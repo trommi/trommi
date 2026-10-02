@@ -550,6 +550,24 @@ export function tally(n, cap = 25) {
   return node
 }
 
+/** A small clock drawn by hand whose hands show how long ago something was: the long hand the minutes
+ *  of the age, the short one its hours (a day once round). Returns an SVG (.age-clock), in currentColor. */
+export function ageClock(ts) {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded('age clock')
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('class', 'age-clock')
+  svg.setAttribute('aria-hidden', 'true')
+  const add = d => { const path = document.createElementNS(NS, 'path'); path.setAttribute('d', d); svg.append(path) }
+  add(penPath(Array.from({ length: 13 }, (_, i) => { const a = 3.4 + (i / 11) * Math.PI * 2, rad = 8.6 + (r() - .5) * .9; return [12 + Math.cos(a) * rad, 12 + Math.sin(a) * rad] })))
+  const min = Math.max(0, (Date.now() - ts) / 60000)
+  const hand = (turn, len) => { const a = turn * Math.PI * 2 - Math.PI / 2; return `M12 12 L${(12 + Math.cos(a) * len).toFixed(1)} ${(12 + Math.sin(a) * len).toFixed(1)}` }
+  add(hand((min % 60) / 60, 5.6))
+  add(hand(Math.min(min / 720, 1.999) % 1, 3.6))
+  return svg
+}
+
 /** The bracket drawn by hand down a run of rows that one session asked: a tall "[" with small hooks.
  *  Stretched over the height it is given (CSS: .run-bracket). seed: the session's id. */
 export function runBracket(seed) {
@@ -659,6 +677,8 @@ const SKETCH = {
   trust: [[[3.2, 9.8], [7.4, 8.8], [10.6, 10.4], [13.2, 12.8], [15.6, 14.4]], [[20.8, 9.8], [16.6, 9], [13.8, 9.8], [11.4, 12.2], [9.4, 13.8]], [[9.6, 14], [11.4, 16.6], [13.6, 16.8], [15.4, 14.6]], [[3, 7.4], [3.5, 12.2]], [[21, 7.6], [20.5, 12.2]]],
   // a sheet going into the slot, strips coming out below: thrown away
   shred: [[[3.6, 10.8], [12, 10.3], [20.4, 10.9]], [[7.4, 10], [7.6, 3.6], [16.4, 3.4], [16.6, 10]], [[8, 12.6], [7.5, 16.2], [8.3, 20.2]], [[12, 12.8], [12.4, 17], [11.8, 21]], [[16, 12.6], [16.5, 15.8], [15.8, 19.6]]],
+  // a wastebasket: thrown away
+  bin: [[[4.8, 7.8], [12, 7.4], [19.2, 7.9]], [[6.6, 8.4], [7.7, 20], [16.3, 20.2], [17.4, 8.2]], [[10.1, 11], [10.4, 17.2]], [[13.9, 11], [13.6, 17.2]], [[9.4, 7.2], [9.9, 4.5], [14.1, 4.3], [14.6, 7.2]]],
   // a paperclip, bent in one go: attach something
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
@@ -730,6 +750,8 @@ const SKETCH = {
   stack: [[[4.6, 11], [12, 10.6], [19.4, 11], [19.7, 15.4], [19.4, 19.8], [12, 20.1], [4.6, 19.8], [4.3, 15.4], [4.7, 10.7]], [[5.8, 10.4], [6.6, 7.4], [12, 7], [17.4, 7.4], [18.2, 10.4]], [[7.6, 6.8], [8.6, 4.2], [12, 3.9], [15.4, 4.2], [16.4, 6.8]], [[8.6, 15.4], [12, 15.2], [15.4, 15.5]]],
   // a speech bubble with its tail: write to someone
   bubble: [[[4.4, 8.6], [6, 6.4], [12, 6], [18.2, 6.4], [19.8, 8.8], [19.6, 14.6], [17.8, 16.8], [11.6, 17], [8.4, 20.6], [8.2, 17], [5.8, 16.6], [4.3, 14.4], [4.5, 8.2]]],
+  // a small desk: its top, two legs, a drawer with its knob, a sheet lying on it
+  desk: [[[3, 9.5], [12, 9.1], [21, 9.5]], [[5, 9.7], [5.2, 15], [5, 20.2]], [[19, 9.7], [18.8, 15], [19, 20.2]], [[12.5, 10], [12.7, 16], [18.8, 16]], [[15.3, 13], [16.1, 13]], [[6.8, 9.2], [7.4, 5.8], [12.4, 6.4], [12.1, 9.2]]],
   // a table: a sheet ruled into cells
   grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
@@ -767,10 +789,15 @@ export const HANDBACK_WORD = 'Revise'
 export const HANDBACK_STATE = 'In revision'
 // Throwing a question away unanswered; and the name of its drawing for sketch().
 export const SHRED_WORD = 'Shred'
-export const SHRED_SKETCH = 'shred'
+export const SHRED_SKETCH = 'bin'
 
 // Going through every open question, one after the other, in the question window: the word on its button.
 export const WALK_WORD = 'Next, please'   // the user's choice (card Nr. 132); the word lives here alone
+
+// The place where everything that needs the human lies: its name (decided: Desk), and its drawing.
+// Only what the human reads is called so; in the code it is still the inbox (files, classes, ids, the address "/").
+export const INBOX_WORD = 'Desk'
+export const INBOX_SKETCH = 'desk'
 
 // Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
 // (The agents' side still says urgency: high | critical; only the words on screen are these.)

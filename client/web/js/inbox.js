@@ -6,7 +6,7 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
@@ -379,6 +379,14 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   const words = plain(card.body)
   const title = el('strong', 'inbox-question', card.title)
   text.append(title)
+  // Beside the title: a small clock for the card's age (its hands show it; the words are its tooltip),
+  // and the card's number, which shows only under the pointer or the keyboard.
+  const when = el('span', 'inbox-when')
+  const told = () => { when.title = `${cardNr(card)} · asked ${ago(card.created)}` }
+  told()
+  when.addEventListener('mouseenter', told)
+  const sr = agoNode(card.created, 'inbox-ago')
+  when.append(el('span', 'inbox-nr', cardNr(card)), ageClock(card.created), sr)
   const body = el('span', 'inbox-body')
   if (about) body.append(el('span', 'inbox-body-about', about))
   if (words) body.append(el('span', 'inbox-body-text', about ? ` · ${words}` : words))
@@ -398,7 +406,6 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     who.append(smallMark(from), el('span', null, from.name))
     byline.append(who, sep())
   }
-  byline.append(el('span', 'inbox-nr', cardNr(card)), sep(), agoNode(card.created, 'inbox-ago'))
   const acts = el('span', 'inbox-acts')
   if (card.kind === 'decision' && quick(card)) {
     const leave = el('button', 'inbox-trust', TRUST_WORD)
@@ -425,7 +432,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   }
   // (With nothing but Shred in it, it and its dot show only while Shift is held.)
   if (!acts.querySelector('.inbox-trust')) acts.classList.add('is-shift-only')
-  if (acts.firstChild) byline.append(sep(), acts)
+  if (acts.firstChild) byline.append(acts)
   // What the card carries: a small drawing and the count per kind; the whole list as its tooltip.
   // (Beside a picture it stands under the picture; this copy is for where there is no room for that.)
   const extra = carries(card)
@@ -435,30 +442,30 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     for (const x of extra) { const one = el('span'); one.append(sketch(x.icon), x.text); more.append(one) }
     return more
   }
-  if (extra.length) byline.append(sep(), carried())
+  if (extra.length) byline.prepend(carried())
   text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
-  content.append(head, text, byline)
+  content.append(head, text, when, byline)
   fit?.observe(title)
   node.append(content)
 
-  // One small picture stands for all of them; it opens large on tap, without leaving the list.
+  // The pictures lie under the text as a small stack, a little fanned: up to three show, the rest are
+  // counted by the note beside it. A tap opens them large, without leaving the list.
   const images = (card.attachments ?? []).filter(a => kindOf(a) === 'image')
   if (images.length) {
     const thumb = el('button', 'inbox-thumb')
     thumb.type = 'button'
     thumb.setAttribute('aria-label', images.length === 1 ? `Enlarge ${images[0].name}` : `Look at ${images.length} pictures`)
-    const img = el('img')
-    img.src = images[0].url
-    img.alt = ''
-    img.loading = 'lazy'
-    img.addEventListener('error', () => thumb.remove())
-    thumb.append(img)
+    for (const a of images.slice(0, 3)) {
+      const img = el('img')
+      img.src = a.url
+      img.alt = ''
+      img.loading = 'lazy'
+      img.addEventListener('error', () => { img.remove(); if (!thumb.querySelector('img')) thumb.remove() })
+      thumb.append(img)
+    }
     thumb.addEventListener('click', () => openLightbox(images, 0))
-    // Under the picture: what the card carries ("6 pictures", "a table").
-    const pics = el('div', 'inbox-pics')
-    pics.append(thumb, carried())
-    node.append(pics)
+    byline.prepend(thumb)
   }
 
   // Snooze is always possible, at the row's top right corner. At rest the corner is only slightly bent:
@@ -572,7 +579,9 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     more.append(clip)
     const count = card.multiple ? `${card.options.length} options, several` : `${card.options.length} options`
     const choose = tile('is-wide is-lead', 'choose', 'Choose', () => (inline ? unfold(!node.classList.contains('is-open')) : onOpen?.(card.id)))
-    choose.append(el('small', null, count))
+    // Only the word stands on the tile; how many options there are is said in its tooltip and to a screen reader.
+    choose.title = count
+    choose.setAttribute('aria-label', `Choose: ${count}`)
     hint(choose, 'list.open')
     // Is the text more than the row shows: it is cut there, or it has a shape (a list, code, a link, lines).
     const cut = () => body.scrollHeight > body.clientHeight + 2 || /\n|```|`|\*\*|https?:\/\//.test(card.body ?? '')
@@ -613,6 +622,7 @@ const rowSig = (card, opts) => JSON.stringify([card.revised, card.urgency, card.
  *  Returns { render(state) }. */
 export function mountInbox(root, { onOpen, onDecided, agent = null }) {
   let signature = ''
+  let lastState = null
   const head = el('header', 'inbox-head')
   const list = el('div', 'inbox-groups')
   root.append(head, list)
@@ -745,7 +755,8 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const off = state.later.map(id => open.find(c => c.id === id)).filter(Boolean)
     const fresh = open.filter(c => !off.includes(c))
     // What was answered: the latest first. A card the agent has closed since is still listed; the server lets it be reopened.
-    const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))
+    // (In a session's own list: that session's answers. One code path for the inbox and for a session.)
+    const answered = all.cards.filter(c => (!agent || c.agent === agent) && c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
     const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), all.cards.filter(c => c.status === 'shredded').map(c => c.id), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
@@ -759,7 +770,8 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const toRead = fresh.filter(c => c.kind === 'info').length, asking = fresh.length - toRead
     let walkTools = null   // the button into the walk, put into the head below
     const circled = el('span', 'inbox-circled', String(asking))
-    const needs = asking === 1 ? ' question needs you.' : ' questions need you.'
+    // On the desk it reads "12 on your desk"; in a session's own list "12 questions need you."
+    const needs = !agent ? ' on your desk.' : asking === 1 ? ' question needs you.' : ' questions need you.'
     const reading = el('span', 'inbox-toread-count')
     if (toRead) reading.append(sketch('page'), `${toRead} to read`)
     // The knocks among them (urgent and blocking) are counted first: "3 knocks · 9 questions need you."
@@ -785,10 +797,11 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       walkTools = el('div', 'inbox-tools')
       walkTools.append(walk)
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
-    else line.append(off.length ? 'Nothing new. What you snoozed is below.' : 'Nothing needs you.')
+    else line.append(off.length ? 'Nothing new. What you snoozed is below.' : agent ? 'Nothing needs you.' : `${INBOX_WORD} is clear.`)
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
-    else title.append(el('h2', null, 'Inbox'), line)
+    else title.append(el('h2', null, INBOX_WORD), line)
+    lastState = state
     head.replaceChildren(...(agent && !open.length ? [] : [title]), ...(walkTools ? [walkTools] : []))
     // (The sheet of keys opens from the "?" in the bar, index.html #keys-open, and by the key "?".)
 
@@ -873,9 +886,9 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       }))
     }
     // Shredded today: a fourth quiet pile, only when there is something in it; "Take back" in its list.
-    const shredded = agent ? [] : all.cards.filter(c => c.status === 'shredded' && sameDay(c.shredded ?? 0, Date.now())).sort((a, b) => (b.shredded ?? 0) - (a.shredded ?? 0))
+    const shredded = all.cards.filter(c => (!agent || c.agent === agent) && c.status === 'shredded' && sameDay(c.shredded ?? 0, Date.now())).sort((a, b) => (b.shredded ?? 0) - (a.shredded ?? 0))
     if (shredded.length) {
-      const key = ':shredded'
+      const key = `${agent ?? ''}:shredded`
       parts.push(pile({
         kind: 'shredded', label: 'Shredded', icon: SHRED_SKETCH, count: `${shredded.length} today`, headClass: 'inbox-shredded-toggle',
         open: pilesOpen.has(key) && !parts.some(p => p.matches?.('.inbox-pile.is-open')),
@@ -1069,5 +1082,17 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     if (current && node) mark(node, false)
   })
 
-  return { render }
+  /** Bring an answered card into view: its pile is opened and its row shown. Returns whether it is there. */
+  function reveal(cardId) {
+    if (!lastState) return false
+    answeredOpen = true
+    signature = ''
+    render(lastState)
+    const row = list.querySelector(`.inbox-done[data-id="${CSS.escape(cardId)}"]`)
+    if (!row) return false
+    row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    row.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
+    return true
+  }
+  return { render, reveal }
 }

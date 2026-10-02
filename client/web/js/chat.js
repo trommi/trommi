@@ -5,9 +5,9 @@
 // (icons, attachments, lightbox, code blocks).
 
 import { sendMessage } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo } from './ui.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, sketch } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
-import { mountHistory, mountFiles } from './history.js'
+import { mountFiles } from './history.js'
 import { dictationMic } from './speech.js'
 import { tellApart } from './agents.js'
 
@@ -377,12 +377,11 @@ function createPane(agent, ctx) {
     return pane
   }
   const cardsRoot = el('div', 'session-cards')
-  const historyRoot = el('div', 'history')
   const filesRoot = el('div', 'files-root')
   const questions = mountInbox(cardsRoot, { onOpen: ctx.onOpen, onDecided: ctx.onDecided, agent })
-  const history = mountHistory(historyRoot, { agent, flags: ctx.flags })
   const files = mountFiles(filesRoot, { agent })
-  const questionsPane = listPane('pane-questions', cardsRoot, historyRoot)
+  // The session's questions are the inbox's own list, scoped to this session: open rows, then the same piles.
+  const questionsPane = listPane('pane-questions', cardsRoot)
   const filesPane = listPane('pane-files', filesRoot)
   const body = el('div', 'chat-body')
   body.append(log, questionsPane, filesPane)
@@ -399,8 +398,15 @@ function createPane(agent, ctx) {
   draft.rows = 1
   draft.autocomplete = 'off'
   draft.enterKeyHint = 'enter'
-  const pen = button('mic', 'Scribble: draw and show pictures')
-  pen.append(icon('pen'))
+  // What goes along with the words: pictures and files, by the clip, by paste, or dropped on the field.
+  let attached = []   // [{ name, data }], data a data: URL, as the server takes them
+  const chips = el('div', 'composer-files')
+  const picker = el('input')
+  picker.type = 'file'
+  picker.multiple = true
+  picker.hidden = true
+  const clip = button('mic composer-clip', 'Attach a picture or a file (or paste it, or drop it here)')
+  clip.append(sketch('clip'))
   // speak instead of typing: the words appear in the draft while you talk (speech.js)
   const mic = dictationMic(draft, { key: `chat:${agent}`, onError: text => ctx.onError?.(text) })
   const send = el('button', 'send')
@@ -408,7 +414,7 @@ function createPane(agent, ctx) {
   send.setAttribute('aria-label', 'Send')
   send.disabled = true
   send.append(icon('send'))
-  form.append(draft, pen, mic, send)
+  form.append(chips, draft, picker, clip, mic, send)
   const hint = el('p', 'hint')
   hint.setAttribute('aria-hidden', 'true')
   hint.append(el('kbd', null, 'Enter'), ' sends, ', el('kbd', null, 'Shift'), ' + ', el('kbd', null, 'Enter'), ' for a new line')
@@ -647,7 +653,6 @@ function createPane(agent, ctx) {
     settle()
 
     questions.render(state)
-    history.render(state, true)
     files.render(state, true)
   }
 
@@ -662,7 +667,29 @@ function createPane(agent, ctx) {
     const max = Math.max(120, Math.min(260, window.innerHeight * 0.36))
     draft.style.height = `${Math.min(draft.scrollHeight, max)}px`
     draft.style.overflowY = draft.scrollHeight > max ? 'auto' : 'hidden'
-    send.disabled = sending || !draft.value.trim()
+    send.disabled = sending || (!draft.value.trim() && !attached.length)
+  }
+  function paintChips() {
+    chips.replaceChildren(...attached.map((a, i) => {
+      const chip = button('composer-file', `${a.name}: take it off`)
+      chip.append(sketch(/^data:image\//.test(a.data) ? 'picture' : 'page'), el('span', null, a.name))
+      chip.addEventListener('click', () => { attached.splice(i, 1); paintChips() })
+      return chip
+    }))
+    form.toggleAttribute('data-files', attached.length > 0)
+    fitDraft()
+  }
+  const readFile = file => new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve({ name: file.name || `pasted-${Date.now()}.png`, data: reader.result })
+    reader.onerror = () => reject(reader.error)
+    reader.readAsDataURL(file)
+  })
+  async function attach(list) {
+    const got = [...list].filter(f => f instanceof File)
+    if (!got.length) return
+    try { attached.push(...await Promise.all(got.map(readFile))) } catch { showError('That file could not be read.') }
+    paintChips()
   }
   function showError(text) {
     error.replaceChildren(icon('warn'), el('span', null, text))
@@ -692,15 +719,17 @@ function createPane(agent, ctx) {
   form.addEventListener('submit', async e => {
     e.preventDefault()
     const text = draft.value.trim()
-    if (!text || sending) return
+    if ((!text && !attached.length) || sending) return
     sending = true
     form.classList.add('is-sending')
     error.hidden = true
     fitDraft()
     try {
-      await sendMessage(text, agent)
+      const files = attached
+      await sendMessage(text, agent, null, files)
       // Only clear what was sent; the user may already be typing the next message.
       if (draft.value.trim() === text) draft.value = ''
+      if (attached === files) { attached = []; paintChips() }
       draft.placeholder = placeholder
       remember()
       pinned = true
@@ -727,8 +756,12 @@ function createPane(agent, ctx) {
   send.addEventListener('mousedown', e => e.preventDefault())
   // The whole composer box is a target for the caret.
   form.addEventListener('click', e => { if (e.target === form) draft.focus() })
-  // The pen in the composer is a shortcut to the canvas.
-  pen.addEventListener('click', () => ctx.onScribble?.(agent))
+  clip.addEventListener('click', () => picker.click())
+  picker.addEventListener('change', () => { attach(picker.files); picker.value = '' })
+  draft.addEventListener('paste', e => { if (e.clipboardData?.files?.length) { e.preventDefault(); attach(e.clipboardData.files) } })
+  form.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); form.classList.add('is-drop') } })
+  form.addEventListener('dragleave', () => form.classList.remove('is-drop'))
+  form.addEventListener('drop', e => { form.classList.remove('is-drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files) } })
 
   return {
     root, render, tick, settle, showError,
@@ -742,7 +775,7 @@ function createPane(agent, ctx) {
     /** Bring one card into view in the list of questions: its open row, or its line among the answered. */
     reveal(cardId) {
       const row = cardsRoot.querySelector(`[data-id="${CSS.escape(cardId)}"]`)
-      if (!row) return history.reveal(cardId)
+      if (!row) return questions.reveal(cardId)
       row.scrollIntoView({ block: 'center', behavior: 'smooth' })
       row.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
       return true

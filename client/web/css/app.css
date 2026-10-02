@@ -281,6 +281,11 @@ body[data-filter] .jump { display: none; }
 .event-about + .event-text::before { content: "→"; margin-right: 8px; color: var(--faint); font-weight: 400; }
 .event-time { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+/* (Quiet: what happened to a question is a note between the messages, not a headline.) */
+.event { min-height: 28px; margin-top: var(--s-4); opacity: .85; }
+.event-ico { width: 18px; height: 18px; background: none; }
+.event-kind { color: var(--faint); font-weight: 500; letter-spacing: .05em; }
+.event-about + .event-text { color: var(--muted); font-weight: 500; }
 /* day separators */
 .day { display: flex; align-items: center; gap: var(--s-4); margin-top: var(--s-10); color: var(--faint); }
 .day:first-child { margin-top: 0; }
@@ -359,6 +364,15 @@ body[data-filter] .jump { display: none; }
   box-shadow: var(--shadow-md);
   transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-med) var(--ease-out);
 }
+.composer { flex-wrap: wrap; }
+.composer.is-drop { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
+/* what is attached: a line of small chips above the words; a click takes one off */
+.composer-files { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 2px; }
+.composer-files:empty { display: none; }
+.composer-file { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 28px; padding: 0 9px 0 6px; border: 0; border-radius: 8px; background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
+.composer-file .sketch { width: 17px; height: 17px; color: var(--muted); }
+.composer-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.composer-clip .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 .composer textarea {
   flex: 1; min-width: 0; height: 40px; padding: 8px 0; resize: none; border: 0; background: none;
@@ -465,6 +479,14 @@ body[data-filter] .jump { display: none; }
 .agent-entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); min-height: 46px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; text-align: left; transition: background var(--d-fast); }
 .agent-entry:hover { background: var(--sunken); }
 .agent-entry[aria-current="true"] { background: var(--surface); box-shadow: var(--shadow-sm); }
+/* The inbox is the place, not one row of the list: a block of its own at the top of the sidebar, on
+   paper, a little taller, its name in the display face; the sessions follow below it after some air. */
+#agents > .agent-row:first-child { margin-bottom: var(--s-4); }
+#agents > .agent-row:first-child .agent-entry { min-height: 56px; padding: 8px var(--s-3) 8px 10px; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+#agents > .agent-row:first-child .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
+#agents > .agent-row:first-child .agent-text strong { font: 800 1.12rem/1 var(--display); letter-spacing: -.01em; }
+#agents > .agent-row:first-child .agent-all { width: 38px; height: 38px; background: none; }
+#agents > .agent-row:first-child .agent-all .sketch { width: 28px; height: 28px; stroke-width: 1.6; color: var(--fg); }
 .agent-text { flex: 1; min-width: 0; display: grid; }
 .agent-text strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* Sessions laid together: one name per line. The ones that were laid on lie a little crooked and
@@ -673,7 +695,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   /* Every row in the list is the same height and the answers are tiles at its right edge, always in
      the same place. Answer one, the next slides up, and its tiles are under the pointer.
      "Choose" unfolds a second grid row below; folded, that row has no height. */
-  min-height: 148px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; grid-template-rows: 148px auto; align-items: stretch;
+  min-height: 172px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; grid-template-rows: 172px auto; align-items: stretch;
   position: relative; background: var(--card-bg); border-radius: 6px;
   box-shadow: 0 0 0 1px var(--card-line), 0 2px 2px rgb(20 30 25 / .04), 0 5px 5px rgb(20 30 25 / .04), 0 10px 10px rgb(20 30 25 / .03);
 }
@@ -756,6 +778,22 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* Unfolded with its text in full below: the row itself does not say it a second time. */
 .inbox-row.is-open[data-fulltext] .inbox-body-text { display: none; }
 /* At most one small picture, beside the text; the rest are behind it. */
+/* Beside the title, at the top right of the text: a small clock for the card's age; the number shows
+   only under the pointer or the keyboard. */
+.inbox-when { position: absolute; top: 15px; right: var(--s-4); display: inline-flex; align-items: center; gap: 6px; color: color-mix(in srgb, var(--card-ink) 55%, var(--card-bg)); }
+.inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 40px; }
+.inbox-when .inbox-nr { margin: 0; padding: 2px 0 0 6px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .02em; text-transform: none; opacity: 0; background: var(--card-bg); transition: opacity 100ms ease-out; }
+.inbox-row:hover .inbox-when .inbox-nr, .inbox-row:focus-within .inbox-when .inbox-nr, .inbox-row.is-current .inbox-when .inbox-nr { opacity: 1; }
+.inbox-when .inbox-ago { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.age-clock { flex: none; width: 19px; height: 19px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.inbox-question { padding-right: 30px; }
+/* The pictures: a small stack under the text, a little fanned; beside it what the card carries. */
+.inbox-byline .inbox-thumb { flex: none; position: relative; align-self: center; width: auto; height: 40px; margin: 0 4px 0 2px; padding: 0; border: 0; border-radius: 0; overflow: visible; background: none; box-shadow: none; display: inline-flex; align-items: center; }
+.inbox-byline .inbox-thumb img { width: 50px; height: 38px; border-radius: 5px; object-fit: cover; object-position: top center; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line), 0 1px 3px rgb(20 30 25 / .12); }
+.inbox-byline .inbox-thumb img:nth-child(1) { rotate: -3deg; z-index: 3; }
+.inbox-byline .inbox-thumb img:nth-child(2) { margin-left: -30px; rotate: 2.5deg; translate: 0 1px; z-index: 2; }
+.inbox-byline .inbox-thumb img:nth-child(3) { margin-left: -30px; rotate: -1.5deg; translate: 0 -1px; z-index: 1; }
+.inbox-byline:has(.inbox-thumb) { bottom: 8px; }
 /* The picture and, under it, what the card carries ("6 pictures"). */
 .inbox-pics { align-self: center; display: grid; justify-items: center; gap: 5px; margin-right: var(--s-4); }
 .inbox-pics .inbox-thumb { margin-right: 0; }
@@ -823,8 +861,8 @@ body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .
 }
 /* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
    (Set in from the right where the Snooze label sits inside the row's edge.) */
-.inbox-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 31px 12px 0; }
-.inbox-answer { flex: none; width: 124px; aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
+.inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 31px 12px 0; }
+.inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
    or two lines at a size that reads: inbox.js lets only labels onto a tile that fit that way. */
@@ -940,13 +978,15 @@ body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .
 /* A narrower column: the text keeps its width, the picture waits behind the title. */
 @container rows (max-width: 700px) {
   .inbox-pics { display: none; }
-  .inbox-row:has(> .inbox-pics) .inbox-byline :is(.inbox-carries, .inbox-sep:has(+ .inbox-carries)) { display: inline-flex; }
   .inbox-question { font-size: 1.25rem; }
   .inbox-body { font-size: var(--t-md); }
 }
 /* Narrow (a phone, or sessions side by side): rows are as tall as their text, the answers stand below it. */
 @container rows (max-width: 560px) {
   .inbox-row { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
+  .inbox-answer { height: auto; }
+  .inbox-when, .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 8px; right: 34px; }
+  .inbox-byline:has(.inbox-thumb) { order: 3; margin-top: 4px; }
   .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; }
   .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-3)); }
   .inbox-row > :not(.inbox-more) { grid-row: auto; }
@@ -1238,7 +1278,10 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
 .quick-open .crown-mark { left: 7px; top: 3px; width: 16px; rotate: -17deg; stroke-width: 2.2; }
 .topbar .padlink-open span { display: none; }
 .topbar .padlink-ico { width: 22px; height: 22px; }
-body:not([data-scope="all"]):not([data-page]) { --float-up: 92px; }
+/* In a session the two do not float over the conversation: they stand small at the top right, beside its title. */
+body:not([data-scope="all"]):not([data-page]) :is(.quick-open, .topbar .padlink-open) { bottom: auto; top: 8px; width: 36px; height: 36px; box-shadow: 0 0 0 1px var(--line); }
+body:not([data-scope="all"]):not([data-page]) .quick { bottom: auto; top: 52px; }
+body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: calc(var(--s-4) + 44px); }
 .quick { display: none; position: fixed; z-index: 6; right: var(--s-4); bottom: calc(var(--s-4) + 54px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: min(520px, calc(100vw - 2 * var(--s-4))); max-width: none; margin: 0; height: 44px; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
 .quick:focus-within { box-shadow: 0 0 0 1px var(--fg), var(--shadow-lg); }
 .quick.is-sheet { display: flex; }
@@ -1247,7 +1290,8 @@ body:not([data-scope="all"]):not([data-page]) { --float-up: 92px; }
 .quick[data-tall] .quick-field { left: 0; right: 0; }
 @media (max-width: 860px) {
   .quick-field { font-size: 16px; }
-  body:not([data-scope="all"]):not([data-page]) { --float-up: 150px; }
+  body:not([data-scope="all"]):not([data-page]) .quick-open { right: 56px; top: 6px; }
+  body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: 100px; top: 6px; }
 }
 /* ---- wide screens: no bar. The logo with its menu floats at the top centre of the page, a small
    pill; the menu drops down centred under it. In the sidebar the Inbox entry stays at the top while
