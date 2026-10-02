@@ -32,7 +32,7 @@ import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { LATER_WORD, LATER_SKETCH, arrowStrokes } from './ui.js'
+import { LATER_WORD, LATER_SKETCH, ACK_WORD, TRUST_WORD, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -105,7 +105,6 @@ const touchOnly = matchMedia('(pointer: coarse)')
 const HAND_BACK_LABEL = 'Back to agent'
 // An info card (something to read, nothing to decide) has two tiles in the place of options: this one closes it,
 // the other is What??.
-const ACK_WORD = 'Acknowledge'
 const ACK_KEY = '\u0000ack', WHAT_KEY = '\u0000what'
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again.'
 // The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
@@ -361,7 +360,12 @@ export function mountFocus({ onDecided } = {}) {
     const { node } = rec
     // An info card is drawn like a question with two answers of the window's own: Acknowledge and What??.
     const info = rec.card.kind === 'info'
-    const card = info ? { ...rec.card, multiple: false, recommended: null, options: [{ key: ACK_KEY, label: ACK_WORD, detail: '' }, { key: WHAT_KEY, label: EXPLAIN_LABEL, detail: '' }] } : rec.card
+    // The time machine: an earlier version of the card is drawn in place of the live one, to read, not to answer.
+    const earlier = rec.version != null ? rec.card.versions?.find(v => v.n === rec.version) ?? null : null
+    if (!earlier) rec.version = null
+    const base = earlier ? { ...rec.card, sections: undefined, html: undefined, ...earlier } : rec.card
+    node.toggleAttribute('data-earlier', Boolean(earlier))
+    const card = info ? { ...base, multiple: false, recommended: null, options: [{ key: ACK_KEY, label: ACK_WORD, detail: '' }, { key: WHAT_KEY, label: EXPLAIN_LABEL, detail: '' }] } : base
     const active = document.activeElement
     const hadFocus = node.contains(active)
     const typed = hadFocus && (active === rec.noteNode || active === rec.askField) ? { ask: active === rec.askField, sel: [active.selectionStart, active.selectionEnd] } : null
@@ -535,6 +539,17 @@ export function mountFocus({ onDecided } = {}) {
     body.dataset.layout = rec.gridTiles ? 'grid' : hasMedia && hasText ? 'split' : hasMedia ? 'media' : 'text'
     if (hasMedia) body.append(media)
     if (hasText) body.append(text)
+    if (earlier) {
+      // which version this is, the way through the others, and the way back to the live one
+      const all = [...rec.card.versions.map(v => v.n), rec.card.version ?? rec.card.versions.at(-1).n + 1]
+      const bar = el('div', 'focus-earlier')
+      const says = el('span', 'focus-earlier-says')
+      says.append(sketch('timemachine'), el('b', null, `Version ${earlier.n} of ${all.at(-1)}`), ` · as it was ${ago(earlier.at)}${earlier.note ? ` · ${earlier.note}` : ''}`)
+      const step = (label, word, to) => { const b = button('focus-earlier-step', label); b.textContent = word; b.disabled = to == null; b.addEventListener('click', () => viewVersion(rec, to)); return b }
+      const at = all.indexOf(earlier.n)
+      bar.append(says, step('The version before', 'Older', all[at - 1]), step('The version after', 'Newer', all[at + 1]), step('Back to the question as it stands now', 'Back to now', all.at(-1)))
+      scroll.append(bar)
+    }
     const who = el('div', 'focus-card-head')
     const session = (pool()?.agents ?? []).find(a => a.id === card.agent)
     who.append(doodle(session?.mark ?? card.agent), el('span', null, card.agent_name || session?.name || 'Agent'))
@@ -593,7 +608,14 @@ export function mountFocus({ onDecided } = {}) {
       pen.addEventListener('click', () => openPad(rec))
       rec.penBtn = pen
       rec.annotate = file => openPad(rec, file)
-      ask.append(rec.chipsNode, askOpen, clip, pen, picker, field, send)
+      // No Send: what is written is kept as it is written (the card's draft on the hub, the same on every device),
+      // and the next thing the human does takes it along: an answer as its note, Back to agent and What?? as the
+      // message, Trust as the note; Snooze leaves it on the card. The end of the field says where the words are.
+      send.hidden = true
+      rec.saveNode = el('span', 'focus-saved')
+      rec.saveNode.setAttribute('role', 'status')
+      ask.append(rec.chipsNode, askOpen, clip, pen, picker, field, send, rec.saveNode)
+      field.addEventListener('blur', () => flushDraft(rec))
       if (pad?.rec === rec) { rec.chipsNode.after(padHost); ask.dataset.pad = '' }   // the card was rebuilt while its scratchpad is open
       field.addEventListener('paste', e => {
         const files = [...(e.clipboardData?.files ?? [])]
@@ -617,7 +639,12 @@ export function mountFocus({ onDecided } = {}) {
       // and the button sends, as in the session's conversation. Never while an IME is composing.
       field.addEventListener('keydown', e => {
         if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return
-        if (!touchOnly.matches || e.ctrlKey || e.metaKey) { e.preventDefault(); ask.requestSubmit() }
+        // Enter: back to the agent, with these words (nothing happens on an empty field: no card leaves by a slip).
+        // Ctrl/Cmd+Enter: say it and stay on the card. On a touch screen Enter is a line break; the buttons act.
+        if (e.ctrlKey || e.metaKey) { e.preventDefault(); return void askBack(rec) }
+        if (touchOnly.matches) return
+        e.preventDefault()
+        if (field.value.trim() || rec.files.length) { claim(rec); handBack() }
       })
       send.addEventListener('mousedown', e => e.preventDefault())   // the caret stays in the field
       ask.addEventListener('submit', e => { e.preventDefault(); askBack(rec) })
@@ -629,17 +656,10 @@ export function mountFocus({ onDecided } = {}) {
       // in front, see paintChrome).
       rec.actionsNode = el('div', 'focus-actions')
       // Each card has its own three; a tap makes the card the one in front first, then does what the button says.
-      const way = (cls, word, drawing, label, act) => {
-        const b = button(`focus-later ${cls} focus-way`, label)
-        b.title = label
-        b.append(...(drawing ? [sketch(drawing)] : []), word)
-        b.addEventListener('click', () => { claim(rec); act() })
-        return b
-      }
       rec.actionsNode.append(
-        ...(info ? [] : [way('focus-explain', whatWord(), null, `${EXPLAIN_LABEL} (E): ask the session to explain this question; it returns with the reply`, () => explain())]),
-        way('focus-handback', el('span', null, HAND_BACK_LABEL), 'reverse', `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`, () => handBack()),
-        way('', el('span', null, LATER_WORD), LATER_SKETCH, `${LATER_WORD} (L): it waits for you, at the end of the line`, () => later()),
+        ...(info ? [] : [wayButton('what', () => { claim(rec); explain() })]),
+        wayButton('hand', () => { claim(rec); handBack() }),
+        wayButton('snooze', () => { claim(rec); later() }),
       )
       rec.composer = el('div', 'focus-composer')
       rec.composer.append(ask, rec.actionsNode)
@@ -749,6 +769,16 @@ export function mountFocus({ onDecided } = {}) {
     answer.append(rec.errorNode, opts)
     // (Send is not one of the list: it stands under it, so the list ends above it and it never covers an option)
     if (rec.sendTile) answer.append(rec.sendTile)
+    // Trust: leave the decision to the session. It is an answer, so it stands with the answers, under them.
+    if (!permission && !info && !earlier) {
+      const advice = card.options.filter(o => advisedKeys.has(o.key)).map(labelOf).join(', ')
+      const trustBtn = button('focus-trust', `${TRUST_WORD}: leave this decision to the agent`)
+      trustBtn.title = advice ? `${TRUST_WORD}: the agent takes what it advised (${advice})` : `${TRUST_WORD}: the agent decides itself`
+      trustBtn.append(sketch('trust'), el('b', null, TRUST_WORD), el('span', null, advice ? `the agent takes: ${advice}` : 'you decide'))
+      trustBtn.addEventListener('click', () => trustIt(rec))
+      rec.trustBtn = trustBtn
+      answer.append(trustBtn)
+    }
     rec.noteTag = null
     if (tags) {
       const line = el('p', 'focus-tag-line')
@@ -823,6 +853,7 @@ export function mountFocus({ onDecided } = {}) {
     node.toggleAttribute('data-head', besideTitle)
     if (besideTitle) scroll.prepend(answer)
     node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends].filter(Boolean))
+    answer.inert = Boolean(earlier)   // an earlier version cannot be answered
     if (multi) paintPicked(rec)
     rec.toEnd = false
     paintThread(rec)
@@ -1066,16 +1097,41 @@ export function mountFocus({ onDecided } = {}) {
   /** Save the draft of a card a moment after it changed (POST /draft; an empty one clears it). */
   function queueDraft(rec) {
     if (rec.card.kind !== 'decision' || rec.draftSent === undefined) return
-    if (!rec.draftTimer && JSON.stringify(draftOf(rec)) === rec.draftSent) return
+    if (!rec.draftTimer && JSON.stringify(draftOf(rec)) === rec.draftSent) return paintSaved(rec)
     clearTimeout(rec.draftTimer)
-    rec.draftTimer = setTimeout(() => {
-      rec.draftTimer = 0
-      if (recs.get(rec.id) !== rec || decidedLocal.has(rec.id) || rec.busy) return
-      const body = JSON.stringify(draftOf(rec))
-      if (body === rec.draftSent) return
-      rec.draftSent = body
-      fetch('/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {})
-    }, 400)
+    rec.draftTimer = setTimeout(() => saveDraft(rec), 300)
+    paintSaved(rec)
+  }
+  function saveDraft(rec) {
+    clearTimeout(rec.draftTimer)
+    rec.draftTimer = 0
+    if (recs.get(rec.id) !== rec || decidedLocal.has(rec.id) || rec.busy) return paintSaved(rec)
+    const body = JSON.stringify(draftOf(rec))
+    if (body === rec.draftSent) return paintSaved(rec)
+    rec.draftSent = body
+    rec.saving = (rec.saving ?? 0) + 1
+    rec.saveFailed = false
+    paintSaved(rec)
+    fetch('/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body })
+      .then(res => { if (!res.ok && res.status !== 409) throw new Error('not saved') }, () => { throw new Error('not saved') })
+      .catch(() => { rec.saveFailed = true; if (rec.draftSent === body) rec.draftSent = '' })
+      .finally(() => { rec.saving--; paintSaved(rec) })
+  }
+  /** Save what is waiting right now (the field is left, the window closes, the card is acted on). */
+  function flushDraft(rec) { if (rec.draftTimer) saveDraft(rec) }
+  /** The end of the field: "…" while the words are on their way, a tick and "saved" once the hub has them. */
+  function paintSaved(rec) {
+    const node = rec.saveNode
+    if (!node) return
+    const words = Boolean(rec.askText.trim())
+    const state = !words ? '' : rec.saveFailed ? 'failed' : rec.draftTimer || rec.saving ? 'saving' : rec.card.kind === 'decision' ? 'saved' : ''
+    if (node.dataset.state === state) return
+    node.dataset.state = state
+    node.hidden = !state
+    node.replaceChildren(...(state === 'saving' ? [el('span', null, '…')]
+      : state === 'saved' ? [icon('check'), el('span', null, 'saved'), ...(touchOnly.matches ? [] : [el('kbd', null, 'Enter'), el('span', 'focus-saved-hint', HAND_BACK_LABEL.toLowerCase())])]
+      : state === 'failed' ? [el('span', null, 'not saved yet')] : []))
+    node.title = state === 'saved' ? `Kept on the board as you write. Enter: ${HAND_BACK_LABEL} with these words. Ctrl+Enter: say it and stay. An answer takes them along as its note.` : ''
   }
   /** Take what the hub holds for a card (card.draft) when it is news: on first sight, from another device, after
    *  "Later", after an answer was taken back. Not while the human is changing this card right now. */
@@ -1212,6 +1268,20 @@ export function mountFocus({ onDecided } = {}) {
     if (isOpen && shown === now) now.askField?.focus({ preventScroll: true })
   }
 
+  /** Turn the card to one of its versions (n), read-only; the live one is the last step. The conversation goes to
+   *  the place where that version was presented, so question, talk and the next version read in their order. */
+  function viewVersion(rec, n) {
+    const live = rec.card.version ?? (rec.card.versions?.at(-1)?.n ?? 0) + 1
+    rec.version = n == null || n >= live ? null : n
+    fill(rec)
+    if (rec.version == null) return announce('The question as it stands now.')
+    announce(`Version ${rec.version}, as it was. It cannot be answered.`)
+    const turn = rec.threadNode?.querySelector(`.focus-turn[data-version="${rec.version}"]`)
+    if (turn) turn.scrollIntoView({ block: 'center' })
+    else rec.scroll.scrollTop = 0
+    rec.node.focus({ preventScroll: true })
+  }
+
   /** Under the title: everything the card carries, as small chips. Pictures (a tap goes to them), things to play,
    *  files, published pages and links (also those only named in the text or in the conversation about the card;
    *  one that was withdrawn or has expired is left out), tables and layouts. */
@@ -1234,7 +1304,7 @@ export function mountFocus({ onDecided } = {}) {
     const whole = texts[0]
     const layouts = (whole.match(/```html/g) ?? []).length
     const tables = (whole.match(/^\s*\|?\s*:?-{2,}:?\s*\|/gm) ?? []).length
-    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables])
+    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables, card.version, card.versions?.length])
     if (sig === rec.assetsSig) return
     rec.assetsSig = sig
     const chip = (drawing, label, to) => {
@@ -1245,7 +1315,9 @@ export function mountFocus({ onDecided } = {}) {
       return node
     }
     const goTo = sel => () => rec.scroll?.querySelector(sel)?.scrollIntoView({ block: 'center', behavior: still() ? 'instant' : 'smooth' })
+    const versions = card.versions?.length ? card.versions : null
     const chips = [
+      ...(versions ? [chip('timemachine', `v${card.version ?? versions.at(-1).n + 1}`, () => viewVersion(rec, rec.version == null ? versions.at(-1).n : null))] : []),
       ...(pictures ? [chip('picture', pictures === 1 ? '1 picture' : `${pictures} pictures`, goTo('.focus-media, .focus-sec-pic'))] : []),
       ...(plays ? [chip('play', plays === 1 ? '1 to play' : `${plays} to play`, goTo('.focus-media .media'))] : []),
       ...[...links.values()].map(x => chip(x.drawing, x.label, x.href)),
@@ -1308,11 +1380,14 @@ export function mountFocus({ onDecided } = {}) {
   function paintThread(rec) {
     if (!rec.threadNode) return
     const told = (pool()?.messages ?? []).filter(m => m.card_id === rec.id && m.from !== 'event')
+    // where the question was presented anew: a line in the conversation that opens that version
+    const turns = (pool()?.messages ?? []).filter(m => m.card_id === rec.id && m.from === 'event' && m.kind === 'revised' && m.version)
     const mine = (asked.get(rec.id) ?? []).filter(a => !(a.state === 'sent' && told.some(m => m.from === 'user' && (m.text ?? '') === a.text && m.ts >= a.ts - 60000)))
     if (asked.has(rec.id)) asked.set(rec.id, mine)
     const items = [
       ...told.map(m => ({ from: m.from === 'user' ? 'user' : 'agent', text: m.text ?? '', ts: m.ts, state: '', attachments: m.attachments ?? [], details: m.details ?? '' })),
       ...mine.map(a => ({ from: 'user', text: a.text, ts: a.ts, state: a.state, error: a.error, pending: a.files ?? [] })),
+      ...turns.map(m => ({ from: 'turn', version: m.version, again: Boolean(m.again), text: m.text ?? '', ts: m.ts })),
     ].sort((a, b) => a.ts - b.ts)
     const sig = JSON.stringify(items)
     if (sig === rec.threadSig) return
@@ -1324,6 +1399,14 @@ export function mountFocus({ onDecided } = {}) {
     const name = rec.card.agent_name || session?.name || 'Agent'
     let before = null
     const nodes = items.map(item => {
+      if (item.from === 'turn') {
+        before = null
+        const line = button('focus-turn', `Show version ${item.version}`)
+        line.dataset.version = item.version
+        line.append(sketch('timemachine'), el('span', null, `Version ${item.version} ${item.again ? 'presented again' : 'presented'}`), agoNode(item.ts, 'msg-time'))
+        line.addEventListener('click', () => viewVersion(rec, item.version))
+        return line
+      }
       const cont = before === item.from
       before = item.from
       const msg = el('article', `msg msg-${item.from}${cont ? ' cont' : ''}`)
@@ -1359,8 +1442,8 @@ export function mountFocus({ onDecided } = {}) {
       }
       return msg
     })
-    const last = items[items.length - 1]
-    if (last && last.from === 'user' && last.state !== 'sending' && last.state !== 'failed') {
+    const last = items.filter(x => x.from !== 'turn').at(-1)
+    if (last && last === items.at(-1) && last.from === 'user' && last.state !== 'sending' && last.state !== 'failed') {
       nodes.push(el('p', 'focus-thread-wait', 'Sent. The reply shows up here; the question stays open.'))
     }
     rec.threadNode.replaceChildren(...nodes)
@@ -1396,7 +1479,7 @@ export function mountFocus({ onDecided } = {}) {
       entry.state = 'sent'
       // What was typed into the composer is plain chat about the card: it stays open, in its place, and in front.
       // Only "Explain" (fixed) leaves the card: it waits under "Later" until the reply, and the walk moves on.
-      if (fixed) {
+      if (flags.explain) {
         announce('Asked to explain. The card waits under Later until the reply.')
         if (!single && shown === rec && order.length > 1) { pendingJump = order[order.indexOf(rec.id) + 1] ?? order.find(id => id !== rec.id); jumpMotion = 'later' }
         putOff(rec.id, true, true)
@@ -1425,7 +1508,8 @@ export function mountFocus({ onDecided } = {}) {
     explaining = true
     explainBtn.disabled = true
     const walking = !single
-    const sent = await askBack(rec, EXPLAIN_TEXT).catch(() => false)
+    // What stands in the composer goes as the request; with nothing written, the fixed one.
+    const sent = await askBack(rec, rec.askText.trim() ? null : EXPLAIN_TEXT, { explain: true }).catch(() => false)
     explaining = false
     paintChrome()
     if (!isOpen) return
@@ -1441,6 +1525,7 @@ export function mountFocus({ onDecided } = {}) {
 
   async function submit(rec, keys) {
     claim(rec)
+    if (rec.version != null) return   // an earlier version is only read
     if (rec.card.kind === 'info') return keys[0] === WHAT_KEY ? explain() : acknowledge(rec)
     if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return
     if (pad?.rec === rec) { await closePad(true); if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return }   // what is on the scratchpad goes along
@@ -1533,6 +1618,42 @@ export function mountFocus({ onDecided } = {}) {
     offerBack(card, { head: 'Read', take: async () => { await sending.catch(() => {}); await reopen(card.id); decidedLocal.delete(card.id) } })
     sync('sent')
     try { await sending } catch (err) { returned(card, '', err) }
+  }
+
+  /** Trust: the card is answered with "you decide" (POST /decide {trust: true}); what stands in the composer goes
+   *  along as the note. It collapses like any answer, with the way back on its strip. */
+  async function trustIt(rec) {
+    claim(rec)
+    if (rec.busy || busyRec() || rec !== shown || rec.version != null || rec.card.kind !== 'decision') return
+    const card = rec.card
+    const note = rec.note.trim()
+    const advice = card.options.filter(o => [].concat(card.recommended ?? []).includes(o.key)).map(o => o.label).join(', ')
+    const send = async () => {
+      const res = await fetch('/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_id: card.id, trust: true, note, revised: card.revised ?? null }) })
+      let out = {}
+      try { out = await res.json() } catch {}
+      if (!res.ok) throw new Error(out.error || res.statusText)
+    }
+    clearTimeout(rec.draftTimer)
+    rec.draftTimer = 0
+    setError(rec, '')
+    if (single) {
+      rec.busy = true
+      try { await send() } catch (err) { rec.busy = false; return refused(rec, err) }
+      rec.busy = false
+      decidedLocal.set(rec.id, Date.now())
+      onDecided?.(card, { key: 'trust', label: `${TRUST_WORD}: ${advice || 'your call'}`, detail: '' }, [])
+      return close()
+    }
+    rec.note = ''
+    decidedLocal.set(rec.id, Date.now())
+    decidedCount++
+    sentId = rec.id
+    offerBack(card, { head: `Trusted: ${advice || 'your call'}`, take: () => reopenAnswer(card) })
+    const sending = send()
+    inflight.set(card.id, sending)
+    sync('sent')
+    try { await sending } catch (err) { returned(card, note, err) } finally { if (inflight.get(card.id) === sending) inflight.delete(card.id) }
   }
 
   /** Say on the card why its answer was not taken. */
@@ -1673,6 +1794,7 @@ export function mountFocus({ onDecided } = {}) {
     handBtn.disabled = true
     const walking = !single
     // whatever still stands in the composer goes first: words, attached files, what is on the scratchpad
+    const words = rec.askText
     const sent = await askBack(rec, null, { handback: true }).catch(() => false)
     handing = false
     paintChrome()
@@ -1682,7 +1804,12 @@ export function mountFocus({ onDecided } = {}) {
     if (walking && shown === rec && order.length > 1) { pendingJump = order[order.indexOf(rec.id) + 1] ?? order.find(id => id !== rec.id); jumpMotion = 'later' }
     putOff(rec.id, true, true)
     announce(`With the agent: ${rec.card.title}`)
-    const fetch = async () => { putOff(rec.id, false) }
+    // Taken back (a slip of Enter): the card is here again, and the words are in its field again.
+    const fetch = async () => {
+      putOff(rec.id, false)
+      const now = recs.get(rec.id)
+      if (now && words.trim() && !now.askText) now.note = words
+    }
     if (!walking) { close(); return void say(pageHost(), { head: 'With the agent', title: 'It comes back with the reply.', back: fetch }) }
     offerBack(rec.card, { head: 'With the agent', title: 'It comes back with the reply.', take: fetch })
   }
@@ -1714,6 +1841,7 @@ export function mountFocus({ onDecided } = {}) {
   const strips = []        // { id, card, kind, node, anchor, back }: anchor is the card it stands in front of
   let orderBefore = []     // the order before it last changed: where a card stood that has just left or moved
   let scrollHow = 'smooth'
+  const LIST_TOP = 70      // where the card in front begins, under the top edge of the list
   let quietUntil = 0       // while the list scrolls by itself, the reading line does not pick another card
   const listEnd = el('div', 'focus-list-end')
   listEnd.append(sketch('choose'), el('p', null, 'That is all for now. The next question shows up here.'))
@@ -1724,6 +1852,23 @@ export function mountFocus({ onDecided } = {}) {
     word.append(sketch('q1'), sketch('q2'))
     return word
   }
+  /** One of the three ways to leave a card without answering, as a button without a word: three question marks
+   *  written by hand (What??), the card that turns the direction round (Back to agent), z z z (Snooze). The word
+   *  is its label for a reader, shows on hover and focus, and stands beside the drawing in a narrow window. */
+  function wayButton(kind, act) {
+    const [cls, word, label] = {
+      what: ['focus-explain', EXPLAIN_LABEL, `${EXPLAIN_LABEL} (E): ask the session to explain this; it returns with the reply`],
+      hand: ['focus-handback', HAND_BACK_LABEL, `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`],
+      snooze: ['', LATER_WORD, `${LATER_WORD} (L): it waits for you, at the end of the line`],
+    }[kind]
+    const b = button(`focus-later ${cls} focus-way`, label)
+    const art = el('span', 'focus-way-art')
+    art.dataset.kind = kind
+    art.append(...(kind === 'what' ? [sketch('q1'), sketch('q2'), sketch('q3')] : [sketch(kind === 'hand' ? 'reverse' : LATER_SKETCH)]))
+    b.append(art, el('span', 'focus-way-word', word))
+    b.addEventListener('click', act)
+    return b
+  }
   function dropStrip(id) {
     const at = strips.findIndex(x => x.id === id)
     if (at < 0) return
@@ -1733,7 +1878,7 @@ export function mountFocus({ onDecided } = {}) {
   /** A card becomes a strip where it stood: what happened to it (head), its title, and with take() the way back. */
   function addStrip(card, head, take) {
     dropStrip(card.id)
-    const kind = /^Answered:/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === 'With the agent' ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
+    const kind = /^(Answered|Trusted):/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === 'With the agent' ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
     // where it stood: in front of the card that came after it (before it left or moved to the end)
     const moved = !order.includes(card.id) || (lastState?.later ?? []).includes(card.id)
     const from = moved && orderBefore.includes(card.id) ? orderBefore : order
@@ -1808,11 +1953,9 @@ export function mountFocus({ onDecided } = {}) {
     // The same card is still in front (the board's state changed: a session posted, a draft was saved): the
     // column stays where the human has it. Scrolled back to the card's top, an answer would move away under the pointer.
     if (motion === 'scroll' || !changed) return
-    // The card in front stands in the middle of the window; one taller than the window begins a little under its
-    // top edge, so the strip of the card before stays in sight. A far way is not travelled, it is jumped.
-    const room = stage.clientHeight - next.node.offsetHeight
-    next.node.classList.toggle('is-tall', room < 96)
-    const to = Math.max(0, next.node.offsetTop - (room < 96 ? 56 : room / 2))
+    // The card in front always lands at the same place: one strip's height under the top edge, so the newest
+    // strip (what was just done) is the one thing in sight above it and older ones are a scroll further up.
+    const to = Math.max(0, next.node.offsetTop - LIST_TOP)
     const how = motion === 'none' || still() || Math.abs(to - stage.scrollTop) > stage.clientHeight * 2.5 ? 'instant' : scrollHow
     scrollHow = 'smooth'
     quietUntil = performance.now() + (how === 'smooth' ? 1600 : 120)
@@ -1903,7 +2046,7 @@ export function mountFocus({ onDecided } = {}) {
       let rec = recs.get(id)
       const card = byId.get(id) ?? rec.card
       // Urgency, sender and age are painted in the top bar, so they never rebuild a card.
-      const sigC = JSON.stringify([card.revised, card.kind, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments, card.agent_name])
+      const sigC = JSON.stringify([card.version, card.versions?.length, card.revised, card.kind, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments, card.agent_name])
       if (!rec) {
         rec = createRec(card)
         recs.set(id, rec)
@@ -1914,7 +2057,21 @@ export function mountFocus({ onDecided } = {}) {
       }
       rec.card = card
       rec.node.dataset.urgency = RANK[card.urgency] != null ? card.urgency : 'normal'
-      if (rec.sigC !== sigC) { rec.sigC = sigC; fill(rec) }
+      if (rec.sigC !== sigC) {
+        // reworded by its session while it stands here: it is presented again, not swapped in silence
+        const again = Boolean(rec.sigC) && (card.version ?? 1) > (rec.seenVersion ?? 1)
+        rec.seenVersion = card.version ?? 1
+        rec.sigC = sigC
+        rec.version = null
+        fill(rec)
+        if (again) {
+          rec.node.removeAttribute('data-again')
+          void rec.node.offsetWidth
+          rec.node.dataset.again = ''
+          setTimeout(() => rec.node.removeAttribute('data-again'), 1600)
+          if (rec === shown) info(`Presented again: ${card.title}`)
+        }
+      }
       else {
         rec.reasonNode.textContent = card.urgency_reason || ''
         rec.reasonNode.hidden = !card.urgency_reason
@@ -2114,7 +2271,16 @@ export function mountFocus({ onDecided } = {}) {
   }, true)
   // While a picture is enlarged, the window's keys rest.
   const key = act => (arg, e) => (zoom ? false : act(arg, e))
-  const thumb = which => key(() => { const pick = shown?.[which]; if (pick) submit(shown, [pick]) })
+  // In the time machine the arrows step through the versions, and nothing answers.
+  function stepVersion(by) {
+    const all = [...shown.card.versions.map(v => v.n), shown.card.version ?? shown.card.versions.at(-1).n + 1]
+    viewVersion(shown, all[all.indexOf(shown.version) + by] ?? shown.version)
+  }
+  const thumb = which => key((_, e) => {
+    if (shown?.version != null) return
+    const pick = shown?.[which]
+    if (pick) submit(shown, [pick])
+  })
   function stepOption(by) {
     const all = [...(shown?.optButtons ?? []), shown?.sendTile].filter(b => b && !b.disabled)
     const at = all.indexOf(document.activeElement)
@@ -2130,10 +2296,11 @@ export function mountFocus({ onDecided } = {}) {
   provide('focus', {
     active: () => isOpen,
     // In the window of one card there is no next and no previous.
-    has: id => !(single && (id === 'focus.next' || id === 'focus.prev')) && !(id === 'focus.voice' && !getState().speech),
+    has: id => !(single && shown?.version == null && (id === 'focus.next' || id === 'focus.prev')) && !(id === 'focus.voice' && !getState().speech),
     actions: {
-      'focus.next': key(() => { if (!single) go(1) }),
-      'focus.prev': key(() => { if (!single) go(-1) }),
+      // (in the time machine the same keys step through the versions of the card)
+      'focus.next': key(() => { if (shown?.version != null) return stepVersion(1); if (!single) go(1) }),
+      'focus.prev': key(() => { if (shown?.version != null) return stepVersion(-1); if (!single) go(-1) }),
       // a two-option card: the thumbs. Left is no, right is yes, as the tiles stand.
       'focus.yes': thumb('yesKey'),
       'focus.no': thumb('noKey'),
@@ -2142,6 +2309,7 @@ export function mountFocus({ onDecided } = {}) {
       'focus.back': key(() => { const last = strips.findLast(x => x.back); if (inList() && last) last.back(); else backNow() }),
       'focus.explain': key(() => explain()),
       'focus.handback': key(() => handBack()),
+      'focus.trust': key(() => { if (!shown?.trustBtn) return false; trustIt(shown) }),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
       'focus.pick': key(n => {
         const btn = shown?.optButtons[n - 1]
@@ -2165,6 +2333,7 @@ export function mountFocus({ onDecided } = {}) {
       'focus.leave': key((_, e) => {
         const typing = e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
         if (typing) { typing.blur(); (shown?.node ?? sheet).focus({ preventScroll: true }) }
+        else if (shown?.version != null) viewVersion(shown, null)   // out of the time machine first
         else close()
       }),
     },
@@ -2370,16 +2539,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     // Explain and Later, as under the composer: both leave the card.
     const ways = el('div', 'focus-zoom-ways')
-    const explainTwin = button('focus-later focus-explain focus-way', 'Explain: ask the session to explain this question')
-    explainTwin.append(whatWord())
-    explainTwin.addEventListener('click', () => { shut(); explain() })
-    const laterTwin = button('focus-later focus-way', `${LATER_WORD}: put this question off`)
-    laterTwin.append(sketch(LATER_SKETCH), el('span', null, LATER_WORD))
-    laterTwin.addEventListener('click', () => { shut(); later() })
-    const handTwin = button('focus-later focus-handback focus-way', `${HAND_BACK_LABEL}: the session works on it, the question returns with its reply`)
-    handTwin.append(sketch('reverse'), el('span', null, HAND_BACK_LABEL))
-    handTwin.addEventListener('click', () => { shut(); handBack() })
-    ways.append(explainTwin, handTwin, laterTwin)
+    ways.append(wayButton('what', () => { shut(); explain() }), wayButton('hand', () => { shut(); handBack() }), wayButton('snooze', () => { shut(); later() }))
     node.append(take, list, line, ways)
 
     let now = -1
@@ -2477,6 +2637,7 @@ export function mountFocus({ onDecided } = {}) {
 
   function close() {
     if (!isOpen) return
+    for (const rec of recs.values()) flushDraft(rec)
     isOpen = false
     wanted = null
     stopReading()

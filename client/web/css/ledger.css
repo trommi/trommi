@@ -1,0 +1,125 @@
+/* The Ledger (js/ledger.js): the overview of the sessions at /agents, one line per session.
+   It takes the place of the list of cards (#roster is still built, not shown).
+   Plain lines and plain controls; by hand are only the marks, the crown, the hand, the small drawings. */
+
+#ledger { display: none; }
+body[data-page="roster"] #roster { display: none; }
+body[data-page="roster"] #ledger {
+  display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
+  padding: var(--s-8) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+}
+.ledger-page { max-width: 1160px; margin-inline: auto; display: grid; gap: var(--s-4); }
+.ledger-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
+.ledger-head h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
+.ledger-head p { font-size: var(--t-lg); color: var(--muted); }
+.ledger-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3) var(--s-5); }
+#ledger kbd { flex: none; font: 500 .68rem/1 var(--mono); padding: 3px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); color: var(--muted); }
+.ledger-find { flex: 1 1 260px; max-width: 360px; display: flex; align-items: center; gap: var(--s-2); height: 40px; padding: 0 10px 0 14px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); cursor: text; }
+.ledger-find:focus-within { box-shadow: 0 0 0 2px var(--fg); }
+.ledger-find input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; outline: none; font-size: max(16px, var(--t-md)); color: var(--fg); appearance: none; -webkit-appearance: none; }
+.ledger-find input::-webkit-search-cancel-button { display: none; }
+.ledger-link { min-height: 36px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; }
+.ledger-link:hover { text-decoration-color: currentColor; }
+.ledger-link:disabled { color: var(--faint); text-decoration: none; cursor: default; }
+.ledger-note { padding: var(--s-2) var(--s-3); border: 1.5px dashed var(--urg-high); border-radius: var(--r-md); font-size: var(--t-sm); }
+
+/* ---- the lines ---- */
+.ledger { display: grid; user-select: none; -webkit-user-select: none; }
+.ledger-line {
+  --c: var(--urg-normal);
+  position: relative; display: grid; grid-template-columns: 18px 44px minmax(0, 1.3fr) 84px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px 132px;
+  align-items: center; gap: 0 var(--s-3); min-height: 56px; padding: 0 6px; border-bottom: 1px solid var(--line); outline: 0;
+}
+.ledger-line[data-urgency="high"] { --c: var(--urg-high); }
+.ledger-line[data-urgency="critical"] { --c: var(--urg-critical); }
+.ledger-line[data-urgency="low"] { --c: var(--urg-low); }
+.ledger-line.is-head { min-height: 36px; border-bottom-color: var(--line-strong); }
+@media (any-hover: hover) { .ledger-line:not(.is-head):hover { background: var(--surface-2); } }
+.ledger-line.is-cur { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--fg); }
+.ledger-line:focus-visible { box-shadow: inset 3px 0 0 var(--accent); }
+.ledger-line.is-carried { opacity: .35; }
+.ledger-line.is-pairing { box-shadow: inset 0 0 0 2px var(--urg-high); border-radius: var(--r-sm); }
+.ledger[data-pairing] .ledger-line[data-id]:not(.is-pairing) { cursor: pointer; }
+.ledger-th { justify-self: start; display: inline-flex; gap: 5px; padding: 0; border: 0; background: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); white-space: nowrap; }
+button.ledger-th { min-height: 32px; align-items: center; }
+button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort="descending"] { color: var(--fg); }
+.ledger-th i { font-style: normal; }
+.ledger-sub { margin: 0; padding: var(--s-6) 6px var(--s-2); border-bottom: 1px solid var(--line-strong); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+/* The grip: three plain strokes; there only in your own order. */
+.ledger-grip { display: grid; gap: 3px; width: 18px; padding: 10px 2px; }
+.ledger-grip[data-grab] { cursor: grab; }
+.ledger-grip i { height: 2px; border-radius: 2px; background: var(--line-strong); }
+.ledger-line:hover .ledger-grip i { background: var(--muted); }
+.ledger-face { position: relative; display: block; width: 40px; height: 40px; }
+.ledger-mark { display: block; padding: 0; border: 0; border-radius: 12px; background: none; }
+.ledger-face .agent-avatar { width: 38px; height: 38px; }
+@media (any-hover: hover) { .ledger-mark:hover .agent-avatar { box-shadow: 0 0 0 2px var(--line-strong); } }
+.ledger-face .crown-toggle { left: -12px; top: -12px; }
+@media (hover: hover) {
+  .ledger-face .crown-toggle[aria-pressed="false"] { opacity: 0; }
+  .ledger-line:hover .crown-toggle[aria-pressed="false"], .ledger-line.is-cur .crown-toggle[aria-pressed="false"] { opacity: .5; }
+  .ledger-face .crown-toggle[aria-pressed="false"]:is(:hover, :focus-visible) { opacity: 1; }
+}
+.ledger-name { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--s-2); }
+.ledger-rename { max-width: 100%; padding: 0; border: 0; background: none; text-align: left; }
+.ledger-name strong { display: block; font: 700 1.02rem/1.25 var(--display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (any-hover: hover) { .ledger-rename:hover strong { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); } }
+.ledger-name small { font-size: var(--t-xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger-with { display: inline-flex; align-items: center; gap: 2px; padding-left: 8px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-xs); font-weight: 600; white-space: nowrap; max-width: 100%; }
+.ledger-with button { width: 26px; height: 24px; padding: 3px; border: 0; border-radius: 50%; background: none; color: inherit; }
+.ledger-with button:hover { color: var(--fg); }
+.ledger-with .sketch { width: 18px; height: 18px; }
+.ledger-state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); color: var(--muted); white-space: nowrap; }
+.ledger-state b { font-weight: 700; font-variant-numeric: tabular-nums; }
+.ledger-line[data-state="waiting"] .ledger-state { color: var(--urg-critical); }
+.ledger-line[data-state="waiting"] .bare-hand { width: 17px; height: 24px; }
+.ledger-line[data-state="away"] .ledger-state, .ledger-line.is-archived .ledger-state { color: var(--faint); }
+.ledger-line[data-state="away"] .ledger-name strong { font-weight: 600; color: var(--muted); }
+.ledger-does { min-width: 0; display: flex; align-items: center; gap: 6px; }
+.ledger-q { flex: 0 1 auto; min-width: 0; padding: 0; border: 0; background: none; font: 600 var(--t-md)/1.3 var(--font); color: var(--fg); text-align: left; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-q:hover { text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--line-strong); }
+.ledger-more { flex: none; min-height: 26px; padding: 0 7px; border: 0; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font: 600 var(--t-xs)/1 var(--font); }
+.ledger-more:hover { color: var(--fg); }
+.ledger-ans { position: relative; flex: none; display: inline-grid; place-items: center; min-width: 38px; height: 34px; padding: 0 9px; border: 0; border-radius: var(--r-sm); background: color-mix(in srgb, var(--c) 10%, var(--surface)); color: color-mix(in srgb, var(--c) 70%, var(--fg)); font: 600 var(--t-sm)/1 var(--font); }
+.ledger-ans:first-of-type { margin-left: auto; }
+.ledger-ans .sketch { width: 20px; height: 20px; }
+.ledger-ans.is-lead { background: var(--c); color: var(--surface); }
+.ledger-ans.is-advised { box-shadow: 0 2px 0 var(--urg-high); }
+.ledger-ans:hover { box-shadow: inset 0 0 0 2px var(--c); }
+.ledger-ans.is-lead:hover { filter: brightness(.92); }
+.ledger-ans:disabled { opacity: .4; }
+.ledger-task { color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger-cell { color: var(--muted); font-size: var(--t-sm); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ledger-acts { display: flex; justify-content: flex-end; gap: 0; }
+.ledger-ib { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); }
+.ledger-ib:hover { background: var(--sunken); color: var(--fg); }
+.ledger-ib .sketch { width: 20px; height: 20px; }
+.ledger-line.is-archived { min-height: 46px; }
+.ledger-line.is-archived .ledger-name strong { font: 600 var(--t-md)/1.3 var(--font); color: var(--muted); }
+.ledger-line.is-archived .agent-avatar { width: 30px; height: 30px; }
+.ledger-none { padding: var(--s-6) 6px; color: var(--muted); }
+/* Let go here: a line between two lines (move), or a dashed frame (lay together). */
+.ledger-line[data-drop="before"]::before, .ledger-line[data-drop="after"]::before { content: ""; position: absolute; z-index: 2; left: 0; right: 0; height: 3px; border-radius: 3px; background: var(--fg); pointer-events: none; }
+.ledger-line[data-drop="before"]::before { top: -2px; }
+.ledger-line[data-drop="after"]::before { bottom: -2px; }
+.ledger-line[data-drop="pair"] { outline: 2px dashed var(--fg); outline-offset: -2px; border-radius: var(--r-sm); }
+
+@media (max-width: 1500px) {
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 84px minmax(0, 1.9fr) minmax(0, 104px) 88px 132px; }
+  .ledger-line > :nth-child(7) { display: none; }
+}
+@media (max-width: 1240px) {
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 84px minmax(0, 1.8fr) 132px; }
+  .ledger-line > :nth-child(6), .ledger-line > :nth-child(8) { display: none; }
+}
+/* ---- phone: mark, name, state and count; a tap opens ---- */
+@media (max-width: 860px) {
+  body[data-page="roster"] #ledger { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
+  .ledger-line.is-head, .ledger-grip, .ledger-does, .ledger-acts .ledger-ib, .ledger-with button, .ledger-find kbd, .ledger-tools .ledger-link { display: none; }
+  .ledger-line { grid-template-columns: 44px minmax(0, 1fr) auto; gap: 0 var(--s-3); min-height: 60px; padding: 0; }
+  .ledger-line.is-archived { grid-template-columns: 44px minmax(0, 1fr) auto auto; }
+  .ledger-line.is-archived .ledger-state { display: none; }
+  .ledger-find { max-width: none; }
+  .ledger-face .crown-toggle { pointer-events: none; }
+  .ledger-face .crown-toggle[aria-pressed="false"] { display: none; }
+}

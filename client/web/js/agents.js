@@ -1,7 +1,7 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, sweepMark, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText } from './ui.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText } from './ui.js'
 import { setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -21,9 +21,21 @@ export const hueFor = agent => drawingHue(drawingOf(agent.mark)) ?? hueOf(agent.
 // Every session has its own scribble, so it is recognised before its name is read.
 /** vip: draw the crown of a starred session on it. Where the crown is a switch of its own beside the
  *  mark (crownToggle), the caller passes false. */
-export function avatar(agent, { vip = true } = {}) {
+// working: the session is at work. Its own mark then redraws itself: the whole drawing stays as a
+// trace, and a darker stroke travels along it (CSS: .is-drawing). Under reduced motion the trace and
+// the mark stand still.
+export function avatar(agent, { vip = true, working = false } = {}) {
   const node = el('span', 'agent-avatar')
-  node.append(doodle(agent.mark ?? agent.id))
+  const mark = doodle(agent.mark ?? agent.id)
+  node.append(mark)
+  if (working) {
+    node.classList.add('is-drawing')
+    for (const p of mark.querySelectorAll('path')) p.setAttribute('pathLength', 100)
+    const trace = mark.cloneNode(true)
+    trace.classList.add('mark-trace')
+    mark.classList.add('mark-live')
+    node.prepend(trace)
+  }
   node.style.setProperty('--hue', hueFor(agent))
   if (!agent.online) node.classList.add('is-offline')
   // A session that matters most: a scribbled crown sits crooked on the corner of its mark.
@@ -48,9 +60,21 @@ export function crownToggle(agent, cls = '') {
 }
 
 /** Sessions laid together: their scribbles over each other inside one loop drawn by hand. */
-export function pairAvatar(members) {
+export function pairAvatar(members, working = []) {
   const node = el('span', 'agent-pair')
-  node.append(pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueFor(a), vip: Boolean(a.starred) }))))
+  const mark = pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueFor(a), vip: Boolean(a.starred) })))
+  node.append(mark)
+  // Each member that is at work redraws its own scribble inside the joint mark.
+  for (const g of [...mark.querySelectorAll('g[data-member]')]) {
+    if (!working.includes(g.dataset.member)) continue
+    node.classList.add('is-drawing')
+    for (const p of g.querySelectorAll('path:not(.pair-crown)')) p.setAttribute('pathLength', 100)
+    const trace = g.cloneNode(true)
+    trace.removeAttribute('data-member')
+    trace.setAttribute('class', 'mark-trace')
+    g.classList.add('mark-live')
+    mark.insertBefore(trace, g)
+  }
   if (!members.some(a => a.online)) node.classList.add('is-offline')
   node.setAttribute('aria-hidden', 'true')
   return node
@@ -71,49 +95,29 @@ function summary(all, members) {
   return { open, tasks, online, running, stuck }
 }
 
-// The mark at the end of a session row carries its state, with no ground under it: colour and stroke
-// say everything. Stopped and waiting for the human: a hand drawn in red, the number of its open
-// questions beside it. At work: a stroke swept round by hand that turns about the number (or about
-// nothing, when it has no question open); every sweep is on the same clock, so a list that is
-// rebuilt does not send it back to the start. Disconnected: the same in grey, standing still.
-// Hand and sweep stand on one axis down the column; the number beside a hand has its own narrow place.
-const SWEEP_TURN = 3400
-// With questions open it is a button of its own beside the row's entry: a click goes through that
-// session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
+// What a session needs or does is told in two places, with no ground under either. At work: its own
+// mark at the left redraws itself (avatar(), above); nothing turns at the right. At the right end of
+// the row: the number of its open questions, always in one column; before it, when the session is
+// stopped and waits for the human, a hand drawn in red, all hands on one axis. A working session's
+// number is small and muted, a disconnected one's faint (its mark is grey). Idle: nothing.
+// With questions open the badge is a button of its own beside the row's entry: a click goes through
+// that session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
 function badge({ open, online, running, stuck }, who = '', walk = null) {
-  if (!open && !(online && running)) return null
-  const node = el(open && walk ? 'button' : 'span', 'agent-badge')
-  if (open && walk) {
+  if (!open) return null
+  const node = el(walk ? 'button' : 'span', 'agent-badge')
+  if (walk) {
     node.type = 'button'
     node.addEventListener('click', e => { e.stopPropagation(); walk() })
   }
   const questions = open === 1 ? '1 question' : `${open} questions`
   const hand = online ? stuck || !running : stuck
-  const count = open ? el('b', null, String(open)) : null
-  if (hand) {
-    node.dataset.state = 'waiting'
-    node.title = online ? `Waiting for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`
-    node.append(bareHand())
-    if (count) node.append(count)
-  } else {
-    node.dataset.state = online ? 'running' : 'open'
-    node.title = online ? (open ? `Working, ${questions} open` : 'Working') : `Disconnected, ${questions} open`
-    const spot = el('span', 'agent-sweep')
-    if (online) {
-      const sweep = sweepMark()
-      sweep.style.animationDelay = `${-(Date.now() % SWEEP_TURN)}ms`
-      spot.append(sweep)
-    }
-    if (count) spot.append(count)
-    node.append(spot)
-  }
+  node.dataset.state = hand ? 'waiting' : online ? 'running' : 'open'
+  if (hand) node.append(bareHand())
+  node.append(el('b', null, String(open)))
   if (!online) node.dataset.offline = ''
-  if (open && walk) {
-    // What a click does comes first; the state it shows follows.
-    const go = `Go through ${who ? `${who}'s ` : 'the '}${questions}`
-    node.setAttribute('aria-label', `${go} (${node.title.toLowerCase()})`)
-    node.title = `${go} · ${node.title}`
-  }
+  const state = hand ? (online ? `Waiting for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`) : online ? `Working, ${questions} open` : `Disconnected, ${questions} open`
+  node.title = walk ? `Go through ${who ? `${who}'s ` : 'the '}${questions} · ${state}` : state
+  if (walk) node.setAttribute('aria-label', `Go through ${who ? `${who}'s ` : 'the '}${questions} (${state.toLowerCase()})`)
   return node
 }
 
@@ -213,7 +217,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
         id: u.id,
         label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
-        lead: single ? avatar(single) : pairAvatar(u.members),
+        lead: single ? avatar(single, { working: u.running }) : pairAvatar(u.members, u.members.filter(a => a.online && u.tasks.some(t => t.agent === a.id && t.state === 'working')).map(a => a.id)),
         active: scope === u.id,
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
       })
@@ -226,8 +230,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
         // It stands under the badge, on the badge's axis. No tooltip (it would lie over the next row):
         // while the pointer is on it, the loop round the group opens up, which says what it does.
         row.classList.add('is-group')
-        // The loop round all of it, marks and names (shown instead of the one round the marks where
-        // the page says data-grouploop="all").
+        // The loop of the group goes round all of it, marks and names.
         row.querySelector('.agent-entry').append(groupLoop(u.members.map(a => a.id).join('+')))
         const cut = el('button', 'agent-cut')
         cut.type = 'button'
@@ -429,7 +432,7 @@ export function mountRoster(root) {
     head.append(el('h2', null, 'Agents'), el('p', null, `${online} of ${all.agents.length} sessions are connected.`))
     const list = el('div', 'roster-list')
     for (const agent of all.agents) {
-      const { open, tasks } = summary(all, [agent])
+      const { open, tasks, running } = summary(all, [agent])
       const card = el('article', 'roster-card')
       card.dataset.online = String(Boolean(agent.online))
       const top = el('header')
@@ -450,7 +453,7 @@ export function mountRoster(root) {
       edit.title = 'Choose a drawing'
       edit.setAttribute('aria-label', `${agent.name}: choose a drawing`)
       edit.setAttribute('aria-haspopup', 'dialog')
-      edit.append(avatar(agent, { vip: false }))
+      edit.append(avatar(agent, { vip: false, working: running }))
       edit.addEventListener('click', () => openMarkPicker(agent, edit))
       top.append(edit, vip, name, status)
       const facts = el('dl', 'roster-facts')

@@ -10,6 +10,10 @@
 /* A block of its own formatting, so that beside something floated (the answers of a question) it takes the
    room that is left instead of dropping below it. */
 .rh { position: relative; display: flow-root; max-width: 100%; min-width: 0; }
+/* A frame without an origin is drawn by a process of its own, and the browser asks that process where a click
+   lands. Scrolled out under the head of a conversation it would still take the clicks meant for the controls
+   there (seen in Chromium, where a message has a transform), unless the block is a clip of its own: contain on
+   the block, a clip path on the frame. Either is enough; both stand. */
 .rh-frame { display: block; width: 100%; height: 96px; max-height: 70vh; border: 0; background: transparent; }
 /* Beyond the cap it scrolls inside, and says so with a rule at its foot. */
 .rh.is-capped .rh-frame { border-bottom: 1px solid var(--line-strong); }
