@@ -1,7 +1,9 @@
 /* Scribble: the infinite canvas. Everything is prefixed scr-; colours, shadows,
    radii, and easings of the chrome come from tokens.css. The paper and the ink
    are content and are painted by scribble.js. The module fills the box its
-   container gives it and never sizes or positions itself. */
+   container gives it, from a phone screen to a wide desktop pane, and never
+   sizes or positions itself. Layout follows the container's width (cqw), not
+   the window's. */
 
 .scr {
   container: scr / inline-size;
@@ -73,9 +75,10 @@
 .scr-pill-danger:hover { background: var(--deny) !important; }
 @keyframes scr-pop { from { opacity: 0; transform: scale(.94) translateY(-4px); } }
 
-/* ── toolbar ────────────────────────────────────────────────────────────── */
-.scr-bar { position: absolute; left: 0; right: 0; bottom: 10px; display: flex; justify-content: center; pointer-events: none; }
-.scr-tools { position: relative; padding: 4px; pointer-events: auto; box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); }
+/* ── toolbar: the tools, then the one button that sends ─────────────────── */
+.scr-bar { position: absolute; left: var(--s-2); right: var(--s-2); bottom: 10px; display: flex; justify-content: center; align-items: center; gap: var(--s-2); pointer-events: none; }
+.scr-bar > * { pointer-events: auto; }
+.scr-tools { position: relative; padding: 4px; box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); }
 .scr-tool[aria-pressed="true"] { background: var(--accent) !important; color: var(--accent-fg); }
 .scr-tools .scr-sep { margin: 0 3px; }
 
@@ -121,31 +124,32 @@
 .scr-toast[data-kind="error"] { background: var(--urg-critical); }
 @keyframes scr-drop-in { from { opacity: 0; transform: translateX(-50%) translateY(-8px); } }
 
-/* ── composer ───────────────────────────────────────────────────────────── */
-.scr-dock { flex: none; position: relative; display: grid; gap: var(--s-2); padding: var(--s-2) var(--s-3) var(--s-3); background: var(--bg); border-top: 1px solid var(--line); }
-.scr-form { display: flex; align-items: flex-end; gap: var(--s-2); padding: 4px 4px 4px var(--s-4); border-radius: var(--r-xl); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); transition: box-shadow var(--d-fast); }
-.scr-form:focus-within { box-shadow: 0 0 0 2px var(--accent), var(--shadow-sm); }
-.scr-caption { flex: 1; min-width: 0; min-height: 44px; max-height: 132px; padding: 11px 0; margin: 0; border: 0; outline: none !important; resize: none; background: none; color: var(--fg); font: 400 var(--t-md)/22px var(--font); }
-.scr-caption::placeholder { color: var(--faint); }
-.scr-send { flex: none; height: 44px; display: inline-flex !important; align-items: center; gap: 6px; padding: 0 var(--s-4) 0 var(--s-3) !important; border-radius: var(--r-pill); background: var(--accent) !important; color: var(--accent-fg) !important; font-weight: 600; font-size: var(--t-sm); white-space: nowrap; transition: background var(--d-fast), color var(--d-fast), transform var(--d-fast) var(--ease-out); }
-.scr-send:hover:not(:disabled) { background: var(--accent-hover) !important; }
+/* ── send ───────────────────────────────────────────────────────────────── */
+.scr-send { position: relative; flex: none; height: 52px; display: inline-flex; align-items: center; justify-content: center; gap: var(--s-2); padding: 0 22px 0 18px; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font-weight: 600; font-size: var(--t-md); white-space: nowrap; box-shadow: var(--shadow-lg); transition: background var(--d-fast), color var(--d-fast), box-shadow var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.scr-send:hover:not(:disabled) { background: var(--accent-hover); }
 .scr-send:active:not(:disabled) { transform: scale(.96); }
-.scr-send:disabled { background: var(--sunken) !important; color: var(--faint) !important; cursor: default; }
-.scr-send[data-state="sending"] { background: var(--accent-soft) !important; color: var(--accent) !important; }
-.scr-send[data-state="sent"] { background: var(--st-done-soft) !important; color: var(--st-done) !important; }
+.scr-send:disabled { background: var(--surface); color: var(--faint); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); cursor: default; }
+.scr-send[data-state="sending"] { background: var(--accent-soft); color: var(--accent); }
+.scr-send[data-state="sent"] { background: var(--st-done-soft); color: var(--st-done); }
 .scr-send-icon { display: grid; place-items: center; width: 20px; height: 20px; }
 .scr-send[data-state="sent"] .scr-send-icon { animation: scr-tick var(--d-slow) var(--ease-spring); }
 @keyframes scr-tick { from { transform: scale(.3); opacity: 0; } }
 .scr-spinner { width: 16px; height: 16px; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 28%, transparent); border-top-color: currentColor; animation: scr-spin .7s linear infinite; }
 @keyframes scr-spin { to { transform: rotate(360deg); } }
+/* On a narrow screen there is no room beside the tools: scribble.js moves the
+   button into this bar under the canvas, full width. Empty, it takes no room. */
+.scr-dock { flex: none; padding: var(--s-2) var(--s-3) var(--s-3); background: var(--bg); border-top: 1px solid var(--line); }
+.scr-dock:empty { display: none; }
+.scr-dock .scr-send { width: 100%; box-shadow: none; }
+.scr-dock .scr-send:disabled { background: var(--sunken); }
 
-.scr-error { display: flex; align-items: flex-start; gap: var(--s-2); padding: 10px 6px 10px var(--s-3); border-radius: var(--r-md); background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); line-height: 1.4; box-shadow: 0 0 0 1px color-mix(in srgb, var(--urg-critical) 30%, transparent); animation: scr-error-in var(--d-med) var(--ease-out); }
+/* a failed send: a notice on the paper, under the top bar */
+.scr-error { position: absolute; top: 64px; left: 50%; z-index: 4; width: min(480px, calc(100% - 2 * var(--s-3))); display: flex; align-items: flex-start; gap: var(--s-2); padding: 10px 6px 10px var(--s-3); border-radius: var(--r-md); background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); line-height: 1.4; box-shadow: 0 0 0 1px color-mix(in srgb, var(--urg-critical) 30%, transparent), var(--shadow-md); transform: translateX(-50%); animation: scr-drop-in var(--d-med) var(--ease-out); user-select: text; -webkit-user-select: text; }
 .scr-error > .scr-icon { margin-top: 1px; }
 .scr-error-text { flex: 1; min-width: 0; color: var(--fg); overflow-wrap: anywhere; }
 .scr-error-close { position: relative; flex: none; width: 44px; height: 44px; margin: -12px -4px -12px 0 !important; display: grid; place-items: center; border-radius: var(--r-pill); color: var(--muted); }
 .scr-error-close .scr-icon { width: 16px; height: 16px; }
 .scr-error-close:hover { color: var(--fg); }
-@keyframes scr-error-in { from { opacity: 0; transform: translateY(6px); } }
 
 /* ── tooltips (mouse only) ──────────────────────────────────────────────── */
 @media (hover: hover) and (pointer: fine) {
@@ -156,6 +160,9 @@
   .scr [data-tip-pos="below-end"]::after { left: auto; right: 0; transform: translateY(-2px); }
   .scr [data-tip-pos="below-start"]:hover::after, .scr [data-tip-pos="below-start"]:focus-visible::after,
   .scr [data-tip-pos="below-end"]:hover::after, .scr [data-tip-pos="below-end"]:focus-visible::after { transform: none; }
+  .scr [data-tip-pos="above-end"]::after { left: auto; right: 0; transform: translateY(2px); }
+  .scr [data-tip-pos="above-end"]:hover::after, .scr [data-tip-pos="above-end"]:focus-visible::after { transform: none; }
+  .scr-send:disabled::after, .scr-send[data-state="sending"]::after, .scr-send[data-state="sent"]::after { display: none; }
   .scr[data-style="open"] .scr-stylebtn::after { display: none; }
 }
 
@@ -164,15 +171,20 @@
   .scr-wide { display: grid; }
   .scr-top { top: var(--s-3); left: var(--s-3); right: var(--s-3); }
   .scr-confirm { top: 64px; right: var(--s-3); }
-  .scr-bar { bottom: 14px; }
+  .scr-bar { left: var(--s-3); right: var(--s-3); bottom: 14px; }
   .scr-dock { padding: var(--s-3) var(--s-4) var(--s-4); }
 }
-@container scr (min-width: 720px) {
+/* a wide pane: colours and widths lie open in the toolbar instead of a popover */
+@container scr (min-width: 900px) {
+  .scr-bar { gap: var(--s-3); bottom: var(--s-4); }
+  .scr-top { top: var(--s-4); left: var(--s-4); right: var(--s-4); }
+  .scr-confirm { top: 68px; right: var(--s-4); }
   .scr-stylebtn, .scr-stylebtn + .scr-style + .scr-sep, .scr-label { display: none; }
   .scr-style, .scr[data-style="open"] .scr-style { position: static; display: flex; align-items: center; gap: 0; width: auto; max-width: none; padding: 0; border-radius: 0; background: none; box-shadow: none; transform: none; visibility: visible; opacity: 1; pointer-events: auto; animation: none; }
   .scr-style-row + .scr-style-row::before { content: ""; width: 1px; height: 22px; margin: 0 3px; background: var(--line); }
   .scr-swatch { width: 36px; }
   .scr-style::after { content: ""; width: 1px; height: 22px; margin: 0 3px; background: var(--line); }
+  .scr-hint { max-width: 420px; font-size: var(--t-md); }
 }
 
 @media (prefers-reduced-motion: reduce) {

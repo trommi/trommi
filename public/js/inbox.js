@@ -46,6 +46,17 @@ export function mountInbox(root, { onOpen, session = false }) {
   root.append(head, undo, list)
   let undoTimer = 0
 
+  // A row in the list has a fixed height. A title that needs two lines leaves room for one
+  // line of text below it, a one-line title for two. Measured, because it depends on the
+  // width and on the font that finally loaded; whole lines only, never a cut one.
+  const fit = new ResizeObserver(entries => {
+    for (const { target } of entries) {
+      if (!target.clientHeight) continue
+      const two = target.clientHeight > parseFloat(getComputedStyle(target).lineHeight) * 1.5
+      target.closest('.inbox-row')?.toggleAttribute('data-tall', two)
+    }
+  })
+
   function offerUndo(card, option) {
     clearTimeout(undoTimer)
     const back = el('button', null, 'Rückgängig')
@@ -83,6 +94,7 @@ export function mountInbox(root, { onOpen, session = false }) {
     text.addEventListener('click', () => onOpen(card.id))
     const content = el('div', 'inbox-content')
     content.append(head, text)
+    if (!full) fit.observe(text.firstChild)
     if (full) {
       if (card.urgency_reason) content.append(el('p', 'inbox-reason', card.urgency_reason))
       if (card.body) content.append(rich(card.body))
@@ -90,11 +102,12 @@ export function mountInbox(root, { onOpen, session = false }) {
     }
 
     // Pictures are shown small and open large on tap, without leaving the list.
+    let thumbs = null
     const images = (card.attachments ?? []).filter(a => kindOf(a) === 'image')
     const others = (card.attachments?.length ?? 0) - images.length
     if (images.length) {
       const strip = el('div', 'inbox-thumbs')
-      images.slice(0, 4).forEach((a, i) => {
+      images.slice(0, full ? 4 : 2).forEach((a, i) => {
         const b = el('button', 'inbox-thumb')
         b.type = 'button'
         b.setAttribute('aria-label', `${a.name} vergrößern`)
@@ -107,24 +120,32 @@ export function mountInbox(root, { onOpen, session = false }) {
         strip.append(b)
       })
       if (others) strip.append(el('span', 'inbox-note', others === 1 ? '+ 1 Datei' : `+ ${others} Dateien`))
-      content.append(strip)
+      thumbs = strip
     }
     content.append(error)
 
     // The answers stand on the right, large and in one column down the page.
     const actions = el('div', 'inbox-actions')
-    if (full && card.kind !== 'permission') {
+    if (full) {
       // With room to spare, every option is written out and answered where it stands.
-      for (const o of card.options) {
+      // A short set stands side by side; long lists stay stacked, in the agent's order.
+      const side = card.options.length <= 3 && card.options.every(o => o.label.length <= 24 && (o.detail ?? '').length <= 70)
+      const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : o === card.options[0])
+      const pair = side && card.options.length === 2
+      // Two answers follow the inbox: the one the agent leads with on the right, the other on the left.
+      const options = pair ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options
+      if (side) actions.dataset.side = String(options.length)
+      for (const o of options) {
         const b = el('button', 'inbox-choice')
         b.type = 'button'
+        if (pair && isYes(o)) b.classList.add('is-lead')
         b.append(el('strong', null, o.label))
         if (o.detail) b.append(el('span', null, o.detail))
         b.addEventListener('click', async () => {
           for (const other of actions.children) other.disabled = true
           try {
             await decide(card.id, o.key)
-            offerUndo(card, o)
+            if (card.kind === 'decision') offerUndo(card, o)
           } catch (err) {
             for (const other of actions.children) other.disabled = false
             error.textContent = `Nicht übernommen: ${err.message}`
@@ -175,12 +196,15 @@ export function mountInbox(root, { onOpen, session = false }) {
       open.addEventListener('click', () => onOpen(card.id))
       actions.append(open)
     }
-    node.append(content, actions)
+    // In the list every row has the same height, so the next answer lands where the last one was.
+    if (thumbs && full) content.append(thumbs)
+    if (thumbs && !full) node.append(content, thumbs, actions)
+    else node.append(content, actions)
     return node
   }
 
   function render(state) {
-    // The inbox looks across every session; the session panel only at the one in scope.
+    // The inbox looks across every session; a session's questions only at the one in scope.
     const all = session ? { ...state.all, cards: state.cards, queue: state.queue, agents: state.all.agents.filter(a => a.id === state.scope) } : state.all
     const byId = new Map(all.cards.map(c => [c.id, c]))
     const open = all.queue.map(id => byId.get(id)).filter(Boolean)
@@ -193,8 +217,10 @@ export function mountInbox(root, { onOpen, session = false }) {
     const line = el('p')
     if (open.length) line.append(el('span', 'inbox-circled', String(open.length)), open.length === 1 ? ' Frage wartet auf dich.' : ' Fragen warten auf dich.')
     else line.append('Nichts wartet auf dich.')
-    title.append(el('h2', null, session ? 'Offene Fragen' : 'Posteingang'), line)
-    head.replaceChildren(title)
+    // A session's pane already carries its name as the title; the inbox has its own.
+    if (session) title.append(line)
+    else title.append(el('h2', null, 'Posteingang'), line)
+    head.replaceChildren(...(session && !open.length ? [] : [title]))
     if (open.length > 1 && !session) {
       const go = el('button', 'inbox-go', 'Der Reihe nach durchgehen')
       go.type = 'button'

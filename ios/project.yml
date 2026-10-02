@@ -1,0 +1,69 @@
+# XcodeGen: `brew install xcodegen && xcodegen` writes Trommi.xcodeproj from this file.
+name: Trommi
+options:
+  bundleIdPrefix: de.trommi
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+  developmentLanguage: de
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MARKETING_VERSION: "0.1.0"
+    CURRENT_PROJECT_VERSION: "1"
+    GENERATE_INFOPLIST_FILE: YES
+targets:
+  Trommi:
+    type: application
+    platform: iOS
+    sources:
+      - Trommi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.trommi.app
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
+        # Only what cannot be said as a build setting lives in Info.plist (App Transport Security).
+        INFOPLIST_FILE: Trommi/Info.plist
+        INFOPLIST_KEY_CFBundleDisplayName: Trommi
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad: "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        INFOPLIST_KEY_NSMicrophoneUsageDescription: "Zum Diktieren von Nachrichten an deine Agenten."
+        INFOPLIST_KEY_NSCameraUsageDescription: "Zum Scannen des QR-Codes mit dem Link zu deinem Trommi-Server."
+        INFOPLIST_KEY_NSLocalNetworkUsageDescription: "Trommi verbindet sich mit deinem Server im lokalen Netzwerk."
+  TrommiTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - TrommiTests
+    dependencies:
+      - target: Trommi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.trommi.app.tests
+  TrommiUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - TrommiUITests
+    dependencies:
+      - target: Trommi
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.trommi.app.uitests
+schemes:
+  Trommi:
+    build:
+      targets:
+        Trommi: all
+        TrommiTests: [test]
+        TrommiUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TrommiTests
+        - TrommiUITests

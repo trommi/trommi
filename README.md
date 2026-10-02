@@ -109,7 +109,7 @@ Ein Tipp auf eine Option entscheidet sofort. Danach bietet eine Leiste zwölf Se
 
 ## Posteingang und Sitzungen
 
-Die Seitenleiste zeigt oben den Posteingang, darunter die Sitzungen. Der Posteingang listet alle offenen Fragen, gruppiert nach Absender: Kurze Fragen (bis drei knappe Optionen, kein Anhang) beantwortest du direkt in der Liste, längere öffnen sich als ganze Seite. Eine Sitzung zeigt ihr Gespräch, in dem jede offene Frage als Karte an der Stelle steht, an der sie gestellt wurde, und rechts ihren Stapel.
+Die Seitenleiste zeigt oben den Posteingang, darunter die Sitzungen. Der Posteingang listet alle offenen Fragen, gruppiert nach Absender: Kurze Fragen (bis drei knappe Optionen, kein Anhang) beantwortest du direkt in der Liste, längere öffnen sich als ganze Seite. Eine Sitzung füllt die Seite mit genau einer von drei Ansichten: **Gespräch** (jede offene Frage steht als Karte an der Stelle, an der sie gestellt wurde), **Fragen** (ihre offenen Fragen ausgeschrieben, darunter der Verlauf der entschiedenen und erledigten) und **Scribble** (ihr Canvas). Umgeschaltet wird in der Leiste unten, auf dem Handy in der Tab-Leiste.
 
 Beantwortete Karten werden nach 30 Tagen samt Anhängen und Markern im Gespräch gelöscht (`BOARD_RETENTION_DAYS`). Offene Karten bleiben.
 
@@ -124,7 +124,7 @@ Mit einem Tinfoil-Schlüssel (`TINFOIL_API_KEY` oder `data/tinfoil.key`) gibt es
 ## Aufbau
 
 - `server.mjs`: Channel (MCP über stdio) und Webserver in einem, als Hub oder Speiche
-- `public/index.html`, `public/css/`, `public/js/`: die Oberfläche als handgeschriebene ES-Module und CSS, ohne Build-Schritt; `store.js` hält den Zustand und den gewählten Agenten, `deck.js` den Kartenstapel, `focus.js` den Fokus-Modus, `scribble.js` das Canvas, `agents.js` die Seitenleiste, `inbox.js` den Posteingang, `speech.js` Diktat und Vorlesen
+- `public/index.html`, `public/css/`, `public/js/`: die Oberfläche als handgeschriebene ES-Module und CSS, ohne Build-Schritt; `store.js` hält den Zustand und den gewählten Agenten, `focus.js` den Fokus-Modus, `scribble.js` das Canvas, `agents.js` die Seitenleiste, `inbox.js` den Posteingang, `speech.js` Diktat und Vorlesen
 - `data/`: Zustand (`state.json`), Anhänge, Token und Links der laufenden Session
 - `dev/`: Vorschau ohne Claude-Code-Session
 

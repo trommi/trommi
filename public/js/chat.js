@@ -377,6 +377,7 @@ function emptyNode(onPick) {
 /**
  * Wire up the conversation inside #chat.
  *   onCard(cardId)   the user tapped a card event
+ *   onScribble()     the user tapped a scribble they sent earlier
  *   onUnread(count)  messages arrived that the user has not seen yet
  * Returns { render(state, loaded), unread() }.
  */
@@ -406,6 +407,7 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
   let pinned = true         // the user is at the end and wants to stay there
   let unread = 0
   let empty = null
+  let scope = null          // the session whose conversation is in the log
 
   // ---- scrolling ----
 
@@ -481,7 +483,10 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     if (!loaded) return
     messages = state.messages
     const grows = order.length <= messages.length && order.every((id, i) => messages[i].id === id)
-    if (first || !grows) {
+    // Another session, or a log that was rewritten: start over at its end, with nothing unread.
+    const restart = first || !grows || state.scope !== scope
+    scope = state.scope
+    if (restart) {
       inner.replaceChildren(working)
       asks.clear()
       order = []
@@ -502,8 +507,9 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     }
     refreshWorking()
 
-    if (first) {
+    if (restart) {
       pinned = true
+      setUnread(0)
     } else if (fresh.some(m => m.from === 'user')) {
       pinned = true   // your own message always brings you back to the end
     } else if (!pinned || !visible()) {

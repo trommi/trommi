@@ -1,6 +1,6 @@
-// Past decisions, as a sheet that rests under the card stack and rises over it.
-// Two groups: "In Arbeit" (status decided) and "Erledigt" (status done). One
-// group is open as a list, the other waits beside it as a slim vertical rail.
+// Past decisions, as a section below a session's open questions that unfolds in place.
+// Two groups: "In Arbeit" (status decided) and "Erledigt" (status done). The two
+// tabs in the bar choose which one is listed; there is one column, nothing beside it.
 
 import { el, agoNode, URGENCY_LABEL } from './ui.js'
 import { reopen } from './store.js'
@@ -125,16 +125,15 @@ function rowNode(card, expanded, onToggle) {
 /**
  * Render the history into root. Returns
  *   render(state, loaded)
- *   reveal(cardId): open the sheet on that card and highlight it; false if the card is not in the history
+ *   reveal(cardId): unfold the history on that card and highlight it; false if the card is not in the history
  */
-export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
+export function mountHistory(root, { flags = new Set() } = {}) {
   let open = false
   let active = null               // group key shown as a list; null until there is data to choose from
   let cards = []
   const expanded = new Set()
   const rows = new Map()          // card id -> { sig, node }; unchanged cards keep their node
 
-  const scrim = el('div', 'hist-scrim')
   const sheet = el('div', 'hist-sheet')
   const bar = el('div', 'hist-bar')
   const label = el('span', 'hist-label')
@@ -164,12 +163,6 @@ export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
     })
     tabs.append(tab)
 
-    const rail = button('hist-rail')
-    rail.dataset.group = g.key
-    const railCount = el('b', null, '0')
-    rail.append(railCount, el('span', null, g.name))
-    rail.addEventListener('click', () => { active = g.key; paint() })
-
     const pane = el('div', 'hist-pane')
     pane.dataset.group = g.key
     pane.setAttribute('role', 'tabpanel')
@@ -177,16 +170,14 @@ export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
     const lead = el('p', 'hist-lead', g.lead)
     const list = el('div', 'hist-list')
     pane.append(lead, list)
-    parts[g.key] = { tab, count, rail, railCount, pane, list, lead }
+    parts[g.key] = { tab, count, pane, list, lead }
   }
-  // Left to right like a board: In Arbeit, then Erledigt. The inactive one is a rail.
-  panes.append(parts.decided.rail, parts.decided.pane, parts.done.pane, parts.done.rail)
+  panes.append(parts.decided.pane, parts.done.pane)
   bar.append(label, tabs, toggle)
   sheet.append(bar, body)
-  root.append(scrim, sheet)
+  root.append(sheet)
 
   function paint() {
-    if (root.dataset.open !== String(open)) onToggle?.(open)
     root.dataset.open = String(open)
     body.inert = !open
     toggle.setAttribute('aria-expanded', String(open))
@@ -197,8 +188,6 @@ export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
       const on = g.key === shown
       p.tab.setAttribute('aria-selected', String(open && on))
       p.pane.hidden = !on
-      p.rail.hidden = on
-      p.rail.setAttribute('aria-label', `${g.name} zeigen, ${p.railCount.textContent} Einträge`)
     }
   }
   function setOpen(value) {
@@ -207,7 +196,6 @@ export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
   }
   toggle.addEventListener('click', e => { e.stopPropagation(); setOpen(!open) })
   bar.addEventListener('click', () => setOpen(!open))
-  scrim.addEventListener('click', () => setOpen(false))
   document.addEventListener('keydown', e => {
     if (e.key === 'Escape' && open && !document.querySelector('dialog[open]')) setOpen(false)
   })
@@ -215,14 +203,14 @@ export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
   function render(state, loaded) {
     if (!loaded) return paint()
     cards = state.cards
+    // Nothing answered yet: no heading for an empty history.
+    root.hidden = !cards.some(c => c.status !== 'open')
     const seen = new Set()
     for (const g of GROUPS) {
       const p = parts[g.key]
       const list = cards.filter(c => c.status === g.key).sort((a, b) => (b.decided ?? b.created) - (a.decided ?? a.created))
       p.count.textContent = list.length
-      p.railCount.textContent = list.length
       p.tab.classList.toggle('is-zero', list.length === 0)
-      p.rail.classList.toggle('is-zero', list.length === 0)
       const nodes = list.map(card => {
         seen.add(card.id)
         const sig = JSON.stringify(card)
@@ -256,9 +244,9 @@ export function mountHistory(root, { flags = new Set(), onToggle } = {}) {
     setOpen(true)
     const row = entry.node
     if (!row.classList.contains('is-open')) row.querySelector('.hist-head').click()
-    // Wait for the sheet to be laid out at its open size before scrolling inside it.
+    // Wait for the section to be laid out at its open size before scrolling to the row.
     setTimeout(() => {
-      row.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' })
       row.classList.remove('is-flash')
       void row.offsetWidth
       row.classList.add('is-flash')
