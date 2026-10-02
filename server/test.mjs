@@ -2,19 +2,29 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import assert from 'node:assert/strict'
-import { spawn } from 'node:child_process'
+import { spawn, spawnSync } from 'node:child_process'
 import http from 'node:http'
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath as toPath } from 'node:url'
+import { readBoard, writeBoard } from './board-store.mjs'
 
 // Run from anywhere: the server is the file next to this test.
 const SERVER = toPath(new URL('./server.mjs', import.meta.url))
 
 const PORT = 8791
 const base = `http://localhost:${PORT}`
+// A hub left over from a run that failed half-way holds the port for ever; a session started now would link to it
+// and be served its board. Say so instead of failing on whatever that board lacks.
+if (await fetch(base).then(() => true, () => false)) {
+  console.error(`port ${PORT} is taken, probably by a hub left over from an earlier run of this test: find it with "ss -ltnp | grep ${PORT}" and stop it`)
+  process.exit(1)
+}
+// Hubs this test starts as processes of their own must not outlive it, however it ends.
+const spawned = []
+process.on('exit', () => { for (const child of spawned) try { child.kill() } catch {} })
 const data = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
 const shot = path.join(data, 'mock.png')
 fs.writeFileSync(shot, Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==', 'base64'))
@@ -370,7 +380,7 @@ assert.equal((await fetch(`${base}/healthz`, { method: 'POST', headers: { Origin
 assert.equal((await agentPost('/agent/tool', { id: 'main', name: 'reply', args: { text: 'x' } })).status, 409)
 assert.equal((await state()).messages.some(m => m.text === 'x'), false)
 // the state file is replaced whole, and only its owner may read it
-assert.equal(fs.statSync(path.join(data, 'state.json')).mode & 0o077, 0)
+for (const f of fs.readdirSync(data).filter(f => f.startsWith('pad.db'))) assert.equal(fs.statSync(path.join(data, f)).mode & 0o077, 0, f)
 assert.deepEqual(fs.readdirSync(data).filter(f => f.includes('.tmp')), [])
 
 // the agent's advice travels with the card and must name a real option
@@ -684,7 +694,7 @@ assert.match(received[0].params.content, /image_path/)
 assert.deepEqual([(await padSend({ session: 'niemand' })).status, (await padSend({ png: 'data:text/html;base64,AAAA' })).status, (await padSend({ elements: [] })).status, (await padSend({ elements: [{ id: 'gibtesnicht' }] })).status], [404, 400, 400, 409])
 await padStream.body.cancel().catch(() => {})
 // the pad's store is a SQLite file of its own beside state.json: read again from disk it is the same pad
-assert.ok(fs.existsSync(path.join(data, 'pad.db')) && !fs.readFileSync(path.join(data, 'state.json'), 'utf8').includes('padnote000001'))
+assert.ok(fs.existsSync(path.join(data, 'pad.db')) && !JSON.stringify(readBoard(data)).includes('padnote000001'))
 assert.equal(fs.statSync(path.join(data, 'pad', 'blobs')).mode & 0o777, 0o700)
 const { openPadStore, padSupport } = await import('./pad.mjs')
 assert.equal(padSupport(), null)
@@ -807,7 +817,7 @@ assert.deepEqual([picture.header.type, picture.header.mime, picture.header.title
 // neither the state, as the page gets it and as it lies on disk, nor the admin export knows the silent key or title;
 // the key of an asset shown on the board is in all three today, in the message that carries the link
 const exportA = await adminLogin('adminkey', cookie)
-const known = [JSON.stringify(await state()), fs.readFileSync(path.join(data, 'state.json'), 'utf8'), await (await adminGet('export', exportA)).text()]
+const known = [JSON.stringify(await state()), JSON.stringify(readBoard(data)), await (await adminGet('export', exportA)).text()]
 for (const place of known) {
   for (const hidden of [qkey, 'Stiller Titel', '0815']) assert.ok(!place.includes(hidden), `the hub knows "${hidden}"`)
   assert.ok(place.includes(qid) && place.includes(akey))
@@ -835,7 +845,7 @@ assert.equal((await fetch(`${base}/a/${aid}/blob`)).status, 404)
 assert.equal(fs.existsSync(path.join(data, 'assets', aid)), false)
 s = await state()
 assert.deepEqual([s.assets.map(a => a.id), s.messages[talk].text, s.messages[talk].asset], [[qid, pid], '**Lasttest** (withdrawn)', { id: aid, type: 'html', title: 'Lasttest', gone: true }])
-assert.ok(!fs.readFileSync(path.join(data, 'state.json'), 'utf8').includes(akey), 'the hub forgot the key with the asset')
+assert.ok(!JSON.stringify(readBoard(data)).includes(akey), 'the hub forgot the key with the asset')
 await refused('revoke_asset', { id: aid }, /no asset/)
 await refused('revoke_asset', { id: '../token' }, /no asset/)
 
@@ -882,7 +892,7 @@ assert.deepEqual((await state()).tasks.map(t => t.id), ['srv'])
 received.length = 0
 
 // the stack and the numbering survive a restart
-const saved = JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8'))
+const saved = readBoard(data)
 assert.deepEqual(saved.queue, [low, high, normal2])
 assert.equal(saved.next_number, 21)
 await client.close()
@@ -1492,7 +1502,7 @@ const stamp = c.draft.ts
 // the same draft again changes nothing; the file follows within a moment
 assert.equal((await draft({ keys: ['eins', 'zwei'], note: ' halb fertig', notes: { eins: 'ja, aber später' } })).status, 200)
 assert.equal((await onBoard(merged)).draft.ts, stamp)
-await eventually(async () => JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).cards.find(k => k.id === merged).draft?.keys.length === 2, 'the draft to reach the state file')
+await eventually(async () => readBoard(data).cards.find(k => k.id === merged).draft?.keys.length === 2, 'the draft to reach the state file')
 assert.equal('draft' in await mine(merged), false, 'list_cards does not show a draft')
 for (const wrong of [{ keys: 'eins' }, { notes: ['x'] }, { notes: { eins: 'x'.repeat(2001) } }, { note: 'x'.repeat(10001) }]) assert.equal((await draft(wrong)).status, 400, JSON.stringify(wrong))
 assert.equal((await post('/draft', { card_id: 'gibtsnicht', keys: [] })).status, 400)
@@ -1606,7 +1616,7 @@ assert.deepEqual([spoken.header.type, spoken.header.title, spoken.content.toStri
 const hidden = await openAsset(await blobOf(tid), tkey, tid)
 assert.deepEqual([hidden.header.type, hidden.header.mime, hidden.header.name, hidden.content.toString()], ['file', 'text/plain', 'asset.txt', 'still 27182'])
 await assert.rejects(openAsset(await blobOf(sid), tkey, sid))
-assert.ok(!fs.readFileSync(path.join(data, 'state.json'), 'utf8').includes(tkey) && !logs.join('\n').includes(tkey) && !logs.join('\n').includes(skey))
+assert.ok(!JSON.stringify(readBoard(data)).includes(tkey) && !logs.join('\n').includes(tkey) && !logs.join('\n').includes(skey))
 // assets are fenced like cards: only the session that published one sees it or ends it
 await refused('revoke_asset', { id: sid }, /no asset/)
 assert.deepEqual(JSON.parse((await infra.callTool({ name: 'list_assets', arguments: {} })).content[0].text), [])
@@ -1647,7 +1657,7 @@ assert.equal((await post('/session', { agent: 'main', archived: true })).status,
 s = await state()
 assert.equal(s.agents[0].archived, true)
 assert.ok(mainOpen.every(id => !s.queue.includes(id) && s.cards.find(c => c.id === id).status === 'open'))
-assert.equal(JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).agents[0].archived, true)
+assert.equal(readBoard(data).agents[0].archived, true)
 assert.equal((await post('/session', { agent: 'main', archived: false })).status, 200)
 assert.deepEqual((await state()).queue.filter(id => mainOpen.includes(id)).length, mainOpen.length, 'un-archived: the cards are back on the stack')
 assert.equal((await post('/session', { agent: 'main', archived: true })).status, 200)
@@ -1673,7 +1683,7 @@ assert.deepEqual(s.agents.map(a => [a.group, a.label ?? '']), [['x'.repeat(40), 
   assert.deepEqual(await order(), ['main', 'api', 'infra'])
   assert.equal((await move('main', null)).status, 200)
   assert.deepEqual((await state()).agents.map(a => [a.id, a.position]), [['api', 0], ['infra', 1], ['main', 2]])
-  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).agents.map(a => [a.id, a.position]), [['api', 0], ['infra', 1], ['main', 2]])
+  assert.deepEqual(readBoard(data).agents.map(a => [a.id, a.position]), [['api', 0], ['infra', 1], ['main', 2]])
   assert.equal((await move('api', 'niemand')).status, 400)
   assert.equal((await post('/session', { agent: 'niemand', before: null })).status, 400)
   assert.deepEqual(await order(), ['api', 'infra', 'main'], 'a refused move changes nothing')
@@ -1698,7 +1708,7 @@ await Promise.all([client.close(), api.close(), infra.close()])
 
 // cleanup: an answered card older than the limit goes with its attachment and its markers; open ones stay
 await new Promise(r => setTimeout(r, 300))
-const kept = JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8'))
+const kept = readBoard(data)
 const days = n => Date.now() - n * 86400000
 fs.writeFileSync(path.join(data, 'files', 'old.png'), 'x')
 fs.writeFileSync(path.join(data, 'files', 'young.png'), 'x')
@@ -1708,7 +1718,7 @@ assert.deepEqual(kept.assets.map(a => a.id), [qid, pid, sid], 'assets outlast re
 const [aOld, aKeep, aYoung] = ['O', 'K', 'Y'].map(c => c.repeat(22))
 for (const id of [aOld, aKeep, aYoung]) fs.writeFileSync(path.join(data, 'assets', id), 'ZWA1' + 'x'.repeat(60))
 const published = (id, created, keep) => ({ id, agent: 'main', type: 'html', title: 'Alt', size: 64, created, keep, silent: false, wrapped_key: null })
-fs.writeFileSync(path.join(data, 'state.json'), JSON.stringify({
+writeBoard(data, ({
   ...kept,
   cards: [aged('gone', 'done', days(31), 'old.png'), aged('recent', 'done', days(29), 'young.png'), aged('waiting', 'open', null, 'young.png')],
   messages: [
@@ -1735,7 +1745,7 @@ const portFree = () => eventually(() => fetch(base).then(() => false, () => true
 await portFree()
 const data2 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
 const on2 = { BOARD_DATA: data2 }
-const file2 = () => JSON.parse(fs.readFileSync(path.join(data2, 'state.json'), 'utf8'))
+const file2 = () => readBoard(data2)
 const say = (who, name, args) => who.callTool({ name, arguments: args })
 const got1 = [], got2 = [], gotAway = []
 const hub = await start('Hub', [], on2)
@@ -1801,6 +1811,7 @@ await Promise.all([twin1.close(), twin2.close(), away.close()])
 await portFree()
 assert.equal(file2().pending.hub[0].params.content, 'für den Hub')
 const raw = spawn('node', [SERVER], { env: serverEnv('Hub', on2), stdio: ['pipe', 'pipe', 'inherit'] })
+spawned.push(raw)
 const lines = []
 let partial = ''
 raw.stdout.on('data', chunk => {
@@ -1863,10 +1874,10 @@ const state3 = JSON.parse(new TextDecoder().decode((await reader3.read()).value)
 await reader3.cancel()
 assert.deepEqual(state3.agents.map(a => [a.model, a.online]), [['m', true], ['m', true]])
 assert.deepEqual(fs.readdirSync(data3).filter(f => f.startsWith('token')), ['token'])
-// the damaged file was put aside, not overwritten
-const aside = fs.readdirSync(data3).filter(f => f.startsWith('state.broken-'))
-assert.equal(aside.length, 1)
-assert.equal(fs.readFileSync(path.join(data3, aside[0]), 'utf8'), '{"cards": [{"id": "halb')
+// the damaged file is left alone, not overwritten
+assert.deepEqual(fs.readdirSync(data3).filter(f => f.startsWith('state.broken-')), [], 'it is not read again, so it need not be moved')
+assert.equal(fs.readFileSync(path.join(data3, 'state.json'), 'utf8'), '{"cards": [{"id": "halb')
+assert.deepEqual(readBoard(data3).agents.map(a => a.model), ['m', 'm'], 'the board started empty and rests in the database')
 await Promise.all(pair.map(c => c.close()))
 
 // ---- a hub of its own: it serves the board without being a session, and has nothing on stdin ----
@@ -1874,6 +1885,7 @@ await portFree()
 const data5 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
 const on5 = { BOARD_DATA: data5 }
 const lone = spawn('node', [SERVER], { env: serverEnv('Dienst', { ...on5, BOARD_HUB_ONLY: '1' }), stdio: ['ignore', 'ignore', 'pipe'] })
+spawned.push(lone)
 lone.stderr.on('data', chunk => logs.push(...String(chunk).split('\n').filter(Boolean)))
 await eventually(async () => (await state()).agents.length === 0, 'the hub of its own to answer')
 s = await state()
@@ -1896,6 +1908,7 @@ s = await state()
 assert.deepEqual([s.agents.map(a => [a.id, a.task, a.online]), s.hub, [...new Set(s.messages.map(m => m.agent))]], [[['solo', 'allein', true]], null, ['solo']])
 // a second hub of its own does not link as a session either; it waits for the port
 const spare = spawn('node', [SERVER], { env: serverEnv('Ersatz', { ...on5, BOARD_HUB_ONLY: '1' }), stdio: ['ignore', 'ignore', 'ignore'] })
+spawned.push(spare)
 await sleep(600)
 assert.deepEqual([(await state()).agents.map(a => a.id), spare.exitCode], [['solo'], null])
 spare.kill()
@@ -1906,8 +1919,18 @@ await portFree()
 await sleep(1500)
 await assert.rejects(fetch(base), 'the spoke of a hub of its own left the port alone')
 await fails(solo, 'list_cards', {}, /try again in a moment/)
-// this one runs without SQLite (as a Node older than 22.13 would), to see that only the pad is missing
+// a hub without SQLite (as a Node older than 22.13 would be) does not start on a board that rests in the database: it would show the past
+const lost = spawn('node', [SERVER], { env: serverEnv('Dienst', { ...on5, BOARD_HUB_ONLY: '1', NODE_OPTIONS: '--no-experimental-sqlite' }), stdio: ['ignore', 'ignore', 'pipe'] })
+spawned.push(lost)
+let lostSaid = ''
+lost.stderr.on('data', chunk => { lostSaid += chunk })
+assert.equal(await new Promise(resolve => lost.on('close', resolve)), 1)
+assert.match(lostSaid, /this board rests in SQLite .*cannot open on Node .*board-store\.mjs back /)
+// the way back is a command: the state goes into state.json, and from there the old way works, with only the pad missing
+const toJson = spawnSync('node', [toPath(new URL('./board-store.mjs', import.meta.url)), 'back', data5])
+assert.deepEqual([toJson.status, fs.existsSync(path.join(data5, 'state.in-sqlite')), JSON.parse(fs.readFileSync(path.join(data5, 'state.json'), 'utf8')).agents.map(a => a.task)], [0, false, ['allein']])
 const back = spawn('node', [SERVER], { env: serverEnv('Dienst', { ...on5, BOARD_HUB_ONLY: '1', NODE_OPTIONS: '--no-experimental-sqlite' }), stdio: ['ignore', 'ignore', 'pipe'] })
+spawned.push(back)
 back.stderr.on('data', chunk => logs.push(...String(chunk).split('\n').filter(Boolean)))
 await eventually(async () => (await state()).agents[0].online === true, 'the spoke to link to the hub that came back')
 assert.ok(!(await say(solo, 'reply', { text: 'wieder da' })).isError)
@@ -1930,6 +1953,7 @@ const SESSION = toPath(new URL('../dev/session.mjs', import.meta.url))
 const helperEnv = { ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data5, BOARD_TOKEN: 'secret', BOARD_PUBLIC_URL: '' }
 const helper = (...args) => new Promise(resolve => {
   const child = spawn('node', [SESSION, ...args], { env: helperEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+  spawned.push(child)
   const out = { stdout: '', stderr: '' }
   for (const stream of ['stdout', 'stderr']) child[stream].on('data', chunk => { out[stream] += chunk })
   child.on('close', code => resolve({ code, ...out }))
@@ -1940,6 +1964,7 @@ fs.writeFileSync(sheet, sheetBytes)
 // a session that is not linked is refused, as it is for a spoke
 assert.deepEqual([(await helper('publish', 'Helfer', sheet)).code, fs.readdirSync(path.join(data5, 'assets')).length], [1, 1])
 const held = spawn('node', [SESSION, 'link', 'Helfer'], { env: helperEnv, stdio: 'ignore' })
+spawned.push(held)
 await eventually(async () => (await state()).agents.some(a => a.id === 'helfer' && a.online), 'the helper session to link')
 const helperTalk = (await state()).messages.length
 const shownOut = await helper('publish', 'helfer', sheet, '--title', 'Blatt', '--note', 'aus dem Helfer')
@@ -2076,7 +2101,7 @@ fakeSpeech.on('upgrade', (req, socket) => {
 })
 await new Promise(resolve => fakeSpeech.listen(0, '127.0.0.1', resolve))
 const on4 = { BOARD_DATA: data4, BOARD_TOKEN: '', BOARD_ADMIN_TOKEN: '', BOARD_PUBLIC_URL: 'https://rechner.example.ts.net/', BOARD_SPEECH_API: `http://127.0.0.1:${fakeSpeech.address().port}/v1`, BOARD_STT_LIVE_SECONDS: '1', BOARD_STT_LIVE_IDLE_MS: '500', BOARD_STT_LIVE_WAIT_MS: '3000' }
-const file4 = () => JSON.parse(fs.readFileSync(in4('state.json'), 'utf8'))
+const file4 = () => readBoard(data4)
 const has4 = (...parts) => fs.existsSync(in4(...parts))
 const gotSpeiche = []
 const chef = await start('Chef', [], on4)
@@ -2497,7 +2522,7 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
   card = (await mine()).cards.find(c => c.id === textOf(res).match(/^card (\w+) /)[1])
   assert.equal(card.html, table)
   // nothing that runs was ever written down
-  assert.doesNotMatch(fs.readFileSync(in4('state.json'), 'utf8').replace(/```js[\s\S]*?```/g, ''), /<script|onclick=|onerror=|evil\.example/i)
+  assert.doesNotMatch(JSON.stringify(readBoard(data4)).replace(/```js[\s\S]*?```/g, ''), /<script|onclick=|onerror=|evil\.example/i)
   // the reference shows a three-column comparison that is clean as it stands
   const example = (await (await fetch(`${base}/api/tools`, { headers: { Cookie: board4 } })).json()).tools.find(t => t.name === 'reply').example
   assert.equal(example.html.match(/<th>/g).length, 3)
@@ -2507,6 +2532,103 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 
 await Promise.all([speiche.close(), neu.close()])
 
-for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+// ---- the board moves from state.json into SQLite: once, whole, and the file stays as it was ----
+await portFree()
+const data6 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+const in6 = name => path.join(data6, name)
+const old6 = {
+  hub: 'alt', next_number: 50, queue: ['veraltet'],
+  agents: [
+    { id: 'alt', name: 'Alt', model: 'm', client: '', task: 'umziehen', joined: 5, online: true, instance: 'x', position: 1, label: 'Mein Alter', icon: 'draw:brush', icon_by: 'human', starred: true },
+    { id: 'fern', name: 'Fern', model: 'm', client: '', task: '', joined: 6, online: false, position: 0, archived: true, group: 'paar' },
+  ],
+  cards: [
+    {
+      id: 'c-offen', agent: 'alt', number: 41, kind: 'decision', status: 'open', urgency: 'high', urgency_reason: 'eilt', title: 'Dritte Fassung?', body: 'Vorweg.\n\n**A**: so.\n\n**B**: anders.',
+      options: [{ key: 'a', label: 'A', detail: '' }, { key: 'b', label: 'B', detail: '' }], attachments: [], multiple: true, recommended: ['a'], choice: null, choices: [], note: '', summary: '', created: 100, decided: null,
+      sections: [{ text: 'Vorweg.' }, { key: 'a', label: 'A', text: 'so.', recommended: true }, { key: 'b', label: 'B', text: 'anders.', recommended: false }],
+      version: 3, revisions: 2, revised: 300, revision_note: 'klarer', with_agent: 350,
+      versions: [{ n: 1, at: 100, title: 'Erste Fassung?', body: 'x', options: [{ key: 'a', label: 'A', detail: '' }, { key: 'b', label: 'B', detail: '' }], recommended: null, multiple: false, attachments: [], urgency: 'normal', note: '' },
+        { n: 2, at: 200, title: 'Zweite Fassung?', body: 'y', options: [{ key: 'a', label: 'A', detail: '' }, { key: 'b', label: 'B', detail: '' }], recommended: 'a', multiple: false, attachments: [], urgency: 'high', note: 'Bild dazu' }],
+      draft: { keys: ['b'], note: 'halb', notes: { a: 'eher nicht' }, marks: [{ id: 'm1', anchor: { kind: 'section', index: 2, x: 0.5 }, text: 'hier', strokes: [[1, 2, 3, 4]] }], ts: 400 },
+    },
+    { id: 'c-fertig', agent: 'alt', number: 42, kind: 'decision', status: 'decided', urgency: 'normal', urgency_reason: '', title: 'Schon beantwortet', body: '', options: [{ key: 'a', label: 'A', detail: '' }, { key: 'b', label: 'B', detail: '' }], attachments: [], multiple: false, choice: 'b', choices: ['b'], note: 'so', option_notes: { a: 'nein, weil' }, answered_version: 1, version: 1, summary: '', created: 110, decided: Date.now() },
+    { id: 'c-weg', agent: 'fern', number: 43, kind: 'decision', status: 'shredded', shredded: Date.now(), urgency: 'low', urgency_reason: '', title: 'Weggeworfen', body: '', options: [{ key: 'a', label: 'A', detail: '' }, { key: 'b', label: 'B', detail: '' }], attachments: [], multiple: false, choice: null, choices: [], note: '', version: 1, summary: '', created: 120, decided: null },
+    { id: 'c-info', agent: 'alt', number: 44, kind: 'info', status: 'open', urgency: 'normal', urgency_reason: '', title: 'Zum Lesen', body: 'So geht das.', options: [], attachments: [], multiple: false, recommended: null, choice: null, choices: [], note: '', version: 1, summary: '', created: 130, decided: null },
+  ],
+  messages: [
+    { id: 'n1', agent: 'alt', from: 'user', text: 'hallo', attachments: [], ts: 1 },
+    { id: 'dup', agent: 'alt', from: 'agent', text: 'erste mit dieser Kennung', attachments: [], ts: 2 },
+    { id: 'dup', agent: 'alt', from: 'agent', text: 'zweite mit dieser Kennung', attachments: [], ts: 3 },
+    { id: 'n4', agent: 'alt', from: 'event', kind: 'revised', card_id: 'c-offen', text: 'klarer', version: 3, ts: 4 },
+    { id: 'n5', agent: 'fern', from: 'user', text: 'für Fern', attachments: [], handback: true, card_id: 'c-weg', marks: [{ id: 'x', anchor: { kind: 'card' }, text: 'Ümlaut “quote” 🙂' }], ts: 5 },
+  ],
+  tasks: [{ agent: 'alt', id: 'bau', label: 'Bau', state: 'working', detail: 'läuft', card_id: null, updated: 7 }, { agent: 'fern', id: 'bau', label: 'Bau', state: 'done', detail: '', card_id: null, updated: 8 }],
+  assets: [],
+  pending: { alt: [{ method: 'notifications/claude/channel', params: { content: 'wartete im alten Zustand', meta: { kind: 'chat' } }, ts: 9 }], fern: [{ method: 'notifications/claude/channel', params: { content: 'für später', meta: { kind: 'chat' } }, ts: Date.now() }] },
+}
+fs.writeFileSync(in6('state.json'), JSON.stringify(old6, null, 2))
+const bytes6 = fs.readFileSync(in6('state.json'))
+const on6 = { BOARD_DATA: data6, BOARD_ADMIN_TOKEN: '' }
+const gotAlt = []
+mark = logs.length
+let alt = await start('Alt', gotAlt, on6)
+// what the page gets is the old board, record for record
+s = await state()
+assert.deepEqual(s.cards, old6.cards)
+assert.deepEqual(s.messages, old6.messages)
+assert.deepEqual(s.tasks, old6.tasks)
+assert.deepEqual(s.agents.map(a => [a.id, a.position, a.label ?? '', a.icon ?? '', a.archived ?? false, a.group ?? null, a.starred ?? false]), [['fern', 0, '', '', true, 'paar', false], ['alt', 1, 'Mein Alter', 'draw:brush', false, null, true]])
+assert.deepEqual([s.next_number, s.queue], [50, ['c-offen', 'c-info']])
+// what waited for the agent is handed over, what waits for one that is away keeps waiting
+await until(() => gotAlt.length === 1)
+assert.equal(gotAlt[0].params.content, 'wartete im alten Zustand')
+// the database holds the same, the log says so once, and state.json is byte for byte what it was
+let db6 = readBoard(data6)
+assert.deepEqual([db6.cards, db6.messages, db6.tasks, db6.next_number, db6.pending], [old6.cards, old6.messages, old6.tasks, 50, { fern: old6.pending.fern }])
+assert.equal(logs.slice(mark).filter(l => l.includes('the state moved from state.json into')).length, 1)
+assert.match(logs.slice(mark).find(l => l.includes('the state moved')), /4 cards, 5 messages, 2 sessions\. state\.json is kept as it was and no longer written/)
+assert.ok(fs.readFileSync(in6('state.json')).equals(bytes6) && fs.existsSync(in6('state.in-sqlite')))
+for (const f of fs.readdirSync(data6).filter(f => f.startsWith('pad.db'))) assert.equal(fs.statSync(in6(f)).mode & 0o077, 0, f)
+// from here on changes go to the database only
+assert.equal((await post('/decide', { card_id: 'c-offen', keys: ['a'], note: 'nach dem Umzug' })).status, 200)
+assert.equal((await post('/message', { text: 'neu nach dem Umzug', agent: 'alt' })).status, 200)
+await call.call(null, 'list_cards', {}).catch(() => {})
+db6 = readBoard(data6)
+assert.deepEqual([db6.cards[0].status, db6.cards[0].choices, db6.cards[0].versions.length, 'draft' in db6.cards[0], db6.messages.at(-1).text, db6.messages.length], ['decided', ['a'], 2, false, 'neu nach dem Umzug', 7])
+assert.ok(fs.readFileSync(in6('state.json')).equals(bytes6))
+// the tool reads the same out again, as the JSON state.json would hold
+const tool6 = (...args) => spawnSync('node', [toPath(new URL('./board-store.mjs', import.meta.url)), ...args], { encoding: 'utf8' })
+assert.deepEqual(JSON.parse(tool6('counts', data6).stdout), { agents: 2, cards: 4, messages: 7, tasks: 2 })
+assert.deepEqual(JSON.parse(tool6('export', data6).stdout).cards, db6.cards)
+// a restart reads the database: a state.json that says something else is not looked at again
+await alt.close()
+await portFree()
+fs.writeFileSync(in6('state.json'), JSON.stringify({ cards: [], messages: [{ id: 'falsch', agent: 'alt', from: 'user', text: 'aus der alten Datei', ts: 1 }] }))
+mark = logs.length
+alt = await start('Alt', [], on6)
+s = await state()
+assert.deepEqual([s.cards.map(c => [c.id, c.status]), s.messages.some(m => m.text === 'aus der alten Datei'), s.messages.some(m => m.text === 'neu nach dem Umzug'), s.next_number], [[['c-offen', 'decided'], ['c-fertig', 'decided'], ['c-weg', 'shredded'], ['c-info', 'open']], false, true, 50])
+assert.equal(logs.slice(mark).filter(l => l.includes('the state moved')).length, 0)
+assert.deepEqual(s.agents.map(a => [a.id, a.online]), [['fern', false], ['alt', true]])
+await alt.close()
+await portFree()
+// told to stay with state.json, a hub does not start beside a board that has moved
+const stay = spawnSync('node', [SERVER], { env: serverEnv('Alt', { ...on6, BOARD_STORE: 'json', BOARD_HUB_ONLY: '1' }), encoding: 'utf8' })
+assert.deepEqual([stay.status, /this board rests in SQLite .*BOARD_STORE=json/.test(stay.stderr)], [1, true])
+// a board that never had a state.json is born in the database, and one kept in JSON on purpose stays there
+const data7 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+const born = await start('Neu', [], { BOARD_DATA: data7 })
+await say(born, 'reply', { text: 'erste Nachricht' })
+assert.deepEqual([readBoard(data7).messages.map(m => m.text), fs.existsSync(path.join(data7, 'state.json')), fs.existsSync(path.join(data7, 'state.in-sqlite'))], [['erste Nachricht'], false, true])
+await born.close()
+await portFree()
+const data8 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+const plain = await start('Json', [], { BOARD_DATA: data8, BOARD_STORE: 'json' })
+await say(plain, 'reply', { text: 'bleibt in der Datei' })
+assert.deepEqual([JSON.parse(fs.readFileSync(path.join(data8, 'state.json'), 'utf8')).messages.map(m => m.text), fs.existsSync(path.join(data8, 'state.in-sqlite')), readBoard(data8)], [['bleibt in der Datei'], false, null])
+await plain.close()
+
+for (const dir of [data, data2, data3, data4, data5, data6, data7, data8]) fs.rmSync(dir, { recursive: true })
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)
