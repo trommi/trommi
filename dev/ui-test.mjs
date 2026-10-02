@@ -2404,7 +2404,7 @@ async function groupWalk() {
     need(await walkTo(shredded), `the walk never came to "${shredded.title}"`)
     if (touch) await press('"Shred" in the walk', js`__t.one(${SEL.focusShred}, __t.one(${SEL.focusCard}))`)
     else await key('x', 88, { text: 'x' })
-    await waitState('the card is shredded', () => cardOf(shredded.id).status === 'shredded', 4000).then(() => passed(), e => check(false, `${touch ? '"Shred"' : 'the key X'}: ${e.message}`))
+    await waitState('the card is shredded', () => cardOf(shredded.id).status === 'shredded', 4000).then(() => passed(), async e => check(false, `${touch ? '"Shred"' : 'the key X'}: ${e.message} (in front: "${(await front())?.title}"; the keyboard is in ${await ev('__t.describe(document.activeElement)')}; shredded instead: ${state().cards.filter(c => c.status === 'shredded').map(c => c.title).join(', ') || 'nothing'})`))
     check(cardOf(shredded.id).choice == null, 'a shredded card carries an answer')
     const shredNote = await stripOf(shredded)
     if (check(shredNote?.back && /Shred/.test(shredNote.text), `after "Shred" the strip reads "${shredNote?.all ?? 'nothing'}", expected "Shredded" and the way back`)) {
