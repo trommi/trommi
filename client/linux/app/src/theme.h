@@ -25,6 +25,7 @@ public:
     QString source() const { return m_source; } // who said light or dark
 
     static QVariantMap tokens(bool dark);
+    Q_INVOKABLE void toggle(); // light or dark, whatever the desktop says
 
 signals:
     void changed();
@@ -39,6 +40,7 @@ private:
     void watch();
     int omarchy() const; // 1 dark, 2 light, 0 unknown
 
+    int m_picked = 0; // the human's own choice: 1 dark, 2 light
     int m_portal = 0; // org.freedesktop.appearance color-scheme: 1 dark, 2 light
     bool m_dark = false;
     double m_textScale = 1.0;

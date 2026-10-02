@@ -2,6 +2,7 @@
 #include "link.h"
 #include "logic.h"
 #include "markdown.h"
+#include "doodle.h"
 #include "model.h"
 
 #include <QFile>
@@ -22,7 +23,16 @@ static State demo()
     return s;
 }
 
-static State from(const char *json)
+static State board()
+{
+    QFile f(QStringLiteral(FIXTURES "/board-state.json"));
+    if (!f.open(QIODevice::ReadOnly)) qFatal("fixture missing");
+    State s;
+    if (!State::decode(f.readAll(), &s)) qFatal("fixture does not decode");
+    return s;
+}
+
+static State from(const QByteArray &json)
 {
     State s;
     if (!State::decode(json, &s)) qFatal("test state does not decode");
@@ -147,10 +157,19 @@ private slots:
         QVERIFY(isQuick(c));
         c.body = QString(241, 'x');
         QVERIFY(!isQuick(c));
+        // A word under a thumb must fit its tile: two lines of fourteen letters.
         c = quickCard();
-        c.options[0].label = QString(18, 'x');
+        c.options[0].label = QString(14, 'x');
         QVERIFY(isQuick(c));
-        c.options[0].label = QString(19, 'x');
+        c.options[0].label = QString(15, 'x');
+        QVERIFY(!isQuick(c));
+        c.options[0].label = "Keep the old one";
+        QVERIFY(isQuick(c));
+        c.options[0].label = "Keep the old one for now, please";
+        QVERIFY(!isQuick(c));
+        // Several answers allowed: never by thumb.
+        c = quickCard();
+        c.multiple = true;
         QVERIFY(!isQuick(c));
         c = quickCard();
         c.options.append({"c", "Drei", ""});
@@ -200,19 +219,55 @@ private slots:
         QVERIFY(t[1].lead);
         QVERIFY(!isBare(p));
 
-        // The second answer is not always a no.
+        // Thumbs are the rule: down on the left, up on the right, whatever the words.
         c.options = {{"a", "Postgres", ""}, {"b", "SQLite", ""}};
         t = tiles(c);
-        QCOMPARE(t[0].icon, "other");
+        QCOMPARE(t[0].icon, "no");
+        QCOMPARE(t[0].label, "SQLite");
+        QVERIFY(!isBare(c));
 
-        // Not a yes/no: later and more, in the same two places.
+        // More than two ways: one wide tile, which says how many.
         c.options.append({"c", "Keine", ""});
         t = tiles(c);
-        QCOMPARE(t[0].key, "later");
-        QCOMPARE(t[0].label, "Later");
-        QCOMPARE(t[1].key, "open");
-        QCOMPARE(t[1].label, "Choose");
-        QVERIFY(t[1].lead && !t[1].answer);
+        QCOMPARE(t.size(), 1);
+        QCOMPARE(t[0].key, "open");
+        QCOMPARE(t[0].label, "Choose");
+        QCOMPARE(t[0].detail, "3 options");
+        QVERIFY(t[0].lead && !t[0].answer);
+        c.multiple = true;
+        QCOMPARE(tiles(c)[0].detail, "3 options, several allowed");
+    }
+
+    void tileLabels()
+    {
+        QVERIFY(fitsTile("Yes"));
+        QVERIFY(fitsTile("Keep the old"));        // two lines
+        QVERIFY(fitsTile("Self-hosted"));
+        QVERIFY(fitsTile("Self-hosted runner"));  // breaks after the hyphen too
+        QVERIFY(!fitsTile("Internationalisation"));
+        QVERIFY(fitsTile("One two three four five six"));   // thirteen letters a line
+        QVERIFY(!fitsTile("One two three four five six seven"));
+    }
+
+    void whatOpensAsAWindow()
+    {
+        Card c = quickCard();
+        c.options.append({"c", "Drei", ""});
+        QVERIFY(!needsWindow(c));
+        c.body = QString(481, 'x');
+        QVERIFY(needsWindow(c));
+        c.body = "Look:\n```\ncode\n```";
+        QVERIFY(needsWindow(c));
+        c.body.clear();
+        c.attachments = {{"a.png", "/files/a.png", "image"}};
+        QVERIFY(!needsWindow(c));
+        c.attachments.append({"b.png", "/files/b.png", "image"});
+        QVERIFY(needsWindow(c));
+        c.attachments = {{"a.pdf", "/files/a.pdf", "file"}};
+        QVERIFY(needsWindow(c));
+        c.attachments.clear();
+        for (int i = 0; i < 4; i++) c.options.append({QString::number(i), "x", ""});
+        QVERIFY(needsWindow(c)); // seven options
     }
 
     void negativeLabels()
@@ -277,53 +332,96 @@ private slots:
         QCOMPARE(g[0].agent.name, "gone");
     }
 
-    void laterMovesACardToTheEnd()
+    void whatIsPutOffLeavesItsSender()
     {
         const State s = demo();
-        const QList<Card> plain = openCards(s, {});
-        QCOMPARE(plain.first().id, "c-perm");
-        // Put off in this order: they sink to the end in this order.
-        const QList<Card> put = openCards(s, {"c-migrate", "c-perm"});
-        QCOMPARE(put.size(), plain.size());
-        QCOMPARE(put[put.size() - 2].id, "c-migrate");
-        QCOMPARE(put.last().id, "c-perm");
-        QCOMPARE(put.first().id, "c-phone");
+        const int all = int(inboxOrder(s, {}).size());
+        const QList<PutOff> off = {{"c-theme", 1, 0}, {"c-migrate", 3, 0}};
+        const Inbox in = inboxOf(s, off);
+        // Whoever asked: one pile, in the order they were put off.
+        QCOMPARE(in.later.size(), 2);
+        QCOMPARE(in.later[0].id, "c-theme");
+        QCOMPARE(in.later[1].id, "c-migrate");
+        QVERIFY(in.asked.isEmpty());
+        for (const Group &g : in.groups)
+            for (const Card &c : g.cards) QVERIFY(c.id != "c-theme" && c.id != "c-migrate");
+        QCOMPARE(in.fresh, all - 2);
+        // The walk comes to them last.
+        QCOMPARE(inboxOrder(s, off).size(), all);
+        QCOMPARE(inboxOrder(s, off).mid(all - 2), QStringList({"c-theme", "c-migrate"}));
+        // A sender whose every question was put off has no group of its own.
+        for (const Group &g : inboxOf(s, {{"c-backup", 0, 0}}).groups) QVERIFY(g.agent.id != "infrastruktur");
         // A card that is gone is no trouble.
-        QCOMPARE(openCards(s, {"nope"}).first().id, "c-perm");
+        QVERIFY(inboxOf(s, {{"nope", 1, 0}}).later.isEmpty());
     }
 
-    void whatIsPutOffStandsInOneGroupAtTheEnd()
+    void whatWasPutOffReturnsWhenItMatters()
+    {
+        const char *json = R"({"agents":[{"id":"a","name":"A","online":true}],
+          "cards":[{"id":"c","agent":"a","urgency":"%1","options":[{"key":"x","label":"X"},{"key":"y","label":"Y"},{"key":"z","label":"Z"}]}],
+          "messages":[{"id":"m1","agent":"a","from":"user","text":"why?","card_id":"c","ts":2000}%2]})";
+        const State calm = from(QString(json).arg("normal", "").toUtf8());
+        QCOMPARE(keptLater(calm, {{"c", 1, 0}}).size(), 1);
+        // The agent made it more urgent since: it is news again.
+        const State urgent = from(QString(json).arg("high", "").toUtf8());
+        QVERIFY(keptLater(urgent, {{"c", 1, 0}}).isEmpty());
+        // Handed to its session ("Explain", "Back to agent"): the pile "With the agent".
+        QCOMPARE(inboxOf(calm, {{"c", 1, 1000}}).asked.size(), 1);
+        QVERIFY(inboxOf(calm, {{"c", 1, 1000}}).later.isEmpty());
+        QCOMPARE(inboxOf(calm, {{"c", 1, 1000}}).fresh, 0);
+        // It comes back by itself once the session has answered about it; the human's own words do not count.
+        const State replied = from(QString(json).arg("normal", R"(,{"id":"m2","agent":"a","from":"agent","text":"because","card_id":"c","ts":3000})").toUtf8());
+        QVERIFY(keptLater(replied, {{"c", 1, 1000}}).isEmpty());
+        QCOMPARE(inboxOf(replied, {{"c", 1, 1000}}).fresh, 1);
+        QCOMPARE(keptLater(replied, {{"c", 1, 5000}}).size(), 1); // asked after that reply
+        QCOMPARE(threadOf(replied, "c").size(), 2);
+    }
+
+    void theServerSaysWhatIsWithTheAgent()
+    {
+        const State s = from(R"({"agents":[{"id":"a","name":"A","online":true}],"cards":[
+          {"id":"c","agent":"a","with_agent":5000,"version":3,"revisions":2,"revision_note":"shorter","versions":[{"n":1},{"n":2}],
+           "options":[{"key":"x","label":"X"},{"key":"y","label":"Y"},{"key":"z","label":"Z"}]},
+          {"id":"d","agent":"a","revisions":1,"options":[{"key":"x","label":"X"},{"key":"y","label":"Y"},{"key":"z","label":"Z"}]},
+          {"id":"e","agent":"a","status":"decided","choice":"x","with_agent":7,"options":[{"key":"x","label":"X"}]}]})");
+        QCOMPARE(s.card("c")->withAgent, 5000.0);
+        QCOMPARE(s.card("c")->version, 3);
+        QCOMPARE(s.card("c")->earlier, 2);
+        QCOMPARE(s.card("c")->revisionNote, "shorter");
+        QCOMPARE(s.card("d")->version, 2); // an older server only counts the rewordings
+        QCOMPARE(s.card("e")->withAgent, 0.0); // only an open card waits
+        // Handed over on another device: it waits in the same pile here, and is not to be worked down.
+        const Inbox in = inboxOf(s, {});
+        QCOMPARE(in.asked.size(), 1);
+        QCOMPARE(in.asked[0].id, "c");
+        QCOMPARE(in.fresh, 1);
+        QCOMPARE(inboxOrder(s, {}), QStringList{"d"});
+        // Put off here as well: still one card, in that pile.
+        const Inbox both = inboxOf(s, {{"c", 1, 0}});
+        QCOMPARE(both.asked.size(), 1);
+        QVERIFY(both.later.isEmpty());
+        // Handed over here, and the session reworded it since: it is back.
+        const State r = from(R"({"agents":[{"id":"a","name":"A"}],"cards":[{"id":"c","agent":"a","revised":9000,
+           "options":[{"key":"x","label":"X"},{"key":"y","label":"Y"},{"key":"z","label":"Z"}]}]})");
+        QVERIFY(keptLater(r, {{"c", 1, 8000}}).isEmpty());
+        QCOMPARE(keptLater(r, {{"c", 1, 9500}}).size(), 1);
+        QCOMPARE(eventLabel("revised"), "Question revised");
+    }
+
+    void theAnsweredPile()
     {
         const State s = demo();
-        const int senders = int(groups(s, {}).size());
-        const QList<Group> g = groups(s, {"c-theme", "c-migrate"});
-        QVERIFY(g.last().later);
-        QCOMPARE(g.last().agent.name, "Later");
-        // Whoever asked: one group, in the order they were put off.
-        QCOMPARE(g.last().cards.size(), 2);
-        QCOMPARE(g.last().cards[0].id, "c-theme");
-        QCOMPARE(g.last().cards[1].id, "c-migrate");
-        QCOMPARE(g.size(), senders + 1);
-        for (int i = 0; i < g.size() - 1; i++) {
-            QVERIFY(!g[i].later);
-            for (const Card &c : g[i].cards) QVERIFY(c.id != "c-theme" && c.id != "c-migrate");
-        }
-        QCOMPARE(inboxOrder(s, {"c-theme", "c-migrate"}).mid(5), QStringList({"c-theme", "c-migrate"}));
-        // A sender whose every question was put off has no group of its own.
-        const QList<Group> h = groups(s, {"c-backup"});
-        for (int i = 0; i < h.size() - 1; i++) QVERIFY(h[i].agent.id != "infrastruktur");
-        // Nothing put off, or only cards that are gone: no such group.
-        for (const Group &x : groups(s, {"nope"})) QVERIFY(!x.later);
-        // There the left tile fetches the card back.
-        QCOMPARE(tiles(*s.card("c-theme"), true)[0].key, "back");
-        QCOMPARE(tiles(*s.card("c-theme"), true)[0].label, "Bring back");
-        QCOMPARE(tiles(*s.card("c-nav"), true)[0].answer, true); // a yes/no stays a yes/no
+        const Inbox in = inboxOf(s, {});
+        // Decisions that were answered, the latest first; an approval is not among them.
+        QVERIFY(!in.answered.isEmpty());
+        for (const Card &c : in.answered) QVERIFY(!c.open() && !c.permission() && !c.choice.isEmpty());
+        for (int i = 1; i < in.answered.size(); i++) QVERIFY(in.answered[i - 1].decided >= in.answered[i].decided);
     }
 
     void theRecommendedOptionIsMarked()
     {
         const State s = demo();
-        QCOMPARE(s.card("c-nav")->recommended, "ja");
+        QCOMPARE(s.card("c-nav")->recommended, QStringList{"ja"});
         const QList<Tile> t = tiles(*s.card("c-nav"));
         QCOMPARE(t[1].key, "ja");
         QVERIFY(t[1].advised && !t[0].advised);
@@ -337,6 +435,11 @@ private slots:
         QVERIFY(tiles(*o.card("a"))[0].advised && !tiles(*o.card("a"))[1].advised);
         QVERIFY(o.card("b")->recommended.isEmpty());
         QVERIFY(o.card("c")->recommended.isEmpty());
+        // Where several answers are allowed, the advice may be several.
+        const State m = from(R"({"cards":[{"id":"a","multiple":true,"recommended":["x","nope","z"],
+            "options":[{"key":"x","label":"X"},{"key":"y","label":"Y"},{"key":"z","label":"Z"}]}]})");
+        QCOMPARE(m.card("a")->recommended, QStringList({"x", "z"}));
+        QVERIFY(m.card("a")->advised("z") && !m.card("a")->advised("y"));
     }
 
     void theDemoInbox()
@@ -380,9 +483,10 @@ private slots:
     void wording()
     {
         QCOMPARE(urgencyLabel(Urgency::Critical), "Blocking");
-        QCOMPARE(waiting(0), "Nothing is waiting for you.");
+        QCOMPARE(waiting(0), "Nothing needs you.");
         QCOMPARE(waiting(0, 2), "Nothing new. What you put off is below.");
-        QCOMPARE(waiting(1, 2), "question is waiting for you.");
+        QCOMPARE(waiting(1, 2), "question needs you.");
+        QCOMPARE(waiting(3), "questions need you.");
         QCOMPARE(urgencyLabel(Urgency::High), "Urgent");
         QCOMPARE(urgencyLabel(Urgency::Normal), ""); // nothing for the usual case
         QCOMPARE(urgencyLabel(Urgency::Low), "whenever");
@@ -393,6 +497,16 @@ private slots:
         QCOMPARE(translateError("card already decided"), "This question is already answered.");
         QCOMPARE(translateError("no agent named x"), "There is no such session.");
         QCOMPARE(translateError("something new"), "something new");
+        const QString stale = "the agent revised this question while you were answering; nothing was sent, read it again and answer once more";
+        QVERIFY(isStale(stale));
+        QVERIFY(translateError(stale).startsWith("The agent revised this question"));
+        Card c;
+        c.number = 12;
+        QCOMPARE(cardNr(c), "Nr. 12");
+        QCOMPARE(cardNote(c), "");
+        c.revised = 5;
+        c.mergedFrom = {"a", "b", "c"};
+        QCOMPARE(cardNote(c), "replaces 3 questions · revised");
     }
 
     void agoInWords()
@@ -456,6 +570,17 @@ private slots:
         QCOMPARE(parseMarkdown("- eins\nund Text")[0].kind, Block::Paragraph);
         QVERIFY(parseMarkdown("").isEmpty());
         QVERIFY(parseMarkdown("\n\n  \n").isEmpty());
+    }
+
+    void aTableAsAgentsWriteIt()
+    {
+        const QList<Block> b = parseMarkdown("Before\n\n| Account | Seconds |\n|---|---:|\n| small | **1** |\n| large | 45 |\n\n| not | a table |");
+        QCOMPARE(b.size(), 3);
+        QCOMPARE(b[1].kind, Block::Table);
+        QCOMPARE(b[1].rows.size(), 3); // the head and two rows; the rule is no row
+        QCOMPARE(b[1].rows[0][1][0].text, "Seconds");
+        QCOMPARE(b[1].rows[1][1][0].kind, Inline::Bold);
+        QCOMPARE(b[2].kind, Block::Paragraph); // one line of pipes is only a line
     }
 
     void htmlEscapesWhatTheAgentWrote()
@@ -581,6 +706,223 @@ private slots:
         QVERIFY(LinkFile::remove(path));
         QVERIFY(!QFile::exists(path));
         QVERIFY(LinkFile::remove(path));
+    }
+
+    // ── the product as it is now: the fields the server sends today ─────
+    void decodesTheCurrentFields()
+    {
+        const State s = board();
+        // Sessions in the server's order, the archived one apart, a pair as a group.
+        QVERIFY(s.agents.size() >= 4);
+        QCOMPARE(s.archived.size(), 1);
+        QCOMPARE(s.archived[0].id, "old-spike");
+        QVERIFY(s.agent("old-spike")); // still known by name
+        QCOMPARE(s.groups.size(), 1);
+        QCOMPARE(s.groups[0].members, QStringList({"docs", "docs-review"}));
+        QCOMPARE(s.agent("api")->mark, "draw:anchor"); // the icon the human picked
+        QCOMPARE(s.agent("web-frontend")->mark, "web-frontend");
+        QVERIFY(s.agent("api")->starred);
+        QVERIFY(s.speech);
+        // What an archived session asked waits with it.
+        QVERIFY(s.card("c-old") && s.card("c-old")->open());
+        QVERIFY(!s.queue.contains("c-old"));
+
+        const Card *multi = s.card("c-checks");
+        QVERIFY(multi->multiple);
+        QCOMPARE(multi->recommended, QStringList({"lint", "e2e"}));
+        QVERIFY(!isQuick(*multi));
+        QCOMPARE(multi->draft.keys, QStringList{"lint"});
+        QCOMPARE(multi->draft.note, "only on main ");
+        QCOMPARE(multi->draft.notes.size(), 1);
+
+        const Card *merged = s.card("c-export");
+        QVERIFY(merged->revised > 0);
+        QCOMPARE(merged->mergedFrom.size(), 2);
+        QCOMPARE(cardNote(*merged), "replaces 2 questions · revised");
+        // Sections: a plain block, then the options as paragraphs, tied by their keys.
+        QCOMPARE(merged->sections.size(), 4);
+        QVERIFY(!merged->sections[0].flagged());
+        QCOMPARE(merged->sections[1].key, "limit");
+        QVERIFY(merged->sections[1].recommended);
+        QCOMPARE(merged->sections[2].picture, 0);
+        QCOMPARE(merged->sections[3].picture, -1); // an index the card does not have
+
+        const Card *done = s.card("c-runner");
+        QCOMPARE(done->choices, QStringList({"hosted"}));
+        QCOMPARE(done->optionNotes.size(), 1);
+        QCOMPARE(done->optionNotes[0].first, "self");
+        const Card *many = s.card("c-notify");
+        QCOMPARE(many->choices, QStringList({"mail", "board"}));
+        QCOMPARE(many->choice, "mail");
+    }
+
+    void oneStringOfChoicesIsAList()
+    {
+        const State s = from(R"({"cards":[
+            {"id":"a","status":"decided","choice":"x","options":[{"key":"x","label":"X"},{"key":"y","label":"Y"}]},
+            {"id":"b","status":"decided","choices":["y"],"options":[{"key":"x","label":"X"},{"key":"y","label":"Y"}]},
+            {"id":"c","sections":"nonsense","draft":7,"merged_from":"x","option_notes":[1],"revised":"soon","multiple":"yes",
+             "options":[{"key":"x","label":"X"}]}]})");
+        QCOMPARE(s.card("a")->choices, QStringList{"x"});
+        QCOMPARE(s.card("b")->choice, "y");
+        QVERIFY(s.card("c")->sections.isEmpty());
+        QVERIFY(s.card("c")->draft.empty());
+        QVERIFY(!s.card("c")->multiple);
+        QCOMPARE(s.card("c")->revised, 0.0);
+    }
+
+    void aGroupNeedsTwoWhoAreStillHere()
+    {
+        const State s = from(R"({"agents":[
+            {"id":"a","name":"A","group":"g1"},{"id":"b","name":"B","group":"g1","archived":true},
+            {"id":"c","name":"C","group":"g2"},{"id":"d","name":"D","group":"g2"},{"id":"e","name":"E"}]})");
+        QCOMPARE(s.groups.size(), 1);
+        QCOMPARE(s.groups[0].id, "g2");
+        QVERIFY(s.agent("a")->group.isEmpty());
+        const QList<Unit> u = units(s);
+        QCOMPARE(u.size(), 3);
+        QCOMPARE(u[0].id, "a");
+        QCOMPARE(u[1].id, "g2");
+        QCOMPARE(u[1].members.size(), 2);
+        QCOMPARE(u[2].id, "e");
+    }
+
+    void whatASessionNeedsShowsAtItsRow()
+    {
+        const State s = board();
+        QHash<QString, Unit> by;
+        for (const Unit &u : units(s)) by.insert(u.id, u);
+        // Blocked: something of it cannot go on without the human. The raised hand.
+        QVERIFY(by["api"].stuck);
+        QCOMPARE(by["api"].badge(), "waiting");
+        // Working, with questions open: the ring with the count.
+        QVERIFY(by["web-frontend"].running && !by["web-frontend"].stuck);
+        QCOMPARE(by["web-frontend"].badge(), "running");
+        QVERIFY(by["web-frontend"].open > 0);
+        // Disconnected with a question left: the count alone.
+        QVERIFY(!by["infrastructure"].online);
+        QCOMPARE(by["infrastructure"].badge(), "open");
+        // Online, nothing running, a question open: it waits for the human.
+        Unit idle;
+        idle.online = true;
+        idle.open = 1;
+        QCOMPARE(idle.badge(), "waiting");
+        idle.open = 0;
+        QCOMPARE(idle.badge(), "");
+        idle.running = true;
+        QCOMPARE(idle.badge(), "running");
+    }
+
+    void layingSessionsTogether()
+    {
+        const State s = from(R"({"agents":[
+            {"id":"a","name":"A","group":"g1"},{"id":"b","name":"B","group":"g1"},
+            {"id":"c","name":"C","group":"g2"},{"id":"d","name":"D","group":"g2"},{"id":"e","name":"E","group":"g2"},
+            {"id":"f","name":"F"},{"id":"h","name":"H"}]})");
+        using L = QList<QPair<QString, QString>>;
+        // Two that stand alone: a new group for both.
+        QCOMPARE(pairChanges(s, "f", "h", "new"), L({{"h", "new"}, {"f", "new"}}));
+        // Onto one that is in a group: into that group.
+        QCOMPARE(pairChanges(s, "f", "c", "new"), L({{"c", "g2"}, {"f", "g2"}}));
+        // Out of a pair into another: whoever is left behind stands alone again.
+        QCOMPARE(pairChanges(s, "a", "f", "new"), L({{"b", ""}, {"f", "new"}, {"a", "new"}}));
+        // Onto itself, onto its own group, onto nobody: nothing.
+        QVERIFY(pairChanges(s, "a", "a", "new").isEmpty());
+        QVERIFY(pairChanges(s, "a", "b", "new").isEmpty());
+        QVERIFY(pairChanges(s, "a", "nobody", "new").isEmpty());
+        // Taking one out: a group of two dissolves, a larger one only loses it.
+        QCOMPARE(unpairChanges(s, "a"), L({{"a", ""}, {"b", ""}}));
+        QCOMPARE(unpairChanges(s, "d"), L({{"d", ""}}));
+        QVERIFY(unpairChanges(s, "f").isEmpty());
+    }
+
+    void twinsAreToldApart()
+    {
+        const State s = from(R"({"agents":[
+            {"id":"a","name":"trommi","cwd":"/home/x/git/trommi"},{"id":"b","name":"trommi","cwd":"/home/x/tmp/trommi"},
+            {"id":"c","name":"api","cwd":"/srv/api","host":"one"},{"id":"d","name":"api","cwd":"/srv/api","host":"two"},
+            {"id":"e","name":"alone"}]})");
+        const auto lines = tellApart(s.agents);
+        QCOMPARE(lines.value("a"), "git/trommi");
+        QCOMPARE(lines.value("b"), "tmp/trommi");
+        QCOMPARE(lines.value("d"), "two");
+        QVERIFY(!lines.contains("e"));
+    }
+
+    void linksInARowAreNamedNotSpelled()
+    {
+        QCOMPARE(plain("See https://example.com/a/very/long/path/that/goes/on/and/on?x=1 now"), "See example.com/a/very/long/path/that… now");
+        QCOMPARE(plain("Here: https://board.example/a/abcdefghijklmnop0123#0123456789abcdefghijklmnopqrstuvwxyzABCDEFG"), "Here: [published link]");
+    }
+
+    // ── the scribbles: the same strokes as the web draws ────────────────
+    void scribblesMatchTheWeb_data()
+    {
+        QTest::addColumn<QString>("file");
+        QTest::newRow("this client's fixture") << QStringLiteral(FIXTURES "/doodles.json");
+        QTest::newRow("the iOS client's fixture") << QStringLiteral(FIXTURES "/../../../ios/TrommiTests/Fixtures/doodles.json");
+    }
+    void scribblesMatchTheWeb()
+    {
+        QFETCH(QString, file);
+        QFile f(file);
+        if (!f.open(QIODevice::ReadOnly)) QSKIP("fixture not there");
+        const QJsonObject all = QJsonDocument::fromJson(f.readAll()).object();
+        auto list = [](const QJsonValue &v) {
+            QStringList out;
+            for (const QJsonValue &x : v.toArray()) out.append(x.toString());
+            return out;
+        };
+        QVERIFY(all.value("doodles").toArray().size() > 30);
+        for (const QJsonValue &v : all.value("doodles").toArray()) {
+            const QJsonObject o = v.toObject();
+            const Drawing d = doodle(o.value("seed").toString());
+            QVERIFY2(d.paths == list(o.value("paths")), qPrintable("doodle " + o.value("seed").toString() + ": " + d.paths.join(" | ")));
+            QCOMPARE(d.rotate, o.value("rotate").toDouble());
+        }
+        for (const QJsonValue &v : all.value("sketches").toArray()) {
+            const QJsonObject o = v.toObject();
+            const Drawing d = sketch(o.value("name").toString());
+            QVERIFY2(d.paths == list(o.value("paths")), qPrintable("sketch " + o.value("name").toString()));
+            QCOMPARE(d.rotate, o.value("rotate").toDouble());
+        }
+        for (const QJsonValue &v : all.value("pairs").toArray()) {
+            const QJsonObject o = v.toObject();
+            QList<PairMember> members;
+            for (const QJsonValue &m : o.value("members").toArray()) members.append({m.toObject().value("id").toString(), m.toObject().value("mark").toString()});
+            const PairDrawing p = pairDoodle(members);
+            QStringList transforms;
+            for (const auto &m : p.members) transforms.append(m.transform);
+            QCOMPARE(transforms, list(o.value("transforms")));
+            QCOMPARE(p.loop, o.value("loop").toString());
+        }
+        const QJsonValue c = all.value("crown");
+        QCOMPARE(crown(), c.isObject() ? c.toObject().value("path").toString() : c.toString());
+        if (!all.contains("hand")) return; // the rest is in this client's fixture only
+        QCOMPARE(raisedHand(), list(all.value("hand")));
+        QCOMPARE(adviceLoop(), all.value("advice").toString());
+        for (const QJsonValue &v : all.value("groupLoops").toArray()) QCOMPARE(groupLoop(v.toObject().value("seed").toString()), v.toObject().value("path").toString());
+        for (const QJsonValue &v : all.value("loops").toArray()) {
+            const QJsonObject o = v.toObject();
+            Pen pen(o.value("seed").toString());
+            QCOMPARE(loopPath(pen, o.value("rad").toDouble(), o.value("drift").toDouble(), o.value("jitter").toDouble(), o.value("start").toDouble()), o.value("path").toString());
+        }
+        QCOMPARE(ringLoop(), all.value("loops").toArray()[0].toObject().value("path").toString());
+        for (const QJsonValue &v : all.value("hues").toArray()) QCOMPARE(hueOf(v.toObject().value("id").toString()), v.toObject().value("hue").toInt());
+        QCOMPARE(railMark("open", false, "c-1")[0], all.value("loops").toArray()[1].toObject().value("path").toString());
+    }
+
+    void scribblesByName()
+    {
+        QCOMPARE(drawings().size(), 40);
+        QVERIFY(drawings().contains("crown") && drawings().contains("burst"));
+        // The same seed, the same scribble; another seed, another one.
+        QCOMPARE(doodle("api").paths, doodle("api").paths);
+        QVERIFY(doodle("api").paths != doodle("web-frontend").paths);
+        QVERIFY(!sketch("explain").paths.isEmpty());
+        QVERIFY(sketch("no such icon").paths.isEmpty());
+        QCOMPARE(railMark("done", true, "x").size(), 2);
+        QVERIFY(ringDrop().startsWith('M') && ringDrop().endsWith('Z'));
     }
 };
 

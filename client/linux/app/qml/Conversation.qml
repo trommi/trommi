@@ -9,8 +9,14 @@ Item {
     property var messages: []
     property string stamp: ""
     property string sendError: ""
+    property string notice: ""
+    readonly property var questions: { board.rev; return board.inbox.filter(r => !r.head && r.agent === nav.agentId) }
+    readonly property var unit: nav.unit(nav.unitId)
 
     function compose() { composer.take() }
+    function say(text) { notice = text; noticeTimer.restart() }
+    Timer { id: settle; interval: 60; onTriggered: list.positionViewAtEnd() }
+    Timer { id: noticeTimer; interval: 5000; onTriggered: view.notice = "" }
     function scroll(by) {
         const max = Math.max(0, list.contentHeight - list.height) + list.originY
         list.contentY = Math.max(list.originY, Math.min(max, list.contentY + by * ui.px(60)))
@@ -26,7 +32,8 @@ Item {
         const y = list.contentY
         stamp = next
         messages = board.conversation(nav.agentId)
-        if (atEnd) Qt.callLater(list.positionViewAtEnd)
+        // Rows of uneven height are measured as they are laid out: once now, once when they are.
+        if (atEnd) { Qt.callLater(list.positionViewAtEnd); settle.restart() }
         else list.contentY = y
     }
     Connections { target: board; function onChanged() { view.refresh() } }
@@ -38,38 +45,87 @@ Item {
     }
     Component.onCompleted: refresh()
 
+    Rectangle { anchors.fill: parent; color: ui.surface }
+
     // ── who this is ─────────────────────────────────────────────────────
     Item {
         id: head
         anchors { left: parent.left; right: parent.right; top: parent.top }
-        height: who.height + ui.px(24)
+        height: who.height + ui.px(22)
         Column {
             id: who
             width: Math.min(ui.px(760), parent.width - ui.px(32))
-            anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: ui.px(14) }
+            anchors { horizontalCenter: parent.horizontalCenter; top: parent.top; topMargin: ui.px(12) }
             spacing: ui.px(6)
-            Row {
-                spacing: ui.px(10)
-                Text {
-                    text: (view.session.starred ? "★ " : "") + (view.session.name || "")
-                    color: ui.fg
-                    font { family: ui.sans; pixelSize: ui.px(24); weight: Font.ExtraBold; letterSpacing: -0.4 }
+            Item {
+                width: parent.width
+                height: ui.px(36)
+                Row {
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: ui.px(12)
+                    Mark { anchors.verticalCenter: parent.verticalCenter; who: view.session; size: ui.px(30) }
+                    Text {
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: view.session.name || ""
+                        color: ui.fg
+                        font { family: ui.sans; pixelSize: ui.px(21); weight: Font.ExtraBold; letterSpacing: -0.3 }
+                    }
+                    Text {
+                        visible: view.session.online === false
+                        anchors.verticalCenter: parent.verticalCenter
+                        text: "disconnected"
+                        color: ui.muted
+                        font { family: ui.sans; pixelSize: ui.px(13) }
+                    }
+                    Btn { // a pair: the other of the two
+                        visible: !!view.unit && view.unit.members.length > 1
+                        anchors.verticalCenter: parent.verticalCenter
+                        implicitHeight: ui.px(30)
+                        quiet: true
+                        label: "the other"
+                        cap: "O"
+                        onPressed: nav.otherPane()
+                    }
                 }
-                Text {
-                    anchors.baseline: parent.children[0].baseline
-                    text: (view.session.online ? "running" : "not running")
-                        + (view.session.open ? "  ·  " + (view.session.open === 1 ? "1 open question  o" : view.session.open + " open questions  o") : "")
-                    color: view.session.online ? ui.stDone : ui.muted
-                    font { family: ui.sans; pixelSize: ui.px(13.5) }
+                Row {
+                    anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                    spacing: ui.px(6)
+                    Btn {
+                        visible: view.questions.length > 0 || nav.questionsOnly
+                        implicitHeight: ui.px(32)
+                        strong: nav.questionsOnly
+                        label: "Questions only (" + view.questions.length + ")"
+                        cap: "Q"
+                        tint: nav.questionsOnly ? ui.fg : ui.accent
+                        onPressed: { nav.questionsOnly = !nav.questionsOnly; nav.sel = "" }
+                    }
+                    Btn { // the crown: this session's questions lead the inbox
+                        id: crownBtn
+                        implicitHeight: ui.px(32)
+                        implicitWidth: ui.px(44)
+                        quiet: true
+                        tint: ui.goldPen
+                        onPressed: board.star(nav.agentId, !view.session.vip)
+                        Scribble {
+                            anchors.centerIn: parent
+                            width: ui.px(24)
+                            box: 26; boxHeight: 19
+                            rotation: -8
+                            path: board.crown()
+                            color: view.session.vip ? ui.goldPen : ui.muted
+                            fill: view.session.vip ? ui.mix(ui.gold, ui.surface, 0.34) : "transparent"
+                            pen: 1.7
+                        }
+                    }
                 }
             }
             Text {
                 visible: text !== ""
                 width: parent.width
-                text: [view.session.model, view.session.cwd].filter(x => x).join("  ·  ")
+                text: [view.session.task, view.session.model, view.session.cwd].filter(x => x).join("  ·  ")
                 color: ui.faint
                 elide: Text.ElideMiddle
-                font { family: ui.mono; pixelSize: ui.px(12) }
+                font { family: ui.sans; pixelSize: ui.px(12) }
             }
             Flow { // the traffic-light lines the agent reports
                 width: parent.width
@@ -102,9 +158,37 @@ Item {
         Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: ui.line }
     }
 
+    // ── its open questions alone, as the rows of the inbox ──────────────
+    Flickable {
+        id: asks
+        visible: nav.questionsOnly
+        anchors { left: parent.left; right: parent.right; top: head.bottom; bottom: foot.top }
+        contentHeight: askList.height + ui.px(56)
+        clip: true
+        boundsBehavior: Flickable.StopAtBounds
+        Column {
+            id: askList
+            width: Math.min(ui.px(760), parent.width - ui.px(32))
+            x: (parent.width - width) / 2
+            y: ui.px(20)
+            spacing: ui.px(16)
+            Repeater {
+                model: nav.questionsOnly ? view.questions : []
+                InboxRow { required property var modelData; width: askList.width; card: modelData }
+            }
+            Text {
+                visible: view.questions.length === 0
+                text: "This session has no question for you right now."
+                color: ui.muted
+                font { family: ui.sans; pixelSize: ui.px(15) }
+            }
+        }
+    }
+
     // ── the conversation ────────────────────────────────────────────────
     ListView {
         id: list
+        visible: !nav.questionsOnly
         anchors { left: parent.left; right: parent.right; top: head.bottom; bottom: foot.top }
         clip: true
         boundsBehavior: Flickable.StopAtBounds
@@ -145,11 +229,20 @@ Item {
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
-                        width: Math.min(implicitWidth, line.column - ui.px(240))
+                        width: Math.min(implicitWidth, line.column - ui.px(line.modelData.tail ? 380 : 240))
                         text: line.modelData.text || ""
                         color: line.modelData.cardId ? ui.fg : ui.muted
                         elide: Text.ElideRight
                         font { family: ui.sans; pixelSize: ui.px(13.5); weight: line.modelData.cardId ? Font.DemiBold : Font.Normal }
+                    }
+                    Text { // what was said to it
+                        visible: !!line.modelData.tail
+                        anchors.verticalCenter: parent.verticalCenter
+                        width: Math.min(implicitWidth, ui.px(180))
+                        text: "→  " + (line.modelData.tail || "")
+                        color: ui.fg
+                        elide: Text.ElideRight
+                        font { family: ui.sans; pixelSize: ui.px(13.5); weight: Font.DemiBold }
                     }
                     Text {
                         anchors.verticalCenter: parent.verticalCenter
@@ -178,7 +271,33 @@ Item {
                     y: ui.px(11)
                     width: parent.width - ui.px(28)
                     spacing: ui.px(8)
+                    Text { // words about a question say which one
+                        visible: !!line.modelData.about
+                        width: parent.width
+                        text: "About: " + (line.modelData.about || "")
+                        color: ui.muted
+                        elide: Text.ElideRight
+                        font { family: ui.sans; pixelSize: ui.px(12); weight: Font.DemiBold }
+                    }
                     Rich { width: parent.width; blocks: line.modelData.blocks || [] }
+                    Rectangle { // something the session published under a link of its own
+                        visible: !!line.modelData.asset
+                        width: parent.width
+                        height: ui.px(48)
+                        radius: ui.px(8)
+                        color: ui.surface2
+                        border { width: 1; color: ui.line }
+                        Sketch { id: assetIcon; x: ui.px(12); anchors.verticalCenter: parent.verticalCenter; name: "page"; size: ui.px(22); color: ui.muted }
+                        Column {
+                            anchors { left: assetIcon.right; leftMargin: ui.px(12); verticalCenter: parent.verticalCenter }
+                            Text {
+                                text: line.modelData.asset ? line.modelData.asset.type + (line.modelData.asset.gone ? " · no longer available" : " · opens in the web client") : ""
+                                color: ui.muted
+                                font { family: ui.sans; pixelSize: ui.px(10.5); weight: Font.DemiBold; letterSpacing: 0.8; capitalization: Font.AllUppercase }
+                            }
+                            Text { text: line.modelData.asset ? line.modelData.asset.title : ""; color: ui.fg; font { family: ui.sans; pixelSize: ui.px(14); weight: Font.Bold } }
+                        }
+                    }
                     Rich {
                         width: parent.width
                         visible: blocks.length > 0
@@ -188,7 +307,7 @@ Item {
                     }
                     Text {
                         width: parent.width
-                        text: (line.modelData.attachments ? line.modelData.attachments + " in the web client  ·  " : "") + (line.mine ? "You · " : "") + (line.modelData.time || "")
+                        text: (line.modelData.attachments ? line.modelData.attachments + " in the web client  ·  " : "") + (line.mine ? "You · " : (view.session.name || "Agent") + " · ") + (line.modelData.time || "")
                         color: ui.faint
                         horizontalAlignment: line.mine ? Text.AlignRight : Text.AlignLeft
                         font { family: ui.sans; pixelSize: ui.px(11.5) }
@@ -221,7 +340,7 @@ Item {
             Text {
                 visible: text !== ""
                 width: parent.width
-                text: view.sendError || (view.session.online === false ? "This session is not running. The message waits until it is back." : "")
+                text: view.sendError || view.notice || (view.session.online === false ? "This session is disconnected. The message waits until it is back." : "")
                 color: view.sendError ? ui.deny : ui.muted
                 wrapMode: Text.Wrap
                 font { family: ui.sans; pixelSize: ui.px(12.5) }
@@ -230,12 +349,12 @@ Item {
                 id: composer
                 width: parent.width
                 multiline: true
-                placeholder: "Message to " + (view.session.name || "the agent") + " …  c"
+                placeholder: "Message to " + (view.session.name || "the agent")
                 onAccepted: board.send(nav.agentId, composer.text)
             }
             Text {
                 visible: composer.typing
-                text: "Enter sends  ·  Shift+Enter new line  ·  Esc back"
+                text: "Enter sends  ·  Shift+Enter for a new line  ·  Esc leaves the field"
                 color: ui.faint
                 font { family: ui.sans; pixelSize: ui.px(11.5) }
             }

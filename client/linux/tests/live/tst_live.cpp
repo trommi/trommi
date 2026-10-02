@@ -87,6 +87,10 @@ private:
             posts.append(path + " origin=" + head.value("origin") + " " + body);
             if (path == "/decide" && body.contains("\"gone\""))
                 return answer("400 Bad Request", "Content-Type: application/json\r\n", "{\"error\":\"unknown card\"}");
+            if (path == "/decide" && body.contains("\"reworded\""))
+                return answer("409 Conflict", "Content-Type: application/json\r\n", "{\"error\":\"the agent revised this question while you were answering; nothing was sent, read it again and answer once more\"}");
+            if (path == "/decide" && body.contains("\"answered\""))
+                return answer("409 Conflict", "Content-Type: application/json\r\n", "{\"error\":\"card already decided\"}");
             return answer("200 OK", "Content-Type: application/json\r\n", "{\"ok\":true}");
         }
         answer("404 Not Found", "", "");
@@ -95,11 +99,12 @@ private:
 
 // Waits for the answer of one POST.
 struct Answer {
-    bool done = false, ok = false;
+    bool done = false, ok = false, stale = false;
+    int status = 0;
     QString error;
     BoardClient::Done take()
     {
-        return [this](bool o, const QString &e) { done = true; ok = o; error = e; };
+        return [this](const BoardClient::Outcome &o) { done = true; ok = o.ok; error = o.error; stale = o.stale; status = o.status; };
     }
     bool wait() { return QTest::qWaitFor([this] { return done; }, 5000); }
 };
@@ -231,23 +236,81 @@ private slots:
         client.start(link);
         QVERIFY(states.wait(5000));
         Answer a, b, c, d;
-        client.decide("c1", "ja", "eine Anmerkung", a.take());
+        client.decide("c1", {"ja"}, false, "eine Anmerkung", 0, a.take());
         QVERIFY(a.wait());
         QVERIFY2(a.ok, qPrintable(a.error));
         client.reopen("c1", b.take());
         QVERIFY(b.wait() && b.ok);
-        client.sendMessage("Hallo Ä", "web", c.take());
+        client.sendMessage("Hallo Ä", "web", {}, c.take());
         QVERIFY(c.wait() && c.ok);
-        client.decide("gone", "ja", "", d.take());
+        client.decide("gone", {"ja"}, false, "", 0, d.take());
         QVERIFY(d.wait());
-        QVERIFY(!d.ok);
+        QVERIFY(!d.ok && !d.stale);
+        QCOMPARE(d.status, 400);
         QCOMPARE(d.error, "This question is no longer there.");
         QCOMPARE(server.denied, 0);
         QCOMPARE(server.posts.size(), 4);
         const QByteArray origin = " origin=" + link.origin().toUtf8() + " ";
-        QCOMPARE(server.posts[0], "/decide" + origin + R"({"card_id":"c1","key":"ja","note":"eine Anmerkung"})");
+        QCOMPARE(server.posts[0], "/decide" + origin + R"({"card_id":"c1","key":"ja","note":"eine Anmerkung","revised":null})");
         QCOMPARE(server.posts[1], "/reopen" + origin + R"({"card_id":"c1"})");
         QCOMPARE(server.posts[2], "/message" + origin + QStringLiteral(R"({"agent":"web","text":"Hallo Ä"})").toUtf8());
+        client.stop();
+    }
+
+    void standIn_whatTheProductSendsToday()
+    {
+        StandIn server;
+        server.dropStreams = false;
+        QVERIFY(server.listen(QHostAddress::LocalHost));
+        ServerLink link;
+        QVERIFY(ServerLink::parse(server.link(), &link));
+        BoardClient client;
+        QSignalSpy states(&client, &BoardClient::state);
+        client.start(link);
+        QVERIFY(states.wait(5000));
+        const QByteArray origin = " origin=" + link.origin().toUtf8() + " ";
+        auto sent = [&](Answer &a) { return a.wait() && a.ok ? server.posts.last() : QByteArray("failed: ") + a.error.toUtf8(); };
+
+        // Several answers at once, with the wording the human saw.
+        Answer many;
+        client.decide("c1", {"lint", "e2e"}, true, "", 1790930000000.0, many.take());
+        QCOMPARE(sent(many), "/decide" + origin + R"({"card_id":"c1","key":"lint","keys":["lint","e2e"],"note":"","revised":1790930000000})");
+        // A question back about a card, instead of an answer to it.
+        Answer ask;
+        client.sendMessage("Why?", "web", "c1", ask.take());
+        QCOMPARE(sent(ask), "/message" + origin + R"({"agent":"web","card_id":"c1","text":"Why?"})");
+        // "Explain" and "Back to agent": the same route, with the turn named.
+        Answer what, hand;
+        client.sendMessage("Explain it.", "web", "c1", what.take(), "explain");
+        QCOMPARE(sent(what), "/message" + origin + R"({"agent":"web","card_id":"c1","explain":true,"text":"Explain it."})");
+        client.sendMessage("Not like this.", "web", "c1", hand.take(), "handback");
+        QCOMPARE(sent(hand), "/message" + origin + R"({"agent":"web","card_id":"c1","handback":true,"text":"Not like this."})");
+        Answer draft;
+        client.draft("c1", {"lint"}, "half a ", draft.take());
+        QCOMPARE(sent(draft), "/draft" + origin + R"({"card_id":"c1","keys":["lint"],"note":"half a "})");
+        Answer star;
+        client.star("web", true, star.take());
+        QCOMPARE(sent(star), "/star" + origin + R"({"agent":"web","starred":true})");
+        // Pair, order, mark, name: one route.
+        Answer pair, move;
+        client.session("web", {{"group", "g1"}}, pair.take());
+        QCOMPARE(sent(pair), "/session" + origin + R"({"agent":"web","group":"g1"})");
+        client.session("web", {{"before", QJsonValue::Null}}, move.take());
+        QCOMPARE(sent(move), "/session" + origin + R"({"agent":"web","before":null})");
+
+        // The agent reworded the card meanwhile: refused, and said so as what it is.
+        Answer stale;
+        client.decide("reworded", {"ja"}, false, "", 5, stale.take());
+        QVERIFY(stale.wait());
+        QVERIFY(!stale.ok && stale.stale);
+        QCOMPARE(stale.status, 409);
+        QVERIFY(stale.error.startsWith("The agent revised this question"));
+        // Another 409 is no rewording.
+        Answer late;
+        client.decide("answered", {"ja"}, false, "", 0, late.take());
+        QVERIFY(late.wait());
+        QVERIFY(!late.ok && !late.stale);
+        QCOMPARE(late.error, "This question is already answered.");
         client.stop();
     }
 
@@ -284,7 +347,7 @@ private slots:
         // server closes the demo's approval on start: nobody waits for it.)
         QVERIFY(latest.queue.size() >= 3);
         QVERIFY(!latest.agents.isEmpty());
-        const QList<Card> open = openCards(latest, {});
+        const QList<Card> open = openCards(latest);
         QCOMPARE(open.size(), latest.queue.size());
         for (const Card &c : open) QVERIFY(rank(open.first().urgency) >= rank(c.urgency));
         QCOMPARE(open.first().urgency, Urgency::Critical);
@@ -298,7 +361,7 @@ private slots:
         const QString id = pick->id, key = pick->options.last().key, agent = pick->agent;
         const int openBefore = latest.queue.size();
         Answer a;
-        client.decide(id, key, "vom Linux-Test", a.take());
+        client.decide(id, {key}, false, "vom Linux-Test", 0, a.take());
         QVERIFY(a.wait());
         QVERIFY2(a.ok, qPrintable(a.error));
         QVERIFY(QTest::qWaitFor([&] { return latest.card(id) && !latest.card(id)->open(); }, 5000));
@@ -310,14 +373,14 @@ private slots:
 
         // Deciding it again is refused, in German.
         Answer again;
-        client.decide(id, key, "", again.take());
+        client.decide(id, {key}, false, "", 0, again.take());
         QVERIFY(again.wait());
         QVERIFY(!again.ok);
         QCOMPARE(again.error, "This question is already answered.");
 
         // An option that does not exist, on another card.
         Answer bad;
-        client.decide(open.first().id, "no-such-key", "", bad.take());
+        client.decide(open.first().id, {"no-such-key"}, false, "", 0, bad.take());
         QVERIFY(bad.wait());
         QVERIFY(!bad.ok);
         QVERIFY(!bad.error.isEmpty());
@@ -334,7 +397,7 @@ private slots:
         // A message to that card's session shows up in its conversation.
         const QString text = QStringLiteral("Hallo vom Linux-Client äöü %1").arg(QDateTime::currentMSecsSinceEpoch());
         Answer m;
-        client.sendMessage(text, agent, m.take());
+        client.sendMessage(text, agent, {}, m.take());
         QVERIFY(m.wait());
         QVERIFY2(m.ok, qPrintable(m.error));
         auto arrived = [&] {
@@ -346,7 +409,7 @@ private slots:
 
         // An empty message is refused.
         Answer e;
-        client.sendMessage("   ", agent, e.take());
+        client.sendMessage("   ", agent, {}, e.take());
         QVERIFY(e.wait());
         QVERIFY(!e.ok);
         QCOMPARE(e.error, "The message is empty.");

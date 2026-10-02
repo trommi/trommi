@@ -2,6 +2,7 @@
 
 #include "logic.h"
 
+#include <QJsonArray>
 #include <QJsonDocument>
 #include <QNetworkCookie>
 #include <QNetworkCookieJar>
@@ -178,7 +179,7 @@ void BoardClient::lost(bool)
 void BoardClient::post(const QString &path, const QJsonObject &body, Done done)
 {
     if (!m_link.valid()) {
-        if (done) done(false, QStringLiteral("Not connected."));
+        if (done) done({false, 0, QStringLiteral("Not connected."), false});
         return;
     }
     QNetworkRequest req = request(path);
@@ -189,33 +190,58 @@ void BoardClient::post(const QString &path, const QJsonObject &body, Done done)
     QNetworkReply *reply = m_net.post(req, QJsonDocument(body).toJson(QJsonDocument::Compact));
     connect(reply, &QNetworkReply::finished, this, [reply, done] {
         reply->deleteLater();
-        const int code = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
-        if (code >= 200 && code < 300) {
-            if (done) done(true, {});
-            return;
+        Outcome out;
+        out.status = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        out.ok = out.status >= 200 && out.status < 300;
+        if (!out.ok) {
+            QString error = QJsonDocument::fromJson(reply->readAll()).object().value("error").toString();
+            out.stale = out.status == 409 && isStale(error);
+            if (error.isEmpty())
+                error = out.status == 401 ? QStringLiteral("The login has expired.")
+                      : out.status ? QStringLiteral("The server answers with %1.").arg(out.status)
+                                   : QStringLiteral("No connection to the board.");
+            out.error = translateError(error);
         }
-        QString error = QJsonDocument::fromJson(reply->readAll()).object().value("error").toString();
-        if (error.isEmpty())
-            error = code == 401 ? QStringLiteral("The login has expired.")
-                  : code ? QStringLiteral("The server answers with %1.").arg(code)
-                         : QStringLiteral("Server not reachable.");
-        if (done) done(false, translateError(error));
+        if (done) done(out);
     });
 }
 
-void BoardClient::sendMessage(const QString &text, const QString &agent, Done done)
+void BoardClient::sendMessage(const QString &text, const QString &agent, const QString &cardId, Done done, const QString &turn)
 {
-    post("/message", {{"text", text}, {"agent", agent}}, done);
+    QJsonObject body{{"text", text}, {"agent", agent}};
+    if (!cardId.isEmpty()) body["card_id"] = cardId;
+    if (!cardId.isEmpty() && (turn == "handback" || turn == "explain")) body[turn] = true;
+    post("/message", body, done);
 }
 
-void BoardClient::decide(const QString &cardId, const QString &key, const QString &note, Done done)
+void BoardClient::decide(const QString &cardId, const QStringList &keys, bool multiple, const QString &note, double revised, Done done)
 {
-    post("/decide", {{"card_id", cardId}, {"key", key}, {"note", note}}, done);
+    QJsonObject body{{"card_id", cardId}, {"key", keys.value(0)}, {"note", note}};
+    if (multiple) body["keys"] = QJsonArray::fromStringList(keys);
+    body["revised"] = revised > 0 ? QJsonValue(revised) : QJsonValue(QJsonValue::Null);
+    post("/decide", body, done);
 }
 
 void BoardClient::reopen(const QString &cardId, Done done)
 {
     post("/reopen", {{"card_id", cardId}}, done);
+}
+
+void BoardClient::draft(const QString &cardId, const QStringList &keys, const QString &note, Done done)
+{
+    post("/draft", {{"card_id", cardId}, {"keys", QJsonArray::fromStringList(keys)}, {"note", note}}, done);
+}
+
+void BoardClient::star(const QString &agent, bool starred, Done done)
+{
+    post("/star", {{"agent", agent}, {"starred", starred}}, done);
+}
+
+void BoardClient::session(const QString &agent, const QJsonObject &changes, Done done)
+{
+    QJsonObject body = changes;
+    body["agent"] = agent;
+    post("/session", body, done);
 }
 
 } // namespace trommi

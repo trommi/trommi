@@ -8,3 +8,6 @@ SOURCES += $$files($$PWD/*.cpp)
 # GCC 16 reports Qt's own headers under C++20 (QChar, QBitArray "defined
 # after use in a SFINAE context"); nothing here can change that.
 gcc:!clang: QMAKE_CXXFLAGS_WARN_ON += -Wno-sfinae-incomplete
+# The scribbles are compared with the web's stroke for stroke: no fused
+# multiply-add, so a sum is rounded where JavaScript rounds it.
+QMAKE_CXXFLAGS += -ffp-contract=off

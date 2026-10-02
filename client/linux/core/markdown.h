@@ -1,5 +1,5 @@
 // The light markdown agents write: paragraphs, bullet lists, **bold**,
-// `code`, fenced code blocks and bare links. Parses to plain values; the
+// `code`, fenced code blocks, tables and bare links. Parses to plain values; the
 // view decides how they look. Follows rich() and inline() in
 // client/web/js/ui.js.
 #pragma once
@@ -16,10 +16,11 @@ struct Inline {
 };
 
 struct Block {
-    enum Kind { Paragraph, Bullets, CodeBlock } kind = Paragraph;
+    enum Kind { Paragraph, Bullets, CodeBlock, Table } kind = Paragraph;
     QList<Inline> inlines;       // Paragraph
     QList<QList<Inline>> items;  // Bullets
     QString code;                // CodeBlock
+    QList<QList<QList<Inline>>> rows; // Table: the head row first, then the others
     bool operator==(const Block &) const = default;
 };
 

@@ -58,7 +58,24 @@ QList<Block> parseMarkdown(const QString &text)
             for (const QString &l : lines)
                 if (!bullet.match(l).hasMatch()) all = false;
             Block b;
-            if (all) {
+            // A table as agents write it: rows of cells between pipes, a rule of dashes under the first.
+            static const QRegularExpression piped(QStringLiteral("^\\s*\\|.*\\|\\s*$"));
+            static const QRegularExpression rule(QStringLiteral("^\\s*\\|?[\\s:|-]*-[\\s:|-]*\\|?\\s*$"));
+            bool table = lines.size() > 1 && rule.match(lines[1]).hasMatch();
+            for (const QString &l : lines)
+                if (!piped.match(l).hasMatch()) table = false;
+            if (table) {
+                b.kind = Block::Table;
+                for (int r = 0; r < lines.size(); r++) {
+                    if (r == 1) continue;
+                    QString l = lines[r].trimmed();
+                    if (l.startsWith('|')) l.remove(0, 1);
+                    if (l.endsWith('|')) l.chop(1);
+                    QList<QList<Inline>> cells;
+                    for (const QString &cell : l.split('|')) cells.append(parseInline(cell.trimmed()));
+                    b.rows.append(cells);
+                }
+            } else if (all) {
                 b.kind = Block::Bullets;
                 for (QString l : lines) b.items.append(parseInline(l.remove(bullet)));
             } else {
