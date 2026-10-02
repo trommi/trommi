@@ -48,3 +48,12 @@ Running notes, newest at the bottom. Nothing here is committed by the worker.
   the avatar's online dot, `#questions`/`#history`/`#session-cards` ids, unused icons. A grep of every class and id in
   app.css/tokens.css against js/ and index.html finds none unused.
 - Not verified: touch drag (long press) on a real phone, `archived` against a real server, real `card_id` round trip.
+
+## After the server contracts landed
+- Demo on 8795 restarted from the current tree. Verified against the real server: ask-back (`card_id` comes back on the
+  message, "About <question>" shows), archive (server marks it, queue 29 -> 25, session leaves sidebar and inbox, is
+  listed under Archive, "Fetch back" restores it), `group` (a pair survives a fresh browser).
+- `recommended` may be a list: every named option is circled.
+- Asset hook: a message with `asset` is a card in the conversation (type, size, title, note, Open, Copy link; dashed
+  "No longer available" when gone) and a line in Files. Verified with a synthetic state only.
+- Help link is `/help.html`.
