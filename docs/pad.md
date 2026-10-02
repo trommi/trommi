@@ -247,3 +247,6 @@ Not built: rotation, frames, text styles beyond size and colour, elements placed
 3. Positions and sizes of elements in the clear on the server, or inside the encrypted record (section 5)?
 4. Should session canvases move to the same element model (`pad: "session:<id>"`), so that there is one canvas implementation? The conversion from the `{ v: 1, images, strokes }` document is mechanical.
 5. May an agent change or remove elements it did not make?
+
+## Entscheidung 2.10.2026 (Christopher)
+Eigene Zeichenfläche, bewusst einfach: Objekte mit einer Position. Für Agenten erzeugt die Fläche ein Bild des Ausschnitts. Keine fremde Bibliothek.

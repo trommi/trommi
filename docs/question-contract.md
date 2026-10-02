@@ -516,3 +516,84 @@ tool result says so. Human uploads have no `page`.
 Under each picture with `page`, a link or button "Open page" (the `title` as
 caption if there is one). Earlier versions of a card keep their pictures and
 pages; the files live as long as the card.
+
+## 9. Trust: leaving the decision to the agent
+
+### Sending
+
+```
+POST /decide { "card_id": "…", "trust": true, "note": "optional", "revised": <card.revised, optional> }
+→ 200 {"ok":true}
+  400 the card is an approval (permission) or an info, is unknown or already decided,
+      or `key` / `keys` were sent along (trust is no choice of options)
+  409 the card was revised while the human was answering (as for any answer)
+```
+
+Only on an open card of `kind: "decision"`. Do not offer the button on
+permission cards (they gate what the agent may do) or on infos.
+
+### Stored
+
+```js
+card.status   = "decided"
+card.trusted  = true          // false again after a take-back; absent on cards never trusted
+card.choices  = ["b"]         // the agent's recommendation (card.recommended), in option order; [] when it gave none
+card.choice   = "b"           // the first of them, or null
+card.note     = "…"           // the human's note, if any
+card.answered_version         // as for any answer
+// card.draft is gone; card.option_notes is {}
+```
+
+The `decided` event in the conversation has `trusted: true` and the text
+`Trusted: your call`, followed by ` · <recommended labels>` when there is
+advice. The agent gets the usual decision event with `trust="1"` (and `choice`
+empty when it had recommended nothing); it decides, says what it chose in a
+`reply` with the `card_id`, and closes the card. A card that shows `trusted`
+with empty `choices` is therefore waiting for that reply.
+
+### Taking it back
+
+`POST /reopen {card_id}` works as for any answer: the card is open again with
+`trusted: false`, `choice: null`, `choices: []`. Nothing is ticked (the human
+ticked nothing); a note they wrote comes back as `card.draft.note`. The agent
+hears `decision_reopened` with `trust="1"`.
+
+## 10. Shred: throwing a card away unanswered
+
+### Sending
+
+```
+POST /shred { "card_id": "…", "note": "optional, at most 2000 characters" }
+→ 200 {"ok":true}
+  400 unknown card, or the card is an approval (permission): those must be answered
+  409 the card is not open (already answered, closed or shredded)
+```
+
+On an open card of `kind: "decision"` or `kind: "info"`.
+
+### Stored
+
+```js
+card.status   = "shredded"     // a fourth status beside open, decided, done
+card.shredded = 1790930354077  // when; null again after a take-back; absent on cards never shredded
+card.choice   = null, card.choices = []
+card.note     = "…"            // the human's note, if any
+// card.draft and card.with_agent are gone
+```
+
+- The card is out of `state.queue`; count neither as a question nor as "to
+  read". It stays in `state.cards` until the retention time has passed
+  (counted from `shredded`), so the client can keep a "Shredded" list:
+  `state.cards.filter(c => c.status === 'shredded')`.
+- The conversation gets `{ kind: "shredded", card_id, text: "<title>" }` (with
+  ` · <note>` appended when there is one).
+- The agent gets `<channel source="board" kind="shredded" card_id="…">`: not a
+  yes and not a no; it must not ask again.
+- The agent cannot revise or withdraw a shredded card.
+
+### Taking it back
+
+`POST /reopen {card_id}` on a shredded card makes it open again as it was
+(`status: "open"`, `shredded: null`, back in the queue), with a `reopened`
+event. The agent hears `decision_reopened` with `shredded="1"` and an empty
+`previous_choice`. The draft is not restored (it was dropped on shredding).
