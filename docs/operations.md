@@ -162,7 +162,7 @@ Then put the printed name into `hub.env` as `BOARD_PUBLIC_URL=https://MACHINE.TA
 
 ## 5. Backups, restore, upgrades, rotation
 
-**What to back up:** the data directory, nothing else. `state.json` (sessions, messages, cards, queue), `files/` (attachments), `scribbles/`, `assets/`, `speech/`, `sessions/`, `admin-log.jsonl`, and the secrets `token`, `admin-token`, `tinfoil.key`. Plus `~/.config/trommi/hub.env` if you changed it.
+**What to back up:** the data directory, nothing else. `pad.db` (SQLite: sessions, messages, cards, queue and the Scratchpad), `files/` (attachments), `scribbles/`, `assets/`, `speech/`, `sessions/`, `admin-log.jsonl`, and the secrets `token`, `admin-token`, `tinfoil.key`. Plus `~/.config/trommi/hub.env` if you changed it.
 
 ```bash
 deploy/backup.sh                       # ~/.local/state/trommi/backups/trommi-data-<date>.tar.gz, mode 0600
@@ -170,7 +170,19 @@ deploy/backup.sh --to /mnt/nas/trommi --keep 14
 deploy/backup.sh --no-secrets          # without token, admin key and speech key
 ```
 
-The hub keeps running. The script copies `state.json` first (the hub replaces it by rename, so a copy is always a whole file), then the rest, checks that the copied state is valid JSON and packs the copy. `url.txt` and logs are never included. It prints paths, counts and sizes, never file contents. An archive with secrets opens the board to whoever reads it.
+**The state is in SQLite now, and `deploy/backup.sh` does not know that yet.** The hub keeps the board in `data/pad.db` in WAL mode, with `pad.db-wal` and `pad.db-shm` beside it. `state.json` is the old file: read once when the board moved, never written since, left in place as a backup of that day (the marker `state.in-sqlite` says so). A copy of `pad.db` taken while the hub writes can be torn, or lack what still sits in the WAL. So, until the script is brought up to date, do one of the two before copying:
+
+```bash
+systemctl --user stop trommi-hub && deploy/backup.sh && systemctl --user start trommi-hub   # a still database
+
+node server/board-store.mjs export data data/state-export.json   # or: a whole copy of the state as JSON, hub running
+deploy/backup.sh
+node server/board-store.mjs counts data                           # records per kind, to compare after a restore
+```
+
+The export holds the board (cards, messages, sessions, status lines, assets, waiting events), not the Scratchpad's elements; those are only in `pad.db`. To start a hub from an export, put it in place as `state.json` in a data directory without `pad.db` and without the marker; `node server/board-store.mjs back data` does the same in place, with the hub stopped.
+
+The script still copies `state.json` first, then the rest (the database files included), checks that the copied `state.json` is valid JSON and packs the copy; that check says nothing about the database. `url.txt` and logs are never included. It prints paths, counts and sizes, never file contents. An archive with secrets opens the board to whoever reads it.
 
 **Restore:**
 
@@ -192,7 +204,7 @@ deploy/install-user-service.sh         # only rewrites the unit if the template 
 systemctl --user daemon-reload && systemctl --user restart trommi-hub
 ```
 
-State migrations run inside the server when it loads `state.json` (missing numbers, urgencies and the queue are filled in); there is no separate step and no way back, which is what the backup before the pull is for. A state file the server cannot read is put aside as `data/state.broken-<time>.json` and the hub starts empty: stop, restore, look at the journal. Sessions keep running the `server.mjs` they started with until they are restarted; the link protocol tolerates an older spoke, but restart sessions after an upgrade that changes tools. Container: `docker compose -f deploy/compose.yaml up -d --build`.
+State migrations run inside the server when it loads the state (missing numbers, urgencies and the queue are filled in); there is no separate step and no way back, which is what the backup before the pull is for. With `BOARD_STORE=json`, a state file the server cannot read is put aside as `data/state.broken-<time>.json` and the hub starts empty: stop, restore, look at the journal. Sessions keep running the `server.mjs` they started with until they are restarted; the link protocol tolerates an older spoke, but restart sessions after an upgrade that changes tools. Container: `docker compose -f deploy/compose.yaml up -d --build`.
 
 **Rotate the access token:** on `/admin.html` under Access. The hub writes a new `data/token`, every browser and app must open the new link, linked sessions adopt the new token from the file by themselves. Without the page: stop the hub, delete `data/token`, start it. If the token is pinned with `BOARD_TOKEN`, the page refuses; change the value in `hub.env` and in the environment of every session, then restart both.
 
@@ -204,7 +216,7 @@ State migrations run inside the server when it loads `state.json` (missing numbe
 | --- | --- |
 | Service is `active` but the journal shows no `hub on …` line | **Port taken.** The service waits for the port. `ss -ltnp 'sport = :8790'` names the holder. If it is not Trommi, stop it or set another `BOARD_PORT` in `hub.env` (and in every session's environment, and run `tailscale-serve.sh` again). |
 | The holder is a `node …/server.mjs` that belongs to a Claude Code session | **A session holds the port** (it took over while the service was down, or was there first). The board works, with that session as hub, on the same data directory. To hand the port back, end or restart that session. With several sessions running another one may take over first, because a spoke tries again after 150 to 650 ms and the service only every 2 s; then end them one after another or all at once. This is the gap the first server change closes. |
-| Board shows old state, or two boards disagree | **Stale or second hub.** A hub left over from before (`sleep … \| node server/server.mjs`, a `dev/` script) holds the port, or a hub on another port uses another data directory. Check the holder's pid and its `BOARD_DATA` (`tr '\0' '\n' < /proc/<pid>/environ \| grep BOARD_`). Never run two hubs on one data directory with different ports: both write `state.json`. |
+| Board shows old state, or two boards disagree | **Stale or second hub.** A hub left over from before (`sleep … \| node server/server.mjs`, a `dev/` script) holds the port, or a hub on another port uses another data directory. Check the holder's pid and its `BOARD_DATA` (`tr '\0' '\n' < /proc/<pid>/environ \| grep BOARD_`). Never run two hubs on one data directory with different ports: both write the same `pad.db`. |
 | A session never appears, its tools answer "the board did not answer" or ask to retry | **Spoke cannot link.** In order: is the hub up (`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/` gives 401)? Same `BOARD_PORT`? Same data directory, so the same `token` file? Is the hub in a container without host networking (403 for every agent call)? The session's stderr says `linked to the hub on port … as "…"` when it works. |
 | Sessions get 403, browsers get "Access only through the link in data/url.txt" | **Token mismatch.** A browser holds a cookie from before a rotation: open the current link from `data/url.txt`. A session read a different token: it has another `BOARD_DATA`, or `BOARD_TOKEN` is pinned on one side only. A session re-reads `data/token` after a refusal, so a mismatch that persists is a configuration difference, not timing. |
 | Service fails at once, `status=1` from `ExecStartPre` | The checkout's `server.mjs` predates `BOARD_HUB_ONLY`. Update the checkout. |

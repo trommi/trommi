@@ -1,6 +1,6 @@
 # Trommi
 
-Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehreren Claude-Code-Sessions über einen Channel. Die Agenten legen Fragen als Karten ab, der Mensch beantwortet sie nacheinander von einem gemeinsamen Stapel, die dringendste zuerst. Offene Ideen stehen in `TODO.md`.
+Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehreren Claude-Code-Sessions über einen Channel. Die Agenten legen Fragen als Karten ab; sie liegen alle auf einem gemeinsamen „Desk“, die dringendste zuerst, und der Mensch beantwortet sie dort oder nacheinander mit „Next, please“. Wie man die Oberfläche bedient, steht kurz auf der Seite `/help.html`. Offene Ideen stehen in `TODO.md`.
 
 ## Starten
 
@@ -25,10 +25,10 @@ Für ein anderes Projekt den Server mit absolutem Pfad in dessen `.mcp.json` ein
 
 ## Technik
 
-- **Server:** Node.js (ab Version 22), eine Datei `server.mjs`, ohne Framework. Einzige Abhängigkeiten: `@modelcontextprotocol/sdk` und `zod`.
+- **Server:** Node.js (ab Version 22.13, wegen `node:sqlite`), `server.mjs` mit `board-store.mjs` und `pad.mjs`, ohne Framework. Einzige Abhängigkeiten: `@modelcontextprotocol/sdk` und `zod`.
 - **Verbindung zu Claude Code:** ein Channel, also ein MCP-Server über stdio mit der Erweiterung `claude/channel`.
 - **Browser:** handgeschriebene ES-Module und CSS, kein Framework, kein Build-Schritt. Live-Daten über Server-Sent Events, Zeichnen auf `<canvas>`, Schriften von Google Fonts.
-- **Speicher:** JSON-Datei und Dateien im Ordner `data/`, keine Datenbank.
+- **Speicher:** SQLite in `data/pad.db` (Karten, Gespräche, Sitzungen und das Scratchpad, mit WAL) und Dateien im Ordner `data/`. `data/state.json` ist die alte Datei: Sie wurde einmal übernommen und bleibt als Sicherung liegen, gelesen oder geschrieben wird sie nicht mehr. Siehe „Zustand“.
 - **Sprache:** Tinfoil (OpenAI-kompatible API) für Erkennung und Stimme.
 - **iOS:** SwiftUI-App im Ordner `client/ios/` (im Aufbau).
 - **Zugang:** Token im Link, danach Cookie; unterwegs über Tailscale (`tailscale serve` für HTTPS).
@@ -40,11 +40,11 @@ Was wir uns bei anderen abgeschaut haben, steht in `docs/gelernt.md`.
 Jede Session, die den Channel lädt, startet ihr eigenes `server.mjs`. Der erste Prozess bekommt den Port und wird zum Hub: Er hält den Zustand und liefert die Oberfläche aus. Jeder weitere verbindet sich als Speiche mit dem Hub und erscheint als eigener Agent in der Seitenleiste. Endet die Session des Hubs, übernimmt eine Speiche den Port; der Zustand liegt in `data/` und geht dabei nicht verloren.
 
 - Der Name eines Agenten ist der Ordnername seiner Session, oder `BOARD_AGENT`.
-- Der Posteingang zeigt die offenen Fragen aller Sitzungen, eine einzelne Sitzung ihr Gespräch mit ihren Fragen darin (siehe „The web UI“).
+- Der Desk zeigt die offenen Fragen aller Sitzungen, eine einzelne Sitzung ihr Gespräch und ihre Fragen (siehe „The web UI“).
 - Ein Agent sieht und ändert nur seine eigenen Karten und Statuszeilen.
-- Die Seite „Agents“ (in der Leiste unten) zeigt je Sitzung Modell, Rechner, Ordner und Programm. Mit dem Stern markierst du eine Sitzung als VIP; ihre Fragen stehen im Posteingang oben.
+- Die Seite `/agents`, der „Ledger“, zeigt je Sitzung eine Zeile: Zustand, erste Frage oder Auftrag, Modell, Rechner. Mit der Krone markierst du die Sitzung, die am meisten zählt (`POST /star`): Ihre Fragen stehen auf dem Desk oben, und sie bekommt die schnelle Notiz.
 - Nachrichten an einen Agenten, dessen Session gerade nicht läuft, warten, bis er wieder da ist.
-- Eine abwesende Sitzung lässt sich archivieren (`POST /session {agent, archived: true}`): Ihre offenen Karten bleiben erhalten, verlassen aber den Stapel, bis sie wieder hervorgeholt wird oder sich neu verbindet. Für eine Sitzung, die online ist, wird das abgelehnt. Mit `group` (freier Text, höchstens 40 Zeichen, `null` löscht) bilden Sitzungen mit demselben Wert ein Paar.
+- Eine abwesende Sitzung lässt sich archivieren (`POST /session {agent, archived: true}`): Ihre offenen Karten bleiben erhalten, verlassen aber den Stapel, bis sie wieder hervorgeholt wird oder sich neu verbindet. Für eine Sitzung, die online ist, wird das abgelehnt. Mit `group` (freier Text, höchstens 40 Zeichen, `null` löscht) liegen Sitzungen mit demselben Wert zusammen.
 
 **Eigener Hub.** Mit `BOARD_HUB_ONLY=1` ist der Prozess nur Hub: Er hält den Zustand und liefert die Oberfläche, meldet sich aber nicht selbst als Sitzung an und braucht kein Claude Code an stdin. So läuft ein Hub als Dienst, ohne Phantom-Sitzung in der Seitenleiste. Ist der Port besetzt, wartet er und versucht es fünfmal pro Sekunde wieder. Ein solcher Hub behält den Port: Sitzungen, die er begrüßt hat, übernehmen ihn nicht, wenn er endet, sondern verbinden sich neu, sobald er wieder da ist. `GET /healthz` antwortet ohne Anmeldung mit `{"ok":true}`. Die Routen der Speichen (`/agent/…`) gelten nur für Prozesse auf demselben Rechner; Anfragen, die ein Proxy wie `tailscale serve` weiterreicht (`X-Forwarded-For`, `Tailscale-User-Login`), werden dort abgelehnt. Betrieb als Dienst: `docs/operations.md`.
 
@@ -63,7 +63,7 @@ Ein Channel ist schmal. Trommi zeigt alles an, was darüber kommt:
 | `reply` mit Text | Nachricht im Gespräch, Markdown wird dargestellt |
 | `reply` mit `details` | aufklappbarer Abschnitt „Details“ unter der Nachricht: Begründung, Protokolle, Diffs |
 | `reply` mit `attachments` | Bilder als Galerie, Video und Audio zum Abspielen, sonst Download |
-| `create_decision`, `revise_card`, `merge_cards`, `set_urgency`, `withdraw_card`, `close_card` | Karten im Posteingang, im Stapel und im Gespräch |
+| `create_decision`, `revise_card`, `merge_cards`, `set_urgency`, `withdraw_card`, `close_card` | Karten auf dem Desk und im Gespräch |
 | `publish_asset` | Nachricht mit einem Link auf die verschlüsselte Seite oder Datei |
 | `set_status`, `clear_status` | Ampel-Zeilen der Sitzung |
 | `introduce` | Modell und Auftrag in der Agenten-Übersicht |
@@ -72,7 +72,7 @@ Ein Channel ist schmal. Trommi zeigt alles an, was darüber kommt:
 
 **Nicht über den Channel kommen:** die Denkschritte des Modells, seine Tool-Aufrufe, die Ausgabe im Terminal und der laufende Text. Der Agent sieht selbst, was er denkt, aber ein MCP-Server bekommt davon nichts. Wer das im Board sehen will, braucht einen zweiten Weg: Hooks, das Agent SDK oder den Zustand aus herdr (siehe `TODO.md`). Bis dahin gilt die Regel in den Anweisungen an den Agenten: Was der Mensch wissen soll, gehört in `reply`, die Begründung in `details`.
 
-Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zeigt die Seite `/help.html` (englisch, hinter der Anmeldung). Die Liste dort kommt aus dem laufenden Server (`GET /api/tools`), dieselben Tabellen, die der Agent bekommt. Das Bild allein: `/help.html#diagram`, als Datei in `demo/channel-api.png`.
+Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zeigt die Seite `/help.html` im unteren Teil (englisch, hinter der Anmeldung; oben steht dort die kurze Anleitung für den Menschen mit der Tastenliste aus `js/keys.js`). Die Liste dort kommt aus dem laufenden Server (`GET /api/tools`), dieselben Tabellen, die der Agent bekommt. Das Bild allein: `/help.html#diagram`, als Datei in `demo/channel-api.png`.
 
 ## Was der Agent bekommt
 
@@ -84,6 +84,13 @@ Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zei
 | Entscheidung mit mehreren Antworten | zusätzlich `choices="A,B"`: alle gewählten Schlüssel, durch Komma getrennt; `choice` ist der erste |
 | Zurückgenommen | `<channel source="board" kind="decision_reopened" card_id="…" previous_choice="KEY">`, bei mehreren Antworten zusätzlich `previous_choices` |
 | Scribble | `<channel source="board" kind="scribble" scribble_id="…" image_path="/abs/pfad.png">Bildunterschrift</channel>` |
+| Weggeworfen (Shred) | `<channel source="board" kind="shredded" card_id="…">` |
+| Info gelesen | `<channel source="board" kind="info_read" card_id="…">` |
+| Rückgabe zurückgenommen | `<channel source="board" kind="handback_withdrawn" card_id="…">` |
+| Auswahl vom Scratchpad | `<channel source="board" kind="pad" image_path="…">` |
+| Kopierte Karte | `kind="chat"` mit `cards="id,id"` und `cards_json`; der Text enthält jede Karte ganz |
+
+Die vollständige Liste mit allen Feldern (`handback`, `explain`, `trust`, `option_notes`, `files`, `marks` …) steht in [docs/interface.md](docs/interface.md), erzeugt aus dem Server.
 
 ## Was der Agent tun kann
 
@@ -125,9 +132,10 @@ Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zei
 - `create_info(title, body | sections | text, attachments, html, urgency, urgency_reason)`: etwas zum Lesen statt einer Frage, eine dritte Kartenart (`kind: "info"`, `options: []`): eine Erklärung, ein Bericht, ein Befund. Sie liegt im Stapel (bei gleicher Dringlichkeit hinter den Fragen), fragt aber nichts. Der Mensch liest und schließt sie mit `POST /close {card_id}`: Die Karte ist sofort erledigt (`read`), im Gespräch steht „read“, und der Agent bekommt still `<channel source="board" kind="info_read" card_id="…">`. Rückfrage, „What??“ und Rückgabe gehen wie bei einer Frage, `revise_card` überarbeitet sie (mit Fassungen), `POST /reopen` legt sie ungelesen zurück; `merge_cards`, `/decide` und `/draft` nehmen sie nicht.
 - **Symbol der Sitzung.** `introduce(model, task, icon)`: Der Agent wählt die Zeichnung, die zu seiner Aufgabe passt; die Namen mit Bedeutung stehen in der Tool-Beschreibung und unter `drawings` in `/api/tools` und kommen aus `client/web/drawings.json` (`[{name, meaning, hue}]`, bei Änderung neu gelesen; fehlt die Datei, gilt jeder Name aus Kleinbuchstaben). Unbekannte Namen werden mit der Liste abgelehnt. Ein von Hand gewähltes Symbol (`POST /session {agent, icon}`, `icon_by: "human"`) überschreibt der Agent nie.
 - **Bild mit Seite.** Überall, wo Agenten `attachments` übergeben, ist ein Eintrag ein Pfad oder `{path, page, title}`. `page` ist die Seite, aus der das Bild entstanden ist: der Pfad einer eigenständigen HTML-Datei (der Hub legt sie neben das Bild und liefert sie unter `/files/…​.html` aus, als Seite, aber in einer Sandbox mit eigenem Ursprung: `Content-Security-Policy: sandbox allow-scripts; default-src 'none'; …`, also ohne Cookies und ohne Zugriff aufs Board) oder ein Pfad auf dem Board, ein Asset-Link oder eine URL (als Link gespeichert). Der Anhang trägt dann `page: {url, kind: "file" | "link"}` und optional `title`. Liegt neben `foo.png` eine `foo.html`, verknüpft der Hub beide von selbst und sagt es im Ergebnis.
-- **Trust.** `POST /decide {card_id, trust: true, note}` überlässt eine offene Frage dem Agenten (nicht bei Freigaben und Infos, die werden abgelehnt). Die Karte ist entschieden mit `trusted: true`; `choice`/`choices` sind die Empfehlung des Agenten, falls es eine gibt, sonst leer. Im Gespräch steht „Trusted: your call“ (plus empfohlene Labels), der Agent bekommt das übliche Ereignis mit `trust="1"`, entscheidet, nennt seine Wahl per `reply` mit der `card_id` und schließt die Karte. Zurücknehmen geht wie bei jeder Antwort.
+- **Whatever (im Server: `trust`).** `POST /decide {card_id, trust: true, note}` überlässt eine offene Frage dem Agenten (nicht bei Freigaben und Infos, die werden abgelehnt). Die Karte ist entschieden mit `trusted: true`; `choice`/`choices` sind die Empfehlung des Agenten, falls es eine gibt, sonst leer. Im Gespräch steht „Trusted: your call“ (plus empfohlene Labels), der Agent bekommt das übliche Ereignis mit `trust="1"`, entscheidet, nennt seine Wahl per `reply` mit der `card_id` und schließt die Karte. Zurücknehmen geht wie bei jeder Antwort.
 - **Shred.** `POST /shred {card_id, note}` wirft eine offene Frage oder Info unbeantwortet weg (Freigaben nicht, die werden abgelehnt): `status: "shredded"`, `shredded: <Zeit>`, keine Wahl, raus aus dem Stapel. Im Gespräch steht „shredded“, der Agent bekommt `<channel source="board" kind="shredded" card_id="…">` und soll die Frage weder erneut noch umformuliert stellen. `POST /reopen` holt die Karte zurück (der Agent hört `decision_reopened` mit `shredded="1"`); gelöscht wird sie wie beantwortete Karten nach der Aufbewahrungszeit.
 - **Angeheftete Notizen und Zeichnungen (`marks`).** Eine Liste `[{id, anchor: {kind: "card" | "option" | "section" | "picture" | "text", key?, index?, x?, y?, quote?}, text?, strokes?}]`. `POST /draft` nimmt sie wie den Rest (immer die ganze Liste, gespeichert als `card.draft.marks`); `POST /decide`, `POST /message` (mit `card_id`) und `POST /shred` nehmen `marks` samt Bild der beschrifteten Karte in `attachments`. Gespeichert als `card.marks` bzw. `message.marks`, im Ereignis als Zahl („3 notes“), für den Agenten als Zeilen unter „Notes pinned to the card:“ mit `marks="N"`; Notizen an Optionen stehen zusätzlich in `option_notes`. Grenzen: 200 Marken, 64 KB je Marke, 1 MB zusammen. Schreibt der Agent die Karte um, fallen Marken an verschwundenen Optionen und Absätzen weg.
+- **Karte in eine andere Sitzung kopieren.** `POST /message {text, agent, cards: ["<id oder Nummer>", …]}` (höchstens 5) gibt eine Entscheidung an eine andere Sitzung weiter: Die Nachricht trägt `message.cards` (Chips, die auf `/q/<nummer>` zeigen), der empfangende Agent bekommt jede Karte ganz, mit Frage, Optionen, Antwort und Notizen. Die Karte selbst bleibt unverändert. Vertrag: Abschnitt 13 in `docs/question-contract.md`.
 - **Rückgabe zurücknehmen.** `POST /handback {card_id, clear: true}` löscht `with_agent`; der Agent bekommt still `kind="handback_withdrawn"`.
 - **Reihenfolge der Sitzungen.** `POST /session {agent, before: "<id>" | null}` stellt eine Sitzung direkt vor eine andere (`null`: ans Ende). `state.agents` steht in dieser Reihenfolge, jede Sitzung trägt `position`; neue kommen ans Ende, Mitglieder einer Gruppe ziehen gemeinsam um. Der Stapel und die Sortierung des Posteingangs bleiben davon unberührt.
 - `set_urgency(card_id, urgency, reason)`: Dringlichkeit einer offenen Karte ändern; die Karte rückt im Stapel entsprechend vor oder zurück
@@ -142,9 +150,9 @@ Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zei
 
 Tool-Freigaben erscheinen ebenfalls als Karten (Erlauben/Ablehnen).
 
-## Stapel und Dringlichkeit
+## Reihenfolge und Dringlichkeit
 
-Der Mensch sieht immer eine Karte, die oberste. Die Reihenfolge legt der Server fest (`queue` im Zustand): Freigaben zuerst, dann nach Dringlichkeit, bei gleicher Dringlichkeit die älteste zuerst.
+Die Reihenfolge der offenen Karten legt der Server fest (`queue` im Zustand): Freigaben zuerst, dann nach Dringlichkeit, bei gleicher Dringlichkeit die älteste zuerst.
 
 | Stufe | Bedeutung |
 | - | - |
@@ -153,45 +161,60 @@ Der Mensch sieht immer eine Karte, die oberste. Die Reihenfolge legt der Server 
 | `normal` | Wird bald gebraucht (Standard) |
 | `low` | Gut zu wissen, nichts hängt daran |
 
-Im Board heißen die Stufen Blocking, Urgent, Normal und Whenever; alle Texte, die der Server für Menschen erzeugt, sind englisch. Freigaben sind immer `critical`. Jede Karte bekommt beim Anlegen eine fortlaufende Nummer, die nie neu vergeben wird. Ändert der Agent die Stufe, erscheint das als Ereignis im Gespräch. Entschiedene Karten lassen sich nicht zurückziehen; der Agent schließt sie mit `close_card`.
+Auf dem Bildschirm sind `high` und `critical` „Knocks“: „Knock“ (dringend), „Knock! Blocking“ (blockiert) und „Knock! Permission“ (eine Freigabe); `normal` trägt nichts, `low` eine kleine Sanduhr. Alle Texte, die der Server für Menschen erzeugt, sind englisch. Freigaben sind immer `critical`. Jede Karte bekommt beim Anlegen eine fortlaufende Nummer, die nie neu vergeben wird. Ändert der Agent die Stufe, erscheint das als Ereignis im Gespräch. Entschiedene Karten lassen sich nicht zurückziehen; der Agent schließt sie mit `close_card`.
 
-Zustandsdateien der Vorversion werden beim Start übernommen: fehlende Nummern, Dringlichkeiten und der Stapel werden ergänzt.
+Zustandsdateien der Vorversion werden beim Start übernommen: fehlende Nummern, Dringlichkeiten und die Reihenfolge werden ergänzt.
+
+## Zustand
+
+Der Hub arbeitet auf einem Objekt im Speicher und legt es in SQLite ab: `data/pad.db`, dieselbe Datei wie das Scratchpad, im WAL-Modus (daneben liegen `pad.db-wal` und `pad.db-shm`). Jeder Datensatz ist eine Zeile, ein Commit schreibt nur, was sich geändert hat. `data/state.json` ist die alte Datei: Beim ersten Start mit SQLite wird sie einmal eingelesen, danach weder gelesen noch geschrieben; sie bleibt als Sicherung liegen, und die Markierung `data/state.in-sqlite` sagt, dass sie veraltet ist.
+
+```bash
+node server/board-store.mjs counts data             # wie viele Datensätze je Art
+node server/board-store.mjs export data [datei]     # der Zustand als JSON, wie ihn state.json hielt
+node server/board-store.mjs back data               # der Weg zurück, bei gestopptem Hub: schreibt state.json neu
+```
+
+`BOARD_STORE=json` bleibt beim alten Weg, ebenso ein Node ohne SQLite. Ein solcher Hub startet aber nicht neben der Markierung, weil er sonst ein Board von gestern zeigen würde; erst `back` macht den Weg frei. Sicherung: `docs/operations.md`.
 
 ## The web UI
 
-Hand-written ES modules and CSS in `client/web/`, English, light unless the human picks dark. Three places: the **Inbox**, one **session** (or several laid together), and the **Agents** page.
+Hand-written ES modules and CSS in `client/web/`, English, light unless the human picks dark. The short guide for the person using it is `/help.html`; the words on screen are constants in `js/ui.js` (and `pad/name.js`), so a word is changed in one place. The layout is still moving (where the app menu lives, how the opened card is arranged), so this section names what there is, not where it sits.
 
-**Inbox.** Every open question of every session, grouped by who asks; a starred session's group comes first, then whoever has the most urgent question. Every row is the same height (148px) with its answer at the right edge, always in the same place, so after an answer the next row stands under the pointer.
+**The Desk** (`INBOX_WORD`; in code, files and classes still "inbox", at the address `/`). One list of every open question of every session; a crowned session's questions first, then by urgency. The heading counts ("12 on your desk", then knocks and things to read) and "Desk is clear." when nothing is left.
 
-- **Thumbs or Choose.** A two-way question is answered by thumb: down on the left, up on the right. The option's own word stands under its thumb when the pair says more than yes and no, whole, in at most two lines; a label that would not fit that way sends the card to Choose instead (`fitsTile` in `inbox.js` is the one rule). Everything else gets one wide **Choose**.
-- **Inline expansion.** Choose unfolds the row in place: the text, every option as a tile, and a line to ask back. Only a card with too much for that (long text, code, several pictures, files, more than six options) opens as a window of its own, the Focus window; a tap on a row's text opens that window too.
-- **Multi-select.** A card made with `multiple: true` has options that toggle and a Send tile that sends them together (`POST /decide {card_id, keys}`).
-- **The agent's advice.** The option named in `recommended` is circled by hand; the human still decides.
-- **Ask back.** Instead of answering, write a question to the session about this card (`POST /message {text, agent, card_id}`). The card stays open and waits under Later until the session has replied; message and reply are marked "About <question>" in the conversation.
-- **Later.** A small tag with an arrow hangs over the bottom edge of every row. It puts the question off: the row leaves its sender's group for one dashed group, **Later**, at the very end, so working down the list comes to an end. The same tag fetches it back. What was put off is kept in this browser; a card the agent makes more urgent returns by itself.
-- **Undo.** An answer can be taken back for a few seconds from the note that says "Answered" ("Back"), and later with "Answer again" in the list of answered questions. The card returns to the stack and the agent is told to stop acting on the old choice.
-- **VIP.** A starred session is marked once: its scribble on gold and a small tab at its group's heading, and the tab in the title of its own page. Its rows stay as plain as any other. The word lives in `VIP_LABEL` (`inbox.js`).
-- **Urgency.** Blocking and Urgent carry a coloured tab at the row's corner, Normal carries none, Whenever a small scribbled hourglass. One colour per urgency drives tint, text and edge of the whole row.
+- **Knocks.** Questions that will not wait: "Knock" (urgent), "Knock! Blocking", "Knock! Permission". They lead the list and the counts; a new one nudges, with a sound if switched on.
+- **Answering in the row.** A two-way question is answered by thumb, down and up, with the option's word under the thumb where it says more than yes and no. Anything else gets "Choose", which opens the options. A card made with `multiple: true` has options that tick and a Send (`POST /decide {card_id, keys}`). The option named in `recommended` is marked by hand; the human still decides.
+- **Next, please** (`WALK_WORD`, address `/walk`). The button that walks through all open questions, one after the other.
+- **The opened card** (`/q/<number>`, `js/focus.js`). The question in full with its pictures, files and earlier versions, the answers, what was said about it, and notes: on the whole answer, on single options, and written or drawn right on the card (`js/focus-marks.js`, `marks` in the contract).
+- **Besides answering.** **Snooze** (put off; kept in this browser, in the Snoozed pile; a card the agent makes more urgent returns by itself), **Revise** (hand the card back to its session and say what should change, `POST /message {card_id, handback: true}`; it returns as the same card, reworded), **Whatever** (the agent takes its own recommendation, `POST /decide {trust: true}`), **Shred** (thrown away unanswered, `POST /shred`). **What??** asks the session to explain a card in writing (`explain: true`).
+- **Info cards.** Something to read, nothing to decide: "Acknowledge" (`POST /close`) or "What??".
+- **Back.** An answer can be taken back from the note that follows it, and later from the piles at the foot of the Desk (Snoozed, Waiting, Answered, Shredded). The agent is told to stop acting on the old choice.
 
-**A session.** One conversation, with the session's questions inside it: while a question is open it stands in the log as the same row as in the inbox, right where it was asked; once answered it shrinks to one line that names the question and the answer. Two filters in the title lay a list over the log and keep its scroll position: **Questions only** (the open ones, then the answered ones, each unfolding what was asked, what was chosen, and the way to answer again) and **Files** (everything the session sent: pictures, video, audio, files, scribbles, links, published assets). The second mode of a session is **Scribble**, its canvas. On a phone the two modes are a tab bar.
+**A session** (`/s/<id>`). Its conversation, its questions (beside the conversation on a wide window), its files, and **Scribble**, its canvas. A published asset in a message is a card with type, size, title, "Open" and "Copy link"; a link to an asset inside any text becomes a compact card, the key never printed. A click on a session's mark picks another drawing, a click on its name renames.
 
-- **Published assets.** A message that carries an `asset` is a card: type, size, title, note, "Open" in a new tab, "Copy link"; once revoked or expired it is dashed and opens nothing. A link to an asset inside any text (`…/a/<id>#<key>`) becomes a compact card with the asset's title, its type and, for a picture, a small preview; the key is never printed. Other long links are shortened to host and start of path.
-- **The picture is the way to the drawing.** A click on a session's mark opens forty drawings right under it; one click picks and saves (`POST /session {agent, icon: "draw:<name>"}`). A click on the name renames.
+- **The crown.** The switch on a session's mark (`POST /star`). A crowned session's questions lead the Desk, and it receives the quick note.
+- **Laid together** ("stacked", `/s/<a>+<b>`). Sessions that share a `group`: one combined list of their questions, each row naming its session, the conversations beside it, each with its own composer. Every browser shows the same groups.
+- **Archive.** A disconnected session can be put away; its questions leave the Desk until it is fetched back or reconnects.
+- **The Ledger** (`/agents`, `js/ledger.js`). One line per session: mark, crown, name, state, its first question (a yes/no is answered in the line) or its task, model, machine, and the actions to open, lay together and archive. Lines are sorted by a click on a column head and moved by their grip.
 
-**Sidebar.** The inbox on top, the sessions below, disconnected ones under a dashed heading. The badge at the end of a row tells the state: a ring circled by hand with the number of open questions while the session works (a drop travels through the ring; under reduced motion it stands still), a raised hand in a red loop when it is stopped waiting for the human, grey when it is disconnected. Sessions of the same name get a second line that tells them apart: the folder, else the machine, else since when.
+**Quick note and Scratchpad.** The quick note (`js/quicksend.js`, key `/`) sends a few words, with pictures or files, to the crowned session as a plain message, from any page. The **Scratchpad** (`PAD_WORD`, `client/web/pad/`, key `P`, address `/pad`) is the human's own notebook and stays with the human: an agent sees only a selection that is sent to it (`POST /pad/send`).
 
-- **Pairs.** Drag one session onto another and they become one entry with a joint mark and one page: their conversations side by side, each with its own composer (on a phone one column, the names switch). Grab a name or a scribble inside the entry and carry it out, and that session stands alone again; the scissors under the badge cut the whole group apart; the Agents page has "Put together with…" and "Split". The server keeps it (`group` on the session), so every browser shows the same pairs.
-- **Archive.** A disconnected session can be put away (the box on its row, or "Archive" on the Agents page; `POST /session {agent, archived: true}`). Its questions leave the inbox; it is listed under Archive on the Agents page, comes back with "Fetch back", and by itself when it reconnects.
+**Passing a decision on.** A card can be copied and pasted into a message to another session (`cards` on `POST /message`); the message shows it as a chip that links to `/q/<number>`.
 
-**Addresses.** Every place has a real address, so a reload and a shared link land on it: `/` the inbox, `/agents`, `/s/<id>` a session, `/s/<a>+<b>` sessions laid together, `/s/<id>/questions`, `/s/<id>/files`, `/s/<id>/scribble`, and `?q=<card id>` on any of them for that question in its own window.
+**Addresses.** Every place has a real address, so a reload and a shared link land on it: `/` the Desk, `/q/<number>` a question, `/walk` the walk, `/s/<id>` a session, `/s/<a>+<b>` sessions laid together, `/s/<id>/files`, `/s/<id>/scribble`, `/agents` the Ledger, `/pad` the Scratchpad. Older links (`?q=<card id>`, `/s/<id>/questions`) are rewritten in place.
 
-**Keyboard.** The inbox can be worked down without the mouse: the arrows pick a row, letters answer it, put it off or open its choices, and one key takes the last answer back. `?` (or "Keys" in the bar) shows every key; they are defined in one place, `js/keys.js`.
+**Keyboard.** The whole app works without the mouse. `?` shows the keys that work where you are; they are defined in one table, `LAYOUT` in `js/keys.js`, and the help page prints that same table.
+
+**The logo** is a scribbled Z in an open ring (`assets/`, the favicon, the mark in `index.html`).
 
 Answered cards are deleted after 30 days together with their attachments and their markers in the conversation (`BOARD_RETENTION_DAYS`). Open cards stay.
 
-## Scribble
+## Scribble und Scratchpad
 
-Jede Sitzung hat ein eigenes, dauerhaftes Canvas: zeichnen, Bilder ablegen, darüber malen, beliebig weit. Der Server speichert es laufend (`data/scribbles/canvas-<sitzung>.json`). „Senden“ schickt dem Agenten zwei Bilder: den Ausschnitt, den du gerade siehst, und das ganze Canvas. Der Agent kann das Canvas also jederzeit als Ganzes ansehen. Was du dazu sagen willst, schreibst du danach ins Gespräch.
+Jede Sitzung hat ein eigenes, dauerhaftes Canvas, „Scribble“: zeichnen, Bilder ablegen, darüber malen, beliebig weit. Der Server speichert es laufend (`data/scribbles/canvas-<sitzung>.json`). „Senden“ schickt dem Agenten zwei Bilder: den Ausschnitt, den du gerade siehst, und das ganze Canvas. Der Agent kann das Canvas also jederzeit als Ganzes ansehen. Was du dazu sagen willst, schreibst du danach ins Gespräch.
+
+Das „Scratchpad“ ist etwas anderes: das eine Notizbuch des Menschen über alle Sitzungen hinweg (`client/web/pad/`, `server/pad.mjs`, gespeichert in `data/pad.db`, beschrieben in `docs/pad.md`). Es bleibt beim Menschen; ein Agent bekommt nur, was dort ausgewählt und gesendet wird.
 
 ## Sprache
 
@@ -200,7 +223,7 @@ Mit einem Tinfoil-Schlüssel (`TINFOIL_API_KEY` oder `data/tinfoil.key`) gibt es
 ## Aufbau
 
 ```
-server/        server.mjs (Channel und Hub in einer Datei) und test.mjs
+server/        server.mjs (Channel und Hub in einer Datei), board-store.mjs (Zustand in SQLite), pad.mjs, test.mjs
 client/web/    die Web-Oberfläche: statische Dateien, handgeschriebene ES-Module und CSS, kein Build-Schritt
 client/ios/    die SwiftUI-App mit Tests
 dev/           Demo-Agenten, Vorschau, Screenshots
@@ -210,7 +233,7 @@ data/          Zustand, Anhänge, Token (nicht in Git)
 
 Server und Clients liegen bewusst in einem Repository: Ändert sich die Schnittstelle, werden alle im selben Commit angepasst, und die Tests der Clients laufen gegen den Server aus demselben Stand. Die Web-Oberfläche liefert der Server aus dem Nachbarordner aus; `package.json` bleibt im Wurzelordner, weil Server und `dev/` dieselben Abhängigkeiten nutzen.
 
-In `client/web/js/`: `store.js` holds the state and what is in scope (the inbox, a session, a group), `app.js` the page, its addresses and the theme, `inbox.js` the question rows and the lists made of them, `chat.js` the conversation with its filters and the asset cards, `history.js` the answered questions and the files, `agents.js` the sidebar, the badges, pairs, the Agents page and the choice of drawing, `ui.js` the shared helpers and everything drawn by hand (session marks, icons, the advice loop, links to assets), `focus.js` the window of one question, `scribble.js` the canvas, `keys.js` the keys, `speech.js` dictation and reading aloud.
+In `client/web/js/`: `store.js` holds the state and what is in scope (the inbox, a session, a group), `app.js` the page, its addresses and the theme, `inbox.js` the question rows and the lists made of them, `chat.js` the conversation with its filters and the asset cards, `history.js` the answered questions and the files, `agents.js` the sidebar, the badges, groups and the choice of drawing, `ledger.js` the Ledger, `beside.js` the questions beside a conversation and the combined list of sessions laid together, `bar.js` the menu and the jump field, `quicksend.js` the quick note, `knock.js` the knocks, `back.js` the note that takes the last action back, `ui.js` the shared helpers, the words on screen and everything drawn by hand (session marks, icons, the advice mark, links to assets), `focus.js` the opened card and the walk, `focus-marks.js` notes and pen on a card, `scribble.js` the canvas, `padlink.js` the way to the Scratchpad, `keys.js` the keys, `speech.js` dictation and reading aloud, `help.js` the help page.
 
 ## Vorschau
 
@@ -234,7 +257,7 @@ dev/trio.sh 8795 600        # drei simulierte Agenten auf http://<host>:8795/?t=
 - **Sitzungen:** jede bekannte Sitzung; eine abwesende lässt sich vergessen (auf Wunsch samt Gespräch, Karten und Dateien), Wartendes lässt sich verwerfen.
 - **Aufräumen:** was die Frist als Nächstes löscht, und verwaiste Dateien (auch in `data/assets/`); beides zeigt erst die Anzahl.
 - **Zugang:** die Anmelde-Links zum Kopieren, und ein neues Token. Danach müssen sich alle Browser und Apps neu anmelden; laufende Sitzungen der Agenten arbeiten weiter. Ist das Token über `BOARD_TOKEN` gesetzt, wird es nicht getauscht.
-- **Daten:** der Zustand als JSON (ohne Token, Schlüssel der Verwaltung und wartende Benachrichtigungen; mit den Einträgen der Assets, also auch mit dem Link jedes Assets, das im Board erscheint) und ein Protokoll der letzten 300 Handgriffe in `data/admin-log.jsonl`.
+- **Daten:** der Zustand als JSON (aus der Datenbank) (ohne Token, Schlüssel der Verwaltung und wartende Benachrichtigungen; mit den Einträgen der Assets, also auch mit dem Link jedes Assets, das im Board erscheint) und ein Protokoll der letzten 300 Handgriffe in `data/admin-log.jsonl`.
 - **Diagnose:** die letzten 200 Zeilen des Hubs auf stderr, offene Seiten, Verbindung jeder Sitzung.
 
 Die Seite verlangt neben der Anmeldung am Board einen zweiten Schlüssel, weil der Link zum Board auf vielen Geräten liegt und nicht reichen soll, um Daten zu löschen:
@@ -259,6 +282,7 @@ Der Schlüssel gilt zwölf Stunden pro Browser und bis zum nächsten Wechsel des
 - `BOARD_MAX_ATTACHMENT_MB` (Standard 1024): größte Datei, die der Agent anhängen darf
 - `BOARD_MAX_ASSET_MB` (Standard 64): größtes Asset für `publish_asset`
 - `BOARD_HUB_ONLY` (`1`): nur Hub sein, keine eigene Sitzung
+- `BOARD_STORE` (`json`): den Zustand wie früher in `state.json` halten statt in SQLite
 
 ## Anhänge
 
@@ -279,7 +303,7 @@ Mit `publish_asset` legt ein Agent eine HTML-Seite, ein Bild, ein Video, eine Au
 | | Heute | Mit dem Raumschlüssel |
 | - | - | - |
 | Gespeichertes Asset | nur Chiffretext | nur Chiffretext |
-| Asset, das im Board erscheint | **Schlüssel, Titel und Notiz.** Der Link steht als Nachricht im Gespräch, und Nachrichten sind noch nicht verschlüsselt. Er liegt damit auch in `state.json` und im Export der Verwaltung. | nichts: Der Asset-Schlüssel liegt in `wrapped_key`, versiegelt mit AES-256-GCM unter einem per HKDF-SHA-256 aus dem Raumschlüssel abgeleiteten Schlüssel, gebunden an Raum, Epoche und Asset-ID |
+| Asset, das im Board erscheint | **Schlüssel, Titel und Notiz.** Der Link steht als Nachricht im Gespräch, und Nachrichten sind noch nicht verschlüsselt. Er liegt damit auch in `data/pad.db` und im Export der Verwaltung. | nichts: Der Asset-Schlüssel liegt in `wrapped_key`, versiegelt mit AES-256-GCM unter einem per HKDF-SHA-256 aus dem Raumschlüssel abgeleiteten Schlüssel, gebunden an Raum, Epoche und Asset-ID |
 | Asset mit `silent: true` | weder Schlüssel noch Titel noch Typ. Der Agent bekommt den Link und gibt ihn selbst weiter. | dasselbe |
 | Immer sichtbar | dass es ein Asset gibt, seine ungefähre Größe, wann es abgelegt und abgerufen wurde, von welcher Adresse | |
 
@@ -294,7 +318,7 @@ Mit `publish_asset` legt ein Agent eine HTML-Seite, ein Bild, ein Video, eine Au
 
 ## Adressen der Oberfläche
 
-Die Oberfläche merkt sich ihren Ort in der Adresse. `/s/<irgendwas>`, `/agents` und `/inbox` liefern dieselbe Seite wie `/`, hinter der Anmeldung. Daneben liefert der Server jede Datei unter `client/web/` aus (html, css, js, mjs, json, png, svg, webp, ico, woff2), auch in Unterordnern wie `designs/` und `pad/`; ein Ordner antwortet mit seiner `index.html`. Punktdateien, Verknüpfungen und Pfade nach außen gibt es nicht, Routen gehen vor Dateien, alles andere bleibt 404. Der Anmelde-Link behält Pfad und weitere Parameter: `/s/api?q=<karte>&t=<token>` führt nach `/s/api?q=<karte>`.
+Die Oberfläche merkt sich ihren Ort in der Adresse. `/s/<irgendwas>`, `/q/<nummer>`, `/walk`, `/agents`, `/pad` und `/inbox` liefern dieselbe Seite wie `/`, hinter der Anmeldung. Daneben liefert der Server jede Datei unter `client/web/` aus (html, css, js, mjs, json, png, svg, webp, ico, woff2), auch in Unterordnern wie `designs/` und `pad/`; ein Ordner antwortet mit seiner `index.html`. Punktdateien, Verknüpfungen und Pfade nach außen gibt es nicht, Routen gehen vor Dateien, alles andere bleibt 404. Der Anmelde-Link behält Pfad und weitere Parameter: `/s/api?q=<karte>&t=<token>` führt nach `/s/api?q=<karte>`.
 
 ## Test
 

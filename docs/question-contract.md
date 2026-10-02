@@ -703,3 +703,14 @@ POST /message { "text": "act on this", "agent": "<receiving session>", "cards": 
   human's note and option notes, or that it is open / shredded / left to the
   agent, and the paths of its pictures), and in meta `cards="id,id"` and
   `cards_json` (the chips plus `kind`, `status`, `choices`).
+
+## 14. How many options a card offers
+
+Agents are told to offer only the options they are about 80% confident are a
+great idea: two or three strong ones, the recommendation marked. When the human
+asked for many proposals, all of them belong on a linked page or an attachment,
+and only the ones the agent stands behind on the card. The hub does not refuse
+a long list, but a card filed or revised with more than six options gets a
+reminder in the tool result (`Many options (N): keep only the ones you are sure
+of. …`). Nothing changes in the card's shape; clients may still meet cards with
+more than six options and must lay them out.

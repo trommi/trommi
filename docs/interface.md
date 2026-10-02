@@ -13,13 +13,13 @@ The same content as a page with a filter: `client/web/designs/interface.html` (o
 | Tools | 16 |
 | Parameters, nested ones included | 119 (75 at the top level; 60 distinct, because four tools share the question fields) |
 | Parameters accepted but not shown | 11 |
-| Events to the agent | 8 (7 kinds on the channel, plus the approval verdict) |
-| Meta keys on those events | 36 |
+| Events to the agent | 9 (8 kinds on the channel, plus the approval verdict) |
+| Meta keys on those events | 45 |
 | Records | 10, with 144 fields; 23 of them read by no web client |
-| Routes for the browser | 35 |
+| Routes for the browser | 36 |
 | Routes for agents | 5 |
 | Wishes | 19 |
-| Mismatches | 20 |
+| Mismatches | 18 |
 
 ## 1. Overview
 
@@ -28,7 +28,7 @@ Four processes in a row. The agent speaks MCP to its channel process; the channe
 ```text
   Claude Code            channel process              hub                       browser
   (the agent)            server.mjs, one per          server.mjs, port 8790     client/web
-                         session, over stdio          state.json, data/
+                         session, over stdio          data/pad.db, data/
 
   tools/call  ────────►  POST /agent/tool  ────────►  runTool()
                                                       state changes ─────────►  GET /events
@@ -56,7 +56,7 @@ Four processes in a row. The agent speaks MCP to its channel process; the channe
 | Piece | What it is | What follows for us |
 | --- | --- | --- |
 | Capabilities | `experimental: { "claude/channel": {}, "claude/channel/permission": {} }` beside `tools` | Claude Code must be started with `--dangerously-load-development-channels`; channels are a research preview. |
-| `instructions` | One string at `initialize`, 39 sentences today | The only place to tell the agent how to behave. Helper sessions never see it. |
+| `instructions` | One string at `initialize`, 41 sentences today | The only place to tell the agent how to behave. Helper sessions never see it. |
 | `notifications/claude/channel` | `{ content: string, meta: { <key>: string } }`; the agent sees `<channel source="board" key="value">content</channel>` | Meta values are strings only: lists travel comma-separated (`choices`, `files`, `elements`), booleans as `"1"`, and anything longer (notes on options) has to be lines of the content. |
 | `…/channel/permission_request` | From Claude Code: `{request_id, tool_name, description, input_preview}` | Becomes a card `kind: permission`. Asked once; the channel process retries five times while the hub changes hands. |
 | `…/channel/permission` | To Claude Code: `{request_id, behavior: "allow" \| "deny"}` | Claude Code decides whether the terminal or the board answered first. |
@@ -65,7 +65,7 @@ Four processes in a row. The agent speaks MCP to its channel process; the channe
 
 ## 2. Agent to board: the tools
 
-Status: **used** = the hub acts on it and, where it is meant to be seen, the web client shows it. **not shown** = accepted and stored, but no web client reads it. **planned** = not built. "Shown where" names the places of the web client: the inbox row, the question card (the Focus window), the conversation.
+Status: **used** = the hub acts on it and, where it is meant to be seen, the web client shows it. **not shown** = accepted and stored, but no web client reads it. **planned** = not built. "Shown where" names the places of the web client: the inbox row (a row of the list the screen calls the Desk), the question card (the opened card, `focus.js`), the conversation. On screen `trust` is "Whatever", a hand-back is "Revise", `explain` is "What??", putting off is "Snooze", and `urgency: high | critical` are "Knocks".
 
 ### The question fields
 
@@ -257,6 +257,9 @@ Every event on the channel is `notifications/claude/channel` with a `content` st
 | `meta.card_id` (sometimes) | set when the human asks back about an open card instead of answering it; answer with reply and the same card_id |
 | `meta.handback` (sometimes) | "1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again |
 | `meta.explain` (sometimes) | "1" when the human pressed "Explain" on that card |
+| `meta.cards` (sometimes) | ids of cards the human copied into this message, comma-separated, often another session's: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw |
+| `meta.cards_json` (sometimes) | the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices} |
+| `meta.marks` (sometimes) | how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path |
 | `meta.files` (sometimes) | absolute paths of the files and pictures the human attached, comma-separated; open them |
 | `meta.image_path` (sometimes) | the first attached picture, when there is one |
 | Expected of the agent | Answer with `reply`. With `card_id`: answer with the same `card_id`, and rework the card with `revise_card` when it was handed back or unclear. Open the files named in `files` first. |
@@ -277,6 +280,7 @@ Every event on the channel is `notifications/claude/channel` with a `content` st
 | `meta.choice` | key of the chosen option; of several, the first |
 | `meta.choices` (sometimes) | only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options |
 | `meta.trust` (sometimes) | "1" when the human left the decision to you: choice is then the option you recommended, or empty if you recommended none; decide, say what you chose with reply and the card_id, and close the card |
+| `meta.marks` (sometimes) | how many notes and drawings the human pinned to parts of the card; they are lines of the content under "Notes pinned to the card:" |
 | `meta.option_notes` (sometimes) | only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content |
 | `meta.files` (sometimes) | absolute paths of what the human attached to the note of the answer, comma-separated |
 | `meta.image_path` (sometimes) | the first attached picture, when there is one |
@@ -310,14 +314,32 @@ Every event on the channel is `notifications/claude/channel` with a `content` st
 |  |  |
 | --- | --- |
 | When | The human threw a question (or an info) away unanswered. |
-| Fired by | `POST /shred` (in the code since today; the running hub did not have it yet when this was written) |
+| Fired by | `POST /shred` |
 | Content | a sentence saying so and what to do: do not ask again, carry on with your own judgement or drop the matter; then the human's note, if they wrote one |
 | `meta.kind` | always `shredded` |
 | `meta.card_id` | the card |
+| `meta.marks` (sometimes) | how many notes and drawings the human pinned to the card before throwing it away; they are lines of the content |
+| `meta.files` (sometimes) | absolute paths of the pictures that came with it, comma-separated |
+| `meta.image_path` (sometimes) | the first picture |
 | Expected of the agent | Do not ask again, in these or other words. Carry on with your own judgement or drop the matter; if nothing can proceed without an answer, say so once in a `reply`. |
 
 ```text
 <channel source="board" kind="shredded" card_id="a1b2c3d4">The human threw the question "Which font?" away unanswered. …</channel>
+```
+
+### `kind="handback_withdrawn"`
+
+|  |  |
+| --- | --- |
+| When | The human took back a card they had handed to you (or asked you to explain) before you reworked it. |
+| Fired by | `POST /handback {clear: true}` |
+| Content | a sentence saying there is no need to rework it |
+| `meta.kind` | always `handback_withdrawn` |
+| `meta.card_id` | the card |
+| Expected of the agent | Nothing: do not rework or explain the card; it is the human's again. |
+
+```text
+<channel source="board" kind="handback_withdrawn" card_id="a1b2c3d4">The human took "Which font?" back; there is no need to rework or explain it.</channel>
 ```
 
 ### `kind="info_read"`
@@ -595,15 +617,16 @@ Every request needs the login cookie (`board_<port>`, set once by `GET /?t=<toke
 | Route | Body or query | What it does | Status |
 | --- | --- | --- | --- |
 | `GET /events` |  | Event stream: the whole state as one JSON frame, on connect and on every change. | used |
-| `POST /message` | `{text, agent, card_id?, handback?, explain?, cards?: [id or number, …], attachments?: [{name, data}]}` (`cards`: up to 5 cards of any session copied into the message; the agent reads them in full, the message keeps `cards: [{id, number, title, agent, choice_label}]`; see `docs/question-contract.md` section 13) | Chat to one session; with `card_id` a question back about an open card; `handback` / `explain` put the card with the agent. Files as base64 data URLs, at most 12 and 96 MB. | used |
+| `POST /message` | `{text, agent, card_id?, handback?, explain?, cards?: [id or number], attachments?: [{name, data}]}` | Chat to one session; with `card_id` a question back about an open card; `handback` ("Revise") / `explain` ("What??") put the card with the agent. `cards` (at most 5) copies cards, usually another session's decision, into the message: the agent gets each in full. Files as base64 data URLs, at most 12 and 96 MB. | used |
+| `POST /handback` | `{card_id, clear: true}` | Takes a hand-back or a "What??" back before the agent has reworked the card. | used |
 | `POST /decide` | `{card_id, key \| keys, note?, notes?: {key: text}, revised?, attachments?}` | Answers a question or an approval. 409 when the card was reworded meanwhile. | used |
-| `POST /decide` | `{card_id, trust: true, note?, revised?}` | Leaves an open question to the agent. The inbox row has the button; the question window has none yet. | used |
+| `POST /decide` | `{card_id, trust: true, note?, revised?}` | Leaves an open question to the agent ("Whatever" on screen). | used |
 | `POST /draft` | `{card_id, keys?, note?, notes?}` | Keeps what is ticked and written but not sent; the whole draft every time, an empty one clears it. | used |
 | `POST /close` | `{card_id}` | Closes an info: read. | used |
-| `POST /shred` | `{card_id, note?}` | Throws an open question or info away unanswered; the agent is told not to ask again. In the code and in the question window since today. | used |
+| `POST /shred` | `{card_id, note?}` | Throws an open question or info away unanswered; the agent is told not to ask again. | used |
 | `POST /reopen` | `{card_id}` | Takes an answer, a trust, a "read" or a shredding back. | used |
 | `POST /session` | `{agent, label?, icon?, archived?, group?, before?}` | The human's name, symbol, group and place for a session; archiving one that is away. | used |
-| `POST /star` | `{agent, starred}` | Marks a session whose questions lead the inbox. | used |
+| `POST /star` | `{agent, starred}` | Puts the crown on a session: its questions lead the Desk, and it receives the quick note. | used |
 | `GET /canvas?agent=` |  | The lasting drawing of one session, as JSON. | used |
 | `POST /canvas` | `{agent, doc}` | Saves it while the human draws. | used |
 | `POST /scribble` | `{agent, doc, png, view?, text?}` | Sends the drawing to the session. The web client never sends `text` (the caption). | used |
@@ -686,7 +709,6 @@ Loopback only, not through a proxy, header `x-board-token`. Used by channel proc
 | --- | --- |
 | `POST /scribble` takes `text` (a caption, which becomes the content of the event); the web client sends `{doc, png, view, agent}` only, so the agent always gets the stock sentence. | `storeScribble`; `store.js` `sendScribble` |
 | "Later" is state the client needs and the hub does not have: it lives in `localStorage` per browser. | `store.js` (`LATER_KEY`) |
-| The picture on the help page names four event kinds (`chat`, `decision`, `decision_reopened`, `scribble`); the hub sends six (`info_read` and `pad` are missing). The list under the picture is read from the hub and is complete. | `help.js` |
 
 ### Documented, but different
 
@@ -696,8 +718,7 @@ Loopback only, not through a proxy, header `x-board-token`. Used by channel proc
 | `close_card` is described as "move a decided card to Done", but the hub does not look at the status: called on an open question or info it closes it, and no answer will come. | `runTool`, case `close_card` |
 | `revise_card`, `set_urgency` and `withdraw_card` say "decision card" in their descriptions; all three work on info cards too. | `TOOLS`; `runTool` |
 | `set_status` says the strip is "at the top of the board"; the web client draws the lines as pills in the sessions list and table. | `TOOLS`; `agents.js`, `table.js` |
-| `README.md`, "Was der Agent bekommt": no `info_read`, no `pad`, none of `handback`, `explain`, `trust`, `option_notes`, `files`, `image_path`; the scribble row lacks `canvas_path` and `canvas_doc`. `reply` is listed without `html`. And: "with `card_id` the red line jumps to the card", which no client does. | `README.md` |
-| `TODO.md` lists "file upload by the human" as open; it is built (`/message` and `/decide` take `attachments`). It also says events for absent agents live only in memory; they are in `state.pending` in `state.json`. | `TODO.md` |
+| `README.md`, "Was der Agent bekommt" names every event kind but not every field (`handback`, `explain`, `trust`, `option_notes`, `files`, `marks`, `canvas_path`); it points here for those. `reply` is listed without `html`. | `README.md` |
 | `docs/question-contract.md` has two sections numbered 6 (rich content, info cards); the shape of a version's attachments in section 5 lacks `title` and `page`, which section 8 adds. | `docs/question-contract.md` |
 | `docs/architecture.md` (written this morning) does not know `create_info`, `/close`, trust, or `html` on `reply`. | `docs/architecture.md` |
 | The running hub is older than the code: on 2 October it offered `create_info` and trust, but not yet `/shred` and the `shredded` event. Whatever this document says is true of the code; a hub shows it after a restart. | `GET /api/tools` on the live hub |
