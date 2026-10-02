@@ -1,6 +1,6 @@
 # QA report: web UI
 
-Snapshot of 2 October 2026, about 10:10. The UI was being rebuilt while this was written, so line
+Snapshot of 2 October 2026, about 10:35. The UI was being rebuilt while this was written, so line
 numbers are those of the working tree at that time, and a few things changed between my first look
 and the last run; where that happened it says so.
 
@@ -9,8 +9,8 @@ session the test steers, one disconnected session; one headless Chromium, real m
 events; 1440x900 and 400x860 with mobile emulation), plus clicking through by hand with the same
 harness (`--script`) for the things below that the suite does not cover.
 
-Last run: **733 checks passing, 7 failing, 7 pending** (131 s). After that run one more check was
-added for the row layout (bug 4), which reports as pending.
+Last run (10:35): **704 checks passing, 9 failing, 12 pending** in 130 s. The nine failures are
+bug 1 (three checks at each size), bug 5 (two checks, phone) and bug 6 (one check, desktop).
 
 Screenshots are in `docs/qa-shots/`. The suite writes its own set (one per step, about 110) into the
 folder it prints at the end.
@@ -28,29 +28,16 @@ folder it prints at the end.
 - **Should:** every step the human takes is one history entry; Back and Forward walk exactly these
   steps and the address always names what is on screen.
 - **Screenshot:** `docs/qa-shots/bug-url-forward-agents.png`
-- **Likely cause:** `client/web/js/app.js:433`. The store subscriber calls `writeAddress(false)`
+- **Likely cause:** `client/web/js/app.js:431`. The store subscriber calls `writeAddress(false)`
   (replace) on every state change. `setScope()` emits synchronously, so (A) the address is replaced
-  before the click handler in line 239 gets to push, and its push then finds nothing to do; (B) in
-  `followAddress()` (line 312) `setScope()` runs before `showPage()`, so the subscriber writes the
+  before the click handler in line 246 gets to push, and its push then finds nothing to do; (B) in
+  `followAddress()` (line 319) `setScope()` runs before `showPage()`, so the subscriber writes the
   address of a half-applied place over the entry that was just reached. The `routing` flag is not
   checked there.
 - Reload on every address, direct links and filter/scribble steps work (54 of 57 checks of the
   `urls` group pass at each size).
 
-### 2. In the Focus window the → key answers "yes" (medium, risk of wrong answers)
-
-- **Steps:** open "Go through them" (or Focus), arrive at a two-option question, press → to go to
-  the next question.
-- **Happens:** the question is answered with its first option. Verified: the card was `decided`,
-  choice `yes`.
-- **Should:** an arrow never answers in a view that shows a round "→" button meaning *next*. Either
-  arrows move and Y/N answer, or the button must not look like the key.
-- **Screenshots:** `docs/qa-shots/bug-walk-arrow-before.png`, `bug-walk-arrow-after.png`
-- **Where:** `client/web/js/keys.js:58-59` (`focus.yes: ['y', 'ArrowRight']`), wired in
-  `client/web/js/focus.js:1090`. J/K and Shift+arrow move, which nobody will guess. The undo offer
-  softens it, but only for ten seconds.
-
-### 3. "If I do not move the mouse I can always click" stops at the end of a sender's group (medium, undecided)
+### 2. "If I do not move the mouse I can always click" stops at the end of a sender's group (medium, undecided)
 
 - **Steps:** answer the last row of a sender's group with the mouse and leave the mouse where it is.
 - **Happens:** the heading of the next sender slides under the pointer; a second click hits nothing.
@@ -58,11 +45,11 @@ folder it prints at the end.
   and no other answer passes under the pointer while the rows slide).
 - **Should:** the user's call. Asked on the board; the answer "within a group is enough" was given
   and taken back, so the check is listed as *pending*.
-- **Screenshot:** `docs/qa-shots/q-group-boundary.png`
+- **Screenshot:** `docs/qa-shots/q-group-boundary.png` (the pointer was on the thumb up of the row above "Web-Frontend")
 - **Where:** group sections with their headings, `client/web/js/inbox.js` (the list is rebuilt per
   sender).
 
-### 4. Rows with more than two options have one wide "Choose" tile, not two square tiles (medium, in the layout ticket)
+### 3. Rows with more than two options have one wide "Choose" tile, not two square tiles (medium, in the layout ticket)
 
 - **Happens:** a double-wide "Choose" tile (256x124) and "Later" as a small tab hanging from the
   lower left edge of the row.
@@ -73,7 +60,7 @@ folder it prints at the end.
 - **Where:** `client/web/js/inbox.js` (`tile('is-wide is-lead', 'choose', …)`, `.inbox-later`),
   `client/web/css/app.css:635`.
 
-### 5. The admin page is German (medium, pending)
+### 4. The admin page is German (medium, pending)
 
 - **Steps:** open Admin.
 - **Happens:** every label, the gate text, the buttons and `lang="de"`.
@@ -83,46 +70,55 @@ folder it prints at the end.
 - The function itself is fine: without the key the API answers 403 and the page shows only the
   gate; a wrong key is refused with a message; the right key opens the page with its sections; a reload stays open.
 
-### 6. The way back after an answer is on screen for four seconds (medium, a design call)
+### 5. Phone: the "Answered … Back" note lies over things one wants to press (medium)
 
-- **Steps:** answer a row in the inbox.
-- **Happens:** a dark, slightly tilted "Back" tag hangs on the row that moved up, says "you said
-  **Yes** to: …" and runs out after 4 s (`BACK_MS` in `client/web/js/back.js`); the U key works for
-  10 s. It lies over the time and, for urgent rows, next to the tab of the row it hangs on; on the
-  phone it also covers the "Later" tab of the row above. It never covers an answer tile (checked).
-- **Should:** the brief says "an undo bar appears", the README says twelve seconds. Four seconds is
-  short for a wrong tap on a phone, where there is no U key.
-- **Screenshots:** `docs/qa-shots/back-tag-desktop.png`, `back-tag-phone.png`
-- History of this spot: until about 09:50 the phone showed a bar at the bottom of the screen that
-  came up exactly under the finger (`docs/qa-shots/bug-phone-undo-covers.png`); that is gone.
+- **Steps A (phone):** in a session, answer a question in the conversation, then tap "Questions
+  only" or "Files".
+- **Happens:** for four seconds the note covers both filters; the tap lands on the note.
+- **Steps B (phone):** answer a row in the inbox.
+- **Happens:** the note lies over the answer tiles of the topmost visible row ("Choose" is half
+  hidden, and the "Back" button sits where "Choose" was).
+- **Desktop:** the note stands at the top left of the main view and covers the first letters of the
+  page title "Inbox"; it covers no control there.
+- **Should:** a place where nothing is pressed. The note is also only up for 4 s (`BACK_MS`,
+  `client/web/js/back.js:27`); the brief says "an undo bar appears", the README twelve seconds. On a
+  phone there is no U key to make up for it.
+- **Screenshots:** `docs/qa-shots/bug-note-covers-filters-phone.png`,
+  `bug-note-covers-tiles-phone.png`, `note-desktop.png`
+- **Where:** `pageHost()` in `client/web/js/back.js:38` (fixed at the top left of the visible
+  `main`), `client/web/css/back.css:5-7`.
+- This spot changed three times while I watched: a bar at the bottom of the phone that came up
+  under the finger (09:40, `bug-phone-undo-covers.png`), a tag on the row that moved up (10:15),
+  and now the note. The suite accepts any of them and checks that it names the answer, takes it
+  back, and covers no answer tile.
 
-### 7. Rows in the "Later" group are two pixels smaller inside (low)
+### 6. Rows in the "Later" group are two pixels smaller inside (low)
 
 - **Happens:** their answer tile is 122 px high instead of 124 and sits 1 px further left and up.
 - **Should:** the same box as in every other row.
 - **Screenshot:** `docs/qa-shots/later-rows-desktop.png`
-- **Cause:** `client/web/css/app.css:701`: `.inbox-row[data-later]` gets a 1 px dashed border and
+- **Cause:** `client/web/css/app.css:702`: `.inbox-row[data-later]` gets a 1 px dashed border and
   `grid-template-rows: 146px`, while normal rows have no border (their outline is a shadow).
 
-### 8. An error in a row is cut off, and reads "Failed to fetch" (low)
+### 7. An error in a row is cut off, and reads "Failed to fetch" (low)
 
 - **Steps:** answer a row with a two-line title while the server cannot be reached.
 - **Happens:** "Not saved: Failed to fetch" appears half hidden under the lower edge of the row
   (fixed height), in the browser's own words. The tiles are enabled again, which is right.
 - **Should:** fully visible, and the wording of the composer ("no connection to the server",
-  `client/web/js/chat.js:695`).
+  `client/web/js/chat.js:697`).
 - **Screenshot:** `docs/qa-shots/offline-row-error.png` (earlier build)
 - **Where:** the `catch` in `questionRow`, `client/web/js/inbox.js`; `.inbox-error` in `app.css`.
 
-### 9. An unfolded row says its text twice (low)
+### 8. An unfolded row says its text twice (low)
 
 - **Steps:** "Choose" on a question with a short text.
 - **Happens:** the text stands in the row and again, word for word, directly below in the unfolded part.
 - **Should:** once. Show it below only when the row had to cut it.
 - **Screenshot:** `docs/qa-shots/desktop-inbox-unfolded-light.png`, `phone-inbox-unfolded-light.png`
-- **Where:** `client/web/js/inbox.js:73` (`if (card.body) box.append(rich(card.body))`).
+- **Where:** `client/web/js/inbox.js:76` (`if (card.body) box.append(rich(card.body))`).
 
-### 10. Markdown tables are shown as pipes (low)
+### 9. Markdown tables are shown as pipes (low)
 
 - **Screenshot:** `docs/qa-shots/markdown-table.png`. Lists, bold, code and code blocks render;
   `| a | b |` stays text. Raw HTML and `javascript:` links from an agent are shown as text and do
@@ -131,6 +127,11 @@ folder it prints at the end.
 
 ### Found and gone again during the session
 
+- **In the Focus window the → key answered "yes"** on a two-option question, while the window
+  shows a round "→" button that means *next* (verified at 09:45: the card was decided `yes`;
+  `docs/qa-shots/bug-walk-arrow-before.png`, `bug-walk-arrow-after.png`). Since about 10:30 the
+  arrows and J/K move and only Y, N and the digits answer (`client/web/js/keys.js:56-59`); the suite
+  now walks through the questions with the arrow key and checks that none is answered.
 - Help link pointed to `/hilfe.html`, which answered 404. Now `/help.html`, English, passes.
 - The scribble toolbar had German labels ("Rückgängig", "Farbe", "Stärke"). Now English.
 - `index.html` linked `/css/keys.css` before the file existed (404 for some minutes).
@@ -157,13 +158,13 @@ carefully done, nothing overflows at 320, 400, 768, 900, 1024 or 1440 px.
 **Inbox, phone** (`phone-inbox-light.png`, `phone-inbox-dark.png`)
 - The "Later" tab is about 40x28 px and sits between two rows: easy to miss, easy to hit the row
   below instead. Below the usual 44 px for a touch target.
-- The "Back" tag (bug 6) covers the "Later" tab of the row above for its four seconds.
+- The "Answered … Back" note (bug 5).
 
 **Window of one question** (`desktop-window-light.png`, `phone-window-light.png`)
 - Clean. On the desktop a question with little text leaves two thirds of the window empty; on the
   phone the gap between "Ask back" and the options at the bottom is large for short questions.
 
-**Conversation** (`desktop-conversation-dark.png`, `phone-conversation-light.png`)
+**Conversation** (`desktop-conversation-dark.png`, `phone-conversation-dark.png`)
 - In the dark theme a sent scribble is a blinding white card, and the scribble canvas itself stays
   light (`desktop-scribble-dark.png`). The canvas as paper is defensible; the card in the dark
   conversation is not.
@@ -181,7 +182,7 @@ carefully done, nothing overflows at 320, 400, 768, 900, 1024 or 1440 px.
 **Agents page** (`desktop-agents-light.png`, `phone-agents-light.png`)
 - The VIP star is a small pale outline with no word next to it; nobody will find "VIP" there.
 
-**Help**: good. **Admin**: German (bug 5), otherwise in the same style.
+**Help**: good. **Admin**: German (bug 4), otherwise in the same style.
 
 ## What the suite covers
 
@@ -193,7 +194,7 @@ carefully done, nothing overflows at 320, 400, 768, 900, 1024 or 1440 px.
 | login (desktop) | no cookie: 401 for page, stream and scripts; the link sets an HttpOnly cookie and drops the token from the address |
 | inbox | groups per sender with counts; equal row height; answer tiles in the same box in every row; thumbs down left, up right; worded pairs; the circled recommendation; one click answers; the next right-hand tile under the unmoved pointer, twice; nothing else passes under the pointer while rows slide; the way back names the answer, lies over no answer tile and takes the answer back; the title count |
 | later | "Later" moves rows into ONE group at the very end; who asked is named; count goes down; survives a reload; "Fetch back"; the group goes when empty |
-| choose | a light question unfolds in place with all options, the recommended one circled, a second press folds it; a heavy one opens the window with pictures, inert page behind, `?q=` in the address, closes on the answer; the walk starts at the most urgent, J/K move without answering, Escape leaves |
+| choose | a light question unfolds in place with all options, the recommended one circled, a second press folds it; a heavy one opens the window with pictures, inert page behind, `?q=` in the address, closes on the answer; the walk starts at the most urgent, the arrows and K move and never answer, Escape leaves |
 | keys (desktop) | arrows mark a row, C unfolds, a digit picks, Y, N, U, L, Escape; typing in the composer never answers |
 | session | one conversation, only its own messages; message and scripted reply; open questions inline as the same rows; one click answers inline; "Questions only" (list, count, pressed state, toggle); "Files" (pictures and a text file, pictures load, open large) |
 | scribble | canvas, send disabled when empty, a stroke enables it, send returns to the conversation, the scribble's picture loads, the agent confirms, the canvas keeps the drawing |
@@ -211,8 +212,8 @@ In every group: no uncaught error, no `console.error`, no failed request (attrib
 in which it happened); every screenshot at phone size also checks that nothing is wider than the
 screen; visible interface strings are checked against a list of German words.
 
-Pending checks (reported apart, do not fail the run): the group-boundary promise (bug 3), the row
-layout (bug 4), German strings and `lang` on the admin page (bug 5). They are listed in `PENDING`
+Pending checks (reported apart, do not fail the run): the group-boundary promise (bug 2), the row
+layout (bug 3), German strings and `lang` on the admin page (bug 4). They are listed in `PENDING`
 at the top of the file with their reasons.
 
 ## Flaky, and not automated
