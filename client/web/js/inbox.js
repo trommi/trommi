@@ -6,7 +6,7 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
@@ -278,7 +278,9 @@ function unfoldNode(card, { onDecided, full = true }) {
     const leave = el('button', 'inbox-option inbox-trust-option')
     leave.type = 'button'
     leave.title = trustTip(card)
-    leave.append(el('strong', null, TRUST_WORD), el('span', null, advisedLabels(card) ? `the agent takes: ${advisedLabels(card)}` : 'the agent decides'))
+    const word = el('strong')
+    word.append(sketch(TRUST_SKETCH), TRUST_WORD)
+    leave.append(word, el('span', null, advisedLabels(card) ? `the agent takes: ${advisedLabels(card)}` : 'the agent decides'))
     leave.addEventListener('click', () => {
       for (const other of options.children) other.disabled = true
       trustCard(card, err => { for (const other of options.children) other.disabled = false; paintSend(); error.textContent = `Not saved: ${err.message}`; error.hidden = false })
@@ -408,7 +410,8 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   }
   const acts = el('span', 'inbox-acts')
   if (card.kind === 'decision' && quick(card)) {
-    const leave = el('button', 'inbox-trust', TRUST_WORD)
+    const leave = el('button', 'inbox-trust')
+    leave.append(sketch(TRUST_SKETCH), el('span', null, TRUST_WORD))
     leave.type = 'button'
     leave.title = trustTip(card)
     leave.addEventListener('click', () => { leave.disabled = true; trustCard(card, err => { leave.disabled = false; error.textContent = `Not saved: ${err.message}`; error.hidden = false }) })

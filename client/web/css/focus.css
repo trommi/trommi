@@ -996,12 +996,12 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 .focus-answer > .focus-actions .focus-way.focus-shred .focus-way-word { display: none; }
 /* Snooze: the label that slides out at the card's right edge, the same one as on a row of the inbox (app.css, .inbox-later) */
 .focus-card { --card-color: var(--u); --card-ink: color-mix(in srgb, var(--u) 70%, var(--fg)); --card-line: color-mix(in srgb, var(--u) 22%, transparent); }
-.focus-card > .focus-snooze { top: 46px; right: 0; border-radius: 8px 0 0 8px; }
+.focus-card > .focus-snooze { top: 78px; right: 0; border-radius: 8px 0 0 8px; }
 @container focus (min-width: 900px) {
-  .focus-card { grid-template: minmax(0, 1fr) / minmax(0, 1fr) auto minmax(230px, 24%); }
+  .focus-card { grid-template: minmax(0, 1fr) / minmax(0, 1fr) auto minmax(260px, 33.3%); }
   .focus-card > .focus-talk { grid-area: 1 / 1; }
   .focus-card > .focus-answer { grid-area: 1 / 2; }
-  .focus-card > .focus-discuss { grid-area: 1 / 3; border-top: 0; border-left: 1px solid var(--line); padding: 44px var(--s-4) var(--s-4); }
+  .focus-card > .focus-discuss { grid-area: 1 / 3; border-top: 0; border-left: 1px solid var(--line); padding: 44px 30px var(--s-4) var(--s-4); }
   .focus-card > .focus-answer { width: clamp(250px, 26cqi, 340px); }
   .focus-card[data-opts="tags-wide"] > .focus-answer { width: clamp(280px, 32cqi, 420px); }
 }
@@ -1025,3 +1025,51 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 }
 /* the pen's tools stand in the card's corner over Discuss; where there is no column for it they get a line of their own */
 @container focus (max-width: 899.9px) { .focus[data-single] .focus-card[data-marks] > .focus-talk { padding-top: 40px; } }
+
+/* One thing scrolls in the decision: what is asked (its bar is not drawn); the list of options only when it is longer
+   than the card, with a thin bar. Options written into the text are not repeated as tiles: only Send, Trust, Revise
+   and the wastebasket stand in the column then. */
+.focus[data-list] .focus-scroll, .focus-card .focus-scroll { scrollbar-width: none; }
+.focus-card[data-sections] .focus-answer > .focus-opts, .focus-card[data-sections] .focus-answer > .focus-tag-line { display: none; }
+@container focus (min-width: 900px) { .focus-card[data-sections] > .focus-answer { width: clamp(200px, 20cqi, 260px); align-content: end; justify-content: flex-end; } }
+/* the pen and its tools in the row of the Discuss field */
+.focus-discuss .focus-mark-tools { order: 0; display: inline-flex; gap: 0; margin: 0; }
+.focus-discuss .focus-mark-tool { width: 32px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.focus-discuss .focus-mark-tool .sketch { width: 19px; height: 19px; }
+.focus-discuss .focus-mark-tool:hover { background: var(--sunken); color: var(--fg); }
+.focus-discuss .focus-mark-tool[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
+
+/* the row of the ways out, wherever it stands: Revise, Snooze, and apart the wastebasket */
+.focus-discuss > .focus-actions { flex: none; min-height: 0; gap: 8px; }
+.focus-discuss > .focus-actions .focus-way { width: auto; height: 40px; min-height: 40px; padding: 0 12px 0 9px; gap: 6px; }
+.focus-discuss > .focus-actions .focus-way .focus-way-art .sketch { width: 22px; height: 22px; }
+.focus-discuss > .focus-actions .focus-way .focus-way-word { position: static; translate: none; padding: 0; background: none; color: inherit; font: 700 var(--t-sm)/1 var(--display); opacity: 1; }
+.focus-discuss > .focus-actions .focus-way.focus-shred { margin-left: auto; width: 40px; padding: 0; box-shadow: none; }
+.focus-discuss > .focus-actions .focus-way.focus-shred .focus-way-word { display: none; }
+.focus-answer > .focus-actions { flex-wrap: wrap; }
+
+/* Discuss folded away (the default on a card with nothing said yet): the decision takes the whole width. The pen in
+   the card's corner opens it; the columns move, eased. */
+.focus-card[data-discuss="closed"] > .focus-discuss { display: none; }
+.focus-discuss-toggle[aria-pressed="true"] { background: var(--fg) !important; color: var(--surface) !important; }
+.focus-card-ends .focus-discuss-toggle .sketch { width: 18px; height: 18px; }
+@container focus (min-width: 900px) {
+  .focus-card { transition: grid-template-columns 260ms cubic-bezier(.22, .9, .25, 1); }
+  .focus-card[data-discuss="closed"] { grid-template-columns: minmax(0, 1fr) auto 0px; }
+  .focus-card[data-discuss="closed"] > .focus-discuss { display: flex; visibility: hidden; padding-left: 0; padding-right: 0; border-left: 0; overflow: hidden; }
+  .focus-card[data-discuss="closed"] > .focus-answer { padding-top: 44px; }
+}
+/* the window of one card has the corner too (its own read-aloud and close stay in the top bar) */
+.focus[data-single] .focus-card-ends { position: absolute; z-index: 3; right: 10px; top: 6px; display: flex; gap: 2px; }
+.focus[data-single] .focus-card-ends > .focus-card-say, .focus[data-single] .focus-card-ends > .focus-card-close { display: none; }
+@media (prefers-reduced-motion: reduce) { .focus-card { transition: none !important; } }
+
+/* The row of the ways out: four equal buttons without words (the reverse card, z z z, the shrug, the wastebasket).
+   The word is the tooltip and the label for a reader. The wastebasket turns red only under the pointer. */
+.focus .focus-actions .focus-way, .focus .focus-actions .focus-way.focus-shred { flex: 1 1 0; width: auto; min-width: 0; height: 46px; min-height: 46px; margin: 0; padding: 0; justify-content: center; background: color-mix(in srgb, var(--u) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); color: var(--ink); }
+.focus .focus-actions .focus-way .focus-way-art .sketch { width: 27px; height: 27px; }
+.focus .focus-actions .focus-way .focus-way-word { display: none !important; }
+.focus .focus-actions .focus-way.focus-shred:hover:not(:disabled) { color: var(--urg-critical); box-shadow: inset 0 0 0 2px var(--urg-critical); }
+.focus-answer > .focus-actions, .focus-discuss > .focus-actions { flex-wrap: nowrap; gap: 6px; }
+/* a long list of options ends in a soft fade, not in a cut tile */
+.focus-card .focus-answer > .focus-opts { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent); mask-image: linear-gradient(#000 calc(100% - 26px), transparent); padding-bottom: 22px; }

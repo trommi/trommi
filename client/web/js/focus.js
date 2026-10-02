@@ -33,7 +33,7 @@ import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT, cardNr } from './inbox.js'
 import { cardMarks } from './focus-marks.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { LATER_WORD, LATER_SKETCH, ACK_WORD, WHAT_WORD, TRUST_WORD, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
+import { LATER_WORD, LATER_SKETCH, ACK_WORD, WHAT_WORD, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -114,6 +114,9 @@ const EXPLAIN_LABEL = WHAT_WORD
 // true: at the top right beside the title, as tall as they need; what is asked flows at their left and takes the
 // whole width under them. ("?head=1" or "?head=0" in the address tries the other.)
 const ANSWERS_BESIDE_TITLE = false
+// Where the row of the ways out (Revise, Snooze, the wastebasket) stands: 'options' (under the answers, in the
+// decision) or 'discuss' (under the field of Discuss). One row, built in one place (fill), moved by this word.
+const WAYS_PLACE = 'options'
 // Writing on the card itself. false: a field at the foot of the card. true: no field; a click anywhere on what is
 // asked begins a note at that place, the pen scribbles over everything (js/focus-marks.js), all of it is part of
 // the card's draft, and the next action takes it along. ("?marks=1" or "?marks=0" in the address tries the other.)
@@ -667,8 +670,10 @@ export function mountFocus({ onDecided } = {}) {
         // Ctrl/Cmd+Enter: say it and stay on the card. On a touch screen Enter is a line break; the buttons act.
         if (touchOnly.matches && !e.ctrlKey && !e.metaKey) return
         e.preventDefault()
-        if (!field.value.trim() && !rec.files.length) return
         claim(rec)
+        // Revise was pressed with nothing said: this Enter hands the card back, with or without words
+        if (rec.revising) { rec.revising = false; field.placeholder = 'Write to the agent'; return void handBack(true) }
+        if (!field.value.trim() && !rec.files.length) return
         if (rec.asking) { rec.asking = false; field.placeholder = 'Write to the agent'; explain() }
         else askBack(rec)
       })
@@ -677,10 +682,9 @@ export function mountFocus({ onDecided } = {}) {
       rec.askNode = ask
       rec.askField = field
       rec.askSend = send
-      // Under the answers: Revise (hand the card back to its session) and, apart and quiet, the wastebasket.
-      // Snooze is no button here: it is the label that slides out at the card's edge, as on a row of the inbox.
+      // The ways out, one row: Revise (hand the card back to its session), Snooze and, apart and quiet, the wastebasket.
       rec.actionsNode = el('div', 'focus-actions')
-      rec.actionsNode.append(wayButton('hand', () => { claim(rec); handBack() }), wayButton('shred', () => shredIt(rec)))
+      rec.actionsNode.append(wayButton('hand', () => { claim(rec); handBack() }), wayButton('snooze', () => { claim(rec); later() }), wayButton('shred', () => shredIt(rec)))
       // Discuss: the small chat about this card at its right. What was said, a field to write in (paste and drop
       // files and pictures, the microphone), always there: nothing to switch to.
       rec.composer = el('aside', 'focus-discuss')
@@ -689,22 +693,7 @@ export function mountFocus({ onDecided } = {}) {
       talkBox.append(rec.threadNode)
       rec.discussScroll = talkBox
       rec.composer.append(el('h3', 'focus-discuss-head', 'Discuss'), talkBox, ask)
-      const snooze = el('button', 'inbox-later focus-snooze')
-      snooze.type = 'button'
-      snooze.setAttribute('aria-label', `${LATER_WORD}: put this question off; it waits for you`)
-      const ear = el('i', 'inbox-later-ear'), flap = el('i', 'inbox-later-flap')
-      flap.append(sketch(LATER_SKETCH), el('b', null, LATER_WORD))
-      ear.append(flap)
-      snooze.append(ear)
-      // a finger has no hover: its first tap slides the label out, the second snoozes (as in the inbox)
-      let byTouch = false
-      snooze.addEventListener('pointerdown', e => { byTouch = e.pointerType === 'touch' })
-      snooze.addEventListener('click', () => {
-        if (byTouch && !snooze.classList.contains('is-unfolded')) { snooze.classList.add('is-unfolded'); return void setTimeout(() => snooze.classList.remove('is-unfolded'), 2600) }
-        claim(rec)
-        later()
-      })
-      rec.snoozeNode = snooze
+      if (WAYS_PLACE === 'discuss') rec.composer.append(rec.actionsNode)
     }
 
     // The answers: one tap answers. The tiles are the row's tiles grown large: exactly
@@ -810,17 +799,22 @@ export function mountFocus({ onDecided } = {}) {
     answer.append(rec.errorNode, opts)
     // (Send is not one of the list: it stands under it, so the list ends above it and it never covers an option)
     if (rec.sendTile) answer.append(rec.sendTile)
-    // Trust: leave the decision to the session. It is an answer, so it stands with the answers, under them.
-    if (!permission && !info && !earlier) {
+    // Whatever (leave the decision to the session): the shrugging figure in the row of the ways out. Under the
+    // pointer or the keyboard it lights the option the session would take, and its label names it.
+    rec.trustBtn = null
+    if (!permission && !info && !earlier && rec.actionsNode) {
       const advice = card.options.filter(o => advisedKeys.has(o.key)).map(labelOf).join(', ')
-      const trustBtn = button('focus-trust', `${TRUST_WORD}: leave this decision to the agent`)
-      trustBtn.title = advice ? `${TRUST_WORD}: the agent takes what it advised (${advice})` : `${TRUST_WORD}: the agent decides itself`
-      trustBtn.append(sketch('trust'), el('b', null, TRUST_WORD), el('span', null, advice ? `the agent takes: ${advice}` : 'you decide'))
-      trustBtn.addEventListener('click', () => trustIt(rec))
+      const trustBtn = wayButton('trust', () => trustIt(rec))
+      const says = advice ? `${TRUST_WORD} (R): the agent takes what it advised: ${advice}` : `${TRUST_WORD} (R): the agent decides itself`
+      trustBtn.title = says
+      trustBtn.setAttribute('aria-label', says)
+      const lightUp = on => () => { for (const b of rec.optButtons) if (advisedKeys.has(b.dataset.key)) b.toggleAttribute('data-lit', on); for (const [key, sec] of rec.secNodes ?? []) if (advisedKeys.has(key)) sec.toggleAttribute('data-lit', on) }
+      for (const type of ['pointerenter', 'focus']) trustBtn.addEventListener(type, lightUp(true))
+      for (const type of ['pointerleave', 'blur']) trustBtn.addEventListener(type, lightUp(false))
       rec.trustBtn = trustBtn
-      answer.append(trustBtn)
+      rec.actionsNode.querySelector('.focus-shred')?.before(trustBtn)
     }
-    if (rec.actionsNode && !earlier) answer.append(rec.actionsNode)
+    if (rec.actionsNode && !earlier && WAYS_PLACE === 'options') answer.append(rec.actionsNode)
     rec.noteTag = null
     if (tags) {
       const line = el('p', 'focus-tag-line')
@@ -889,10 +883,19 @@ export function mountFocus({ onDecided } = {}) {
     closeTwin.title = 'Close (Esc)'
     closeTwin.append(icon('close'))
     closeTwin.addEventListener('click', close)
-    ends.append(sayTwin, closeTwin)
+    // Discuss is folded away until it is wanted: the pen in the card's corner opens it (the decision moves together
+    // to two thirds, Discuss comes in as the right third) and closes it again.
+    const talkBtn = button('focus-discuss-toggle', 'Discuss: write to the agent about this question')
+    talkBtn.title = 'Discuss: write to the agent, scribble (A)'
+    talkBtn.append(sketch('pen'))
+    talkBtn.addEventListener('click', () => { claim(rec); setDiscuss(rec, !rec.discussOpen); if (rec.discussOpen) rec.askField?.focus({ preventScroll: true }) })
+    rec.talkBtn = talkBtn
+    ends.append(...(rec.composer ? [talkBtn] : []), sayTwin, closeTwin)
     // Writing anywhere: the card is the surface, its tools stand in its corner.
     rec.marksUi = null
     node.toggleAttribute('data-marks', writeAnywhere && !permission && !earlier)
+    // a question written as one text has its options in that text: they are not shown a second time as tiles
+    node.toggleAttribute('data-sections', Boolean(sections))
     if (writeAnywhere && !permission && !earlier) {
       rec.marksUi = cardMarks({
         scroll,
@@ -901,7 +904,9 @@ export function mountFocus({ onDecided } = {}) {
         onChange: () => { rec.marks = rec.marksUi.get(); paintDraft(rec); queueDraft(rec) },
       })
       rec.marksUi.set(rec.marks ?? [])
-      ends.prepend(rec.marksUi.controls)
+      // the pen stands in the row of the Discuss field, beside the paperclip
+      rec.askNode?.querySelector('.focus-clip')?.after(rec.marksUi.controls)
+      if (!rec.marksUi.controls.parentNode) ends.prepend(rec.marksUi.controls)
       // files and pictures: dropped or pasted anywhere on the card (they wait as chips at its foot until the next action)
       const carries = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
       node.ondragover = e => { if (carries(e)) e.preventDefault() }
@@ -912,7 +917,8 @@ export function mountFocus({ onDecided } = {}) {
     // Or (besideTitle) the answers are the first thing in what scrolls and float at its top right.
     node.toggleAttribute('data-head', besideTitle)
     if (besideTitle) scroll.prepend(answer)
-    node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends, earlier ? null : rec.snoozeNode].filter(Boolean))
+    node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends].filter(Boolean))
+    setDiscuss(rec, rec.discussOpen ?? (Boolean(rec.askText.trim()) || Boolean(rec.discussWanted) || (pool()?.messages ?? []).some(m => m.card_id === rec.id && m.from !== 'event')))
     answer.inert = Boolean(earlier)   // an earlier version cannot be answered
     if (multi) paintPicked(rec)
     rec.toEnd = false
@@ -1209,6 +1215,7 @@ export function mountFocus({ onDecided } = {}) {
     rec.wasKeys = rec.multi ? [] : keys
     rec.optNotes = new Map(Object.entries(draft?.notes ?? {}).filter(([k]) => known.has(k)))
     rec.askText = draft?.note ?? ''
+    if (rec.askText.trim() && rec.discussOpen === false && !rec.discussTouched) setDiscuss(rec, true)
     rec.marks = draft?.marks ?? []
     rec.marksUi?.set(rec.marks)
     rec.draftSent = JSON.stringify(draftOf(rec))
@@ -1391,6 +1398,14 @@ export function mountFocus({ onDecided } = {}) {
     slot.replaceChildren(...chips)
   }
 
+  /** Open or fold away the Discuss column of a card (kept per card while the window is open). */
+  function setDiscuss(rec, open) {
+    rec.discussOpen = Boolean(open) && Boolean(rec.composer)
+    rec.node.dataset.discuss = rec.discussOpen ? 'open' : 'closed'
+    rec.talkBtn?.setAttribute('aria-pressed', String(rec.discussOpen))
+    if (rec.composer) rec.composer.inert = !rec.discussOpen
+  }
+
   /** Take files into the composer of a card (picked, dropped or pasted): read, and shown as chips until sent. */
   async function addFiles(rec, list) {
     const room = MAX_FILES - rec.files.length
@@ -1509,6 +1524,8 @@ export function mountFocus({ onDecided } = {}) {
       nodes.push(el('p', 'focus-thread-wait', 'Sent. The reply shows up here; the question stays open.'))
     }
     rec.threadNode.replaceChildren(...nodes)
+    if (items.length && rec.discussOpen == null) rec.discussWanted = true
+    if (grew && rec.discussOpen === false && rec.threadCount && rec.node.dataset.discuss) setDiscuss(rec, true)   // something was said: it shows
     paintAssets(rec)
     // the newest is in view, as in any chat
     if (grew) {
@@ -1572,6 +1589,7 @@ export function mountFocus({ onDecided } = {}) {
     // What?? is writing in Discuss: with nothing written yet, the key puts the caret there, and Enter then asks.
     if (rec.card.kind !== 'info' && !rec.askText.trim() && rec.askField && document.activeElement !== rec.askField) {
       rec.asking = true
+      setDiscuss(rec, true)
       rec.askField.placeholder = 'What is unclear? Enter asks'
       return void rec.askField.focus({ preventScroll: true })
     }
@@ -1914,9 +1932,18 @@ export function mountFocus({ onDecided } = {}) {
   let handing = false
   /** Hand the card in front to its session: what stands in the composer is sent first, then the card goes to
    *  "Later" as one the session owes a reply on, and comes back with that reply. The walk moves on; the window of one card closes. */
-  async function handBack() {
+  async function handBack(sure = false) {
     const rec = shown
     if (!isOpen || !rec || rec.busy || !rec.askNode || handing) return false
+    // With nothing written, noted or attached the session would have nothing to go on: the caret goes into Discuss
+    // and asks what should change. Enter there hands the card back, also when the field stays empty.
+    if (!sure && !rec.askText.trim() && !rec.files.length && !rec.marksUi?.count() && pad?.rec !== rec && rec.askField) {
+      rec.revising = true
+      setDiscuss(rec, true)
+      rec.askField.placeholder = 'What should change? Enter sends'
+      return void rec.askField.focus({ preventScroll: true })
+    }
+    rec.revising = false
     handing = true
     handBtn.disabled = true
     const walking = !single
@@ -2032,11 +2059,13 @@ export function mountFocus({ onDecided } = {}) {
       hand: ['focus-handback', HAND_BACK_LABEL, `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`],
       snooze: ['', LATER_WORD, `${LATER_WORD} (L): it waits for you, at the end of the line`],
       shred: ['focus-shred', SHRED_WORD, `${SHRED_WORD} (X): throw this away, unanswered`],
+      trust: ['focus-whatever', TRUST_WORD, `${TRUST_WORD} (R): leave this decision to the agent`],
     }[kind]
     const b = button(`focus-later ${cls} focus-way`, label)
+    b.title = label
     const art = el('span', 'focus-way-art')
     art.dataset.kind = kind
-    art.append(...(kind === 'what' ? [sketch('q1'), sketch('q2'), sketch('q3')] : [sketch(kind === 'hand' ? 'reverse' : kind === 'shred' ? SHRED_SKETCH : LATER_SKETCH)]))
+    art.append(...(kind === 'what' ? [sketch('q1'), sketch('q2'), sketch('q3')] : [sketch(kind === 'hand' ? 'reverse' : kind === 'shred' ? SHRED_SKETCH : kind === 'trust' ? TRUST_SKETCH : LATER_SKETCH)]))
     b.append(art, el('span', 'focus-way-word', word))
     b.addEventListener('click', act)
     return b
@@ -2466,6 +2495,7 @@ export function mountFocus({ onDecided } = {}) {
   }
   /** Open the line to ask back on the card that is up. */
   function ask() {
+    if (shown?.composer) setDiscuss(shown, true)
     const open = shown?.askNode?.querySelector('.focus-ask-open')
     if (!open) return false
     open.click()
