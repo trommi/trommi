@@ -58,7 +58,7 @@ not clipped any more), rich HTML and tables in a conversation, the Scratchpad.
 
 | Where | What | Proposed patch |
 |---|---|---|
-| Desk row, phone. `desk--phone-dark.png` (second card) | A row without a knock label starts its title at the very top edge; the copy button and the clock lie on the end of the first line ("großen"). A row with a label has a free band there. | `@container (max-width: 520px) { .inbox-row:not(:has(.inbox-knock)) .inbox-content { padding-top: 30px } }` (the band every row has). |
+| Desk row, phone. `desk--phone-dark.png` (second card) | A row without a knock label starts its title at the very top edge; the copy button and the clock lie on the end of the first line ("großen"). A row with a label has a free band there. | On a phone: `.inbox-row:not(:has(.inbox-tab)) .inbox-content { padding-top: 30px }` (`.inbox-tab` is the knock label; this gives every row the band a labelled row has). |
 | Desk row, phone. | The one tab left at the corner (Snooze, `.inbox-tab-act`) is 26px, the copy button 24px, the badge in the strip (`.agent-badge`) 30px. | `::after { content: ""; position: absolute; inset: -6px }` on each. |
 | Piles, phone. `desk-bottom--phone-dark.png` | "Snoozed", "Waiting", "Answered" (`.inbox-pile-head`) are 17px high and stand 8px apart. | `min-height: 40px` below 861px. |
 | Top bar, phone, while disconnected. `desk--phone-dark.png` (13:09) | "Disconnected, reconnecting" (`.brand-open::after`) does not fit beside "Desk 2 · 9": it is cut at the right edge and pushes the Agents button onto a second line; the bar grows. | Below 861px shorten it: `content: "Offline"`, or show only the coloured logo. |
