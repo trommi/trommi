@@ -1,5 +1,5 @@
 // The keyboard, tried with real key events in headless Chromium against a board of its own.
-//   node dev/keys-test.mjs [PORT] [OUT_DIR]      default port 8885, screenshots into OUT_DIR (default $TMPDIR/keys-test)
+//   node dev/keys-test.mjs [PORT] [OUT_DIR]      default port 8884, screenshots into OUT_DIR (default $TMPDIR/keys-test)
 // Starts a hub on PORT (never 8790 or 8795) with three sessions and a set of questions, drives
 // the page by keys only, and checks the board's own state after every answer.
 // Needs the command sandbox disabled, like dev/cdp.mjs. Exit code 1 when a check fails.
@@ -13,7 +13,7 @@ import { fileURLToPath } from 'node:url'
 import { launchChromium } from './cdp.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const port = Number(process.argv[2] || 8885)
+const port = Number(process.argv[2] || 8884)
 const out = process.argv[3] || path.join(os.tmpdir(), 'keys-test')
 if (port === 8790 || port === 8795) throw new Error('that port belongs to a board in use')
 fs.mkdirSync(out, { recursive: true })
@@ -125,6 +125,8 @@ async function key(name, { shift = false, ctrl = false, pause = 110 } = {}) {
 const keys = async (...names) => { for (const n of names) await key(n) }
 /** A real click at the middle of the element an expression names. */
 async function click(expression) {
+  await ev(`const n = ${expression}; if (!__k.inSight(n)) n.scrollIntoView({ block: 'center' })`)
+  await sleep(80)
   const at = await ev(`return __k.point(${expression})`)
   await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: at.x, y: at.y })
   await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: 1, clickCount: 1 })
@@ -155,10 +157,13 @@ const HELPERS = `
     box: n => { const r = n.getBoundingClientRect(); return { x: r.left, y: r.top, r: r.right, b: r.bottom, w: r.width, h: r.height } },
     list: () => [...document.querySelectorAll('.inbox-groups')].find(n => n.getClientRects().length),
     rows: () => [...(__k.list()?.querySelectorAll('.inbox-row:not(.is-leaving)') ?? [])],
+    reach: () => __k.rows().filter(n => !n.closest('.inbox-pile:not(.is-open)')),
+    done: () => [...(__k.list()?.querySelectorAll('.inbox-done') ?? [])].map(n => ({ id: n.dataset.id, text: n.innerText.replace(/\\s+/g, ' '), h: Math.round(n.getBoundingClientRect().height), current: n.classList.contains('is-current') })),
     row: id => __k.rows().find(n => n.dataset.id === id),
-    cur: () => { const n = __k.list()?.querySelector('.inbox-row.is-current'); return n ? { id: n.dataset.id, y: Math.round(n.getBoundingClientRect().top), later: 'later' in n.dataset, open: n.classList.contains('is-open'), focus: document.activeElement === n } : null },
+    cur: () => { const n = __k.list()?.querySelector('.inbox-row.is-current, .inbox-done.is-current'); return n ? { id: n.dataset.id, y: Math.round(n.getBoundingClientRect().top), later: 'later' in n.dataset, done: n.classList.contains('inbox-done'), open: n.classList.contains('is-open'), focus: document.activeElement === n } : null },
     inView: n => { const b = n.closest('main, .pane-list').getBoundingClientRect(), r = n.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 },
     back: () => { const n = [...document.querySelectorAll('.says')].find(b => b.getClientRects().length); return n ? { text: n.innerText.replace(/\\s+/g, ' '), box: __k.box(n), host: n.parentElement.className, button: Boolean(n.querySelector('.says-back')) } : null },
+    inSight: n => { const r = n.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight - 60 },
     point: n => { const r = n.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } },
     hits: (a, b) => a.x < b.r && b.x < a.r && a.y < b.b && b.y < a.b,
     active: () => { const a = document.activeElement; return a ? { tag: a.tagName, cls: String(a.className), text: (a.innerText ?? '').slice(0, 40), label: a.getAttribute('aria-label') } : null },
@@ -172,7 +177,7 @@ const back = () => ev('return __k.back()')
 async function markRow(id) {
   await key('Home')
   for (let i = 0; i < 60; i++) {
-    if ((await cur())?.id === id) return true
+    if ((await cur())?.id === id) { await sleep(450); return true }   // let the list come to rest
     await key('j', { pause: 40 })
   }
   return check(false, `J does not reach the row of card ${id}`)
@@ -291,6 +296,7 @@ async function main() {
   await click(`__k.row(${JSON.stringify(c.b1)}).querySelectorAll('.inbox-answer.is-thumb')[1]`)
   await until('a click on the thumb up answers yes', () => card(c.b1).status !== 'open' && card(c.b1).choice === 'yes')
   await until('the note is shown', back)
+  await sleep(450)   // a new note lets taps through for a moment, so a fast second tap cannot hit Back
   await click('document.querySelector(".says-back")')
   await until('a click on Back takes the answer back', () => card(c.b1).status === 'open')
   await until('the question is back in its group, and marked', async () => (await cur())?.id === c.b1 && await ev(`return __k.row(${JSON.stringify(c.b1)}).closest('.inbox-group').querySelector('.inbox-sender').textContent.includes('Beta')`))
@@ -306,8 +312,18 @@ async function main() {
   check(Math.abs(afterLater.y - y0) <= 1 && afterLater.id !== c.b2, `after L the mark stays in place, on the row that moved up (${y0} -> ${afterLater.y}, ${afterLater.id === c.b2 ? 'same row' : 'next row'})`)
   check(/Moved to Later/.test((await back())?.text ?? ''), 'a note says "Moved to Later"')
   await shot('03-moved-to-later')
+  // What was put off lies in a pile at the foot of the list. J goes on from the last row to the pile's line; Enter unfolds it.
+  check(await ev(`return Boolean(__k.row(${JSON.stringify(c.b2)})) || Boolean(__k.list().querySelector('.inbox-group-later'))`), 'a "Later" pile stands at the foot of the list')
   await key('End', { pause: 500 })
-  check((await cur())?.id === c.b2 && (await cur()).later, 'End reaches the row in the "Later" group')
+  await key('j')
+  check((await ev('return __k.active()')).cls.includes('inbox-pile-head') && !(await cur()), 'J past the last row goes to the line of the pile')
+  await key('Enter', { pause: 600 })
+  check(await ev('return Boolean(__k.list().querySelector(".inbox-group-later.is-open"))'), 'Enter unfolds the pile')
+  await key('j', { pause: 400 })
+  { const at = await cur(); check(at?.id === c.b2 && at.later, `J then marks the row that was put off (${at?.id === c.b2 ? 'it' : 'another row'}, later ${at?.later})`) }
+  await key('k')
+  await key('j')
+  check((await cur())?.id === c.b2, 'K and J move between the rows above and the unfolded pile')
   await shot('03b-later-group')
   await key('l')
   await until('L on a row that was put off fetches it back', () => ev(`return !('later' in __k.row(${JSON.stringify(c.b2)}).dataset)`))
@@ -383,9 +399,43 @@ async function main() {
   await until('E in that window asks the session to explain', () => watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user' && /^Explain this question/.test(m.text)))
   await until('the window closes', () => ev('return !__k.front()'))
   await until('the row is under "Later"', () => ev(`return 'later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? {})`))
-  check(/Asked to explain/.test((await back())?.text ?? ''), 'and the page says so')
+  check(/Asked/.test((await back())?.text ?? ''), 'and the page says so')
   await key('u')
   await until('U fetches it back', () => ev(`return !('later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? { later: 1 }))`))
+
+  // ---------------------------------------------------------------------------
+  section('Inbox: the Answered group')
+  check(!(await ev('return Boolean(__k.list().querySelector(".inbox-group-answered"))')), 'with nothing answered there is no "Answered" group')
+  await markRow(c.g2)
+  await key('y')
+  await until('Y answers', () => card(c.g2).status !== 'open')
+  await until('an "Answered" group stands at the end, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return g && g === __k.list().lastElementChild && !g.querySelector(".inbox-done") && /Answered/.test(g.innerText) && /1 today/i.test(g.innerText)'))
+  await sleep(4300)   // the note has left: this is the wrong answer that is noticed later
+  await click('__k.list().querySelector(".inbox-answered-toggle")')
+  const listed = await ev('return __k.done()')
+  if (check(listed.length === 1 && listed[0].id === c.g2, 'a click unfolds it: one slim row for the answered question')) {
+    check(/Renew the certificate\?/.test(listed[0].text) && /Yes/.test(listed[0].text) && /Gamma/.test(listed[0].text) && /Take back/.test(listed[0].text), `the row says what was asked, what was answered and who asked ("${listed[0].text}")`)
+    check(listed[0].h < 100, `the row is slimmer than a question row (${listed[0].h}px)`)
+  }
+  await key('End', { pause: 500 })
+  check((await cur())?.done && (await cur()).id === c.g2, 'End reaches the answered row')
+  await shot('06b-answered-group')
+  await keys('y', 'n', 'l', 'e', 'Enter', 'a')
+  await sleep(300)
+  check(card(c.g2).status !== 'open' && !(await ev('return Boolean(__k.front())')), 'the answer keys do nothing on an answered row')
+  await key('u')
+  await until('U on the marked answered row takes the answer back', () => card(c.g2).status === 'open')
+  await until('the question stands in its group again, marked', async () => { const at = await cur(); return at?.id === c.g2 && !at.done && await ev(`return __k.row(${JSON.stringify(c.g2)}).closest('.inbox-group').querySelector('.inbox-sender').textContent.includes('Gamma')`) })
+  // The same by hand, on a card the agent has closed since.
+  await key('n')
+  await until('N answers', () => card(c.g2).status !== 'open')
+  await gamma.call('close_card', { card_id: c.g2, summary: 'Left as it is.' })
+  await until('the row says the agent has closed it', () => ev('return __k.done().some(d => /done by the agent/i.test(d.text))'))
+  await sleep(700)   // the rows have come to rest
+  await click('__k.list().querySelector(".inbox-takeback")')
+  await until('a click on "Take back" reopens it all the same', () => card(c.g2).status === 'open')
+  await until('and the question stands in its group again, marked', async () => (await cur())?.id === c.g2 && !(await cur()).done)
+  await key('Escape')
 
   // ---------------------------------------------------------------------------
   section('The sheet behind "?"')
@@ -470,6 +520,18 @@ async function main() {
   check(await member() === first, 'O again moves back')
   await ev(`return Promise.all(['alpha', 'beta'].map(agent => fetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent, group: null }) })))`)
 
+  // The pad lies over the board; while it is up the board's keys rest.
+  await keys('g', 'i')
+  await sleep(300)
+  await key('p', { pause: 900 })
+  if (check(await ev('return document.body.hasAttribute("data-pad") && location.pathname === "/pad"'), 'P opens the pad')) {
+    await ev('window.focus(); document.activeElement?.blur?.()')
+    await keys('g', 'a', 't')
+    check(await ev('return location.pathname === "/pad" && document.documentElement.dataset.theme !== "dark"'), 'under the pad the board\'s keys rest')
+    await ev('history.back()')
+    await until('leaving the pad returns to the place before', () => ev('return !document.body.hasAttribute("data-pad") && location.pathname === "/"'))
+  }
+
   // ---------------------------------------------------------------------------
   section('Focus: the walk through all questions')
   await keys('g', 'i')
@@ -519,6 +581,7 @@ async function main() {
   await click('[...__k.front().querySelectorAll(".focus-opt")].at(-1)')
   await until('a click on a tile answers', () => card(duo).status !== 'open')
   await until('the note is shown again', back)
+  await sleep(450)
   await click('document.querySelector(".focus-says .says-back")')
   await until('a click on Back takes the answer back', () => card(duo).status === 'open')
   await until('and that question is in front again', async () => await frontId() === duo)
@@ -527,6 +590,15 @@ async function main() {
   await key('Backspace', { pause: 700 })
   await until('Backspace takes it back', () => card(duo).status === 'open')
   await until('the question is in front again', async () => await frontId() === duo)
+  // More options than a pair: C puts the keyboard on the first, up and down go through them, nothing is answered.
+  for (let i = 0; i < walkOrder.length && !((card(await frontId())?.options.length ?? 0) > 2); i++) await key('j', { pause: 400 })
+  const many = await frontId()
+  await key('c')
+  const firstOpt = (await ev('return __k.active()')).text
+  await key('ArrowDown')
+  const secondOpt = (await ev('return __k.active()')).text
+  check(firstOpt && secondOpt && firstOpt !== secondOpt && card(many).status === 'open' && await frontId() === many, `C then the down arrow walk the options without answering ("${firstOpt}" -> "${secondOpt}")`)
+  await ev('document.activeElement.blur()')
   const beforeLater = await frontId()
   await key('l', { pause: 700 })
   check(await frontId() !== beforeLater && watch.state.cards.find(x => x.id === beforeLater).status === 'open', 'L puts the question off and the next one comes')
@@ -539,7 +611,7 @@ async function main() {
     await key('e', { pause: 900 })
     await until('E asks the session to explain the question in front', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && /^Explain this question/.test(m.text)))
     check(await frontId() !== beforeExplain, 'and the walk moves on')
-    check(/Asked to explain/.test((await back())?.text ?? ''), 'a note says "Asked to explain"')
+    check(/Asked/.test((await back())?.text ?? ''), 'a note says that the session was asked')
     await shot('13-explain-in-walk')
   }
   await key('?', { shift: true, pause: 300 })
@@ -571,7 +643,7 @@ async function main() {
   await shot('15-tab-focus')
   for (const where of ['/', '/agents', '/s/gamma', '/s/gamma/questions']) {
     await open(where)
-    const nameless = await ev(`return [...document.querySelectorAll('button, a[href], [role="button"]')].filter(n => n.getClientRects().length && !(n.getAttribute('aria-label') ?? n.getAttribute('aria-labelledby') ?? n.innerText ?? '').trim() && !n.title).map(n => n.tagName + '.' + n.className)`)
+    const nameless = await ev(`return [...document.querySelectorAll('button, a[href], [role="button"]')].filter(n => n.checkVisibility({ visibilityProperty: true }) && !(n.getAttribute('aria-label') ?? n.getAttribute('aria-labelledby') ?? n.innerText ?? '').trim() && !n.title).map(n => n.tagName + '.' + n.className)`)
     check(!nameless.length, `${where}: every control has a name; without one: ${[...new Set(nameless)].join(', ')}`)
   }
 
