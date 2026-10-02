@@ -101,7 +101,7 @@ const SEL = {
   focusExplain: '.focus-explain',
   focusHand: '.focus-handback',
   focusLater: '.focus-later:not(.focus-explain):not(.focus-handback)',
-  focusRail: '.focus-rail',
+  focusRail: '.focus-rail, .focus-more',   // how far the walk is: a rail of marks, later one line "3 more" at the foot
   focusThread: '.focus-thread',
   focusNote: '.focus-says .says',
   // In the walk (one scrolling column of cards) a card that left is a slim strip where it stood, with the way back on it.
@@ -185,7 +185,7 @@ const SEL = {
   // These scroll sideways on purpose; everything else must fit the width of a phone.
   sidewaysOk: '#agents, pre, .hist-tabs, .focus-thumbs, .scr-tools, table',
   // What agents and the human wrote. Everything outside of it is the interface and must be English.
-  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-option, .inbox-pile-peek, .inbox-done, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .roster-card, .roster-archived, .focus-card, .hist-row, .file-row, .adm-card, .adm-log, .adm-stderr, .adm-links, .focus-rail, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
+  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-option, .inbox-pile-peek, .inbox-done, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .roster-card, .roster-archived, .focus-card, .hist-row, .file-row, .adm-card, .adm-log, .adm-stderr, .adm-links, .focus-rail, .focus-strip, .pane-now, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
 }
 
 // Words of the interface the test relies on.
@@ -1418,7 +1418,10 @@ async function groupSession() {
   // Its open questions stand in the conversation as the same rows as in the inbox.
   const mine = openCards(agent.id)
   need(mine.length > 0, `"${nameOf(agent)}" has no open question left; the fixture changed`)
-  const asks = `${SEL.pane} ${SEL.ask}`
+  // On a wide window the open questions lie in a column beside the conversation (and "Questions only" has
+  // nothing to do); otherwise they stand in the conversation itself.
+  const beside = await ev(js`!__t.one(${SEL.filterQuestions}) && !!__t.one(${SEL.questionsPane})`)
+  const asks = beside ? SEL.questionsPane : `${SEL.pane} ${SEL.ask}`
   const inline = await ev(js`__t.rows(${asks}).length ? __t.all(${asks}).flatMap(a => __t.rows(a)) : []`)
   check(inline.length === mine.length, `the conversation shows ${inline.length} open questions as rows, the session has ${mine.length}`)
   for (const c of mine) check(inline.some(r => r.id === c.id), `the open question "${c.title}" is missing in the conversation`)
@@ -1427,36 +1430,39 @@ async function groupSession() {
     const heights = [...new Set(inline.map(r => Math.round(r.box.height)))]
     check(heights.length === 1, `the questions in the conversation differ in height: ${heights.join(', ')}px`)
   }
-  await checkPictures('the pictures of questions in the conversation', `${SEL.ask} ${SEL.rowThumbImage}`, null, mine.some(c => pictures(c).length) ? 1 : 0)
+  await checkPictures('the pictures of questions in the conversation', `${beside ? SEL.questionsPane : SEL.ask} ${SEL.rowThumbImage}`, null, mine.some(c => pictures(c).length) ? 1 : 0)
 
   // Answer one right there.
   const card = mine.find(c => c.options.length === 2 && inline.find(r => r.id === c.id)?.tiles.length === 2)
   need(card, `"${nameOf(agent)}" has no open two-option question left; the fixture changed`)
-  const root = `__t.all(${JSON.stringify(SEL.ask)}).find(a => __t.row(${JSON.stringify(card.id)}, a))`
+  const root = beside ? `__t.one(${JSON.stringify(SEL.questionsPane)})` : `__t.all(${JSON.stringify(SEL.ask)}).find(a => __t.row(${JSON.stringify(card.id)}, a))`
   await press(`"${card.options[0].label}" on the question "${card.title}" in the conversation`, `__t.tile(${JSON.stringify(card.id)}, 'right', ${root})`)
   await waitState(`"${card.title}" is decided`, () => cardOf(card.id).status !== 'open')
   check(cardOf(card.id).choice === card.options[0].key, `one click on "${card.options[0].label}" chose "${cardOf(card.id).choice}"`)
-  await expect('the answered question is no longer offered in the conversation', js`!__t.all(${SEL.ask}).some(a => __t.row(${card.id}, a))`)
+  await expect('the answered question is no longer offered in the conversation', js`!__t.all(${beside ? SEL.questionsPane : SEL.ask}).some(a => __t.row(${card.id}, a))`)
   await expect('the answer can be taken back', js`!!__t.one(${SEL.undoBar})`, 2000)
   await expect('the scripted agent confirms the answer', js`!!__t.byText(${SEL.agentMessage}, ${`ich setze ${card.options[0].key} um`})`, 10000)
   await shot('answered-inline')
 
-  // "Questions only": the same rows as a list, and nothing else; pressed again, the conversation is back.
-  const left = openCards(agent.id)
-  await press('"Questions only"', js`__t.one(${SEL.filterQuestions})`)
-  await waitFor('the filter shows the list of questions', js`document.body.dataset.filter === 'questions' && !!__t.one(${SEL.questionsPane})`)
-  await settle()
-  const listed = await ev(js`__t.rows(${SEL.questionsPane})`)
-  check(listed.map(r => r.id).sort().join() === left.map(c => c.id).sort().join(), `"Questions only" lists ${listed.length} rows, the session has ${left.length} open questions`)
-  check(!(await ev(js`__t.all(${SEL.message}).length`)), '"Questions only" still shows messages of the conversation')
-  check(await ev(js`document.querySelector(${SEL.filterQuestions}).getAttribute('aria-pressed')`) === 'true', 'the filter does not say that it is on')
-  check(parseInt(await ev(js`__t.text(document.querySelector(${SEL.filterCount}))`) || '0', 10) === left.length, `the filter counts "${await ev(js`__t.text(document.querySelector(${SEL.filterCount}))`)}", ${left.length} are open`)
-  if (left.length) await checkRows(SEL.questionsPane, '"Questions only"')
-  await checkPictures('"Questions only"', `${SEL.questionsPane} ${SEL.rowThumbImage}`, null, left.some(c => pictures(c).length) ? 1 : 0)
-  await checkEnglish('"Questions only"')
-  await shot('questions-only')
-  await press('"Questions only" again', js`__t.one(${SEL.filterQuestions})`)
-  await expect('pressed again, the whole conversation is back', js`!document.body.dataset.filter && __t.all(${SEL.message}).length > 0`)
+  if (!beside) {
+    // "Questions only": the same rows as a list, and nothing else; pressed again, the conversation is back.
+    const left = openCards(agent.id)
+    await press('"Questions only"', js`__t.one(${SEL.filterQuestions})`)
+    await waitFor('the filter shows the list of questions', js`document.body.dataset.filter === 'questions' && !!__t.one(${SEL.questionsPane})`)
+    await settle()
+    const listed = await ev(js`__t.rows(${SEL.questionsPane})`)
+    check(listed.map(r => r.id).sort().join() === left.map(c => c.id).sort().join(), `"Questions only" lists ${listed.length} rows, the session has ${left.length} open questions`)
+    check(!(await ev(js`__t.all(${SEL.message}).length`)), '"Questions only" still shows messages of the conversation')
+    check(await ev(js`document.querySelector(${SEL.filterQuestions}).getAttribute('aria-pressed')`) === 'true', 'the filter does not say that it is on')
+    check(parseInt(await ev(js`__t.text(document.querySelector(${SEL.filterCount}))`) || '0', 10) === left.length, `the filter counts "${await ev(js`__t.text(document.querySelector(${SEL.filterCount}))`)}", ${left.length} are open`)
+    if (left.length) await checkRows(SEL.questionsPane, '"Questions only"')
+    await checkPictures('"Questions only"', `${SEL.questionsPane} ${SEL.rowThumbImage}`, null, left.some(c => pictures(c).length) ? 1 : 0)
+    await checkEnglish('"Questions only"')
+    await shot('questions-only')
+    await press('"Questions only" again', js`__t.one(${SEL.filterQuestions})`)
+    await expect('pressed again, the whole conversation is back', js`!document.body.dataset.filter && __t.all(${SEL.message}).length > 0`)
+
+  }
 
   // "Files": what the session sent, each with a picture that loads.
   const courierAgent = agentNamed(COURIER)
@@ -1655,9 +1661,14 @@ async function groupUrls() {
   await at('the inbox', '/', { page: '', scope: 'all' })
   await goSession(agent)
   await at('a session', home, { view: 'chat', filter: '' })
-  await press('"Questions only"', js`__t.one(${SEL.filterQuestions})`)
-  await settle()
-  await at('"Questions only"', `${home}/questions`, { view: 'chat', filter: 'questions' })
+  // (On a wide window the questions lie beside the conversation; there is no "Questions only" then, and its old address is the session's.)
+  const beside = !(await ev(js`!!__t.one(${SEL.filterQuestions})`))
+  const filtered = beside ? [] : [`${home}/questions`]
+  if (!beside) {
+    await press('"Questions only"', js`__t.one(${SEL.filterQuestions})`)
+    await settle()
+    await at('"Questions only"', `${home}/questions`, { view: 'chat', filter: 'questions' })
+  }
   await mode('scribble', agent)
   await at('scribble', `${home}/scribble`, { view: 'scribble' })
   await goRoster()
@@ -1667,11 +1678,15 @@ async function groupUrls() {
   // A step may leave the page altogether when an entry is missing; then the page loads anew.
   const walk = async dir => { await ev(`history.${dir}()`).catch(() => {}); await sleep(300); await appReady().catch(() => {}); await settle() }
   const back = () => walk('back'), forward = () => walk('forward')
-  for (const p of [`${home}/scribble`, `${home}/questions`, home, '/']) { await back(); await at(`back to ${p}`, p, {}); await seenIs(`back to ${p}`, p) }
-  for (const p of [home, `${home}/questions`, `${home}/scribble`, '/agents']) { await forward(); await at(`forward to ${p}`, p, {}); await seenIs(`forward to ${p}`, p) }
+  for (const p of [`${home}/scribble`, ...filtered, home, '/']) { await back(); await at(`back to ${p}`, p, {}); await seenIs(`back to ${p}`, p) }
+  for (const p of [home, ...filtered, `${home}/scribble`, '/agents']) { await forward(); await at(`forward to ${p}`, p, {}); await seenIs(`forward to ${p}`, p) }
 
   // A reload stays where it was, and each address opens its view directly.
-  for (const p of ['/agents', `${home}/scribble`, `${home}/questions`, home, '/']) {
+  if (beside) {
+    check(await open(`${home}/questions`) === 200, `${home}/questions is not served`)
+    await expect('an old link to "Questions only" lands on the session, its questions beside the conversation', js`location.pathname === ${home} && !!__t.one(${SEL.questionsPane}) && __t.all(${SEL.message}).length > 0`, 4000)
+  }
+  for (const p of ['/agents', `${home}/scribble`, ...filtered, home, '/']) {
     check(await open(p) === 200, `${p} is not served`)
     await at(`opened directly, ${p}`, p, {})
     await seenIs(`opened directly, ${p}`, p)
@@ -1748,12 +1763,16 @@ async function groupAgents() {
   const crownOf = js`__t.one(${SEL.crownToggle}, __t.unit(${nameOf(vip)}))`
   if (!touch && await ev(`!!${crownOf}`)) {
     check(await ev(`${crownOf}.getAttribute('aria-pressed')`) === 'true', 'the crown in the sidebar does not show the session as VIP')
-    await press(`the crown of "${nameOf(vip)}" in the sidebar`, crownOf)
-    await waitState('a click on the crown takes VIP away', s => !s.agents.find(a => a.id === vip.id).starred, 4000).then(() => passed(), e => check(false, e.message))
-    await settle()
-    // (Without VIP the crown shows only while the pointer is near; the switch on the agents page is always there.)
-    await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
-    await waitState(`"${nameOf(vip)}" is starred again`, s => s.agents.find(a => a.id === vip.id).starred)
+    const pressed = await press(`the crown of "${nameOf(vip)}" in the sidebar`, crownOf).then(() => true, e => { if (!(e instanceof Failed)) throw e; return check(false, e.message) })
+    if (pressed) {
+      await waitState('a click on the crown takes VIP away', s => !s.agents.find(a => a.id === vip.id).starred, 4000).then(() => passed(), e => check(false, e.message))
+      await settle()
+      // (Without VIP the crown shows only while the pointer is near; the switch on the agents page is always there.)
+      if (!agentById(vip.id).starred) {
+        await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
+        await waitState(`"${nameOf(vip)}" is starred again`, s => s.agents.find(a => a.id === vip.id).starred)
+      }
+    }
   }
 
   await reload()
@@ -1786,6 +1805,16 @@ async function groupAgents() {
   await expect(`the session is called "${target.name}" again`, js`!!__t.rosterCard(${target.name})`, 3000)
 }
 
+const closeMenu = async () => { if (await ev(js`!!__t.one(${SEL.brandDoors})`)) { await escape(); await settle() } }
+/** The switch between light and dark: in the bar, or one of the entries of the menu at the logo. */
+async function pressTheme() {
+  if (!(await ev(js`__t.vis(document.querySelector(${SEL.themeToggle}))`))) {
+    await press('the logo', js`__t.one(${SEL.brandMenu})`)
+    await waitFor('the menu at the logo shows the theme switch', js`__t.vis(document.querySelector(${SEL.themeToggle}))`, 3000)
+  }
+  await press('the theme toggle', js`document.querySelector(${SEL.themeToggle})`)
+}
+
 async function groupTheme() {
   await open('/')
   const theme = () => ev('document.documentElement.dataset.theme ?? "light"')
@@ -1793,9 +1822,10 @@ async function groupTheme() {
   const start = await theme()
   const startPaper = await paper()
   const other = start === 'dark' ? 'light' : 'dark'
-  await press('the theme toggle', js`document.querySelector(${SEL.themeToggle})`)
+  await pressTheme()
   await waitFor(`the toggle switches to ${other}`, js`(document.documentElement.dataset.theme ?? 'light') === ${other}`, 2000)
   await settle()
+  await closeMenu()
   check(await paper() !== startPaper, 'the page looks the same in both themes')
   check(await ev(js`document.querySelector(${SEL.themeToggle}).getAttribute('aria-pressed')`) === String(other === 'dark'), 'the toggle does not say which theme is on')
   await reload()
@@ -1803,7 +1833,8 @@ async function groupTheme() {
   await open('/agents')
   check(await theme() === other, `on another page the theme is ${await theme()} again`)
   await shot(`${other}`)
-  await press('the theme toggle', js`document.querySelector(${SEL.themeToggle})`)
+  await closeMenu()
+  await pressTheme()
   await waitFor(`the toggle switches back to ${start}`, js`(document.documentElement.dataset.theme ?? 'light') === ${start}`, 2000)
   await reload()
   check(await theme() === start, `after switching back and a reload the theme is ${await theme()}`)
@@ -2014,7 +2045,7 @@ async function groupWalk() {
   await settle()
   check(!(await front()).single, 'the circled count opened the window of one card, not the walk')
   check((await place()).path === '/' && /[?&]q=next\b/.test(await ev('location.search')), `the walk has no address of its own: ${await ev('location.pathname + location.search')}`)
-  check(await ev(js`!!__t.one(${SEL.focusRail})`), 'the walk shows no rail that says how far it is')
+  check(await ev(js`!!__t.one(${SEL.focusRail})`), 'the walk does not say how far it is (no rail, no "… more" line)')
 
   // One composer, and beside it the ways to leave a card without answering.
   need(await walkTo(talk), `the walk never came to "${talk.title}"`)
@@ -2328,7 +2359,7 @@ async function groupModules() {
   }
   // Importing is not all: the Focus window is built when it is first opened, and a name that is missing then
   // (a constant renamed half-way) leaves "Go through them" and every "Choose" on a heavy card dead.
-  await ev(js`document.querySelector(${SEL.walk}).click()`)
+  await ev(js`(document.querySelector(${SEL.goThrough}) ?? document.querySelector(${SEL.walk}))?.click()`)
   const up = await waitFor('the window opens', '__t.focusOpen()', 4000).catch(() => false)
   check(up, `the Focus window does not open: ${[...new Set(problems)].join(' | ').slice(0, 300) || 'nothing happens, and no error is logged'}`)
   await closeWindows()
