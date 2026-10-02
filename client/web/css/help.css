@@ -120,6 +120,10 @@ section { display: grid; gap: var(--s-5); min-width: 0; scroll-margin-top: var(-
 @media (max-width: 760px) {
   body { padding-top: var(--s-6); }
   main { gap: var(--s-10); }
+  /* A finger needs 36px: the way back and the links of the contents get room above and below, without moving anything. */
+  .hp-back { padding: 12px 0; margin: -12px 0 calc(var(--s-4) - 12px); }
+  .hp-nav { row-gap: 0; }
+  .hp-nav a { padding: 12px 0; }
   .hp-title { font-size: 1.25rem; flex-wrap: wrap; }
   .hp-title b { white-space: normal; }
   .hp-two, .hp-entry { grid-template-columns: minmax(0, 1fr); }

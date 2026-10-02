@@ -61,20 +61,29 @@
 <header class="topbar">
   <!-- The logo is the menu (js/bar.js): Help, Admin, Keys, the knock sound, the theme, and the connection. -->
   <div class="brand">
-    <h1><button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" title="Help, Admin, Keys, theme">
+    <!-- The Desk floats at the top centre (a phone: in the bar): a click goes to the Desk; the caret beside it
+         opens the menu. What waits and who works stands in #desk-state (js/agents.js). -->
+    <h1 class="deskpill">
+      <button type="button" class="desk-go" id="desk-go" title="Desk: everything that waits for you (G I)">
       <svg class="brand-mark" viewBox="0 0 64 64" aria-hidden="true">
         <rect class="brand-mark-bg" width="64" height="64" rx="18"/>
         <path class="brand-mark-pen" stroke-width="3.2" d="M12.8 11.7C14.7 10.6 20.2 6 24.3 5.1C28.5 4.2 33.4 5.2 37.7 6.1C42 7.1 46.8 8.2 50 10.7C53.1 13.2 55 17.5 56.7 21.2C58.4 24.9 60.1 28.9 60.2 32.9C60.2 36.8 59.3 41.6 57.1 44.9C55 48.3 50.9 50.8 47.3 52.9C43.8 55 39.7 57.3 35.8 57.7C31.8 58.1 27.4 56.6 23.5 55.3C19.6 54.1 15.2 52.7 12.4 50.1C9.5 47.5 7.4 43.3 6.4 39.6C5.4 36 5.8 31.9 6.4 28.1C7.1 24.4 8.1 20.2 10.3 17.2C12.6 14.2 18.4 11.3 20 10.1"/>
         <path class="brand-mark-pen" stroke-width="7.6" d="M19.5 21.5C21.6 21.3 27.8 20.8 32 20.5C36.2 20.3 42.4 20.1 44.5 20C42.4 22.1 36.2 28.4 32 32.5C27.8 36.6 21.6 42.5 19.5 44.5C21.6 44.4 27.7 44.2 32 44C36.3 43.8 43.3 43.6 45.5 43.5"/>
       </svg>
-      <span>Trommi</span>
-    </button></h1>
+        <span class="desk-name">Desk</span>
+        <span class="desk-state" id="desk-state"></span>
+      </button>
+      <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings" title="Jump, desks, Agents, Help, Admin, Keys, theme"></button>
+    </h1>
     <nav class="sidedoors" id="brand-doors" role="menu" aria-label="Jump, places and settings" hidden>
       <!-- Jump: type to go to a session, a question by its number, the inbox, the agents, the pad. -->
       <input id="jump-field" type="search" placeholder="Jump to…" aria-label="Jump to a session, a question number or a place" autocomplete="off" spellcheck="false">
       <div id="jump-results" role="listbox" aria-label="Places"></div>
-      <!-- Projects: one today, so a quiet line; a list once there are more. -->
-      <p class="menu-project" id="project-current">Project <b>Trommi</b></p>
+      <!-- Desks (a desk is what was called a project): one today; the list takes more. -->
+      <p class="menu-head">Switch desk</p>
+      <div class="menu-desks" id="desk-list">
+        <button role="menuitemradio" type="button" class="menu-desk" id="project-current" aria-checked="true"><b>Trommi</b><i id="desk-open"></i></button>
+      </div>
       <div class="menu-grid">
         <button role="menuitem" type="button" id="menu-agents">Agents</button>
         <a role="menuitem" href="/help.html">Help</a>
@@ -91,7 +100,7 @@
   </div>
   <!-- Where to go; at the right end only the pad's control (put before #focus-open by js/padlink.js). -->
   <nav class="footnav" aria-label="Places">
-    <button type="button" id="nav-inbox">Inbox</button>
+    <button type="button" id="nav-inbox">Desk</button>
     <button type="button" id="nav-roster">Agents</button>
   </nav>
   <button class="icon-btn roster-open" id="roster-open" type="button" aria-label="Agents" title="Agents"></button>

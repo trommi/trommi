@@ -1152,3 +1152,74 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus .focus-zoom-ways .focus-way .focus-way-word { display: none !important; }
 .focus .focus-zoom-ways .focus-way .focus-way-art .sketch { width: 27px; height: 27px; }
 .focus .focus-zoom-ways .focus-way.focus-shred:hover:not(:disabled) { color: var(--urg-critical); box-shadow: inset 0 0 0 2px var(--urg-critical); }
+
+/* ══ One view: a card with pictures begins with the picture, large, on the stage (which one it is and the quiet
+   controls above it, the steps at its sides); title, the quiet line, text and what was said follow by scrolling. ══ */
+.focus-card[data-pictures] .focus-scroll > .focus-media { padding: 0; margin: 0 0 var(--s-5); background: none; box-shadow: none; border-radius: 0; max-width: none; gap: var(--s-2); }
+.focus-stage-bar { display: flex; align-items: center; gap: var(--s-2); min-height: 40px; padding-right: 112px; }
+.focus-stage-where { flex: 1 1 auto; min-width: 0; display: flex; align-items: baseline; gap: var(--s-3); color: var(--muted); font-size: var(--t-sm); white-space: nowrap; overflow: hidden; }
+.focus-stage-where b { color: var(--fg); font: 700 1rem/1 var(--display); font-variant-numeric: tabular-nums; }
+.focus-stage-where span { overflow: hidden; text-overflow: ellipsis; }
+.focus-stage-bar .focus-grid-flip, .focus-stage-bar .focus-page-link { flex: none; height: 34px; padding: 0 12px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); color: var(--fg); font-size: var(--t-xs); font-weight: 600; }
+.focus-stage-bar .focus-page-link[hidden] { display: none; }
+.focus-stage-view { position: relative; min-width: 0; }
+.focus-media[data-view="grid"] > .focus-stage-view { display: none; }
+.focus-card[data-pictures] .focus-figure { height: clamp(220px, 58cqh, 760px); cursor: default; background: var(--surface); }
+.focus-card[data-pictures] .focus-figure img { max-height: 100%; max-width: 100%; }
+.focus-stage-step { position: absolute; z-index: 2; top: 50%; translate: 0 -50%; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); color: var(--fg); }
+.focus-stage-step[hidden] { display: none; }
+.focus-stage-step.is-prev { left: 10px; }
+.focus-stage-step.is-next { right: 10px; }
+.focus-stage-step .focus-icon { width: 18px; height: 18px; }
+.focus-figure-zoom { cursor: zoom-in; }
+.focus-card[data-pictures] .focus-title { padding-right: 0; }
+.focus-take { width: 100%; text-align: left; }
+.focus-take[hidden] { display: none; }
+/* the small title at the stage's top once the real one is out of sight: which question this is, and the way up */
+.focus-talk { position: relative; }
+.focus-up { position: absolute; z-index: 4; left: var(--pad); top: 8px; max-width: calc(100% - var(--pad) - 130px); height: 34px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px 0 10px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); color: var(--fg); font: 700 var(--t-sm)/1 var(--display); }
+.focus-up[hidden] { display: none; }
+.focus-up .focus-icon { flex: none; width: 15px; height: 15px; color: var(--muted); }
+.focus-up-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-card[data-pictures] .focus-talk:has(> .focus-up:not([hidden])) .focus-stage-where { visibility: hidden; }
+.focus-card-count { align-self: center; padding-right: 6px; font-size: var(--t-xs); color: var(--muted); }
+.focus-card-count:empty { display: none; }
+/* a card that is not open any more: to read, with what became of it */
+.focus-card[data-past] > .focus-composer, .focus-card[data-past] .focus-actions, .focus-card[data-past] .focus-opt-send, .focus-card[data-past] .focus-tag-line { display: none; }
+.focus-card[data-past] .focus-opt:not([data-chosen]) { opacity: .45; }
+.focus-card[data-past] .focus-opt[data-chosen] { box-shadow: inset 0 0 0 2px var(--accent); }
+.focus-past { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--s-3); margin: var(--s-4) 0 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.focus-past p { margin: 0; }
+.focus-past-says { flex: 1 1 auto; color: var(--muted); }
+.focus-past-says b { color: var(--fg); }
+.focus-past-note { flex: 1 1 100%; order: 3; color: var(--fg); }
+.focus-past-back { flex: none; height: 34px; padding: 0 12px; border-radius: var(--r-sm); background: var(--sunken); color: var(--fg); font-weight: 600; font-size: var(--t-sm); }
+.focus-past-back:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+@container focus (max-width: 699.9px) {
+  .focus .focus-card > .focus-card-ends { position: absolute; z-index: 5; right: 8px; top: 6px; display: flex; gap: 2px; }
+  .focus-stage-bar { padding-right: 104px; flex-wrap: wrap; }
+  .focus-card[data-pictures] .focus-figure { height: clamp(200px, 42dvh, 420px); }
+}
+.focus-card[data-pictures] .focus-scroll { padding-top: 6px; }
+.focus-stage-bar { min-height: 36px; }
+.focus[data-list] .focus-card[data-pictures] .focus-figure { height: clamp(220px, 46cqh, 640px); }
+.focus-card[data-pictures] .focus-thumbs .focus-figure-name { display: none; }
+.focus-up { top: 7px; }
+/* in the stack of cards the note of what happened stands at the window's top left */
+.focus[data-list] .focus-says { position: fixed; inset: 12px auto auto 12px; width: auto; translate: none; }
+/* the quiet controls stay readable over a picture scrolled under them */
+.focus .focus-card > .focus-card-ends { padding: 2px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--sunken) 82%, transparent); }
+.focus[data-list] .focus-says { inset: 12px auto auto 12px !important; }
+/* the option of the picture shown: marked, the arrow from the picture points at it */
+.focus-card .focus-opt[data-match] { box-shadow: inset 0 0 0 2px var(--u); background: color-mix(in srgb, var(--u) 20%, var(--surface)); }
+/* the options never end in half a tile: the list scrolls in its column (soft fade at its foot), and many options
+   stand tighter */
+.focus-card .focus-answer > .focus-opts { flex: 0 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.focus-card .focus-answer > .focus-opts::-webkit-scrollbar { display: none; }
+.focus-opts[data-count="stack"]:has(> .focus-opt:nth-of-type(5)) .focus-opt { min-height: 0; padding-block: 8px; }
+.focus-opts[data-count="stack"]:has(> .focus-opt:nth-of-type(5)) .focus-opt-detail { font-size: var(--t-xs); line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.focus-opts[data-count="stack"]:has(> .focus-opt:nth-of-type(5)) { gap: 6px; }
+/* groups of options, each under its heading */
+.focus-opt-group { flex: 0 0 100%; margin: var(--s-3) 0 0; padding-bottom: 2px; border-bottom: 1px solid var(--line); font: 600 var(--t-xs)/1.3 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.focus-opt-group:first-child { margin-top: 0; }
+.focus-opt-send .focus-opt-count, .focus-opt-send small { white-space: normal; overflow-wrap: anywhere; }

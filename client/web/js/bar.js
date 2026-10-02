@@ -51,6 +51,11 @@ if (opener) {
   opener.append(fold)
 }
 
+// The floating Desk: a click goes to the Desk, from anywhere. (Its counts: js/agents.js.)
+$('desk-go')?.addEventListener('click', () => $('nav-inbox')?.click())
+// The one desk there is: choosing it goes there too.
+$('project-current')?.addEventListener('click', () => { close(false); $('nav-inbox')?.click() })
+
 // ---- the menu behind the logo ----
 const items = () => [...menu.querySelectorAll('[role^="menuitem"], [role="option"]')].filter(n => n.offsetParent !== null)
 const isOpen = () => !menu.hidden

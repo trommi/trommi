@@ -128,6 +128,8 @@ section { display: grid; gap: var(--s-4); min-width: 0; }
 @media (max-width: 640px) {
   body { padding-top: var(--s-6); }
   main { gap: var(--s-10); }
+  /* A finger needs 36px: the way back gets room above and below, without moving anything. */
+  .adm-back { padding: 12px 0; margin: -12px 0 calc(var(--s-4) - 12px); }
   .adm-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .adm-store .adm-facts { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .adm-title { font-size: 1.2rem; }

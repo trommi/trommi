@@ -8,7 +8,6 @@
 //   - disconnected sessions are a group of their own and can be put away; the archive stands below
 // On a phone a line is mark, name, state and count; a tap opens the session.
 //
-// It takes the place of the list of cards (js/agents.js mountRoster, still built into #roster, not shown).
 // Going somewhere is the page's own business (js/app.js): this file presses the sidebar's own rows.
 //
 // Keys, while the page is up (heard here; js/keys.js does not list them yet):
@@ -19,7 +18,7 @@
 //   +  or =    lay together with… (then pick the other line, Enter), or take it out of its group
 //   A          archive (disconnected only)         Shift+↑↓  move the line     Esc   let go
 
-import { subscribe, getState, pair, unpair, archive, moveSession, decide, reopen } from './store.js'
+import { subscribe, getState, pair, unpair, archive, moveSession, decide, reopen, star } from './store.js'
 import { avatar, crownToggle, tellApart, openMarkPicker, openEditor, summary, badge } from './agents.js'
 import { el, sketch, ago } from './ui.js'
 import { walkSession } from './app.js'
@@ -109,10 +108,13 @@ function mountLedger(root) {
   const yesOf = card => (card.kind === 'permission' ? card.options.find(o => o.key === 'allow') : null) ?? card.options[0]
   async function answer(card, option, buttons = []) {
     for (const b of buttons) b.disabled = true
+    // The note comes with the click, as the line's question leaves with it; if the board refuses, it goes again.
+    // (The eye is on the line, not on the note: it stays longer than in a list.)
+    const note = card.kind === 'decision' ? say(pageHost(), { head: `Answered: ${option.label}`, title: card.title, back: () => reopen(card.id), ms: 8000 }) : null
     try {
       await decide(card.id, option.key)
-      if (card.kind === 'decision') say(pageHost(), { head: `Answered: ${option.label}`, title: card.title, back: () => reopen(card.id) })
     } catch (err) {
+      note?.stop()
       for (const b of buttons) b.disabled = false
       tell(`Not saved: ${err.message}`)
     }
@@ -184,9 +186,12 @@ function mountLedger(root) {
     const state = el('span', 'ledger-state')
     const word = stateWord(s)
     const ring = badge(s, a.name, () => walk(a.id))
+    // The ring's number and the word are parts of their own, with a point between: "1 · away".
+    const sep = () => el('i', 'ledger-sep', ' · ')
     if (ring) state.append(ring)
-    state.append(el('span', null, word === 'asking' ? 'asks' : word))
-    if (s.hand) state.append(el('b', null, String(s.open)))   // the hand's ring holds no number
+    if (ring?.querySelector('b')) state.append(sep())
+    state.append(el('span', 'ledger-word', word === 'asking' ? 'asks' : word))
+    if (s.hand) state.append(sep(), el('b', null, String(s.open)))   // the hand's ring holds no number
 
     // What it asks (its first question, a yes/no answered right here) or what it does.
     const does = el('span', 'ledger-does')
@@ -224,6 +229,10 @@ function mountLedger(root) {
     if (s.open) acts.append(icon('tray', 'Its questions, one after the other', () => walk(a.id)))
     if (!group && all.agents.length > 1) acts.append(icon('heads', 'Lay together with…', () => togglePair(a.id)))
     if (!a.online) acts.append(icon('archive', 'Archive: put this session away', () => act(archive(a.id))))
+    // A phone's line only opens the session; renaming it has a small control of its own there.
+    const edit = icon('pen', `Rename ${a.name}`, () => openEditor(a))
+    edit.classList.add('ledger-edit')
+    acts.append(edit)
 
     row.append(grip, face, name, state, does, cell(a.model), cell(a.host), cell(a.online ? 'now' : ago(a.seen ?? a.joined ?? Date.now())), acts)
     return row
@@ -414,6 +423,16 @@ function mountLedger(root) {
   window.addEventListener('pointercancel', end)
   list.addEventListener('touchmove', e => { if (drag?.ghost) e.preventDefault() }, { passive: false })
 
+  // The crown by key. A second press may come before the board has told of the first: it goes on from
+  // what was asked for last, not from what the page still shows.
+  const crowned = new Map()   // session id -> what was asked for, until the board's state says the same
+  function crown(a) {
+    if (crowned.get(a.id) === Boolean(a.starred)) crowned.delete(a.id)
+    const next = !(crowned.has(a.id) ? crowned.get(a.id) : Boolean(a.starred))
+    crowned.set(a.id, next)
+    act(star(a.id, next))
+  }
+
   // ---- keys (see the head of this file) ----
   const busy = () => {
     if (document.querySelector('dialog[open], [data-owns-keys]:not([hidden])') || document.body.hasAttribute('data-pad') || document.body.dataset.keys) return true
@@ -456,7 +475,7 @@ function mountLedger(root) {
       q: () => walk(a.id),
       r: () => openEditor(a),
       d: () => openMarkPicker(a, row.querySelector('.ledger-mark')),
-      c: () => row.querySelector('.crown-toggle')?.click(),
+      c: () => crown(a),
       a: () => { if (!a.online) act(archive(a.id)) },
       '+': () => togglePair(a.id), '=': () => togglePair(a.id),
       y: () => row.querySelector('.ledger-ans[data-answer="yes"]')?.click(),
@@ -473,8 +492,7 @@ function mountLedger(root) {
   const node = el('main')
   node.id = 'ledger'
   node.setAttribute('aria-label', 'Agents')
-  const before = $('roster') ?? $('inbox')   // #roster: the old list of cards, while it still exists
-  before?.after(node)
+  $('inbox')?.after(node)
   const ledger = mountLedger(node)
   subscribe(state => ledger.render(state))
   // "Last seen" moves on by itself.

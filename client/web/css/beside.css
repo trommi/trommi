@@ -34,6 +34,8 @@
   /* The name's column, then the filters, then the two modes, on the title's lower line. (The longer
      selectors outweigh the lines in app.css that once took the old split back.) */
   body:not([data-pair]):not([data-scope="all"]) .pane-title { grid-template-columns: minmax(0, 1fr) auto auto; }
+  /* (The name's box reaches under them and is positioned: they stand above it, so they can be pressed.) */
+  body:not([data-pair]):not([data-scope="all"]) :is(.filters, .modes) { position: relative; z-index: 1; }
   body:not([data-pair]):not([data-scope="all"]) .filters { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-3) 10px 0; }
   body:not([data-pair]):not([data-scope="all"]) .modes { grid-column: 3; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-4) 6px 0; }
 
