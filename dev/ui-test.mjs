@@ -51,7 +51,7 @@ const SEL = {
   sidebarAway: '#agents .agent-heading-away',
   sidebarArchive: '.agent-archive',
   sidebarOffline: '.is-offline',
-  sidebarCount: '.agent-count:not(.is-knock)',   // every open question; the knocks (urgent, blocking) are counted before it
+  sidebarCount: '.agent-count',   // the Inbox entry: how many questions are open (session rows carry no number)
   navInbox: '#nav-inbox',
   navRoster: '#nav-roster, #roster-open',   // whichever of the two the layout shows
 
@@ -146,19 +146,35 @@ const SEL = {
   scribbleError: '#scribble .scr-error',
 
   // agents page
-  roster: '#roster',
-  rosterCard: '.roster-card',
-  rosterName: '.roster-name strong',
-  rosterFact: '.roster-facts > div',
-  rosterStar: '.roster-star',
+  // The Agents page is the Ledger: one line per session.
+  roster: '#ledger',
+  rosterCard: '.ledger-line[data-id]',
+  rosterName: '.ledger-name strong',
+  rosterFact: '.ledger-cell',          // in a line: model, machine, last seen
+  rosterStar: '.crown-toggle',
+  rosterState: '.ledger-state',
+  rosterAnswer: '.ledger-ans',
+  rosterHead: '.ledger-th',
+  rosterFind: '.ledger-find input',
+  rosterOrder: '.ledger-tools .ledger-link',
+  rosterSplit: '.ledger-with button',
+  rosterCurrent: '.is-cur',
+  menuAgents: '#menu-agents',
+  jumpField: '#jump-field',
+  quickOpen: '.quick-open',
+  // a session's own title: its drawing, its crown, its name (the way to these on a phone)
+  paneMark: '#pane-who .pane-mark',
+  paneCrown: '#pane-who .crown-toggle',
+  paneRename: '#pane-who .pane-name button',
+  groupQuestions: '.group-questions',
+  rowShred: '.inbox-shred',
   crownToggle: '.crown-toggle',
-  rosterEdit: '.roster-edit',
-  rosterRename: '.roster-rename',
+  rosterEdit: '.ledger-mark',
+  rosterRename: '.ledger-rename',
   markPicker: 'dialog.mark-picker',
   markTile: 'dialog.mark-picker [role="radio"]',
-  rosterAct: '.roster-act',
-  rosterArchived: '.roster-archived',
-  rosterLinks: '.roster-links a',
+  rosterAct: '.ledger-ib',
+  rosterArchived: '.ledger-line.is-archived',
   editor: 'dialog.session-editor',
   editorName: 'dialog.session-editor input[type="text"]',
   editorSave: 'dialog.session-editor button[type="submit"]',
@@ -185,7 +201,7 @@ const SEL = {
   // These scroll sideways on purpose; everything else must fit the width of a phone.
   sidewaysOk: '#agents, pre, .hist-tabs, .focus-thumbs, .scr-tools, table',
   // What agents and the human wrote. Everything outside of it is the interface and must be English.
-  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-option, .inbox-pile-peek, .inbox-done, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .roster-card, .roster-archived, .focus-card, .hist-row, .file-row, .adm-card, .adm-log, .adm-stderr, .adm-links, .focus-rail, .focus-strip, .pane-now, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
+  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-option, .inbox-pile-peek, .inbox-done, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .ledger-name, .ledger-does, .ledger-task, .focus-card, .hist-row, .file-row, .adm-card, .adm-log, .adm-stderr, .adm-links, .focus-rail, .focus-strip, .pane-now, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
 }
 
 // Words of the interface the test relies on.
@@ -339,10 +355,12 @@ const PAGE_LIB = `(() => {
     pane: id => all(SEL.pane).find(p => p.dataset.agent === id) ?? null,
     roster: () => all(SEL.rosterCard).map(c => ({
       name: text(c.querySelector(SEL.rosterName)),
-      facts: Object.fromEntries(all(SEL.rosterFact, c).map(d => [text(d.querySelector('dt')), text(d.querySelector('dd'))])),
+      id: c.dataset.id, state: text(c.querySelector(SEL.rosterState)), current: c.matches(SEL.rosterCurrent),
+      // (A narrow window drops the columns of model and machine; what the line holds is read either way.)
+      facts: (cells => ({ Model: text(cells[0]), Machine: text(cells[1]) }))(c.querySelectorAll(SEL.rosterFact)),
       starred: c.querySelector(SEL.rosterStar)?.getAttribute('aria-pressed') === 'true',
       mark: [...(c.querySelector(SEL.rosterEdit)?.querySelectorAll('path') ?? [])].map(p => p.getAttribute('d')).join(' '),
-      acts: all(SEL.rosterAct, c).map(text),
+      acts: all(SEL.rosterAct, c).map(label),
     })),
     rosterCard: name => all(SEL.rosterCard).find(c => text(c.querySelector(SEL.rosterName)) === name) ?? null,
     /** Scroll every picture into view, give it time to load, and report its real size. */
@@ -1551,13 +1569,18 @@ async function groupSidebar() {
   // Every session has its scribbled mark.
   check(rows.length >= state().agents.filter(a => !a.archived).length - 1, `the sidebar lists ${rows.length} sessions, the board has ${state().agents.length}`)
   check(rows.every(r => r.mark), `sessions without a drawn mark: ${rows.filter(r => !r.mark).map(r => r.name).join(', ')}`)
-  // The badge: a hand when the session is stopped waiting for the human, a calm ring while it works.
+  // The badge: a red hand when one of the session's questions knocks (urgent, blocking, a permission), else a small stack of cards.
+  const knocks = a => openCards(a.id).some(c => !putOff.has(c.id) && (c.kind === 'permission' || c.urgency === 'high' || c.urgency === 'critical'))
   const blocked = row(COURIER)
   if (check(blocked, `"${COURIER}" is not in the sidebar`)) check(blocked.badge?.hand && !blocked.badge?.ring, `"${COURIER}" has a blocking question, but its badge is ${JSON.stringify(blocked.badge)}, expected the raised hand`)
-  const busy = scripted().find(a => state().tasks.some(t => t.agent === a.id && t.state === 'working') && !openCards(a.id).some(c => c.urgency === 'critical'))
-  if (busy) check(row(nameOf(busy))?.badge?.ring && !row(nameOf(busy))?.badge?.hand, `"${nameOf(busy)}" is working and not blocked, but its badge is ${JSON.stringify(row(nameOf(busy))?.badge)}, expected the ring`)
+  for (const a of scripted().filter(a => openCards(a.id).some(c => !putOff.has(c.id)))) {
+    const b = row(nameOf(a))?.badge
+    check(knocks(a) ? b?.hand : b?.ring && !b?.hand, `a question of "${nameOf(a)}" ${knocks(a) ? 'knocks' : 'does not knock'}, but its badge is ${JSON.stringify(b)}, expected ${knocks(a) ? 'the hand' : 'the stack of cards'}`)
+  }
+  const busy = scripted().find(a => openCards(a.id).some(c => !putOff.has(c.id)))
   const waiting = openCards(busy?.id).filter(c => !putOff.has(c.id)).length
-  if (busy && waiting) check(Number(row(nameOf(busy))?.badge?.number) === waiting, `the badge of "${nameOf(busy)}" counts "${row(nameOf(busy))?.badge?.number}", it has ${waiting} open questions`)
+  // A session's row carries no number (a stack of cards, or the hand); how many is said by its tooltip and by the Inbox entry.
+  if (busy && waiting) check(row(nameOf(busy))?.badge?.number === '' && row(nameOf(busy))?.badge?.title.includes(`${waiting} question`), `the badge of "${nameOf(busy)}" reads "${row(nameOf(busy))?.badge?.number}" with the tooltip "${row(nameOf(busy))?.badge?.title}", expected no number and a tooltip naming its ${waiting} open questions`)
   const fresh = openCards().filter(c => !putOff.has(c.id) && !agentById(c.agent)?.archived).length
   check(Number(list.find(r => r.name === TEXT.inbox)?.count) === fresh, `the inbox entry counts "${list.find(r => r.name === TEXT.inbox)?.count}", ${fresh} questions need an answer`)
 
@@ -1587,8 +1610,12 @@ async function groupSidebar() {
   const gone = agentNamed(GONE)
   const without = fresh - openCards(gone.id).length
   if (touch) {
+    // A phone has no hover and its line on the agents page only opens the session: is there a way to put a session away?
     await goRoster()
-    await press(`"Archive" on "${GONE}"`, js`__t.byLabel(${SEL.rosterAct}, 'Archive', __t.rosterCard(${GONE}))`)
+    const way = await ev(js`!!__t.all(${SEL.rosterAct}, __t.rosterCard(${GONE})).find(b => /^Archive/.test(__t.label(b))) || !!__t.one(${SEL.sidebarArchive}, __t.unit(${GONE}))`)
+    check(way, `on a phone nothing archives the disconnected session "${GONE}": its line on the agents page only opens it, and the strip of sessions has no archive action`)
+    if (way) await press(`"Archive" on "${GONE}"`, js`__t.all(${SEL.rosterAct}, __t.rosterCard(${GONE})).find(b => /^Archive/.test(__t.label(b))) ?? __t.one(${SEL.sidebarArchive}, __t.unit(${GONE}))`)
+    else await ev(js`fetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent: ${agentNamed(GONE).id}, archived: true }) }).then(r => r.status)`)
   } else {
     await press(`archive on "${GONE}"`, js`__t.one(${SEL.sidebarArchive}, __t.unit(${GONE}))`)
   }
@@ -1638,9 +1665,24 @@ async function groupPair() {
   await shot('pair-open')
   await reload()
   check((await ev(js`__t.all(${SEL.pane}).length`)) === (touch ? 1 : 2), 'after a reload the pair is not shown as before')
-  // Split them again on the agents page.
+  // Sessions laid together: ONE list of the questions of both, each row naming its session.
+  if (!touch) {
+    const both = [first, second].flatMap(a => openCards(a.id).filter(c => !putOff.has(c.id)))
+    const joined = await ev(js`(n => n && __t.rows(n).map(r => ({ id: r.id, from: r.from })))(__t.one(${SEL.groupQuestions}))`)
+    if (check(joined, 'the joined view has no list of the questions of its sessions')) {
+      check(joined.map(r => r.id).sort().join() === both.map(c => c.id).sort().join(), `the joined list shows ${joined.length} questions, the two sessions have ${both.length} open`)
+      const unnamed = joined.filter(r => !r.from.includes(nameOf(agentById(cardOf(r.id).agent))))
+      check(!unnamed.length, `${unnamed.length} rows of the joined list do not name their session (e.g. "${cardOf(unnamed[0]?.id)?.title}" says "${unnamed[0]?.from}")`)
+      check(await ev(js`__t.all(${SEL.groupQuestions}).length`) === 1, 'the joined view shows more than one list of questions')
+    }
+  }
+  // Split them again on the agents page: the scissors on the chip "with …".
   await goRoster()
-  await press(`"${TEXT.split}" on "${nameOf(first)}"`, js`__t.byLabel(${SEL.rosterAct}, ${TEXT.split}, __t.rosterCard(${nameOf(first)}))`)
+  const scissors = js`__t.one(${SEL.rosterSplit}, __t.rosterCard(${nameOf(first)}))`
+  if (touch && !(await ev(`!!${scissors}`))) {
+    check(false, `on a phone nothing takes "${nameOf(first)}" out of its group: the line on the agents page only opens the session`)
+    await ev(js`Promise.all([${first.id}, ${second.id}].map(agent => fetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent, group: null }) })))`)
+  } else await press(`the scissors on "${nameOf(first)}"`, scissors)
   await waitState('the two sessions are apart again', s => !s.agents.find(a => a.id === first.id).group && !s.agents.find(a => a.id === second.id).group, 4000)
   await expect('the sidebar shows two rows again', js`!!__t.unit(${nameOf(first)}) && !!__t.unit(${nameOf(second)})`, 3000)
 }
@@ -1707,6 +1749,21 @@ async function groupUrls() {
   await open('/')
 }
 
+/** A way to a session's name, drawing and crown: its line on the Agents page, or (a phone's line only opens) its own title. */
+async function sessionControl(name, what) {
+  const sel = touch ? { rename: SEL.paneRename, mark: SEL.paneMark, crown: SEL.paneCrown }[what] : { rename: SEL.rosterRename, mark: SEL.rosterEdit, crown: SEL.rosterStar }[what]
+  if (touch) {
+    await goSession(agentNamed(name))
+    if (!(await ev(js`!!__t.one(${sel})`))) return false
+    await press(`the ${what} of "${name}" in its title`, js`__t.one(${sel})`)
+  } else {
+    await goRoster()
+    await press(`the ${what} of "${name}" in its line`, js`__t.rosterCard(${name}).querySelector(${sel})`)
+  }
+  return true
+}
+const post = (pathname, body) => ev(js`fetch(${pathname}, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(${body}) }).then(r => r.status)`)
+
 async function groupAgents() {
   await open('/')
   await goRoster()
@@ -1719,28 +1776,98 @@ async function groupAgents() {
     check(card.facts[TEXT.model] === agent.model, `"${nameOf(agent)}" shows the model "${card.facts[TEXT.model]}", it introduced itself as "${agent.model}"`)
     const machine = card.facts[TEXT.machine] ?? ''
     check(machine && machine !== TEXT.unknown && machine.includes(agent.host), `"${nameOf(agent)}" shows the machine "${machine}", it runs on "${agent.host}"`)
+    const open = openCards(agent.id).filter(c => !putOff.has(c.id)).length
+    if (open) check(card.state.endsWith(String(open)), `the line of "${nameOf(agent)}" says "${card.state}", it has ${open} open questions`)
   }
+  const away = cards.filter(c => /away/.test(c.state)).map(c => c.name)
+  check(!away.length || away.join() === state().agents.filter(a => !a.online && !a.archived).map(nameOf).join() && cards.slice(-away.length).every(c => away.includes(c.name)), `the disconnected sessions are not the last lines of the agents page: ${cards.map(c => `${c.name} (${c.state})`).join(', ')}`)
   await checkEnglish('agents page')
   await shot('agents')
+
+  if (!touch) {
+    // The first question of a session is answered in its line, and the note takes it back.
+    const gone = agentNamed(GONE), asked = openCards(gone.id)[0]
+    if (asked && asked.options.length === 2) {
+      await press(`the thumb up in the line of "${GONE}"`, js`__t.all(${SEL.rosterAnswer}, __t.rosterCard(${GONE})).find(b => b.dataset.answer === 'yes')`)
+      await waitState('the answer in the line reaches the board', () => cardOf(asked.id).status !== 'open', 4000).then(() => passed(), e => check(false, e.message))
+      check(cardOf(asked.id).choice === asked.options[0].key, `the thumb up in the line chose "${cardOf(asked.id).choice}"`)
+      if (await expect('the note offers to take the answer back', js`!!__t.note()?.back`, 3000)) {
+        await shot('answered-in-line')
+        const taken = await press('the way back', js`__t.one(${SEL.noteBack}, __t.one(${SEL.undoBar}))`).then(() => true, e => { if (!(e instanceof Failed)) throw e; return check(false, `after an answer in a line of the agents page: ${e.message}`) })
+        if (taken) await waitState('the answer is taken back', () => cardOf(asked.id).status === 'open', 4000).then(() => passed(), e => check(false, e.message))
+      }
+      if (cardOf(asked.id).status !== 'open') { await post('/reopen', { card_id: asked.id }); await waitState('the answer is taken back', () => cardOf(asked.id).status === 'open', 4000) }
+      await sleep(4200)   // the note has gone
+      await settle()
+    }
+    // A click on a column head sorts; "Back to your order" returns.
+    const names = () => ev('__t.roster().filter(c => !/away/.test(c.state)).map(c => c.name)')
+    const own = await names()
+    await press('the column head "Session"', js`__t.byText(${SEL.rosterHead}, 'Session')`)
+    await settle()
+    const sorted = await names()
+    check(sorted.join() === [...own].sort((a, b) => (a.toLowerCase() > b.toLowerCase() ? 1 : -1)).join(), `sorted by "Session" the lines read ${sorted.join(', ')}`)
+    await press('"Back to your order"', js`__t.one(${SEL.rosterOrder})`)
+    await settle()
+    check((await names()).join() === own.join(), `"Back to your order" leaves the lines as ${(await names()).join(', ')}, they were ${own.join(', ')}`)
+    // The keys of the page: "/" finds, the arrows pick a line, Shift+arrow moves it, C is the crown, Enter opens.
+    await ev('document.activeElement?.blur?.()')
+    await key('/', 191, { text: '/' })
+    check(await ev(js`document.activeElement === document.querySelector(${SEL.rosterFind})`), 'the key "/" does not put the caret into the field that finds a session')
+    await type(COURIER.slice(0, 4).toLowerCase())
+    await expect('typing into the field leaves the sessions that fit', js`__t.roster().map(c => c.name).join() === ${COURIER}`, 2000)
+    await escape()
+    await expect('Escape empties the field and shows all again', js`__t.roster().length === ${listed.length}`, 2000)
+    await ev('document.activeElement?.blur?.()')
+    await key('ArrowDown', 40)
+    await expect('the arrow picks the first line', js`__t.roster()[0].current`, 2000)
+    await key('ArrowDown', 40)
+    await expect('the arrow goes on to the second line', js`__t.roster()[1].current`, 2000)
+    const second = own[1], before = state().agents.map(a => a.id).join()
+    await key('ArrowUp', 38, { modifiers: 8 })
+    await waitState('Shift and an arrow move the picked line', s => s.agents.map(a => a.id).join() !== before, 3000).then(() => passed(), e => check(false, e.message))
+    await expect('the sidebar follows the new order', js`(names => names.indexOf(${second}) < names.indexOf(${own[0]}))(__t.sidebar().filter(r => r.name).map(r => r.name))`, 3000)
+    await key('ArrowDown', 40, { modifiers: 8 })
+    await waitState('Shift and the other arrow move it back', s => s.agents.map(a => a.id).join() === before, 3000).then(() => passed(), e => check(false, e.message))
+    const picked = agentNamed(second)
+    await key('c', 67, { text: 'c' })
+    await waitState('C puts the crown on the picked session', s => s.agents.find(a => a.id === picked.id).starred, 3000).then(() => passed(), e => check(false, e.message))
+    await key('c', 67, { text: 'c' })
+    await waitState('C takes the crown off again', s => !s.agents.find(a => a.id === picked.id).starred, 3000).then(() => passed(), e => check(false, e.message))
+    await key('Enter', 13, { text: '\r' })
+    await expect('Enter opens the picked session', js`location.pathname === ${`/s/${picked.id}`} && !!__t.pane(${picked.id})`, 3000)
+    await goRoster()
+  } else {
+    // A phone's line is small: a tap opens the session.
+    const first = listed[0]
+    await press(`the line of "${nameOf(first)}"`, js`__t.rosterCard(${nameOf(first)}).querySelector(${SEL.rosterName})`)
+    await expect('a tap on a line opens the session', js`location.pathname === ${`/s/${first.id}`} && !!__t.pane(${first.id})`, 3000)
+  }
 
   // Rename a session: its name is the way in.
   const target = scripted()[1]
   const oldName = nameOf(target)
   const newName = `Interface ${size}`
   const oldMark = cards.find(c => c.name === oldName).mark
-  await press(`the name of "${oldName}"`, js`__t.rosterCard(${oldName}).querySelector(${SEL.rosterRename})`)
+  let chosen = null
+  const reach = await sessionControl(oldName, 'rename')
+  // (Seen on a phone: a single session has no title there, and its line on the agents page only opens it.)
+  check(reach, 'on a phone nothing renames a session, chooses its drawing or sets its crown: a single session has no title, and its line on the agents page only opens it')
+  if (reach) {
   await waitFor('the editor opens', js`!!__t.one(${SEL.editor})`)
   await press('the name field', js`__t.one(${SEL.editorName})`)
   await retype(newName)
   await shot('editor')
   await press('save', js`__t.one(${SEL.editorSave})`)
   await waitFor('the editor closes', js`!__t.one(${SEL.editor})`)
+  await waitState(`the session is called "${newName}"`, s => s.agents.some(a => nameOf(a) === newName))
+  await goRoster()
   await waitFor(`the session is listed as "${newName}"`, js`!!__t.rosterCard(${newName})`)
   check(await ev(js`!!__t.entry(${newName}) && !__t.entry(${oldName})`), `the sidebar does not show the new name "${newName}"`)
 
   // Choose another mark: its picture is the way in, and one press on a drawing is the choice.
   const drawn = b => `[...${b}.querySelectorAll('path')].map(p => p.getAttribute('d')).join(' ')`
-  await press(`the mark of "${newName}"`, js`__t.rosterCard(${newName}).querySelector(${SEL.rosterEdit})`)
+  await sessionControl(newName, 'mark')
   await waitFor('the marks to choose from appear', js`__t.all(${SEL.markTile}).length > 1`)
   await settle()
   const offered = await ev(`__t.all(${JSON.stringify(SEL.markTile)}).map(b => ({ name: __t.label(b), on: b.getAttribute('aria-checked') === 'true', d: ${drawn('b')} }))`)
@@ -1751,20 +1878,22 @@ async function groupAgents() {
   const pick = offered.find(o => !o.on && o.d !== oldMark)
   await press(`the mark "${pick.name}"`, js`__t.all(${SEL.markTile}).find(b => __t.label(b) === ${pick.name})`)
   await expect('choosing a mark closes the picker', js`!__t.one(${SEL.markPicker})`, 3000)
-  const renamed = await expect('the session shows its new mark', js`(c => c && c.mark === ${pick.d} && c)(__t.roster().find(c => c.name === ${newName}))`, 3000) ?? (await ev('__t.roster()')).find(c => c.name === newName)
-  check(renamed.mark && renamed.mark !== oldMark, 'the session kept its old mark')
-  await press(`the mark of "${newName}" again`, js`__t.rosterCard(${newName}).querySelector(${SEL.rosterEdit})`)
+  await waitState('the board keeps the chosen mark', s => (s.agents.find(a => a.id === target.id).icon ?? '') !== (target.icon ?? ''), 3000).then(() => passed(), e => check(false, e.message))
+  chosen = agentById(target.id).icon
+  await sessionControl(newName, 'mark')
   await waitFor('the marks to choose from appear', js`__t.all(${SEL.markTile}).length > 1`)
   check(await ev(js`__t.all(${SEL.markTile}).filter(b => b.getAttribute('aria-checked') === 'true').map(__t.label).join()`) === pick.name, 'the picker does not show the chosen mark as chosen')
   await escape()
   await expect('Escape closes the picker', js`!__t.one(${SEL.markPicker})`, 3000)
 
-  // VIP: its questions lead the inbox.
+  }
+  // VIP: the crown is the switch, and the questions of that session lead the inbox.
   const vip = scripted().findLast(a => openCards(a.id).some(c => !putOff.has(c.id)) && a.id !== target.id)
   need(vip, 'no scripted session with open questions; the fixture changed')
-  await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
+  if (!(await sessionControl(nameOf(vip), 'crown'))) await post('/star', { agent: vip.id, starred: true })
   await waitState(`"${nameOf(vip)}" is starred`, s => s.agents.find(a => a.id === vip.id).starred)
-  await expect('the star shows as set', js`__t.roster().find(c => c.name === ${nameOf(vip)}).starred`)
+  await goRoster()
+  await expect('the crown on the agents page shows as set', js`__t.roster().find(c => c.name === ${nameOf(vip)}).starred`)
   // The crown on a session's mark in the sidebar is the same switch: one click takes VIP away, one puts it back.
   const crownOf = js`__t.one(${SEL.crownToggle}, __t.unit(${nameOf(vip)}))`
   if (!touch && await ev(`!!${crownOf}`)) {
@@ -1773,9 +1902,8 @@ async function groupAgents() {
     if (pressed) {
       await waitState('a click on the crown takes VIP away', s => !s.agents.find(a => a.id === vip.id).starred, 4000).then(() => passed(), e => check(false, e.message))
       await settle()
-      // (Without VIP the crown shows only while the pointer is near; the switch on the agents page is always there.)
       if (!agentById(vip.id).starred) {
-        await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
+        await sessionControl(nameOf(vip), 'crown')
         await waitState(`"${nameOf(vip)}" is starred again`, s => s.agents.find(a => a.id === vip.id).starred)
       }
     }
@@ -1784,31 +1912,34 @@ async function groupAgents() {
   await reload()
   await goRoster()
   const again = await ev('__t.roster()')
-  const kept = again.find(c => c.name === newName)
-  if (check(kept, `after a reload the session is no longer called "${newName}": ${again.map(c => c.name).join(', ')}`)) check(kept.mark === renamed.mark, 'after a reload the session has another mark than the chosen one')
-  check(again.find(c => c.name === nameOf(vip))?.starred, 'after a reload the star is gone')
+  if (reach) {
+    check(again.find(c => c.name === newName), `after a reload the session is no longer called "${newName}": ${again.map(c => c.name).join(', ')}`)
+    check(agentById(target.id).icon === chosen, 'after a reload the session has another mark than the chosen one')
+  }
+  check(again.find(c => c.name === nameOf(vip))?.starred, 'after a reload the crown is gone')
   await shot('renamed-starred')
 
   await goInbox()
   const top = (await ev('__t.groups()'))[0]
   check(top.name.replace(/^★ /, '') === nameOf(vip), `the VIP session "${nameOf(vip)}" is not the first group of the inbox, "${top.name}" is`)
   // The mark stands once on the heading of the group, or on each of its rows.
-  check(top.vip || (await ev('__t.rows()')).filter(r => top.ids.includes(r.id)).every(r => r.vip), 'the questions of the VIP session are not marked VIP')
+  // The crown stands where the session is named: on the group, on each row, or (a run of rows names its sender once) on the first.
+  check(top.vip || (await ev('__t.rows()')).filter(r => top.ids.includes(r.id)).some(r => r.vip) || await ev(js`!!document.querySelector(${SEL.inbox + ' .inbox-gutter .crown-mark, ' + SEL.inbox + ' [data-vip] .crown-mark'})`), 'the questions of the VIP session are not marked VIP')
   const marked = (await ev('__t.rows()')).filter(r => r.vip && !top.ids.includes(r.id) && !putOff.has(r.id))
   check((await ev('__t.groups()')).slice(1).every(g => !g.vip) && !marked.length, `a session that is not VIP carries the VIP mark${marked.length ? `: the row "${marked[0].title}"` : ''}`)
   await shot('inbox-vip')
 
   // Put things back, so the next group finds the board as it was: an emptied name is the session's own again.
-  await goRoster()
-  await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
-  await waitState('the star is off again', s => !s.agents.find(a => a.id === vip.id).starred)
-  await press(`the name of "${newName}"`, js`__t.rosterCard(${newName}).querySelector(${SEL.rosterRename})`)
+  if (!(await sessionControl(nameOf(vip), 'crown'))) await post('/star', { agent: vip.id, starred: false })
+  await waitState('the crown is off again', s => !s.agents.find(a => a.id === vip.id).starred)
+  if (!reach) return
+  await sessionControl(newName, 'rename')
   await waitFor('the editor opens', js`!!__t.one(${SEL.editor})`)
   await press('the name field', js`__t.one(${SEL.editorName})`)
   await retype(target.name)
   await press('save', js`__t.one(${SEL.editorSave})`)
   await waitFor('the editor closes', js`!__t.one(${SEL.editor})`)
-  await expect(`the session is called "${target.name}" again`, js`!!__t.rosterCard(${target.name})`, 3000)
+  await waitState(`the session is called "${target.name}" again`, s => s.agents.some(a => a.id === target.id && nameOf(a) === target.name), 3000).then(() => passed(), e => check(false, e.message))
 }
 
 const closeMenu = async () => { if (await ev(js`!!__t.one(${SEL.brandDoors})`)) { await escape(); await settle() } }
@@ -1855,7 +1986,7 @@ async function groupHelp() {
   await waitFor('the logo opens its menu', js`!!__t.one(${SEL.brandDoors})`, 3000)
   await settle()
   const doors = await ev(js`__t.all(${SEL.menuItem}, ${SEL.brandDoors}).map(n => __t.text(n).replace(/[ ?]+$/, ''))`)
-  check(doors.slice(0, 2).join('|') === 'Help|Admin', `the menu at the logo offers "${doors.join('", "')}", expected Help and Admin`)
+  check(['Agents', 'Help', 'Admin'].every(d => doors.includes(d)), `the menu at the logo offers "${doors.join('", "')}", expected Agents, Help and Admin among them`)
   const inView = await ev(js`(b => b.left >= 0 && b.top >= 0 && b.right <= innerWidth && b.bottom <= innerHeight)(__t.box(__t.one(${SEL.brandDoors})))`)
   check(inView, 'the menu at the logo reaches out of the screen')
   await checkEnglish('the menu at the logo')
@@ -2220,7 +2351,7 @@ async function groupNumber() {
   await ev(js`__t.row(${heavy.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await press(`"${TEXT.choose}" on "${heavy.title}"`, js`__t.tile(${heavy.id}, 'right')`)
   await waitFor('the window opens', js`__t.focusState()?.id === ${heavy.id}`)
-  check(new URLSearchParams(await ev('location.search')).get('q') === String(heavy.number), `the address of the window is ${await ev('location.search')}, expected ?q=${heavy.number}`)
+  check(await ev('location.pathname + location.search') === `/q/${heavy.number}`, `the address of the window is ${await ev('location.pathname + location.search')}, expected /q/${heavy.number}`)
   // The pictures large: the options stay beside them, so the answer needs no way back.
   await settle()
   await press('the picture of the card', js`__t.one(${SEL.focusFigure}, __t.one(${SEL.focusCard}))`)
@@ -2234,23 +2365,25 @@ async function groupNumber() {
   }
   await closeWindows()
   // The address alone opens the card: by number, and by the id that older links carry.
-  for (const [what, q] of [['its number', heavy.number], ['its id (an old link)', heavy.id]]) {
-    check(await open(`/?q=${q}`) === 200, `/?q=${q} is not served`)
+  for (const [what, link] of [['its number', `/q/${heavy.number}`], ['an old link with its number', `/?q=${heavy.number}`], ['an old link with its id', `/?q=${heavy.id}`]]) {
+    check(await open(link) === 200, `${link} is not served`)
     await expect(`the address with ${what} opens that question`, js`__t.focusState()?.id === ${heavy.id}`, 5000)
     check((await front())?.single, `the address with ${what} opened the walk instead of the one question`)
     await closeWindows()
   }
-  await open(`/s/${agentNamed(COURIER).id}?q=${heavy.number}`)
+  await open(`/s/${agentNamed(COURIER).id}/q/${heavy.number}`)
   await expect('the number opens its question over a session too', js`__t.focusState()?.id === ${heavy.id}`, 5000)
-  check((await place()).path === `/s/${agentNamed(COURIER).id}`, `the address is ${(await place()).path}`)
+  check((await place()).path === `/s/${agentNamed(COURIER).id}/q/${heavy.number}`, `the address is ${(await place()).path}`)
   await closeWindows()
-  check(await open('/?q=999999') === 200, 'the address of an unknown number is not served')
+  await expect('closed, the address is the session again', js`location.pathname === ${`/s/${agentNamed(COURIER).id}`}`, 3000)
+  await closeWindows()
+  check(await open('/q/999999') === 200, 'the address of an unknown number is not served')
   await sleep(400)
   check(!(await ev('__t.focusOpen()')) || !!(await front())?.id, 'an unknown number opens an empty window')
   await closeWindows()
 
   // Many short options are tags: all of them on screen at once.
-  await open(`/?q=${many.number}`)
+  await open(`/q/${many.number}`)
   await waitFor('the question with many options opens', js`__t.focusState()?.id === ${many.id}`, 5000)
   await settle()
   const tags = await front()
