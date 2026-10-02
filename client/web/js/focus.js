@@ -322,6 +322,7 @@ export function mountFocus({ onDecided } = {}) {
   let lastState = null
   let isOpen = false
   let single = false              // opened on one card: its window only, closes on the answer
+  let inlineHost = null, inlineDone = null   // unfolded inside a row of the page (openInline) instead of as the window
   let pastId = null               // the window was opened on a card that is not open any more: it is shown to read
   let wanted = null               // the one card asked for before the state had arrived
   let order = []
@@ -1014,10 +1015,10 @@ export function mountFocus({ onDecided } = {}) {
    *  that run. [{ title, keys }], empty without sections. */
   function optionGroups(sections) {
     const groups = []
-    let heading = '', run = null
+    let heading = '', before = null, run = null
     for (const block of sections ?? []) {
-      if (block.key == null) { if (block.text?.trim()) heading = block.text; run = null; continue }
-      if (!run) { run = { title: String(heading).trim().split('\n')[0].replace(/^#+\s*/, '').replace(/[*_`]/g, '').replace(/[:.]\s*$/, '').slice(0, 60) || `Group ${groups.length + 1}`, keys: [] }; groups.push(run) }
+      if (block.key == null) { if (block.text?.trim()) { heading = block.text; before = block }; run = null; continue }
+      if (!run) { run = { before, title: String(heading).trim().split('\n')[0].replace(/^#+\s*/, '').replace(/[*_`]/g, '').replace(/[:.]\s*$/, '').slice(0, 60) || `Group ${groups.length + 1}`, keys: [] }; groups.push(run) }
       run.keys.push(block.key)
     }
     return groups
@@ -1030,8 +1031,15 @@ export function mountFocus({ onDecided } = {}) {
     const multi = Boolean(card.multiple)
     const box = el('div', 'focus-secs')
     rec.secNodes = new Map()
+    const groups = optionGroups(sections)
     for (const block of sections) {
-      if (block.key == null) { if (block.text) box.append(rich(block.text)); continue }
+      if (block.key == null) {
+        // a short plain block right before a run of options is the heading of that group
+        const heads = groups.find(g => g.before === block)
+        if (heads && !/\n\s*\S/.test(String(block.text).trim())) box.append(el('h3', 'focus-sec-group', heads.title))
+        else if (block.text) box.append(rich(block.text))
+        continue
+      }
       const sec = el('section', 'focus-sec')
       sec.dataset.key = block.key
       const pick = button('focus-sec-pick')
@@ -2911,7 +2919,8 @@ export function mountFocus({ onDecided } = {}) {
   // ── open and close ──────────────────────────────────────────────────────
   /** Without a card: the walk, from the most urgent question. With one: the window of that
    *  card alone (the walk, if that card is not open any more). While open, open(id) goes there. */
-  function open(cardId) {
+  function open(cardId, inline = false) {
+    if (inlineHost && !inline) close()   // the window is asked for while a card stands unfolded in a row: fold that first
     if (isOpen) {
       if (cardId) go(cardId)
       return
@@ -2934,9 +2943,12 @@ export function mountFocus({ onDecided } = {}) {
     current = single ? cardId : null
     root.hidden = false
     root.removeAttribute('data-closing')
-    document.documentElement.classList.add('focus-lock')
-    inerted = [...document.body.children].filter(n => n !== root && !n.inert && !/^(SCRIPT|STYLE|LINK)$/.test(n.tagName))
-    for (const n of inerted) n.inert = true
+    // (unfolded in a row of the page, the page stays alive around it)
+    if (!inlineHost) {
+      document.documentElement.classList.add('focus-lock')
+      inerted = [...document.body.children].filter(n => n !== root && !n.inert && !/^(SCRIPT|STYLE|LINK)$/.test(n.tagName))
+      for (const n of inerted) n.inert = true
+    }
     sync('none')
     if (!isOpen) return
     ;(sheet.dataset.state === 'done' ? doneBtn : shown?.node ?? sheet).focus({ preventScroll: true })
@@ -2987,13 +2999,21 @@ export function mountFocus({ onDecided } = {}) {
     document.documentElement.classList.remove('focus-lock')
     const finish = () => { root.hidden = true; root.removeAttribute('data-closing'); teardown() }
     clearTimeout(closeTimer)
-    if (still()) finish()
+    const folded = inlineHost ? inlineDone : null
+    if (still() || inlineHost) finish()
     else { root.dataset.closing = ''; closeTimer = setTimeout(finish, 200) }
+    if (inlineHost) {
+      // back to being the window, for the next time it is one
+      inlineHost = inlineDone = null
+      root.removeAttribute('data-inline')
+      document.body.append(root)
+    }
     const back = opener
     opener = null
     if (back?.isConnected) back.focus({ preventScroll: true })
     else document.activeElement?.blur?.()
     document.dispatchEvent(new CustomEvent('focus:close'))
+    folded?.()
   }
 
   // ── wiring ──────────────────────────────────────────────────────────────
@@ -3019,5 +3039,22 @@ export function mountFocus({ onDecided } = {}) {
     rec.scroll?.scrollTo({ top: 0 })
     return true
   }
-  return { open, close, ask, revise, gallery, isOpen: () => isOpen }
+  /** The same card, unfolded in place inside host (a row of the Desk) instead of in the window: its height follows
+   *  its content, the page around it stays alive. Only one at a time: another call folds the one before. onClose()
+   *  is called whenever it folds (Esc, the close control, an answer, closeInline(), the window being opened).
+   *  False when the card cannot be shown. */
+  function openInline(host, cardId, { onClose } = {}) {
+    if (isOpen) close()
+    clearTimeout(closeTimer)
+    inlineHost = host
+    inlineDone = typeof onClose === 'function' ? onClose : null
+    root.dataset.inline = ''
+    host.append(root)
+    open(cardId, true)
+    if (!isOpen || !single) { if (isOpen) close(); else { inlineHost = inlineDone = null; root.removeAttribute('data-inline'); document.body.append(root) } return false }
+    requestAnimationFrame(() => { if (inlineHost === host) host.scrollIntoView({ block: 'nearest', behavior: still() ? 'instant' : 'smooth' }) })
+    return true
+  }
+  const closeInline = () => { if (inlineHost) close() }
+  return { open: id => open(id), close, ask, revise, gallery, openInline, closeInline, isInline: () => Boolean(inlineHost), isOpen: () => isOpen }
 }

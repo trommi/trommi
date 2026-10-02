@@ -272,7 +272,7 @@ async function draftOp(mode, fn) {
   } catch { return undefined }
 }
 
-export function mountScribble(root, { send, draftKey = 'draft', onChange } = {}) {
+export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLabel: sendWord = 'Send this view', sendTip = null } = {}) {
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')
   const mod = k => (mac ? `⌘${k}` : `Ctrl+${k}`)
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -421,7 +421,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
 
   // send: one button. With room it stands at the end of the toolbar, on a
   // narrow screen in a bar of its own under the canvas (see placeSend).
-  const SEND_TIP = 'Sends the agent what you see right now, and the whole canvas with it'
+  const SEND_TIP = sendTip ?? 'Sends the agent what you see right now, and the whole canvas with it'
   const bSend = el('button', 'scr-send')
   bSend.type = 'button'
   bSend.dataset.tip = SEND_TIP
@@ -1142,8 +1142,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     sending = state === 'sending'
     bSend.dataset.state = state
     sendIcon.replaceChildren(state === 'sending' ? el('span', 'scr-spinner') : icon(state === 'sent' ? 'check' : 'send'))
-    sendLabel.textContent = state === 'sending' ? 'Sending …' : state === 'sent' ? 'Sent' : 'Send this view'
-    bSend.setAttribute('aria-label', state === 'idle' ? `Send this view. ${SEND_TIP}.` : sendLabel.textContent)
+    sendLabel.textContent = state === 'sending' ? 'Sending …' : state === 'sent' ? 'Sent' : sendWord
+    bSend.setAttribute('aria-label', state === 'idle' ? `${sendWord}. ${SEND_TIP}.` : sendLabel.textContent)
     bSend.setAttribute('aria-busy', String(sending))
     sync()
   }

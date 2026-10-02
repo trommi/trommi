@@ -69,3 +69,21 @@ Not built: writing and scribbling anywhere on the card (anchored notes), the scr
 - Fourth round: the opened question is the decision (text, pictures, options, Trust, Revise, wastebasket) and at its right "Discuss" (`aside.focus-discuss`: the card's thread, a field with paperclip, microphone and send; Enter says it and the card stays). Snooze is the inbox's sliding label (`.inbox-later.focus-snooze`) at the card's right edge. What?? is no button: key E puts the caret into Discuss and the next Enter asks with `explain`. The end of the stack and "all answered" are one drawn tick, one sentence, Close (plus the piles button when there are any). Notes on paragraphs and options and the pen stay; a general note is written in Discuss.
 - Later the same round: Discuss is folded away by default (`setDiscuss`, `rec.discussOpen`, `data-discuss` on the card); the pen in the card's corner opens it (two thirds / one third, eased) and it opens by itself for a thread, a draft, Revise, What?? and key A. The scribble pen stands in the Discuss field's row. Options written into the text (sections) are not repeated as tiles. The ways out are one row of four equal wordless buttons (`rec.actionsNode`, `WAYS_PLACE`): reverse card (Revise), z z z (Snooze), the shrug (Whatever; lights the advised option), the wastebasket (Shred). Revise with nothing said first asks "What should change?" in Discuss; Enter sends, also empty. No Snooze tab at the edge any more.
 - Decided after trying the side column: no Discuss column. The opened card is one scrolling column (the decision, under it what was said in time order, "N messages below" as a chip under the title), the field at the foot of that column, and at the right, fixed, the answers and the four symbols (Snooze, Revise, Whatever, Shred). Many pictures: one large picture with a one-row filmstrip; the grid is a toggle. `mountFocus().revise()` scrolls to the field and asks "What should change?".
+
+## One view (merged card and gallery)
+- A card with pictures begins with the picture large on the stage (counter, name, "All in a grid", "Open the page",
+  steps at its sides, filmstrip); title, the quiet line "From X · third version · 39 min ago · N messages below",
+  text and thread follow by scrolling; the field stays at the stage's foot. Right: white column, options, Send, the
+  four ways out at its bottom. Copy, read aloud, close at the stage's top right (also in the window of one card).
+- Picture and option are tied both ways: an option under the pointer shows its picture; the picture shown marks its
+  option (data-match) and the pen arrow points at it (linkPicture). No tile that changes with the picture.
+- Mini title (`.focus-up`) while the real title is out of sight; click or Home goes to the top.
+- Walk: scrolling stack (`LIST_WALK`); a card that leaves is gone, a note at the top left says what happened, with
+  Back. No strips.
+- A card that is not open any more opens to read (`open(id)` with any status, `data-past`, "Take back").
+- `gallery()` on the mountFocus object: the open card at its first picture, false (and closed) without pictures.
+- Sectioned cards: a short plain block before a run of options is that group's heading (`optionGroups`); Send says
+  which group has nothing picked (a hint, it does not block: the contract has no "one per group").
+- Words go only into the foot field; a note on a paragraph starts from the pencil beside it; the pen draws only in
+  its mode (Drawing · Clear drawing · Done, Esc). Strokes from before that mode are dropped from drafts.
+- Not built yet: mounting the card inline in a Desk row (planned name: `openInline(host, cardId, { onClose })`).

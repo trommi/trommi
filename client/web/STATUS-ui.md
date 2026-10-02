@@ -266,3 +266,20 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   crown: `.memo-none` "No session wears the crown." and `.memo-ledger` opens /agents. A phone: a sheet at the bottom.
 - Gone: `.quick`, `.quick-to`, `.quick-list`, `.quick-box`, `.quick-files` (and their rules in app.css; the
   `.quick .cardclip-bar` rules in cardclip.css match nothing now).
+
+## Tab runs, floating Desk, hub snooze (2 Oct, afternoon)
+
+- Card Nr. 143, Tab: every run of one sender's cards on the Desk has a divider tab above its first card
+  (`.inbox-group[data-sender] > .inbox-run-tab`: drawing, crown, name, in the session's colour); cards of a run stand
+  4px apart and do not repeat the drawing. The mark on a card (`.inbox-who`, was `.inbox-sender`) shows only outside
+  runs (unfolded piles).
+- Card Nr. 141, Float: the Desk is no row in the sidebar any more. `#desk-go` in the top pill goes to the Desk and
+  shows `#desk-state` (`.agent-count.is-knock` knocks, `.agent-count.is-total` all open, `.agent-working`);
+  `#brand-menu` is the caret beside it; the menu has "Switch desk" (`#desk-list`, `#project-current` is the one desk).
+  The pill hides while a card is open (`.focus-lock`). The Desk heading no longer repeats the knocks.
+- Snooze is on the hub: store.js posts `/snooze`, lists `snoozed_until` cards in `state.later` (and puts them back
+  into `state.all.queue` for the views), migrates local snoozes once, and calls the snoozed cards back when the
+  last waiting card is answered. A returned card says "Back from snooze" in its note line.
+- Audit: "Trusted" reads "Whatever"; the count circle is drawn with the pen (`penCircle()`); one soft tinted card
+  shadow; the empty state is the desk drawing and a sentence, no dashed box; phone Desk has room at its foot.
+

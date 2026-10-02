@@ -79,6 +79,11 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
 @media (min-width: 861px) and (max-width: 1199px) {
   body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-top: 46px; }
 }
+/* On a wide window the title stays one line; the two round buttons stand at its right end, so the modes
+   ("Conversation", "Scribble") end before them instead of under them. */
+@media (min-width: 1200px) {
+  body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: 120px; }
+}
 /* Narrow, with nothing open: the list takes no room. */
 @media (max-width: 1199px) {
   body[data-pair][data-view="chat"]:not([data-page]) .group-questions { flex: none; max-height: min(46dvh, 480px); padding: var(--s-4) var(--gutter) var(--s-5); border-bottom: 1px solid var(--line-strong); }
