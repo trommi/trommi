@@ -27,7 +27,7 @@ What is planned and not built is in the last section and is marked as such.
 | Admin | The cookie, plus the admin key (`data/admin-token`) exchanged for a session cookie | `/admin/api/*` |
 | No login | Nothing | `/a/<id>`, `/a/<id>/blob`, `/a/-/…` (the asset viewer and ciphertext), `/healthz` |
 
-**The state.** One object: `agents`, `messages`, `cards`, `tasks` (status lines), `assets`, `queue` (ids of open cards in the order the human sees them), `pending` (events waiting for sessions that are away), `next_number`, `hub`. `commit()` recomputes the queue, writes `data/state.json` (temp file, then rename) and writes one frame to every open `GET /events` stream: the whole state as JSON, without `pending`. A page that is behind gets the latest state once it has caught up.
+**The state.** One object: `agents`, `messages`, `cards`, `tasks` (status lines), `assets`, `queue` (ids of open cards in the order the human sees them), `pending` (events waiting for sessions that are away), `next_number`, `hub`. `commit()` recomputes the queue, writes what changed to SQLite (`server/board-store.mjs`: the table `board_docs` in `data/pad.db`, one row per card, message, session, status line and asset, the rest in one root row; only rows that differ are written, in one transaction) and writes one frame to every open `GET /events` stream: the whole state as JSON, without `pending`. A page that is behind gets the latest state once it has caught up.
 
 Weak spots:
 
@@ -134,7 +134,8 @@ Weak spots:
 
 | Under `data/` | What | Deleted after 30 days (`BOARD_RETENTION_DAYS`) |
 | --- | --- | --- |
-| `state.json` | The whole state | Answered and closed cards, their markers in the conversation, events queued for sessions that never came back. Not: chat messages. |
+| `pad.db`, table `board_docs` | The whole state (step 1 of `docs/architecture-target.md`) | Answered, closed and shredded cards, their markers in the conversation, events queued for sessions that never came back. Not: chat messages. |
+| `state.json`, `state.in-sqlite` | Where the state was before: read once, when the database holds no board yet, checked against what arrived, and from then on neither read nor written; it stays as the backup of that day. The marker says the board has moved. | No |
 | `files/` | Attachments in both directions, pad selections | Only the files of deleted cards (all their versions and note attachments) |
 | `scribbles/` | Sent drawings, one canvas per session | No |
 | `assets/` | Ciphertext of published assets | Yes, unless `keep` |
@@ -147,9 +148,11 @@ Weak spots:
 
 Weak spots:
 
-- The state is one JSON file, rewritten in full on every change.
+- The state is still one object in memory, serialised record by record on every change to find what differs, and still pushed whole to every page (step 2 of the target). The rows are documents, not the event log of `server/store/`; the log comes with the small events.
+- A hub that cannot use SQLite (Node older than 22.13, or `BOARD_STORE=json`) refuses to start beside a board that has moved. The way back is `node server/board-store.mjs back <data dir>` with the hub stopped; `export` and `counts` read the state out.
+- `dev/` and `docs/operations.md` still describe the backup as "copy `state.json` first"; the state is now in `pad.db` (WAL), which wants `sqlite3 .backup` or a stopped hub for a copy that is certainly whole.
 - Everything is clear text: whoever reads `data/` or a backup of it reads the board.
-- `server/store/` has tables for cards, messages, deliveries and files, tested, with a migration from `state.json`. Only the pad uses it.
+- `server/store/` has tables for cards, messages, deliveries and files, tested, with a migration from `state.json`. Only the pad uses it; the board's rows lie beside its tables in the same file.
 
 ## 8. Planned, not built
 
