@@ -132,7 +132,7 @@ client.fallbackNotificationHandler = async ({ method, params }) => {
 }
 
 await client.connect(new StdioClientTransport({
-  command: 'node', args: [path.join(root, 'server.mjs')],
+  command: 'node', args: [path.join(root, 'server', 'server.mjs')],
   env: { ...process.env, BOARD_AGENT: persona.name },
   stderr: 'inherit',
 }))

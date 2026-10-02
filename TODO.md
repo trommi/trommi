@@ -3,7 +3,7 @@
 Punkte, die besprochen, aber noch nicht gebaut sind. Reihenfolge ist keine Priorität.
 
 - [x] **Spracherkennung:** Diktat im Eingabefeld, Vorlesen von Karten, `create_voiceover` für Agenten (Tinfoil). Offen: freihändiger Dauerbetrieb.
-- [ ] **Verschlüsselung:** Entwurf in `public/krypto-konzept.html`. Entschieden: Einladungslink mit Geheimnis, **ein Raumschlüssel, kein Ratchet**, signierte Nachrichten. Status und Zeitpunkt einer Antwort bleiben für den Server lesbar, weil er nach 30 Tagen löscht.
+- [ ] **Verschlüsselung:** Entwurf in `client/web/krypto-konzept.html`. Entschieden: Einladungslink mit Geheimnis, **ein Raumschlüssel, kein Ratchet**, signierte Nachrichten. Status und Zeitpunkt einer Antwort bleiben für den Server lesbar, weil er nach 30 Tagen löscht.
 - [ ] **Nachrichten-Log:** jede Nachricht mit fortlaufender Nummer und Client-ID speichern, Clients holen Lücken gezielt nach; heute geht bei jeder Änderung der ganze Zustand raus und Nachrichten an abwesende Agenten liegen nur im Arbeitsspeicher.
 - [ ] **Fester Hub-Dienst:** statt „erste Sitzung ist der Hub“.
 - [ ] **Stabile Agenten-IDs:** nicht der Ordnername; Claudes Sitzungs-ID als veränderliche Zusatzangabe (wechselt bei Resume, `/compact`, Fork).

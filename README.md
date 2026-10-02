@@ -9,7 +9,7 @@ cd ~/git/trommi
 claude --dangerously-load-development-channels server:board
 ```
 
-Claude Code startet `server.mjs` selbst. Der Server lauscht auf allen Netzwerkschnittstellen und verlangt ein Token. Die fertigen Links (localhost und LAN-Adresse) stehen in `data/url.txt`:
+Claude Code startet `server/server.mjs` selbst (eingetragen in `.mcp.json`). Der Server lauscht auf allen Netzwerkschnittstellen und verlangt ein Token. Die fertigen Links (localhost und LAN-Adresse) stehen in `data/url.txt`:
 
 ```bash
 cat data/url.txt
@@ -20,7 +20,7 @@ Einmal pro Browser öffnen, danach merkt sich ein Cookie den Zugang.
 Für ein anderes Projekt den Server mit absolutem Pfad in dessen `.mcp.json` eintragen:
 
 ```json
-{ "mcpServers": { "board": { "command": "node", "args": ["/home/christopher/git/trommi/server.mjs"] } } }
+{ "mcpServers": { "board": { "command": "node", "args": ["/home/christopher/git/trommi/server/server.mjs"] } } }
 ```
 
 ## Technik
@@ -30,7 +30,7 @@ Für ein anderes Projekt den Server mit absolutem Pfad in dessen `.mcp.json` ein
 - **Browser:** handgeschriebene ES-Module und CSS, kein Framework, kein Build-Schritt. Live-Daten über Server-Sent Events, Zeichnen auf `<canvas>`, Schriften von Google Fonts.
 - **Speicher:** JSON-Datei und Dateien im Ordner `data/`, keine Datenbank.
 - **Sprache:** Tinfoil (OpenAI-kompatible API) für Erkennung und Stimme.
-- **iOS:** SwiftUI-App im Ordner `ios/` (im Aufbau).
+- **iOS:** SwiftUI-App im Ordner `client/ios/` (im Aufbau).
 - **Zugang:** Token im Link, danach Cookie; unterwegs über Tailscale (`tailscale serve` für HTTPS).
 
 Was wir uns bei anderen abgeschaut haben, steht in `docs/gelernt.md`.
@@ -123,10 +123,18 @@ Mit einem Tinfoil-Schlüssel (`TINFOIL_API_KEY` oder `data/tinfoil.key`) gibt es
 
 ## Aufbau
 
-- `server.mjs`: Channel (MCP über stdio) und Webserver in einem, als Hub oder Speiche
-- `public/index.html`, `public/css/`, `public/js/`: die Oberfläche als handgeschriebene ES-Module und CSS, ohne Build-Schritt; `store.js` hält den Zustand und den gewählten Agenten, `focus.js` den Fokus-Modus, `scribble.js` das Canvas, `agents.js` die Seitenleiste, `inbox.js` den Posteingang, `speech.js` Diktat und Vorlesen
-- `data/`: Zustand (`state.json`), Anhänge, Token und Links der laufenden Session
-- `dev/`: Vorschau ohne Claude-Code-Session
+```
+server/        server.mjs (Channel und Hub in einer Datei) und test.mjs
+client/web/    die Web-Oberfläche: statische Dateien, handgeschriebene ES-Module und CSS, kein Build-Schritt
+client/ios/    die SwiftUI-App mit Tests
+dev/           Demo-Agenten, Vorschau, Screenshots
+docs/          Konzepte und Gelerntes
+data/          Zustand, Anhänge, Token (nicht in Git)
+```
+
+Server und Clients liegen bewusst in einem Repository: Ändert sich die Schnittstelle, werden alle im selben Commit angepasst, und die Tests der Clients laufen gegen den Server aus demselben Stand. Die Web-Oberfläche liefert der Server aus dem Nachbarordner aus; `package.json` bleibt im Wurzelordner, weil Server und `dev/` dieselben Abhängigkeiten nutzen.
+
+In `client/web/js/`: `store.js` hält den Zustand und die gewählte Sitzung, `inbox.js` Posteingang und Fragen, `chat.js` das Gespräch, `focus.js` den Fokus-Modus, `scribble.js` das Canvas, `agents.js` Seitenleiste und Agenten-Übersicht, `history.js` den Verlauf, `speech.js` Diktat und Vorlesen.
 
 ## Vorschau
 
@@ -160,7 +168,7 @@ Der Agent hängt Dateien per absolutem Pfad an `reply` oder `create_decision` an
 ## Test
 
 ```bash
-node test.mjs
+node server/test.mjs
 ```
 
 Der Test startet einen eigenen Server auf Port 8791 mit einem temporären Datenverzeichnis.

@@ -11,4 +11,4 @@ data=${TMPDIR:-/tmp}/board-dev-$port
 rm -rf "$data"
 node dev/demo-state.mjs "$data"
 # stdin stays open for $secs; the server exits when it closes.
-sleep "$secs" | BOARD_PORT=$port BOARD_HOST=127.0.0.1 BOARD_TOKEN=demo BOARD_DATA=$data node server.mjs
+sleep "$secs" | BOARD_PORT=$port BOARD_HOST=127.0.0.1 BOARD_TOKEN=demo BOARD_DATA=$data node server/server.mjs

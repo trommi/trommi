@@ -1,5 +1,5 @@
 # Puts every change to the app on your own iPhone through TestFlight, without a Mac.
-# A push that touches ios/ builds, signs and uploads; internal testers get the
+# A push that touches client/ios/ builds, signs and uploads; internal testers get the
 # build as soon as Apple has processed it, with no review in between.
 #
 # One-time setup, all in the browser:
@@ -21,7 +21,7 @@ name: iOS TestFlight
 on:
   push:
     branches: [main, trommi-board]
-    paths: ['ios/**', '.github/workflows/ios-testflight.yml']
+    paths: ['client/ios/**', '.github/workflows/ios-testflight.yml']
   workflow_dispatch:
 
 concurrency:
@@ -34,7 +34,7 @@ jobs:
     timeout-minutes: 45
     defaults:
       run:
-        working-directory: ios
+        working-directory: client/ios
     env:
       ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
       ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}

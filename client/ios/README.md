@@ -7,7 +7,7 @@ Native App (SwiftUI, iOS 17+) für den Trommi-Server: Posteingang mit allen offe
 Auf einem Mac mit Xcode 16 oder neuer:
 
 ```bash
-cd ios
+cd client/ios
 brew install xcodegen && xcodegen     # schreibt Trommi.xcodeproj aus project.yml
 open Trommi.xcodeproj                  # Schema "Trommi", Simulator wählen, Cmd-R
 ```

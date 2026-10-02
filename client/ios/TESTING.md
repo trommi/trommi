@@ -30,7 +30,7 @@ Preise Stand Oktober 2026 von den Preisseiten bzw. aus Berichten darüber; vor e
 2. `xcodegen`, dann `xcodebuild test` auf einem iPhone-Simulator: Unit-Tests und UI-Tests.
 3. Artefakte am Lauf: `ios-test-results` (das `.xcresult`, öffnet sich in Xcode, und das Build-Log), `ios-screenshots` (Bilder aus den UI-Tests als PNG), `ios-simulator-app` (die App für den Simulator als Zip).
 
-Ein Lauf dauert geschätzt 10 bis 20 Minuten; gemessen ist das nicht. In einem privaten Repo wären die Freiminuten damit nach etwa zehn bis zwanzig Läufen im Monat verbraucht. Dann entweder nur bei Änderungen unter `ios/` laufen lassen (der `paths`-Filter steht als Kommentar oben im Workflow) oder auf den Mac mini wechseln.
+Ein Lauf dauert geschätzt 10 bis 20 Minuten; gemessen ist das nicht. In einem privaten Repo wären die Freiminuten damit nach etwa zehn bis zwanzig Läufen im Monat verbraucht. Dann entweder nur bei Änderungen unter `client/ios/` laufen lassen (der `paths`-Filter steht als Kommentar oben im Workflow) oder auf den Mac mini wechseln.
 
 Der Workflow ist hier nie gelaufen. Rechne beim ersten Mal mit Korrekturen, vor allem an Übersetzungsfehlern der Oberfläche.
 
@@ -76,6 +76,6 @@ Für die App auf dem eigenen iPhone, dauerhaft und mit Updates:
 2. Einen Build hochladen. Am einfachsten vom Mac mini: in Xcode „Product → Archive → Distribute App → TestFlight“. Automatisch geht es mit `xcodebuild archive` und `xcodebuild -exportArchive` plus einem App-Store-Connect-API-Schlüssel, im selben Workflow auf dem eigenen Runner.
 3. Dich selbst als internen Tester eintragen, die TestFlight-App auf dem iPhone installieren. Interne Tester brauchen keine Prüfung durch Apple; ein Build gilt 90 Tage.
 
-Xcode Cloud kann Schritt 2 übernehmen. Es erwartet eine Projektdatei im Repo. Weil `Trommi.xcodeproj` hier erzeugt wird, braucht es `ios/ci_scripts/ci_post_clone.sh` mit `brew install xcodegen && cd .. && xcodegen`, oder die Projektdatei wird doch eingecheckt. Das ist nicht eingerichtet und nicht ausprobiert.
+Xcode Cloud kann Schritt 2 übernehmen. Es erwartet eine Projektdatei im Repo. Weil `Trommi.xcodeproj` hier erzeugt wird, braucht es `client/ios/ci_scripts/ci_post_clone.sh` mit `brew install xcodegen && cd .. && xcodegen`, oder die Projektdatei wird doch eingecheckt. Das ist nicht eingerichtet und nicht ausprobiert.
 
 Die App erlaubt HTTP zu beliebigen Adressen (siehe README). Für TestFlight mit internen Testern ist das kein Hindernis; bei einer Veröffentlichung im App Store würde Apple danach fragen.
