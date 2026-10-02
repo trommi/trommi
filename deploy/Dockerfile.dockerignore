@@ -1,0 +1,11 @@
+# Everything is left out unless listed: the data directory holds the token, the
+# admin key and the speech key and must never end up in an image layer.
+*
+!package.json
+!package-lock.json
+!server/server.mjs
+!client/web
+# Drafts and previews in client/web that the board does not need.
+client/web/designs
+client/web/*-preview.html
+client/web/*.md
