@@ -21,3 +21,5 @@ Punkte, die besprochen, aber noch nicht gebaut sind. Reihenfolge ist keine Prior
 - [ ] **Hub nur auf Loopback binden:** erreichbar über localhost und den Tailnet-Namen, nicht mehr als HTTP im LAN.
 
 - [ ] **iOS: eigener Tinfoil-Schlüssel.** In der App einen eigenen Tinfoil-Schlüssel eintragen können (Schlüsselbund); dann geht Diktat direkt vom Gerät zu Tinfoil. Im Browser nie: der Schlüssel läge offen (Christopher, 2.10.2026).
+
+- [ ] **iOS geparkt (2.10.2026):** Christopher stellt iOS hinten an. Stand und offene Punkte stehen in `client/ios/`. Erst wieder aufnehmen, wenn er es sagt.
