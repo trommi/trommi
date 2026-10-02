@@ -993,6 +993,54 @@ assert.deepEqual(logs.slice(mark).filter(l => l.includes('] hub on ')).map(l => 
 await solo.close()
 await eventually(async () => (await state()).agents[0].online === false, 'the hub of its own to outlast its only session')
 assert.equal(back.exitCode, null)
+
+// a worker without a channel publishes through dev/session.mjs: the helper encrypts with the same envelope
+// and uploads like a spoke, so the hub is handed ciphertext, and of a silent asset no key
+const SESSION = toPath(new URL('../dev/session.mjs', import.meta.url))
+const helperEnv = { ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data5, BOARD_TOKEN: 'secret', BOARD_PUBLIC_URL: '' }
+const helper = (...args) => new Promise(resolve => {
+  const child = spawn('node', [SESSION, ...args], { env: helperEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+  const out = { stdout: '', stderr: '' }
+  for (const stream of ['stdout', 'stderr']) child[stream].on('data', chunk => { out[stream] += chunk })
+  child.on('close', code => resolve({ code, ...out }))
+})
+const sheet = path.join(data5, 'blatt.html')
+const sheetBytes = Buffer.concat([Buffer.from('<!doctype html><h1>vom Helfer 16180</h1>'), crypto.randomBytes(3000)])
+fs.writeFileSync(sheet, sheetBytes)
+// a session that is not linked is refused, as it is for a spoke
+assert.deepEqual([(await helper('publish', 'Helfer', sheet)).code, fs.readdirSync(path.join(data5, 'assets')).length], [1, 1])
+const held = spawn('node', [SESSION, 'link', 'Helfer'], { env: helperEnv, stdio: 'ignore' })
+await eventually(async () => (await state()).agents.some(a => a.id === 'helfer' && a.online), 'the helper session to link')
+const helperTalk = (await state()).messages.length
+const shownOut = await helper('publish', 'helfer', sheet, '--title', 'Blatt', '--note', 'aus dem Helfer')
+assert.equal(shownOut.code, 0, shownOut.stderr)
+// the base is the first line of data/url.txt without its query
+const [hid, hkey] = shownOut.stdout.match(/^http:\/\/localhost:8791\/a\/([\w-]{22})#([\w-]{43})\n$/).slice(1)
+// the blob is fetched without a cookie and opens with the key from the printed link: the same bytes
+const fetched = await blobOf(hid)
+assert.deepEqual(fetched, fs.readFileSync(path.join(data5, 'assets', hid)))
+assert.ok(!fetched.includes('16180') && !fetched.includes(hkey))
+const unsealed = await openAsset(fetched, hkey, hid)
+assert.deepEqual([unsealed.header.type, unsealed.header.title, unsealed.header.name, unsealed.header.mime, unsealed.content.equals(sheetBytes)], ['html', 'Blatt', 'blatt.html', 'text/html', true])
+// announced on the board exactly as the tool does it
+s = await state()
+assert.deepEqual([s.messages.length, s.messages.at(-1).agent, s.messages.at(-1).from, s.messages.at(-1).text], [helperTalk + 1, 'helfer', 'agent', `**Blatt** (HTML page)\n\naus dem Helfer\n\n${base}/a/${hid}#${hkey}`])
+assert.deepEqual(s.messages.at(-1).asset, { id: hid, type: 'html', title: 'Blatt', note: 'aus dem Helfer', url: `/a/${hid}#${hkey}`, size: fetched.length })
+// silent: nothing on the board, and the hub's state holds neither key nor title nor type
+const quietOut = await helper('publish', 'helfer', sheet, '--silent', '--keep', '--type', 'file', '--title', 'Verschwiegen')
+assert.equal(quietOut.code, 0, quietOut.stderr)
+const [zid, zkey] = quietOut.stdout.match(/^http:\/\/localhost:8791\/a\/([\w-]{22})#([\w-]{43})\n$/).slice(1)
+s = await state()
+assert.equal(s.messages.length, helperTalk + 1)
+assert.deepEqual({ ...s.assets.at(-1), created: 0, size: 0 }, { id: zid, agent: 'helfer', type: null, title: '', size: 0, created: 0, keep: true, silent: true, wrapped_key: null })
+for (const where of [JSON.stringify(s), fs.readFileSync(path.join(data5, 'state.json'), 'utf8')]) assert.ok(!where.includes(zkey) && !where.includes('Verschwiegen'), 'the hub knows something about a silent asset')
+const hushed = await openAsset(await blobOf(zid), zkey, zid)
+assert.deepEqual([hushed.header.type, hushed.header.title, hushed.content.equals(sheetBytes)], ['file', 'Verschwiegen', true])
+// the public address, when one is named, is what the printed link starts with
+helperEnv.BOARD_PUBLIC_URL = 'https://rechner.example.ts.net/, https://zweite.example'
+assert.match((await helper('publish', 'helfer', sheet, '--silent')).stdout, /^https:\/\/rechner\.example\.ts\.net\/a\/[\w-]{22}#[\w-]{43}\n$/)
+assert.match((await helper('publish', 'helfer', sheet, '--type', 'pdf')).stderr, /type must be one of/)
+held.kill()
 back.kill()
 
 // ---- the admin backend, on a board whose state, files and sizes are known ----
@@ -1232,5 +1280,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke, tool reference, app paths, hub of its own')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own')
 process.exit(0)

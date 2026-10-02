@@ -15,6 +15,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_ID, ASSET_KEY, ASSET_BLOB_MAX, prepareAsset, assetUpload, assetLink } from './asset-envelope.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.BOARD_PORT || 8790)
@@ -28,8 +29,6 @@ const ASSETS = path.join(DATA, 'assets')
 const STATE_FILE = path.join(DATA, 'state.json')
 // Rendered videos are the big case; the file is copied once and streamed with Range requests.
 const MAX_ATTACHMENT = Number(process.env.BOARD_MAX_ATTACHMENT_MB || 1024) * 1024 * 1024
-// An asset is decrypted in the browser's memory in one piece, so it stays far smaller than an attachment.
-const MAX_ASSET = Number(process.env.BOARD_MAX_ASSET_MB || 64) * 1024 * 1024
 // A hub that is nobody's session: it holds the state and serves the pages, but is
 // no agent itself. For a hub that runs as a service, with nothing on stdin.
 const HUB_ONLY = /^(1|true|yes)$/i.test(process.env.BOARD_HUB_ONLY ?? '')
@@ -60,21 +59,6 @@ process.stderr.write = (chunk, ...rest) => {
   logLines.splice(0, Math.max(0, logLines.length - LOG_LINES))
   return writeStderr(chunk, ...rest)
 }
-const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif'])
-const VIDEO_EXT = new Set(['.mp4', '.m4v', '.webm', '.mov'])
-const AUDIO_EXT = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac'])
-const HTML_EXT = new Set(['.html', '.htm'])
-const kindOf = ext => (IMAGE_EXT.has(ext) ? 'image' : VIDEO_EXT.has(ext) ? 'video' : AUDIO_EXT.has(ext) ? 'audio' : 'file')
-const MIME = {
-  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
-  '.webp': 'image/webp', '.svg': 'image/svg+xml', '.avif': 'image/avif', '.pdf': 'application/pdf',
-  '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
-  '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
-  '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
-  '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json',
-  '.mjs': 'text/javascript; charset=utf-8', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
-}
-
 // Speech runs on Tinfoil's OpenAI-compatible API. Without a key the board
 // works as before and simply offers no microphone or read-aloud.
 const SPEECH = path.join(DATA, 'speech')
@@ -403,77 +387,18 @@ function storeAttachment(file) {
 
 // ---- assets --------------------------------------------------------------
 
-// A page or a file the agent publishes under a link. Whoever has the link can
-// open it, without a login: the key stands behind the # of the link, which a
-// browser never sends. The process beside the agent encrypts, hub or spoke, so
-// what the hub stores and serves is ciphertext.
-//
-// The blob, version 1:
-//   "ZWA1" | nonce, 12 bytes | AES-256-GCM ciphertext | tag, 16 bytes
-//   associated data: "ZWA1/" + asset id, so a blob opens only under its own address
-//   plaintext: header length (uint32, big endian) | header, JSON | content | zeros
-//   header: { v: 1, type, title, name, mime, size, created }
-// The zeros pad the plaintext to a step, so the length says little about the
-// content. Each asset has a key and a nonce of its own, used once. One piece,
-// not the 64 KiB chunks docs/krypto-konzept.md plans for attachments: the viewer
-// decrypts in memory, which is why assets have a size limit of their own.
-const ASSET_TYPES = ['html', 'image', 'video', 'audio', 'file']
-const ASSET_LABEL = { html: 'HTML page', image: 'Image', video: 'Video', audio: 'Audio', file: 'File' }
-const ASSET_MAGIC = Buffer.from('ZWA1')
-// 128 random bits in base64url: the address cannot be guessed, and it cannot name a path.
-const ASSET_ID = /^[A-Za-z0-9_-]{22}$/
-const ASSET_KEY = /^[A-Za-z0-9_-]{43}$/
-
-// Padmé: at most about 12 % on top, and only log(log(size)) bits of the length left to see.
-function padded(size) {
-  const e = Math.floor(Math.log2(size))
-  const step = 2 ** (e - Math.floor(Math.log2(e)) - 1)
-  return Math.max(1024, Math.ceil(size / step) * step)
-}
-const ASSET_BLOB_MAX = padded(MAX_ASSET + 4096) + 64
-
-// What publish_asset was given, as the bytes to encrypt and what to say about them inside the envelope.
-function readAsset(args) {
-  const file = typeof args.path === 'string' && args.path ? path.resolve(args.path) : null
-  if (file ? args.content != null : typeof args.content !== 'string') throw new Error('give either path (a file) or content (a string)')
-  if (file && !fs.statSync(file).isFile()) throw new Error(`not a file: ${args.path}`)
-  if ((file ? fs.statSync(file).size : Buffer.byteLength(args.content)) > MAX_ASSET) throw new Error(`asset larger than ${MAX_ASSET / 1024 / 1024} MB`)
-  const ext = file ? path.extname(file).toLowerCase() : ''
-  const type = args.type ?? (!file || HTML_EXT.has(ext) ? 'html' : kindOf(ext))
-  if (!ASSET_TYPES.includes(type)) throw new Error(`type must be one of ${ASSET_TYPES.join(', ')}; got ${JSON.stringify(type)}`)
-  const name = file ? path.basename(file) : type === 'html' ? 'page.html' : 'asset.txt'
-  const mime = type === 'html' ? 'text/html' : MIME[ext]?.split(';')[0] ?? (file ? 'application/octet-stream' : 'text/plain')
-  const title = String(args.title ?? '').trim().slice(0, 200) || name
-  return { meta: { type, title, name, mime }, content: file ? fs.readFileSync(file) : Buffer.from(args.content) }
-}
-
-function sealAsset(meta, content) {
-  const id = crypto.randomBytes(16).toString('base64url')
-  const key = crypto.randomBytes(32)
-  const nonce = crypto.randomBytes(12)
-  const header = Buffer.from(JSON.stringify({ v: 1, ...meta, size: content.length, created: Date.now() }))
-  const length = Buffer.alloc(4)
-  length.writeUInt32BE(header.length)
-  const size = 4 + header.length + content.length
-  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce)
-  cipher.setAAD(Buffer.from(`ZWA1/${id}`))
-  const sealed = [length, header, content, Buffer.alloc(padded(size) - size)].map(part => cipher.update(part))
-  return { id, key: key.toString('base64url'), blob: Buffer.concat([ASSET_MAGIC, nonce, ...sealed, cipher.final(), cipher.getAuthTag()]) }
-}
+// The envelope itself (format, padding, id and key, link) is in asset-envelope.mjs,
+// shared with dev/session.mjs.
 
 // Runs in the process that got the tool call. The hub is handed the key only
 // for an asset it has to show on the board; of a silent one it learns the
 // address and the size, nothing else.
 async function publishAsset(args) {
-  const { meta, content } = readAsset(args)
-  const { id, key, blob } = sealAsset(meta, content)
-  const silent = args.silent === true
-  const shown = silent ? {} : { type: meta.type, title: meta.title, note: String(args.note ?? '').trim().slice(0, 2000), key }
-  const record = { id, keep: args.keep === true, silent, ...shown }
-  const { bases } = role === 'hub' ? storeAsset(selfId, record, blob) : await hubFetch(`/agent/asset?${new URLSearchParams({ id: selfId, instance: INSTANCE })}`, {
-    headers: { 'Content-Type': 'application/octet-stream', 'x-asset': Buffer.from(JSON.stringify(record)).toString('base64url') }, body: blob,
-  })
-  const [link, ...more] = bases.map(base => `${base}/a/${id}#${key}`)
+  const { id, key, blob, meta, record } = prepareAsset(args)
+  const silent = record.silent
+  const sent = assetUpload(selfId, INSTANCE, record, blob)
+  const { bases } = role === 'hub' ? storeAsset(selfId, record, blob) : await hubFetch(sent.route, { headers: sent.headers, body: sent.body })
+  const [link, ...more] = bases.map(base => assetLink(base, id, key))
   return [
     `asset ${id} published (${meta.type}, ${blob.length} bytes encrypted, ${record.keep ? 'kept until revoked' : `deleted after ${RETENTION_DAYS} days`}).`,
     `Link, opens without a board login for anyone who has it: ${link}`,
