@@ -14,11 +14,25 @@ const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 // What a starred session's rows are called. The word is not settled; it lives here alone.
 export const VIP_LABEL = 'VIP'
 
-// Answerable by thumb: a two-way question. Two options with labels short enough for a tile,
-// at most about three lines of text, and nothing attached beyond pictures, which the row shows.
+// The one rule for a word under a thumb. A tile has room for two short lines; a label stands there
+// only if it fits them whole, broken between words or after a hyphen, never inside a word.
+// A label that needs more is not shrunk and not cut: its card is answered through "Choose",
+// where every option has a line of its own.
+const TILE_LINE = 14
+export function fitsTile(label) {
+  let lines = 1, used = 0
+  for (const word of String(label).trim().replace(/-(?=\S)/g, '- ').split(/\s+/)) {
+    if (word.length > TILE_LINE) return false
+    if (used && used + 1 + word.length > TILE_LINE) { lines++; used = word.length } else used += (used ? 1 : 0) + word.length
+  }
+  return lines <= 2
+}
+
+// Answerable by thumb: a two-way question. Two options whose labels fit a tile, at most about
+// three lines of text, and nothing attached beyond pictures, which the row shows.
 const quick = card =>
   !card.multiple && (card.kind === 'permission' ||
-  (card.options.length === 2 && card.options.every(o => o.label.length <= 18) && (card.attachments ?? []).every(a => kindOf(a) === 'image') && (card.body ?? '').length <= 240))
+  (card.options.length === 2 && card.options.every(o => fitsTile(o.label)) && (card.attachments ?? []).every(a => kindOf(a) === 'image') && (card.body ?? '').length <= 240))
 
 // A plain yes or no needs no word under its thumb.
 const BARE = /^(yes|no|ok|okay|allow|deny|ja|nein)$/i
@@ -31,6 +45,10 @@ const needsWindow = card =>
 
 // What the agent would pick: one option, or several where several are allowed.
 const advised = (card, key) => [].concat(card.recommended ?? []).includes(key)
+
+// The keys that work a list down, for the legend behind the "?".
+const KEYS = [['↑ ↓', 'move'], ['Y', 'yes'], ['N', 'no'], ['L', 'later'], ['C', 'choices'], ['1…9', 'pick one'], ['U', 'undo'], ['Esc', 'leave']]
+let keysOpen = false
 
 // Rows that stand unfolded, by card id: a list that is rebuilt keeps them open.
 const unfolded = new Set()
@@ -136,14 +154,15 @@ function unfoldNode(card, { onDecided }) {
 
 /** One question as a row.
  *  onOpen(cardId): open the card as a window of its own. onDecided(card, option): it was answered here.
- *  vip: the session is starred. off: the card was put off. from: the session that asked, named on the
+ *  vip: the session is starred and nothing around the row says so (it stands among other sessions' rows),
+ *  so the row carries the small golden tab itself.
+ *  off: the card was put off. from: the session that asked, named on the
  *  row when nothing around it says so. fit: the list's lineFit(). */
 export function questionRow(card, { onOpen, onDecided, vip = false, off = false, from = null, fit = null } = {}) {
   const node = el('article', 'inbox-row')
   node.dataset.id = card.id
   node.dataset.urgency = card.urgency
   if (off) node.dataset.later = ''
-  if (vip) node.dataset.vip = ''
   const error = el('p', 'inbox-error')
   error.hidden = true
 
@@ -296,7 +315,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
   root.append(head, list)
   const fit = lineFit()
   const rows = new Map()   // card id -> { sig, node }; an unchanged card keeps its node, so nothing flickers
-  const row = (card, opts) => {
+  const row = (card, opts = {}) => {
     const sig = rowSig(card, opts)
     const cached = rows.get(card.id)
     if (cached?.sig === sig) return cached.node
@@ -341,9 +360,27 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       // Working down the list happens in the list: the first row is marked, and the keys take over.
       const go = el('button', 'inbox-go', 'Go through them')
       go.type = 'button'
-      go.addEventListener('click', () => { mark(nodes()[0]); go.blur() })
-      head.append(go)
-      title.append(el('p', 'inbox-keys', 'With the keyboard: ↑ and ↓ move, Y or → is yes, N or ← is no, L puts a question off, C or Enter opens the choices, a digit picks one, U takes the last answer back.'))
+      // The keys are shown along with the mark: a frame alone does not say what to do next.
+      go.addEventListener('click', () => { keysOpen = true; paintKeys(); mark(nodes()[0]); go.blur() })
+      // Which keys: a short legend, tucked behind a "?" (the key "?" opens it too).
+      const legend = el('p', 'inbox-keys')
+      legend.id = 'inbox-keys'
+      for (const [key, does] of KEYS) {
+        const pair = el('span')
+        pair.append(el('kbd', null, key), does)
+        legend.append(pair)
+      }
+      const help = el('button', 'inbox-keys-toggle', '?')
+      help.type = 'button'
+      help.title = 'Keyboard shortcuts (?)'
+      help.setAttribute('aria-label', 'Keyboard shortcuts')
+      help.setAttribute('aria-controls', legend.id)
+      const paintKeys = () => { legend.hidden = !keysOpen; help.setAttribute('aria-expanded', String(keysOpen)) }
+      help.addEventListener('click', () => { keysOpen = !keysOpen; paintKeys() })
+      paintKeys()
+      const tools = el('div', 'inbox-tools')
+      tools.append(help, go)
+      head.append(tools, legend)
     }
 
     // One group per sender. Starred sessions come first, then whoever has the most urgent question.
@@ -362,10 +399,13 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
         const label = el('h3', 'inbox-sender')
         const avatar = el('span', 'inbox-avatar')
         avatar.append(doodle(sender.mark ?? sender.id))
-        label.append(avatar, el('span', null, sender.name), el('b', null, cards.length === 1 ? '1 question' : `${cards.length} questions`))
+        label.append(avatar, el('span', null, sender.name))
+        // A starred session is marked once, here; its rows below stay plain.
+        if (sender.starred) { label.dataset.vip = ''; label.append(el('span', 'inbox-vip', VIP_LABEL)) }
+        label.append(el('b', null, cards.length === 1 ? '1 question' : `${cards.length} questions`))
         section.append(label)
       }
-      section.append(...cards.map(c => row(c, { vip: Boolean(sender.starred) })))
+      section.append(...cards.map(c => row(c)))
       parts.push(section)
     }
     // Put off: one group below all senders, in the order the cards were put off. Its heading is dashed,
@@ -378,7 +418,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       label.append(avatar, el('span', null, 'Later'), el('b', null, `${off.length} put off`))
       section.append(label, ...off.map(c => {
         const sender = all.agents.find(a => a.id === c.agent)
-        return row(c, { off: true, vip: Boolean(sender?.starred), from: agent ? null : sender })
+        return row(c, { off: true, vip: Boolean(!agent && sender?.starred), from: agent ? null : sender })
       }))
       parts.push(section)
     }
@@ -415,6 +455,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const t = document.activeElement
     if (t && (/^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName) || t.isContentEditable)) return
     if (document.querySelector('dialog[open], .focus:not([hidden])') || !shown()) return
+    if (e.key === '?' && head.querySelector('.inbox-keys-toggle')?.offsetParent) { e.preventDefault(); return head.querySelector('.inbox-keys-toggle').click() }
     // Enter on a button is that button's.
     if (e.key === 'Enter' && t && /^(BUTTON|A|SUMMARY)$/.test(t.tagName)) return
     const all = nodes()
