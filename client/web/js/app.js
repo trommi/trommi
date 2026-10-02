@@ -268,6 +268,24 @@ async function openFocus(cardId, step = true, { ask = false, revise = false, gal
     showToast('error', 'The focus window could not be loaded.', 4000)
   }
 }
+// A Desk row unfolds its card in place (focus.js openInline) where there is room for it; a phone keeps
+// the window. The address reads /q/<n> while it is unfolded; folding goes back ('focus:close', below).
+async function unfoldCard(host, cardId, onClose) {
+  if (matchMedia('(max-width: 860px)').matches) return false
+  try {
+    focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
+    if (!focusMode.openInline) return false
+    // Another row is unfolded: it folds as this one opens. The address entry it made is kept and
+    // rewritten for this card, instead of going back and forth.
+    const swap = Boolean(focusMode.isInline?.())
+    routing = swap
+    let ok = false
+    try { ok = focusMode.openInline(host, cardId, { onClose }) } finally { routing = false }
+    focusCard = ok ? cardId : null
+    writeAddress(ok && !swap)
+    return ok
+  } catch (err) { console.error(err); return false }
+}
 // Closed by hand: leave the entry the window made, so "back" does not open it again.
 document.addEventListener('focus:close', () => {
   if (!focusCard) return
@@ -294,7 +312,7 @@ export function walkSession(id) {
   return openFocus()
 }
 const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
-const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onDecided: offerUndo })
+const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onUnfold: unfoldCard, onDecided: offerUndo })
 
 // The title of the pane: which session this is, by its mark and name. For sessions laid
 // together, their joint mark and each name; a name picks that one for the canvas, and on a
@@ -530,18 +548,22 @@ $('chat').addEventListener('focusout', () => { delete root.dataset.typing })
 
 const typingIn = node => Boolean(node?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))
 const inSession = () => !body.dataset.page && body.dataset.scope !== 'all'
-// The sidebar as it stands: the inbox first, then every session and pair, top to bottom.
-const places = () => [...$('agents').querySelectorAll('.agent-entry')]
+// The sidebar as it stands: every session and pair, top to bottom. The Desk is the place before the first:
+// its own entry in the sidebar if it has one, else the bar's.
+const sessions = () => [...$('agents').querySelectorAll('.agent-row[data-unit] .agent-entry')]
+const places = () => [$('agents').querySelector('.agent-row:not([data-unit]) .agent-entry') ?? $('nav-inbox'), ...sessions()]
 // Going somewhere by key leaves the keys in charge: the caret does not land in the composer.
 function goTo(entry) {
   if (!entry) return false
   entry.click()
-  entry.scrollIntoView({ block: 'nearest', inline: 'center' })
+  if (entry.getClientRects().length) entry.scrollIntoView({ block: 'nearest', inline: 'center' })
   if (typingIn(document.activeElement)) document.activeElement.blur()
 }
 const stepPlace = by => () => {
   const all = places()
-  const at = all.findIndex(n => n.hasAttribute('aria-current'))
+  // Where we are: the session that is marked as current, else the Desk (place 0) when it is up, else nowhere.
+  const on = all.findIndex((n, i) => i > 0 && n.getAttribute('aria-current') === 'true')
+  const at = on >= 0 ? on : body.dataset.page ? -1 : 0
   return goTo(all[at < 0 ? (by > 0 ? 0 : all.length - 1) : (at + by + all.length) % all.length])
 }
 provide('app', {
@@ -550,7 +572,7 @@ provide('app', {
     'go.inbox': () => { $('nav-inbox').click() },
     'go.agents': () => { $('nav-roster').click() },
     'go.focus': () => { openFocus() },
-    'go.session': n => goTo(places()[n]),
+    'go.session': n => goTo(sessions()[n - 1]),
     'session.next': stepPlace(1),
     'session.prev': stepPlace(-1),
     theme: () => themeToggle.click(),

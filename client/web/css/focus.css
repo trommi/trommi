@@ -1249,3 +1249,29 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus[data-inline] .focus-card .focus-answer > .focus-actions { margin-top: var(--s-4); }
 /* dark: the buttons column has a clear edge against the stage */
 :root[data-theme="dark"] .focus .focus-card > .focus-answer { background: color-mix(in srgb, var(--surface) 90%, #fff); box-shadow: -1px 0 0 var(--line-strong); }
+
+/* Snooze and Shred are tools of the card: quiet round buttons in the row at the stage's top right, before copy,
+   read aloud and close. Beside the answers stay Revise and Whatever. */
+.focus .focus-card-ends > .focus-way { flex: none; width: 32px; height: 32px; min-height: 0; margin: 0; padding: 0; display: grid; place-items: center; border-radius: 50%; background: none; box-shadow: none; color: var(--muted); }
+.focus .focus-card-ends > .focus-way .focus-way-word { display: none !important; }
+.focus .focus-card-ends > .focus-way .focus-way-art { display: grid; place-items: center; }
+.focus .focus-card-ends > .focus-way .sketch { width: 20px; height: 20px; }
+.focus .focus-card-ends > .focus-way:hover { background: var(--sunken); color: var(--fg); }
+.focus .focus-card-ends > .focus-way.focus-shred:hover { color: var(--urg-critical); }
+.focus-card .focus-title { padding-right: 176px; }
+.focus-stage-bar { padding-right: 184px; }
+.focus-up { max-width: calc(100% - var(--pad) - 200px); }
+@container focus (max-width: 699.9px) { .focus-stage-bar { padding-right: 0; } .focus-up { max-width: calc(100% - 196px); } }
+
+/* ══ The walk is a page of its own: nothing of the page behind it, one way back at the top left; the note of what
+   happened stands under that. At its end: the calm sentence and who is still at work. ══ */
+.focus[data-list] > .focus-backdrop { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; }
+.focus-back-desk { display: none; }
+.focus[data-list]:not([data-inline]) > .focus-back-desk { position: fixed; z-index: 6; left: 12px; top: 12px; height: 36px; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px 0 10px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
+.focus-back-desk .focus-icon { width: 16px; height: 16px; }
+.focus[data-list] .focus-says { inset: 58px auto auto 12px !important; }
+.focus[data-list] .focus-sheet[data-state="done"] { background: none; box-shadow: none; }
+.focus-done-work { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; margin: var(--s-5) 0 0; color: var(--muted); font-size: var(--t-sm); }
+.focus-done-work[hidden] { display: none; }
+.focus-done-work .agent-avatar { width: 30px; height: 30px; }
+@container focus (max-width: 699.9px) { .focus[data-list] .focus-says { inset: 54px auto auto 8px !important; } }

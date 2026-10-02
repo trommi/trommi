@@ -354,7 +354,7 @@ const EDGE_TABS = ['inbox-later']
  *  onOpen(cardId): open the card as a window of its own. onDecided(card, option): it was answered here.
  *  off: the card was put off. from: the session that asked, named on the
  *  row when nothing around it says so. fit: the list's lineFit(). */
-export function questionRow(card, { onOpen, onDecided, onGallery = null, off = false, from = null, fit = null } = {}) {
+export function questionRow(card, { onOpen, onDecided, onGallery = null, onUnfold = null, off = false, from = null, fit = null } = {}) {
   const node = el('article', 'inbox-row')
   node.tabIndex = -1   // the keyboard's mark puts the focus here, so Tab goes on from the marked row
   node.dataset.id = card.id
@@ -451,7 +451,20 @@ export function questionRow(card, { onOpen, onDecided, onGallery = null, off = f
     return more
   }
   if (extra.length) byline.prepend(carried())
-  text.addEventListener('click', () => onOpen?.(card.id))
+  // A click on the text unfolds the card in place where the page can (the Desk on a wide screen: onUnfold
+  // puts the whole card into the host and says whether it did); else it opens as a window. Unfolded,
+  // the row shows only the card (CSS: .inbox-row.is-unfolded) and may be wider than the column.
+  text.addEventListener('click', async () => {
+    if (onUnfold && !node.classList.contains('is-unfolded')) {
+      const host = el('div', 'inbox-inline')
+      const fold = () => { node.classList.remove('is-unfolded'); host.remove() }
+      node.classList.add('is-unfolded')
+      node.append(host)
+      if (await onUnfold(host, card.id, fold)) return
+      fold()
+    }
+    onOpen?.(card.id)
+  })
   const content = el('div', 'inbox-content')
   content.append(head, text, when, byline)
   fit?.observe(title)
@@ -663,7 +676,7 @@ const rowSig = (card, opts) => JSON.stringify([card.revised, card.urgency, card.
  *  (Nothing is added to the list for that: the next row has to land where the answered one was.)
  *  With agent (a session id) it lists only that session's questions, without the big heading.
  *  Returns { render(state) }. */
-export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = null }) {
+export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold = null, agent = null }) {
   let signature = ''
   let lastState = null
   const head = el('header', 'inbox-head')
@@ -676,8 +689,9 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     const sig = rowSig(card, opts)
     const cached = rows.get(card.id)
     if (cached?.sig === sig) return cached.node
+    if (cached?.node.classList.contains('is-unfolded')) return cached.node   // it holds the card, unfolded: not rebuilt under it
     if (cached) fit.unobserve(cached.node.querySelector('.inbox-question'))
-    const node = questionRow(card, { onOpen, onDecided, onGallery, fit, ...opts })
+    const node = questionRow(card, { onOpen, onDecided, onGallery, onUnfold, fit, ...opts })
     cards.set(card.id, card)
     rows.set(card.id, { sig, node })
     return node
