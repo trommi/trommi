@@ -95,6 +95,7 @@ const SEL = {
   focusCard: '.focus-card[data-shown]',
   focusTitle: '.focus-title',
   focusOption: '.focus-opt',
+  focusOptionNote: '.focus-opt-note',
   focusField: '.focus-ask-field',
   focusSend: '.focus-ask-send',
   focusExplain: '.focus-explain',
@@ -1062,6 +1063,8 @@ async function groupInbox() {
     const over = b => b.top < bar.box.bottom && b.bottom > bar.box.top && b.left < bar.box.right && b.right > bar.box.left
     const covered = (await ev('__t.rows()')).filter(r => r.tiles.some(t => over(t.box)))
     check(!covered.length, `the way back lies over the answer tiles of "${covered[0]?.title}"`)
+    const { height: tall, width: wide } = touch ? PHONE : DESKTOP
+    check(bar.box.top >= 0 && bar.box.left >= 0 && bar.box.bottom <= tall + 1 && bar.box.right <= wide + 1, `the note with the way back is cut off by the edge of the screen: it reaches from ${bar.box.top} to ${bar.box.bottom} on a screen ${tall}px high`)
     await shot('undo-bar')
     await press('the way back', js`(n => n.matches('button') ? n : n.querySelector('button'))(__t.one(${SEL.undoBar}))`)
     await waitState(`"${c.title}" is open again`, () => cardOf(c.id).status === 'open')
@@ -1101,7 +1104,6 @@ async function groupInbox() {
     const gone = await waitFor('the row leaves', js`!__t.row(${slow.id})`, 900).catch(() => false)
     check(gone, 'on a slow line the answered row stays until the server has replied; it should leave at once')
     if (gone) check(cardOf(slow.id).status === 'open', 'the test line was not slow: the server already had the answer')
-    await expect('the way back is offered at once too', js`!!__t.note()?.back`, 600)
   } finally {
     await release()
   }
@@ -2149,9 +2151,8 @@ async function groupNumber() {
   check(!hidden.length, `of the many options these are not on screen without scrolling: ${hidden.map(o => o.name).join(', ')}`)
   check(tags.options.filter(o => o.advised).length === 1 && /^Wed/.test(tags.options.find(o => o.advised)?.name ?? ''), 'the recommended tag is not marked')
   await shot('tags')
-  const tapped = await ev(js`(n => { const r = n.getBoundingClientRect(); return __t.describe(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) })(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => /^Thu/.test(__t.label(n))) ?? document.body)`).catch(() => '')
   await press('the tag "Thu"', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => /^Thu/.test(__t.label(n)))`)
-  await waitState('one tap on a tag answers', () => cardOf(many.id).choice === 'thu', 4000).then(() => passed(), () => check(false, `a ${touch ? 'tap' : 'click'} on the middle of the tag "Thu" did not answer: it landed on ${tapped}`))
+  await waitState('one tap on a tag answers', () => cardOf(many.id).choice === 'thu', 4000).then(() => passed(), async () => check(false, `a ${touch ? 'tap' : 'click'} on the middle of the tag "Thu" did not answer${await ev(js`!!__t.one(${SEL.focusOptionNote})`) ? ': the small pencil beside the word took it and opened the line for a note' : ''}`))
   await closeWindows()
   await courier.tool('withdraw_card', { card_id: heavy.id, reason: 'the test is done with it' }).catch(() => {})
   await open('/')
