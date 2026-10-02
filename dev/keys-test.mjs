@@ -235,7 +235,7 @@ async function main() {
   await key('ArrowUp')
   check((await cur())?.id === ids[0], 'K and the up arrow move it up')
   await shot('01-marked')
-  const groupOf = 'return __k.list().querySelector(".is-current").closest(".inbox-group").querySelector(".inbox-sender span:not(.inbox-avatar)").textContent'
+  const groupOf = 'return __k.list().querySelector(".is-current").closest(".inbox-group").querySelector(".inbox-sender")?.textContent ?? ""'
   const firstGroup = await ev(groupOf)
   let crossed = false
   for (let i = 0; i < 12; i++) {

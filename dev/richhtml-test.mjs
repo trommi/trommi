@@ -250,6 +250,12 @@ try {
       return res.result?.value
     }
     for (const url of ['/?t=demo', '/s/api']) { await tab.send('Page.navigate', { url: `${base}${url}` }); await sleep(2600) }
+    // Where the frame shows, it takes the click itself.
+    const shown = await eval2(`window.__clicked = []; addEventListener('click', e => window.__clicked.push(e.target.closest('button, a')?.textContent.trim() ?? e.target.tagName), true); const f = document.querySelector('#chat .rh-frame'); f.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 500)); const r = f.getBoundingClientRect(); for (let y = r.top + 8; y < r.bottom; y += 12) if (document.elementFromPoint(r.left + r.width / 2, y) === f) return { x: r.left + r.width / 2, y }; return null`)
+    ok(shown, 'the frame shows')
+    for (const type of ['mousePressed', 'mouseReleased']) await tab.send('Input.dispatchMouseEvent', { type, x: shown.x, y: shown.y, button: 'left', clickCount: 1 })
+    await sleep(350)
+    equal(await eval2('return window.__clicked.splice(0)'), [], 'a click on the visible frame goes into the frame')
     const under = await eval2(`
       const f = document.querySelector('#chat .rh-frame')
       let box = f; while (box && !/auto|scroll/.test(getComputedStyle(box).overflowY)) box = box.parentElement
@@ -258,8 +264,6 @@ try {
       const top = box.getBoundingClientRect().top
       box.scrollTop += f.getBoundingClientRect().top + f.getBoundingClientRect().height / 2 - (top - 40)
       await new Promise(r => setTimeout(r, 600))
-      window.__clicked = []
-      addEventListener('click', e => window.__clicked.push(e.target.closest('button, a')?.textContent.trim() ?? e.target.tagName), true)
       const r = f.getBoundingClientRect()
       return { frame: [Math.round(r.top), Math.round(r.bottom)], top: Math.round(top), controls: [...document.querySelectorAll('button, a')].filter(b => b.getClientRects().length && !box.contains(b)).map(b => { const q = b.getBoundingClientRect(); return { name: b.textContent.trim(), x: q.left + q.width / 2, y: q.top + q.height / 2, over: q.right > r.left && q.left < r.right && q.bottom > r.top && q.top < r.bottom } }).filter(c => c.over && c.name) }`)
     ok(under.frame[0] < under.top && under.frame[1] > under.top && under.controls.length, `the frame lies under the head of the conversation (${under.frame.join('..')}, the log starts at ${under.top}), behind ${under.controls.map(c => c.name).join(', ')}`)
@@ -268,12 +272,6 @@ try {
       await sleep(350)
       equal(await eval2('return window.__clicked.splice(0)'), [c.name], `a click on "${c.name}" reaches it, not the frame scrolled out behind it`)
     }
-    // and where the frame shows, it still takes the click itself
-    const shown = await eval2(`const f = document.querySelector('#chat .rh-frame'); f.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 500)); const r = f.getBoundingClientRect(); for (let y = r.top + 8; y < r.bottom; y += 12) if (document.elementFromPoint(r.left + r.width / 2, y) === f) return { x: r.left + r.width / 2, y }; return null`)
-    ok(shown, 'the frame shows again')
-    for (const type of ['mousePressed', 'mouseReleased']) await tab.send('Input.dispatchMouseEvent', { type, x: shown.x, y: shown.y, button: 'left', clickCount: 1 })
-    await sleep(350)
-    equal(await eval2('return window.__clicked.splice(0)'), [], 'a click on the visible frame goes into the frame')
   } finally {
     await real.close()
   }
