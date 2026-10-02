@@ -27,12 +27,12 @@
 // scroll position, and a running video survive both pushes and navigation.
 
 import { subscribe, decide, reopen, putOff, sendMessage, isLoaded, getState } from './store.js'
-import { readCard, stopReading, dictationMic, stopDictation } from './speech.js'
+import { readCard, stopReading, dictationMic, startDictation, stopDictation, isDictating } from './speech.js'
 import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { loopPath, penSeed } from './ui.js'
+import { loopPath, penSeed, penFrame } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -100,6 +100,16 @@ const TAGS_FROM = 7
 const TAG_CHARS = 18
 const TAGS_WIDE_FROM = 16
 const touchOnly = matchMedia('(pointer: coarse)')
+// Where the rail of the walk stands (the one setting for it; "?rail=<place>" in the address tries another):
+//   'outside'  a slim strip of paper beside the window, at its left
+//   'gutter'   inside the window, in a gutter of its own at the left
+//   'top'      a row along the top edge of the window, under the top bar
+//   'bottom'   a row at the foot of the conversation, above the composer
+//   'below'    a strip of paper under the window
+// A narrow window (a phone) always has it as a thin row under the top bar.
+const RAIL_PLACES = ['outside', 'gutter', 'top', 'bottom', 'below']
+const RAIL_PLACE = 'outside'
+const railNarrow = matchMedia('(max-width: 760px)')
 
 /** Which picture belongs to which option: a Map of option key -> index in images, or null when that is
  *  not plain to see. It is plain when every picture names exactly one option in its file name (the key or
@@ -453,16 +463,18 @@ export function mountFocus({ onDecided } = {}) {
       askOpen.tabIndex = -1
       const field = el('textarea', 'focus-ask-field')
       field.rows = 1
-      field.placeholder = 'Ask the agent, or write a note for your answer'
+      field.placeholder = 'Write to the agent'
       field.autocomplete = 'off'
       field.enterKeyHint = 'send'
       field.setAttribute('aria-label', 'Write to the agent about this question. Enter asks it and the question stays open; an answer takes what you wrote along as a note.')
       field.value = rec.askText
-      const send = button('focus-ask-send', 'Ask the agent')
-      send.type = 'submit'
-      send.title = 'Ask the agent (Enter)'
-      send.append(icon('up'))
-      ask.append(askOpen, field, send)
+      // Send stands outside the field, the first of three equal buttons at its right: Send, Explain, Later.
+      const send = button('focus-ask-send focus-way', 'Send to the agent')
+      send.title = 'Send (Enter). The question stays open.'
+      send.append(sketch('send'), el('span', null, 'Send'))
+      framed(send, 'send', { round: 11, wobble: 1.7 })
+      send.addEventListener('click', () => ask.requestSubmit())
+      ask.append(askOpen, field)
       field.after(dictationMic(field, { key: `${rec.id}:ask`, primary: true, onError: text => info(text, true) }))   // speak instead of typing (speech.js)
       askOpen.addEventListener('click', () => field.focus({ preventScroll: true }))
       field.addEventListener('input', () => { rec.askText = field.value; paintDraft(rec) })
@@ -477,13 +489,14 @@ export function mountFocus({ onDecided } = {}) {
       rec.askNode = ask
       rec.askField = field
       rec.askSend = send
-      // Under the field: the two ways to leave the card without answering (Explain, Later: one pair of buttons that
-      // moves along with the card in front), and in a few words what the field does.
+      // The field stands in a box drawn with the pen, as wide as the conversation above it. At its right, on the
+      // same line: the two ways to leave the card without answering (Explain, Later: one pair of buttons that
+      // moves along with the card in front, see paintChrome).
+      framed(ask, 'composer', { round: 15, wobble: 1.7 })
       rec.actionsNode = el('div', 'focus-actions')
-      const foot = el('div', 'focus-composer-foot')
-      foot.append(rec.actionsNode, el('p', 'focus-ask-hint', 'Enter sends: plain chat, the question stays. An answer takes these words along as its note.'))
+      rec.actionsNode.append(send)
       rec.composer = el('div', 'focus-composer')
-      rec.composer.append(ask, foot)
+      rec.composer.append(ask, rec.actionsNode)
       scroll.append(rec.threadNode)
     }
 
@@ -973,6 +986,36 @@ export function mountFocus({ onDecided } = {}) {
     if (wasHidden) announce(`More urgent: ${rec.card.title}. The question in front of you stays.`)
   }
 
+  // ── drawn with the pen: the composer's box, its send mark, Explain and Later ──
+  // A box drawn by hand round a node (ui.js penFrame), in the node's real size: drawn again when the size changes.
+  const frames = new WeakMap()
+  const frameWatch = new ResizeObserver(entries => { for (const e of entries) frames.get(e.target)?.() })
+  function framed(node, seed, opts) {
+    const svg = document.createElementNS(SVG_NS, 'svg')
+    svg.setAttribute('class', 'focus-frame')
+    svg.setAttribute('aria-hidden', 'true')
+    const path = document.createElementNS(SVG_NS, 'path')
+    svg.append(path)
+    node.append(svg)
+    let was = ''
+    frames.set(node, () => {
+      const w = node.offsetWidth, h = node.offsetHeight
+      if (!w || !h || was === `${w}x${h}`) return
+      was = `${w}x${h}`
+      svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+      path.setAttribute('d', penFrame(w, h, seed, opts))
+    })
+    frameWatch.observe(node)
+    return node
+  }
+  // Explain and Later: each its own drawing and its own box. (The buttons and what they do are made above;
+  // here they only get their look. They stand beside the composer of the card in front, see paintChrome.)
+  explainBtn.replaceChildren(sketch('explain'), el('span', null, 'Explain'))
+  explainBtn.classList.add('focus-way')
+  laterBtn.classList.add('focus-way')
+  framed(explainBtn, 'explain', { round: 13, wobble: 1.8 })
+  framed(laterBtn, 'later', { round: 9, wobble: 1.6 })
+
   // ── the rail: how far the walk is ───────────────────────────────────────
   // A slim strip at the left edge of the window (a thin row under the top bar when the window is narrow):
   // how many questions are left, and one small scribbled mark per question in the order of the walk.
@@ -985,7 +1028,20 @@ export function mountFocus({ onDecided } = {}) {
   const railCount = el('p', 'focus-rail-count')
   const railMarks = el('div', 'focus-rail-marks')
   rail.append(railCount, railMarks)
-  top.after(rail)
+  const railWish = new URLSearchParams(location.search).get('rail')
+  const railPlace = () => (railNarrow.matches ? 'row' : RAIL_PLACES.includes(railWish) ? railWish : RAIL_PLACE)
+  /** Put the rail where its place says: beside or under the window, in it, or with the card in front. */
+  function seatRail() {
+    const place = railPlace()
+    rail.dataset.place = place
+    root.dataset.rail = place
+    const home = place === 'outside' || place === 'below' ? root : place === 'bottom' ? shown?.node.querySelector('.focus-talk') ?? sheet : sheet
+    if (place === 'bottom' && home !== sheet) { if (rail.parentNode !== home || rail.nextSibling !== (shown.composer ?? null)) home.insertBefore(rail, shown.composer ?? null) }
+    else if (home === root) { if (rail.parentNode !== root) root.append(rail) }
+    else if (rail.previousSibling !== top) top.after(rail)
+  }
+  seatRail()
+  railNarrow.addEventListener('change', () => { seatRail(); railSig = ''; paintRail() })
   const railSeen = new Map()   // id -> card: every question that stood in this walk
   const railDone = new Map()   // id -> card: the ones answered since, in the order they were answered
   let railSig = ''
@@ -1034,6 +1090,7 @@ export function mountFocus({ onDecided } = {}) {
     rail.hidden = !show
     sheet.toggleAttribute('data-rail', show)
     if (!show) return
+    seatRail()
     const off = new Set(lastState?.later ?? [])
     const list = [
       ...[...railDone].map(([id, card]) => ({ id, card, state: 'done' })),
@@ -1333,6 +1390,12 @@ export function mountFocus({ onDecided } = {}) {
   // While a picture is enlarged, the window's keys rest.
   const key = act => (arg, e) => (zoom ? false : act(arg, e))
   const thumb = which => key(() => { const pick = shown?.[which]; if (pick) submit(shown, [pick]) })
+  function stepOption(by) {
+    const all = [...(shown?.optButtons ?? []), shown?.sendTile].filter(b => b && !b.disabled)
+    const at = all.indexOf(document.activeElement)
+    if (at < 0) return false   // the arrows scroll the text, as ever
+    all[(at + by + all.length) % all.length].focus()
+  }
   /** Open the line to ask back on the card that is up. */
   function ask() {
     const open = shown?.askNode?.querySelector('.focus-ask-open')
@@ -1342,7 +1405,7 @@ export function mountFocus({ onDecided } = {}) {
   provide('focus', {
     active: () => isOpen,
     // In the window of one card there is no next and no previous.
-    has: id => !(single && (id === 'focus.next' || id === 'focus.prev')),
+    has: id => !(single && (id === 'focus.next' || id === 'focus.prev')) && !(id === 'focus.voice' && !getState().speech),
     actions: {
       'focus.next': key(() => { if (!single) go(1) }),
       'focus.prev': key(() => { if (!single) go(-1) }),
@@ -1362,6 +1425,16 @@ export function mountFocus({ onDecided } = {}) {
         else submit(shown, [btn.dataset.key])
       }),
       'focus.choices': key(() => { const btn = shown?.optButtons[0]; if (!btn) return false; btn.focus() }),
+      // Once the keyboard is on an option, up and down go through all of them (more than nine have no digit).
+      'focus.option.next': key(() => stepOption(1)),
+      'focus.option.prev': key(() => stepOption(-1)),
+      // Dictate into the composer: a tap starts, the next stops; held for longer than a moment, letting go stops.
+      'focus.voice': key(() => {
+        if (isDictating()) return void stopDictation()
+        if (!shown?.askField) return false
+        startDictation(shown.askField)
+        return ms => { if (ms > 300) stopDictation() }
+      }),
       'focus.ask': key(ask),
       'focus.leave': key((_, e) => {
         const typing = e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
@@ -1539,11 +1612,13 @@ export function mountFocus({ onDecided } = {}) {
     }
     // Explain and Later, as under the composer: both leave the card.
     const ways = el('div', 'focus-zoom-ways')
-    const explainTwin = button('focus-later focus-explain', 'Explain: ask the session to explain this question')
-    explainTwin.append(askMark.cloneNode(true), el('span', null, 'Explain'))
+    const explainTwin = button('focus-later focus-explain focus-way', 'Explain: ask the session to explain this question')
+    explainTwin.append(sketch('explain'), el('span', null, 'Explain'))
+    framed(explainTwin, 'explain', { round: 13, wobble: 1.8 })
     explainTwin.addEventListener('click', () => { shut(); explain() })
-    const laterTwin = button('focus-later', 'Later: put this question off')
+    const laterTwin = button('focus-later focus-way', 'Later: put this question off')
     laterTwin.append(sketch('later'), el('span', null, 'Later'))
+    framed(laterTwin, 'later', { round: 9, wobble: 1.6 })
     laterTwin.addEventListener('click', () => { shut(); later() })
     ways.append(explainTwin, laterTwin)
     node.append(take, list, line, ways)

@@ -127,6 +127,7 @@ function makeText(type, x, y, data, blob = null) {
 }
 
 let saveError = false
+let firstLook = false   // no view was saved on this device and nothing is on the pad yet
 function persist(records) {
   db.put(records).then(() => { saveError = false; renderStatus() }, () => { saveError = true; renderStatus() })
   sync.push(records)
@@ -141,6 +142,9 @@ function applyRemote(records) {
   }
   order = null
   refresh()
+  // A device that has never looked at this pad starts with all of it in view.
+  if (firstLook && els.size && !gesture && !edit) fit(false)
+  firstLook = false
 }
 /** Change the pad. changes: [{ id, before, after }]; after null deletes. One call is one undo step. */
 function apply(changes, record = true) {
@@ -725,7 +729,7 @@ async function finishRecording(r) {
   $('rec').dataset.state = 'working'
   $('rec-label').textContent = r.stub ? 'Demo transcript' : 'Transcribing'
   $('rec-stop').hidden = true
-  let text = '', audio = null
+  let text = ''
   try {
     if (r.stub) {
       await new Promise(done => setTimeout(done, 500))
@@ -733,10 +737,9 @@ async function finishRecording(r) {
     } else {
       const blob = new Blob(r.chunks, { type: r.recorder.mimeType || 'audio/webm' })
       if (!blob.size) throw new Error('nothing was recorded')
+      // Only the words are kept: the recording is gone once it has been transcribed.
       text = (await transcribe(blob)).trim()
       if (!text) throw new Error('no words were heard')
-      audio = newId()
-      await sync.putBlob({ id: audio, type: blob.type, blob })
     }
   } catch (err) {
     if (rec === r) endRecording()
@@ -745,7 +748,7 @@ async function finishRecording(r) {
   if (rec !== r) return
   endRecording()
   const size = TEXT_SIZE
-  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: wrapAt(r.x), ms, stub: r.stub }, audio)
+  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: wrapAt(r.x), ms, stub: r.stub })
   add([el])
   sel.clear()
   sel.add(el.id)
@@ -1362,7 +1365,7 @@ async function start() {
     Object.assign(view, { x: saved.x, y: saved.y, z: clamp(saved.z, MIN_Z, MAX_Z) })
     if (saved.style?.pen && saved.style?.hl) Object.assign(style, saved.style)
     if (saved.tool === 'hl') drawTool = 'hl'
-  } else setView(W / 2, H / 2, 1)
+  } else { setView(W / 2, H / 2, 1); firstLook = !els.size }
   $('zoom').textContent = `${Math.round(view.z * 100)} %`
   buildSwatches()
   refresh()

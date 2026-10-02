@@ -16,6 +16,7 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_ID, ASSET_KEY, ASSET_BLOB_MAX, prepareAsset, assetUpload, assetLink } from './asset-envelope.mjs'
+import { padRoutes, padSupport } from './pad.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.BOARD_PORT || 8790)
@@ -475,9 +476,12 @@ const mcp = new Server(
       'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
       'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
       'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
-      'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and ideally a one-line detail naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
+      'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and where it helps a detail of a few words naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
       'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
+      'Keep every question short to read: an option label is at most about four words; detail is optional and at most one short line of about six words, never a paragraph and never an explanation of what leaving it unticked means; the body is one or two short sentences. A longer explanation goes behind a link (publish_asset) or an attachment, or comes when the human presses "Explain", which reaches you as a question back.',
+      'Before filing a question, call list_cards. If you already have an open question on the same subject, do not add another: rewrite the open one with revise_card, which keeps its number and place, or replace several by one with merge_cards. Do this on your own initiative, without being asked; the human should never get many small questions that are really one.',
+      'Prefer one question with multiple: true ("tick what you agree to", your advice as a recommended list) over several yes/no questions on one theme. More than about three open questions of yours on one theme is a sign to merge them.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
       'The human sees one card at a time, the top of the stack; urgency decides the order (most urgent first, then oldest first), so set it honestly on every card.',
@@ -486,17 +490,54 @@ const mcp = new Server(
       'Keep the stack true as your work moves: when an open card starts blocking you, raise it with set_urgency; lower it if the pressure is gone; and call withdraw_card as soon as a question became moot, so the human never answers something you no longer need. list_cards shows the current stack.',
       'The choice arrives later as <channel source="board" kind="decision" card_id="..." choice="KEY">; the body is the human\'s note if they wrote one. Act on it, then call close_card with a one-line summary of what you did.',
       'Do not block waiting for a decision: keep working on whatever does not depend on it.',
-      'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and if your answer changes the question, update the card: withdraw it and ask again with the clearer wording or options.',
+      'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and when the question back shows the card was unclear, do not only reply: rewrite the card with revise_card, so the question itself is clear.',
+      'When that question back asks you to explain the card (the board has a one-tap "Explain"), answer with reply and the same card_id in plain words and briefly: what the question is about, what each option would mean for the human, and which one you would pick. The card waits out of the way until your reply arrives, so answer promptly.',
       'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
       'Other agents may share this board; the human sees all stacks merged into one, ordered by urgency. You only see and change your own cards and status lines.',
       'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply. The human may dictate messages, so expect transcription slips in chat and read them charitably.',
       'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
+      'The human also keeps one pad for everything: notes, drawings, pictures and spoken text, each an element of its own. <channel source="board" kind="pad" elements="ID,ID" image_path="/abs/selection.png"> means they selected some of it and sent it to you: the body is the words of the selected notes in reading order, image_path is a picture of exactly the selection, so read it; elements are the ids of what was selected.',
       'The human answers with one tap and can take an answer back: <channel source="board" kind="decision_reopened" card_id="..." previous_choice="KEY"> means the card is open again. Stop acting on the old choice, undo what you safely can, tell them briefly via reply what you rolled back, and wait for the new choice.',
       'To hand the human, or anyone they choose, a page or a file as a link, call publish_asset: a self-contained HTML page (inline CSS and scripts, images as data: URLs; nothing is loaded from the network), an image, a video, an audio file or any other file. It is encrypted before it leaves this process and the key is part of the link, so whoever has the link can open it without a login. revoke_asset ends a link.',
       'Keep the status strip current with set_status: one line per work stream or subagent, a traffic light the human reads at a glance. decision (red) = waiting on the human, pass the card_id of the question; working (yellow) = in progress; done (green) = finished. Update a line the moment its state changes and clear the strip with clear_status when a new piece of work starts.',
     ].join(' '),
   },
 )
+
+// What a question is made of besides its title, the same for create_decision, revise_card and merge_cards.
+const QUESTION_PROPS = {
+  body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment.' },
+  options: {
+    type: 'array',
+    minItems: 2,
+    description: 'The choices offered',
+    items: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Stable identifier returned to you, e.g. "sqlite"' },
+        label: { type: 'string', description: 'What the human sees on the button, at most about four words' },
+        detail: { type: 'string', description: 'Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means' },
+      },
+      required: ['key', 'label'],
+    },
+  },
+  attachments: {
+    type: 'array',
+    description: 'Absolute paths of files to show on the card; images render inline',
+    items: { type: 'string' },
+  },
+  urgency: {
+    type: 'string',
+    enum: URGENCIES,
+    description: 'Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know',
+  },
+  urgency_reason: { type: 'string', description: 'What is waiting on this, one short phrase; expected for high and critical' },
+  multiple: { type: 'boolean', description: 'true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides.' },
+  recommended: {
+    anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+    description: 'The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference.',
+  },
+}
 
 const TOOLS = [
   {
@@ -519,44 +560,41 @@ const TOOLS = [
   },
   {
     name: 'create_decision',
-    description: 'Put a decision card on the board for the human to answer. Returns the card id.',
+    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. Keep it short: body one or two short sentences, option labels about four words, detail at most one short line.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'The question, one line' },
-        body: { type: 'string', description: 'Context the human needs to decide' },
-        options: {
-          type: 'array',
-          minItems: 2,
-          description: 'The choices offered',
-          items: {
-            type: 'object',
-            properties: {
-              key: { type: 'string', description: 'Stable identifier returned to you, e.g. "sqlite"' },
-              label: { type: 'string', description: 'What the human sees on the button' },
-              detail: { type: 'string', description: 'Optional one-line consequence of this choice' },
-            },
-            required: ['key', 'label'],
-          },
-        },
-        attachments: {
-          type: 'array',
-          description: 'Absolute paths of files to show on the card; images render inline',
-          items: { type: 'string' },
-        },
-        urgency: {
-          type: 'string',
-          enum: URGENCIES,
-          description: 'Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know',
-        },
-        urgency_reason: { type: 'string', description: 'What is waiting on this, one short phrase; expected for high and critical' },
-        multiple: { type: 'boolean', description: 'true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides.' },
-        recommended: {
-          anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
-          description: 'The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference.',
-        },
+        ...QUESTION_PROPS,
       },
       required: ['title', 'options'],
+    },
+  },
+  {
+    name: 'revise_card',
+    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision. Decided cards cannot be revised.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string' },
+        title: { type: 'string', description: 'The question, one line' },
+        ...QUESTION_PROPS,
+        note: { type: 'string', description: 'One short line telling the human what changed, shown in the conversation; without it the new title is shown' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    name: 'merge_cards',
+    description: 'Replace several of your open decision cards by one new card, in one step: the old cards leave the stack with a pointer to the new one, and the new card says what it replaces. Use it on your own initiative when several of your open questions are really one subject, typically with multiple: true and one option per former question ("tick what you agree to", your advice as a recommended list). Same fields and brevity as create_decision; answers to the old cards will no longer arrive. Returns the new card id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_ids: { type: 'array', minItems: 2, items: { type: 'string' }, description: 'The open cards this one replaces, at least two' },
+        title: { type: 'string', description: 'The one question, one line' },
+        ...QUESTION_PROPS,
+      },
+      required: ['card_ids', 'title', 'options'],
     },
   },
   {
@@ -642,7 +680,7 @@ const TOOLS = [
   },
   {
     name: 'list_cards',
-    description: 'List all cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open).',
+    description: 'List all your cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open); open cards come with body and options. Call it before filing a question, to see what you already have open on the subject.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -679,6 +717,11 @@ const TOOL_EXAMPLES = {
   create_decision: {
     title: 'Run the migration on production now?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
     options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
+  },
+  revise_card: { card_id: 'a1b2c3d4', title: 'Run the migration tonight at 2?', options: [{ key: 'tonight', label: 'Tonight at 2' }, { key: 'weekend', label: 'At the weekend' }], recommended: 'tonight', note: 'Running it now is off the table: the backup takes until midnight' },
+  merge_cards: {
+    card_ids: ['a1b2c3d4', 'e5f6a7b8', 'c9d0e1f2'], title: 'Which parts of the storage plan do you agree to?', body: 'Tick what I may build.', multiple: true, recommended: ['sqlite', 'files'],
+    options: [{ key: 'sqlite', label: 'SQLite for cards' }, { key: 'files', label: 'Attachments as files' }, { key: 'sync', label: 'Sync between hubs', detail: 'About two days more' }],
   },
   set_urgency: { card_id: 'a1b2c3d4', urgency: 'critical', reason: 'nothing else is left to do' },
   withdraw_card: { card_id: 'a1b2c3d4', reason: 'the staging run answered it' },
@@ -720,6 +763,12 @@ const CHANNEL_EVENTS = [
     example: '<channel source="board" kind="scribble" scribble_id="9f2c41d07a3e" image_path="/…/scribbles/9f2c41d07a3e.png" canvas_path="/…/scribbles/canvas-api.png" canvas_doc="/…/scribbles/canvas-api.json">This button, further left.</channel>',
   },
   {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'pad', when: 'The human selected elements on the pad and sent them to this session.',
+    content: 'the words of the selected notes and spoken notes in reading order, or a sentence pointing at the picture',
+    meta: { kind: 'pad', pad: 'which pad: global', message_id: 'the message in the conversation that shows the selection', elements: 'ids of the selected elements, comma-separated', image_path: 'PNG of exactly the selection, on white' },
+    example: '<channel source="board" kind="pad" pad="global" message_id="5e1f09ab" elements="0muqnb5cchmsr9cse,0muqnb7k2p1d4xw3a" image_path="/…/files/pad-9f2c41d07a3e.png">Ship the pad prototype</channel>',
+  },
+  {
     direction: 'to_agent', method: 'notifications/claude/channel/permission', kind: null, when: 'The human answered an approval card. Claude Code decides whether this or the terminal came first.',
     params: { request_id: 'the id from the request', behavior: 'allow or deny' },
     example: '{ "request_id": "abcde", "behavior": "allow" }',
@@ -756,6 +805,55 @@ const listArg = (value, what) => {
   return value ?? []
 }
 
+// What the human reads and answers on a card. revise_card may change any of these.
+const QUESTION_FIELDS = ['title', 'body', 'options', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments']
+const questionSig = c => JSON.stringify([c.title, c.body, c.options, c.multiple, c.recommended, c.attachments])
+
+// The fields of a question, checked the same way whether it is filed, revised or merged.
+function questionFields(args) {
+  const options = listArg(args.options, 'options').map(o => ({
+    key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
+  }))
+  const keys = new Set(options.map(o => o.key))
+  if (options.length < 2 || keys.size !== options.length) {
+    throw new Error('options need at least two entries with unique keys')
+  }
+  const urgency = urgencyArg(args.urgency, 'normal')
+  const multiple = args.multiple === true
+  // One key, or for a card that takes several answers a list of them; stored the way it was given.
+  const advised = args.recommended == null ? [] : [args.recommended].flat().map(String)
+  const stray = advised.find(key => !keys.has(key))
+  if (stray != null) throw new Error(`recommended must be the key of one of the options; got "${stray}"`)
+  if (Array.isArray(args.recommended) && !multiple) throw new Error('recommended as a list needs multiple: true; a card with one answer has one recommendation')
+  return {
+    multiple, recommended: Array.isArray(args.recommended) ? advised : advised[0] ?? null,
+    urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
+    title: String(args.title ?? ''), body: String(args.body ?? ''), options,
+  }
+}
+
+const openQuestions = agent => state.cards.filter(c => c.agent === agent && c.kind === 'decision' && c.status === 'open')
+const placeOf = card => `position ${state.queue.indexOf(card.id) + 1} of ${state.queue.length} in the stack`
+
+// From this many open questions of one session on, filing another comes with a reminder to bundle.
+const CROWD = 3
+const crowdHint = (others, card) => (others.length < CROWD ? '' : [
+  `\nYou now have ${others.length + 1} open questions. If some of them are one subject, replace them by one with merge_cards (multiple: true, one option per former question), or fold this one into another with revise_card and withdraw it. Open:`,
+  ...[...others, card].map(c => `Nr. ${c.number} (${c.id}, ${c.urgency}): ${c.title.replace(/\s+/g, ' ').slice(0, 100)}`),
+].join('\n'))
+
+// A card is read on a phone, between other things. Past these lengths the agent is told, not refused.
+const BODY_MAX = 300
+const DETAIL_MAX = 60
+function lengthHint(card) {
+  const long = card.options.filter(o => o.detail.length > DETAIL_MAX)
+  const said = [
+    card.body.length > BODY_MAX ? `the body has ${card.body.length} characters (aim for one or two short sentences)` : '',
+    long.length ? `the detail of ${long.map(o => `"${o.key}"`).join(', ')} is longer than one short line (aim for about six words)` : '',
+  ].filter(Boolean)
+  return said.length ? `\nThis is a lot to read: ${said.join('; ')}. Shorten it with revise_card and put the longer explanation behind a link or in an attachment; the human can ask for it with "Explain".` : ''
+}
+
 // Runs on the hub, for the hub's own agent and on behalf of spokes.
 function runTool(agent, name, args) {
   if (!args || typeof args !== 'object') args = {}
@@ -766,29 +864,78 @@ function runTool(agent, name, args) {
       return 'sent'
     }
     case 'create_decision': {
-      const options = listArg(args.options, 'options').map(o => ({
-        key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
-      }))
-      const keys = new Set(options.map(o => o.key))
-      if (options.length < 2 || keys.size !== options.length) {
-        throw new Error('options need at least two entries with unique keys')
-      }
-      const urgency = urgencyArg(args.urgency, 'normal')
-      const multiple = args.multiple === true
-      // One key, or for a card that takes several answers a list of them; stored the way it was given.
-      const advised = args.recommended == null ? [] : [args.recommended].flat().map(String)
-      const stray = advised.find(key => !keys.has(key))
-      if (stray != null) throw new Error(`recommended must be the key of one of the options; got "${stray}"`)
-      if (Array.isArray(args.recommended) && !multiple) throw new Error('recommended as a list needs multiple: true; a card with one answer has one recommendation')
-      const card = addCard(agent, 'decision', {
-        multiple, recommended: Array.isArray(args.recommended) ? advised : advised[0] ?? null,
-        urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
-        title: String(args.title ?? ''), body: String(args.body ?? ''),
-        options, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),
-      })
+      const fields = questionFields(args)
+      const others = openQuestions(agent)
+      const card = addCard(agent, 'decision', { ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment) })
       addEvent('asked', card, card.title)
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, position ${state.queue.indexOf(card.id) + 1} of ${state.queue.length} in the stack; the choice will arrive as a channel event`
+      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}`
+    }
+    case 'revise_card': {
+      const card = findCard(agent, args.card_id)
+      if (card.kind === 'permission') throw new Error('permission cards cannot be revised')
+      if (card.status === 'decided') {
+        throw new Error(`card ${card.id} was already decided (choice: ${card.choice}); the human answered the question as it stood, so act on that answer, or call close_card and ask anew with create_decision`)
+      }
+      if (card.status !== 'open') throw new Error(`card ${card.id} is already done`)
+      const given = QUESTION_FIELDS.filter(key => args[key] != null)
+      if (!given.length) throw new Error(`nothing to revise: pass at least one of ${QUESTION_FIELDS.join(', ')}`)
+      const options = args.options == null ? card.options : listArg(args.options, 'options')
+      const multiple = args.multiple ?? card.multiple
+      // Advice that was not restated holds as far as it still fits the options and the kind of card.
+      const kept = [card.recommended ?? []].flat().filter(key => options.some(o => String(o?.key) === key))
+      const urgency = args.urgency ?? card.urgency
+      const fields = questionFields({
+        title: args.title ?? card.title, body: args.body ?? card.body, options, multiple, urgency,
+        // As with set_urgency: a new level without a reason has none.
+        urgency_reason: args.urgency_reason ?? (urgency === card.urgency ? card.urgency_reason : ''),
+        recommended: args.recommended != null ? (args.recommended.length ? args.recommended : null) : multiple && Array.isArray(card.recommended) ? kept : kept[0],
+      })
+      const attachments = args.attachments == null ? card.attachments : listArg(args.attachments, 'attachments').map(storeAttachment)
+      const stood = questionSig(card)
+      const level = card.urgency
+      Object.assign(card, fields, { attachments })
+      // Only a change to what the human reads is a revision; a mere change of urgency is what set_urgency does.
+      const reworded = questionSig(card) !== stood
+      if (reworded) {
+        card.revised = Date.now()
+        card.revisions = (card.revisions ?? 0) + 1
+        addEvent('revised', card, String(args.note ?? '').trim() || card.title)
+      }
+      if (card.urgency !== level) addEvent('urgency', card, card.urgency_reason ? `${URGENCY_LABEL[card.urgency]}: ${card.urgency_reason}` : URGENCY_LABEL[card.urgency])
+      commit()
+      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${lengthHint(card)}`
+    }
+    case 'merge_cards': {
+      const ids = [...new Set(listArg(args.card_ids, 'card_ids').map(String))]
+      if (ids.length < 2) throw new Error('merge_cards replaces at least two cards; to change one card use revise_card')
+      // Everything is checked before anything changes, so a refused merge leaves every card as it was.
+      const old = ids.map(id => findCard(agent, id))
+      for (const c of old) {
+        if (c.kind === 'permission') throw new Error('permission cards cannot be merged')
+        if (c.status === 'decided') throw new Error(`card ${c.id} was already decided (choice: ${c.choice}); the human spent an answer on it, so act on it and merge only the open ones`)
+        if (c.status !== 'open') throw new Error(`card ${c.id} is already done`)
+      }
+      // The merged question is as pressing as the most pressing one it replaces, unless said otherwise.
+      const top = old.reduce((a, b) => (URGENCIES.indexOf(b.urgency) > URGENCIES.indexOf(a.urgency) ? b : a))
+      const fields = questionFields({ ...args, urgency: args.urgency ?? top.urgency, urgency_reason: args.urgency_reason ?? (args.urgency == null ? top.urgency_reason : '') })
+      const card = addCard(agent, 'decision', {
+        ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),
+        // The human has been waiting since the oldest of them, and the new card takes that place in the stack.
+        created: Math.min(...old.map(c => c.created)),
+        merged_from: old.map(c => ({ id: c.id, number: c.number, title: c.title })),
+      })
+      addEvent('asked', card, card.title)
+      for (const c of old) {
+        c.status = 'done'
+        c.merged_into = card.id
+        c.summary = `Merged into Nr. ${card.number}: ${card.title}`
+        addEvent('done', c, c.summary)
+      }
+      // A status line that waited on one of the old cards now waits on the new one.
+      for (const t of state.tasks) if (t.agent === agent && ids.includes(t.card_id)) t.card_id = card.id
+      commit()
+      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}`
     }
     case 'set_urgency': {
       const card = findCard(agent, args.card_id)
@@ -863,6 +1010,10 @@ function runTool(agent, name, args) {
         urgency: c.urgency, urgency_reason: c.urgency_reason,
         queue_position: state.queue.indexOf(c.id) + 1 || null,
         title: c.title, multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
+        ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, options: c.options, recommended: c.recommended ?? null } : {}),
+        ...(c.revised ? { revised: c.revised } : {}),
+        ...(c.merged_from ? { merged_from: c.merged_from.map(m => m.number) } : {}),
+        ...(c.merged_into ? { merged_into: c.merged_into } : {}),
       })), null, 2)
     case 'list_assets':
       return JSON.stringify(listAssets(agent), null, 2)
@@ -918,15 +1069,23 @@ function addPermission(agent, params) {
   commit()
 }
 
+const STALE_ANSWER = 'the agent revised this question while you were answering; nothing was sent, read it again and answer once more'
+// How long after a rewrite an answer cannot have been meant for the new wording.
+const REVISE_GRACE = Number(process.env.BOARD_REVISE_GRACE_MS) || 1500
+
 // answer is one key, or for a card that takes several a list of keys.
-async function decide(cardId, answer, note) {
+// seen is the card's revised stamp as the page that answers last saw it; pages that do not send it are not checked for it.
+async function decide(cardId, answer, note, seen) {
   const card = state.cards.find(c => c.id === cardId)
   if (!card) throw new Error('unknown card')
   if (card.status !== 'open') throw new Error('card already decided')
+  // An answer holds for the question the human read. One that was given to an earlier wording, or so
+  // soon after a rewrite that nobody could have read it, is not taken; the page shows the card as it is now.
+  if (card.revised && ((seen !== undefined && seen !== card.revised) || Date.now() - card.revised < REVISE_GRACE)) throw fail(409, STALE_ANSWER)
   if (Array.isArray(answer) && !card.multiple) throw new Error('this card takes one answer; send key, not keys')
   const given = new Set([answer].flat().map(String))
   if (!given.size) throw new Error('keys must name at least one option')
-  if ([...given].some(k => !card.options.some(o => o.key === k))) throw new Error('unknown option')
+  if ([...given].some(k => !card.options.some(o => o.key === k))) throw card.revised ? fail(409, STALE_ANSWER) : new Error('unknown option')
   // In the order of the options, whatever order they were ticked in.
   const chosen = card.options.filter(o => given.has(o.key))
   const key = chosen[0].key
@@ -1049,6 +1208,119 @@ async function transcribe(audio, type) {
   form.append('file', new Blob([audio], { type }), `audio.${type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : type.includes('wav') ? 'wav' : type.includes('mpeg') ? 'mp3' : 'webm'}`)
   const res = await speechFetch('/audio/transcriptions', { method: 'POST', body: form })
   return String((await res.json()).text ?? '').trim()
+}
+
+// ---- live dictation ---------------------------------------------------------
+// True streaming, not a re-transcription loop: Tinfoil's voxtral-mini-4b-realtime takes
+// PCM16 over a WebSocket (OpenAI Realtime transcription dialect) and sends the words back
+// while the human is still speaking; what it sent is never revised. The key stays here, so
+// the page gets the words as an event stream (POST /speech/live) and posts its audio in
+// small pieces (POST /speech/live/ID), then POST /speech/live/ID/stop.
+// The realtime model is the smaller one and mishears more. So when the human stops, the
+// whole recording goes once more through the file model, and that text is the final one;
+// if that fails, the streamed text stands.
+const LIVE_MODEL = process.env.BOARD_STT_LIVE_MODEL || 'voxtral-mini-4b-realtime'
+const LIVE_POLISH = !/^(0|off|no|false)$/i.test(process.env.BOARD_STT_LIVE_POLISH ?? '')
+const LIVE_SECONDS = Number(process.env.BOARD_STT_LIVE_SECONDS || 180)   // longest dictation
+const LIVE_IDLE = Number(process.env.BOARD_STT_LIVE_IDLE_MS || 15000)    // no audio for this long: the page is gone
+const LIVE_WAIT = Number(process.env.BOARD_STT_LIVE_WAIT_MS || 10000)    // for the service to open, and to finish
+const LIVE_RATE = 16000                                                  // PCM16 mono, what the page sends
+const LIVE_SESSIONS = 4
+const live = new Map()   // id -> a running dictation
+
+const wavOf = pcm => {
+  const head = Buffer.alloc(44)
+  head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVEfmt ', 8)
+  head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22)
+  head.writeUInt32LE(LIVE_RATE, 24); head.writeUInt32LE(LIVE_RATE * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34)
+  head.write('data', 36); head.writeUInt32LE(pcm.length, 40)
+  return Buffer.concat([head, pcm])
+}
+
+function liveOpen(req, res) {
+  const key = speechKey()
+  if (!key) throw fail(503, 'Speech is not set up (TINFOIL_API_KEY or data/tinfoil.key is missing)')
+  if (live.size >= LIVE_SESSIONS) throw fail(429, 'Too many dictations at once; stop one first')
+  const s = { id: crypto.randomBytes(9).toString('hex'), pcm: [], bytes: 0, text: '', queue: [], open: false, stopping: null, over: false, timer: null, ws: null }
+  live.set(s.id, s)
+  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
+  s.emit = (event, data) => { if (!s.over) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }
+  s.wait = (ms, fn) => { clearTimeout(s.timer); s.timer = setTimeout(fn, ms) }
+  s.end = () => {
+    if (s.over) return
+    s.over = true
+    clearTimeout(s.timer)
+    live.delete(s.id)
+    try { s.ws.close() } catch {}
+    res.end()
+  }
+  s.fail = message => { s.emit('error', { message }); s.end() }
+  // The words are in: say them once more with the better model, then close.
+  s.finish = async transcript => {
+    if (s.finishing) return
+    s.finishing = true
+    clearTimeout(s.timer)
+    try { s.ws.close() } catch {}
+    let text = String(transcript ?? s.text).trim(), polished = false
+    // Nothing heard live: the file model would only invent words for the silence.
+    const better = text && await (s.better ??= s.polish())
+    if (better) { text = better; polished = true }
+    s.emit('final', { text, polished, reason: s.stopping ?? 'stop', seconds: Math.round(s.bytes / LIVE_RATE / 2 * 10) / 10 })
+    s.end()
+  }
+  s.polish = () => (LIVE_POLISH && s.bytes ? transcribe(wavOf(Buffer.concat(s.pcm)), 'audio/wav').catch(() => '') : Promise.resolve(''))
+  s.stop = reason => {
+    if (s.stopping || s.over) return
+    s.stopping = reason
+    if (!s.bytes) return s.finish('')
+    // Both at once: the live model says its last words while the file model reads the whole recording.
+    s.better = s.polish()
+    const commit = () => { try { s.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })) } catch {} }
+    if (s.open) commit()
+    else s.queue.push(commit)
+    s.wait(LIVE_WAIT, () => s.finish())
+  }
+  // The page went away (closed, lost its network, pressed Esc): nothing is left running.
+  res.on('close', s.end)
+
+  const ws = s.ws = new WebSocket(`${SPEECH_API.replace(/^http/, 'ws')}/realtime?intent=transcription`, { headers: { Authorization: `Bearer ${key}` } })
+  ws.onmessage = e => {
+    let m
+    try { m = JSON.parse(e.data) } catch { return }
+    if (m.type === 'session.created') {
+      ws.send(JSON.stringify({ type: 'session.update', session: { type: 'transcription', audio: { input: { format: { type: 'audio/pcm', rate: LIVE_RATE }, transcription: { model: LIVE_MODEL } } } } }))
+      s.open = true
+      for (const queued of s.queue.splice(0)) typeof queued === 'function' ? queued() : ws.send(queued)
+    } else if (m.type === 'conversation.item.input_audio_transcription.delta' && typeof m.delta === 'string') {
+      s.text += m.delta
+      s.emit('delta', { text: m.delta })
+    } else if (m.type === 'conversation.item.input_audio_transcription.completed') {
+      s.finish(m.transcript)
+    } else if (m.type === 'error') {
+      s.fail(`Speech service: ${String(m.error?.message ?? m.message ?? 'error').slice(0, 300)}`)
+    }
+  }
+  ws.onerror = () => { if (!s.finishing) s.fail('Speech service: the live connection failed') }
+  ws.onclose = () => { if (!s.finishing) s.fail('Speech service: the live connection closed') }
+  s.wait(LIVE_WAIT, () => (s.open ? s.stop('idle') : s.fail('Speech service: the live connection did not open')))
+  s.emit('ready', { id: s.id, rate: LIVE_RATE, max_seconds: LIVE_SECONDS })
+}
+
+function liveAudio(id, pcm) {
+  const s = live.get(id)
+  if (!s || s.stopping) throw fail(s ? 409 : 404, 'This dictation has ended')
+  if (pcm.length % 2) throw fail(400, 'audio must be whole 16-bit samples')
+  const room = LIVE_SECONDS * LIVE_RATE * 2 - s.bytes
+  const part = pcm.length > room ? pcm.subarray(0, room) : pcm
+  if (part.length) {
+    s.pcm.push(part)
+    s.bytes += part.length
+    const frame = JSON.stringify({ type: 'input_audio_buffer.append', audio: part.toString('base64') })
+    if (s.open) s.ws.send(frame)
+    else s.queue.push(frame)
+  }
+  if (pcm.length >= room) return s.stop('limit')
+  if (s.open) s.wait(LIVE_IDLE, () => s.stop('idle'))
 }
 
 // What a card sounds like when read out: markdown stripped, code skipped, options numbered.
@@ -1586,7 +1858,14 @@ function staticFile(pathname) {
 }
 
 // The page keeps its place in the address (History API), so these paths are the page too.
-const APP_PATH = /^\/($|s\/|agents$|inbox$)/
+const APP_PATH = /^\/($|s\/|agents$|inbox$|pad$)/
+// The pad: its elements, their bytes, live changes, and sending a selection to a session (pad.mjs).
+// It keeps them in SQLite, in data/pad.db; the store is loaded when the pad is first used.
+const padRoute = padRoutes({
+  dir: () => DATA, files: FILES, ping: PING, retentionDays: RETENTION_DAYS, send, readJson, readRaw, pngBytes, deliver,
+  sessionOf: id => (state.agents.some(a => a.id === id) ? id : null),
+  say: (agent, words, attachments) => { addMessage(agent, 'user', words, attachments); return state.messages.at(-1).id },
+})
 const withoutToken = url => {
   const rest = new URLSearchParams(url.search)
   rest.delete('t')
@@ -1702,6 +1981,14 @@ const httpServer = http.createServer(async (req, res) => {
       const audio = await readRaw(req, 25e6)
       return send(res, 200, JSON.stringify({ text: await transcribe(audio, req.headers['content-type'] || 'audio/webm') }))
     }
+    if (req.method === 'POST' && url.pathname === '/speech/live') return liveOpen(req, res)
+    if (req.method === 'POST' && url.pathname.startsWith('/speech/live/')) {
+      const [id, verb] = url.pathname.slice('/speech/live/'.length).split('/')
+      if (verb === 'stop') live.get(id)?.stop('stop')
+      else if (verb) return send(res, 404, '{"error":"not found"}')
+      else liveAudio(id, await readRaw(req, 2e6))
+      return send(res, 200, '{"ok":true}')
+    }
     if (req.method === 'GET' && url.pathname.startsWith('/speech/card/')) {
       const card = state.cards.find(c => c.id === path.basename(url.pathname))
       if (!card) return send(res, 404, '{"error":"not found"}')
@@ -1736,9 +2023,10 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/decide') {
       const body = await readJson(req)
       if (body.keys != null && !Array.isArray(body.keys)) throw new Error('keys must be a list')
-      await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim())
+      await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim(), body.revised === undefined ? undefined : body.revised ?? null)
       return send(res, 200, '{"ok":true}')
     }
+    if (url.pathname.startsWith('/pad/') && await padRoute(req, res, url)) return
     // Last, so no file can stand in for a route: whatever else lies in client/web, mockups and prototypes included.
     if (req.method === 'GET') {
       const found = staticFile(url.pathname)
@@ -1750,7 +2038,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
     return send(res, 404, '{"error":"not found"}')
   } catch (err) {
-    return send(res, 400, JSON.stringify({ error: err.message }))
+    return send(res, err.status ?? 400, JSON.stringify({ error: err.message }))
   }
 })
 
@@ -1851,6 +2139,7 @@ function becomeHub() {
   setUp(true)
   reportClient()
   purge()
+  if (padSupport()) console.error(`[board] ${padSupport()}`)
   if (!cleaning) setInterval(purge, 6 * 3600000).unref()
   cleaning = true
   writeLinks()

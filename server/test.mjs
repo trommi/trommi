@@ -37,6 +37,8 @@ fs.writeFileSync(path.join(data, 'state.json'), JSON.stringify({
 
 // The fixtures below are dated 1970; keep them out of the cleanup until it is tested on purpose.
 process.env.BOARD_RETENTION_DAYS = '100000'
+// An answer right after a rewrite is refused for a moment; keep that moment short here.
+process.env.BOARD_REVISE_GRACE_MS = '250'
 
 const received = []
 // Every notification any session got, to compare with what the help page says arrives.
@@ -116,7 +118,7 @@ const agentPost = (route, body, token = 'secret') => fetch(`http://127.0.0.1:${P
 
 assert.deepEqual(
   (await client.listTools()).tools.map(t => t.name),
-  ['reply', 'create_decision', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'create_voiceover', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset'],
+  ['reply', 'create_decision', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'create_voiceover', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset'],
 )
 
 // migration: old cards get numbers in creation order, an urgency, and a queue
@@ -254,7 +256,7 @@ assert.equal((await fetch(`${base}/`, { headers: { Cookie: 'board=secret' } })).
 assert.equal(fs.readFileSync(path.join(data, 'url.txt'), 'utf8').split('\n')[0], `${base}/?t=secret`)
 // the page keeps its place in the address: those paths are the page, behind the login, and the login keeps path and query
 const home = await (await fetch(`${base}/`, { headers: { Cookie: cookie } })).text()
-for (const place of ['/s/api', '/s/api/fragen', '/agents', '/inbox']) {
+for (const place of ['/s/api', '/s/api/fragen', '/agents', '/inbox', '/pad']) {
   assert.equal((await fetch(base + place)).status, 401, place)
   const there = await fetch(base + place, { headers: { Cookie: cookie } })
   assert.deepEqual([there.status, there.headers.get('content-type'), await there.text()], [200, 'text/html; charset=utf-8', home], place)
@@ -404,12 +406,115 @@ assert.equal((await state()).messages.at(-1).details, 'lang und **ausführlich**
 assert.equal((await fetch(`${base}/scribbles/..%2Ftoken`, { headers: { Cookie: cookie } })).status, 404)
 received.length = 0
 
+// the pad: one record per element, behind the login, with a running number for every change
+const padGet = async (query = '') => (await fetch(`${base}/pad/elements?pad=global${query}`, { headers: { Cookie: cookie } })).json()
+const padEl = (id, rev, rest = {}) => ({ id, pad: 'global', type: 'text', x: 10, y: 20, w: 100, h: 27, rotation: 0, z: 1, group: null, author: 'human', created: 5, updated: 5, rev, blob: null, data: { text: 'Notiz', size: 20, color: 'ink', wrap: null }, sent: [{ session: 'erfunden' }], ...rest })
+assert.equal((await fetch(`${base}/pad/elements?pad=global`)).status, 401)
+assert.equal((await post('/pad/elements', { pad: 'global', elements: [padEl('padnote000001', 1)] }, 'http://evil.example')).status, 403)
+const padEmpty = await padGet()
+assert.deepEqual([padEmpty.seq, padEmpty.elements], [0, []])
+assert.match(padEmpty.epoch, /^[0-9a-f]{12}$/)
+// live changes: a second page hears what the first one writes
+const padStream = await fetch(`${base}/pad/events?pad=global&since=0`, { headers: { Cookie: cookie } })
+const padHeard = []
+;(async () => {
+  let buffer = ''
+  for await (const chunk of padStream.body) {
+    buffer += new TextDecoder().decode(chunk)
+    for (let at; (at = buffer.indexOf('\n\n')) >= 0;) {
+      const frame = buffer.slice(0, at)
+      buffer = buffer.slice(at + 2)
+      if (frame.startsWith('data: ')) padHeard.push(JSON.parse(frame.slice(6)))
+    }
+  }
+})().catch(() => {})
+const padBefore = Date.now()
+let padOut = await (await post('/pad/elements', { pad: 'global', client_id: 'tab-a', elements: [padEl('padnote000001', 1), padEl('padstroke00001', 1, { type: 'stroke', z: 2, data: { tool: 'pen', color: 'ink', size: 4, box: [10, 10], pts: [0, 0, 10, 10] } })] })).json()
+assert.deepEqual(padOut.results.map(r => [r.id, r.rev, r.seq]), [['padnote000001', 1, 1], ['padstroke00001', 1, 2]])
+// the hub's clock sets "updated", and "sent" is the server's to write
+assert.ok(padOut.results[0].updated >= padBefore)
+let padNow = await padGet()
+assert.deepEqual(padNow.elements.map(e => [e.id, e.rev, e.seq, e.sent, e.updated >= padBefore]), [['padnote000001', 1, 1, [], true], ['padstroke00001', 1, 2, [], true]])
+await until(() => padHeard.some(f => f.elements?.length === 2))
+assert.deepEqual([padHeard[0].hello, padHeard.find(f => f.elements).client_id], [true, 'tab-a'])
+// last writer wins per element: a write that is behind is refused and answered with what counts
+padOut = await (await post('/pad/elements', { pad: 'global', elements: [padEl('padnote000001', 2, { x: 50 }), padEl('padstroke00001', 1, { x: 99 })] })).json()
+assert.deepEqual(padOut.results.map(r => [r.id, r.error ?? 'ok', r.current?.x]), [['padnote000001', 'ok', undefined], ['padstroke00001', 'conflict', 10]])
+assert.equal((await post('/pad/elements', { pad: 'global', elements: [padEl('padnote000001', 3, { type: 'voice' })] }).then(r => r.json())).results[0].error, 'type')
+for (const bad of [{ elements: [] }, { elements: [padEl('../x', 1)] }, { elements: [padEl('padnote000002', 0)] }, { elements: [padEl('padnote000002', 1, { type: 'frame' })] }, { elements: [padEl('padnote000002', 1, { data: null })] }]) {
+  assert.equal((await post('/pad/elements', { pad: 'global', ...bad })).status, 400, JSON.stringify(bad).slice(0, 80))
+}
+// a delete is a tombstone, listed only for those who catch up; undoing it writes the element again
+const padDelete = await fetch(`${base}/pad/elements/padnote000001`, { method: 'DELETE', headers: { Cookie: cookie, Origin: base } })
+assert.deepEqual([padDelete.status, (await padDelete.json()).rev], [200, 3])
+assert.equal((await fetch(`${base}/pad/elements/gibtesnicht`, { method: 'DELETE', headers: { Cookie: cookie, Origin: base } })).status, 404)
+assert.equal((await fetch(`${base}/pad/elements/padstroke00001`, { method: 'DELETE', headers: { Cookie: cookie } })).status, 403)
+assert.deepEqual((await padGet()).elements.map(e => e.id), ['padstroke00001'])
+assert.deepEqual((await padGet('&since=2')).elements.map(e => [e.id, e.deleted, e.rev, e.data]), [['padnote000001', true, 3, undefined]])
+assert.equal((await post('/pad/elements', { pad: 'global', elements: [padEl('padnote000001', 3)] }).then(r => r.json())).results[0].error, 'conflict')
+padOut = await (await post('/pad/elements', { pad: 'global', elements: [padEl('padnote000001', 4, { x: 50 })] })).json()
+assert.deepEqual([padOut.results[0].rev, (await padGet()).elements.map(e => [e.id, e.x, e.deleted])], [4, [['padnote000001', 50, undefined], ['padstroke00001', 10, undefined]]])
+// bytes of pictures and voice notes
+const padBlob = (id, init = {}) => fetch(`${base}/pad/blobs/${id}`, { headers: { Cookie: cookie, Origin: base, 'Content-Type': 'image/png' }, ...init })
+assert.equal((await padBlob('padblob0000001', { method: 'PUT', body: fs.readFileSync(shot) })).status, 200)
+const padBytes = await padBlob('padblob0000001')
+assert.deepEqual([padBytes.status, padBytes.headers.get('content-type'), Buffer.from(await padBytes.arrayBuffer()).equals(fs.readFileSync(shot))], [200, 'image/png', true])
+assert.equal((await padBlob('padblob0000002', { method: 'PUT', body: '<script>', headers: { Cookie: cookie, Origin: base, 'Content-Type': 'text/html' } })).status, 200)
+assert.equal((await padBlob('padblob0000002')).headers.get('content-type'), 'application/octet-stream')
+assert.equal((await padBlob('fehlt000000001')).status, 404)
+assert.equal((await padBlob('..%2Ftoken')).status, 404)
+assert.equal((await padBlob('padblob0000003', { method: 'PUT', body: 'x', headers: { Cookie: cookie, 'Content-Type': 'image/png' } })).status, 403)
+// a picture's element survives its own delete and undo with its bytes
+await post('/pad/elements', { pad: 'global', elements: [padEl('padimage000001', 1, { type: 'image', blob: 'padblob0000001', data: { mime: 'image/png', nw: 1, nh: 1, name: '' } })] })
+await post('/pad/elements', { pad: 'global', elements: [{ id: 'padimage000001', pad: 'global', deleted: true, author: 'human', rev: 2 }] })
+assert.equal((await padBlob('padblob0000001')).status, 200, 'the file stays while the tombstone does')
+await post('/pad/elements', { pad: 'global', elements: [padEl('padimage000001', 3, { type: 'image', blob: 'padblob0000001', data: { mime: 'image/png', nw: 1, nh: 1, name: '' } })] })
+assert.equal((await padGet()).elements.find(e => e.id === 'padimage000001').blob, 'padblob0000001')
+// sending a selection: the session gets the words and a picture it can open, the conversation shows it, the elements remember
+const padSend = body => post('/pad/send', { pad: 'global', session: 'main', elements: [{ id: 'padnote000001', type: 'text', rev: 4 }, { id: 'padstroke00001', type: 'stroke', rev: 1 }], text: 'Notiz', bbox: { x: 0, y: 0, w: 1, h: 1 }, png: dot, ...body })
+const padSent = await padSend({})
+assert.equal(padSent.status, 200)
+const padSentOut = await padSent.json()
+await until(() => received.length === 1)
+const padMeta = received[0].params.meta
+assert.deepEqual([received[0].params.content, padMeta.kind, padMeta.pad, padMeta.elements, padMeta.message_id], ['Notiz', 'pad', 'global', 'padnote000001,padstroke00001', padSentOut.message_id])
+assert.deepEqual(fs.readFileSync(padMeta.image_path), fs.readFileSync(shot))
+const padMessage = (await state()).messages.at(-1)
+assert.deepEqual([padMessage.id, padMessage.from, padMessage.agent, padMessage.text, padMessage.attachments[0].image], [padSentOut.message_id, 'user', 'main', 'Notiz', true])
+assert.equal((await fetch(base + padMessage.attachments[0].url, { headers: { Cookie: cookie } })).headers.get('content-type'), 'image/png')
+padNow = await padGet()
+assert.deepEqual(padNow.elements.map(e => [e.id, e.rev, e.sent.map(l => [l.session, l.message_id, l.rev])]), [
+  ['padimage000001', 3, []], ['padnote000001', 4, [['main', padSentOut.message_id, 4]]], ['padstroke00001', 1, [['main', padSentOut.message_id, 1]]],
+])
+assert.deepEqual(padSentOut.elements.map(e => e.id), ['padnote000001', 'padstroke00001'])
+await until(() => padHeard.some(f => f.elements?.some(e => e.sent?.length)))
+assert.equal(padNow.seq, padSentOut.seq)
+// without words the agent is told to look at the picture; what cannot be sent says why
+received.length = 0
+assert.equal((await padSend({ text: '' })).status, 200)
+await until(() => received.length === 1)
+assert.match(received[0].params.content, /image_path/)
+assert.deepEqual([(await padSend({ session: 'niemand' })).status, (await padSend({ png: 'data:text/html;base64,AAAA' })).status, (await padSend({ elements: [] })).status, (await padSend({ elements: [{ id: 'gibtesnicht' }] })).status], [404, 400, 400, 409])
+await padStream.body.cancel().catch(() => {})
+// the pad's store is a SQLite file of its own beside state.json: read again from disk it is the same pad
+assert.ok(fs.existsSync(path.join(data, 'pad.db')) && !fs.readFileSync(path.join(data, 'state.json'), 'utf8').includes('padnote000001'))
+assert.equal(fs.statSync(path.join(data, 'pad', 'blobs')).mode & 0o777, 0o700)
+const { openPadStore, padSupport } = await import('./pad.mjs')
+assert.equal(padSupport(), null)
+const padAgain = await openPadStore(data)
+assert.deepEqual([padAgain.seq, padAgain.epoch, padAgain.list('global').elements], [padNow.seq + 1, padNow.epoch, (await padGet()).elements])
+assert.equal(padAgain.list('global', 0).elements.length, 3)
+padAgain.close()
+received.length = 0
+
 // speech is optional: without a key the board says so instead of failing oddly
 assert.equal((await state()).speech, false)
 await refused('create_voiceover', { text: 'hallo' }, /not set up/)
 const mute = await fetch(`${base}/speech/transcribe`, { method: 'POST', headers: { Cookie: cookie, Origin: base, 'Content-Type': 'audio/webm' }, body: 'x' })
 assert.equal(mute.status, 400)
 assert.match((await mute.json()).error, /not set up/)
+const muteLive = await fetch(`${base}/speech/live`, { method: 'POST', headers: { Cookie: cookie, Origin: base } })
+assert.deepEqual([muteLive.status, (await muteLive.json()).error], [503, 'Speech is not set up (TINFOIL_API_KEY or data/tinfoil.key is missing)'])
 
 // media: a video is stored as such and served with Range support
 const clip = path.join(data, 'render.mp4')
@@ -559,7 +664,7 @@ for (const tool of reference.tools) {
 }
 // and the events as they really arrive: every kind this test has received so far, with exactly those meta fields
 const kinds = reference.events.filter(e => e.kind)
-assert.deepEqual(kinds.map(e => e.kind), ['chat', 'decision', 'decision_reopened', 'scribble'])
+assert.deepEqual(kinds.map(e => e.kind), ['chat', 'decision', 'decision_reopened', 'scribble', 'pad'])
 for (const event of kinds) {
   const real = heard.find(n => n.method === event.method && n.params.meta.kind === event.kind)
   assert.deepEqual(Object.keys(real.params.meta).sort(), Object.keys(event.meta).sort(), event.kind)
@@ -568,9 +673,9 @@ for (const event of kinds) {
 const verdict = reference.events.find(e => e.method === 'notifications/claude/channel/permission')
 assert.deepEqual(Object.keys(heard.find(n => n.method === verdict.method).params).sort(), Object.keys(verdict.params).sort())
 assert.deepEqual(Object.keys(reference.events.find(e => e.method.endsWith('/permission_request')).params), ['request_id', 'tool_name', 'description', 'input_preview'])
-assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id'], ['choices'], ['previous_choices'], []])
+assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id'], ['choices'], ['previous_choices'], [], []])
 assert.ok(reference.tools[0].inputSchema.properties.card_id)
-assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
+assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
 
 // status strip: upsert, link to a card, and turn yellow when that card is answered
 await call('set_status', { id: 'srv', label: 'Server', state: 'working', detail: 'läuft' })
@@ -648,12 +753,158 @@ assert.deepEqual((({ multiple, choice, choices }) => [multiple, choice, choices]
 await call('close_card', { card_id: multi })
 received.length = 0
 
+{
+const textOf = res => res.content[0].text
+// revising: an open card is rewritten in place, keeps id, number and place, and the conversation says so
+const stackBefore = (await state()).queue
+const rev = await ask('Welche Architektur?', { body: 'unklar', recommended: 'a' })
+const revNumber = (await state()).cards.at(-1).number
+let out = textOf(await call('revise_card', { card_id: rev, title: 'Monolith oder Dienste?', options: [{ key: 'a', label: 'Monolith' }, { key: 'dienste', label: 'Dienste', detail: 'mehr Betrieb' }], note: 'Optionen benannt' }))
+assert.match(out, new RegExp(`^card ${rev} revised, still Nr\\. ${revNumber}, position ${stackBefore.length + 1} of ${stackBefore.length + 1} in the stack$`))
+s = await state()
+let revised = s.cards.find(c => c.id === rev)
+assert.deepEqual([revised.number, revised.status, revised.title, revised.body, revised.recommended, revised.revisions], [revNumber, 'open', 'Monolith oder Dienste?', 'unklar', 'a', 1])
+assert.deepEqual(revised.options, [{ key: 'a', label: 'Monolith', detail: '' }, { key: 'dienste', label: 'Dienste', detail: 'mehr Betrieb' }])
+assert.ok(revised.revised >= revised.created)
+assert.deepEqual(s.queue, [...stackBefore, rev])
+assert.deepEqual([s.messages.at(-1).from, s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], ['event', 'revised', rev, 'Optionen benannt'])
+// an answer holds for the question the human read: a key that is gone, or a page that saw the earlier wording, is refused and says why
+await sleep(300)
+let stale = await post('/decide', { card_id: rev, key: 'b' })
+assert.equal(stale.status, 409)
+assert.match((await stale.json()).error, /the agent revised this question while you were answering/)
+assert.equal((await post('/decide', { card_id: rev, key: 'a', revised: null })).status, 409, 'the page had not seen the revision')
+assert.equal((await post('/decide', { card_id: rev, key: 'a', revised: revised.revised - 1 })).status, 409)
+// nor one that comes so soon after a rewrite that nobody can have read it
+await call('revise_card', { card_id: rev, body: 'Für den Prototyp' })
+s = await state()
+revised = s.cards.find(c => c.id === rev)
+assert.equal(s.messages.at(-1).text, 'Monolith oder Dienste?', 'without a note the marker shows the title')
+assert.equal((await post('/decide', { card_id: rev, key: 'a', revised: revised.revised })).status, 409)
+assert.equal((await state()).cards.find(c => c.id === rev).status, 'open')
+// urgency alone is no revision: the card moves, the wording and its stamp stay
+out = textOf(await call('revise_card', { card_id: rev, urgency: 'critical', urgency_reason: 'alles steht' }))
+assert.match(out, /unchanged in wording/)
+s = await state()
+assert.deepEqual((({ urgency, urgency_reason, revised: at, revisions }) => [urgency, urgency_reason, at, revisions])(s.cards.find(c => c.id === rev)), ['critical', 'alles steht', revised.revised, 2])
+assert.deepEqual([s.queue.indexOf(rev) < stackBefore.length, s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], [true, 'urgency', rev, 'Blocking: alles steht'])
+// advice that names an option which is gone is dropped; a list needs a card that takes several
+await call('revise_card', { card_id: rev, options: [{ key: 'x', label: 'Eins' }, { key: 'y', label: 'Zwei' }], urgency: 'normal' })
+revised = (await state()).cards.find(c => c.id === rev)
+assert.deepEqual([revised.recommended, revised.urgency, revised.urgency_reason, revised.revisions], [null, 'normal', '', 3])
+await call('revise_card', { card_id: rev, multiple: true, recommended: ['x', 'y'] })
+await call('revise_card', { card_id: rev, options: [{ key: 'y', label: 'Zwei' }, { key: 'z', label: 'Drei' }] })
+assert.deepEqual((await state()).cards.find(c => c.id === rev).recommended, ['y'])
+await call('revise_card', { card_id: rev, recommended: [] })
+assert.equal((await state()).cards.find(c => c.id === rev).recommended, null, 'an empty recommendation clears the advice')
+await refused('revise_card', { card_id: rev }, /nothing to revise: pass at least one of title, body, options/)
+await refused('revise_card', { card_id: rev, options: [option('a')] }, /at least two entries/)
+await refused('revise_card', { card_id: rev, recommended: 'weg' }, /recommended must be the key of one of the options; got "weg"/)
+await refused('revise_card', { card_id: rev, multiple: false, recommended: ['y', 'z'] }, /needs multiple: true/)
+await refused('revise_card', { card_id: 'nope', title: 'x' }, /no card nope/)
+revised = (await state()).cards.find(c => c.id === rev)
+assert.deepEqual([revised.multiple, revised.revisions], [true, 6], 'a refused revision changes nothing')
+// answered as it now stands, it is an ordinary decision; after that it is no longer the agent's to rewrite
+await sleep(300)
+assert.equal((await post('/decide', { card_id: rev, keys: ['z'], revised: revised.revised })).status, 200)
+await until(() => received.length === 1)
+assert.deepEqual(received[0].params.meta, { kind: 'decision', card_id: rev, choice: 'z', choices: 'z' })
+await refused('revise_card', { card_id: rev, title: 'doch anders' }, /already decided \(choice: z\); the human answered the question as it stood/)
+await call('close_card', { card_id: rev })
+await refused('revise_card', { card_id: rev, title: 'doch anders' }, /already done/)
+const listedRev = JSON.parse(textOf(await call('list_cards', {}))).find(c => c.id === rev)
+assert.equal(listedRev.revised, revised.revised)
+received.length = 0
+
+// merging: several open cards become one new card in one step; the old ones point at it, and it says what it replaces
+const m1 = await ask('Datenbank: SQLite?', { urgency: 'low' })
+const m2 = await ask('Anhänge als Dateien?', { urgency: 'high', urgency_reason: 'der Umbau wartet' })
+const m3 = await ask('Sync zwischen Hubs?')
+assert.equal((await post('/message', { text: 'was heißt Sync?', card_id: m3 })).status, 200)
+await until(() => received.length === 1)
+await call('reply', { text: 'Abgleich zweier Rechner', card_id: m3 })
+await call('set_status', { id: 'arch', label: 'Architektur', state: 'decision', card_id: m2 })
+s = await state()
+const olds = [m1, m2, m3].map(id => s.cards.find(c => c.id === id))
+const merge = { title: 'Welchen Teilen stimmst du zu?', body: 'Kreuze an, was ich bauen darf.', multiple: true, recommended: ['sqlite', 'files'], options: [{ key: 'sqlite', label: 'SQLite' }, { key: 'files', label: 'Anhänge als Dateien' }, { key: 'sync', label: 'Sync' }] }
+// refused merges leave every card as it was
+await refused('merge_cards', { ...merge, card_ids: [m1] }, /at least two cards; to change one card use revise_card/)
+await refused('merge_cards', { ...merge, card_ids: [m1, m1] }, /at least two cards/)
+await refused('merge_cards', { ...merge, card_ids: [m1, 'nope'] }, /no card nope/)
+await refused('merge_cards', { ...merge, card_ids: [m1, m2, rev] }, /already done/)
+await refused('merge_cards', { ...merge, card_ids: [m1, m2, late], options: [option('a')] }, /at least two entries/)
+await refused('merge_cards', { ...merge, card_ids: 'alle' }, /card_ids must be a list/)
+assert.deepEqual((await state()).cards.filter(c => [m1, m2, m3].includes(c.id)).map(c => c.status), ['open', 'open', 'open'])
+out = textOf(await call('merge_cards', { ...merge, card_ids: [m1, m2, m3] }))
+const merged = out.match(/^card (\w+) created as Nr\. (\d+), replacing Nr\. ([\d, ]+), position \d+ of \d+ in the stack; answers to the replaced cards will no longer arrive/)
+assert.ok(merged, out)
+assert.equal(merged[3], olds.map(c => c.number).join(', '))
+s = await state()
+const one = s.cards.find(c => c.id === merged[1])
+assert.equal(one, s.cards.at(-1))
+assert.deepEqual(one.merged_from, olds.map(c => ({ id: c.id, number: c.number, title: c.title })))
+assert.deepEqual([one.number, one.status, one.multiple, one.recommended, one.urgency, one.urgency_reason, one.created], [Number(merged[2]), 'open', true, ['sqlite', 'files'], 'high', 'der Umbau wartet', olds[0].created], 'as pressing as the most pressing, as old as the oldest')
+for (const c of [m1, m2, m3].map(id => s.cards.find(x => x.id === id))) {
+  assert.deepEqual([c.status, c.choice, c.merged_into, c.summary], ['done', null, one.id, `Merged into Nr. ${one.number}: Welchen Teilen stimmst du zu?`])
+  assert.ok(!s.queue.includes(c.id))
+}
+assert.ok(s.queue.includes(one.id))
+assert.deepEqual(s.messages.slice(-4).map(m => [m.kind, m.card_id]), [['asked', one.id], ['done', m1], ['done', m2], ['done', m3]])
+// what was asked back about an old card is still in the conversation, and the status line waits on the new card
+assert.deepEqual(s.messages.filter(m => m.card_id === m3 && m.from !== 'event').map(m => [m.from, m.text]), [['user', 'was heißt Sync?'], ['agent', 'Abgleich zweier Rechner']])
+assert.deepEqual((({ state: light, card_id }) => [light, card_id])(s.tasks.find(t => t.id === 'arch')), ['decision', one.id])
+assert.equal((await post('/decide', { card_id: m1, key: 'a' })).status, 400, 'a replaced card cannot be answered')
+await refused('merge_cards', { ...merge, card_ids: [m1, one.id] }, /already done/)
+const listedOne = JSON.parse(textOf(await call('list_cards', {})))
+assert.deepEqual(listedOne.find(c => c.id === one.id).merged_from, olds.map(c => c.number))
+assert.equal(listedOne.find(c => c.id === m1).merged_into, one.id)
+assert.deepEqual(listedOne.find(c => c.id === one.id).options.map(o => o.key), ['sqlite', 'files', 'sync'], 'open cards are listed with what they ask')
+assert.equal((await post('/decide', { card_id: one.id, keys: ['sqlite', 'files'] })).status, 200)
+await until(() => received.length === 2)
+assert.deepEqual(received[1].params.meta, { kind: 'decision', card_id: one.id, choice: 'sqlite', choices: 'sqlite,files' })
+await refused('merge_cards', { ...merge, card_ids: [late, one.id] }, /already decided \(choice: sqlite\)/)
+assert.equal((await state()).cards.find(c => c.id === late).status, 'open')
+await call('close_card', { card_id: one.id })
+await call('clear_status', { id: 'arch' })
+
+// the hub nudges: a session that files a question while three of its own are open is reminded to bundle, and shown them
+s = await state()
+const mineOpen = s.cards.filter(c => c.agent === one.agent && c.kind === 'decision' && c.status === 'open')
+assert.ok(mineOpen.length >= 3)
+out = textOf(await call('create_decision', { title: 'noch  eine\nFrage', options: [option('a'), option('b')] }))
+const extra = out.match(/^card (\w+) created as Nr\. (\d+), /)
+assert.match(out, new RegExp(`\\nYou now have ${mineOpen.length + 1} open questions\\. If some of them are one subject, replace them by one with merge_cards .* revise_card`))
+assert.deepEqual(out.split('\n').slice(2), [...mineOpen.map(c => `Nr. ${c.number} (${c.id}, ${c.urgency}): ${c.title}`), `Nr. ${extra[2]} (${extra[1]}, normal): noch eine Frage`])
+await call('withdraw_card', { card_id: extra[1] })
+
+// and says, without refusing, when a card is a lot to read
+out = textOf(await call('create_decision', { title: 'lang', body: 'x'.repeat(301), options: [{ key: 'a', label: 'A', detail: 'y'.repeat(60) }, { key: 'b', label: 'B', detail: 'y'.repeat(61) }, { key: 'c', label: 'C', detail: 'z'.repeat(80) }] }))
+const wordy = out.match(/^card (\w+) /)[1]
+assert.match(out, /\nThis is a lot to read: the body has 301 characters \(aim for one or two short sentences\); the detail of "b", "c" is longer than one short line \(aim for about six words\)\. Shorten it with revise_card/)
+assert.equal((await state()).cards.at(-1).status, 'open')
+out = textOf(await call('revise_card', { card_id: wordy, body: 'x'.repeat(300) }))
+assert.match(out, /\nThis is a lot to read: the detail of "b", "c" is longer/)
+assert.doesNotMatch(out, /the body has/)
+out = textOf(await call('revise_card', { card_id: wordy, options: [{ key: 'a', label: 'A', detail: 'kurz' }, { key: 'b', label: 'B' }] }))
+assert.doesNotMatch(out, /a lot to read/)
+await call('withdraw_card', { card_id: wordy })
+received.length = 0
+}
+
 // several agents on one board: the first process is the hub, the others link to it
 const gotApi = [], gotInfra = []
 const api = await start('API', gotApi)
 const infra = await start('Infra', gotInfra)
 const apiCard = (await api.callTool({ name: 'create_decision', arguments: { title: 'vom zweiten Agenten', options: [option('a'), option('b')], urgency: 'critical' } }))
   .content[0].text.match(/^card (\w+) /)[1]
+// another session's card is not there to revise or merge, and a short card of a session with one question draws no hint
+await refused('revise_card', { card_id: apiCard, title: 'gekapert' }, new RegExp(`no card ${apiCard}`))
+await refused('merge_cards', { card_ids: [late, apiCard], title: 'gekapert', options: [option('a'), option('b')] }, new RegExp(`no card ${apiCard}`))
+assert.deepEqual((({ title, status }) => [title, status])((await state()).cards.find(c => c.id === apiCard)), ['vom zweiten Agenten', 'open'])
+assert.equal((await state()).cards.find(c => c.id === late).status, 'open')
+const calm = (await api.callTool({ name: 'revise_card', arguments: { card_id: apiCard, body: 'kurz' } })).content[0].text
+assert.doesNotMatch(calm, /open questions|a lot to read/)
+await sleep(300)
 await infra.callTool({ name: 'set_status', arguments: { id: 'deploy', label: 'Deploy', state: 'working' } })
 s = await state()
 assert.deepEqual(s.agents.map(a => [a.id, a.name, a.online]), [['main', 'main', true], ['api', 'API', true], ['infra', 'Infra', true]])
@@ -982,7 +1233,8 @@ await portFree()
 await sleep(1500)
 await assert.rejects(fetch(base), 'the spoke of a hub of its own left the port alone')
 await fails(solo, 'list_cards', {}, /try again in a moment/)
-const back = spawn('node', [SERVER], { env: serverEnv('Dienst', { ...on5, BOARD_HUB_ONLY: '1' }), stdio: ['ignore', 'ignore', 'pipe'] })
+// this one runs without SQLite (as a Node older than 22.13 would), to see that only the pad is missing
+const back = spawn('node', [SERVER], { env: serverEnv('Dienst', { ...on5, BOARD_HUB_ONLY: '1', NODE_OPTIONS: '--no-experimental-sqlite' }), stdio: ['ignore', 'ignore', 'pipe'] })
 back.stderr.on('data', chunk => logs.push(...String(chunk).split('\n').filter(Boolean)))
 await eventually(async () => (await state()).agents[0].online === true, 'the spoke to link to the hub that came back')
 assert.ok(!(await say(solo, 'reply', { text: 'wieder da' })).isError)
@@ -993,6 +1245,11 @@ assert.deepEqual(logs.slice(mark).filter(l => l.includes('] hub on ')).map(l => 
 await solo.close()
 await eventually(async () => (await state()).agents[0].online === false, 'the hub of its own to outlast its only session')
 assert.equal(back.exitCode, null)
+// without node:sqlite the hub runs and serves the board; the pad's routes say what is missing, once in the log too
+const noPad = await fetch(`${base}/pad/elements?pad=global`, { headers: { Cookie: cookie } })
+assert.deepEqual([noPad.status, /node:sqlite/.test((await noPad.json()).error)], [501, true])
+assert.equal((await post('/pad/send', { session: 'solo', elements: [{ id: 'padnote000001' }], png: dot })).status, 501)
+assert.deepEqual([(await fetch(`${base}/pad`, { headers: { Cookie: cookie } })).status, back.exitCode, logs.slice(mark).filter(l => l.includes('The pad is off')).length], [200, null, 1])
 
 // a worker without a channel publishes through dev/session.mjs: the helper encrypts with the same envelope
 // and uploads like a spoke, so the hub is handed ciphertext, and of a silent asset no key
@@ -1081,7 +1338,65 @@ fs.writeFileSync(in4('state.json'), JSON.stringify({
   ],
   pending: { weg: [waits('wartet eins'), waits('wartet zwei')] },
 }))
-const on4 = { BOARD_DATA: data4, BOARD_TOKEN: '', BOARD_ADMIN_TOKEN: '', BOARD_PUBLIC_URL: 'https://rechner.example.ts.net/' }
+// The speech service, played by a local server: the realtime socket and the file model. No real key is involved.
+const tinfoil = { auth: [], updates: [], audio: 0, sockets: 0, uploads: [], polish: 'Bitte nimm die zweite.' }
+const wsFrame = text => {
+  const body = Buffer.from(text)
+  const head = body.length < 126 ? Buffer.from([0x81, body.length]) : Buffer.from([0x81, 126, body.length >> 8, body.length & 255])
+  return Buffer.concat([head, body])
+}
+const fakeSpeech = http.createServer(async (req, res) => {
+  const chunks = []
+  for await (const chunk of req) chunks.push(chunk)
+  tinfoil.auth.push(req.headers.authorization)
+  tinfoil.uploads.push(Buffer.concat(chunks))
+  if (tinfoil.polish == null) return res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":{"message":"busy"}}')
+  res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text: ` ${tinfoil.polish}` }))
+})
+fakeSpeech.on('upgrade', (req, socket) => {
+  tinfoil.auth.push(req.headers.authorization)
+  tinfoil.path = req.url
+  tinfoil.sockets++
+  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')}\r\n\r\n`)
+  const say = msg => socket.write(wsFrame(JSON.stringify(msg)))
+  const said = []
+  let buf = Buffer.alloc(0), gone = false
+  const leave = () => { if (!gone) { gone = true; tinfoil.sockets--; socket.destroy() } }
+  socket.on('close', leave)
+  socket.on('error', leave)
+  socket.on('data', chunk => {
+    buf = Buffer.concat([buf, chunk])
+    for (;;) {
+      if (buf.length < 2) return
+      let len = buf[1] & 127, at = 2
+      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); at = 4 } else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); at = 10 }
+      if (buf.length < at + 4 + len) return
+      const mask = buf.subarray(at, at + 4), body = Buffer.from(buf.subarray(at + 4, at + 4 + len)), op = buf[0] & 15
+      buf = buf.subarray(at + 4 + len)
+      for (let i = 0; i < body.length; i++) body[i] ^= mask[i & 3]
+      if (op === 8) return leave()
+      if (op !== 1) continue
+      const msg = JSON.parse(body.toString())
+      if (msg.type === 'session.update') tinfoil.updates.push(msg.session)
+      if (msg.type === 'input_audio_buffer.append') {
+        const pcm = Buffer.from(msg.audio, 'base64')
+        tinfoil.audio += pcm.length
+        // a recording that starts with these bytes makes the service fail
+        if (pcm.subarray(0, 4).toString() === 'FAIL') { say({ type: 'error', error: { message: 'model overloaded' } }); continue }
+        const word = ` Wort${said.length + 1}`
+        said.push(word)
+        say({ type: 'conversation.item.input_audio_transcription.delta', delta: word })
+      }
+      if (msg.type === 'input_audio_buffer.commit') {
+        say({ type: 'input_audio_buffer.committed' })
+        say({ type: 'conversation.item.input_audio_transcription.completed', transcript: said.join('').trim() })
+      }
+    }
+  })
+  say({ type: 'session.created' })
+})
+await new Promise(resolve => fakeSpeech.listen(0, '127.0.0.1', resolve))
+const on4 = { BOARD_DATA: data4, BOARD_TOKEN: '', BOARD_ADMIN_TOKEN: '', BOARD_PUBLIC_URL: 'https://rechner.example.ts.net/', BOARD_SPEECH_API: `http://127.0.0.1:${fakeSpeech.address().port}/v1`, BOARD_STT_LIVE_SECONDS: '1', BOARD_STT_LIVE_IDLE_MS: '500', BOARD_STT_LIVE_WAIT_MS: '3000' }
 const file4 = () => JSON.parse(fs.readFileSync(in4('state.json'), 'utf8'))
 const has4 = (...parts) => fs.existsSync(in4(...parts))
 const gotSpeiche = []
@@ -1168,6 +1483,110 @@ await eventually(async () => (d = await (await adminGet('diagnose', admin4)).jso
 assert.ok(d.lines.some(l => /hub on 0\.0\.0\.0:8791 as "chef"/.test(l.line) && l.ts > 0))
 assert.ok(d.lines.length <= 200)
 assert.deepEqual(d.links.map(l => [l.id, l.state, l.queued]), [['weg', 'away', 2], ['alt', 'away', 0], ['chef', 'hub', 0], ['speiche', 'linked', 0]])
+
+// live dictation: the page posts PCM in pieces and hears the words as events while it still speaks;
+// the key goes to the service and nowhere else
+{
+const liveHead = { Origin: base, Cookie: board4 }
+const dictate = async () => {
+  const ctl = new AbortController()
+  const res = await fetch(`${base}/speech/live`, { method: 'POST', headers: liveHead, signal: ctl.signal })
+  assert.deepEqual([res.status, res.headers.get('content-type')], [200, 'text/event-stream'])
+  const reader = res.body.getReader()
+  let buf = ''
+  const next = async () => {
+    for (;;) {
+      const cut = buf.indexOf('\n\n')
+      if (cut >= 0) {
+        const [event, line] = buf.slice(0, cut).split('\n')
+        buf = buf.slice(cut + 2)
+        return [event.slice(7), JSON.parse(line.slice(6))]
+      }
+      const { value, done } = await reader.read()
+      if (done) return null
+      buf += Buffer.from(value).toString()
+    }
+  }
+  const [event, ready] = await next()
+  assert.deepEqual([event, ready.rate, ready.max_seconds], ['ready', 16000, 1])
+  assert.match(ready.id, /^[0-9a-f]{18}$/)
+  const audio = (pcm, id = ready.id) => fetch(`${base}/speech/live/${id}`, { method: 'POST', headers: { ...liveHead, 'Content-Type': 'application/octet-stream' }, body: pcm })
+  const stop = () => fetch(`${base}/speech/live/${ready.id}/stop`, { method: 'POST', headers: liveHead })
+  return { id: ready.id, next, audio, stop, abort: () => ctl.abort() }
+}
+const pcmOf = (bytes, start = '') => Buffer.concat([Buffer.from(start), Buffer.alloc(bytes - start.length, 3)])
+assert.equal((await fetch(`${base}/speech/live`, { method: 'POST' })).status, 401)
+assert.equal((await fetch(`${base}/speech/live`, { method: 'POST', headers: { ...liveHead, Origin: 'http://evil.example' } })).status, 403)
+assert.equal((await fetch(`${base}/speech/live/nichtda`, { method: 'POST', headers: liveHead, body: pcmOf(4) })).status, 404)
+// the words arrive while the audio is still coming; the final text is the file model's reading of the whole recording
+let spoken = await dictate()
+assert.equal((await spoken.audio(pcmOf(3200))).status, 200)
+assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort1' }])
+assert.equal((await spoken.audio(pcmOf(3200))).status, 200)
+assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort2' }])
+const odd = await spoken.audio(pcmOf(3))
+assert.deepEqual([odd.status, (await odd.json()).error], [400, 'audio must be whole 16-bit samples'])
+assert.equal((await spoken.stop()).status, 200)
+assert.deepEqual(await spoken.next(), ['final', { text: 'Bitte nimm die zweite.', polished: true, reason: 'stop', seconds: 0.2 }])
+assert.equal(await spoken.next(), null, 'the stream ends with the final text')
+assert.deepEqual([tinfoil.path, tinfoil.updates.at(-1), tinfoil.audio], ['/v1/realtime?intent=transcription', { type: 'transcription', audio: { input: { format: { type: 'audio/pcm', rate: 16000 }, transcription: { model: 'voxtral-mini-4b-realtime' } } } }, 6400])
+assert.deepEqual([...new Set(tinfoil.auth)], ['Bearer tinfoil-geheim'])
+const wav = tinfoil.uploads.at(-1)
+assert.ok(wav.includes('whisper-large-v3-turbo') && wav.includes(Buffer.concat([Buffer.from('data'), Buffer.from([0, 25, 0, 0]), pcmOf(6400)])), 'the whole recording goes to the file model as WAV')
+const late = await spoken.audio(pcmOf(3200))
+assert.deepEqual([late.status, (await late.json()).error], [404, 'This dictation has ended'])
+await eventually(() => tinfoil.sockets === 0, 'the live socket to close after the final text')
+// the file model fails: the streamed words stand
+tinfoil.polish = null
+spoken = await dictate()
+await spoken.audio(pcmOf(3200)); await spoken.audio(pcmOf(3200)); await spoken.audio(pcmOf(3200))
+await spoken.stop()
+let heardLive = []
+for (let e; (e = await spoken.next());) heardLive.push(e)
+assert.deepEqual(heardLive.at(-1), ['final', { text: 'Wort1 Wort2 Wort3', polished: false, reason: 'stop', seconds: 0.3 }])
+assert.deepEqual(heardLive.slice(0, -1).map(e => e[1].text).join(''), ' Wort1 Wort2 Wort3')
+tinfoil.polish = 'Fertig.'
+// nothing was said: no final text is invented, and the file model is not asked
+const uploads = tinfoil.uploads.length
+spoken = await dictate()
+await spoken.stop()
+assert.deepEqual(await spoken.next(), ['final', { text: '', polished: false, reason: 'stop', seconds: 0 }])
+assert.equal(tinfoil.uploads.length, uploads)
+// longer than allowed: the recording is cut at the limit and ends by itself
+spoken = await dictate()
+tinfoil.audio = 0
+assert.equal((await spoken.audio(pcmOf(40000))).status, 200)
+assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort1' }])
+assert.deepEqual(await spoken.next(), ['final', { text: 'Fertig.', polished: true, reason: 'limit', seconds: 1 }])
+assert.equal(tinfoil.audio, 32000)
+// the page falls silent without stopping (lost network): the dictation ends by itself
+spoken = await dictate()
+await spoken.audio(pcmOf(3200))
+assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort1' }])
+const silentSince = Date.now()
+assert.deepEqual(await spoken.next(), ['final', { text: 'Fertig.', polished: true, reason: 'idle', seconds: 0.1 }])
+assert.ok(Date.now() - silentSince >= 400)
+// the service reports an error: the page reads it as text and the stream ends
+spoken = await dictate()
+await spoken.audio(pcmOf(3200, 'FAIL'))
+assert.deepEqual(await spoken.next(), ['error', { message: 'Speech service: model overloaded' }])
+assert.equal(await spoken.next(), null)
+// the page goes away in the middle: the socket to the service closes with it
+spoken = await dictate()
+await spoken.audio(pcmOf(3200))
+await eventually(() => tinfoil.sockets === 1, 'the live socket to stand')
+spoken.abort()
+await eventually(() => tinfoil.sockets === 0, 'the live socket to close when the page leaves')
+assert.equal((await spoken.audio(pcmOf(3200))).status, 404)
+// only a few at once
+const many = [await dictate(), await dictate(), await dictate(), await dictate()]
+const fifth = await fetch(`${base}/speech/live`, { method: 'POST', headers: liveHead })
+assert.deepEqual([fifth.status, (await fifth.json()).error], [429, 'Too many dictations at once; stop one first'])
+for (const one of many) one.abort()
+await eventually(() => tinfoil.sockets === 0, 'all live sockets to close')
+fakeSpeech.closeAllConnections()
+fakeSpeech.close()
+}
 
 // export: the state without what waits for agents, and without any secret, even one typed into the chat
 assert.equal((await post4('/message', { text: `der Link war ?t=${token4} und der Schlüssel tinfoil-geheim`, agent: 'speiche' })).status, 200)
@@ -1280,5 +1699,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation')
 process.exit(0)

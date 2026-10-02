@@ -98,15 +98,40 @@ export function assetLink(asset) {
   return node
 }
 
+// Asset cards that stand inside text remember the address they were made from, so that they can be
+// drawn again when the board's word on the asset changes (withdrawn, renamed, known at last).
+const linkedFrom = new WeakMap()   // card node -> { url, sig }
+const assetSig = a => [a.gone, a.known, a.type, a.title, a.size].join('|')
+
 function linkNode(url) {
   const info = linkInfo(url)
-  if (info.asset) return assetLink(info.asset)
+  if (info.asset) {
+    const node = assetLink(info.asset)
+    node.dataset.assetLink = info.asset.id
+    linkedFrom.set(node, { url, sig: assetSig(info.asset) })
+    return node
+  }
   const a = el('a', null, info.text)
   a.href = url
   a.title = url
   a.target = '_blank'
   a.rel = 'noopener noreferrer'
   return a
+}
+
+/** Draw every asset card inside text again whose asset is no longer what the card says (rich() draws a
+ *  text once; an asset can be withdrawn later). Cheap when nothing changed. Returns how many were redrawn. */
+export function refreshAssetLinks(root = document) {
+  let redrawn = 0
+  for (const node of root.querySelectorAll('[data-asset-link]')) {
+    const was = linkedFrom.get(node)
+    if (!was) continue
+    const info = linkInfo(was.url)
+    if (!info.asset || assetSig(info.asset) === was.sig) continue
+    node.replaceWith(linkNode(was.url))
+    redrawn++
+  }
+  return redrawn
 }
 
 function inline(parent, text) {
@@ -367,6 +392,14 @@ export function pairDoodle(members) {
     hit.setAttribute('width', '32')
     hit.setAttribute('height', '32')
     g.append(hit, ...own.childNodes)
+    // A session that matters most wears its crown here too (see crown()).
+    if (m.vip) {
+      const top = document.createElementNS(NS, 'path')
+      top.setAttribute('class', 'pair-crown')
+      top.setAttribute('d', CROWN)
+      top.setAttribute('transform', `rotate(${-turn} 16 16) translate(-9 -9) rotate(-17 13 9.5) scale(.86)`)
+      g.append(top)
+    }
     svg.append(g)
   })
   // The loop: one and a bit turns round both, starting and ending apart.
@@ -378,6 +411,46 @@ export function pairDoodle(members) {
     return [23 + Math.cos(a) * (20.5 - drift + (r() - .5) * 1.4), 17 + Math.sin(a) * (14.5 - drift + (r() - .5) * 1.4)]
   })))
   svg.append(loop)
+  return svg
+}
+
+/** The loop drawn by hand round a whole group of sessions, marks and names together: squarish, one and
+ *  a bit turns, it does not close. Stretched over whatever it is put into (CSS: .group-loop).
+ *  seed: the members' ids, so a group always gets the same loop. */
+export function groupLoop(seed) {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded(`group loop:${seed}`)
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 100 100')
+  svg.setAttribute('preserveAspectRatio', 'none')
+  svg.setAttribute('class', 'group-loop')
+  svg.setAttribute('aria-hidden', 'true')
+  const steps = 30, bend = v => Math.sign(v) * Math.abs(v) ** .42, start = 2.7 + r() * .5
+  const path = document.createElementNS(NS, 'path')
+  path.setAttribute('class', 'pair-loop')
+  path.setAttribute('d', penPath(Array.from({ length: steps }, (_, i) => {
+    const a = start + (i / (steps - 1)) * Math.PI * 2 * 1.07, rad = 49 - (i / steps) * 3 + (r() - .5) * 1.6
+    return [50 + bend(Math.cos(a)) * rad, 50 + bend(Math.sin(a)) * rad]
+  })))
+  svg.append(path)
+  return svg
+}
+
+// ---- the crown: a session that matters most (VIP) ---------------------------------
+
+// Scribbled in one go, three points, the base not quite closed. It sits crooked on the corner of the
+// session's mark (CSS: .crown-mark); nothing stands next to the name.
+const CROWN = 'M3.6 16 L2.6 5.4 L8.7 10.6 L13 2.6 L17.5 10.4 L23.6 5 L22.3 16.2 L4.4 15.7'
+/** The mark of a starred session. Returns an SVG, 26 by 19, placed and coloured by CSS. */
+export function crown() {
+  const NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 26 19')
+  svg.setAttribute('class', 'crown-mark')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS(NS, 'path')
+  path.setAttribute('d', CROWN)
+  svg.append(path)
   return svg
 }
 
@@ -410,6 +483,14 @@ const SKETCH = {
     [[8.9, 20.9], [12.2, 20.6], [15.5, 21]],
   ],
   later: [[[12, 3.8], [12.3, 10], [11.9, 16.4]], [[6.6, 11.6], [12.1, 17.2], [17.4, 11.3]], [[4.6, 20.8], [12, 20.3], [19.6, 20.6]]],
+  // The Focus window's composer: send is an arrow up with a kick in its shaft; explain is a question mark
+  // with three short rays, an "aha" about to happen.
+  send: [[[12.4, 20.4], [11.6, 15.6], [12.5, 10.4], [12, 4.6]], [[6.2, 10.4], [12, 4.2], [17.8, 10]]],
+  explain: [
+    [[7.6, 9.6], [7.8, 6.4], [10.4, 4.2], [13.6, 4.4], [15.6, 6.8], [15, 9.6], [12.6, 11.6], [11.6, 13.4], [11.7, 15.6]],
+    [[11.6, 19.2], [11.9, 19.7]],
+    [[18.2, 3.6], [19.6, 2.2]], [[19.4, 7.4], [21.4, 7.2]], [[18.6, 11], [20.2, 12.2]],
+  ],
   back: [[[12.1, 20.2], [11.8, 14], [12.2, 7.6]], [[6.6, 12.6], [12, 6.8], [17.5, 12.3]], [[4.6, 3.6], [12, 3.9], [19.5, 3.4]]],
   // a box with its lid on and a grip: put away
   archive: [
@@ -428,6 +509,30 @@ const SKETCH = {
     [[21.4, 5.2], [16.6, 9.6], [11.4, 13.6], [8.6, 16.2], [5.6, 16], [3.8, 18.4], [5, 21], [7.8, 21.2], [9.2, 18.8], [8.2, 16.6]],
     [[21.8, 19.6], [16.4, 14.8], [11.6, 10.6], [8.8, 8], [5.8, 8.4], [3.6, 6.2], [4.6, 3.4], [7.6, 3], [9.2, 5.4], [8.4, 7.8]],
   ],
+  // scissors again, for the web: the blades are two straight cuts, the grips two loops of their own
+  snip: [
+    [[21.4, 5.2], [9.6, 15]],
+    [[21.6, 19.2], [9.6, 9]],
+    [[9, 15.6], [6, 15.4], [3.8, 17.8], [4.8, 20.8], [7.8, 21.2], [9.6, 18.8], [8.6, 16]],
+    [[9, 8.4], [6, 8.6], [3.8, 6.2], [4.8, 3.2], [7.8, 2.8], [9.6, 5.2], [8.6, 8]],
+  ],
+  // a pile that unfolds: one stroke pointing down
+  unfold: [[[6.2, 9.2], [12, 15.4], [17.8, 8.8]]],
+  // onward: an arrow to the right
+  go: [[[4.4, 12.2], [11, 11.7], [19.2, 12.1]], [[14.2, 7], [19.6, 12], [14.4, 17.2]]],
+  // the theme: a moon for the dark one, a sun for the light one
+  moon: [[[15.6, 3.8], [9, 5.6], [5.4, 11.6], [7.2, 18], [13.4, 20.6], [19.6, 17.6], [14.4, 15.6], [11.6, 10.6], [13, 5.8], [15.9, 4.2]]],
+  sun: [
+    [[12, 7.6], [15.6, 9], [16.4, 12.4], [14.6, 15.8], [11.4, 16.4], [8.2, 14.6], [7.6, 11.2], [9.6, 8.2], [12.4, 7.5]],
+    [[12, 2.4], [12.1, 4.6]], [[12, 19.4], [11.9, 21.6]], [[2.4, 12], [4.6, 12.1]], [[19.4, 12], [21.6, 11.9]],
+    [[5.2, 5.4], [6.6, 6.8]], [[17.4, 17.4], [18.8, 18.8]], [[5.4, 18.8], [6.8, 17.4]], [[17.4, 6.6], [18.8, 5.2]],
+  ],
+  // Focus: the four corners of a frame
+  frame: [[[4, 9], [4.2, 4.2], [9, 4]], [[15, 4], [19.8, 4.2], [20, 9]], [[20, 15], [19.8, 19.8], [15, 20]], [[9, 20], [4.2, 19.8], [4, 15]]],
+  // help: a plain question mark
+  question: [[[7.8, 9.4], [8, 6.2], [10.6, 4], [13.8, 4.2], [15.8, 6.8], [15, 9.6], [12.6, 11.6], [11.8, 13.4], [11.9, 15.6]], [[11.8, 19.2], [12.1, 19.7]]],
+  // the keys: one key cap with its mark
+  keycap: [[[4.6, 6], [19.2, 5.6], [19.6, 18.4], [4.4, 18.8], [4.8, 5.6]], [[9, 14.4], [12, 9], [15, 14.6]]],
   // three options, one of them ticked
   choose: [
     [[3.6, 6.6], [5.2, 8.6], [8.4, 4.4]],

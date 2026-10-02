@@ -1086,6 +1086,10 @@ export class Store {
           for (const el of gone) {
             this.q('DELETE FROM pad_links WHERE element = ?').run(el.id)
             this.q('DELETE FROM pad_elements WHERE id = ?').run(el.id)
+            // Its file was kept for an undo; it goes with the tombstone, unless another element shows it too.
+            if (el.blob_id && !this.q('SELECT 1 FROM pad_elements WHERE blob_id = ?').get(el.blob_id)) {
+              this.q("UPDATE blobs SET doomed_at = ? WHERE id = ? AND doomed_at IS NULL AND retention = 'owner'").run(at, el.blob_id)
+            }
           }
           out.elements = gone.length
         }
@@ -1138,6 +1142,8 @@ export class Store {
   // stroke, text, caption of a voice note) is `data`, stored as the payload.
   // rev: the client's revision; it must be newer than the stored one, or the write is refused as stale.
   // Left out, the store counts up. ifRev: change only if the stored revision is exactly this one.
+  // A deleted element comes back when it is put again with a newer revision and its data: that is what
+  // undoing a delete is. "updated" is always the hub's time, whatever the client's clock says.
   putElement(el) {
     const pad = String(el.pad ?? 'global')
     const sender = el.sender ?? el.author
@@ -1147,7 +1153,9 @@ export class Store {
       const id = String(el.id ?? newId(8))
       const known = this.q('SELECT * FROM pad_elements WHERE id = ?').get(id)
       const at = el.at ?? this.now()
-      if (known?.deleted_at != null) fail('not_found', `no element ${id}`)
+      const back = known?.deleted_at != null
+      if (back && !(el.rev != null && el.rev > known.rev)) fail('not_found', `no element ${id}`)
+      if (back && el.payload == null && el.data === undefined) fail('invalid', `element ${id} was deleted; bringing it back needs its data`)
       if (known && el.ifRev != null && el.ifRev !== known.rev) fail('conflict', `element ${id} is at revision ${known.rev}, not ${el.ifRev}`)
       if (known && el.rev != null && el.rev <= known.rev) fail('conflict', `element ${id} is at revision ${known.rev}; revision ${el.rev} is stale`)
       if (!known) {
@@ -1166,7 +1174,7 @@ export class Store {
           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(id, pad, el.type, el.group ?? null, num(el.x), num(el.y), num(el.w), num(el.h), num(el.rotation), z,
           String(el.author), el.created ?? at, at, rev, el.blob ?? null, content.payload, content.enc, ev.seq)
       } else {
-        this.q('UPDATE pad_elements SET grp = ?, x = ?, y = ?, w = ?, h = ?, rotation = ?, z = ?, updated = ?, rev = ?, blob_id = ?, payload = ?, enc = ?, seq = ? WHERE id = ?')
+        this.q('UPDATE pad_elements SET deleted_at = NULL, grp = ?, x = ?, y = ?, w = ?, h = ?, rotation = ?, z = ?, updated = ?, rev = ?, blob_id = ?, payload = ?, enc = ?, seq = ? WHERE id = ?')
           .run(el.group === undefined ? known.grp : el.group, num(el.x, known.x), num(el.y, known.y), num(el.w, known.w), num(el.h, known.h), num(el.rotation, known.rotation), el.z ?? known.z,
             at, rev, el.blob === undefined ? known.blob_id : el.blob, content.payload, content.enc, ev.seq, id)
       }
@@ -1174,7 +1182,11 @@ export class Store {
     })
   }
 
-  element(id) { return elementOf(this.q('SELECT * FROM pad_elements WHERE id = ? AND deleted_at IS NULL').get(String(id))) ?? null }
+  // One element; with deleted: true also its tombstone, if that is all that is left of it.
+  element(id, { deleted = false } = {}) {
+    const row = this.q('SELECT * FROM pad_elements WHERE id = ?').get(String(id))
+    return row && (deleted || row.deleted_at == null) ? elementOf(row) : null
+  }
 
   // Elements of a pad in stacking order, bottom first. box [x0, y0, x1, y1]: only what touches that rectangle.
   // after [z, id]: the page after that element. sinceSeq instead: what changed after a cursor, tombstones of
@@ -1191,26 +1203,19 @@ export class Store {
     return this.q(`SELECT * FROM pad_elements WHERE ${where.join(' AND ')} ORDER BY z, id LIMIT ?`).all(...args, take).map(elementOf)
   }
 
-  // Take an element off the pad. Its row stays as a tombstone until the purge, so other devices learn of it;
-  // its file, if it has one, is returned for deletion.
-  deleteElement(id, { by = 'human', clientId, at } = {}) {
+  // Take an element off the pad. Its row stays as a tombstone until the purge, so other devices learn of it
+  // and so the delete can be undone (putElement with a newer revision); its file stays as long as the tombstone.
+  // rev: the revision the delete counts as; it must be newer than the stored one. Left out, the next one.
+  deleteElement(id, { by = 'human', clientId, at, rev } = {}) {
     return this.tx(() => {
       const found = this.dup(by, clientId)
-      if (found) return this.duplicate(found, { file: null })
+      if (found) return this.duplicate(found)
       const row = this.q('SELECT * FROM pad_elements WHERE id = ? AND deleted_at IS NULL').get(String(id))
       if (!row) fail('not_found', `no element ${id}`)
+      if (rev != null && rev <= row.rev) fail('conflict', `element ${id} is at revision ${row.rev}; revision ${rev} is stale`)
       const ev = this.write({ sender: by, clientId, type: 'pad.deleted', ref: row.id, body: { pad: row.pad }, at })
-      this.q('UPDATE pad_elements SET deleted_at = ?, updated = ?, rev = rev + 1, payload = NULL, seq = ? WHERE id = ?').run(ev.created, ev.created, ev.seq, row.id)
-      let file = null
-      if (row.blob_id) {
-        const blob = this.q('SELECT * FROM blobs WHERE id = ?').get(row.blob_id)
-        const shared = this.q('SELECT 1 FROM pad_elements WHERE blob_id = ? AND deleted_at IS NULL').get(row.blob_id)
-        if (blob && !shared && blob.retention === 'owner') {
-          this.q('UPDATE blobs SET doomed_at = ? WHERE id = ?').run(ev.created, blob.id)
-          file = fileOf(blob)
-        }
-      }
-      return { ...ev, file }
+      this.q('UPDATE pad_elements SET deleted_at = ?, updated = ?, rev = ?, payload = NULL, seq = ? WHERE id = ?').run(ev.created, ev.created, rev ?? row.rev + 1, ev.seq, row.id)
+      return { ...ev, element: elementOf(this.q('SELECT * FROM pad_elements WHERE id = ?').get(row.id)) }
     })
   }
 
@@ -1230,8 +1235,10 @@ export class Store {
       })
       for (const e of elements) {
         this.q('INSERT INTO pad_links (element, session, seq, rev, sent_at, sent_by) VALUES (?, ?, ?, ?, ?, ?)').run(e.id, target, ev.seq, e.rev, ev.created, String(by))
+        // Not a new revision, but news about the element: a device that catches up by seq learns where it went.
+        this.q('UPDATE pad_elements SET seq = ? WHERE id = ?').run(ev.seq, e.id)
       }
-      const out = { ...ev, elements }
+      const out = { ...ev, elements: elements.map(e => ({ ...e, seq: ev.seq })) }
       if (deliver) this.deliverWith(deliver, target, out)
       return out
     })

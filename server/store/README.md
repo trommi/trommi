@@ -105,9 +105,12 @@ store.putElement({ id, type: 'stroke', x, y, w, h, z, group, author: 'phone', da
 store.putElement({ id, x: 520, ifRev: 3, author: 'phone' })              // change one element; a stale revision is refused
 store.elements({ pad: 'global', box: [x0, y0, x1, y1], after: [z, id], limit })
 store.elements({ sinceSeq: cursor })                                    // what changed, tombstones included
-store.deleteElement(id, { by: 'phone' })                                // → { file: the image to delete, or null }
+store.deleteElement(id, { by: 'phone', rev })                           // a tombstone; its file stays until the purge takes the tombstone
+store.putElement({ id, rev: newer, type, data, … })                     // …so this brings it back: the undo of a delete
+store.element(id, { deleted: true })                                    // the element, or its tombstone
 store.sendElements({ ids: [a, b], session: 'api', by: 'phone', body: { note: 'this button' }, deliver: out => ({ method, params }) })
 store.elementLinks({ element: a })                                      // where it was sent, in which revision
+// sending moves the elements' seq (not their rev), so elements({ sinceSeq }) reports them to devices catching up
 ```
 
 **Also:** `saveCanvas` / `canvas`, `appendMember` / `memberLog` / `devices`, `putWrappedKey` / `wrappedKeys`, `audit` / `adminLog`, `stats()`, `exportTo(file, { scrub })` (JSON lines; waiting notifications are counted, not exported), `backup(file)`, `checkpoint()`, `tx(fn)` to make several calls one commit.

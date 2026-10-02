@@ -50,6 +50,7 @@ export const LAYOUT = [
     { id: 'list.ask', keys: ['a'], does: 'ask back instead of answering' },
     { id: 'list.explain', keys: ['e'], does: 'explain: show all of it, then ask the session to say more' },
     { id: 'list.later', keys: ['l'], does: 'later, or fetch it back' },
+    { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'on an answered row: take that answer back' },
     { id: 'list.leave', keys: ['Escape'], does: 'close the choices, then drop the mark' },
   ] },
   { scope: 'focus', title: 'Focus: one question per page', modal: true, keys: [
@@ -60,7 +61,10 @@ export const LAYOUT = [
     { id: 'focus.pick', keys: ['1…9'], does: 'pick that option' },
     { id: 'focus.send', keys: ['Enter'], does: 'send, where several answers are allowed' },
     { id: 'focus.choices', keys: ['c'], does: 'go to the options' },
-    { id: 'focus.ask', keys: ['a'], does: 'ask back instead of answering' },
+    { id: 'focus.option.next', keys: ['ArrowDown'], does: 'next option, once the keyboard is on one', repeat: true, control: true },
+    { id: 'focus.option.prev', keys: ['ArrowUp'], does: 'previous option', repeat: true, control: true, quiet: true },
+    { id: 'focus.ask', keys: ['a'], does: 'write to the session about the question' },
+    { id: 'focus.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
     { id: 'focus.explain', keys: ['e'], does: 'explain: ask the session to say more' },
     { id: 'focus.later', keys: ['l'], does: 'later: on to the next' },
     { id: 'focus.back', keys: ['u', 'Backspace'], does: 'back: take the last answer back' },
@@ -68,6 +72,7 @@ export const LAYOUT = [
   ] },
   { scope: 'conversation', title: 'In a session', keys: [
     { id: 'chat.write', keys: ['r'], does: 'write to the session' },
+    { id: 'chat.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
     { id: 'chat.questions', keys: ['q'], does: 'questions only, and back' },
     { id: 'chat.files', keys: ['f'], does: 'files, and back' },
     { id: 'chat.pane', keys: ['o'], does: 'the other session of a pair' },
@@ -100,6 +105,7 @@ const providers = new Map()   // scope -> Set of { active(), actions, has?(id) }
 
 /** Say what a view can do. active(): is it on screen and listening right now.
  *  actions: { id: fn(number | undefined, event) }; a function that returns false did not take the key.
+ *    One that returns a function wants to know when the key is let go: it is called with the milliseconds held.
  *  has(id): optional; false hides an entry from the sheet (a pair key where there is no pair). */
 export function provide(scope, provider) {
   if (!providers.has(scope)) providers.set(scope, new Set())
@@ -107,7 +113,7 @@ export function provide(scope, provider) {
   return () => providers.get(scope).delete(provider)
 }
 
-const NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', ' ': 'Space', Delete: 'Del' }
+const NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', ' ': 'Space', Delete: 'Del', Backspace: '⌫' }
 const capOf = part => part.split('+').map(p => (p === 'Shift' ? '⇧' : NAMES[p] ?? (p.length === 1 ? p.toUpperCase() : p)))
 const entryOf = id => { for (const group of LAYOUT) for (const entry of group.keys) if (entry.id === id) return entry }
 
@@ -179,6 +185,15 @@ function setPending(prefix) {
 
 // ---- the listener ----
 
+let held = null   // { key, at, up }: a key that is down, for an action that wants to know how long
+function letGo(e) {
+  if (!held || (e && e.key !== held.key)) return
+  const { at, up } = held
+  held = null
+  up(e ? performance.now() - at : Infinity)
+}
+document.addEventListener('keyup', letGo, true)
+
 function run(name, e, { typing, control }) {
   const scopes = scopesNow()
   const under = isModal(scopes[0])   // a modal scope is up: below it only what is marked "always"
@@ -198,7 +213,9 @@ function run(name, e, { typing, control }) {
           if (!act) continue
           // A held key repeats a move; anything else waits for the next press.
           if (e.repeat && !entry.repeat) return true
-          if (act(arg === true ? undefined : arg, e) !== false) return true
+          const did = act(arg === true ? undefined : arg, e)
+          if (typeof did === 'function') held = { key: e.key, at: performance.now(), up: did }
+          if (did !== false) return true
         }
       }
     }
@@ -209,6 +226,8 @@ function run(name, e, { typing, control }) {
 document.addEventListener('keydown', e => {
   if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.keyCode === 229) return
   if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'Tab', 'Dead'].includes(e.key)) return
+  // A key that is held for an action repeats into nothing, not into the field the action may have focused.
+  if (held && e.key === held.key && e.repeat) { e.preventDefault(); e.stopPropagation(); return }
   const t = e.target instanceof Element ? e.target : null
   const taken = () => { e.preventDefault(); e.stopPropagation() }
   if (sheet?.open) {
@@ -216,7 +235,8 @@ document.addEventListener('keydown', e => {
     return
   }
   // A dialog owns the keyboard while it is open; so does a player with its own keys.
-  if (document.querySelector('dialog[open], [data-owns-keys]:not([hidden])') || t?.closest('video, audio')) return
+  // (The pad is a page of its own in a frame, with its own keys; while it lies over the board, the board's rest.)
+  if (document.querySelector('dialog[open], [data-owns-keys]:not([hidden])') || document.body.hasAttribute('data-pad') || t?.closest('video, audio')) return
   const typing = typingIn(t)
   const name = nameOf(e)
   if (typing) {
@@ -244,7 +264,7 @@ document.addEventListener('keydown', e => {
   }
 }, true)
 // A sequence does not survive the page losing the keyboard.
-window.addEventListener('blur', () => setPending(null))
+window.addEventListener('blur', () => { setPending(null); letGo() })
 
 // ---- the sheet behind "?": every key that works where you are ----
 
@@ -298,8 +318,8 @@ export function openSheet() {
       const row = el('div')
       const keys = el('dt')
       // "← →" for a pair of moves reads better than two rows; the quiet twin lends its key.
-      const specs = entry.id === 'list.option.next' ? ['ArrowLeft', 'ArrowRight'] : entry.keys
-      specs.forEach((spec, i) => { if (i && entry.id !== 'list.option.next') keys.append(el('i', null, 'or')); keys.append(capsNode(spec)) })
+      const pair = entry.id === 'list.option.next' ? ['ArrowLeft', 'ArrowRight'] : entry.id === 'focus.option.next' ? ['ArrowUp', 'ArrowDown'] : null
+      ;(pair ?? entry.keys).forEach((spec, i) => { if (i && !pair) keys.append(el('i', null, 'or')); keys.append(capsNode(spec)) })
       row.append(keys, el('dd', null, entry.verb ?? entry.does))
       list.append(row)
     }

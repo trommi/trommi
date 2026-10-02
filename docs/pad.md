@@ -1,8 +1,8 @@
 # The global pad
 
-2 October 2026. A prototype exists in `client/web/pad/`; the server side described here does not yet. This document answers three things: whether to adopt a whiteboard library, what an element is, and what the server has to offer so that single elements can be sent to an agent.
+2 October 2026. The pad is built: the page in `client/web/pad/`, its routes in `server/pad.mjs`, its elements in SQLite (`data/pad.db`, through `server/store/store.mjs`), and a control in the board's bar that opens it from anywhere (`client/web/js/padlink.js`). This document answers three things: whether to adopt a whiteboard library, what an element is, and what the server has to offer so that single elements can be sent to an agent.
 
-**In short.** Keep building our own canvas. tldraw may not run in production without a licence key (sold through sales, or granted at discretion for hobby use with a watermark) and reports unlicensed use to its maker; Excalidraw is MIT but is a React application of 1.1 MB plus React with about 28 imports to map, which a client without a build step and without third-party code cannot take in honestly. Neither stores what we need (who sent which element to which session). The pad stores one record per element, the same shape in the browser's IndexedDB today and in the server's `pad_elements` table tomorrow.
+**In short.** Keep building our own canvas. tldraw may not run in production without a licence key (sold through sales, or granted at discretion for hobby use with a watermark) and reports unlicensed use to its maker; Excalidraw is MIT but is a React application of 1.1 MB plus React with about 28 imports to map, which a client without a build step and without third-party code cannot take in honestly. Neither stores what we need (who sent which element to which session). The pad stores one record per element, the same shape in the browser's IndexedDB (the cache a device works on) and in the server's `pad_elements` table (what counts).
 
 There is one global pad (id `global`), and every session keeps its own canvas (`js/scribble.js`), as decided.
 
@@ -106,11 +106,12 @@ Every element is one record with its own id. Nothing is nested, nothing is store
 | `z` | Integer stacking order; ties break by `id`. "To front" writes only the moved elements (highest other `z` plus one), never the whole pad. |
 | `group` | A group id or null. Selecting one member selects all. A group is not an element: nothing else to sync or to orphan. |
 | `author` | Who made it: `human` today, a device id once devices have keys, a session id for elements an agent placed. |
-| `created`, `updated` | Milliseconds. `updated` is the client's time until a server assigns its own. |
+| `created`, `updated` | Milliseconds. `updated` is set by the hub's clock when it takes a write, and comes back in the answer; until then the record carries the device's time. |
 | `rev` | Counts up with every write of this element, undo and delete included. The basis for conflict handling. |
 | `blob` | Id of the element's bytes in the blob store (the picture, the audio of a voice note), or null. Outside `data`, so a server can keep and delete the file without reading `data`. |
 | `data` | What the element is, by type (below). The only part that needs encrypting. |
-| `sent` | Where it went: session, time, the message it travelled in, and the revision that was sent. Lets the pad mark sent elements and notice "changed since". |
+| `sent` | Where it went: session, time, the message it travelled in, and the revision that was sent. Lets the pad mark sent elements and notice "changed since". Written by the server only; whatever a client sends in this field is ignored. |
+| `seq` | The hub's running number of the last news about this element (a change, a delete, a send). What a device remembers to catch up. |
 
 `data` by type:
 
@@ -118,7 +119,7 @@ Every element is one record with its own id. Nothing is nested, nothing is store
 | --- | --- |
 | `stroke` | `tool` (`pen`, `hl`), `color`, `size`, `box` `[w0, h0]`, `pts` `[x0, y0, …]`, optional `pr` (pressure per point). Points are relative to the box as drawn; moving changes only `x, y`, scaling only `w, h`. |
 | `text` | `text`, `size`, `color`, `wrap` (width at which lines break; null is the default). |
-| `voice` | A text that was spoken: as `text`, plus `ms` (length of the recording) and `stub` (true if it is sample text). The audio, if kept, is `blob`. |
+| `voice` | A text that was spoken: as `text`, plus `ms` (length of the recording) and `stub` (true if it is sample text). Only the words are kept; the recording is discarded once it is transcribed (decided 2 October). |
 | `image` | `mime`, `nw`, `nh`, `name`. The bytes are `blob`. |
 
 The colour `ink` follows the theme (dark on light paper, light on dark); every other colour is stored as hex. What an agent receives is always painted on white.
@@ -141,7 +142,7 @@ POST /pad/send
   "bbox": { "x": -420, "y": -269.87, "w": 860, "h": 439.87 },
   "png": "data:image/png;base64,…"
 }
-→ { "ok": true, "message_id": 412 }
+→ { "ok": true, "message_id": "5e1f09ab", "seq": 57, "elements": [the records, with "sent" filled in] }
 ```
 
 - `png`: the bounding box of the selection plus a margin, only the selected elements, on white, without grid or selection frame, at most 2,000 px on the long side. Rendered by the client, because only the client can paint (and, later, decrypt).
@@ -151,12 +152,12 @@ POST /pad/send
 The agent receives, in the form the channel already uses for scribbles:
 
 ```
-<channel source="board" kind="pad" pad="global" message_id="412" elements="0muq…,0muq…" image_path="/abs/data/pad/sent-412.png">Ship the pad prototype
+<channel source="board" kind="pad" pad="global" message_id="5e1f09ab" elements="0muq…,0muq…" image_path="/abs/data/files/pad-9f2c41d07a3e.png">Ship the pad prototype
 
 one element = one record</channel>
 ```
 
-The client marks an element as sent only after the server confirms with a `message_id`. In the prototype `/pad/send` does not exist: the dialog shows the picture, text and ids, and on "Send" reports "Not sent" with the reason.
+`message_id` is the id of the message that shows the selection in the session's conversation (words and picture). The picture is stored with the attachments (`data/files/pad-<id>.png`), so it is served, cleaned up and forgotten like any other attachment. The server sends what it has: an element that has not reached it yet cannot be sent (409), so the page waits until its changes are saved before it posts. An element is marked as sent only by the server's answer; with no board behind the page the dialog reports "Not sent" with the reason. With no words in the selection the agent is told to look at `image_path`.
 
 **What the agent can do in return** (tools for the channel, not built):
 
@@ -186,20 +187,23 @@ The API, all under the board's login:
 
 The pad should not ride on `/events`, which sends the whole board state on every change.
 
-In the client this is one file: `client/web/pad/db.js` offers `list`, `put`, `putBlob`, `getBlob` and `meta`. A server transport implements the same calls (plus a subscription) and `pad.js` does not change.
+`POST /pad/elements` answers `{ ok, seq, epoch, results }`. `epoch` names the store: a page that meets another one than last time (its first visit, a board that started over) fetches everything and sends up what only it has. An element that names a `blob` the server does not have is answered with `error: "blob"`; the page uploads the bytes again and retries. With `client_id` in a write, the change carries it on the stream, so a page can tell its own echo.
 
-### Compared with `server/store/store.mjs`
+In the client: `db.js` is the device's cache (`list`, `put`, `putBlob`, `getBlob`, `meta`), `sync.js` is the link to the server (`push`, `take`, `putBlob`, `getBlob`, `settled`, `pause`, `resume`). A change is written to the cache at once and sent a moment later; what could not be sent waits in a list of ids that survives a reload. While the pad is out of sight inside the board its stream is closed, and it catches up when it is shown.
 
-`docs/storage.md` ("The pad: one row per element") and the store's code (`pad_elements`, `pad_links`, `putElement`, `elements`, `deleteElement`, `sendElements`) were written in parallel and use the same record. The client was adjusted to it in two places (`blob` at the top level instead of inside `data`; sending does not raise `rev`). What still differs:
+### Storage: `server/store/store.mjs`
 
-| Topic | Store | Pad client | Proposal |
-| --- | --- | --- | --- |
-| Undo of a delete | `putElement` on a deleted id fails with `not_found`, and deleting dooms the element's file at once | undo writes the same id again with a higher `rev`, and needs the picture back | allow a put with a higher `rev` to revive a tombstone, and keep the file until the tombstone is purged |
-| `sent` | rows in `pad_links` (element, session, event `seq`, `rev`, time, by whom); `elementOf` does not return them | an array on the record | the transport folds links into `sent` when listing; `message_id` is the event's `seq`. The client never writes `sent` itself |
-| `updated` | the hub's time | the device's time | take the hub's value from the answer |
-| `z` | integer | integer; "to back" goes below zero | nothing to do |
-| Types | `stroke`, `image`, `text`, `voice` (CHECK constraint) | the same | a `frame` type later needs a migration |
-| HTTP routes | none yet; only the store methods | expects the table above | the routes above map one to one onto the store methods |
+The pad uses the SQLite store, in a database of its own (`data/pad.db`; bytes in `data/pad/blobs/`), through `server/pad.mjs`. The board's state stays in `state.json` until it moves over. `node:sqlite` needs Node 22.13 or newer: the store is loaded when the pad is first used, so a hub on an older Node starts and serves everything else, logs one line, and answers the pad's routes with 501 and the reason.
+
+The three places where store and page differed, and how they were settled (in the store, with tests):
+
+| Topic | Now |
+| --- | --- |
+| Undo of a delete | `putElement` with a newer `rev` and its data brings a deleted element back. `deleteElement` no longer gives up the element's file; the file goes when the purge takes the tombstone (after the retention, 30 days), unless another element shows it. `deleteElement` takes the `rev` the delete counts as. |
+| `sent` | Stays in `pad_links`. `sendElements` also moves the elements' `seq` (not their `rev`), so devices that catch up learn where an element went. `pad.mjs` folds the links into `sent` on every record it hands out; `message_id` is kept in the `pad.sent` event. |
+| `updated` | The hub's time, returned in the answer to a write; the page takes it over. |
+
+Not settled: a `frame` type needs a migration (CHECK constraint); a device that was away longer than the retention does not learn of deletions that were purged in the meantime.
 
 ## 5. Onto the encrypted event log
 
@@ -213,9 +217,11 @@ The model was chosen so that step 4 of the crypto concept (hash chain and encryp
 - **Deleting for real.** After the purge period the ciphertext of old revisions goes; header and hash stay, as for messages.
 - **Speech.** Recorded audio is plaintext, so under the concept the browser sends it straight to the speech service, not through the hub. The pad calls one function (`transcribe` in `board.js`), which is where that changes.
 
-## 6. The prototype
+## 6. What is built
 
-`client/web/pad/`: `index.html`, `pad.css`, `pad.js` (input, view, selection, chrome), `elements.js` (record, geometry, painting, hit testing, the PNG), `db.js` (IndexedDB, one record per element), `board.js` (sessions, speech, sending). Hand-written ES modules, no dependency, no font or script from another host. Open `/pad/` on a board.
+`client/web/pad/`: `index.html`, `pad.css`, `pad.js` (input, view, selection, chrome), `elements.js` (record, geometry, painting, hit testing, the PNG), `db.js` (IndexedDB, one record per element), `sync.js` (the server), `board.js` (sessions, speech, sending), `name.js` (the one visible word for the pad, while its name is under decision). Hand-written ES modules, no dependency, no font or script from another host.
+
+**From anywhere.** `client/web/js/padlink.js` puts one control in the board's bar (and exports `openPad`, `closePad`, `togglePad`, `isPadOpen`; the key P calls `togglePad`). It lays the pad over whatever is shown: the inbox, a session, a pair, the agents page, the Focus window. The pad is the page `/pad/?embed=1` in a frame of the same origin that is mounted once and then only shown and hidden, so opening it again is instant. A frame, because the pad is a page of its own (its keys, ids, dialogs and paste handling must not meet the board's). The address is `/pad`: a reload stays there; Esc, the control, the pad's close button and the browser's Back go back to exactly where the human was (the history entry the pad was opened from). Opened from a session, "Send to" names that session; from a pair, the menu lists its two sessions first. The theme is shared both ways. `/pad/` on its own still works as a page.
 
 How input is read:
 
@@ -230,13 +236,13 @@ How input is read:
 
 Speech uses `transcribe()` from `/js/store.js` when the board has a speech key. Otherwise the same flow runs with nothing recorded and a sample sentence that says so (`data.stub: true`), and the status line reads "speech is a stub".
 
-`client/web/pad/dev-check.mjs` drives the page in headless Chromium with real pointer, touch, wheel and key events and checks 42 things on a desktop and a phone screen, in light and dark; it passes against a demo board and against a plain file server. On a board with a speech key it starts a real recording with a fake microphone and discards it; the transcription of real speech was not exercised.
+`client/web/pad/dev-check.mjs` drives the page in headless Chromium with real pointer, touch, wheel and key events, on a desktop and a phone screen, in light and dark: 45 checks against a plain file server, 74 against a demo board, where it goes on to the board itself (the pad opened from the inbox, a session, a pair, the agents page and the Focus window, closed with Esc, Back and its button, a reload, a selection sent to a demo agent that answers with the path of the PNG it got, a second browser as another device). On a board with a speech key it starts a real recording with a fake microphone and discards it; the transcription of real speech was not exercised.
 
-Not built: the server side (sync, `/pad/send`, blobs), rotation, frames, text styles beyond size and colour, elements placed by agents, live updates between tabs, a link to the pad from the board's navigation (the board's files belong to others). Known rough edges: a highlighter stroke lying over a note takes the click meant for the note; a voice element dropped near the bottom of a phone screen lands under the toolbar.
+Not built: rotation, frames, text styles beyond size and colour, elements placed by agents and the tools for it (`pad_get`, `pad_list`, `pad_put`). The two rough edges of the first round are gone: a click on a note under a highlighter stroke picks the note (the stroke is picked where nothing lies under it), and a note spoken at the foot of the screen is moved clear of the toolbar.
 
 ## 7. Open questions
 
-1. Keep the audio of a voice note, or only its words? The prototype keeps the audio as a blob when the recording was real.
+1. ~~Keep the audio of a voice note, or only its words?~~ Decided: only the words.
 2. Should the PNG show only the selected elements (today), or everything inside the selection's rectangle, for context?
 3. Positions and sizes of elements in the clear on the server, or inside the encrypted record (section 5)?
 4. Should session canvases move to the same element model (`pad: "session:<id>"`), so that there is one canvas implementation? The conversion from the `{ v: 1, images, strokes }` document is mechanical.

@@ -466,6 +466,8 @@ function createPane(agent, ctx) {
     const node = el('article', `msg msg-${m.from === 'user' ? 'user' : 'agent'}${cont ? ' cont' : ''}`)
     if (m.from === 'user') {
       for (const a of (m.attachments ?? []).filter(a => a.kind === 'scribble')) node.append(scribbleCard(a, () => ctx.onScribble?.(agent)))
+      // What the human sent from the pad: the picture of the selection, as the session got it.
+      node.append(...attachmentNodes((m.attachments ?? []).filter(a => a.pad)))
       if (about) node.append(aboutNode(about, ctx.onCard))
       if (m.text) {
         const bubble = el('div', 'bubble')
