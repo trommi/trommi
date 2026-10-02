@@ -1,6 +1,10 @@
 # Marketing: first pass
 
-Written 2 October 2026. The landing page draft is `client/web/designs/landing.html` (pictures `landing.png`, `landing-phone.png`). The positioning line is asked on the board; until it is answered the page shows the recommended one.
+Written 2 October 2026. The landing page draft is `client/web/designs/landing.html` (pictures `landing.png`, `landing-phone.png`).
+
+**Decided (card Nr. 147, 2 October 2026):** the headline is "Your agents ask. You answer. Next, please." It is the page's default; `?h=desk` and `?h=babysit` still show the two that lost.
+
+**Screenshots must be retaken before anything is shown.** The app has changed since they were made: Desk is in the sidebar again with a caret menu, cards are grouped under a session tab, the opened card unfolds in place with a stage and a buttons column, and the walk is a focused page. The pictures on the landing page show the older layout. The same holds for the recording in section 7.
 
 Two things are open elsewhere and this document works under either outcome of both:
 
@@ -73,7 +77,7 @@ The largest budgets and the worst fit today. Do not aim the launch at them.
 2. One desk for every question your agents ask.
 3. Stop babysitting terminals.
 
-The headline choice is on the board. My recommendation is the first: it is the product's own voice, it is the name of its main button, and the screenshot under it says the same two words. It needs the sub-line to say what the product is, which the page does.
+Decided on card Nr. 147: the first. It is the product's own voice, it is the name of its main button, and the screenshot under it says the same two words. It needs the sub-line to say what the product is, which the page does.
 
 A fourth line, "Agents that knock first", was left off the card. It only becomes strong if the product is renamed Knockfirst, and it pulls the story towards approvals, where Pushary already stands.
 
@@ -141,6 +145,7 @@ For one person. Each step lists what must be true first. Nothing here has been p
 
 - The name is decided (card Nr. 133). If it changes, a trademark look-up for the new name comes first (`docs/naming.md` could not do one).
 - The four ways besides answering are settled, and the opened card's layout stops moving (`TODO.md`, "Noch im Fluss"). A recording of a screen that changes next week is wasted.
+- The landing page's screenshots are retaken from the current app (see the note at the top).
 - English demo data exists in the repository. `dev/demo-state.mjs` and `dev/fake-agent.mjs` are German; the screenshots on the landing page came from a throwaway English hub that is gone.
 
 ### Step 1: the 60-second recording
