@@ -40,6 +40,9 @@
 name: iOS TestFlight
 
 on:
+  # A release tag (v1.2.0) uploads a build; nothing else does, apart from the button.
+  push:
+    tags: ['v*']
   workflow_dispatch:
     inputs:
       sign_archive:
