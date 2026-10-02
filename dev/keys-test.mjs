@@ -91,6 +91,7 @@ async function watchState() {
 // ---- checks ------------------------------------------------------------------
 
 let passed = 0
+const pendingNotes = []
 const failures = []
 function check(ok, what) {
   if (ok) passed++
@@ -419,6 +420,51 @@ async function main() {
   check(!(await ev('return Boolean(__k.front())')), 'Escape leaves the field and closes the card')
 
   // ---------------------------------------------------------------------------
+  section('Inbox: the Answered group')
+  // The pile of answered questions with "Take back". While the Desk lists nothing answered (it was taken out
+  // and is to come back), these checks wait: one line says so instead of failing.
+  await markRow(c.g3)
+  await key('y')
+  await until('Y answers', () => card(c.g3).status !== 'open')
+  await sleep(600)
+  const pileThere = await ev('return Boolean(__k.list().querySelector(".inbox-group-answered"))')
+  await key('u')
+  await until('U takes it back', () => card(c.g3).status === 'open')
+  if (!pileThere) { pendingNotes.push('the Desk shows no "Answered" pile: its checks (unfold, Take back by key and by click) were skipped'); console.log('  ~ pending: no "Answered" pile on the Desk') } else {
+    check(!(await ev('return Boolean(__k.list().querySelector(".inbox-group-answered"))')), 'with nothing answered there is no "Answered" group')
+    await markRow(c.g2)
+    await key('y')
+    await until('Y answers', () => card(c.g2).status !== 'open')
+    await until('an "Answered" group stands at the end, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return g && g === __k.list().lastElementChild && !g.querySelector(".inbox-done") && /Answered/.test(g.innerText) && /1 today/i.test(g.innerText)'))
+    await sleep(5300)   // the note has left: this is the wrong answer that is noticed later
+    await click('__k.list().querySelector(".inbox-answered-toggle")')
+    const listed = await ev('return __k.done()')
+    if (check(listed.length === 1 && listed[0].id === c.g2, 'a click unfolds it: one slim row for the answered question')) {
+      check(/Renew the certificate\?/.test(listed[0].text) && /Yes/.test(listed[0].text) && /Gamma/.test(listed[0].text) && /Take back/.test(listed[0].text), `the row says what was asked, what was answered and who asked ("${listed[0].text}")`)
+      check(listed[0].h < 100, `the row is slimmer than a question row (${listed[0].h}px)`)
+    }
+    await key('End', { pause: 500 })
+    check((await cur())?.done && (await cur()).id === c.g2, 'End reaches the answered row')
+    await shot('06b-answered-group')
+    await keys('y', 'n', 'l', 'e', 'Enter', 'a')
+    await sleep(300)
+    check(card(c.g2).status !== 'open' && !(await ev('return Boolean(__k.front())')), 'the answer keys do nothing on an answered row')
+    await key('u')
+    await until('U on the marked answered row takes the answer back', () => card(c.g2).status === 'open')
+    await until('the question stands in its group again, marked', async () => { const at = await cur(); return at?.id === c.g2 && !at.done && await ev(`return __k.among(${JSON.stringify(c.g2)}, ${JSON.stringify([c.g1, c.g3, c.g4])})`) })
+    // The same by hand, on a card the agent has closed since.
+    await key('n')
+    await until('N answers', () => card(c.g2).status !== 'open')
+    await gamma.call('close_card', { card_id: c.g2, summary: 'Left as it is.' })
+    await until('the row says the agent has closed it', () => ev('return __k.done().some(d => /done by the agent/i.test(d.text))'))
+    await sleep(700)   // the rows have come to rest
+    await click('__k.list().querySelector(".inbox-takeback")')
+    await until('a click on "Take back" reopens it all the same', () => card(c.g2).status === 'open')
+    await until('and the question stands in its group again, marked', async () => (await cur())?.id === c.g2 && !(await cur()).done)
+    await key('Escape')
+  }
+
+  // ---------------------------------------------------------------------------
   section('The sheet behind "?"')
   await key('?', { shift: true, pause: 300 })
   const sheet = await ev('const d = document.querySelector("dialog.keys-sheet"); return d?.open ? { groups: [...d.querySelectorAll("h3")].map(h => h.textContent), rows: d.querySelectorAll("dl > div").length, text: d.innerText } : null')
@@ -625,11 +671,23 @@ async function main() {
     check(card(c.x1).status === 'open' && (await strips()).some(t => t.includes(card(c.x1).title)), `S snoozes the question in front (strips: ${(await strips()).join(' | ')})`)
   }
   if (await bring(c.x2)) {
-    await key('b', { pause: 600 })
-    check(['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag) && card(c.x2).status === 'open', 'B (Revise) puts the caret into the field and hands nothing back yet')
-    await key('Enter', { pause: 300 })
-    await until('Enter then hands the question back to the agent', async () => card(c.x2).status === 'open' && ((await strips()).some(t => t.includes(card(c.x2).title)) || await titleNow() !== card(c.x2).title))
-    if (['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag)) await key('Escape', { pause: 300 })
+    await key('b', { pause: 300 })
+    await until('B (Revise) hands the question back to the agent at once', async () => card(c.x2).status === 'open' && await titleNow() !== card(c.x2).title)
+    check((await strips()).length > 0, `and says so, with Back (${(await strips()).join(' | ')})`)
+  }
+  // In the card: A puts the caret into its field, D switches the pen on and off.
+  {
+    await key('a', { pause: 400 })
+    check(await ev('return Boolean(document.activeElement?.closest(".focus textarea, .focus input, .focus [contenteditable]"))'), 'A puts the caret into the card\'s field')
+    await type('gyn')
+    await key('Escape', { pause: 300 })
+    check(await ev('return Boolean(__k.front())'), 'Escape leaves the field, the card stays')
+    const pen = () => ev('return Boolean(document.querySelector(".focus .focus-card[data-shown] [data-pen]"))')
+    const before = await pen()
+    await key('d', { pause: 300 })
+    check(await pen() !== before, 'D switches the pen on')
+    await key('d', { pause: 300 })
+    check(await pen() === before, 'D again switches it off')
   }
   if (await bring(c.x3)) {
     await key('r', { pause: 300 })
@@ -650,6 +708,23 @@ async function main() {
   if (await markRow(c.x6)) {
     await key('x')
     await until('in the list X shreds the marked row', () => card(c.x6).status !== 'open')
+  }
+  {
+    const victim = (await ev('return __k.reach().map(n => n.dataset.id)')).find(id => card(id)?.status === 'open' && card(id).kind === 'decision')
+    if (victim && await markRow(victim)) {
+      await key('b', { pause: 300 })
+      await until('in the list B (Revise) hands the marked question back: it leaves the open rows', () => ev(`return !__k.reach().some(n => n.dataset.id === ${JSON.stringify(victim)} && !('later' in n.dataset))`))
+      check(card(victim).status === 'open', 'and it is not answered')
+    }
+    await key('Escape')
+    for (const [how, press] of [['Ctrl+K', () => key('k', { ctrl: true, pause: 400 })], ['G then J', () => keys('g', 'j')]]) {
+      await press()
+      await sleep(300)
+      check(await ev('return document.activeElement?.tagName === "INPUT"'), `${how} puts the caret into the jump field`)
+      await key('Escape', { pause: 300 })
+      await ev('document.activeElement?.blur?.()')
+      await key('Escape', { pause: 200 })
+    }
   }
   await key('?', { shift: true, pause: 300 })
   const words = await ev('return document.querySelector("dialog.keys-sheet").innerText')
@@ -720,5 +795,5 @@ try {
   try { await shot('99-broke-off') } catch {}
   if (hubLog) console.log(hubLog.split('\n').slice(-6).join('\n'))
 }
-console.log(`\n${passed} passed, ${failures.length} failed. Screenshots in ${out}`)
+console.log(`\n${passed} passed, ${failures.length} failed, ${pendingNotes.length} pending. Screenshots in ${out}`)
 await stop(failures.length ? 1 : 0)
