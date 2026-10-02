@@ -621,7 +621,6 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-answer:active { scale: .97; }
 .inbox-answer:disabled { opacity: .35; }
 .inbox-answer.is-picked { opacity: 1; box-shadow: inset 0 0 0 3px var(--card-color); }
-.inbox-open { grid-column: 1 / -1; background: transparent; outline: 1.500px dashed color-mix(in srgb, var(--card-color) 45%, transparent); outline-offset: -1.500px; }
 .inbox-error { color: var(--deny); font-size: var(--t-sm); }
 /* Nothing here yet: dashed and a little crooked, so it reads as not-yet-real. */
 .inbox-empty { justify-self: center; rotate: -2deg; margin-top: var(--s-8); padding: var(--s-6) var(--s-8); border: 2px dashed var(--line-strong); border-radius: 6px; color: var(--muted); text-align: center; }
@@ -873,3 +872,8 @@ body[data-page="roster"] #roster { display: block; grid-column: 2; min-width: 0;
     transition-duration: .01ms !important; transition-delay: 0s !important; scroll-behavior: auto !important;
   }
 }
+
+/* In a fixed-height row one small picture is enough; the rest are behind "Mehr". */
+.inbox-row:not(.is-full) .inbox-thumb { width: 72px; height: 54px; }
+.inbox-row:not(.is-full) .inbox-thumb:nth-child(n+2) { display: none; }
+.inbox-tab span { white-space: nowrap; }
