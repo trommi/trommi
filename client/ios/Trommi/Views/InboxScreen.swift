@@ -32,7 +32,7 @@ struct InboxScreen: View {
                         .accessibilityIdentifier("settings-button")
                     }
                 }
-                .safeAreaInset(edge: .bottom) { UndoBar() }
+                .safeAreaInset(edge: .bottom) { BackBar() }
                 .fullScreenCover(item: $focus) { request in
                     FocusView(start: request.start)
                 }
@@ -81,13 +81,16 @@ struct InboxList: View {
                     QuestionRow(card: card, vip: group.agent.starred, open: { open(card.id) })
                 }
             }
-            if !inbox.later.isEmpty {
-                GroupHeading(title: "Later", count: inbox.laterCountLabel) {
+            // Core also knows the piles of the web (Later, With the agent, Answered: InboxModel.piles);
+            // this list still shows what was put off as one group, whoever it waits for.
+            let off = inbox.later + inbox.handed
+            if !off.isEmpty {
+                GroupHeading(title: "Later", count: "\(off.count) put off") {
                     SketchIcon(kind: .later, size: 20).foregroundStyle(Theme.muted).frame(width: 24, height: 24)
                 }
                 .padding(.top, 8)
                 .accessibilityIdentifier("inbox-group-later")
-                ForEach(inbox.later) { row in
+                ForEach(off) { row in
                     QuestionRow(card: row.card, vip: row.sender?.starred ?? false, off: true, sender: row.sender, open: { open(row.card.id) })
                 }
             }
@@ -120,7 +123,7 @@ struct InboxList: View {
             .accessibilityLabel(inbox.sentence)
             .accessibilityIdentifier("inbox-line")
             Spacer(minLength: 0)
-            if inbox.offersWalk {
+            if inbox.offersWalk, inbox.fresh.count > 1 {
                 Button("Go through them") { open(nil) }
                     .buttonStyle(LeadButtonStyle(compact: true))
                     .accessibilityIdentifier("inbox-go")

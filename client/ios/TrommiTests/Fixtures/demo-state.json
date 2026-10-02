@@ -415,7 +415,10 @@
       "summary": "",
       "decided": 1790915758695,
       "recommended": "pg",
-      "created": 1790914858695
+      "created": 1790914858695,
+      "option_notes": {
+        "sqlite": "fine for the tests, not for production"
+      }
     },
     {
       "id": "c-next",
@@ -504,7 +507,9 @@
       "summary": "",
       "decided": null,
       "recommended": "system",
-      "created": 1790919238695
+      "created": 1790919238695,
+      "revised": 1790919358695,
+      "revisions": 1
     },
     {
       "id": "c-phone",
@@ -682,13 +687,33 @@
           "detail": ""
         },
         {
+          "key": "14",
+          "label": "14 days",
+          "detail": ""
+        },
+        {
           "key": "30",
           "label": "30 days",
           "detail": ""
         },
         {
+          "key": "60",
+          "label": "60 days",
+          "detail": ""
+        },
+        {
           "key": "90",
           "label": "90 days",
+          "detail": ""
+        },
+        {
+          "key": "180",
+          "label": "180 days",
+          "detail": ""
+        },
+        {
+          "key": "365",
+          "label": "365 days",
           "detail": ""
         }
       ],
@@ -743,7 +768,7 @@
       "urgency": "normal",
       "urgency_reason": "",
       "title": "Which chapters go into the first release?",
-      "body": "Tick every chapter that should be in. The others follow later.",
+      "body": "Tick every chapter that should be in. The others follow later.\n\n**Getting started**: Install, link a session, answer the first question.\n\n**The board**: Inbox, sessions, the card page.\n\n**Writing agents**: Still rough: the tool reference is complete, the examples are not.\n\n**Administration**",
       "options": [
         {
           "key": "start",
@@ -758,7 +783,7 @@
         {
           "key": "agents",
           "label": "Writing agents",
-          "detail": "Still rough"
+          "detail": ""
         },
         {
           "key": "admin",
@@ -777,7 +802,58 @@
         "start",
         "board"
       ],
-      "created": 1790920198695
+      "created": 1790920198695,
+      "sections": [
+        {
+          "text": "Tick every chapter that should be in. The others follow later."
+        },
+        {
+          "key": "start",
+          "label": "Getting started",
+          "text": "Install, link a session, answer the first question.",
+          "recommended": true
+        },
+        {
+          "key": "board",
+          "label": "The board",
+          "text": "Inbox, sessions, the card page.",
+          "recommended": true
+        },
+        {
+          "key": "agents",
+          "label": "Writing agents",
+          "text": "Still rough: the tool reference is complete, the examples are not.",
+          "recommended": false
+        },
+        {
+          "key": "admin",
+          "label": "Administration",
+          "text": "",
+          "recommended": false
+        }
+      ],
+      "merged_from": [
+        {
+          "id": "c-ch-start",
+          "number": 14,
+          "title": "Is \"Getting started\" ready to publish?"
+        },
+        {
+          "id": "c-ch-board",
+          "number": 15,
+          "title": "Is \"The board\" ready to publish?"
+        }
+      ],
+      "draft": {
+        "keys": [
+          "start"
+        ],
+        "note": "",
+        "notes": {
+          "agents": "only once the examples are in"
+        },
+        "ts": 1790920258695
+      }
     },
     {
       "id": "c-spike",

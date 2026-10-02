@@ -42,7 +42,7 @@ const cards = [
   }),
   card('c-db', 'api', 3, {
     title: 'Which database?', status: 'decided', created: now - 95 * min, decided: now - 80 * min,
-    choice: 'pg', choices: ['pg'], note: 'with Docker', body: 'SQLite is enough for the prototype, Postgres would be closer to production.', recommended: 'pg',
+    choice: 'pg', choices: ['pg'], note: 'with Docker', option_notes: { sqlite: 'fine for the tests, not for production' }, body: 'SQLite is enough for the prototype, Postgres would be closer to production.', recommended: 'pg',
     options: [{ key: 'sqlite', label: 'SQLite', detail: '' }, { key: 'pg', label: 'Postgres', detail: '' }],
   }),
   card('c-next', 'web-frontend', 4, {
@@ -55,6 +55,8 @@ const cards = [
   }),
   card('c-theme', 'web-frontend', 5, {
     title: 'Which default theme?', created: now - 22 * min, recommended: 'system',
+    // The agent reworded it once after asking.
+    revised: now - 20 * min, revisions: 1,
     body: 'Both themes are finished. I only need the default for new users.',
     options: [
       { key: 'light', label: 'Light', detail: 'Easier to read in daylight' },
@@ -97,7 +99,8 @@ const cards = [
   }),
   card('c-backup', 'infrastructure', 10, {
     title: 'How long should backups be kept?', created: now - 8 * min, urgency: 'low',
-    options: [{ key: '7', label: '7 days', detail: '' }, { key: '30', label: '30 days', detail: '' }, { key: '90', label: '90 days', detail: '' }],
+    // Many short options: the card shows them as small tags.
+    options: ['7', '14', '30', '60', '90', '180', '365'].map(days => ({ key: days, label: `${days} days`, detail: '' })),
   }),
   card('c-ship', 'docs', 11, {
     title: 'Publish the handbook as it is?', created: now - 7 * min, recommended: 'yes',
@@ -105,13 +108,24 @@ const cards = [
   }),
   card('c-parts', 'docs', 13, {
     title: 'Which chapters go into the first release?', created: now - 6 * min, multiple: true, recommended: ['start', 'board'],
-    body: 'Tick every chapter that should be in. The others follow later.',
+    // Handed in as one structured text (sections); body and options are what the hub derives from it.
+    body: 'Tick every chapter that should be in. The others follow later.\n\n**Getting started**: Install, link a session, answer the first question.\n\n**The board**: Inbox, sessions, the card page.\n\n**Writing agents**: Still rough: the tool reference is complete, the examples are not.\n\n**Administration**',
     options: [
       { key: 'start', label: 'Getting started', detail: '' },
       { key: 'board', label: 'The board', detail: '' },
-      { key: 'agents', label: 'Writing agents', detail: 'Still rough' },
+      { key: 'agents', label: 'Writing agents', detail: '' },
       { key: 'admin', label: 'Administration', detail: '' },
     ],
+    sections: [
+      { text: 'Tick every chapter that should be in. The others follow later.' },
+      { key: 'start', label: 'Getting started', text: 'Install, link a session, answer the first question.', recommended: true },
+      { key: 'board', label: 'The board', text: 'Inbox, sessions, the card page.', recommended: true },
+      { key: 'agents', label: 'Writing agents', text: 'Still rough: the tool reference is complete, the examples are not.', recommended: false },
+      { key: 'admin', label: 'Administration', text: '', recommended: false },
+    ],
+    // It replaces two earlier questions, and the human has ticked one chapter and written on another without sending.
+    merged_from: [{ id: 'c-ch-start', number: 14, title: 'Is "Getting started" ready to publish?' }, { id: 'c-ch-board', number: 15, title: 'Is "The board" ready to publish?' }],
+    draft: { keys: ['start'], note: '', notes: { agents: 'only once the examples are in' }, ts: now - 5 * min },
   }),
   card('c-spike', 'old-spike', 12, {
     title: 'Keep the spike branch?', created: now - 3000 * min,

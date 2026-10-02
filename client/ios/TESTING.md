@@ -10,11 +10,11 @@ The app can only be built on macOS. So the question is whose Mac does it, and ho
 
 ## 1. GitHub Actions (set up, never run)
 
-`ios.yml` runs on a push that changes `client/ios/**`, `server/server.mjs`, `dev/serve.sh` or `dev/demo-state.mjs`, and on the button "Run workflow". A change to the workflow file alone does not start it. It has two jobs that run side by side:
+`ios.yml` runs on a push that changes `client/ios/**`, `server/server.mjs`, `dev/serve.sh`, `dev/demo-state.mjs`, `dev/session.mjs` or `client/web/js/ui.js`, and on the button "Run workflow". A change to the web's drawings in `ui.js` turns the fixture check red until `node tools/doodle-fixtures.mjs` and `node tools/doodle-tables.mjs` were run and their output checked in. A change to the workflow file alone does not start it. It has two jobs that run side by side:
 
 | Job | Runner | What it does | Feedback after about |
 | - | - | - | - |
-| Core on Linux | `ubuntu-24.04` | Checks that the fixtures are what their generators write (also: that the marks still match the web's generator), then `swift test` with a live `server.mjs` | 2 to 3 minutes |
+| Core on Linux | `ubuntu-24.04` | Checks that the fixtures and `Core/DoodleTables.swift` are what their generators write (also: that the marks still match the web's generator), then `swift test` with a live `server.mjs`, seeded by `tools/live-seed.sh` | 2 to 3 minutes |
 | App on the simulator | `macos-26` | The same `swift test` with Apple's URLSession, `xcodegen`, then three separate steps: **Build**, **Unit tests**, **UI tests** | 10 to 20 minutes (estimated, never measured) |
 
 Building and testing are separate steps on purpose: if the app does not compile, "Build" is red and nothing else runs; if it compiles and a test fails, the build step is green and you know it is about behaviour.

@@ -55,6 +55,7 @@ enum Wording {
         case "done": return "Done"
         case "urgency": return "Urgency"
         case "reopened": return "Taken back"
+        case "revised": return "Question revised"
         default: return "Board"
         }
     }
@@ -81,6 +82,11 @@ enum Wording {
         return f.string(from: Date(timeIntervalSince1970: ts / 1000))
     }
 
+    /// What "Explain" asks the session about a card, in one tap (EXPLAIN_TEXT in inbox.js).
+    static let explainText = "Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do."
+    /// The same request as the human sees it in the conversation about the card.
+    static let explainShown = "Explain this, please."
+
     static func questions(_ n: Int) -> String { n == 1 ? "1 question" : "\(n) questions" }
     static func items(_ n: Int) -> String { n == 1 ? "1 item" : "\(n) items" }
     static func sessions(_ n: Int) -> String { n == 1 ? "1 session" : "\(n) sessions" }
@@ -101,6 +107,10 @@ enum BoardError: Error, Equatable {
     case onlineNotArchived
     case oneAnswerOnly
     case noAnswer
+    /// The agent reworded the question after the human last saw it (HTTP 409).
+    case revised
+    case noDraft
+    case noteTooLong
 
     var message: String {
         switch self {
@@ -115,6 +125,9 @@ enum BoardError: Error, Equatable {
         case .onlineNotArchived: return "A session that is connected cannot be archived."
         case .oneAnswerOnly: return "This question takes one answer."
         case .noAnswer: return "Choose at least one option."
+        case .revised: return "The agent revised this question while you were answering. Nothing was sent: read it again and answer once more."
+        case .noDraft: return "Only questions keep what you ticked, not permissions."
+        case .noteTooLong: return "The note on an option is longer than \(BoardState.optionNoteLimit) characters."
         }
     }
 
@@ -127,6 +140,8 @@ enum BoardError: Error, Equatable {
             ("empty message", .emptyMessage), ("no agent ", .unknownAgent),
             ("a session that is online cannot be archived", .onlineNotArchived),
             ("this card takes one answer", .oneAnswerOnly), ("keys must name at least one option", .noAnswer),
+            ("the agent revised this question", .revised), ("only decisions keep a draft", .noDraft),
+            ("notes names an unknown option", .unknownOption),
         ]
         for (text, error) in known where serverText.hasPrefix(text) { return error.message }
         if serverText == "forbidden" { return "The server refused the request." }
@@ -150,12 +165,31 @@ enum Answer: Equatable, Sendable {
         }
     }
 
-    /// The JSON body of POST /decide, as server.mjs reads it.
-    func body(cardID: String, note: String) -> [String: Any] {
+    /// The JSON body of POST /decide, as server.mjs reads it. `notes`: what the human wrote on
+    /// single options, chosen or not. `revised`: the wording of the card the human answered
+    /// (card.revised, JSON null for a card that was never reworded); the hub refuses an answer
+    /// given to an older wording with 409.
+    func body(cardID: String, note: String, notes: [String: String] = [:], revised: Double? = nil) -> [String: Any] {
+        var out: [String: Any] = ["card_id": cardID, "note": note, "revised": revised.map(Answer.stamp) ?? NSNull()]
         switch self {
-        case .one(let key): return ["card_id": cardID, "key": key, "note": note]
-        case .several(let keys): return ["card_id": cardID, "keys": keys, "key": keys.first ?? "", "note": note]
+        case .one(let key): out["key"] = key
+        case .several(let keys):
+            out["keys"] = keys
+            out["key"] = keys.first ?? ""
         }
+        let written = Answer.clean(notes)
+        if !written.isEmpty { out["notes"] = written }
+        return out
+    }
+
+    /// A time stamp as JSON writes a whole number, so the hub compares the same number it sent.
+    static func stamp(_ ms: Double) -> Any {
+        ms == ms.rounded() && abs(ms) < 9e15 ? Int64(ms) as Any : ms as Any
+    }
+
+    /// Notes trimmed, empty ones dropped, as the hub stores them.
+    static func clean(_ notes: [String: String]) -> [String: String] {
+        notes.mapValues { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.value.isEmpty }
     }
 }
 
@@ -164,6 +198,7 @@ struct PendingDecision: Equatable, Sendable {
     var cardID: String
     var answer: Answer
     var note: String
+    var notes: [String: String] = [:]
 }
 
 /// What POST /session can change. nil leaves a field alone.
@@ -196,32 +231,46 @@ struct SessionChanges: Equatable, Sendable {
 }
 
 extension BoardState {
+    /// NOTE_MAX in server.mjs: the longest note on one option; the general note may be five times as long.
+    static let optionNoteLimit = 2000
+
     /// One answer to a card: decide() with a single key.
     mutating func decide(cardID: String, key: String, note: String, now: Double) throws {
         try decide(cardID: cardID, answer: .one(key), note: note, now: now)
     }
 
-    /// What decide() in server.mjs does to the state.
-    mutating func decide(cardID: String, answer: Answer, note: String, now: Double) throws {
+    /// What decide() in server.mjs does to the state. `seen`: the wording the human answered
+    /// (card.revised as the client held it); `.some(nil)` is "never reworded", nil does not check.
+    mutating func decide(cardID: String, answer: Answer, note: String, notes: [String: String] = [:], seen: Double?? = nil, now: Double) throws {
         guard let i = cards.firstIndex(where: { $0.id == cardID }) else { throw BoardError.unknownCard }
         guard cards[i].status == .open else { throw BoardError.alreadyDecided }
+        if let revised = cards[i].revised, let seen, seen != revised { throw BoardError.revised }
         if case .several = answer, !cards[i].multiple { throw BoardError.oneAnswerOnly }
         let given = Set(answer.keys)
         guard !given.isEmpty else { throw BoardError.noAnswer }
-        guard given.allSatisfy({ key in cards[i].options.contains { $0.key == key } }) else { throw BoardError.unknownOption }
+        let known = Set(cards[i].options.map(\.key))
+        guard given.isSubset(of: known) else { throw cards[i].revised == nil ? BoardError.unknownOption : BoardError.revised }
+        let remarks = cards[i].kind == .decision ? Answer.clean(notes) : [:]
+        guard Set(remarks.keys).isSubset(of: known) else { throw cards[i].revised == nil ? BoardError.unknownOption : BoardError.revised }
+        guard remarks.values.allSatisfy({ $0.count <= BoardState.optionNoteLimit }) else { throw BoardError.noteTooLong }
         // In the order of the options, whatever order they were ticked in.
         let chosen = cards[i].options.filter { given.contains($0.key) }
         cards[i].choices = chosen.map(\.key)
         // The first one, for clients and agents that know only one answer.
         cards[i].choice = chosen.first?.key
         cards[i].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
+        cards[i].optionNotes = remarks
+        cards[i].draft = nil
         cards[i].decided = now
         // A permission verdict needs no follow-up from the agent, so it is done at once.
         cards[i].status = cards[i].kind == .permission ? .done : .decided
         let card = cards[i]
         if card.kind == .decision {
+            // "Second · Second: but not before Monday", each note shortened to 80 characters.
+            let remarked = card.options.compactMap { o in remarks[o.key].map { "\(o.label): \(BoardState.brief($0))" } }
+            let text = ([chosen.map(\.label).joined(separator: ", ")] + remarked).joined(separator: " · ")
             messages.append(Message(id: "local-\(messages.count)-decided-\(card.id)", agent: card.agent, from: .event, kind: "decided",
-                                    cardID: card.id, text: chosen.map(\.label).joined(separator: ", "), details: "", attachments: [], ts: now))
+                                    cardID: card.id, text: text, details: "", attachments: [], ts: now))
         }
         for t in tasks.indices where tasks[t].agent == card.agent && tasks[t].cardID == card.id && tasks[t].state == .decision {
             tasks[t].state = .working
@@ -236,17 +285,53 @@ extension BoardState {
         guard let i = cards.firstIndex(where: { $0.id == cardID }) else { throw BoardError.unknownCard }
         guard cards[i].kind == .decision else { throw BoardError.notADecision }
         guard cards[i].status != .open else { throw BoardError.alreadyOpen }
-        guard cards[i].choice != nil else { throw BoardError.withdrawn }
+        guard let previous = cards[i].choice else { throw BoardError.withdrawn }
+        // Nothing the human ticked or wrote is lost: the answer they took back is what they have not sent yet.
+        let all = cards[i].choices.isEmpty ? [previous] : cards[i].choices
+        cards[i].draft = CardDraft(keys: cards[i].options.map(\.key).filter(all.contains), note: cards[i].note, notes: cards[i].optionNotes, ts: now)
         cards[i].status = .open
         cards[i].choice = nil
         cards[i].choices = []
         cards[i].note = ""
+        cards[i].optionNotes = [:]
         cards[i].summary = ""
         cards[i].decided = nil
         let card = cards[i]
         messages.append(Message(id: "local-\(messages.count)-reopened-\(card.id)", agent: card.agent, from: .event, kind: "reopened",
                                 cardID: card.id, text: card.title, details: "", attachments: [], ts: now))
         queue = BoardState.queueOf(cards, agents: agents)
+    }
+
+    /// What setDraft() in server.mjs does to the state: the whole draft replaces the one before;
+    /// a draft with nothing in it clears it. Keys and notes for options the card does not have are dropped.
+    /// Returns false when nothing changed (the same draft again).
+    @discardableResult
+    mutating func setDraft(cardID: String, keys: [String], note: String, notes: [String: String], now: Double) throws -> Bool {
+        guard let i = cards.firstIndex(where: { $0.id == cardID }) else { throw BoardError.unknownCard }
+        guard cards[i].kind == .decision else { throw BoardError.noDraft }
+        guard cards[i].status == .open else { throw BoardError.alreadyDecided }
+        guard note.count <= BoardState.optionNoteLimit * 5 else { throw BoardError.noteTooLong }
+        let known = cards[i].options.map(\.key)
+        let written = Answer.clean(notes).filter { known.contains($0.key) }
+        guard written.values.allSatisfy({ $0.count <= BoardState.optionNoteLimit }) else { throw BoardError.noteTooLong }
+        let ticked = Set(keys)
+        var next = CardDraft(keys: known.filter(ticked.contains), note: note, notes: written, ts: now)
+        let before = cards[i].draft
+        if next.isEmpty {
+            guard before != nil else { return false }
+            cards[i].draft = nil
+            return true
+        }
+        if let before, before.keys == next.keys, before.note == next.note, before.notes == next.notes { return false }
+        next.ts = now
+        cards[i].draft = next
+        return true
+    }
+
+    /// brief() in server.mjs: one line, at most `max` characters.
+    static func brief(_ said: String, max: Int = 80) -> String {
+        let line = said.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        return line.count > max ? String(line.prefix(max - 1)) + "…" : line
     }
 
     /// What POST /message does to the state. `about`: the question the human asks back
@@ -289,7 +374,7 @@ extension BoardState {
     func applying(_ pending: [PendingDecision], now: Double) -> BoardState {
         guard !pending.isEmpty else { return self }
         var copy = self
-        for p in pending { try? copy.decide(cardID: p.cardID, answer: p.answer, note: p.note, now: now) }
+        for p in pending { try? copy.decide(cardID: p.cardID, answer: p.answer, note: p.note, notes: p.notes, now: now) }
         return copy
     }
 }

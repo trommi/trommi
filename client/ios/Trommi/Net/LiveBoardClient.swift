@@ -86,10 +86,19 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
     private func send(_ request: URLRequest) async throws -> Data {
         let (data, response) = try await LiveBoardClient.run(request, in: session)
         if (200..<300).contains(response.statusCode) { return data }
-        if response.statusCode == 401 { throw ClientError.unauthorized }
-        if response.statusCode == 404 { throw ClientError.notFound }
-        let reason = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-        throw ClientError.server(BoardError.translate(reason ?? "error \(response.statusCode)"))
+        throw LiveBoardClient.refusal(status: response.statusCode, body: data)
+    }
+
+    /// The server's reason for a refusal, as an error. 409 with the hub's "revised while you
+    /// were answering" is its own case, so the app can show the card as it is now.
+    static func refusal(status: Int, body: Data) -> ClientError {
+        if status == 401 { return .unauthorized }
+        let reason = ((try? JSONSerialization.jsonObject(with: body)) as? [String: Any])?["error"] as? String
+        // A path that does not exist; a 404 with a sentence of its own (a dictation that has ended) keeps it.
+        if status == 404, reason == nil || reason == "not found" { return .notFound }
+        let text = BoardError.translate(reason ?? "error \(status)")
+        if status == 409, text == BoardError.revised.message { return .stale(text) }
+        return .server(text)
     }
 
     private func post(_ path: String, _ body: [String: Any]) async throws {
@@ -105,8 +114,12 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
         try await post("/message", body)
     }
 
-    func decide(cardID: String, answer: Answer, note: String) async throws {
-        try await post("/decide", answer.body(cardID: cardID, note: note))
+    func decide(cardID: String, answer: Answer, note: String, notes: [String: String], revised: Double?) async throws {
+        try await post("/decide", answer.body(cardID: cardID, note: note, notes: notes, revised: revised))
+    }
+
+    func saveDraft(cardID: String, keys: [String], note: String, notes: [String: String]) async throws {
+        try await post("/draft", DraftEditor.body(cardID: cardID, keys: keys, note: note, notes: notes))
     }
 
     func reopen(cardID: String) async throws {
@@ -135,6 +148,46 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
         var request = try request(path)
         request.timeoutInterval = 120
         return try await send(request)
+    }
+
+    // MARK: live dictation
+
+    private static func livePath(_ id: String, _ tail: String = "") -> String {
+        "/speech/live/" + (id.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? id) + tail
+    }
+
+    func liveDictation() -> AsyncThrowingStream<DictationEvent, Error> {
+        AsyncThrowingStream { continuation in
+            guard var request = try? self.request("/speech/live", method: "POST") else {
+                return continuation.finish(throwing: ClientError.notFound)
+            }
+            request.setValue("text/event-stream", forHTTPHeaderField: "Accept")
+            request.httpBody = Data()
+            // A dictation lasts three minutes at most; the hub closes the stream itself.
+            let config = LiveBoardClient.configuration(idleTimeout: 60)
+            config.timeoutIntervalForResource = 600
+            request.timeoutInterval = 60
+            let session = URLSession(configuration: config, delegate: DictationStream(continuation), delegateQueue: nil)
+            let task = session.dataTask(with: request)
+            continuation.onTermination = { _ in
+                task.cancel()
+                session.invalidateAndCancel()
+            }
+            task.resume()
+        }
+    }
+
+    func sendDictationAudio(id: String, pcm: Data) async throws {
+        var request = try request(LiveBoardClient.livePath(id), method: "POST")
+        request.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type")
+        request.httpBody = pcm
+        _ = try await send(request)
+    }
+
+    func stopDictation(id: String) async throws {
+        var request = try request(LiveBoardClient.livePath(id, "/stop"), method: "POST")
+        request.httpBody = Data()
+        _ = try await send(request)
     }
 
     // MARK: events
@@ -199,6 +252,55 @@ private final class EventStream: NSObject, URLSessionDataDelegate, @unchecked Se
 
     func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
         continuation.finish(throwing: ClientError.unreachable(error.map { ($0 as NSError).localizedDescription } ?? ""))
+        session.finishTasksAndInvalidate()
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse,
+                    newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
+        completionHandler(nil)
+    }
+}
+
+/// Receives the events of one dictation. A refusal (no key on the hub, too many at once)
+/// comes as JSON with an error status; its text is read before the stream ends with it.
+private final class DictationStream: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    private let continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation
+    private var parser = SSEParser()
+    private var status = 0
+    private var refusal = Data()
+    private var ended = false
+
+    init(_ continuation: AsyncThrowingStream<DictationEvent, Error>.Continuation) {
+        self.continuation = continuation
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        completionHandler(.allow)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        guard status == 200 else {
+            if refusal.count < 65_536 { refusal.append(data) }
+            return
+        }
+        for event in parser.feedEvents(data) {
+            guard let parsed = DictationEvent.parse(event: event.name, data: event.data) else { continue }
+            continuation.yield(parsed)
+            if case .final = parsed { ended = true }
+            if case .failed = parsed { ended = true }
+        }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        if status != 200, status != 0 {
+            continuation.finish(throwing: LiveBoardClient.refusal(status: status, body: refusal))
+        } else if ended {
+            continuation.finish()
+        } else {
+            continuation.finish(throwing: ClientError.unreachable(error.map { ($0 as NSError).localizedDescription } ?? ""))
+        }
         session.finishTasksAndInvalidate()
     }
 

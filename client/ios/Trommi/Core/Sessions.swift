@@ -25,6 +25,16 @@ extension Agent {
         return ([mark] + (1...11).map { "\(id):\($0)" }).filter { seen.insert($0).inserted }
     }
 
+    /// The forty drawings a session can be given by name instead of a scribble from its id
+    /// ("draw:star"; DRAWINGS in ui.js), in the order the web offers them.
+    static let drawingChoices: [String] = Doodle.drawings.map(Doodle.drawingMark)
+
+    /// The name of the drawing this session wears, if its mark is one: "star".
+    var drawingName: String? {
+        guard let name = Doodle.drawingName(of: mark), Doodle.drawings.contains(name) else { return nil }
+        return name
+    }
+
     /// What to send after the human edited name and mark. A name equal to the one the
     /// session gave itself (or emptied) clears the label; the session's own mark clears the icon.
     func edit(name: String, mark picked: String) -> SessionChanges {

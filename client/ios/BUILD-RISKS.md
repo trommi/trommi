@@ -1,14 +1,14 @@
 # Build risks
 
-The app has never been built on a Mac. This list says, per construct, where the first real build is most likely to stop and what to change if it does. Line numbers are those of 2 October 2026.
+The app has never been built on a Mac. This list says, per construct, where the first real build is most likely to stop and what to change if it does. Line numbers in the table are those of round two (2 October 2026, morning); round three moved `Components.swift`, `InboxScreen.swift`, `QuestionRow.swift` and `FocusView.swift` by a few lines and was parked before the views were rewritten (see [STATUS.md](STATUS.md)).
 
 ## What is certain and what is not
 
 | Part | State |
 | - | - |
-| `Trommi/Core`, `Trommi/Net` (models, rules, `AppModel`, the server connection) | Compiled with Swift 6.1.2 on Linux in Swift 5 language mode, 157 tests pass, 8 of them against a live `server.mjs` |
+| `Trommi/Core`, `Trommi/Net` (models, rules, `AppModel`, the server connection, live dictation without the microphone) | Compiled with Swift 6.1.2 on Linux in Swift 5 language mode, 205 tests pass, 13 of them against a live `server.mjs` |
 | `TrommiTests` | Compiled and run on Linux as above; in Xcode they compile against the app module instead of the package |
-| `Trommi/App`, `Trommi/Views` (21 files, about 3,450 lines) | Parsed only (`swiftc -parse`), never type-checked: SwiftUI, UIKit and AVFoundation do not exist on Linux |
+| `Trommi/App`, `Trommi/Views` (21 files, about 3,460 lines) | Parsed only (`swiftc -parse`), never type-checked: SwiftUI, UIKit and AVFoundation do not exist on Linux |
 | `TrommiUITests` | Parsed only |
 | `project.yml`, the asset catalog, both workflows | Never executed |
 
@@ -49,7 +49,24 @@ Ordered by how likely they are to fail. "Fallback" is the smallest change that k
 | 21 | `Core/AppModel.swift` in the app target | `import Observation`, `@Observable` on a `@MainActor` class, `@ObservationIgnored private let hooks` | Compiles on Linux; Apple's SDK may differ in macro details | None expected to be needed |
 | 22 | `Net/LiveBoardClient.swift` | Delegate-based `URLSession` calls, `HTTPURLResponse.value(forHTTPHeaderField:)` | Compiled and tested only with Linux Foundation | The `core` step on macOS (`swift test`) fails before Xcode is even started, with the exact line |
 
+## Added in round three
+
+| # | File | Construct | Doubt | Fallback |
+| - | - | - | - | - |
+| 23 | `Core/Dictation.swift` | `LiveDictation`: an `@Observable` main-actor class with `nonisolated init`, whose `start` captures a `var` (`LiveText`) in a `Task` and mutates it there | Compiles on Linux in Swift 5 mode with minimal checking; Apple's SDK or stricter checking may call the captured `var` a data race | Move `live` into a property of the class marked `@ObservationIgnored` |
+| 24 | `Net/LiveBoardClient.swift`, `DictationStream` | A `POST` whose answer is an event stream, read through a `URLSessionDataDelegate` while other requests upload the sound | Tested on Linux only for the refusal (503 with JSON). Apple's URLSession may hold back the first bytes of a streamed answer to a POST until it has 512 of them or the type is known | The server already sends `Content-Type: text/event-stream` and `X-Accel-Buffering: no`; if "ready" still arrives late, read the stream with `URLSession.bytes(for:)` in the app target |
+| 25 | `Core/DoodleTables.swift` | Two dictionary literals with about 2,000 numbers | Type-checks in a few seconds on Linux; Xcode's "expression too complex" limit is not the same on every version | The generator (`tools/doodle-tables.mjs`) can write one `static let` per drawing instead |
+| 26 | `Views/Components.swift`, `BackBar` | `Text(note.head)` etc. on the new `BackNote`, `await model.takeBack()` in a `Task` from a view method | Parsed only | None expected to be needed |
+| 27 | `Views/InboxScreen.swift`, `InboxList` | `let off = inbox.later + inbox.handed` inside the `LazyVStack` builder | A `let` in a view builder; parsed only | Make it a computed property of `InboxList` |
+
+Not written yet, so no risk today, but expect these when the microphone for live dictation is wired in `App/Media.swift`:
+
+- `AVAudioEngine.inputNode.installTap(onBus:bufferSize:format:)`: the tap block runs on an audio thread and must not touch the main actor; `AudioFeed.feed(_:rate:)` is made for that (a lock, no actor). The input format must be read after the audio session is active, or the tap crashes with a format mismatch; fallback: `AVAudioRecorder` as today and `/speech/transcribe`.
+- The tap's buffer is `AVAudioPCMBuffer` with `floatChannelData`; with a Bluetooth headset the rate changes mid-session (`AVAudioEngineConfigurationChange`), which must restart the tap.
+
 ## Things that compile but may misbehave
+
+- **The "Back" note** (`BackBar`) stays 4 seconds, as on the web; the undo bar it replaces stayed 10. The UI tests tap it right after an answer, but a slow simulator may miss it.
 
 Nobody has seen the app. These are the places to look at first in the screenshots of the UI tests.
 

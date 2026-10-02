@@ -1,8 +1,9 @@
 // The hand-scribbled marks: one per session, generated from its id, so a
 // session is recognised before its name is read; several sessions scribbled
 // together inside one loop; and the sketched icons (thumbs, hand, later, choose).
-// A port of seeded(), penPath(), DOODLES, doodle(), pairDoodle() and sketch()
-// in client/web/js/ui.js: the same seed gives the same strokes as on the web.
+// A port of seeded(), penPath(), DOODLES, doodle(), pairDoodle(), crown() and sketch()
+// in client/web/js/ui.js: the same seed gives the same strokes as on the web. The points
+// of the named drawings and of the icons are in DoodleTables.swift, written from ui.js.
 // Coordinates are rounded to one decimal like the web's toFixed(1).
 import Foundation
 
@@ -178,25 +179,72 @@ struct Doodle: Equatable, Sendable {
         return out
     }
 
-    /// The scribbled mark that belongs to one session (doodle(id) in ui.js).
+    private static func family(_ index: Int, _ r: inout SeededRandom) -> [[PathCommand]] {
+        switch index {
+        case 0: return burst(&r)
+        case 1: return spiral(&r)
+        case 2: return blob(&r)
+        case 3: return flower(&r)
+        case 4: return waves(&r)
+        case 5: return knot(&r)
+        case 6: return bolt(&r)
+        default: return hatch(&r)
+        }
+    }
+
+    /// A stroke that keeps its corners (linePath in ui.js).
+    private static func straight(_ points: [Point]) -> [PathCommand] {
+        guard let first = points.first else { return [] }
+        return [.move(round1(first.x), round1(first.y))] + points.dropFirst().map { .line(round1($0.x), round1($0.y)) }
+    }
+
+    /// The prefix of a mark that names a drawing: "draw:star".
+    static let drawingPrefix = "draw:"
+
+    /// The forty drawings a session can be given by name (DRAWINGS in ui.js): the eight kinds, then the named ones.
+    static let drawings: [String] = DoodleTables.kinds + DoodleTables.namedOrder
+
+    /// The mark that gives a session the drawing `name` (drawingMark in ui.js).
+    static func drawingMark(_ name: String) -> String { drawingPrefix + name }
+
+    /// The name of the drawing a mark asks for, whether or not there is such a drawing.
+    static func drawingName(of seed: String) -> String? {
+        guard seed.hasPrefix(drawingPrefix), seed.count > drawingPrefix.count, !seed.contains("\n") else { return nil }
+        return String(seed.dropFirst(drawingPrefix.count))
+    }
+
+    /// The scribbled mark that belongs to one session (doodle(id) in ui.js). The seed is the
+    /// session's id or the mark the human picked; "draw:<name>" gives that drawing.
     static func mark(_ seed: String) -> Doodle {
         var r = SeededRandom(seed)
-        let family = Int((r.next() * 8).rounded(.down))
+        let name = drawingName(of: seed)
         let strokes: [[PathCommand]]
-        switch family {
-        case 0: strokes = burst(&r)
-        case 1: strokes = spiral(&r)
-        case 2: strokes = blob(&r)
-        case 3: strokes = flower(&r)
-        case 4: strokes = waves(&r)
-        case 5: strokes = knot(&r)
-        case 6: strokes = bolt(&r)
-        default: strokes = hatch(&r)
+        if let name, let kind = DoodleTables.kinds.firstIndex(of: name) {
+            strokes = family(kind, &r)
+        } else if let name, let table = DoodleTables.named[name] {
+            // The pen wobbles a little on every point: x first, then y, as the web draws them.
+            strokes = table.map { stroke in
+                var points: [Point] = []
+                var i = 0
+                while i + 1 < stroke.xy.count {
+                    let x = stroke.xy[i] + (r.next() - 0.5) * 1.1
+                    let y = stroke.xy[i + 1] + (r.next() - 0.5) * 1.1
+                    points.append((x, y))
+                    i += 2
+                }
+                return stroke.straight ? straight(points) : pen(points)
+            }
+        } else {
+            strokes = family(Int((r.next() * 8).rounded(.down)), &r)
         }
         // Math.round: halves go up.
         let rotation = ((r.next() - 0.5) * 16 + 0.5).rounded(.down)
         return Doodle(strokes: strokes, rotation: rotation, width: 32, height: 32)
     }
+
+    /// The crown of a starred session: scribbled in one go, three points, the base not quite
+    /// closed (CROWN in ui.js). It sits crooked on the corner of the session's mark.
+    static let crown = Doodle(strokes: [DoodleTables.crown], rotation: 0, width: 26, height: 19)
 
     // MARK: several sessions as one mark
 
@@ -245,42 +293,10 @@ struct Doodle: Equatable, Sendable {
 
     // MARK: sketched icons
 
-    private static let thumb: [[Point]] = [
-        [(4.6, 11.2), (4.2, 19.6), (7.3, 19.9), (7.7, 11), (4.3, 10.7)],
-        [(8.2, 11.4), (10, 7.6), (10.8, 3.6), (13.4, 3.9), (13, 7.4), (12.4, 9.9), (17.8, 9.6), (19.8, 10.8), (19.2, 13.4), (18.4, 16.8), (17.2, 19.8), (14, 20.1), (10.2, 19.8), (8.1, 18.9)],
-        [(15.2, 13.2), (18.6, 13.3)],
-        [(14.8, 16.4), (17.9, 16.6)],
-    ]
-
+    /// The strokes of an icon, as SKETCH in ui.js has them (Core/DoodleTables.swift).
     private static func strokes(of kind: SketchKind) -> [[Point]] {
-        switch kind {
-        case .yes: return thumb
-        case .no: return thumb.map { $0.map { (24 - $0.x, 24 - $0.y) } }
-        case .hand:
-            return [
-                [(7.6, 14.6), (5.8, 12.2), (3.9, 11.4), (3.7, 13.3), (5.6, 16.2), (7.4, 19.4), (10, 21.3), (13.6, 21.4), (16.4, 19.6), (17.6, 15.4), (17.8, 8.4), (16.6, 7), (15.6, 8.6), (15.5, 11.6)],
-                [(7.6, 14.2), (7.5, 6.2), (8.6, 4.8), (9.8, 6.2), (10, 11.2)],
-                [(10, 11), (10.1, 4.2), (11.4, 2.7), (12.6, 4.2), (12.6, 11)],
-                [(12.7, 11.2), (13, 5.2), (14.2, 4), (15.3, 5.6), (15.3, 11.8)],
-            ]
-        case .later:
-            return [[(12, 3.8), (12.3, 10), (11.9, 16.4)], [(6.6, 11.6), (12.1, 17.2), (17.4, 11.3)], [(4.6, 20.8), (12, 20.3), (19.6, 20.6)]]
-        case .back:
-            return [[(12.1, 20.2), (11.8, 14), (12.2, 7.6)], [(6.6, 12.6), (12, 6.8), (17.5, 12.3)], [(4.6, 3.6), (12, 3.9), (19.5, 3.4)]]
-        case .choose:
-            return [
-                [(3.6, 6.6), (5.2, 8.6), (8.4, 4.4)],
-                [(11.4, 6.6), (16, 6.3), (20.6, 6.8)],
-                [(4.4, 12.4), (6.4, 12.3)], [(11.2, 12.4), (15, 12.7), (19, 12.2)],
-                [(4.4, 18), (6.5, 18.2)], [(11.4, 18.2), (14, 17.9), (16.8, 18.3)],
-            ]
-        case .other:
-            return [[(4.6, 8.6), (11, 8.2), (18.8, 8.7)], [(14.6, 4.8), (19.2, 8.6), (14.9, 12.2)], [(19.4, 15.6), (12, 15.9), (5.2, 15.4)], [(9.4, 11.9), (4.8, 15.5), (9.2, 19.3)]]
-        case .whenever:
-            return [
-                [(6.4, 3.8), (17.8, 3.6), (17.4, 6.4), (12.6, 11.8), (17.6, 17.6), (18, 20.4), (6.2, 20.6), (6.5, 17.8), (11.4, 12.2), (6.6, 6.6), (6.2, 3.4)],
-                [(10.4, 18.4), (12.1, 16.6), (13.8, 18.5)],
-            ]
+        (DoodleTables.sketch[kind.rawValue] ?? []).map { xy in
+            stride(from: 0, to: xy.count - 1, by: 2).map { (xy[$0], xy[$0 + 1]) }
         }
     }
 
@@ -324,6 +340,18 @@ struct Doodle: Equatable, Sendable {
     /// The stroke as the `d` of an SVG path, written like ui.js writes it. Used to compare with the web.
     static func svgPath(_ commands: [PathCommand]) -> String {
         func n(_ v: Double) -> String { String(format: "%.1f", v) }
+        return commands.map { command in
+            switch command {
+            case .move(let x, let y): return "M\(n(x)) \(n(y))"
+            case .line(let x, let y): return "L\(n(x)) \(n(y))"
+            case .quad(let cx, let cy, let x, let y): return "Q\(n(cx)) \(n(cy)) \(n(x)) \(n(y))"
+            }
+        }.joined(separator: " ")
+    }
+
+    /// The same without forced decimals ("M3.6 16 L2.6 5.4"), as the crown is written in ui.js.
+    static func svgPathShort(_ commands: [PathCommand]) -> String {
+        func n(_ v: Double) -> String { v == v.rounded() ? String(Int(v)) : String(v) }
         return commands.map { command in
             switch command {
             case .move(let x, let y): return "M\(n(x)) \(n(y))"

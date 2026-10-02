@@ -2,14 +2,26 @@
 // may end anywhere, also in the middle of a UTF-8 character or a line.
 import Foundation
 
+/// One event of a stream: its name ("message" when the stream gives none) and its data.
+struct SSEEvent: Equatable, Sendable {
+    var name: String
+    var data: String
+}
+
 struct SSEParser {
     private var buffer: [UInt8] = []
     private var data: [String] = []
+    private var name = ""
 
     /// Feed the next chunk; returns the data of every event completed by it.
     mutating func feed(_ chunk: Data) -> [String] {
+        feedEvents(chunk).map(\.data)
+    }
+
+    /// Feed the next chunk; returns every event completed by it, with its name.
+    mutating func feedEvents(_ chunk: Data) -> [SSEEvent] {
         buffer.append(contentsOf: chunk)
-        var events: [String] = []
+        var events: [SSEEvent] = []
         var start = 0
         while let newline = buffer[start...].firstIndex(of: 10) {
             var end = newline
@@ -22,11 +34,11 @@ struct SSEParser {
     }
 
     /// One line of the stream. An empty line ends the event.
-    private mutating func line(_ text: String) -> String? {
+    private mutating func line(_ text: String) -> SSEEvent? {
         if text.isEmpty {
+            defer { data = []; name = "" }
             guard !data.isEmpty else { return nil }
-            defer { data = [] }
-            return data.joined(separator: "\n")
+            return SSEEvent(name: name.isEmpty ? "message" : name, data: data.joined(separator: "\n"))
         }
         if text.hasPrefix(":") { return nil }   // a comment, used as a heartbeat
         let field: Substring
@@ -40,6 +52,7 @@ struct SSEParser {
             value = ""
         }
         if field == "data" { data.append(String(value)) }
+        if field == "event" { name = String(value) }
         return nil
     }
 }

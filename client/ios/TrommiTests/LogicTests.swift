@@ -21,8 +21,8 @@ final class QuestionRuleTests: XCTestCase {
         XCTAssertTrue(makeCard(["Yes", "No"]).isQuick)
         XCTAssertFalse(makeCard(["Yes", "No", "Maybe"]).isQuick, "three options open the card")
         XCTAssertFalse(makeCard(["Yes"]).isQuick)
-        XCTAssertTrue(makeCard([String(repeating: "a", count: 18), "No"]).isQuick)
-        XCTAssertFalse(makeCard([String(repeating: "a", count: 19), "No"]).isQuick)
+        XCTAssertTrue(makeCard([String(repeating: "a", count: 14), "No"]).isQuick)
+        XCTAssertFalse(makeCard([String(repeating: "a", count: 15), "No"]).isQuick, "a word longer than a tile's line is not cut")
         XCTAssertTrue(makeCard(["Yes", "No"], body: String(repeating: "b", count: 240)).isQuick)
         XCTAssertFalse(makeCard(["Yes", "No"], body: String(repeating: "b", count: 241)).isQuick)
         XCTAssertTrue(makeCard(["Allow", "Deny", "Third"], body: String(repeating: "b", count: 999), kind: .permission).isQuick,
@@ -38,8 +38,22 @@ final class QuestionRuleTests: XCTestCase {
 
     func testQuickRuleCountsLikeJavaScript() {
         // An emoji is one Character but two UTF-16 units, which is what inbox.js counts.
-        XCTAssertTrue(makeCard([String(repeating: "😀", count: 9), "No"]).isQuick)
-        XCTAssertFalse(makeCard([String(repeating: "😀", count: 10), "No"]).isQuick)
+        XCTAssertTrue(makeCard([String(repeating: "😀", count: 7), "No"]).isQuick)
+        XCTAssertFalse(makeCard([String(repeating: "😀", count: 8), "No"]).isQuick)
+    }
+
+    /// fitsTile in inbox.js: two lines of fourteen, broken between words or after a hyphen, never inside a word.
+    func testALabelFitsATileInTwoShortLines() {
+        // Checked against fitsTile() in node, label by label.
+        for label in ["Yes", "Run it now", "Tonight at 2", "Keep the old one", "Follow-up later", "  Postgres  ", "", "In the background",
+                      "In steps without a lock", "one two three four five six", "Raise the limit to sixty", "With the conversation"] {
+            XCTAssertTrue(Card.fitsTile(label), label)
+        }
+        for label in ["Internationalisation", "Paginate the export now please", "wellestablishedness"] {
+            XCTAssertFalse(Card.fitsTile(label), label)
+        }
+        XCTAssertTrue(Card.fitsTile("well-established"), "a hyphen is a place to break")
+        XCTAssertFalse(makeCard(["Paginate the export now please", "No"]).isQuick, "such a card is answered through Choose")
     }
 
     func testQuickCardsOfTheFixture() throws {
@@ -87,11 +101,14 @@ final class QuestionRuleTests: XCTestCase {
         XCTAssertEqual(swapped.cardTiles.map(\.label), ["Deny", "Allow"], "the card names them the same on every permission")
     }
 
-    func testEverythingElseIsLaterAndChoose() throws {
+    func testEverythingElseIsOneWideChoose() throws {
         let state = try Fixture.multi()
-        XCTAssertEqual(state.card("c-migrate")?.rowActions, .laterChoose)
-        XCTAssertEqual(state.card("c-theme")?.rowActions, .laterChoose)
-        XCTAssertEqual(makeCard(["Yes", "No"], attachments: [.file]).rowActions, .laterChoose)
+        // Code in the text, or more than one picture: too much for a row, the card opens as a page.
+        XCTAssertEqual(state.card("c-migrate")?.rowActions, .choose(inline: false, count: "4 options"))
+        XCTAssertEqual(state.card("c-theme")?.rowActions, .choose(inline: false, count: "3 options"))
+        // Three plain options unfold in the row.
+        XCTAssertEqual(state.card("c-next")?.rowActions, .choose(inline: true, count: "3 options"))
+        XCTAssertEqual(makeCard(["Yes", "No"], attachments: [.file]).rowActions, .choose(inline: false, count: "2 options"))
     }
 
     func testThumbsAreTheRuleInARow() {
@@ -143,7 +160,7 @@ final class QuestionRuleTests: XCTestCase {
         let parts = try XCTUnwrap(state.card("c-parts"))
         XCTAssertTrue(parts.multiple)
         XCTAssertEqual(parts.answerMode, .several)
-        XCTAssertEqual(parts.rowActions, .laterChoose)
+        XCTAssertEqual(parts.rowActions, .choose(inline: true, count: "4 options, several allowed"))
         XCTAssertEqual(parts.recommended, ["start", "board"])
         XCTAssertEqual(parts.cardTiles.map(\.advised), [true, true, false, false], "the agent may recommend several")
         XCTAssertTrue(parts.cardTiles.allSatisfy { !$0.isLead && $0.sketch == .other })
@@ -175,8 +192,9 @@ final class QuestionRuleTests: XCTestCase {
         func json(_ answer: Answer) throws -> String {
             String(decoding: try JSONSerialization.data(withJSONObject: answer.body(cardID: "c", note: "n"), options: [.sortedKeys]), as: UTF8.self)
         }
-        XCTAssertEqual(try json(.one("a")), #"{"card_id":"c","key":"a","note":"n"}"#)
-        XCTAssertEqual(try json(.several(["a", "b"])), #"{"card_id":"c","key":"a","keys":["a","b"],"note":"n"}"#)
+        // "revised" always travels: null says "the wording that was never changed".
+        XCTAssertEqual(try json(.one("a")), #"{"card_id":"c","key":"a","note":"n","revised":null}"#)
+        XCTAssertEqual(try json(.several(["a", "b"])), #"{"card_id":"c","key":"a","keys":["a","b"],"note":"n","revised":null}"#)
     }
 
     // MARK: urgency
@@ -294,7 +312,8 @@ final class InboxTests: XCTestCase {
         XCTAssertTrue(inbox.groups.isEmpty)
         XCTAssertFalse(inbox.isEmpty)
         XCTAssertEqual(state.inbox(later: LaterList()).sentence, "1 question needs you.")
-        XCTAssertFalse(state.inbox(later: LaterList()).offersWalk)
+        XCTAssertTrue(state.inbox(later: LaterList()).offersWalk, "the count is the way into the walk, also for one question")
+        XCTAssertFalse(inbox.offersWalk, "nothing new, nothing to walk")
     }
 
     func testLaterEntryGoesWhenAnsweredOrMoreUrgent() throws {
@@ -420,7 +439,11 @@ final class LocalChangeTests: XCTestCase {
         var state = original
         try state.decide(cardID: "c-nav", key: "delete", note: "away with it", now: 5)
         try state.reopen(cardID: "c-nav", now: 6)
-        XCTAssertEqual(state.card("c-nav"), original.card("c-nav"))
+        // Nothing the human ticked or wrote is lost: the answer taken back is the card's draft.
+        XCTAssertEqual(state.card("c-nav")?.draft, CardDraft(keys: ["delete"], note: "away with it", notes: [:], ts: 6))
+        var plain = try XCTUnwrap(state.card("c-nav"))
+        plain.draft = nil
+        XCTAssertEqual(plain, original.card("c-nav"), "otherwise it is the card it was")
         XCTAssertEqual(state.queue, original.queue)
         XCTAssertEqual(state.messages.last?.kind, "reopened")
     }

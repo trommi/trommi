@@ -87,6 +87,43 @@ struct AssetRef: Equatable, Sendable {
     var gone: Bool
 }
 
+/// A question this card replaced when the agent merged several into one (merge_cards).
+struct MergedCard: Equatable, Sendable, Identifiable {
+    var id: String
+    var number: Int
+    var title: String
+}
+
+/// One block of a question handed in as one structured text (docs/question-contract.md):
+/// a plain paragraph, or a paragraph that is an option.
+struct CardSection: Equatable, Sendable {
+    /// The option's key; nil for a plain paragraph.
+    var key: String?
+    /// The option's short label; empty for a plain paragraph.
+    var label: String
+    /// Markdown; may be empty for an option that needs no explanation.
+    var text: String
+    var recommended: Bool
+    /// Index into the card's attachments; nil when no picture belongs to this block.
+    var picture: Int?
+
+    var isOption: Bool { key != nil }
+}
+
+/// What the human ticked and wrote on an open card without sending it. The hub keeps it,
+/// so "Later" loses nothing and another device shows the same ticks.
+struct CardDraft: Equatable, Sendable {
+    var keys: [String] = []
+    /// As typed, not trimmed.
+    var note: String = ""
+    /// Option key to what was written on that option.
+    var notes: [String: String] = [:]
+    /// When the hub stored it; a different stamp is a different draft.
+    var ts: Double = 0
+
+    var isEmpty: Bool { keys.isEmpty && note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && notes.isEmpty }
+}
+
 struct Card: Equatable, Sendable, Identifiable {
     var id: String
     var agent: String
@@ -112,6 +149,22 @@ struct Card: Equatable, Sendable, Identifiable {
     var multiple: Bool = false
     /// Every chosen key in the order of the options; `choice` is the first of them.
     var choices: [String] = []
+    /// When the agent last reworded the question; nil when it stands as it was asked.
+    /// An answer names the wording it was given to, and the hub refuses one given to an older wording.
+    var revised: Double? = nil
+    var revisions: Int = 0
+    /// The questions this one replaced; empty for a card that was asked as it is.
+    var mergedFrom: [MergedCard] = []
+    /// On a card that was merged away: the card that replaced it.
+    var mergedInto: String? = nil
+    /// The question as blocks tied to its options; nil for a card filed as body plus options.
+    var sections: [CardSection]? = nil
+    /// What the human wrote on single options when answering, by option key.
+    var optionNotes: [String: String] = [:]
+    /// What the human attached to the note of the answer.
+    var noteAttachments: [Attachment] = []
+    /// Ticked and written but not sent; nil when there is none. Only on open questions.
+    var draft: CardDraft? = nil
 }
 
 struct Message: Equatable, Sendable, Identifiable {
@@ -232,6 +285,18 @@ private struct Fields {
         return (try? box.decode(Lossy<T>.self, forKey: AnyKey(key)))?.value
     }
 
+    /// An object from keys to texts; entries that are not text are dropped.
+    func texts(_ key: String) -> [String: String] {
+        guard let box, let raw = try? box.decode([String: Lossy<String>].self, forKey: AnyKey(key)) else { return [:] }
+        return raw.compactMapValues(\.value)
+    }
+
+    /// True when the key is there and holds a list.
+    func isArray(_ key: String) -> Bool {
+        guard let box else { return false }
+        return (try? box.nestedUnkeyedContainer(forKey: AnyKey(key))) != nil
+    }
+
     func array<T: Decodable>(_ key: String, of type: T.Type = T.self) -> [T] {
         guard let box, let raw = try? box.decode([Lossy<T>].self, forKey: AnyKey(key)) else { return [] }
         return raw.compactMap(\.value)
@@ -306,6 +371,49 @@ extension AssetRef: Decodable {
     }
 }
 
+extension MergedCard: Decodable {
+    init(from decoder: Decoder) throws {
+        let f = Fields(decoder)
+        guard let id = f.optionalString("id"), !id.isEmpty else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "merged card without id"))
+        }
+        self.id = id
+        number = f.int("number") ?? 0
+        title = f.string("title")
+    }
+}
+
+extension CardSection: Decodable {
+    init(from decoder: Decoder) throws {
+        let f = Fields(decoder)
+        guard f.box != nil else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "section is not an object"))
+        }
+        key = f.optionalString("key")
+        text = f.string("text")
+        label = f.string("label", key ?? "")
+        recommended = f.bool("recommended")
+        picture = f.int("picture")
+        // A plain block is never empty; one that is says nothing and is dropped.
+        if key == nil, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "empty plain section"))
+        }
+    }
+}
+
+extension CardDraft: Decodable {
+    init(from decoder: Decoder) throws {
+        let f = Fields(decoder)
+        guard f.box != nil else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "draft is not an object"))
+        }
+        keys = f.array("keys", of: QueueID.self).map(\.value)
+        note = f.string("note")
+        notes = f.texts("notes")
+        ts = f.double("ts") ?? 0
+    }
+}
+
 extension Card: Decodable {
     init(from decoder: Decoder) throws {
         let f = Fields(decoder)
@@ -336,6 +444,32 @@ extension Card: Decodable {
         multiple = f.bool("multiple")
         let chosen = f.strings("choices")
         choices = chosen.isEmpty ? (choice.map { [$0] } ?? []) : chosen
+        revised = f.double("revised").flatMap { $0 > 0 ? $0 : nil }
+        revisions = f.int("revisions") ?? 0
+        mergedFrom = f.array("merged_from")
+        mergedInto = f.optionalString("merged_into")
+        noteAttachments = f.array("note_attachments")
+        optionNotes = f.texts("option_notes").filter { keys.contains($0.key) && !$0.value.isEmpty }
+        // Sections only count when they are a list and say what the options say: every flagged
+        // block is one of the options. Anything else falls back to body and options.
+        if f.isArray("sections") {
+            var blocks: [CardSection] = f.array("sections")
+            for i in blocks.indices {
+                if let picture = blocks[i].picture, !attachments.indices.contains(picture) { blocks[i].picture = nil }
+            }
+            let flagged = blocks.compactMap(\.key)
+            sections = !blocks.isEmpty && flagged.allSatisfy(keys.contains) ? blocks : nil
+        } else {
+            sections = nil
+        }
+        // A draft belongs to an open question; what it says about options that are gone is dropped.
+        if status == .open, kind == .decision, var kept: CardDraft = f.object("draft") {
+            kept.keys = options.map(\.key).filter(kept.keys.contains)
+            kept.notes = kept.notes.filter { keys.contains($0.key) && !$0.value.isEmpty }
+            draft = kept.isEmpty ? nil : kept
+        } else {
+            draft = nil
+        }
     }
 }
 

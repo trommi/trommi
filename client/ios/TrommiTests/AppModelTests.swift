@@ -30,10 +30,11 @@ final class AppModelTests: XCTestCase {
         }
     }
 
+    /// The board's clock runs after the app's (1000), as a reply comes after the question it answers.
     private func board(_ device: Device, failing: String? = nil) async throws -> (AppModel, StubBoardClient) {
-        let stub = StubBoardClient(state: try Fixture.multi(), clock: { 42 })
+        let stub = StubBoardClient(state: try Fixture.multi(), clock: { 2000 })
         if let failing { stub.failNext(failing) }
-        let model = AppModel(hooks: device.hooks, clock: { 1000 })
+        let model = AppModel(hooks: device.hooks, draftDelay: 0.02, clock: { 1000 })
         model.start(stub, address: "Test", first: nil, demo: false)
         try await until("the first state") { model.loaded }
         return (model, stub)
@@ -63,7 +64,7 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(device.clients, [true])
     }
 
-    func testAnAnswerShowsAtOnceAndOffersUndo() async throws {
+    func testAnAnswerShowsAtOnceAndOffersTheWayBack() async throws {
         let device = Device()
         let (model, stub) = try await board(device)
         let card = try XCTUnwrap(model.state.card("c-nav"))
@@ -72,13 +73,15 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.state.card("c-nav")?.choice, "keep")
         XCTAssertFalse(model.state.queue.contains("c-nav"))
         XCTAssertEqual(stub.current.card("c-nav")?.status, .decided)
-        XCTAssertEqual(model.undo?.cardID, "c-nav")
-        XCTAssertEqual(model.undo?.label, "Keep")
+        XCTAssertEqual(model.back?.cardID, "c-nav")
+        XCTAssertEqual(model.back?.head, "Answered: Keep")
+        XCTAssertEqual(model.back?.title, card.title)
+        XCTAssertEqual(model.back?.undo, .reopen)
         XCTAssertEqual(device.feedback, [.decided])
 
-        let undone = await model.reopen("c-nav")
-        XCTAssertNil(undone)
-        XCTAssertNil(model.undo)
+        let undone = await model.takeBack()
+        XCTAssertEqual(undone, "c-nav", "the card that is back")
+        XCTAssertNil(model.back)
         try await until("the question is back") { model.state.queue.contains("c-nav") }
         XCTAssertEqual(stub.current.card("c-nav")?.status, .open)
     }
@@ -92,17 +95,18 @@ final class AppModelTests: XCTestCase {
         XCTAssertEqual(model.notice, reason)
         XCTAssertEqual(model.state.card("c-nav")?.status, .open, "the question is open again")
         XCTAssertTrue(model.state.queue.contains("c-nav"))
-        XCTAssertNil(model.undo)
+        XCTAssertNil(model.back, "nothing to take back")
+        XCTAssertEqual(model.refusals["c-nav"], reason, "the card says why")
         XCTAssertFalse(model.isPending("c-nav"))
         XCTAssertEqual(device.feedback, [.decided, .failed])
     }
 
-    func testAPermissionOffersNoUndo() async throws {
+    func testAPermissionOffersNoWayBack() async throws {
         let (model, _) = try await board(Device())
         let card = try XCTUnwrap(model.state.card("c-perm"))
         _ = await model.decide(card, card.options[0])
         XCTAssertEqual(model.state.card("c-perm")?.status, .done)
-        XCTAssertNil(model.undo)
+        XCTAssertNil(model.back)
     }
 
     func testLaterIsKeptAndPruned() async throws {
@@ -200,7 +204,7 @@ final class AppModelTests: XCTestCase {
         let reason = await model.decide(parts, [parts.options[3], parts.options[0]])
         XCTAssertNil(reason)
         XCTAssertEqual(stub.current.card("c-parts")?.choices, ["start", "admin"])
-        XCTAssertEqual(model.undo?.label, "Administration, Getting started")
+        XCTAssertEqual(model.back?.head, "Answered: Administration, Getting started")
         let empty = await model.decide(try XCTUnwrap(model.state.card("c-nav")), [])
         XCTAssertEqual(empty, "Not saved: Choose at least one option.")
     }
@@ -218,5 +222,197 @@ final class AppModelTests: XCTestCase {
         try await model.send("Hello", to: "api")
         XCTAssertEqual(stub.current.conversation(of: "api").last?.text, "Hello")
         try await until("the message on screen") { model.state.conversation(of: "api").last?.text == "Hello" }
+    }
+
+    // MARK: back
+
+    func testBackTakesAnAnswerBackEvenWhileItIsOnItsWay() async throws {
+        let (model, stub) = try await board(Device())
+        let card = try XCTUnwrap(model.state.card("c-next"))
+        // The answer is not awaited: the row is gone and the note is up before the server has spoken.
+        let answering = Task { await model.decide(card, card.options[1], note: "go", notes: ["live-log": "not yet"]) }
+        try await until("the note") { model.back != nil }
+        XCTAssertFalse(model.state.queue.contains("c-next"), "the row left at once")
+        let back = await model.takeBack()
+        _ = await answering.value
+        XCTAssertEqual(back, "c-next")
+        try await until("the question is open again") { model.state.card("c-next")?.status == .open && !model.isPending("c-next") }
+        // It returns with what was ticked and written, as its draft.
+        XCTAssertEqual(stub.current.card("c-next")?.draft?.keys, ["encryption"])
+        XCTAssertEqual(stub.current.card("c-next")?.draft?.note, "go")
+        XCTAssertEqual(stub.current.card("c-next")?.draft?.notes, ["live-log": "not yet"])
+        XCTAssertNil(model.back)
+        let nothing = await model.takeBack()
+        XCTAssertNil(nothing, "nothing left to take back")
+    }
+
+    func testLaterSaysWhereTheQuestionWentAndBackFetchesIt() async throws {
+        let device = Device()
+        let (model, _) = try await board(device)
+        let card = try XCTUnwrap(model.state.card("c-theme"))
+        model.later(card)
+        XCTAssertEqual(model.back?.head, "Moved to Later")
+        XCTAssertEqual(model.back?.title, card.title)
+        XCTAssertEqual(model.state.inbox(later: model.later).later.map(\.card.id), ["c-theme"])
+        XCTAssertFalse(model.later.isHanded("c-theme"), "the agent hears nothing of a plain Later")
+        let back = await model.takeBack()
+        XCTAssertEqual(back, "c-theme")
+        XCTAssertTrue(model.later.ids.isEmpty)
+        XCTAssertTrue(LaterList.decoded(device.later).ids.isEmpty)
+
+        // A second note replaces the first.
+        model.later(card)
+        model.later(try XCTUnwrap(model.state.card("c-nav")))
+        XCTAssertEqual(model.back?.cardID, "c-nav")
+        model.dismissBack()
+        XCTAssertNil(model.back)
+        XCTAssertEqual(model.later.ids, ["c-theme", "c-nav"], "letting the note go undoes nothing")
+    }
+
+    func testExplainHandsTheCardToItsAgentUntilTheReply() async throws {
+        let device = Device()
+        let (model, stub) = try await board(device)
+        let card = try XCTUnwrap(model.state.card("c-migrate"))
+        let failed = await model.explain(card)
+        XCTAssertNil(failed)
+        XCTAssertEqual(stub.current.thread(of: "c-migrate").map(\.text), [Wording.explainText])
+        XCTAssertEqual(model.back?.head, "Asked to explain")
+        XCTAssertEqual(model.back?.title, "It comes back with the answer.")
+        XCTAssertTrue(model.later.isHanded("c-migrate"))
+        XCTAssertEqual(LaterList.decoded(device.later).handed, ["c-migrate"], "kept on the device")
+        try await until("the pile") { model.state.inbox(later: model.later).handed.map(\.card.id) == ["c-migrate"] }
+        XCTAssertEqual(model.state.card("c-migrate")?.status, .open)
+
+        // The session replies about the card: it is back in its sender's group by itself.
+        try stub.reply("It adds one column.", agent: "api", about: "c-migrate")
+        try await until("the card is back") { model.later.ids.isEmpty }
+        XCTAssertTrue(model.state.inbox(later: model.later).fresh.contains { $0.id == "c-migrate" })
+        XCTAssertTrue(LaterList.decoded(device.later).ids.isEmpty)
+    }
+
+    func testBackToAgentSendsWhatWasWrittenFirst() async throws {
+        let (model, stub) = try await board(Device())
+        let card = try XCTUnwrap(model.state.card("c-phone"))
+        let failed = await model.handBack(card, text: "  Try it with tabs first.  ")
+        XCTAssertNil(failed)
+        XCTAssertEqual(stub.current.thread(of: "c-phone").map(\.text), ["Try it with tabs first."])
+        XCTAssertEqual(model.back?.head, "With the agent")
+        XCTAssertTrue(model.later.isHanded("c-phone"))
+        let back = await model.takeBack()
+        XCTAssertEqual(back, "c-phone")
+        XCTAssertFalse(model.later.contains("c-phone"))
+
+        // With nothing written, nothing is sent; the card still waits for the agent's word.
+        let quiet = try XCTUnwrap(model.state.card("c-nav"))
+        _ = await model.handBack(quiet)
+        XCTAssertTrue(stub.current.thread(of: "c-nav").isEmpty)
+        XCTAssertTrue(model.later.isHanded("c-nav"))
+
+        // If the words do not arrive, the card stays where it is.
+        stub.failNext("message")
+        let other = try XCTUnwrap(model.state.card("c-next"))
+        let reason = await model.handBack(other, text: "Hello?")
+        XCTAssertEqual(reason, "Not handed over: The server did not answer.")
+        XCTAssertFalse(model.later.contains("c-next"))
+        stub.failNext("message")
+        let unexplained = await model.explain(other)
+        XCTAssertEqual(unexplained, "Not asked: The server did not answer.")
+        XCTAssertFalse(model.later.contains("c-next"))
+    }
+
+    // MARK: a revised question
+
+    func testAnAnswerToARevisedQuestionComesBackWithTheReason() async throws {
+        let device = Device()
+        let (model, stub) = try await board(device)
+        // The human still looks at the old wording when the agent rewrites the card.
+        let seen = try XCTUnwrap(model.state.card("c-nav"))
+        try stub.revise(cardID: "c-nav", title: "Delete the old navigation and its tests?")
+        let reason = await model.decide(seen, seen.options[0])
+        XCTAssertEqual(reason, "Not saved: \(BoardError.revised.message)")
+        XCTAssertEqual(model.notice, reason)
+        XCTAssertEqual(model.refusals["c-nav"], reason)
+        XCTAssertNil(model.back)
+        XCTAssertEqual(stub.current.card("c-nav")?.status, .open, "nothing was sent")
+        try await until("the card as it is now") { model.state.card("c-nav")?.title == "Delete the old navigation and its tests?" }
+        XCTAssertEqual(model.state.card("c-nav")?.selfNote, "revised")
+        XCTAssertEqual(model.state.conversation(of: "web-frontend").last?.kind, "revised")
+
+        // Read again and answered once more: taken, and the reason is gone.
+        let now = try XCTUnwrap(model.state.card("c-nav"))
+        let again = await model.decide(now, now.options[0])
+        XCTAssertNil(again)
+        XCTAssertNil(model.refusals["c-nav"])
+        XCTAssertEqual(stub.current.card("c-nav")?.choice, "delete")
+    }
+
+    // MARK: drafts
+
+    func testADraftGoesOutAMomentAfterTheLastChange() async throws {
+        let (model, stub) = try await board(Device())
+        let card = try XCTUnwrap(model.state.card("c-next"))
+        var editor = DraftEditor(card: card)
+        editor.toggle("encryption", multiple: false)
+        model.saveDraft(card, editor)
+        editor.note = "after the release"
+        editor.setNote("too early", on: "live-log")
+        model.saveDraft(card, editor)
+        XCTAssertTrue(model.hasUnsentDraft("c-next"))
+        XCTAssertNil(stub.current.card("c-next")?.draft, "not yet: the next change may follow")
+        try await until("the draft on the hub") { stub.current.card("c-next")?.draft != nil }
+        XCTAssertEqual(stub.current.card("c-next")?.draft?.keys, ["encryption"])
+        XCTAssertEqual(stub.current.card("c-next")?.draft?.note, "after the release")
+        XCTAssertEqual(stub.current.card("c-next")?.draft?.notes, ["live-log": "too early"])
+        try await until("the draft in the state") { model.state.card("c-next")?.draft != nil && !model.hasUnsentDraft("c-next") }
+
+        // What the hub already holds is not sent again.
+        model.saveDraft(try XCTUnwrap(model.state.card("c-next")), editor)
+        XCTAssertFalse(model.hasUnsentDraft("c-next"))
+
+        // "Later" loses nothing; an empty draft clears it.
+        model.later(try XCTUnwrap(model.state.card("c-next")))
+        XCTAssertEqual(model.state.card("c-next")?.draft?.note, "after the release")
+        model.saveDraft(card, DraftEditor())
+        try await until("the draft cleared") { stub.current.card("c-next")?.draft == nil }
+
+        // An answer replaces a draft that was still waiting to go out.
+        editor.note = "never sent"
+        model.saveDraft(card, editor)
+        _ = await model.decide(card, card.options[0])
+        XCTAssertFalse(model.hasUnsentDraft("c-next"))
+        XCTAssertNil(stub.current.card("c-next")?.draft)
+        // Permissions keep none.
+        model.saveDraft(try XCTUnwrap(model.state.card("c-perm")), editor)
+        XCTAssertFalse(model.hasUnsentDraft("c-perm"))
+    }
+
+    // MARK: links
+
+    func testALinkToAQuestionWaitsForTheBoard() async throws {
+        let device = Device()
+        let stub = StubBoardClient(state: try Fixture.multi(), clock: { 42 })
+        let model = AppModel(hooks: device.hooks, clock: { 1000 })
+        // Opened by a link before anything is loaded.
+        XCTAssertTrue(model.handle(url: try XCTUnwrap(URL(string: "trommi://open?q=9"))))
+        XCTAssertNil(model.linkTarget)
+        model.start(stub, address: "Test", first: nil, demo: false)
+        try await until("the link resolved") { model.linkTarget != nil }
+        XCTAssertEqual(model.linkTarget, .card("c-nav"), "question Nr. 9")
+        model.consumeLink()
+        XCTAssertNil(model.linkTarget)
+
+        XCTAssertTrue(model.handle(url: try XCTUnwrap(URL(string: "https://board.example/?q=next"))))
+        XCTAssertEqual(model.linkTarget, .walk)
+        model.consumeLink()
+        XCTAssertTrue(model.handle(url: try XCTUnwrap(URL(string: "https://board.example/?q=4711"))))
+        XCTAssertNil(model.linkTarget)
+        XCTAssertEqual(model.notice, "This question does not exist on this board.")
+        XCTAssertFalse(model.handle(url: try XCTUnwrap(URL(string: "https://board.example/agents"))), "no question named")
+
+        // The demo has no server: no address to share, no pad.
+        XCTAssertNil(model.link(to: try XCTUnwrap(model.state.card("c-nav"))))
+        model.openPad()
+        XCTAssertNil(model.browser)
+        XCTAssertEqual(model.notice, "The pad lives on the server; the demo has none.")
     }
 }
