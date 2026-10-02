@@ -2062,8 +2062,106 @@ assert.deepEqual(o.sessions.map(a => [a.id, a.online]), [['chef', false], ['spei
 assert.deepEqual((await (await adminGet('log', admin4)).json()).entries.map(e => e.action).slice(-2), ['rotate', 'login'])
 assert.ok(!(await say(speiche, 'list_cards', {})).isError && !(await say(neu, 'list_cards', {})).isError)
 assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
+
+// ---- rich content: html beside a message or a question, and ```html fenced inside a text ----
+{
+  const { cleanHtml, HTML_MAX } = await import('./richhtml.mjs')
+  const textOf = res => res.content?.[0]?.text ?? ''
+  const fails = async (name, args, pattern) => {
+    const res = await say(neu, name, args).catch(err => ({ isError: true, content: [{ text: err.message }] }))
+    assert.ok(res.isError, `${name} should have been refused`)
+    assert.match(textOf(res), pattern)
+  }
+  const mine = async () => { const s = await state(board4); return { messages: s.messages.filter(m => m.agent === 'neu'), cards: s.cards.filter(c => c.agent === 'neu') } }
+  const table = '<table><tr><th>Way</th><th>Lock</th></tr><tr><td>Now</td><td>40 s</td></tr></table>'
+
+  // a message: the field is accepted, stored and delivered; the words stay what they were
+  let res = await say(neu, 'reply', { text: 'Two ways, **now** is fine.', html: table })
+  assert.equal(textOf(res), 'sent')
+  let last = (await mine()).messages.at(-1)
+  assert.deepEqual([last.text, last.html], ['Two ways, **now** is fine.', table])
+  // never without words beside it, never anything but a string, never more than the limit
+  await fails('reply', { text: '  ', html: table }, /html needs text beside it/)
+  await fails('reply', { text: 'x', html: { a: 1 } }, /must be a string/)
+  await fails('reply', { text: 'x', html: `<p>${'a'.repeat(HTML_MAX)}</p>` }, /at most 200 KB/)
+  assert.equal(textOf(await say(neu, 'reply', { text: 'big but allowed', html: `<p>${'a'.repeat(HTML_MAX - 7)}</p>` })), 'sent')
+  await fails('reply', { text: 'x', html: '<script>alert(1)</script>' }, /html is empty after cleaning/)
+  // what runs, loads or sends is taken out before it is stored, and the agent is told
+  res = await say(neu, 'reply', { text: 'cleaned', html: `<div onclick="steal()" title="on = > ok">A<script>fetch('/events')</script><img src="https://evil.example/p.png"><img src="data:image/png;base64,AAAA" onerror=x()><a href="java&#x73;cript:x()">l</a><a href="https://example.org/">w</a><iframe src="/"></iframe><form action="/message"><input name=t></form><meta http-equiv="refresh" content="0;url=https://evil.example"><style>@import "https://evil.example/a.css"; td { background: url(https://evil.example/b.png) }</style><scr<script>x</script>ipt>y()</scr<script></script>ipt></div>` })
+  for (const what of ['<script> (', '<meta>', '<iframe>', '<form>', 'handlers (2)', 'script addresses', 'pictures from an address', 'addresses in CSS (2)']) assert.ok(textOf(res).startsWith('sent\nRemoved from your html') && textOf(res).includes(what), `the answer names ${what}`)
+  last = (await mine()).messages.at(-1)
+  assert.doesNotMatch(last.html, /<script|onclick|onerror|evil\.example|<iframe|<form|<meta|javascript|java&#|@import|steal|fetch/i)
+  assert.match(last.html, /title="on = > ok"/)
+  assert.match(last.html, /<img src="data:image\/png;base64,AAAA"\s*>/)
+  assert.match(last.html, /<a href="https:\/\/example\.org\/">w<\/a>/)
+  assert.match(last.html, /<input name=t>/)
+  // cleaning what is clean changes nothing, and the next call does not inherit the report
+  assert.equal(cleanHtml(last.html), last.html)
+  assert.equal(textOf(await say(neu, 'reply', { text: 'plain' })), 'sent')
+
+  // the same inside a text: a block fenced as html is cleaned in place, text and details alike; other fences are left alone
+  res = await say(neu, 'reply', { text: 'Look:\n\n```html\n<b onmouseover="x()">bold</b><script>1</script>\n```\n\n```js\n<script>stays()</script>\n```', details: '```html\n<i>fine</i><script>2</script>\n```' })
+  assert.match(textOf(res), /Removed from your html/)
+  last = (await mine()).messages.at(-1)
+  assert.equal(last.text, 'Look:\n\n```html\n<b >bold</b>\n```\n\n```js\n<script>stays()</script>\n```')
+  assert.equal(last.details, '```html\n<i>fine</i>\n```')
+  assert.equal(last.html, undefined)
+  await fails('reply', { text: `\`\`\`html\n<p>${'a'.repeat(HTML_MAX)}</p>\n\`\`\`` }, /an html block in text is \d+ KB/)
+
+  // a question: html beside the body
+  const opts = [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }]
+  await fails('create_decision', { title: 'T', html: table, options: opts }, /html needs body beside it/)
+  await fails('create_decision', { title: 'T', html: table, sections: [{ text: 'intro' }, { key: 'a', label: 'A', text: 'x' }, { key: 'b', label: 'B', text: 'y' }] }, /html and sections \(or text\) cannot be combined/)
+  res = await say(neu, 'create_decision', { title: 'Which way?', body: 'Two ways.\n\n```html\n<p onclick="x()">' + 'long '.repeat(200) + '</p>\n```', html: `${table}<script>1</script>`, options: opts })
+  const rid = textOf(res).match(/^card (\w+) /)[1]
+  // a layout is looked at, not read: it does not count as a long body; what was removed is said
+  assert.doesNotMatch(textOf(res), /a lot to read/)
+  assert.match(textOf(res), /Removed from your html.*handlers, <script>/s)
+  let card = (await mine()).cards.find(c => c.id === rid)
+  assert.equal(card.html, table)
+  assert.doesNotMatch(card.body, /onclick/)
+  // revised: the new layout is the card's, the old one stays with the version it belonged to
+  res = await say(neu, 'revise_card', { card_id: rid, html: '<ul><li>one</li><li>two</li></ul>', note: 'as a list' })
+  assert.match(textOf(res), /revised/)
+  card = (await mine()).cards.find(c => c.id === rid)
+  assert.deepEqual([card.html, card.version, card.versions.length, card.versions[0].html], ['<ul><li>one</li><li>two</li></ul>', 2, 1, table])
+  // untouched by a revision of something else; listed for the agent; taken away by ''
+  await say(neu, 'revise_card', { card_id: rid, title: 'Which way then?' })
+  card = (await mine()).cards.find(c => c.id === rid)
+  assert.deepEqual([card.html, card.version, card.versions[1].html], ['<ul><li>one</li><li>two</li></ul>', 3, '<ul><li>one</li><li>two</li></ul>'])
+  assert.equal(JSON.parse(textOf(await say(neu, 'list_cards', {}))).find(c => c.id === rid).html, card.html)
+  assert.match(textOf(await say(neu, 'revise_card', { card_id: rid, html: '' })), /revised/)
+  card = (await mine()).cards.find(c => c.id === rid)
+  assert.deepEqual(['html' in card, card.version, card.versions.at(-1).html], [false, 4, '<ul><li>one</li><li>two</li></ul>'])
+  assert.match(textOf(await say(neu, 'revise_card', { card_id: rid, html: '' })), /unchanged in wording/)
+
+  // sections: a block carries its own layout, beside its own words
+  await fails('create_decision', { title: 'T', sections: [{ text: 'intro' }, { key: 'a', label: 'A', html: table }, { key: 'b', label: 'B', text: 'y' }] }, /the html of section a needs text beside it/)
+  res = await say(neu, 'create_decision', { title: 'Blocks', sections: [{ text: 'Intro.', html: `${table}<script>1</script>` }, { key: 'a', label: 'A', text: 'First.', html: '<mark>a</mark>' }, { key: 'b', label: 'B', text: 'Second.' }] })
+  const sid = textOf(res).match(/^card (\w+) /)[1]
+  card = (await mine()).cards.find(c => c.id === sid)
+  assert.deepEqual(card.sections.map(s => s.html), [table, '<mark>a</mark>', undefined])
+  assert.equal(card.body, 'Intro.\n\n**A**: First.\n\n**B**: Second.')
+  assert.equal(card.html, undefined)
+  // as one text: a fenced block keeps its blank lines and stays in its paragraph
+  res = await say(neu, 'create_decision', { title: 'Text', text: 'Intro.\n\n```html\n<p>one</p>\n\n<p onclick="x()">two</p>\n```\n\n[a] A: First.\n```html\n<b>x</b>\n\n<b>y</b>\n```\n\n[b] B: Second.' })
+  card = (await mine()).cards.find(c => c.id === textOf(res).match(/^card (\w+) /)[1])
+  assert.deepEqual(card.sections.map(s => [s.key ?? null, s.text]), [[null, 'Intro.'], [null, '```html\n<p>one</p>\n\n<p >two</p>\n```'], ['a', 'First.\n```html\n<b>x</b>\n\n<b>y</b>\n```'], ['b', 'Second.']])
+  // merged: the new card carries its layout
+  res = await say(neu, 'merge_cards', { card_ids: [rid, sid], title: 'Both', body: 'In one.', html: table, options: opts })
+  card = (await mine()).cards.find(c => c.id === textOf(res).match(/^card (\w+) /)[1])
+  assert.equal(card.html, table)
+  // nothing that runs was ever written down
+  assert.doesNotMatch(fs.readFileSync(in4('state.json'), 'utf8').replace(/```js[\s\S]*?```/g, ''), /<script|onclick=|onerror=|evil\.example/i)
+  // the reference shows a three-column comparison that is clean as it stands
+  const example = (await (await fetch(`${base}/api/tools`, { headers: { Cookie: board4 } })).json()).tools.find(t => t.name === 'reply').example
+  assert.equal(example.html.match(/<th>/g).length, 3)
+  assert.equal(cleanHtml(example.html), example.html)
+  assert.ok(example.text.trim())
+}
+
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)

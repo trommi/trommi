@@ -15,6 +15,7 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
+import { cleanFences, htmlBeside, strippedHint, fences, HTML_MAX } from './richhtml.mjs'
 import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_ID, ASSET_KEY, ASSET_BLOB_MAX, prepareAsset, assetUpload, assetLink } from './asset-envelope.mjs'
 import { padRoutes, padSupport } from './pad.mjs'
 
@@ -533,6 +534,7 @@ const mcp = new Server(
       'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
       'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
       'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. For the one thing the human must not miss, write __two underscores around a few words__: the board underlines them by hand. Use it rarely; a text that underlines much is shown plain. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
+      'To compare things, write a markdown table (| a | b | rows, a rule of dashes under the first): the board draws it as a real table, numbers right-aligned. For anything richer, pass html beside the words (reply, create_decision, revise_card, merge_cards, or a block in sections), or fence it as ```html inside a text: it is shown at its place in the house style, light and dark. Semantic HTML only: tables, headings, lists, details, mark, kbd, simple inline CSS, the classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad. No scripts and nothing from the network, both are removed; pictures as data: URLs or as attachments. Always say the gist in plain words in text (body for a question): that is what is read aloud and what clients without HTML show. A whole page to try out stays with publish_asset.',
       'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and where it helps a detail of a few words naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
       'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
@@ -577,6 +579,7 @@ const SECTION_TEXT_EXAMPLE = [
 // What a question is made of besides its title, the same for create_decision, revise_card and merge_cards.
 const QUESTION_PROPS = {
   body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context.' },
+  html: { type: 'string', description: `Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most ${HTML_MAX / 1024} KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html.` },
   options: {
     type: 'array',
     minItems: 2,
@@ -600,6 +603,7 @@ const QUESTION_PROPS = {
         text: { type: 'string', description: 'The paragraph, markdown; for a flagged block what this option means, at most about 400 characters' },
         key: { type: 'string', description: 'Flags the block as an option: the stable identifier returned to you' },
         label: { type: 'string', description: 'Required with key: the short name of the option on its tile, at most about four words' },
+        html: { type: 'string', description: 'A rich layout shown under this paragraph (see html); the text beside it says the same in plain words' },
         recommended: { type: 'boolean', description: 'true: you would pick this one; several only with multiple: true' },
         picture: { anyOf: [{ type: 'string' }, { type: 'integer' }], description: 'An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0' },
       },
@@ -636,6 +640,7 @@ const TOOLS = [
       type: 'object',
       properties: {
         text: { type: 'string', description: 'The message to show in the chat' },
+        html: { type: 'string', description: `Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most ${HTML_MAX / 1024} KB. For a plain comparison a markdown table in the text is enough. Needs text beside it: the gist in plain words, which is what is read aloud and what clients without HTML show.` },
         details: { type: 'string', description: 'Optional longer material shown collapsed under the message: your reasoning, what you tried, command output, a diff. Markdown. The human opens it only if they want to.' },
         attachments: {
           type: 'array',
@@ -802,7 +807,11 @@ const TOOLS = [
 
 // One call per tool that does something sensible, for the help page. The test checks each against its schema.
 const TOOL_EXAMPLES = {
-  reply: { text: 'The migration is written and **green locally**.', details: 'Ran `npm test`: 48 of 48 pass.\nThe slow one was the index on `orders`.', attachments: ['/home/me/project/out/before-after.png'] },
+  reply: {
+    text: 'Three ways to run the migration. **Tonight at 2** is the cheapest: 40 seconds of lock while hardly anyone is online.',
+    html: '<table><thead><tr><th>Way</th><th>Lock</th><th>Work for me</th></tr></thead><tbody><tr><td>Now</td><td>40 s</td><td>none</td></tr><tr><td><mark>Tonight at 2</mark></td><td>40 s</td><td>none</td></tr><tr><td>In batches</td><td>0 s</td><td>2 h</td></tr></tbody></table>',
+    details: 'Ran `npm test`: 48 of 48 pass.\nThe slow one was the index on `orders`.', attachments: ['/home/me/project/out/before-after.png'],
+  },
   create_decision: {
     title: 'Run the migration on production now?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
     options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
@@ -901,8 +910,8 @@ const listArg = (value, what) => {
 }
 
 // What the human reads and answers on a card. revise_card may change any of these.
-const QUESTION_FIELDS = ['title', 'body', 'options', 'sections', 'text', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments']
-const questionSig = c => JSON.stringify([c.title, c.body, c.options, c.multiple, c.recommended, c.attachments, c.sections ?? null])
+const QUESTION_FIELDS = ['title', 'body', 'options', 'sections', 'text', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments', 'html']
+const questionSig = c => JSON.stringify([c.title, c.body, c.options, c.multiple, c.recommended, c.attachments, c.sections ?? null, c.html ?? null])
 
 // ---- a question as one structured text ------------------------------------
 
@@ -913,7 +922,8 @@ const questionSig = c => JSON.stringify([c.title, c.body, c.options, c.multiple,
 //   picture: file.png               as the last line: the attachment that belongs to the option
 const FLAGGED = /^\[([\w.-]+)(\*)?\](?!\()[ \t]*/
 function parseSections(text) {
-  return String(text).replace(/\r\n?/g, '\n').split(/\n[ \t]*\n/).map(p => p.trim()).filter(Boolean).map(par => {
+  // A fenced block (an ```html layout, code) is one paragraph's own, blank lines and all.
+  return fences.hide(String(text).replace(/\r\n?/g, '\n')).split(/\n[ \t]*\n/).map(p => fences.show(p).trim()).filter(Boolean).map(par => {
     const flag = FLAGGED.exec(par)
     if (!flag) return { text: par }
     let picture = null
@@ -946,15 +956,18 @@ function sectionsOf(args, names) {
   const blocks = args.sections != null ? listArg(args.sections, 'sections') : parseSections(args.text)
   return blocks.map((b, i) => {
     if (typeof b === 'string') b = { text: b }
-    const said = String(b?.text ?? '').trim()
+    const said = cleanFences(String(b?.text ?? '').trim(), `section ${i + 1}`)
+    // A layout of the block's own, shown under its paragraph.
+    const rich = htmlBeside(b?.html, said, { field: `the html of section ${b?.key || i + 1}`, beside: 'text' })
+    const layout = rich ? { html: rich } : {}
     if (b?.key == null || b.key === '') {
       if (!said) throw new Error(`section ${i + 1} is empty: a block without a key needs text`)
-      return { text: said }
+      return { text: said, ...layout }
     }
     const key = String(b.key)
     const label = String(b.label ?? '').trim()
     if (!label) throw new Error(`section "${key}" has a key, so it becomes an option and needs a label: the short name on its tile, at most about four words`)
-    return { key, label, text: said, recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
+    return { key, label, text: said, ...layout, recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
   })
 }
 
@@ -968,6 +981,9 @@ const NO_ADVICE = Symbol('no advice')
 // names: the file names of the card's attachments, for blocks that point at one.
 function questionFields(args, names = []) {
   const sections = args.sections != null || args.text != null ? sectionsOf(args, names) : null
+  if (sections && args.html) throw new Error('html and sections (or text) cannot be combined: give the layout to the block it belongs to, as html on that section, or fenced as ```html inside the text')
+  const body = sections ? bodyOf(sections) : cleanFences(String(args.body ?? ''), 'body')
+  const html = sections ? '' : htmlBeside(args.html, body, { beside: 'body' })
   const flagged = sections?.filter(s => s.key != null)
   const options = flagged ? flagged.map(s => ({ key: s.key, label: s.label, detail: '' })) : listArg(args.options, 'options').map(o => ({
     key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
@@ -991,7 +1007,7 @@ function questionFields(args, names = []) {
   return {
     multiple, recommended: Array.isArray(given) ? advised : advised[0] ?? null,
     urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
-    title: String(args.title ?? ''), body: sections ? bodyOf(sections) : String(args.body ?? ''), options,
+    title: String(args.title ?? ''), body, ...(html ? { html } : {}), options,
     // The mark on each block says the same as recommended, whichever of the two was given.
     ...(sections ? { sections: sections.map(s => (s.key == null ? s : { ...s, recommended: advised.includes(s.key) })) } : {}),
   }
@@ -1012,13 +1028,15 @@ const crowdHint = (others, card) => (others.length < CROWD ? '' : [
 const BODY_MAX = 300
 const DETAIL_MAX = 60
 const SECTION_MAX = 400
+// What there is to read in a text: a fenced layout or code block is looked at, not read.
+const prose = text => String(text ?? '').replace(/```[\s\S]*?```/g, '')
 function lengthHint(card) {
   const long = card.options.filter(o => o.detail.length > DETAIL_MAX)
   // A sectioned card is read block by block, so each block has its own measure and the body, which is all of them, has none.
-  const wordy = (card.sections ?? []).map((s, i) => (s.text.length > SECTION_MAX ? `${s.key == null ? `block ${i + 1}` : `"${s.key}"`} (${s.text.length})` : '')).filter(Boolean)
+  const wordy = (card.sections ?? []).map((s, i) => (prose(s.text).length > SECTION_MAX ? `${s.key == null ? `block ${i + 1}` : `"${s.key}"`} (${prose(s.text).length})` : '')).filter(Boolean)
   const said = [
     wordy.length ? `the section text of ${wordy.join(', ')} is longer than about ${SECTION_MAX} characters (aim for two or three sentences per block)` : '',
-    !card.sections && card.body.length > BODY_MAX ? `the body has ${card.body.length} characters (aim for one or two short sentences)` : '',
+    !card.sections && prose(card.body).length > BODY_MAX ? `the body has ${prose(card.body).length} characters (aim for one or two short sentences)` : '',
     long.length ? `the detail of ${long.map(o => `"${o.key}"`).join(', ')} is longer than one short line (aim for about six words)` : '',
   ].filter(Boolean)
   return said.length ? `\nThis is a lot to read: ${said.join('; ')}. Shorten it with revise_card and put the longer explanation behind a link or in an attachment; the human can ask for it with "Explain".` : ''
@@ -1028,19 +1046,22 @@ function lengthHint(card) {
 const VISUAL = /\b(ui|ux|design|layout|looks?|appearance|colou?rs?|buttons?|icons?|sidebar|toolbar|mock-?ups?|variants?|fonts?|typography|logos?|themes?|spacing|animation|farben?|schrift(art)?|aussehen|gestaltung|varianten?|entw[uü]rfe?|seitenleiste|symbole?)\b/i
 // A link or a path in backticks may be the page to try.
 const SHOWN = /https?:\/\/|`[^`]*\/[^`]*`/
-const visualHint = card => (card.attachments.length || SHOWN.test(card.body) || !VISUAL.test(`${card.title} ${card.body} ${card.options.map(o => o.label).join(' ')}`) ? ''
+const visualHint = card => (card.attachments.length || card.html || card.sections?.some(s => s.html) || /```html/i.test(card.body) || SHOWN.test(card.body) || !VISUAL.test(`${card.title} ${card.body} ${card.options.map(o => o.label).join(' ')}`) ? ''
   : '\nThis reads like a question about how something looks, and it shows nothing. Add a picture with revise_card: a screenshot, mockup or drawing per option where possible, each named <anything>-<key>.png so it shows with its option, or link a page to try (publish_asset). Words alone are hard to judge.')
 
 // Runs on the hub, for the hub's own agent and on behalf of spokes.
 function runTool(agent, name, args) {
   if (!args || typeof args !== 'object') args = {}
+  strippedHint()   // what an earlier, refused call lost is not this call's news
   switch (name) {
     case 'reply': {
       const about = args.card_id == null ? {} : { card_id: findCard(agent, args.card_id).id }
       // The agent answered the question back, so the card is with the human again.
       if (about.card_id) delete findCard(agent, about.card_id).with_agent
-      addMessage(agent, 'agent', String(args.text ?? ''), listArg(args.attachments, 'attachments').map(storeAttachment), { ...(args.details ? { details: String(args.details) } : {}), ...about })
-      return 'sent'
+      const text = cleanFences(String(args.text ?? ''), 'text')
+      const html = htmlBeside(args.html, text)
+      addMessage(agent, 'agent', text, listArg(args.attachments, 'attachments').map(storeAttachment), { ...(html ? { html } : {}), ...(args.details ? { details: cleanFences(String(args.details), 'details') } : {}), ...about })
+      return `sent${strippedHint()}`
     }
     case 'create_decision': {
       const fields = questionFields(args, namesOf(args))
@@ -1048,7 +1069,7 @@ function runTool(agent, name, args) {
       const card = addCard(agent, 'decision', { ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment) })
       addEvent('asked', card, card.title)
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}${visualHint(card)}`
+      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}${visualHint(card)}${strippedHint()}`
     }
     case 'revise_card': {
       const card = findCard(agent, args.card_id)
@@ -1072,6 +1093,8 @@ function runTool(agent, name, args) {
         : { body: args.body ?? card.body, options }
       const fields = questionFields({
         title: args.title ?? card.title, ...wording, multiple, urgency,
+        // A layout stands until it is replaced; '' takes it away, and new blocks carry their own.
+        html: resection ? args.html : args.html ?? card.html,
         // As with set_urgency: a new level without a reason has none.
         urgency_reason: args.urgency_reason ?? (urgency === card.urgency ? card.urgency_reason : ''),
         // New blocks carry their own marks, unless the call says otherwise.
@@ -1084,13 +1107,14 @@ function runTool(agent, name, args) {
       // The version this call may replace, as the human saw it.
       const was = {
         n: card.version ?? (card.revisions ?? 0) + 1, at: card.revised ?? card.created, title: card.title, body: card.body, options: card.options,
-        ...(card.sections ? { sections: card.sections } : {}), recommended: card.recommended ?? null, multiple: card.multiple,
+        ...(card.sections ? { sections: card.sections } : {}), ...(card.html ? { html: card.html } : {}), recommended: card.recommended ?? null, multiple: card.multiple,
         attachments: card.attachments, urgency: level, note: card.revision_note ?? '',
       }
       const again = card.with_agent != null
       delete card.with_agent
       const unsectioned = Boolean(card.sections && !fields.sections)
       if (unsectioned) delete card.sections
+      if (!fields.html) delete card.html
       Object.assign(card, fields, { attachments })
       trimDraft(card)
       // Only a change to what the human reads is a revision; a mere change of urgency is what set_urgency does.
@@ -1112,7 +1136,7 @@ function runTool(agent, name, args) {
       }
       if (card.urgency !== level) addEvent('urgency', card, card.urgency_reason ? `${URGENCY_LABEL[card.urgency]}: ${card.urgency_reason}` : URGENCY_LABEL[card.urgency])
       commit()
-      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${lengthHint(card)}${visualHint(card)}`
+      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${lengthHint(card)}${visualHint(card)}${strippedHint()}`
     }
     case 'merge_cards': {
       const ids = [...new Set(listArg(args.card_ids, 'card_ids').map(String))]
@@ -1145,7 +1169,7 @@ function runTool(agent, name, args) {
       // A status line that waited on one of the old cards now waits on the new one.
       for (const t of state.tasks) if (t.agent === agent && ids.includes(t.card_id)) t.card_id = card.id
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}${visualHint(card)}`
+      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}${visualHint(card)}${strippedHint()}`
     }
     case 'set_urgency': {
       const card = findCard(agent, args.card_id)
@@ -1225,7 +1249,7 @@ function runTool(agent, name, args) {
         queue_position: state.queue.indexOf(c.id) + 1 || null,
         title: c.title, version: c.version ?? (c.revisions ?? 0) + 1, ...(c.answered_version ? { answered_version: c.answered_version } : {}), ...(c.with_agent ? { with_agent: c.with_agent } : {}),
         multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
-        ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
+        ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, ...(c.html ? { html: c.html } : {}), options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
         ...(c.revised ? { revised: c.revised } : {}),
         ...(c.merged_from ? { merged_from: c.merged_from.map(m => m.number) } : {}),
         ...(c.merged_into ? { merged_into: c.merged_into } : {}),
