@@ -564,6 +564,8 @@ export function mountFocus({ onDecided } = {}) {
     who.append(doodle(session?.mark ?? card.agent), el('span', null, card.agent_name || session?.name || 'Agent'))
     if (urgencyWord(card)) who.append(el('b', null, urgencyWord(card)))
     who.append(el('span', 'focus-nr', cardNr(rec.card)))
+    // why it is in the pass a second time
+    if (cameBack.has(rec.id)) who.append(el('em', 'focus-came-back', cameBack.get(rec.id)))
     scroll.append(who, lead)
     if (hasMedia || hasText) scroll.append(body)
 
@@ -1526,7 +1528,7 @@ export function mountFocus({ onDecided } = {}) {
     paintChrome()
     if (!isOpen) return
     if (!sent) return info('Not asked: the session did not get it.', true)
-    const fetch = async () => { putOff(rec.id, false) }
+    const fetch = async () => { await unhand(rec.id); putOff(rec.id, false) }
     // The window of one card closes: the card is put off and comes back with the reply. The page says so.
     if (!walking) { close(); return void say(pageHost(), { head: `Asked: ${EXPLAIN_LABEL}`, title: 'It comes back with the answer.', back: fetch }) }
     offerBack(rec.card, { head: `Asked: ${EXPLAIN_LABEL}`, title: 'It comes back with the answer.', take: fetch })
@@ -1701,6 +1703,9 @@ export function mountFocus({ onDecided } = {}) {
     try { await sending } catch (err) { returned(card, note, err) }
   }
 
+  /** A hand-back taken back: the hub no longer counts the card as being with its session. */
+  const unhand = id => globalThis.fetch('/handback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_id: id, clear: true }) }).catch(() => {})
+
   /** Say on the card why its answer was not taken. */
   function refused(rec, err) {
     const reason = err?.message || 'The server did not answer.'
@@ -1845,12 +1850,13 @@ export function mountFocus({ onDecided } = {}) {
     paintChrome()
     if (!isOpen) return
     if (!sent) return info('Not handed over: the session did not get your words.', true)
-    if (!recs.has(rec.id)) return
+    // (the hub may already have told this page that the card is with its session: it has left the pass by then)
     if (walking && shown === rec && order.length > 1) { pendingJump = order[order.indexOf(rec.id) + 1] ?? order.find(id => id !== rec.id); jumpMotion = 'later' }
     putOff(rec.id, true, true)
     announce(`${HANDBACK_STATE}: ${rec.card.title}`)
     // Taken back (a slip of Enter): the card is here again, and the words are in its field again.
     const fetch = async () => {
+      await unhand(rec.id)
       putOff(rec.id, false)
       const now = recs.get(rec.id)
       if (now && words.trim() && !now.askText) now.note = words
@@ -1889,7 +1895,43 @@ export function mountFocus({ onDecided } = {}) {
   const LIST_TOP = 70      // where the card in front begins, under the top edge of the list
   let quietUntil = 0       // while the list scrolls by itself, the reading line does not pick another card
   const listEnd = el('div', 'focus-list-end')
-  listEnd.append(sketch('choose'), el('p', null, 'That is all for now. The next question shows up here.'))
+  const endPiles = button('focus-list-piles')
+  listEnd.append(sketch('choose'), el('p', null, 'That is all for now. The next question shows up here.'), endPiles)
+
+  // ── one pass through the stack ──────────────────────────────────────────
+  // The order of a pass is fixed when it starts: every open question once. What arrives later is appended at the
+  // end, never put in above the card in front. Snoozed cards and cards that are with their session are not part
+  // of the pass (the end of the stack counts them and offers to go through them on purpose); one that comes
+  // back from its session is appended and says why it is here again. A card only scrolled past stays where it is.
+  let pass = null                 // ids in the order of this pass; null until the first state of the walk
+  const passAway = new Map()      // id -> when it left the pass by being put off or handed over
+  const passPiles = new Set()     // put-off cards taken into the pass on purpose
+  const passBack = new Map()      // id -> the card it stood in front of: taken back, it returns there
+  const cameBack = new Map()      // id -> why a card is in the pass a second time
+  function passOrder(open, off, handed, byId) {
+    const away = id => off.has(id) && !passPiles.has(id)
+    if (!pass) pass = open.filter(id => !away(id))
+    for (const id of open) if (away(id) && !passAway.has(id)) passAway.set(id, Date.now())
+    pass = pass.filter(id => open.includes(id) && !away(id))
+    for (const id of open) {
+      if (pass.includes(id) || away(id)) continue
+      if (passBack.has(id)) {
+        const at = pass.indexOf(passBack.get(id))
+        pass.splice(at < 0 ? pass.length : at, 0, id)
+      } else {
+        // new, or back from its session (reworded, or with a reply)
+        if (passAway.has(id) && !passPiles.has(id)) cameBack.set(id, (byId.get(id)?.revised ?? 0) > passAway.get(id) ? 'Presented again' : 'Answered your question')
+        pass.push(id)
+      }
+      passBack.delete(id)
+      passAway.delete(id)
+    }
+    const snoozed = open.filter(id => away(id) && !handed.has(id)).length, withAgent = open.filter(id => away(id) && handed.has(id)).length
+    endPiles.hidden = !snoozed && !withAgent
+    endPiles.textContent = [snoozed ? `${snoozed} snoozed` : '', withAgent ? `${withAgent} ${HANDBACK_STATE.toLowerCase()}` : ''].filter(Boolean).join(' · ') + ': go through them'
+    endPiles.onclick = () => { for (const id of open) if (away(id)) passPiles.add(id); sync() }
+    return [...pass]
+  }
 
   /** "What??" as it is shown: the word in type, its two question marks written by hand. */
   function whatWord() {
@@ -1945,7 +1987,8 @@ export function mountFocus({ onDecided } = {}) {
       entry.back = async () => {
         if (b.disabled) return
         b.disabled = true
-        try { await take() } catch (err) { b.disabled = false; return info(`Not taken back: ${err?.message || 'The server did not answer.'}`, true) }
+        passBack.set(card.id, entry.anchor)   // it returns to where it stood, not to the end of the pass
+        try { await take() } catch (err) { b.disabled = false; passBack.delete(card.id); return info(`Not taken back: ${err?.message || 'The server did not answer.'}`, true) }
         dropStrip(card.id)
         pendingJump = card.id
         jumpMotion = 'prev'
@@ -2059,7 +2102,8 @@ export function mountFocus({ onDecided } = {}) {
     const prevIndex = prevOrder.indexOf(current)
     // The server's order, most urgent first; what the human put off comes after everything else.
     const put = id => (state.later ?? []).indexOf(id)
-    const next = [...new Set(state.queue)].filter(isOpenCard).sort((a, b) => put(a) - put(b))
+    let next = [...new Set(state.queue)].filter(isOpenCard).sort((a, b) => put(a) - put(b))
+    if (!single) next = passOrder(next, new Set(state.later ?? []), new Set(state.handed ?? []), byId)
     // the one card of this window may belong to a session the page behind is not looking at
     if (single && current && !next.includes(current) && isOpenCard(current)) next.unshift(current)
     // The one card this window was opened on is gone (withdrawn, or answered elsewhere): so is the window.
@@ -2078,7 +2122,8 @@ export function mountFocus({ onDecided } = {}) {
       if (inList()) {
         // In the list a card that leaves is a strip from then on: its answer, or why it is gone.
         clearTimeout(rec.outTimer)
-        if (!strips.some(x => x.id === id)) addStrip(rec.card, byId.get(id)?.status !== 'open' && byId.get(id)?.choice != null ? 'Answered elsewhere' : 'Withdrawn by the agent', null)
+        // (one that is only put off or with its session keeps no such strip: the action that did it leaves its own)
+        if (!strips.some(x => x.id === id) && byId.get(id)?.status !== 'open') addStrip(rec.card, byId.get(id)?.choice != null ? 'Answered elsewhere' : 'Withdrawn by the agent', null)
         rec.node.remove()
         if (rec === shown) shown = null
       } else if (rec === shown) { if (id !== sentId && !decidedLocal.has(id)) lost = { rec, card: byId.get(id) } }
@@ -2710,6 +2755,11 @@ export function mountFocus({ onDecided } = {}) {
     stage.replaceChildren()
     strips.length = 0
     orderBefore = []
+    pass = null
+    passAway.clear()
+    passPiles.clear()
+    passBack.clear()
+    cameBack.clear()
   }
 
   function close() {

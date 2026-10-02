@@ -6,7 +6,7 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
@@ -96,7 +96,7 @@ export function pile({ kind, label, icon, count, open = false, onToggle, items, 
   const fold = el('span', 'inbox-pile-fold')
   fold.append(sketch('unfold'))
   // Folded, the pile shows its count as a tally of pen strokes (five to a gate) above its name.
-  const strokes = tally(items.length)
+  const strokes = tally(items.length, 15)   // three gates at most; beyond that the strokes simply stop
   strokes.classList.add('inbox-pile-tally')
   head.append(strokes, avatar, el('span', null, label), el('b', null, count), fold)
   title.append(head)
@@ -298,6 +298,19 @@ function unfoldNode(card, { onDecided, full = true }) {
   const said = el('span', 'inbox-asked')
   said.setAttribute('role', 'status')
   ask.append(field, go, said)
+  if (card.kind !== 'permission') {
+    // Throwing the question away is offered here, once the card is open (on the row itself only while Shift is held).
+    const away = el('button', 'inbox-shred-open')
+    away.type = 'button'
+    away.title = `${SHRED_WORD}: throw this away unanswered. The session is told; it will not ask again`
+    away.append(sketch(SHRED_SKETCH), el('span', null, SHRED_WORD))
+    away.addEventListener('click', async () => {
+      away.disabled = true
+      try { await shred(card.id); unfolded.delete(card.id); say(pageHost(), { head: 'Shredded', title: card.title, back: () => reopen(card.id) }) }
+      catch (err) { away.disabled = false; error.textContent = `Not shredded: ${err.message}`; error.hidden = false }
+    })
+    ask.insertBefore(away, said)
+  }
   ask.addEventListener('submit', async e => {
     e.preventDefault()
     const text = field.value.trim()
@@ -751,20 +764,24 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const knocks = el('span', 'inbox-knocks')
     if (knocking) knocks.append(sketch(KNOCK_SKETCH), knocksText(knocking))
     if (fresh.length && !agent) {
-      // The count and its sentence are the way into the walk: every open question, one after the other,
-      // in the big window (answer or Later, and the next one comes). Also when there is only one.
-      const walk = el('button', 'inbox-walk')
+      // "3 questions need you from 4 agents": a sentence, with "agents" as the way to the page of all
+      // sessions. The way into the walk (every open question, one after the other, in the big window;
+      // also when there is only one) is a real button beside it.
+      const senders = new Set(fresh.map(c => c.agent)).size
+      const who = el('button', 'inbox-agents-link', senders === 1 ? '1 agent' : `${senders} agents`)
+      who.type = 'button'
+      who.title = 'The agents: every session, where it runs and what it does'
+      who.addEventListener('click', () => document.getElementById('nav-roster')?.click())
+      line.append(...(knocking ? [knocks, el('span', 'inbox-dot', '·')] : []), ...(asking || !toRead ? [circled, needs.trim().replace(/\.$/, '')] : [reading]), ' from ', who, ...(toRead && asking ? [el('span', 'inbox-dot', '·'), reading] : []))
+      const walk = el('button', 'inbox-walk inbox-go')
       walk.type = 'button'
-      walk.title = 'Go through them, one after the other'
-      walk.setAttribute('aria-label', `${asking}${needs}${toRead ? ` ${toRead} to read.` : ''} Go through them, one after the other.`)
-      const arrow = el('span', 'inbox-walk-go')
-      arrow.append(sketch('go'))
-      if (knocking) walk.append(knocks, el('span', 'inbox-dot', '·'))
-      if (asking || !toRead) walk.append(circled, el('span', null, needs.trim()))
-      if (toRead) walk.append(...(asking ? [el('span', 'inbox-dot', '·')] : []), reading)
-      walk.append(arrow)
+      walk.title = `${WALK_WORD}: every open question, one after the other (G F)`
+      walk.setAttribute('aria-keyshortcuts', 'G F')
+      walk.append(el('span', null, WALK_WORD), sketch('go'))
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
-      line.append(walk)
+      const tools = el('div', 'inbox-tools')
+      tools.append(walk)
+      queueMicrotask(() => head.append(tools))
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : 'Nothing needs you.')
     // A session's pane already carries its name as the title; the inbox has its own.
@@ -838,7 +855,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     }
     const waiting = off.filter(c => asked.has(c.id)), put = off.filter(c => !asked.has(c.id))
     offPile('later', 'Snoozed', LATER_SKETCH, put, String(put.length))
-    offPile('asked', 'With the agent', 'explain', waiting, String(waiting.length))
+    offPile('asked', 'Waiting', 'explain', waiting, String(waiting.length))   // with the agent: it comes back by itself
     // Answered: one more group below everything, folded to a line. Unfolded, every answer is a slim row
     // with the way to take it back, for the wrong answer that is noticed only later.
     if (answered.length) {

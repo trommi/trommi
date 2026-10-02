@@ -491,7 +491,8 @@ body[data-filter] .jump { display: none; }
 .agent-count { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: var(--r-pill); background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 600; font-variant-numeric: tabular-nums; }
 .agent-entry[aria-current="true"] .agent-count:not(.is-knock) { background: var(--bg); }
 .agent-count.is-knock { padding-left: 5px; background: var(--urg-high); color: var(--surface); }
-.agent-count .sketch { width: 14px; height: 14px; stroke-width: 2.2; }
+.agent-count { padding: 3px 7px; }
+.agent-count .sketch { width: 17px; height: 17px; stroke-width: 2; }
 /* Sessions laid together: no tile of its own, the scribbles overlap inside one loop drawn round them. */
 .agent-pair { flex: none; display: block; width: 60px; height: 44px; margin-inline: -9px -5px; }
 .pair-mark { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; }
@@ -556,7 +557,7 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
    group opens up, which says what they do without a tooltip. */
 .agent-row.is-group { position: relative; }
 .agent-row.is-group .agent-entry { position: relative; min-height: 52px; }
-.agent-cut { position: absolute; z-index: 2; right: 66px; top: 50%; translate: 0 -50%; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: 50%; background: var(--sunken); color: var(--muted); rotate: -12deg; transition: color var(--d-fast), background var(--d-fast), opacity var(--d-fast); }
+.agent-cut { position: absolute; z-index: 2; right: 50px; top: 50%; translate: 0 -50%; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: 50%; background: var(--sunken); color: var(--muted); rotate: -12deg; transition: color var(--d-fast), background var(--d-fast), opacity var(--d-fast); }
 .agent-cut .sketch { width: 20px; height: 20px; stroke-width: 1.8; }
 .agent-cut:hover, .agent-cut:focus-visible { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong); }
 .agent-entry[aria-current="true"] + .agent-cut { background: var(--surface); }
@@ -597,8 +598,9 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 .is-drawing .mark-live path:not(.pair-crown) { stroke-dasharray: 34 66; stroke-width: 2.5; animation: mark-travel 2800ms linear infinite; }
 @keyframes mark-travel { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .is-drawing .mark-live path:not(.pair-crown) { animation: none; stroke-dasharray: none; stroke-width: inherit; } }
-.agent-badge { flex: none; display: inline-flex; align-items: center; justify-content: flex-end; gap: 1px; min-width: 44px; height: 32px; font-size: var(--t-sm); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
-.agent-badge b { min-width: 1.7em; text-align: center; }
+.agent-badge { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; min-width: 30px; height: 32px; font-size: var(--t-sm); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
+.agent-badge .sketch { width: 25px; height: 25px; stroke-width: 1.9; }
+.agent-badge[data-state="running"] { color: color-mix(in srgb, var(--fg) 72%, var(--bg)); }
 .agent-badge[data-state="waiting"] { color: var(--urg-critical); }
 .agent-badge[data-state="running"] { font-size: .74rem; font-weight: 600; color: var(--muted); }
 .agent-badge[data-offline], .agent-badge[data-state="waiting"][data-offline] { font-size: .74rem; font-weight: 600; color: var(--faint); }
@@ -606,11 +608,12 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 /* The badge stands beside the row's entry, over its right end, pulled in from the edge, so that it can
    be a button of its own: a click goes through that session's questions. Under the pointer or the
    keyboard the count is underlined and the hand gives a small wave. */
-.agent-row.has-badge .agent-entry { padding-right: 60px; }
-.agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 14px 0 -58px; }
+.agent-row.has-badge .agent-entry { padding-right: 48px; }
+.agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 12px 0 -42px; }
 button.agent-badge { padding: 0; border: 0; border-radius: var(--r-sm); background: none; font-family: inherit; cursor: pointer; }
 button.agent-badge .bare-hand { transition: rotate 140ms ease-out, translate 140ms ease-out; }
-button.agent-badge:hover b, button.agent-badge:focus-visible b { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 3px; }
+button.agent-badge .sketch { transition: translate 140ms ease-out; }
+button.agent-badge:hover > .sketch, button.agent-badge:focus-visible > .sketch { translate: 0 -2px; color: var(--fg); }
 button.agent-badge:hover .bare-hand, button.agent-badge:focus-visible .bare-hand { rotate: -14deg; translate: 0 -1px; }
 button.agent-badge:active { scale: .95; }
 
@@ -632,24 +635,22 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* The heading, and on its line the count with its sentence; in a narrow window that wraps below. */
 .inbox-title { flex: 1 1 20rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
 .inbox-title h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
-.inbox-title p { font-size: var(--t-lg); color: var(--muted); }
+.inbox-title p { display: flex; flex-wrap: wrap; align-items: center; gap: .1em .3em; font-size: var(--t-lg); color: var(--muted); }
 /* A number circled by hand: two half ellipses that do not quite meet. */
 .inbox-circled { position: relative; display: inline-block; padding: 0 .45em; font-weight: 700; color: var(--fg); }
 .inbox-circled::before, .inbox-circled::after { content: ""; position: absolute; top: -.12em; bottom: -.18em; border: 2px solid var(--urg-high); opacity: .7; }
 .inbox-circled::before { left: 0; right: 48%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
 .inbox-circled::after { left: 32%; right: -.1em; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
-/* The count and its sentence are the way into the walk through all of them: a link, with a small
-   arrow drawn after it. Under the pointer or the keyboard the circle is drawn over once more
-   (thicker, fully inked), the words darken and the arrow moves on. */
-.inbox-walk > span { white-space: nowrap; }
-.inbox-walk { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .15em .3em; margin: -4px -8px; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
-.inbox-walk-go { display: inline-flex; margin-left: .15em; color: var(--urg-high); opacity: .8; transition: translate 140ms ease-out, opacity 100ms; }
-.inbox-walk-go .sketch { width: 22px; height: 22px; stroke-width: 2; }
-.inbox-walk .inbox-circled::before, .inbox-walk .inbox-circled::after { transition: border-width 100ms ease-out, opacity 100ms ease-out, rotate 160ms ease-out; }
-.inbox-walk:hover, .inbox-walk:focus-visible { color: var(--fg); }
-.inbox-walk:hover .inbox-circled::before, .inbox-walk:hover .inbox-circled::after, .inbox-walk:focus-visible .inbox-circled::before, .inbox-walk:focus-visible .inbox-circled::after { border-width: 3px; opacity: 1; rotate: -4deg; }
-.inbox-walk:hover .inbox-walk-go, .inbox-walk:focus-visible .inbox-walk-go { translate: 4px 0; opacity: 1; }
-.inbox-walk:active { scale: .98; }
+/* The way into the walk through all open questions: a plain button beside the heading's sentence, with a small arrow drawn in it. */
+.inbox-tools { display: flex; align-items: center; gap: var(--s-2); }
+.inbox-go { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px 0 16px; border: 0; border-radius: 10px; background: var(--fg); color: var(--bg); font: 600 var(--t-md)/1 var(--font); white-space: nowrap; cursor: pointer; transition: filter 100ms ease-out; }
+.inbox-go .sketch { width: 20px; height: 20px; stroke-width: 2; transition: translate 140ms ease-out; }
+.inbox-go:hover { filter: brightness(1.2); }
+.inbox-go:hover .sketch, .inbox-go:focus-visible .sketch { translate: 3px 0; }
+.inbox-go:active { scale: .98; }
+/* "agents" in the line: the way to the page of all sessions */
+.inbox-agents-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-decoration-thickness: 2px; text-underline-offset: 4px; cursor: pointer; }
+.inbox-agents-link:hover, .inbox-agents-link:focus-visible { color: var(--fg); text-decoration-color: currentColor; }
 /* One list at one pitch: the senders' sections follow each other at the gap between two rows. The
    piles at the foot stand a little apart. */
 .inbox-groups { display: grid; gap: var(--s-4); container: rows / inline-size; }
@@ -731,16 +732,14 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 @container inboxpage (min-width: 821px) {
   .inbox-group[data-sender] { position: relative; }
   .inbox-gutter { display: block; position: absolute; left: -100px; top: 0; bottom: 0; width: 86px; pointer-events: none; }
-  .inbox-gutter-who { position: sticky; top: 4px; z-index: 1; display: grid; justify-items: center; gap: 3px; padding: 4px 0 6px; text-align: center; background: var(--surface); }
+  /* beside the middle of the run's first row; it keeps in sight while a long run scrolls by */
+  .inbox-gutter-who { position: sticky; top: 40px; z-index: 1; display: grid; justify-items: center; gap: 3px; margin-top: 40px; padding: 4px 0 6px; text-align: center; background: var(--surface); }
   .inbox-gutter-who .inbox-avatar { width: 36px; height: 36px; }
   .inbox-gutter-who b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .78rem/1.2 var(--font); color: var(--fg); }
   .run-bracket { position: absolute; right: -9px; top: 3px; width: 9px; height: calc(100% - 6px); overflow: visible; fill: none; stroke: var(--line-strong); stroke-linecap: round; stroke-linejoin: round; }
   .run-bracket path { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
-  .inbox-group[data-sender] .inbox-content { overflow: visible; }
-  .inbox-group[data-sender] .inbox-byline { left: auto; right: calc(100% + 22px); bottom: 9px; width: 78px; display: grid; justify-items: end; gap: 4px; text-align: right; overflow: visible; }
-  .inbox-group[data-sender] .inbox-byline :is(.inbox-from, .inbox-sep) { display: none; }
-  .inbox-group[data-sender] .inbox-acts { flex-direction: column; align-items: flex-end; gap: 4px; }
-  .inbox-group[data-sender] .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; }
+  /* (Number and age stay in the card, as its byline; who asks is said by the gutter.) */
+  .inbox-group[data-sender] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
   /* (The keyboard's arrow would stand in the gutter: the frame round the row marks it there.) */
   .inbox-group[data-sender] .inbox-row.is-current::before { display: none; }
 }
@@ -777,7 +776,16 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-shred .sketch { width: 15px; height: 15px; stroke-width: 2; }
 .inbox-trust:hover, .inbox-trust:focus-visible, .inbox-shred:hover, .inbox-shred:focus-visible { color: var(--card-ink); text-decoration-color: currentColor; }
 .inbox-shred:hover span, .inbox-shred:focus-visible span { text-decoration: underline; text-underline-offset: 3px; }
-/* The two quiet actions show while the pointer or the keyboard is on the row; where nothing hovers, always. */
+/* "Shred" is not on the row: it shows only while Shift is held (bar.js sets body[data-shift]), on the row under the
+   pointer or the keyboard; otherwise it is offered once the card is open. */
+.inbox-shred { display: none; }
+body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-shred { display: inline-flex; color: var(--urg-critical); }
+.inbox-sep:has(+ .inbox-acts:not(:has(.inbox-trust))) { display: none; }
+body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .inbox-acts) { display: inline; }
+.inbox-shred-open { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--card-ink); font-size: var(--t-sm); font-weight: 600; opacity: .75; }
+.inbox-shred-open .sketch { width: 18px; height: 18px; }
+.inbox-shred-open:hover { opacity: 1; background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
+/* The quiet action shows while the pointer or the keyboard is on the row; where nothing hovers, always. */
 @media (hover: hover) {
   .inbox-acts { opacity: 0; transition: opacity 100ms ease-out; }
   .inbox-row:hover .inbox-acts, .inbox-row:focus-within .inbox-acts, .inbox-row.is-current .inbox-acts { opacity: 1; }
@@ -800,28 +808,28 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
      the keys are on) the corner folds down properly: a flap turns about the diagonal fold line, the
      page shows where the corner was, and on the flap, the paper's underside, stand z z z and the word.
    Under reduced motion the flap simply lies folded down. */
-.inbox-later { --ear: 62px; --tip: 11px; position: absolute; z-index: 2; top: 0; right: 0; width: 30px; height: 46px; padding: 0; border: 0; background: none; color: var(--card-ink); }
+.inbox-later { --ear: 66px; --tip: 12px; position: absolute; z-index: 2; top: 0; right: 0; width: 30px; height: 46px; padding: 0; border: 0; background: none; color: var(--card-ink); }
 .inbox-later:focus-visible { outline: 0; }
-.inbox-later-ear { position: absolute; top: -1px; right: -1px; width: var(--ear); height: var(--ear); perspective: 260px; pointer-events: none; }
-/* at rest: the slightly bent tip (page showing behind it, its underside a shade darker) */
-.inbox-later-ear::before { content: ""; position: absolute; top: 0; right: 0; width: var(--tip); height: var(--tip); border-radius: 0 0 0 3px;
-  background: linear-gradient(225deg, var(--surface) 50%, color-mix(in srgb, var(--card-color) 46%, var(--surface)) 50%, color-mix(in srgb, var(--card-color) 20%, var(--surface)) calc(50% + 3px)); transition: opacity 80ms linear 100ms; }
-/* folded down: the place the corner came from shows the page */
-.inbox-later-ear::after { content: ""; position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%); background: var(--surface); opacity: 0; transition: opacity 60ms linear; }
-/* the flap: the paper's underside, with the drawing and the word on it; it turns about the diagonal */
+/* The corner is a square that grows from the tip: as with a page that is being turned, the fold line
+   travels in from the corner, eased. Its upper right half is the page showing through where the paper
+   left; its lower left half is the flap, the paper's underside: lit along the fold, darker toward
+   the tip, with a soft shadow that it throws on the card. */
+.inbox-later-ear { position: absolute; top: -1px; right: -1px; width: var(--tip); height: var(--tip); pointer-events: none; transition: width 320ms cubic-bezier(.22, .9, .25, 1), height 320ms cubic-bezier(.22, .9, .25, 1); }
+.inbox-later-ear::before { content: ""; position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%); background: var(--surface); }
+.inbox-later-ear::after { content: ""; position: absolute; left: -7%; bottom: -7%; width: 100%; height: 100%; z-index: 0; clip-path: polygon(0 4%, 96% 100%, 0 100%); background: rgb(20 30 25 / .16); filter: blur(4px); opacity: 0; transition: opacity 320ms ease-out; }
 .inbox-later-flap {
-  position: absolute; inset: 0; z-index: 1; clip-path: polygon(0 0, 100% 100%, 0 100%); border-radius: 0 0 0 5px; transform-origin: 50% 50%;
-  background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 50%, var(--surface)) 50%, color-mix(in srgb, var(--card-color) 30%, var(--surface)) calc(50% + 1.5px), color-mix(in srgb, var(--card-color) 16%, var(--surface)) calc(50% + 9px));
-  transform: rotate3d(1, 1, 0, 180deg); opacity: 0;
-  transition: transform 200ms cubic-bezier(.3, .7, .3, 1), opacity 50ms linear 150ms;
+  position: absolute; inset: 0; z-index: 1; clip-path: polygon(0 0, 100% 100%, 0 100%); border-radius: 0 0 0 16%;
+  background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 30%, #fff) 50%, color-mix(in srgb, var(--card-color) 8%, var(--surface)) calc(50% + 2px), color-mix(in srgb, var(--card-color) 14%, var(--surface)) 62%, color-mix(in srgb, var(--card-color) 30%, var(--surface)) 100%);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card-color) 26%, var(--surface));
 }
-.inbox-row[data-later] .inbox-later-flap { background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 45%, var(--surface)) 50%, var(--surface-2) calc(50% + 1.5px)); }
-.inbox-later-flap .sketch { position: absolute; left: 5px; bottom: 5px; width: 14px; height: 14px; stroke-width: 2.4; }
-.inbox-later-flap b { position: absolute; left: 50%; top: 50%; translate: -50% -50%; rotate: 45deg; margin: 5px 0 0 -5px; font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap { transform: rotate3d(1, 1, 0, 0deg); opacity: 1; transition: transform 200ms cubic-bezier(.3, .7, .3, 1), opacity 30ms linear; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::before { opacity: 0; transition-delay: 0s; }
+.inbox-row[data-later] .inbox-later-flap { background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 30%, #fff) 50%, var(--surface-2) calc(50% + 2px), color-mix(in srgb, var(--card-color) 20%, var(--surface)) 100%); }
+.inbox-later-flap .sketch, .inbox-later-flap b { opacity: 0; transition: opacity 120ms linear; }
+.inbox-later-flap .sketch { position: absolute; left: 7px; bottom: 7px; width: 15px; height: 15px; stroke-width: 2.3; }
+.inbox-later-flap b { position: absolute; left: 50%; top: 50%; translate: -50% -50%; rotate: 45deg; margin: 6px 0 0 -6px; font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear { width: var(--ear); height: var(--ear); }
 :is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::after { opacity: 1; }
-.inbox-later:active .inbox-later-flap { filter: brightness(.94); }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap :is(.sketch, b) { opacity: 1; transition: opacity 160ms linear 170ms; }
+.inbox-later:active .inbox-later-flap { filter: brightness(.95); }
 /* the key's cap on the row the keys are on: at the foot of the strip */
 .inbox-row.is-current > .inbox-later.inbox-later[data-cap]::after { position: absolute; left: 4px; top: auto; right: auto; bottom: -4px; margin: 0; rotate: 0deg; }
 /* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
@@ -927,22 +935,15 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-group-answered .inbox-pile-words span { font-weight: 600; color: var(--accent); }
 .inbox-pile-peek .inbox-from-mark { width: 17px; height: 17px; color: hsl(var(--hue) 62% 30%); }
 :root[data-theme="dark"] .inbox-pile-peek .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
-/* folded */
-.inbox-groups > .inbox-pile:not(.is-open) { padding: var(--s-3) var(--s-3) var(--s-3); border-top: 1px dashed var(--line-strong); cursor: pointer; }
-.inbox-pile:not(.is-open) { gap: 4px; }
-.inbox-pile:not(.is-open) .inbox-pile-title { font-size: 1.02rem; }
-.inbox-pile:not(.is-open) .inbox-pile-head { flex-wrap: wrap; gap: 4px var(--s-2); align-items: baseline; }
-.inbox-pile:not(.is-open) .inbox-pile-tally { display: inline-flex; flex: 0 0 100%; order: -1; color: var(--muted); margin-bottom: 2px; }
-.inbox-pile:not(.is-open) .inbox-pile-head::after, .inbox-pile:not(.is-open) .inbox-pile-fold, .inbox-pile:not(.is-open) .inbox-avatar { display: none; }
-.inbox-pile:not(.is-open) .inbox-pile-head b { order: 0; font-size: var(--t-sm); letter-spacing: 0; font-variant-numeric: tabular-nums; }
-.inbox-pile:not(.is-open) .inbox-pile-item { height: 0; margin: 0; overflow: hidden; opacity: 0; }
-.inbox-pile:not(.is-open) .inbox-pile-item:first-child { height: 20px; opacity: 1; }
-.inbox-pile:not(.is-open) .inbox-pile-peek { display: flex; height: 20px; }
-.inbox-pile:not(.is-open) .inbox-pile-full { display: none; }
-@media (any-hover: hover) {
-  .inbox-groups > .inbox-pile:not(.is-open):hover { background: var(--surface-2); }
-  .inbox-pile:not(.is-open):hover .inbox-pile-head, .inbox-pile:not(.is-open):hover .inbox-pile-tally { color: var(--fg); }
-}
+/* folded: one quiet line, a word and its strokes; nothing else */
+.inbox-groups > .inbox-pile:not(.is-open) { padding: 2px 0; cursor: pointer; }
+.inbox-pile:not(.is-open) .inbox-pile-title { font: 600 var(--t-sm)/1 var(--font); color: var(--muted); }
+.inbox-pile:not(.is-open) .inbox-pile-head { gap: 10px; }
+.inbox-pile:not(.is-open) .inbox-pile-tally { display: inline-flex; order: 1; color: color-mix(in srgb, var(--muted) 75%, var(--surface)); }
+.inbox-pile:not(.is-open) .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
+.inbox-pile:not(.is-open) .tally-more, .inbox-pile:not(.is-open) .inbox-pile-head b,
+.inbox-pile:not(.is-open) .inbox-pile-head::after, .inbox-pile:not(.is-open) .inbox-pile-fold, .inbox-pile:not(.is-open) .inbox-avatar, .inbox-pile:not(.is-open) .inbox-pile-sheets { display: none; }
+@media (any-hover: hover) { .inbox-pile:not(.is-open):hover .inbox-pile-title, .inbox-pile:not(.is-open):hover .inbox-pile-tally { color: var(--fg); } }
 /* While the sheets move, each is cut at its own edge. */
 .inbox-pile.is-moving .inbox-pile-item { overflow: hidden; }
 /* Nothing here yet: dashed and a little crooked, so it reads as not-yet-real. */
@@ -957,12 +958,8 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* Narrow (a phone, or sessions side by side): rows are as tall as their text, the answers stand below it. */
 @container rows (max-width: 560px) {
   .inbox-row { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
-  /* one compact line each: tally, name and number; the latest entry under it */
-  .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; padding: var(--s-2) var(--s-1); }
-  .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-4)); }
-  .inbox-pile:not(.is-open) .inbox-pile-head { flex-wrap: nowrap; }
-  .inbox-pile:not(.is-open) .inbox-pile-tally { flex: 0 1 auto; order: 5; margin: 0 0 0 auto; }
-  .inbox-pile:not(.is-open) .tally-mark { height: 20px; }
+  .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; }
+  .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-3)); }
   .inbox-row > :not(.inbox-more) { grid-row: auto; }
   .inbox-content { grid-column: 1 / -1; padding: 0 var(--s-4) var(--s-3); overflow: visible; }
   .inbox-row-head { height: auto; min-height: 26px; margin-left: calc(-1 * var(--s-4)); }
@@ -1236,25 +1233,42 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
 .quick-list button[aria-current="true"] { font-weight: 700; }
 .quick-list .agent-avatar { width: 26px; height: 26px; }
 .quick-list i { margin-left: auto; padding-left: var(--s-4); font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
-.quick-open { display: none; }
-@media (max-width: 860px) {
-  .quick-open { display: grid; }
-  .quick { display: none; position: absolute; z-index: 6; left: 8px; right: 8px; top: calc(100% + 6px); max-width: none; margin: 0; height: 44px; box-shadow: 0 0 0 1px var(--fg), var(--shadow-lg); }
-  .quick.is-sheet { display: flex; }
-  .quick-box, .quick-field { height: 44px; }
-  .quick-field { padding-block: 12px; font-size: 16px; }
-  .quick[data-tall] .quick-field { left: 0; right: 0; bottom: auto; top: 0; }
-  .quick-note, .quick-list, .quick-files { bottom: auto; top: calc(100% + 8px); }
+/* Two small round buttons float at the bottom right of every page: the speech bubble wearing the crown
+   (quick send to the crowned session; its field opens above them) and the pad's drawing. In a session
+   they stand above the composer, so they never lie on its send button. */
+.quick-open, .topbar .padlink-open {
+  position: fixed; z-index: 6; bottom: calc(var(--s-4) + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: 44px; height: 44px; min-height: 0; padding: 0; margin: 0;
+  display: grid; place-items: center; border: 0; border-radius: 50%; rotate: none; background: var(--surface); color: var(--fg);
+  box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); transition: box-shadow var(--d-fast), translate var(--d-fast);
 }
+.topbar .quick-open { right: var(--s-4); width: 44px; height: 44px; border-radius: 50%; }
+.topbar .padlink-open { right: calc(var(--s-4) + 52px); }
+.quick-open:hover, .topbar .padlink-open:hover { background: var(--surface); box-shadow: 0 0 0 1px var(--fg), var(--shadow-md); translate: 0 -1px; rotate: none; }
+.quick-open[aria-expanded="true"], .topbar .padlink-open[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.quick-open .sketch { width: 22px; height: 22px; stroke-width: 1.8; }
+.quick-open .crown-mark { left: 7px; top: 3px; width: 16px; rotate: -17deg; stroke-width: 2.2; }
+.topbar .padlink-open span { display: none; }
+.topbar .padlink-ico { width: 22px; height: 22px; }
+body:not([data-scope="all"]):not([data-page]) { --float-up: 92px; }
+.quick { display: none; position: fixed; z-index: 6; right: var(--s-4); bottom: calc(var(--s-4) + 54px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: min(520px, calc(100vw - 2 * var(--s-4))); max-width: none; margin: 0; height: 44px; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.quick:focus-within { box-shadow: 0 0 0 1px var(--fg), var(--shadow-lg); }
+.quick.is-sheet { display: flex; }
+.quick-box, .quick-field { height: 44px; }
+.quick-field { padding-block: 12px; }
+.quick[data-tall] .quick-field { left: 0; right: 0; }
+@media (max-width: 860px) {
+  .quick-field { font-size: 16px; }
+  body:not([data-scope="all"]):not([data-page]) { --float-up: 150px; }
+}
+/* ---- wide screens: no bar. The sidebar: the Inbox entry stays at its top while the sessions scroll,
+   and the logo with its menu is pinned at its very bottom (the menu opens upward). ---- */
 @media (min-width: 861px) {
   body { grid-template-rows: minmax(0, 1fr) auto; }
-  .topbar { grid-row: 2; gap: 0 var(--s-2); border-bottom: 0; border-top: 1px solid var(--line); background: var(--bg); }
+  #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
+  #agents > .agent-row:first-child { position: sticky; top: 0; z-index: 4; padding-block: var(--s-3) var(--s-1); background: var(--bg); }
+  .topbar { grid-column: 1; grid-row: 2; min-height: 50px; padding: 0 var(--s-3) 0 var(--s-4); border: 0; border-top: 1px solid var(--line); border-right: 1px solid var(--line); background: var(--bg); }
+  #session, #inbox, #roster, #ledger { grid-row: 1 / 3; }
   .brand { margin-right: 0; }
-  .footnav { display: flex; align-items: center; gap: var(--s-1); margin-left: var(--s-5); }
-  /* A place is a tool without a ground; the one you are at lies on paper, as in the sidebar. */
-  .footnav button { background: none; color: var(--muted); font-weight: 500; }
-  .footnav button:hover { color: var(--fg); background: var(--sunken); }
-  .footnav button[aria-current] { color: var(--fg); font-weight: 600; background: var(--surface); box-shadow: var(--shadow-sm), 0 0 0 1px var(--line); }
 }
 
 /* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */
@@ -1301,8 +1315,6 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
   .agent-row.is-insert-before::after, .agent-row.is-insert-after::after { left: auto; right: auto; top: 4px; bottom: 4px; width: 3px; height: auto; }
   .agent-row.is-insert-before::after { left: -4px; }
   .agent-row.is-insert-after::after { right: -4px; }
-  .topbar .focus-open, .topbar .padlink-open { padding: 0; width: 44px; height: 40px; justify-content: center; margin-inline: 2px; }
-  .topbar .padlink-open span { display: none; }
   .sidedoors { bottom: auto; top: calc(100% + 6px); }
   .brand-open { margin-left: -6px; padding: 0 6px; gap: 8px; }
   .topbar .icon-btn { width: 44px; height: 40px; }

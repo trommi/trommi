@@ -103,7 +103,8 @@ export function summary(all, members) {
 // With questions open the badge is a button of its own beside the row's entry: a click goes through
 // that session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
 export function badge({ open, online, running, stuck }, who = '', walk = null) {
-  if (!open) return null
+  // Idle shows nothing, and so does a disconnected session (its mark is grey).
+  if (!open || !online) return null
   const node = el(walk ? 'button' : 'span', 'agent-badge')
   if (walk) {
     node.type = 'button'
@@ -112,8 +113,9 @@ export function badge({ open, online, running, stuck }, who = '', walk = null) {
   const questions = open === 1 ? '1 question' : `${open} questions`
   const hand = online ? stuck || !running : stuck
   node.dataset.state = hand ? 'waiting' : online ? 'running' : 'open'
-  if (hand) node.append(bareHand())
-  node.append(el('b', null, String(open)))
+  // How many is beside the point here: a hand when the session waits for you, else a small stack of
+  // cards, the same for one question or twelve. (The number is in the tooltip and in the inbox.)
+  node.append(hand ? bareHand() : sketch('stack'))
   if (!online) node.dataset.offline = ''
   const state = hand ? (online ? `Waiting for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`) : online ? `Working, ${questions} open` : `Disconnected, ${questions} open`
   node.title = walk ? `Go through ${who ? `${who}'s ` : 'the '}${questions} · ${state}` : state
@@ -179,16 +181,10 @@ export function mountAgents(root, { onSelect, onWalk }) {
   // The inbox's badge: the knocks first (the drawing of knuckles and their number), then every open question.
   function inboxCount(fresh, knocking) {
     if (!fresh) return null
-    const box = el('span', 'agent-counts')
-    if (knocking) {
-      const k = el('b', 'agent-count is-knock')
-      k.title = knocksText(knocking)
-      k.append(sketch(KNOCK_SKETCH), String(knocking))
-      box.append(k)
-    }
-    const total = el('b', knocking ? 'agent-count is-all' : 'agent-count', String(fresh))
-    total.title = fresh === 1 ? '1 open question' : `${fresh} open questions`
-    box.append(total)
+    // No number: the stack of cards when anything is open, the knuckles when something knocks.
+    const box = el('span', knocking ? 'agent-count is-knock' : 'agent-count')
+    box.title = [knocking ? knocksText(knocking) : '', fresh === 1 ? '1 open question' : `${fresh} open questions`].filter(Boolean).join(' · ')
+    box.append(sketch(knocking ? KNOCK_SKETCH : 'stack'), String(fresh))   // the inbox says how many; the session rows do not
     return box
   }
   function render(state) {
