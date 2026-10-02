@@ -72,7 +72,15 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-line[data-state="waiting"] .ledger-state { color: var(--urg-critical); }
 .ledger-state .agent-badge { flex: none; margin: 0; }
 .ledger-sep { font-style: normal; color: var(--faint); margin-inline: -2px; }
-.ledger-acts .ledger-edit { display: none; }
+.ledger-acts .ledger-menu { display: none; font: 700 1.2rem/1 var(--font); letter-spacing: .05em; }
+/* A phone's sheet for one line: plain rows, at the lower edge. */
+.ledger-sheet { width: 100vw; max-width: 100vw; margin: auto 0 0; padding: var(--s-3) var(--s-3) calc(var(--s-3) + env(safe-area-inset-bottom, 0px)); border: 0; border-radius: var(--r-lg) var(--r-lg) 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); }
+.ledger-sheet[open] { display: grid; gap: 2px; }
+.ledger-sheet::backdrop { background: var(--overlay); }
+.ledger-sheet h3 { padding: var(--s-2) var(--s-3) var(--s-3); font: 800 1.2rem/1.2 var(--display); }
+.ledger-sheet-item { min-height: 48px; padding: 0 var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--fg); font: 500 1rem/1.2 var(--font); text-align: left; }
+.ledger-sheet-item:hover, .ledger-sheet-item:focus-visible { background: var(--sunken); }
+.ledger-sheet-item.is-close { margin-top: var(--s-2); text-align: center; font-weight: 600; background: var(--sunken); }
 .ledger-line[data-state="away"] .ledger-state, .ledger-line.is-archived .ledger-state { color: var(--faint); }
 .ledger-line[data-state="away"] .ledger-name strong { font-weight: 600; color: var(--muted); }
 .ledger-does { min-width: 0; display: flex; align-items: center; gap: 6px; }
@@ -115,8 +123,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 /* ---- phone: mark, name, state and count; a tap opens ---- */
 @media (max-width: 860px) {
   body[data-page="roster"] #ledger { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
-  .ledger-line.is-head, .ledger-grip, .ledger-does, .ledger-acts .ledger-ib:not(.ledger-edit), .ledger-find kbd, .ledger-tools .ledger-link { display: none; }
-  .ledger-acts .ledger-edit { display: grid; width: 44px; height: 44px; }
+  .ledger-line.is-head, .ledger-grip, .ledger-does, .ledger-acts .ledger-ib:not(.ledger-menu), .ledger-find kbd, .ledger-tools .ledger-link { display: none; }
+  .ledger-acts .ledger-menu { display: grid; width: 44px; height: 44px; }
   .ledger-with button { width: 36px; height: 36px; }
   .ledger-line { grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 0 var(--s-3); min-height: 60px; padding: 0; }
   .ledger-line.is-archived { grid-template-columns: 44px minmax(0, 1fr) auto auto; }
