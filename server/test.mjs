@@ -870,7 +870,7 @@ for (const event of kinds) {
 const verdict = reference.events.find(e => e.method === 'notifications/claude/channel/permission')
 assert.deepEqual(Object.keys(heard.find(n => n.method === verdict.method).params).sort(), Object.keys(verdict.params).sort())
 assert.deepEqual(Object.keys(reference.events.find(e => e.method.endsWith('/permission_request')).params), ['request_id', 'tool_name', 'description', 'input_preview'])
-assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'marks', 'files', 'image_path'], ['choices', 'trust', 'marks', 'option_notes', 'files', 'image_path'], ['previous_choices', 'trust', 'shredded'], ['marks', 'files', 'image_path'], [], [], [], []])
+assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'cards', 'cards_json', 'marks', 'files', 'image_path'], ['choices', 'trust', 'marks', 'option_notes', 'files', 'image_path'], ['previous_choices', 'trust', 'shredded'], ['marks', 'files', 'image_path'], [], [], [], []])
 assert.ok(reference.tools[0].inputSchema.properties.card_id)
 assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
 
@@ -2601,6 +2601,36 @@ assert.ok(fs.readFileSync(in6('state.json')).equals(bytes6))
 const tool6 = (...args) => spawnSync('node', [toPath(new URL('./board-store.mjs', import.meta.url)), ...args], { encoding: 'utf8' })
 assert.deepEqual(JSON.parse(tool6('counts', data6).stdout), { agents: 2, cards: 4, messages: 7, tasks: 2 })
 assert.deepEqual(JSON.parse(tool6('export', data6).stdout).cards, db6.cards)
+// a card copied into a message to another session: that agent reads the whole decision, the message keeps a chip, the card is untouched
+{
+  const before = JSON.stringify((await state()).cards)
+  gotAlt.length = 0
+  for (const wrong of [{ cards: 'x' }, { cards: ['gibtsnicht'] }, { cards: ['c-fertig', 1, 2, 3, 4, 5] }]) assert.equal((await post('/message', { text: 'x', agent: 'alt', ...wrong })).status, 400, JSON.stringify(wrong))
+  assert.equal((await post('/message', { text: 'richte dich danach', agent: 'fern', cards: ['c-fertig'] })).status, 200, 'to a session that is away: it waits')
+  assert.equal((await post('/message', { text: 'richte dich danach', agent: 'alt', cards: ['c-fertig', '42', 'c-weg', 'c-info'] })).status, 200)
+  await until(() => gotAlt.length === 1)
+  const got = gotAlt[0].params
+  assert.equal(got.content, [
+    'richte dich danach', '',
+    '--- Question Nr. 42 (card c-fertig), asked by the session "Mein Alter" [alt] ---', 'Schon beantwortet', '',
+    'Options:', '- A [a]', '- B [b]', '',
+    'Answer: B [b]', 'The human\'s note: so', 'Note on A [a]: nein, weil', '',
+    '--- Question Nr. 43 (card c-weg), asked by the session "Fern" [fern] ---', 'Weggeworfen', '',
+    'Options:', '- A [a]', '- B [b]', '',
+    'Answer: none. The human threw it away unanswered.', '',
+    '--- Info Nr. 44 (card c-info), written by the session "Mein Alter" [alt] ---', 'Zum Lesen', '', 'So geht das.', '',
+    'Not read yet.',
+  ].join('\n'))
+  assert.deepEqual([got.meta.kind, got.meta.cards, JSON.parse(got.meta.cards_json)[0]], ['chat', 'c-fertig,c-weg,c-info', { id: 'c-fertig', number: 42, title: 'Schon beantwortet', agent: 'alt', choice_label: 'B', kind: 'decision', status: 'decided', choices: ['b'] }])
+  const now = await state()
+  assert.deepEqual([now.messages.at(-1).agent, now.messages.at(-1).cards], ['alt', [{ id: 'c-fertig', number: 42, title: 'Schon beantwortet', agent: 'alt', choice_label: 'B' }, { id: 'c-weg', number: 43, title: 'Weggeworfen', agent: 'fern', choice_label: null }, { id: 'c-info', number: 44, title: 'Zum Lesen', agent: 'alt', choice_label: null }]])
+  assert.equal(JSON.stringify(now.cards), before, 'the cards themselves are as they were')
+  // a message may be nothing but the card; an open question with advice and a picture reads so
+  assert.equal((await post('/message', { text: '', agent: 'alt', cards: ['c-offen'] })).status, 200)
+  await until(() => gotAlt.length === 2)
+  assert.match(gotAlt[1].params.content, /^The human passes a card on to you\.\n\n--- Question Nr\. 41 \(card c-offen\), .*\nDritte Fassung\?\n\n[\s\S]*\nOptions \(several may be chosen\):\n- A \[a\] \(the agent's advice\)\n- B \[b\]\n\nAnswer: A \[a\]\nThe human's note: nach dem Umzug$/)
+}
+
 // a restart reads the database: a state.json that says something else is not looked at again
 await alt.close()
 await portFree()
@@ -2630,5 +2660,5 @@ assert.deepEqual([JSON.parse(fs.readFileSync(path.join(data8, 'state.json'), 'ut
 await plain.close()
 
 for (const dir of [data, data2, data3, data4, data5, data6, data7, data8]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)

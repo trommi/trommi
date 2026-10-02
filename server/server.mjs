@@ -661,6 +661,7 @@ const mcp = new Server(
       'For high and critical, give an urgency_reason: one short phrase, in the human\'s language, saying what is waiting. If everything is urgent, nothing is; most cards are normal.',
       'Keep the stack true as your work moves: when an open card starts blocking you, raise it with set_urgency; lower it if the pressure is gone; and call withdraw_card as soon as a question became moot, so the human never answers something you no longer need. list_cards shows the current stack.',
       'When the human trusts you with a question (the decision event carries trust="1"), the decision is yours: take the option you recommended or, if you recommended none, choose yourself. Then say in one line what you chose, with reply and that card_id, and call close_card with a summary. Do not ask again.',
+      'The human may copy a card into a message to you, often another session\'s decision (cards="..." in the event): the content then holds that card in full, with the question, the options, the answer and the notes. Treat an answered one as decided; do not ask it again.',
       'The human can throw a question away unanswered: <channel source="board" kind="shredded" card_id="...">. That is not a yes and not a no. Do not file it again, nor a rewording of it; carry on with your own judgement or drop the matter. If you truly cannot proceed without an answer, say so once in a reply, not as a new question.',
       'The choice arrives later as <channel source="board" kind="decision" card_id="..." choice="KEY">; the body is the human\'s note if they wrote one. Act on it, then call close_card with a one-line summary of what you did.',
       'Do not block waiting for a decision: keep working on whatever does not depend on it.',
@@ -984,7 +985,7 @@ const TOOL_EXAMPLES = {
 const CHANNEL_EVENTS = [
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
-    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
+    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', cards: 'ids of cards the human copied into this message, comma-separated, often another session\'s: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw', cards_json: 'the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices}', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
   },
   {
@@ -1772,6 +1773,44 @@ async function shred(cardId, note, marks, files = []) {
     ].join('\n'),
     meta: { kind: 'shredded', card_id: card.id, ...(pinned.length ? { marks: String(pinned.length) } : {}), ...uploadMeta(files) },
   })
+}
+
+// A card passed on to another session, as that session reads it: everything an agent that never saw the card needs
+// to understand the question and, if there is one, the answer. The card itself is not touched.
+const CARDS_MAX = 5
+function passedCards(list) {
+  if (list == null) return []
+  if (!Array.isArray(list)) throw new Error('cards must be a list of card ids')
+  if (list.length > CARDS_MAX) throw new Error(`at most ${CARDS_MAX} cards in one message; got ${list.length}`)
+  // Named by id or by number; the same card twice counts once.
+  return [...new Set(list.map(String).map(ref => {
+    const card = state.cards.find(c => c.id === ref) ?? state.cards.find(c => String(c.number) === ref)
+    if (!card) throw new Error(`no card ${ref}`)
+    return card
+  }))]
+}
+const choiceLabels = card => (card.choices ?? []).map(key => card.options.find(o => o.key === key)?.label ?? key)
+const cardChip = card => ({ id: card.id, number: card.number, title: card.title, agent: card.agent, choice_label: choiceLabels(card).join(', ') || null })
+function cardText(card) {
+  const from = state.agents.find(a => a.id === card.agent)
+  const advised = [card.recommended ?? []].flat()
+  const answer = card.status === 'shredded' ? ['Answer: none. The human threw it away unanswered.']
+    : card.kind === 'info' ? [card.read ? 'The human has read it.' : 'Not read yet.']
+    : card.choices?.length || card.trusted ? [
+      card.trusted ? `Answer: the human left it to the agent${card.choices?.length ? `, whose advice was: ${choiceLabels(card).map((l, i) => `${l} [${card.choices[i]}]`).join(', ')}` : ''}.`
+        : `Answer: ${choiceLabels(card).map((l, i) => `${l} [${card.choices[i]}]`).join(', ')}`,
+      ...(card.note ? [`The human's note: ${card.note}`] : []),
+      ...Object.entries(card.option_notes ?? {}).map(([key, said]) => `Note on ${card.options.find(o => o.key === key)?.label ?? key} [${key}]: ${said.replace(/\s*\n\s*/g, ' ')}`),
+    ] : ['Answer: none yet, the question is open.']
+  const pictures = [...card.attachments, ...(card.note_attachments ?? [])].map(uploadPath)
+  return [
+    `--- ${card.kind === 'info' ? 'Info' : 'Question'} Nr. ${card.number} (card ${card.id}), ${card.kind === 'info' ? 'written' : 'asked'} by the session "${from?.label || from?.name || card.agent}" [${card.agent}] ---`,
+    card.title,
+    ...(card.body ? ['', card.body] : []),
+    ...(card.options.length ? ['', `Options${card.multiple ? ' (several may be chosen)' : ''}:`, ...card.options.map(o => `- ${o.label} [${o.key}]${o.detail ? `: ${o.detail}` : ''}${advised.includes(o.key) ? ' (the agent\'s advice)' : ''}`)] : []),
+    '', ...answer,
+    ...(pictures.length ? [`Pictures and files: ${pictures.join(', ')}`] : []),
+  ].join('\n')
 }
 
 // The human read an info and closed it. Nothing was asked, so the card is done at once; the agent is told quietly.
@@ -2671,14 +2710,16 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/message') {
       const body = await readJson(req, UPLOAD_BODY)
       const msg = String(body.text ?? '').trim()
-      if (!msg && !(Array.isArray(body.attachments) && body.attachments.length) && !(Array.isArray(body.marks) && body.marks.length)) return send(res, 400, '{"error":"empty message"}')
+      if (!msg && !(Array.isArray(body.attachments) && body.attachments.length) && !(Array.isArray(body.marks) && body.marks.length) && !(Array.isArray(body.cards) && body.cards.length)) return send(res, 400, '{"error":"empty message"}')
       // The body may be large for the files' sake only; the words keep their old limit.
       if (msg.length > 1e6) throw new Error('body too large')
       const agent = targetAgent(body.agent)
       // Notes and drawings pinned to the card the message is about; without such a card they have nothing to hold on to.
       const noted = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
       const pinned = noted ? marksOf(noted, body.marks, true) : []
-      if (!msg && !pinned.length && !(Array.isArray(body.attachments) && body.attachments.length)) return send(res, 400, '{"error":"empty message"}')
+      // Cards the human copies into this conversation, from this session or any other.
+      const passed = passedCards(body.cards)
+      if (!msg && !pinned.length && !passed.length && !(Array.isArray(body.attachments) && body.attachments.length)) return send(res, 400, '{"error":"empty message"}')
       // Files and pictures the human attached; a message may be nothing but them.
       const files = storeUploads(body.attachments)
       // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
@@ -2687,10 +2728,19 @@ const httpServer = http.createServer(async (req, res) => {
       // The human gave the card back to be reworked, or asked for it to be explained: until the agent answers, it is with the agent.
       const turn = asked && asked.kind !== 'permission' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
       if (Object.keys(turn).length) asked.with_agent = Date.now()
-      addMessage(agent, 'user', msg, files, { ...about, ...turn, ...(pinned.length ? { marks: pinned } : {}) })
+      addMessage(agent, 'user', msg, files, { ...about, ...turn, ...(pinned.length ? { marks: pinned } : {}), ...(passed.length ? { cards: passed.map(cardChip) } : {}) })
       await deliver(agent, 'notifications/claude/channel', {
-        content: [msg || (files.length ? uploadLine(files) : 'The human pinned notes to the card.'), ...(pinned.length ? marksBlock(noted, pinned) : [])].join('\n'),
-        meta: { kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...(pinned.length ? { marks: String(pinned.length) } : {}), ...uploadMeta(files) },
+        content: [
+          msg || (files.length ? uploadLine(files) : passed.length ? `The human passes ${passed.length === 1 ? 'a card' : `${passed.length} cards`} on to you.` : 'The human pinned notes to the card.'),
+          ...(pinned.length ? marksBlock(noted, pinned) : []),
+          ...passed.flatMap(card => ['', cardText(card)]),
+        ].join('\n'),
+        meta: {
+          kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...(pinned.length ? { marks: String(pinned.length) } : {}),
+          // meta values are strings: the ids, and the same cards as JSON for whoever wants fields instead of prose.
+          ...(passed.length ? { cards: passed.map(c => c.id).join(','), cards_json: JSON.stringify(passed.map(c => ({ ...cardChip(c), kind: c.kind, status: c.status, choices: c.choices ?? [] }))) } : {}),
+          ...uploadMeta(files),
+        },
       })
       return send(res, 200, '{"ok":true}')
     }
