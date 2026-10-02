@@ -276,8 +276,8 @@ test('rollback and fork against the pinned head', async () => {
   await rejects(() => z.checkLogAgainstPin(old, pinned), 'log-rollback')
   await rejects(() => sync(w.laptop, w, w.hub.log.slice(0, 1)), 'log-rollback')
   // Forked: two human devices each sign a different entry 3, the hub shows each device one of them.
-  const a = await z.rotateEpoch(w.phone.state, w.phone.device, { previous: w.phone.secrets.get(1), time: T0 })
-  const b = await z.removeMembers(w.laptop.state, w.laptop.device, { ids: [w.agent.device.id], previous: w.laptop.secrets.get(1), time: T0 })
+  const a = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.agent.device.id], previous: w.phone.secrets.get(1), time: T0 })
+  const b = await z.addMember(w.laptop.state, w.laptop.device, { member: { role: ROLE.AGENT, name: 'Other', ...z.publicDevice(await z.generateDevice()) }, time: T0 })
   const logA = [...w.hub.log, a.entry], logB = [...w.hub.log, b.entry]
   assert.equal((await sync(w.phone, w, logA)).status, 'extended')
   const err = await rejects(() => sync(w.phone, w, logB), 'log-fork')
@@ -286,9 +286,41 @@ test('rollback and fork against the pinned head', async () => {
   await rejects(async () => z.checkLogAgainstPin(await z.verifyLog(logB, w.roomId), { seq: 3, hash: a.state.head.hash }), 'log-fork')
   // A fork shows with the first message between the two devices.
   await sync(w.laptop, w, logB)
-  w.phone.secrets.set(2, a.secret); w.laptop.secrets.set(2, b.secret)
+  w.phone.secrets.set(2, a.secret)
   const env = await send(w, w.laptop)
   await rejects(() => recv(w.phone, env), 'log-fork')
+})
+test('any human device changes members, there is no main device', async () => {
+  const w = await makeWorld()
+  // The laptop joined second. It adds a tablet, and the tablet removes the founding phone.
+  const tablet = await invite(w, w.laptop, await z.generateDevice(), ROLE.HUMAN, 'Tablet')
+  await sync(w.laptop, w)
+  const r = await z.removeMembers(tablet.state, tablet.device, { ids: [w.phone.device.id], previous: tablet.secrets.get(1), time: T0 })
+  assert.deepEqual(z.activeMembers(r.state).map(m => m.name), ['Laptop', 'Agent', 'Tablet'])
+  assert.equal(r.state.epoch, 2)
+  // The removed founder has no say left; the recovery key still stands above everyone.
+  await rejects(() => z.removeMembers(r.state, w.phone.device, { ids: [tablet.device.id], previous: r.secret, time: T0 }), 'bad-entry')
+  const rec = await z.recoverRoom({ state: r.state, code: w.code, newCode: z.generateRecoveryCode(), newDevice: await z.generateDevice(), recoveryWrap: r.wraps.at(-1).sealed, time: T0 })
+  assert.deepEqual(z.activeMembers(rec.state).map(m => m.role), [ROLE.AGENT, ROLE.HUMAN])
+})
+test('the room key changes on removal only: there is no rotation entry', async () => {
+  const w = await makeWorld()
+  assert.equal(z.rotateEpoch, undefined)
+  assert.deepEqual(Object.values(z.ENTRY).sort(), [1, 2, 3, 5])
+  // The retired type 4 (a new epoch without a removal), correctly signed by a human device.
+  const s = w.phone.state, next = z.newEpochSecret(2), c = await z.epochCommits(next)
+  await rejects(async () => z.applyEntry(s, await handEntry(s, w.phone.device, 4, concat(be(2, 4), c.keyCommit, c.histCommit))), 'bad-format')
+  // Adding a member does not change the key either.
+  const added = await z.addMember(s, w.phone.device, { member: { role: ROLE.AGENT, name: 'Bot', ...z.publicDevice(await z.generateDevice()) }, time: T0 })
+  assert.equal(added.state.epoch, 1)
+})
+test('an invite id produces one member, once', async () => {
+  const w = await makeWorld()
+  const inviteId = w.phone.state.entries[1].inviteId
+  await rejects(async () => z.addMember(w.phone.state, w.phone.device, { member: { role: ROLE.AGENT, name: 'Twin', ...z.publicDevice(await z.generateDevice()) }, inviteId, time: T0 }), 'bad-entry')
+})
+test('a room cannot be founded without a recovery code', async () => {
+  await rejects(async () => z.createRoom({ device: await z.generateDevice(), name: 'Phone', time: T0 }), 'recovery-required')
 })
 test('epoch bookkeeping: memberAt and epochAt follow the log', async () => {
   const w = await makeWorld()
@@ -439,12 +471,12 @@ test('rotation on removal: the removed member gets no wrap and cannot read the n
 test('a new human reads old epochs through the back links; a new agent cannot, even with the links', async () => {
   const w = await makeWorld()
   const old = await send(w, w.phone, { payload: utf8('epoch one') })
-  const r2 = await z.rotateEpoch(w.phone.state, w.phone.device, { previous: w.phone.secrets.get(1), time: T0 })
-  w.hub.log.push(r2.entry); storeWraps(w, 2, r2.wraps); w.hub.backLinks.set(2, r2.backLink)
-  await sync(w.phone, w); w.phone.secrets.set(2, r2.secret)
-  const r3 = await z.rotateEpoch(w.phone.state, w.phone.device, { previous: r2.secret, time: T0 })
-  w.hub.log.push(r3.entry); storeWraps(w, 3, r3.wraps); w.hub.backLinks.set(3, r3.backLink)
-  await sync(w.phone, w); w.phone.secrets.set(3, r3.secret)
+  // Two removals, so two new room keys: epochs 2 and 3.
+  await remove(w, w.phone, [w.agent.device.id])
+  const temp = await invite(w, w.phone, await z.generateDevice(), ROLE.AGENT, 'Temp')
+  await sync(w.phone, w)
+  await remove(w, w.phone, [temp.device.id])
+  assert.equal(w.phone.state.epoch, 3)
 
   const tablet = await invite(w, w.phone, await z.generateDevice(), ROLE.HUMAN, 'Tablet')
   await sync(w.phone, w)
@@ -487,7 +519,7 @@ test('round trip, header fields, padding, an independent decrypt with node:crypt
   const env = await send(w, w.phone, { kind: KIND.CARD, payload: utf8('{"title":"Deploy?"}'), recipient: null, card: { id: cardId, state: 1 }, blobs: [blob], push: true, time: T0 + 5 })
   const got = await recv(w.laptop, env)
   assert.equal(got.kind, KIND.CARD); assert.equal(txt(got.payload), '{"title":"Deploy?"}')
-  assert.deepEqual(got.header.card, { id: cardId, state: 1, answeredAt: 0 }); assert.deepEqual(got.header.blobs, [blob])
+  assert.deepEqual(got.header.card, { id: cardId, state: 1, urgency: 1, answeredAt: 0 }); assert.deepEqual(got.header.blobs, [blob])
   assert.equal(got.header.push, true); assert.equal(got.header.seq, 1); assert.equal(got.header.time, T0 + 5)
   assert.equal(got.forMe, true); assert.equal(got.member.name, 'Phone'); assert.deepEqual(got.hash, env.hash)
   const p = z.peekEnvelope(env.bytes)
@@ -688,6 +720,51 @@ test('membership at the named log state: not yet a member, removed since, log be
   await rejects(() => send(w, w.laptop), 'not-member')
 })
 
+test('urgency and card status are readable on the outside, signed, and nothing else is', async () => {
+  const w = await makeWorld()
+  const cardId = fill(16, 0xc7)
+  const env = await send(w, w.phone, { kind: KIND.CARD, payload: utf8('{"title":"Wire the money?"}'), card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.CRITICAL }, push: true })
+  // What the hub does: no key, no verification, just the header.
+  const seen = z.peekEnvelope(env.bytes).header
+  assert.deepEqual(seen.card, { id: cardId, state: 1, urgency: 3, answeredAt: 0 })
+  assert.ok(!includesBytes(env.bytes, utf8('Wire')))
+  // The hub cannot lower or raise it: the header is under the signature and is the associated data.
+  const at = env.bytes.indexOf(0xc7) + 16 + 1
+  assert.equal(env.bytes[at], 3)
+  const lowered = env.bytes.slice(); lowered[at] = 0
+  await rejects(() => recv(w.laptop, lowered), 'bad-signature')
+  const answered = await send(w, w.phone, { kind: KIND.ANSWER, card: { id: cardId, state: z.CARD_STATE.ANSWERED, urgency: z.URGENCY.CRITICAL, answeredAt: T0 + 9 } })
+  assert.deepEqual(z.peekEnvelope(await z.pruneEnvelope(answered.bytes)).header.card, { id: cardId, state: 2, urgency: 3, answeredAt: T0 + 9 })
+  await rejects(() => send(w, w.phone, { card: { id: cardId, state: 1, urgency: 4 } }), 'bad-argument')
+  await rejects(() => send(w, w.phone, { card: { id: cardId, state: 0 } }), 'bad-argument')
+  const unknown = env.bytes.slice(); unknown[at] = 9
+  await rejects(() => z.peekEnvelope(unknown), 'bad-format')
+})
+
+// ---- signing in to the hub -----------------------------------------------------
+
+group('hub sign-in')
+test('a member signs the hub\'s challenge; removed devices, other rooms, other hubs and outsiders are refused', async () => {
+  const w = await makeWorld()
+  const challenge = fill(32, 0x5c)
+  const sign = (device, over = {}) => z.signHubAuth({ device, roomId: w.roomId, hub: w.hubUrl, challenge, ...over })
+  const state = w.phone.state
+  const ok = await z.verifyHubAuth(await sign(w.agent.device), { state, hub: w.hubUrl })
+  assert.equal(ok.kind, 'member'); assert.equal(ok.member.name, 'Agent'); assert.deepEqual(ok.challenge, challenge)
+  const rec = await z.verifyHubAuth(await sign(await z.recoveryDevice(w.code)), { state, hub: w.hubUrl })
+  assert.equal(rec.kind, 'recovery')
+  await rejects(async () => z.verifyHubAuth(await sign(await z.generateDevice()), { state, hub: w.hubUrl }), 'not-member')
+  await rejects(async () => z.verifyHubAuth(await sign(w.phone.device), { state, hub: 'https://other.example' }), 'wrong-hub')
+  await rejects(async () => z.verifyHubAuth(await sign(w.phone.device, { roomId: fill(32, 1) }), { state, hub: w.hubUrl }), 'wrong-room')
+  // One member's signature under another member's id.
+  const mine = await sign(w.laptop.device)
+  const forged = concat(mine.slice(0, -64 - 64), w.phone.device.id, mine.slice(-64 - 32))
+  await rejects(() => z.verifyHubAuth(forged, { state, hub: w.hubUrl }), 'bad-signature')
+  for (let i = 0; i < mine.length; i += 3) await rejects(() => z.verifyHubAuth(flip(mine, i), { state, hub: w.hubUrl }), ['bad-signature', 'bad-format', 'bad-version', 'wrong-room', 'wrong-hub', 'not-member'])
+  await remove(w, w.phone, [w.agent.device.id])
+  await rejects(async () => z.verifyHubAuth(await sign(w.agent.device), { state: w.phone.state, hub: w.hubUrl }), 'not-member')
+})
+
 // ---- commands ------------------------------------------------------------------
 
 group('commands')
@@ -772,8 +849,9 @@ test('stale verdict: expired, no longer pending, a different request, a changed 
 test('freshness: commands of the previous epoch count for two minutes, chat is marked late', async () => {
   const { w, ctx, answer } = await cardSetup()
   const old = await answer(w.phone)                         // sent in epoch 1
-  const r = await z.rotateEpoch(w.laptop.state, w.laptop.device, { previous: w.laptop.secrets.get(1), time: T0 })
-  w.hub.log.push(r.entry); storeWraps(w, 2, r.wraps)
+  const temp = await invite(w, w.laptop, await z.generateDevice(), ROLE.AGENT, 'Temp')
+  await sync(w.laptop, w)
+  await remove(w, w.laptop, [temp.device.id])               // the laptop removes someone: epoch 2
   await sync(w.agent, w); await fetchKey(w.agent, w)
   const got = await recv(w.agent, old)
   assert.equal(got.epochCurrent, false)
@@ -781,7 +859,7 @@ test('freshness: commands of the previous epoch count for two minutes, chat is m
   assert.ok(z.authoriseCommand(got, { ...at, now: T0 + 2 * MIN }))
   await rejects(() => z.authoriseCommand(got, { ...at, now: T0 + 2 * MIN + 1 }), 'stale-epoch')
   await rejects(() => z.authoriseCommand(got, { ...ctx, state: w.agent.state, now: T0 }), 'stale-epoch')
-  // Chat: the phone had seen the agent's envelope 1, the agent is at 3 by now.
+  // Chat: the phone had seen the agent's envelope 1, the agent is further by now.
   await sync(w.phone, w); await fetchKey(w.phone, w)
   const chat = await recv(w.agent, await send(w, w.phone, { recipient: w.agent.device.id }))
   assert.equal(z.authoriseCommand(chat, { ...at, ownSeq: 1 }).late, false)
@@ -877,6 +955,39 @@ test('all devices lost: the code enrols a new device, removes the old ones, rota
   const cmd = await recv(w.agent, await send(w, tablet, { recipient: w.agent.device.id }))
   assert.equal(z.authoriseCommand(cmd, { state: w.agent.state, agentId: w.agent.device.id, now: T0 }).kind, KIND.CHAT)
 })
+test('recovery removes every human device and keeps every agent; nothing else is a valid recovery', async () => {
+  const w = await makeWorld()
+  await fetchKey(w.agent, w)
+  const bot = await invite(w, w.phone, await z.generateDevice(), ROLE.AGENT, 'Bot', { confirm: false })
+  const state = await z.verifyLog(w.hub.log, w.roomId)
+  const rec = await z.recoveryDevice(w.code)
+  const tablet = await z.generateDevice()
+  const r = await z.recoverRoom({ state, code: w.code, newCode: z.generateRecoveryCode(), newDevice: tablet, name: 'Tablet', recoveryWrap: w.hub.wraps.get(`1:${b64u(state.recovery.id)}`), time: T0 })
+  assert.deepEqual(z.activeMembers(r.state).map(m => m.name), ['Agent', 'Bot', 'Tablet'])
+  assert.deepEqual(r.state.entries.at(-1).ids.map(b64u).sort(), [w.phone.device.id, w.laptop.device.id].map(b64u).sort())
+  assert.equal(r.state.epoch, 2)
+  // Both agents get the new room key (without the history key), the removed devices get nothing.
+  assert.deepEqual(r.wraps.map(x => b64u(x.id)).sort(), [w.agent.device.id, bot.device.id, tablet.id, r.state.recovery.id].map(b64u).sort())
+  for (const a of [w.agent, bot]) {
+    const got = await z.unwrapEpochKey(r.state, a.device, r.wraps.find(x => b64u(x.id) === b64u(a.device.id)).sealed, 2)
+    assert.deepEqual(got.key, r.secret.key); assert.equal(got.hist, null)
+  }
+  // Hand-made recoveries with another list, signed by the real recovery key: all refused.
+  const body = r.entry.slice(0, -64)
+  const at = 80 + 1 + 64 + 2 + utf8('Tablet').length       // where the id list starts
+  assert.equal((body[at] << 8) | body[at + 1], 2)
+  const ids = [body.slice(at + 2, at + 34), body.slice(at + 34, at + 66)]
+  const withIds = list => {
+    const sorted = [...list].sort((a, b) => Buffer.compare(a, b))
+    return concat(body.slice(0, at), Uint8Array.of(0, sorted.length), ...sorted, body.slice(at + 66))
+  }
+  const signed = async b => concat(b, await z.sign(rec, z.LABEL.logSig, b))
+  assert.ok(await z.applyEntry(state, await signed(withIds(ids))), 'the rebuilt entry is the same entry')
+  for (const list of [[], [ids[0]], [...ids, w.agent.device.id], [ids[0], w.agent.device.id], [...ids, w.agent.device.id, bot.device.id]]) {
+    const e = await rejects(async () => z.applyEntry(state, await signed(withIds(list))), 'bad-entry')
+    assert.match(e.message, /every human device and no agent/)
+  }
+})
 test('a recovery entry overrides a device branch, is reported, and only a recovery key can make one', async () => {
   const w = await makeWorld()
   // A thief with the phone adds a device; the laptop has pinned that branch.
@@ -885,7 +996,7 @@ test('a recovery entry overrides a device branch, is reported, and only a recove
   // The owner recovers from the state before the theft.
   const state = await z.verifyLog(w.hub.log, w.roomId)
   const tablet = await z.generateDevice()
-  const r = await z.recoverRoom({ state, code: w.code, newCode: z.generateRecoveryCode(), newDevice: tablet, recoveryWrap: w.hub.wraps.get(`1:${b64u(state.recovery.id)}`), removeIds: [w.phone.device.id], time: T0 })
+  const r = await z.recoverRoom({ state, code: w.code, newCode: z.generateRecoveryCode(), newDevice: tablet, recoveryWrap: w.hub.wraps.get(`1:${b64u(state.recovery.id)}`), time: T0 })
   const res = z.checkLogAgainstPin(r.state, w.laptop.pin)
   assert.deepEqual(res, { status: 'recovery-override', forkSeq: 3 })
   // Without the pinned hashes the fork cannot be judged and stays a fork.
@@ -1078,7 +1189,7 @@ test('commands: redirects an answer to another card, replays an approval, delive
   await rejects(() => z.authoriseCommand(got, { ...ctx, card: { id: cardB, hash: envB.hash, open: true, options: ['yes', 'no'] } }), 'card-mismatch')
   // Rewriting the card id in the cleartext header breaks the signature.
   const p = z.peekEnvelope(ans.bytes)
-  const cardAt = p.headerBytes.length - 1 - 25
+  const cardAt = p.headerBytes.length - 1 - 26
   assert.deepEqual(p.headerBytes.slice(cardAt, cardAt + 16), cardId)
   const edited = ans.bytes.slice(); edited.set(cardB, 4 + cardAt)
   await rejects(() => recv(w.agent, edited), ['bad-signature', 'replay'])
@@ -1118,10 +1229,16 @@ test('colludes with a removed agent: hands it every wrap and back link of the ne
 // ---- vectors -------------------------------------------------------------------
 
 const H = b => hex(b)
+const be = (n, len) => { const b = new Uint8Array(len); let v = BigInt(n); for (let i = len - 1; i >= 0; i--) { b[i] = Number(v & 0xffn); v >>= 8n } return b }
+/** A log entry built by hand from FORMAT.md, section 6, and signed by `signer`: for entries the library refuses to build. */
+async function handEntry(state, signer, type, payload) {
+  const body = concat(Uint8Array.of(1, 1, type), be(state.head.seq + 1, 4), state.head.hash, be(T0, 8), Uint8Array.of(1), signer.id, payload)
+  return concat(body, await z.sign(signer, z.LABEL.logSig, body))
+}
 async function buildVectors() {
   const v = { about: 'Deterministic test vectors for zcrypto.mjs format version 1. All byte strings are lower-case hex. Regenerate with: node crypto/test.mjs --write-vectors', rng: 'Test-only randomness: call number c (from 0) of a generator with seed s returns n bytes, byte j = (s + 17c + j) mod 256. Each section names its seed.' }
   const dev = async (a, b) => z.deviceFromSeeds(fill(32, a), fill(32, b), { extractable: true })
-  const phone = await dev(0x11, 0x12), laptop = await dev(0x21, 0x22), agent = await dev(0x31, 0x32)
+  const phone = await dev(0x11, 0x12), laptop = await dev(0x21, 0x22), agent = await dev(0x31, 0x32), tablet = await dev(0x41, 0x42), helper = await dev(0x51, 0x52)
   const pubs = d => ({ signPub: H(d.signPub), kexPub: H(d.kexPub), id: H(d.id) })
 
   v.encoding = { bytes: '00fbff10', base64url: b64u(unhex('00fbff10')), hash: { label: 'trommi/v1/log-entry', data: H(utf8('abc')), out: H(await z.hash(z.LABEL.logEntry, utf8('abc'))) },
@@ -1129,7 +1246,9 @@ async function buildVectors() {
   v.devices = {
     phone: { signSeed: H(fill(32, 0x11)), kexSeed: H(fill(32, 0x12)), ...pubs(phone), public: H(z.encodeDevicePublic(phone)), secretFile: H(await z.exportDeviceSecret(phone)) },
     laptop: { signSeed: H(fill(32, 0x21)), kexSeed: H(fill(32, 0x22)), ...pubs(laptop) },
-    agent: { signSeed: H(fill(32, 0x31)), kexSeed: H(fill(32, 0x32)), ...pubs(agent) },
+    agent: { signSeed: H(fill(32, 0x31)), kexSeed: H(fill(32, 0x32)), ...pubs(agent), secretFile: H(await z.exportDeviceSecret(agent)) },
+    tablet: { signSeed: H(fill(32, 0x41)), kexSeed: H(fill(32, 0x42)), ...pubs(tablet) },
+    helper: { signSeed: H(fill(32, 0x51)), kexSeed: H(fill(32, 0x52)), ...pubs(helper) },
   }
   v.signature = { signer: 'phone', label: 'trommi/v1/log-sig', message: H(utf8('message')), signature: H(await z.sign(phone, z.LABEL.logSig, utf8('message'))) }
 
@@ -1140,45 +1259,61 @@ async function buildVectors() {
   const sealed = await z.seal(laptop.kexPub, utf8('sealed box'), utf8('associated'), { _rng: fixedRng(0x50) })
   v.sealedBox = { rngSeed: 0x50, recipient: 'laptop', plaintext: H(utf8('sealed box')), aad: H(utf8('associated')), ephemeralSeed: H(fixedRng(0x50)(32)), sealed: H(sealed) }
 
-  // Room: genesis (entry 0), laptop by invite (1), agent by invite (2), agent removed (3), scheduled rotation (4), recovery (5).
+  // Room: genesis by the phone (entry 0), laptop by invite with the check code (1), agent by a link in its prompt,
+  // no check code (2), a second agent invited by the laptop (3), that agent removed by the laptop: epoch 2 (4),
+  // recovery: phone and laptop out, tablet in, the first agent stays: epoch 3 (5).
   const room = await z.createRoom({ device: phone, name: 'Phone', recovery: rec, time: T0, _rng: fixedRng(0x60) })
   const sec = s => ({ epoch: s.epoch, key: H(s.key), hist: s.hist ? H(s.hist) : null })
   const commits = async s => { const c = await z.epochCommits(s); return { keyCommit: H(c.keyCommit), histCommit: H(c.histCommit) } }
-  const wraps = ws => ws.map(x => ({ recipient: H(x.id), sealed: H(x.sealed) }))
-  v.room = { rngSeed: 0x60, time: T0, name: 'Phone', genesis: H(room.entry), roomId: H(room.roomId), secret: sec(room.secret), ...await commits(room.secret), wraps: wraps(room.wraps) }
+  const names = new Map([[H(rec.id), 'recovery key']])
+  const who = id => names.get(H(id)) ?? H(id)
+  const wraps = ws => ws.map(x => ({ recipient: who(x.id), recipientId: H(x.id), sealed: H(x.sealed) }))
+  for (const [n, d] of [['phone', phone], ['laptop', laptop], ['agent', agent], ['helper', helper], ['tablet', tablet]]) names.set(H(d.id), n)
+  v.room = { rngSeed: 0x60, rngCalls: 'room nonce (16), room key (32), history key (32), then one ephemeral X25519 key (32) per wrap', time: T0, name: 'Phone', genesis: H(room.entry), roomId: H(room.roomId), secret: sec(room.secret), ...await commits(room.secret), wraps: wraps(room.wraps) }
 
   const log = [room.entry]
   let state = room.state
   v.invites = []
-  const members = {}
-  for (const [name, device, role, seed] of [['Laptop', laptop, ROLE.HUMAN, 0x70], ['Agent', agent, ROLE.AGENT, 0x78]]) {
-    const made = await z.createInvite({ state, inviter: phone, hub: 'https://hub.example', role, now: T0, _rng: fixedRng(seed) })
+  const members = { Phone: room.secret }
+  for (const [name, device, role, seed, inviter, checked] of [['Laptop', laptop, ROLE.HUMAN, 0x70, phone, true], ['Agent', agent, ROLE.AGENT, 0x78, phone, false], ['Helper', helper, ROLE.AGENT, 0x88, laptop, false]]) {
+    const before = state
+    const made = await z.createInvite({ state, inviter, hub: 'https://hub.example', app: 'https://app.example/join', role, now: T0, _rng: fixedRng(seed) })
     const { request, join } = await z.createJoinRequest({ link: made.link, offer: made.offer, log, device, name, now: T0 })
-    const { reveal, code: checkCode } = await z.acceptJoinRequest({ invite: made.invite, request, inviter: phone, now: T0 })
+    const { reveal, code: checkCode } = await z.acceptJoinRequest({ invite: made.invite, request, inviter, now: T0 })
     assert.equal(await z.checkReveal({ join, reveal, log }), checkCode)
-    const done = await z.finalizeInvite({ invite: made.invite, state, inviter: phone, secret: room.secret, codeConfirmed: true, now: T0, _rng: fixedRng(seed + 1) })
+    const done = await z.finalizeInvite({ invite: made.invite, state, inviter, secret: room.secret, codeConfirmed: checked, skipCheckCode: !checked, now: T0, _rng: fixedRng(seed + 1) })
     log.push(done.entry); state = done.state
     members[name] = (await z.completeJoin({ join, device, log, wrap: done.wrap })).secret
-    v.invites.push({ rngSeed: seed, wrapRngSeed: seed + 1, hub: 'https://hub.example', role, name, now: T0, secret: H(made.invite.secret), nonce: H(made.invite.nonce), inviteId: H(made.invite.inviteId),
-      expiresAt: made.invite.expiresAt, link: made.link, offer: H(made.offer), request: H(request), reveal: H(reveal), checkCode, entry: H(done.entry), wrap: H(done.wrap) })
+    v.invites.push({ rngSeed: seed, rngCalls: 'link secret (32), nonce (32)', wrapRngSeed: seed + 1, hub: 'https://hub.example', app: 'https://app.example/join', role, name, inviter: who(inviter.id), now: T0,
+      logSeqBefore: before.head.seq, secret: H(made.invite.secret), nonce: H(made.invite.nonce), inviteId: H(made.invite.inviteId), expiresAt: made.invite.expiresAt, link: made.link,
+      offer: H(made.offer), offerHash: H(await z.hash(z.LABEL.inviteOffer, made.offer)), request: H(request), requestHash: H(await z.hash(z.LABEL.inviteRequest, request)), reveal: H(reveal),
+      checkCode, checkCodeCompared: checked, entry: H(done.entry), wrap: H(done.wrap), roomKeyOpened: sec(members[name]) })
   }
+  const stateEpoch1 = state
 
-  // Envelopes in epoch 1.
+  // Envelopes in epoch 1: phone 1, agent 1 (a card), phone 2 (the answer, chained to phone 1).
   const chains = { phone: z.newChains(), agent: z.newChains() }
   const cardId = fill(16, 0xc1), blobId = fill(16, 0xb1)
   const e1 = await z.sealEnvelope({ device: phone, state, secret: room.secret, chains: chains.phone, kind: KIND.CHAT, payload: utf8('hello'), time: T0 + 1, _rng: fixedRng(0x80) })
   await z.openEnvelope(e1.bytes, { state, chains: chains.agent, secrets: new Map([[1, members.Agent]]) })
-  const e2 = await z.sealEnvelope({ device: agent, state, secret: members.Agent, chains: chains.agent, kind: KIND.CARD, payload: utf8('{"title":"Deploy?","options":["yes","no"]}'), card: { id: cardId, state: 1 }, blobs: [blobId], push: true, time: T0 + 2, _rng: fixedRng(0x81) })
+  const e2 = await z.sealEnvelope({ device: agent, state, secret: members.Agent, chains: chains.agent, kind: KIND.CARD, payload: utf8('{"title":"Deploy?","options":["yes","no"]}'), card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.HIGH }, blobs: [blobId], push: true, time: T0 + 2, _rng: fixedRng(0x81) })
   await z.openEnvelope(e2.bytes, { state, chains: chains.phone, secrets: new Map([[1, room.secret]]) })
   const answerBind = z.encodeAnswerBind({ cardId, cardHash: e2.hash, choice: 'yes' })
-  const e3 = await z.sealEnvelope({ device: phone, state, secret: room.secret, chains: chains.phone, kind: KIND.ANSWER, bind: answerBind, payload: utf8('{"note":"go"}'), recipient: agent.id, card: { id: cardId, state: 2, answeredAt: T0 + 3 }, time: T0 + 3, _rng: fixedRng(0x82) })
-  const env = (e, more) => ({ ...more, bytes: H(e.bytes), hash: H(e.hash), header: H(z.peekEnvelope(e.bytes).headerBytes), nonce: H(z.peekEnvelope(e.bytes).nonce) })
+  const e3 = await z.sealEnvelope({ device: phone, state, secret: room.secret, chains: chains.phone, kind: KIND.ANSWER, bind: answerBind, payload: utf8('{"note":"go"}'), recipient: agent.id, card: { id: cardId, state: z.CARD_STATE.ANSWERED, urgency: z.URGENCY.HIGH, answeredAt: T0 + 3 }, time: T0 + 3, _rng: fixedRng(0x82) })
+  await z.openEnvelope(e3.bytes, { state, chains: chains.agent, secrets: new Map([[1, members.Agent]]), self: agent.id })
+  const env = (e, more) => {
+    const p = z.peekEnvelope(e.bytes), h = p.header
+    return { ...more, epoch: h.epoch, seq: h.seq, prev: H(h.prev), logSeq: h.logSeq, logHash: H(h.logHash), seen: h.seen.map(x => ({ sender: who(x.sender), seq: x.seq, hash: H(x.hash) })),
+      hubSees: { push: h.push, card: h.card ? { id: H(h.card.id), state: h.card.state, urgency: h.card.urgency, answeredAt: h.card.answeredAt } : null, blobs: h.blobs.map(H) },
+      header: H(p.headerBytes), nonce: H(p.nonce), ciphertext: H(p.ciphertext), ciphertextHash: H(nodeCrypto.createHash('sha256').update(p.ciphertext).digest()), signature: H(p.signature), hash: H(e.hash), bytes: H(e.bytes) }
+  }
   v.envelopes = {
     senderKeys: { phone: H(await z.deriveSenderKey(room.roomId, room.secret, phone.id)), agent: H(await z.deriveSenderKey(room.roomId, room.secret, agent.id)) },
     chat: env(e1, { rngSeed: 0x80, sender: 'phone', kind: KIND.CHAT, payload: H(utf8('hello')), time: T0 + 1 }),
     card: env(e2, { rngSeed: 0x81, sender: 'agent', kind: KIND.CARD, payload: H(utf8('{"title":"Deploy?","options":["yes","no"]}')), time: T0 + 2, cardId: H(cardId), blobId: H(blobId) }),
     answer: env(e3, { rngSeed: 0x82, sender: 'phone', kind: KIND.ANSWER, bind: H(answerBind), payload: H(utf8('{"note":"go"}')), recipient: 'agent', time: T0 + 3 }),
     pruned: H(await z.pruneEnvelope(e1.bytes)),
+    prunedAnswer: H(await z.pruneEnvelope(e3.bytes)),
   }
   v.binds = {
     answer: H(answerBind),
@@ -1186,23 +1321,46 @@ async function buildVectors() {
     redecide: H(z.encodeRedecideBind({ cardId, previousHash: e3.hash, choice: 'no' })),
     request: H(z.encodeRequestBind({ requestId: fill(16, 0x71), expiresAt: T0 + 300000 })),
   }
+  const challenge = fill(32, 0x5c)
+  v.hubAuth = { signer: 'agent', hub: 'https://hub.example', challenge: H(challenge), logSeq: state.head.seq, signed: H(await z.signHubAuth({ device: agent, roomId: room.roomId, hub: 'https://hub.example', challenge })) }
 
-  // Rotations.
-  const rem = await z.removeMembers(state, phone, { ids: [agent.id], previous: room.secret, time: T0 + 10, _rng: fixedRng(0x90) })
+  // A member is removed: the room key changes. Then the recovery: it changes again, and the agent stays.
+  const rem = await z.removeMembers(state, laptop, { ids: [helper.id], previous: members.Laptop, time: T0 + 10, _rng: fixedRng(0x90) })
   log.push(rem.entry); state = rem.state
-  const rot = await z.rotateEpoch(state, laptop, { previous: rem.secret, time: T0 + 20, _rng: fixedRng(0x98) })
-  log.push(rot.entry); state = rot.state
   const newCode = z.generateRecoveryCode({ _rng: fixedRng(0xa0) })
-  const tablet = await dev(0x41, 0x42)
-  const recovered = await z.recoverRoom({ state, code, newCode, newDevice: tablet, name: 'Tablet', recoveryWrap: rot.wraps.at(-1).sealed, time: T0 + 30, _rng: fixedRng(0xa8) })
+  const recovered = await z.recoverRoom({ state, code, newCode, newDevice: tablet, name: 'Tablet', recoveryWrap: rem.wraps.at(-1).sealed, time: T0 + 30, _rng: fixedRng(0xa8) })
   log.push(recovered.entry); state = recovered.state
-  const rotation = async (r, more) => ({ ...more, entry: H(r.entry), entryHash: H(r.state.head.hash), secret: sec(r.secret), ...await commits(r.secret), wraps: wraps(r.wraps), backLink: H(r.backLink) })
-  v.rotations = {
-    remove: await rotation(rem, { rngSeed: 0x90, signer: 'phone', removed: ['agent'], time: T0 + 10 }),
-    epoch: await rotation(rot, { rngSeed: 0x98, signer: 'laptop', time: T0 + 20 }),
-    recover: await rotation(recovered, { rngSeed: 0xa8, newCodeRngSeed: 0xa0, newCode, newDevice: { signSeed: H(fill(32, 0x41)), kexSeed: H(fill(32, 0x42)), ...pubs(tablet) }, name: 'Tablet', time: T0 + 30 }),
+  names.set(H(state.recovery.id), 'new recovery key')
+  const rotation = async (r, more) => ({ ...more, rngCalls: 'room key (32), history key (32), then one ephemeral X25519 key (32) per wrap', entry: H(r.entry), entryHash: H(r.state.head.hash), removedIds: r.state.entries.at(-1).ids.map(H),
+    secret: sec(r.secret), ...await commits(r.secret), wraps: wraps(r.wraps), backLink: H(r.backLink), membersAfter: z.activeMembers(r.state).map(m => m.name) })
+  const newRec = await z.recoveryDevice(newCode)
+  v.epochChanges = {
+    remove: await rotation(rem, { rngSeed: 0x90, signer: 'laptop', removed: ['helper'], time: T0 + 10 }),
+    recover: await rotation(recovered, { rngSeed: 0xa8, signer: 'recovery key', removed: ['phone', 'laptop'], kept: ['agent'], recoveryWrapUsed: H(rem.wraps.at(-1).sealed),
+      newCodeRngSeed: 0xa0, newCode, newRecovery: pubs(newRec), newDevice: 'tablet', name: 'Tablet', time: T0 + 30 }),
   }
-  v.log = { entries: log.map(H), hashes: state.hashes.map(H), finalEpoch: state.epoch, activeMembers: z.activeMembers(state).map(m => m.name) }
+  // After the recovery the agent takes the new room key from its wrap and reads the new human device.
+  const agentSecret3 = await z.unwrapEpochKey(state, agent, recovered.wraps.find(x => H(x.id) === H(agent.id)).sealed, 3)
+  const tabletChains = z.newChains()
+  const e4 = await z.sealEnvelope({ device: tablet, state, secret: recovered.secret, chains: tabletChains, kind: KIND.CHAT, payload: utf8('back again'), recipient: agent.id, time: T0 + 40, _rng: fixedRng(0xb4) })
+  await z.openEnvelope(e4.bytes, { state, chains: chains.agent, secrets: new Map([[3, agentSecret3]]), self: agent.id })
+  v.envelopes.afterRecovery = env(e4, { rngSeed: 0xb4, sender: 'tablet', kind: KIND.CHAT, payload: H(utf8('back again')), recipient: 'agent', time: T0 + 40, senderKey: H(await z.deriveSenderKey(room.roomId, recovered.secret, tablet.id)), agentRoomKey: sec(agentSecret3) })
+
+  const typeName = Object.fromEntries(Object.entries(ENTRY).map(([k, n]) => [n, k.toLowerCase()]))
+  v.log = {
+    entries: log.map((bytes, i) => {
+      const e = state.entries[i]
+      return { seq: e.seq, type: e.type, typeName: typeName[e.type], signerKind: e.signerKind, signer: i === 5 ? 'recovery key' : who(e.signer), time: e.time, epochAfter: z.epochAt(state, i),
+        body: H(e.body), signature: H(e.signature), hash: H(state.hashes[i]), bytes: H(bytes) }
+    }),
+    finalEpoch: state.epoch, activeMembers: z.activeMembers(state).map(m => m.name),
+    refused: {
+      about: 'Entries a verifier must refuse when applied after entry 3 (bad-entry or bad-format).',
+      retiredType4: H(await handEntry(stateEpoch1, phone, 4, concat(be(2, 4), fill(32, 1), fill(32, 2)))),
+      signedByAgent: H(await handEntry(stateEpoch1, agent, ENTRY.REMOVE, concat(be(1, 2), helper.id, be(2, 4), fill(32, 1), fill(32, 2)))),
+      replayOfEntry3: H(log[3]),
+    },
+  }
 
   // Assets.
   const small = await z.encryptAsset(utf8('asset'), { _rng: fixedRng(0xb0) })
@@ -1234,32 +1392,71 @@ test('vectors.json regenerates byte for byte', async () => {
 test('the stored vectors open from their bytes alone (as a second implementation would)', async () => {
   const v = process.argv.includes('--write-vectors') ? JSON.parse(JSON.stringify(vectorsBuilt)) : JSON.parse(fs.readFileSync(VECTORS, 'utf8'))
   const dev = d => z.deviceFromSeeds(unhex(d.signSeed), unhex(d.kexSeed))
-  const phone = await dev(v.devices.phone), laptop = await dev(v.devices.laptop), agent = await dev(v.devices.agent)
-  assert.equal(hex(phone.id), v.devices.phone.id)
+  const phone = await dev(v.devices.phone), laptop = await dev(v.devices.laptop), agent = await dev(v.devices.agent), tablet = await dev(v.devices.tablet)
+  for (const [d, name] of [[phone, 'phone'], [laptop, 'laptop'], [agent, 'agent'], [tablet, 'tablet']]) {
+    assert.equal(hex(d.id), v.devices[name].id); assert.equal(hex(d.signPub), v.devices[name].signPub); assert.equal(hex(d.kexPub), v.devices[name].kexPub)
+  }
+  assert.equal(hex((await z.importDeviceSecret(unhex(v.devices.agent.secretFile))).id), v.devices.agent.id)
   assert.equal(await z.verify(phone.signPub, v.signature.label, unhex(v.signature.message), unhex(v.signature.signature)), true)
   assert.equal(txt(await z.openSealed(laptop, unhex(v.sealedBox.sealed), unhex(v.sealedBox.aad))), 'sealed box')
   const rec = await z.recoveryDevice(v.recovery.code)
   assert.equal(hex(rec.id), v.recovery.id)
-  const entries = v.log.entries.map(unhex)
-  const state3 = await z.verifyLog(entries.slice(0, 3), unhex(v.room.roomId))
-  const full = await z.verifyLog(entries, unhex(v.room.roomId))
-  assert.deepEqual(full.hashes.map(hex), v.log.hashes)
-  assert.deepEqual(z.activeMembers(full).map(m => m.name), ['Laptop', 'Tablet'].filter(n => v.log.activeMembers.includes(n)))
-  assert.equal(full.epoch, 4)
-  // Keys: the phone's wrap of epoch 1, the agent's wrap from its invite, the back links down from the recovery.
-  const s1 = await z.unwrapEpochKey(state3, phone, unhex(v.room.wraps.find(x => x.recipient === v.devices.phone.id).sealed), 1)
+  const roomId = unhex(v.room.roomId)
+  const entries = v.log.entries.map(e => unhex(e.bytes))
+  for (const e of v.log.entries) {
+    assert.equal(e.bytes, e.body + e.signature)
+    assert.equal(hex(await z.hash(z.LABEL.logEntry, unhex(e.body))), e.hash)
+  }
+  assert.equal(v.log.entries[0].hash, v.room.roomId)
+  assert.deepEqual(v.log.entries.map(e => e.typeName), ['genesis', 'add', 'add', 'add', 'remove', 'recover'])
+  const state3 = await z.verifyLog(entries.slice(0, 4), roomId)
+  const full = await z.verifyLog(entries, roomId)
+  assert.deepEqual(full.hashes.map(hex), v.log.entries.map(e => e.hash))
+  assert.deepEqual(z.activeMembers(full).map(m => m.name), ['Agent', 'Tablet']); assert.deepEqual(v.log.activeMembers, ['Agent', 'Tablet'])
+  assert.equal(full.epoch, 3); assert.deepEqual(v.log.entries.map(e => e.epochAfter), [1, 1, 1, 1, 2, 3])
+  for (const k of ['retiredType4', 'signedByAgent', 'replayOfEntry3']) await rejects(() => z.applyEntry(state3, unhex(v.log.refused[k])), ['bad-entry', 'bad-format'])
+
+  // Invites: the joining side recomputes everything from the link and the bytes that crossed the hub.
+  const joiners = [laptop, agent, await dev(v.devices.helper)]
+  for (const [i, inv] of v.invites.entries()) {
+    const log = entries.slice(0, inv.logSeqBefore + 1)
+    const { secret } = z.parseInviteLink(inv.link)
+    assert.equal(hex(secret), inv.secret)
+    assert.equal(hex(await z.hkdf(secret, roomId, z.LABEL.inviteId, new Uint8Array(0), 16)), inv.inviteId)
+    const { request, join } = await z.createJoinRequest({ link: inv.link, offer: unhex(inv.offer), log, device: joiners[i], name: inv.name, now: inv.now })
+    assert.equal(hex(request), inv.request, 'the request holds no randomness')
+    assert.equal(await z.checkReveal({ join, reveal: unhex(inv.reveal), log }), inv.checkCode)
+    const joined = await z.completeJoin({ join, device: joiners[i], log: [...log, unhex(inv.entry)], wrap: unhex(inv.wrap) })
+    assert.equal(hex(joined.secret.key), v.room.secret.key)
+    assert.equal(joined.secret.hist === null, inv.role === ROLE.AGENT)
+    assert.equal(inv.checkCodeCompared, inv.role === ROLE.HUMAN)
+  }
+  // Keys: the phone's wrap of epoch 1, the agent's wrap from its invite.
+  const s1 = await z.unwrapEpochKey(state3, phone, unhex(v.room.wraps.find(x => x.recipient === 'phone').sealed), 1)
   assert.equal(hex(s1.key), v.room.secret.key)
   const sa = await z.unwrapEpochKey(state3, agent, unhex(v.invites[1].wrap), 1)
   assert.equal(sa.hist, null)
-  const tablet = await z.deviceFromSeeds(unhex(v.rotations.recover.newDevice.signSeed), unhex(v.rotations.recover.newDevice.kexSeed))
-  const s4 = await z.unwrapEpochKey(full, tablet, unhex(v.rotations.recover.wraps.find(x => x.recipient === hex(tablet.id)).sealed), 4)
-  const s3 = await z.openBackLink(full, s4, unhex(v.rotations.recover.backLink))
-  const s2 = await z.openBackLink(full, s3, unhex(v.rotations.epoch.backLink))
-  const s1b = await z.openBackLink(full, s2, unhex(v.rotations.remove.backLink))
+  // Removal: a new room key for everyone who stays, none for the removed helper.
+  const rm = v.epochChanges.remove, rc = v.epochChanges.recover
+  assert.deepEqual(rm.wraps.map(x => x.recipient).sort(), ['agent', 'laptop', 'phone', 'recovery key'])
+  const state4 = await z.verifyLog(entries.slice(0, 5), roomId)
+  assert.equal(hex((await z.unwrapEpochKey(state4, agent, unhex(rm.wraps.find(x => x.recipient === 'agent').sealed), 2)).key), rm.secret.key)
+  assert.notEqual(rm.secret.key, v.room.secret.key)
+  // Recovery: from the code alone. The agent is kept and gets the new room key; the old devices get none.
+  const viaCode = await z.unwrapEpochKey(state4, rec, unhex(rc.recoveryWrapUsed), 2)
+  assert.equal(hex(viaCode.key), rm.secret.key)
+  assert.deepEqual(rc.wraps.map(x => x.recipient).sort(), ['agent', 'new recovery key', 'tablet'])
+  assert.deepEqual(rc.removedIds.sort(), [v.devices.phone.id, v.devices.laptop.id].sort())
+  assert.equal(hex((await z.recoveryDevice(rc.newCode)).id), rc.newRecovery.id)
+  const a3 = await z.unwrapEpochKey(full, agent, unhex(rc.wraps.find(x => x.recipient === 'agent').sealed), 3)
+  assert.equal(a3.hist, null); assert.equal(hex(a3.key), rc.secret.key)
+  const s3 = await z.unwrapEpochKey(full, tablet, unhex(rc.wraps.find(x => x.recipient === 'tablet').sealed), 3)
+  const s2 = await z.openBackLink(full, s3, unhex(rc.backLink))
+  const s1b = await z.openBackLink(full, s2, unhex(rm.backLink))
   assert.equal(hex(s1b.key), v.room.secret.key)
-  // Envelopes, in the agent's order.
+  // Envelopes, in the agent's order; the hub reads urgency and status without any key.
   const chains = z.newChains()
-  const secrets = new Map([[1, sa]])
+  const secrets = new Map([[1, sa], [3, a3]])
   const chat = await z.openEnvelope(unhex(v.envelopes.chat.bytes), { state: state3, chains, secrets })
   assert.equal(txt(chat.payload), 'hello'); assert.equal(hex(chat.hash), v.envelopes.chat.hash)
   const phoneChains = z.newChains()
@@ -1267,10 +1464,21 @@ test('the stored vectors open from their bytes alone (as a second implementation
   assert.equal(hex(pruned.hash), v.envelopes.chat.hash)
   const card = await z.openEnvelope(unhex(v.envelopes.card.bytes), { state: state3, chains: phoneChains, secrets: new Map([[1, s1]]) })
   assert.equal(card.kind, KIND.CARD)
+  assert.deepEqual(z.peekEnvelope(unhex(v.envelopes.card.bytes)).header.card.urgency, z.URGENCY.HIGH)
+  assert.deepEqual(v.envelopes.card.hubSees.card, { id: v.envelopes.card.cardId, state: 1, urgency: 2, answeredAt: 0 })
+  assert.equal(z.peekEnvelope(unhex(v.envelopes.prunedAnswer)).header.card.answeredAt, T0 + 3)
   advanceOwn(chains, agent.id, card)
   const answer = await z.openEnvelope(unhex(v.envelopes.answer.bytes), { state: state3, chains, secrets, self: agent.id })
+  assert.equal(answer.header.seq, 2); assert.equal(hex(answer.header.prev), v.envelopes.chat.hash, 'the hash chain of one sender')
   const ok = z.authoriseCommand(answer, { state: state3, agentId: agent.id, now: T0 + 3, ownSeq: 1, card: { id: unhex(v.envelopes.card.cardId), hash: unhex(v.envelopes.card.hash), open: true, options: ['yes', 'no'] } })
   assert.equal(ok.bind.choice, 'yes')
+  const back = await z.openEnvelope(unhex(v.envelopes.afterRecovery.bytes), { state: full, chains, secrets, self: agent.id })
+  assert.equal(txt(back.payload), 'back again'); assert.equal(back.member.name, 'Tablet')
+  assert.equal(z.authoriseCommand(back, { state: full, agentId: agent.id, now: T0 + 40 }).kind, KIND.CHAT)
+  // The removed phone is refused by everyone who has the newer log.
+  await rejects(() => z.verifyEnvelope(unhex(v.envelopes.answer.bytes), { state: full, chains: z.newChains(), allowChainStart: true }), 'removed-sender')
+  const auth = await z.verifyHubAuth(unhex(v.hubAuth.signed), { state: state3, hub: v.hubAuth.hub })
+  assert.equal(auth.member.name, 'Agent'); assert.equal(hex(auth.challenge), v.hubAuth.challenge)
   // Assets.
   assert.equal(txt(await z.decryptAsset(unhex(v.assets.small.blob), unhex(v.assets.small.key), unhex(v.assets.small.sha256))), 'asset')
   assert.equal(hex((await z.unwrapAssetKey(unhex(v.room.roomId), new Map([[1, s1]]), unhex(v.assets.wrap.wrapped))).key), v.assets.small.key)

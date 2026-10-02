@@ -8,6 +8,8 @@ The cryptographic core of Trommi as one standalone ES module. It implements `doc
 | --- | --- |
 | `zcrypto.mjs` | the library; no dependencies, WebCrypto only |
 | `test.mjs` | tests, hostile-hub simulation, micro-benchmark: `node crypto/test.mjs` |
+| `hub.mjs` | the hub's side of pairing and keys, without HTTP and without a database: member list, sign-in, invites, sealed keys, envelopes. Not wired into the server. Protocol: `docs/pairing.md` |
+| `hub-test.mjs` | real clients against the hub module, and everything a hub must refuse: `node crypto/hub-test.mjs` |
 | `vectors.json` | deterministic vectors for other implementations; `test.mjs` regenerates and compares them (`--write-vectors` rewrites) |
 | `FORMAT.md` | exact bytes, labels, key schedule, deviations from the concept |
 | `demo.html` | invite → join → send → tamper → detect, in a browser |
@@ -77,6 +79,7 @@ z.encodeVerdictBind({ requestId, requestHash: requestEnvelope.hash, expiresAt, a
 // Removal rotates the room key in the same log entry
 const r = await z.removeMembers(state, phone, { ids: [agent.id], previous: secret })
 // r.entry -> hub log, r.wraps -> one sealed key per remaining member and the recovery key, r.backLink -> history for humans
+// Removal (and recovery) is the only thing that changes the room key: there is no rotation on a schedule.
 
 // Assets
 const a = await z.encryptAsset(fileBytes)                 // { blob, key, blobId, sha256, size }
@@ -84,11 +87,11 @@ await z.decryptAsset(a.blob, a.key, a.sha256)
 await z.wrapAssetKey(state.roomId, secret, a.blobId, a.key)
 z.assetLink('https://hub.example/blob/1', a.blobId, a.key)
 
-// All devices lost
+// All devices lost: the code enrols the new device, removes every human device and keeps the agents
 await z.recoverRoom({ state, code, newCode: z.generateRecoveryCode(), newDevice, recoveryWrap })
 ```
 
-Also exported: `verifyLog`, `applyEntry`, `addMember`, `rotateEpoch`, `activeMembers`, `memberAt`, `epochAt`, `wrapEpochKey`, `unwrapEpochKey`, `wrapForAll`, `makeBackLink`, `openBackLink`, `deriveSenderKey`, `verifyEnvelope` (no key needed; also for pruned envelopes), `pruneEnvelope`, `peekEnvelope` (what a hub reads), `decodeBind`, `decryptAssetChunk`, `unwrapAssetKey`, `parseInviteLink`, `parseAssetLink`, `parseRecoveryCode`, `b64u` / `unb64u`, `hex` / `unhex`.
+Also exported: `verifyLog`, `applyEntry`, `addMember`, `signHubAuth`, `verifyHubAuth`, `verifyInviteOffer`, `verifyInviteRequest`, `verifyInviteReveal` (what a hub checks), `CARD_STATE`, `URGENCY`, `activeMembers`, `memberAt`, `epochAt`, `wrapEpochKey`, `unwrapEpochKey`, `wrapForAll`, `makeBackLink`, `openBackLink`, `deriveSenderKey`, `verifyEnvelope` (no key needed; also for pruned envelopes), `pruneEnvelope`, `peekEnvelope` (what a hub reads), `decodeBind`, `decryptAssetChunk`, `unwrapAssetKey`, `parseInviteLink`, `parseAssetLink`, `parseRecoveryCode`, `b64u` / `unb64u`, `hex` / `unhex`.
 
 ## What the caller must do
 
@@ -96,14 +99,15 @@ The library holds no state and stores nothing. The client must keep, durably: th
 
 ## Covered
 
-Device identity; sealed box; membership log with genesis, add, remove with rotation, scheduled rotation, recovery, full verification, rollback and fork detection; invites with HMAC proof, commit-then-reveal check code, expiry and single use enforced by the inviter; room key epochs with commitments, wraps and back links; per-sender keys; envelopes with padding, per-sender numbers, hash chain, `seen`, pruned form; command authorisation; chunked asset encryption, wrapped asset keys, asset links; recovery code.
+Device identity; sealed box; membership log with genesis, add, remove with a new room key, recovery that keeps the agents, full verification, rollback and fork detection; invites with HMAC proof, commit-then-reveal check code, expiry and single use enforced by the inviter; room key epochs with commitments, wraps and back links; per-sender keys; envelopes with padding, per-sender numbers, hash chain, `seen`, pruned form, card status and urgency readable on the outside; sign-in to the hub by signed challenge; command authorisation; chunked asset encryption, wrapped asset keys, asset links; recovery code.
 
 ## Not covered, known limits
 
 - No forward secrecy and no post-compromise security (decided: no ratchet). All members of an epoch, agents included, can read all its messages.
-- Sign-in to the hub, canvas versioning, snapshots and asset streaming are not implemented.
+- Canvas versioning, snapshots and asset streaming are not implemented.
+- An epoch lasts until a member is removed (decided: no rotation on a schedule). A new agent can read back to the last removal.
 - Room keys are bytes in memory; only device private keys can be non-extractable.
 - A device that loses its chain state cannot keep sending under the same identity.
 - A hub can always withhold the newest entries and envelopes; the library reports that as soon as any other evidence arrives (`log-behind`, `withheld`), not before.
 - Whoever serves the page's JavaScript can use the keys. See concept section 9.
-- The full list with reasons is in FORMAT.md, sections 14 and 15.
+- The full list with reasons is in FORMAT.md, sections 14 and 15; the decisions of 2 October 2026 in section 16.

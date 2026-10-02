@@ -1,6 +1,6 @@
 # zcrypto format, version 1
 
-The exact bytes that `zcrypto.mjs` reads and writes, so that a Swift (CryptoKit) and a native Linux client can be built against `vectors.json`. Design and threat model: `docs/krypto-konzept.md`. Deviations from that concept are listed in section 14.
+The exact bytes that `zcrypto.mjs` reads and writes, so that a Swift (CryptoKit) and a native Linux client can be built against `vectors.json`. Design and threat model: `docs/krypto-konzept.md`; how hub and clients speak during pairing: `docs/pairing.md`. Deviations from the concept are listed in section 14, the decisions of 2 October 2026 and where each one lives in the format in section 16.
 
 Status: implemented and tested, not wired into the product, not audited.
 
@@ -41,6 +41,7 @@ Every top-level object starts with the version byte `0x01` and an object type by
 | `0x04` | sealed box | `0x0a` | wrapped asset key |
 | `0x05` | invite offer | `0x0b` | device public keys |
 | `0x06` | invite request | `0x0c` | device secret file |
+| | | `0x0d` | hub sign-in |
 
 Text forms (links, JSON transport, `vectors.json`): byte strings travel as **base64url without padding** (RFC 4648 section 5). The decoder rejects padding, foreign characters and non-zero trailing bits. `vectors.json` uses lower-case hex instead, for readability. There is no signed JSON anywhere: JSON only carries finished byte strings.
 
@@ -77,6 +78,7 @@ A label is the ASCII string below followed by one `0x00` byte. No label contains
 | `trommi/v1/asset-wrap` | KDF: asset key wrap key and nonce |
 | `trommi/v1/recovery/sign` | KDF: recovery Ed25519 seed |
 | `trommi/v1/recovery/kex` | KDF: recovery X25519 private key |
+| `trommi/v1/hub-auth` | Sign: sign-in to the hub |
 
 ## 4. Device identity
 
@@ -132,17 +134,18 @@ ids    = count u16 ‖ deviceId(32) × count                            ascendin
 | 1 genesis | `roomNonce(16) ‖ member ‖ recSignPub(32) ‖ recKexPub(32) ‖ epoch` | the founding device, which is `member` (role human); epoch is 1 |
 | 2 add | `member ‖ inviteId(16)` (zeros if not by invite) | an active human device |
 | 3 remove | `ids ‖ epoch` (at least one id) | an active human device |
-| 4 epoch | `epoch` | an active human device |
+| 4 | retired, refused | (was: a new epoch on a schedule) |
 | 5 recover | `member ‖ ids ‖ epoch ‖ newRecSignPub(32) ‖ newRecKexPub(32)` | the current recovery key |
 
 Rules a verifier enforces, entry by entry:
 
 - `seq` is the predecessor's plus one, `prev` matches, the signature verifies under the key the log itself gives the signer.
-- Device signers must be active (added, not removed) and human **before** the entry is applied. Agents sign nothing. The recovery key signs type 5 and nothing else.
-- A new `epoch` number is the current one plus one. Removal always carries the new epoch: removal without rotation cannot be expressed.
+- Device signers must be active (added, not removed) and human **before** the entry is applied. **Any** human device may sign; there is no main device, and the founding device has no special standing after entry 0. Agents sign nothing. The recovery key signs type 5 and nothing else.
+- A new `epoch` number is the current one plus one. Removal always carries the new epoch: removal without rotation cannot be expressed. **Nothing else starts an epoch:** there is no rotation on a schedule, and an add does not change the key.
 - An added device must be new: its id, its signing key and its exchange key must not appear in the log before, removed members included. Removed devices cannot return.
-- Removed ids must be active. In a recover entry the list may be empty.
-- A recover entry enrols one human device and installs a new recovery key that differs from the old one.
+- Removed ids must be active.
+- A non-zero `inviteId` appears in one add entry only.
+- A recover entry enrols one human device and installs a new recovery key that differs from the old one. Its `ids` are **exactly the active human devices**: all of them, and no agent. Agents stay members through a recovery and get the new room key.
 
 A log is trusted only relative to a room id that came from somewhere else: the invite link, or the device's own storage.
 
@@ -219,7 +222,7 @@ checkCode = decimal, six digits, zero-padded:
 
 Order: the inviter publishes the offer (which commits to the nonce) and hands over the link. The new device verifies the log against the room id in the link, verifies the offer against the log, and sends the request. The inviter accepts the **first request with a valid MAC**, marks the invite used, and only then reveals the nonce. The new device checks the reveal against commitment and request hash. Both show the code. After the human confirmed it, the inviter writes the add entry (with `inviteId`) and seals the current epoch secret to the new device.
 
-Enforced by the inviter's device, not the hub: expiry (`expiresAt`, ten minutes by default) at the time the request arrives; single use; five minutes between accepting the request and the confirmation; the check code is mandatory for the human role and can be skipped for agents only on explicit request.
+Enforced by the inviter's device, not the hub: expiry (`expiresAt`, ten minutes by default) at the time the request arrives; single use; five minutes between accepting the request and the confirmation. **The check code is mandatory for the human role;** the library offers no way around it. An agent that joins by a link pasted into its prompt has nobody to read a code, so the inviter passes `skipCheckCode` for the agent role (reasons and risk: `docs/pairing.md`). The code is still computed and can be shown.
 
 ## 9. Envelope
 
@@ -230,7 +233,7 @@ pruned = 0x01 0x03 ‖ header var16 ‖ nonce(12) ‖ ciphertextHash(32) ‖ sig
 header = 0x01 ‖ flags u8 ‖ roomId(32) ‖ epoch u32 ‖ keyId u32 ‖ sender(32) ‖ seq u64 ‖ prev(32)
          ‖ logSeq u32 ‖ logHash(32) ‖ recipient(32) ‖ time u64
          ‖ seenCount u16 ‖ ( sender(32) ‖ seq u64 ‖ hash(32) ) × seenCount
-         ‖ [ cardId(16) ‖ cardState u8 ‖ answeredAt u64 ]          present iff flags bit 1
+         ‖ [ cardId(16) ‖ cardState u8 ‖ urgency u8 ‖ answeredAt u64 ]   present iff flags bit 1
          ‖ blobCount u8 ‖ blobId(16) × blobCount
 
 ciphertext     = AES-256-GCM(senderKey, nonce, aad = header, paddedBody)     includes the 16-byte tag
@@ -239,11 +242,13 @@ envelopeHash   = H("trommi/v1/envelope", header ‖ nonce ‖ ciphertextHash)
 signature      = Sign(sender, "trommi/v1/envelope-sig", envelopeHash)
 ```
 
-Header fields: `flags` bit 0 = "send a push", bit 1 = card fields present, other bits must be zero. `keyId` is 0 (the room key; reserved for a key per agent session). `seq` starts at 1 per sender and room. `prev` is the `envelopeHash` of the sender's previous envelope, zeros for the first. `logSeq`, `logHash` name the newest log entry the sender knew. `recipient` is a device id, or zeros for everyone. `time` is the sender's clock in milliseconds. `seen` lists, per other sender and sorted by sender id, the newest envelope of that sender the author had accepted. The fixed part is 192 bytes, each `seen` entry 72.
+Header fields: `flags` bit 0 = "send a push", bit 1 = card fields present, other bits must be zero. `keyId` is 0 (the room key; reserved for a key per agent session). `seq` starts at 1 per sender and room. `prev` is the `envelopeHash` of the sender's previous envelope, zeros for the first. `logSeq`, `logHash` name the newest log entry the sender knew. `recipient` is a device id, or zeros for everyone. `time` is the sender's clock in milliseconds. `seen` lists, per other sender and sorted by sender id, the newest envelope of that sender the author had accepted. The fixed part is 192 bytes, each `seen` entry 72, the card block 26.
+
+**Card block, readable by the hub.** `cardState`: 1 open, 2 answered, 3 closed (withdrawn, expired or closed without an answer). `urgency`: 0 low, 1 normal, 2 high, 3 critical; the hub decides about push messages by it. `answeredAt`: milliseconds, 0 while open; the hub deletes the ciphertext of a card's envelopes 30 days after it. Other values are refused. The block is in the header, so it is signed and is associated data: the hub reads it and cannot change it. Title, text, options and the chosen option are in the ciphertext.
 
 The nonce is 96 random bits. The room id, epoch and sender are in the key (section 7), in the associated data and under the signature.
 
-**What is signed, what is associated data.** The whole header is the associated data of the encryption. The signature covers header, nonce and the hash of the ciphertext, through `envelopeHash`. The same hash links the chain. A pruned envelope (the hub deleted the ciphertext after 30 days) therefore still verifies and still carries the chain.
+**What is signed, what is associated data.** The whole header is the associated data of the encryption. The signature covers header, nonce and the hash of the ciphertext, through `envelopeHash`. The same hash links the chain. A pruned envelope (the hub deleted the ciphertext of an answered card after 30 days) therefore still verifies and still carries the chain.
 
 **Body** (the plaintext):
 
@@ -321,7 +326,9 @@ recovery signSeed   = KDF(code(32), salt = empty, "trommi/v1/recovery/sign", con
 recovery kexPrivate = KDF(code(32), salt = empty, "trommi/v1/recovery/kex",  context = empty, 32)
 ```
 
-No password stretching: the input has 256 bits of entropy. Recovery: derive the key pair, open the recovery key's wrap of the current epoch, sign a recover entry (section 6), wrap the new epoch for everyone who remains and for the new recovery key, write the back link.
+No password stretching: the input has 256 bits of entropy. The code is mandatory: a room cannot be founded without one (`createRoom` refuses with `recovery-required`; the genesis entry has no encoding for "none").
+
+Recovery: derive the key pair, open the recovery key's wrap of the current epoch, sign a recover entry (section 6) that enrols the new device and removes every human device, wrap the new epoch for the new device, **for every agent** and for the new recovery key, write the back link. The agents were not removed; they open their wrap like after any removal and keep working.
 
 ## 13. Key schedule at a glance
 
@@ -351,7 +358,7 @@ Deviations:
 8. **A signed invite offer** is an added message. It carries the commitment that commit-then-reveal needs, and lets the new device check who invites before it sends its keys.
 9. **Sealed box nonce** is derived by HKDF together with the key instead of being transmitted; the key is single-use.
 10. **Device ids are 32 bytes** (hash of both public keys). The concept does not fix a size.
-11. **Recovery keeps agents by default** and removes every human device; the list is a parameter. The concept says "removes all old ones".
+11. **Recovery keeps the agents** and removes every human device. This is a rule of the log since the decision of 2 October 2026, no longer a default.
 12. **Wrapped asset key and asset link** are additions asked for by the task. In the concept an asset key only travels inside a message.
 
 Choices where the concept was open or ambiguous:
@@ -364,7 +371,7 @@ Choices where the concept was open or ambiguous:
 - The recovery key signs recover entries only. Changing the recovery code without a recovery is not expressible in version 1.
 - The genesis entry is not countersigned by the recovery key.
 
-Not covered by version 1: sign-in to the hub by challenge (concept section 8), the canvas version counter, encrypted snapshots, a streaming interface for assets (there is whole-buffer encryption and per-chunk decryption), any ratchet (decided against).
+Not covered by version 1: the canvas version counter, encrypted snapshots, a streaming interface for assets (there is whole-buffer encryption and per-chunk decryption), any ratchet (decided against).
 
 ## 15. Assumptions and limits
 
@@ -378,5 +385,50 @@ Not covered by version 1: sign-in to the hub by challenge (concept section 8), t
 - **GCM limits:** random 96-bit nonces under one sender key per epoch; the library does not count messages. Stay far below 2^32 per sender and epoch.
 - **Ed25519 verification rules** (non-canonical encodings, small-order keys) differ slightly between libraries. Hashes never include signatures, so a re-encoded signature cannot change a chain; implementations should still be compared on the vectors.
 - **The X25519 key in an invite request is not proven to be owned.** A wrong key only locks the new device out.
+- **Long epochs.** Without rotation on a schedule an epoch lasts until someone is removed. A leaked room key opens everything from the last removal to the next. A new agent can read back to the last removal if the hub hands it the old envelopes; what limits this is the deletion of answered cards after 30 days and the removal of a member.
 - **Six digits** bound an active attacker with a stolen link to a one-in-a-million chance per attempt; each attempt burns an invite.
 - **Whoever serves the JavaScript can use the keys** (concept section 9). This library does not change that.
+
+## 16. Decisions of 2 October 2026, and where they are in the format
+
+| Decision | In the format |
+| --- | --- |
+| Curve25519 on all devices | Section 1: Ed25519 and X25519 only. No P-256 anywhere, no algorithm field to negotiate. |
+| Any of the human's devices may change members; the recovery code stands above all | Section 6: any active human device signs add and remove. Only the recovery key signs recover, and a recover entry overrides a device branch (`recovery-override`). |
+| ONE room key per epoch, no ratchet, renewed only on removal | Sections 6 and 7: entry type 4 is retired and refused; remove and recover are the only entries that carry a new epoch. |
+| Recovery removes the human's devices and keeps the agents | Section 6: the id list of a recover entry is exactly the active human devices. Section 12: every agent gets a wrap of the new key. |
+| Recovery code mandatory; check code mandatory for humans | Section 12 and section 8. |
+| Urgency and card status readable for the hub, contents ciphertext; answered cards deleted after 30 days | Section 9: card block with id, state, urgency, answer time; pruned envelope. |
+| Web client from a fixed address of its own | Not a wire format. The invite link's `<app url>` is that address; the hub address travels inside the fragment. |
+| Speech goes through the hub | Not in this format: speech is not end-to-end encrypted. The hub sees the audio and the text of what is dictated or read aloud. |
+
+One consequence to know: epochs are now as long as the time between two removals. An agent that joins receives the room key of the current epoch and can open every envelope of that epoch it is given, back to the last removal (section 15).
+
+## 17. Signing in to the hub
+
+```
+signed = body ‖ Sign(device, "trommi/v1/hub-auth", body)
+  body = 0x01 0x0d ‖ roomId(32) ‖ hub str16(512) ‖ deviceId(32) ‖ challenge(32)
+```
+
+The hub hands out `challenge` (32 random bytes, two minutes, one use). `deviceId` names an active member, or the recovery key pair of the room. The hub verifies the signature under the key the membership log gives that id and issues a token for ten minutes, bound to the device. A removed device is refused (`not-member`). The room id and the hub address are under the signature, so a signature made for one hub is useless at another.
+
+## 18. Vectors
+
+`vectors.json` is generated by `node crypto/test.mjs --write-vectors` from fixed seeds and compared byte for byte on every test run. One room is played through, in this order:
+
+| Part | What a second implementation checks |
+| --- | --- |
+| `devices` | key pairs from fixed seeds (phone, laptop, agent, tablet, helper): public keys, device id, public form, key file |
+| `recovery` | code → raw bytes → key pair and id |
+| `sealedBox` | a sealed box with a fixed ephemeral key |
+| `room` | genesis entry, room id, epoch 1 secret and commitments, one wrap for the phone and one for the recovery key |
+| `invites` | three invites: laptop (human, check code compared), agent (link in its prompt, no check code), helper (agent, invited by the laptop). Each with link, secret, invite id, offer, request, reveal, check code, add entry, wrap, and the room key the new member opens |
+| `envelopes` | sender keys; chat (phone 1), card (agent 1, urgency high), answer (phone 2, chained to phone 1), each split into header, nonce, ciphertext, signature, hash, and `hubSees`; two pruned forms; `afterRecovery`: the tablet's first envelope in epoch 3, opened by the agent |
+| `binds`, `hubAuth` | command bindings; a signed hub sign-in |
+| `epochChanges.remove` | the laptop removes the helper: entry, epoch 2 secret, a wrap for each who stays, back link |
+| `epochChanges.recover` | the recovery: phone and laptop out, tablet in, agent kept; the wrap the code opened, epoch 3 secret, wraps for agent, tablet and the new recovery key, back link, the new code |
+| `log` | all six entries with body, signature and hash; three entries that must be refused (retired type 4, an entry signed by an agent, a replay) |
+| `assets` | unchanged |
+
+Randomness in the vectors comes from the generator described in the file's `rng` field; `rngCalls` in a section lists what is drawn, in order.

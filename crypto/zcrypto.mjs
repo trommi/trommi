@@ -175,7 +175,7 @@ function str16(w, s, max) {
 /** Second byte of every top-level object, after the version byte. */
 export const OBJ = Object.freeze({
   LOG_ENTRY: 0x01, ENVELOPE: 0x02, ENVELOPE_PRUNED: 0x03, SEALED: 0x04, INVITE_OFFER: 0x05, INVITE_REQUEST: 0x06,
-  INVITE_REVEAL: 0x07, BACK_LINK: 0x08, ASSET: 0x09, ASSET_WRAP: 0x0a, DEVICE_PUBLIC: 0x0b, DEVICE_SECRET: 0x0c,
+  INVITE_REVEAL: 0x07, BACK_LINK: 0x08, ASSET: 0x09, ASSET_WRAP: 0x0a, DEVICE_PUBLIC: 0x0b, DEVICE_SECRET: 0x0c, HUB_AUTH: 0x0d,
 })
 
 /** Every domain-separation label. A label is used as utf8(label) || 0x00 in front of the data. */
@@ -203,6 +203,7 @@ export const LABEL = Object.freeze({
   assetWrap: 'trommi/v1/asset-wrap',
   recoverySign: 'trommi/v1/recovery/sign',
   recoveryKex: 'trommi/v1/recovery/kex',
+  hubAuth: 'trommi/v1/hub-auth',
 })
 const labelBytes = label => concat(te.encode(label), Uint8Array.of(0))
 
@@ -405,7 +406,9 @@ export async function openSealed(device, sealed, aad = EMPTY) {
 
 // ---- membership log ------------------------------------------------------------
 
-export const ENTRY = Object.freeze({ GENESIS: 1, ADD: 2, REMOVE: 3, EPOCH: 4, RECOVER: 5 })
+// Type 4 was a rotation on a schedule. It is retired: the room key changes only when someone is removed
+// (remove, recover), so an entry of type 4 is refused like any unknown type.
+export const ENTRY = Object.freeze({ GENESIS: 1, ADD: 2, REMOVE: 3, RECOVER: 5 })
 export const SIGNER = Object.freeze({ DEVICE: 1, RECOVERY: 2 })
 const NAME_MAX = 128
 
@@ -445,7 +448,6 @@ function encodeEntryBody(e) {
       w.raw(e.recovery.signPub, 32, 'recovery signPub').raw(e.recovery.kexPub, 32, 'recovery kexPub'); epoch(); break
     case ENTRY.ADD: writeMember(w, e.member); w.raw(e.inviteId, 16, 'inviteId'); break
     case ENTRY.REMOVE: writeIds(w, e.ids); epoch(); break
-    case ENTRY.EPOCH: epoch(); break
     case ENTRY.RECOVER:
       writeMember(w, e.member); writeIds(w, e.ids); epoch()
       w.raw(e.recovery.signPub, 32, 'recovery signPub').raw(e.recovery.kexPub, 32, 'recovery kexPub'); break
@@ -468,7 +470,6 @@ export function decodeEntry(bytes) {
     case ENTRY.GENESIS: e.roomNonce = r.take(16); e.member = readMember(r); recovery(); epoch(); break
     case ENTRY.ADD: e.member = readMember(r); e.inviteId = r.take(16); break
     case ENTRY.REMOVE: e.ids = readIds(r); epoch(); break
-    case ENTRY.EPOCH: epoch(); break
     case ENTRY.RECOVER: e.member = readMember(r); e.ids = readIds(r); epoch(); recovery(); break
     default: fail('bad-format', 'unknown entry type')
   }
@@ -492,6 +493,7 @@ function cloneState(s) {
     hashes: [...s.hashes],
     entries: [...s.entries],
     recovery: { ...s.recovery },
+    inviteIds: new Set(s.inviteIds),
   }
 }
 
@@ -525,6 +527,7 @@ export async function applyEntry(state, entryBytes) {
       epoch: 1,
       epochs: new Map([[1, { seq: 0, keyCommit: e.keyCommit, histCommit: e.histCommit }]]),
       recovery,
+      inviteIds: new Set(),
       lastRecoverSeq: -1,
     }
   }
@@ -533,7 +536,7 @@ export async function applyEntry(state, entryBytes) {
   if (e.seq !== state.head.seq + 1) bad(`number ${e.seq} does not follow ${state.head.seq}`)
   if (!bytesEqual(e.prev, state.head.hash)) bad('predecessor hash does not match')
 
-  // Who may sign: an active human device (add, remove, epoch) or the recovery key (recover only).
+  // Who may sign: ANY active human device (add, remove; there is no main device) or the recovery key (recover only).
   if (e.type === ENTRY.RECOVER) {
     if (e.signerKind !== SIGNER.RECOVERY || !bytesEqual(e.signer, state.recovery.id)) bad('only the recovery key may sign a recovery')
     await checkSig(state.recovery.signPub)
@@ -568,13 +571,21 @@ export async function applyEntry(state, entryBytes) {
     next.epochs.set(e.epoch, { seq: e.seq, keyCommit: e.keyCommit, histCommit: e.histCommit })
   }
   switch (e.type) {
-    case ENTRY.ADD: await addMember(e.member); break
+    case ENTRY.ADD:
+      await addMember(e.member)
+      if (!isZero(e.inviteId)) {
+        if (next.inviteIds.has(idKey(e.inviteId))) bad('this invite already produced a member')
+        next.inviteIds.add(idKey(e.inviteId))
+      }
+      break
     case ENTRY.REMOVE:
       if (e.ids.length === 0) bad('nothing to remove')
       removeMembers(e.ids); newEpoch(); break
-    case ENTRY.EPOCH: newEpoch(); break
     case ENTRY.RECOVER: {
       if (e.member.role !== ROLE.HUMAN) bad('recovery enrols a human device')
+      // Recovery removes the human's devices, all of them, and keeps every agent.
+      const humans = activeMembers(state).filter(m => m.role === ROLE.HUMAN)
+      if (e.ids.length !== humans.length || !humans.every(m => e.ids.some(id => bytesEqual(id, m.id)))) bad('a recovery removes every human device and no agent')
       removeMembers(e.ids)
       await addMember(e.member)
       newEpoch()
@@ -743,6 +754,7 @@ const base = (state, type, signer, signerKind, time) => ({
  * `recovery` is the public half of the recovery key (see recoveryDevice).
  */
 export async function createRoom({ device, name = '', recovery, time, _rng }) {
+  if (recovery?.signPub?.length !== 32 || recovery?.kexPub?.length !== 32) fail('recovery-required', 'a room cannot be founded without a recovery code')
   const rng = rngOf({ _rng })
   const roomNonce = rng(16)
   const secret = newEpochSecret(1, { _rng })
@@ -777,13 +789,6 @@ async function rotated(state, entry, secret, previous, opts) {
 export async function removeMembers(state, signer, { ids, previous, time, _rng }) {
   const secret = newEpochSecret(state.epoch + 1, { _rng })
   const entry = await signEntry({ ...base(state, ENTRY.REMOVE, signer, SIGNER.DEVICE, time), ids, epoch: secret.epoch, ...await epochCommits(secret) }, signer)
-  return rotated(state, entry, secret, previous, { _rng })
-}
-
-/** Scheduled rotation (every 30 days). Same result shape as removeMembers. */
-export async function rotateEpoch(state, signer, { previous, time, _rng }) {
-  const secret = newEpochSecret(state.epoch + 1, { _rng })
-  const entry = await signEntry({ ...base(state, ENTRY.EPOCH, signer, SIGNER.DEVICE, time), epoch: secret.epoch, ...await epochCommits(secret) }, signer)
   return rotated(state, entry, secret, previous, { _rng })
 }
 
@@ -829,17 +834,18 @@ export async function recoveryDevice(code) {
 }
 
 /**
- * All devices lost, code at hand: enrol `newDevice`, remove `removeIds` (default: every human device),
- * rotate, and install the recovery key of `newCode`. `recoveryWrap` is the sealed copy of the current
- * epoch secret that the server keeps for the recovery key.
+ * All devices lost, code at hand: enrol `newDevice`, remove every human device, KEEP every agent,
+ * start a new epoch, and install the recovery key of `newCode`. `recoveryWrap` is the sealed copy of
+ * the current epoch secret that the server keeps for the recovery key. The agents get the new room
+ * key through `wraps`, like after any removal.
  * Returns { entry, state, secret, previous, wraps, backLink }.
  */
-export async function recoverRoom({ state, code, newCode, newDevice, name = '', recoveryWrap, removeIds, time, _rng }) {
+export async function recoverRoom({ state, code, newCode, newDevice, name = '', recoveryWrap, time, _rng }) {
   const rec = await recoveryDevice(code)
   if (!bytesEqual(rec.id, state.recovery.id)) fail('bad-recovery-code', 'this code does not belong to the room')
   const previous = await unwrapEpochKey(state, rec, recoveryWrap, state.epoch)
   const next = await recoveryDevice(newCode)
-  const ids = removeIds ?? activeMembers(state).filter(m => m.role === ROLE.HUMAN).map(m => m.id)
+  const ids = activeMembers(state).filter(m => m.role === ROLE.HUMAN).map(m => m.id)
   const secret = newEpochSecret(state.epoch + 1, { _rng })
   const entry = await signEntry({
     ...base(state, ENTRY.RECOVER, rec, SIGNER.RECOVERY, time),
@@ -903,6 +909,43 @@ export async function createInvite({ state, inviter, hub, role, app = 'https://a
   }
 }
 
+/** Parse an offer without judging it (a hub reads the invite id, role and expiry from it). */
+export function decodeInviteOffer(bytes) { return decodeOffer(bytes) }
+/** Parse a request without judging it. Only the inviter, who holds the link secret, can check its MAC. */
+export function decodeInviteRequest(bytes) { return decodeRequest(bytes) }
+
+/** An offer is good if an active human member of this room signed it and it has not run out. Returns the parsed offer. */
+export async function verifyInviteOffer(state, offer, now = Date.now()) {
+  const o = decodeOffer(offer)
+  if (!bytesEqual(o.roomId, state.roomId)) fail('bad-invite', 'the offer belongs to another room')
+  const inviter = memberAt(state, o.inviterId)
+  if (!inviter || inviter.role !== ROLE.HUMAN) fail('bad-invite', 'the offer is not from a human member of this room')
+  if (!await verify(inviter.signPub, LABEL.inviteOfferSig, o.body, o.signature)) fail('bad-signature', 'invite offer')
+  if (o.role !== ROLE.HUMAN && o.role !== ROLE.AGENT) fail('bad-format', 'unknown role')
+  if (now > o.expiresAt) fail('invite-expired', 'this invite has run out')
+  return o
+}
+/** What anyone can check of a request: it is well-formed and signed by the key it carries. Returns it parsed, with the device id. */
+export async function verifyInviteRequest(request) {
+  const q = decodeRequest(request)
+  if (q.role !== ROLE.HUMAN && q.role !== ROLE.AGENT) fail('bad-format', 'unknown role')
+  if (!await verify(q.signPub, LABEL.inviteRequestSig, concat(q.body, q.mac), q.signature)) fail('bad-signature', 'invite request')
+  return { ...q, id: await deviceId(q.signPub, q.kexPub) }
+}
+/** A reveal is good if an active human member signed it. Returns { inviteId, nonce, requestHash, inviterId }. */
+export async function verifyInviteReveal(state, reveal, inviterId) {
+  const inviter = memberAt(state, inviterId)
+  if (!inviter || inviter.role !== ROLE.HUMAN) fail('bad-invite', 'the inviter is no longer a member')
+  if (!(reveal instanceof Uint8Array) || reveal.length < 64) fail('bad-format', 'reveal')
+  const body = reveal.slice(0, reveal.length - 64)
+  if (!await verify(inviter.signPub, LABEL.inviteRevealSig, body, reveal.slice(reveal.length - 64))) fail('bad-signature', 'invite reveal')
+  const r = new R(body)
+  header(r, OBJ.INVITE_REVEAL)
+  const out = { inviteId: r.take(16), nonce: r.take(32), requestHash: r.take(32), inviterId }
+  r.end()
+  return out
+}
+
 function decodeOffer(bytes) {
   if (!(bytes instanceof Uint8Array) || bytes.length < 64) fail('bad-format', 'offer')
   const body = bytes.slice(0, bytes.length - 64)
@@ -936,13 +979,9 @@ async function inviteCode(offer, request, nonce) {
 export async function createJoinRequest({ link, offer, log, device, name = '', now = Date.now() }) {
   const { hub, roomId, secret } = parseInviteLink(link)
   const state = await verifyLog(log, roomId)
-  const o = decodeOffer(offer)
   const { inviteId, macKey } = await inviteKeys(secret, roomId)
-  if (!bytesEqual(o.roomId, roomId) || !bytesEqual(o.inviteId, inviteId)) fail('bad-invite', 'the offer does not belong to this link')
-  const inviter = memberAt(state, o.inviterId)
-  if (!inviter || inviter.role !== ROLE.HUMAN) fail('bad-invite', 'the offer is not from a human member of this room')
-  if (!await verify(inviter.signPub, LABEL.inviteOfferSig, o.body, o.signature)) fail('bad-signature', 'invite offer')
-  if (now > o.expiresAt) fail('invite-expired', 'this invite has run out')
+  if (!bytesEqual(decodeOffer(offer).inviteId, inviteId)) fail('bad-invite', 'the offer does not belong to this link')
+  const o = await verifyInviteOffer(state, offer, now)
   const offerHash = await hash(LABEL.inviteOffer, offer)
   const w = new W().u8(VERSION).u8(OBJ.INVITE_REQUEST).raw(roomId, 32).raw(inviteId, 16)
   str16(w, hub, HUB_MAX).u8(o.role)
@@ -982,15 +1021,7 @@ export async function acceptJoinRequest({ invite, request, inviter, now = Date.n
 /** On the joining device: check the reveal and return the six-digit code to show. */
 export async function checkReveal({ join, reveal, log }) {
   const state = await verifyLog(log, join.roomId)
-  const inviter = memberAt(state, join.inviterId)
-  if (!inviter) fail('bad-invite', 'the inviter is no longer a member')
-  if (!(reveal instanceof Uint8Array) || reveal.length < 64) fail('bad-format', 'reveal')
-  const body = reveal.slice(0, reveal.length - 64)
-  if (!await verify(inviter.signPub, LABEL.inviteRevealSig, body, reveal.slice(reveal.length - 64))) fail('bad-signature', 'invite reveal')
-  const r = new R(body)
-  header(r, OBJ.INVITE_REVEAL)
-  const inviteId = r.take(16), nonce = r.take(32), requestHash = r.take(32)
-  r.end()
+  const { inviteId, nonce, requestHash } = await verifyInviteReveal(state, reveal, join.inviterId)
   if (!bytesEqual(inviteId, join.inviteId)) fail('bad-invite', 'reveal for another invite')
   if (!bytesEqual(requestHash, await hash(LABEL.inviteRequest, join.request))) fail('bad-invite', 'the inviter answered a different request (someone else used this link)')
   if (!bytesEqual(join.commit, await hash(LABEL.inviteCommit, inviteId, nonce))) fail('bad-invite', 'the revealed number does not match the commitment')
@@ -999,7 +1030,8 @@ export async function checkReveal({ join, reveal, log }) {
 
 /**
  * Step 5, on the inviter, after the human compared the codes.
- * Human invites always need `codeConfirmed`; agent invites need it unless `skipCheckCode` is set.
+ * Human invites always need `codeConfirmed` (the check code is mandatory for humans). An agent that
+ * joins by a link pasted into its prompt has nobody to read a code: pass `skipCheckCode` for it.
  * Returns { entry, state, wrap } where `wrap` is the current epoch secret sealed to the new member.
  */
 export async function finalizeInvite({ invite, state, inviter, secret, codeConfirmed = false, skipCheckCode = false, now = Date.now(), time, _rng }) {
@@ -1026,10 +1058,46 @@ export async function completeJoin({ join, device, log, wrap }) {
   return { state, secret: await unwrapEpochKey(state, device, wrap, state.epoch) }
 }
 
+// ---- signing in to the hub -----------------------------------------------------
+//
+// The hub hands out 32 random bytes; the device signs them together with the room and the hub address.
+// Members sign with their device key, a human who is recovering signs with the recovery key.
+
+/** 0x01 0x0d roomId(32) hub str16 deviceId(32) challenge(32) || signature(64) */
+export async function signHubAuth({ device, roomId, hub, challenge }) {
+  const w = new W().u8(VERSION).u8(OBJ.HUB_AUTH).raw(roomId, 32, 'roomId')
+  const body = str16(w, hub, HUB_MAX).raw(device.id, 32, 'device id').raw(challenge, 32, 'challenge').done()
+  return concat(body, await sign(device, LABEL.hubAuth, body))
+}
+/** Returns { id, kind: 'member' | 'recovery', member, challenge }. Whether the challenge is the hub's own and unused is the hub's check. */
+export async function verifyHubAuth(bytes, { state, hub }) {
+  if (!(bytes instanceof Uint8Array) || bytes.length < 64) fail('bad-format', 'hub auth')
+  const body = bytes.slice(0, bytes.length - 64)
+  const r = new R(body)
+  header(r, OBJ.HUB_AUTH)
+  const a = { roomId: r.take(32), hub: r.str16(HUB_MAX), id: r.take(32), challenge: r.take(32) }
+  r.end()
+  if (!bytesEqual(a.roomId, state.roomId)) fail('wrong-room', 'signed for another room')
+  if (a.hub !== hub) fail('wrong-hub', 'signed for another hub')
+  const recovery = bytesEqual(a.id, state.recovery.id)
+  const member = recovery ? null : memberAt(state, a.id)
+  if (!recovery && !member) fail('not-member', 'this device is not a member (or was removed)')
+  if (!await verify(recovery ? state.recovery.signPub : member.signPub, LABEL.hubAuth, body, bytes.slice(bytes.length - 64))) fail('bad-signature', 'hub auth')
+  return { id: a.id, kind: recovery ? 'recovery' : 'member', member, challenge: a.challenge }
+}
+
 // ---- message envelope ----------------------------------------------------------
 
 export const KIND = Object.freeze({ CHAT: 1, CARD: 2, ANSWER: 3, PERMISSION_REQUEST: 4, VERDICT: 5, STATUS: 6, REDECIDE: 7, SCRIBBLE: 8 })
 const FLAG_PUSH = 1, FLAG_CARD = 2
+/** Card fields the hub can read (and nobody can change: they are signed). Urgency is the order of the stack and decides about pushes. */
+export const CARD_STATE = Object.freeze({ OPEN: 1, ANSWERED: 2, CLOSED: 3 })
+export const URGENCY = Object.freeze({ LOW: 0, NORMAL: 1, HIGH: 2, CRITICAL: 3 })
+const cardFields = (c, bad) => {
+  if (!Number.isInteger(c.state) || c.state < 1 || c.state > 3) bad('card state')
+  if (!Number.isInteger(c.urgency) || c.urgency < 0 || c.urgency > 3) bad('urgency')
+  return c
+}
 const NONCE_LEN = 12
 
 const senderKeyCtx = (epoch, id) => concat(epochCtx(epoch), id)
@@ -1057,7 +1125,10 @@ function encodeHeader(h) {
     if (i && compareBytes(seen[i - 1].sender, seen[i].sender) === 0) fail('bad-argument', 'duplicate sender in seen')
     w.raw(seen[i].sender, 32, 'seen sender').u64(seen[i].seq).raw(seen[i].hash, 32, 'seen hash')
   }
-  if (h.card) w.raw(h.card.id, 16, 'card id').u8(h.card.state).u64(h.card.answeredAt ?? 0)
+  if (h.card) {
+    const c = cardFields({ ...h.card, urgency: h.card.urgency ?? URGENCY.NORMAL }, what => fail('bad-argument', what))
+    w.raw(c.id, 16, 'card id').u8(c.state).u8(c.urgency).u64(c.answeredAt ?? 0)
+  }
   w.u8(h.blobs.length)
   for (const b of h.blobs) w.raw(b, 16, 'blob id')
   return w.done()
@@ -1078,7 +1149,7 @@ function decodeHeader(bytes) {
     if (i && compareBytes(h.seen[i - 1].sender, s.sender) >= 0) fail('bad-format', 'seen not strictly ascending')
     h.seen.push(s)
   }
-  if (flags & FLAG_CARD) h.card = { id: r.take(16), state: r.u8(), answeredAt: r.u64() }
+  if (flags & FLAG_CARD) h.card = cardFields({ id: r.take(16), state: r.u8(), urgency: r.u8(), answeredAt: r.u64() }, what => fail('bad-format', `unknown ${what}`))
   const blobs = r.u8()
   for (let i = 0; i < blobs; i++) h.blobs.push(r.take(16))
   r.end()
@@ -1125,7 +1196,7 @@ function splitEnvelope(bytes) {
   return { headerBytes, nonce, ct, ctHash, signature, pruned }
 }
 
-/** The server's form after 30 days: header, nonce, hash of the ciphertext, signature. Still verifiable. */
+/** The hub's form of an answered card 30 days after the answer: header, nonce, hash of the ciphertext, signature. Still verifiable. */
 export async function pruneEnvelope(bytes) {
   const e = splitEnvelope(bytes)
   if (e.pruned) return bytes
