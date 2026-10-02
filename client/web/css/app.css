@@ -114,11 +114,11 @@ body[data-pair] .pane-title { padding-inline: var(--gutter); }
 .pane-members small { margin-left: .5em; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
 body[data-view="scribble"] .pane-members button[aria-pressed="false"] { color: var(--faint); }
 body[data-view="scribble"] .pane-members button[aria-pressed="true"] { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
-/* Filters lay a list over the conversation. Dashed while off, solid once it holds. */
-.filters { flex: none; display: flex; align-items: center; gap: var(--s-2); }
-.filters button { min-height: 32px; padding: 0 12px; border: 1px dashed var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 600; white-space: nowrap; }
-.filters button:hover { color: var(--fg); border-color: var(--fg); }
-.filters button[aria-pressed="true"] { border-style: solid; border-color: var(--fg); background: var(--fg); color: var(--bg); }
+/* Filters lay a list over the conversation: two quiet words at the head's right end, filled while one holds. */
+.filters { flex: none; display: flex; align-items: center; gap: var(--s-1); }
+.filters button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.filters button:hover { color: var(--fg); background: var(--sunken); }
+.filters button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .filters b { display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
 .filters b:empty { display: none; }
 body[data-view="scribble"] .filters { display: none; }
@@ -675,6 +675,8 @@ button.agent-badge:active { scale: .95; }
 
 /* The Desk entry says how many sessions are at work: a small turning ring and the number. */
 .agent-working { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.agent-working b { display: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: 0; font-variant-numeric: tabular-nums; }
+.desk-state .agent-working[data-n]:not([data-n="1"]) b { display: inline; margin-left: -2px; }
 .agent-working .agent-ring { position: static; flex: none; width: 13px; height: 13px; }
 .agent-working .ring-loop { stroke-width: 2.4; }
 .agent-working .ring-drop path { stroke-width: 3.4; }
@@ -1113,11 +1115,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .msg.msg-user .shots { align-self: stretch; margin-left: 0; grid-template-columns: repeat(auto-fit, minmax(0, 11rem)); justify-content: end; max-width: none; }
 .msg.msg-user .shots-one { grid-template-columns: minmax(0, 18rem); }
 .msg.msg-user .files { justify-content: flex-end; margin-bottom: var(--s-2); }
-/* Between a phone and a wide window the logo's pill and the two small round buttons stand over the top edge:
-   a session's title line starts below them. */
-@media (min-width: 861px) and (max-width: 1199px) {
-  body:not([data-pair]):not([data-scope="all"]):not([data-page]) .pane-title { padding-top: 46px; }
-}
 /* Open questions out of sight: how many, and the way to the next one. Beside "To the end", at the column's right edge. */
 .open-jump {
   position: absolute; z-index: 2; bottom: calc(100% + var(--s-3)); right: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter)));
@@ -1130,6 +1127,41 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .open-jump:hover { filter: brightness(.94); }
 .open-jump:active { scale: .97; }
 body[data-filter] .open-jump { display: none; }
+/* ---- a session's head and its canvas (js/chat.js) ----
+   The switch "Conversation · Scribble" is gone: the canvas opens from the composer. Nothing floats over the head:
+   the memo button is left out inside a session ("/" still opens it), the Scratchpad is one quiet icon at its right end. */
+html body:not([data-scope="all"]):not([data-page]) .modes, html body:not([data-scope="all"]):not([data-page]) .tabbar { display: none; }
+html body:not([data-pair]) .pane-now { font-size: var(--t-sm); }
+html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
+@media (min-width: 861px) {
+  html body:not([data-scope="all"]):not([data-page]) .quick-open { display: none; }
+  html body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: var(--s-3); top: 6px; box-shadow: none; background: none; color: var(--muted); }
+  html body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open:hover { background: var(--sunken); color: var(--fg); translate: none; box-shadow: none; }
+  html body:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: calc(var(--s-3) + 44px); }
+}
+@media (min-width: 1200px) {
+  html body:not([data-pair]):not([data-scope="all"]) .pane-title { padding-right: 0; }
+  html body:not([data-pair]):not([data-scope="all"]) .filters { margin: 0 var(--s-4) 9px 0; }
+}
+.composer-scribble .ico { width: 22px; height: 22px; stroke-width: 1.6; }
+.composer-scribble[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+/* The canvas in the pane's place: it carries the way back to the conversation. */
+body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
+#scribble > .scr { flex: 1; min-height: 0; height: auto; }
+/* (app.js can mount the canvas twice when the page is loaded on /scribble; as before, only the first shows.) */
+#scribble > .scr ~ .scr { display: none; }
+.scribble-bar { flex: none; display: flex; align-items: center; padding: 5px var(--s-3); border-bottom: 1px solid var(--line); background: var(--surface); }
+.scribble-back { display: inline-flex; align-items: center; gap: 4px; min-height: 36px; padding: 0 12px 0 6px; border: 0; border-radius: 8px; background: none; color: var(--fg); font-size: var(--t-sm); font-weight: 600; }
+.scribble-back:hover { background: var(--sunken); }
+.scribble-back .ico { width: 18px; height: 18px; }
+/* A wide window, a session on its own: the conversation moves together to half the width, the canvas stands beside it. */
+@media (min-width: 1200px) {
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #session { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) .pane-title { grid-column: 1 / -1; }
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #chat { display: flex; grid-column: 1; grid-row: 2; }
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #scribble { grid-column: 2; grid-row: 2; border-left: 1px solid var(--line); }
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) .scribble-bar { display: none; }
+}
 /* Both markers stand at the column's right edge, one above the other, clear of the middle of the lines; and the
    stream ends with room for them, so its last line is never under one. */
 .jump { left: auto; translate: none; right: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))); height: 34px; }
@@ -1140,7 +1172,7 @@ body[data-filter] .open-jump { display: none; }
    on its own. Sessions laid together keep their layout. */
 @media (min-width: 1200px) {
   body:not([data-pair]):not([data-scope="all"]) .pane-who,
-  body:not([data-pair]):not([data-scope="all"]) .pane-now { margin-inline: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))) max(29rem, calc((100% - 47.5rem) / 2 + var(--gutter))); }
+  body:not([data-pair]):not([data-scope="all"]) .pane-now { margin-inline: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))) max(17rem, calc((100% - 47.5rem) / 2 + var(--gutter))); }
   body:not([data-pair]):not([data-scope="all"]) .pane-title { border-bottom: 1px solid var(--line); }
 }
 
@@ -1207,10 +1239,10 @@ body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: no
 .brand h1 { display: flex; }
 .brand-open { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; margin-left: -8px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; transition: background var(--d-fast); }
 .brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
-.brand-fold { display: inline-flex; margin-left: -4px; color: var(--faint); rotate: 180deg; transition: rotate var(--d-med) var(--ease-out), color var(--d-fast); }
+.brand-fold { display: inline-flex; margin-left: -4px; color: var(--faint); rotate: 0deg; transition: rotate var(--d-med) var(--ease-out), color var(--d-fast); }
 .brand-fold .sketch { width: 16px; height: 16px; stroke-width: 2.2; }
 .brand-open:hover .brand-fold { color: var(--muted); }
-.brand-open[aria-expanded="true"] .brand-fold { rotate: 0deg; color: var(--fg); }
+.brand-open[aria-expanded="true"] .brand-fold { rotate: 180deg; color: var(--fg); }
 /* The menu: a small sheet above the logo (below it on a phone, where the bar is at the top). */
 .sidedoors { position: absolute; z-index: 6; left: max(var(--s-3), env(safe-area-inset-left, 0px)); bottom: calc(100% + 6px); min-width: 208px; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
 .topbar .sidedoors a, .topbar .sidedoors button, .topbar .sidedoors #keys-open { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
@@ -1282,31 +1314,37 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
      the desk drawing, "Desk", who works, the knocks and everything open; one click goes to the Desk from
      anywhere. The caret at its right opens the menu under it. (Not moved by a transform: the floating
      buttons at the foot are children of .topbar and must stay the page's.) */
-  /* Rhythm: the block's drawing stands over the sessions' drawings, its caret column over their rings;
-     below the block there is clear room, so a crown on the first row never touches it. */
-  #agents { padding-top: 96px; }
-  .topbar { position: fixed; z-index: 7; top: 10px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 66px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+  /* The block: one line. The desk drawing stands over the sessions' drawings, the big word "Desk" over
+     their names; beside it the small turning ring while sessions work; the knocks and everything open
+     as small marks before the caret, whose column stands over the rows' rings. Even margins all round;
+     below it clear room, kept by a spacer that stays while the sessions scroll under it. */
+  #agents { padding-top: 0; }
+  #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 80px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
+  .topbar { position: fixed; z-index: 7; top: 8px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
   .topbar:has(#desk-go[aria-current]) { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
   .topbar .brand { margin-right: 0; flex: 1; min-width: 0; height: 100%; }
-  .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.12rem/1 var(--display); letter-spacing: -.01em; }
+  .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.34rem/1 var(--display); letter-spacing: -.02em; }
   .topbar .deskpill { gap: 0; }
-  .topbar .desk-go { flex: 1; min-width: 0; height: 100%; display: grid; grid-template-columns: 38px minmax(0, 1fr); align-content: center; align-items: center; justify-items: start; column-gap: 12px; row-gap: 7px; padding: 0 8px 0 6px; border-radius: 14px 0 0 14px; text-align: left; }
+  .topbar .desk-go { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 0; padding: 0 7px 0 6px; border-radius: 14px 0 0 14px; text-align: left; }
   .topbar .desk-go:hover { background: none; }
   .topbar .desk-go .brand-mark { display: none; }
-  .topbar .desk-go > .sketch { grid-row: 1 / span 2; justify-self: center; width: 28px; height: 28px; stroke-width: 1.6; }
-  .topbar .desk-go .desk-name { text-decoration: none; }
-  /* the state is a quiet second line under the name: knocks, everything open, who works */
-  .topbar .desk-state { grid-column: 2; display: flex; align-items: center; gap: 9px; min-width: 0; max-width: 100%; overflow: hidden; white-space: nowrap; }
-  .topbar .desk-state .agent-counts { gap: 9px; }
-  .topbar .desk-state .agent-count { padding: 0; background: none; color: var(--muted); font-weight: 600; }
+  .topbar .desk-go > .sketch { flex: none; width: 28px; height: 28px; margin: 0 17px 0 5px; stroke-width: 1.6; }
+  .topbar .desk-state { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; margin-left: 7px; }
+  .topbar .desk-state .agent-working b { display: none !important; }
+  .topbar .desk-state .agent-count.is-total .sketch { display: none; }
+  .topbar .desk-state .agent-count.is-total { min-width: 18px; height: 18px; padding: 0 5px; justify-content: center; border-radius: var(--r-pill); background: var(--sunken); font-size: .7rem; }
+  .topbar .desk-state .agent-working { order: -1; }
+  .topbar .desk-state .agent-working span { display: none; }
+  .topbar .desk-state .agent-working .agent-ring { width: 16px; height: 16px; }
+  .topbar .desk-state .agent-counts { margin-left: auto; gap: 7px; }
+  .topbar .desk-state .agent-count { padding: 0; gap: 2px; background: none; color: var(--muted); font-weight: 600; }
   .topbar .desk-state .agent-count.is-knock { color: var(--urg-high); }
   .topbar .desk-state .agent-count .sketch { width: 15px; height: 15px; }
-  .topbar .desk-go:not(:has(.desk-state > *)) .desk-name { grid-row: 1 / span 2; }
-  .topbar .brand-open { align-self: stretch; width: 44px; min-width: 44px; margin-left: 0; padding: 0; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
+  .topbar .brand-open { align-self: stretch; width: 32px; min-width: 32px; margin-left: 0; padding: 0; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
   .topbar .brand-open .brand-fold { margin-left: 0; }
   .agent-entry { border-radius: 14px; }
-  .agent-row > .agent-badge { margin-right: 6px; }
-  .topbar .sidedoors { left: 0; translate: none; bottom: auto; top: calc(100% + 6px); width: 240px; }
+  .agent-row > .agent-badge { margin-right: 8px; }
+  .topbar #brand-doors { left: 0; translate: none; bottom: auto; top: calc(100% + 6px); width: 240px; }
 }
 /* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
    with the connection and two small switches. One thin rule between the parts. */
@@ -1327,7 +1365,6 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 .deskpill { display: flex; align-items: center; gap: 2px; }
 .desk-go { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: var(--r-pill); background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
 .desk-go:hover { background: var(--sunken); }
-.desk-go[aria-current] .desk-name { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); }
 .desk-state { display: inline-flex; align-items: center; gap: 8px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: 0; }
 .desk-state:empty { display: none; }
 .desk-state .agent-working { font-size: var(--t-xs); }
@@ -1461,4 +1498,39 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .topbar .sidedoors .menu-foot button { width: 44px; min-height: 44px; }
   #jump-field { height: 44px; }
   .inbox-revising-row, .inbox-revising-open { min-height: 44px; }
+}
+
+/* ---- the Desk's menu: one column, one type size for entries and one small for what they say ----
+   The jump field first (its key at the right), the desk(s), the four places as a list with one icon
+   column, then the two switches as labelled rows, and the connection as the last quiet line. */
+.topbar #brand-doors { gap: 0; padding: 8px; border-radius: 14px; box-shadow: 0 0 0 1px var(--line-strong), 0 12px 28px -10px rgb(20 30 25 / .28); }
+.jump-box { position: relative; display: block; }
+#jump-field { height: 36px; padding: 0 58px 0 12px; border-radius: 9px; font: 400 var(--t-sm)/1 var(--font); }
+.jump-box kbd { position: absolute; right: 8px; top: 50%; translate: 0 -50%; margin: 0; padding: 3px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); font: 500 .68rem/1 var(--mono); color: var(--muted); pointer-events: none; }
+.topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { width: 100%; min-height: 36px; gap: 10px; padding: 0 12px; border-radius: 9px; font: 500 var(--t-sm)/1 var(--font); justify-content: flex-start; }
+.topbar #brand-doors .sketch { flex: none; width: 18px; height: 18px; stroke-width: 1.8; color: var(--muted); }
+.topbar #brand-doors :is(i, kbd):not(.jump-box kbd) { margin-left: auto; padding-left: 12px; font: 500 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.topbar #brand-doors kbd:not(.jump-box kbd) { min-width: 0; padding: 3px 6px; background: none; box-shadow: 0 0 0 1px var(--line-strong); border-radius: 6px; font-family: var(--mono); }
+.menu-desks { padding: 6px 0 0; }
+.menu-desks, .menu-grid, .menu-foot { margin-top: 6px; padding: 6px 0 0; border-top: 1px solid var(--line); }
+.menu-desks { border-top: 0; margin-top: 2px; }
+.menu-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
+/* one desk: a single quiet line, no heading and no tick */
+.menu-head:has(+ .menu-desks > :only-child) { display: none; }
+.menu-desk:only-child::after { content: none; }
+.menu-desk[aria-checked="true"] i { color: var(--muted); }
+.menu-foot { display: grid; gap: 0; align-items: stretch; }
+.topbar #brand-doors .menu-foot .conn { order: 9; justify-content: flex-start; justify-self: start; height: 30px; margin: 4px 0 0; padding: 0 12px; border: 0; font-size: var(--t-xs); color: var(--muted); }
+.topbar #brand-doors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: none; }
+.topbar #brand-doors .menu-foot button:hover, .topbar #brand-doors .menu-foot button:focus-visible { background: var(--sunken); }
+#knock-sound::after { content: "Off"; }
+#knock-sound[aria-checked="true"]::after { content: "On"; color: var(--accent); }
+#theme-toggle::after { content: "Light"; }
+:root[data-theme="dark"] #theme-toggle::after { content: "Dark"; }
+#knock-sound::after, #theme-toggle::after { margin-left: auto; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); }
+@media (pointer: coarse), (max-width: 860px) {
+  .topbar #brand-doors { width: min(300px, calc(100vw - 24px)); }
+  .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { min-height: 44px; width: 100%; }
+  #jump-field { height: 44px; }
+  .jump-box kbd { display: none; }
 }

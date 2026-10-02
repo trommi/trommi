@@ -34,6 +34,7 @@ const ICONS = {
   mic: ['M12 3.500a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3z', 'M5.500 11.500a6.500 6.500 0 0 0 13 0M12 18v3'],
   send: ['M12 19V5M5.500 11.500 12 5l6.500 6.500'],
   down: ['M12 5v14M5.500 12.500 12 19l6.500-6.500'],
+  canvas: ['M4.500 5.500h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1h-15a1 1 0 0 1-1-1v-11a1 1 0 0 1 1-1z', 'M10.500 5.500v13', 'M13 14.500c.900-2.600 1.700-3.800 2.400-3.400.800.400-.600 2.900.300 3.200.800.300 1.300-1.500 2.300-2'],
 }
 
 export function icon(name, cls = 'ico') {
@@ -487,9 +488,15 @@ function createPane(agent, ctx) {
   send.append(icon('send'))
   // Draw instead of describing: a sheet over the conversation; what was drawn goes along as a picture.
   const pen = button('mic composer-pen', 'Draw something to go along with the message')
-  pen.title = 'Draw something'
+  pen.title = 'Draw over the conversation (goes along with your message)'
+  // The session's own canvas, beside the conversation (a narrow window: in its place). It stays; "Send this view" sends it.
+  const canvas = button('mic composer-scribble', 'Scribble: the session\'s canvas beside the conversation')
+  canvas.title = 'Scribble canvas beside the conversation'
+  canvas.setAttribute('aria-pressed', String(document.body.dataset.view === 'scribble'))
+  canvas.append(icon('canvas'))
+  canvas.addEventListener('click', () => ctx.onCanvas?.(agent))
   pen.append(sketch('pen'))
-  form.append(chips, clip, draft, picker, mic, pen, send)
+  form.append(chips, clip, draft, picker, mic, pen, canvas, send)
   // A copied decision goes along as a chip (cardclip.js): offered above the field, or Ctrl+V.
   const clipped = pasteChip(draft, { host: form, onChange: () => fitDraft() })
   const hint = el('p', 'hint')
@@ -1019,6 +1026,27 @@ function createPane(agent, ctx) {
  */
 export function mountChat(root, ctx = {}) {
   const flags = ctx.flags ?? new Set()
+  // The canvas is the page's view "scribble" (app.js: the address /s/<id>/scribble, the canvas of the member in front);
+  // the button in a composer switches it through the page's own (hidden) switch, for the session it belongs to.
+  ctx.onCanvas = agentId => {
+    if (document.body.dataset.view === 'scribble') return document.getElementById('mode-chat')?.click()
+    if (shown.length > 1) document.querySelectorAll('.pane-members button')[shown.indexOf(agentId)]?.click()
+    document.getElementById('mode-scribble')?.click()
+  }
+  // Where the canvas takes the whole pane (a narrow window, sessions laid together) it carries the way back.
+  const back = el('div', 'scribble-bar')
+  const backButton = button('scribble-back')
+  backButton.append(icon('prev'), el('span', null, 'Conversation'))
+  backButton.addEventListener('click', () => document.getElementById('mode-chat')?.click())
+  back.append(backButton)
+  const paintCanvas = () => {
+    const open = document.body.dataset.view === 'scribble'
+    for (const b of document.querySelectorAll('.composer-scribble')) b.setAttribute('aria-pressed', String(open))
+    const host = document.getElementById('scribble')
+    if (open && host && back.parentNode !== host) host.prepend(back)
+  }
+  new MutationObserver(paintCanvas).observe(document.body, { attributes: true, attributeFilter: ['data-view'] })
+  paintCanvas()
   const panes = new Map()   // session id -> pane; kept, so a session's log is built once
   let shown = []
   let member = null

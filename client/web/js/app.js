@@ -194,7 +194,9 @@ function pickMember(id) {
   if (body.dataset.view === 'scribble') syncCanvas()
 }
 
-async function mountScribblePane() {
+let scribbleMounting = null   // the mount under way: asked twice before it is done, it is still one canvas
+function mountScribblePane() { return (scribbleMounting ??= mountScribbleOnce()) }
+async function mountScribbleOnce() {
   if (scribble) return scribble
   try {
     const { mountScribble } = await import('./scribble.js')
@@ -294,7 +296,15 @@ document.addEventListener('focus:close', () => {
   focusCard = null
   if (routing) return
   if (history.state?.q) history.back()
-  else writeAddress(false)
+  else {
+    // Arrived on this address directly: no entry to go back to. The card's part is cut from the address
+    // that stands (not rebuilt from the state, which may not hold the session yet), and it is followed.
+    const path = location.pathname.replace(/\/(q\/[^/]+|walk)$/, '') || '/'
+    const params = new URLSearchParams(location.search)
+    params.delete('q')
+    history.replaceState({}, '', path + (params.size ? `?${params}` : '') + location.hash)
+    followAddress()
+  }
 })
 $('focus-open').addEventListener('click', () => openFocus())
 
@@ -396,8 +406,14 @@ function followAddress(first = false) {
   // A deep link from before there were addresses may still ask for a mode by hash flag.
   if (first && !to.ids.length && !to.page) showView(flags.has('scribble') ? 'scribble' : 'chat', flags.has('decisions') ? 'questions' : flags.has('files') ? 'files' : null)
   else showView(to.view, to.filter)
-  if (to.q && isLoaded()) openFocus(to.q === 'next' ? null : cardOf(to.q), false)
-  else if (!to.q && focusMode?.isOpen()) focusMode.close()
+  if (to.q && isLoaded()) {
+    // Back or forward onto a card of the Desk on a wide screen: it unfolds in its row again, as it was.
+    const id = to.q === 'next' ? null : cardOf(to.q)
+    const text = !first && id && !to.ids.length && !to.page && !matchMedia('(max-width: 860px)').matches
+      ? document.querySelector(`#inbox .inbox-group[data-sender] .inbox-row[data-id="${CSS.escape(id)}"]:not(.is-unfolded) .inbox-text`) : null
+    if (text) text.click()
+    else openFocus(id, false)
+  } else if (!to.q && focusMode?.isOpen()) focusMode.close()
   routing = false
   return to
 }
