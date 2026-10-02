@@ -30,7 +30,6 @@ const ICONS = {
   external: ['M14 5h5v5', 'M19 5l-8 8', 'M11 6.500H6.500A1.500 1.500 0 0 0 5 8v9.500A1.500 1.500 0 0 0 6.500 19H16a1.500 1.500 0 0 0 1.500-1.500V13'],
   spark: ['M12 3.500c.700 4.500 4 7.800 8.500 8.500-4.500.700-7.800 4-8.500 8.500-.700-4.500-4-7.800-8.500-8.500 4.500-.700 7.800-4 8.500-8.500z'],
   warn: ['M12 9v4.500', 'M12 16.800v.100', 'M10.300 4.500 2.900 17.500a2 2 0 0 0 1.700 3h14.800a2 2 0 0 0 1.700-3L13.700 4.500a2 2 0 0 0-3.400 0z'],
-  pen: ['M4 20c2.500-1 3-3.500 4.500-5.500S12 11 13.500 12s-1 4 .500 5 3.500-2 6-2.500M15.500 4.500l4 4L11 17l-4.500.500L7 13z'],
   mic: ['M12 3.500a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3z', 'M5.500 11.500a6.500 6.500 0 0 0 13 0M12 18v3'],
   send: ['M12 19V5M5.500 11.500 12 5l6.500 6.500'],
   down: ['M12 5v14M5.500 12.500 12 19l6.500-6.500'],
@@ -486,24 +485,17 @@ function createPane(agent, ctx) {
   send.setAttribute('aria-label', 'Send')
   send.disabled = true
   send.append(icon('send'))
-  // Draw instead of describing: a sheet over the conversation; what was drawn goes along as a picture.
-  const pen = button('mic composer-pen', 'Draw something to go along with the message')
-  pen.title = 'Draw over the conversation (goes along with your message)'
   // The session's own canvas, beside the conversation (a narrow window: in its place). It stays; "Send this view" sends it.
   const canvas = button('mic composer-scribble', 'Scribble: the session\'s canvas beside the conversation')
   canvas.title = 'Scribble canvas beside the conversation'
   canvas.setAttribute('aria-pressed', String(document.body.dataset.view === 'scribble'))
   canvas.append(icon('canvas'))
   canvas.addEventListener('click', () => ctx.onCanvas?.(agent))
-  pen.append(sketch('pen'))
-  form.append(chips, clip, draft, picker, mic, pen, canvas, send)
+  form.append(chips, clip, draft, picker, mic, canvas, send)
   // A copied decision goes along as a chip (cardclip.js): offered above the field, or Ctrl+V.
   const clipped = pasteChip(draft, { host: form, onChange: () => fitDraft() })
-  const hint = el('p', 'hint')
-  hint.setAttribute('aria-hidden', 'true')
-  hint.append(el('kbd', null, 'Enter'), ' sends, ', el('kbd', null, 'Shift'), ' + ', el('kbd', null, 'Enter'), ' for a new line')
   const dockColumn = el('div', 'column')
-  dockColumn.append(error, form, hint)
+  dockColumn.append(error, form)
   const dock = el('div', 'dock')
   dock.append(jump, openJump, dockColumn)
   root.append(head, body, dock)
@@ -912,58 +904,6 @@ function createPane(agent, ctx) {
   clip.addEventListener('click', () => picker.click())
   picker.addEventListener('change', () => { attach(picker.files); picker.value = '' })
 
-  // ---- the drawing sheet: the session's canvas tools (scribble.js), empty each time, over the conversation ----
-  let sheet = null, board = null
-  function closeSheet() {
-    if (!sheet || sheet.hidden) return
-    sheet.hidden = true
-    root.removeAttribute('data-drawing')
-    pen.setAttribute('aria-pressed', 'false')
-    draft.focus({ preventScroll: true })
-  }
-  async function openSheet() {
-    if (sheet && !sheet.hidden) return closeSheet()
-    if (!sheet) {
-      sheet = el('div', 'draw-sheet')
-      sheet.setAttribute('role', 'dialog')
-      sheet.setAttribute('aria-label', 'Draw something to go along with the message')
-      const head = el('div', 'draw-sheet-head')
-      const cancel = button('draw-sheet-close')
-      cancel.textContent = 'Cancel'
-      cancel.addEventListener('click', closeSheet)
-      head.append(el('strong', null, 'Drawing'), el('span', null, 'It goes along with your message as a picture.'), cancel)
-      const stage = el('div', 'draw-sheet-stage')
-      sheet.append(head, stage)
-      sheet.hidden = true
-      body.append(sheet)
-      try {
-        const { mountScribble } = await import('./scribble.js')
-        board = mountScribble(stage, {
-          draftKey: null,
-          sendLabel: 'Add to message', sendTip: 'The drawing goes along with your message as a picture',
-          send: async ({ png }) => {
-            if (!png) throw new Error('Nothing drawn yet.')
-            attached.push({ name: `drawing-${new Date().toTimeString().slice(0, 8).replaceAll(':', '')}.png`, data: png })
-            paintChips()
-            closeSheet()
-          },
-        })
-      } catch (err) {
-        console.error(err)
-        sheet.remove()
-        sheet = null
-        return showError('The drawing tools could not be loaded.')
-      }
-    }
-    if (attached.length >= MAX_FILES) return showError(`At most ${MAX_FILES} files in one message.`)
-    board.clear()
-    sheet.hidden = false
-    root.setAttribute('data-drawing', '')
-    pen.setAttribute('aria-pressed', 'true')
-  }
-  pen.addEventListener('click', openSheet)
-  // (Heard first: the canvas has its own use for Escape while one of its menus is open.)
-  document.addEventListener('keydown', e => { if (e.key === 'Escape' && sheet && !sheet.hidden && !sheet.querySelector('.scr[data-style]')) { e.preventDefault(); e.stopPropagation(); closeSheet() } }, true)
   draft.addEventListener('paste', paste)
   // A file dropped anywhere on the conversation goes into the message (and never replaces the page).
   const carriesFiles = e => [...(e.dataTransfer?.types ?? [])].includes('Files')

@@ -297,4 +297,11 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   `.inbox-revising-take` → store `takeBack()` = POST /handback clear). It replaces the "Waiting" pile.
 - `list.revise` (B) hands the marked card back at once (`focusMode.revise(id)` through `openFocus(id, …, { revise })`).
 - Not connected: a dot on the caret, no sentence. Phone: 44px pile heads and menu entries. Dark: edge on quiet tiles.
+- Desk block, one line: drawing, big "Desk", the working ring alone (`.agent-working`, count in title and `data-n`),
+  `.agent-count.is-knock` and `.is-total` before the caret. A sticky spacer (`#agents::before`) keeps room under it.
+- Menu: `label.jump-box` holds `#jump-field` and `kbd#jump-key`; one desk is one quiet line; `.menu-grid` is a list;
+  the two switches are labelled rows (`.menu-word`, state word by CSS); `#conn` last.
+- app.js: closing a card that was loaded directly cuts `/q/<n>` or `/walk` from the address and follows it; Forward
+  onto a Desk card unfolds it inline on wide screens; `mountScribblePane()` caches its promise (one canvas).
+- Empty Desk: "Desk is clear." plus what lies below by name ("1 in revision · 2 snoozed"), nothing otherwise.
 
