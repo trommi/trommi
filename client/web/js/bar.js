@@ -37,9 +37,7 @@ if (menu) lead(menu.querySelector('a[href="/help.html"]'), 'page')
 const sound = $('knock-sound')
 if (sound) {
   lead(sound, KNOCK_SKETCH)
-  const state = document.createElement('i')
-  sound.append(state)
-  const paint = () => { const on = knockSound(); sound.setAttribute('aria-checked', String(on)); state.textContent = on ? 'on' : 'off' }
+  const paint = () => { const on = knockSound(); sound.setAttribute('aria-checked', String(on)); sound.title = `Knock sound: ${on ? 'on' : 'off'}` }
   sound.addEventListener('click', e => { e.stopPropagation(); setKnockSound(!knockSound()); paint() })
   paint()
 }
@@ -53,12 +51,13 @@ if (opener) {
 }
 
 // ---- the menu behind the logo ----
-const items = () => [...menu.querySelectorAll('[role^="menuitem"]')].filter(n => n.offsetParent !== null)
+const items = () => [...menu.querySelectorAll('[role^="menuitem"], [role="option"]')].filter(n => n.offsetParent !== null)
 const isOpen = () => !menu.hidden
 function open(focusFirst = true) {
   menu.hidden = false
   opener.setAttribute('aria-expanded', 'true')
-  if (focusFirst) items()[0]?.focus()
+  // The jump field takes the keyboard: type and go, or arrow down into the entries.
+  if (focusFirst) (jump ?? items()[0])?.focus()
 }
 function close(back = true) {
   if (!isOpen()) return
@@ -68,7 +67,7 @@ function close(back = true) {
 }
 if (opener && menu) {
   // Opened by the pointer, the keyboard stays where it is; opened by a key, it goes to the first entry.
-  opener.addEventListener('click', e => (isOpen() ? close() : open(e.detail === 0)))
+  opener.addEventListener('click', () => (isOpen() ? close() : open(true)))
   opener.addEventListener('keydown', e => {
     if (e.key !== 'ArrowUp' && e.key !== 'ArrowDown') return
     e.preventDefault()
@@ -91,6 +90,48 @@ if (opener && menu) {
   document.addEventListener('pointerdown', e => { if (isOpen() && !e.target.closest('.brand')) close(false) })
   menu.addEventListener('focusout', e => { if (isOpen() && e.relatedTarget && !e.relatedTarget.closest?.('.brand')) close(false) })
 }
+
+// ---- jump: type, and go ----
+// A session by its name, a question by its number ("12", "Nr. 12"), or a place. Enter takes the first.
+const jump = $('jump-field'), results = $('jump-results')
+function places(query) {
+  const q = query.trim().toLowerCase()
+  const out = []
+  const add = (label, sketchName, go) => out.push({ label, sketchName, go })
+  const nr = /^(?:nr\.?\s*|#)?(\d+)$/.exec(q)
+  if (nr) add(`Question Nr. ${nr[1]}`, 'stack', () => { location.href = `/?q=${nr[1]}` })
+  const match = text => !q || text.toLowerCase().includes(q)
+  if (match('inbox')) add('Inbox', 'tray', () => $('nav-inbox')?.click())
+  if (match('agents')) add('Agents', 'heads', () => $('nav-roster')?.click())
+  if (match('scratchpad pad')) add('Scratchpad', 'pen', () => $('pad-open')?.click())
+  for (const row of document.querySelectorAll('#agents .agent-row[data-unit]')) {
+    const name = [...row.querySelectorAll('.agent-text strong')].map(n => n.textContent).join(' + ')
+    if (match(name)) add(name, 'bubble', () => row.querySelector('.agent-entry')?.click())
+  }
+  return out.slice(0, 8)
+}
+function paintJump() {
+  if (!results) return
+  const list = jump.value.trim() ? places(jump.value) : []
+  results.replaceChildren(...list.map((p, i) => {
+    const b = document.createElement('button')
+    b.type = 'button'
+    b.setAttribute('role', 'option')
+    if (!i) b.setAttribute('aria-selected', 'true')
+    b.append(sketch(p.sketchName), p.label)
+    b.addEventListener('click', () => { close(false); jump.value = ''; paintJump(); p.go() })
+    return b
+  }))
+}
+if (jump) {
+  jump.addEventListener('input', paintJump)
+  jump.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); results.querySelector('button')?.click() }
+    if (e.key === 'ArrowDown') { e.preventDefault(); e.stopPropagation(); (results.querySelector('button') ?? items()[0])?.focus() }
+  })
+}
+/** Open the menu with the keyboard in the jump field (for the table of keys: action "go.jump"). */
+export function openJump() { if (!isOpen()) open(false); jump?.focus(); jump?.select() }
 
 // While Shift is held, a row's quiet action is "Shred" (inbox.js, app.css: body[data-shift]).
 const shift = e => document.body.toggleAttribute('data-shift', e.shiftKey && !e.target.closest?.('input, textarea, select, [contenteditable]'))

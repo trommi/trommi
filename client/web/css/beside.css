@@ -3,8 +3,8 @@
    answered ones at the foot; right the conversation in a column of its own, under the two modes.
    Nothing in the page is rebuilt for it: every session's pane already holds its list of questions
    (js/chat.js, .pane-questions, until now shown by the "Questions only" filter); here it is laid
-   next to the log. Sessions laid together keep their columns side by side, each with its own
-   questions folded above its conversation.
+   next to the log. Sessions laid together: one list of the questions of all of them (js/beside.js
+   mounts it) in the wide column, their conversations narrow beside it, one above the other.
    Below 1200px nothing here applies: the questions stand in the conversation and behind
    "Questions only", as before. */
 
@@ -57,37 +57,61 @@
   body:not([data-pair]) #chat .msg.cont { margin-top: var(--s-3); }
   body:not([data-pair]) #chat .hint { display: none; }
 
-  /* ---- sessions laid together: each column has its questions folded above its conversation ---- */
-  body[data-pair] #chat .chat-pane { display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
-  body[data-pair] #chat .chat-body { display: contents; }
-  body[data-pair] #chat .chat-pane-head { grid-row: 1; }
-  body[data-pair] #chat .pane-questions {
-    grid-column: 1; grid-row: 2; visibility: visible; max-height: min(44dvh, 460px); padding-block: var(--s-4) var(--s-5);
-    border-bottom: 1px solid var(--line); background: var(--surface-2);
-  }
-  body[data-pair] #chat .log, body[data-pair] #chat .pane-files { grid-column: 1; grid-row: 3; }
-  body[data-pair] #chat .dock { grid-column: 1; grid-row: 4; }
-  body[data-pair] #chat .pane-questions .history,
-  body[data-pair] #chat .pane-questions .inbox-empty { display: none; }
-  body[data-pair] #chat .pane-questions:not(:has(.inbox-row, .inbox-pile)) { display: none; }
-
-  /* ---- an open question inside the conversation: a small reference to its card in the column ----
-     Only its title is left, on one quiet line in the question's colour; a click brings the card into
-     view beside (js/beside.js). */
-  #chat .log .ask-open { container: none; margin-block: var(--s-4) 0; }
-  #chat .log .ask-open .inbox-row {
-    min-height: 0; display: block; padding: 0; border-radius: var(--r-sm); background: none; box-shadow: none; outline: 0; cursor: pointer;
-  }
-  #chat .log .ask-open .inbox-row > :not(.inbox-content),
-  #chat .log .ask-open .inbox-content > :not(.inbox-text),
-  #chat .log .ask-open .inbox-text > :not(.inbox-question) { display: none; }
-  #chat .log .ask-open .inbox-content { display: block; padding: 0; overflow: visible; }
-  #chat .log .ask-open .inbox-text { display: flex; align-items: baseline; gap: var(--s-2); width: 100%; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); border-left: 3px solid var(--card-color); background: var(--card-bg); }
-  #chat .log .ask-open .inbox-text::before { content: "Question"; flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--card-color); }
-  #chat .log .ask-open .inbox-text::after { content: "←"; flex: none; margin-left: auto; color: var(--card-color); }
-  #chat .log .ask-open .inbox-question { display: block; font: 600 var(--t-sm)/1.35 var(--font); letter-spacing: 0; text-wrap: wrap; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  body[data-pair] #chat .log .ask-open .inbox-text::after { content: "↑"; }
-  @media (any-hover: hover) { #chat .log .ask-open .inbox-text:hover { background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); } }
+  /* ---- sessions laid together: one wide column with the questions of all of them, the conversations
+     narrow beside it, one above the other, each with its own name and composer ---- */
+  body[data-pair]:not([data-page]):not([data-scope="all"]) #session { display: grid; grid-template-columns: minmax(0, 1fr) var(--talk-w); grid-template-rows: auto minmax(0, 1fr); }
+  body[data-pair] .pane-title { grid-column: 1 / -1; }
+  body[data-pair][data-view="chat"] .group-questions { grid-column: 1; grid-row: 2; }
+  body[data-pair] #chat { grid-column: 2; grid-row: 2; flex-direction: column; overflow: hidden; border-left: 1px solid var(--line); }
+  body[data-pair] #scribble { grid-column: 1 / -1; grid-row: 2; }
+  body[data-pair] #chat .chat-pane { min-width: 0 !important; --gutter: var(--s-4) !important; }
+  body[data-pair] #chat .chat-pane + .chat-pane { border-left: 0; border-top: 1px solid var(--line-strong); }
+  body[data-pair] #chat .log-inner { padding-block: var(--s-4) var(--s-4); }
+  body[data-pair] #chat .msg { margin-top: var(--s-5); }
+  body[data-pair] #chat .hint { display: none; }
   /* The card the reference pointed at, for a moment. */
   .pane-questions .inbox-row.is-pointed { outline: 3px solid var(--fg); outline-offset: 3px; }
 }
+
+/* ---- sessions laid together, at every width: the combined list of their questions ---- */
+.group-questions { display: none; }
+body[data-pair][data-view="chat"]:not([data-page]) .group-questions {
+  display: block; min-height: 0; overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--s-6) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+}
+body[data-pair] #filter-questions { display: none; }
+body[data-pair][data-filter="questions"] .log { visibility: visible; }
+.group-list { max-width: 50.5rem; margin-inline: auto; }
+.group-list .inbox-title h2 { display: none; }
+.group-list .inbox-head { margin-bottom: var(--s-4); }
+.group-list .inbox-empty { margin-top: var(--s-2); }
+.group-questions .rich { font-size: 1rem; line-height: 1.6; overflow-wrap: anywhere; min-width: 0; }
+.group-questions .rich > * + * { margin-top: .8em; }
+.group-questions .rich p { white-space: pre-wrap; }
+.group-questions .rich ul { padding-left: 1.35em; }
+.group-questions .rich a { color: var(--accent); text-underline-offset: 3px; }
+.group-questions .rich :not(pre) > code { font: .86em/1.4 var(--mono); padding: .12em .4em; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line); }
+.group-questions .rich pre { margin: 0; padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font: .84rem/1.6 var(--mono); }
+/* Narrow, with nothing open: the list takes no room. */
+@media (max-width: 1199px) {
+  body[data-pair][data-view="chat"]:not([data-page]) .group-questions { flex: none; max-height: min(46dvh, 480px); padding: var(--s-4) var(--gutter) var(--s-5); border-bottom: 1px solid var(--line-strong); }
+  body[data-pair][data-view="chat"]:not([data-page]) .group-questions:not(:has(.inbox-row, .inbox-pile)) { display: none; }
+}
+
+/* ---- an open question inside the conversation: a small reference to its card in the column ----
+   Only its title is left, on one quiet line in the question's colour; a click brings the card into
+   view beside (js/beside.js). */
+body[data-beside] #chat .log .ask-open { container: none; margin-block: var(--s-4) 0; }
+body[data-beside] #chat .log .ask-open .inbox-row {
+    min-height: 0; display: block; padding: 0; border-radius: var(--r-sm); background: none; box-shadow: none; outline: 0; cursor: pointer;
+  }
+body[data-beside] #chat .log .ask-open .inbox-row > :not(.inbox-content),
+body[data-beside] #chat .log .ask-open .inbox-content > :not(.inbox-text),
+body[data-beside] #chat .log .ask-open .inbox-text > :not(.inbox-question) { display: none; }
+body[data-beside] #chat .log .ask-open .inbox-content { display: block; padding: 0; overflow: visible; }
+body[data-beside] #chat .log .ask-open .inbox-text { display: flex; align-items: baseline; gap: var(--s-2); width: 100%; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); border-left: 3px solid var(--card-color); background: var(--card-bg); }
+body[data-beside] #chat .log .ask-open .inbox-text::before { content: "Question"; flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--card-color); }
+body[data-beside] #chat .log .ask-open .inbox-text::after { content: "←"; flex: none; margin-left: auto; color: var(--card-color); }
+body[data-beside] #chat .log .ask-open .inbox-question { display: block; font: 600 var(--t-sm)/1.35 var(--font); letter-spacing: 0; text-wrap: wrap; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 1199px) { body[data-pair] #chat .log .ask-open .inbox-text::after { content: "↑"; } }
+@media (any-hover: hover) { body[data-beside] #chat .log .ask-open .inbox-text:hover { background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); } }

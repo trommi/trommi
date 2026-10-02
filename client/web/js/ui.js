@@ -770,7 +770,7 @@ export const SHRED_WORD = 'Shred'
 export const SHRED_SKETCH = 'shred'
 
 // Going through every open question, one after the other, in the question window: the word on its button.
-export const WALK_WORD = 'Power through'
+export const WALK_WORD = 'Go through them'   // not settled: the word is being chosen; change it here alone
 
 // Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
 // (The agents' side still says urgency: high | critical; only the words on screen are these.)

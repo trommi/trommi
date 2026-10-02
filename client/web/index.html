@@ -68,15 +68,24 @@
       </svg>
       <span>Trommi</span>
     </button></h1>
-    <nav class="sidedoors" id="brand-doors" role="menu" aria-label="Help, administration and settings" hidden>
-      <button role="menuitem" type="button" id="menu-agents">Agents</button>
-      <a role="menuitem" href="/help.html">Help</a>
-      <a role="menuitem" href="/admin.html">Admin</a>
-      <button role="menuitem" type="button" id="keys-open" aria-haspopup="dialog" aria-keyshortcuts="?"><span>Keys</span><kbd>?</kbd></button>
-      <button role="menuitemcheckbox" type="button" id="knock-sound" aria-checked="false">Knock sound</button>
-      <button role="menuitemcheckbox" type="button" id="theme-toggle" aria-label="Switch to the dark theme" aria-pressed="false"><span>Dark theme</span><i></i></button>
-      <!-- The connection: here while all is well; when it is not, the logo says so too (app.css). -->
-      <p class="conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text">Connecting</span></p>
+    <nav class="sidedoors" id="brand-doors" role="menu" aria-label="Jump, places and settings" hidden>
+      <!-- Jump: type to go to a session, a question by its number, the inbox, the agents, the pad. -->
+      <input id="jump-field" type="search" placeholder="Jump to…" aria-label="Jump to a session, a question number or a place" autocomplete="off" spellcheck="false">
+      <div id="jump-results" role="listbox" aria-label="Places"></div>
+      <!-- Projects: one today, so a quiet line; a list once there are more. -->
+      <p class="menu-project" id="project-current">Project <b>Trommi</b></p>
+      <div class="menu-grid">
+        <button role="menuitem" type="button" id="menu-agents">Agents</button>
+        <a role="menuitem" href="/help.html">Help</a>
+        <a role="menuitem" href="/admin.html">Admin</a>
+        <button role="menuitem" type="button" id="keys-open" aria-haspopup="dialog" aria-keyshortcuts="?"><span>Keys</span></button>
+      </div>
+      <!-- The foot: the connection, and two small switches. -->
+      <div class="menu-foot">
+        <p class="conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text">Connecting</span></p>
+        <button role="menuitemcheckbox" type="button" id="knock-sound" aria-checked="false" aria-label="Knock sound" title="Knock sound: a soft double knock when an urgent question arrives"></button>
+        <button role="menuitemcheckbox" type="button" id="theme-toggle" aria-label="Switch to the dark theme" aria-pressed="false"></button>
+      </div>
     </nav>
   </div>
   <!-- Where to go; at the right end only the pad's control (put before #focus-open by js/padlink.js). -->

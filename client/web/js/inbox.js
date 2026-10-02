@@ -423,6 +423,8 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     hint(away, 'list.shred')
     acts.append(away)
   }
+  // (With nothing but Shred in it, it and its dot show only while Shift is held.)
+  if (!acts.querySelector('.inbox-trust')) acts.classList.add('is-shift-only')
   if (acts.firstChild) byline.append(sep(), acts)
   // What the card carries: a small drawing and the count per kind; the whole list as its tooltip.
   // (Beside a picture it stands under the picture; this copy is for where there is no room for that.)
@@ -755,6 +757,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     // Questions need an answer; info cards are only to be read. The line tells them apart:
     // "4 questions need you · 2 to read".
     const toRead = fresh.filter(c => c.kind === 'info').length, asking = fresh.length - toRead
+    let walkTools = null   // the button into the walk, put into the head below
     const circled = el('span', 'inbox-circled', String(asking))
     const needs = asking === 1 ? ' question needs you.' : ' questions need you.'
     const reading = el('span', 'inbox-toread-count')
@@ -779,15 +782,14 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       walk.setAttribute('aria-keyshortcuts', 'G F')
       walk.append(el('span', null, WALK_WORD), sketch('go'))
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
-      const tools = el('div', 'inbox-tools')
-      tools.append(walk)
-      queueMicrotask(() => head.append(tools))
+      walkTools = el('div', 'inbox-tools')
+      walkTools.append(walk)
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : 'Nothing needs you.')
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
     else title.append(el('h2', null, 'Inbox'), line)
-    head.replaceChildren(...(agent && !open.length ? [] : [title]))
+    head.replaceChildren(...(agent && !open.length ? [] : [title]), ...(walkTools ? [walkTools] : []))
     // (The sheet of keys opens from the "?" in the bar, index.html #keys-open, and by the key "?".)
 
     // One group per sender. Starred sessions come first, then whoever has the most urgent question.
@@ -1012,6 +1014,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       'list.no': onRow(node => press(node.querySelectorAll('.inbox-answer.is-thumb')[0])),
       'list.later': onRow(node => press(node.querySelector('.inbox-later'))),
       'list.shred': onRow(node => press(node.querySelector('.inbox-shred'))),
+      'list.trust': onRow(node => press(node.querySelector('.inbox-trust'))),
       // Several answers allowed: Enter sends what is picked, and never toggles the option in focus.
       'list.send': marked(node => {
         const send = node.querySelector('.inbox-send')

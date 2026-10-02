@@ -3,10 +3,10 @@
 // The card itself is the surface. A click on what is asked (a paragraph, the title, empty space) puts a caret
 // there: a small note that stays with what was clicked. The pen scribbles over everything that scrolls. Both
 // are "marks":
-//   { id, anchor: { kind: 'card' | 'section' | 'option', index?, key?, quote? }, text }      a written note
+//   { id, anchor: { kind: 'card' | 'text' | 'option', key?, quote? }, text }               a written note
 //   { id, anchor: { kind: 'card' }, strokes: [{ color, pts: [x0, y0, x1, y1, …] }] }          a scribble
-// A section's index counts the blocks of the card's text (quote: how it begins, to find it again after a
-// rewording). Stroke points are fractions of the content's WIDTH (y too), so a scribble keeps its place while the
+// A note on a piece of the text carries how that piece begins (quote), to find it again after a rewording; a
+// paragraph that is an option counts as that option. Stroke points are fractions of the content's WIDTH (y too), so a scribble keeps its place while the
 // column keeps its width and scales with it otherwise.
 //
 //   const marks = cardMarks({ scroll, blocks(), labelOf(key), onChange() })
@@ -117,15 +117,13 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
   const anchorOf = target => {
     const all = blocks()
     const block = all.find(b => b.contains(target))
-    if (!block) return { kind: 'card' }
-    return { kind: 'section', index: all.indexOf(block), quote: block.textContent.trim().replace(/\s+/g, ' ').slice(0, 48) }
+    if (!block || block.classList.contains('focus-title')) return { kind: 'card' }
+    if (block.dataset.key) return { kind: 'option', key: block.dataset.key }
+    return { kind: 'text', quote: block.textContent.trim().replace(/\s+/g, ' ').slice(0, 48) }
   }
   /** Where a note of that anchor stands: after its block, under its option, or at the end of the text. */
   function placeOf(anchor) {
-    if (anchor.kind === 'section') {
-      const all = blocks()
-      return all.find(b => b.textContent.trim().replace(/\s+/g, ' ').startsWith(anchor.quote ?? '\u0000')) ?? all[anchor.index] ?? null
-    }
+    if (anchor.kind === 'text') return blocks().find(b => !b.classList.contains('focus-mark') && b.textContent.trim().replace(/\s+/g, ' ').startsWith(anchor.quote ?? '\u0000')) ?? null
     if (anchor.kind === 'option') return scroll.closest('.focus-card')?.querySelector(`.focus-opt[data-key="${CSS.escape(anchor.key)}"]`) ?? null
     return null
   }
@@ -163,7 +161,7 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
   }
   function note(anchor = { kind: 'card' }) {
     // one note per place: a second click there goes on writing the first
-    let mark = list.find(m => m.text != null && m.anchor.kind === anchor.kind && m.anchor.key === anchor.key && (anchor.kind !== 'section' || m.anchor.quote === anchor.quote))
+    let mark = list.find(m => m.text != null && m.anchor.kind === anchor.kind && m.anchor.key === anchor.key && (anchor.kind !== 'text' || m.anchor.quote === anchor.quote))
     if (!mark) { mark = { id: newId(), anchor, text: '' }; list.push(mark) }
     paintNotes()
     noteNodes.get(mark.id)?.querySelector('textarea').focus({ preventScroll: false })
@@ -185,7 +183,7 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
   }
 
   // ── what the agent gets ──
-  const refer = anchor => (anchor.kind === 'option' ? `on option "${labelOf(anchor.key)}"` : anchor.kind === 'section' ? `on the paragraph beginning "${anchor.quote}"` : 'general')
+  const refer = anchor => (anchor.kind === 'option' ? `on option "${labelOf(anchor.key)}"` : anchor.kind === 'text' ? `on the paragraph beginning "${anchor.quote}"` : 'general')
   const written = () => list.filter(m => m.text?.trim())
   function text() {
     const notes = written().filter(m => m.anchor.kind !== 'option')

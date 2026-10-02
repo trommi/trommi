@@ -197,3 +197,32 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
 - The working trace is in the session title too. `summary()` and `badge()` are exported for the Ledger.
 - The old roster (`mountRoster`, `.roster-*`) is still built and hidden by ledger.css; `dev/ui-test.mjs` names its selectors
   in forty places, so it was left for QA and the Layout worker to retire together.
+
+## Later the same day: what replaced parts of the notes above
+- **No bar.** On wide screens `.topbar` is a small pill floating at the top centre (`js/bar.js`): the Trommi mark and name
+  open a menu centred under it with a jump field (`#jump-field`: a session by name, a question by "12" / "Nr. 12", Inbox,
+  Agents, Scratchpad; `openJump()` is exported for a key, action name `go.jump`), the project (one today), Agents, Help,
+  Admin, Keys (`#keys-open`), Knock sound, Dark theme (`#theme-toggle`) and the connection. A lost connection shows at
+  the pill. `#focus-open`, `.footnav` (`#nav-inbox`, `#nav-roster`) stay in the page, hidden, for the wiring and the keys.
+  A phone keeps its top bar with the logo at the left.
+- **Floating at the bottom right**, on every page: the crowned speech bubble (`.quick-open`, quick send as a small sheet above
+  it, "/" opens it) and the pad's control (restyled from app.css). In a session they stand above the composer (`--float-up`).
+- **Sidebar**: the Inbox entry is sticky at the top and shows its count (with the knuckles when something knocks); session
+  rows show `sketch('stack')` or the red hand, no numbers; nothing for idle and disconnected.
+- **Rows**: the gutter holds only who asks (mark and name beside the middle of the run's first row, sticky; `runBracket()`);
+  number and age are the card's byline again. The Snooze corner is a page curl: the fold grows in from the corner
+  (`.inbox-later-ear` grows from `--tip` to `--ear`), the word and z z z stand on the underside. "Shred" shows on a row only
+  while Shift is held (`body[data-shift]`, set in bar.js), otherwise in the opened card (`.inbox-shred-open`). Keys:
+  `list.trust`, `list.shred` are provided.
+- **Heading**: "4 knocks · 16 questions need you from 4 agents · 1 to read" as a sentence ("agents" is a link), and a real
+  button into the walk (`.inbox-walk.inbox-go`, word in `WALK_WORD`, "Go through them" until the word is chosen).
+- **Piles**: folded, one quiet line each: the word and a `tally()` of at most three gates; nothing else. "With the agent" is
+  called "Waiting".
+- Suite at the end: `--only inbox,later,choose,admin` passes except "the window has no address of its own: /q/N" (the
+  address is app.js routing, not this worker's).
+- **Snooze is "slide"** (the user's choice on card Nr. 126; it replaces the page curl): a paper label tucked behind the
+  row's right edge at the top, a nub with z z z peeking out; under pointer or keyboard it slides out with the word. In the
+  inbox on a wide page (inbox width over 1000 px) it lies wholly in the right margin and the tiles sit 12 px from the edge
+  again; elsewhere it sits inside the right edge, slides inward, and the tiles are set in 31 px. One CSS block, `.inbox-later`.
+- **The centre menu is compact** (244 px): jump field, a quiet project line, Agents / Help / Admin / Keys two by two, and a
+  foot with the connection and two small switches (knock sound, theme).
