@@ -1,7 +1,7 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, sweepMark, ago, DRAWINGS, drawingMark, KNOCK_SKETCH, isKnock, knocksText } from './ui.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, sweepMark, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText } from './ui.js'
 import { setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -14,13 +14,17 @@ export function hueOf(id) {
   return HUES[h % HUES.length]
 }
 
+/** The colour of a session's mark: a named drawing has a colour of its own, wherever it shows; a seeded
+ *  scribble takes the colour that comes from the session's id. */
+export const hueFor = agent => drawingHue(drawingOf(agent.mark)) ?? hueOf(agent.id)
+
 // Every session has its own scribble, so it is recognised before its name is read.
 /** vip: draw the crown of a starred session on it. Where the crown is a switch of its own beside the
  *  mark (crownToggle), the caller passes false. */
 export function avatar(agent, { vip = true } = {}) {
   const node = el('span', 'agent-avatar')
   node.append(doodle(agent.mark ?? agent.id))
-  node.style.setProperty('--hue', hueOf(agent.id))
+  node.style.setProperty('--hue', hueFor(agent))
   if (!agent.online) node.classList.add('is-offline')
   // A session that matters most: a scribbled crown sits crooked on the corner of its mark.
   if (agent.starred && vip) { node.dataset.vip = ''; node.append(crown()) }
@@ -46,7 +50,7 @@ export function crownToggle(agent, cls = '') {
 /** Sessions laid together: their scribbles over each other inside one loop drawn by hand. */
 export function pairAvatar(members) {
   const node = el('span', 'agent-pair')
-  node.append(pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueOf(a.id), vip: Boolean(a.starred) }))))
+  node.append(pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueFor(a), vip: Boolean(a.starred) }))))
   if (!members.some(a => a.online)) node.classList.add('is-offline')
   node.setAttribute('aria-hidden', 'true')
   return node
@@ -74,9 +78,15 @@ function summary(all, members) {
 // rebuilt does not send it back to the start. Disconnected: the same in grey, standing still.
 // Hand and sweep stand on one axis down the column; the number beside a hand has its own narrow place.
 const SWEEP_TURN = 3400
-function badge({ open, online, running, stuck }) {
+// With questions open it is a button of its own beside the row's entry: a click goes through that
+// session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
+function badge({ open, online, running, stuck }, who = '', walk = null) {
   if (!open && !(online && running)) return null
-  const node = el('span', 'agent-badge')
+  const node = el(open && walk ? 'button' : 'span', 'agent-badge')
+  if (open && walk) {
+    node.type = 'button'
+    node.addEventListener('click', e => { e.stopPropagation(); walk() })
+  }
   const questions = open === 1 ? '1 question' : `${open} questions`
   const hand = online ? stuck || !running : stuck
   const count = open ? el('b', null, String(open)) : null
@@ -98,6 +108,12 @@ function badge({ open, online, running, stuck }) {
     node.append(spot)
   }
   if (!online) node.dataset.offline = ''
+  if (open && walk) {
+    // What a click does comes first; the state it shows follows.
+    const go = `Go through ${who ? `${who}'s ` : 'the '}${questions}`
+    node.setAttribute('aria-label', `${go} (${node.title.toLowerCase()})`)
+    node.title = `${go} · ${node.title}`
+  }
   return node
 }
 
@@ -122,7 +138,8 @@ export function tellApart(agents) {
 }
 
 /** The sidebar. onSelect(id | null) is called when the user picks the inbox (null), a session or a group. */
-export function mountAgents(root, { onSelect }) {
+/** onWalk(id): go through the open questions of that session or group, one after the other. */
+export function mountAgents(root, { onSelect, onWalk }) {
   let signature = ''
   let lastState = null
 
@@ -198,7 +215,6 @@ export function mountAgents(root, { onSelect }) {
         sub: single ? apart.get(single.id) : '',
         lead: single ? avatar(single, { vip: false }) : pairAvatar(u.members),
         active: scope === u.id,
-        mark: badge(u),
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
       })
       row.dataset.unit = u.id
@@ -221,6 +237,9 @@ export function mountAgents(root, { onSelect }) {
         cut.addEventListener('click', () => { for (const a of u.members) editSession(a.id, { group: null }).catch(() => {}) })
         row.append(cut)
       }
+      // The state at the end of the row, a button of its own where there are questions to go through.
+      const state = badge(u, pairName(u.members), onWalk && (() => onWalk(u.id)))
+      if (state) { row.classList.add('has-badge'); row.append(state) }
       if (!u.online) {
         row.classList.add('is-offline')
         const away = el('button', 'agent-archive')
@@ -349,7 +368,7 @@ export function mountAgents(root, { onSelect }) {
   }, true)
   root.addEventListener('pointerdown', e => {
     const row = e.target.closest('.agent-row[data-unit]')
-    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut, .crown-toggle')) return
+    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut, .crown-toggle, button.agent-badge')) return
     const ids = row.dataset.members.split(' ')
     // In a group the scribble under the pointer is the one that is taken out.
     const agent = e.target.closest('[data-member]')?.dataset.member ?? ids.at(-1)
@@ -511,7 +530,6 @@ export function openMarkPicker(agent, anchor) {
   picker?.remove()
   const dialog = picker = el('dialog', 'mark-picker')
   dialog.setAttribute('aria-label', `Choose a drawing for ${agent.name}`)
-  dialog.style.setProperty('--hue', hueOf(agent.id))
   const grid = el('div', 'mark-grid')
   grid.setAttribute('role', 'radiogroup')
   grid.setAttribute('aria-label', 'Drawing')
@@ -519,7 +537,9 @@ export function openMarkPicker(agent, anchor) {
   for (const name of DRAWINGS) {
     const b = el('button', 'mark-tile')
     b.type = 'button'
-    b.title = name
+    // Each drawing in its own colour; its meaning is the tooltip.
+    b.style.setProperty('--hue', drawingHue(name))
+    b.title = DRAWING_INFO.find(d => d.name === name)?.meaning || name
     b.setAttribute('role', 'radio')
     b.setAttribute('aria-label', name)
     b.setAttribute('aria-checked', String(agent.mark === drawingMark(name)))

@@ -367,11 +367,90 @@ const NAMED = {
   crown: [straight([[5, 24], [4.6, 9.6], [11, 17], [16, 7], [21, 17], [27.4, 9.6], [27, 24.2], [5.3, 24.4]])],
   flame: [[[15.6, 3.6], [15.6, 3.6], [21, 10.4], [24.4, 17.4], [22.6, 24], [16.6, 28], [10.4, 25.6], [7.8, 19.6], [9.6, 13.6], [12.6, 10.4], [15.2, 4]], [[16, 26.4], [13, 22.6], [16.2, 16.6], [16.2, 16.6], [19.2, 22.4], [16.4, 26.2]]],
   boat: [straight([[4, 19], [28, 19.2], [23.6, 26.6], [8.4, 26.4], [4.4, 19.4]]), straight([[15, 19], [15.2, 4.4]]), straight([[15.4, 5], [24, 16.4], [15.5, 16.6]])],
+  // ---- the kinds of work agents do: a drawing each, so a session can wear what it is busy with ----
+  browser: [straight([[4, 6], [28, 5.6], [28.2, 26], [3.8, 26.4], [4.2, 5.6]]), straight([[4.2, 11.4], [28, 11]]), straight([[7.2, 8.4], [8, 8.6]]), [[8, 18], [13, 16.4], [17.6, 19], [23.6, 17]]],
+  terminal: [straight([[3.8, 6], [28, 5.8], [28.2, 26], [4, 26.2], [4, 5.6]]), straight([[8.4, 12], [13.6, 16], [8.6, 20]]), straight([[15.8, 20.6], [22.6, 20.4]])],
+  database: [[[6, 9], [9, 6.4], [16, 5.4], [23, 6.4], [26, 9], [23, 11.6], [16, 12.6], [9, 11.6], [6.2, 9.3]], straight([[6, 9.4], [6.2, 23]]), straight([[26, 9.4], [25.8, 23]]), [[6.2, 23], [9, 25.8], [16, 26.8], [23, 25.8], [25.8, 23]], [[6.2, 16], [9, 18.6], [16, 19.6], [23, 18.6], [25.8, 16]]],
+  phone: [straight([[10, 3.8], [22, 4], [22.4, 28], [9.8, 28.2], [10.2, 3.4]]), straight([[14.2, 7], [18, 7]]), straight([[15.6, 24.6], [16.6, 24.8]])],
+  brush: [straight([[26.4, 4.4], [15, 16]]), [[15, 16], [12.2, 14.8], [10.4, 17.4], [13.2, 19.8], [16, 17.6]], [[11, 17.2], [7.2, 19.2], [6, 23], [4.2, 26.8], [9.2, 26.2], [12.8, 23.6], [13.6, 20]]],
+  flask: [straight([[11, 4.4], [21, 4.2]]), straight([[12.8, 4.6], [12.8, 12]]), straight([[19.2, 4.6], [19.2, 12]]), [[12.8, 12], [9, 18.4], [6, 24], [7.6, 27.4], [16, 28], [24.4, 27.4], [26, 24], [23, 18.4], [19.2, 12]], [[9.2, 20.6], [13, 19.4], [18, 21.2], [22.8, 20]]],
+  lock: [[[10.4, 14], [10.2, 9], [13, 5], [16, 4.2], [19, 5], [21.8, 9], [21.6, 14]], straight([[7, 14], [25, 13.8], [25.2, 27], [6.8, 27.2], [7.2, 13.4]]), straight([[16, 18.6], [16.1, 22.8]])],
+  book: [straight([[16, 8.2], [16.2, 27]]), [[16, 8], [12, 5.8], [4.2, 6.6], [4.1, 15.6], [4, 24.6], [12, 24.4], [16, 27]], [[16, 8], [20, 5.8], [27.8, 6.6], [27.9, 15.6], [28, 24.6], [20, 24.4], [16.2, 27]]],
+  rocket: [[[16, 3.2], [11.6, 9], [10.8, 16.6], [12, 22], [20, 22], [21.2, 16.6], [20.4, 9], [16.2, 3.5]], [[16, 10], [18, 12], [16, 14], [14, 12], [16.2, 9.9]], straight([[10.8, 16.6], [6.4, 23.6], [11.8, 21.4]]), straight([[21.2, 16.6], [25.6, 23.6], [20.2, 21.4]]), [[14, 24.6], [16, 29], [18, 24.6]]],
+  mic: [[[16, 3.8], [12.6, 5.6], [12, 10], [12.4, 15], [16, 17.4], [19.6, 15], [20, 10], [19.4, 5.6], [16.3, 3.7]], [[8, 13.4], [9, 18.4], [12.6, 21.6], [16, 22.4], [19.4, 21.6], [23, 18.4], [24, 13.4]], straight([[16, 22.6], [16.1, 27.4]]), straight([[11.4, 27.6], [20.6, 27.4]])],
+  bug: [[[16, 9], [11, 12], [10, 18], [12, 24], [16, 26], [20, 24], [22, 18], [21, 12], [16.2, 8.9]], [[12.6, 8.8], [16, 5.4], [19.4, 8.8]], straight([[16, 9.6], [16.1, 25.6]]), straight([[10.2, 14], [5, 11.4]]), straight([[9.8, 18.4], [4.4, 18.6]]), straight([[11, 22.6], [6, 26.2]]), straight([[21.8, 14], [27, 11.4]]), straight([[22.2, 18.4], [27.6, 18.6]]), straight([[21, 22.6], [26, 26.2]])],
+  branch: [straight([[9, 7.6], [9.2, 24.8]]), [[9, 4], [11, 5.8], [9, 7.6], [7, 5.8], [9.2, 3.9]], [[9.2, 25], [11.2, 26.8], [9.2, 28.6], [7.2, 26.8], [9.4, 24.9]], [[23, 9], [25, 10.8], [23, 12.6], [21, 10.8], [23.2, 8.9]], [[23, 12.8], [22, 17.6], [14.6, 19], [9.6, 22.4]]],
 }
 const KINDS = ['burst', 'spiral', 'blob', 'flower', 'waves', 'knot', 'bolt', 'hatch']   // DOODLES, in their order
 /** The drawings a session can be given: forty names. A session's mark is then "draw:<name>". */
 export const DRAWINGS = [...KINDS, ...Object.keys(NAMED)]
 export const drawingMark = name => `draw:${name}`
+/** The drawing a mark names ("draw:rocket" -> "rocket"), or null for a seeded scribble. */
+export const drawingOf = mark => { const name = /^draw:(.+)$/.exec(String(mark ?? ''))?.[1]; return DRAWINGS.includes(name) ? name : null }
+// Every drawing has one colour of its own, wherever it shows: a hue, turned by the golden angle from
+// one drawing to the next, so neighbours in the picker never look alike. (A session with a seeded
+// scribble instead of a named drawing keeps the colour that comes from its id.) The hue is used as
+// hsl(hue 62% 30%) on light and hsl(hue 70% 76%) on dark, which reads for every hue.
+export const drawingHue = name => { const at = DRAWINGS.indexOf(name); return at < 0 ? null : Math.round((162 + at * 137.508) % 360) }
+// What each drawing stands for, in one line: for the human who picks one, and for an agent that picks
+// the one that fits its task (the hub offers this list; client/web/drawings.json is written from it
+// by dev/drawings-json.mjs).
+const MEANING = {
+  burst: 'rays from a point: something new, a spark, a first idea',
+  spiral: 'a wound line: research, going deeper into one thing',
+  blob: 'a circle drawn twice: general work, a bit of everything',
+  flower: 'loops round a point: polish, care for details',
+  waves: 'three wavy lines: streams, data flowing, sync',
+  knot: 'a line that crosses itself: a tangle to sort out, refactoring',
+  bolt: 'a zigzag stroke: speed, performance',
+  hatch: 'a shaded patch: filling in, bulk work',
+  star: 'a star: the important one, highlights',
+  zigzag: 'a zigzag: charts, metrics, ups and downs',
+  eight: 'a figure eight: loops, recurring jobs, schedules',
+  arrow: 'an arrow: migration, moving things from here to there',
+  leaf: 'a leaf: clean-up, something small and fresh',
+  eye: 'an eye: review, watching, monitoring',
+  key: 'a key: access, accounts, login',
+  anchor: 'an anchor: stability, infrastructure',
+  kite: 'a kite: experiments, prototypes',
+  comb: 'a comb: tidying, formatting, linting',
+  ladder: 'a ladder: step-by-step work, upgrades',
+  heart: 'a heart: the core, health checks',
+  moon: 'a moon: night jobs, the dark theme',
+  cloud: 'a cloud: cloud services, hosting',
+  drop: 'a drop: leaks, small fixes',
+  flag: 'a flag: milestones, releases, feature flags',
+  house: 'a house: the home page, the main app',
+  tree: 'a tree: structure, the file tree',
+  fish: 'a fish: search, catching things',
+  bird: 'a bird: messages, notifications',
+  cup: 'a cup: slow background work, a break',
+  bell: 'a bell: alerts, reminders',
+  cross: 'a cross: removing, deleting',
+  triangle: 'a triangle: warnings, risks',
+  square: 'a square: a plain block, layout',
+  diamond: 'a diamond: quality, the precious part',
+  grid: 'a grid: tables, layout grids',
+  mountain: 'a mountain: a big task, the long climb',
+  umbrella: 'an umbrella: protection, error handling',
+  crown: 'a crown: the lead, coordination',
+  flame: 'a flame: urgent work, hot fixes',
+  boat: 'a boat: shipping, delivery',
+  browser: 'a browser window: web UI, front end',
+  terminal: 'a terminal prompt: server, command line, back end',
+  database: 'a database cylinder: database, storage',
+  phone: 'a phone: mobile apps',
+  brush: 'a brush: design, visuals',
+  flask: 'a flask: tests, QA, trying things out',
+  lock: 'a lock: security, encryption',
+  book: 'an open book: documentation, writing',
+  rocket: 'a rocket: deploy, operations, release',
+  mic: 'a microphone: speech, audio',
+  bug: 'a bug: bug hunting, debugging',
+  branch: 'a branch: version control, merging',
+}
+/** Every drawing a session can wear: its name (the mark is "draw:<name>"), what it stands for, its hue. */
+export const DRAWING_INFO = DRAWINGS.map(name => ({ name, meaning: MEANING[name] ?? '', hue: drawingHue(name) }))
 const linePath = points => `M${points.map(([x, y]) => `${x.toFixed(1)} ${y.toFixed(1)}`).join(' L')}`
 
 /** A scribbled mark that belongs to one session. Returns an SVG element sized by CSS, drawn in currentColor.
@@ -590,6 +669,8 @@ const SKETCH = {
     [[10, 6.8], [10.3, 10.6]], [[13.4, 6.6], [13.5, 10.8]],
     [[19.6, 6], [21.6, 4.2]], [[20.6, 10.2], [22.8, 9.6]],
   ],
+  // a sun coming up over a line: wake a snoozed question
+  wake: [[[6.2, 16.2], [7.6, 11.6], [12, 9.4], [16.4, 11.4], [17.8, 16.2]], [[3, 16.6], [12, 16.2], [21, 16.5]], [[12, 3.6], [12.1, 6.2]], [[5.4, 7.2], [7.2, 9]], [[18.6, 7], [16.9, 8.8]]],
   // a table: a sheet ruled into cells
   grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
@@ -610,6 +691,9 @@ const SKETCH = {
 // Putting a question off: the one word for it everywhere (button, tag, pile), and the name of its drawing for sketch().
 export const LATER_WORD = 'Snooze'
 export const LATER_SKETCH = 'snooze'
+// Fetching a snoozed question back: its word and its drawing (a sun coming up).
+export const WAKE_WORD = 'Wake up'
+export const WAKE_SKETCH = 'wake'
 
 // Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
 // (The agents' side still says urgency: high | critical; only the words on screen are these.)

@@ -1,5 +1,14 @@
 # UI worker log (index.html, app/store/inbox/agents/chat/history/ui.js, app.css, tokens.css)
 
+## House rule: hand-drawn is the accent
+From the user: "Maybe a bit overdone with the hand-drawn. The buttons are often simply normal, and then something like a
+circle is hand-drawn in it. We should not overdo it."
+- Controls and surfaces are clean and normal: quiet rounded shapes like the option tiles. No wobbly outlines around buttons,
+  inputs, menus or bar entries, no tilted controls.
+- Drawn by hand is the accent only: the small drawing inside a button (`sketch()`), a circle, a mark, the session doodles,
+  the crown, the marker behind an advised label, the underline under `__words__`, a slight tilt of a paper edge.
+- One drawing family: everything comes from the pen functions in `js/ui.js`. No stock icons, nothing copied from other products.
+
 Running notes, newest at the bottom. Nothing here is committed by the worker.
 
 ## 1. Later stack: done
@@ -94,3 +103,57 @@ against that board), headless Chromium at 1440x900 and 400x860, light and dark.
 - Not verified: copying a link (headless Chromium has no clipboard), touch drag on a real phone, Safari.
 - Others work in these files now: keys (inbox.js, app.js, index.html), Focus (focus.js, focus.css), the coordinator (store.js).
 
+
+## Round three (third UI worker): what the user asked for while it ran, in the order it landed
+Checked on an own demo board (trio on 8804, restarted once from the current tree, plus a scripted session "Probe" via
+`dev/session.mjs` for cards with advice, urgency and underlined text), headless Chromium with real pointer, touch and key
+events at 1440x900 and 400x860, light and dark. Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `z-*` final, `post-*` sheets).
+
+- **Sidebar group.** No "+": names laid on sit slightly askew (`.agent-text strong + strong`; a phone's one-line strip keeps the
+  plus). Scissors (`sketch('snip')`, straight blades) show only under the pointer or the keyboard, in the gap before the badge;
+  a group row is as tall as its names (52 px for two). The loop round marks and names exists as a test:
+  `<html data-grouploop="all">` (flag `#loop-all`, set in index.html), default is the loop round the marks. Decision filed (Nr. 117).
+- **Marks and badges without a ground** (user: "Both"). `.agent-avatar` and the inbox's marks are the drawing alone in the
+  session's colour; the flag is gone. Badge (`badge()` in agents.js): red `bareHand()` with the count beside it; at work a
+  `sweepMark()` that turns round the count (static under reduced motion); disconnected grey. Hand and sweep share one 30 px
+  place, the count beside a hand has its own 14 px. The ring with the drop is gone.
+- **VIP is a crown** (`crown()`), crooked on the corner of the mark; the gold tab, `VIP_LABEL` and `--gold-hi/--gold-ink` are
+  gone, `--gold-pen` is new. The crown is its own click target (`crownToggle()` in agents.js, 28 px, "Make VIP" / "Remove VIP"):
+  sidebar row, session title, Agents page (there it keeps the class `roster-star`). In a group's joint mark the crown is part
+  of the drawing (`pairDoodle` members with `vip: true`) and not clickable.
+- **Reordering by drag.** Middle of another row = lay together (the loop opens), upper/lower quarter or between rows = move
+  there (thin line), clear of the list = pull out of the group. A group moves as one. Alt+arrow moves the row that holds the
+  keyboard (handled in agents.js until keys.js has an entry; `mountAgents().move(by)`). Order: `POST /session { agent, before }`
+  (`moveSession` in store.js); for a hub that sends no `position` the order is kept per browser (`trommi-order`, clearly marked
+  FALLBACK in store.js) and dropped as soon as positions arrive. Verified both ways.
+- **Inbox list.** One continuous list at one pitch, no sender headings; `section.inbox-group[data-sender]` still holds a
+  sender's rows. Who asks stands in the byline of each row (`.inbox-byline`: mark and name `.inbox-from`, `.inbox-nr` "Nr. 12",
+  age, and what the card carries `.inbox-carries`, e.g. "6 pictures"). The count beside the heading is the way into the walk
+  (`.inbox-walk`); the "Go through them" pill and the "?" beside it are gone (the "?" is `#keys-open` in the bar).
+  After an answer the next row lands where the answered one stood (`landOn()` scrolls by what is missing, also at the end of the list).
+- **Knocks.** Urgent and blocking questions: label "Knock" / "Knock! Blocking" / "Knock! Permission" with `sketch('knock')`,
+  "3 knocks · 9 questions need you", the inbox's badge shows the knocks first, the title reads "(3 knocks) Trommi". A new one
+  arrives with two small nudges, its session's mark too (`js/knock.js`); sound off by default, switch "Knock sound" in the logo menu.
+  Constants in ui.js: `KNOCK_WORD`, `KNOCK_BLOCKING_WORD`, `KNOCK_PERMISSION_WORD`, `KNOCK_SKETCH`, `isKnock()`, `knockWord()`, `knocksText()`.
+- **Snooze.** The word is `LATER_WORD` ("Snooze", `sketch('snooze')`); waking is `WAKE_WORD` ("Wake up", `sketch('wake')`).
+  The control is a dog-ear at the row's top right (`.inbox-later`, a 30x46 strip right of the tiles, which are set in by 31 px):
+  it unfolds under the pointer or keyboard (flap turns back, a tab with the word turns up from the top edge); a finger's first
+  tap unfolds, the second snoozes.
+- **Piles at the foot** (`pile()` in inbox.js, exported): Snoozed, With the agent (cards handed back, `state.handed`), Answered.
+  Side by side, small (top card, up to three edges, drawing and count); a click or Enter fans one open in place, full width,
+  one at a time. Answered rows are built when the pile first opens. Rows in a folded pile are out of the keyboard's reach.
+- **Bar.** Logo is a menu (`js/bar.js`: Help, Admin, Knock sound; arrows, Escape, click beside it), places with drawings, the
+  two tools as plain quiet controls (the pad's hand-drawn box is overridden in app.css), connection as a dot that speaks only
+  when it is not there, keys "?", theme as scribbled moon/sun.
+- **Advice** is a highlighter swipe behind the label (`adviceLoop()`, one pass per line, measured from the text, redrawn on
+  resize; darker band on filled tiles; a bare thumb gets a short swipe). The pointing hand stays as the unused export `pointingHand()`.
+  **Underline**: `__words__` in a text get a drawn underline (`.rich-under`); a text that underlines more than a third of itself is shown plainly.
+- **Also**: Markdown tables render (`.rich-table`); an unfolded "Choose" row does not repeat a text the row already shows;
+  snoozed rows are the same size as open ones; asset cards inside a text are drawn again when the asset is withdrawn
+  (`refreshAssetLinks()`); the admin page is English.
+- New drawing names (for the iOS port; no existing name or seed changed): sketch `snip unfold go moon sun frame question
+  keycap tray heads grid knock wake` (`snooze`, `pen`, `clip` came from the Focus worker), functions `crown() groupLoop()
+  bareHand() sweepMark() pointingHand()`, and `adviceLoop()` now draws the marker.
+- Not done: kite and diamond still look alike (changing either would change an existing name's output). The `info` card kind
+  (no contract yet). Not verified: the Focus window (it did not load while this was checked: an error in focus.js), touch
+  drag on a real phone, Safari, the knock sound by ear.

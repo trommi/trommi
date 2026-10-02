@@ -499,6 +499,71 @@ if (onBoard) {
   check('board: P opens it over the Focus window, Esc returns into Focus', inFocus.focus && at.open && onTop === 'IFRAME' && !after.open && after.focus && after.path === inFocus.path, `${inFocus.path} → ${at.path} → ${after.path}`)
   await s.key('Escape')
 
+  // send an area: frame a part of the paper, pick the session, and it is cut out and flies there
+  await s.js(`[...document.querySelectorAll('#agents .agent-entry')][1].click(); await new Promise(r => setTimeout(r, 400))`)
+  await clickOn(s, '#pad-open')
+  await s.js(`${FRAME}
+    const w = frame.contentWindow
+    const cv = doc.createElement('canvas'); cv.width = 320; cv.height = 200
+    const c = cv.getContext('2d'); const g = c.createLinearGradient(0, 0, 320, 200)
+    g.addColorStop(0, '#1b6a57'); g.addColorStop(1, '#f2c14e'); c.fillStyle = g; c.fillRect(0, 0, 320, 200)
+    c.fillStyle = '#fff'; c.font = '600 28px sans-serif'; c.fillText('screenshot.png', 40, 110)
+    const blob = await new Promise(r => cv.toBlob(r, 'image/png'))
+    const dt = new w.DataTransfer(); dt.items.add(new w.File([blob], 'screenshot.png', { type: 'image/png' }))
+    doc.getElementById('pad').dispatchEvent(new w.DragEvent('drop', { bubbles: true, cancelable: true, clientX: 1050, clientY: 560, dataTransfer: dt }))
+    await new Promise(r => setTimeout(r, 900))`)
+  await s.key('Escape')
+  await s.key('f')
+  await sleep(600)
+  const toolBefore = (await s.js(padSummary)).tool
+  await s.key('a')
+  const box = await s.js(`${FRAME} const v = pad.view(), e = pad.elements(); const x0 = Math.min(...e.map(e => e.x)) * v.z + v.x, y0 = Math.min(...e.map(e => e.y)) * v.z + v.y, x1 = Math.max(...e.map(e => e.x + e.w)) * v.z + v.x, y1 = Math.max(...e.map(e => e.y + e.h)) * v.z + v.y; return { x0, y0, x1, y1, n: e.length, types: e.map(e => e.type), z: v.z }`)
+  // the frame takes the upper left three quarters: some elements whole, some cut by its edge
+  const fx0 = box.x0 - 14, fy0 = box.y0 - 14, fx1 = box.x0 + (box.x1 - box.x0) * 0.8, fy1 = box.y0 + (box.y1 - box.y0) * 0.86
+  await s.page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: fx0, y: fy0, button: 'left', buttons: 1, clickCount: 1 })
+  for (let i = 1; i <= 8; i++) { await s.page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: fx0 + ((fx1 - fx0) * i) / 8, y: fy0 + ((fy1 - fy0) * i) / 8, button: 'left', buttons: 1 }); await sleep(10) }
+  await s.shot('50-area-dragging')
+  await s.page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: fx1, y: fy1, button: 'left', buttons: 0, clickCount: 1 })
+  await sleep(300)
+  const chooser = await s.js(`${FRAME} const a = pad.area(); const items = [...doc.querySelectorAll('#area-menu .pad-menu-item')]; return { tool: pad.state().tool, area: a, items: items.map(i => i.textContent), marks: items.filter(i => i.querySelector('.pad-mark svg')).length, focus: doc.activeElement?.id, types: a ? a.ids.map(id => pad.elements().find(e => e.id === id).type) : [] }`)
+  check('area: A, then a drag frames a part of the paper and the chooser lists the sessions with their marks, the one you came from first', chooser.tool === 'area' && chooser.area && chooser.items.length === 3 && chooser.marks === 3 && /^Web-Frontendwhere you were.*Enter$/.test(chooser.items[0]) && chooser.focus === 'area-menu', `${chooser.area?.ids.length} of ${box.n} elements: ${chooser.types.join(',')}; ${chooser.items.join(' | ')}`)
+  check('area: what lies in the frame, whole or in part, goes: strokes, a note and a picture', ['stroke', 'text', 'image'].every(t => chooser.types.includes(t)), chooser.types.join(','))
+  await s.shot('51-area-chooser')
+  const beforeArea = await s.js(`return (await import('/js/store.js')).getState().all.messages.length`)
+  // slow the animations down to look at them
+  await s.page.send('Animation.enable')
+  await s.page.send('Animation.setPlaybackRate', { playbackRate: 0.1 })
+  await s.key('Enter')
+  await sleep(1100)
+  const strip = await s.js(`const n = document.querySelector('.padlink-strip'); const t = n?.querySelector('.is-target'); const sh = document.querySelector('.padlink-fly > div:not(.padlink-strip)'); return { strip: Boolean(n), marks: n?.children.length, target: Boolean(t), sheet: Boolean(sh) }`)
+  await s.shot('52-swoosh-cut-out')
+  await sleep(3200)
+  await s.shot('53-swoosh-in-flight')
+  await sleep(1700)
+  await s.shot('54-swoosh-at-the-mark')
+  await s.page.send('Animation.setPlaybackRate', { playbackRate: 1 })
+  await sleep(2500)
+  check('area: the board shows a strip of the sessions\' marks at the left edge and the cut-out piece flies above the pad', strip.strip && strip.marks === 3 && strip.target && strip.sheet, JSON.stringify(strip))
+  st = await s.js(padSummary)
+  const aft = await s.js(`${FRAME} return { layer: Boolean(document.querySelector('.padlink-fly')), area: pad.area(), menu: !doc.getElementById('area-menu').hidden, toast: doc.getElementById('toast').textContent, sentIds: pad.elements().filter(e => e.sent.some(l => l.session === 'web-frontend')).length }`)
+  check('area: afterwards nothing is lost: the elements stay, marked as sent; a note says where it went; the tool in hand is the one from before', !aft.layer && !aft.area && !aft.menu && aft.toast === 'Sent to Web-Frontend' && st.n === box.n && aft.sentIds >= chooser.area.ids.length && st.tool === toolBefore, `${aft.toast}; ${aft.sentIds} marked; tool ${st.tool}`)
+  await sleep(2500)
+  const talk2 = await s.js(`const st = (await import('/js/store.js')).getState(); return st.all.messages.slice(${beforeArea}).map(m => ({ from: m.from, text: m.text, att: (m.attachments ?? []).map(a => a.name + ' ' + a.url) }))`)
+  const reply2 = talk2.find(m => m.from === 'agent' && /Vom Pad erhalten/.test(m.text))
+  const png2 = reply2?.text.match(/`([^`]+\.png)`/)?.[1]
+  const said = Number(reply2?.text.match(/erhalten: (\d+)/)?.[1])
+  let dims = null
+  if (png2 && fs.existsSync(png2)) { const b = fs.readFileSync(png2); dims = [b.readUInt32BE(16), b.readUInt32BE(20)]; fs.copyFileSync(png2, path.join(outDir, '55-area-what-the-agent-got.png')) }
+  const want = chooser.area ? [Math.round(chooser.area.w * Math.min(2, 2000 / Math.max(chooser.area.w, chooser.area.h))), Math.round(chooser.area.h * Math.min(2, 2000 / Math.max(chooser.area.w, chooser.area.h)))] : null
+  check('area: the demo agent received the element list and a PNG of exactly that rectangle', Boolean(reply2) && said === chooser.area.ids.length && dims && Math.abs(dims[0] - want[0]) <= 1 && Math.abs(dims[1] - want[1]) <= 1, `${said} elements, PNG ${dims?.join('x')} (frame ${want?.join('x')})`)
+  // an empty frame sends nothing; Esc puts the tool away
+  await s.key('a')
+  await s.drag([[60, 700], [200, 800]])
+  const empty = await s.js(`${FRAME} return { area: pad.area(), toast: doc.getElementById('toast').textContent, menu: !doc.getElementById('area-menu').hidden }`)
+  await s.key('Escape')
+  check('area: a frame around nothing says so and sends nothing; Esc puts the tool away', !empty.area && !empty.menu && /Nothing in that area/.test(empty.toast) && (await s.js(padSummary)).tool === toolBefore, empty.toast)
+  await s.key('Escape')
+
   // arriving on the address itself
   await s.go(`${origin}/pad`)
   at = await s.js(where)
@@ -538,6 +603,28 @@ if (onBoard) {
     const pst = await p.js(padSummary)
     check(`board phone ${name}: a tap opens the pad over the session, a finger draws`, w.open && w.path === '/pad' && pst.n === n0 + 1 && pst.sync.pending === 0, `${n0} → ${pst.n}`)
     await p.shot(`41-phone-${name}-pad`)
+    // send an area on a phone: the piece flies into the chooser's row
+    const areaBtn = await rectOf(p, '.pad-tool[data-tool="area"]', true)
+    const toolsFit = await p.js(`${FRAME} const r = doc.querySelector('.pad-tools').getBoundingClientRect(); return r.left >= 0 && r.right <= frame.contentWindow.innerWidth + 0.5`)
+    await tap(areaBtn[0], areaBtn[1])
+    const pb = await p.js(`${FRAME} const v = pad.view(), e = pad.elements().at(-1); return [e.x * v.z + v.x, e.y * v.z + v.y, (e.x + e.w) * v.z + v.x, (e.y + e.h) * v.z + v.y]`)
+    await p.touch('touchStart', [[pb[0] - 12, pb[1] - 12]])
+    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[pb[0] - 12 + ((pb[2] - pb[0] + 24) * i) / 8, pb[1] - 12 + ((pb[3] - pb[1] + 24) * i) / 8]]); await sleep(12) }
+    await p.touch('touchEnd', [])
+    await sleep(350)
+    const pm = await p.js(`${FRAME} const m = doc.getElementById('area-menu'), r = m.getBoundingClientRect(); return { open: !m.hidden, fits: r.left >= 0 && r.right <= frame.contentWindow.innerWidth + 0.5 && r.bottom <= frame.contentWindow.innerHeight, first: m.querySelector('.pad-menu-item')?.textContent, n: pad.area()?.ids.length }`)
+    await p.shot(`42-phone-${name}-area-chooser`)
+    await p.page.send('Animation.enable')
+    await p.page.send('Animation.setPlaybackRate', { playbackRate: 0.1 })
+    const row = await rectOf(p, '#area-menu .pad-menu-item', true)
+    await tap(row[0], row[1])
+    await sleep(3000)
+    const local = await p.js(`${FRAME} return { sheet: doc.getElementById('fly').children.length, strip: Boolean(document.querySelector('.padlink-strip')) }`)
+    await p.shot(`43-phone-${name}-swoosh`)
+    await p.page.send('Animation.setPlaybackRate', { playbackRate: 1 })
+    await sleep(2500)
+    const after = await p.js(`${FRAME} return { toast: doc.getElementById('toast').textContent, sheet: doc.getElementById('fly').children.length, area: pad.area(), sent: pad.elements().at(-1).sent.length }`)
+    check(`board phone ${name}: Send area fits the toolbar, the chooser fits the screen, the piece flies into the chooser's row and it is sent`, toolsFit && pm.open && pm.fits && pm.n >= 1 && /^Web-Frontend/.test(pm.first) && local.sheet === 1 && !local.strip && after.toast === 'Sent to Web-Frontend' && after.sheet === 0 && !after.area && after.sent >= 1, `${pm.first}; ${after.toast}; ${JSON.stringify(local)}`)
     const close = await rectOf(p, '#back', true)
     await tap(close[0], close[1])
     w = await p.js(where)

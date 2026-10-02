@@ -14,7 +14,9 @@
 // pushes an entry that remembers where the human was; closing goes back to it.
 
 import { subscribe, getState, isLoaded } from './store.js'
+import { avatar, hueOf } from './agents.js'
 import { PAD_WORD } from '/pad/name.js'
+import { flySheet } from '/pad/fly.js'
 
 const PATH = '/pad'
 const root = document.documentElement
@@ -89,6 +91,46 @@ function sessionsOf(path) {
   return parts[1].split('+').map(s => { try { return decodeURIComponent(s) } catch { return s } })
 }
 
+// A session's scribble as the sidebar draws it, for the pad's chooser (the pad is a page of its own).
+const marks = new Map()
+function markOf(agent) {
+  const key = `${agent.id}|${agent.mark}`
+  if (!marks.has(key)) marks.set(key, avatar(agent, { vip: false }).querySelector('svg')?.outerHTML ?? '')
+  return marks.get(key)
+}
+
+// ---- the swoosh: an area cut out on the pad flies into its session ----
+// The pad covers the sidebar, so the flight needs somewhere visible to end. The board draws it,
+// above the frame: a slim strip of the sessions' marks comes in at the left edge, where the sidebar
+// is, the piece flies to its session's mark and is swallowed, the strip leaves. Drawn here and not
+// in the pad because the marks are the board's (same component, same colours as the sidebar), and
+// because this is where a flight into the real sidebar or dock can end once the layout allows it.
+async function fly({ png, rect, session }) {
+  const agents = getState().all?.agents ?? []
+  const layer = document.createElement('div')
+  layer.className = 'padlink-fly'
+  const strip = document.createElement('div')
+  strip.className = 'padlink-strip'
+  let target = null
+  for (const a of agents) {
+    const mark = avatar(a, { vip: false })
+    if (a.id === session) { target = mark; mark.classList.add('is-target') }
+    strip.append(mark)
+  }
+  layer.append(strip)
+  body.append(layer)
+  const calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+  try {
+    if (!calm) strip.animate([{ translate: '-110% 0' }, { translate: '0 0' }], { duration: 180, easing: 'cubic-bezier(.16, 1, .3, 1)' })
+    // The piece starts exactly where the pad shows it: the frame fills the window, so its coordinates are the window's.
+    await flySheet(layer, { png, rect, target: target ?? strip })
+    await new Promise(r => setTimeout(r, 240))
+    if (!calm) await strip.animate([{ translate: '0 0' }, { translate: '-110% 0' }], { duration: 200, easing: 'ease-in', fill: 'forwards' }).finished.catch(() => {})
+  } finally {
+    layer.remove()
+  }
+}
+
 /** Tell the pad what it needs from the board. Sent again only when something changed. */
 function tellPad(force = false) {
   if (!ready || !frame?.contentWindow) return
@@ -97,7 +139,7 @@ function tellPad(force = false) {
   const msg = {
     trommi: 'pad', type: 'context', open, prefer: open ? prefer : [],
     theme: root.dataset.theme === 'dark' ? 'dark' : 'light',
-    ...(known ? { sessions: state.all.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online) })), speech: Boolean(state.speech) } : {}),
+    ...(known ? { sessions: state.all.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), hue: hueOf(a.id), mark: markOf(a) })), speech: Boolean(state.speech) } : {}),
   }
   const sig = JSON.stringify(msg)
   if (!force && sig === lastContext) return
@@ -168,6 +210,7 @@ window.addEventListener('message', e => {
   const msg = e.data
   if (msg.type === 'ready') { ready = true; tellPad(true) }
   else if (msg.type === 'close') closePad()
+  else if (msg.type === 'fly' && open && typeof msg.png === 'string' && msg.png.startsWith('data:image/png') && msg.rect) fly(msg)
   else if (msg.type === 'theme') {
     // The pad's own switch was used: the board follows, through its own switch so it paints itself.
     if ((root.dataset.theme === 'dark') !== (msg.theme === 'dark')) document.getElementById('theme-toggle')?.click()

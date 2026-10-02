@@ -305,3 +305,21 @@ export function renderPNG(list, env, { max = 2000, margin = 24 } = {}) {
   for (const el of list) paintElement(c, el, { ...env, dark: false })
   return { png: cv.toDataURL('image/png'), bbox: { x: r2(b.x), y: r2(b.y), w: r2(b.w), h: r2(b.h) }, width: cv.width, height: cv.height }
 }
+
+/** A picture of exactly this rectangle of the paper (world units): everything that shows in it,
+ *  whole or cut off at its edge, on white. What the human saw is what the agent gets. */
+export function renderRect(list, rect, env, { max = 2000 } = {}) {
+  const scale = Math.min(2, max / Math.max(rect.w, rect.h))
+  const cv = document.createElement('canvas')
+  cv.width = Math.max(1, Math.round(rect.w * scale))
+  cv.height = Math.max(1, Math.round(rect.h * scale))
+  const c = cv.getContext('2d', { alpha: false })
+  c.fillStyle = '#ffffff'
+  c.fillRect(0, 0, cv.width, cv.height)
+  c.setTransform(scale, 0, 0, scale, -rect.x * scale, -rect.y * scale)
+  for (const el of list) {
+    if (el.x > rect.x + rect.w || el.y > rect.y + rect.h || el.x + el.w < rect.x || el.y + el.h < rect.y) continue
+    paintElement(c, el, { ...env, dark: false })
+  }
+  return { png: cv.toDataURL('image/png'), bbox: { x: r2(rect.x), y: r2(rect.y), w: r2(rect.w), h: r2(rect.h) }, width: cv.width, height: cv.height }
+}

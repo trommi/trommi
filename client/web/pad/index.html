@@ -73,6 +73,9 @@
     <button type="button" class="pad-icon-btn pad-danger" id="delete" data-icon="trash" aria-label="Delete" data-tip="Delete · Del"></button>
   </div>
   <div class="pad-menu" id="send-menu" role="menu" aria-label="Send the selection to a session" hidden></div>
+  <!-- the fast path: an area was framed, pick who gets it -->
+  <div class="pad-menu pad-area-menu" id="area-menu" role="menu" aria-label="Send this area to a session" hidden></div>
+  <div class="pad-fly" id="fly" aria-hidden="true"></div>
 
   <div class="pad-bar">
     <div class="pad-pill pad-tools" role="toolbar" aria-label="Tools">
@@ -80,6 +83,7 @@
       <button type="button" class="pad-icon-btn pad-tool" data-tool="pen" data-icon="pen" aria-label="Pen" data-tip="Pen · P"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="hl" data-icon="hl" aria-label="Highlighter" data-tip="Highlighter · H"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="eraser" data-icon="eraser" aria-label="Eraser" data-tip="Eraser · E"></button>
+      <button type="button" class="pad-icon-btn pad-tool" data-tool="area" data-icon="area" aria-label="Send an area to a session" data-tip="Send area · A"></button>
       <span class="pad-sep"></span>
       <button type="button" class="pad-icon-btn pad-stylebtn" id="style-btn" aria-label="Colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Colour and width"><span class="pad-dot" id="style-dot"></span></button>
       <div class="pad-style" id="style" hidden>
@@ -154,7 +158,8 @@
     <section>
       <h3>Selection</h3>
       <dl>
-        <dt><kbd>S</kbd></dt><dd>Send to a session</dd>
+        <dt><kbd>A</kbd> drag</dt><dd>Frame an area and send it: <kbd>Enter</kbd> takes the first session</dd>
+        <dt><kbd>S</kbd></dt><dd>Send the selection to a session</dd>
         <dt><kbd>Del</kbd></dt><dd>Delete</dd>
         <dt><kbd>Ctrl</kbd> <kbd>A</kbd></dt><dd>Select everything</dd>
         <dt><kbd>Ctrl</kbd> <kbd>D</kbd></dt><dd>Duplicate</dd>

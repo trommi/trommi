@@ -7,7 +7,8 @@
 // one written here (it carries a nonce made for this frame; whatever the agent wrote has none, and
 // handlers written into tags never run). That script does three things: it says how tall the
 // content is, takes the theme when it changes, and hands a clicked link to this page, which opens
-// it in a new tab. No forms, no popups, no way to move the page around it.
+// it in a new tab (a link never moves the frame itself). No forms, no popups, no way to move the
+// page around it.
 // The server has already cleaned what it stored (server/richhtml.mjs); here it is parsed and
 // cleaned once more by the browser's own parser, so that old state and other senders hold too.
 //
@@ -163,7 +164,8 @@ function parse(source) {
     }
   }
   // A link never moves the frame: it asks for a new tab, which the frame may not open; the page around it does.
-  doc.querySelectorAll('a[href]').forEach(a => { if (!a.getAttribute('href').startsWith('#')) a.target = '_blank' })
+  // (A link to a place in the block is followed by the frame's script; an address of its own it has none.)
+  doc.querySelectorAll('a[href], area[href]').forEach(a => { if (!a.getAttribute('href').startsWith('#')) a.target = '_blank' })
   doc.querySelectorAll('table').forEach(t => tidyTable(t))
   for (const style of doc.head.querySelectorAll('style')) doc.body.prepend(style)
   return { body: doc.body.innerHTML, kind: doc.querySelector('table') && !doc.querySelector('.grid, .card, details, h1, h2, h3, svg, img') ? 'table' : 'layout' }
@@ -193,6 +195,7 @@ tfoot>tr>*{border-top:2px solid var(--fg);border-bottom:0;font-weight:600}
 th:last-child,td:last-child{padding-right:0}
 caption{caption-side:top;text-align:left;padding-bottom:6px}
 .num,[align=right]{text-align:right;font-variant-numeric:tabular-nums}
+.num{white-space:nowrap}
 .mid,[align=center]{text-align:center}
 code,kbd,samp,pre{font-family:var(--mono);font-size:.86em}
 :not(pre)>code{padding:1px 5px;border-radius:5px;background:var(--sunken)}
@@ -238,8 +241,38 @@ function tokens() {
   return { css: `:root{${vars.join(';')};font-size:${root.fontSize};color-scheme:${dark ? 'dark' : 'light'}}`, scheme: dark ? 'dark' : 'light' }
 }
 
+// The board's fonts, for the frames. A frame fetches nothing, so this page fetches them once (the same
+// files it shows its own text with, from the stylesheet in its head) and hands them in as data: the
+// Latin cut of the text face in two weights, the display face and the mono face. Until they are here, and
+// where they cannot be had, a frame stands in the system's face.
+const FACES = [['IBM Plex Sans', '400'], ['IBM Plex Sans', '600'], ['IBM Plex Mono', '400'], ['Bricolage Grotesque', null]]
+let fontCss = ''
+const fontsReady = typeof document === 'undefined' ? Promise.resolve() : (async () => {
+  const sheet = document.querySelector('link[href*="fonts.googleapis.com/css"]')
+  if (!sheet) return
+  const css = await (await fetch(sheet.href, { credentials: 'omit' })).text()
+  const faces = new Map()   // file -> { family, style, weights }
+  for (const block of css.split('/*').filter(b => /^\s*latin\s*\*\//.test(b))) {
+    const family = /font-family:\s*['"]([^'"]+)['"]/.exec(block)?.[1], weight = /font-weight:\s*(\d+)/.exec(block)?.[1]
+    const style = /font-style:\s*(\w+)/.exec(block)?.[1] ?? 'normal', url = /url\((https:\/\/fonts\.gstatic\.com\/[^)]+\.woff2)\)/.exec(block)?.[1]
+    if (!family || !url || style !== 'normal' || !FACES.some(([f, w]) => f === family && (w == null || w === weight))) continue
+    const face = faces.get(url) ?? { family, weights: [] }
+    face.weights.push(Number(weight))
+    faces.set(url, face)
+  }
+  const rules = await Promise.all([...faces].map(async ([url, face]) => {
+    const bytes = new Uint8Array(await (await fetch(url, { credentials: 'omit' })).arrayBuffer())
+    let binary = ''
+    for (let i = 0; i < bytes.length; i += 0x8000) binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000))
+    const weights = [Math.min(...face.weights), Math.max(...face.weights)]
+    return `@font-face{font-family:"${face.family}";font-style:normal;font-weight:${weights[0] === weights[1] ? weights[0] : weights.join(' ')};font-display:swap;src:url(data:font/woff2;base64,${btoa(binary)}) format("woff2")}`
+  }))
+  fontCss = rules.join('')
+  for (const ref of live.values()) ref.deref()?.contentWindow?.postMessage({ trommiFonts: fontCss }, '*')
+})().catch(() => {})
+
 // The one script in a frame. It reports the height of the content (and whether it is wider than the
-// frame), takes new tokens when the theme changes, and hands a clicked link to the page around it.
+// frame), takes new tokens when the theme changes and the fonts when they are here, and hands a clicked link to the page around it.
 const inside = id => `(()=>{
 const id=${JSON.stringify(id)},root=document.documentElement
 let last=''
@@ -248,15 +281,15 @@ new ResizeObserver(tell).observe(root)
 addEventListener('load',tell)
 addEventListener('toggle',()=>requestAnimationFrame(tell),true)
 tell()
-addEventListener('message',e=>{if(e.source!==parent||!e.data||typeof e.data.trommiTokens!=='string')return;document.getElementById('trommi-tokens').textContent=e.data.trommiTokens;last='';tell()})
-addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href]');if(!a)return;const href=a.getAttribute('href');if(href.charAt(0)==='#')return;e.preventDefault();parent.postMessage({trommiRich:id,open:a.href},'*')},true)
+addEventListener('message',e=>{if(e.source!==parent||!e.data)return;for(const k of ['trommiTokens','trommiFonts'])if(typeof e.data[k]==='string')document.getElementById(k==='trommiTokens'?'trommi-tokens':'trommi-fonts').textContent=e.data[k];last='';tell()})
+addEventListener('click',e=>{const a=e.target&&e.target.closest&&e.target.closest('a[href],area[href]');if(!a)return;e.preventDefault();const href=a.getAttribute('href');if(href.charAt(0)==='#'){const to=href.length>1&&document.getElementById(href.slice(1));if(to)to.scrollIntoView();return}parent.postMessage({trommiRich:id,open:a.href},'*')},true)
 })()`
 
-const POLICY = nonce => `default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'`
+const POLICY = nonce => `default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'nonce-${nonce}'; base-uri 'none'; form-action 'none'`
 
 function documentOf(body, id, large) {
   const nonce = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(16).padStart(2, '0')).join('')
-  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${POLICY(nonce)}"><meta name="referrer" content="no-referrer"><style id="trommi-tokens">${tokens().css}</style><style>${HOUSE}${large ? 'body{padding:20px 24px}' : ''}</style></head><body>${body}<script nonce="${nonce}">${inside(id)}</script></body></html>`
+  return `<!doctype html><html><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="${POLICY(nonce)}"><meta name="referrer" content="no-referrer"><style id="trommi-fonts">${fontCss}</style><style id="trommi-tokens">${tokens().css}</style><style>${HOUSE}${large ? 'body{padding:20px 24px}' : ''}</style></head><body>${body}<script nonce="${nonce}">${inside(id)}</script></body></html>`
 }
 
 // The frames that stand in the page, by the name their script signs with.
@@ -266,6 +299,15 @@ let seq = 0
 const heights = new Map()   // key of the source -> px
 const keyOf = source => { let h = 0; for (let i = 0; i < source.length; i += 1 + (source.length >> 12)) h = (h * 31 + source.charCodeAt(i)) | 0; return `${source.length}:${h}:${Math.round(innerWidth / 40)}` }
 const cap = () => Math.max(240, Math.round(innerHeight * 0.7))
+
+// What the place a frame stands in adds to the tokens: its size of type and its ink (a question window
+// sets its text a little larger than a conversation, details are greyer).
+function dress(frame) {
+  const { css, scheme } = tokens()
+  const host = frame.parentElement && frame.dataset.large == null ? getComputedStyle(frame.parentElement) : null
+  frame.style.colorScheme = scheme
+  frame.contentWindow?.postMessage({ trommiTokens: host ? `${css}html{font-size:${host.fontSize}}body{color:${host.color}}` : css }, '*')
+}
 
 function fit(frame, h, wide) {
   if (frame.dataset.large != null) return
@@ -285,17 +327,17 @@ if (typeof window !== 'undefined') {
     const frame = live.get(said.trommiRich)?.deref()
     // Only the frame that was given this name may speak under it.
     if (!frame || e.source !== frame.contentWindow) return
+    // Its first word: it stands in the page now, so it can be told how the text around it is set.
+    if (frame.dataset.met == null) { frame.dataset.met = ''; dress(frame) }
     if (Number.isFinite(said.h)) fit(frame, Math.min(Math.max(0, said.h), 100000), said.wide === true)
     else if (typeof said.open === 'string' && /^https?:\/\//i.test(said.open)) window.open(said.open, '_blank', 'noopener,noreferrer')
   })
   // The theme changed: every frame gets the new tokens, without being loaded again.
   new MutationObserver(() => {
-    const { css, scheme } = tokens()
     for (const [id, ref] of live) {
       const frame = ref.deref()
       if (!frame?.isConnected) { if (!frame) live.delete(id); continue }
-      frame.style.colorScheme = scheme
-      frame.contentWindow?.postMessage({ trommiTokens: css }, '*')
+      dress(frame)
     }
   }).observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] })
   // The window changed: most of the screen is another height now.
