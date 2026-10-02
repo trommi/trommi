@@ -881,8 +881,12 @@ async function goSession(agent) {
 }
 async function goRoster() {
   await closeWindows()
-  if (!(await ev(js`__t.vis(document.querySelector(${SEL.roster}))`))) await press('the agents page', js`__t.one(${SEL.navRoster})`)
-  await waitFor('the agents page lists the sessions', js`__t.vis(document.querySelector(${SEL.roster})) && __t.roster().length > 0`)
+  // The Agents page is the Ledger. A phone has an icon for it in its bar; a wide screen reaches it through the menu at the top centre.
+  if (!(await ev('__t.vis(document.querySelector("#ledger"))'))) {
+    if (await ev(js`!!__t.one(${SEL.navRoster})`)) await press('the agents page', js`__t.one(${SEL.navRoster})`)
+    else { await press('the menu', '__t.one("#brand-menu")'); await press('"Agents" in the menu', '__t.one("#menu-agents")') }
+  }
+  await waitFor('the agents page lists the sessions', '__t.vis(document.querySelector("#ledger")) && document.querySelectorAll("#ledger .ledger-line").length > 0')
   await settle()
 }
 /** On a phone the tab bar steps aside while the keyboard is up; a tap on the conversation puts it away. */
@@ -1655,7 +1659,7 @@ async function groupUrls() {
     [home]: js`!!__t.pane(${agent.id}) && __t.all(${SEL.message}).length > 0`,
     [`${home}/questions`]: js`!!__t.one(${SEL.questionsPane}) && !__t.all(${SEL.message}).length`,
     [`${home}/scribble`]: js`!!__t.one(${SEL.scribbleCanvas})`,
-    '/agents': js`__t.vis(document.querySelector(${SEL.roster})) && __t.roster().length > 0`,
+    '/agents': '__t.vis(document.querySelector("#ledger")) && document.querySelectorAll("#ledger .ledger-line").length > 0',   // the Agents page is the Ledger
   }
   const seenIs = async (what, pathname) => { await expect(`${what}: the page shows what ${pathname} names`, shows[pathname], 4000) }
 
