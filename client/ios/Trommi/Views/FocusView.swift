@@ -20,7 +20,7 @@ struct FocusView: View {
             page
                 .background(Theme.bg)
                 .safeAreaInset(edge: .top) {
-                    UndoBar(onUndone: { cardID in
+                    BackBar(onBack: { cardID in
                         walk?.sync(queue: model.state.queue, later: model.later.ids)
                         walk?.noteUndone(cardID)
                     })

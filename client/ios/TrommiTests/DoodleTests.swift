@@ -14,9 +14,11 @@ final class DoodleTests: XCTestCase {
             struct Member: Decodable { var id: String; var mark: String }
             var members: [Member]; var transforms: [String]; var loop: String
         }
+        struct Crown: Decodable { var box: String; var path: String }
         var doodles: [Mark]
         var sketches: [Mark]
         var pairs: [Pair]
+        var crown: Crown
     }
 
     private func expected() throws -> Expected { try JSONDecoder().decode(Expected.self, from: Fixture.data("doodles")) }
@@ -76,10 +78,43 @@ final class DoodleTests: XCTestCase {
         XCTAssertEqual(exact, total, "every stroke is the same text as on the web")
     }
 
+    func testEveryNamedDrawingMatchesTheWeb() throws {
+        let fixture = try expected()
+        XCTAssertEqual(Doodle.drawings.count, 40)
+        XCTAssertEqual(Set(Doodle.drawings).count, 40)
+        XCTAssertEqual(Array(Doodle.drawings.prefix(8)), ["burst", "spiral", "blob", "flower", "waves", "knot", "bolt", "hatch"])
+        for name in Doodle.drawings {
+            let seed = Doodle.drawingMark(name)
+            XCTAssertEqual(seed, "draw:\(name)")
+            XCTAssertEqual(Doodle.drawingName(of: seed), name)
+            let theirs = try XCTUnwrap(fixture.doodles.first { $0.seed == seed }, "the fixture has no \(seed)")
+            let ours = Doodle.mark(seed)
+            XCTAssertEqual(ours.rotation, theirs.rotate, "rotation of \(seed)")
+            XCTAssertEqual(ours.strokes.count, theirs.paths.count, "strokes of \(seed)")
+            for (stroke, d) in zip(ours.strokes, theirs.paths) { assertSame(stroke, d, "drawing \(name)") }
+        }
+        XCTAssertEqual(exact, total, "every stroke is the same text as on the web")
+        // A name that is no drawing is a seed like any other.
+        XCTAssertEqual(Doodle.drawingName(of: "draw:nothing-of-the-kind"), "nothing-of-the-kind")
+        XCTAssertNil(Doodle.drawingName(of: "api"))
+        XCTAssertNil(Doodle.drawingName(of: "draw:"))
+        // A straight stroke keeps its corners: no curve in a star.
+        XCTAssertFalse(Doodle.mark("draw:star").strokes.joined().contains { if case .quad = $0 { return true } else { return false } })
+    }
+
+    func testTheCrownIsTheWebsCrown() throws {
+        let crown = try expected().crown
+        XCTAssertEqual(crown.box, "0 0 26 19")
+        XCTAssertEqual(Doodle.crown.width, 26)
+        XCTAssertEqual(Doodle.crown.height, 19)
+        XCTAssertEqual(Doodle.crown.strokes.count, 1)
+        XCTAssertEqual(Doodle.svgPathShort(Doodle.crown.strokes[0]), crown.path)
+    }
+
     func testEveryFamilyOfMarksIsCovered() throws {
         // The first number of a seed picks the family; the fixtures must reach all eight.
         var families = Set<Int>()
-        for mark in try expected().doodles {
+        for mark in try expected().doodles where Doodle.drawingName(of: mark.seed ?? "") == nil {
             var r = SeededRandom(mark.seed ?? "")
             families.insert(Int((r.next() * 8).rounded(.down)))
         }

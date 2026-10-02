@@ -1,6 +1,9 @@
 // One question as a row. Every row has the same height, with two square tiles
 // at its trailing edge: no and yes for a yes/no question, otherwise "Later"
-// and "Choose", which opens the options. The same row stands in the inbox and
+// and "Choose", which opens the options. (The web has since moved "Later" to a
+// small tag on the row's edge and lets "Choose" unfold the row in place; Core
+// already says which it would be, RowActions.choose(inline:count:), this view
+// does not draw it yet.) The same row stands in the inbox and
 // in a session's conversation. Follows questionRow() in client/web/js/inbox.js;
 // which tiles a card gets is decided in Core (Card.rowActions).
 import SwiftUI
@@ -146,9 +149,10 @@ struct QuestionRow: View {
                 .accessibilityHint(tile.option.detail.isEmpty ? "Answers at once" : tile.option.detail)
                 .accessibilityIdentifier("answer-\(card.id)-\(tile.id)")
             }
-        case .laterChoose:
+        case .choose:
             Button {
-                if off { model.fetchBack(card.id) } else { model.putOff(card) }
+                // "Later" says where the question went, with the way back (the note at the foot of the list).
+                if off { model.fetchBack(card.id) } else { model.later(card) }
             } label: {
                 TileLabel(sketch: off ? .back : .later, label: off ? "Fetch back" : "Later", lead: false, advice: nil)
             }

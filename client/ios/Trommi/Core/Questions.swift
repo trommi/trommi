@@ -6,6 +6,10 @@ import Foundation
 /// The hand-drawn icons of client/web/js/ui.js (SKETCH).
 enum SketchKind: String, CaseIterable, Sendable {
     case yes, no, hand, later, back, choose, other, whenever
+    /// The composer of a question: dictate, send, hand the card back, attach, ask to explain.
+    case mic, send, reverse, clip, explain
+    /// Lists and the bar: put away, a pile that unfolds, onward, the inbox, the sessions, help, the pad.
+    case archive, unfold, go, tray, heads, question, page
 }
 
 /// What stands out in the head of a row. A normal question gets nothing.
@@ -34,12 +38,25 @@ struct AnswerTile: Equatable, Sendable, Identifiable {
     var spoken: String { advised ? "\(option.label), recommended by the agent" : option.label }
 }
 
-/// The two tiles at the trailing edge of a row.
+/// What stands at the trailing edge of a row.
 enum RowActions: Equatable, Sendable {
-    /// A yes/no question: no on the left, yes on the right.
+    /// A two-way question: thumb down on the left, thumb up on the right.
     case answer([AnswerTile])
-    /// Anything else: "Later" (or "Fetch back" once it was put off) and "Choose".
-    case laterChoose
+    /// Anything else: one wide "Choose". `inline`: it unfolds the row in place with its options;
+    /// a card with too much for a row opens as a page of its own instead. `count`: "4 options".
+    case choose(inline: Bool, count: String)
+}
+
+/// One block of a question on its page: a paragraph, or a paragraph that is an option.
+enum CardBlock: Equatable, Identifiable, Sendable {
+    case paragraph(index: Int, text: String)
+    case option(index: Int, option: CardOption, text: String, advised: Bool, picture: Attachment?)
+
+    var id: Int {
+        switch self {
+        case .paragraph(let index, _), .option(let index, _, _, _, _): return index
+        }
+    }
 }
 
 /// How the answers stand on the whole card.
@@ -58,11 +75,92 @@ extension Card {
     /// attached beyond pictures, which the row shows. Same rule as quick() in
     /// inbox.js, which counts UTF-16 units like JavaScript's length.
     var isQuick: Bool {
+        if multiple { return false }
         if kind == .permission { return true }
-        return !multiple && options.count == 2
-            && options.allSatisfy { $0.label.utf16.count <= 18 }
+        return options.count == 2
+            && options.allSatisfy { Card.fitsTile($0.label) }
             && attachments.allSatisfy { $0.kind == .image }
             && body.utf16.count <= 240
+    }
+
+    /// The one rule for a word under a thumb (fitsTile in inbox.js). A tile has room for two
+    /// short lines; a label stands there only if it fits them whole, broken between words or
+    /// after a hyphen, never inside a word. A label that needs more is answered through "Choose".
+    static func fitsTile(_ label: String) -> Bool {
+        let line = 14
+        // A hyphen inside a word is a place to break: "follow-up" is "follow-" and "up".
+        var text = ""
+        let units = Array(label.trimmingCharacters(in: .whitespacesAndNewlines))
+        for (i, ch) in units.enumerated() {
+            text.append(ch)
+            if ch == "-", i + 1 < units.count, !units[i + 1].isWhitespace { text.append(" ") }
+        }
+        var lines = 1, used = 0
+        for word in text.split(whereSeparator: \.isWhitespace) {
+            let length = word.utf16.count
+            if length > line { return false }
+            if used > 0, used + 1 + length > line {
+                lines += 1
+                used = length
+            } else {
+                used += (used > 0 ? 1 : 0) + length
+            }
+        }
+        return lines <= 2
+    }
+
+    /// "Choose" unfolds a card in its row. A card with more than fits there comfortably opens
+    /// as a page instead: a long text, code, several pictures, anything to play or download,
+    /// many options (needsWindow in inbox.js).
+    var needsWindow: Bool {
+        body.utf16.count > 480 || body.contains("```") || options.count > 6
+            || images.count > 1 || attachments.contains { $0.kind != .image }
+    }
+
+    /// "4 options" under the word "Choose"; "4 options, several allowed" where several may be ticked.
+    var optionCountLabel: String {
+        multiple ? "\(options.count) options, several allowed" : "\(options.count) options"
+    }
+
+    /// Many short options stand as small tags instead of one tile each (TAGS_FROM, TAG_CHARS in focus.js).
+    var optionsAsTags: Bool {
+        kind == .decision && options.count >= 7
+            && options.allSatisfy { $0.label.trimmingCharacters(in: .whitespacesAndNewlines).utf16.count <= 18 }
+    }
+
+    /// "Nr. 12": a card's number, as it is written wherever a card is named.
+    var numberLabel: String { "Nr. \(number)" }
+
+    /// What the card says of itself: "replaces 3 questions · revised" (cardNote in ui.js).
+    var selfNote: String {
+        [mergedFrom.isEmpty ? "" : "replaces \(mergedFrom.count) questions", revised == nil ? "" : "revised"]
+            .filter { !$0.isEmpty }.joined(separator: " · ")
+    }
+
+    /// The question as blocks when the agent handed it in as one structured text; nil for a
+    /// card with body and options, which is drawn as before.
+    var blocks: [CardBlock]? {
+        guard let sections else { return nil }
+        return sections.enumerated().map { index, block in
+            guard let key = block.key, let option = options.first(where: { $0.key == key }) else {
+                return .paragraph(index: index, text: block.text)
+            }
+            let picture = block.picture.flatMap { attachments.indices.contains($0) ? attachments[$0] : nil }
+            return .option(index: index, option: option, text: block.text, advised: block.recommended || advises(option), picture: picture)
+        }
+    }
+
+    /// Attachments no block points at: they belong to the card as a whole.
+    var looseAttachments: [Attachment] {
+        guard let sections else { return attachments }
+        let tied = Set(sections.compactMap(\.picture))
+        return attachments.enumerated().filter { !tied.contains($0.offset) }.map(\.element)
+    }
+
+    /// The sketch on the row of an answered question: a thumb for a yes or no, else the drawing of a choice.
+    var answeredSketch: SketchKind {
+        guard options.count == 2, !multiple else { return .choose }
+        return choice == options.first?.key ? .yes : .no
     }
 
     /// The option the agent leads with is the "yes": its first one, or "allow" on a permission.
@@ -85,7 +183,7 @@ extension Card {
     /// every card. The option's own word stands under its thumb only when the pair says
     /// more than yes and no (or allow and deny).
     var rowActions: RowActions {
-        guard isQuick else { return .laterChoose }
+        guard isQuick else { return .choose(inline: !needsWindow, count: optionCountLabel) }
         let bare = !options.isEmpty && options.allSatisfy { AnswerWords.isBare($0.label, orVerdict: true) }
         return .answer(noThenYes.map { option in
             let lead = isYes(option)
@@ -140,7 +238,7 @@ extension Card {
 
     /// The grey text under the title in a row: reason and body without markdown.
     var excerpt: String {
-        [urgencyReason, Card.plain(body)].filter { !$0.isEmpty }.joined(separator: " · ")
+        [selfNote, urgencyReason, Card.plain(body)].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 
     /// The label of the chosen option, or of all of them where several were chosen; nil without an answer.

@@ -1,6 +1,7 @@
 # Builds the iOS app and runs its tests when the app changes, or when the
 # server does: the core tests run against a live server.mjs, so a change to its
-# interface must show up here. Everything else in the repository skips this,
+# interface must show up here. Also when the web's drawings change (ui.js): the
+# app's marks are a port of them and are checked stroke for stroke. Everything else in the repository skips this,
 # because macOS minutes are the expensive ones. A change to this file alone
 # does not start it either: press "Run workflow".
 #
@@ -15,7 +16,7 @@ name: iOS
 
 on:
   push:
-    paths: ['client/ios/**', 'server/server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs']
+    paths: ['client/ios/**', 'server/server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs', 'dev/session.mjs', 'client/web/js/ui.js']
   workflow_dispatch:
 
 concurrency:
@@ -43,8 +44,10 @@ jobs:
           cmp Trommi/Resources/demo-state.json TrommiTests/Fixtures/demo-state.json
           node tools/demo-state.mjs
           node tools/doodle-fixtures.mjs
-          # The marks must match the web: a change to doodle() in client/web/js/ui.js shows up here.
-          git diff --exit-code -- Trommi/Resources TrommiTests/Fixtures
+          # The points of the named drawings and icons, written from ui.js into a Swift file.
+          node tools/doodle-tables.mjs
+          # The marks must match the web: a change to doodle(), NAMED or SKETCH in client/web/js/ui.js shows up here.
+          git diff --exit-code -- Trommi/Resources TrommiTests/Fixtures Trommi/Core/DoodleTables.swift
 
       - name: Cache the SwiftPM build
         uses: actions/cache@v4
@@ -67,6 +70,8 @@ jobs:
         run: |
           (cd ../.. && npm ci && (dev/serve.sh 8851 600 > /tmp/trommi-server.log 2>&1 &))
           for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8851/?t=demo" && break; sleep 1; done
+          # Cards only an agent can make (sections, a revised one, a merged one); without them those tests are skipped.
+          tools/live-seed.sh 8851
           set -o pipefail
           TROMMI_TEST_LINK='http://127.0.0.1:8851/?t=demo' swift test 2>&1 | tee swift-test.log
           {
@@ -120,12 +125,15 @@ jobs:
           restore-keys: spm-${{ runner.os }}-
 
       # The part without UI, also against a real server.mjs with demo data:
-      # login, cookie, Origin, the event stream, answering, sessions, files.
+      # login, cookie, Origin, the event stream, answering, notes, drafts, a revised
+      # question (409), sections, sessions, files, the refusal of live dictation.
       # The same tests as in the Linux job, here with Apple's URLSession.
       - name: Core tests, with a live server
         run: |
           (cd ../.. && npm ci && (dev/serve.sh 8851 900 > /tmp/trommi-server.log 2>&1 &))
           for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8851/?t=demo" && break; sleep 1; done
+          # Cards only an agent can make (sections, a revised one, a merged one); without them those tests are skipped.
+          tools/live-seed.sh 8851
           set -o pipefail
           TROMMI_TEST_LINK='http://127.0.0.1:8851/?t=demo' swift test 2>&1 | tee swift-test.log
           {

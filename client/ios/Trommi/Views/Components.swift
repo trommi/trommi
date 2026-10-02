@@ -1,5 +1,5 @@
 // Small pieces every screen uses: the card surface, relative time, button
-// looks, the connection badge, the notice banner and the undo bar.
+// looks, the connection badge, the notice banner and the note with "Back".
 import SwiftUI
 
 extension View {
@@ -79,30 +79,32 @@ struct ConnectionBadge: View {
     }
 }
 
-/// "Answered: Postgres – Undo", for ten seconds after an answer.
-struct UndoBar: View {
+/// What just happened to a question, and the way back: "Answered: Postgres", "Moved to Later",
+/// with "Back", for a few seconds (AppModel.back). The identifiers are the ones the UI tests
+/// knew the undo bar by.
+struct BackBar: View {
     @Environment(AppModel.self) private var model
-    /// Called with the card id once the answer was taken back.
-    var onUndone: (String) -> Void = { _ in }
+    /// Called with the card id once it is back.
+    var onBack: (String) -> Void = { _ in }
     @State private var working = false
 
     var body: some View {
-        if let offer = model.undo {
+        if let note = model.back {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text("Answered").font(.caption)
-                    Text(offer.label).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(note.head).font(.subheadline.weight(.semibold)).lineLimit(1)
+                    Text(note.title).font(.caption).lineLimit(1)
                 }
                 Spacer(minLength: 8)
                 Button {
-                    undo(offer)
+                    takeBack()
                 } label: {
-                    Label("Undo", systemImage: "arrow.uturn.backward")
+                    Label("Back", systemImage: "arrow.uturn.backward")
                         .font(.subheadline.weight(.semibold))
                 }
                 .disabled(working)
                 .accessibilityIdentifier("undo-button")
-                .accessibilityLabel("Undo the answer \(offer.label) to: \(offer.title)")
+                .accessibilityLabel("Back: take back \(note.head), \(note.title)")
             }
             .foregroundStyle(Theme.bg)
             .tint(Theme.bg)
@@ -115,12 +117,13 @@ struct UndoBar: View {
         }
     }
 
-    private func undo(_ offer: UndoOffer) {
+    private func takeBack() {
         working = true
         Task {
-            let failed = await model.reopen(offer.cardID)
+            // A failure shows as a notice at the top; then nothing came back.
+            let cardID = await model.takeBack()
             working = false
-            if failed == nil { onUndone(offer.cardID) }
+            if let cardID { onBack(cardID) }
         }
     }
 }
