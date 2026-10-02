@@ -1,0 +1,30 @@
+# Sketch, not yet built with flatpak-builder.
+# The KDE runtime carries Qt 6 (base, declarative, wayland) and libsecret.
+app-id: de.trommi.Trommi
+runtime: org.kde.Platform
+runtime-version: '6.10'
+sdk: org.kde.Sdk
+command: trommi
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --share=ipc
+  - --device=dri
+  # The board is a server on this machine or in the tailnet.
+  - --share=network
+  # The link in the keyring; notifications go through the portal-less
+  # org.freedesktop.Notifications name, which Flatpak lets through.
+  - --talk-name=org.freedesktop.secrets
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: trommi
+    buildsystem: simple
+    build-commands:
+      - qmake6 client/linux/app/app.pro PREFIX=/app
+      - make -j$FLATPAK_BUILDER_N_JOBS
+      - make install
+      # Flatpak wants the desktop file named after the app id.
+      - mv /app/share/applications/trommi.desktop /app/share/applications/de.trommi.Trommi.desktop
+    sources:
+      - type: dir
+        path: ../../..

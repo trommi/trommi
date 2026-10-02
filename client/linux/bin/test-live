@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# The client against the real server with demo data (dev/serve.sh, token
+# "demo", its own temporary data directory): login, the event stream,
+# decide, reopen, message.
+#   bin/test-live [PORT]      PORT defaults to 8817; never 8790, the real board.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+port=${1:-8817}
+[[ $port != 8790 ]] || { echo "8790 is the real board; pick another port" >&2; exit 1; }
+build=${TROMMI_BUILD:-build}
+mkdir -p "$build/tests/live"
+here=$PWD
+(cd "$build/tests/live" && qmake6 "$here/tests/live/live.pro" >/dev/null && make -s -j"$(nproc)")
+
+log=$(mktemp)
+../../dev/serve.sh "$port" 60 >"$log" 2>&1 &
+server=$!
+trap 'kill "$server" 2>/dev/null || true; rm -f "$log"' EXIT
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:$port/?t=demo" && break
+  sleep 0.2
+done
+TROMMI_TEST_URL="http://127.0.0.1:$port/?t=demo" "$build/tests/live/tst_live"
