@@ -19,8 +19,9 @@ import { fileURLToPath } from 'node:url'
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.BOARD_PORT || 8790)
 const HOST = process.env.BOARD_HOST || '0.0.0.0'
-const DATA = process.env.BOARD_DATA || path.join(ROOT, 'data')
-const PUBLIC = path.join(ROOT, 'public')
+// The server lives in server/; data and the static web client sit beside it in the repository.
+const DATA = process.env.BOARD_DATA || path.join(ROOT, '..', 'data')
+const PUBLIC = path.join(ROOT, '..', 'client', 'web')
 const FILES = path.join(DATA, 'files')
 const SCRIBBLES = path.join(DATA, 'scribbles')
 const STATE_FILE = path.join(DATA, 'state.json')

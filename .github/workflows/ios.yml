@@ -6,7 +6,7 @@ name: iOS
 
 on:
   push:
-    paths: ['ios/**', 'server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs', '.github/workflows/ios.yml']
+    paths: ['client/ios/**', 'server/server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs', '.github/workflows/ios.yml']
   workflow_dispatch:
 
 concurrency:
@@ -19,7 +19,7 @@ jobs:
     timeout-minutes: 40
     defaults:
       run:
-        working-directory: ios
+        working-directory: client/ios
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +30,7 @@ jobs:
       # login, cookie, Origin, the event stream, decide, reopen, message, files.
       - name: Core package tests, with a live server
         run: |
-          (cd .. && npm ci && (dev/serve.sh 8801 600 > /tmp/trommi-server.log 2>&1 &))
+          (cd ../.. && npm ci && (dev/serve.sh 8801 600 > /tmp/trommi-server.log 2>&1 &))
           for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8801/?t=demo" && break; sleep 1; done
           TROMMI_TEST_LINK='http://127.0.0.1:8801/?t=demo' swift test
 
@@ -76,8 +76,8 @@ jobs:
         with:
           name: ios-test-results
           path: |
-            ios/build/Trommi.xcresult
-            ios/build-log.txt
+            client/ios/build/Trommi.xcresult
+            client/ios/build-log.txt
           if-no-files-found: warn
 
       - name: Upload screenshots
@@ -85,7 +85,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-screenshots
-          path: ios/build/screenshots
+          path: client/ios/build/screenshots
           if-no-files-found: warn
 
       - name: Upload simulator build
@@ -93,5 +93,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-simulator-app
-          path: ios/build/Trommi-simulator.zip
+          path: client/ios/build/Trommi-simulator.zip
           if-no-files-found: warn

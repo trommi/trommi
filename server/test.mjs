@@ -7,6 +7,10 @@ import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath as toPath } from 'node:url'
+
+// Run from anywhere: the server is the file next to this test.
+const SERVER = toPath(new URL('./server.mjs', import.meta.url))
 
 const PORT = 8791
 const base = `http://localhost:${PORT}`
@@ -40,7 +44,7 @@ const serverEnv = (name, env) => ({ ...process.env, BOARD_PORT: String(PORT), BO
 async function start(name = 'main', sink = received, env = {}) {
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { sink.push(n) }
-  const transport = new StdioClientTransport({ command: 'node', args: ['./server.mjs'], env: serverEnv(name, env), stderr: 'pipe' })
+  const transport = new StdioClientTransport({ command: 'node', args: [SERVER], env: serverEnv(name, env), stderr: 'pipe' })
   transport.stderr.on('data', chunk => {
     logs.push(...String(chunk).split('\n').filter(Boolean))
     process.stderr.write(chunk)
@@ -537,7 +541,7 @@ assert.equal((await post('/message', { text: 'für den Hub', agent: 'hub' })).st
 await Promise.all([twin1.close(), twin2.close(), away.close()])
 await portFree()
 assert.equal(file2().pending.hub[0].params.content, 'für den Hub')
-const raw = spawn('node', ['./server.mjs'], { env: serverEnv('Hub', on2), stdio: ['pipe', 'pipe', 'inherit'] })
+const raw = spawn('node', [SERVER], { env: serverEnv('Hub', on2), stdio: ['pipe', 'pipe', 'inherit'] })
 const lines = []
 let partial = ''
 raw.stdout.on('data', chunk => {
