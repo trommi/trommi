@@ -283,7 +283,7 @@ extension BoardState {
         cards[i].status = cards[i].kind == .permission ? .done : .decided
         let card = cards[i]
         if card.kind == .decision {
-            messages.append(Message(id: "local-\(card.id)-decided-\(Int(now))", agent: card.agent, from: .event, kind: "decided",
+            messages.append(Message(id: "local-\(messages.count)-decided-\(card.id)", agent: card.agent, from: .event, kind: "decided",
                                     cardID: card.id, text: option.label, details: "", attachments: [], ts: now))
         }
         for t in tasks.indices where tasks[t].agent == card.agent && tasks[t].cardID == card.id && tasks[t].state == .decision {
@@ -306,7 +306,7 @@ extension BoardState {
         cards[i].summary = ""
         cards[i].decided = nil
         let card = cards[i]
-        messages.append(Message(id: "local-\(card.id)-reopened-\(Int(now))", agent: card.agent, from: .event, kind: "reopened",
+        messages.append(Message(id: "local-\(messages.count)-reopened-\(card.id)", agent: card.agent, from: .event, kind: "reopened",
                                 cardID: card.id, text: card.title, details: "", attachments: [], ts: now))
         queue = BoardState.queueOf(cards)
     }
@@ -316,7 +316,7 @@ extension BoardState {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { throw BoardError.emptyMessage }
         guard agents.contains(where: { $0.id == agent }) else { throw BoardError.unknownAgent }
-        messages.append(Message(id: "local-msg-\(messages.count)-\(Int(now))", agent: agent, from: .user, kind: "",
+        messages.append(Message(id: "local-\(messages.count)-message", agent: agent, from: .user, kind: "",
                                 cardID: nil, text: clean, details: "", attachments: [], ts: now))
     }
 

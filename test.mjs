@@ -328,6 +328,8 @@ assert.ok(s.messages.every(m => m.agent), 'every message names its agent')
 // a session can be starred from the page
 assert.equal((await post('/star', { agent: 'api', starred: true })).status, 200)
 assert.equal((await state()).agents[1].starred, true)
+assert.equal((await post('/session', { agent: 'api', label: 'Schnittstelle', icon: 'api:3' })).status, 200)
+assert.deepEqual([(await state()).agents[1].label, (await state()).agents[1].icon, (await state()).agents[1].name], ['Schnittstelle', 'api:3', 'API'])
 // agents are fenced off from each other
 await refused('close_card', { card_id: apiCard }, /no card/)
 assert.equal(JSON.parse((await infra.callTool({ name: 'list_cards', arguments: {} })).content[0].text).length, 0)

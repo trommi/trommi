@@ -904,6 +904,15 @@ const httpServer = http.createServer(async (req, res) => {
       if (!card) return send(res, 404, '{"error":"not found"}')
       return send(res, 200, fs.readFileSync(await speak(cardScript(card))), 'audio/mpeg')
     }
+    if (req.method === 'POST' && url.pathname === '/session') {
+      // The human's own name and mark for a session; they outlive reconnects.
+      const body = await readJson(req)
+      const agent = state.agents.find(a => a.id === targetAgent(body.agent))
+      if (body.label != null) agent.label = String(body.label).trim().slice(0, 60)
+      if (body.icon != null) agent.icon = String(body.icon).slice(0, 80)
+      commit()
+      return send(res, 200, '{"ok":true}')
+    }
     if (req.method === 'POST' && url.pathname === '/star') {
       const body = await readJson(req)
       const agent = state.agents.find(a => a.id === targetAgent(body.agent))

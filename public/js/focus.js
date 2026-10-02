@@ -142,21 +142,24 @@ export function mountFocus() {
 
   const foot = el('footer', 'focus-foot')
   const prevBtn = button('focus-nav focus-nav-prev')
-  prevBtn.append(icon('left'), el('span', null, 'Zurück'))
+  prevBtn.setAttribute('aria-label', 'Vorherige Karte')
+  prevBtn.append(icon('left'))
   const nextBtn = button('focus-nav focus-nav-next')
-  nextBtn.append(el('span', null, 'Weiter'), icon('right'))
+  nextBtn.setAttribute('aria-label', 'Nächste Karte')
+  nextBtn.append(icon('right'))
   const progress = el('div', 'focus-progress')
   const dots = el('div', 'focus-dots')
   dots.setAttribute('aria-hidden', 'true')
   const pos = el('span', 'focus-pos')
   progress.append(dots, pos)
-  foot.append(prevBtn, progress, nextBtn)
+  // Only the position stays in the foot; the arrows stand at the sides of the sheet.
+  foot.append(progress)
 
   const live = el('div', 'focus-sr')
   live.setAttribute('aria-live', 'polite')
   live.setAttribute('role', 'status')
 
-  sheet.append(top, stage, done, loading, foot, live)
+  sheet.append(top, stage, done, loading, foot, live, prevBtn, nextBtn)
   root.append(backdrop, sheet)
   document.body.append(root)
 
@@ -211,19 +214,16 @@ export function mountFocus() {
     // meta line: id chip coloured by urgency, the asking agent, kind and age
     const meta = el('header', 'focus-meta')
     const chip = el('span', 'focus-chip')
+    // One tab says who is asking and how urgent it is; that it is a decision goes without saying.
     const nr = el('span', 'focus-chip-nr')
-    nr.append(el('small', null, 'Nr.'), ` ${card.number}`)
+    if (card.agent_name) nr.append(card.agent_name)
+    else nr.append(el('small', null, 'Nr.'), ` ${card.number}`)
     rec.urgNode = el('span', 'focus-chip-urg')
     chip.append(nr, rec.urgNode)
     meta.append(chip)
-    if (card.agent_name) {
-      const agent = el('span', 'focus-agent')
-      agent.title = `Fragt: ${card.agent_name}`
-      agent.append(icon('agent'), el('span', 'focus-sr', 'Agent: '), el('span', 'focus-agent-name', card.agent_name))
-      meta.append(agent)
-    }
     const kind = el('span', 'focus-kind')
-    kind.append(permission ? 'Freigabe' : 'Entscheidung', el('i', null, '·'), agoNode(card.created, 'focus-ago'))
+    if (permission) kind.append('Freigabe', el('i', null, '·'))
+    kind.append(agoNode(card.created, 'focus-ago'))
     meta.append(kind)
 
     const scroll = el('div', 'focus-scroll')

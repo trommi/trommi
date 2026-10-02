@@ -2,7 +2,7 @@
 // Yes/no questions are answered right in the row, with two buttons on the
 // right; anything longer opens as a full page.
 
-import { el, agoNode, URGENCY_LABEL, doodle, kindOf } from './ui.js'
+import { el, agoNode, URGENCY_LABEL, doodle, kindOf, rich, mediaNodes } from './ui.js'
 import { decide, reopen } from './store.js'
 import { openLightbox } from './chat.js'
 
@@ -15,10 +15,29 @@ const quick = card =>
   card.kind === 'permission' ||
   (card.options.length === 2 && card.options.every(o => o.label.length <= 18) && (card.attachments ?? []).every(a => kindOf(a) === 'image') && (card.body ?? '').length <= 240)
 
+// Hand-drawn icons for the answer tiles, in the spirit of a thumbs-up and thumbs-down.
+const TILE_ICON = {
+  yes: 'M7.200 11.200 10.400 4.700c1.500-.2 2.300.9 2.100 2.300l-.5 3h4.700c1.300 0 2.100 1.100 1.800 2.300l-1.200 5c-.3 1.100-1.100 1.700-2.200 1.700H7.300M7.200 11v8.100H4.600V11z',
+  no: 'M16.800 12.800 13.600 19.300c-1.500.2-2.300-.9-2.100-2.300l.5-3H7.300c-1.300 0-2.100-1.100-1.800-2.300l1.200-5c.3-1.100 1.100-1.700 2.200-1.700h7.800M16.800 13V4.900h2.600V13z',
+  other: 'M5 9.500h11.500l-3.200-3.300M19 14.500H7.500l3.200 3.300',
+  open: 'M4.500 7.200h15M4.500 12h15M4.500 16.800h9.500',
+}
+const NEGATIVE = /^(nein|nicht|noch nicht|später|ablehnen|lassen|weglassen|behalten|nur |abbrechen|bei .* bleiben)/i
+function tileIcon(kind) {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', TILE_ICON[kind])
+  svg.append(path)
+  return svg
+}
+
 const plain = text => String(text ?? '').replace(/```[\s\S]*?```/g, ' ').replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
 
-/** onOpen(cardId | null): open that card as a full page, or with null start at the most urgent one. */
-export function mountInbox(root, { onOpen }) {
+/** onOpen(cardId | null): open that card as a full page, or with null start at the most urgent one.
+ *  With session: true it lists only the session in scope, every card written out in full with all its options. */
+export function mountInbox(root, { onOpen, session = false }) {
   let signature = ''
   const head = el('header', 'inbox-head')
   const undo = el('div', 'inbox-undo')
@@ -42,8 +61,8 @@ export function mountInbox(root, { onOpen }) {
     undoTimer = setTimeout(() => { undo.hidden = true }, 10000)
   }
 
-  function row(card, vip) {
-    const node = el('article', 'inbox-row')
+  function row(card, vip, full = false) {
+    const node = el('article', full ? 'inbox-row is-full' : 'inbox-row')
     node.dataset.id = card.id
     node.dataset.urgency = card.urgency
     const error = el('p', 'inbox-error')
@@ -60,10 +79,15 @@ export function mountInbox(root, { onOpen }) {
     text.type = 'button'
     const rest = [card.urgency_reason, plain(card.body)].filter(Boolean).join(' · ')
     text.append(el('strong', 'inbox-question', card.title))
-    if (rest) text.append(el('span', 'inbox-body', rest))
+    if (rest && !full) text.append(el('span', 'inbox-body', rest))
     text.addEventListener('click', () => onOpen(card.id))
     const content = el('div', 'inbox-content')
     content.append(head, text)
+    if (full) {
+      if (card.urgency_reason) content.append(el('p', 'inbox-reason', card.urgency_reason))
+      if (card.body) content.append(rich(card.body))
+      content.append(...mediaNodes(card.attachments))
+    }
 
     // Pictures are shown small and open large on tap, without leaving the list.
     const images = (card.attachments ?? []).filter(a => kindOf(a) === 'image')
@@ -89,16 +113,43 @@ export function mountInbox(root, { onOpen }) {
 
     // The answers stand on the right, large and in one column down the page.
     const actions = el('div', 'inbox-actions')
-    if (quick(card)) {
-      // Decline first, approve last, as on the stack.
-      const options = card.kind === 'permission'
-        ? [...card.options].sort((a, b) => (a.key === 'allow') - (b.key === 'allow'))
-        : card.options
-      options.forEach((o, i) => {
-        const b = el('button', 'inbox-answer', o.label)
+    if (full && card.kind !== 'permission') {
+      // With room to spare, every option is written out and answered where it stands.
+      for (const o of card.options) {
+        const b = el('button', 'inbox-choice')
         b.type = 'button'
-        // The first option of a decision is the one the agent leads with.
-        if (card.kind === 'permission' ? o.key === 'allow' : i === 0) b.classList.add('is-lead')
+        b.append(el('strong', null, o.label))
+        if (o.detail) b.append(el('span', null, o.detail))
+        b.addEventListener('click', async () => {
+          for (const other of actions.children) other.disabled = true
+          try {
+            await decide(card.id, o.key)
+            offerUndo(card, o)
+          } catch (err) {
+            for (const other of actions.children) other.disabled = false
+            error.textContent = `Nicht übernommen: ${err.message}`
+            error.hidden = false
+          }
+        })
+        actions.append(b)
+      }
+    } else if (quick(card)) {
+      // No on the left, yes on the right, on every card. The option the agent
+      // leads with (its first, or "allow") is the yes.
+      const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : o === card.options[0])
+      const options = [...card.options].sort((a, b) => isYes(a) - isYes(b))
+      // A bare yes/no needs no words: thumb up, thumb down.
+      const bare = card.options.every(o => /^(ja|nein|yes|no|ok|okay)$/i.test(o.label.trim()))
+      options.forEach(o => {
+        const b = el('button', 'inbox-answer')
+        b.type = 'button'
+        const lead = isYes(o)
+        if (lead) b.classList.add('is-lead')
+        const disc = el('span', 'inbox-disc')
+        disc.append(tileIcon(lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other'))
+        b.append(disc)
+        if (bare) b.setAttribute('aria-label', o.label)
+        else b.append(el('span', null, o.label))
         if (o.detail) b.title = o.detail
         b.addEventListener('click', async () => {
           for (const other of actions.children) other.disabled = true
@@ -118,7 +169,9 @@ export function mountInbox(root, { onOpen }) {
     } else {
       const open = el('button', 'inbox-answer inbox-open')
       open.type = 'button'
-      open.append(el('span', null, 'Optionen ansehen'), el('small', null, `${card.options.length} zur Wahl`))
+      const disc = el('span', 'inbox-disc')
+      disc.append(tileIcon('open'))
+      open.append(disc, el('span', null, `${card.options.length} Optionen`))
       open.addEventListener('click', () => onOpen(card.id))
       actions.append(open)
     }
@@ -127,20 +180,22 @@ export function mountInbox(root, { onOpen }) {
   }
 
   function render(state) {
-    const { all } = state
+    // The inbox looks across every session; the session panel only at the one in scope.
+    const all = session ? { ...state.all, cards: state.cards, queue: state.queue, agents: state.all.agents.filter(a => a.id === state.scope) } : state.all
     const byId = new Map(all.cards.map(c => [c.id, c]))
     const open = all.queue.map(id => byId.get(id)).filter(Boolean)
-    const next = JSON.stringify([open.map(c => [c.id, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.attachments?.length]), all.agents.map(a => [a.id, a.name, a.starred])])
+    const next = JSON.stringify([open.map(c => [c.id, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.attachments?.length]), all.agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
+    root.classList.toggle('inbox-session', session)
     const title = el('div', 'inbox-title')
     const line = el('p')
     if (open.length) line.append(el('span', 'inbox-circled', String(open.length)), open.length === 1 ? ' Frage wartet auf dich.' : ' Fragen warten auf dich.')
     else line.append('Nichts wartet auf dich.')
-    title.append(el('h2', null, 'Posteingang'), line)
+    title.append(el('h2', null, session ? 'Offene Fragen' : 'Posteingang'), line)
     head.replaceChildren(title)
-    if (open.length > 1) {
+    if (open.length > 1 && !session) {
       const go = el('button', 'inbox-go', 'Der Reihe nach durchgehen')
       go.type = 'button'
       go.addEventListener('click', () => onOpen(null))
@@ -161,12 +216,13 @@ export function mountInbox(root, { onOpen }) {
       const section = el('section', 'inbox-group')
       const label = el('h3', 'inbox-sender')
       const mark = el('span', 'inbox-avatar')
-      mark.append(doodle(agent.id))
+      mark.append(doodle(agent.mark ?? agent.id))
       label.append(mark, el('span', null, agent.starred ? `★ ${agent.name}` : agent.name), el('b', null, cards.length === 1 ? '1 Frage' : `${cards.length} Fragen`))
-      section.append(label, ...cards.map(c => row(c, agent.starred)))
+      if (session) section.append(...cards.map(c => row(c, false, true)))
+      else section.append(label, ...cards.map(c => row(c, agent.starred)))
       list.append(section)
     }
-    if (!groups.length) list.append(el('p', 'inbox-empty', 'Sobald ein Agent eine Frage hat, erscheint sie hier.'))
+    if (!groups.length) list.append(el('p', 'inbox-empty', session ? 'Diese Sitzung hat gerade keine Frage an dich.' : 'Sobald ein Agent eine Frage hat, erscheint sie hier.'))
     if (before.size && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       for (const node of list.querySelectorAll('.inbox-row')) {
         const was = before.get(node.dataset.id)

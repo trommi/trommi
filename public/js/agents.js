@@ -1,10 +1,9 @@
 // The sidebar: the inbox with every open decision on top, the sessions below.
 
 import { el, doodle, ago } from './ui.js'
-import { setScope, star } from './store.js'
+import { setScope, star, editSession } from './store.js'
 
 const STATE_RANK = { decision: 0, working: 1, done: 2 }
-const STATE_WORD = { decision: 'wartet auf dich', working: 'arbeitet', done: 'fertig' }
 
 // A stable colour per agent, from the hues that read on both themes.
 const HUES = [162, 28, 262, 205, 338, 96, 48, 232]
@@ -17,7 +16,7 @@ function hueOf(id) {
 // Every session has its own scribble, so it is recognised before its name is read.
 export function avatar(agent) {
   const node = el('span', 'agent-avatar')
-  node.append(doodle(agent.id))
+  node.append(doodle(agent.mark ?? agent.id))
   node.style.setProperty('--hue', hueOf(agent.id))
   node.dataset.online = String(Boolean(agent.online))
   node.setAttribute('aria-hidden', 'true')
@@ -30,26 +29,53 @@ function summary(all, agent) {
   const tasks = all.tasks.filter(t => t.agent === agent.id)
   const light = open ? 'decision' : tasks.map(t => t.state).sort((a, b) => STATE_RANK[a] - STATE_RANK[b])[0] ?? null
   const last = all.messages.findLast(m => m.agent === agent.id && m.from === 'agent')
-  return { open, tasks, light, last }
+  // Blocked: something of the agent's is stuck on the human. Running: it has work in progress.
+  const mine = all.cards.filter(c => c.agent === agent.id && c.status === 'open')
+  const running = agent.online && tasks.some(t => t.state === 'working')
+  const blocked = mine.some(c => c.urgency === 'critical' || c.kind === 'permission') || (open > 0 && !running)
+  return { open, tasks, light, last, running, blocked }
+}
+
+// The badge at the end of a session row: a raised hand when the session is
+// stopped waiting for the human, the number of questions otherwise, with a
+// turning ring while the session is at work.
+function badge({ open, running, blocked }) {
+  if (!open && !running) return null
+  const node = el('span', 'agent-badge')
+  if (blocked) {
+    node.dataset.state = 'blocked'
+    node.title = open === 1 ? 'Wartet auf dich: 1 Frage' : `Wartet auf dich: ${open} Fragen`
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    svg.setAttribute('viewBox', '0 0 24 24')
+    svg.setAttribute('aria-hidden', 'true')
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    // a raised hand, drawn in one go
+    path.setAttribute('d', 'M8.200 12.400V6.300c0-1.700 2.300-1.700 2.300 0v5M10.500 11V4.600c0-1.700 2.400-1.700 2.400 0V11M12.900 11V5.500c0-1.700 2.300-1.600 2.300 0v6.300M15.200 11.800V8.100c0-1.600 2.200-1.600 2.200 0v6.200c0 4-2.300 6.300-5.600 6.300-2.600 0-4-1.200-5.200-3.300l-2.100-3.700c-.8-1.500 1.100-2.600 2.100-1.300l1.600 2.200')
+    svg.append(path)
+    // Blocked is blocked, however many questions are waiting.
+    node.append(svg)
+  } else {
+    node.dataset.state = running ? 'running' : 'open'
+    node.title = running ? (open ? `Arbeitet, ${open} Fragen offen` : 'Arbeitet') : `${open} Fragen offen`
+    if (open) node.append(el('b', null, String(open)))
+  }
+  return node
 }
 
 /** The sidebar. onSelect(agentId | null) is called when the user picks an entry. */
 export function mountAgents(root, { onSelect }) {
   let signature = ''
 
-  function entry({ id, label, sub, open, light, lead, active, page = null }) {
+  function entry({ id, label, sub, open, light, lead, active, page = null, mark = null }) {
     const btn = el('button', 'agent-entry')
     btn.type = 'button'
     if (active && document.body.dataset.page !== 'roster' || page && document.body.dataset.page === page) btn.setAttribute('aria-current', 'true')
     const text = el('span', 'agent-text')
-    text.append(el('strong', null, label), el('small', null, sub))
+    text.append(el('strong', null, label))
+    if (sub) text.append(el('small', null, sub))
     btn.append(lead, text)
-    if (light) {
-      const dot = el('i', 'agent-light')
-      dot.dataset.state = light
-      btn.append(dot)
-    }
-    if (open) btn.append(el('b', 'agent-count', String(open)))
+    if (mark) btn.append(mark)
+    else if (open) btn.append(el('b', 'agent-count', String(open)))
     btn.addEventListener('click', () => {
       // The overview is a page of its own; everything else is the inbox or a session.
       if (page) document.body.dataset.page = page
@@ -66,7 +92,7 @@ export function mountAgents(root, { onSelect }) {
     const { all, scope } = state
     document.body.dataset.scope = scope ?? 'all'
     const rows = all.agents.map(a => ({ agent: a, ...summary(all, a) }))
-    const next = JSON.stringify([scope, all.queue.length, rows.map(r => [r.agent.id, r.agent.name, r.agent.online, r.open, r.light, r.agent.starred])])
+    const next = JSON.stringify([scope, document.body.dataset.page, all.queue.length, rows.map(r => [r.agent.id, r.agent.name, r.agent.mark, r.agent.task, r.agent.online, r.open, r.running, r.blocked, r.agent.starred])])
     if (next === signature) return
     signature = next
 
@@ -81,13 +107,9 @@ export function mountAgents(root, { onSelect }) {
       el('h2', 'caps agent-heading', 'Sitzungen'),
       ...rows.map(r => entry({
         id: r.agent.id, label: r.agent.starred ? `★ ${r.agent.name}` : r.agent.name,
-        sub: r.agent.online ? (r.light ? STATE_WORD[r.light] : 'verbunden') : 'getrennt',
-        open: r.open, light: r.open ? null : r.light, lead: avatar(r.agent), active: scope === r.agent.id,
+        sub: r.agent.online ? r.agent.task || '' : 'getrennt',
+        open: 0, light: null, lead: avatar(r.agent), active: scope === r.agent.id, mark: badge(r),
       })),
-      entry({
-        id: null, page: 'roster', label: 'Übersicht', sub: `${all.agents.filter(a => a.online).length} von ${all.agents.length} verbunden`,
-        open: 0, light: null, lead: el('span', 'agent-avatar agent-roster', '≡'), active: false,
-      }),
     )
   }
 
@@ -125,7 +147,17 @@ export function mountRoster(root) {
       vip.setAttribute('aria-pressed', String(Boolean(agent.starred)))
       vip.setAttribute('aria-label', agent.starred ? 'VIP-Markierung entfernen' : 'Als VIP markieren')
       vip.addEventListener('click', () => star(agent.id, !agent.starred).catch(() => {}))
-      top.append(avatar(agent), name, state, vip)
+      // Tap the mark to rename the session or pick another scribble.
+      const mark = avatar(agent)
+      const edit = el('button', 'roster-edit')
+      edit.type = 'button'
+      edit.setAttribute('aria-label', `${agent.name}: Name und Symbol ändern`)
+      edit.append(mark)
+      edit.addEventListener('click', () => openEditor(agent))
+      const change = el('button', 'roster-change', 'Ändern')
+      change.type = 'button'
+      change.addEventListener('click', () => openEditor(agent))
+      top.append(edit, name, state, change, vip)
       const facts = el('dl', 'roster-facts')
       facts.append(
         cell('Modell', agent.model),
@@ -135,10 +167,79 @@ export function mountRoster(root) {
         cell('Offene Fragen', String(open)),
         cell('Verbunden seit', agent.online && agent.connected ? ago(agent.connected) : ''),
       )
-      card.append(top, facts)
+      const lines = summary(all, agent).tasks
+      if (lines.length) {
+        const lights = el('div', 'roster-tasks')
+        for (const t of lines) {
+          const pill = el('span', 'roster-task', t.detail ? `${t.label}: ${t.detail}` : t.label)
+          pill.dataset.state = t.state
+          lights.append(pill)
+        }
+        card.append(top, lights, facts)
+      } else card.append(top, facts)
       list.append(card)
     }
     root.replaceChildren(head, list)
   }
   return { render }
+}
+
+// ---- rename a session, pick its scribble -------------------------------------
+
+let editor = null
+function openEditor(agent) {
+  editor?.remove()
+  const dialog = editor = el('dialog', 'session-editor')
+  const form = el('form')
+  form.method = 'dialog'
+  const name = el('input')
+  name.type = 'text'
+  name.id = 'session-name'
+  name.value = agent.name
+  name.maxLength = 60
+  name.setAttribute('aria-label', 'Name der Sitzung')
+  let picked = agent.mark
+  const grid = el('div', 'session-marks')
+  grid.setAttribute('role', 'radiogroup')
+  grid.setAttribute('aria-label', 'Symbol')
+  // The current mark first, then a handful of fresh scribbles from the same family.
+  const seeds = [agent.mark, ...Array.from({ length: 11 }, (_, i) => `${agent.id}:${i + 1}`)].filter((s, i, all) => all.indexOf(s) === i)
+  for (const seed of seeds) {
+    const b = el('button', 'session-mark')
+    b.type = 'button'
+    b.setAttribute('role', 'radio')
+    b.setAttribute('aria-checked', String(seed === picked))
+    b.append(doodle(seed))
+    b.addEventListener('click', () => {
+      picked = seed
+      for (const other of grid.children) other.setAttribute('aria-checked', String(other === b))
+    })
+    grid.append(b)
+  }
+  const error = el('p', 'session-error')
+  const row = el('div', 'session-buttons')
+  const cancel = el('button', null, 'Abbrechen')
+  cancel.type = 'button'
+  cancel.addEventListener('click', () => dialog.close())
+  const save = el('button', 'is-lead', 'Speichern')
+  save.type = 'submit'
+  row.append(cancel, save)
+  form.append(el('h2', null, 'Sitzung anpassen'), el('label', 'caps', 'Name'), name, el('span', 'caps', 'Symbol'), grid, error, row)
+  form.addEventListener('submit', async e => {
+    e.preventDefault()
+    save.disabled = true
+    try {
+      // An emptied name falls back to the one the session gave itself.
+      await editSession(agent.id, { label: name.value.trim() === agent.given ? '' : name.value.trim(), icon: picked === agent.id ? '' : picked })
+      dialog.close()
+    } catch (err) {
+      save.disabled = false
+      error.textContent = `Nicht gespeichert: ${err.message}`
+    }
+  })
+  dialog.append(form)
+  dialog.addEventListener('close', () => dialog.remove())
+  document.body.append(dialog)
+  dialog.showModal()
+  name.select()
 }

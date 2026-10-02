@@ -15,7 +15,9 @@ const listeners = new Set()
 
 // Older servers send no agents, urgency or queue; fill those in so views can rely on them.
 function normalize(data) {
-  const agents = data.agents?.length ? data.agents : [{ id: 'main', name: 'Agent', online: true }]
+  // The human may have renamed a session or picked another mark for it; views only ever see the result.
+  const agents = (data.agents?.length ? data.agents : [{ id: 'main', name: 'Agent', online: true }])
+    .map(a => ({ ...a, given: a.name, name: a.label || a.name, mark: a.icon || a.id }))
   const fallback = agents[0].id
   const nameOf = Object.fromEntries(agents.map(a => [a.id, a.name]))
   const several = agents.length > 1
@@ -122,6 +124,9 @@ function recipient() {
 
 /** Send a chat message to the agent in scope. Rejects with a readable Error. */
 export const sendMessage = text => post('/message', { text, agent: recipient() })
+
+/** Rename a session or give it another scribble. */
+export const editSession = (agent, changes) => post('/session', { agent, ...changes })
 
 /** Mark a session as one whose questions matter most; they lead the inbox. */
 export const star = (agent, starred) => post('/star', { agent, starred })

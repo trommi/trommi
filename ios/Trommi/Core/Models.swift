@@ -250,6 +250,9 @@ extension Card: Decodable {
 extension Message: Decodable {
     init(from decoder: Decoder) throws {
         let f = Fields(decoder)
+        guard f.box != nil else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "message is not an object"))
+        }
         text = f.string("text")
         ts = f.double("ts") ?? 0
         from = Sender(rawValue: f.string("from")) ?? .agent
