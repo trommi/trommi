@@ -508,7 +508,7 @@ export function mountFocus({ onDecided } = {}) {
         })
         const flip = button('focus-grid-flip')
         const paintView = () => {
-          media.dataset.view = rec.galleryView ?? 'grid'
+          media.dataset.view = rec.galleryView ?? 'one'
           flip.textContent = media.dataset.view === 'grid' ? 'One large picture' : 'All in a grid'
         }
         flip.addEventListener('click', () => { rec.galleryView = media.dataset.view === 'grid' ? 'one' : 'grid'; paintView() })
@@ -686,14 +686,13 @@ export function mountFocus({ onDecided } = {}) {
       rec.actionsNode = el('div', 'focus-actions')
       // their order, here as on a row of the desk: Snooze, Revise, Whatever, Shred
       rec.actionsNode.append(wayButton('snooze', () => { claim(rec); later() }), wayButton('hand', () => { claim(rec); handBack() }), wayButton('shred', () => shredIt(rec)))
-      // Discuss: the small chat about this card at its right. What was said, a field to write in (paste and drop
-      // files and pictures, the microphone), always there: nothing to switch to.
-      rec.composer = el('aside', 'focus-discuss')
-      rec.composer.setAttribute('aria-label', 'Discuss: the conversation with the agent about this question')
-      const talkBox = el('div', 'focus-discuss-talk')
-      talkBox.append(rec.threadNode)
-      rec.discussScroll = talkBox
-      rec.composer.append(el('h3', 'focus-discuss-head', 'Discuss'), talkBox, ask)
+      // The question is thrown back and forth, so what was said about it is part of the card: it follows under the
+      // decision in the one column that scrolls, in the order of time, and the field stands at the foot of that
+      // column, always in reach.
+      rec.discussScroll = null
+      rec.composer = el('div', 'focus-composer')
+      rec.composer.append(ask)
+      scroll.append(rec.threadNode)
       if (WAYS_PLACE === 'discuss') rec.composer.append(rec.actionsNode)
     }
 
@@ -884,14 +883,7 @@ export function mountFocus({ onDecided } = {}) {
     closeTwin.title = 'Close (Esc)'
     closeTwin.append(icon('close'))
     closeTwin.addEventListener('click', close)
-    // Discuss is folded away until it is wanted: the pen in the card's corner opens it (the decision moves together
-    // to two thirds, Discuss comes in as the right third) and closes it again.
-    const talkBtn = button('focus-discuss-toggle', 'Discuss: write to the agent about this question')
-    talkBtn.title = 'Discuss: write to the agent, scribble (A)'
-    talkBtn.append(sketch('pen'))
-    talkBtn.addEventListener('click', () => { claim(rec); setDiscuss(rec, !rec.discussOpen); if (rec.discussOpen) rec.askField?.focus({ preventScroll: true }) })
-    rec.talkBtn = talkBtn
-    ends.append(...(rec.composer ? [talkBtn] : []), sayTwin, closeTwin)
+    ends.append(sayTwin, closeTwin)
     // Writing anywhere: the card is the surface, its tools stand in its corner.
     rec.marksUi = null
     node.toggleAttribute('data-marks', writeAnywhere && !permission && !earlier)
@@ -919,7 +911,6 @@ export function mountFocus({ onDecided } = {}) {
     node.toggleAttribute('data-head', besideTitle)
     if (besideTitle) scroll.prepend(answer)
     node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends].filter(Boolean))
-    setDiscuss(rec, rec.discussOpen ?? (Boolean(rec.askText.trim()) || Boolean(rec.discussWanted) || (pool()?.messages ?? []).some(m => m.card_id === rec.id && m.from !== 'event')))
     answer.inert = Boolean(earlier)   // an earlier version cannot be answered
     if (multi) paintPicked(rec)
     rec.toEnd = false
@@ -1216,7 +1207,6 @@ export function mountFocus({ onDecided } = {}) {
     rec.wasKeys = rec.multi ? [] : keys
     rec.optNotes = new Map(Object.entries(draft?.notes ?? {}).filter(([k]) => known.has(k)))
     rec.askText = draft?.note ?? ''
-    if (rec.askText.trim() && rec.discussOpen === false && !rec.discussTouched) setDiscuss(rec, true)
     rec.marks = draft?.marks ?? []
     rec.marksUi?.set(rec.marks)
     rec.draftSent = JSON.stringify(draftOf(rec))
@@ -1374,7 +1364,7 @@ export function mountFocus({ onDecided } = {}) {
     const whole = texts[0]
     const layouts = (whole.match(/```html/g) ?? []).length
     const tables = (whole.match(/^\s*\|?\s*:?-{2,}:?\s*\|/gm) ?? []).length
-    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables, card.version, card.versions?.length])
+    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables, card.version, card.versions?.length, rec.threadNode?.querySelectorAll('.msg').length ?? 0])
     if (sig === rec.assetsSig) return
     rec.assetsSig = sig
     const chip = (drawing, label, to) => {
@@ -1386,7 +1376,9 @@ export function mountFocus({ onDecided } = {}) {
     }
     const goTo = sel => () => rec.scroll?.querySelector(sel)?.scrollIntoView({ block: 'center', behavior: still() ? 'instant' : 'smooth' })
     const versions = card.versions?.length ? card.versions : null
+    const said = rec.threadNode?.querySelectorAll('.msg').length ?? 0
     const chips = [
+      ...(said ? [chip('other', said === 1 ? '1 message below' : `${said} messages below`, goTo('.focus-thread'))] : []),
       ...(versions ? [chip('timemachine', `v${card.version ?? versions.at(-1).n + 1}`, () => viewVersion(rec, rec.version == null ? versions.at(-1).n : null))] : []),
       ...(pictures ? [chip('picture', pictures === 1 ? '1 picture' : `${pictures} pictures`, goTo('.focus-media, .focus-sec-pic'))] : []),
       ...(plays ? [chip('play', plays === 1 ? '1 to play' : `${plays} to play`, goTo('.focus-media .media'))] : []),
@@ -1399,13 +1391,8 @@ export function mountFocus({ onDecided } = {}) {
     slot.replaceChildren(...chips)
   }
 
-  /** Open or fold away the Discuss column of a card (kept per card while the window is open). */
-  function setDiscuss(rec, open) {
-    rec.discussOpen = Boolean(open) && Boolean(rec.composer)
-    rec.node.dataset.discuss = rec.discussOpen ? 'open' : 'closed'
-    rec.talkBtn?.setAttribute('aria-pressed', String(rec.discussOpen))
-    if (rec.composer) rec.composer.inert = !rec.discussOpen
-  }
+  /** Bring the field at the foot of the card into reach (Revise, What??, the key for a note). */
+  function setDiscuss(rec) { rec.threadNode?.scrollIntoView({ block: 'end', behavior: still() ? 'instant' : 'smooth' }) }
 
   /** Take files into the composer of a card (picked, dropped or pasted): read, and shown as chips until sent. */
   async function addFiles(rec, list) {
@@ -1525,8 +1512,6 @@ export function mountFocus({ onDecided } = {}) {
       nodes.push(el('p', 'focus-thread-wait', 'Sent. The reply shows up here; the question stays open.'))
     }
     rec.threadNode.replaceChildren(...nodes)
-    if (items.length && rec.discussOpen == null) rec.discussWanted = true
-    if (grew && rec.discussOpen === false && rec.threadCount && rec.node.dataset.discuss) setDiscuss(rec, true)   // something was said: it shows
     paintAssets(rec)
     // the newest is in view, as in any chat
     if (grew) {

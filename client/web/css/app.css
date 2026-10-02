@@ -618,24 +618,39 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 .is-drawing .mark-live path:not(.pair-crown) { stroke-dasharray: 34 66; stroke-width: 2.5; animation: mark-travel 2800ms linear infinite; }
 @keyframes mark-travel { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
 @media (prefers-reduced-motion: reduce) { .is-drawing .mark-live path:not(.pair-crown) { animation: none; stroke-dasharray: none; stroke-width: inherit; } }
-.agent-badge { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 1px; min-width: 30px; height: 32px; font-size: var(--t-sm); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
-.agent-badge .sketch { width: 25px; height: 25px; stroke-width: 1.9; }
-.agent-badge[data-state="running"] { color: color-mix(in srgb, var(--fg) 72%, var(--bg)); }
-.agent-badge[data-state="waiting"] { color: var(--urg-critical); }
-.agent-badge[data-state="running"] { font-size: .74rem; font-weight: 600; color: var(--muted); }
-.agent-badge[data-offline], .agent-badge[data-state="waiting"][data-offline] { font-size: .74rem; font-weight: 600; color: var(--faint); }
+/* The ring at the end of a session row, circled by hand. Its number is the open questions; while the
+   session works a drop travels round it; a knock turns it into the raised hand in a red loop. */
+.agent-badge { flex: none; position: relative; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
+.agent-badge b { position: relative; }
+.agent-ring, .hand-mark { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.agent-ring { color: color-mix(in srgb, var(--fg) 46%, var(--bg)); }
+.ring-loop { fill: var(--sunken); stroke: currentColor; stroke-width: 1.5; }
+.agent-badge[data-state="running"] .agent-ring { color: color-mix(in srgb, var(--accent) 72%, var(--bg)); }
+.agent-badge[data-state="running"] .ring-loop { fill: var(--accent-soft); }
+.ring-drop { fill: currentColor; stroke: none; transform-box: view-box; transform-origin: 50% 50%; animation: agent-flow var(--ring-turn, 4600ms) cubic-bezier(.42,.2,.58,.8) infinite; }
+@keyframes agent-flow { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .ring-drop { display: none; } }
+.agent-badge[data-state="waiting"] { --hand-soft: var(--urg-critical-soft); color: var(--urg-critical); }
+.hand-mark { stroke: currentColor; }
+.agent-badge[data-state="waiting"] .agent-ring { color: var(--urg-critical); }
+.hand-loop { fill: var(--hand-soft, none); stroke-width: 1.5; }
+.hand-pen { stroke-width: 1.45; }
+.agent-badge[data-offline] { color: var(--faint); }
+.agent-badge[data-offline] .agent-ring { color: var(--line-strong, var(--faint)); }
 .bare-hand { display: block; width: 18px; height: 26px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; }
 /* The badge stands beside the row's entry, over its right end, pulled in from the edge, so that it can
    be a button of its own: a click goes through that session's questions. Under the pointer or the
    keyboard the count is underlined and the hand gives a small wave. */
 .agent-row.has-badge .agent-entry { padding-right: 48px; }
 .agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 12px 0 -42px; }
-button.agent-badge { padding: 0; border: 0; border-radius: var(--r-sm); background: none; font-family: inherit; cursor: pointer; }
-button.agent-badge .bare-hand { transition: rotate 140ms ease-out, translate 140ms ease-out; }
-button.agent-badge .sketch { transition: translate 140ms ease-out; }
-button.agent-badge:hover > .sketch, button.agent-badge:focus-visible > .sketch { translate: 0 -2px; color: var(--fg); }
-button.agent-badge:hover .bare-hand, button.agent-badge:focus-visible .bare-hand { rotate: -14deg; translate: 0 -1px; }
+button.agent-badge { border: 0; border-radius: 50%; background: none; font-family: inherit; cursor: pointer; transition: scale 140ms ease-out; }
+button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 button.agent-badge:active { scale: .95; }
+
+/* The Desk entry says how many sessions are at work: a small turning ring and the number. */
+.agent-working { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
+.agent-working .agent-ring { position: static; flex: none; width: 13px; height: 13px; color: color-mix(in srgb, var(--accent) 72%, var(--bg)); }
+.agent-working .ring-loop { fill: none; stroke-width: 2.6; }
 
 /* ---- microphone and focus button ---- */
 .mic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); }
@@ -806,28 +821,9 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* What the card carries, in the byline: a small drawing and the count for each kind. */
 /* "Trust": a quiet word at the end of the byline of a thumb row; it leaves the decision to the agent. */
-.inbox-acts { display: inline-flex; align-items: center; gap: .7em; }
-.inbox-trust, .inbox-shred { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
-.inbox-trust { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
-.inbox-shred .sketch { width: 15px; height: 15px; stroke-width: 2; }
-.inbox-trust .sketch { width: 17px; height: 17px; stroke-width: 1.9; }
-.inbox-trust { text-decoration: none; }
-.inbox-trust span { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
-.inbox-trust-option strong { display: flex; align-items: center; gap: 6px; }
-.inbox-trust-option strong .sketch { width: 20px; height: 20px; }
-.inbox-trust:hover, .inbox-trust:focus-visible, .inbox-shred:hover, .inbox-shred:focus-visible { color: var(--card-ink); text-decoration-color: currentColor; }
-.inbox-shred:hover span, .inbox-shred:focus-visible span { text-decoration: underline; text-underline-offset: 3px; }
 .inbox-shred-open { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--card-ink); font-size: var(--t-sm); font-weight: 600; opacity: .75; }
 .inbox-shred-open .sketch { width: 18px; height: 18px; }
 .inbox-shred-open:hover { opacity: 1; background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
-/* The quiet action shows while the pointer or the keyboard is on the row; where nothing hovers, always. */
-@media (hover: hover) {
-  .inbox-acts { opacity: 0; transition: opacity 100ms ease-out; }
-  .inbox-row:hover .inbox-acts, .inbox-row:focus-within .inbox-acts, .inbox-row.is-current .inbox-acts { opacity: 1; }
-  .inbox-sep:has(+ .inbox-acts) { opacity: 0; }
-  .inbox-row:hover .inbox-sep:has(+ .inbox-acts), .inbox-row:focus-within .inbox-sep:has(+ .inbox-acts), .inbox-row.is-current .inbox-sep:has(+ .inbox-acts) { opacity: 1; }
-}
-.inbox-row.is-current .inbox-shred.inbox-shred[data-cap]::after { position: static; margin-left: 5px; rotate: 0deg; min-width: 18px; padding: 2px 4px; box-shadow: 0 0 0 1px var(--card-line); }
 /* A card that is shredded leaves in strips. */
 .inbox-row.is-leaving[data-leave="shredded"] { animation-name: row-shred; animation-duration: 340ms; -webkit-mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); }
 @keyframes row-shred { from { opacity: 1; translate: 0 0; } 40% { opacity: .9; } to { opacity: 0; translate: 0 38px; scale: 1 .86; } }
@@ -1357,8 +1353,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
   .agent-text strong + strong { rotate: none; translate: none; }
   .agent-text strong + strong::before { content: "+ "; color: var(--faint); font-weight: 500; }
-  .agent-badge { height: 28px; min-width: 0; }
-  .agent-badge b { min-width: 1.2em; }
+  .agent-badge { width: 30px; height: 30px; }
   .agent-row.has-badge .agent-entry { padding-right: 52px; }
   .agent-row > .agent-badge { margin: 0 8px 0 -46px; }
   .focus-open span { display: none; }

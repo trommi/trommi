@@ -771,7 +771,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-zoom-tile span { padding: 0 4px; }
 .focus-zoom-tile[data-lit] { box-shadow: 0 0 0 2px var(--u), var(--shadow-sm); }
 /* ten small pictures do not fit one line beside a text: they wrap */
-.focus-thumbs { flex-wrap: wrap; }
+.focus-thumbs { flex-wrap: nowrap; }
 
 @container focus (min-width: 700px) {
   /* Two columns: what is asked at the left with its own scroll, the answers at the right over the whole height;
@@ -1073,3 +1073,24 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 .focus-answer > .focus-actions, .focus-discuss > .focus-actions { flex-wrap: nowrap; gap: 6px; }
 /* a long list of options ends in a soft fade, not in a cut tile */
 .focus-card .focus-answer > .focus-opts { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent); mask-image: linear-gradient(#000 calc(100% - 26px), transparent); padding-bottom: 22px; }
+
+/* ══ The opened card, as decided: one column that scrolls (the decision, under it what was said, in time order),
+   the field at its foot; at the right, fixed, the answers and the four ways out. No side column for the talk. ══ */
+@container focus (min-width: 700px) {
+  .focus-card, .focus-card[data-discuss] { grid-template: minmax(0, 1fr) auto / minmax(0, 1fr) auto; transition: none; }
+  .focus-card > .focus-talk { grid-area: 1 / 1; }
+  .focus-card > .focus-composer { grid-area: 2 / 1; }
+  .focus-card > .focus-answer { grid-area: 1 / 2 / 3 / 3; padding-top: 44px; }
+}
+.focus-composer { flex-wrap: nowrap; padding: var(--s-2) var(--pad) var(--s-3); }
+.focus-composer .focus-ask { flex: 1 1 auto; }
+.focus-composer .focus-mark-tools { display: inline-flex; gap: 0; margin: 0; }
+.focus-composer .focus-mark-tool { flex: none; width: 36px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.focus-composer .focus-mark-tool .sketch { width: 20px; height: 20px; }
+.focus-composer .focus-mark-tool:hover { background: var(--sunken); color: var(--fg); }
+.focus-composer .focus-mark-tool[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
+.focus-composer .focus-saved span, .focus-composer .focus-saved kbd { display: none; }
+.focus-thread { clear: both; max-width: 52rem; }
+/* many pictures: one large picture and a single strip of small ones that scrolls sideways */
+.focus-thumbs { overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
+.focus-thumbs .focus-figure-name { flex: none; position: sticky; right: 0; padding-left: var(--s-2); background: var(--sunken); }
