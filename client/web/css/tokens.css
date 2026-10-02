@@ -98,16 +98,17 @@
 /* The agent's advice: a swipe of a highlighter behind the words of the option it would pick (ui.js
    adviceLoop, the one place that draws the mark; it is appended to the option or to its label and
    finds the lines of the words by itself). One pass per line, behind the words, never on them.
-   Ink: --advice; how strong: --marker. On a tile that is filled with colour a pale band would lie
-   behind white words and say nothing, so there the band is a darker shade of the tile itself. It
+   Ink: --advice; how strong: --marker. It
    has slanted, uneven ends and is taller than a selection, so it reads as marked by hand, not as
    selected or ticked. */
 .is-advised { position: relative; isolation: isolate; --advice: var(--urg-high); --marker: .26; }
 :root[data-theme="dark"] .is-advised { --marker: .34; }
 .advice-loop { position: absolute; z-index: -1; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; fill: none; }
 .advice-loop path { stroke: var(--advice); stroke-linecap: butt; stroke-linejoin: round; opacity: var(--marker); }
-.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised { --advice: color-mix(in srgb, var(--card-color, var(--urg-normal)) 40%, #000); --marker: .5; }
-:root[data-theme="dark"] :is(.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised) { --advice: color-mix(in srgb, var(--card-color, var(--urg-normal)) 55%, #fff); --marker: .55; }
+/* On a tile filled with colour: no band (it would be a smudge behind white words) but a light line
+   under the words, like a pale marker on dark paper. A host says so with --advice-under: 1. */
+.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised { --advice-under: 1; --advice: color-mix(in srgb, var(--surface) 82%, var(--card-color, var(--urg-normal))); --marker: .95; }
+.advice-loop.is-under path { stroke-linecap: round; }
 /* The Focus window's pair of squares appends no mark of its own: there the band is laid behind the
    label as a background (the same marker, one line). The two strokes of the old circle are gone. */
 .focus-opt.is-advised::before, .focus-opt.is-advised::after { content: none; }

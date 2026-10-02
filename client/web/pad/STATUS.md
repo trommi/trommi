@@ -1,5 +1,21 @@
 # Pad status log
 
+## Round three, 2 October 2026: "Send area" (the pad is called Scratchpad on screen). Nothing committed.
+
+The user: "a button where I take an area and send it to the agent, and then it is cut out with such an animation and is sent, swoosh, into the sidebar, into the agent."
+
+- **Send area tool** in the toolbar (a dashed frame with an arrow, key **A**): drag a rectangle, outlined while dragging by a hand-drawn dashed frame. On release a chooser stands at the frame: the sessions with their marks, the one you came from first, then by most recent send, a find field when there are more than six; Enter sends to the first, arrows move, Esc drops the frame. Rectangle only; a free lasso is not built.
+- **What goes**: every element that lies in the frame, whole or in part (ids, words), and a PNG of exactly the frame (`renderRect` in `elements.js`: elements are cut at its edge), through the existing `POST /pad/send`. No server change, **no restart needed**; a page reload is enough.
+- **The swoosh** (`client/web/pad/fly.js`, about 650 ms): the frame is drawn through (the snip), the piece lifts off with a tilt and a shadow, flies in an arc to the session's mark, the mark bounces. With reduced motion the piece fades and the mark blinks once.
+- **Where it flies**: inside the board on a wide screen the board draws the flight above the pad's frame (`fly()` in `js/padlink.js`): a slim strip of the sessions' marks comes in at the left edge, where the sidebar is, and leaves again. Chosen over a strip inside the pad because the marks are the board's own component (same scribbles and colours as the sidebar), and because the same code can end the flight at the real sidebar or dock once a layout leaves it visible. On a phone, and on the pad as a page of its own, the piece flies into the chooser's row.
+- **Afterwards**: the elements stay, marked as sent; a note "Sent to <session>" for four seconds; the tool goes back to the one in hand before. **No Back**: the hub has no way to take a message back (the agent already has it), so the note only says where it went. Adding one would need a server route and an event that tells the agent to disregard it.
+- "Send to…" on a selection is unchanged.
+- The block over the toolbar in the user's screenshot was their own dictation tool's overlay, not the pad (coordinator). Looked for it anyway; the only real overlap found and fixed: the recording pill could cover the top edge of the toolbar by 10 px.
+- **Verified** with `dev-check.mjs` on a demo board (8861): 82 of 82, with real pointer and touch input, desktop 1440x900 and phone 400x860, light and dark. A frame over strokes, a note and a picture; the fixture agent answered with the element count and the PNG path; the PNG has the frame's exact size and was looked at (picture and stroke cut at the frame's edge). Frames of the flight captured at a tenth of the speed. One earlier run had five failures in the old standalone part (a selection click) that did not repeat: a flake right after the demo board started, not understood.
+- **Not verified**: more than six sessions (the find field) in a browser; reduced motion; the flight on a real phone.
+- Files: `client/web/pad/pad.js`, `fly.js` (new), `elements.js`, `board.js`, `index.html`, `pad.css`, `dev-check.mjs`; `client/web/js/padlink.js` (marks in the context, `fly`), `client/web/css/padlink.css` (strip). `padlink.js` now imports `avatar` and `hueOf` from `js/agents.js`.
+- Unanswered on the board (card 3571488e, chat to "Pad"): the user asks for links to the best-known canvas libraries with a pros and cons table (nothing proprietary), and how the Scratchpad gets onto iOS.
+
 ## Round two, 2 October 2026 (session "Pad"). Nothing committed.
 
 Goal: the pad can be called up from anywhere in the board, what is on it lives on the server, and a selection really reaches a session.

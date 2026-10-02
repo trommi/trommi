@@ -671,6 +671,8 @@ const SKETCH = {
   ],
   // a sun coming up over a line: wake a snoozed question
   wake: [[[6.2, 16.2], [7.6, 11.6], [12, 9.4], [16.4, 11.4], [17.8, 16.2]], [[3, 16.6], [12, 16.2], [21, 16.5]], [[12, 3.6], [12.1, 6.2]], [[5.4, 7.2], [7.2, 9]], [[18.6, 7], [16.9, 8.8]]],
+  // a tick, made in one move: read, fine
+  tick: [[[4.6, 12.8], [7.4, 15.2], [9.8, 18], [13, 12.4], [19.6, 5.6]]],
   // a table: a sheet ruled into cells
   grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
@@ -694,6 +696,12 @@ export const LATER_SKETCH = 'snooze'
 // Fetching a snoozed question back: its word and its drawing (a sun coming up).
 export const WAKE_WORD = 'Wake up'
 export const WAKE_SKETCH = 'wake'
+
+// An info card (something to read, nothing to decide) has two answers of the board's own.
+export const ACK_WORD = 'Acknowledge'   // read and closed
+export const ACK_SKETCH = 'tick'
+export const WHAT_WORD = 'What??'       // ask the session to explain it; it comes back explained
+export const WHAT_SKETCH = 'explain'
 
 // Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
 // (The agents' side still says urgency: high | critical; only the words on screen are these.)
@@ -778,12 +786,24 @@ export function adviceLoop() {
       else lines.push(box)
     }
     // No words to lie behind: a short swipe in the lower part of the tile, where its word would be.
-    if (!lines.length) lines.push({ x: frame.width * k * .26, y: frame.height * k * .7, w: frame.width * k * .48, h: 16 })
+    if (!lines.length) lines.push({ x: frame.width * k * .26, y: frame.height * k * .68, w: frame.width * k * .48, h: 16 })
+    // On a tile that is filled with colour a band behind white words is only a smudge: there (the host
+    // says so with --advice-under: 1, tokens.css) the mark is a light line drawn under the words instead,
+    // no wider than they are, with a slight tilt.
+    const under = getComputedStyle(host).getPropertyValue('--advice-under').trim() === '1'
+    svg.classList.toggle('is-under', under)
     svg.replaceChildren(...lines.map((l, n) => {
-      const y = l.y + l.h * .54, x0 = l.x - 4, x1 = l.x + l.w + 5, w = i => wobble[(n * 4 + i) % wobble.length]
+      const w = i => wobble[(n * 4 + i) % wobble.length]
       const path = document.createElementNS(NS, 'path')
-      path.setAttribute('d', penPath([[x0, y + 1.2 + w(0) * .5], [x0 + (x1 - x0) * .35, y - .6 + w(1) * .5], [x0 + (x1 - x0) * .7, y + .8 + w(2) * .5], [x1, y - 1.2 + w(3) * .5]]))
-      path.style.strokeWidth = `${(l.h * .78).toFixed(1)}px`
+      if (under) {
+        const y = l.y + l.h + 1.5, x0 = l.x + 1, x1 = l.x + l.w - 1
+        path.setAttribute('d', penPath([[x0, y + .9 + w(0) * .2], [x0 + (x1 - x0) * .4, y - .2 + w(1) * .2], [x0 + (x1 - x0) * .75, y + .5 + w(2) * .2], [x1, y - .8 + w(3) * .2]]))
+        path.style.strokeWidth = '2.4px'
+      } else {
+        const y = l.y + l.h * .54, x0 = l.x - 4, x1 = l.x + l.w + 5
+        path.setAttribute('d', penPath([[x0, y + 1.2 + w(0) * .5], [x0 + (x1 - x0) * .35, y - .6 + w(1) * .5], [x0 + (x1 - x0) * .7, y + .8 + w(2) * .5], [x1, y - 1.2 + w(3) * .5]]))
+        path.style.strokeWidth = `${(l.h * .78).toFixed(1)}px`
+      }
       return path
     }))
   }

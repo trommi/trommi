@@ -33,8 +33,15 @@ button { cursor: pointer; touch-action: manipulation; }
 .ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .caps { font-size: var(--t-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 
-/* Thin, quiet scrollbars in the panes. */
-#agents, .log, .pane-list, #chat .rich pre { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+/* Scrollbars: thin and quiet in the panes, in the house colours, no arrow buttons; none at all on the
+   sidebar (it still scrolls by wheel, touch and keys). Text fields keep the system's own. */
+#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--line-strong) 80%, transparent) transparent; }
+:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar { width: 8px; height: 8px; }
+:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-thumb { border-radius: 8px; border: 2px solid transparent; background: var(--line-strong); background-clip: padding-box; }
+:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-track { background: transparent; }
+:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-button { display: none; }
+#agents { scrollbar-width: none; }
+#agents::-webkit-scrollbar { display: none; }
 
 /* ---- top bar ------------------------------------------------------------- */
 
@@ -683,6 +690,9 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-content { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: var(--s-2); padding: 0 var(--s-4) var(--s-4) var(--s-5); min-width: 0; overflow: hidden; }
 .inbox-content > * { min-width: 0; }
 .inbox-row-head { height: 26px; display: flex; align-items: flex-start; gap: var(--s-3); margin-left: calc(-1 * var(--s-5)); }
+/* Only a knock has a head line (its tab). Every other row begins with its title, at the row's top padding. */
+.inbox-row-head:empty { display: none; }
+.inbox-content:has(> .inbox-row-head:empty) { padding-top: 13px; }
 /* Only what stands out carries a tab: blocking and urgent. A normal question has none. */
 .inbox-tab { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 7px 10px; border-radius: 6px 0 6px 0; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .inbox-tab { background: var(--card-color); color: var(--surface); }
@@ -699,8 +709,9 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-knocks .sketch { width: 21px; height: 21px; stroke-width: 2; }
 .inbox-dot { color: var(--faint); }
 /* One that can wait: no tab, a small hourglass scribbled in a soft colour. */
-.inbox-whenever { flex: none; margin: 5px 0 0 var(--s-4); color: color-mix(in srgb, var(--card-color) 55%, var(--surface)); }
-.inbox-whenever .sketch { width: 21px; height: 21px; stroke-width: 1.9; }
+/* (It stands in the byline, before who asks.) */
+.inbox-whenever { flex: none; display: inline-flex; color: color-mix(in srgb, var(--card-color) 62%, var(--surface)); }
+.inbox-whenever .sketch { width: 16px; height: 16px; stroke-width: 2; }
 /* The byline under the text: who asks (the session's mark and name, where the list holds more than one
    session), the card's number, its age, and what it carries. One quiet line at the foot of the row. */
 .inbox-content { position: relative; }
@@ -728,56 +739,61 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-carries { display: inline-flex; align-items: center; gap: .7em; min-width: 0; }
 .inbox-carries > span { display: inline-flex; align-items: center; gap: 4px; }
 .inbox-carries .sketch { width: 15px; height: 15px; stroke-width: 1.9; }
-/* Snooze: a dog-ear at the row's top right corner (class .inbox-later, key L). The button is a strip
-   of its own to the right of the answer tiles (the tiles are set in by its width), so the ear never
-   lies over a tile and a click on a tile never lands on it. At rest: the corner folded down, the
-   small drawing on it. Under the pointer or the keyboard (and after a finger's first tap,
-   .is-unfolded) it unfolds like paper: the flap turns back about the fold line to where it came from,
-   and a small tab with the word turns up from behind the row's top edge beside it. Under reduced
-   motion both simply stand open. */
-.inbox-later { --ear: 26px; position: absolute; z-index: 2; top: 0; right: 0; width: 30px; height: 46px; padding: 0; border: 0; background: none; color: var(--card-ink); }
+/* Snooze: the row's top right corner (class .inbox-later, key L). Everything about its look and its
+   motion is in this block, so another way of unfolding can take its place.
+   The button is a strip of its own to the right of the answer tiles (the tiles are set in by its
+   width): it alone takes the click. What is seen is drawn inside it and takes no click:
+   - at rest the corner is only slightly bent: a small turned tip, a hint;
+   - under the pointer or the keyboard (and after a finger's first tap, .is-unfolded, and on the row
+     the keys are on) the corner folds down properly: a flap turns about the diagonal fold line, the
+     page shows where the corner was, and on the flap, the paper's underside, stand z z z and the word.
+   Under reduced motion the flap simply lies folded down. */
+.inbox-later { --ear: 62px; --tip: 11px; position: absolute; z-index: 2; top: 0; right: 0; width: 30px; height: 46px; padding: 0; border: 0; background: none; color: var(--card-ink); }
 .inbox-later:focus-visible { outline: 0; }
-.inbox-later-ear { position: absolute; top: -1px; right: -1px; width: var(--ear); height: var(--ear); perspective: 140px; pointer-events: none; }
-/* the corner that is folded away: the page shows through, over the row's own edge */
-.inbox-later-ear::before { content: ""; position: absolute; inset: 0; background: linear-gradient(225deg, var(--surface) 50%, transparent 50%); transition: opacity 90ms linear 90ms; }
-/* the flap: the paper's underside, a shade darker, a soft line along the fold */
+.inbox-later-ear { position: absolute; top: -1px; right: -1px; width: var(--ear); height: var(--ear); perspective: 260px; pointer-events: none; }
+/* at rest: the slightly bent tip (page showing behind it, its underside a shade darker) */
+.inbox-later-ear::before { content: ""; position: absolute; top: 0; right: 0; width: var(--tip); height: var(--tip); border-radius: 0 0 0 3px;
+  background: linear-gradient(225deg, var(--surface) 50%, color-mix(in srgb, var(--card-color) 46%, var(--surface)) 50%, color-mix(in srgb, var(--card-color) 20%, var(--surface)) calc(50% + 3px)); transition: opacity 80ms linear 100ms; }
+/* folded down: the place the corner came from shows the page */
+.inbox-later-ear::after { content: ""; position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%); background: var(--surface); opacity: 0; transition: opacity 60ms linear; }
+/* the flap: the paper's underside, with the drawing and the word on it; it turns about the diagonal */
 .inbox-later-flap {
-  position: absolute; inset: 0; clip-path: polygon(0 0, 100% 100%, 0 100%); border-radius: 0 0 0 4px; transform-origin: 50% 50%;
-  background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 46%, var(--surface)) 50%, color-mix(in srgb, var(--card-color) 30%, var(--surface)) calc(50% + 1.5px), color-mix(in srgb, var(--card-color) 17%, var(--surface)) calc(50% + 7px));
-  transition: transform 180ms cubic-bezier(.3, .7, .3, 1), background 180ms linear;
+  position: absolute; inset: 0; z-index: 1; clip-path: polygon(0 0, 100% 100%, 0 100%); border-radius: 0 0 0 5px; transform-origin: 50% 50%;
+  background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 50%, var(--surface)) 50%, color-mix(in srgb, var(--card-color) 30%, var(--surface)) calc(50% + 1.5px), color-mix(in srgb, var(--card-color) 16%, var(--surface)) calc(50% + 9px));
+  transform: rotate3d(1, 1, 0, 180deg); opacity: 0;
+  transition: transform 200ms cubic-bezier(.3, .7, .3, 1), opacity 50ms linear 150ms;
 }
 .inbox-row[data-later] .inbox-later-flap { background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 45%, var(--surface)) 50%, var(--surface-2) calc(50% + 1.5px)); }
-.inbox-later .sketch { position: absolute; z-index: 1; right: 9px; top: 9px; width: 15px; height: 15px; stroke-width: 2.3; opacity: .85; pointer-events: none; transition: translate 180ms ease-out, opacity 100ms; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap { transform: rotate3d(1, 1, 0, 180deg); background: var(--card-bg); }
+.inbox-later-flap .sketch { position: absolute; left: 7px; bottom: 7px; width: 17px; height: 17px; stroke-width: 2.2; }
+.inbox-later-flap b { position: absolute; left: 50%; top: 50%; translate: -50% -50%; rotate: 45deg; margin: 9px 0 0 -9px; font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap { transform: rotate3d(1, 1, 0, 0deg); opacity: 1; transition: transform 200ms cubic-bezier(.3, .7, .3, 1), opacity 30ms linear; }
 :is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::before { opacity: 0; transition-delay: 0s; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .sketch { translate: 3px -3px; opacity: 1; }
-.inbox-later:focus-visible .inbox-later-ear { outline: 2px solid var(--fg); outline-offset: 1px; border-radius: 0 6px 0 0; }
-.inbox-later:active .sketch { translate: 3px -1px; }
-.inbox-row.is-current > .inbox-later.inbox-later[data-cap]::after { content: none; }
-/* the tab with the word: paper hinged on the row's top edge, folded away behind it until the ear opens */
-.inbox-later-word {
-  position: absolute; z-index: 3; right: 30px; bottom: calc(100% - 1px); height: 22px; padding: 0 9px; display: inline-flex; align-items: center;
-  border-radius: 5px 5px 0 0; background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); color: var(--card-ink);
-  box-shadow: 0 0 0 1px var(--card-line), inset 0 -3px 3px -3px rgb(20 30 25 / .22);
-  font: 600 var(--t-xs)/1 var(--font); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; pointer-events: none;
-  transform-origin: 50% 100%; transform: perspective(180px) rotateX(-96deg); opacity: 0;
-  transition: transform 180ms cubic-bezier(.3, .7, .3, 1), opacity 60ms linear 120ms;
-}
-.inbox-later:hover + .inbox-later-word, .inbox-later:focus-visible + .inbox-later-word, .inbox-later.is-unfolded + .inbox-later-word, .inbox-row.is-current > .inbox-later-word { transform: perspective(180px) rotateX(0deg); opacity: 1; transition: transform 180ms cubic-bezier(.3, .7, .3, 1), opacity 40ms linear; }
-.inbox-row.is-current .inbox-later-word[data-cap]::after { position: static; margin-left: 6px; rotate: 0deg; min-width: 18px; padding: 2px 4px; box-shadow: 0 0 0 1px var(--card-line); text-transform: none; }
-/* (Set in from the right by the ear's strip: nothing of a tile lies under the ear.) */
-.inbox-actions { display: grid; grid-template-columns: repeat(2, 124px); gap: 8px; padding: 12px 31px 12px 0; align-content: stretch; }
-.inbox-answer { aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: anywhere; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::after { opacity: 1; }
+.inbox-later:active .inbox-later-flap { filter: brightness(.94); }
+/* the key's cap on the row the keys are on: at the foot of the strip */
+.inbox-row.is-current > .inbox-later.inbox-later[data-cap]::after { position: absolute; left: 4px; top: auto; right: auto; bottom: -4px; margin: 0; rotate: 0deg; }
+/* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
+   (Set in from the right by the corner's strip: no tile lies under what takes the corner's click.) */
+.inbox-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 31px 12px 0; }
+.inbox-answer { flex: none; width: 124px; aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
    or two lines at a size that reads: inbox.js lets only labels onto a tile that fit that way. */
 .inbox-answer.is-thumb .sketch { width: 44px; height: 44px; stroke-width: 1.5; }
-.inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { max-width: 100%; font-size: var(--t-sm); font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: break-word; }
-/* More than two ways: one tile across both places. */
-.inbox-answer.is-wide { grid-column: span 2; aspect-ratio: auto; font: 700 1.05rem/1.2 var(--display); }
+.inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { max-width: 100%; font-size: var(--t-sm); font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: normal; }
+/* A longer pair of labels: smaller, up to three lines; a word is never broken inside (inbox.js labelSize). */
+.inbox-answer.is-thumb.is-small { gap: 4px; }
+.inbox-answer.is-thumb.is-small .sketch { width: 34px; height: 34px; }
+.inbox-answer.is-thumb.is-small > span:last-child:not(.inbox-disc) { font-size: .72rem; line-height: 1.15; }
+/* More than two ways: one tile, "Choose", in the place of the right-hand thumb. */
+.inbox-answer.is-wide { font: 700 1.05rem/1.2 var(--display); }
 .inbox-answer small { font: 500 var(--t-xs)/1.2 var(--font); opacity: .8; }
 .inbox-answer.is-wide[aria-expanded="true"] .sketch { opacity: .5; }
 .inbox-answer.is-lead { background: var(--card-color); color: var(--surface); }
+/* An info card: "What??" and "Acknowledge" stand where the answers do; in the byline a small page says it is to read. */
+.inbox-toread { color: color-mix(in srgb, var(--card-color) 60%, var(--surface)); }
+.inbox-toread-count { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.inbox-toread-count .sketch { width: 20px; height: 20px; stroke-width: 1.9; }
 @media (any-hover: hover) {
   .inbox-answer:hover, .inbox-option:hover { box-shadow: inset 0 0 0 2px var(--card-color); }
   .inbox-answer.is-lead:hover { filter: brightness(.92); }
@@ -890,13 +906,14 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
   .inbox-row > :not(.inbox-more) { grid-row: auto; }
   .inbox-content { grid-column: 1 / -1; padding: 0 var(--s-4) var(--s-3); overflow: visible; }
   .inbox-row-head { height: auto; min-height: 26px; margin-left: calc(-1 * var(--s-4)); }
-  .inbox-whenever { margin-left: var(--s-3); }
   .inbox-question { font-size: 1.25rem; line-height: 1.18; }
   .inbox-body, .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; font-size: var(--t-md); line-height: 1.45; }
   .inbox-thumb { display: block; grid-column: 1 / -1; justify-self: start; width: 72px; height: 54px; margin: 0 var(--s-4) var(--s-3); }
   .inbox-row-head { padding-right: 30px; }
   .inbox-byline { position: static; margin-top: 2px; }
-  .inbox-actions { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 var(--s-3) var(--s-4); }
+  .inbox-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 var(--s-3) var(--s-4); }
+  .inbox-answer { width: auto; }
+  .inbox-answer.is-wide { grid-column: 1 / -1; }
   .inbox-answer { aspect-ratio: auto; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, auto); justify-content: center; align-items: center; gap: 10px; min-height: 56px; border-radius: 10px; }
   .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: left; }
   .inbox-answer .sketch, .inbox-answer.is-thumb .sketch { width: 30px; height: 30px; stroke-width: 1.7; }
@@ -1076,14 +1093,28 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
 .brand-open[aria-expanded="true"] .brand-fold { rotate: 0deg; color: var(--fg); }
 /* The menu: a small sheet above the logo (below it on a phone, where the bar is at the top). */
 .sidedoors { position: absolute; z-index: 6; left: max(var(--s-3), env(safe-area-inset-left, 0px)); bottom: calc(100% + 6px); min-width: 208px; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
-.topbar .sidedoors a, .topbar .sidedoors button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
-.topbar .sidedoors a:hover, .topbar .sidedoors button:hover, .topbar .sidedoors :focus-visible { background: var(--sunken); text-decoration: none; }
+.topbar .sidedoors a, .topbar .sidedoors button, .topbar .sidedoors #keys-open { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
+.topbar .sidedoors a:hover, .topbar .sidedoors button:hover, .topbar .sidedoors #keys-open:hover, .topbar .sidedoors :focus-visible { background: var(--sunken); text-decoration: none; }
 .topbar .sidedoors :focus-visible { outline-offset: -2px; }
 .sidedoors .sketch { width: 20px; height: 20px; stroke-width: 1.8; color: var(--muted); }
 /* a switch in the menu says how it stands */
 .sidedoors button { width: 100%; cursor: pointer; }
 .sidedoors button i { margin-left: auto; padding-left: var(--s-4); font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
 .sidedoors button[aria-checked="true"] i { color: var(--accent); }
+.sidedoors kbd { margin-left: auto; min-width: 22px; padding: 4px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 0 var(--line-strong); font: 500 .72rem/1 var(--mono); color: var(--muted); text-align: center; }
+/* the theme: a switch that says how it stands, with the moon while it is light and the sun while it is dark */
+#theme-toggle i::after { content: "off"; }
+#theme-toggle[aria-pressed="true"] i::after { content: "on"; }
+#theme-toggle[aria-pressed="true"] i { color: var(--accent); }
+/* the connection, last in the menu: a line, not a control */
+.sidedoors .conn { margin: 4px 0 0; padding: 10px 12px 6px 14px; height: auto; border-top: 1px solid var(--line); border-radius: 0; font-size: var(--t-sm); }
+.sidedoors .conn[data-state="online"] span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+.sidedoors .conn[data-state="offline"] { margin: 4px -6px -6px; padding: 10px 18px 12px 20px; border-radius: 0 0 var(--r-md) var(--r-md); }
+/* When the connection is not there it must be seen without opening anything: the logo carries a mark,
+   and the word stands beside it in the bar. */
+.brand:has(.conn[data-state="offline"]) .brand-open::after, .brand:has(.conn[data-state="connecting"]) .brand-open::after { content: "Connecting"; margin-left: 4px; padding: 5px 10px; border-radius: var(--r-pill); font: 500 var(--t-xs)/1 var(--font); letter-spacing: .01em; color: var(--muted); background: var(--sunken); }
+.brand:has(.conn[data-state="offline"]) .brand-open::after { content: "Disconnected, reconnecting"; background: var(--urg-high-soft); color: var(--urg-high); animation: blink 1.6s var(--ease-in-out) infinite; }
+.brand:has(.conn[data-state="offline"]) .brand-mark-bg { fill: var(--urg-high); }
 /* The two tools, and on wide screens the two places: one shape. */
 .topbar .focus-open, .topbar .padlink-open, .footnav button {
   display: inline-flex; align-items: center; gap: 7px; height: 36px; min-height: 36px; padding: 0 14px 0 10px;
@@ -1098,12 +1129,8 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
 .topbar .icon-btn { width: 36px; height: 36px; border-radius: 10px; }
 #theme-toggle .ico-sun, :root[data-theme="dark"] #theme-toggle .ico-moon { display: none; }
 :root[data-theme="dark"] #theme-toggle .ico-sun { display: block; }
-#theme-toggle .sketch, #keys-open .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
 /* The sheet of keys: only where there is a keyboard. */
-@media (pointer: coarse), (max-width: 860px) { .topbar #keys-open { display: none; } }
-/* The connection is a small mark; it speaks only while it is not there. */
-.conn[data-state="online"] { padding: 0 6px; }
-.conn[data-state="online"] span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@media (pointer: coarse) { .topbar #keys-open { display: none; } }
 @media (min-width: 861px) {
   body { grid-template-rows: minmax(0, 1fr) auto; }
   .topbar { grid-row: 2; gap: 0 var(--s-2); border-bottom: 0; border-top: 1px solid var(--line); background: var(--bg); }
@@ -1113,9 +1140,6 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
   .footnav button { background: none; color: var(--muted); font-weight: 500; }
   .footnav button:hover { color: var(--fg); background: var(--sunken); }
   .footnav button[aria-current] { color: var(--fg); font-weight: 600; background: var(--surface); box-shadow: var(--shadow-sm), 0 0 0 1px var(--line); }
-  .topbar .conn { order: 5; }
-  .topbar #keys-open { order: 6; margin-right: -6px; }
-  .topbar #theme-toggle { order: 7; }
 }
 
 /* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */

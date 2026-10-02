@@ -1,4 +1,6 @@
-// The Table: the overview of the sessions in the Stack layout (css/table.css), at /agents.
+// The Table: a second form of the overview of the sessions at /agents (css/table.css), beside the list
+// of cards (js/agents.js mountRoster). A small switch at the top of the page flips between the two and
+// is remembered in this browser (<html data-agents="table">); the list is the default.
 // Every session lies on a table top as its mark, sized by how many questions it has open:
 // the ones that need you first, then the working, the idle, the ones that are away.
 //   - find a session (name, machine, model, task, folder) and show one state only
@@ -17,12 +19,94 @@
 //   Shift+arrow  move the mark one place      Esc   let go of the mark
 // Answering in the slip is the list's own business (js/inbox.js: J K, Y N, L, C, 1…9).
 
-import { getState, pair, unpair, archive, moveSession, editSession, reopen } from './store.js'
+import { subscribe, getState, pair, unpair, archive, moveSession, editSession, reopen } from './store.js'
 import { avatar, crownToggle, tellApart, openMarkPicker, openEditor } from './agents.js'
 import { mountInbox } from './inbox.js'
-import { el, sketch, groupLoop, ago } from './ui.js'
+import { el, sketch, groupLoop, ago, bareHand, sweepMark } from './ui.js'
 import { say, pageHost } from './back.js'
-import { unitsOf, summaryOf, stateOf, stateText, stateBadge } from './stack.js'
+
+const $ = id => document.getElementById(id)
+
+// ---- what a session, or several laid together, need right now (the sidebar's rule, js/agents.js) ----
+
+/** One unit per session, or per group of sessions laid together, in the server's order. */
+function unitsOf(all) {
+  const units = []
+  for (const a of all.agents) {
+    const group = a.group && all.groups.find(g => g.id === a.group)
+    if (!group) units.push({ id: a.id, members: [a] })
+    else if (!units.some(u => u.id === group.id)) units.push({ id: group.id, members: group.members })
+  }
+  for (const u of units) Object.assign(u, summaryOf(all, u.members))
+  return units
+}
+
+/** open: its questions that wait; running: it has work in progress; stuck: it cannot go on without the human. */
+function summaryOf(all, members) {
+  const ids = new Set(members.map(a => a.id))
+  const mine = all.cards.filter(c => ids.has(c.agent) && c.status === 'open' && all.queue.includes(c.id))
+  const tasks = all.tasks.filter(t => ids.has(t.agent))
+  const online = members.some(a => a.online)
+  const running = members.some(a => a.online && tasks.some(t => t.agent === a.id && t.state === 'working'))
+  const stuck = mine.some(c => c.urgency === 'critical' || c.kind === 'permission')
+  return { open: mine.length, tasks, online, running, stuck }
+}
+
+/** The state as one word: away (not connected), needs (a question waits), working, idle. */
+const stateOf = s => (!s.online ? 'away' : s.open ? 'needs' : s.running ? 'working' : 'idle')
+const stateText = s => {
+  const questions = s.open === 1 ? '1 question' : `${s.open} questions`
+  if (!s.online) return s.open ? `disconnected, ${questions} open` : 'disconnected'
+  if (s.open) return s.running && !s.stuck ? `working, ${questions} open` : `waiting for you: ${questions}`
+  return s.running ? 'working' : 'connected, nothing open'
+}
+
+/** The mark of a session's state, as in the sidebar: a hand with the count while it waits for the
+ *  human, a stroke swept round the count while it works, grey and still when it is not connected. */
+const SWEEP_TURN = 3400
+function stateBadge({ open, online, running, stuck }) {
+  if (!open && !(online && running)) return null
+  const node = el('span', 'agent-badge')
+  const count = open ? el('b', null, String(open)) : null
+  if (online ? stuck || !running : stuck) {
+    node.dataset.state = 'waiting'
+    node.append(bareHand())
+    if (count) node.append(count)
+  } else {
+    node.dataset.state = online ? 'running' : 'open'
+    const spot = el('span', 'agent-sweep')
+    if (online) {
+      const sweep = sweepMark()
+      sweep.style.animationDelay = `${-(Date.now() % SWEEP_TURN)}ms`
+      spot.append(sweep)
+    }
+    if (count) spot.append(count)
+    node.append(spot)
+  }
+  if (!online) node.dataset.offline = ''
+  node.title = stateText({ open, online, running, stuck })
+  return node
+}
+
+// ---- going somewhere: through the page's own controls ----
+
+/** null: the questions (home). 'table': the overview. Else a session's or a group's id. */
+function go(id) {
+  if (id == null) return void $('nav-inbox')?.click()
+  if (id === 'table') return void $('nav-roster')?.click()
+  const row = [...document.querySelectorAll('#agents .agent-row[data-unit]')]
+    .find(r => r.dataset.unit === id || (r.dataset.members ?? '').split(' ').includes(id))
+  row?.querySelector('.agent-entry')?.click()
+}
+
+/** Open one question as a window of its own (null: walk through all of them): by its address, which the page follows. */
+function openQuestion(cardId) {
+  const params = new URLSearchParams(location.search)
+  params.set('q', cardId == null ? 'next' : String(getState().all.cards.find(c => c.id === cardId)?.number ?? cardId))
+  history.pushState({ q: cardId ?? 'next' }, '', `${location.pathname}?${params}${location.hash}`)
+  window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
+}
+
 
 const STATES = [['all', 'All'], ['needs', 'Needs you'], ['working', 'Working'], ['idle', 'Idle'], ['away', 'Away']]
 const ZONES = STATES.slice(1)
@@ -45,7 +129,7 @@ function glass() {
 const button = (cls, text) => { const b = el('button', cls, text); b.type = 'button'; return b }
 
 /** go(id): open a session or group. openQuestion(cardId): that question as a window. Returns { render(state), shown() }. */
-export function mountTable(root, { go, openQuestion }) {
+function mountTable(root, { go, openQuestion }) {
   const view = { find: '', only: 'all', tidy: 'need', cursor: '', pairFrom: '' }
   let last = null        // the state drawn last
   let units = []         // as drawn: [{ id, members, open, … }]
@@ -553,4 +637,46 @@ export function mountTable(root, { go, openQuestion }) {
   }, true)
 
   return { render, shown: () => { if (isShown()) paint() } }
+}
+
+// ---- mount: the page beside the list, and the switch between the two ----
+
+{
+  const KEY = 'trommi-agents-view'
+  const root = document.documentElement
+  const isTable = () => root.dataset.agents === 'table'
+  try { if (localStorage.getItem(KEY) === 'table') root.dataset.agents = 'table' } catch {}
+
+  const node = el('main')
+  node.id = 'table'
+  node.setAttribute('aria-label', 'Table')
+  $('roster')?.after(node)
+  const table = mountTable(node, { go, openQuestion })
+  subscribe(state => table.render(state))
+
+  const flip = el('nav', 'agents-view')
+  flip.setAttribute('aria-label', 'Form of the overview')
+  const choice = (key, label) => {
+    const b = button(null, label)
+    b.addEventListener('click', () => {
+      if (key === 'table') root.dataset.agents = 'table'
+      else delete root.dataset.agents
+      try { localStorage.setItem(KEY, key) } catch {}
+      paintFlip()
+      table.shown()
+    })
+    return b
+  }
+  const asList = choice('list', 'List'), asTable = choice('table', 'Table')
+  flip.append(asList, asTable)
+  // The switch stands in the head of whichever form is up. The list rebuilds itself; it is put back then.
+  const roster = $('roster')
+  const place = () => {
+    const head = isTable() ? node.querySelector('.table-head') : roster?.querySelector('.roster-head')
+    if (head && flip.parentElement !== head) head.append(flip)
+  }
+  const paintFlip = () => { asList.setAttribute('aria-pressed', String(!isTable())); asTable.setAttribute('aria-pressed', String(isTable())); place() }
+  paintFlip()
+  if (roster) new MutationObserver(place).observe(roster, { childList: true })
+  new MutationObserver(() => table.shown()).observe(document.body, { attributes: true, attributeFilter: ['data-page'] })
 }
