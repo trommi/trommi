@@ -31,6 +31,10 @@ Window {
         readonly property color accentSoft: c.accent_soft
         readonly property color accentFg: c.accent_fg
         readonly property color deny: c.deny
+        readonly property color gold: c.gold
+        readonly property color goldPen: c.gold_pen
+        readonly property color urgCriticalSoft: c.urg_critical_soft
+        readonly property color overlay: Qt.alpha(theme.dark ? "black" : "#0c120f", theme.dark ? 0.65 : 0.55)
         readonly property color urgLow: c.urg_low
         readonly property color urgNormal: c.urg_normal
         readonly property color urgHigh: c.urg_high
@@ -51,6 +55,8 @@ Window {
         function cardInk(u) { return mix(urg(u), fg, 0.70) }
         function cardLine(u) { return mix(urg(u), surface, 0.30) }
         function state(s) { return s === "decision" ? stDecision : s === "done" ? stDone : stWorking }
+        // The ink a session's mark is drawn in: its own hue, readable on both themes.
+        function ink(hue) { return theme.dark ? Qt.hsla(hue / 360, 0.70, 0.76, 1) : Qt.hsla(hue / 360, 0.62, 0.30, 1) }
 
         readonly property string sans: sansFont
         readonly property string mono: monoFont
@@ -85,26 +91,27 @@ Window {
     Nav { id: nav }
 
     // ── keys ────────────────────────────────────────────────────────────
+    // A key by the name the layout in Nav knows it under.
     function keyName(e) {
-        const shift = e.modifiers & Qt.ShiftModifier, ctrl = e.modifiers & Qt.ControlModifier
+        const ctrl = e.modifiers & Qt.ControlModifier
+        if (ctrl && e.key === Qt.Key_Q) return "ctrl+q"
+        if (e.modifiers & (Qt.ControlModifier | Qt.AltModifier | Qt.MetaModifier)) return "" // no chords are taken
         switch (e.key) {
         case Qt.Key_Up: return "up"
         case Qt.Key_Down: return "down"
         case Qt.Key_Left: return "left"
         case Qt.Key_Right: return "right"
-        case Qt.Key_Tab: return shift ? "shift+tab" : "tab"
-        case Qt.Key_Backtab: return "shift+tab"
         case Qt.Key_Return: case Qt.Key_Enter: return "enter"
         case Qt.Key_Escape: return "esc"
+        case Qt.Key_Backspace: return "backspace"
         case Qt.Key_PageUp: return "pgup"
         case Qt.Key_PageDown: return "pgdn"
         case Qt.Key_Home: return "home"
         case Qt.Key_End: return "end"
         case Qt.Key_Space: return "space"
+        case Qt.Key_Tab: case Qt.Key_Backtab: return ""
         }
-        if (ctrl && e.key >= Qt.Key_A && e.key <= Qt.Key_Z)
-            return "ctrl+" + String.fromCharCode(e.key).toLowerCase()
-        return e.text
+        return e.text.length === 1 ? e.text.toLowerCase() : ""
     }
 
     Item {
@@ -114,6 +121,8 @@ Window {
         Keys.onPressed: e => {
             const k = win.keyName(e)
             if (!k) return
+            // A key held down repeats only where that is harmless: moving, never an answer.
+            if (e.isAutoRepeat && !nav.repeats(k)) { e.accepted = true; return }
             e.accepted = nav.key(k)
         }
     }
@@ -127,6 +136,7 @@ Window {
             for (const k of testKeys.split(" ")) {
                 const it = win.activeFocusItem
                 if (k.startsWith("type:")) nav.type(k.slice(5).replace(/_/g, " "))
+                else if (k === "open") nav.openCard(nav.sel) // as a click on a row's text does
                 else if (it && it.testKey) it.testKey(k) // a field has the keys
                 else nav.key(k)
             }
@@ -146,30 +156,69 @@ Window {
         Sidebar {
             id: sidebar
             visible: !ui.narrow
-            width: visible ? ui.px(232) : 0
+            width: visible ? ui.px(256) : 0
             anchors { left: parent.left; top: parent.top; bottom: parent.bottom }
         }
 
         // Narrow, as a tile often is: the places shrink to one line.
-        PlaceBar {
+        Rectangle {
             id: placeBar
             visible: ui.narrow
-            height: visible ? ui.px(40) : 0
+            height: visible ? ui.px(44) : 0
             anchors { left: parent.left; right: parent.right; top: parent.top }
+            color: ui.surface2
+            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: ui.line }
+            Row {
+                anchors { left: parent.left; leftMargin: ui.px(14); verticalCenter: parent.verticalCenter }
+                spacing: ui.px(8)
+                Btn { quiet: true; icon: "tray"; label: "Inbox"; cap: board.freshCount > 0 ? String(board.freshCount) : ""; onPressed: nav.openInbox() }
+                Btn { quiet: true; icon: "heads"; label: nav.view === "session" ? conversation.session.name || "Sessions" : "Sessions"; onPressed: nav.stepSession(1) }
+            }
+            Text {
+                anchors { right: parent.right; rightMargin: ui.px(14); verticalCenter: parent.verticalCenter }
+                text: board.online ? "? keys" : "Not connected"
+                color: board.online ? ui.faint : ui.deny
+                font { family: ui.sans; pixelSize: ui.px(12) }
+            }
         }
 
         Item {
             id: stage
-            anchors { left: sidebar.right; right: parent.right; top: placeBar.bottom; bottom: undoBar.top }
+            anchors { left: sidebar.right; right: parent.right; top: placeBar.bottom; bottom: parent.bottom }
 
             Inbox { id: inbox; anchors.fill: parent; visible: nav.view === "inbox" }
-            CardView { id: cardView; anchors.fill: parent; visible: nav.view === "card" }
             Conversation { id: conversation; anchors.fill: parent; visible: nav.view === "session" }
+
+            // What just happened, and the way back: at the lower left, where it covers no title.
+            Says { anchors { left: parent.left; bottom: parent.bottom; margins: ui.px(16) } shown: !nav.focusOpen }
         }
 
-        UndoBar {
-            id: undoBar
-            anchors { left: sidebar.right; right: parent.right; bottom: parent.bottom }
+        FocusWindow { id: focusWindow; anchors.fill: parent; visible: nav.focusOpen }
+    }
+
+    // "g", then where to.
+    Rectangle {
+        visible: nav.pending !== ""
+        anchors { horizontalCenter: parent.horizontalCenter; bottom: parent.bottom; bottomMargin: ui.px(20) }
+        width: chip.implicitWidth + ui.px(28)
+        height: ui.px(38)
+        radius: ui.px(8)
+        color: ui.fg
+        Row {
+            id: chip
+            anchors.centerIn: parent
+            spacing: ui.px(12)
+            KeyCap { anchors.verticalCenter: parent.verticalCenter; text: "G"; ink: ui.bg }
+            Repeater {
+                model: nav.pending !== "" ? nav.following(nav.pending) : []
+                Row {
+                    required property var modelData
+                    anchors.verticalCenter: parent.verticalCenter
+                    spacing: ui.px(5)
+                    KeyCap { anchors.verticalCenter: parent.verticalCenter; text: modelData[0]; ink: ui.bg }
+                    Text { anchors.verticalCenter: parent.verticalCenter; text: modelData[1]; color: ui.bg; font { family: ui.sans; pixelSize: ui.px(12.5) } }
+                }
+            }
         }
     }
 

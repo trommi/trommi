@@ -1,6 +1,6 @@
 // The light markdown agents write, drawn block by block: paragraphs with
-// bold, code and links, bullet lists, and code blocks in a box of their
-// own. A click on a code block copies it.
+// bold, code and links, bullet lists, tables, and code blocks in a box of
+// their own. A click on a code block copies it.
 import QtQuick
 
 Column {
@@ -16,7 +16,42 @@ Column {
         Loader {
             required property var modelData
             width: rich.width
-            sourceComponent: modelData.kind === "code" ? code : modelData.kind === "ul" ? list : paragraph
+            sourceComponent: modelData.kind === "code" ? code : modelData.kind === "ul" ? list : modelData.kind === "table" ? table : paragraph
+
+            Component {
+                id: table
+                // A table as agents write it: ruled like a sheet, a heavier rule under its head.
+                Column {
+                    id: sheet
+                    readonly property var rows: modelData.rows
+                    readonly property int columns: rows.length ? rows[0].length : 1
+                    readonly property real cell: Math.min(ui.px(180), width / columns)
+                    Repeater {
+                        model: sheet.rows
+                        Column {
+                            required property var modelData
+                            required property int index
+                            readonly property bool head: index === 0
+                            Row {
+                                Repeater {
+                                    model: modelData
+                                    Text {
+                                        required property string modelData
+                                        width: sheet.cell
+                                        text: modelData
+                                        textFormat: Text.RichText
+                                        color: rich.ink
+                                        wrapMode: Text.Wrap
+                                        topPadding: ui.px(5); bottomPadding: ui.px(5); rightPadding: ui.px(14)
+                                        font { family: ui.sans; pixelSize: rich.size * 0.95; weight: parent.parent.head ? Font.DemiBold : Font.Normal }
+                                    }
+                                }
+                            }
+                            Rectangle { width: sheet.cell * sheet.columns; height: head ? 2 : 1; color: head ? ui.fg : ui.lineStrong; visible: head || index < sheet.rows.length - 1 }
+                        }
+                    }
+                }
+            }
 
             Component {
                 id: paragraph

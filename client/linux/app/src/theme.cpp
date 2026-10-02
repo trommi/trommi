@@ -28,7 +28,8 @@ QVariantMap Theme::tokens(bool dark)
             {"line", "#252f2a"}, {"line_strong", "#35423b"},
             {"accent", "#6fd0b5"}, {"accent_hover", "#8adcc5"}, {"accent_soft", "#17332b"}, {"accent_fg", "#08130f"},
             {"urg_low", "#8b9891"}, {"urg_normal", "#6fd0b5"}, {"urg_high", "#f2a56c"}, {"urg_critical", "#ff8a80"},
-            {"deny", "#f08a83"},
+            {"urg_low_soft", "#1c2420"}, {"urg_normal_soft", "#17332b"}, {"urg_high_soft", "#3a2415"}, {"urg_critical_soft", "#41191a"},
+            {"deny", "#f08a83"}, {"gold", "#d2ab3c"}, {"gold_pen", "#dcb84e"},
             {"st_decision", "#ff8a80"}, {"st_working", "#f2c14e"}, {"st_done", "#6cd598"},
         };
     return {
@@ -37,7 +38,8 @@ QVariantMap Theme::tokens(bool dark)
         {"line", "#e1e5df"}, {"line_strong", "#c9d0c8"},
         {"accent", "#1b6a57"}, {"accent_hover", "#155646"}, {"accent_soft", "#dcefe8"}, {"accent_fg", "#ffffff"},
         {"urg_low", "#6b7771"}, {"urg_normal", "#1b6a57"}, {"urg_high", "#b4551b"}, {"urg_critical", "#b3261e"},
-        {"deny", "#a8322d"},
+        {"urg_low_soft", "#eceee8"}, {"urg_normal_soft", "#dcefe8"}, {"urg_high_soft", "#fbe9dc"}, {"urg_critical_soft", "#fbe0de"},
+        {"deny", "#a8322d"}, {"gold", "#c39a1f"}, {"gold_pen", "#a8820f"},
         {"st_decision", "#c62f25"}, {"st_working", "#b07a06"}, {"st_done", "#1f8a4c"},
     };
 }
@@ -64,7 +66,7 @@ Theme::Theme(QObject *parent) : QObject(parent)
 
 QVariantMap Theme::colors() const { return tokens(m_dark); }
 
-// Light or dark, from the first that knows: TROMMI_THEME, the desktop
+// Light or dark, from the first that knows: the human's pick, TROMMI_THEME, the desktop
 // portal's colour scheme, Qt's own reading of the platform, Omarchy's
 // current theme. Light if nobody does, as in the web client.
 void Theme::decide()
@@ -73,7 +75,10 @@ void Theme::decide()
     QString source = "default";
     const QString forced = qEnvironmentVariable("TROMMI_THEME");
     const Qt::ColorScheme qt = QGuiApplication::styleHints()->colorScheme();
-    if (forced == "dark" || forced == "light") {
+    if (m_picked) {
+        dark = m_picked == 1;
+        source = "picked";
+    } else if (forced == "dark" || forced == "light") {
         dark = forced == "dark";
         source = "TROMMI_THEME";
     } else if (m_portal == 1 || m_portal == 2) {
@@ -91,6 +96,13 @@ void Theme::decide()
         m_source = source;
         emit changed();
     }
+}
+
+// The human's own choice for this window (the key "t"), until it is closed.
+void Theme::toggle()
+{
+    m_picked = m_dark ? 2 : 1;
+    decide();
 }
 
 // Omarchy's theme says light or dark in colors.toml: by "mode", else by

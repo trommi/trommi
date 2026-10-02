@@ -92,6 +92,28 @@ static QList<Attachment> attachments(const QJsonValue &v)
     return out;
 }
 
+// A list of keys, whatever the server made of it: one string is a list of one.
+static QStringList strings(const QJsonValue &v)
+{
+    QStringList out;
+    if (v.isString() && !v.toString().isEmpty()) out.append(v.toString());
+    for (const QJsonValue &item : v.toArray())
+        if (item.isString() && !item.toString().isEmpty()) out.append(item.toString());
+    return out;
+}
+
+// Notes on single options, in the order of the options; empty ones dropped.
+static QList<QPair<QString, QString>> notes(const QJsonValue &v, const QList<Option> &options)
+{
+    QList<QPair<QString, QString>> out;
+    const QJsonObject o = v.toObject();
+    for (const Option &opt : options) {
+        const QString text = o.value(opt.key).toString().trimmed();
+        if (!text.isEmpty()) out.append({opt.key, text});
+    }
+    return out;
+}
+
 bool State::decode(const QByteArray &json, State *out, QString *error)
 {
     QJsonParseError pe;
@@ -104,6 +126,7 @@ bool State::decode(const QByteArray &json, State *out, QString *error)
     State s;
 
     QSet<QString> seen;
+    QList<Agent> everyone;
     for (const QJsonValue &item : root.value("agents").toArray()) {
         const QJsonObject o = item.toObject();
         Agent a;
@@ -117,19 +140,43 @@ bool State::decode(const QByteArray &json, State *out, QString *error)
         a.cwd = str(o, "cwd");
         a.model = str(o, "model");
         a.task = str(o, "task");
+        a.host = str(o, "host");
         a.online = flag(o, "online");
         a.starred = flag(o, "starred");
-        s.agents.append(a);
+        a.archived = flag(o, "archived");
+        a.group = str(o, "group");
+        const QString icon = str(o, "icon");
+        a.mark = icon.isEmpty() ? a.id : icon;
+        a.joined = num(o, "joined");
+        a.connected = num(o, "connected");
+        a.seen = num(o, "seen");
+        everyone.append(a);
     }
     // Older servers send no agents.
-    if (s.agents.isEmpty()) {
+    if (everyone.isEmpty()) {
         Agent a;
-        a.id = "main";
+        a.id = a.mark = "main";
         a.name = a.given = "Agent";
         a.online = true;
-        s.agents.append(a);
+        everyone.append(a);
     }
-    const QString fallback = s.agents.first().id;
+    const QString fallback = everyone.first().id;
+    QSet<QString> gone;
+    for (const Agent &a : everyone) {
+        if (a.archived) gone.insert(a.id);
+        (a.archived ? s.archived : s.agents).append(a);
+    }
+    // A group is two or more sessions that are still here; one alone is just a session.
+    for (const Agent &a : s.agents) {
+        if (a.group.isEmpty()) continue;
+        auto it = std::find_if(s.groups.begin(), s.groups.end(), [&](const AgentGroup &g) { return g.id == a.group; });
+        if (it == s.groups.end()) s.groups.append({a.group, {a.id}});
+        else it->members.append(a.id);
+    }
+    s.groups.removeIf([](const AgentGroup &g) { return g.members.size() < 2; });
+    for (Agent &a : s.agents)
+        if (!a.group.isEmpty() && !s.group(a.group)) a.group.clear();
+    s.speech = flag(root, "speech");
 
     seen.clear();
     int index = 0;
@@ -159,16 +206,53 @@ bool State::decode(const QByteArray &json, State *out, QString *error)
             opt.detail = str(oo, "detail");
             c.options.append(opt);
         }
-        // Advice for an option that is not there is no advice.
-        const QString advised = str(o, "recommended");
-        for (const Option &opt : c.options)
-            if (opt.key == advised) c.recommended = advised;
+        auto has = [&c](const QString &key) {
+            return std::any_of(c.options.begin(), c.options.end(), [&](const Option &opt) { return opt.key == key; });
+        };
+        c.multiple = flag(o, "multiple");
+        // One key or a list of them; advice for an option that is not there is no advice.
+        for (const QString &key : strings(o.value("recommended")))
+            if (has(key) && !c.recommended.contains(key)) c.recommended.append(key);
         c.attachments = attachments(o.value("attachments"));
         c.choice = str(o, "choice");
+        c.choices = strings(o.value("choices"));
+        if (c.choices.isEmpty() && !c.choice.isEmpty()) c.choices.append(c.choice);
+        if (c.choice.isEmpty() && !c.choices.isEmpty()) c.choice = c.choices.first();
         c.note = str(o, "note");
+        c.optionNotes = notes(o.value("option_notes"), c.options);
         c.summary = str(o, "summary");
         c.created = num(o, "created");
         c.decided = num(o, "decided");
+        c.revised = num(o, "revised");
+        c.mergedFrom = strings(o.value("merged_from"));
+        c.version = std::max(1, int(num(o, "version", num(o, "revisions") + 1)));
+        c.earlier = int(o.value("versions").toArray().size());
+        c.revisionNote = str(o, "revision_note");
+        c.withAgent = c.open() ? num(o, "with_agent") : 0;
+        for (const QJsonValue &sv : o.value("sections").toArray()) {
+            const QJsonObject so = sv.toObject();
+            Section sec;
+            sec.key = str(so, "key");
+            sec.text = str(so, "text");
+            if (sec.flagged()) {
+                if (!has(sec.key)) continue; // an option the card does not have
+                sec.label = str(so, "label", sec.key);
+                sec.recommended = c.advised(sec.key) || flag(so, "recommended");
+                const QJsonValue pic = so.value("picture");
+                if (pic.isDouble() && pic.toInt(-1) >= 0 && pic.toInt() < c.attachments.size()) sec.picture = pic.toInt();
+            } else if (sec.text.trimmed().isEmpty()) {
+                continue;
+            }
+            c.sections.append(sec);
+        }
+        if (o.value("draft").isObject()) {
+            const QJsonObject d = o.value("draft").toObject();
+            for (const QString &key : strings(d.value("keys")))
+                if (has(key)) c.draft.keys.append(key);
+            c.draft.note = str(d, "note");
+            c.draft.notes = notes(d.value("notes"), c.options);
+            c.draft.ts = num(d, "ts");
+        }
         s.cards.append(c);
     }
 
@@ -185,6 +269,13 @@ bool State::decode(const QByteArray &json, State *out, QString *error)
         m.details = str(o, "details");
         m.cardId = str(o, "card_id");
         m.attachments = attachments(o.value("attachments"));
+        if (o.value("asset").isObject()) {
+            const QJsonObject a = o.value("asset").toObject();
+            m.assetId = str(a, "id");
+            m.assetType = str(a, "type");
+            m.assetTitle = str(a, "title");
+            m.assetGone = flag(a, "gone");
+        }
         m.ts = num(o, "ts");
         s.messages.append(m);
     }
@@ -210,6 +301,11 @@ bool State::decode(const QByteArray &json, State *out, QString *error)
     } else {
         s.queue = repairedQueue(nullptr, s.cards);
     }
+    // What an archived session asked waits with it, out of the way.
+    s.queue.removeIf([&](const QString &id) {
+        const Card *c = s.card(id);
+        return c && gone.contains(c->agent);
+    });
 
     *out = s;
     return true;
@@ -226,6 +322,15 @@ const Agent *State::agent(const QString &id) const
 {
     for (const Agent &a : agents)
         if (a.id == id) return &a;
+    for (const Agent &a : archived)
+        if (a.id == id) return &a;
+    return nullptr;
+}
+
+const AgentGroup *State::group(const QString &id) const
+{
+    for (const AgentGroup &g : groups)
+        if (g.id == id) return &g;
     return nullptr;
 }
 
