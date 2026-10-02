@@ -6,8 +6,9 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
 import { hueOf } from './agents.js'
+import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen } from './store.js'
 import { openLightbox } from './chat.js'
 import { provide, hint } from './keys.js'
@@ -173,6 +174,25 @@ export const lineFit = () => new ResizeObserver(entries => {
   }
 })
 
+// What a card carries besides its words, for the byline: pictures, things to play, files, links to
+// published pages, a table. Each as { icon (a sketch name), text ("6 pictures") }.
+const many = (n, one, more = `${one}s`) => (n === 1 ? `1 ${one}` : `${n} ${more}`)
+export function carries(card) {
+  const list = card.attachments ?? [], count = kind => list.filter(a => kindOf(a) === kind).length
+  const body = String(card.body ?? '').replace(/```[\s\S]*?```/g, '')
+  const pages = new Set((body.match(/https?:\/\/[^\s<>)`]+|(?<=`)\/a\/[^\s`]+/g) ?? []).map(u => linkInfo(u.replace(/[.,;:!?]+$/, '')).asset?.id).filter(Boolean)).size
+  // A table as markdown or as HTML, or another layout the agent sent along (richhtml.js): named here, shown in the window.
+  const table = richMark(card)
+  return [
+    count('image') && { icon: 'picture', text: many(count('image'), 'picture') },
+    count('video') && { icon: 'play', text: many(count('video'), 'video') },
+    count('audio') && { icon: 'play', text: many(count('audio'), 'recording') },
+    count('file') && { icon: 'page', text: many(count('file'), 'file') },
+    pages && { icon: 'page', text: many(pages, 'page') },
+    table && { icon: 'grid', text: table === 'layout' ? 'a layout' : 'a table' },
+  ].filter(Boolean)
+}
+
 // What "Choose" unfolds under a row: the text, every option as a tile, and a line to ask the
 // agent back instead of answering. One tap on an option answers; where several answers are
 // allowed the options are toggles and one tile sends them.
@@ -280,7 +300,10 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   const head = el('header', 'inbox-row-head')
   const blocking = card.kind === 'permission' || card.urgency === 'critical'
   if (blocking || card.urgency === 'high') {
-    head.append(el('span', 'inbox-tab', blocking ? (card.kind === 'permission' ? 'Blocking · Permission' : 'Blocking') : 'Urgent'))
+    // A knock: the small drawing of knuckles on a door, and the word.
+    const tab = el('span', 'inbox-tab')
+    tab.append(sketch(KNOCK_SKETCH), knockWord(card))
+    head.append(tab)
   } else if (card.urgency === 'low') {
     const mark = el('span', 'inbox-whenever')
     mark.title = 'Whenever: nothing waits on this'
@@ -313,6 +336,14 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     byline.append(who, ' · ')
   }
   byline.append(el('span', 'inbox-nr', cardNr(card)), ' · ', agoNode(card.created, 'inbox-ago'))
+  // What the card carries: a small drawing and the count per kind; the whole list as its tooltip.
+  const extra = carries(card)
+  if (extra.length) {
+    const more = el('span', 'inbox-carries')
+    more.title = `This question carries ${extra.map(x => x.text).join(', ')}`
+    for (const x of extra) { const one = el('span'); one.append(sketch(x.icon), x.text); more.append(one) }
+    byline.append(' · ', more)
+  }
   text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
   content.append(head, text, byline)
@@ -331,7 +362,6 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     img.loading = 'lazy'
     img.addEventListener('error', () => thumb.remove())
     thumb.append(img)
-    if (images.length > 1) thumb.append(el('b', null, String(images.length)))
     thumb.addEventListener('click', () => openLightbox(images, 0))
     node.append(thumb)
   }
@@ -345,7 +375,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   const later = el('button', 'inbox-later')
   later.type = 'button'
   later.setAttribute('aria-label', off ? 'Fetch back' : `${LATER_WORD}: put this question off; it waits for you below`)
-  later.append(sketch(off ? 'back' : LATER_SKETCH))
+  later.append(el('i', 'inbox-later-fold'), sketch(off ? 'back' : LATER_SKETCH))
   const laterWord = el('span', 'inbox-later-word', off ? 'Fetch back' : LATER_WORD)
   laterWord.setAttribute('aria-hidden', 'true')
   later.addEventListener('click', () => {
@@ -589,6 +619,10 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const line = el('p')
     const circled = el('span', 'inbox-circled', String(fresh.length))
     const needs = fresh.length === 1 ? ' question needs you.' : ' questions need you.'
+    // The knocks among them (urgent and blocking) are counted first: "3 knocks · 9 questions need you."
+    const knocking = fresh.filter(isKnock).length
+    const knocks = el('span', 'inbox-knocks')
+    if (knocking) knocks.append(sketch(KNOCK_SKETCH), knocksText(knocking))
     if (fresh.length && !agent) {
       // The count and its sentence are the way into the walk: every open question, one after the other,
       // in the big window (answer or Later, and the next one comes). Also when there is only one.
@@ -598,10 +632,11 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       walk.setAttribute('aria-label', `${fresh.length}${needs} Go through them, one after the other.`)
       const arrow = el('span', 'inbox-walk-go')
       arrow.append(sketch('go'))
+      if (knocking) walk.append(knocks, el('span', 'inbox-dot', '·'))
       walk.append(circled, el('span', null, needs.trim()), arrow)
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
       line.append(walk)
-    } else if (fresh.length) line.append(circled, needs)
+    } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), circled, needs)
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : 'Nothing needs you.')
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)

@@ -31,9 +31,13 @@
 <link rel="stylesheet" href="/css/keys.css">
 <link rel="stylesheet" href="/css/padlink.css">
 <link rel="stylesheet" href="/css/back.css">
+<link rel="stylesheet" href="/css/stack.css">
+<link rel="stylesheet" href="/css/table.css">
+<script src="/js/layout-boot.js"></script>
 <script type="module" src="/js/app.js"></script>
 <script type="module" src="/js/padlink.js"></script>
 <script type="module" src="/js/bar.js"></script>
+<script type="module" src="/js/stack.js"></script>
 </head>
 <body data-view="chat" data-scope="all">
 <script>
@@ -69,6 +73,7 @@
     <nav class="sidedoors" id="brand-doors" role="menu" aria-label="Help and administration" hidden>
       <a role="menuitem" href="/help.html">Help</a>
       <a role="menuitem" href="/admin.html">Admin</a>
+      <button role="menuitemcheckbox" type="button" id="knock-sound" aria-checked="false">Knock sound</button>
     </nav>
   </div>
   <!-- Where to go; then the two tools (the pad's control is put before Focus by js/padlink.js); then the state. -->

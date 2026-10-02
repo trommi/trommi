@@ -4,7 +4,7 @@
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
 import { mountAgents, mountRoster, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor } from './agents.js'
 import { mountInbox } from './inbox.js'
-import { el, sketch, setAssetSource } from './ui.js'
+import { el, sketch, setAssetSource, isKnock, knocksText } from './ui.js'
 import { mountChat } from './chat.js'
 import { provide, openSheet } from './keys.js'
 import { say, pageHost, backNow } from './back.js'
@@ -343,7 +343,9 @@ function paintCount(state) {
   const here = state.scope ? fresh(state.queue) : 0
   $('filter-count').textContent = here ? (here > 99 ? '99+' : String(here)) : ''
   $('filter-questions').setAttribute('aria-label', here ? `Questions only, ${here} open` : 'Questions only')
-  document.title = everywhere ? `(${everywhere}) Trommi` : 'Trommi'
+  // Knocks (urgent and blocking questions) come first in the title, as everywhere.
+  const knocking = state.all.cards.filter(c => c.status === 'open' && isKnock(c) && state.all.queue.includes(c.id) && !state.later.includes(c.id)).length
+  document.title = knocking ? `(${knocksText(knocking)}) Trommi` : everywhere ? `(${everywhere}) Trommi` : 'Trommi'
 }
 
 // ---- connection feedback ---------------------------------------------------

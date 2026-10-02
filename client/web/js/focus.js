@@ -32,7 +32,7 @@ import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { loopPath, penSeed, LATER_WORD, LATER_SKETCH } from './ui.js'
+import { loopPath, penSeed, LATER_WORD, LATER_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -115,6 +115,7 @@ const touchOnly = matchMedia('(pointer: coarse)')
 // A narrow window (a phone) always has a thin row of dots under the top bar.
 // The word on the button that hands a card to its session.
 const HAND_BACK_LABEL = 'Back to agent'
+const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again.'
 // The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
 const EXPLAIN_LABEL = 'What??'
 const RAIL_PLACES = ['outside', 'pill', 'senders', 'next3', 'unroll', 'dock', 'tab', 'topbar', 'title', 'bar', 'arrows']
@@ -390,6 +391,10 @@ export function mountFocus({ onDecided } = {}) {
     const players = mediaNodes(attachments)
     const media = el('div', 'focus-media')
     rec.showImage = null
+    rec.mediaNode = media
+    rec.gridTiles = null
+    // which picture belongs to which option, where that is plain to see (pairPictures)
+    const pairs = permission || sections ? null : pairPictures(card.options, images)
     if (images.length) {
       rec.imageAt = clamp(rec.imageAt, 0, images.length - 1)
       const figure = button('focus-figure')
@@ -407,6 +412,7 @@ export function mountFocus({ onDecided } = {}) {
         caption.textContent = images.length > 1 ? `${i + 1} / ${images.length} · ${images[i].name}` : images[i].name
         figure.setAttribute('aria-label', `Enlarge image ${i + 1} of ${images.length}: ${images[i].name}`)
         thumbs.forEach((t, k) => t.setAttribute('aria-pressed', String(k === i)))
+        rec.gridTiles?.forEach((t, k) => t.toggleAttribute('data-lit', k === i))
         tiePicture(rec, true)
       }
       rec.showImage = pick
@@ -430,6 +436,48 @@ export function mountFocus({ onDecided } = {}) {
         media.append(strip)
       } else {
         media.append(caption)
+      }
+      // Four or more pictures that each belong to an option stand as a grid: all at once, each with the word of its
+      // option. An option under the pointer lights its picture, a picture under the pointer marks its option;
+      // "Take" (or a double click) answers, a click enlarges. The one large picture is a toggle away.
+      if (pairs && pairs.size >= 4) {
+        const keyAt = new Map([...pairs].map(([key, at]) => [at, key]))
+        const grid = el('div', 'focus-grid')
+        rec.gridTiles = images.map((a, i) => {
+          const o = card.options.find(x => x.key === keyAt.get(i))
+          const tile = el('div', 'focus-grid-tile')
+          if (o) tile.dataset.key = o.key
+          const pic = button('focus-grid-pic', `Enlarge ${a.name}`)
+          const small = el('img')
+          small.src = a.url
+          small.alt = o?.label ?? a.name
+          small.loading = 'lazy'
+          small.draggable = false
+          pic.append(small)
+          const answer = () => { if (o) (card.multiple ? toggle(rec, o.key) : submit(rec, [o.key])) }
+          pic.addEventListener('click', e => { if (e.detail > 1) return; pick(i); openZoom(allImages, allImages.indexOf(a), pic, at => { const k = images.indexOf(allImages[at]); if (k >= 0) pick(k) }, rec) })
+          pic.addEventListener('dblclick', () => { zoom?.close(); answer() })
+          const cap = el('div', 'focus-grid-cap')
+          cap.append(el('span', null, o?.label ?? a.name))
+          if (o) {
+            const take = button('focus-grid-take', `${card.multiple ? 'Tick' : 'Take'} ${o.label}`)
+            take.textContent = card.multiple ? 'Tick' : 'Take'
+            take.addEventListener('click', answer)
+            cap.append(take)
+          }
+          tile.append(pic, cap)
+          for (const type of ['pointerenter', 'focusin']) tile.addEventListener(type, () => { if (rec.imageAt !== i) pick(i) })
+          grid.append(tile)
+          return tile
+        })
+        const flip = button('focus-grid-flip')
+        const paintView = () => {
+          media.dataset.view = rec.galleryView ?? 'grid'
+          flip.textContent = media.dataset.view === 'grid' ? 'One large picture' : 'All in a grid'
+        }
+        flip.addEventListener('click', () => { rec.galleryView = media.dataset.view === 'grid' ? 'one' : 'grid'; paintView() })
+        media.append(grid, flip)
+        paintView()
       }
       pick(rec.imageAt)
     }
@@ -476,7 +524,8 @@ export function mountFocus({ onDecided } = {}) {
     const hasText = text.childNodes.length > 0
 
     const body = el('div', 'focus-body')
-    body.dataset.layout = hasMedia && hasText ? 'split' : hasMedia ? 'media' : 'text'
+    // (a grid of pictures takes the whole width, the text under it)
+    body.dataset.layout = rec.gridTiles ? 'grid' : hasMedia && hasText ? 'split' : hasMedia ? 'media' : 'text'
     if (hasMedia) body.append(media)
     if (hasText) body.append(text)
     const who = el('div', 'focus-card-head')
@@ -630,7 +679,7 @@ export function mountFocus({ onDecided } = {}) {
     // Which picture belongs to which option, where that is plain to see (see pairPictures).
     rec.pictureOf = permission ? null
       : sections ? new Map(sections.filter(b => b.key != null && pointed.has(attachments[b.picture])).map(b => [b.key, allImages.indexOf(attachments[b.picture])]))
-      : pairPictures(card.options, images)
+      : pairs
     if (rec.pictureOf && !rec.pictureOf.size) rec.pictureOf = null
     rec.optRows = new Map()
     rec.draftSent ??= JSON.stringify(draftOf(rec))
@@ -719,10 +768,13 @@ export function mountFocus({ onDecided } = {}) {
     if (rec.pictureOf && rec.showImage && !sections) {
       const look = e => {
         const at = rec.pictureOf.get(e.target.closest?.('.focus-opt')?.dataset.key)
+        media.toggleAttribute('data-pointing', at != null)   // in the grid the other pictures step back
         if (at != null && at !== rec.imageAt) rec.showImage(at)
       }
       opts.addEventListener('pointerover', look)
       opts.addEventListener('focusin', look)
+      opts.addEventListener('pointerleave', () => media.removeAttribute('data-pointing'))
+      opts.addEventListener('focusout', () => media.removeAttribute('data-pointing'))
     }
     if (!permission) {
       // No second field: the note is what stands in the composer (rec.note reads it). This line under the tiles says so
@@ -828,6 +880,43 @@ export function mountFocus({ onDecided } = {}) {
     rec.optButtons.find(b => b.dataset.key === key)?.toggleAttribute('data-lit', on)
   }
 
+  /** The mark of the current option: an arrow drawn with the pen (ui.js arrowStrokes), laid over host. Where the
+   *  picture stands right beside the options (the enlarged view), one line leaves the picture's edge, runs down the
+   *  gap beside the options and under the row of the tag, and comes into the tag's lower left corner. Anywhere
+   *  else it is the short arrow from above the tag. Drawn again with another wobble on every change. */
+  let arrowTurn = 0
+  function pointAt(host, tag, picture = null) {
+    host.querySelector(':scope > .focus-arrow')?.remove()
+    if (!tag || !tag.isConnected || !tag.offsetWidth) return
+    const base = host.getBoundingClientRect()
+    const box = n => { const r = n.getBoundingClientRect(); return { x: r.left - base.left + host.scrollLeft, y: r.top - base.top + host.scrollTop, w: r.width, h: r.height } }
+    const T = box(tag), O = box(tag.parentElement)
+    const P = picture?.isConnected && picture.offsetWidth ? box(picture) : null
+    let points
+    if (P && O.x - (P.x + P.w) > 8 && O.x - (P.x + P.w) < 150) {
+      const gx = O.x - 9
+      const y0 = clamp(T.y - 22, P.y + 26, P.y + P.h - 26)
+      const start = [[P.x + P.w - 30, y0], [P.x + P.w - 4, y0 + 5], [gx - 3, y0 + 16]]
+      const mid = T.y + T.h / 2
+      const end = T.x - O.x < 4
+        ? [[gx - 4, mid + (start.at(-1)[1] > mid ? 20 : -20)], [gx - 2, mid + (start.at(-1)[1] > mid ? 5 : -5)], [T.x - 2, mid]]
+        : [[gx, T.y + T.h - 10], [gx + 7, T.y + T.h + 3], [gx + 22, T.y + T.h + 4.5], [T.x - 16, T.y + T.h + 4.5], [T.x - 5, T.y + T.h + 3], [T.x + 7, T.y + T.h - 8]]
+      points = [...start, ...end]
+    } else {
+      const x = T.x + Math.min(T.w / 2, 60)
+      points = [[x + 17, T.y - 22], [x + 9, T.y - 14], [x + 3, T.y - 8], [x, T.y - 2]]
+    }
+    const svg = document.createElementNS(SVG_NS, 'svg')
+    svg.setAttribute('class', 'focus-arrow')
+    svg.setAttribute('aria-hidden', 'true')
+    for (const d of arrowStrokes(points, `${tag.dataset.key}:${arrowTurn++}`)) {
+      const path = document.createElementNS(SVG_NS, 'path')
+      path.setAttribute('d', d)
+      svg.append(path)
+    }
+    host.append(svg)
+  }
+
   /** The picture shown in the card's gallery marks the option it belongs to (data-match, the same mark as beside
    *  the enlarged picture), and with reveal brings that option into view in its column. */
   function tiePicture(rec, reveal) {
@@ -840,6 +929,8 @@ export function mountFocus({ onDecided } = {}) {
       b.toggleAttribute('data-match', mine)
       if (mine && !was && reveal && b.isConnected) b.scrollIntoView({ block: 'nearest' })
     }
+    // the arrow points at it (drawn in the answer column, which scrolls with its tags)
+    if (rec.answer) pointAt(rec.answer, rec.optButtons?.find(b => b.hasAttribute('data-match')) ?? null)
   }
 
   // ── a note on a single option ───────────────────────────────────────────
@@ -1167,9 +1258,10 @@ export function mountFocus({ onDecided } = {}) {
 
   /** Send what stands in the card's ask-back line; with fixed, that text instead (Explain), and the line keeps what it holds.
    *  Resolves true when the session has it. */
-  async function askBack(rec, fixed = null) {
+  async function askBack(rec, fixed = null, flags = fixed ? { explain: true } : {}) {
     if (!fixed && pad?.rec === rec) await closePad(true)   // what is on the scratchpad goes along
-    const text = (fixed ?? rec.askText).trim()
+    // (handed back with nothing written: a plain sentence says so, since a message needs words)
+    const text = (fixed ?? rec.askText).trim() || (flags.handback && !rec.files.length ? HAND_BACK_TEXT : '')
     // what is attached in the composer goes with what is typed there (never with the fixed request of What??)
     const files = fixed ? [] : rec.files
     if (!text && !files.length) return rec.askField?.focus({ preventScroll: true })
@@ -1184,7 +1276,7 @@ export function mountFocus({ onDecided } = {}) {
     paintThread(rec)
     rec.scroll.scrollTop = rec.scroll.scrollHeight
     try {
-      await sendMessage(text, rec.card.agent, rec.id, files.map(({ name, data }) => ({ name, data })))
+      await sendMessage(text, rec.card.agent, rec.id, files.map(({ name, data }) => ({ name, data })), flags)
       entry.state = 'sent'
       // What was typed into the composer is plain chat about the card: it stays open, in its place, and in front.
       // Only "Explain" (fixed) leaves the card: it waits under "Later" until the reply, and the walk moves on.
@@ -1443,7 +1535,7 @@ export function mountFocus({ onDecided } = {}) {
     handBtn.disabled = true
     const walking = !single
     // whatever still stands in the composer goes first: words, attached files, what is on the scratchpad
-    const sent = rec.askText.trim() || rec.files.length || pad?.rec === rec ? await askBack(rec).catch(() => false) : true
+    const sent = await askBack(rec, null, { handback: true }).catch(() => false)
     handing = false
     paintChrome()
     if (!isOpen) return
@@ -1752,9 +1844,14 @@ export function mountFocus({ onDecided } = {}) {
     shown = next
     if (!next) return
     next.node.dataset.shown = ''
-    if (motion === 'scroll') return
-    // a little air above it, so the strip of the card before stays in sight; a far way is not travelled, it is jumped
-    const to = Math.max(0, next.node.offsetTop - 56)
+    // The same card is still in front (the board's state changed: a session posted, a draft was saved): the
+    // column stays where the human has it. Scrolled back to the card's top, an answer would move away under the pointer.
+    if (motion === 'scroll' || !changed) return
+    // The card in front stands in the middle of the window; one taller than the window begins a little under its
+    // top edge, so the strip of the card before stays in sight. A far way is not travelled, it is jumped.
+    const room = stage.clientHeight - next.node.offsetHeight
+    next.node.classList.toggle('is-tall', room < 96)
+    const to = Math.max(0, next.node.offsetTop - (room < 96 ? 56 : room / 2))
     const how = motion === 'none' || still() || Math.abs(to - stage.scrollTop) > stage.clientHeight * 2.5 ? 'instant' : scrollHow
     scrollHow = 'smooth'
     quietUntil = performance.now() + (how === 'smooth' ? 1600 : 120)
@@ -1772,7 +1869,7 @@ export function mountFocus({ onDecided } = {}) {
   function readLine() {
     if (!isOpen || !inList() || performance.now() < quietUntil || busyRec()) return
     const box = stage.getBoundingClientRect()
-    const line = box.top + box.height * .32
+    const line = box.top + box.height * .45
     let best = null
     for (const id of order) {
       const r = recs.get(id).node.getBoundingClientRect()
@@ -2193,9 +2290,40 @@ export function mountFocus({ onDecided } = {}) {
     const side = rec && rec.card.kind !== 'permission' ? zoomAnswers(rec, to => show(to), () => closeZoom()) : null
     if (side) { box.dataset.answer = ''; box.append(side.node) }
 
+    // Where the pictures belong to options, the enlarged view can show all of them at once, each with its word.
+    let gridBtn = null, bigGrid = null
+    if (rec?.pictureOf && rec.pictureOf.size >= 4) {
+      const keyAt = new Map([...rec.pictureOf].map(([key, at]) => [at, key]))
+      bigGrid = el('div', 'focus-zoom-grid')
+      bigGrid.hidden = true
+      images.forEach((a, k) => {
+        const o = rec.card.options.find(x => x.key === keyAt.get(k))
+        const tile = button('focus-zoom-tile', `Show ${o?.label ?? a.name} large`)
+        const small = el('img')
+        small.src = a.url
+        small.alt = ''
+        small.draggable = false
+        tile.append(small, el('span', null, o?.label ?? a.name))
+        tile.addEventListener('pointerenter', () => { if (i !== k) show(k) })
+        tile.addEventListener('click', () => { setGrid(false); show(k) })
+        bigGrid.append(tile)
+      })
+      gridBtn = button('focus-zoom-flip')
+      gridBtn.addEventListener('click', () => setGrid(bigGrid.hidden))
+      bar.insertBefore(gridBtn, shut)
+      box.insertBefore(bigGrid, bar)
+    }
+    function setGrid(on) {
+      bigGrid.hidden = !on
+      view.hidden = on
+      prev.hidden = next.hidden = on || images.length < 2
+      gridBtn.textContent = on ? 'One large picture' : 'All in a grid'
+    }
+
     let i = start
     const show = to => {
       i = (to + images.length) % images.length
+      bigGrid?.querySelectorAll('.focus-zoom-tile').forEach((t, k) => t.toggleAttribute('data-lit', k === i))
       img.src = images[i].url
       img.alt = images[i].name
       count.textContent = `${i + 1} / ${images.length}`
@@ -2225,6 +2353,7 @@ export function mountFocus({ onDecided } = {}) {
     root.dataset.zoom = ''
     sheet.append(box)
     zoom = { box, closeBtn: shut, close: closeZoom, step: d => { if (images.length > 1) show(i + d) } }
+    if (bigGrid) setGrid(false)
     show(start)
     shut.focus({ preventScroll: true })
   }
@@ -2303,6 +2432,7 @@ export function mountFocus({ onDecided } = {}) {
         send.replaceChildren(el('span', 'focus-opt-label', n ? `Send ${n}` : 'Send'))
         paintPicked(rec)
       }
+      requestAnimationFrame(() => { if (node.isConnected) pointAt(node.closest('.focus-zoom'), buttons.find(b => b.hasAttribute('data-match')) ?? null, node.closest('.focus-zoom').querySelector('.focus-zoom-img')) })
       take.hidden = !mine
       if (!mine) return
       const word = multi ? (rec.picked.has(mine.key) ? 'Untick this one' : 'Tick this one') : 'Take this one'

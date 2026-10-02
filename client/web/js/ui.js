@@ -1,6 +1,8 @@
 // Shared DOM helpers. Everything builds nodes, never HTML strings, so text
 // from the agent can't inject markup.
 
+import { htmlBlock, tidyTable, spaceTables, withoutLayouts } from './richhtml.js'
+
 export const el = (tag, cls, text) => {
   const node = document.createElement(tag)
   if (cls) node.className = cls
@@ -40,7 +42,7 @@ export function linkInfo(url) {
 
 /** Text for one line: every link in it replaced by what it is, so no key and no long address is printed. */
 export function tidyLinks(text) {
-  return String(text ?? '').replace(/`?(https?:\/\/[^\s<>)`]+)`?/g, (_, url) => {
+  return withoutLayouts(text).replace(/`?(https?:\/\/[^\s<>)`]+)`?/g, (_, url) => {
     const info = linkInfo(url)
     return info.asset ? `[${info.asset.title || (ASSET_LABEL[info.asset.type] ?? 'published link')}]` : info.text
   })
@@ -177,13 +179,16 @@ export function rich(text) {
   const prose = String(text).replace(/```[\s\S]*?```/g, '')
   const under = [...prose.matchAll(UNDER)].reduce((n, m) => n + m[1].length, 0)
   underlining = under * 3 <= prose.replace(/\s+/g, ' ').length
+  const langs = [...String(text).matchAll(/```([^\n]*)\n?/g)].map(m => m[1].trim().toLowerCase())
   String(text).split(/```[^\n]*\n?/).forEach((chunk, i) => {
     if (i % 2) {
+      // A block fenced as html is a layout from the agent: shown at its place, in a frame of its own (richhtml.js).
+      if (langs[i - 1] === 'html') return root.append(htmlBlock(chunk))
       const pre = el('pre')
       pre.append(el('code', null, chunk.replace(/\n$/, '')))
       return root.append(pre)
     }
-    for (const block of chunk.split(/\n{2,}/)) {
+    for (const block of spaceTables(chunk).split(/\n{2,}/)) {
       const lines = block.split('\n').filter(l => l.trim())
       if (!lines.length) continue
       // A table as agents write it: rows of cells between pipes, a rule of dashes under the first.
@@ -195,7 +200,7 @@ export function rich(text) {
         const body = table.appendChild(el('tbody'))
         for (const l of lines.slice(2)) fill(body.appendChild(el('tr')), 'td', cells(l))
         const wrap = el('div', 'rich-table-wrap')
-        wrap.append(table)
+        wrap.append(tidyTable(table, lines[1]))
         root.append(wrap)
       } else if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
         const ul = el('ul')
@@ -579,6 +584,14 @@ const SKETCH = {
     [[15.4, 6], [17.8, 7.8], [17.2, 10.4], [15.2, 11]],
     [[16.6, 14], [19.4, 15.6], [20.6, 19.4]],
   ],
+  // knuckles on a door: a fist seen from the side, and the two short strokes of its knock
+  knock: [
+    [[6.2, 10.4], [7.6, 7], [11, 6.2], [15, 6.6], [17.4, 9], [17.8, 13.4], [16, 17.2], [11.4, 18], [7.4, 16.6], [5.8, 13.4], [6.3, 10]],
+    [[10, 6.8], [10.3, 10.6]], [[13.4, 6.6], [13.5, 10.8]],
+    [[19.6, 6], [21.6, 4.2]], [[20.6, 10.2], [22.8, 9.6]],
+  ],
+  // a table: a sheet ruled into cells
+  grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
   choose: [
     [[3.6, 6.6], [5.2, 8.6], [8.4, 4.4]],
@@ -597,6 +610,19 @@ const SKETCH = {
 // Putting a question off: the one word for it everywhere (button, tag, pile), and the name of its drawing for sketch().
 export const LATER_WORD = 'Snooze'
 export const LATER_SKETCH = 'snooze'
+
+// Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
+// (The agents' side still says urgency: high | critical; only the words on screen are these.)
+export const KNOCK_WORD = 'Knock'                        // urgent
+export const KNOCK_BLOCKING_WORD = 'Knock! Blocking'     // blocking
+export const KNOCK_PERMISSION_WORD = 'Knock! Permission' // blocking: a permission the session waits for
+export const KNOCK_SKETCH = 'knock'                      // knuckles on a door
+/** Is this card a knock: urgent, blocking, or a permission. */
+export const isKnock = card => card.kind === 'permission' || card.urgency === 'high' || card.urgency === 'critical'
+/** The word a knock wears; null for a card that is none. */
+export const knockWord = card => (card.kind === 'permission' ? KNOCK_PERMISSION_WORD : card.urgency === 'critical' ? KNOCK_BLOCKING_WORD : card.urgency === 'high' ? KNOCK_WORD : null)
+/** "1 knock", "3 knocks". */
+export const knocksText = n => (n === 1 ? '1 knock' : `${n} knocks`)
 
 /** An icon drawn like the session marks: a few uneven pen strokes with a little tilt. Sized and coloured by CSS. */
 export function sketch(name) {
@@ -711,6 +737,19 @@ export function pointingHand() {
     }
   }
   return svg
+}
+
+/** An arrow drawn with the pen: one line through the given points (px, in the box it is drawn in), its head two
+ *  short strokes at the last point. Returns the d of each stroke (line, barb, barb); another seed, another wobble.
+ *  This is the mark of "the current one" (the option a picture belongs to, the option or row the keyboard is on):
+ *  whoever shows it draws the strokes this returns. */
+export function arrowStrokes(points, seed) {
+  const r = seeded(`arrow:${seed}`)
+  const last = points.length - 1
+  const line = points.map(([x, y], i) => (i === 0 || i === last ? [x, y] : [x + (r() - .5) * 2.4, y + (r() - .5) * 2.4]))
+  const [a, b] = points.slice(-2), dir = Math.atan2(b[1] - a[1], b[0] - a[0])
+  const barb = turn => [b[0] - Math.cos(dir + turn) * 9.5 + (r() - .5) * 1.4, b[1] - Math.sin(dir + turn) * 9.5 + (r() - .5) * 1.4]
+  return [penPath(line), penPath([barb(.5), [b[0] + .3, b[1]], b]), penPath([barb(-.5), b, b])]
 }
 
 /** A circle drawn by hand: one and a bit turns that drift inward and do not close. r is a seeded generator.

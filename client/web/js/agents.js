@@ -1,7 +1,7 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, sweepMark, ago, DRAWINGS, drawingMark } from './ui.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, sweepMark, ago, DRAWINGS, drawingMark, KNOCK_SKETCH, isKnock, knocksText } from './ui.js'
 import { setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -155,6 +155,21 @@ export function mountAgents(root, { onSelect }) {
     return row
   }
 
+  // The inbox's badge: the knocks first (the drawing of knuckles and their number), then every open question.
+  function inboxCount(fresh, knocking) {
+    if (!fresh) return null
+    const box = el('span', 'agent-counts')
+    if (knocking) {
+      const k = el('b', 'agent-count is-knock')
+      k.title = knocksText(knocking)
+      k.append(sketch(KNOCK_SKETCH), String(knocking))
+      box.append(k)
+    }
+    const total = el('b', knocking ? 'agent-count is-all' : 'agent-count', String(fresh))
+    total.title = fresh === 1 ? '1 open question' : `${fresh} open questions`
+    box.append(total)
+    return box
+  }
   function render(state) {
     lastState = state
     const { all, scope } = state
@@ -168,7 +183,9 @@ export function mountAgents(root, { onSelect }) {
     }
     for (const u of units) Object.assign(u, summary(all, u.members))
     const fresh = all.queue.filter(id => !state.later.includes(id)).length
-    const next = JSON.stringify([scope, document.body.dataset.page, fresh, units.map(u => [u.id, u.members.map(a => [a.id, a.name, a.mark, a.task, a.online, a.starred, a.cwd, a.host]), u.open, u.running, u.stuck])])
+    // Of those, the knocks (urgent and blocking): they are what the inbox's badge shows first.
+    const knocking = all.cards.filter(c => c.status === 'open' && isKnock(c) && all.queue.includes(c.id) && !state.later.includes(c.id)).length
+    const next = JSON.stringify([scope, document.body.dataset.page, fresh, knocking, units.map(u => [u.id, u.members.map(a => [a.id, a.name, a.mark, a.task, a.online, a.starred, a.cwd, a.host]), u.open, u.running, u.stuck])])
     if (next === signature) return
     signature = next
 
@@ -221,7 +238,7 @@ export function mountAgents(root, { onSelect }) {
     tray.append(el('i'), el('i'), el('i'))
     const here = units.filter(u => u.online), away = units.filter(u => !u.online)
     root.replaceChildren(
-      entry({ id: null, label: 'Inbox', lead: tray, active: scope == null, mark: fresh ? el('b', 'agent-count', String(fresh)) : null }),
+      entry({ id: null, label: 'Inbox', lead: tray, active: scope == null, mark: inboxCount(fresh, knocking) }),
       el('h2', 'caps agent-heading', 'Sessions'),
       ...here.map(unitRow),
       ...(away.length ? [el('h2', 'caps agent-heading agent-heading-away', 'Disconnected'), ...away.map(unitRow)] : []),

@@ -1,0 +1,177 @@
+/* The Table (js/table.js): the overview of the sessions in the Stack layout, at /agents.
+   Shown only under <html data-layout="stack">; with the switch off #table does not exist.
+   Controls and surfaces are plain; by hand are only the marks themselves, the loop round a group,
+   and the slight tilt a mark lies at. */
+
+#table { display: none; }
+:root[data-layout="stack"] body[data-page="roster"] #table {
+  display: block; grid-column: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
+  padding: var(--s-8) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+}
+.table-page { max-width: 1180px; margin-inline: auto; display: grid; gap: var(--s-5); }
+.table-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
+.table-head h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
+.table-head p { font-size: var(--t-lg); color: var(--muted); }
+
+/* ---- find, show, tidy ---- */
+.table-tools { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3) var(--s-5); }
+#table kbd { flex: none; font: 500 .68rem/1 var(--mono); padding: 3px 5px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface); color: var(--muted); }
+.t-find { flex: 1 1 260px; max-width: 380px; display: flex; align-items: center; gap: var(--s-2); height: 40px; padding: 0 10px 0 12px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--faint); cursor: text; }
+.t-find:focus-within { box-shadow: 0 0 0 2px var(--fg); color: var(--fg); }
+.t-find .ico { width: 18px; height: 18px; }
+.t-find input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; outline: none; font-size: max(16px, var(--t-md)); color: var(--fg); appearance: none; -webkit-appearance: none; }
+.t-find input::-webkit-search-cancel-button { display: none; }
+.t-chips { display: flex; flex-wrap: wrap; gap: var(--s-1); }
+.t-chips button { display: inline-flex; align-items: center; gap: 6px; min-height: 34px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.t-chips button b { font-weight: 600; color: var(--faint); font-variant-numeric: tabular-nums; }
+.t-chips button:hover { background: var(--sunken); color: var(--fg); }
+.t-chips button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.t-chips button[aria-pressed="true"] b { color: inherit; opacity: .7; }
+.t-tidy { display: flex; align-items: center; gap: 2px; margin-left: auto; }
+.t-tidy .caps { color: var(--faint); margin-right: var(--s-2); }
+.t-tidy button { min-height: 34px; padding: 0 var(--s-2); border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); }
+.t-tidy button:hover { color: var(--fg); }
+.t-tidy button[aria-pressed="true"] { color: var(--fg); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+
+/* ---- the table top and the slip beside it ---- */
+.table-body { display: grid; grid-template-columns: minmax(0, 1fr) 388px; gap: var(--s-5); align-items: start; }
+.table-main { display: grid; gap: var(--s-3); min-width: 0; }
+.table-top {
+  position: relative; min-height: 420px; display: grid; align-content: start; gap: var(--s-6); padding: var(--s-5) var(--s-5) var(--s-8);
+  border-radius: var(--r-lg); background-color: var(--sunken);
+  background-image: radial-gradient(color-mix(in srgb, var(--line-strong) 80%, transparent) 1px, transparent 1.5px); background-size: 18px 18px;
+  box-shadow: inset 0 1px 3px rgb(20 30 25 / .08); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+}
+.t-zone { display: grid; gap: var(--s-3); }
+.t-zone + .t-zone { padding-top: var(--s-4); border-top: 1px dashed var(--line-strong); }
+.t-zone h3 { color: var(--muted); }
+.t-spots { display: flex; flex-wrap: wrap; align-items: flex-end; gap: var(--s-6) var(--s-5); min-height: 96px; }
+.t-spot { position: relative; display: flex; align-items: flex-end; gap: var(--s-4); rotate: var(--tilt, 0deg); cursor: grab; }
+.t-spot.is-pair { padding: 14px 20px 12px; margin: -6px -4px; }
+.t-spot.is-dim { opacity: .9; }
+.t-spot .group-loop { display: block; inset: 0; left: 0; top: 0; width: 100%; height: 100%; }
+.t-spot .group-loop .pair-loop { stroke: var(--muted); }
+.t-spot.is-leaving .pair-loop, .t-spot:has(.t-unpair:hover) .pair-loop, .t-spot:has(.t-unpair:focus-visible) .pair-loop { stroke-dasharray: 9 7; stroke: var(--fg); animation: loop-open 700ms linear infinite; }
+.t-unpair { position: absolute; z-index: 2; right: -8px; top: -8px; width: 30px; height: 30px; padding: 5px; border: 0; border-radius: 50%; background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px var(--line-strong); rotate: -12deg; }
+.t-unpair .sketch { width: 20px; height: 20px; stroke-width: 1.8; }
+.t-unpair:hover, .t-unpair:focus-visible { color: var(--fg); }
+@media (hover: hover) {
+  .t-unpair { opacity: 0; transition: opacity var(--d-fast); }
+  .t-spot:hover .t-unpair, .t-unpair:focus-visible { opacity: 1; }
+  body.is-pairing .t-unpair { opacity: 0; }
+}
+/* A mark: a tile of paper with the session's drawing, what it needs on its corner, its name below. */
+.tok { position: relative; display: grid; justify-items: center; gap: 6px; min-width: 76px; max-width: 132px; padding: 0; border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: 600 var(--t-xs)/1.15 var(--font); cursor: inherit; }
+.tok-face { position: relative; display: block; }
+.tok .agent-avatar { width: var(--sz, 48px); height: var(--sz, 48px); padding: calc(var(--sz, 48px) * .15); border-radius: calc(var(--sz, 48px) * .28); background: var(--surface); box-shadow: var(--shadow-md); transition: box-shadow var(--d-fast), translate var(--d-fast); }
+.tok[data-state="working"] .agent-avatar, .tok[data-state="idle"] .agent-avatar { box-shadow: var(--shadow-sm); }
+.tok[data-state="away"] .agent-avatar { box-shadow: none; background: none; outline: 1.5px dashed var(--line-strong); outline-offset: -1px; }
+.tok .agent-avatar .crown-mark { left: -14%; top: -22%; width: 46%; }
+.tok-text { display: grid; justify-items: center; gap: 2px; max-width: 100%; }
+.tok-text strong { max-width: 100%; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tok-text small { max-width: 100%; font: 500 .64rem/1.1 var(--font); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tok .agent-badge { position: absolute; right: -14px; top: -10px; height: 28px; margin: 0; grid-template-columns: 26px auto; padding-right: 5px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.tok .agent-badge[data-state="running"], .tok .agent-badge[data-state="open"] { grid-template-columns: 26px; padding-right: 0; }
+.tok .agent-sweep { width: 26px; height: 26px; }
+.tok .bare-hand { width: 16px; height: 23px; }
+@media (any-hover: hover) { .tok:hover { color: var(--fg); } .tok:hover .agent-avatar { translate: 0 -2px; box-shadow: var(--shadow-lg); } }
+.tok:focus-visible { outline: none; }
+.tok:focus-visible .agent-avatar { outline: 2px solid var(--accent); outline-offset: 3px; }
+.tok.is-cursor { color: var(--fg); }
+.tok.is-cursor .agent-avatar { outline: 3px solid var(--fg); outline-offset: 3px; }
+.tok.is-dim { opacity: .22; pointer-events: none; filter: saturate(0); }
+.tok.is-carried { opacity: .3; }
+/* Lay together: the one that waits for its partner is dashed, the others offer themselves. */
+.tok.is-pairing .agent-avatar { outline: 2.5px dashed var(--urg-high); outline-offset: 3px; }
+.table-top[data-pairing] .tok:not(.is-pairing):not(.is-dim) .agent-avatar { box-shadow: var(--shadow-md), 0 0 0 1.5px var(--urg-high); }
+.tok.is-drop .agent-avatar { outline: 2.5px dashed var(--fg); outline-offset: 4px; scale: 1.06; }
+/* Let go here and it moves to this place: a thin line beside the mark. */
+.t-spot.is-insert-before::before, .t-spot.is-insert-after::after { content: ""; position: absolute; top: 4px; bottom: 4px; width: 3px; border-radius: 3px; background: var(--fg); pointer-events: none; }
+.t-spot.is-insert-before::before { left: calc(var(--s-5) / -2 - 1px); }
+.t-spot.is-insert-after::after { right: calc(var(--s-5) / -2 - 1px); }
+.t-ghost { width: 48px; height: 48px; border-radius: 14px; }
+.t-none { place-self: center; margin-top: var(--s-8); color: var(--muted); }
+.t-link { min-height: 36px; padding: 0 var(--s-1); border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; }
+.t-link:hover { text-decoration-color: currentColor; }
+.table-hint { display: flex; flex-wrap: wrap; gap: 4px var(--s-4); padding: 0 var(--s-1); color: var(--faint); font-size: var(--t-xs); line-height: 1.6; }
+.table-hint span { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.table-hint.is-live { display: block; padding: var(--s-2) var(--s-3); border: 1.5px dashed var(--urg-high); border-radius: var(--r-md); color: var(--fg); font-size: var(--t-sm); line-height: 1.45; }
+@media (pointer: coarse) { .table-hint:not(.is-live) { display: none; } }
+
+/* ---- the slip ---- */
+.table-slip {
+  position: sticky; top: 0; display: grid; gap: var(--s-4); align-content: start; max-height: calc(var(--app-h, 100dvh) - var(--bar-h) - var(--s-8) - var(--s-5)); overflow-y: auto; overscroll-behavior: contain;
+  padding: var(--s-4); border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
+}
+.table-slip.is-empty { box-shadow: none; outline: 1px dashed var(--line-strong); outline-offset: -1px; color: var(--muted); font-size: var(--t-sm); }
+.slip-none strong { color: var(--fg); font-weight: 600; }
+.slip-head { position: relative; display: flex; align-items: center; gap: var(--s-3); }
+.slip-mark { flex: none; padding: 0; border: 0; border-radius: 14px; background: none; }
+.slip-mark .agent-avatar { width: 46px; height: 46px; border-radius: 14px; padding: 2px; }
+@media (any-hover: hover) { .slip-mark:hover .agent-avatar { box-shadow: 0 0 0 2px var(--line-strong); } }
+.slip-head .crown-toggle { left: -12px; top: -10px; }
+.slip-who { flex: 1; min-width: 0; display: grid; gap: 1px; }
+.slip-name { justify-self: start; max-width: 100%; padding: 0; border: 0; background: none; text-align: left; }
+.slip-name strong { display: block; font: 800 1.25rem/1.2 var(--display); letter-spacing: -.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (any-hover: hover) { .slip-name:hover strong { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); } }
+.slip-who span { color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.slip-close { flex: none; width: 34px; height: 34px; margin: -4px -6px 0 0; border: 0; border-radius: 50%; background: none; color: var(--muted); font-size: 1.4rem; line-height: 1; align-self: flex-start; }
+.slip-close:hover { background: var(--sunken); color: var(--fg); }
+/* The session's questions: the same rows as everywhere, in their narrow form. */
+.slip-list .inbox-head { margin-bottom: var(--s-3); }
+.slip-list .inbox-groups { gap: var(--s-5); }
+.slip-list .inbox-empty { margin-top: 0; padding: var(--s-4) var(--s-5); rotate: -1deg; }
+#table .rich { font-size: var(--t-md); line-height: 1.55; overflow-wrap: anywhere; min-width: 0; }
+#table .rich > * + * { margin-top: .7em; }
+#table .rich p { white-space: pre-wrap; }
+#table .rich ul { padding-left: 1.35em; }
+#table .rich a { color: var(--accent); text-underline-offset: 3px; }
+#table .rich :not(pre) > code { font: .86em/1.4 var(--mono); padding: .12em .4em; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line); }
+#table .rich pre { margin: 0; padding: 10px 12px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font: .8rem/1.6 var(--mono); }
+.slip-facts { margin: 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-2) var(--s-4); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+.slip-facts dt { font: 600 var(--t-xs)/1.4 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.slip-facts dd { margin: 0; font-size: var(--t-sm); overflow-wrap: anywhere; }
+.slip-actions { display: flex; flex-wrap: wrap; gap: var(--s-2); padding-top: var(--s-3); border-top: 1px solid var(--line); }
+.t-act { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 38px; max-width: 100%; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--fg); font: 600 var(--t-sm)/1.1 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-act:hover { border-color: var(--fg); }
+.t-act.is-lead { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+#table .t-act.is-lead kbd { background: none; border-color: color-mix(in srgb, var(--bg) 40%, transparent); color: inherit; }
+
+/* ---- put away ---- */
+.table-archive { display: grid; gap: var(--s-2); max-width: 560px; margin-top: var(--s-4); }
+.table-archive h3 { color: var(--muted); margin-bottom: var(--s-1); }
+.t-archived { display: flex; align-items: center; gap: var(--s-3); }
+.t-archived-text { flex: 1; min-width: 0; display: grid; }
+.t-archived-text strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.t-archived-text span { color: var(--muted); font-size: var(--t-sm); }
+
+/* ---- narrower: the slip goes under the table ---- */
+@media (max-width: 1100px) {
+  .table-body { grid-template-columns: minmax(0, 1fr); }
+  .table-slip { position: static; max-height: none; }
+  .table-slip.is-empty { display: none; }
+}
+
+/* ---- phone: a plain list of marks with their counts ---- */
+@media (max-width: 860px) {
+  :root[data-layout="stack"] body[data-page="roster"] #table { grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
+  .table-page { gap: var(--s-4); }
+  .t-find { flex-basis: 100%; max-width: none; }
+  .t-tidy { margin-left: 0; }
+  .t-chips { flex-wrap: nowrap; overflow-x: auto; margin-inline: calc(-1 * var(--gutter)); padding-inline: var(--gutter); scrollbar-width: none; max-width: 100vw; }
+  .t-chips::-webkit-scrollbar { display: none; }
+  .table-top { min-height: 0; padding: 0; gap: var(--s-5); border-radius: 0; background: none; box-shadow: none; }
+  .t-zone + .t-zone { padding-top: var(--s-4); }
+  .t-spots { display: grid; gap: 0; min-height: 0; }
+  .t-spot { rotate: none; display: grid; gap: 0; cursor: default; }
+  .t-spot.is-pair { margin: var(--s-1) 0; padding: 2px var(--s-3); border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line-strong); }
+  .t-spot .group-loop, .t-unpair, .table-slip { display: none; }
+  .t-spot + .t-spot .tok, .tok + .tok { border-top: 1px solid var(--line); }
+  .tok { grid-template-columns: 44px minmax(0, 1fr) auto; justify-items: start; align-items: center; gap: 0 var(--s-3); width: 100%; min-width: 0; max-width: none; min-height: 60px; padding: var(--s-2) 0; border-radius: 0; text-align: left; font-size: var(--t-md); color: var(--fg); }
+  .tok-face { display: contents; }
+  .tok .agent-avatar { --sz: 40px; grid-column: 1; grid-row: 1; box-shadow: none; background: none; padding: 2px; }
+  .tok-text { grid-column: 2; grid-row: 1; justify-items: start; gap: 1px; }
+  .tok-text small { font-size: var(--t-sm); color: var(--muted); }
+  .tok .agent-badge { position: static; grid-column: 3; grid-row: 1; box-shadow: none; background: none; }
+  .tok.is-cursor .agent-avatar { outline: 0; }
+}
