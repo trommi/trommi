@@ -626,7 +626,7 @@ button.agent-badge:active { scale: .95; }
 
 /* ---- inbox: with no session selected, the grouped list of open questions is the whole page ---- */
 #inbox { display: none; }
-body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
+body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
 .inbox-head, .inbox-groups { max-width: 760px; margin-inline: auto; }
 .inbox-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-8); }
 /* The heading, and on its line the count with its sentence; in a narrow window that wraps below. */
@@ -641,7 +641,8 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 /* The count and its sentence are the way into the walk through all of them: a link, with a small
    arrow drawn after it. Under the pointer or the keyboard the circle is drawn over once more
    (thicker, fully inked), the words darken and the arrow moves on. */
-.inbox-walk { display: inline-flex; align-items: center; gap: .3em; margin: -4px -8px; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.inbox-walk > span { white-space: nowrap; }
+.inbox-walk { display: inline-flex; flex-wrap: wrap; align-items: center; gap: .15em .3em; margin: -4px -8px; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .inbox-walk-go { display: inline-flex; margin-left: .15em; color: var(--urg-high); opacity: .8; transition: translate 140ms ease-out, opacity 100ms; }
 .inbox-walk-go .sketch { width: 22px; height: 22px; stroke-width: 2; }
 .inbox-walk .inbox-circled::before, .inbox-walk .inbox-circled::after { transition: border-width 100ms ease-out, opacity 100ms ease-out, rotate 160ms ease-out; }
@@ -720,6 +721,34 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-byline .inbox-from-mark { width: 17px; height: 17px; color: hsl(var(--hue) 62% 30%); }
 :root[data-theme="dark"] .inbox-byline .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
 .inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
+.inbox-gutter { display: none; }
+/* ---- the gutter: who asks stands outside the cards, at their left, once for a whole run of rows ----
+   Where the page is wide enough (its left margin gives the room, so the cards keep their width; a
+   little narrower and the list makes the room itself): the session's mark and name at the top of
+   its run, keeping in sight while a long run scrolls by; a bracket drawn by hand down the run; and
+   beside every row its note: number, age, and the two quiet actions. The cards then hold only the
+   knock label, title, text and the picture with what the card carries. */
+@container inboxpage (min-width: 821px) {
+  .inbox-group[data-sender] { position: relative; }
+  .inbox-gutter { display: block; position: absolute; left: -100px; top: 0; bottom: 0; width: 86px; pointer-events: none; }
+  .inbox-gutter-who { position: sticky; top: 4px; z-index: 1; display: grid; justify-items: center; gap: 3px; padding: 4px 0 6px; text-align: center; background: var(--surface); }
+  .inbox-gutter-who .inbox-avatar { width: 36px; height: 36px; }
+  .inbox-gutter-who b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .78rem/1.2 var(--font); color: var(--fg); }
+  .run-bracket { position: absolute; right: -9px; top: 3px; width: 9px; height: calc(100% - 6px); overflow: visible; fill: none; stroke: var(--line-strong); stroke-linecap: round; stroke-linejoin: round; }
+  .run-bracket path { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
+  .inbox-group[data-sender] .inbox-content { overflow: visible; }
+  .inbox-group[data-sender] .inbox-byline { left: auto; right: calc(100% + 22px); bottom: 9px; width: 78px; display: grid; justify-items: end; gap: 4px; text-align: right; overflow: visible; }
+  .inbox-group[data-sender] .inbox-byline :is(.inbox-from, .inbox-sep) { display: none; }
+  .inbox-group[data-sender] .inbox-acts { flex-direction: column; align-items: flex-end; gap: 4px; }
+  .inbox-group[data-sender] .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; }
+  /* (The keyboard's arrow would stand in the gutter: the frame round the row marks it there.) */
+  .inbox-group[data-sender] .inbox-row.is-current::before { display: none; }
+}
+@container inboxpage (min-width: 821px) and (max-width: 1000px) { .inbox-groups { padding-left: 100px; } }
+/* No room for a gutter: the first row of a run says who asks, the rows after it do not repeat it. */
+@container inboxpage (max-width: 820px) {
+  .inbox-group[data-sender] .inbox-row ~ .inbox-row :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
+}
 .inbox-from-mark .crown-mark { left: -36%; top: -20%; width: 78%; stroke-width: 2.4; }
 /* (Tightened by a few pixels, so that the byline has its line below two lines of title and one of text.) */
 .inbox-text { display: grid; gap: 2px; padding: 2px 0 0; border: 0; background: none; text-align: left; min-width: 0; }
@@ -730,14 +759,35 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 /* Unfolded with its text in full below: the row itself does not say it a second time. */
 .inbox-row.is-open[data-fulltext] .inbox-body-text { display: none; }
 /* At most one small picture, beside the text; the rest are behind it. */
+/* The picture and, under it, what the card carries ("6 pictures"). */
+.inbox-pics { align-self: center; display: grid; justify-items: center; gap: 5px; margin-right: var(--s-4); }
+.inbox-pics .inbox-thumb { margin-right: 0; }
+.inbox-pics .inbox-carries { flex-direction: column; gap: 2px; font: 500 .68rem/1.2 var(--font); color: color-mix(in srgb, var(--card-ink) 62%, var(--card-bg)); white-space: nowrap; }
+.inbox-pics .inbox-carries .sketch { width: 13px; height: 13px; }
+.inbox-row:has(> .inbox-pics) .inbox-byline :is(.inbox-carries, .inbox-sep:has(+ .inbox-carries)) { display: none; }
 /* It stands clear of the tiles by the row's own padding; a narrower column drops it before the gap. */
 .inbox-thumb { position: relative; align-self: center; width: 64px; height: 64px; margin-right: var(--s-4); padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line); cursor: zoom-in; transition: scale 100ms ease-out; }
 @media (any-hover: hover) { .inbox-thumb:hover { scale: 1.05; } }
 .inbox-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* What the card carries, in the byline: a small drawing and the count for each kind. */
 /* "Trust": a quiet word at the end of the byline of a thumb row; it leaves the decision to the agent. */
-.inbox-trust { flex: none; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; cursor: pointer; }
-.inbox-trust:hover, .inbox-trust:focus-visible { color: var(--card-ink); text-decoration-color: currentColor; }
+.inbox-acts { display: inline-flex; align-items: center; gap: .7em; }
+.inbox-trust, .inbox-shred { flex: none; display: inline-flex; align-items: center; gap: 3px; padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; cursor: pointer; }
+.inbox-trust { text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 45%, transparent); text-underline-offset: 3px; }
+.inbox-shred .sketch { width: 15px; height: 15px; stroke-width: 2; }
+.inbox-trust:hover, .inbox-trust:focus-visible, .inbox-shred:hover, .inbox-shred:focus-visible { color: var(--card-ink); text-decoration-color: currentColor; }
+.inbox-shred:hover span, .inbox-shred:focus-visible span { text-decoration: underline; text-underline-offset: 3px; }
+/* The two quiet actions show while the pointer or the keyboard is on the row; where nothing hovers, always. */
+@media (hover: hover) {
+  .inbox-acts { opacity: 0; transition: opacity 100ms ease-out; }
+  .inbox-row:hover .inbox-acts, .inbox-row:focus-within .inbox-acts, .inbox-row.is-current .inbox-acts { opacity: 1; }
+  .inbox-sep:has(+ .inbox-acts) { opacity: 0; }
+  .inbox-row:hover .inbox-sep:has(+ .inbox-acts), .inbox-row:focus-within .inbox-sep:has(+ .inbox-acts), .inbox-row.is-current .inbox-sep:has(+ .inbox-acts) { opacity: 1; }
+}
+.inbox-row.is-current .inbox-shred.inbox-shred[data-cap]::after { position: static; margin-left: 5px; rotate: 0deg; min-width: 18px; padding: 2px 4px; box-shadow: 0 0 0 1px var(--card-line); }
+/* A card that is shredded leaves in strips. */
+.inbox-row.is-leaving[data-leave="shredded"] { animation-name: row-shred; animation-duration: 340ms; -webkit-mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); }
+@keyframes row-shred { from { opacity: 1; translate: 0 0; } 40% { opacity: .9; } to { opacity: 0; translate: 0 38px; scale: 1 .86; } }
 .inbox-carries { display: inline-flex; align-items: center; gap: .7em; min-width: 0; }
 .inbox-carries > span { display: inline-flex; align-items: center; gap: 4px; }
 .inbox-carries .sketch { width: 15px; height: 15px; stroke-width: 1.9; }
@@ -766,8 +816,8 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
   transition: transform 200ms cubic-bezier(.3, .7, .3, 1), opacity 50ms linear 150ms;
 }
 .inbox-row[data-later] .inbox-later-flap { background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 45%, var(--surface)) 50%, var(--surface-2) calc(50% + 1.5px)); }
-.inbox-later-flap .sketch { position: absolute; left: 7px; bottom: 7px; width: 17px; height: 17px; stroke-width: 2.2; }
-.inbox-later-flap b { position: absolute; left: 50%; top: 50%; translate: -50% -50%; rotate: 45deg; margin: 9px 0 0 -9px; font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+.inbox-later-flap .sketch { position: absolute; left: 5px; bottom: 5px; width: 14px; height: 14px; stroke-width: 2.4; }
+.inbox-later-flap b { position: absolute; left: 50%; top: 50%; translate: -50% -50%; rotate: 45deg; margin: 5px 0 0 -5px; font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
 :is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap { transform: rotate3d(1, 1, 0, 0deg); opacity: 1; transition: transform 200ms cubic-bezier(.3, .7, .3, 1), opacity 30ms linear; }
 :is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::before { opacity: 0; transition-delay: 0s; }
 :is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::after { opacity: 1; }
@@ -899,7 +949,8 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-empty { justify-self: center; width: fit-content; margin-inline: auto; rotate: -2deg; margin-top: var(--s-8); padding: var(--s-6) var(--s-8); border: 2px dashed var(--line-strong); border-radius: 6px; color: var(--muted); text-align: center; }
 /* A narrower column: the text keeps its width, the picture waits behind the title. */
 @container rows (max-width: 700px) {
-  .inbox-thumb { display: none; }
+  .inbox-pics { display: none; }
+  .inbox-row:has(> .inbox-pics) .inbox-byline :is(.inbox-carries, .inbox-sep:has(+ .inbox-carries)) { display: inline-flex; }
   .inbox-question { font-size: 1.25rem; }
   .inbox-body { font-size: var(--t-md); }
 }
@@ -917,9 +968,16 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
   .inbox-row-head { height: auto; min-height: 26px; margin-left: calc(-1 * var(--s-4)); }
   .inbox-question { font-size: 1.25rem; line-height: 1.18; }
   .inbox-body, .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; font-size: var(--t-md); line-height: 1.45; }
-  .inbox-thumb { display: block; grid-column: 1 / -1; justify-self: start; width: 72px; height: 54px; margin: 0 var(--s-4) var(--s-3); }
+  .inbox-pics { display: block; grid-column: 1 / -1; justify-self: start; margin: 0 var(--s-4) var(--s-3); }
+  .inbox-pics .inbox-carries { display: none; }
+  .inbox-thumb { display: block; width: 72px; height: 54px; }
   .inbox-row-head { padding-right: 30px; }
-  .inbox-byline { position: static; margin-top: 2px; }
+  /* the note is a quiet line at the top of the card; later rows of a run drop the mark and the name */
+  .inbox-byline { position: static; order: -1; flex-wrap: wrap; row-gap: 2px; margin: 10px 0 0; padding-right: 26px; }
+  .inbox-row-head { order: -2; }
+  .inbox-row-head:not(:empty) + .inbox-text { margin-top: 0; }
+  .inbox-content:has(> .inbox-row-head:empty) { padding-top: 0; }
+  .inbox-group[data-sender] .inbox-row ~ .inbox-row :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
   .inbox-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 var(--s-3) var(--s-4); }
   .inbox-answer { width: auto; }
   .inbox-answer.is-wide { grid-column: 1 / -1; }

@@ -6,10 +6,10 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
-import { decide, putOff, sendMessage, reopen, closeInfo, trust } from './store.js'
+import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
 import { openLightbox } from './chat.js'
 import { provide, hint } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
@@ -372,31 +372,55 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   if (about || words) text.append(body)
   // The byline under the text: the card's number (for looking it up) and its age. One quiet line that
   // always stands; under a title of two lines it is the text above it that gives way.
+  // The note that belongs to the row: its number (for looking it up) and its age, and two quiet
+  // actions that cost no room: "Trust" (leave it to the agent, on a two-way question) and "Shred" (throw
+  // it away unanswered). In the inbox this note stands in the gutter at the left of the card, beside the
+  // run of rows its session asked (CSS: .inbox-group[data-sender]); in a session's own list and in a
+  // narrow column it is a line of the card. Who asks (.inbox-from) is part of it only where no gutter says so.
   const byline = el('p', 'inbox-byline')
+  const sep = () => el('span', 'inbox-sep', ' · ')
   if (quiet) byline.append(quiet)
   if (from) {
-    // Who asks, where the list holds more than one session: its mark (with the crown, if it wears one) and name.
     const who = el('span', 'inbox-from')
     who.append(smallMark(from), el('span', null, from.name))
-    byline.append(who, ' · ')
+    byline.append(who, sep())
   }
-  byline.append(el('span', 'inbox-nr', cardNr(card)), ' · ', agoNode(card.created, 'inbox-ago'))
-  // On a thumb row of a question: "Trust", a small word at the end of the byline.
+  byline.append(el('span', 'inbox-nr', cardNr(card)), sep(), agoNode(card.created, 'inbox-ago'))
+  const acts = el('span', 'inbox-acts')
   if (card.kind === 'decision' && quick(card)) {
     const leave = el('button', 'inbox-trust', TRUST_WORD)
     leave.type = 'button'
     leave.title = trustTip(card)
     leave.addEventListener('click', () => { leave.disabled = true; trustCard(card, err => { leave.disabled = false; error.textContent = `Not saved: ${err.message}`; error.hidden = false }) })
-    byline.append(' · ', leave)
+    acts.append(leave)
   }
+  if (card.kind !== 'permission') {
+    const away = el('button', 'inbox-shred')
+    away.type = 'button'
+    away.title = `${SHRED_WORD}: throw this away unanswered. The session is told; it will not ask again`
+    away.setAttribute('aria-label', `${SHRED_WORD}: throw "${card.title}" away unanswered`)
+    away.append(sketch(SHRED_SKETCH), el('span', null, SHRED_WORD))
+    away.addEventListener('click', async () => {
+      away.disabled = true
+      try {
+        await shred(card.id)
+        say(pageHost(), { head: 'Shredded', title: card.title, back: () => reopen(card.id) })
+      } catch (err) { away.disabled = false; error.textContent = `Not shredded: ${err.message}`; error.hidden = false }
+    })
+    hint(away, 'list.shred')
+    acts.append(away)
+  }
+  if (acts.firstChild) byline.append(sep(), acts)
   // What the card carries: a small drawing and the count per kind; the whole list as its tooltip.
+  // (Beside a picture it stands under the picture; this copy is for where there is no room for that.)
   const extra = carries(card)
-  if (extra.length) {
+  const carried = () => {
     const more = el('span', 'inbox-carries')
     more.title = `This question carries ${extra.map(x => x.text).join(', ')}`
     for (const x of extra) { const one = el('span'); one.append(sketch(x.icon), x.text); more.append(one) }
-    byline.append(' · ', more)
+    return more
   }
+  if (extra.length) byline.append(sep(), carried())
   text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
   content.append(head, text, byline)
@@ -416,7 +440,10 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     img.addEventListener('error', () => thumb.remove())
     thumb.append(img)
     thumb.addEventListener('click', () => openLightbox(images, 0))
-    node.append(thumb)
+    // Under the picture: what the card carries ("6 pictures", "a table").
+    const pics = el('div', 'inbox-pics')
+    pics.append(thumb, carried())
+    node.append(pics)
   }
 
   // Snooze is always possible, at the row's top right corner. At rest the corner is only slightly bent:
@@ -595,11 +622,11 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     node.tabIndex = -1
     node.dataset.id = card.id
     const picked = card.choices?.length ? card.choices : [card.choice]
-    const labels = card.kind === 'info' ? 'Read' : card.trusted ? `Trusted${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
+    const labels = card.status === 'shredded' ? 'Shredded' : card.kind === 'info' ? 'Read' : card.trusted ? `Trusted${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
     // A yes or no shows its thumb; anything else the drawing of a choice.
     const duo = card.options.length === 2 && !card.multiple
     const mark = el('span', 'inbox-done-mark')
-    mark.append(sketch(card.kind === 'info' ? 'page' : !duo ? 'choose' : card.choice === card.options[0].key ? 'yes' : 'no'))
+    mark.append(sketch(card.status === 'shredded' ? SHRED_SKETCH : card.kind === 'info' ? 'page' : !duo ? 'choose' : card.choice === card.options[0].key ? 'yes' : 'no'))
     const text = el('div', 'inbox-done-text')
     const sub = el('p', 'inbox-done-sub')
     sub.append(el('b', null, labels))
@@ -705,7 +732,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     // What was answered: the latest first. A card the agent has closed since is still listed; the server lets it be reopened.
     const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
-    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
+    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), all.cards.filter(c => c.status === 'shredded').map(c => c.id), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
@@ -769,8 +796,22 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       const section = el('section', 'inbox-group')
       if (!agent) {
         section.dataset.sender = sender.id
+        section.dataset.run = cards.length > 1 ? 'many' : 'single'
         section.setAttribute('aria-label', `${sender.name}: ${cards.length === 1 ? '1 question' : `${cards.length} questions`}`)
         if (sender.starred) section.dataset.vip = ''
+        // The gutter at the left of the cards: the session's mark and name once for the whole run of its
+        // rows (it keeps in sight while a long run scrolls by), and a bracket drawn down the run.
+        const gutter = el('div', 'inbox-gutter')
+        gutter.setAttribute('aria-hidden', 'true')
+        const who = el('div', 'inbox-gutter-who')
+        const mark = el('span', 'inbox-avatar')
+        mark.style.setProperty('--hue', hueFor(sender))
+        mark.append(doodle(sender.mark ?? sender.id))
+        if (sender.starred) mark.append(crown())
+        who.append(mark, el('b', null, sender.name))
+        gutter.append(who)
+        if (cards.length > 1) gutter.append(runBracket(sender.id))
+        section.append(gutter)
       }
       section.append(...cards.map(c => row(c, { from: agent ? null : sender })))
       parts.push(section)
@@ -812,6 +853,17 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
         items: answered.map(c => ({ title: c.title, tail: answerOf(c), node: () => doneRow(c, all.agents.find(a => a.id === c.agent)) })),
       }))
     }
+    // Shredded today: a fourth quiet pile, only when there is something in it; "Take back" in its list.
+    const shredded = agent ? [] : all.cards.filter(c => c.status === 'shredded' && sameDay(c.shredded ?? 0, Date.now())).sort((a, b) => (b.shredded ?? 0) - (a.shredded ?? 0))
+    if (shredded.length) {
+      const key = ':shredded'
+      parts.push(pile({
+        kind: 'shredded', label: 'Shredded', icon: SHRED_SKETCH, count: `${shredded.length} today`, headClass: 'inbox-shredded-toggle',
+        open: pilesOpen.has(key) && !parts.some(p => p.matches?.('.inbox-pile.is-open')),
+        onToggle: to => { pilesOpen[to ? 'add' : 'delete'](key); folded(to) },
+        items: shredded.map(c => ({ title: c.title, tail: 'Shredded', node: () => doneRow(c, all.agents.find(a => a.id === c.agent)) })),
+      }))
+    }
     if (!open.length) parts.push(el('p', 'inbox-empty', agent ? 'This session has no question for you right now.' : 'As soon as an agent has a question, it shows up here.'))
     list.replaceChildren(...parts)
     for (const [id, { node }] of rows) {
@@ -846,7 +898,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     for (const { node, id, box } of leavers) {
       node.classList.remove('is-current', 'is-open')
       node.classList.add('is-leaving')
-      node.dataset.leave = off.some(c => c.id === id) ? 'later' : 'answered'
+      node.dataset.leave = off.some(c => c.id === id) ? 'later' : byId.get(id)?.status === 'shredded' ? 'shredded' : 'answered'
       node.removeAttribute('data-id')
       node.inert = true
       Object.assign(node.style, { left: `${box.left - frame.left}px`, top: `${box.top - frame.top}px`, width: `${box.width}px`, height: `${box.height}px` })
@@ -942,6 +994,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       'list.yes': onRow(node => press(node.querySelectorAll('.inbox-answer.is-thumb')[1])),
       'list.no': onRow(node => press(node.querySelectorAll('.inbox-answer.is-thumb')[0])),
       'list.later': onRow(node => press(node.querySelector('.inbox-later'))),
+      'list.shred': onRow(node => press(node.querySelector('.inbox-shred'))),
       // Several answers allowed: Enter sends what is picked, and never toggles the option in focus.
       'list.send': marked(node => {
         const send = node.querySelector('.inbox-send')

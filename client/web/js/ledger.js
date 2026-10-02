@@ -161,14 +161,14 @@ function mountLedger(root) {
     mark.setAttribute('aria-label', `${a.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
     mark.append(avatar(a, { vip: false, working: s.running }))
-    mark.addEventListener('click', e => { e.stopPropagation(); openMarkPicker(a, mark) })
+    mark.addEventListener('click', e => { if (phone.matches) return; e.stopPropagation(); openMarkPicker(a, mark) })   // a phone's line only opens
     face.append(mark, crownToggle(a, 'ledger-crown'))
 
     const name = el('span', 'ledger-name')
     const rename = button('ledger-rename')
     rename.title = 'Rename'
     rename.append(el('strong', null, a.name))
-    rename.addEventListener('click', e => { e.stopPropagation(); openEditor(a) })
+    rename.addEventListener('click', e => { if (phone.matches) return; e.stopPropagation(); openEditor(a) })
     name.append(rename)
     if (apart.get(a.id)) name.append(el('small', null, apart.get(a.id)))
     const group = all.groups.find(g => g.id === a.group)
@@ -335,9 +335,10 @@ function mountLedger(root) {
     if (!row) return
     const id = row.dataset.id
     if (view.pairFrom) return view.pairFrom === id ? togglePair(id) : join(view.pairFrom, id)
-    if (e.target.closest('button, a, input')) return
     // A phone's line is small: a tap opens. Elsewhere a click on the line picks it; a second one opens.
-    if (phone.matches || view.cur === id) return go(id)
+    if (phone.matches) return go(id)
+    if (e.target.closest('button, a, input')) return
+    if (view.cur === id) return go(id)
     point(id)
   })
   list.addEventListener('dblclick', e => { const row = e.target.closest('.ledger-line[data-id]'); if (row && !e.target.closest('button')) go(row.dataset.id) })

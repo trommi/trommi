@@ -1,6 +1,6 @@
 # Layout worker log
 
-Files of this work: `css/beside.css`, `js/beside.js`, `css/table.css`, `js/table.js`; four lines in `index.html`
+Files of this work: `css/beside.css`, `js/beside.js`, `css/ledger.css`, `js/ledger.js`; four lines in `index.html`
 (two stylesheet links, two module scripts). Nothing here was committed by the worker.
 
 ## Course of the work
@@ -28,19 +28,28 @@ Files of this work: `css/beside.css`, `js/beside.js`, `css/table.css`, `js/table
   not shown in that form.
 - Scribble takes the whole width under the head. Files replaces the log in the right column.
 
-### Table: a second form of the Agents page (`css/table.css`, `js/table.js`)
-- `/agents` shows today's list of cards by default. A small switch "List | Table" in the page's head flips to the
-  Table and is remembered in this browser (`localStorage trommi-agents-view`, `<html data-agents="table">`).
-- Table: marks on a table top, sized by open questions, in zones Needs you / Working / Idle / Away (or tidied by
-  machine or name); find; state chips; a slip beside the table for the picked session (its questions as real rows
-  via `mountInbox`, rename, drawing, VIP crown, model, machine, folder, program, tasks, open, lay together, take
-  out, archive); archive shelf with "Fetch back".
-- Push a mark onto another's picture: laid together. Pull one out of its loop: it leaves. Push it between two
-  marks of its zone: moved (the server's order, so the sidebar follows). The marks settle into the order; there are
-  no free positions.
-- Phone: a plain list of marks with name, state and count; a tap opens the session. No slip, no drag.
-- Keys (heard in `table.js`, not yet in `keys.js`): `/` find, arrows to the next mark, Enter open, `+` lay
-  together (then pick the partner) or take out, Shift+arrow move, Esc let go.
+### Ledger: the Agents page (`css/ledger.css`, `js/ledger.js`)
+The user chose "Ledger" (draft `designs/g3.html`) over the Table; `js/table.js`, `css/table.css` and the "List | Table"
+switch are removed. `/agents` now shows the Ledger; the list of cards (`mountRoster`, `#roster`) is still built but hidden
+by `ledger.css`.
+- One line per session: grip, mark (opens the drawings; redraws itself while the session works, `avatar(…, { working })`),
+  crown switch, name (renames), "with X" chip with scissors for one of a group, state (red hand + count when it waits
+  for you; else working / asks / idle / away, with the count), its first question (a yes/no is answered in the line with
+  two small thumbs via `decide`, with the note that takes it back; else "Choose" opens the question as a window; "+n"
+  walks through the rest) or its task, model, machine, last seen, and actions: open, its questions, lay together, archive.
+- A click on a column head sorts (again: reversed); "Back to your order" returns. In your order a line is dragged by
+  its grip: between two lines it moves (`moveSession`, the sidebar follows), onto the middle of a line the two are laid
+  together (`pair`). Disconnected sessions are a group of their own; the archive stands below with "Fetch back".
+- Narrower windows drop columns (machine below 1500px, model and last seen below 1240px). Phone: mark, name, state
+  and count; a tap opens the session.
+- Keys (heard in `ledger.js`, not yet in `keys.js`): `/` find, ↑↓ line, Enter open, `Q` its questions, `Y` `N` answer
+  the first question, `R` rename, `D` drawing, `C` crown, `+` lay together / take out, `A` archive (disconnected),
+  Shift+↑↓ move, Esc let go. (The draft's `P` for pairing is the pad's key in the app, hence `+`.)
+- Not exported by `agents.js`, so kept as a few lines of my own: the rule of what a session needs (`summary`) and the
+  hand-plus-count (`badge`). With `export` on those two, `ledger.js` could import them.
+- Verified on the demo board with real pointer and key events (1440x900 and 400x860, light and dark): sort both ways,
+  back to own order, find, answer in the line, arrows, Shift+arrow, C, R, D, Enter, Back, move by grip (sidebar
+  follows), lay together by drop and by key, take out, question as a window and back; phone tap opens.
 
 ## Verified (own demo board, headless Chromium, real pointer and key events; 1440x900 and 400x860, light and dark)
 - Session view: questions left of the log, sidebar in place; answer there; reference in the log scrolls to its card;

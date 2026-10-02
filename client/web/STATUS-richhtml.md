@@ -48,7 +48,7 @@ An agent can send comparison tables and other layouts with a message or a questi
 - `server/test.mjs`: one block before the last sessions close; `docs/question-contract.md`: section 6.
 - `dev/fake-agent.mjs`: the API persona sends a markdown table and an HTML block, in a message and in a question.
 
-## Verified (own trio on 8861, headless Chromium, `node dev/richhtml-test.mjs`: 42 checks)
+## Verified (own trio on 8861, headless Chromium, `node dev/richhtml-test.mjs`: 48 checks)
 Conversation and question window, 1440x900 and 400x860, light and dark; the frame's walls from the inside
 (parent.document, top.location, cookie, storage, fetch, picture from an address, late script, handler, popup,
 top navigation: all refused); hostile HTML handed to `rich()` uncleaned does nothing; height equals content;
@@ -58,7 +58,16 @@ change reaches the same frame without a reload; inbox rows name it and keep thei
 
 ## Not verified / open
 - Real phone (touch scroll inside a capped frame), Safari and Firefox.
-- The live hub needs a restart for the server part (field, cleaning, instructions); the client part is live as
-  soon as the page is reloaded. Until the restart an `html` field is silently ignored by the old hub.
+- The hub has been restarted since: the `html` field, the cleaning and the instructions are live. Not exercised by me against the live hub.
 - iOS and Linux clients ignore `html`; they show the words.
 - Fonts in the frame need the board page to reach the font files once; offline the frame uses the system face.
+
+## Fix: a frame scrolled out under the head of a conversation swallowed clicks there
+Reported by the Layout worker. Cause: the frame has no origin, so Chromium draws it in a process of its own and
+asks that process where a click lands; with a transform on the message (`.msg.is-new`) the log's clip was not
+applied to that question, so the frame took clicks on Files / Conversation / Scribble although nothing of it
+showed there (`elementFromPoint` named the button, the real click never arrived). Fix in `css/richhtml.css`:
+`.rh { contain: paint }` and `.rh-frame { clip-path: inset(0) }` (each alone is enough). Check added to
+`dev/richhtml-test.mjs`: a second browser with frames isolated as browsers run them, real mouse clicks on every
+control the scrolled-out frame lies behind, and one on the visible frame; it fails without the fix (on "Files")
+and passes with it, with `css/beside.css` and with that sheet removed.

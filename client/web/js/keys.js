@@ -32,7 +32,23 @@ export const LAYOUT = [
     { id: 'session.prev', keys: [','], does: 'previous session' },
     { id: 'back', keys: ['u', 'Backspace'], does: 'back: take the last answer back' },
     { id: 'theme', keys: ['t'], does: 'light or dark' },
+    { id: 'quicksend', keys: ['/'], does: 'quick send: write to a session from wherever you are', native: true },
+    { id: 'sessions.move', keys: ['Alt+ArrowUp', 'Alt+ArrowDown'], does: 'move the session you are in up or down the sidebar', native: true },
     { id: 'field.leave', keys: ['Escape'], does: 'leave a field', typing: true },
+  ] },
+  { scope: 'ledger', title: 'The agents page', keys: [
+    { id: 'ledger.find', keys: ['/'], does: 'find a session', native: true },
+    { id: 'ledger.step', keys: ['ArrowDown', 'ArrowUp'], does: 'next, previous session', native: true },
+    { id: 'ledger.open', keys: ['Enter'], does: 'open it', native: true },
+    { id: 'ledger.walk', keys: ['q'], does: 'its questions, one after the other', native: true },
+    { id: 'ledger.answer', keys: ['y', 'n'], does: 'answer its question: yes, no', native: true },
+    { id: 'ledger.rename', keys: ['r'], does: 'rename', native: true },
+    { id: 'ledger.mark', keys: ['d'], does: 'another drawing', native: true },
+    { id: 'ledger.crown', keys: ['c'], does: 'crown: its questions come first', native: true },
+    { id: 'ledger.pair', keys: ['+'], does: 'lay together with another', native: true },
+    { id: 'ledger.archive', keys: ['a'], does: 'archive (a disconnected one)', native: true },
+    { id: 'ledger.order', keys: ['Shift+ArrowDown', 'Shift+ArrowUp'], does: 'move it down, up', native: true },
+    { id: 'ledger.leave', keys: ['Escape'], does: 'drop the mark', native: true },
   ] },
   { scope: 'list', title: 'A list of questions', keys: [
     { id: 'list.next', keys: ['j', 'ArrowDown'], does: 'next question; after the last, the piles below (Enter unfolds one)', repeat: true },
@@ -41,21 +57,24 @@ export const LAYOUT = [
     { id: 'list.last', keys: ['End'], does: 'last question' },
     { id: 'list.option.next', keys: ['ArrowRight'], does: 'next option, where choices are open', repeat: true, control: true },
     { id: 'list.option.prev', keys: ['ArrowLeft'], does: 'previous option', repeat: true, control: true, quiet: true },
-    { id: 'list.yes', keys: ['y'], does: 'yes: the thumb up' },
-    { id: 'list.no', keys: ['n'], does: 'no: the thumb down' },
+    { id: 'list.yes', keys: ['y'], does: 'yes: the thumb up; on a note from the agent: acknowledge' },
+    { id: 'list.no', keys: ['n'], does: 'no: the thumb down; on a note from the agent: What??' },
     { id: 'list.send', keys: ['Enter'], does: 'send, where several answers are allowed', control: true },
-    { id: 'list.open', keys: ['Enter', 'c'], does: 'open the choices, or the question as a window' },
+    { id: 'list.open', keys: ['Enter', 'c'], does: 'open the choices, or the question as a window; a note from the agent: acknowledge' },
     { id: 'list.pick', keys: ['1…9'], does: 'pick that option' },
     { id: 'list.toggle', keys: [' '], does: 'pick the option in focus', native: true },
     { id: 'list.ask', keys: ['a'], does: 'ask back instead of answering' },
+    { id: 'list.read', keys: ['h'], does: 'hear it: read the marked question aloud, again to stop' },
+    { id: 'list.trust', keys: ['r'], does: 'trust: the agent decides' },
+    { id: 'list.shred', keys: ['x'], does: 'shred: throw it away unanswered' },
     { id: 'list.explain', keys: ['e'], does: 'What??: show all of it, then ask the session to explain' },
     { id: 'list.later', keys: ['l'], does: 'snooze, or fetch it back' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'on an answered row: take that answer back' },
     { id: 'list.leave', keys: ['Escape'], does: 'close the choices, then drop the mark' },
   ] },
   { scope: 'focus', title: 'Focus: one question per page', modal: true, keys: [
-    { id: 'focus.next', keys: ['ArrowRight', 'j'], does: 'next question, without answering', repeat: true },
-    { id: 'focus.prev', keys: ['ArrowLeft', 'k'], does: 'previous question', repeat: true },
+    { id: 'focus.next', keys: ['ArrowRight', 'j'], does: 'next question, without answering (in the time machine: the next version)', repeat: true },
+    { id: 'focus.prev', keys: ['ArrowLeft', 'k'], does: 'previous question (or version)', repeat: true },
     { id: 'focus.yes', keys: ['y'], does: 'yes: the thumb up' },
     { id: 'focus.no', keys: ['n'], does: 'no: the thumb down' },
     { id: 'focus.pick', keys: ['1…9'], does: 'pick that option' },
@@ -66,13 +85,19 @@ export const LAYOUT = [
     { id: 'focus.ask', keys: ['a'], does: 'write to the session about the question' },
     { id: 'focus.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
     { id: 'focus.explain', keys: ['e'], does: 'What??: ask the session to explain' },
-    { id: 'focus.handback', keys: ['b'], does: 'back to agent: hand the question back, with what you wrote' },
-    { id: 'focus.later', keys: ['l'], does: 'snooze: on to the next' },
+    { id: 'focus.handback', keys: ['b'], does: 'revise: back to the agent, with what you wrote' },
+    { id: 'focus.trust', keys: ['r'], does: 'trust: the agent decides' },
+    { id: 'focus.shred', keys: ['x'], does: 'shred: throw it away unanswered' },
+    { id: 'focus.draw', keys: ['d'], does: 'draw on the question' },
+    { id: 'focus.note', keys: ['a'], does: 'start a note' },
+    { id: 'focus.read', keys: ['h'], does: 'hear it: read the question aloud, again to stop' },
+    { id: 'focus.later', keys: ['l', 's'], does: 'snooze: on to the next' },
     { id: 'focus.back', keys: ['u', 'Backspace'], does: 'back: take the last answer back' },
-    { id: 'focus.leave', keys: ['Escape'], does: 'leave a field, then close', typing: true, control: true },
+    { id: 'focus.leave', keys: ['Escape'], does: 'leave a field, then the time machine, then close', typing: true, control: true },
   ] },
   { scope: 'conversation', title: 'In a session', keys: [
     { id: 'chat.write', keys: ['r'], does: 'write to the session' },
+    { id: 'chat.read', keys: ['h'], does: 'hear it: read the latest message aloud, again to stop' },
     { id: 'chat.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
     { id: 'chat.questions', keys: ['q'], does: 'questions only, and back' },
     { id: 'chat.files', keys: ['f'], does: 'files, and back' },
@@ -99,7 +124,7 @@ export const LAYOUT = [
 ]
 
 // Which scope hears a key first. A list of questions before the page around it.
-const ORDER = ['focus', 'list', 'conversation', 'session', 'scribble', 'writing', 'app']
+const ORDER = ['focus', 'ledger', 'list', 'conversation', 'session', 'scribble', 'writing', 'app']
 const SEQUENCE_MS = 1600
 
 const providers = new Map()   // scope -> Set of { active(), actions, has?(id) }
@@ -305,7 +330,9 @@ export function openSheet() {
   for (const group of LAYOUT) {
     if (!scopes.includes(group.scope) && !under) continue
     const live = activeOf(group.scope)
-    const entries = group.keys.filter(entry => !entry.quiet && (scopes.includes(group.scope) || (entry.always && live.length)) && live.every(p => p.has?.(entry.id) !== false))
+    const entries = group.keys.filter(entry => !entry.quiet && (scopes.includes(group.scope) || (entry.always && live.length)) && live.every(p => p.has?.(entry.id) !== false)
+      // A key that waits for its action (another module is to provide it) is not listed until it is there.
+      && (entry.native || entry.id === 'help' || live.some(p => p.actions?.[entry.id])))
     if (!entries.length) continue
     let list = sections.get(group.title)
     if (!list) {

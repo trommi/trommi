@@ -49,3 +49,17 @@ All in `js/focus.js` and one block at the end of `css/focus.css`. Verified on de
 
 Not done or not verified: option notes inside the enlarged-picture view; drawing on a picture the agent attached (only on one's own attachments); the note's attachments are stored on the card (`note_attachments`) but no view shows them after the answer; a real phone (touch, on-screen keyboard, real clipboard paste: paste was tested with a dispatched paste event carrying a file); `keys.js` has no entry for B (`focus.handback` is provided) and still says "explain".
 - Later, changed by the user: the composer is ONE line in the conversation column (field with Send inside, then `What??` · `Back to agent` · `Snooze` at the same height); the answers keep the full height at the right. "Later" is `LATER_WORD = 'Snooze'` with the drawing `LATER_SKETCH = 'snooze'` (both exported from ui.js); the toast says "Snoozed".
+
+## Third round (state at the end of this session)
+
+- The walk is a stack of separate cards (one scrolling column; each card at most the window's height less a peek of the next, inner scroll). The card at the reading line is the one in front; it always lands at the same place (`LIST_TOP`), with only the newest strip in sight above it. Answered / trusted / read / snoozed / handed / asked / shredded cards become strips with Back (`addStrip`, `arrange`). No rail: `.focus-more` at the foot says "N more". A card opened alone stays one card and closes on its answer.
+- Card layout: two columns (content left with its own scroll, options right, Send under the option list, Trust under that), composer line across the whole card. `ANSWERS_BESIDE_TITLE` (or `?head=1`) switches to the options floating beside the title; off by default.
+- Composer: no Send. What is typed is saved as the card's draft 300 ms after a keystroke (`queueDraft`/`saveDraft`/`flushDraft`), the end of the field says "…" then "saved". Enter = Back to agent with the words (nothing on an empty field), Ctrl/Cmd+Enter = say it and stay, Shift+Enter = line break; on touch Enter is a line break. Back on the strip returns card and words. Attached files and drawings stay client-side until an action sends them.
+- Buttons beside the field, wordless (`wayButton`): ??? (What??, sends `explain: true`, takes the field's words along), the reverse card (Back to agent, `handback: true`), z z z (Snooze), and apart from them Shred (`POST /shred`).
+- Info cards (`kind: "info"`): two tiles, What?? and Acknowledge (`POST /close`), strip "Read".
+- Under the title: `paintAssets` chips (pictures, pages and links incl. those in the conversation, files, tables, layouts, the version chip).
+- Time machine: `viewVersion(rec, n)`, `rec.version`; `.focus-turn` lines in the conversation; "Presented again" on a rewording.
+- Gallery: `pairPictures`; grid from four paired pictures; `tiePicture` marks the option, `linkPicture` draws one pen line from the picture to its option (ui.js `arrowStrokes`), only while both ends are in sight and the way is free; `attachment.page` gives "Open the page" and, in the enlarged view, "Live" (sandboxed frame).
+- `mountFocus` re-fetches `focus.css` so an old page cannot run new code with an old stylesheet.
+
+Not built: writing and scribbling anywhere on the card (anchored notes), the scribble overlay with a snapshot picture, option notes in the enlarged view, `note_attachments` shown after an answer.
