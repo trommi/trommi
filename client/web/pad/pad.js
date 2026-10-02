@@ -106,14 +106,14 @@ const nextRev = id => { const r = (revs.get(id) ?? 0) + 1; revs.set(id, r); retu
 const stamp = el => ({ ...el, updated: Date.now(), rev: nextRev(el.id) })
 const tombstone = el => ({ id: el.id, pad: el.pad, deleted: true, author: AUTHOR, updated: Date.now(), rev: nextRev(el.id) })
 const topZ = () => ordered().reduce((m, e) => Math.max(m, e.z), 0)
-function make(type, box, data, z = topZ() + 1) {
+function make(type, box, data, z = topZ() + 1, blob = null) {
   const now = Date.now()
   const id = newId()
-  return { id, pad: PAD, type, x: r2(box.x), y: r2(box.y), w: r2(box.w), h: r2(box.h), rotation: 0, z, group: null, author: AUTHOR, created: now, updated: now, rev: nextRev(id), data, sent: [] }
+  return { id, pad: PAD, type, x: r2(box.x), y: r2(box.y), w: r2(box.w), h: r2(box.h), rotation: 0, z, group: null, author: AUTHOR, created: now, updated: now, rev: nextRev(id), blob, data, sent: [] }
 }
-function makeText(type, x, y, data) {
+function makeText(type, x, y, data, blob = null) {
   const lay = layoutText(data, type)
-  return make(type, { x, y, w: lay.w, h: lay.h }, data)
+  return make(type, { x, y, w: lay.w, h: lay.h }, data, undefined, blob)
 }
 
 let saveError = false
@@ -520,7 +520,7 @@ function duplicate() {
   let z = topZ()
   const copies = list.map(e => {
     if (e.group && !groups.has(e.group)) groups.set(e.group, newId())
-    return make(e.type, { x: e.x + off, y: e.y + off, w: e.w, h: e.h }, e.data, ++z)
+    return make(e.type, { x: e.x + off, y: e.y + off, w: e.w, h: e.h }, e.data, ++z, e.blob)
   }).map((c, i) => ({ ...c, group: list[i].group ? groups.get(list[i].group) : null }))
   add(copies)
   sel.clear()
@@ -708,7 +708,7 @@ async function finishRecording(r) {
   if (rec !== r) return
   endRecording()
   const size = TEXT_SIZE
-  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: wrapAt(r.x), audio, ms, stub: r.stub })
+  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: wrapAt(r.x), ms, stub: r.stub }, audio)
   add([el])
   sel.clear()
   sel.add(el.id)
@@ -771,7 +771,7 @@ async function addImages(files, at) {
       const w = r2(nw * k), h = r2(nh * k)
       const [cx, cy] = at ? toWorld(at[0], at[1]) : toWorld(W / 2, (H - 20) / 2)
       const off = (added.length * 28) / view.z
-      added.push(make('image', { x: cx - w / 2 + off, y: cy - h / 2 + off, w, h }, { blob: id, mime: blob.type, nw, nh, name: f.name || '' }, ++z))
+      added.push(make('image', { x: cx - w / 2 + off, y: cy - h / 2 + off, w, h }, { mime: blob.type, nw, nh, name: f.name || '' }, ++z, id))
     } catch { failed++ }
   }
   $('toast').hidden = true
@@ -1164,7 +1164,7 @@ $('send-to').addEventListener('click', () => ($('send-menu').hidden ? openSendMe
 
 /** What a session receives for a selection (docs/pad.md, "Sending a selection"). */
 async function buildPayload(session, list) {
-  await Promise.all(list.filter(e => e.type === 'image').map(e => picture(e.data.blob).ready))
+  await Promise.all(list.filter(e => e.type === 'image' && e.blob).map(e => picture(e.blob).ready))
   const shot = renderPNG(list, env())
   return {
     shot,
@@ -1207,9 +1207,10 @@ $('send-go').addEventListener('click', async () => {
   $('send-go').textContent = 'Sending…'
   try {
     const { message_id } = await sendSelection(payload)
-    // the element remembers where it went; this is a write like any other, but not an undo step
+    // The element remembers where it went and in which revision. That is no change to the
+    // element itself (no new revision, no undo step): on a server these are link rows.
     const at = Date.now()
-    apply(list.map(e => els.get(e.id)).filter(Boolean).map(e => ({ id: e.id, before: e, after: stamp({ ...e, sent: [...(e.sent ?? []), { session: session.id, at, message_id }] }) })), false)
+    apply(list.map(e => els.get(e.id)).filter(Boolean).map(e => ({ id: e.id, before: e, after: { ...e, sent: [...(e.sent ?? []), { session: session.id, at, message_id, rev: e.rev }] } })), false)
     $('send-dialog').close()
     toast(`Sent to ${session.name}`)
   } catch (err) {
@@ -1249,6 +1250,7 @@ async function start() {
     revs.set(r.id, r.rev ?? 1)
     if (!r.deleted) els.set(r.id, r)
   }
+  order = null   // a first paint may already have cached the empty pad
   W = pad.clientWidth; H = pad.clientHeight
   sizeCanvas()
   if (saved?.z) {

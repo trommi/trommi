@@ -1,6 +1,7 @@
 // Development only: drive the pad in headless Chromium with real pointer, touch,
 // wheel and key input (DevTools protocol), check what it did, and save screenshots.
-//   node client/web/pad/dev-check.mjs http://localhost:8871/pad/index.html OUT_DIR
+//   dev/trio.sh 8861 600 &   then   node client/web/pad/dev-check.mjs "http://localhost:8861/pad/?t=demo" OUT_DIR
+//   without a board:  (cd client/web && python3 -m http.server 8872)  and  …/dev-check.mjs http://localhost:8872/pad/ OUT_DIR
 // Needs the command sandbox disabled (Chromium), like dev/cdp.mjs. Exit code 1 if a check fails.
 import fs from 'node:fs'
 import path from 'node:path'
@@ -141,7 +142,7 @@ const summary = `return { n: pad.elements().length, types: pad.elements().map(e 
     await new Promise(r => setTimeout(r, 700))`)
   st = await s.js(summary)
   const img = await s.js(`return pad.elements().find(e => e.type === 'image')`)
-  check('a dropped picture becomes an image element with its bytes in the blob store', Boolean(img) && st.sel === 1 && await s.js(`return (await (await import('./db.js')).openStore()).getBlob('${img?.data.blob}').then(b => b.blob.size > 100)`), img ? `${img.w}x${img.h} at ${img.x},${img.y}` : '')
+  check('a dropped picture becomes an image element with its bytes in the blob store', Boolean(img) && st.sel === 1 && await s.js(`return (await (await import('./db.js')).openStore()).getBlob('${img?.blob}').then(b => b.blob.size > 100)`), img ? `${img.w}x${img.h} at ${img.x},${img.y}` : '')
   // draw over the picture: it is selected, so first let go of it
   await s.key('Escape')
   await s.drag([[900, 470], [1000, 440], [1100, 480], [1090, 580], [920, 590], [900, 470]])
@@ -253,7 +254,7 @@ const summary = `return { n: pad.elements().length, types: pad.elements().map(e 
   const ids2 = await s.js(`return pad.elements().map(e => e.id + ':' + e.rev).join(',')`)
   check('after a reload the same records come back from IndexedDB', ids === ids2 && ids.length > 0, `${ids2.split(',').length} elements`)
   const rec0 = await s.js(`return pad.records().then(r => r.find(x => x.type === 'stroke'))`)
-  check('a stored record has the documented fields', ['id', 'pad', 'type', 'x', 'y', 'w', 'h', 'rotation', 'z', 'group', 'author', 'created', 'updated', 'rev', 'data', 'sent'].every(k => k in rec0), Object.keys(rec0).join(','))
+  check('a stored record has the documented fields', ['id', 'pad', 'type', 'x', 'y', 'w', 'h', 'rotation', 'z', 'group', 'author', 'created', 'updated', 'rev', 'blob', 'data', 'sent'].every(k => k in rec0), Object.keys(rec0).join(','))
   fs.writeFileSync(path.join(outDir, 'record.json'), JSON.stringify(rec0, null, 2))
 
   await s.key('?', { modifiers: SHIFT, code: 'Slash', vk: 191 })
