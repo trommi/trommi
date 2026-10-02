@@ -1283,7 +1283,7 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 /* "N more" has a strip of its own under the cards instead of lying on a card's field */
 .focus[data-list] .focus-sheet[data-state="cards"] .focus-stage { margin-bottom: 50px; }
 /* text that goes on under the field fades out instead of being cut */
-.focus:not([data-inline]) .focus-card .focus-scroll { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent); mask-image: linear-gradient(#000 calc(100% - 26px), transparent); }
+.focus:not([data-inline]) .focus-card .focus-scroll[data-more] { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent); mask-image: linear-gradient(#000 calc(100% - 26px), transparent); }
 /* the advice marker in dark: lighter, so the label on it reads */
 :root[data-theme="dark"] .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 45%, transparent); }
 /* a finger needs more than 32px */
@@ -1295,3 +1295,5 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
   .focus-opt-pen::after { content: ''; position: absolute; inset: -8px; }
 }
 .focus-done-work { margin-bottom: var(--s-5); }
+/* on a phone the walk's way back has a line of its own above the cards */
+@media (max-width: 700px) { .focus[data-list]:not([data-inline]) { padding-top: 56px; } }
