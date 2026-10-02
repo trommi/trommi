@@ -3,11 +3,13 @@
 
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
 import { mountAgents, mountRoster, avatar, pairAvatar, tellApart, openMarkPicker, openEditor } from './agents.js'
-import { mountInbox, VIP_LABEL } from './inbox.js'
+import { mountInbox } from './inbox.js'
 import { el, sketch, setAssetSource } from './ui.js'
 import { mountChat } from './chat.js'
 import { provide, openSheet } from './keys.js'
 import { say, pageHost, backNow } from './back.js'
+import { togglePad } from './padlink.js'
+import { startDictation, stopDictation, isDictating } from './speech.js'
 
 // Links to published assets are named from what the board knows of them.
 setAssetSource(() => getState().all)
@@ -277,8 +279,8 @@ function paintTitle(state) {
     name.addEventListener('click', () => openEditor(agent))
     const heading = el('h2', 'pane-name')
     heading.append(name)
-    // A starred session is marked once, here; its questions below stay plain.
-    return paneTitle.replaceChildren(mark, heading, ...(agent.starred ? [el('span', 'inbox-vip', VIP_LABEL)] : []))
+    // A starred session wears its crown on the mark (agents.js avatar); nothing stands next to the name.
+    return paneTitle.replaceChildren(mark, heading)
   }
   paneTitle.title = ''
   const names = el('h2', 'pane-members')
@@ -287,7 +289,6 @@ function paintTitle(state) {
     const b = el('button', null, a.name)
     b.type = 'button'
     if (apart.get(a.id)) b.append(el('small', null, apart.get(a.id)))
-    if (a.starred) b.append(el('span', 'inbox-vip', VIP_LABEL))
     b.setAttribute('aria-pressed', String(a.id === picked))
     b.addEventListener('click', () => { pickMember(a.id); if (body.dataset.view === 'chat' && !phone.matches) chat.focus(null, a.id) })
     names.append(b)
@@ -495,10 +496,7 @@ provide('app', {
     'session.next': stepPlace(1),
     'session.prev': stepPlace(-1),
     theme: () => themeToggle.click(),
-    // The pad lives in a module of its own (padlink.js); it is fetched when first asked for.
-    pad: () => {
-      import('./padlink.js').then(m => (m.togglePad ?? m.openPad ?? m.default)(), () => showToast('error', 'The pad could not be loaded.', 3000))
-    },
+    pad: () => togglePad(),
     // The last answer, or whatever else the note at the top left offers to take back.
     back: () => backNow(),
     // Out of a field, to whatever holds it: the question's row, or the conversation.
@@ -510,15 +508,22 @@ provide('app', {
     },
   },
 })
+/** The key for dictation: a tap starts it, the next tap stops it; held for longer than a moment, letting go stops it. */
+function voiceKey(field) {
+  if (isDictating()) return void stopDictation()
+  startDictation(field)
+  return ms => { if (ms > 300) stopDictation() }
+}
 provide('session', {
   active: inSession,
   actions: { 'session.scribble': () => setView(body.dataset.view === 'scribble' ? 'chat' : 'scribble') },
 })
 provide('conversation', {
   active: () => inSession() && body.dataset.view === 'chat',
-  has: id => id !== 'chat.pane' || getState().members.length > 1,
+  has: id => (id === 'chat.pane' ? getState().members.length > 1 : id === 'chat.voice' ? Boolean(getState().speech) : true),
   actions: {
     'chat.write': () => chat.focus(),
+    'chat.voice': () => voiceKey($('chat').querySelector('.chat-pane.is-member .composer textarea') ?? $('chat').querySelector('.composer textarea')),
     'chat.questions': () => $('filter-questions').click(),
     'chat.files': () => $('filter-files').click(),
     'chat.pane': () => {

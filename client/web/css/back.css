@@ -56,3 +56,36 @@
   .focus .focus-card[data-out="sent"], .focus .focus-card[data-out="later"] { animation: row-fade 160ms linear forwards !important; }
 }
 @keyframes row-fade { to { opacity: 0; } }
+
+/* ---- Answered: the group at the very end of the inbox ---- */
+/* Folded to its heading until it is opened. Then every answer is a slim row: what was asked, what
+   was said, who asked and when, and "Take back". Solid lines: these are decided. */
+.inbox-group-answered { gap: var(--s-2); }
+.inbox-group-answered .inbox-sender { color: var(--muted); }
+.inbox-group-answered .inbox-sender::after { content: none; }
+.inbox-answered-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; }
+.inbox-answered-toggle::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
+.inbox-answered-toggle b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.inbox-answered-caret { order: 4; font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .08em; text-transform: uppercase; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+.inbox-answered-toggle:hover { color: var(--fg); }
+.inbox-group-answered .inbox-avatar { background: none; color: var(--muted); outline: 1px solid var(--line-strong); outline-offset: -1px; }
+.inbox-done { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); min-height: 60px; padding: 8px 12px 8px 14px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); scroll-margin: 72px 0 28px; }
+.inbox-done:focus { outline: none; }
+.inbox-done-mark { display: grid; place-items: center; color: var(--muted); }
+.inbox-done-mark .sketch { width: 26px; height: 26px; stroke-width: 1.7; }
+.inbox-done-text { min-width: 0; display: grid; gap: 2px; }
+.inbox-done-text strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 1.02rem/1.25 var(--display); letter-spacing: -.005em; }
+.inbox-done-sub { display: flex; align-items: center; gap: var(--s-3); min-width: 0; overflow: hidden; white-space: nowrap; font-size: var(--t-sm); color: var(--muted); }
+.inbox-done-sub b { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 600; color: var(--accent); }
+.inbox-done-who { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.inbox-done-who .doodle { width: 16px; height: 16px; }
+.inbox-done-ago { flex: none; font-size: var(--t-xs); color: var(--faint); }
+.inbox-done-closed { flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.inbox-takeback { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sm); font-weight: 600; white-space: nowrap; }
+.inbox-takeback:hover { border-color: var(--fg); }
+.inbox-takeback:disabled { opacity: .5; }
+@container rows (max-width: 520px) {
+  .inbox-done { grid-template-columns: 26px minmax(0, 1fr); }
+  .inbox-takeback { grid-column: 2; justify-self: start; }
+  .inbox-done-who { display: none; }
+}

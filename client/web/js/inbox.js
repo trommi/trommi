@@ -7,7 +7,7 @@
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
 import { el, rich, agoNode, doodle, sketch, kindOf, tidyLinks, adviceLoop, cardNote } from './ui.js'
-import { decide, putOff, sendMessage } from './store.js'
+import { decide, putOff, sendMessage, reopen } from './store.js'
 import { openLightbox } from './chat.js'
 import { provide, hint, openSheet } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
@@ -49,6 +49,13 @@ const needsWindow = card =>
 
 // What the agent would pick: one option, or several where several are allowed.
 const advised = (card, key) => [].concat(card.recommended ?? []).includes(key)
+
+// The "Answered" group at the end of the inbox stands folded to one line until it is opened.
+let answeredOpen = false
+const ANSWERED_MAX = 40   // so many of the latest answers are listed
+const sameDay = (a, b) => new Date(a).toDateString() === new Date(b).toDateString()
+// What a row is: an open question, one that was put off, or one that was answered.
+const kindOfRow = node => (node.classList.contains('inbox-done') ? 'done' : 'later' in node.dataset ? 'later' : 'open')
 
 // Rows that stand unfolded, by card id: a list that is rebuilt keeps them open.
 const unfolded = new Set()
@@ -337,6 +344,38 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     return node
   }
 
+  // ---- an answered question, as a slim row ----
+  let fetching = null   // the id of a card that "Take back" is returning: its row is marked when it is here
+  function doneRow(card, sender) {
+    const node = el('article', 'inbox-done')
+    node.tabIndex = -1
+    node.dataset.id = card.id
+    const picked = card.choices?.length ? card.choices : [card.choice]
+    const labels = card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
+    // A yes or no shows its thumb; anything else the drawing of a choice.
+    const duo = card.options.length === 2 && !card.multiple
+    const mark = el('span', 'inbox-done-mark')
+    mark.append(sketch(!duo ? 'choose' : card.choice === card.options[0].key ? 'yes' : 'no'))
+    const text = el('div', 'inbox-done-text')
+    const sub = el('p', 'inbox-done-sub')
+    sub.append(el('b', null, labels))
+    if (sender) { const who = el('span', 'inbox-done-who'); who.append(doodle(sender.mark ?? sender.id), sender.name); sub.append(who) }
+    if (card.decided) sub.append(agoNode(card.decided, 'inbox-done-ago'))
+    if (card.status === 'done') sub.append(el('span', 'inbox-done-closed', 'done by the agent'))
+    text.append(el('strong', null, card.title), sub)
+    const take = el('button', 'inbox-takeback', 'Take back')
+    take.type = 'button'
+    take.setAttribute('aria-label', `Take back "${labels}" on: ${card.title}`)
+    hint(take, 'list.takeback')
+    take.addEventListener('click', async () => {
+      take.disabled = true
+      fetching = card.id
+      try { await reopen(card.id) } catch (err) { fetching = null; take.disabled = false; error(`Not taken back: ${err.message}`) }
+    })
+    node.append(mark, text, take)
+    return node
+  }
+
   // ---- a row that left, and one that comes back ----
   // What happened to a question that left is said by the note at the top left (back.js), which also
   // takes it back. The list does its part: the row that left goes with a motion that shows where to,
@@ -352,7 +391,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
 
   // ---- the row the keyboard is on ----
   let current = null   // { id, index, off }
-  const nodes = () => [...list.querySelectorAll('.inbox-row:not(.is-leaving)')]
+  const nodes = () => [...list.querySelectorAll('.inbox-row:not(.is-leaving), .inbox-done')]
   // Bring a row wholly into view: with its sender's heading if it is the first of its group, with the
   // tag that hangs below its edge, and with the page's own title if it is the very first row.
   function reveal(node, smooth = true) {
@@ -376,7 +415,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     if (!node) { current = null; return }
     node.classList.add('is-current')
     node.setAttribute('aria-current', 'true')
-    current = { id: node.dataset.id, index: nodes().indexOf(node), off: 'later' in node.dataset }
+    current = { id: node.dataset.id, index: nodes().indexOf(node), kind: kindOfRow(node) }
     // The keyboard's own place follows the mark, unless it is busy elsewhere (a field, the sidebar).
     const at = document.activeElement
     if (!at || at === document.body || (list.contains(at) && !node.contains(at))) node.focus({ preventScroll: true })
@@ -390,7 +429,10 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const open = all.queue.map(id => byId.get(id)).filter(c => c && (!agent || c.agent === agent))
     const off = state.later.map(id => open.find(c => c.id === id)).filter(Boolean)
     const fresh = open.filter(c => !off.includes(c))
-    const next = JSON.stringify([off.map(c => c.id), open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
+    // What was answered: the latest first. A card the agent has closed since is still listed; the server lets it be reopened.
+    const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && c.kind === 'decision' && c.choice != null)
+      .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
+    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), off.map(c => c.id), open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
@@ -431,7 +473,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
 
     // Remember where every row was, so that after an answer the rest slides up instead of jumping.
     const before = new Map(nodes().map(n => [n.dataset.id, n.getBoundingClientRect().top]))
-    const old = nodes().map(n => ({ node: n, id: n.dataset.id, off: 'later' in n.dataset, box: n.getBoundingClientRect() }))
+    const old = nodes().filter(n => kindOfRow(n) !== 'done').map(n => ({ node: n, id: n.dataset.id, off: 'later' in n.dataset, box: n.getBoundingClientRect() }))
     // Rebuilding moves every row out of the list and back. A row or a control that holds the keyboard
     // would lose it on the way, and Chromium then lays the emptied list out and scrolls it to its top:
     // let go before the first row moves, and take the keyboard up again below.
@@ -467,6 +509,24 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       }))
       parts.push(section)
     }
+    // Answered: one more group below everything, folded to a line. Unfolded, every answer is a slim row
+    // with the way to take it back, for the wrong answer that is noticed only later.
+    if (answered.length) {
+      const section = el('section', 'inbox-group inbox-group-answered')
+      const label = el('h3', 'inbox-sender')
+      const toggle = el('button', 'inbox-answered-toggle')
+      toggle.type = 'button'
+      toggle.setAttribute('aria-expanded', String(answeredOpen))
+      const avatar = el('span', 'inbox-avatar')
+      avatar.append(sketch('yes'))
+      const today = answered.filter(c => sameDay(c.decided ?? 0, Date.now())).length
+      toggle.append(avatar, el('span', null, 'Answered'), el('b', null, today === answered.length ? `${today} today` : today ? `${today} today · ${answered.length} in all` : `${answered.length}`), el('i', 'inbox-answered-caret', answeredOpen ? 'Hide' : 'Show'))
+      toggle.addEventListener('click', () => { answeredOpen = !answeredOpen; signature = ''; render(state); list.querySelector('.inbox-answered-toggle')?.focus({ preventScroll: true }) })
+      label.append(toggle)
+      section.append(label)
+      if (answeredOpen) section.append(...answered.map(c => doneRow(c, all.agents.find(a => a.id === c.agent))))
+      parts.push(section)
+    }
     if (!open.length) parts.push(el('p', 'inbox-empty', agent ? 'This session has no question for you right now.' : 'As soon as an agent has a question, it shows up here.'))
     list.replaceChildren(...parts)
     for (const [id, { node }] of rows) {
@@ -482,9 +542,12 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     let returned = null
     for (const { id, off: wasOff } of old) if (!wasOff && !openNow.has(id)) away.set(id, now)
     for (const [id, at] of away) {
-      if (openNow.has(id)) { if (now - backUsedAt() < 4000) returned = nodes().find(n => n.dataset.id === id) ?? null; away.delete(id) }
+      if (openNow.has(id)) { if (now - backUsedAt() < 4000) returned = nodes().find(n => n.dataset.id === id && kindOfRow(n) === 'open') ?? null; away.delete(id) }
       else if (now - at > 60000) away.delete(id)
     }
+    // A card that "Take back" returned from the answered ones.
+    const fetched = Boolean(fetching && openNow.has(fetching))
+    if (fetched) { returned = nodes().find(n => n.dataset.id === fetching && kindOfRow(n) === 'open') ?? returned; fetching = null }
     // The row that left stays a moment as a ghost in its old place and goes: an answered one off to
     // the side, one that was put off down towards "Later". Nothing can be pressed on it, and it is no row any more.
     const leavers = signature && shown() ? old.filter(o => !o.node.isConnected && !o.off && !openNow.has(o.id)) : []
@@ -502,15 +565,15 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     // The marked row was answered or put off: the mark stays in its place, on the row that moved up.
     if (current) {
       const now = nodes()
-      const same = now.find(n => n.dataset.id === current.id)
-      if (same && 'later' in same.dataset === current.off) mark(same, false)
+      const same = now.find(n => n.dataset.id === current.id && kindOfRow(n) === current.kind)
+      if (same && kindOfRow(same) === current.kind) mark(same, false)
       // The mark changed rows: where the list got shorter, the row it is on now may be out of sight.
       else { mark(now[Math.min(current.index, now.length - 1)] ?? null, false); if (current && shown()) reveal(now[current.index], false) }
     }
     // A field or button that was in use keeps the keyboard; a row gives it to the row that is marked now.
     if (held?.isConnected && !held.matches('.inbox-row') && !held.closest('[inert]')) held.focus({ preventScroll: true })
     if (returned && shown()) {
-      if (current) mark(returned, true, false)
+      if (current || fetched) mark(returned, true, false)
       else { reveal(returned, false); returned.animate([{ outline: '3px solid var(--fg)', outlineOffset: '3px' }, { outline: '3px solid transparent', outlineOffset: '3px' }], { duration: 1400 }) }
     }
     if (before.size && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
@@ -579,6 +642,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       }),
       // The choices in the row, or the whole question as a window where there is too much for a row.
       'list.open': onRow(node => {
+        if (kindOfRow(node) === 'done') return true   // nothing to open; its key is "take back"
         const choose = node.querySelector('.inbox-answer.is-wide')
         if (!choose) { onOpen?.(node.dataset.id); return true }
         if (!press(choose)) return false
@@ -589,6 +653,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       'list.pick': marked((node, n) => (isOpen(node) ? press(node.querySelectorAll('.inbox-option[data-key]')[n - 1]) : false)),
       // Ask back: the line under the choices; a row without choices opens as a window, with that line ready.
       'list.ask': onRow(node => {
+        if (kindOfRow(node) === 'done') return true
         const choose = node.querySelector('.inbox-answer.is-wide')
         if (!node.querySelector('.inbox-more')) { onOpen?.(node.dataset.id, { ask: true }); return true }
         if (!isOpen(node)) choose.click()
@@ -606,8 +671,10 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
           say(pageHost(), { head: 'Asked to explain', title: 'It comes back with the answer.', back: async () => putOff(card.id, false) })
         }, err => error(`Not asked: ${err.message}`))
       }),
+      // On an answered row: its answer is taken back, and the question stands in its group again.
+      'list.takeback': marked(node => (kindOfRow(node) === 'done' ? press(node.querySelector('.inbox-takeback')) : false)),
       'list.leave': marked(node => {
-        if (isOpen(node)) { node.querySelector('.inbox-answer.is-wide').click(); node.focus({ preventScroll: true }); return true }
+        if (isOpen(node)) { node.querySelector('.inbox-answer.is-wide')?.click(); node.focus({ preventScroll: true }); return true }
         mark(null)
         if (node === document.activeElement) node.blur()
       }),
@@ -615,7 +682,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
   })
   // A row that is touched takes the mark along, once the keyboard has set one.
   list.addEventListener('pointerdown', e => {
-    const node = e.target.closest('.inbox-row')
+    const node = e.target.closest('.inbox-row, .inbox-done')
     if (current && node) mark(node, false)
   })
 

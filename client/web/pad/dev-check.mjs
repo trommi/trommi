@@ -329,6 +329,15 @@ for (const [name, hash] of [['light', ''], ['dark', '#dark']]) {
   await sleep(1300)
   st = await s.js(summary)
   check(`phone ${name}: a held finger records`, held === 'recording' && !st.recording && (st.board.speech || st.types.includes('voice')), st.types.join(','))
+  if (!st.board.speech) {
+    // spoken at the very foot of the screen, beside the toolbar: the note must not end up under it
+    await s.key('Escape')
+    await s.touch('touchStart', [[18, 806]]); await sleep(900); await s.touch('touchEnd', [])
+    await sleep(1500)
+    const low = await s.js(`const e = pad.elements().filter(e => e.type === 'voice').at(-1), v = pad.view(); return e ? { bottom: (e.y + e.h) * v.z + v.y, top: e.y * v.z + v.y, n: pad.elements().filter(e => e.type === 'voice').length } : null`)
+    check(`phone ${name}: a note spoken at the foot of the screen is moved clear of the toolbar`, Boolean(low) && low.n === 2 && low.bottom <= 860 - 96 + 1 && low.top >= 60, low ? `bottom at ${Math.round(low.bottom)} of 860` : 'no voice element')
+    st = await s.js(summary)
+  }
   if (!st.sel) await s.key('a', { modifiers: CTRL })
   await s.shot(`20-phone-${name}`)
   await s.js(`document.getElementById('send-to').click(); await new Promise(r => setTimeout(r, 200)); document.querySelector('#send-menu .pad-menu-item').click(); await new Promise(r => setTimeout(r, 500))`)

@@ -690,19 +690,35 @@ await test('pad: elements one by one, and sending a selection to a session', () 
   refused(() => store.sendElements({ ids: [], session: 'a' }), 'invalid')
   assert.deepEqual([store.cursor(), store.queued('a'), store.elementLinks({ session: 'a' }).length], before)
 
-  // delete: a tombstone for the other devices, the file handed back, the element no longer there
+  // what was sent is news about the element: it shows up for a device that catches up, in the same revision
+  assert.deepEqual(store.elements({ sinceSeq: sent.seq }).map(e => [e.id, e.rev]), [['t1', 8]])
+  assert.deepEqual([sent.elements.map(e => e.seq), store.element(stroke.id).seq, store.element(stroke.id).rev], [[sent.seq, sent.seq], sent.seq, 1])
+
+  // delete: a tombstone for the other devices, the element no longer there; its file stays for an undo
   const since = store.cursor()
-  assert.deepEqual(store.deleteElement('i1', { by: 'laptop' }).file, { id: 'pad/img1', kind: 'pad', path: 'pad/img1.png', size: 5000 })
-  assert.deepEqual([store.element('i1'), store.elements().map(e => e.id)], [null, [stroke.id, 'v1', 't1']])
+  const dropped = store.deleteElement('i1', { by: 'laptop' })
+  assert.deepEqual([dropped.element.deleted, dropped.element.rev, dropped.element.data, store.blob('pad/img1').doomed], [true, 3, undefined, false])
+  assert.deepEqual([store.element('i1'), store.element('i1', { deleted: true }).rev, store.elements().map(e => e.id)], [null, 3, [stroke.id, 'v1', 't1']])
   assert.deepEqual(store.elements({ sinceSeq: since }).map(e => [e.id, e.deleted, e.data]), [['i1', true, undefined]])
   refused(() => store.deleteElement('i1'), 'not_found')
   refused(() => store.putElement({ id: 'i1', x: 1, author: 'x' }), 'not_found')
   refused(() => store.sendElements({ ids: ['i1'], session: 'a' }), 'not_found')
+  // undo of a delete: the same id again with a newer revision and its data; older or without data is refused
+  refused(() => store.putElement({ id: 'i1', rev: 3, author: 'laptop', data: { mime: 'image/png' } }), 'not_found')
+  refused(() => store.putElement({ id: 'i1', rev: 4, author: 'laptop' }), 'invalid')
+  refused(() => store.putElement({ id: 'i1', rev: 4, type: 'text', author: 'laptop', data: {} }), 'invalid')
+  const back = store.putElement({ id: 'i1', rev: 4, x: 7, author: 'laptop', blob: 'pad/img1', data: { mime: 'image/png', nw: 600, nh: 400 } }).element
+  assert.deepEqual([back.deleted, back.rev, back.x, back.blob, back.data.nw, back.updated > dropped.created, back.created], [false, 4, 7, 'pad/img1', 600, true, image.created])
+  assert.deepEqual(store.elements().map(e => e.id), [stroke.id, 'i1', 'v1', 't1'])
+  // a delete with a revision of its own: it must be newer than what is stored
+  refused(() => store.deleteElement('i1', { by: 'laptop', rev: 4 }), 'conflict')
+  assert.equal(store.deleteElement('i1', { by: 'laptop', rev: 9 }).element.rev, 9)
   store.deleteElement('t1', { by: 'phone' })
-  // tombstones go with the retention; what was sent stays in the log
+  // tombstones go with the retention, and only then the file of a deleted picture; what was sent stays in the log
   clock.t += 31 * DAY
   const purged = store.purge()
   assert.deepEqual([purged.elements, store.elements({ sinceSeq: 0 }).map(e => e.id).sort(), store.elementLinks({ element: 't1' })], [2, [stroke.id, 'v1'].sort(), []])
+  assert.deepEqual([purged.files.filter(f => f.kind === 'pad'), store.blob('pad/img1').doomed, store.blob('pad/voice1').doomed], [[{ id: 'pad/img1', kind: 'pad', path: 'pad/img1.png', size: 5000 }], true, false])
   assert.equal(store.event(sent.seq).type, 'pad.sent')
 })
 

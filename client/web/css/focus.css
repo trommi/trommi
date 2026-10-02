@@ -522,20 +522,47 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-thread .msg-user[data-state="failed"] .focus-msg-state { color: var(--urg-critical); font-weight: 500; }
 .focus-thread .focus-thread-wait { align-self: flex-end; margin: var(--s-2) 4px 0 0; font-size: var(--t-xs); color: var(--faint); }
 
-/* The composer: always there, the only field of the card. Under it, Explain and Later, and what the field does. */
-.focus-composer { flex: none; width: 100%; max-width: calc(48rem + 2 * var(--pad)); padding: var(--s-2) var(--pad) var(--s-3); }
-.focus-composer .focus-ask { max-width: none; margin: 0; align-items: flex-end; gap: var(--s-2); padding: 5px 5px 5px 16px; border-radius: 15px 19px 14px 18px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line-strong), var(--shadow-sm); cursor: text; transition: box-shadow var(--d-fast); }
-.focus-composer .focus-ask:focus-within { box-shadow: inset 0 0 0 2px var(--accent), var(--shadow-sm); }
+/* The composer: always there, the only field of the card. As wide as the conversation above it (--measure),
+   in a box drawn with the pen (.focus-frame, ui.js penFrame). Explain and Later stand at its right, on the same
+   line: each its own drawing in its own, lighter box. */
+.focus-talk > * { --ways: 0px; }
+.focus-thread, .focus-body[data-layout="text"] .focus-text { max-width: min(48rem, 100% - var(--ways)); }
+.focus-frame { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.focus-composer { flex: none; display: flex; align-items: flex-end; gap: 12px; padding: var(--s-2) var(--pad) var(--s-4); }
+.focus-composer .focus-ask { position: relative; flex: 0 1 48rem; min-width: 0; max-width: none; margin: 0; align-items: flex-end; gap: 2px; padding: 6px 6px 6px 18px; cursor: text; color: color-mix(in srgb, var(--fg) 62%, var(--surface)); transition: color var(--d-fast); }
+.focus-composer .focus-ask > .focus-frame { stroke-width: 2; fill: var(--surface); z-index: 0; }
+.focus-composer .focus-ask > :not(.focus-frame) { position: relative; z-index: 1; }
+.focus-composer .focus-ask:focus-within { color: var(--accent); }
+.focus-composer .focus-ask:focus-within > .focus-frame { stroke-width: 2.4; }
 .focus-composer .focus-ask-open { display: none; }
-.focus-composer .focus-ask-field { display: block; height: 40px; min-height: 40px; padding: 8px 0; border-radius: 0; background: none; box-shadow: none; resize: none; line-height: 24px; overflow-y: hidden; scrollbar-width: thin; }
+.focus-composer .focus-ask-field { display: block; height: 40px; min-height: 40px; padding: 8px 0; border-radius: 0; background: none; box-shadow: none; resize: none; line-height: 24px; overflow-y: hidden; scrollbar-width: thin; color: var(--fg); }
 .focus-composer .focus-ask-field:hover, .focus-composer .focus-ask-field:focus { background: none; box-shadow: none; }
-.focus-composer .focus-ask-send { width: 40px; height: 40px; }
-.focus-composer-foot { display: flex; align-items: center; gap: var(--s-3); min-height: 38px; padding-top: 2px; }
-.focus-actions { flex: none; display: flex; align-items: center; gap: 2px; margin-left: -8px; }
-.focus-actions .focus-later, .focus-zoom-ways .focus-later { width: auto; height: 36px; margin-top: 0; padding: 0 12px 0 8px; gap: 5px; }
-.focus-actions .focus-later span, .focus-zoom-ways .focus-later span { display: inline; }
-.focus-actions .focus-later .sketch, .focus-zoom-ways .focus-later .sketch { width: 20px; height: 20px; }
-.focus-ask-hint { flex: 1 1 0; min-width: 0; margin: 0; text-align: right; font-size: var(--t-xs); line-height: 1.3; color: var(--faint); text-wrap: balance; }
+.focus-composer .focus-ask > .dictate-mic { width: 40px; height: 40px; }
+/* Send, Explain, Later: three buttons of one rank at the right of the field, each its own drawing in its own
+   box drawn with the pen. Send takes the accent once there is something to send. */
+.focus-actions { flex: none; display: flex; align-items: center; gap: 8px; min-height: 52px; }
+.focus .focus-way { position: relative; flex: none; width: auto; height: 44px; margin-top: 0; display: inline-flex; align-items: center; gap: 6px; padding: 0 14px 0 10px; border-radius: 12px; background: none; color: color-mix(in srgb, var(--fg) 58%, var(--surface)); font: 700 var(--t-sm)/1 var(--display); letter-spacing: .01em; transition: color var(--d-fast), opacity var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.focus .focus-way > .focus-frame { stroke-width: 1.5; transition: fill var(--d-fast); }
+.focus .focus-way > :not(.focus-frame) { position: relative; }
+.focus .focus-way span { display: inline; color: var(--fg); }
+.focus .focus-way .sketch { width: 24px; height: 24px; stroke-width: 1.8; transition: translate var(--d-fast) var(--ease-out), rotate var(--d-fast) var(--ease-out); }
+.focus .focus-way:hover:not(:disabled) { background: none; color: var(--fg); }
+.focus .focus-way:hover:not(:disabled) > .focus-frame { fill: var(--sunken); }
+.focus .focus-way:active:not(:disabled) { transform: scale(.96); }
+.focus .focus-way:disabled { opacity: .45; }
+.focus .focus-way:nth-child(1) { rotate: .5deg; }
+.focus .focus-way:nth-child(2) { rotate: -.8deg; }
+.focus .focus-way:nth-child(3) { rotate: .7deg; }
+.focus .focus-way.focus-later:not(.focus-explain):hover .sketch { translate: 0 2px; }
+.focus .focus-way.focus-explain:hover .sketch { rotate: 8deg; }
+.focus .focus-ask-send.focus-way { border-radius: 12px; }
+.focus .focus-ask-send.focus-way:not(:disabled), .focus .focus-ask-send.focus-way:not(:disabled) span { color: var(--accent); }
+.focus .focus-ask-send.focus-way:not(:disabled) > .focus-frame { stroke-width: 2; }
+.focus .focus-ask-send.focus-way:not(:disabled):hover .sketch { translate: 0 -2px; }
+.focus .focus-ask-send.focus-way:disabled { background: none; opacity: .5; }
+/* Beside the field only where the window has the room; else the three go under it, and the conversation takes the whole width. */
+.focus-composer { flex-wrap: wrap; gap: 4px 12px; }
+.focus-composer .focus-ask { flex: 1 1 100%; }
 /* Under the tiles, while something stands in the composer: it goes along with the answer. */
 .focus-note-tag { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--t-sm); font-weight: 500; color: color-mix(in srgb, var(--u) 70%, var(--fg)); animation: focus-note-in var(--d-med) var(--ease-out); }
 .focus-note-tag .sketch { flex: none; width: 20px; height: 20px; }
@@ -566,13 +593,17 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-card[data-opts="tags-wide"] .focus-opts .focus-opt-label { font-size: .95rem; }
 
 /* ── the rail: how far the walk is ────────────────────────────────────────── */
-.focus-rail { flex: none; display: flex; align-items: center; gap: var(--s-3); min-width: 0; padding: 0 var(--pad) 2px; color: var(--muted); }
-.focus-sheet:not([data-state="cards"]) .focus-rail, .focus[data-single] .focus-rail { display: none; }
+/* Where it stands is one setting in focus.js (RAIL_PLACE); the rail carries it as data-place. The marks are
+   the same everywhere; a place only says whether they run down or along, and on what they lie. */
+.focus-rail { flex: none; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 0; color: var(--muted); }
+.focus-rail[hidden], .focus-sheet:not([data-state="cards"]) .focus-rail, .focus[data-single] .focus-rail { display: none; }
+.focus[data-closing] > .focus-rail { animation: focus-fade-out 200ms var(--ease-in-out) forwards; }
+.focus[data-zoom] > .focus-rail { visibility: hidden; }
 .focus-rail-count { flex: none; margin: 0; white-space: nowrap; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
 .focus-rail-count b { font: 800 1.1rem/1 var(--display); letter-spacing: -.01em; color: var(--fg); }
 .focus-rail-marks { flex: 0 1 auto; min-width: 0; min-height: 0; display: flex; align-items: center; overflow: hidden; }
-.focus-rail-mark { flex: 0 1 18px; min-width: 5px; height: 24px; display: grid; place-items: center; color: color-mix(in srgb, var(--fg) 46%, var(--surface)); transition: scale var(--d-fast) var(--ease-out); }
-.focus-rail-mark svg { display: block; width: 100%; max-width: 16px; height: 16px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.focus-rail-mark { flex: 0 1 20px; min-width: 5px; height: 26px; display: grid; place-items: center; color: color-mix(in srgb, var(--fg) 46%, var(--surface)); transition: scale var(--d-fast) var(--ease-out); }
+.focus-rail-mark svg { display: block; width: 100%; max-width: 18px; height: 18px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .focus-rail-mark[data-urgency="low"] { color: var(--faint); }
 .focus-rail-mark[data-urgency="high"] { color: var(--urg-high); }
 .focus-rail-mark[data-urgency="critical"] { color: var(--urg-critical); }
@@ -582,13 +613,49 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-rail-hollow { stroke-width: 2.8; }
 .focus-rail-tick { stroke-width: 3.6; }
 .focus-rail-ring { stroke: var(--fg); stroke-width: 1.7; }
-.focus-rail-mark[data-front] { flex: 0 0 26px; }
-.focus-rail-mark[data-front] svg { max-width: 24px; height: 24px; }
+.focus-rail-mark[data-front] { flex: 0 0 30px; }
+.focus-rail-mark[data-front] svg { max-width: 28px; height: 28px; }
 @media (hover: hover) and (pointer: fine) { .focus-rail-mark:hover:not(:disabled) { scale: 1.3; } }
 .focus-rail-mark[data-gap="sender"], .focus-rail-who[data-gap="sender"] { margin-left: 7px; }
 .focus-rail-mark[data-gap="part"] { margin-left: 12px; }
 .focus-rail-who { display: none; }
 .focus-rail-who .doodle { width: 15px; height: 15px; stroke-width: 2.4; }
+.focus-rail[data-size="few"] .focus-rail-who { flex: none; display: block; color: var(--muted); opacity: .75; }
+.focus-rail[data-size="few"] .focus-rail-who + .focus-rail-mark { margin: 0; }
+
+/* along: a thin row. In a narrow window ("row") and at the top it stands under the top bar, at the bottom above the composer. */
+.focus-rail[data-place="row"], .focus-rail[data-place="top"] { padding: 0 var(--pad) 2px; }
+.focus-rail[data-place="top"] { padding-bottom: var(--s-2); }
+.focus-rail[data-place="row"] .focus-rail-mark { flex-basis: 16px; height: 24px; }
+.focus-rail[data-place="row"] .focus-rail-mark svg { max-width: 14px; height: 14px; }
+.focus-rail[data-place="row"] .focus-rail-mark[data-front] { flex-basis: 26px; }
+.focus-rail[data-place="row"] .focus-rail-mark[data-front] svg { max-width: 24px; height: 24px; }
+.focus-rail[data-place="row"] .focus-rail-who { display: none; }
+.focus-rail[data-place="bottom"] { padding: var(--s-1) var(--pad) 0; }
+
+/* down: the marks one under the other, the count at the foot */
+.focus-rail[data-place="outside"], .focus-rail[data-place="gutter"] { flex-direction: column; gap: var(--s-2); }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-count { order: 2; display: grid; justify-items: center; gap: 3px; font-size: .62rem; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-marks { width: 100%; flex-direction: column; overflow-y: auto; scrollbar-width: none; padding: 3px 0; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark { flex: 0 1 24px; width: 100%; min-width: 0; min-height: 11px; height: auto; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark svg { width: 18px; max-width: none; height: 100%; max-height: 18px; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark[data-front] { flex: 0 0 30px; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark[data-front] svg { width: 28px; height: 28px; max-height: none; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) :is(.focus-rail-mark, .focus-rail-who)[data-gap="sender"] { margin: 7px 0 0; }
+.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark[data-gap="part"] { margin: 13px 0 0; }
+/* in the window, in a gutter of its own: a dashed line between it and the conversation. It begins under the
+   place of the passing note at the top left ("what just happened, Back"), so that note does not cover it. */
+.focus-rail[data-place="gutter"] { position: absolute; z-index: 1; left: 0; top: 104px; bottom: var(--s-4); width: 58px; border-right: 1px dashed var(--line-strong); }
+.focus-sheet[data-rail] .focus-rail[data-place="gutter"] ~ .focus-stage .focus-talk { padding-left: 46px; }
+
+/* beside the window, or under it: a slim strip of paper of its own on the dimmed page */
+.focus-rail:is([data-place="outside"], [data-place="below"]) { position: relative; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: focus-fade var(--d-slow) var(--ease-out); }
+.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) { grid-template-columns: 48px 46px minmax(0, 1240px) 48px; column-gap: 10px; }
+.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) > .focus-sheet { grid-column: 3; }
+.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) > .focus-nav-next { grid-column: 4; }
+.focus-rail[data-place="outside"] { grid-area: 1 / 2; align-self: center; max-height: min(100%, 900px); width: 46px; padding: 12px 0 14px; border-radius: 23px 21px 24px 22px; }
+.focus[data-rail="below"]:has(> .focus-rail:not([hidden])) { grid-template-rows: minmax(0, 1fr) auto; row-gap: 10px; }
+.focus-rail[data-place="below"] { grid-area: 2 / 2; justify-self: center; max-width: 100%; height: 44px; padding: 0 20px 0 18px; border-radius: 22px 20px 23px 21px; }
 
 /* ── the answers beside an enlarged picture ───────────────────────────────── */
 .focus-zoom-answer { flex: none; display: flex; flex-direction: column; gap: var(--s-3); max-height: 46%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--s-3) var(--pad) var(--s-3); background: var(--surface); box-shadow: 0 -1px 0 var(--line); }
@@ -597,40 +664,37 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-zoom-take b { font: 800 1.2rem/1.15 var(--display); overflow-wrap: anywhere; }
 .focus-zoom-take:hover { filter: brightness(.93); }
 .focus-zoom-take:active { transform: scale(.985); }
-.focus-zoom-take.is-advised { --advice: color-mix(in srgb, var(--urg-high) 55%, var(--fg)); }
+.focus-zoom-take.is-advised { --advice: color-mix(in srgb, var(--u) 35%, var(--surface)); }
 .focus-zoom-opts .focus-opt-label { white-space: normal !important; overflow-wrap: anywhere; }
 .focus-zoom-opts .focus-opt[data-match] { box-shadow: inset 0 0 0 2px var(--u); }
 .focus-zoom-opts .focus-opt[data-match][aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--fg); }
-.focus-zoom-ways { flex: none; display: flex; gap: 2px; margin: auto 0 0 -8px; }
+.focus-zoom-ways { flex: none; display: flex; gap: 8px; margin: auto 0 0; }
+/* ten small pictures do not fit one line beside a text: they wrap */
+.focus-thumbs { flex-wrap: wrap; }
 
+@container focus (min-width: 1080px) {
+  .focus-card[data-kind="decision"]:not([data-opts="tags-wide"]) > .focus-talk > * { --ways: 322px; }
+  .focus-card:not([data-opts="tags-wide"]) .focus-composer { flex-wrap: nowrap; }
+  .focus-card:not([data-opts="tags-wide"]) .focus-composer .focus-ask { flex: 0 1 48rem; }
+}
 @container focus (min-width: 700px) {
-  /* the rail stands at the left edge, under the top bar; the conversation moves in a little */
-  .focus-rail { position: absolute; z-index: 1; left: 0; top: 62px; bottom: var(--s-4); width: 46px; flex-direction: column; gap: var(--s-2); padding: 0; }
-  .focus-rail-count { display: grid; justify-items: center; gap: 3px; font-size: .62rem; }
-  .focus-rail-marks { flex: 0 1 auto; width: 100%; flex-direction: column; overflow-y: auto; scrollbar-width: none; padding: 3px 0; }
-  .focus-rail-mark { flex: 0 1 24px; width: 100%; min-width: 0; min-height: 11px; height: auto; }
-  .focus-rail-mark svg { width: 18px; max-width: none; height: 100%; max-height: 18px; }
-  .focus-rail-mark[data-front] { flex: 0 0 30px; }
-  .focus-rail-mark[data-front] svg { width: 28px; max-width: none; height: 28px; max-height: none; }
-  .focus-rail-mark[data-gap="sender"], .focus-rail-who[data-gap="sender"] { margin: 7px 0 0; }
-  .focus-rail-mark[data-gap="part"] { margin: 13px 0 0; }
-  .focus-rail[data-size="few"] .focus-rail-who { flex: none; display: block; margin-bottom: 1px; color: var(--muted); opacity: .75; }
-  .focus-rail[data-size="few"] .focus-rail-who + .focus-rail-mark { margin-top: 0; }
-  .focus-sheet[data-rail] .focus-talk { padding-left: 18px; }
   /* forty tags on one screen: the answers take more of the window */
-  .focus-card[data-opts="tags-wide"] .focus-answer { width: clamp(280px, 48cqi, 600px); }
+  .focus-card[data-opts="tags-wide"] .focus-answer { width: clamp(280px, 42cqi, 540px); }
   /* the picture large, the answers in a column at its right */
   .focus-zoom[data-answer] { flex-direction: row; }
-  .focus-zoom-answer { --side: clamp(250px, 27cqi, 336px); width: var(--side); max-height: none; padding: 68px var(--s-4) var(--s-4); box-shadow: -1px 0 0 var(--line); }
+  .focus-zoom-answer { --side: clamp(250px, 27cqi, 336px); width: var(--side); max-height: none; padding: var(--s-5) var(--s-4) var(--s-4); box-shadow: -1px 0 0 var(--line); }
   .focus-zoom[data-answer] .focus-zoom-next { right: calc(clamp(250px, 27cqi, 336px) + var(--s-3)); }
   .focus-zoom[data-answer] .focus-zoom-bar { right: clamp(250px, 27cqi, 336px); }
 }
 @media (max-width: 640px) {
-  .focus-composer { padding: var(--s-1) var(--pad) var(--s-2); }
+  .focus-composer { padding: var(--s-1) var(--pad) var(--s-1); }
   .focus-composer .focus-ask-field { font-size: 16px; }
-  .focus-composer-foot { min-height: 34px; }
-  .focus-ask-hint { display: none; }
+    /* no room beside the field: Explain and Later go under it */
+  .focus-talk, .focus-card[data-kind="decision"] > .focus-talk { --ways: 0px; }
+  .focus-composer { flex-wrap: wrap; gap: 4px 8px; }
+  .focus-composer .focus-ask { flex: 1 1 100%; }
+  .focus-actions { min-height: 44px; }
+  .focus-actions .focus-later { width: auto; height: 40px; }
   .focus-thread { margin-top: var(--s-5); }
   .focus-answer { max-height: 46dvh; }
-  .focus-rail { padding-bottom: 0; }
 }

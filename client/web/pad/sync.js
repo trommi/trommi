@@ -28,6 +28,7 @@ export function startSync({ pad, db, onRemote, onState }) {
   let mode = 'starting', error = null
   let events = null, paused = false, flushing = false, flushTimer = 0, retryTimer = 0, retryMs = 1000
   let waiters = []
+  const blobTries = new Map()   // element id -> how often its bytes were sent again
 
   const report = () => {
     onState?.(state())
@@ -160,12 +161,20 @@ export function startSync({ pad, db, onRemote, onState }) {
         }
         if (!res.ok || !out?.results) throw new Error(out?.error || `HTTP ${res.status}`)
         error = null
-        const accepted = [], refused = []
+        const accepted = [], refused = [], again = []
         out.results.forEach((r, i) => {
           const rec = batch[i]
           const newer = dirty.get(rec.id) !== rec   // changed again while this was on its way
           if (!newer) dirty.delete(rec.id)
-          if (r.error) { if (!newer && r.current) refused.push(r.current) }
+          if (r.error === 'blob' && !newer && (blobTries.get(rec.id) ?? 0) < 2) {
+            // The server lacks the bytes this element shows: send them again, then the element.
+            blobTries.set(rec.id, (blobTries.get(rec.id) ?? 0) + 1)
+            dirtyBlobs.add(rec.blob)
+            again.push(rec)
+          } else if (r.error) {
+            if (!newer && r.current) refused.push(r.current)
+            else if (!newer) error = `element ${rec.id}: ${r.error}`
+          }
           else if (!newer) accepted.push({ ...rec, updated: r.updated, seq: r.seq })
         })
         // The server's time and running number belong on the record; take() keeps them unless the
@@ -174,6 +183,14 @@ export function startSync({ pad, db, onRemote, onState }) {
         if (refused.length) {
           for (const rec of refused) known.delete(rec.id)
           take(refused, 0)
+        }
+        if (again.length) {
+          for (const id of [...dirtyBlobs]) {
+            const found = await db.getBlob(id)
+            if (found) await fetch(`/pad/blobs/${id}`, { method: 'PUT', headers: { 'Content-Type': found.type || found.blob.type || 'application/octet-stream' }, body: found.blob })
+            dirtyBlobs.delete(id)
+          }
+          for (const rec of again) if (!dirty.has(rec.id)) dirty.set(rec.id, rec)
         }
       }
       saveDirty()

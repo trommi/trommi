@@ -1,14 +1,14 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, sketch, raisedHand, loopPath, penSeed, ago, DRAWINGS, drawingMark } from './ui.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, raisedHand, loopPath, penSeed, ago, DRAWINGS, drawingMark } from './ui.js'
 import { setScope, star, editSession, pair, unpair, archive } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
 
 // A stable colour per session, from the hues that read on both themes.
 const HUES = [162, 28, 262, 205, 338, 96, 48, 232]
-function hueOf(id) {
+export function hueOf(id) {
   let h = 0
   for (const ch of id) h = (h * 31 + ch.charCodeAt(0)) >>> 0
   return HUES[h % HUES.length]
@@ -20,6 +20,8 @@ export function avatar(agent) {
   node.append(doodle(agent.mark ?? agent.id))
   node.style.setProperty('--hue', hueOf(agent.id))
   if (!agent.online) node.classList.add('is-offline')
+  // A session that matters most: a scribbled crown sits crooked on the corner of its mark.
+  if (agent.starred) { node.dataset.vip = ''; node.append(crown()) }
   node.setAttribute('aria-hidden', 'true')
   return node
 }
@@ -27,7 +29,7 @@ export function avatar(agent) {
 /** Sessions laid together: their scribbles over each other inside one loop drawn by hand. */
 export function pairAvatar(members) {
   const node = el('span', 'agent-pair')
-  node.append(pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueOf(a.id) }))))
+  node.append(pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueOf(a.id), vip: Boolean(a.starred) }))))
   if (!members.some(a => a.online)) node.classList.add('is-offline')
   node.setAttribute('aria-hidden', 'true')
   return node
@@ -50,15 +52,15 @@ function summary(all, members) {
 
 // At work: a ring circled by hand, and a drop that travels through it as through a soft tube.
 // The ring stands still: one and a bit turns of the pen that do not quite close, like the loop
-// round the waiting hand. The drop is drawn on its own and goes round: a swelling whose thickness
-// rises and falls along one smooth wave, steeper where it leads than where it trails, and thins to
-// nothing at both ends, so it has no start and no end to see. Its two edges are not quite even,
-// as when a pen is pressed harder. It is drawn twice, the second a moment behind the first: where
+// round the waiting hand. The drop is drawn on its own and goes round: a bulge of liquid, round and
+// full where it leads, drawn out to a thin tail behind, and it thins to nothing at both ends, so it
+// has no start and no end to see. It swells to both sides of the line, more outward than inward, and
+// its two edges are not quite even. It is drawn twice, the second a moment behind the first: where
 // the drop is slow the two lie on each other, where it is quick they pull apart a little, and the
 // drop stretches as liquid does. The movement is CSS (app.css); every ring is on the same clock,
 // so a list that is rebuilt does not send its drop back to the start.
 const RING = { c: 16, r: 14.3, turn: 4600, lag: 150 }
-const DROP = { swell: 1.95, lead: 95, trail: 150, power: 1.6 }
+const DROP = { swell: 3.3, lead: 30, trail: 118, power: 1.15, tail: 2.4 }
 const RING_LOOP = loopPath(penSeed('working ring'), { rad: 14.55, drift: .5, jitter: .6, start: 1.1 })
 const DROP_PATH = (() => {
   const r = penSeed('working drop')
@@ -69,8 +71,9 @@ const DROP_PATH = (() => {
   const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
     const deg = -DROP.trail + (DROP.trail + DROP.lead) * i / steps   // from the thickest place; ahead is clockwise
     const t = deg * Math.PI / 180
-    const wave = ((1 + Math.cos(Math.PI * deg / (deg < 0 ? DROP.trail : DROP.lead))) / 2) ** DROP.power
-    const rad = RING.r + side * DROP.swell * wave * (side > 0 ? 1 : .8) * uneven(t, side > 0 ? 0 : 2)
+    // Ahead of its thickest place the drop is round like a bead; behind, it is drawn out into a tail.
+    const wave = ((1 + Math.cos(Math.PI * deg / (deg < 0 ? DROP.trail : DROP.lead))) / 2) ** (deg < 0 ? DROP.tail : DROP.power)
+    const rad = RING.r + side * DROP.swell * wave * (side > 0 ? 1 : .72) * uneven(t, side > 0 ? 0 : 2)
     return `${(RING.c + Math.sin(t) * rad).toFixed(3)} ${(RING.c - Math.cos(t) * rad).toFixed(3)}`
   })
   return `M${edge(1).join(' L')} L${edge(-1).reverse().join(' L')} Z`
@@ -159,6 +162,7 @@ export function mountAgents(root, { onSelect }) {
       if (line.member) name.dataset.member = line.member
       text.append(name)
     }
+    if (Array.isArray(label)) text.dataset.lines = label.length
     if (sub) text.append(el('small', null, sub))
     btn.append(lead, text)
     if (mark) btn.append(mark)
@@ -210,10 +214,13 @@ export function mountAgents(root, { onSelect }) {
         // It stands under the badge, on the badge's axis. No tooltip (it would lie over the next row):
         // while the pointer is on it, the loop round the group opens up, which says what it does.
         row.classList.add('is-group')
+        // The loop round all of it, marks and names (shown instead of the one round the marks where
+        // the page says data-grouploop="all").
+        row.querySelector('.agent-entry').append(groupLoop(u.members.map(a => a.id).join('+')))
         const cut = el('button', 'agent-cut')
         cut.type = 'button'
         cut.setAttribute('aria-label', `Pull apart ${pairName(u.members)}`)
-        cut.append(sketch('scissors'))
+        cut.append(sketch('snip'))
         cut.addEventListener('click', () => { for (const a of u.members) editSession(a.id, { group: null }).catch(() => {}) })
         row.append(cut)
       }
@@ -361,8 +368,11 @@ export function mountRoster(root) {
       rename.addEventListener('click', () => openEditor(agent))
       name.append(rename, el('span', null, agent.task || 'no task named'))
       const status = el('span', 'roster-state', agent.online ? 'connected' : `disconnected, last seen ${ago(agent.seen ?? agent.joined ?? Date.now())}`)
-      const vip = el('button', 'roster-star', agent.starred ? '★' : '☆')
+      // The crown is the switch: drawn faintly while off, in gold once the session wears it.
+      const vip = el('button', 'roster-star')
       vip.type = 'button'
+      vip.title = agent.starred ? 'VIP: its questions come first. Click to take the crown off.' : 'Make it VIP: its questions come first'
+      vip.append(crown())
       vip.setAttribute('aria-pressed', String(Boolean(agent.starred)))
       vip.setAttribute('aria-label', agent.starred ? 'Remove the VIP mark' : 'Mark as VIP')
       vip.addEventListener('click', () => star(agent.id, !agent.starred).catch(() => {}))
