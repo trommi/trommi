@@ -678,3 +678,28 @@ Clears `card.with_agent`, adds the event `{ kind: "handback_withdrawn",
 card_id, text: <title> }` to the conversation, and tells the agent quietly
 (`kind: "handback_withdrawn"`): no need to rework or explain the card. I chose
 a route of its own over `/reopen`, which keeps meaning "take an answer back".
+
+## 13. Copying a card into a message to another session
+
+```
+POST /message { "text": "act on this", "agent": "<receiving session>", "cards": ["<card id or number>", …] }
+→ 200 {"ok":true}
+  400 `cards` is not a list, names an unknown card, or holds more than 5
+```
+
+- Any card may be named, of any session and in any status; by id or by its
+  number. `text` may be empty when there are cards. Duplicates count once.
+- The card and its session are not changed.
+- The stored message carries
+
+  ```js
+  message.cards = [{ id, number, title, agent, choice_label }]
+  // agent: the session that asked; choice_label: the chosen labels joined by ", ", or null when there is no answer
+  ```
+
+  Draw each as a chip that links to `/q/<number>`.
+- The receiving agent gets every card in full in the event content (number,
+  asking session, title, body, options with the advice, the answer with the
+  human's note and option notes, or that it is open / shredded / left to the
+  agent, and the paths of its pictures), and in meta `cards="id,id"` and
+  `cards_json` (the chips plus `kind`, `status`, `choices`).

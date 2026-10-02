@@ -595,7 +595,7 @@ Every request needs the login cookie (`board_<port>`, set once by `GET /?t=<toke
 | Route | Body or query | What it does | Status |
 | --- | --- | --- | --- |
 | `GET /events` |  | Event stream: the whole state as one JSON frame, on connect and on every change. | used |
-| `POST /message` | `{text, agent, card_id?, handback?, explain?, attachments?: [{name, data}]}` | Chat to one session; with `card_id` a question back about an open card; `handback` / `explain` put the card with the agent. Files as base64 data URLs, at most 12 and 96 MB. | used |
+| `POST /message` | `{text, agent, card_id?, handback?, explain?, cards?: [id or number, …], attachments?: [{name, data}]}` (`cards`: up to 5 cards of any session copied into the message; the agent reads them in full, the message keeps `cards: [{id, number, title, agent, choice_label}]`; see `docs/question-contract.md` section 13) | Chat to one session; with `card_id` a question back about an open card; `handback` / `explain` put the card with the agent. Files as base64 data URLs, at most 12 and 96 MB. | used |
 | `POST /decide` | `{card_id, key \| keys, note?, notes?: {key: text}, revised?, attachments?}` | Answers a question or an approval. 409 when the card was reworded meanwhile. | used |
 | `POST /decide` | `{card_id, trust: true, note?, revised?}` | Leaves an open question to the agent. The inbox row has the button; the question window has none yet. | used |
 | `POST /draft` | `{card_id, keys?, note?, notes?}` | Keeps what is ticked and written but not sent; the whole draft every time, an empty one clears it. | used |
