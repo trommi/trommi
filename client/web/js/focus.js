@@ -684,7 +684,8 @@ export function mountFocus({ onDecided } = {}) {
       rec.askSend = send
       // The ways out, one row: Revise (hand the card back to its session), Snooze and, apart and quiet, the wastebasket.
       rec.actionsNode = el('div', 'focus-actions')
-      rec.actionsNode.append(wayButton('hand', () => { claim(rec); handBack() }), wayButton('snooze', () => { claim(rec); later() }), wayButton('shred', () => shredIt(rec)))
+      // their order, here as on a row of the desk: Snooze, Revise, Whatever, Shred
+      rec.actionsNode.append(wayButton('snooze', () => { claim(rec); later() }), wayButton('hand', () => { claim(rec); handBack() }), wayButton('shred', () => shredIt(rec)))
       // Discuss: the small chat about this card at its right. What was said, a field to write in (paste and drop
       // files and pictures, the microphone), always there: nothing to switch to.
       rec.composer = el('aside', 'focus-discuss')
@@ -2919,5 +2920,8 @@ export function mountFocus({ onDecided } = {}) {
   hintBtn.addEventListener('click', () => { const id = hintId; hintId = null; if (!go(id)) paintHint() })
   subscribe(state => { lastState = state; sync() })
 
-  return { open, close, ask, isOpen: () => isOpen }
+  /** Revise from outside (a row of the desk): on the card that is open, Discuss opens and the caret asks what should
+   *  change; Enter there hands the card back. Call it after open(cardId). */
+  const revise = () => { if (!shown?.askNode) return false; handBack(); return true }
+  return { open, close, ask, revise, isOpen: () => isOpen }
 }
