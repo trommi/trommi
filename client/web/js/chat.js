@@ -8,7 +8,7 @@ import { sendMessage } from './store.js'
 import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountHistory, mountFiles } from './history.js'
-import { mountDictation } from './speech.js'
+import { dictationMic } from './speech.js'
 import { tellApart } from './agents.js'
 
 // ---- icons -----------------------------------------------------------------
@@ -393,9 +393,8 @@ function createPane(agent, ctx) {
   draft.enterKeyHint = 'enter'
   const pen = button('mic', 'Scribble: draw and show pictures')
   pen.append(icon('pen'))
-  const mic = button('mic')
-  mic.append(icon('mic'))
-  mic.hidden = true
+  // speak instead of typing: the words appear in the draft while you talk (speech.js)
+  const mic = dictationMic(draft, { key: `chat:${agent}`, onError: text => ctx.onError?.(text) })
   const send = el('button', 'send')
   send.type = 'submit'
   send.setAttribute('aria-label', 'Send')
@@ -597,7 +596,6 @@ function createPane(agent, ctx) {
       draft.placeholder = placeholder
       draft.setAttribute('aria-label', placeholder)
     }
-    mic.hidden = !state.speech
 
     messages = state.all.messages.filter(m => m.agent === agent)
     const grows = order.length <= messages.length && order.every((id, i) => messages[i].id === id)
@@ -723,7 +721,6 @@ function createPane(agent, ctx) {
   form.addEventListener('click', e => { if (e.target === form) draft.focus() })
   // The pen in the composer is a shortcut to the canvas.
   pen.addEventListener('click', () => ctx.onScribble?.(agent))
-  mountDictation(mic, draft, { onError: ctx.onError })
 
   return {
     root, render, tick, settle, showError,

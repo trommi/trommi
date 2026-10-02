@@ -134,8 +134,13 @@ export function refreshAssetLinks(root = document) {
   return redrawn
 }
 
+// `__words__` is the agent's way to underline what matters: the words stand with a line drawn under
+// them by hand (.rich-under). It is sparing by nature: a text that underlines more than a third of
+// itself is shown plainly, without any (rich() decides and sets this before it draws).
+const UNDER = /(?<![\w.])__(?=\S)([^_\n]+?)(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$))/gm
+let underlining = true
 function inline(parent, text) {
-  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(https?:\/\/[^\s<>)]+)/g
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(https?:\/\/[^\s<>)]+)|((?<![\w.])__(?=\S)[^_\n]+?(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$)))/gm
   let last = 0
   for (const m of text.matchAll(re)) {
     parent.append(text.slice(last, m.index))
@@ -151,6 +156,10 @@ function inline(parent, text) {
     }
     else if (m[1]) parent.append(el('code', null, m[1].slice(1, -1)))
     else if (m[2]) parent.append(el('strong', null, m[2].slice(2, -2)))
+    else if (m[4]) {
+      if (underlining) inline(parent.appendChild(el('span', 'rich-under')), m[4].slice(2, -2))
+      else inline(parent, m[4].slice(2, -2))
+    }
     else {
       // What ends a sentence does not belong to the address.
       const url = m[3].replace(/[.,;:!?]+$/, '')
@@ -165,6 +174,9 @@ function inline(parent, text) {
  *  `code`, fenced code blocks, bare links. Returns a div.rich. */
 export function rich(text) {
   const root = el('div', 'rich')
+  const prose = String(text).replace(/```[\s\S]*?```/g, '')
+  const under = [...prose.matchAll(UNDER)].reduce((n, m) => n + m[1].length, 0)
+  underlining = under * 3 <= prose.replace(/\s+/g, ' ').length
   String(text).split(/```[^\n]*\n?/).forEach((chunk, i) => {
     if (i % 2) {
       const pre = el('pre')
@@ -612,28 +624,38 @@ const HAND = [
   [13.5, 7.4], [14.7, 6], [15.6, 7.8], [15.5, 13],
   [16.3, 10], [17.6, 9.2], [18.3, 10.9], [17.7, 15.6], [16.6, 19.8], [16.9, 23.2],
 ]
-/** The mark of the agent's advice: a loop drawn by hand round the option it would pick. This is the
- *  one place that draws it; whoever shows advice appends what this returns to the option (or to its
- *  label), so another mark can be swapped in here alone. The loop is stretched over whatever it is
- *  put into (CSS: .advice-loop), and it is squarish rather than round, so that it goes round two
- *  lines of words without running through a letter. */
+/** The mark of the agent's advice: a small pointing hand, the old printer's sign (cuff, a thumb on top,
+ *  one finger out, three curled under), drawn with the pen. It stands at the edge of the option the
+ *  agent would pick and points at it. This is the one place that draws it; whoever shows advice
+ *  appends what this returns to the option (or to its label). Where it stands is CSS (.advice-hand in
+ *  tokens.css): at the left edge pointing right by default, from below pointing up on a square tile.
+ *  Under the ink lies a wider stroke in the paper's colour (--advice-paper), so the hand reads where
+ *  it crosses the edge of a filled tile. (It was a loop round the option once: hence the name.) */
+const ADVICE_HAND = [
+  [[2.6, 7.6], [8.8, 7.4], [11.6, 4.6], [14.4, 4], [15, 6], [13.4, 8.4], [19, 8.6], [27.4, 8.8], [29.6, 10.4], [27.6, 12.2], [20.4, 12.3], [17.6, 12.5]],
+  [[17.4, 12.6], [20, 13.2], [20.4, 15.2], [17.6, 15.9], [19.4, 16.6], [19.2, 18.6], [16.8, 19], [17.6, 20], [16.6, 21.6], [13.6, 21.6], [8.6, 21], [2.4, 20.6]],
+  [[5.4, 6], [5.9, 13.6], [5.5, 22.4]],
+]
 export function adviceLoop() {
   const NS = 'http://www.w3.org/2000/svg'
-  const r = seeded('advice')
+  const r = seeded('advice hand')
   const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', '0 0 100 100')
-  svg.setAttribute('preserveAspectRatio', 'none')
-  svg.setAttribute('class', 'advice-loop')
+  svg.setAttribute('viewBox', '0 2 32 22')
+  svg.setAttribute('class', 'advice-hand')
   svg.setAttribute('aria-hidden', 'true')
-  const steps = 26, bend = v => Math.sign(v) * Math.abs(v) ** .6
-  const path = document.createElementNS(NS, 'path')
-  path.setAttribute('d', penPath(Array.from({ length: steps }, (_, i) => {
-    const a = 3.5 + (i / (steps - 1)) * Math.PI * 2 * 1.06, rad = 49 - (i / steps) * 2.5 + (r() - .5) * 2
-    return [50 + bend(Math.cos(a)) * rad, 50 + bend(Math.sin(a)) * rad]
-  })))
-  svg.append(path)
+  const strokes = ADVICE_HAND.map(stroke => penPath(stroke.map(([x, y]) => [x + (r() - .5) * .5, y + (r() - .5) * .5])))
+  for (const cls of ['advice-hand-paper', 'advice-hand-ink']) {
+    for (const d of strokes) {
+      const path = document.createElementNS(NS, 'path')
+      path.setAttribute('class', cls)
+      path.setAttribute('d', d)
+      svg.append(path)
+    }
+  }
   return svg
 }
+/** The same, by the name of what it is. */
+export const adviceMark = adviceLoop
 
 /** A circle drawn by hand: one and a bit turns that drift inward and do not close. r is a seeded generator.
  *  Returns the path's d, in a 32 box. The waiting hand and the working ring stand in such a loop. */

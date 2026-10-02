@@ -100,19 +100,26 @@ const TAGS_FROM = 7
 const TAG_CHARS = 18
 const TAGS_WIDE_FROM = 16
 const touchOnly = matchMedia('(pointer: coarse)')
-// Where the rail of the walk stands (the one setting for it; "?rail=<place>" in the address tries another):
-//   'outside'  a slim strip of paper beside the window, at its left
-//   'gutter'   inside the window, in a gutter of its own at the left
-//   'top'      a row along the top edge of the window, under the top bar
-//   'bottom'   a row at the foot of the conversation, above the composer
-//   'below'    a strip of paper under the window
-// A narrow window (a phone) always has it as a thin row under the top bar.
-// The word on the button that hands a card to its session (the word is still being chosen).
+// How the walk shows what lies ahead (the one setting for it; "?rail=<key>" in the address tries another).
+// All of them show the count and the marks of the sessions whose questions come next:
+//   'pill'     a pill under the window: the count, then one session mark per question
+//   'senders'  a pill under the window: one chip per session with how many it asks
+//   'next3'    a pill under the window: "4 of 11" and the marks of the next three
+//   'unroll'   a small pill under the window that unrolls into the list of questions
+//   'dock'     a dock of small tiles under the window, one per question
+//   'tab'      the pill sits on the window's top edge
+//   'topbar'   the marks stand in the window's top bar
+//   'title'    the pill stands over the question's title
+//   'bar'      a thin line of segments along the window's bottom edge
+//   'arrows'   no rail: the arrow to the next question carries the count and the next session's mark
+// A narrow window (a phone) always has a thin row of dots under the top bar.
+// The word on the button that hands a card to its session.
 const HAND_BACK_LABEL = 'Back to agent'
 // The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
 const EXPLAIN_LABEL = 'What??'
-const RAIL_PLACES = ['outside', 'gutter', 'top', 'bottom', 'below']
-const RAIL_PLACE = 'outside'
+const RAIL_PLACES = ['pill', 'senders', 'next3', 'unroll', 'dock', 'tab', 'topbar', 'title', 'bar', 'arrows']
+const RAIL_PLACE = 'pill'
+const RAIL_BELOW = ['pill', 'senders', 'next3', 'unroll', 'dock']
 const railNarrow = matchMedia('(max-width: 760px)')
 
 /** Which picture belongs to which option: a Map of option key -> index in images, or null when that is
@@ -378,6 +385,7 @@ export function mountFocus({ onDecided } = {}) {
     const pointed = new Set((sections ?? []).map(b => attachments[b.picture]).filter(Boolean))
     const images = allImages.filter(a => !pointed.has(a))
     rec.allImages = allImages
+    rec.galleryImages = images
     const files = attachments.filter(a => kindOf(a) === 'file')
     const players = mediaNodes(attachments)
     const media = el('div', 'focus-media')
@@ -399,6 +407,7 @@ export function mountFocus({ onDecided } = {}) {
         caption.textContent = images.length > 1 ? `${i + 1} / ${images.length} · ${images[i].name}` : images[i].name
         figure.setAttribute('aria-label', `Enlarge image ${i + 1} of ${images.length}: ${images[i].name}`)
         thumbs.forEach((t, k) => t.setAttribute('aria-pressed', String(k === i)))
+        tiePicture(rec, true)
       }
       rec.showImage = pick
       figure.addEventListener('click', () => openZoom(allImages, allImages.indexOf(images[rec.imageAt]), figure, i => { const at = images.indexOf(allImages[i]); if (at >= 0) pick(at) }, rec))
@@ -689,6 +698,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     for (const key of rec.optNotes.keys()) optNoteRow(rec, key, false)
     paintOptNotes(rec)
+    tiePicture(rec, false)
     if (rec.pictureOf && rec.showImage && !sections) {
       const look = e => {
         const at = rec.pictureOf.get(e.target.closest?.('.focus-opt')?.dataset.key)
@@ -798,6 +808,20 @@ export function mountFocus({ onDecided } = {}) {
   function light(rec, key, on) {
     rec.secNodes?.get(key)?.toggleAttribute('data-lit', on)
     rec.optButtons.find(b => b.dataset.key === key)?.toggleAttribute('data-lit', on)
+  }
+
+  /** The picture shown in the card's gallery marks the option it belongs to (data-match, the same mark as beside
+   *  the enlarged picture), and with reveal brings that option into view in its column. */
+  function tiePicture(rec, reveal) {
+    const shownPicture = rec.galleryImages?.[rec.imageAt]
+    const at = shownPicture ? rec.allImages.indexOf(shownPicture) : -1
+    const key = at < 0 ? null : [...(rec.pictureOf ?? [])].find(([, index]) => index === at)?.[0]
+    for (const b of rec.optButtons ?? []) {
+      const mine = key != null && b.dataset.key === key
+      const was = b.hasAttribute('data-match')
+      b.toggleAttribute('data-match', mine)
+      if (mine && !was && reveal && b.isConnected) b.scrollIntoView({ block: 'nearest' })
+    }
   }
 
   // ── a note on a single option ───────────────────────────────────────────
@@ -1396,7 +1420,8 @@ export function mountFocus({ onDecided } = {}) {
     handing = true
     handBtn.disabled = true
     const walking = !single
-    const sent = rec.askText.trim() ? await askBack(rec).catch(() => false) : true
+    // whatever still stands in the composer goes first: words, attached files, what is on the scratchpad
+    const sent = rec.askText.trim() || rec.files.length || pad?.rec === rec ? await askBack(rec).catch(() => false) : true
     handing = false
     paintChrome()
     if (!isOpen) return
@@ -1430,11 +1455,16 @@ export function mountFocus({ onDecided } = {}) {
     const place = railPlace()
     rail.dataset.place = place
     root.dataset.rail = place
-    const home = place === 'outside' || place === 'below' ? root : place === 'bottom' ? shown?.node.querySelector('.focus-talk') ?? sheet : sheet
-    if (place === 'bottom' && home !== sheet) { if (rail.parentNode !== home) home.append(rail) }
-    else if (home === root) { if (rail.parentNode !== root) root.append(rail) }
-    else if (rail.previousSibling !== top) top.after(rail)
+    root.dataset.railSeat = RAIL_BELOW.includes(place) ? 'below' : place
+    if (RAIL_BELOW.includes(place) || place === 'tab' || place === 'arrows') { if (rail.parentNode !== root) root.append(rail) }
+    else if (place === 'topbar') { if (rail.previousSibling !== meta) meta.after(rail) }
+    else if (place === 'title') { const talk = shown?.node.querySelector('.focus-talk'); if (talk && rail.parentNode !== talk) talk.prepend(rail) }
+    else if (rail.parentNode !== sheet || rail.previousSibling !== top) top.after(rail)
   }
+  // 'arrows': what the arrow to the next question carries
+  const navCount = el('span', 'focus-nav-count')
+  const navWho = el('span', 'focus-nav-who')
+  nextBtn.append(navCount, navWho)
   seatRail()
   railNarrow.addEventListener('change', () => { seatRail(); railSig = ''; paintRail() })
   const railSeen = new Map()   // id -> card: every question that stood in this walk
@@ -1497,48 +1527,91 @@ export function mountFocus({ onDecided } = {}) {
     if (sig === railSig) return
     railSig = sig
     const left = order.length
+    const place = rail.dataset.place
+    const sessions = pool()?.agents ?? []
+    const sessionOf = card => sessions.find(a => a.id === card.agent)
+    const markOf = card => doodle(sessionOf(card)?.mark ?? card.agent)
+    const nameOf = card => card.agent_name || sessionOf(card)?.name || ''
+    const at = list.findIndex(x => x.id === current)
     railCount.replaceChildren(el('b', null, String(left)), el('span', null, ' left'))
     railCount.title = `${left === 1 ? 'One question' : `${left} questions`} left${railDone.size ? `, ${railDone.size} answered` : ''}`
-    rail.dataset.size = list.length > 24 ? 'many' : list.length > 12 ? 'some' : 'few'
-    const sessions = pool()?.agents ?? []
-    const open = list.filter(x => x.state === 'open')
-    const senders = new Set(open.map(x => x.card.agent)).size
-    const changes = open.filter((x, i) => i && open[i - 1].card.agent !== x.card.agent).length
-    const bySender = senders > 1 && changes < senders * 2
-    const nodes = []
-    let before = null
-    for (const x of list) {
+    railCount.hidden = false
+    /** One question as a mark: a tick when answered, else the dot of the old rail or its session's mark. */
+    const mark = (x, drawn) => {
       const b = button('focus-rail-mark')
-      b.tabIndex = -1   // the walk has its keys (J, K); forty marks are no stops for Tab
+      b.tabIndex = -1   // the walk has its keys; forty marks are no stops for Tab
       b.dataset.state = x.state
       b.dataset.urgency = RANK[x.card.urgency] != null ? x.card.urgency : 'normal'
       const front = x.id === current
       if (front) { b.dataset.front = ''; b.setAttribute('aria-current', 'step') }
-      const who = x.card.agent_name ? ` · ${x.card.agent_name}` : ''
-      b.title = `${x.state === 'done' ? 'Answered: ' : x.state === 'later' ? 'Later: ' : ''}${x.card.title}${who}`
-      b.setAttribute('aria-label', b.title)
+      const who = nameOf(x.card)
+      b.title = `${x.state === 'done' ? 'Answered: ' : x.state === 'later' ? `${LATER_WORD}: ` : ''}${x.card.title}${who ? ` · ${who}` : ''}`
       const started = x.state !== 'done' && Boolean(recs.get(x.id)?.card.draft)
       if (started) { b.dataset.started = ''; b.title += ' · started' }
-      b.append(railMark(x.state, front, x.id, started))
+      b.setAttribute('aria-label', b.title)
+      b.append(x.state === 'done' ? railMark('done', false, x.id) : drawn ? markOf(x.card) : railMark(x.state, front, x.id, started))
       if (x.state === 'done') b.disabled = true
       else b.addEventListener('click', () => go(x.id))
-      // A wider gap where the kind of mark changes. Where the sender changes, a small gap and (while there is room)
-      // the sender's mark, but only in a walk that goes sender by sender: the walk follows urgency, and when the
-      // senders alternate in it, a gap at every other mark would say nothing.
-      if (before && before.state !== x.state) b.dataset.gap = 'part'
-      if (bySender && x.state === 'open' && (before?.state !== 'open' || before.card.agent !== x.card.agent)) {
-        const session = sessions.find(a => a.id === x.card.agent)
-        const mark = el('span', 'focus-rail-who')
-        mark.title = x.card.agent_name || session?.name || ''
-        mark.append(doodle(session?.mark ?? x.card.agent))
-        if (before) { mark.dataset.gap = b.dataset.gap ?? 'sender'; b.dataset.gap ??= 'sender' }
-        nodes.push(mark)
+      return b
+    }
+    /** With many questions only those round the one in front are shown; "+12" says how many more there are. */
+    const windowed = (max, make) => {
+      if (list.length <= max) return list.map(make)
+      const from = clamp(at - 3, 0, list.length - max)
+      const more = n => el('span', 'focus-rail-more', `+${n}`)
+      return [...(from ? [more(from)] : []), ...list.slice(from, from + max).map(make), ...(list.length - from - max ? [more(list.length - from - max)] : [])]
+    }
+    let nodes = []
+    if (place === 'row') nodes = list.map(x => mark(x, false))
+    else if (place === 'pill' || place === 'tab' || place === 'title' || place === 'topbar' || place === 'dock') {
+      nodes = windowed(place === 'topbar' ? 10 : place === 'dock' ? 14 : 18, x => mark(x, true))
+    } else if (place === 'bar') {
+      nodes = list.map(x => mark(x, false))
+      for (const b of nodes) b.replaceChildren()
+    } else if (place === 'senders') {
+      // one chip per session, in the order its first open question comes up
+      const open = list.filter(x => x.state !== 'done')
+      const groups = new Map()
+      for (const x of open) groups.set(x.card.agent, [...(groups.get(x.card.agent) ?? []), x])
+      const mine = list[at]?.card.agent
+      nodes = [...groups].map(([agent, items]) => {
+        const b = button('focus-rail-chip')
+        b.tabIndex = -1
+        if (agent === mine) b.dataset.front = ''
+        b.title = `${nameOf(items[0].card)}: ${items.length === 1 ? 'one question' : `${items.length} questions`}`
+        b.setAttribute('aria-label', b.title)
+        b.append(markOf(items[0].card), el('span', null, nameOf(items[0].card)), el('b', null, String(items.length)))
+        // to this session's next question after the one in front, else its first
+        b.addEventListener('click', () => { const next = items.find(x => list.indexOf(x) > at) ?? items[0]; go(next.id) })
+        return b
+      })
+    } else if (place === 'next3' || place === 'unroll') {
+      railCount.replaceChildren(el('b', null, String(at + 1)), el('span', null, ` of ${list.length}`))
+      const next = list.slice(at + 1).filter(x => x.state !== 'done').slice(0, 3)
+      nodes = next.length ? [el('span', 'focus-rail-word', 'next'), ...next.map(x => mark(x, true))] : [el('span', 'focus-rail-word', 'the last one')]
+      if (place === 'unroll') {
+        const panel = el('div', 'focus-rail-list')
+        panel.append(...list.map(x => {
+          const row = button('focus-rail-row')
+          row.tabIndex = -1
+          row.dataset.state = x.state
+          if (x.id === current) row.dataset.front = ''
+          const lead = el('span', 'focus-rail-row-mark')
+          lead.append(x.state === 'done' ? icon('check') : markOf(x.card))
+          row.append(lead, el('span', 'focus-rail-row-title', x.card.title), el('span', 'focus-rail-row-who', x.state === 'later' ? LATER_WORD : nameOf(x.card)))
+          if (x.state === 'done') row.disabled = true
+          else row.addEventListener('click', () => go(x.id))
+          return row
+        }))
+        nodes.push(panel)
       }
-      nodes.push(b)
-      before = x
     }
     railMarks.replaceChildren(...nodes)
-    railMarks.querySelector('[data-front]')?.scrollIntoView({ block: 'nearest', inline: 'nearest' })
+    // 'arrows': the count and the next session's mark ride on the arrow
+    const after = list.slice(at + 1).filter(x => x.state !== 'done')
+    navCount.textContent = after.length ? String(after.length) : ''
+    navWho.replaceChildren(...(after.length ? [markOf(after[0].card)] : []))
+    nextBtn.title = after.length ? `Next question, without answering (J): ${after[0].card.title}` : 'Next question, without answering (J)'
   }
 
   // ── state → cards ───────────────────────────────────────────────────────
