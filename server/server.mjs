@@ -205,7 +205,8 @@ function queueOf(cards, agents = []) {
   const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
   return cards
     .filter(c => c.status === 'open' && !shelved.has(c.agent))
-    .sort((a, b) => rank(b) - rank(a) || a.created - b.created || a.number - b.number)
+    // Among equally urgent cards, what waits for an answer comes before what is only to be read.
+    .sort((a, b) => rank(b) - rank(a) || (a.kind === 'info') - (b.kind === 'info') || a.created - b.created || a.number - b.number)
     .map(c => c.id)
 }
 
@@ -380,6 +381,39 @@ function setProfile(id, fields) {
   commit()
 }
 
+// The named drawings a session can carry as its mark: [{ name, meaning, hue }], kept by the web client.
+// Read again when the file changes; without the file any plain name is taken and no list is offered.
+const DRAWINGS_FILE = process.env.BOARD_DRAWINGS || path.join(PUBLIC, 'drawings.json')
+let drawingsSeen = { stamp: '', list: null }
+function drawings() {
+  let stamp = ''
+  try { const st = fs.statSync(DRAWINGS_FILE); stamp = `${st.mtimeMs}:${st.size}` } catch {}
+  if (stamp !== drawingsSeen.stamp) {
+    let list = null
+    try {
+      const raw = JSON.parse(fs.readFileSync(DRAWINGS_FILE, 'utf8'))
+      if (Array.isArray(raw)) list = raw.filter(d => d && typeof d.name === 'string' && d.name).map(d => ({ name: d.name, meaning: String(d.meaning ?? ''), ...(d.hue == null ? {} : { hue: d.hue }) }))
+    } catch {}
+    drawingsSeen = { stamp, list: list?.length ? list : null }
+  }
+  return drawingsSeen.list
+}
+const drawingList = list => list.map(d => (d.meaning ? `${d.name} (${d.meaning})` : d.name)).join(', ')
+
+// The agent picks the drawing that fits its task. What the human picked by hand stays.
+function setIcon(id, icon) {
+  const agent = state.agents.find(a => a.id === id)
+  if (!agent || icon == null || icon === '') return ''
+  const name = String(icon).replace(/^draw:/, '')
+  const list = drawings()
+  if (list ? !list.some(d => d.name === name) : !/^[a-z]+$/.test(name)) {
+    throw new Error(list ? `no drawing "${name}"; choose one of: ${drawingList(list)}` : `icon must be the name of a drawing, lower-case letters only; got "${name}"`)
+  }
+  if (agent.icon && agent.icon_by !== 'agent') return '; the human chose this session\'s symbol by hand, so it stays'
+  Object.assign(agent, { icon: `draw:${name}`, icon_by: 'agent' })
+  return `; symbol "${name}"`
+}
+
 // The queue of an agent that is away lives in the state file, so it outlasts the hub.
 async function deliver(agent, method, params) {
   if (links.get(agent)?.send(method, params)) return
@@ -534,11 +568,12 @@ const mcp = new Server(
       'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
       'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
       'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. For the one thing the human must not miss, write __two underscores around a few words__: the board underlines them by hand. Use it rarely; a text that underlines much is shown plain. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
-      'To compare things, write a markdown table (| a | b | rows, a rule of dashes under the first): the board draws it as a real table, numbers right-aligned. For anything richer, pass html beside the words (reply, create_decision, revise_card, merge_cards, or a block in sections), or fence it as ```html inside a text: it is shown at its place in the house style, light and dark. Semantic HTML only: tables, headings, lists, details, mark, kbd, simple inline CSS, the classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad. No scripts and nothing from the network, both are removed; pictures as data: URLs or as attachments. Always say the gist in plain words in text (body for a question): that is what is read aloud and what clients without HTML show. A whole page to try out stays with publish_asset.',
+      'To compare things, write a markdown table (| a | b | rows, a rule of dashes under the first): the board draws it as a real table, numbers right-aligned. For anything richer, pass html beside the words (reply, create_decision, revise_card, merge_cards, or a block in sections), or fence it as ```html inside a text: it is shown at its place in the house style, light and dark. Semantic HTML only: tables, headings, lists, details, mark, kbd, simple inline CSS, the classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad. No scripts and nothing from the network, both are removed; pictures as data: URLs or as attachments. To show HTML as source instead, fence it as ```xml. Always say the gist in plain words in text (body for a question): that is what is read aloud and what clients without HTML show. A whole page to try out stays with publish_asset.',
       'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and where it helps a detail of a few words naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
       'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
       'Keep every question short to read: an option label is at most about four words; detail is optional and at most one short line of about six words, never a paragraph and never an explanation of what leaving it unticked means; the body is one or two short sentences. A longer explanation goes behind a link (publish_asset) or an attachment, or comes when the human presses "Explain", which reaches you as a question back.',
+      'When the human asks for an explanation, or you have something they should read but need not decide (a report, how something works, what you found), file it with create_info: a card with a title and a text, with a picture or diagram where it helps and sections for structure. The human reads it and closes it; you then get <channel source="board" kind="info_read" card_id="...">, which needs no answer. Do not dress such a thing up as a question with made-up options. A plain progress note stays a reply. If the human hands an info back or asks back about it, rework it with revise_card.',
       'A question stays ONE card through its whole life. When the human hands a card back to you (a chat message with card_id and handback="1") or asks back about it, do not file a new question and do not only reply: rework the card with revise_card (new wording, options, pictures). It is then presented again, and the earlier versions stay visible to the human. Use withdraw_card and a new card only when the subject itself changed.',
       'Before filing a question, call list_cards. If you already have an open question on the same subject, do not add another: rewrite the open one with revise_card, which keeps its number and place, or replace several by one with merge_cards. Do this on your own initiative, without being asked; the human should never get many small questions that are really one.',
       'Prefer one question with multiple: true ("tick what you agree to", your advice as a recommended list) over several yes/no questions on one theme. More than about three open questions of yours on one theme is a sign to merge them.',
@@ -556,6 +591,7 @@ const mcp = new Server(
       'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and when the question back shows the card was unclear, do not only reply: rewrite the card with revise_card, so the question itself is clear.',
       'When that question back asks you to explain the card (the board has a one-tap "Explain"), answer with reply and the same card_id in plain words and briefly: what the question is about, what each option would mean for the human, and which one you would pick. The card waits out of the way until your reply arrives, so answer promptly.',
       'The human can attach files, pasted screenshots and small drawings to a chat message and to the note of an answer: the meta attribute files then holds their absolute paths, comma-separated, and image_path the first picture among them. Read them before you answer.',
+      'When you introduce yourself, also pass icon: the drawing that fits your task, chosen from the names listed in the description of introduce. It becomes the symbol of your session; one the human picked by hand is kept.',
       'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
       'Other agents may share this board; the human sees all stacks merged into one, ordered by urgency. You only see and change your own cards and status lines.',
       'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply. The human may dictate messages, so expect transcription slips in chat and read them charitably.',
@@ -665,6 +701,25 @@ const TOOLS = [
     },
   },
   {
+    name: 'create_info',
+    description: 'Put something to read on the board: an explanation the human asked for, a report, how something works, what you found. It lies in the stack like a question but asks nothing: no options; the human reads it and closes it, and you get a quiet info_read event that needs no answer. Give the words as body, or structured as sections or text (plain blocks only), with a picture or diagram where it helps. revise_card reworks it, withdraw_card takes it away. Returns the card id.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: 'What it is about, one line' },
+        body: { type: 'string', description: 'The text, markdown. Or give sections or text.' },
+        sections: {
+          type: 'array',
+          description: 'Instead of body: the text as an ordered list of blocks, each a paragraph or a short passage of its own. No block has a key: an info has no options.',
+          items: { type: 'object', properties: { text: { type: 'string', description: 'The paragraph, markdown' }, html: QUESTION_PROPS.sections.items.properties.html }, required: ['text'] },
+        },
+        text: { type: 'string', description: 'The same as sections, written as one text block: paragraphs separated by a blank line.' },
+        ...Object.fromEntries(['html', 'attachments', 'urgency', 'urgency_reason'].filter(k => QUESTION_PROPS[k]).map(k => [k, QUESTION_PROPS[k]])),
+      },
+      required: ['title'],
+    },
+  },
+  {
     name: 'revise_card',
     description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision, and the same rule for questions about looks: they carry a picture per option or a link to a page to try. Every rewording is a new version of the same card; the earlier versions stay visible to the human, and after a hand-back the revision is what presents the card again. Decided cards cannot be revised.',
     inputSchema: {
@@ -750,12 +805,13 @@ const TOOLS = [
   },
   {
     name: 'introduce',
-    description: 'Tell the board who you are. Call it once when the session starts, and again when your task changes; the human sees it on the agents overview.',
+    description: 'Tell the board who you are. Call it once when the session starts, and again when your task changes; the human sees it on the agents overview. Pass icon: the drawing that fits your task, so the human knows your session by its symbol.',
     inputSchema: {
       type: 'object',
       properties: {
         model: { type: 'string', description: 'The model you are running as, e.g. "Claude Opus 5.5"' },
         task: { type: 'string', description: 'What you are working on in this session, one line' },
+        icon: { type: 'string', description: 'The name of the drawing that fits your task; it becomes the symbol of your session. A symbol the human picked by hand is kept.' },
       },
       required: ['model'],
     },
@@ -816,6 +872,14 @@ const TOOL_EXAMPLES = {
     title: 'Run the migration on production now?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
     options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
   },
+  create_info: {
+    title: 'How the nightly migration works', attachments: ['/home/me/project/out/migration.png'], urgency: 'low',
+    sections: [
+      { text: 'You asked why the deploy waits until 2. In short: the migration locks `orders`, and at 2 nobody is writing to it.' },
+      { text: '**Order of events.** Backup at midnight, migration at 2, deploy right after. The picture shows the three steps.' },
+      { text: '**If it fails,** the deploy does not start and you find a question from me in the morning.' },
+    ],
+  },
   revise_card: { card_id: 'a1b2c3d4', title: 'Run the migration tonight at 2?', options: [{ key: 'tonight', label: 'Tonight at 2' }, { key: 'weekend', label: 'At the weekend' }], recommended: 'tonight', note: 'Running it now is off the table: the backup takes until midnight' },
   merge_cards: {
     card_ids: ['a1b2c3d4', 'e5f6a7b8', 'c9d0e1f2'], title: 'Which parts of the storage plan do you agree to?', multiple: true, attachments: ['/home/me/project/out/sync.png'],
@@ -831,7 +895,7 @@ const TOOL_EXAMPLES = {
   close_card: { card_id: 'a1b2c3d4', summary: 'Migration ran at 02:00, 38 seconds' },
   set_status: { id: 'migration', label: 'Migration', state: 'decision', detail: 'waiting for the go-ahead', card_id: 'a1b2c3d4' },
   clear_status: { id: 'migration' },
-  introduce: { model: 'Claude Opus 5.5', task: 'Prepare migration and deploy' },
+  introduce: { model: 'Claude Opus 5.5', task: 'Prepare migration and deploy', icon: 'database' },
   create_voiceover: { text: 'The deploy went through. Two things need your answer.', style: 'calm, friendly' },
   list_cards: {},
   publish_asset: { path: '/home/me/project/out/report.html', title: 'Load test, 2 October', note: 'Charts for the three variants' },
@@ -859,6 +923,11 @@ const CHANNEL_EVENTS = [
     content: 'a sentence saying which answer was taken back', meta: { kind: 'decision_reopened', card_id: 'the card', previous_choice: 'key of the answer that no longer holds' },
     optional: { previous_choices: 'only for a card made with multiple: true: every key that was chosen, comma-separated' },
     example: '<channel source="board" kind="decision_reopened" card_id="a1b2c3d4" previous_choice="tonight">…</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'info_read', when: 'The human read an info card (create_info) and closed it. Nothing is expected of you.',
+    content: 'a sentence naming the card', meta: { kind: 'info_read', card_id: 'the card' },
+    example: '<channel source="board" kind="info_read" card_id="a1b2c3d4">The human read "How the nightly migration works" and closed it.</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'scribble', when: 'The human drew on the canvas and pressed send.',
@@ -891,7 +960,15 @@ const CHANNEL_EVENTS = [
 
 const text = t => ({ content: [{ type: 'text', text: t }] })
 
-mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
+// The tools as they are handed out: introduce names the drawings there are to choose from right now.
+function toolsNow() {
+  const list = drawings()
+  if (!list) return TOOLS
+  return TOOLS.map(t => (t.name !== 'introduce' ? t : {
+    ...t, inputSchema: { ...t.inputSchema, properties: { ...t.inputSchema.properties, icon: { ...t.inputSchema.properties.icon, description: `${t.inputSchema.properties.icon.description} One of: ${drawingList(list)}` } } },
+  }))
+}
+mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolsNow() }))
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = req.params.arguments ?? {}
@@ -1012,6 +1089,24 @@ function questionFields(args, names = []) {
     ...(sections ? { sections: sections.map(s => (s.key == null ? s : { ...s, recommended: advised.includes(s.key) })) } : {}),
   }
 }
+// Something to read: the words of a question without anything to choose.
+function infoFields(args, names = []) {
+  for (const key of ['options', 'multiple', 'recommended']) {
+    if (args[key] != null) throw new Error(`an info has no ${key}: it asks nothing, the human reads it and closes it. Something to choose is a question: create_decision`)
+  }
+  const sections = args.sections != null || args.text != null ? sectionsOf(args, names) : null
+  const flagged = sections?.find(s => s.key != null)
+  if (flagged) throw new Error(`an info has no options, so no block may have a key (got "${flagged.key}"). Something to choose is a question: create_decision`)
+  if (sections && args.html) throw new Error('html and sections (or text) cannot be combined: give the layout to the block it belongs to, as html on that section, or fenced as ```html inside the text')
+  const body = sections ? bodyOf(sections) : cleanFences(String(args.body ?? ''), 'body')
+  const html = sections ? '' : htmlBeside(args.html, body, { beside: 'body' })
+  if (!String(args.title ?? '').trim()) throw new Error('an info needs a title')
+  if (!body.trim() && !html) throw new Error('an info needs something to read: body, sections or text')
+  return {
+    multiple: false, recommended: null, options: [], urgency: urgencyArg(args.urgency, 'normal'), urgency_reason: String(args.urgency_reason ?? '').trim(),
+    title: String(args.title), body, ...(html ? { html } : {}), ...(sections ? { sections } : {}),
+  }
+}
 const namesOf = args => listArg(args.attachments, 'attachments').map(f => path.basename(String(f)))
 
 const openQuestions = agent => state.cards.filter(c => c.agent === agent && c.kind === 'decision' && c.status === 'open')
@@ -1071,6 +1166,13 @@ function runTool(agent, name, args) {
       commit()
       return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}${visualHint(card)}${strippedHint()}`
     }
+    case 'create_info': {
+      const fields = infoFields(args, namesOf(args))
+      const card = addCard(agent, 'info', { ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment) })
+      addEvent('info', card, card.title)
+      commit()
+      return `info ${card.id} put on the board as Nr. ${card.number}, ${placeOf(card)}; when the human has read and closed it, info_read arrives, which needs no answer${strippedHint()}`
+    }
     case 'revise_card': {
       const card = findCard(agent, args.card_id)
       if (card.kind === 'permission') throw new Error('permission cards cannot be revised')
@@ -1091,14 +1193,15 @@ function runTool(agent, name, args) {
       const wording = resection ? { sections: args.sections, text: args.text, body: args.body, options: args.options }
         : card.sections && !plain ? { sections: card.sections }
         : { body: args.body ?? card.body, options }
-      const fields = questionFields({
-        title: args.title ?? card.title, ...wording, multiple, urgency,
+      const info = card.kind === 'info'
+      const fields = (info ? infoFields : questionFields)({
+        title: args.title ?? card.title, ...wording, ...(info ? { options: args.options, multiple: args.multiple } : { multiple }), urgency,
         // A layout stands until it is replaced; '' takes it away, and new blocks carry their own.
         html: resection ? args.html : args.html ?? card.html,
         // As with set_urgency: a new level without a reason has none.
         urgency_reason: args.urgency_reason ?? (urgency === card.urgency ? card.urgency_reason : ''),
         // New blocks carry their own marks, unless the call says otherwise.
-        recommended: args.recommended != null ? (args.recommended.length ? args.recommended : NO_ADVICE)
+        recommended: info ? args.recommended : args.recommended != null ? (args.recommended.length ? args.recommended : NO_ADVICE)
           : resection ? undefined : multiple && Array.isArray(card.recommended) ? kept : kept[0] ?? NO_ADVICE,
       }, args.attachments == null ? card.attachments.map(a => a.name) : namesOf(args))
       const attachments = args.attachments == null ? card.attachments : listArg(args.attachments, 'attachments').map(storeAttachment)
@@ -1136,15 +1239,17 @@ function runTool(agent, name, args) {
       }
       if (card.urgency !== level) addEvent('urgency', card, card.urgency_reason ? `${URGENCY_LABEL[card.urgency]}: ${card.urgency_reason}` : URGENCY_LABEL[card.urgency])
       commit()
-      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${lengthHint(card)}${visualHint(card)}${strippedHint()}`
+      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${info ? '' : lengthHint(card) + visualHint(card)}${strippedHint()}`
     }
     case 'merge_cards': {
+      // Checked below for each card: only questions merge.
       const ids = [...new Set(listArg(args.card_ids, 'card_ids').map(String))]
       if (ids.length < 2) throw new Error('merge_cards replaces at least two cards; to change one card use revise_card')
       // Everything is checked before anything changes, so a refused merge leaves every card as it was.
       const old = ids.map(id => findCard(agent, id))
       for (const c of old) {
         if (c.kind === 'permission') throw new Error('permission cards cannot be merged')
+        if (c.kind === 'info') throw new Error(`card ${c.id} is an info, not a question; infos are not merged. Rework it with revise_card or take it away with withdraw_card`)
         if (c.status === 'decided') throw new Error(`card ${c.id} was already decided (choice: ${c.choice}); the human spent an answer on it, so act on it and merge only the open ones`)
         if (c.status !== 'open') throw new Error(`card ${c.id} is already done`)
       }
@@ -1237,9 +1342,12 @@ function runTool(agent, name, args) {
       state.tasks = state.tasks.filter(t => t.agent !== agent || (args.id && t.id !== args.id))
       commit()
       return 'cleared'
-    case 'introduce':
+    case 'introduce': {
+      // Checked first, so a refused symbol leaves the rest as it was.
+      const symbol = setIcon(agent, args.icon)
       setProfile(agent, { model: args.model, task: args.task })
-      return 'noted'
+      return `noted${symbol}`
+    }
     case 'create_voiceover':
       return speak(args.text, String(args.style ?? '')).then(file => `voiceover written to ${file}`)
     case 'list_cards':
@@ -1249,7 +1357,7 @@ function runTool(agent, name, args) {
         queue_position: state.queue.indexOf(c.id) + 1 || null,
         title: c.title, version: c.version ?? (c.revisions ?? 0) + 1, ...(c.answered_version ? { answered_version: c.answered_version } : {}), ...(c.with_agent ? { with_agent: c.with_agent } : {}),
         multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
-        ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, ...(c.html ? { html: c.html } : {}), options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
+        ...(c.status === 'open' && c.kind !== 'permission' ? { body: c.body, ...(c.html ? { html: c.html } : {}), options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
         ...(c.revised ? { revised: c.revised } : {}),
         ...(c.merged_from ? { merged_from: c.merged_from.map(m => m.number) } : {}),
         ...(c.merged_into ? { merged_into: c.merged_into } : {}),
@@ -1438,6 +1546,23 @@ async function decide(cardId, answer, note, seen, notes, files = []) {
   }
 }
 
+// The human read an info and closed it. Nothing was asked, so the card is done at once; the agent is told quietly.
+async function closeInfo(cardId) {
+  const card = state.cards.find(c => c.id === cardId)
+  if (!card) throw new Error('unknown card')
+  if (card.kind !== 'info') throw new Error('only an info is closed by reading it; a question is answered with /decide')
+  if (card.status !== 'open') throw fail(409, 'card already closed')
+  const now = Date.now()
+  Object.assign(card, { status: 'done', read: now, decided: now })
+  delete card.with_agent
+  addEvent('read', card, card.title)
+  commit()
+  await deliver(card.agent, 'notifications/claude/channel', {
+    content: `The human read "${card.title}" and closed it. Nothing is expected of you.`,
+    meta: { kind: 'info_read', card_id: card.id },
+  })
+}
+
 // A scribble is the human's drawing: the editable document is kept so it can be
 // reopened, and a rendered PNG goes to the agent, who can only read pictures.
 const pngBytes = url => {
@@ -1480,6 +1605,14 @@ async function storeScribble(agent, body) {
 async function reopen(cardId) {
   const card = state.cards.find(c => c.id === cardId)
   if (!card) throw new Error('unknown card')
+  if (card.kind === 'info') {
+    // Taken back, it lies in the stack unread again; the agent has nothing to undo and is not told.
+    if (card.status === 'open') throw new Error('card is already open')
+    if (!card.read) throw new Error('the agent withdrew this card')
+    Object.assign(card, { status: 'open', read: null, decided: null, summary: '' })
+    addEvent('reopened', card, card.title)
+    return commit()
+  }
   if (card.kind !== 'decision') throw new Error('only decisions can be reopened')
   if (card.status === 'open') throw new Error('card is already open')
   if (card.choice == null) throw new Error('the agent withdrew this card')
@@ -2188,7 +2321,7 @@ function staticFile(pathname) {
 }
 
 // The page keeps its place in the address (History API), so these paths are the page too.
-const APP_PATH = /^\/($|s\/|agents$|inbox$|pad$)/
+const APP_PATH = /^\/($|s\/|q\/[\w-]+$|agents$|inbox$|pad$|walk$)/
 // The pad: its elements, their bytes, live changes, and sending a selection to a session (pad.mjs).
 // It keeps them in SQLite, in data/pad.db; the store is loaded when the pad is first used.
 const padRoute = padRoutes({
@@ -2233,7 +2366,7 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/api/tools') {
       // The help page renders its reference from the same tables the agent is given.
-      return send(res, 200, JSON.stringify({ version: VERSION, retention_days: RETENTION_DAYS, max_asset_mb: MAX_ASSET / 1024 / 1024, tools: TOOLS.map(t => ({ ...t, example: TOOL_EXAMPLES[t.name] })), events: CHANNEL_EVENTS }))
+      return send(res, 200, JSON.stringify({ version: VERSION, retention_days: RETENTION_DAYS, max_asset_mb: MAX_ASSET / 1024 / 1024, tools: toolsNow().map(t => ({ ...t, example: TOOL_EXAMPLES[t.name] })), drawings: drawings() ?? [], events: CHANNEL_EVENTS }))
     }
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
@@ -2289,7 +2422,7 @@ const httpServer = http.createServer(async (req, res) => {
       const asked = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
       const about = asked ? { card_id: body.card_id } : {}
       // The human gave the card back to be reworked, or asked for it to be explained: until the agent answers, it is with the agent.
-      const turn = asked?.kind === 'decision' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
+      const turn = asked && asked.kind !== 'permission' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
       if (Object.keys(turn).length) asked.with_agent = Date.now()
       addMessage(agent, 'user', msg, files, { ...about, ...turn })
       await deliver(agent, 'notifications/claude/channel', { content: msg || uploadLine(files), meta: { kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...uploadMeta(files) } })
@@ -2350,7 +2483,12 @@ const httpServer = http.createServer(async (req, res) => {
       // Sessions that share a group are shown as a pair; null takes a session out of its group.
       if ('group' in body) agent.group = body.group == null ? null : String(body.group).trim().slice(0, 40) || null
       if (body.label != null) agent.label = String(body.label).trim().slice(0, 60)
-      if (body.icon != null) agent.icon = String(body.icon).slice(0, 80)
+      if (body.icon != null) {
+        agent.icon = String(body.icon).slice(0, 80)
+        // Picked by hand it is the human's and the agent leaves it alone; cleared, the agent may choose again.
+        if (agent.icon) agent.icon_by = 'human'
+        else delete agent.icon_by
+      }
       if ('before' in body) moveSession(agent, body.before)
       commit()
       return send(res, 200, '{"ok":true}')
@@ -2379,6 +2517,11 @@ const httpServer = http.createServer(async (req, res) => {
         for (const a of files) fs.rmSync(uploadPath(a), { force: true })
         throw err
       }
+      return send(res, 200, '{"ok":true}')
+    }
+    if (req.method === 'POST' && url.pathname === '/close') {
+      const body = await readJson(req)
+      await closeInfo(String(body.card_id))
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'POST' && url.pathname === '/draft') {
