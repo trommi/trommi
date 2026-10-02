@@ -13,6 +13,7 @@ Item {
     property color fill: "transparent"
     property real pen: 2              // the width of the stroke, in units of the box
     property bool stretch: false      // fill the item whatever its shape (a loop round something)
+    property bool flat: false         // the ends cut straight, as a marker's are
 
     width: 32
     height: width * boxHeight / box
@@ -37,7 +38,7 @@ Item {
             strokeColor: s.color
             strokeWidth: s.pen
             fillColor: s.fill
-            capStyle: ShapePath.RoundCap
+            capStyle: s.flat ? ShapePath.FlatCap : ShapePath.RoundCap
             joinStyle: ShapePath.RoundJoin
             PathSvg { path: s.stretch ? s.fitted(s.strokes) : s.strokes }
         }

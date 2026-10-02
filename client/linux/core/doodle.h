@@ -7,6 +7,7 @@
 #pragma once
 
 #include <QList>
+#include <QRectF>
 #include <QString>
 #include <QStringList>
 
@@ -63,7 +64,18 @@ QString loopPath(Pen &pen, double rad = 14.9, double drift = 1.1, double jitter 
 // The loop of the working ring, and the drop that travels through it.
 QString ringLoop();
 QString ringDrop();
-// The loop round the option the agent would pick, in a 100 box to be stretched.
+// The mark of the agent's advice: a swipe of a highlighter behind the words
+// of the option it would pick, one pass per line of the label, a little
+// uneven. lines: the box of each line of words, in pixels; the strokes come
+// back in the same pixels, each with the width of its pen.
+struct MarkerStroke {
+    QString path;
+    double width = 0;
+};
+QList<MarkerStroke> adviceMarker(const QList<QRectF> &lines);
+// A squarish loop drawn by hand, in a 100 box to be stretched round
+// something (the web's advice mark before the highlighter; here it circles
+// the count of the inbox).
 QString adviceLoop();
 // The loop round a group of sessions, in a 100 box to be stretched.
 QString groupLoop(const QString &seed);

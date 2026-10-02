@@ -45,11 +45,26 @@ const pairs = [['docs', 'docs-review'], ['api', 'web-frontend', 'infrastructure'
     loop: svg.children.find(c => c.tag === 'path').attrs.d,
   }
 })
+// The advice mark measures the words it lies behind: here they are three lines of a label that
+// stands at (10, 6) in a tile of 220 by 90, as a page would report them.
+const markerLines = [{ x: 10, y: 6, w: 150, h: 22 }, { x: 10, y: 28, w: 96.5, h: 22 }, { x: 10, y: 50.4, w: 40, h: 20.6 }]
+globalThis.NodeFilter = { SHOW_TEXT: 4 }
+globalThis.ResizeObserver = class { observe() {} }
+const marker = await new Promise(done => {
+  const texts = [{ nodeValue: 'words', parentElement: { closest: () => null } }]
+  document.createTreeWalker = () => ({ nextNode: () => texts.shift() ?? null })
+  document.createRange = () => ({ selectNodeContents() {}, getClientRects: () => markerLines.map(l => ({ left: l.x, top: l.y, width: l.w, height: l.h })) })
+  const svg = ui.adviceLoop()
+  svg.parentElement = { querySelector: () => null }
+  svg.getBoundingClientRect = () => ({ left: 0, top: 0, width: 220, height: 90 })
+  svg.clientWidth = 220
+  svg.replaceChildren = (...kids) => done({ lines: markerLines, paths: kids.map(k => k.attrs.d), widths: kids.map(k => parseFloat(k.style.strokeWidth)) })
+})
 const out = {
   doodles, sketches, pairs,
   crown: paths(ui.crown())[0],
   hand: paths(ui.raisedHand()),
-  advice: paths(ui.adviceLoop())[0],
+  marker,
   groupLoops: ['docs+docs-review', 'api+web-frontend+infrastructure'].map(seed => ({ seed, path: paths(ui.groupLoop(seed))[0] })),
   // The loop of the working ring (RING_LOOP in agents.js) and the marks of the Focus rail (focus.js).
   loops: [

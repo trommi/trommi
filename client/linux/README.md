@@ -8,7 +8,7 @@ Die Oberfläche ist englisch, wie das Board selbst. Was die Agenten schreiben, b
 
 ![Die Frage als Fenster](docs/question.png)
 
-Der Stand folgt dem Web-Client (`client/web/`): derselbe Aufbau, dieselben Tasten, dieselben gekritzelten Zeichen. Bedienelemente und Flächen sind schlicht; von Hand gezeichnet ist nur der Akzent (die Zeichen der Sitzungen, die Krone, die Hand, der Ring, die kleinen Symbole, der Kringel um den Rat des Agenten).
+Der Stand folgt dem Web-Client (`client/web/`): derselbe Aufbau, dieselben Tasten, dieselben gekritzelten Zeichen. Bedienelemente und Flächen sind schlicht; von Hand gezeichnet ist nur der Akzent (die Zeichen der Sitzungen, die Krone, die Hand, der Ring, die kleinen Symbole, der Markerstrich hinter dem Rat des Agenten).
 
 ## Bauen
 
@@ -102,7 +102,7 @@ Nicht übernommen: `G` `A` (die Seite aller Agenten gibt es hier nicht), `V` (Di
 ## Was geprüft ist
 
 - Alles baut ohne Warnung (Qt 6.11.2, GCC 16.2.1); beim Laufen kommt keine Warnung von QML.
-- `bin/test`: 50 Fälle im Kern (Dekodieren aller heutigen Felder, Reihenfolge, Gruppen, Stapel, „With the agent“, Paare, Zustände der Sitzungen, Markdown mit Tabellen, Link, Cookie, Ereignisstrom), darunter der Vergleich der gekritzelten Zeichen Strich für Strich mit dem, was das Web zeichnet (76 Zeichen, 30 Symbole, Paare, Krone, Hand, Ring, Kringel), auch gegen die Vorlage des iOS-Clients. Dazu 7 Fälle gegen einen Ersatz-Server: Anmeldung, falsches Token, abgerissener Strom, und was jeder POST heute trägt (`keys`, `revised`, `card_id`, `handback`, `explain`, `/draft`, `/star`, `/session`), samt der Ablehnung mit 409.
+- `bin/test`: 50 Fälle im Kern (Dekodieren aller heutigen Felder, Reihenfolge, Gruppen, Stapel, „With the agent“, Paare, Zustände der Sitzungen, Markdown mit Tabellen, Link, Cookie, Ereignisstrom), darunter der Vergleich der gekritzelten Zeichen Strich für Strich mit dem, was das Web zeichnet (76 Zeichen, 30 Symbole, Paare, Krone, Hand, Ring, der Markerstrich hinter dem Rat des Agenten), auch gegen die Vorlage des iOS-Clients. Dazu 7 Fälle gegen einen Ersatz-Server: Anmeldung, falsches Token, abgerissener Strom, und was jeder POST heute trägt (`keys`, `revised`, `card_id`, `handback`, `explain`, `/draft`, `/star`, `/session`), samt der Ablehnung mit 409.
 - `bin/test-live`: 12 Fälle, drei davon gegen `dev/serve.sh` (echter Server) mit einer eigenen Sitzung, die den Agenten spielt: Anmeldung, Antworten, Zurücknehmen, Nachricht; mehrere Antworten, Entwurf, eine Karte, die der Agent umformuliert, während geantwortet wird (409, dann erneut gelesen und angenommen), Zurückgeben (`with_agent`), Paar, Krone, Umordnen.
 - Das Fenster wurde ohne Bildschirm gerendert (`QT_QPA_PLATFORM=offscreen`, Software-Renderer) und die Bilder angesehen: Posteingang hell und dunkel, aufgeklappte Zeile, die drei Stapel zu und offen, das Fenster einer Frage mit Gespräch, mit mehreren Antworten, mit Marken, mit Abschnitten, der Gang mit Leiste, Sitzung mit Tabelle, „Questions only“, ein Paar, schmales Fenster, die Tasten. Tasten wurden dabei über `TROMMI_KEYS` eingespielt, auch gegen einen echten Server mit drei Agenten (`dev/trio.sh`): die Antworten kamen dort an.
 - `--status` gegen den Demo-Server (Runde eins).

@@ -27,9 +27,9 @@ Offen, ehrlich:
 - Modell: `multiple`, `recommended` als Liste, `choices`, `revised`, `version`, `merged_from`, `sections`, `option_notes`, `draft`, `with_agent`; Sitzungen mit `icon`, `group`, `archived`, Reihenfolge wie der Server sie schickt; `speech`.
 - Netz: `/decide` mit `keys` und `revised` (409 als das, was es ist), `/message` mit `card_id`, `handback`, `explain`, `/draft`, `/star`, `/session`.
 - Regeln wie im Web: Daumen nur, wenn die Worte auf die Kachel passen (`fitsTile`), „Choose“ klappt auf oder öffnet das Fenster (`needsWindow`), „Later“ kommt zurück, wenn die Frage dringender wird, Stapel „With the agent“ und „Answered“.
-- Zeichen: `core/doodle` überträgt `doodle()`, `sketch()`, `pairDoodle()`, Krone, Hand, Ring, Kringel; gegen die Striche des Web-Clients und die Vorlage des iOS-Clients geprüft.
+- Zeichen: `core/doodle` überträgt `doodle()`, `sketch()`, `pairDoodle()`, Krone, Hand, Ring, den Markerstrich hinter dem Rat; gegen die Striche des Web-Clients und die Vorlage des iOS-Clients geprüft.
 - Oberfläche neu: Posteingang, Stapel, das Fenster einer Frage mit Leiste und einem Feld, Seitenleiste mit Zeichen und Zuständen, Paare, Tasten wie in `client/web/js/keys.js`.
-- Behoben, was das erste Ansehen zeigte: aufgeklappte Zeile lief über die nächste, der Kringel wurde beim Strecken dick, alle Antworten trugen die Ziffer 1, der Zettel lag über dem Titel, das Gespräch stand am Anfang statt am Ende, die markierte Zeile wurde gesucht, bevor sie ihren Platz hatte.
+- Behoben, was das erste Ansehen zeigte: aufgeklappte Zeile lief über die nächste, der gestreckte Kringel wurde dick, alle Antworten trugen die Ziffer 1, der Zettel lag über dem Titel, das Gespräch stand am Anfang statt am Ende, die markierte Zeile wurde gesucht, bevor sie ihren Platz hatte.
 - Stand der Tests: 50 im Kern, 9 gegen den Ersatz-Server (drei weitere nur mit echtem Server), `bin/test-live` 12.
 
 Offen, ehrlich: wie in README unter „Was nicht geprüft ist“ und „Noch nicht hier“.
