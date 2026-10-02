@@ -1305,8 +1305,8 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
      as small marks before the caret, whose column stands over the rows' rings. Even margins all round;
      below it clear room, kept by a spacer that stays while the sessions scroll under it. */
   #agents { padding-top: 0; }
-  #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 80px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
-  .topbar { position: fixed; z-index: 7; top: 8px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+  #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 92px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
+  .topbar { position: fixed; z-index: 7; top: 18px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
   .topbar:has(#desk-go[aria-current]) { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
   .topbar .brand { margin-right: 0; flex: 1; min-width: 0; height: 100%; }
   .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.34rem/1 var(--display); letter-spacing: -.02em; }
@@ -1355,7 +1355,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 .desk-state:empty { display: none; }
 .desk-state .agent-working { font-size: var(--t-xs); }
 .menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: 4px; border-top: 1px solid var(--line); }
-.topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 32px; gap: 7px; padding: 0 8px; font-size: var(--t-sm); }
+.topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
 .topbar .sidedoors .sketch { width: 17px; height: 17px; }
 .menu-foot { display: flex; align-items: center; gap: 2px; padding-top: 4px; border-top: 1px solid var(--line); }
 .topbar .sidedoors .menu-foot .conn { flex: 1; margin: 0; padding: 0 8px; height: 30px; border: 0; font-size: var(--t-xs); }
@@ -1493,6 +1493,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 #jump-field { height: 36px; padding: 0 58px 0 12px; border-radius: 9px; font: 400 var(--t-sm)/1 var(--font); }
 .jump-box kbd { position: absolute; right: 8px; top: 50%; translate: 0 -50%; margin: 0; padding: 3px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); font: 500 .68rem/1 var(--mono); color: var(--muted); pointer-events: none; }
 .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { width: 100%; min-height: 36px; gap: 10px; padding: 0 12px; border-radius: 9px; font: 500 var(--t-sm)/1 var(--font); justify-content: flex-start; }
+.topbar #brand-doors .menu-grid :is(a, button) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
 .topbar #brand-doors .sketch { flex: none; width: 18px; height: 18px; stroke-width: 1.8; color: var(--muted); }
 .topbar #brand-doors :is(i, kbd):not(.jump-box kbd) { margin-left: auto; padding-left: 12px; font: 500 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
 .topbar #brand-doors kbd:not(.jump-box kbd) { min-width: 0; padding: 3px 6px; background: none; box-shadow: 0 0 0 1px var(--line-strong); border-radius: 6px; font-family: var(--mono); }
@@ -1515,6 +1516,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 #knock-sound::after, #theme-toggle::after { margin-left: auto; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); }
 @media (pointer: coarse), (max-width: 860px) {
   .topbar #brand-doors { width: min(300px, calc(100vw - 24px)); }
+  .topbar #brand-doors .menu-grid :is(a, button) { min-height: 44px; }
   .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { min-height: 44px; width: 100%; }
   #jump-field { height: 44px; }
   .jump-box kbd { display: none; }
