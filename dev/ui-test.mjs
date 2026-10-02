@@ -86,7 +86,7 @@ const SEL = {
   rowFrom: '.inbox-from',
   rowOpen: '.is-open',
   rowCurrent: '.is-current',
-  rowOption: '.inbox-option',
+  rowOption: '.inbox-option[data-key]',   // the card's own options (beside them: "Send" where several are allowed, and "Trust")
   advised: '.is-advised',
   adviceLoop: '.advice-loop path, .advice-hand path',   // the mark of the agent's advice: a loop drawn round the option, later a small hand on it
 
@@ -918,7 +918,9 @@ async function checkRows(root, where) {
     if (right && !(left.box.right <= right.box.left + 1 && same(left.box.top, right.box.top))) bad.side.push(short(row))
     const mine = span(row), ref = span(lead)
     if (!(mine.right <= row.box.right + 1 && row.box.right - mine.right <= 36)) bad.edge.push(`${short(row)} ends ${Math.round(row.box.right - mine.right)}px before the edge`)
-    if (!(same(mine.left, ref.left) && same(mine.right, ref.right) && (touch || same(mine.top, ref.top)) && same(mine.height, ref.height))) bad.line.push(`${short(row)} (${Math.round(mine.left)}..${Math.round(mine.right)}, ${Math.round(mine.height)}px high; the first row ${Math.round(ref.left)}..${Math.round(ref.right)}, ${Math.round(ref.height)}px)`)
+    // One tile ("Choose") is as wide as the pair, or a square in the place of the pair's right-hand tile.
+    const fits = r => same(mine.left, r.left) && same(mine.right, r.right) && (touch || same(mine.top, r.top)) && same(mine.height, r.height)
+    if (!(fits(ref) || (row.tiles.length === 1 && fits({ ...ref, left: lead.tiles.at(-1).box.left })))) bad.line.push(`${short(row)} (${Math.round(mine.left)}..${Math.round(mine.right)}, ${Math.round(mine.height)}px high; the first row ${Math.round(ref.left)}..${Math.round(ref.right)}, ${Math.round(ref.height)}px)`)
     if (right) for (const t of row.tiles) if (!same(t.box.width, t.box.height, 2)) bad.square.push(`${short(row)} "${t.name}" is ${t.box.width}x${t.box.height}`)
     const card = cardOf(row.id)
     if (card && row.title !== card.title) bad.title.push(`${short(row)} for the card "${card.title}"`)
