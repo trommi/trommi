@@ -2190,6 +2190,8 @@ async function beginNote(card, byKey = false) {
   else await press(`the title of "${card.title}"`, `${walkCard(card)}.querySelector(${JSON.stringify(SEL.focusTitle)})`)
   if (await waitFor('a note opens on the card', ready(SEL.focusMark), 1500).catch(() => false)) return 'note'
   if (await ev(ready(SEL.focusField))) return 'field'
+  // The opened card has one write field at its foot.
+  if (await ev(`!!__t.one(${JSON.stringify(SEL.focusField)}, ${walkCard(card)})`)) { await press('the write field at the foot of the card', `__t.one(${JSON.stringify(SEL.focusField)}, ${walkCard(card)})`); return 'field' }
   if (await ev(`!!__t.one(${JSON.stringify(SEL.focusDiscuss)}, ${walkCard(card)})`)) {
     if (!(await ev(`!!__t.one(${JSON.stringify(SEL.focusField)}, ${walkCard(card)})`))) await press('"Discuss" on the card', `__t.one(${JSON.stringify(SEL.focusDiscuss)}, ${walkCard(card)})`)
     await settle()

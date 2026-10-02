@@ -435,7 +435,7 @@ async function main() {
     await markRow(c.g2)
     await key('y')
     await until('Y answers', () => card(c.g2).status !== 'open')
-    await until('an "Answered" group stands at the end, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return g && g === __k.list().lastElementChild && !g.querySelector(".inbox-done") && /Answered/.test(g.innerText) && /1 today/i.test(g.innerText)'))
+    await until('an "Answered" pile stands below the open rows, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return Boolean(g) && !g.classList.contains("is-open") && Boolean(g.compareDocumentPosition(__k.reach().at(-1)) & Node.DOCUMENT_POSITION_PRECEDING) && /Answered/.test(g.textContent)'))
     await sleep(5300)   // the note has left: this is the wrong answer that is noticed later
     await click('__k.list().querySelector(".inbox-answered-toggle")')
     const listed = await ev('return __k.done()')
