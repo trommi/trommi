@@ -44,7 +44,7 @@ function detailNode(card) {
   // questions and the agent is told.
   const foot = el('p', 'hist-foot')
   const when = el('span', 'hist-times')
-  when.append(`Question ${card.number} · asked `, agoNode(card.created))
+  when.append(`Nr. ${card.number} · asked `, agoNode(card.created))
   if (card.decided) when.append(' · answered ', agoNode(card.decided))
   when.append(' · ', card.kind === 'permission' ? 'Permission' : URGENCY_LABEL[card.urgency] ?? '')
   foot.append(when)

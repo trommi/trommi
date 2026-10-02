@@ -32,7 +32,7 @@ import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { loopPath, penSeed, penFrame } from './ui.js'
+import { loopPath, penSeed } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -107,6 +107,10 @@ const touchOnly = matchMedia('(pointer: coarse)')
 //   'bottom'   a row at the foot of the conversation, above the composer
 //   'below'    a strip of paper under the window
 // A narrow window (a phone) always has it as a thin row under the top bar.
+// The word on the button that hands a card to its session (the word is still being chosen).
+const HAND_BACK_LABEL = 'Back to agent'
+// The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
+const EXPLAIN_LABEL = 'What??'
 const RAIL_PLACES = ['outside', 'gutter', 'top', 'bottom', 'below']
 const RAIL_PLACE = 'outside'
 const railNarrow = matchMedia('(max-width: 760px)')
@@ -144,6 +148,25 @@ async function decideMany(cardId, keys, note, revised = null) {
   if (!res.ok) throw new Error(out.error || res.statusText)
   return out
 }
+
+/** An answer whose note carries files (pictures, a drawing): the same request as decide(), with attachments. */
+async function decideWith(card, keys, note, attachments) {
+  const body = { card_id: card.id, note, attachments, revised: card.revised ?? null, ...(card.multiple ? { keys } : { key: keys[0] }) }
+  const res = await fetch('/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  let out = {}
+  try { out = await res.json() } catch {}
+  if (!res.ok) throw new Error(out.error || res.statusText)
+  return out
+}
+// What the human may attach in the composer: so many files, each up to this size.
+const MAX_FILES = 12
+const MAX_FILE_BYTES = 24 * 1024 * 1024
+const readDataUrl = file => new Promise((resolve, reject) => {
+  const reader = new FileReader()
+  reader.onload = () => resolve(String(reader.result))
+  reader.onerror = () => reject(reader.error ?? new Error('not readable'))
+  reader.readAsDataURL(file)
+})
 
 export function mountFocus({ onDecided } = {}) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
@@ -313,7 +336,7 @@ export function mountFocus({ onDecided } = {}) {
     node.dataset.id = card.id
     node.tabIndex = -1
     node.inert = true
-    const rec = { id: card.id, card, node, sigC: '', askText: '', askOpen: false, picked: new Set(), busy: false, outTimer: 0, optButtons: [], imageAt: 0, threadSig: null }
+    const rec = { id: card.id, card, node, sigC: '', files: [], askText: '', askOpen: false, picked: new Set(), busy: false, outTimer: 0, optButtons: [], imageAt: 0, threadSig: null }
     // One field per card: the note to an answer is what stands in the composer. rec.note stays as a name for it.
     Object.defineProperty(rec, 'note', {
       get: () => rec.askText,
@@ -468,13 +491,40 @@ export function mountFocus({ onDecided } = {}) {
       field.enterKeyHint = 'send'
       field.setAttribute('aria-label', 'Write to the agent about this question. Enter asks it and the question stays open; an answer takes what you wrote along as a note.')
       field.value = rec.askText
-      // Send stands outside the field, the first of three equal buttons at its right: Send, Explain, Later.
-      const send = button('focus-ask-send focus-way', 'Send to the agent')
+      // Send stands in the field, at its right end beside the microphone: a plain small button with the pen's arrow.
+      const send = button('focus-ask-send', 'Send to the agent')
+      send.type = 'submit'
       send.title = 'Send (Enter). The question stays open.'
-      send.append(sketch('send'), el('span', null, 'Send'))
-      framed(send, 'send', { round: 11, wobble: 1.7 })
-      send.addEventListener('click', () => ask.requestSubmit())
-      ask.append(askOpen, field)
+      send.append(sketch('send'))
+      // Files and pictures: by the paperclip, by dropping them on the composer, or by pasting (a screenshot from
+      // the clipboard). They stand as small chips over the field until they are sent, with the message or with an answer.
+      const clip = button('focus-clip', 'Attach files or pictures')
+      clip.title = 'Attach files or pictures (or drop them here, or paste a screenshot)'
+      clip.append(sketch('clip'))
+      const picker = el('input')
+      picker.type = 'file'
+      picker.multiple = true
+      picker.hidden = true
+      picker.tabIndex = -1
+      clip.addEventListener('click', () => picker.click())
+      picker.addEventListener('change', () => { addFiles(rec, picker.files); picker.value = '' })
+      rec.chipsNode = el('div', 'focus-chips')
+      ask.append(rec.chipsNode, askOpen, clip, picker, field, send)
+      field.addEventListener('paste', e => {
+        const files = [...(e.clipboardData?.files ?? [])]
+        if (!files.length) return
+        e.preventDefault()
+        addFiles(rec, files)
+      })
+      const carriesFiles = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
+      ask.addEventListener('dragover', e => { if (carriesFiles(e)) { e.preventDefault(); ask.dataset.drop = '' } })
+      ask.addEventListener('dragleave', e => { if (!ask.contains(e.relatedTarget)) delete ask.dataset.drop })
+      ask.addEventListener('drop', e => {
+        if (!carriesFiles(e)) return
+        e.preventDefault()
+        delete ask.dataset.drop
+        addFiles(rec, e.dataTransfer.files)
+      })
       field.after(dictationMic(field, { key: `${rec.id}:ask`, primary: true, onError: text => info(text, true) }))   // speak instead of typing (speech.js)
       askOpen.addEventListener('click', () => field.focus({ preventScroll: true }))
       field.addEventListener('input', () => { rec.askText = field.value; paintDraft(rec) })
@@ -489,12 +539,10 @@ export function mountFocus({ onDecided } = {}) {
       rec.askNode = ask
       rec.askField = field
       rec.askSend = send
-      // The field stands in a box drawn with the pen, as wide as the conversation above it. At its right, on the
-      // same line: the two ways to leave the card without answering (Explain, Later: one pair of buttons that
-      // moves along with the card in front, see paintChrome).
-      framed(ask, 'composer', { round: 15, wobble: 1.7 })
+      // The field is as wide as the conversation above it. At its right, on the same line: the ways to leave the
+      // card without answering (What??, Back to agent, Later: one set of buttons that moves along with the card
+      // in front, see paintChrome).
       rec.actionsNode = el('div', 'focus-actions')
-      rec.actionsNode.append(send)
       rec.composer = el('div', 'focus-composer')
       rec.composer.append(ask, rec.actionsNode)
       scroll.append(rec.threadNode)
@@ -627,14 +675,15 @@ export function mountFocus({ onDecided } = {}) {
       answer.append(rec.noteTag)
     }
 
+    // The conversation at the left, the answers at the right, and the composer with its buttons in a row of
+    // its own under both: the field as wide as the conversation, the buttons at its right.
     const talk = el('div', 'focus-talk')
     talk.append(scroll)
-    if (rec.composer) talk.append(rec.composer)
-    node.replaceChildren(talk, answer)
+    node.replaceChildren(...[talk, answer, rec.composer].filter(Boolean))
     if (multi) paintPicked(rec)
     rec.toEnd = false
     paintThread(rec)
-    paintDraft(rec)
+    paintFiles(rec)
     // With a conversation under the question, the newest of it is in view, as in any chat.
     scroll.scrollTop = rec.toEnd ? scroll.scrollHeight : scrollTop
     rec.toEnd = false
@@ -671,13 +720,61 @@ export function mountFocus({ onDecided } = {}) {
   function paintDraft(rec) {
     const field = rec.askField
     if (!field) return
-    const has = Boolean(rec.askText.trim())
-    rec.askSend.disabled = !has
-    if (rec.noteTag) rec.noteTag.hidden = !has
+    const words = Boolean(rec.askText.trim()), n = rec.files.length
+    rec.askSend.disabled = !words && !n
+    if (rec.noteTag) {
+      rec.noteTag.hidden = !words && !n
+      rec.noteTag.lastChild.textContent = words && n ? `Your words and ${n === 1 ? 'the file' : `${n} files`} go along` : n ? `${n === 1 ? 'The file goes' : `${n} files go`} along with your answer` : 'Your words go along as a note'
+    }
     field.style.height = 'auto'
     const full = field.scrollHeight
     if (full) field.style.height = `${Math.min(full, 168)}px`
     field.style.overflowY = full > 168 ? 'auto' : 'hidden'
+  }
+
+  /** Take files into the composer of a card (picked, dropped or pasted): read, and shown as chips until sent. */
+  async function addFiles(rec, list) {
+    const room = MAX_FILES - rec.files.length
+    const files = [...list]
+    if (files.length > room) info(`At most ${MAX_FILES} files at once.`, true)
+    for (const file of files.slice(0, Math.max(0, room))) {
+      if (file.size > MAX_FILE_BYTES) { info(`Too large (over ${MAX_FILE_BYTES / 1024 / 1024} MB): ${file.name}`, true); continue }
+      try {
+        const data = await readDataUrl(file)
+        // a screenshot from the clipboard has no name of its own
+        const name = file.name && file.name !== 'image.png' ? file.name : `Screenshot ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/:/g, '.')}.png`
+        rec.files.push({ name, data, image: /^image\//.test(file.type), size: file.size })
+      } catch {
+        info(`Not readable: ${file.name}`, true)
+      }
+    }
+    paintFiles(rec)
+  }
+  /** The chips over the field: a small picture or a name, each with its way out. */
+  function paintFiles(rec) {
+    if (!rec.chipsNode) return
+    rec.chipsNode.hidden = !rec.files.length
+    rec.chipsNode.replaceChildren(...rec.files.map(file => {
+      const chip = el('span', 'focus-chip')
+      chip.title = file.name
+      if (file.image) {
+        const img = el('img')
+        img.src = file.data
+        img.alt = file.name
+        chip.append(img)
+        chip.dataset.kind = 'image'
+        // a picture can be drawn on before it is sent (the scratchpad, see openPad)
+        if (file.doc || !file.drawn) chip.addEventListener('click', e => { if (!e.target.closest('.focus-chip-x')) rec.annotate?.(file) })
+      } else {
+        chip.append(icon('file'), el('span', null, file.name))
+      }
+      const out = button('focus-chip-x', `Remove ${file.name}`)
+      out.append(icon('close'))
+      out.addEventListener('click', () => { rec.files = rec.files.filter(f => f !== file); paintFiles(rec); rec.askField?.focus({ preventScroll: true }) })
+      chip.append(out)
+      return chip
+    }))
+    paintDraft(rec)
   }
 
   /** What was said about a card, under its question, in the look of the session's conversation (the classes
@@ -686,11 +783,11 @@ export function mountFocus({ onDecided } = {}) {
   function paintThread(rec) {
     if (!rec.threadNode) return
     const told = (pool()?.messages ?? []).filter(m => m.card_id === rec.id && m.from !== 'event')
-    const mine = (asked.get(rec.id) ?? []).filter(a => !(a.state === 'sent' && told.some(m => m.from === 'user' && m.text === a.text)))
+    const mine = (asked.get(rec.id) ?? []).filter(a => !(a.state === 'sent' && told.some(m => m.from === 'user' && (m.text ?? '') === a.text && m.ts >= a.ts - 60000)))
     if (asked.has(rec.id)) asked.set(rec.id, mine)
     const items = [
       ...told.map(m => ({ from: m.from === 'user' ? 'user' : 'agent', text: m.text ?? '', ts: m.ts, state: '', attachments: m.attachments ?? [], details: m.details ?? '' })),
-      ...mine.map(a => ({ from: 'user', text: a.text, ts: a.ts, state: a.state, error: a.error })),
+      ...mine.map(a => ({ from: 'user', text: a.text, ts: a.ts, state: a.state, error: a.error, pending: a.files ?? [] })),
     ].sort((a, b) => a.ts - b.ts)
     const sig = JSON.stringify(items)
     if (sig === rec.threadSig) return
@@ -709,9 +806,12 @@ export function mountFocus({ onDecided } = {}) {
         const bubble = el('div', 'bubble')
         // The fixed request of "Explain" is one long sentence for the agent; here it is the two words the human tapped.
         const fixed = item.text === EXPLAIN_TEXT
-        bubble.append(el('p', null, fixed ? 'Explain this, please.' : item.text))
+        bubble.append(el('p', null, fixed ? EXPLAIN_LABEL : item.text))
         if (fixed) bubble.title = item.text
-        msg.append(bubble)
+        if (item.text) msg.append(bubble)
+        // what went along: stored files as in the session's conversation, files still on their way by name
+        msg.append(...attachmentNodes(item.attachments ?? []))
+        if (item.pending?.length) msg.append(el('p', 'focus-msg-files', item.pending.join(', ')))
         if (item.state === 'sending') { msg.dataset.state = 'sending'; msg.append(el('p', 'focus-msg-state', 'Sending')) }
         else if (item.state === 'failed') { msg.dataset.state = 'failed'; msg.append(el('p', 'focus-msg-state', `Not sent: ${item.error}`)) }
         else msg.append(agoNode(item.ts, 'msg-time'))
@@ -750,18 +850,21 @@ export function mountFocus({ onDecided } = {}) {
    *  Resolves true when the session has it. */
   async function askBack(rec, fixed = null) {
     const text = (fixed ?? rec.askText).trim()
-    if (!text) return rec.askField?.focus({ preventScroll: true })
-    const entry = { text, ts: Date.now(), state: 'sending', error: '' }
+    // what is attached in the composer goes with what is typed there (never with the fixed request of What??)
+    const files = fixed ? [] : rec.files
+    if (!text && !files.length) return rec.askField?.focus({ preventScroll: true })
+    const entry = { text, ts: Date.now(), state: 'sending', error: '', files: files.map(f => f.name) }
     asked.set(rec.id, [...(asked.get(rec.id) ?? []).filter(a => a.state !== 'failed'), entry])
     if (!fixed) {
       rec.askText = ''
       if (rec.askField) { rec.askField.value = ''; rec.askSend.disabled = true }
-      paintDraft(rec)
+      rec.files = []
+      paintFiles(rec)
     }
     paintThread(rec)
     rec.scroll.scrollTop = rec.scroll.scrollHeight
     try {
-      await sendMessage(text, rec.card.agent, rec.id)
+      await sendMessage(text, rec.card.agent, rec.id, files.map(({ name, data }) => ({ name, data })))
       entry.state = 'sent'
       // What was typed into the composer is plain chat about the card: it stays open, in its place, and in front.
       // Only "Explain" (fixed) leaves the card: it waits under "Later" until the reply, and the walk moves on.
@@ -779,7 +882,7 @@ export function mountFocus({ onDecided } = {}) {
     const now = recs.get(rec.id)
     if (!now) return sent
     // a failed question goes back into the field, unless the human is already typing the next one
-    if (entry.state === 'failed' && !fixed && !now.askText && now.askField) { now.askText = text; now.askField.value = text; now.askSend.disabled = false; paintDraft(now) }
+    if (entry.state === 'failed' && !fixed && !now.askText && !now.files.length && now.askField) { now.askText = text; now.askField.value = text; now.files = files; paintFiles(now) }
     paintThread(now)
     now.scroll.scrollTop = now.scroll.scrollHeight
     return sent
@@ -801,12 +904,12 @@ export function mountFocus({ onDecided } = {}) {
     if (!sent) return info('Not asked: the session did not get it.', true)
     const fetch = async () => { putOff(rec.id, false) }
     // The window of one card closes: the card is put off and comes back with the reply. The page says so.
-    if (!walking) { close(); return void say(pageHost(), { head: 'Asked to explain', title: 'It comes back with the answer.', back: fetch }) }
-    offerBack(rec.card, { head: 'Asked to explain', title: 'It comes back with the answer.', take: fetch })
+    if (!walking) { close(); return void say(pageHost(), { head: `Asked: ${EXPLAIN_LABEL}`, title: 'It comes back with the answer.', back: fetch }) }
+    offerBack(rec.card, { head: `Asked: ${EXPLAIN_LABEL}`, title: 'It comes back with the answer.', take: fetch })
   }
 
   // ── answering ───────────────────────────────────────────────────────────
-  const request = (card, keys, note) => (card.multiple ? decideMany(card.id, keys, note, card.revised ?? null) : decide(card.id, keys[0], note))
+  const request = (card, keys, note, files = []) => (files.length ? decideWith(card, keys, note, files) : card.multiple ? decideMany(card.id, keys, note, card.revised ?? null) : decide(card.id, keys[0], note))
 
   async function submit(rec, keys) {
     if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return
@@ -817,6 +920,7 @@ export function mountFocus({ onDecided } = {}) {
     const option = chosen.length === 1 && !rec.multi ? chosen[0] : { key: keys.join(','), label: chosen.map(rec.labelOf).join(', '), detail: '' }
     const btn = rec.multi ? rec.sendTile : rec.optButtons.find(b => b.dataset.key === keys[0])
     const note = rec.noteNode ? rec.note.trim() : ''
+    const files = rec.files.map(({ name, data }) => ({ name, data }))   // what is attached in the composer goes with the answer
     setError(rec, '')
 
     if (!single) {
@@ -830,7 +934,7 @@ export function mountFocus({ onDecided } = {}) {
       sentId = rec.id
       if (card.kind !== 'permission') offerBack(card, { head: `Answered: ${option.label}`, take: () => reopenAnswer(card) })
       else hideUndo()
-      const sending = request(card, keys, note)
+      const sending = request(card, keys, note, files)
       inflight.set(card.id, sending)
       sync('sent')
       try {
@@ -854,7 +958,7 @@ export function mountFocus({ onDecided } = {}) {
     if (rec.noteNode) rec.noteNode.disabled = true
     paintChrome()
     try {
-      await request(card, keys, note)
+      await request(card, keys, note, files)
     } catch (err) {
       rec.busy = false
       delete rec.node.dataset.busy
@@ -986,35 +1090,42 @@ export function mountFocus({ onDecided } = {}) {
     if (wasHidden) announce(`More urgent: ${rec.card.title}. The question in front of you stays.`)
   }
 
-  // ── drawn with the pen: the composer's box, its send mark, Explain and Later ──
-  // A box drawn by hand round a node (ui.js penFrame), in the node's real size: drawn again when the size changes.
-  const frames = new WeakMap()
-  const frameWatch = new ResizeObserver(entries => { for (const e of entries) frames.get(e.target)?.() })
-  function framed(node, seed, opts) {
-    const svg = document.createElementNS(SVG_NS, 'svg')
-    svg.setAttribute('class', 'focus-frame')
-    svg.setAttribute('aria-hidden', 'true')
-    const path = document.createElementNS(SVG_NS, 'path')
-    svg.append(path)
-    node.append(svg)
-    let was = ''
-    frames.set(node, () => {
-      const w = node.offsetWidth, h = node.offsetHeight
-      if (!w || !h || was === `${w}x${h}`) return
-      was = `${w}x${h}`
-      svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
-      path.setAttribute('d', penFrame(w, h, seed, opts))
-    })
-    frameWatch.observe(node)
-    return node
-  }
-  // Explain and Later: each its own drawing and its own box. (The buttons and what they do are made above;
-  // here they only get their look. They stand beside the composer of the card in front, see paintChrome.)
-  explainBtn.replaceChildren(sketch('explain'), el('span', null, 'Explain'))
+  // ── Send, Explain, Later: three plain buttons of one rank, each with its small drawing ──
+  // (The buttons Explain and Later and what they do are made above; here they only get their look: the tile of
+  // an option, small, with a drawing of the pen in it. They stand beside the composer of the card in front, see paintChrome.)
+  explainBtn.replaceChildren(sketch('explain'), el('span', null, EXPLAIN_LABEL))
+  explainBtn.title = `${EXPLAIN_LABEL} (E): ask the session to explain this question; it returns with the reply`
   explainBtn.classList.add('focus-way')
   laterBtn.classList.add('focus-way')
-  framed(explainBtn, 'explain', { round: 13, wobble: 1.8 })
-  framed(laterBtn, 'later', { round: 9, wobble: 1.6 })
+  laterBtn.title = 'Later (L): it waits for you, at the end of the line'
+  // The fourth of the row: hand the card to its session. It leaves, and returns only with the session's reply
+  // (Later, beside it, waits for the human instead). Its mark is a playing card that turns the direction round.
+  const handBtn = button('focus-later focus-handback focus-way', `${HAND_BACK_LABEL}: the session works on it, the question returns with its reply`)
+  handBtn.title = `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`
+  handBtn.append(sketch('reverse'), el('span', null, HAND_BACK_LABEL))
+  let handing = false
+  /** Hand the card in front to its session: what stands in the composer is sent first, then the card goes to
+   *  "Later" as one the session owes a reply on, and comes back with that reply. The walk moves on; the window of one card closes. */
+  async function handBack() {
+    const rec = shown
+    if (!isOpen || !rec || rec.busy || !rec.askNode || handing) return false
+    handing = true
+    handBtn.disabled = true
+    const walking = !single
+    const sent = rec.askText.trim() ? await askBack(rec).catch(() => false) : true
+    handing = false
+    paintChrome()
+    if (!isOpen) return
+    if (!sent) return info('Not handed over: the session did not get your words.', true)
+    if (!recs.has(rec.id)) return
+    if (walking && shown === rec && order.length > 1) { pendingJump = order[order.indexOf(rec.id) + 1] ?? order.find(id => id !== rec.id); jumpMotion = 'later' }
+    putOff(rec.id, true, true)
+    announce(`With the agent: ${rec.card.title}`)
+    const fetch = async () => { putOff(rec.id, false) }
+    if (!walking) { close(); return void say(pageHost(), { head: 'With the agent', title: 'It comes back with the reply.', back: fetch }) }
+    offerBack(rec.card, { head: 'With the agent', title: 'It comes back with the reply.', take: fetch })
+  }
+  handBtn.addEventListener('click', handBack)
 
   // ── the rail: how far the walk is ───────────────────────────────────────
   // A slim strip at the left edge of the window (a thin row under the top bar when the window is narrow):
@@ -1036,7 +1147,7 @@ export function mountFocus({ onDecided } = {}) {
     rail.dataset.place = place
     root.dataset.rail = place
     const home = place === 'outside' || place === 'below' ? root : place === 'bottom' ? shown?.node.querySelector('.focus-talk') ?? sheet : sheet
-    if (place === 'bottom' && home !== sheet) { if (rail.parentNode !== home || rail.nextSibling !== (shown.composer ?? null)) home.insertBefore(rail, shown.composer ?? null) }
+    if (place === 'bottom' && home !== sheet) { if (rail.parentNode !== home) home.append(rail) }
     else if (home === root) { if (rail.parentNode !== root) root.append(rail) }
     else if (rail.previousSibling !== top) top.after(rail)
   }
@@ -1294,7 +1405,9 @@ export function mountFocus({ onDecided } = {}) {
     explainBtn.hidden = laterBtn.hidden
     explainBtn.disabled = locked || explaining
     const slot = shown?.actionsNode
-    if (slot && laterBtn.parentNode !== slot) slot.append(explainBtn, laterBtn)
+    handBtn.hidden = laterBtn.hidden
+    handBtn.disabled = locked || handing
+    if (slot && laterBtn.parentNode !== slot) slot.append(explainBtn, handBtn, laterBtn)
     paintRail()
     if (!card) return
     sheet.dataset.urgency = shown.node.dataset.urgency
@@ -1416,6 +1529,7 @@ export function mountFocus({ onDecided } = {}) {
       // The note while it is up; a little longer, the key alone.
       'focus.back': key(() => { backNow() }),
       'focus.explain': key(() => explain()),
+      'focus.handback': key(() => handBack()),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
       'focus.pick': key(n => {
         const btn = shown?.optButtons[n - 1]
@@ -1613,14 +1727,15 @@ export function mountFocus({ onDecided } = {}) {
     // Explain and Later, as under the composer: both leave the card.
     const ways = el('div', 'focus-zoom-ways')
     const explainTwin = button('focus-later focus-explain focus-way', 'Explain: ask the session to explain this question')
-    explainTwin.append(sketch('explain'), el('span', null, 'Explain'))
-    framed(explainTwin, 'explain', { round: 13, wobble: 1.8 })
+    explainTwin.append(sketch('explain'), el('span', null, EXPLAIN_LABEL))
     explainTwin.addEventListener('click', () => { shut(); explain() })
     const laterTwin = button('focus-later focus-way', 'Later: put this question off')
     laterTwin.append(sketch('later'), el('span', null, 'Later'))
-    framed(laterTwin, 'later', { round: 9, wobble: 1.6 })
     laterTwin.addEventListener('click', () => { shut(); later() })
-    ways.append(explainTwin, laterTwin)
+    const handTwin = button('focus-later focus-handback focus-way', `${HAND_BACK_LABEL}: the session works on it, the question returns with its reply`)
+    handTwin.append(sketch('reverse'), el('span', null, HAND_BACK_LABEL))
+    handTwin.addEventListener('click', () => { shut(); handBack() })
+    ways.append(explainTwin, handTwin, laterTwin)
     node.append(take, list, line, ways)
 
     let now = -1

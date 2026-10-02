@@ -2,7 +2,7 @@
 // conversation, theme, connection feedback, and the glue between conversation and scribble.
 
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
-import { mountAgents, mountRoster, avatar, pairAvatar, tellApart, openMarkPicker, openEditor } from './agents.js'
+import { mountAgents, mountRoster, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor } from './agents.js'
 import { mountInbox } from './inbox.js'
 import { el, sketch, setAssetSource } from './ui.js'
 import { mountChat } from './chat.js'
@@ -53,7 +53,7 @@ paintTheme()
 //   /s/<id>                a session's conversation; /s/<id>+<id> sessions laid together
 //   /s/<id>/questions      the conversation filtered to its questions; /files likewise
 //   /s/<id>/scribble       its canvas
-//   ?q=<card id>           on any of them: that question open in its own window ("next": the walk through all)
+//   ?q=<card number>       on any of them: that question open in its own window ("next": the walk through all)
 
 function readAddress() {
   const parts = location.pathname.split('/').filter(Boolean)
@@ -67,6 +67,8 @@ function readAddress() {
   return { page: null, ids: [], view: 'chat', filter: null, q }
 }
 let focusCard = null   // what ?q= says: a card id, "next", or null
+// ?q= may carry the number of a question or, as older links do, its id.
+const cardOf = q => (/^\d+$/.test(q) && getState().all.cards.find(c => c.number === Number(q))?.id) || q
 function addressNow() {
   const state = getState()
   let path = '/'
@@ -77,7 +79,8 @@ function addressNow() {
     if (tail) path += `/${tail}`
   }
   const params = new URLSearchParams(location.search)
-  if (focusCard) params.set('q', focusCard)
+  // The address names a question by its number, as the board does everywhere else (?q=102).
+  if (focusCard) params.set('q', String(state.all.cards.find(c => c.id === focusCard)?.number ?? focusCard))
   else params.delete('q')
   const query = params.toString()
   return path + (query ? `?${query}` : '') + location.hash
@@ -271,7 +274,7 @@ function paintTitle(state) {
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${agent.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(agent))
+    mark.append(avatar(agent, { vip: false }))
     mark.addEventListener('click', () => openMarkPicker(agent, mark))
     const name = el('button', null, agent.name)
     name.type = 'button'
@@ -279,8 +282,9 @@ function paintTitle(state) {
     name.addEventListener('click', () => openEditor(agent))
     const heading = el('h2', 'pane-name')
     heading.append(name)
-    // A starred session wears its crown on the mark (agents.js avatar); nothing stands next to the name.
-    return paneTitle.replaceChildren(mark, heading)
+    // The crown on the mark's corner is a switch of its own (agents.js crownToggle): a click puts it on
+    // or takes it off. Nothing stands next to the name.
+    return paneTitle.replaceChildren(mark, crownToggle(agent), heading)
   }
   paneTitle.title = ''
   const names = el('h2', 'pane-members')
@@ -324,7 +328,7 @@ function followAddress(first = false) {
   // A deep link from before there were addresses may still ask for a mode by hash flag.
   if (first && !to.ids.length && !to.page) showView(flags.has('scribble') ? 'scribble' : 'chat', flags.has('decisions') ? 'questions' : flags.has('files') ? 'files' : null)
   else showView(to.view, to.filter)
-  if (to.q && isLoaded()) openFocus(to.q === 'next' ? null : to.q, false)
+  if (to.q && isLoaded()) openFocus(to.q === 'next' ? null : cardOf(to.q), false)
   else if (!to.q && focusMode?.isOpen()) focusMode.close()
   routing = false
   return to
@@ -424,10 +428,13 @@ subscribe((state, online) => {
     // The address named a question to open; now its card is known.
     if (!arrived) {
       arrived = true
-      if (arrival.q) openFocus(arrival.q === 'next' ? null : arrival.q, false)
+      if (arrival.q) openFocus(arrival.q === 'next' ? null : cardOf(arrival.q), false)
     }
     // The scope may have changed by itself: a session that is gone, a group that formed or dissolved.
-    writeAddress(false)
+    // Not at once: the store tells its listeners in the middle of a step (a click in the sidebar, Back or
+    // Forward being followed). Written now, the address would name a half-taken step, and the step's own
+    // entry would find nothing left to add. Once the step is through, this finds the address already right.
+    queueMicrotask(() => writeAddress(false))
   }
   paintView()
   if (!toast.hidden) placeToast()

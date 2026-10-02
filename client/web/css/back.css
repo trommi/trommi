@@ -89,3 +89,17 @@
   .inbox-takeback { grid-column: 2; justify-self: start; }
   .inbox-done-who { display: none; }
 }
+
+/* A phone has no free corner: while a note is up, the view gives it a strip at its lower edge
+   (above the tab bar; the composer moves up with the view), so the note lies over nothing. */
+@media (max-width: 860px) {
+  body[data-says] main { margin-bottom: 62px; }
+  .says-page .says { rotate: 0deg; max-width: calc(100vw - 16px); padding-block: 7px 11px; }
+  .focus-says .says { max-width: calc(100cqi - 120px); }
+}
+/* For a moment a new note lets taps through, so a second tap meant for the next answer cannot hit "Back". */
+.says[data-fresh] { pointer-events: none; }
+
+/* What went wrong with an answer on a row: on the row's lower edge, in full, never cut by the text's fixed lines. */
+.inbox-row-error { position: absolute; z-index: 2; left: 76px; bottom: 6px; max-width: calc(100% - 96px); padding: 3px 9px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--deny) 40%, var(--surface)); font-weight: 600; line-height: 1.3; }
+.inbox-row-error[hidden] { display: none; }

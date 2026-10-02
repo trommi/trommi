@@ -92,14 +92,43 @@ Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zei
 - `create_decision(title, body, options[{key, label, detail}], attachments[Pfade], urgency, urgency_reason, recommended, multiple)`: Karte anlegen. Mit `multiple: true` darf der Mensch mehrere Optionen ankreuzen (`POST /decide {card_id, keys: [...]}`); die Karte speichert `choices` und als `choice` die erste. `recommended` ist ein Schlüssel oder, bei `multiple`, eine Liste.
 - `revise_card(card_id, title, body, options, attachments, urgency, urgency_reason, recommended, multiple, note)`: eine eigene offene Karte an Ort und Stelle umschreiben; nur angeben, was sich ändert. Die Karte behält Kennung, Nummer und Platz, bekommt den Zeitstempel `revised`, und im Gespräch steht „Question revised“ mit `note`. Entschiedene Karten lassen sich nicht umschreiben. Eine Antwort gilt für die Fassung, die der Mensch gelesen hat: `POST /decide` kann `revised` mitschicken (der Stand, den die Seite kennt); passt er nicht, gibt es die gewählte Option nicht mehr oder liegt die Änderung weniger als 1,5 Sekunden zurück (`BOARD_REVISE_GRACE_MS`), antwortet der Hub mit 409 und einem lesbaren Grund, und nichts wird gespeichert.
 - `merge_cards(card_ids[], title, body, options, attachments, urgency, urgency_reason, recommended, multiple)`: mehrere eigene offene Karten in einem Schritt durch eine neue ersetzen, typisch mit `multiple: true` und einer Option je früherer Frage. Die alten Karten sind erledigt („Merged into Nr. …“, `merged_into`), die neue nennt in `merged_from` ihre Nummern und Titel, übernimmt die höchste Dringlichkeit und das Alter der ältesten. Rückfragen zu den alten Karten bleiben im Gespräch.
-- Der Hub erinnert, ohne abzulehnen: Wer eine Frage stellt, während schon drei eigene offen sind, bekommt im Ergebnis den Hinweis auf `merge_cards` und `revise_card` samt Liste seiner offenen Karten; ist der Text über 300 Zeichen oder ein `detail` über 60 Zeichen lang, steht auch das im Ergebnis.
+- **Ein Textblock statt `body` + `options`.** `create_decision`, `revise_card` und `merge_cards` nehmen die ganze Frage auch als einen gegliederten Text: als `sections` (Liste von Blöcken) oder als `text` (ein String). Ein Block ohne `key` ist Fließtext; ein Block mit `key` ist ein markierter Absatz und wird zur Option. Der Hub leitet daraus `options` (`{key, label, detail: ''}`), `recommended` und `body` ab (Absätze als Markdown, markierte mit fettem Label voran) und speichert die Blöcke als `card.sections`; die Seite zeigt jeden Absatz mit seiner Option verbunden. Die Antwort kommt unverändert als `choice` / `choices`. `sections` oder `text` zusammen mit `options` oder `body` wird abgelehnt, ebenso ein `picture`, das die Karte nicht als Anhang hat. Der Vertrag für Clients steht in [docs/question-contract.md](docs/question-contract.md).
+
+  ```json
+  { "title": "Was soll in den Export?", "multiple": true, "attachments": ["/abs/skizze.png"],
+    "sections": [
+      { "text": "Der Export läuft bei großen Konten ins Limit. Kreuze an, was ich bauen darf." },
+      { "key": "limit", "label": "Limit anheben", "recommended": true, "text": "60 statt 30 Sekunden. Schnell gemacht, verschiebt die Grenze nur." },
+      { "key": "async", "label": "Im Hintergrund", "picture": "skizze.png", "text": "Die Datei kommt per Mail. Etwa zwei Tage." }
+    ] }
+  ```
+
+  Dasselbe als `text`: Absätze sind durch eine Leerzeile getrennt; ein Absatz, der mit `[key]` beginnt, ist eine Option. `[key] Label: Erklärung`; ohne Doppelpunkt ist die erste Zeile das Label, die folgenden Zeilen erklären. `[key*]` oder `(recommended)` hinter dem Label markiert die Empfehlung, eine letzte Zeile `picture: datei.png` (Dateiname oder Position ab 0) bindet einen Anhang an die Option. Alles andere ist Fließtext. Für Absätze, die selbst Leerzeilen enthalten (Code-Blöcke), `sections` nehmen.
+
+  ```
+  Der Export läuft bei großen Konten ins Limit. Kreuze an, was ich bauen darf.
+
+  [limit*] Limit anheben: 60 statt 30 Sekunden. Schnell gemacht, verschiebt die Grenze nur.
+
+  [async] Im Hintergrund: Die Datei kommt per Mail. Etwa zwei Tage.
+  picture: skizze.png
+
+  [page] Export blättern
+  Kleinere Dateien, aber jeder Abnehmer der API muss mitziehen.
+  ```
+
+  `revise_card` mit `sections` oder `text` ersetzt Text und Optionen; mit `body` oder `options` wird die Karte wieder eine einfache (die Blöcke entfallen, das Ergebnis sagt es); ohne beides bleiben die Blöcke stehen, und `recommended` zieht ihre Markierung nach.
+- **Notiz je Option.** Der Mensch kann zu jeder Option etwas schreiben, auch zu einer nicht gewählten: `POST /decide {card_id, key | keys, note, notes: {"<key>": "Text"}}`. Die Karte speichert sie als `option_notes`, das Ereignis „decided“ nennt sie, und der Agent bekommt sie im Text des Kanal-Ereignisses (nach der allgemeinen Notiz: `Notes on options:` und je Notiz eine Zeile `- Label [key], chosen|not chosen: Text`); das Attribut `option_notes="a,b"` nennt die Schlüssel. Unbekannte Schlüssel und Notizen über 2000 Zeichen werden abgelehnt.
+- **Entwürfe.** `POST /draft {card_id, keys: [...], note, notes: {...}}` merkt sich auf der offenen Karte, was angekreuzt und geschrieben, aber nicht gesendet ist (`card.draft = {keys, note, notes, ts}`); ein leerer Entwurf löscht ihn. Er ist Teil des Zustands, den jede Seite bekommt, also auf jedem Gerät derselbe. Der Agent erfährt nichts davon. Er verschwindet mit der Antwort, beim Zurückziehen, Zusammenführen und Schließen; schreibt der Agent die Karte um, fällt heraus, was nicht mehr existierende Optionen betrifft. Wird eine Antwort zurückgenommen (`POST /reopen`), wird sie zum Entwurf: Haken und Notizen sind wieder da.
+- Der Hub erinnert, ohne abzulehnen: Wer eine Frage stellt, während schon drei eigene offen sind, bekommt im Ergebnis den Hinweis auf `merge_cards` und `revise_card` samt Liste seiner offenen Karten; ist der Text über 300 Zeichen oder ein `detail` über 60 Zeichen lang, steht auch das im Ergebnis. Bei Karten aus Blöcken gilt stattdessen: ein einzelner Block über etwa 400 Zeichen wird genannt. Und: Eine Frage, die nach Aussehen klingt (Design, Layout, Farbe, Button, Icon, Sidebar, Mockup, Variante, Schrift, Logo …) und weder Anhang noch Link trägt, bekommt den Hinweis, ein Bild je Option (`<irgendwas>-<key>.png`) oder eine Seite zum Ausprobieren nachzureichen. Die Anweisungen an die Agenten verlangen das von vornherein: Fragen zu Oberfläche und Gestaltung nie nur in Worten, und auch die Erklärung dazu mit Bild.
+- **Reihenfolge der Sitzungen.** `POST /session {agent, before: "<id>" | null}` stellt eine Sitzung direkt vor eine andere (`null`: ans Ende). `state.agents` steht in dieser Reihenfolge, jede Sitzung trägt `position`; neue kommen ans Ende, Mitglieder einer Gruppe ziehen gemeinsam um. Der Stapel und die Sortierung des Posteingangs bleiben davon unberührt.
 - `set_urgency(card_id, urgency, reason)`: Dringlichkeit einer offenen Karte ändern; die Karte rückt im Stapel entsprechend vor oder zurück
 - `withdraw_card(card_id, reason)`: offene Frage zurückziehen, die sich erledigt hat
 - `set_status(id, label, state, detail, card_id)`: eine Zeile der Statusleiste anlegen oder ändern. `decision` = rot (wartet auf dich), `working` = gelb (in Arbeit), `done` = grün (umgesetzt). Mit `card_id` springt die rote Zeile zur Karte und wird nach deiner Antwort von selbst gelb.
 - `clear_status(id)`: eine Zeile entfernen, ohne `id` alle
 - `close_card(card_id, summary)`: entschiedene Karte nach „Erledigt“ schieben
 - `create_voiceover(text, style)`: Text als MP3 sprechen lassen, gibt den Dateipfad zurück (für Videos oder als Anhang)
-- `list_cards()`: Stand aller Karten mit Nummer, Dringlichkeit und Platz im Stapel; offene Karten mit Text und Optionen, damit der Agent vor einer neuen Frage sieht, was er schon gefragt hat
+- `list_cards()`: Stand aller Karten mit Nummer, Dringlichkeit und Platz im Stapel; offene Karten mit Text, Optionen und gegebenenfalls `sections`, damit der Agent vor einer neuen Frage sieht, was er schon gefragt hat
 - `publish_asset(path | content, type, title, note, silent, keep)`: eine Seite oder Datei verschlüsselt ablegen und einen Link zurückbekommen, siehe „Assets und Links“
 - `list_assets()`, `revoke_asset(id)`: eigene Assets auflisten, einen Link beenden
 

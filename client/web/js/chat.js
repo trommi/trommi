@@ -5,7 +5,7 @@
 // (icons, attachments, lightbox, code blocks).
 
 import { sendMessage } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText } from './ui.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountHistory, mountFiles } from './history.js'
 import { mountDictation } from './speech.js'
@@ -613,6 +613,8 @@ function createPane(agent, ctx) {
     for (const m of fresh) append(m, state, animate)
     for (const entry of asks.values()) paintAsk(entry, state)
     if (published.size) for (const m of messages) if (published.has(m.id) && m.asset) paintAsset(published.get(m.id), m)
+    // A link to an asset inside a text is a card too; it is drawn again when the asset was withdrawn since.
+    refreshAssetLinks(inner)
 
     if (!messages.length && !empty) {
       empty = emptyNode(text => { draft.value = text; fitDraft(); draft.focus() })

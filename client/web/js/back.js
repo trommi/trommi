@@ -33,17 +33,21 @@ let usedAt = 0                // when "Back" was last used
 /** When "Back" was last used: a list brings the question that returns just after into view. */
 export const backUsedAt = () => usedAt
 
-/** The place for notes about the page itself: the top left corner of whatever main view is up. */
+/** The place for notes about the page itself. On a wide screen the top left corner of whatever main view
+ *  is up, where no control stands. A phone has no such corner: there the view gives up a strip at its lower
+ *  edge for as long as the note is there (css, body[data-says]), so the note covers nothing and nothing moves. */
+const phone = matchMedia('(max-width: 860px)')
 let pageNode = null
 export function pageHost() {
   if (!pageNode) {
     pageNode = el('div', 'says-host says-page')
     document.body.append(pageNode)
   }
+  document.body.dataset.says = ''
   const main = [...document.querySelectorAll('main')].find(n => n.getClientRects().length)
   const box = main?.getBoundingClientRect()
-  pageNode.style.left = `${Math.round((box?.left ?? 0) + 14)}px`
-  pageNode.style.top = `${Math.round((box?.top ?? 0) + 14)}px`
+  pageNode.style.left = `${Math.round((box?.left ?? 0) + (phone.matches ? 8 : 14))}px`
+  pageNode.style.top = phone.matches ? `${Math.round((box?.bottom ?? window.innerHeight - 64) + 6)}px` : `${Math.round((box?.top ?? 0) + 14)}px`
   return pageNode
 }
 
@@ -62,7 +66,14 @@ export function say(host, { head, title = '', back = null, onFail, ms = BACK_MS 
   node.append(words)
 
   let left = ms, since = 0, timer = 0, over = false, within = false, done = false
-  const stop = () => { done = true; clearTimeout(timer); node.remove(); if (notes.get(host)?.node === node) notes.delete(host) }
+  const stop = () => {
+    done = true
+    clearTimeout(timer)
+    node.remove()
+    if (notes.get(host)?.node !== node) return
+    notes.delete(host)
+    if (host === pageNode) delete document.body.dataset.says
+  }
   // The clock stops while the pointer rests on the note or the keyboard is in it.
   const tick = () => {
     clearTimeout(timer)
@@ -101,6 +112,10 @@ export function say(host, { head, title = '', back = null, onFail, ms = BACK_MS 
   node.append(line)
 
   host.replaceChildren(node)
+  if (host === pageNode) document.body.dataset.says = ''
+  // A second tap meant for the next answer must not land on "Back": for a moment the note lets taps through.
+  node.dataset.fresh = ''
+  setTimeout(() => delete node.dataset.fresh, 400)
   notes.set(host, { node, stop })
   tick()
   return { node, stop }

@@ -166,7 +166,10 @@ function load(owner) {
   for (const c of cards) if (!numbered(c.number)) c.number = next++
   const tasks = list('tasks')
     .filter(t => t.id && STATUSES.includes(t.state)).map(t => ({ agent: owner, ...t }))
+  // The sessions stand in the order the human gave them; one without a place yet comes after those that have one.
+  const place = a => (Number.isFinite(a.position) ? a.position : Infinity)
   const agents = list('agents').filter(a => a.id).map(a => ({ ...a, online: false }))
+    .sort((a, b) => place(a) - place(b)).map((a, position) => ({ ...a, position }))
   // Spokes of the hub that just went away are probably still running and about to link again.
   reserved = new Map(list('agents').filter(a => a.online && a.instance && a.id !== raw.hub).map(a => [a.id, a.instance]))
   const pending = {}
@@ -206,11 +209,15 @@ let reserved = new Map()
 let reservedUntil = 0
 
 const clients = new Set()
+// Set while a change that may wait a moment (a draft) is not yet in the state file.
+let saveTimer = null
 const newId = () => crypto.randomBytes(4).toString('hex')
 
 // Written whole and then swapped in: a hub that dies in the middle of a write
 // leaves the previous file behind, not half of a new one.
 function save() {
+  clearTimeout(saveTimer)
+  saveTimer = null
   const tmp = `${STATE_FILE}.${process.pid}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, STATE_FILE)
@@ -219,11 +226,14 @@ function save() {
 // The page gets everything except what is still waiting to be delivered to agents.
 const frameOf = () => `data: ${JSON.stringify({ ...state, pending: undefined })}\n\n`
 
-function commit() {
+// soon: the pages get the state at once, the file is written within a second, together with whatever else changed until then.
+function commit(soon = false) {
   state.queue = queueOf(state.cards, state.agents)
-  for (const a of state.agents) a.online = links.has(a.id)
+  // The list is the order of the sidebar; position says the same as a number, so a new session is last and a forgotten one leaves no gap.
+  state.agents.forEach((a, at) => { a.online = links.has(a.id); a.position = at })
   state.speech = Boolean(speechKey())
-  save()
+  if (!soon) save()
+  else saveTimer ??= setTimeout(() => { if (role === 'hub') save() }, 1000).unref()
   const frame = frameOf()
   // A page on a slow connection gets the latest state once it has caught up,
   // not a growing backlog of every state in between.
@@ -386,6 +396,43 @@ function storeAttachment(file) {
   return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size }
 }
 
+// What the human attaches in the browser (a file, a pasted screenshot, a drawing): a list of
+// { name, data } with data a base64 data URL. Each is stored beside the agents' attachments and
+// served like them; the agent is told where the files lie, so it can open them.
+const MAX_UPLOADS = 12
+const UPLOAD_BODY = 96e6
+const UPLOAD_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/gif': '.gif', 'image/webp': '.webp', 'image/svg+xml': '.svg', 'application/pdf': '.pdf', 'text/plain': '.txt' }
+function storeUploads(list) {
+  if (list == null) return []
+  if (!Array.isArray(list)) throw new Error('attachments must be a list')
+  if (list.length > MAX_UPLOADS) throw new Error(`at most ${MAX_UPLOADS} attachments at once`)
+  // All of them are read before the first is written: one bad entry stores nothing.
+  const read = list.map(a => {
+    const m = /^data:([\w.+-]+\/[\w.+-]+)?(?:;[\w.+=-]+)*;base64,([A-Za-z0-9+/=]+)$/.exec(String(a?.data ?? ''))
+    if (!m) throw new Error('an attachment must be a base64 data URL')
+    const bytes = Buffer.from(m[2], 'base64')
+    if (!bytes.length) throw new Error('an attachment is empty')
+    if (bytes.length > MAX_ATTACHMENT) throw new Error(`attachment larger than ${MAX_ATTACHMENT / 1024 / 1024} MB`)
+    const name = path.basename(String(a.name ?? '').replace(/\\/g, '/')).replace(/[\u0000-\u001f]+/g, ' ').trim().slice(0, 120) || 'file'
+    const named = path.extname(name).toLowerCase()
+    return { name, bytes, ext: /^\.[a-z0-9]{1,8}$/.test(named) ? named : UPLOAD_EXT[m[1]] ?? '' }
+  })
+  return read.map(({ name, bytes, ext }) => {
+    const stored = `${newId()}${ext}`
+    fs.writeFileSync(path.join(FILES, stored), bytes, { mode: 0o600 })
+    const kind = kindOf(ext)
+    return { name, url: `/files/${stored}`, kind, image: kind === 'image', size: bytes.length }
+  })
+}
+const uploadPath = a => path.join(FILES, path.basename(a.url))
+/** For the agent: where the human's files lie (meta values are strings, so the paths travel comma-separated), the first picture also as image_path. */
+function uploadMeta(files) {
+  if (!files.length) return {}
+  const picture = files.find(a => a.image)
+  return { files: files.map(uploadPath).join(','), ...(picture ? { image_path: uploadPath(picture) } : {}) }
+}
+const uploadLine = files => `The human sent ${files.length === 1 ? 'a file' : `${files.length} files`}: ${files.map(a => a.name).join(', ')}. The meta attribute files holds ${files.length === 1 ? 'its path' : 'their paths'}.`
+
 // ---- assets --------------------------------------------------------------
 
 // The envelope itself (format, padding, id and key, link) is in asset-envelope.mjs,
@@ -482,8 +529,11 @@ const mcp = new Server(
       'Keep every question short to read: an option label is at most about four words; detail is optional and at most one short line of about six words, never a paragraph and never an explanation of what leaving it unticked means; the body is one or two short sentences. A longer explanation goes behind a link (publish_asset) or an attachment, or comes when the human presses "Explain", which reaches you as a question back.',
       'Before filing a question, call list_cards. If you already have an open question on the same subject, do not add another: rewrite the open one with revise_card, which keeps its number and place, or replace several by one with merge_cards. Do this on your own initiative, without being asked; the human should never get many small questions that are really one.',
       'Prefer one question with multiple: true ("tick what you agree to", your advice as a recommended list) over several yes/no questions on one theme. More than about three open questions of yours on one theme is a sign to merge them.',
+      'When a question needs explaining per option, do not write a body with one paragraph per option next to a separate options list: hand in ONE structured text, as sections (a list of blocks) or as text (one string), and flag the paragraphs that are options. The board then shows each paragraph tied to its option: the human ticks the paragraph itself. In text, paragraphs are separated by a blank line, and a paragraph starting with [key] Label: becomes the option "key" with that paragraph as its explanation ([key*] marks the one you would pick); every other paragraph is plain context. Keep labels to about four words and each paragraph short. Plain options stay right for simple questions.',
+      'The human can write a note on any option, chosen or not ("not this, because ..."). Such notes come with the decision: its text lists them as lines "- Label [key], chosen or not chosen: note" after the general note, and option_notes names the keys that have one. Read them before acting.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
+      'A question about how something looks or is laid out (UI, design, layout, wording or naming seen on screen) MUST carry a picture; words alone are not enough for it. Attach a screenshot, mockup or drawing per option where possible, each file named after its option key (<anything>-<key>.png), so the board shows each picture with its option; in sections, picture ties one to its block. For something that must be tried, link a clickable page: publish_asset, or a path on the board in backticks. When the human asks you to explain such a question, answer with a picture too.',
       'The human sees one card at a time, the top of the stack; urgency decides the order (most urgent first, then oldest first), so set it honestly on every card.',
       'critical: you are blocked and nothing else can proceed. high: it blocks your current task, but you have other work. normal (default): needed soon, nothing waits on it yet. low: nice to know, no work depends on it.',
       'For high and critical, give an urgency_reason: one short phrase, in the human\'s language, saying what is waiting. If everything is urgent, nothing is; most cards are normal.',
@@ -492,6 +542,7 @@ const mcp = new Server(
       'Do not block waiting for a decision: keep working on whatever does not depend on it.',
       'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and when the question back shows the card was unclear, do not only reply: rewrite the card with revise_card, so the question itself is clear.',
       'When that question back asks you to explain the card (the board has a one-tap "Explain"), answer with reply and the same card_id in plain words and briefly: what the question is about, what each option would mean for the human, and which one you would pick. The card waits out of the way until your reply arrives, so answer promptly.',
+      'The human can attach files, pasted screenshots and small drawings to a chat message and to the note of an answer: the meta attribute files then holds their absolute paths, comma-separated, and image_path the first picture among them. Read them before you answer.',
       'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
       'Other agents may share this board; the human sees all stacks merged into one, ordered by urgency. You only see and change your own cards and status lines.',
       'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply. The human may dictate messages, so expect transcription slips in chat and read them charitably.',
@@ -504,13 +555,21 @@ const mcp = new Server(
   },
 )
 
+// The text-block form of a question, as shown to agents and on the help page.
+const SECTION_TEXT_EXAMPLE = [
+  'The export times out for large accounts. Tick what I may build.',
+  '[limit*] Raise the limit: 60 instead of 30 seconds. Done in five minutes, but only moves the wall.',
+  '[async] Export in the background: The file arrives by mail when it is ready. About two days.',
+  '[page] Paginate the export\nSmaller files, but every consumer of the API has to follow.',
+].join('\n\n')
+
 // What a question is made of besides its title, the same for create_decision, revise_card and merge_cards.
 const QUESTION_PROPS = {
-  body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment.' },
+  body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context.' },
   options: {
     type: 'array',
     minItems: 2,
-    description: 'The choices offered',
+    description: 'The choices offered. Give options (with body), or sections, or text: one of the three.',
     items: {
       type: 'object',
       properties: {
@@ -520,6 +579,25 @@ const QUESTION_PROPS = {
       },
       required: ['key', 'label'],
     },
+  },
+  sections: {
+    type: 'array',
+    description: 'Instead of body and options: the whole question as one structured text, an ordered list of blocks. A block without key is plain text (introduction, context). A block with key is a flagged paragraph and becomes an option: the board shows the paragraph tied to its option, and options, body and recommended are derived from the blocks. At least two blocks need a key.',
+    items: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The paragraph, markdown; for a flagged block what this option means, at most about 400 characters' },
+        key: { type: 'string', description: 'Flags the block as an option: the stable identifier returned to you' },
+        label: { type: 'string', description: 'Required with key: the short name of the option on its tile, at most about four words' },
+        recommended: { type: 'boolean', description: 'true: you would pick this one; several only with multiple: true' },
+        picture: { anyOf: [{ type: 'string' }, { type: 'integer' }], description: 'An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0' },
+      },
+      required: ['text'],
+    },
+  },
+  text: {
+    type: 'string',
+    description: `The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: "[key] Label: explanation"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice. A last line "picture: file.png" ties an attachment to the option. Every other paragraph is plain context. Example:\n${SECTION_TEXT_EXAMPLE}`,
   },
   attachments: {
     type: 'array',
@@ -560,19 +638,19 @@ const TOOLS = [
   },
   {
     name: 'create_decision',
-    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. Keep it short: body one or two short sentences, option labels about four words, detail at most one short line.',
+    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. Keep it short: body one or two short sentences, option labels about four words, detail at most one short line. When every option needs a sentence or two of explanation, pass sections or text instead of body and options, so each paragraph sits with its option. A question about how something looks or is laid out must carry a picture: one attachment per option where possible, named <anything>-<key>.png, or a link to a page to try.',
     inputSchema: {
       type: 'object',
       properties: {
         title: { type: 'string', description: 'The question, one line' },
         ...QUESTION_PROPS,
       },
-      required: ['title', 'options'],
+      required: ['title'],
     },
   },
   {
     name: 'revise_card',
-    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision. Decided cards cannot be revised.',
+    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision, and the same rule for questions about looks: they carry a picture per option or a link to a page to try. Decided cards cannot be revised.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -586,7 +664,7 @@ const TOOLS = [
   },
   {
     name: 'merge_cards',
-    description: 'Replace several of your open decision cards by one new card, in one step: the old cards leave the stack with a pointer to the new one, and the new card says what it replaces. Use it on your own initiative when several of your open questions are really one subject, typically with multiple: true and one option per former question ("tick what you agree to", your advice as a recommended list). Same fields and brevity as create_decision; answers to the old cards will no longer arrive. Returns the new card id.',
+    description: 'Replace several of your open decision cards by one new card, in one step: the old cards leave the stack with a pointer to the new one, and the new card says what it replaces. Use it on your own initiative when several of your open questions are really one subject, typically with multiple: true and one option per former question ("tick what you agree to", your advice as a recommended list). Same fields and brevity as create_decision; answers to the old cards will no longer arrive; attachments of the old cards are not carried over, so a question about looks needs its pictures again. Returns the new card id.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -594,7 +672,7 @@ const TOOLS = [
         title: { type: 'string', description: 'The one question, one line' },
         ...QUESTION_PROPS,
       },
-      required: ['card_ids', 'title', 'options'],
+      required: ['card_ids', 'title'],
     },
   },
   {
@@ -680,7 +758,7 @@ const TOOLS = [
   },
   {
     name: 'list_cards',
-    description: 'List all your cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open); open cards come with body and options. Call it before filing a question, to see what you already have open on the subject.',
+    description: 'List all your cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open); open cards come with body, options and, when they were filed as one structured text, sections (pass them back changed to revise_card). Call it before filing a question, to see what you already have open on the subject.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -720,8 +798,13 @@ const TOOL_EXAMPLES = {
   },
   revise_card: { card_id: 'a1b2c3d4', title: 'Run the migration tonight at 2?', options: [{ key: 'tonight', label: 'Tonight at 2' }, { key: 'weekend', label: 'At the weekend' }], recommended: 'tonight', note: 'Running it now is off the table: the backup takes until midnight' },
   merge_cards: {
-    card_ids: ['a1b2c3d4', 'e5f6a7b8', 'c9d0e1f2'], title: 'Which parts of the storage plan do you agree to?', body: 'Tick what I may build.', multiple: true, recommended: ['sqlite', 'files'],
-    options: [{ key: 'sqlite', label: 'SQLite for cards' }, { key: 'files', label: 'Attachments as files' }, { key: 'sync', label: 'Sync between hubs', detail: 'About two days more' }],
+    card_ids: ['a1b2c3d4', 'e5f6a7b8', 'c9d0e1f2'], title: 'Which parts of the storage plan do you agree to?', multiple: true, attachments: ['/home/me/project/out/sync.png'],
+    sections: [
+      { text: 'Three parts, each stands on its own. Tick what I may build.' },
+      { key: 'sqlite', label: 'SQLite for cards', recommended: true, text: 'One file, no server to run. Cards survive a restart and can be searched.' },
+      { key: 'files', label: 'Attachments as files', recommended: true, text: 'Pictures stay next to the database as plain files, so backups are a copy.' },
+      { key: 'sync', label: 'Sync between hubs', picture: 'sync.png', text: 'Two machines show the same board. About two days more, and conflicts need a rule.' },
+    ],
   },
   set_urgency: { card_id: 'a1b2c3d4', urgency: 'critical', reason: 'nothing else is left to do' },
   withdraw_card: { card_id: 'a1b2c3d4', reason: 'the staging run answered it' },
@@ -741,13 +824,14 @@ const TOOL_EXAMPLES = {
 const CHANNEL_EVENTS = [
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
-    content: 'the message', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id' },
+    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision', when: 'The human answered a decision card.',
-    content: 'the human\'s note, or a sentence naming the card and the chosen key', meta: { kind: 'decision', card_id: 'the card', choice: 'key of the chosen option; of several, the first' },
-    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options' },
+    content: 'the human\'s note, or a sentence naming the card and the chosen key; when the human wrote notes on single options, a blank line and "Notes on options:" follow, with one line "- Label [key], chosen: note" or "- Label [key], not chosen: note" per note, in the order of the options',
+    meta: { kind: 'decision', card_id: 'the card', choice: 'key of the chosen option; of several, the first' },
+    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options', option_notes: 'only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content', files: 'absolute paths of what the human attached to the note of the answer, comma-separated', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="decision" card_id="a1b2c3d4" choice="tonight">After the backup, please.</channel>',
   },
   {
@@ -806,31 +890,102 @@ const listArg = (value, what) => {
 }
 
 // What the human reads and answers on a card. revise_card may change any of these.
-const QUESTION_FIELDS = ['title', 'body', 'options', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments']
-const questionSig = c => JSON.stringify([c.title, c.body, c.options, c.multiple, c.recommended, c.attachments])
+const QUESTION_FIELDS = ['title', 'body', 'options', 'sections', 'text', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments']
+const questionSig = c => JSON.stringify([c.title, c.body, c.options, c.multiple, c.recommended, c.attachments, c.sections ?? null])
+
+// ---- a question as one structured text ------------------------------------
+
+// The text-block form: paragraphs separated by a blank line; one that starts with [key] is an option.
+//   [key] Label: explanation        [key*] or "Label (recommended):" marks the advice
+//   [key] Label                     without a colon the first line is the label,
+//   explanation ...                 the following lines explain
+//   picture: file.png               as the last line: the attachment that belongs to the option
+const FLAGGED = /^\[([\w.-]+)(\*)?\](?!\()[ \t]*/
+function parseSections(text) {
+  return String(text).replace(/\r\n?/g, '\n').split(/\n[ \t]*\n/).map(p => p.trim()).filter(Boolean).map(par => {
+    const flag = FLAGGED.exec(par)
+    if (!flag) return { text: par }
+    let picture = null
+    const rest = par.slice(flag[0].length).replace(/\n[ \t]*picture:[ \t]*(.+)$/i, (_, name) => { picture = name.trim(); return '' })
+    const [first, ...lines] = rest.split('\n')
+    const colon = first.search(/:(\s|$)/)
+    let advised = Boolean(flag[2])
+    const label = (colon < 0 ? first : first.slice(0, colon)).replace(/\s*(\*|\(recommended\))\s*$/i, () => { advised = true; return '' }).trim()
+    return {
+      key: flag[1], label, text: [colon < 0 ? '' : first.slice(colon + 1), ...lines].join('\n').trim(),
+      ...(advised ? { recommended: true } : {}), ...(picture == null ? {} : { picture }),
+    }
+  })
+}
+
+// Which attachment a flagged block points at, as its position in the card's attachments.
+function pictureOf(ref, names, key) {
+  const at = Number.isInteger(ref) || /^\d+$/.test(String(ref)) ? Number(ref) : names.findIndex(n => n === String(ref) || n === path.basename(String(ref)))
+  if (!(at >= 0 && at < names.length)) {
+    throw new Error(`section "${key}" names the picture "${ref}", which is not among this card's attachments (${names.length ? names.map((n, i) => `${i}: ${n}`).join(', ') : 'it has none'}); give a file name or a position counted from 0`)
+  }
+  return at
+}
+
+// The blocks as they are stored: plain ones as { text }, flagged ones as { key, label, text, recommended, picture? }.
+function sectionsOf(args, names) {
+  if (args.sections != null && args.text != null) throw new Error('give sections or text, not both: text is the same thing written as one block')
+  if (args.options != null) throw new Error(`${args.sections != null ? 'sections' : 'text'} and options cannot be combined: the flagged blocks are the options. Flag a block with key and label, or go back to body and options`)
+  if (args.body != null) throw new Error(`${args.sections != null ? 'sections' : 'text'} and body cannot be combined: the blocks are the body. Put the introduction in as a first block without a key`)
+  const blocks = args.sections != null ? listArg(args.sections, 'sections') : parseSections(args.text)
+  return blocks.map((b, i) => {
+    if (typeof b === 'string') b = { text: b }
+    const said = String(b?.text ?? '').trim()
+    if (b?.key == null || b.key === '') {
+      if (!said) throw new Error(`section ${i + 1} is empty: a block without a key needs text`)
+      return { text: said }
+    }
+    const key = String(b.key)
+    const label = String(b.label ?? '').trim()
+    if (!label) throw new Error(`section "${key}" has a key, so it becomes an option and needs a label: the short name on its tile, at most about four words`)
+    return { key, label, text: said, recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
+  })
+}
+
+// For pages and clients that know nothing of sections: the same text as markdown, each flagged paragraph led by its label.
+const bodyOf = sections => sections.map(s => (s.key == null ? s.text : `**${s.label}**${s.text ? `: ${s.text}` : ''}`)).join('\n\n')
+
+// In revise_card: the advice is taken away, whatever the blocks say.
+const NO_ADVICE = Symbol('no advice')
 
 // The fields of a question, checked the same way whether it is filed, revised or merged.
-function questionFields(args) {
-  const options = listArg(args.options, 'options').map(o => ({
+// names: the file names of the card's attachments, for blocks that point at one.
+function questionFields(args, names = []) {
+  const sections = args.sections != null || args.text != null ? sectionsOf(args, names) : null
+  const flagged = sections?.filter(s => s.key != null)
+  const options = flagged ? flagged.map(s => ({ key: s.key, label: s.label, detail: '' })) : listArg(args.options, 'options').map(o => ({
     key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
   }))
   const keys = new Set(options.map(o => o.key))
   if (options.length < 2 || keys.size !== options.length) {
-    throw new Error('options need at least two entries with unique keys')
+    throw new Error(sections
+      ? 'a question needs at least two options with unique keys: flag at least two blocks with key and label (in text: paragraphs starting with [key] Label:)'
+      : 'options need at least two entries with unique keys')
   }
   const urgency = urgencyArg(args.urgency, 'normal')
   const multiple = args.multiple === true
+  // Said outright it holds; otherwise the blocks marked as advice are it.
+  const marked = flagged?.filter(s => s.recommended).map(s => s.key) ?? []
+  const given = args.recommended === NO_ADVICE ? null : args.recommended ?? (!marked.length ? null : multiple || marked.length > 1 ? marked : marked[0])
   // One key, or for a card that takes several answers a list of them; stored the way it was given.
-  const advised = args.recommended == null ? [] : [args.recommended].flat().map(String)
+  const advised = given == null ? [] : [given].flat().map(String)
   const stray = advised.find(key => !keys.has(key))
   if (stray != null) throw new Error(`recommended must be the key of one of the options; got "${stray}"`)
-  if (Array.isArray(args.recommended) && !multiple) throw new Error('recommended as a list needs multiple: true; a card with one answer has one recommendation')
+  if (Array.isArray(given) && !multiple) throw new Error('recommended as a list needs multiple: true; a card with one answer has one recommendation')
   return {
-    multiple, recommended: Array.isArray(args.recommended) ? advised : advised[0] ?? null,
+    multiple, recommended: Array.isArray(given) ? advised : advised[0] ?? null,
     urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
-    title: String(args.title ?? ''), body: String(args.body ?? ''), options,
+    title: String(args.title ?? ''), body: sections ? bodyOf(sections) : String(args.body ?? ''), options,
+    // The mark on each block says the same as recommended, whichever of the two was given.
+    ...(sections ? { sections: sections.map(s => (s.key == null ? s : { ...s, recommended: advised.includes(s.key) })) } : {}),
   }
 }
+const namesOf = args => listArg(args.attachments, 'attachments').map(f => path.basename(String(f)))
 
 const openQuestions = agent => state.cards.filter(c => c.agent === agent && c.kind === 'decision' && c.status === 'open')
 const placeOf = card => `position ${state.queue.indexOf(card.id) + 1} of ${state.queue.length} in the stack`
@@ -845,14 +1000,25 @@ const crowdHint = (others, card) => (others.length < CROWD ? '' : [
 // A card is read on a phone, between other things. Past these lengths the agent is told, not refused.
 const BODY_MAX = 300
 const DETAIL_MAX = 60
+const SECTION_MAX = 400
 function lengthHint(card) {
   const long = card.options.filter(o => o.detail.length > DETAIL_MAX)
+  // A sectioned card is read block by block, so each block has its own measure and the body, which is all of them, has none.
+  const wordy = (card.sections ?? []).map((s, i) => (s.text.length > SECTION_MAX ? `${s.key == null ? `block ${i + 1}` : `"${s.key}"`} (${s.text.length})` : '')).filter(Boolean)
   const said = [
-    card.body.length > BODY_MAX ? `the body has ${card.body.length} characters (aim for one or two short sentences)` : '',
+    wordy.length ? `the section text of ${wordy.join(', ')} is longer than about ${SECTION_MAX} characters (aim for two or three sentences per block)` : '',
+    !card.sections && card.body.length > BODY_MAX ? `the body has ${card.body.length} characters (aim for one or two short sentences)` : '',
     long.length ? `the detail of ${long.map(o => `"${o.key}"`).join(', ')} is longer than one short line (aim for about six words)` : '',
   ].filter(Boolean)
   return said.length ? `\nThis is a lot to read: ${said.join('; ')}. Shorten it with revise_card and put the longer explanation behind a link or in an attachment; the human can ask for it with "Explain".` : ''
 }
+
+// A question about looks is judged by looking. One that reads like it and shows nothing is answered with a reminder, not refused.
+const VISUAL = /\b(ui|ux|design|layout|looks?|appearance|colou?rs?|buttons?|icons?|sidebar|toolbar|mock-?ups?|variants?|fonts?|typography|logos?|themes?|spacing|animation|farben?|schrift(art)?|aussehen|gestaltung|varianten?|entw[uü]rfe?|seitenleiste|symbole?)\b/i
+// A link or a path in backticks may be the page to try.
+const SHOWN = /https?:\/\/|`[^`]*\/[^`]*`/
+const visualHint = card => (card.attachments.length || SHOWN.test(card.body) || !VISUAL.test(`${card.title} ${card.body} ${card.options.map(o => o.label).join(' ')}`) ? ''
+  : '\nThis reads like a question about how something looks, and it shows nothing. Add a picture with revise_card: a screenshot, mockup or drawing per option where possible, each named <anything>-<key>.png so it shows with its option, or link a page to try (publish_asset). Words alone are hard to judge.')
 
 // Runs on the hub, for the hub's own agent and on behalf of spokes.
 function runTool(agent, name, args) {
@@ -864,12 +1030,12 @@ function runTool(agent, name, args) {
       return 'sent'
     }
     case 'create_decision': {
-      const fields = questionFields(args)
+      const fields = questionFields(args, namesOf(args))
       const others = openQuestions(agent)
       const card = addCard(agent, 'decision', { ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment) })
       addEvent('asked', card, card.title)
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}`
+      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}${visualHint(card)}`
     }
     case 'revise_card': {
       const card = findCard(agent, args.card_id)
@@ -885,16 +1051,27 @@ function runTool(agent, name, args) {
       // Advice that was not restated holds as far as it still fits the options and the kind of card.
       const kept = [card.recommended ?? []].flat().filter(key => options.some(o => String(o?.key) === key))
       const urgency = args.urgency ?? card.urgency
+      // New blocks replace body and options; a new body or new options make it a plain card again; otherwise its blocks stand.
+      const resection = args.sections != null || args.text != null
+      const plain = args.body != null || args.options != null
+      const wording = resection ? { sections: args.sections, text: args.text, body: args.body, options: args.options }
+        : card.sections && !plain ? { sections: card.sections }
+        : { body: args.body ?? card.body, options }
       const fields = questionFields({
-        title: args.title ?? card.title, body: args.body ?? card.body, options, multiple, urgency,
+        title: args.title ?? card.title, ...wording, multiple, urgency,
         // As with set_urgency: a new level without a reason has none.
         urgency_reason: args.urgency_reason ?? (urgency === card.urgency ? card.urgency_reason : ''),
-        recommended: args.recommended != null ? (args.recommended.length ? args.recommended : null) : multiple && Array.isArray(card.recommended) ? kept : kept[0],
-      })
+        // New blocks carry their own marks, unless the call says otherwise.
+        recommended: args.recommended != null ? (args.recommended.length ? args.recommended : NO_ADVICE)
+          : resection ? undefined : multiple && Array.isArray(card.recommended) ? kept : kept[0] ?? NO_ADVICE,
+      }, args.attachments == null ? card.attachments.map(a => a.name) : namesOf(args))
       const attachments = args.attachments == null ? card.attachments : listArg(args.attachments, 'attachments').map(storeAttachment)
       const stood = questionSig(card)
       const level = card.urgency
+      const unsectioned = Boolean(card.sections && !fields.sections)
+      if (unsectioned) delete card.sections
       Object.assign(card, fields, { attachments })
+      trimDraft(card)
       // Only a change to what the human reads is a revision; a mere change of urgency is what set_urgency does.
       const reworded = questionSig(card) !== stood
       if (reworded) {
@@ -904,7 +1081,7 @@ function runTool(agent, name, args) {
       }
       if (card.urgency !== level) addEvent('urgency', card, card.urgency_reason ? `${URGENCY_LABEL[card.urgency]}: ${card.urgency_reason}` : URGENCY_LABEL[card.urgency])
       commit()
-      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${lengthHint(card)}`
+      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${lengthHint(card)}${visualHint(card)}`
     }
     case 'merge_cards': {
       const ids = [...new Set(listArg(args.card_ids, 'card_ids').map(String))]
@@ -918,7 +1095,7 @@ function runTool(agent, name, args) {
       }
       // The merged question is as pressing as the most pressing one it replaces, unless said otherwise.
       const top = old.reduce((a, b) => (URGENCIES.indexOf(b.urgency) > URGENCIES.indexOf(a.urgency) ? b : a))
-      const fields = questionFields({ ...args, urgency: args.urgency ?? top.urgency, urgency_reason: args.urgency_reason ?? (args.urgency == null ? top.urgency_reason : '') })
+      const fields = questionFields({ ...args, urgency: args.urgency ?? top.urgency, urgency_reason: args.urgency_reason ?? (args.urgency == null ? top.urgency_reason : '') }, namesOf(args))
       const card = addCard(agent, 'decision', {
         ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),
         // The human has been waiting since the oldest of them, and the new card takes that place in the stack.
@@ -928,6 +1105,7 @@ function runTool(agent, name, args) {
       addEvent('asked', card, card.title)
       for (const c of old) {
         c.status = 'done'
+        delete c.draft
         c.merged_into = card.id
         c.summary = `Merged into Nr. ${card.number}: ${card.title}`
         addEvent('done', c, c.summary)
@@ -935,7 +1113,7 @@ function runTool(agent, name, args) {
       // A status line that waited on one of the old cards now waits on the new one.
       for (const t of state.tasks) if (t.agent === agent && ids.includes(t.card_id)) t.card_id = card.id
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}`
+      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}${visualHint(card)}`
     }
     case 'set_urgency': {
       const card = findCard(agent, args.card_id)
@@ -960,6 +1138,7 @@ function runTool(agent, name, args) {
       }
       if (card.status !== 'open') throw new Error(`card ${card.id} is already done`)
       card.status = 'done'
+      delete card.draft
       card.summary = String(args.reason ?? '').trim()
       addEvent('done', card, card.summary ? `Withdrawn: ${card.summary}` : 'Withdrawn')
       commit()
@@ -970,6 +1149,7 @@ function runTool(agent, name, args) {
       // Same reason as in withdraw_card: Claude Code is waiting for the human's verdict.
       if (card.kind === 'permission' && card.status === 'open') throw new Error('an open permission card cannot be closed; only the human answers it')
       card.status = 'done'
+      delete card.draft
       card.summary = String(args.summary ?? '')
       addEvent('done', card, card.summary || card.title)
       commit()
@@ -1010,7 +1190,7 @@ function runTool(agent, name, args) {
         urgency: c.urgency, urgency_reason: c.urgency_reason,
         queue_position: state.queue.indexOf(c.id) + 1 || null,
         title: c.title, multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
-        ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, options: c.options, recommended: c.recommended ?? null } : {}),
+        ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
         ...(c.revised ? { revised: c.revised } : {}),
         ...(c.merged_from ? { merged_from: c.merged_from.map(m => m.number) } : {}),
         ...(c.merged_into ? { merged_into: c.merged_into } : {}),
@@ -1069,13 +1249,77 @@ function addPermission(agent, params) {
   commit()
 }
 
+// The human drags a session to a new place in the sidebar: directly before another one, or to the end.
+// Sessions that share a group stay together: the whole group moves, and it lands before a group, never inside one;
+// only a move before a member of the session's own group reorders within it.
+function moveSession(agent, before) {
+  const target = before == null ? null : state.agents.find(a => a.id === String(before))
+  if (before != null && !target) throw new Error(`no session ${before}`)
+  if (target === agent) return
+  const within = Boolean(target && agent.group && target.group === agent.group)
+  const moved = within || !agent.group ? [agent] : state.agents.filter(a => a.group === agent.group)
+  const rest = state.agents.filter(a => !moved.includes(a))
+  const anchor = !target ? null : within || !target.group ? target : rest.find(a => a.group === target.group)
+  const at = anchor ? rest.indexOf(anchor) : rest.length
+  state.agents = [...rest.slice(0, at), ...moved, ...rest.slice(at)]
+}
+
 const STALE_ANSWER = 'the agent revised this question while you were answering; nothing was sent, read it again and answer once more'
 // How long after a rewrite an answer cannot have been meant for the new wording.
 const REVISE_GRACE = Number(process.env.BOARD_REVISE_GRACE_MS) || 1500
 
+// What the human wrote on single options, chosen or not: { key: text } in the order of the options.
+// strict: a key the card does not have is refused (an answer); otherwise it is dropped (a draft, which may be older than a revision).
+const NOTE_MAX = 2000
+function optionNotes(card, notes, strict) {
+  if (notes == null) return {}
+  if (typeof notes !== 'object' || Array.isArray(notes)) throw new Error('notes must be an object: { "<option key>": "text" }')
+  const stray = Object.keys(notes).find(k => !card.options.some(o => o.key === k))
+  if (stray != null && strict) throw card.revised ? fail(409, STALE_ANSWER) : new Error(`notes names an unknown option: "${stray}"`)
+  const out = {}
+  for (const o of card.options) {
+    const said = typeof notes[o.key] === 'string' ? notes[o.key].trim() : ''
+    if (said.length > NOTE_MAX) throw new Error(`the note on "${o.label}" is longer than ${NOTE_MAX} characters`)
+    if (said) out[o.key] = said
+  }
+  return out
+}
+
+// What the human ticked and wrote but has not sent. Kept on the open card so that every page shows it; the agent never sees it.
+function setDraft(cardId, body) {
+  const card = state.cards.find(c => c.id === cardId)
+  if (!card) throw new Error('unknown card')
+  if (card.kind !== 'decision') throw new Error('only decisions keep a draft')
+  if (card.status !== 'open') throw fail(409, 'card already decided')
+  if (body.keys != null && !Array.isArray(body.keys)) throw new Error('keys must be a list')
+  const ticked = new Set((body.keys ?? []).map(String))
+  const note = String(body.note ?? '')
+  if (note.length > NOTE_MAX * 5) throw new Error(`the note is longer than ${NOTE_MAX * 5} characters`)
+  const draft = { keys: card.options.filter(o => ticked.has(o.key)).map(o => o.key), note, notes: optionNotes(card, body.notes, false) }
+  const empty = !draft.keys.length && !note.trim() && !Object.keys(draft.notes).length
+  const same = d => JSON.stringify([d?.keys ?? [], d?.note ?? '', d?.notes ?? {}])
+  if (same(empty ? null : draft) === same(card.draft)) return
+  if (empty) delete card.draft
+  else card.draft = { ...draft, ts: Date.now() }
+  commit(true)
+}
+
+// After a rewrite: what the draft says about options that no longer exist goes.
+function trimDraft(card) {
+  if (!card.draft) return
+  const has = key => card.options.some(o => o.key === key)
+  const keys = card.draft.keys.filter(has)
+  const notes = Object.fromEntries(Object.entries(card.draft.notes).filter(([key]) => has(key)))
+  if (!keys.length && !card.draft.note.trim() && !Object.keys(notes).length) delete card.draft
+  else Object.assign(card.draft, { keys, notes })
+}
+
+const brief = (said, max = 80) => { const line = said.replace(/\s+/g, ' '); return line.length > max ? `${line.slice(0, max - 1)}…` : line }
+
 // answer is one key, or for a card that takes several a list of keys.
 // seen is the card's revised stamp as the page that answers last saw it; pages that do not send it are not checked for it.
-async function decide(cardId, answer, note, seen) {
+// notes: what the human wrote on single options, { key: text }.
+async function decide(cardId, answer, note, seen, notes, files = []) {
   const card = state.cards.find(c => c.id === cardId)
   if (!card) throw new Error('unknown card')
   if (card.status !== 'open') throw new Error('card already decided')
@@ -1089,14 +1333,21 @@ async function decide(cardId, answer, note, seen) {
   // In the order of the options, whatever order they were ticked in.
   const chosen = card.options.filter(o => given.has(o.key))
   const key = chosen[0].key
+  const remarks = card.kind === 'decision' ? optionNotes(card, notes, true) : {}
+  const remarked = card.options.filter(o => remarks[o.key])
   card.choices = chosen.map(o => o.key)
   // The first one, for clients and agents that know only one answer.
   card.choice = key
   card.note = note
+  // What the human attached to the note: kept with the card's own attachments' rules (served from /files, cleaned up with the card).
+  if (files.length) card.note_attachments = files
+  else delete card.note_attachments
+  if (card.kind === 'decision') card.option_notes = remarks
+  delete card.draft
   card.decided = Date.now()
   // A permission verdict needs no follow-up from Claude, so it is done at once.
   card.status = card.kind === 'permission' ? 'done' : 'decided'
-  if (card.kind === 'decision') addEvent('decided', card, chosen.map(o => o.label).join(', '))
+  if (card.kind === 'decision') addEvent('decided', card, [chosen.map(o => o.label).join(', '), ...remarked.map(o => `${o.label}: ${brief(remarks[o.key])}`)].join(' · '))
   // The human has answered, so the stream that waited on this card is moving again.
   for (const t of state.tasks) {
     if (t.agent === card.agent && t.card_id === card.id && t.state === 'decision') Object.assign(t, { state: 'working', card_id: null, updated: Date.now() })
@@ -1108,9 +1359,17 @@ async function decide(cardId, answer, note, seen) {
     })
   } else {
     await deliver(card.agent, 'notifications/claude/channel', {
-      content: note || `Decision on "${card.title}": ${card.choices.join(', ')}`,
+      // Notes on single options have no place in meta, so they are lines of the text, each naming its option.
+      content: [
+        note || `Decision on "${card.title}": ${card.choices.join(', ')}`,
+        ...(remarked.length ? ['', 'Notes on options:', ...remarked.map(o => `- ${o.label} [${o.key}], ${given.has(o.key) ? 'chosen' : 'not chosen'}: ${remarks[o.key].replace(/\s*\n\s*/g, ' ')}`)] : []),
+      ].join('\n'),
       // meta values are strings, so several keys travel as one, comma-separated.
-      meta: { kind: 'decision', card_id: card.id, choice: key, ...(card.multiple ? { choices: card.choices.join(',') } : {}) },
+      meta: {
+        kind: 'decision', card_id: card.id, choice: key, ...(card.multiple ? { choices: card.choices.join(',') } : {}),
+        ...(remarked.length ? { option_notes: remarked.map(o => o.key).join(',') } : {}),
+        ...uploadMeta(files),
+      },
     })
   }
 }
@@ -1163,7 +1422,9 @@ async function reopen(cardId) {
   const previous = card.choice
   const all = card.choices?.length ? card.choices : [previous]
   const label = all.map(key => card.options.find(o => o.key === key)?.label ?? key).join(', ')
-  Object.assign(card, { status: 'open', choice: null, choices: [], note: '', summary: '', decided: null })
+  // Nothing the human ticked or wrote is lost: the answer they took back is what they have not sent yet.
+  const draft = { keys: card.options.filter(o => all.includes(o.key)).map(o => o.key), note: card.note ?? '', notes: card.option_notes ?? {}, ts: Date.now() }
+  Object.assign(card, { status: 'open', choice: null, choices: [], note: '', option_notes: {}, summary: '', decided: null, draft })
   addEvent('reopened', card, card.title)
   commit()
   await deliver(card.agent, 'notifications/claude/channel', {
@@ -1542,7 +1803,7 @@ const tally = files => ({ count: files.length, bytes: files.reduce((sum, f) => s
 
 // The stored files of a list of messages and cards, as [folder, name] pairs.
 function filesOf(items) {
-  return items.flatMap(item => item.attachments ?? []).flatMap(a => {
+  return items.flatMap(item => [...(item.attachments ?? []), ...(item.note_attachments ?? [])]).flatMap(a => {
     if (a?.kind === 'scribble' && a.id) return [[SCRIBBLES, `${a.id}.png`], [SCRIBBLES, `${a.id}.json`]]
     return typeof a?.url === 'string' && a.url.startsWith('/files/') ? [[FILES, path.basename(a.url)]] : []
   })
@@ -1947,14 +2208,18 @@ const httpServer = http.createServer(async (req, res) => {
       return fs.createReadStream(file).on('error', () => res.destroy()).pipe(res)
     }
     if (req.method === 'POST' && url.pathname === '/message') {
-      const body = await readJson(req)
+      const body = await readJson(req, UPLOAD_BODY)
       const msg = String(body.text ?? '').trim()
-      if (!msg) return send(res, 400, '{"error":"empty message"}')
+      if (!msg && !(Array.isArray(body.attachments) && body.attachments.length)) return send(res, 400, '{"error":"empty message"}')
+      // The body may be large for the files' sake only; the words keep their old limit.
+      if (msg.length > 1e6) throw new Error('body too large')
       const agent = targetAgent(body.agent)
+      // Files and pictures the human attached; a message may be nothing but them.
+      const files = storeUploads(body.attachments)
       // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
       const about = state.cards.some(c => c.id === body.card_id && c.agent === agent && c.status === 'open') ? { card_id: body.card_id } : {}
-      addMessage(agent, 'user', msg, [], about)
-      await deliver(agent, 'notifications/claude/channel', { content: msg, meta: { kind: 'chat', ...about } })
+      addMessage(agent, 'user', msg, files, about)
+      await deliver(agent, 'notifications/claude/channel', { content: msg || uploadLine(files), meta: { kind: 'chat', ...about, ...uploadMeta(files) } })
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'GET' && /^\/scribbles\/[0-9a-f]+\.(json|png)$/.test(url.pathname)) {
@@ -2005,6 +2270,7 @@ const httpServer = http.createServer(async (req, res) => {
       if ('group' in body) agent.group = body.group == null ? null : String(body.group).trim().slice(0, 40) || null
       if (body.label != null) agent.label = String(body.label).trim().slice(0, 60)
       if (body.icon != null) agent.icon = String(body.icon).slice(0, 80)
+      if ('before' in body) moveSession(agent, body.before)
       commit()
       return send(res, 200, '{"ok":true}')
     }
@@ -2021,9 +2287,22 @@ const httpServer = http.createServer(async (req, res) => {
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'POST' && url.pathname === '/decide') {
-      const body = await readJson(req)
+      const body = await readJson(req, UPLOAD_BODY)
       if (body.keys != null && !Array.isArray(body.keys)) throw new Error('keys must be a list')
-      await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim(), body.revised === undefined ? undefined : body.revised ?? null)
+      if (JSON.stringify([body.note ?? '', body.notes ?? null]).length > 1e6) throw new Error('body too large')
+      // What the human attached to the note of the answer. An answer that is not taken keeps none of it.
+      const files = storeUploads(body.attachments)
+      try {
+        await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim(), body.revised === undefined ? undefined : body.revised ?? null, body.notes, files)
+      } catch (err) {
+        for (const a of files) fs.rmSync(uploadPath(a), { force: true })
+        throw err
+      }
+      return send(res, 200, '{"ok":true}')
+    }
+    if (req.method === 'POST' && url.pathname === '/draft') {
+      const body = await readJson(req)
+      setDraft(String(body.card_id), body)
       return send(res, 200, '{"ok":true}')
     }
     if (url.pathname.startsWith('/pad/') && await padRoute(req, res, url)) return

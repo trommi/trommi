@@ -15,15 +15,32 @@ export function hueOf(id) {
 }
 
 // Every session has its own scribble, so it is recognised before its name is read.
-export function avatar(agent) {
+/** vip: draw the crown of a starred session on it. Where the crown is a switch of its own beside the
+ *  mark (crownToggle), the caller passes false. */
+export function avatar(agent, { vip = true } = {}) {
   const node = el('span', 'agent-avatar')
   node.append(doodle(agent.mark ?? agent.id))
   node.style.setProperty('--hue', hueOf(agent.id))
   if (!agent.online) node.classList.add('is-offline')
   // A session that matters most: a scribbled crown sits crooked on the corner of its mark.
-  if (agent.starred) { node.dataset.vip = ''; node.append(crown()) }
+  if (agent.starred && vip) { node.dataset.vip = ''; node.append(crown()) }
   node.setAttribute('aria-hidden', 'true')
   return node
+}
+
+/** The crown as a switch: it sits on the corner of a session's mark, as a button of its own beside
+ *  the mark, so the mark keeps its own click. On a starred session it is the gold crown, and a click
+ *  takes it off; on any other it is a faint outline that shows when the pointer or the keyboard is
+ *  near, and a click puts it on. Placed by CSS (.crown-toggle), per place it stands in. */
+export function crownToggle(agent, cls = '') {
+  const b = el('button', `crown-toggle ${cls}`.trim())
+  b.type = 'button'
+  b.setAttribute('aria-pressed', String(Boolean(agent.starred)))
+  b.title = agent.starred ? 'Remove VIP' : 'Make VIP'
+  b.setAttribute('aria-label', `${agent.name}: ${agent.starred ? 'remove VIP' : 'make VIP, its questions come first'}`)
+  b.append(crown())
+  b.addEventListener('click', e => { e.stopPropagation(); star(agent.id, !agent.starred).catch(() => {}) })
+  return b
 }
 
 /** Sessions laid together: their scribbles over each other inside one loop drawn by hand. */
@@ -60,13 +77,13 @@ function summary(all, members) {
 // drop stretches as liquid does. The movement is CSS (app.css); every ring is on the same clock,
 // so a list that is rebuilt does not send its drop back to the start.
 const RING = { c: 16, r: 14.3, turn: 4600, lag: 150 }
-const DROP = { swell: 3.3, lead: 30, trail: 118, power: 1.15, tail: 2.4 }
+const DROP = { swell: 3.1, lead: 34, trail: 104, power: 1.2, tail: 2.1 }
 const RING_LOOP = loopPath(penSeed('working ring'), { rad: 14.55, drift: .5, jitter: .6, start: 1.1 })
 const DROP_PATH = (() => {
   const r = penSeed('working drop')
   const phase = [r() * 6, r() * 6, r() * 6, r() * 6]
   // A slow unevenness along the drop, different for its outer and its inner edge.
-  const uneven = (t, k) => 1 + .17 * (Math.sin(3.1 * t + phase[k]) * .6 + Math.sin(7.3 * t + phase[k + 1]) * .4)
+  const uneven = (t, k) => 1 + .06 * (Math.sin(3.1 * t + phase[k]) * .6 + Math.sin(7.3 * t + phase[k + 1]) * .4)
   const steps = 96
   const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
     const deg = -DROP.trail + (DROP.trail + DROP.lead) * i / steps   // from the thickest place; ahead is clockwise
@@ -201,13 +218,15 @@ export function mountAgents(root, { onSelect }) {
         id: u.id,
         label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
-        lead: single ? avatar(single) : pairAvatar(u.members),
+        lead: single ? avatar(single, { vip: false }) : pairAvatar(u.members),
         active: scope === u.id,
         mark: badge(u),
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
       })
       row.dataset.unit = u.id
       row.dataset.members = u.members.map(a => a.id).join(' ')
+      // The crown on the mark's corner is its own switch. (In a group the crowns are part of the joint drawing.)
+      if (single) row.append(crownToggle(single))
       if (!single) {
         // Without dragging: scissors cut the group apart, every session stands alone again.
         // (One session alone is taken out on the Agents page, with "Split".)
@@ -295,7 +314,7 @@ export function mountAgents(root, { onSelect }) {
   }
   root.addEventListener('pointerdown', e => {
     const row = e.target.closest('.agent-row[data-unit]')
-    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut')) return
+    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut, .crown-toggle')) return
     const ids = row.dataset.members.split(' ')
     // In a group the scribble under the pointer is the one that is taken out.
     const agent = e.target.closest('[data-member]')?.dataset.member ?? ids.at(-1)
@@ -368,23 +387,17 @@ export function mountRoster(root) {
       rename.addEventListener('click', () => openEditor(agent))
       name.append(rename, el('span', null, agent.task || 'no task named'))
       const status = el('span', 'roster-state', agent.online ? 'connected' : `disconnected, last seen ${ago(agent.seen ?? agent.joined ?? Date.now())}`)
-      // The crown is the switch: drawn faintly while off, in gold once the session wears it.
-      const vip = el('button', 'roster-star')
-      vip.type = 'button'
-      vip.title = agent.starred ? 'VIP: its questions come first. Click to take the crown off.' : 'Make it VIP: its questions come first'
-      vip.append(crown())
-      vip.setAttribute('aria-pressed', String(Boolean(agent.starred)))
-      vip.setAttribute('aria-label', agent.starred ? 'Remove the VIP mark' : 'Mark as VIP')
-      vip.addEventListener('click', () => star(agent.id, !agent.starred).catch(() => {}))
+      // The crown on the corner of the mark is the switch for VIP.
+      const vip = crownToggle(agent, 'roster-star')
       // Tap the picture to choose another drawing, right there.
       const edit = el('button', 'roster-edit')
       edit.type = 'button'
       edit.title = 'Choose a drawing'
       edit.setAttribute('aria-label', `${agent.name}: choose a drawing`)
       edit.setAttribute('aria-haspopup', 'dialog')
-      edit.append(avatar(agent))
+      edit.append(avatar(agent, { vip: false }))
       edit.addEventListener('click', () => openMarkPicker(agent, edit))
-      top.append(edit, name, status, vip)
+      top.append(edit, vip, name, status)
       const facts = el('dl', 'roster-facts')
       facts.append(
         cell('Model', agent.model),

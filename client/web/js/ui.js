@@ -174,7 +174,18 @@ export function rich(text) {
     for (const block of chunk.split(/\n{2,}/)) {
       const lines = block.split('\n').filter(l => l.trim())
       if (!lines.length) continue
-      if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
+      // A table as agents write it: rows of cells between pipes, a rule of dashes under the first.
+      const cells = l => l.trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim())
+      if (lines.length > 1 && lines.every(l => /^\s*\|.*\|\s*$/.test(l)) && /^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$/.test(lines[1])) {
+        const table = el('table', 'rich-table')
+        const fill = (row, tag, values) => { for (const v of values) inline(row.appendChild(el(tag)), v) }
+        fill(table.appendChild(el('thead')).appendChild(el('tr')), 'th', cells(lines[0]))
+        const body = table.appendChild(el('tbody'))
+        for (const l of lines.slice(2)) fill(body.appendChild(el('tr')), 'td', cells(l))
+        const wrap = el('div', 'rich-table-wrap')
+        wrap.append(table)
+        root.append(wrap)
+      } else if (lines.every(l => /^\s*[-*]\s+/.test(l))) {
         const ul = el('ul')
         for (const l of lines) inline(ul.appendChild(el('li')), l.replace(/^\s*[-*]\s+/, ''))
         root.append(ul)
@@ -486,6 +497,14 @@ const SKETCH = {
   // The Focus window's composer: send is an arrow up with a kick in its shaft; explain is a question mark
   // with three short rays, an "aha" about to happen.
   send: [[[12.4, 20.4], [11.6, 15.6], [12.5, 10.4], [12, 4.6]], [[6.2, 10.4], [12, 4.2], [17.8, 10]]],
+  // a playing card with two arrows chasing each other: the turn goes back to the other side
+  reverse: [
+    [[7.2, 3.3], [17, 3.1], [18.7, 4.9], [18.9, 19.2], [17.1, 20.9], [7, 20.7], [5.3, 19], [5.1, 5], [7.4, 3.1]],
+    [[8.5, 11.6], [9.1, 8.4], [12.2, 7], [15, 8.2]], [[13, 6.1], [15.4, 8.3], [13.1, 10.2]],
+    [[15.5, 12.5], [14.9, 15.7], [11.8, 17.1], [9, 15.9]], [[11, 18], [8.6, 15.8], [10.9, 13.9]],
+  ],
+  // a paperclip, bent in one go: attach something
+  clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
     [[7.6, 9.6], [7.8, 6.4], [10.4, 4.2], [13.6, 4.4], [15.6, 6.8], [15, 9.6], [12.6, 11.6], [11.6, 13.4], [11.7, 15.6]],
     [[11.6, 19.2], [11.9, 19.7]],
@@ -532,7 +551,15 @@ const SKETCH = {
   // help: a plain question mark
   question: [[[7.8, 9.4], [8, 6.2], [10.6, 4], [13.8, 4.2], [15.8, 6.8], [15, 9.6], [12.6, 11.6], [11.8, 13.4], [11.9, 15.6]], [[11.8, 19.2], [12.1, 19.7]]],
   // the keys: one key cap with its mark
-  keycap: [[[4.6, 6], [19.2, 5.6], [19.6, 18.4], [4.4, 18.8], [4.8, 5.6]], [[9, 14.4], [12, 9], [15, 14.6]]],
+  keycap: [[[5, 6], [12, 5.6], [19, 5.8], [19.4, 12], [19.2, 18.4], [12, 18.8], [4.8, 18.6], [4.6, 12], [5, 5.5]], [[8.6, 12.6], [12, 11.8], [15.4, 12.5]]],
+  // the bar's two places: a tray for the inbox, two heads for the agents
+  tray: [[[4.2, 13], [5.4, 9], [7, 5.6], [12, 5.3], [17, 5.5], [18.6, 9], [19.8, 13]], [[4, 13.2], [4.1, 16.4], [4.4, 19.4], [12, 19.7], [19.6, 19.5], [19.9, 16.4], [20, 13.2]], [[4.4, 13.2], [8.8, 13], [10, 15.8], [14, 15.8], [15.2, 13], [19.6, 13.2]]],
+  heads: [
+    [[9, 4.8], [11.6, 6.2], [11.8, 9.2], [9.2, 10.8], [6.6, 9.4], [6.4, 6.4], [9.3, 4.7]],
+    [[3.4, 19.4], [5, 15.2], [9, 13.6], [13, 15.2], [14.6, 19.6]],
+    [[15.4, 6], [17.8, 7.8], [17.2, 10.4], [15.2, 11]],
+    [[16.6, 14], [19.4, 15.6], [20.6, 19.4]],
+  ],
   // three options, one of them ticked
   choose: [
     [[3.6, 6.6], [5.2, 8.6], [8.4, 4.4]],

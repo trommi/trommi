@@ -99,6 +99,17 @@ Object.assign(PERSONAS, {
       yesNo('Screenshots im README einbetten?', 'Fünf Bilder, zusammen etwa 2 MB.', 'Einbetten', 'Verlinken'),
       yesNo('Changelog ab jetzt führen?', '', 'Ja', 'Nein', { urgency: 'low' }),
     ],
+    // One structured text: the flagged paragraphs are the options, so each explanation sits with its tile.
+    sectioned: {
+      title: 'Was soll ins Handbuch?', multiple: true, urgency: 'normal',
+      text: [
+        'Das Handbuch hat bisher zwei Kapitel. Kreuze an, was ich als Nächstes schreiben soll.',
+        '[einstieg*] Erste Schritte: Installation und die erste Frage auf dem Board, mit Screenshots. Etwa ein halber Tag.',
+        '[werkzeuge*] Werkzeuge der Agenten: Jedes Tool mit einem Beispiel, erzeugt aus `/api/tools`, damit es nie veraltet.',
+        '[betrieb] Betrieb und Backup\nWo die Daten liegen, wie man sie sichert und was nach 30 Tagen gelöscht wird.',
+        '[faq] Häufige Fragen: Erst sinnvoll, wenn echte Fragen von Nutzern da sind.',
+      ].join('\n\n'),
+    },
     // Three small questions on one subject: a moment later this session bundles them into one, as a real agent should.
     merge: {
       title: 'Was soll ins README?', body: 'Kreuze an, was ich umsetzen darf.', multiple: true, recommended: ['englisch', 'changelog'],
@@ -161,6 +172,8 @@ for (const card of persona.cards) {
   }
   await sleep(500)
 }
+// Boards started before sections existed refuse this one; then the demo simply has no such card.
+if (persona.sectioned) await call('create_decision', persona.sectioned).catch(() => {})
 if (persona.merge && filed.length > 1) {
   await sleep(6000)
   const { options, ...rest } = persona.merge
