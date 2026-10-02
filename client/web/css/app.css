@@ -344,7 +344,7 @@ body[data-filter] .jump { display: none; }
 
 /* ---- conversation: dock (jump button, error, composer) ------------------- */
 
-.dock { flex: none; position: relative; padding-bottom: max(var(--s-3), env(safe-area-inset-bottom, 0px)); background: var(--surface); }
+.dock { flex: none; position: relative; padding-bottom: max(var(--s-4), env(safe-area-inset-bottom, 0px)); background: var(--surface); }
 .dock::before {
   content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 28px; pointer-events: none;
   background: linear-gradient(to top, var(--surface), transparent);
@@ -390,18 +390,7 @@ body[data-filter] .jump { display: none; }
 .composer-file img { flex: none; width: 24px; height: 24px; border-radius: 6px; object-fit: cover; background: var(--surface); }
 .composer-file em { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; font: 400 15px/1 var(--font); font-style: normal; color: var(--muted); }
 .composer-file:hover em { background: var(--fg); color: var(--bg); }
-.composer-clip .sketch, .composer-pen .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
-.composer-pen[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-/* The drawing sheet (js/chat.js): the canvas tools laid over the conversation, the composer stays below it. */
-.draw-sheet { grid-area: 1 / 1; z-index: 3; display: flex; flex-direction: column; min-height: 0; margin: var(--s-3) var(--gutter) var(--s-2); border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-lg); overflow: hidden; animation: arrive var(--d-med) var(--ease-out) both; }
-.draw-sheet[hidden] { display: none; }
-.draw-sheet-head { flex: none; display: flex; align-items: baseline; gap: var(--s-3); padding: 8px 8px 8px var(--s-4); border-bottom: 1px solid var(--line); font-size: var(--t-sm); color: var(--muted); }
-.draw-sheet-head strong { color: var(--fg); font-weight: 700; }
-.draw-sheet-head span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.draw-sheet-close { margin-left: auto; flex: none; min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--fg); font-size: var(--t-sm); font-weight: 600; }
-.draw-sheet-close:hover { border-color: var(--fg); }
-.draw-sheet-stage { flex: 1; min-height: 0; position: relative; }
-.chat-pane[data-drawing] :is(.jump, .open-jump) { display: none; }
+.composer-clip .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 .composer textarea {
   flex: 1; min-width: 0; height: 40px; padding: 8px 4px; resize: none; border: 0; background: none;
@@ -424,9 +413,6 @@ body[data-filter] .jump { display: none; }
   border: 2px solid currentColor; border-top-color: transparent; animation: spin .7s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.hint { margin-top: var(--s-2); text-align: center; font-size: var(--t-xs); color: var(--faint); }
-.hint kbd { font: 500 .68rem/1 var(--mono); padding: 2px 5px; border: 1px solid var(--line); border-radius: 5px; background: var(--surface-2); color: var(--muted); }
-@media (pointer: coarse) { .hint { display: none; } }
 
 /* ---- lightbox ------------------------------------------------------------ */
 
@@ -1453,7 +1439,6 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .event.cont .event-ico::before { height: 20px; }
   .event-time { display: none; }
   .dock { padding-bottom: var(--s-3); }
-  .hint { display: none; }
   .composer { border-radius: var(--r-xl); padding: 5px; gap: 0; }
   .composer textarea { height: 44px; padding-block: 10px; font-size: 16px; }   /* below 16px iOS zooms the page on focus */
   .send { width: 44px; height: 44px; }
