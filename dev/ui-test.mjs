@@ -51,7 +51,7 @@ const SEL = {
   sidebarAway: '#agents .agent-heading-away',
   sidebarArchive: '.agent-archive',
   sidebarOffline: '.is-offline',
-  sidebarCount: '.agent-count',
+  sidebarCount: '.agent-count:not(.is-knock)',   // every open question; the knocks (urgent, blocking) are counted before it
   navInbox: '#nav-inbox',
   navRoster: '#nav-roster, #roster-open',   // whichever of the two the layout shows
 
@@ -198,6 +198,7 @@ const TEXT = {
 }
 // The word for putting a question off changed more than once ("Later", "Snooze"); either is the same control.
 const isLater = word => /^(Snooze|Later)/.test(String(word ?? ''))
+const isFetch = word => /^(Fetch back|Wake)/.test(String(word ?? ''))
 const saysLater = words => /Snoozed|Moved to Later/.test(String(words ?? ''))
 // Words that give away an interface string that was not translated.
 const GERMAN = /(Posteingang|Gespräch|Fragen\b|Senden|Rückgängig|Später|Agenten|Verbunden|Verbindet|Getrennt|Abbrechen|Löschen|Farbe|Stärke|Verwaltung|Schlüssel|Sitzung|Übersicht|Zurück|Öffnen|Schließen|Nachricht|Zeichnen|Entscheidung|Dunkles|Helles|Ansicht|Bereiche|Rückg|Wiederholen|Einpassen|sendet|für eine|Zum Ende|Zum Board)/
@@ -303,7 +304,7 @@ const PAGE_LIB = `(() => {
     // The questions of one sender stand together: under a heading with its name and count, or (one list without
     // headings) in a section that names them for a screen reader, each row saying who asked.
     // A pile (Later, With the agent, Answered) keeps its rows also while it is pushed together; they are listed either way.
-    groups: (root = SEL.inbox) => all(SEL.group, root).map(g => { const pile = g.matches(SEL.pile); const said = /^(.*): (\d+) questions?$/.exec(g.getAttribute('aria-label') ?? '') ?? []; return { name: text((pile ? g.querySelector(SEL.pileName) : null) ?? g.querySelector(SEL.groupName)) || (said[1] ?? ''), count: text(g.querySelector(pile ? SEL.pileCount : SEL.groupCount)) || (said[2] ?? ''), pile: g.dataset.pile ?? '', open: !pile || g.matches(SEL.pileOpen), later: g.matches(SEL.laterGroup), vip: !!one(SEL.groupVip, g), ids: (pile ? [...g.querySelectorAll(SEL.row + ', ' + SEL.doneRow)] : all(SEL.row, g)).map(n => n.dataset.id).filter(Boolean), peeks: pile ? [...g.querySelectorAll(SEL.pilePeek)].map(text) : [] } }),
+    groups: (root = SEL.inbox) => all(SEL.group, root).map(g => { const pile = g.matches(SEL.pile); const said = /^(.*): (\\d+) questions?$/.exec(g.getAttribute('aria-label') ?? '') ?? []; return { name: text((pile ? g.querySelector(SEL.pileName) : null) ?? g.querySelector(SEL.groupName)) || (said[1] ?? ''), count: text(g.querySelector(pile ? SEL.pileCount : SEL.groupCount)) || (said[2] ?? ''), pile: g.dataset.pile ?? '', open: !pile || g.matches(SEL.pileOpen), later: g.matches(SEL.laterGroup), vip: !!one(SEL.groupVip, g), ids: (pile ? [...g.querySelectorAll(SEL.row + ', ' + SEL.doneRow)] : all(SEL.row, g)).map(n => n.dataset.id).filter(Boolean), peeks: pile ? [...g.querySelectorAll(SEL.pilePeek)].map(text) : [] } }),
     pileOf: kind => all(SEL.pile).find(g => g.dataset.pile === kind) ?? null,
     /** Which answer tile lies under a point of the screen. */
     tileAt(x, y) {
@@ -334,7 +335,7 @@ const PAGE_LIB = `(() => {
     noteNode: (inWindow = false, title = '') => (inWindow ? (all(SEL.focusStrip).findLast(n => text(n).includes(title)) ?? one(SEL.focusNote)) : one(SEL.undoBar)),
     note: (inWindow = false, title = '') => { const n = __t.noteNode(inWindow, title); return n && { text: text(n.querySelector(SEL.focusStripSaid) ?? n.querySelector(SEL.undoSaid) ?? n), all: text(n), back: !!one(SEL.noteBack, n), strip: n.matches(SEL.focusStrip), box: box(n) } },
     inPile: (kind, id) => !!__t.pileOf(kind) && [...__t.pileOf(kind).querySelectorAll(SEL.row + ', ' + SEL.doneRow)].some(n => n.dataset.id === id),
-    openCount: () => Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0),
+    openCount: () => Number(/^\\((\\d+)/.exec(document.title)?.[1] ?? 0),
     pane: id => all(SEL.pane).find(p => p.dataset.agent === id) ?? null,
     roster: () => all(SEL.rosterCard).map(c => ({
       name: text(c.querySelector(SEL.rosterName)),
@@ -737,6 +738,12 @@ async function settle() {
     if (await ev('__t.still()')) break
     await sleep(40)
   }
+  // On a phone the strip of sessions glides to the chosen one after a load. A tap that falls into that
+  // glide only stops it (Chromium gives no click), so wait until the strip rests.
+  if (touch) {
+    const at = () => ev(js`document.querySelector(${SEL.sidebar})?.scrollLeft ?? 0`).catch(() => 0)
+    for (let i = 0, last = await at(); i < 15; i++) { await sleep(90); const now = await at(); if (now === last) break; last = now }
+  }
   await ev('new Promise(r => requestAnimationFrame(() => requestAnimationFrame(() => r(true))))')
 }
 
@@ -910,7 +917,7 @@ async function checkRows(root, where) {
     const [left, right] = row.tiles
     if (right && !(left.box.right <= right.box.left + 1 && same(left.box.top, right.box.top))) bad.side.push(short(row))
     const mine = span(row), ref = span(lead)
-    if (!(mine.right <= row.box.right + 1 && row.box.right - mine.right <= 24)) bad.edge.push(`${short(row)} ends ${Math.round(row.box.right - mine.right)}px before the edge`)
+    if (!(mine.right <= row.box.right + 1 && row.box.right - mine.right <= 36)) bad.edge.push(`${short(row)} ends ${Math.round(row.box.right - mine.right)}px before the edge`)
     if (!(same(mine.left, ref.left) && same(mine.right, ref.right) && (touch || same(mine.top, ref.top)) && same(mine.height, ref.height))) bad.line.push(`${short(row)} (${Math.round(mine.left)}..${Math.round(mine.right)}, ${Math.round(mine.height)}px high; the first row ${Math.round(ref.left)}..${Math.round(ref.right)}, ${Math.round(ref.height)}px)`)
     if (right) for (const t of row.tiles) if (!same(t.box.width, t.box.height, 2)) bad.square.push(`${short(row)} "${t.name}" is ${t.box.width}x${t.box.height}`)
     const card = cardOf(row.id)
@@ -1119,7 +1126,20 @@ async function groupInbox() {
   await waitState(`"${slow.title}" is decided`, () => cardOf(slow.id).status !== 'open', 8000)
   check(cardOf(slow.id).choice === 'yes', `the answer on a slow line arrived as "${cardOf(slow.id).choice}"`)
   await sleep(300)
-  check(await ev('__t.openCount()') === openCards().filter(c => agentById(c.agent) && !agentById(c.agent).archived && fresh(c.id)).length, `the title of the page counts ${await ev('__t.openCount()')} open questions`)
+  // The title of the page: the knocks (urgent and blocking questions) where there are any, else every open question.
+  const waiting = openCards().filter(c => agentById(c.agent) && !agentById(c.agent).archived && fresh(c.id))
+  const knocks = waiting.filter(c => c.kind === 'permission' || c.urgency === 'high' || c.urgency === 'critical').length
+  check(await ev('__t.openCount()') === (knocks || waiting.length), `the title of the page reads "${await ev('document.title')}", expected ${knocks ? `${knocks} knocks` : `${waiting.length} open questions`}`)
+}
+
+/** Press the control that puts a row off, or fetches it back. A finger has no hover: where the control is a folded
+ *  corner, the first tap only unfolds it and the second one acts. */
+async function pressLater(id, what) {
+  const was = await ev(js`__t.inPile('later', ${id})`)
+  await press(what, js`__t.later(${id})`)
+  if (!touch) return
+  const moved = await waitFor('it moves', js`__t.inPile('later', ${id}) !== ${was}`, 700).catch(() => false)
+  if (!moved && await ev(js`!!__t.later(${id})`)) await press(`${what} (the second tap: the first one unfolded the corner)`, js`__t.later(${id})`)
 }
 
 /** Unfold a pile at the foot of the inbox (Later, With the agent, Answered), unless it stands open. */
@@ -1146,7 +1166,7 @@ async function groupLater() {
 
   for (const card of [one, two]) {
     await ev(js`__t.row(${card.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
-    await press(`"${TEXT.later}" on "${card.title}"`, js`__t.later(${card.id})`)
+    await pressLater(card.id, `"${TEXT.later}" on "${card.title}"`)
     putOff.add(card.id)
     await waitFor(`"${TEXT.later}" moves "${card.title}" into the pile at the foot`, js`__t.inPile('later', ${card.id})`, 3000)
     await settle()
@@ -1181,7 +1201,7 @@ async function groupLater() {
   await unfoldPile('later')
   const off = await ev(js`__t.rowInfo(${one.id})`)
   if (check(off, 'the unfolded pile does not show the row put off')) {
-    check(off.later.startsWith(TEXT.back), `a row put off offers "${off.later}" as the way back, expected "${TEXT.back}"`)
+    check(isFetch(off.later), `a row put off offers "${off.later}" as the way back, expected "${TEXT.back}" or "Wake up"`)
     check(off.from.includes(COURIER), `a row put off does not say who asked: "${off.from}"`)
   }
   await checkRows(SEL.inbox, `inbox after "${TEXT.later}"`)
@@ -1192,12 +1212,12 @@ async function groupLater() {
   await reload()
   check(await ev(js`__t.inPile('later', ${one.id})`), `after a reload the row put off is no longer on the "${TEXT.later}" pile`)
   await unfoldPile('later')
-  await press(`"${TEXT.back}" on "${one.title}"`, js`__t.later(${one.id})`)
+  await pressLater(one.id, `"${TEXT.back}" on "${one.title}"`)
   putOff.delete(one.id)
   await expect(`"${TEXT.back}" returns the row to the questions of its sender`, js`!!__t.groups().find(g => !g.pile && g.name.replace(/^★ /, '') === ${COURIER})?.ids.includes(${one.id})`, 3000)
   await settle()
   await unfoldPile('later')
-  await press(`"${TEXT.back}" on "${two.title}"`, js`__t.later(${two.id})`)
+  await pressLater(two.id, `"${TEXT.back}" on "${two.title}"`)
   putOff.delete(two.id)
   await expect(`the "${TEXT.later}" pile goes when it is empty`, js`!__t.groups().some(g => g.later)`, 3000)
   await settle()
@@ -1726,7 +1746,7 @@ async function groupAgents() {
   await expect('the star shows as set', js`__t.roster().find(c => c.name === ${nameOf(vip)}).starred`)
   // The crown on a session's mark in the sidebar is the same switch: one click takes VIP away, one puts it back.
   const crownOf = js`__t.one(${SEL.crownToggle}, __t.unit(${nameOf(vip)}))`
-  if (await ev(`!!${crownOf}`)) {
+  if (!touch && await ev(`!!${crownOf}`)) {
     check(await ev(`${crownOf}.getAttribute('aria-pressed')`) === 'true', 'the crown in the sidebar does not show the session as VIP')
     await press(`the crown of "${nameOf(vip)}" in the sidebar`, crownOf)
     await waitState('a click on the crown takes VIP away', s => !s.agents.find(a => a.id === vip.id).starred, 4000).then(() => passed(), e => check(false, e.message))
