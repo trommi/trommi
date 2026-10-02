@@ -1,6 +1,6 @@
 // The inbox: every open decision of every session, grouped by who is asking.
-// Yes/no questions are answered right in the row, with two buttons on the
-// right; anything longer opens as a full page.
+// Every row is the same height with two tiles at its right edge: no and yes
+// for a yes/no question, otherwise "later" and "more", which opens the options.
 
 import { el, agoNode, URGENCY_LABEL, doodle, kindOf, rich, mediaNodes } from './ui.js'
 import { decide, reopen } from './store.js'
@@ -21,6 +21,7 @@ const TILE_ICON = {
   no: 'M16.800 12.800 13.600 19.300c-1.500.2-2.300-.9-2.100-2.300l.5-3H7.300c-1.300 0-2.100-1.100-1.800-2.300l1.200-5c.3-1.100 1.100-1.700 2.200-1.700h7.800M16.800 13V4.900h2.600V13z',
   other: 'M5 9.500h11.500l-3.200-3.300M19 14.500H7.500l3.200 3.300',
   open: 'M4.500 7.200h15M4.500 12h15M4.500 16.800h9.500',
+  later: 'M12 5v12.500M6.500 12.500 12 18l5.500-5.500M5 20.500h14',
 }
 const NEGATIVE = /^(nein|nicht|noch nicht|später|ablehnen|lassen|weglassen|behalten|nur |abbrechen|bei .* bleiben)/i
 function tileIcon(kind) {
@@ -36,9 +37,11 @@ function tileIcon(kind) {
 const plain = text => String(text ?? '').replace(/```[\s\S]*?```/g, ' ').replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
 
 /** onOpen(cardId | null): open that card as a full page, or with null start at the most urgent one.
- *  With session: true it lists only the session in scope, every card written out in full with all its options. */
+ *  With session: true it lists only the session in scope, in the same rows. */
 export function mountInbox(root, { onOpen, session = false }) {
   let signature = ''
+  let lastState = null
+  let later = []   // cards put off for now, in the order they were put off; they sink to the end
   const head = el('header', 'inbox-head')
   const undo = el('div', 'inbox-undo')
   undo.hidden = true
@@ -188,13 +191,25 @@ export function mountInbox(root, { onOpen, session = false }) {
         actions.append(b)
       })
     } else {
-      const open = el('button', 'inbox-answer inbox-open')
-      open.type = 'button'
-      const disc = el('span', 'inbox-disc')
-      disc.append(tileIcon('open'))
-      open.append(disc, el('span', null, `${card.options.length} Optionen`))
-      open.addEventListener('click', () => onOpen(card.id))
-      actions.append(open)
+      // Not a yes/no: the same two places hold "later" (the card goes to the end
+      // of the list) and "more" (the options open in a window).
+      const tile = (cls, kind, label, act) => {
+        const b = el('button', `inbox-answer ${cls}`)
+        b.type = 'button'
+        const disc = el('span', 'inbox-disc')
+        disc.append(tileIcon(kind))
+        b.append(disc, el('span', null, label))
+        b.addEventListener('click', act)
+        return b
+      }
+      actions.append(
+        tile('inbox-later', 'later', 'Später', () => {
+          later = [...later.filter(id => id !== card.id), card.id]
+          signature = ''
+          render(lastState)
+        }),
+        tile('is-lead', 'open', 'Mehr', () => onOpen(card.id)),
+      )
     }
     // In the list every row has the same height, so the next answer lands where the last one was.
     if (thumbs && full) content.append(thumbs)
@@ -207,8 +222,11 @@ export function mountInbox(root, { onOpen, session = false }) {
     // The inbox looks across every session; a session's questions only at the one in scope.
     const all = session ? { ...state.all, cards: state.cards, queue: state.queue, agents: state.all.agents.filter(a => a.id === state.scope) } : state.all
     const byId = new Map(all.cards.map(c => [c.id, c]))
+    lastState = state
+    const put = id => later.indexOf(id)
     const open = all.queue.map(id => byId.get(id)).filter(Boolean)
-    const next = JSON.stringify([open.map(c => [c.id, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.attachments?.length]), all.agents.map(a => [a.id, a.name, a.mark, a.starred])])
+      .map((c, i) => [c, i]).sort((a, b) => put(a[0].id) - put(b[0].id) || a[1] - b[1]).map(([c]) => c)
+    const next = JSON.stringify([later, open.map(c => [c.id, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.attachments?.length]), all.agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
@@ -244,7 +262,7 @@ export function mountInbox(root, { onOpen, session = false }) {
       const mark = el('span', 'inbox-avatar')
       mark.append(doodle(agent.mark ?? agent.id))
       label.append(mark, el('span', null, agent.starred ? `★ ${agent.name}` : agent.name), el('b', null, cards.length === 1 ? '1 Frage' : `${cards.length} Fragen`))
-      if (session) section.append(...cards.map(c => row(c, false, true)))
+      if (session) section.append(...cards.map(c => row(c, false)))
       else section.append(label, ...cards.map(c => row(c, agent.starred)))
       list.append(section)
     }
