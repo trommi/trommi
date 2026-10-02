@@ -38,6 +38,22 @@ const LINK_WAIT = Math.min(HUB_TIMEOUT, 5000)
 const PING = Number(process.env.BOARD_PING_MS || 15000)
 // Notifications kept for an agent whose session is away; older ones give way to newer ones.
 const PENDING_MAX = 100
+const VERSION = (() => {
+  try { return String(JSON.parse(fs.readFileSync(path.join(ROOT, '..', 'package.json'), 'utf8')).version ?? '') } catch { return '' }
+})()
+// Extra addresses the board is reached under, e.g. the HTTPS name from `tailscale serve`; comma-separated.
+const PUBLIC_URLS = (process.env.BOARD_PUBLIC_URL || '').split(',').map(u => u.trim().replace(/\/+$/, '')).filter(Boolean)
+
+// stderr is the only log there is; the admin page shows the end of it.
+const LOG_LINES = 200
+const logLines = []
+const writeStderr = process.stderr.write.bind(process.stderr)
+process.stderr.write = (chunk, ...rest) => {
+  const said = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString()
+  for (const line of said.split('\n')) if (line) logLines.push({ ts: Date.now(), line: line.slice(0, 2000) })
+  logLines.splice(0, Math.max(0, logLines.length - LOG_LINES))
+  return writeStderr(chunk, ...rest)
+}
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif'])
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.webm', '.mov'])
 const AUDIO_EXT = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac'])
@@ -79,20 +95,36 @@ fs.mkdirSync(SPEECH, { recursive: true })
 // The token is the only thing between the network and this session, so it is
 // kept across restarts and never logged to the chat.
 const TOKEN_FILE = path.join(DATA, 'token')
-const readToken = () => {
-  try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim() } catch { return '' }
+const readSecret = file => {
+  try { return fs.readFileSync(file, 'utf8').trim() } catch { return '' }
 }
-let TOKEN = process.env.BOARD_TOKEN || readToken()
-if (!TOKEN) {
-  // Two sessions that start together must agree on one token: the file is put
-  // in place whole and never replaced, and whoever comes second reads it.
+const readToken = () => readSecret(TOKEN_FILE)
+// Two sessions that start together must agree on one secret: the file is put
+// in place whole, never over an existing one, and whoever comes second reads it.
+function mintSecret(file) {
   const fresh = crypto.randomBytes(24).toString('base64url')
-  const tmp = `${TOKEN_FILE}.${process.pid}`
+  const tmp = `${file}.${process.pid}`
   fs.writeFileSync(tmp, fresh, { mode: 0o600 })
-  try { fs.linkSync(tmp, TOKEN_FILE) } catch {}
+  try { fs.linkSync(tmp, file) } catch {}
   fs.rmSync(tmp, { force: true })
-  TOKEN = readToken() || fresh
+  return readSecret(file) || fresh
 }
+let TOKEN = process.env.BOARD_TOKEN || readToken() || mintSecret(TOKEN_FILE)
+
+// The hub may have replaced the token since this process read it (rotation on
+// the admin page). A token pinned by the environment is never second-guessed.
+function adoptToken() {
+  const fresh = process.env.BOARD_TOKEN ? '' : readToken()
+  if (!fresh || fresh === TOKEN) return false
+  TOKEN = fresh
+  return true
+}
+
+// The admin page can delete data and replace the token, so the login link alone
+// does not open it: it also asks for this key, which only someone with a shell
+// on the hub's machine can read. Set when this process becomes the hub.
+const ADMIN_FILE = path.join(DATA, 'admin-token')
+let adminKey = ''
 
 // ---- state ---------------------------------------------------------------
 
@@ -290,6 +322,8 @@ function unregister(id, link) {
 
 // Old answers are not kept forever: the card, its attachment files, and its
 // markers in the conversation go together. Open cards are never touched.
+const expired = cutoff => state.cards.filter(c => c.status !== 'open' && (c.decided ?? c.created) < cutoff)
+
 function purge() {
   const cutoff = Date.now() - RETENTION_DAYS * 86400000
   // An agent that never came back does not keep its mail forever either.
@@ -300,7 +334,7 @@ function purge() {
     else delete state.pending[id]
     save()
   }
-  const old = state.cards.filter(c => c.status !== 'open' && (c.decided ?? c.created) < cutoff)
+  const old = expired(cutoff)
   if (!old.length) return
   const ids = new Set(old.map(c => c.id))
   for (const card of old) {
@@ -887,10 +921,11 @@ function targetAgent(id) {
 }
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1'])
-const tokenMatches = given => {
-  const a = Buffer.from(String(given ?? '')), b = Buffer.from(TOKEN)
-  return a.length === b.length && crypto.timingSafeEqual(a, b)
+const sameSecret = (given, secret) => {
+  const a = Buffer.from(String(given ?? '')), b = Buffer.from(secret)
+  return b.length > 0 && a.length === b.length && crypto.timingSafeEqual(a, b)
 }
+const tokenMatches = given => sameSecret(given, TOKEN)
 
 // Spokes talk to the hub here: same machine only, and they must know the token.
 async function agentRoute(req, res, url) {
@@ -943,6 +978,318 @@ async function agentRoute(req, res, url) {
   }
 }
 
+// ---- admin -----------------------------------------------------------------
+
+// What the person who runs the hub would otherwise do in a shell. Everything
+// here is behind the login cookie and the Origin check like the rest, and
+// behind the admin key on top: the login link is shared with every device that
+// uses the board, and a link that leaked must not be enough to delete data or
+// to lock the owner out by replacing the token.
+const ADMIN_COOKIE = `board_admin_${PORT}`
+const ADMIN_TTL = 12 * 3600000
+// The browser holds a random session id, not the key; a new hub knows none of them.
+const adminSessions = new Map()
+const cookieOf = (req, name) => (req.headers.cookie ?? '').split(/;\s*/).find(c => c.startsWith(`${name}=`))?.slice(name.length + 1)
+const isAdmin = req => adminSessions.get(cookieOf(req, ADMIN_COOKIE)) > Date.now()
+const fail = (status, message) => Object.assign(new Error(message), { status })
+
+// Nothing the admin routes hand out or write down may carry a secret, even if
+// someone pasted one into a chat. Very short secrets are left alone: replacing
+// them would eat ordinary words.
+function scrubber() {
+  const secrets = [TOKEN, adminKey, speechKey()].filter(s => s.length >= 6).flatMap(s => [s, JSON.stringify(s).slice(1, -1)])
+  return text => secrets.reduce((out, s) => out.split(s).join('[entfernt]'), String(text))
+}
+const scrub = text => scrubber()(text)
+
+const ADMIN_LOG = path.join(DATA, 'admin-log.jsonl')
+const ADMIN_LOG_MAX = 300
+let adminLog = []
+function readAdminLog() {
+  const parse = line => { try { return JSON.parse(line) } catch { return null } }
+  return readSecret(ADMIN_LOG).split('\n').map(parse).filter(e => e && typeof e === 'object').slice(-ADMIN_LOG_MAX)
+}
+function audit(req, action, detail = '') {
+  const last = adminLog.at(-1)
+  // Repeated wrong keys count up in one line, so they cannot push the rest out of the log.
+  if (action === 'login-failed' && last?.action === action) Object.assign(last, { ts: Date.now(), count: (last.count ?? 1) + 1 })
+  else adminLog = [...adminLog, { ts: Date.now(), action, detail: scrub(detail), from: req.socket.remoteAddress ?? '' }].slice(-ADMIN_LOG_MAX)
+  const tmp = `${ADMIN_LOG}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, adminLog.map(e => JSON.stringify(e)).join('\n') + '\n', { mode: 0o600 })
+  fs.renameSync(tmp, ADMIN_LOG)
+}
+
+// Files are only ever named by one of the data folders and a bare file name.
+function dataFile(dir, name) {
+  const file = path.join(dir, path.basename(String(name)))
+  if (path.dirname(file) !== dir || !path.resolve(file).startsWith(path.resolve(DATA) + path.sep)) throw fail(400, `not a file in the data directory: ${name}`)
+  return file
+}
+function listFiles(dir) {
+  const stat = name => { try { return fs.statSync(dataFile(dir, name)) } catch { return null } }
+  // Regular files only: a link placed in the folder is neither counted nor followed.
+  return fs.readdirSync(dir, { withFileTypes: true }).filter(e => e.isFile())
+    .map(e => ({ dir, name: e.name, stat: stat(e.name) })).filter(f => f.stat).map(f => ({ dir, name: f.name, size: f.stat.size, mtime: f.stat.mtimeMs }))
+}
+function removeFile(dir, name) {
+  const file = dataFile(dir, name)
+  let size = 0
+  try {
+    const stat = fs.lstatSync(file)
+    if (!stat.isFile()) return 0
+    size = stat.size
+  } catch { return 0 }
+  fs.rmSync(file, { force: true })
+  return size
+}
+const tally = files => ({ count: files.length, bytes: files.reduce((sum, f) => sum + f.size, 0) })
+
+// The stored files of a list of messages and cards, as [folder, name] pairs.
+function filesOf(items) {
+  return items.flatMap(item => item.attachments ?? []).flatMap(a => {
+    if (a?.kind === 'scribble' && a.id) return [[SCRIBBLES, `${a.id}.png`], [SCRIBBLES, `${a.id}.json`]]
+    return typeof a?.url === 'string' && a.url.startsWith('/files/') ? [[FILES, path.basename(a.url)]] : []
+  })
+}
+const canvasFiles = agent => ['json', 'png'].map(ext => [SCRIBBLES, path.basename(canvasFile(agent, ext))])
+
+// Files nothing in the state points to. The canvas of every session that is
+// still mentioned anywhere counts as referenced. Spoken audio is a cache that
+// nothing references; a day is long enough for an agent to pick up a voiceover.
+const SPEECH_KEEP = 86400000
+function orphans() {
+  const owners = new Set([...state.agents.map(a => a.id), ...state.messages.map(m => m.agent), ...state.cards.map(c => c.agent)].filter(Boolean))
+  const used = new Set([...filesOf([...state.messages, ...state.cards]), ...[...owners].flatMap(canvasFiles)].map(([dir, name]) => path.join(dir, name)))
+  const loose = dir => listFiles(dir).filter(f => !used.has(path.join(dir, f.name)))
+  return { files: loose(FILES), scribbles: loose(SCRIBBLES), speech: listFiles(SPEECH).filter(f => Date.now() - f.mtime > SPEECH_KEEP) }
+}
+
+// What purge() would take if it ran now.
+function purgePreview() {
+  const cutoff = Date.now() - RETENTION_DAYS * 86400000
+  const old = expired(cutoff)
+  const ids = new Set(old.map(c => c.id))
+  const names = new Set(filesOf(old).map(([, name]) => name))
+  return {
+    cutoff, cards: old.length, ...tally(listFiles(FILES).filter(f => names.has(f.name))),
+    markers: state.messages.filter(m => m.from === 'event' && ids.has(m.card_id)).length,
+    queued: Object.values(state.pending).flat().filter(e => e.ts < cutoff).length,
+  }
+}
+
+function forgetSession(id, withData) {
+  const agent = state.agents.find(a => a.id === id)
+  if (!agent) throw fail(404, `no session ${id}`)
+  if (links.has(id)) throw fail(409, `session ${id} is online; only a session that is away can be forgotten`)
+  const mine = x => x.agent === id
+  const gone = { messages: 0, cards: 0, files: 0, bytes: 0 }
+  if (withData) {
+    const items = [...state.messages.filter(mine), ...state.cards.filter(mine)]
+    for (const [dir, name] of [...filesOf(items), ...canvasFiles(id)]) {
+      const size = removeFile(dir, name)
+      if (!size) continue
+      gone.files++
+      gone.bytes += size
+    }
+    gone.messages = state.messages.filter(mine).length
+    gone.cards = state.cards.filter(mine).length
+    state.messages = state.messages.filter(m => !mine(m))
+    state.cards = state.cards.filter(c => !mine(c))
+  }
+  // Status lines and waiting notifications mean nothing without the session.
+  state.tasks = state.tasks.filter(t => !mine(t))
+  delete state.pending[id]
+  state.agents = state.agents.filter(a => a.id !== id)
+  commit()
+  return gone
+}
+
+function loginLinks() {
+  const lan = Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)
+  const hosts = HOST === '0.0.0.0' ? [['local', 'localhost'], ['lan', lan?.address]] : [['local', HOST]]
+  return [
+    ...hosts.filter(([, host]) => host).map(([kind, host]) => ({ kind, url: `http://${host}:${PORT}/?t=${TOKEN}` })),
+    ...PUBLIC_URLS.map(base => ({ kind: 'public', url: `${base}/?t=${TOKEN}` })),
+  ]
+}
+const writeLinks = () => fs.writeFileSync(path.join(DATA, 'url.txt'), loginLinks().map(l => l.url).join('\n') + '\n', { mode: 0o600 })
+
+// Every login so far ends here: old cookies no longer match and open pages are
+// cut off. Spokes keep their link and pick the new token up from the file the
+// next time the hub refuses the old one.
+function rotateToken() {
+  const tmp = `${TOKEN_FILE}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, crypto.randomBytes(24).toString('base64url'), { mode: 0o600 })
+  fs.renameSync(tmp, TOKEN_FILE)
+  TOKEN = readToken()
+  writeLinks()
+  for (const res of clients) res.end()
+}
+
+function overview() {
+  const cards = status => state.cards.filter(c => c.status === status).length
+  const size = file => { try { return fs.statSync(file).size } catch { return 0 } }
+  const queued = id => state.pending[id]?.length ?? 0
+  return {
+    version: VERSION, node: process.version, now: Date.now(), uptime: Math.round(process.uptime()),
+    hub: { id: selfId, pid: process.pid, host: os.hostname(), since: hubSince },
+    port: PORT, bind: HOST, speech: Boolean(speechKey()), token_fixed: Boolean(process.env.BOARD_TOKEN), retention_days: RETENTION_DAYS,
+    data: { dir: path.resolve(DATA), state: size(STATE_FILE), files: tally(listFiles(FILES)), scribbles: tally(listFiles(SCRIBBLES)), speech: tally(listFiles(SPEECH)) },
+    counts: {
+      messages: state.messages.length, cards: { open: cards('open'), decided: cards('decided'), done: cards('done') },
+      queued: Object.fromEntries(Object.keys(state.pending).map(id => [id, queued(id)])), sse: clients.size,
+    },
+    sessions: state.agents.map(a => ({
+      id: a.id, name: a.name, label: a.label ?? '', online: links.has(a.id), hub: a.id === selfId,
+      model: a.model, host: a.host, cwd: a.cwd, client: a.client, platform: a.platform, task: a.task,
+      joined: a.joined, connected: a.connected, seen: a.seen, queued: queued(a.id),
+      messages: state.messages.filter(m => m.agent === a.id).length, cards: state.cards.filter(c => c.agent === a.id).length,
+    })),
+  }
+}
+
+// The state as a file to keep. Left out: the queue of notifications for agents
+// that are away (it repeats chat text and names paths on this machine; only
+// its length per agent is kept) and, by scrub, any secret that got into a text.
+function exportState() {
+  const queued = Object.fromEntries(Object.entries(state.pending).map(([id, queue]) => [id, queue.length]))
+  return scrub(JSON.stringify({ exported: Date.now(), version: VERSION, ...state, pending: undefined, pending_counts: queued }, null, 2))
+}
+
+// confirm names what the body must repeat in its "confirm" field before anything is removed or replaced.
+const ADMIN_ROUTES = new Map(Object.entries({
+  login: {
+    method: 'POST', open: true,
+    async run({ req, res, body }) {
+      if (!sameSecret(body.key, adminKey)) {
+        // A wrong key costs a second; no lockout, which a guest could turn against the owner.
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        audit(req, 'login-failed')
+        throw fail(403, 'wrong admin key')
+      }
+      for (const [id, until] of adminSessions) if (until < Date.now()) adminSessions.delete(id)
+      const id = crypto.randomBytes(24).toString('base64url')
+      adminSessions.set(id, Date.now() + ADMIN_TTL)
+      res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=${id}; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=${ADMIN_TTL / 1000}`)
+      audit(req, 'login')
+      return { ok: true }
+    },
+  },
+  logout: {
+    method: 'POST', open: true,
+    run({ req, res }) {
+      adminSessions.delete(cookieOf(req, ADMIN_COOKIE))
+      res.setHeader('Set-Cookie', `${ADMIN_COOKIE}=; HttpOnly; SameSite=Strict; Path=/admin; Max-Age=0`)
+      return { ok: true }
+    },
+  },
+  overview: { method: 'GET', run: overview },
+  cleanup: {
+    method: 'GET',
+    run() {
+      const loose = orphans()
+      return { retention_days: RETENTION_DAYS, purge: purgePreview(), orphans: { files: tally(loose.files), scribbles: tally(loose.scribbles), speech: tally(loose.speech) } }
+    },
+  },
+  log: { method: 'GET', run: () => ({ max: ADMIN_LOG_MAX, entries: adminLog }) },
+  diagnose: {
+    method: 'GET',
+    run: (ctx, clean = scrubber()) => ({
+      sse: clients.size, lines: logLines.map(l => ({ ts: l.ts, line: clean(l.line) })),
+      links: state.agents.map(a => ({
+        id: a.id, state: a.id === selfId ? 'hub' : links.has(a.id) ? 'linked' : 'away',
+        since: a.connected, seen: a.seen, queued: state.pending[a.id]?.length ?? 0,
+      })),
+    }),
+  },
+  export: {
+    method: 'GET',
+    run({ req, res }) {
+      audit(req, 'export')
+      res.setHeader('Content-Disposition', `attachment; filename="trommi-${new Date().toISOString().slice(0, 10)}.json"`)
+      send(res, 200, exportState())
+    },
+  },
+  links: {
+    method: 'POST',
+    run({ req }) {
+      audit(req, 'links')
+      return { links: loginLinks(), token_fixed: Boolean(process.env.BOARD_TOKEN) }
+    },
+  },
+  'sessions/forget': {
+    method: 'POST', confirm: body => String(body.id),
+    run({ req, body }) {
+      const gone = forgetSession(String(body.id), body.data === true)
+      audit(req, 'forget', `${body.id}${body.data === true ? `, mit ${gone.messages} Nachrichten, ${gone.cards} Karten, ${gone.files} Dateien` : ', Daten behalten'}`)
+      return { ok: true, ...gone }
+    },
+  },
+  'sessions/clear-queue': {
+    method: 'POST', confirm: body => String(body.id),
+    run({ req, body }) {
+      const id = String(body.id)
+      const queued = Object.hasOwn(state.pending, id) ? state.pending[id].length : 0
+      if (!queued && !state.agents.some(a => a.id === id)) throw fail(404, `no session ${id}`)
+      delete state.pending[id]
+      save()
+      audit(req, 'clear-queue', `${id}, ${queued} Benachrichtigungen`)
+      return { ok: true, removed: queued }
+    },
+  },
+  purge: {
+    method: 'POST', confirm: () => 'purge',
+    run({ req }) {
+      const { cutoff, ...removed } = purgePreview()
+      purge()
+      audit(req, 'purge', `${removed.cards} Karten, ${removed.count} Dateien`)
+      return { ok: true, ...removed }
+    },
+  },
+  orphans: {
+    method: 'POST', confirm: () => 'orphans',
+    run({ req }) {
+      const loose = Object.values(orphans()).flat()
+      const bytes = loose.reduce((sum, f) => sum + removeFile(f.dir, f.name), 0)
+      audit(req, 'orphans', `${loose.length} Dateien`)
+      return { ok: true, removed: loose.length, bytes }
+    },
+  },
+  'token/rotate': {
+    method: 'POST', confirm: () => 'rotate',
+    run({ req, res }) {
+      // A restart would bring the old token back, so the rotation would be a pretence.
+      if (process.env.BOARD_TOKEN) throw fail(409, 'the token is set by BOARD_TOKEN; change it there and restart')
+      rotateToken()
+      // Whoever rotated stays logged in; everyone else needs the new link.
+      res.setHeader('Set-Cookie', `${COOKIE}=${TOKEN}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`)
+      audit(req, 'rotate')
+      return { ok: true, links: loginLinks() }
+    },
+  },
+}))
+
+async function adminRoute(req, res, url) {
+  const route = ADMIN_ROUTES.get(url.pathname.slice('/admin/api/'.length))
+  // A process that lost or never had the port holds no state to manage.
+  if (role !== 'hub') return send(res, 503, '{"error":"only the hub answers admin requests"}')
+  if (!route) return send(res, 404, '{"error":"not found"}')
+  if (req.method !== route.method) {
+    res.setHeader('Allow', route.method)
+    return send(res, 405, '{"error":"method not allowed"}')
+  }
+  if (!route.open && !isAdmin(req)) return send(res, 403, '{"error":"admin key required","admin":false}')
+  try {
+    const body = route.method === 'POST' ? await readJson(req) : {}
+    if (!body || typeof body !== 'object' || Array.isArray(body)) throw fail(400, 'the body must be an object')
+    if (route.confirm && body.confirm !== route.confirm(body)) throw fail(400, `not confirmed: send "confirm": ${JSON.stringify(route.confirm(body))}`)
+    const out = await route.run({ req, res, body })
+    if (out !== undefined) send(res, 200, JSON.stringify(out))
+  } catch (err) {
+    send(res, err.status ?? 400, JSON.stringify({ error: scrub(err.message) }))
+  }
+}
+
 const httpServer = http.createServer(async (req, res) => {
   let url
   // Runs before any check, so a request line that is no URL ("//") must not throw.
@@ -963,6 +1310,7 @@ const httpServer = http.createServer(async (req, res) => {
   }
   if (!authed(req)) return send(res, 401, 'Zugang nur über den Link aus data/url.txt', 'text/plain; charset=utf-8')
   if (req.method !== 'GET' && !sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}')
+  if (url.pathname.startsWith('/admin/api/')) return adminRoute(req, res, url)
   try {
     if (req.method === 'GET' && url.pathname === '/') {
       return send(res, 200, fs.readFileSync(path.join(PUBLIC, 'index.html')), 'text/html; charset=utf-8')
@@ -1120,7 +1468,7 @@ const notifySelf = (method, params) => {
 let relink = () => {}
 let misses = 0
 
-async function hubPost(route, body, ms = HUB_TIMEOUT) {
+async function hubPost(route, body, ms = HUB_TIMEOUT, again = true) {
   let res, out
   try {
     res = await fetch(`http://127.0.0.1:${PORT}${route}`, {
@@ -1137,6 +1485,8 @@ async function hubPost(route, body, ms = HUB_TIMEOUT) {
     if (up) relink()
     throw new Error(RETRY)
   }
+  // The token was rotated while the link stood; the file has the new one.
+  if (res.status === 403 && again && adoptToken()) return hubPost(route, body, ms, false)
   if (!res.ok) throw new Error(out?.error ?? 'the board refused the request')
   return out
 }
@@ -1155,10 +1505,15 @@ mcp.oninitialized = () => {
 }
 
 let cleaning = false
+let hubSince = 0
 
 function becomeHub() {
   role = 'hub'
   misses = 0
+  hubSince = Date.now()
+  adoptToken()
+  adminKey = process.env.BOARD_ADMIN_TOKEN || readSecret(ADMIN_FILE) || mintSecret(ADMIN_FILE)
+  adminLog = readAdminLog()
   // Only a spoke that takes over has fellow spokes on their way back.
   const takeover = selfId != null
   links.clear()
@@ -1173,11 +1528,8 @@ function becomeHub() {
   purge()
   if (!cleaning) setInterval(purge, 6 * 3600000).unref()
   cleaning = true
-  const lan = Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)
-  const hosts = HOST === '0.0.0.0' ? ['localhost', lan?.address].filter(Boolean) : [HOST]
-  const urls = hosts.map(h => `http://${h}:${PORT}/?t=${TOKEN}`)
-  fs.writeFileSync(path.join(DATA, 'url.txt'), urls.join('\n') + '\n', { mode: 0o600 })
-  console.error(`[board] hub on ${HOST}:${PORT} as "${selfId}", links in ${path.join(DATA, 'url.txt')}`)
+  writeLinks()
+  console.error(`[board] hub on ${HOST}:${PORT} as "${selfId}", links in ${path.join(DATA, 'url.txt')}${process.env.BOARD_ADMIN_TOKEN ? '' : `, admin key in ${ADMIN_FILE}`}`)
 }
 
 // Someone else has the port: link to them and stay linked. If the link drops,
@@ -1205,7 +1557,7 @@ function joinHub() {
     if (res.statusCode !== 200) {
       res.resume()
       // Refused: the hub may hold a token that was written after this process read the file.
-      if (!process.env.BOARD_TOKEN) TOKEN = readToken() || TOKEN
+      adoptToken()
       return retry()
     }
     let buffer = ''
