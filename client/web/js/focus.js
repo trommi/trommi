@@ -2295,6 +2295,8 @@ export function mountFocus({ onDecided } = {}) {
   // ── state → cards ───────────────────────────────────────────────────────
   function sync(motion) {
     const state = lastState
+    // (the row it was unfolded in was drawn anew and took the card with it: fold, and be the window again)
+    if (isOpen && inlineHost && !root.isConnected) return close()
     if (!isOpen || !state) return
     const byId = new Map(pool().cards.map(c => [c.id, c]))
     const isOpenCard = id => byId.get(id)?.status === 'open' && !decidedLocal.has(id)
@@ -2947,6 +2949,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     clearTimeout(closeTimer)
     teardown()
+    if (!root.isConnected) document.body.append(root)
     opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
     isOpen = true
     started = false

@@ -206,6 +206,8 @@ export function putOff(cardId, off = true, asked = false) {
   else if (card && !off && isSnoozed(card)) snooze(cardId, false)
   emit()
 }
+/** Take a card back that is with its session (handed back to revise, asked to explain) before it was reworked. */
+export const takeBack = cardId => post('/handback', { card_id: cardId, clear: true }).then(() => putOff(cardId, false))
 // Another tab of this browser put a card off or fetched one back.
 window.addEventListener('storage', e => { if (e.key === LATER_KEY) { later = readLater(); emit() } })
 

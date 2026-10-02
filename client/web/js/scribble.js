@@ -72,7 +72,9 @@ const SIZES = { pen: [2, 4, 7, 12], hl: [10, 18, 28, 42] }
 const HL_ALPHA = 0.5
 // The drawing surface stays paper in both themes: ink colours, photos and the
 // PNG the agent receives all assume a white ground. Dark only dims it a little.
-const PAPER = { light: '#ffffff', dark: '#eceee9' }
+// The ink is the same in both themes and what is sent is always on white, so the paper stays paper in dark:
+// only dimmed, so that it does not glare beside the dark page.
+const PAPER = { light: '#ffffff', dark: '#cfd3cb' }
 const DOT = 'rgb(20 28 24 / .27)'
 const SELECT = '#1b6a57'
 const PLACEHOLDER = '#e6e9e3'

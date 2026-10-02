@@ -161,6 +161,8 @@ body[data-filter] .jump { display: none; }
 /* A message that asks back about a question says which one. */
 .msg-about { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; margin-bottom: 4px; padding: 0; border: 0; background: none; font-size: var(--t-xs); color: var(--muted); }
 .msg-about span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* (a finger needs 36px: the line is taller than it looks) */
+.msg-about { padding-block: 9px; margin-block: -9px -5px; }
 .msg-about:hover span:last-child { color: var(--fg); text-decoration: underline; }
 
 .agent-mark {
@@ -757,6 +759,25 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-text.has-sender { position: relative; padding-left: 36px; }
 .inbox-who.inbox-from-mark { position: absolute; left: 0; top: 3px; width: 26px; height: 26px; color: hsl(var(--hue) 62% 30%); }
 :root[data-theme="dark"] .inbox-who.inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+/* ---- "In revision": the cards that are with their session right now, one slim line each ---- */
+.inbox-revising { gap: 0; margin-top: var(--s-6); }
+.inbox-revising-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font: 600 var(--t-sm)/1.4 var(--font); color: var(--muted); }
+.inbox-revising-head b { font-weight: 500; color: var(--faint); font-variant-numeric: tabular-nums; }
+.inbox-revising-row { display: flex; align-items: center; gap: var(--s-3); min-height: 36px; border-top: 1px solid var(--line); }
+.inbox-revising-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; min-height: 36px; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.inbox-revising-open .agent-ring { position: static; flex: none; width: 15px; height: 15px; color: var(--accent); }
+.inbox-revising-open .ring-loop { opacity: .38; stroke-width: 2.2; }
+.inbox-revising-open .ring-drop path { stroke-width: 3.2; }
+.inbox-revising-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.inbox-revising-open:hover strong, .inbox-revising-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
+.inbox-revising-sent { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); color: var(--faint); }
+.inbox-revising-tail { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.inbox-revising-tail .inbox-from-mark { width: 16px; height: 16px; color: hsl(var(--hue) 62% 30%); }
+:root[data-theme="dark"] .inbox-revising-tail .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+.inbox-revising-take { flex: none; min-height: 28px; padding: 0 4px; border: 0; background: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; opacity: 0; }
+.inbox-revising-row:hover .inbox-revising-take, .inbox-revising-take:focus-visible { opacity: 1; color: var(--fg); }
+@media (hover: none) { .inbox-revising-take { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .inbox-revising-open .ring-loop { opacity: 1; stroke-dasharray: 91 9; } }
 /* ---- a row unfolded in place: it holds the whole card (js/focus.js, inline) and nothing of its own ----
    Its compact content is hidden while the card shows it; where the page has room the row is wider
    than the column. */
@@ -1107,6 +1128,11 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .open-jump:hover { filter: brightness(.94); }
 .open-jump:active { scale: .97; }
 body[data-filter] .open-jump { display: none; }
+/* Both markers stand at the column's right edge, one above the other, clear of the middle of the lines; and the
+   stream ends with room for them, so its last line is never under one. */
+.jump { left: auto; translate: none; right: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))); height: 34px; }
+.jump:not([hidden]) ~ .open-jump { bottom: calc(100% + var(--s-3) + 40px); }
+.chat-pane:not(.is-several) .log-inner { padding-bottom: 60px; }
 /* On a wide window a session used to be split in two (css/beside.css: its questions in a column of their own,
    the conversation narrow beside it). It is one stream again; these lines take that split back for a session
    on its own. Sessions laid together keep their layout. */
@@ -1249,16 +1275,28 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   body { grid-template-rows: minmax(0, 1fr); }
   #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
   #session, #inbox, #ledger { grid-row: 1; }
-  /* (centred by its margins, not by a transform: the floating buttons below are its children and must stay the page's) */
-  .topbar { position: fixed; z-index: 7; top: 6px; left: 256px; right: 0; width: fit-content; margin-inline: auto; min-height: 0; height: 34px; padding: 0 4px; border: 0; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
-  .brand { margin-right: 0; }
-  .brand h1 { font-size: .92rem; }
-  .brand-mark { width: 20px; height: 20px; }
-  .brand-open { min-height: 28px; min-width: 28px; margin-left: 0; padding: 0 6px; gap: 7px; justify-content: center; border-radius: var(--r-pill); box-shadow: -1px 0 0 var(--line); border-top-left-radius: 0; border-bottom-left-radius: 0; cursor: pointer; }
-  .brand-open .brand-fold { margin-left: 0; }
-  .sidedoors { left: 50%; translate: -50% 0; bottom: auto; top: calc(100% + 8px); width: 300px; }
-  /* room for the pill above the pages' headings */
-  body[data-scope="all"] #inbox, body[data-page="roster"] #ledger { padding-top: 52px; }
+  /* The Desk stands at the top of the sidebar, a block of its own that stays while the sessions scroll:
+     the desk drawing, "Desk", who works, the knocks and everything open; one click goes to the Desk from
+     anywhere. The caret at its right opens the menu under it. (Not moved by a transform: the floating
+     buttons at the foot are children of .topbar and must stay the page's.) */
+  #agents { padding-top: 78px; }
+  .topbar { position: fixed; z-index: 7; top: 10px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 58px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+  .topbar:has(#desk-go[aria-current]) { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
+  .topbar .brand { margin-right: 0; flex: 1; min-width: 0; height: 100%; }
+  .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.12rem/1 var(--display); letter-spacing: -.01em; }
+  .topbar .deskpill { gap: 0; }
+  .topbar .desk-go { flex: 1; min-width: 0; height: 100%; display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-content: center; align-items: center; column-gap: 9px; row-gap: 4px; padding: 0 6px 0 10px; border-radius: 14px 0 0 14px; text-align: left; }
+  .topbar .desk-go:hover { background: none; }
+  .topbar .desk-go .brand-mark { display: none; }
+  .topbar .desk-go > .sketch { grid-row: 1 / span 2; width: 28px; height: 28px; stroke-width: 1.6; }
+  .topbar .desk-state { display: contents; }
+  .topbar .desk-state .agent-counts { grid-column: 3; grid-row: 1 / span 2; }
+  .topbar .desk-state .agent-working { grid-column: 2; grid-row: 2; }
+  .topbar .desk-go:not(:has(.agent-working)) .desk-name { grid-row: 1 / span 2; }
+  .topbar .desk-go[aria-current] .desk-name { text-decoration: none; }
+  .topbar .brand-open { align-self: stretch; min-width: 30px; margin-left: 0; padding: 0 4px; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
+  .topbar .brand-open .brand-fold { margin-left: 0; }
+  .topbar .sidedoors { left: 0; translate: none; bottom: auto; top: calc(100% + 6px); width: 240px; }
 }
 /* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
    with the connection and two small switches. One thin rule between the parts. */
@@ -1283,7 +1321,6 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 .desk-state { display: inline-flex; align-items: center; gap: 8px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: 0; }
 .desk-state:empty { display: none; }
 .desk-state .agent-working { font-size: var(--t-xs); }
-.focus-lock .topbar .deskpill { visibility: hidden; }
 .menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: 4px; border-top: 1px solid var(--line); }
 .topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 32px; gap: 7px; padding: 0 8px; font-size: var(--t-sm); }
 .topbar .sidedoors .sketch { width: 17px; height: 17px; }
@@ -1295,7 +1332,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 .topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) .sketch { color: var(--fg); }
 @media (min-width: 861px) {
   /* one edge on the pill: the logo button has no ground of its own in it */
-  .brand-open:hover, .brand-open[aria-expanded="true"] { background: none; }
+  .brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
 }
 
 /* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */
@@ -1314,6 +1351,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .pane-members button[aria-pressed="true"] { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 5px; }
   body[data-view="scribble"]:not([data-pair]) .pane-title { display: none; }
   .filters { margin-left: auto; }
+  .filters button { min-height: 36px; }
   body[data-pair] .chat-pane:not(.is-member) { display: none; }
   #chat[data-cols]:not([data-cols="1"]) .chat-pane { min-width: 0; --gutter: var(--s-4); }
   .chat-pane-head { display: none; }
@@ -1355,6 +1393,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .topbar { gap: 0 2px; padding-left: max(var(--s-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--s-1), env(safe-area-inset-right, 0px)); }
   .brand-open { margin-left: 0; min-width: 40px; min-height: 40px; justify-content: center; }
   .desk-go { min-height: 40px; padding-left: 0; }
+  .desk-go > .sketch { display: none; }
   .desk-go:hover { background: none; }
   .desk-state .agent-working span { display: none; }
   .icon-btn { width: 44px; height: 44px; }

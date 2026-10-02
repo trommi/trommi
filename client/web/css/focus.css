@@ -1275,3 +1275,22 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus-done-work[hidden] { display: none; }
 .focus-done-work .agent-avatar { width: 30px; height: 30px; }
 @container focus (max-width: 699.9px) { .focus[data-list] .focus-says { inset: 54px auto auto 8px !important; } }
+
+/* From the dark/phone audit. The end of the walk reads on the page's ground in both themes, and there is one end. */
+.focus-list-end { color: var(--muted); opacity: 1; }
+.focus-list-end .sketch { color: var(--accent); }
+.focus[data-list] .focus-sheet[data-state="done"] .focus-stage { display: none; }
+/* "N more" has a strip of its own under the cards instead of lying on a card's field */
+.focus[data-list] .focus-sheet[data-state="cards"] .focus-stage { margin-bottom: 50px; }
+/* text that goes on under the field fades out instead of being cut */
+.focus:not([data-inline]) .focus-card .focus-scroll { -webkit-mask-image: linear-gradient(#000 calc(100% - 26px), transparent); mask-image: linear-gradient(#000 calc(100% - 26px), transparent); }
+/* the advice marker in dark: lighter, so the label on it reads */
+:root[data-theme="dark"] .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 45%, transparent); }
+/* a finger needs more than 32px */
+@container focus (max-width: 699.9px) {
+  .focus .focus-card-ends button { width: 36px; height: 36px; }
+  .focus-card .focus-title { padding-right: 0; }
+  .focus-card .focus-lead, .focus-card[data-pictures] .focus-stage-bar { padding-top: 44px; }
+  .focus-opt-pen { position: relative; }
+  .focus-opt-pen::after { content: ''; position: absolute; inset: -8px; }
+}
