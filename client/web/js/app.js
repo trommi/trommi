@@ -256,6 +256,8 @@ async function openFocus(cardId, step = true, { ask = false, revise = false, gal
     // Opened for its pictures: only if the window can show them at once (focus.js gallery()); the caller
     // hears false otherwise and shows them its own way.
     if (gallery && !focusMode.gallery) return false
+    // Revise, with a card named: it is handed back at once (a note with the way back), no window.
+    if (revise && cardId) return focusMode.revise(cardId)
     focusMode.open(cardId ?? undefined)
     if (!focusMode.isOpen()) return false
     if (ask) focusMode.ask()   // opened to ask back: the line for it is ready

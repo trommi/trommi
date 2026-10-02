@@ -7,10 +7,10 @@
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
 import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
-import { hueFor } from './agents.js'
-import { loopPath, penSeed, INBOX_SKETCH } from './ui.js'
+import { hueFor, workingRing } from './agents.js'
+import { loopPath, penSeed, INBOX_SKETCH, HANDBACK_STATE } from './ui.js'
 import { richMark } from './richhtml.js'
-import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
+import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred, takeBack } from './store.js'
 import { openLightbox } from './chat.js'
 import { provide, hint } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
@@ -924,7 +924,38 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
     }
     const waiting = off.filter(c => asked.has(c.id)), put = off.filter(c => !asked.has(c.id))
     offPile('later', 'Snoozed', LATER_SKETCH, put, String(put.length))
-    offPile('asked', 'Waiting', 'explain', waiting, String(waiting.length))   // with the agent: it comes back by itself
+    // With the agent right now (handed back to revise, asked to explain; not yet presented again): an
+    // open, compact list, one slim line per card: the turning ring, the title, who has it, since when,
+    // and what was sent, faint. A click opens the card; "Take back" withdraws it from the session. A
+    // card that is presented again leaves this list and stands on the desk.
+    if (waiting.length) {
+      const section = el('section', 'inbox-group inbox-revising')
+      section.setAttribute('aria-label', `${HANDBACK_STATE}: ${waiting.length}`)
+      const head = el('h3', 'inbox-revising-head')
+      head.append(el('span', null, HANDBACK_STATE), el('b', null, String(waiting.length)))
+      section.append(head)
+      for (const c of waiting) {
+        const sender = all.agents.find(a => a.id === c.agent)
+        const line = el('div', 'inbox-revising-row')
+        line.dataset.id = c.id
+        const go = el('button', 'inbox-revising-open')
+        go.type = 'button'
+        go.title = `${cardNr(c)}: open it`
+        const sent = [...all.messages].reverse().find(m => m.card_id === c.id && m.from === 'user')?.text ?? ''
+        go.append(workingRing(), el('strong', null, c.title), ...(sent ? [el('span', 'inbox-revising-sent', plain(sent))] : []))
+        go.addEventListener('click', () => onOpen?.(c.id))
+        const tail = el('span', 'inbox-revising-tail')
+        if (sender && !agent) { const who = smallMark(sender); who.title = sender.name; tail.append(who) }
+        if (c.with_agent) tail.append(agoNode(c.with_agent))
+        const take = el('button', 'inbox-revising-take', 'Take back')
+        take.type = 'button'
+        take.title = 'Take it back: the session need not rework it'
+        take.addEventListener('click', () => { take.disabled = true; takeBack(c.id).catch(() => { take.disabled = false; take.textContent = 'Not taken back' }) })
+        line.append(go, tail, take)
+        section.append(line)
+      }
+      parts.push(section)
+    }
     // Answered: one more group below everything, folded to a line. Unfolded, every answer is a slim row
     // with the way to take it back, for the wrong answer that is noticed only later.
     if (answered.length) {
