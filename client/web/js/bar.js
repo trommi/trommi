@@ -5,7 +5,8 @@
 // it (or Enter) opens a small menu; the arrows walk it, Escape or a click beside it closes it.
 // House rule: the controls are plain and quiet, the drawing inside each is what is done by hand.
 
-import { sketch } from './ui.js'
+import { sketch, KNOCK_SKETCH } from './ui.js'
+import { knockSound, setKnockSound } from './knock.js'
 
 const $ = id => document.getElementById(id)
 const opener = $('brand-menu')
@@ -30,6 +31,16 @@ redraw($('theme-toggle'), 'sun', 'moon')
 redraw($('roster-open'), 'heads')
 // (The key before "Admin" is put there by app.js.)
 if (menu) lead(menu.querySelector('a[href="/help.html"]'), 'page')
+// A soft double knock when an urgent or blocking question arrives: off unless switched on here.
+const sound = $('knock-sound')
+if (sound) {
+  lead(sound, KNOCK_SKETCH)
+  const state = document.createElement('i')
+  sound.append(state)
+  const paint = () => { const on = knockSound(); sound.setAttribute('aria-checked', String(on)); state.textContent = on ? 'on' : 'off' }
+  sound.addEventListener('click', e => { e.stopPropagation(); setKnockSound(!knockSound()); paint() })
+  paint()
+}
 // The sheet of keys: a question mark in the bar (keys.js owns the sheet, app.js binds the click).
 lead($('keys-open'), 'question')
 if (opener) {
@@ -40,7 +51,7 @@ if (opener) {
 }
 
 // ---- the menu behind the logo ----
-const items = () => [...menu.querySelectorAll('[role="menuitem"]')].filter(n => n.offsetParent !== null)
+const items = () => [...menu.querySelectorAll('[role^="menuitem"]')].filter(n => n.offsetParent !== null)
 const isOpen = () => !menu.hidden
 function open(focusFirst = true) {
   menu.hidden = false
@@ -74,7 +85,7 @@ if (opener && menu) {
     e.stopImmediatePropagation()
     close()
   }, true)
-  menu.addEventListener('click', e => { if (e.target.closest('[role="menuitem"]')) close(false) })
+  menu.addEventListener('click', e => { if (e.target.closest('[role="menuitem"]')) close(false) })   // a switch (menuitemcheckbox) leaves it open
   document.addEventListener('pointerdown', e => { if (isOpen() && !e.target.closest('.brand')) close(false) })
   menu.addEventListener('focusout', e => { if (isOpen() && e.relatedTarget && !e.relatedTarget.closest?.('.brand')) close(false) })
 }

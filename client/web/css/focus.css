@@ -559,7 +559,8 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-composer .focus-ask-send:disabled { background: color-mix(in srgb, var(--u) 10%, var(--surface)); color: color-mix(in srgb, var(--u) 45%, var(--muted)); }
 /* the paperclip, and what is attached: small chips over the field until it is sent */
 .focus-composer .focus-ask { flex-wrap: wrap; padding-left: 5px; }
-.focus-composer .focus-ask-field { flex: 1 1 4rem; min-width: 0; }
+.focus-composer .focus-ask-field { flex: 1 1 0; min-width: 2.5rem; }
+.focus-composer .focus-ask-field::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .focus-clip { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); transition: background var(--d-fast), color var(--d-fast); }
 .focus-clip .sketch { width: 22px; height: 22px; }
 .focus-clip:hover { background: var(--sunken); color: var(--fg); }
@@ -600,14 +601,14 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-note-tag .sketch { flex: none; width: 20px; height: 20px; }
 
 /* ── a note on a single option: the small pencil on a tile, tag or paragraph, and its line ── */
-.focus-opt-pen { flex: none; order: 3; width: 30px; height: 30px; margin: -4px -8px -4px 0; display: grid; place-items: center; border-radius: 50%; color: color-mix(in srgb, currentColor 45%, transparent); cursor: pointer; transition: background var(--d-fast), color var(--d-fast); }
-.focus-opt-pen .sketch { width: 18px; height: 18px; stroke-width: 1.8; }
-.focus-opt-pen:hover, .focus-opt-pen:focus-visible { background: color-mix(in srgb, currentColor 14%, transparent); color: currentColor; }
-.focus-opt-pen[data-noted] { color: var(--urg-high); }
+.focus-opt-pen { position: absolute; z-index: 2; right: -5px; top: -7px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--muted); cursor: pointer; opacity: 0; transition: opacity var(--d-fast), color var(--d-fast); }
+.focus .focus-opt-pen .sketch { width: 13px !important; height: 13px !important; stroke-width: 2; }
+.focus-opt:hover > .focus-opt-pen, .focus-opt:focus-visible > .focus-opt-pen, .focus-opt-pen:focus-visible, .focus-opt-pen[data-noted], .focus-sec:hover .focus-opt-pen, .focus-sec:focus-within .focus-opt-pen { opacity: 1; }
+.focus-opt-pen:hover { color: var(--fg); }
+.focus-opt-pen[data-noted] { color: var(--urg-high); box-shadow: 0 0 0 1px var(--urg-high); }
+/* where nothing hovers it is always there, faint */
+@media (hover: none) { .focus-opt-pen { opacity: .55; } }
 .focus-opt[data-state] .focus-opt-pen { display: none; }
-.focus-opts[data-count="duo"] .focus-opt-pen { position: absolute; right: 6px; top: 6px; margin: 0; }
-.focus-opts[data-count="tags"] .focus-opt-pen { width: 24px; height: 24px; margin: 0 -7px 0 -2px; }
-.focus-opts[data-count="tags"] .focus-opt-pen .sketch { width: 15px; height: 15px; }
 .focus-zoom-opts .focus-opt-pen { display: none; }
 .focus-opt-note { display: flex; align-items: center; gap: 6px; min-width: 0; height: 38px; margin: -2px 0 2px; padding: 0 10px; border-radius: var(--r-sm); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--urg-high); }
 .focus-opt-note:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
@@ -637,7 +638,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-sec > .rich { padding-left: 36px; }
 .focus-sec-pic { margin: 4px 0 0 36px; justify-self: start; max-width: min(100%, 26rem); overflow: hidden; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); cursor: zoom-in; }
 .focus-sec-pic img { display: block; max-width: 100%; max-height: 220px; }
-.focus-sec .focus-opt-pen { order: 0; margin: 0; }
+.focus-sec .focus-opt-pen { position: static; }
 /* a question that was begun (ticked or written, not sent): a short stroke beside its mark on the rail */
 .focus-rail-started { stroke: var(--urg-high); stroke-width: 3; }
 
@@ -771,42 +772,58 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-rail[data-place="outside"] .focus-rail-mark[data-front] svg { width: 28px; height: 28px; max-height: none; }
 .focus-rail[data-place="outside"] .focus-rail-mark[data-state="later"] { opacity: 1; color: var(--muted); }
 
-/* ── the walk as one list: every open question a card, one under the other ── */
-.focus[data-list] .focus-stage { display: block; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
-.focus[data-list] .focus-card { visibility: visible; width: 100%; padding: var(--s-4) 0 var(--s-3); border-bottom: 1px dashed var(--line-strong); animation: none !important; content-visibility: auto; contain-intrinsic-size: auto 460px; opacity: .55; transition: opacity var(--d-med); }
-.focus[data-list] .focus-card[data-shown] { opacity: 1; }
-.focus[data-list] .focus-card:hover { opacity: 1; }
-.focus[data-list] .focus-talk { min-height: 0; }
-.focus[data-list] .focus-scroll { flex: none; overflow: visible; padding-bottom: var(--s-3); }
+/* ── the walk as one list: every open question a card of its own, one under the other ── */
+/* The window itself steps back: each question is its own sheet of paper on the dimmed page, the page shows between
+   them, and scrolling moves whole cards past. Read-aloud and close float beside the cards, at the top right. */
+.focus[data-list] .focus-sheet { height: 100%; overflow: visible; border-radius: 0; background: none; box-shadow: none; animation: none; }
+.focus[data-list] .focus-sheet::before { display: none; }
+.focus[data-list] .focus-top { position: absolute; z-index: 3; left: calc(100% + 10px); top: 0; width: 48px; min-height: 0; padding: 0; flex-direction: column-reverse; align-items: center; gap: var(--s-2); }
+.focus[data-list] .focus-top .focus-round { margin-top: 0; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); }
+.focus[data-list] .focus-meta { display: none; }
+.focus[data-list] .focus-notes { position: absolute; right: 58px; top: 0; width: max-content; max-width: 60vw; margin: 0; }
 .focus[data-list] .focus-nav { display: none; }
+.focus[data-list] .focus-stage { display: flex; flex-direction: column; gap: 18px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; scroll-snap-type: y proximity; padding: 2px 2px 0; }
+.focus[data-list] .focus-card { flex: none; visibility: visible; width: 100%; min-height: min(70vh, 640px); overflow: clip; border-radius: var(--r-xl); background: linear-gradient(180deg, color-mix(in srgb, var(--u-soft) 62%, var(--surface)), var(--surface) 200px); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: none !important; scroll-snap-align: center; content-visibility: auto; contain-intrinsic-size: auto 600px; position: relative; }
+.focus[data-list] .focus-card.is-tall { scroll-snap-align: none; }
+/* the cards that are not in front lie a little in the shade */
+.focus[data-list] .focus-card::after { content: ""; position: absolute; inset: 0; z-index: 4; border-radius: inherit; background: color-mix(in srgb, var(--fg) 9%, transparent); pointer-events: none; opacity: 1; transition: opacity var(--d-med); }
+.focus[data-list] .focus-card[data-shown]::after, .focus[data-list] .focus-card:hover::after { opacity: 0; }
+.focus[data-list] .focus-talk { min-height: 0; padding-top: var(--s-5); }
+.focus[data-list] .focus-scroll { flex: none; overflow: visible; padding-bottom: var(--s-3); }
 .focus-card-head { display: none; }
-.focus[data-list] .focus-card-head { display: flex; align-items: center; gap: 7px; margin-bottom: var(--s-2); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--u) 60%, var(--muted)); }
+.focus[data-list] .focus-card-head { display: flex; align-items: center; gap: 7px; margin-bottom: var(--s-3); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--u) 60%, var(--muted)); }
 .focus-card-head .doodle { width: 20px; height: 20px; stroke-width: 2.1; }
 .focus-card-head b { padding: 4px 8px; border-radius: var(--r-sm); background: var(--u); color: var(--surface); font-weight: 600; }
-/* the top bar no longer names who asks: every card does */
-.focus[data-list] .focus-meta { visibility: hidden; }
-/* what a card became: answered, snoozed, with the agent */
-.focus-strip { display: flex; align-items: center; gap: 10px; min-height: 48px; margin: var(--s-2) var(--pad); padding: 4px 6px 4px 14px; border-radius: var(--r-md); background: var(--sunken); color: var(--muted); font-size: var(--t-sm); animation: focus-note-in var(--d-slow) var(--ease-out); }
+/* what a card became (answered, snoozed, with the agent): a slim card of its own */
+.focus-strip { flex: none; display: flex; align-items: center; gap: 10px; min-height: 52px; padding: 4px 8px 4px 16px; border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-sm); color: var(--muted); font-size: var(--t-sm); animation: focus-note-in var(--d-slow) var(--ease-out); }
 .focus-strip-mark { flex: none; width: 22px; height: 22px; display: grid; place-items: center; }
 .focus-strip-mark .sketch, .focus-strip-mark .focus-icon { width: 20px; height: 20px; }
 .focus-strip[data-kind="answered"] .focus-strip-mark { color: var(--accent); }
 .focus-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-strip-text b { font-weight: 600; color: var(--fg); }
-.focus-strip-back { flex: none; height: 38px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px 0 9px; border-radius: var(--r-sm); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-weight: 600; }
+.focus-strip-back { flex: none; height: 38px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px 0 9px; border-radius: var(--r-sm); background: var(--sunken); color: var(--fg); font-weight: 600; }
 .focus-strip-back .focus-icon { width: 16px; height: 16px; stroke-width: 2.2; }
-.focus-strip-back:hover { background: var(--surface-2); }
-.focus-list-end { min-height: 62vh; display: grid; align-content: start; justify-items: center; gap: var(--s-2); padding: var(--s-8) var(--pad); color: var(--muted); text-align: center; }
+.focus-strip-back:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.focus-list-end { flex: none; min-height: 46vh; display: grid; align-content: start; justify-items: center; gap: var(--s-2); padding: var(--s-6) var(--pad); color: var(--surface); text-align: center; opacity: .85; }
 .focus-list-end .sketch { width: 30px; height: 30px; }
 .focus-list-end p { margin: 0; max-width: 26rem; }
 @container focus (min-width: 700px) {
   /* a card's answers stay beside its own content: they stick to the top while its text is longer than the window */
-  .focus[data-list] .focus-card { grid-template-rows: auto auto; align-content: start; }
-  .focus[data-list] .focus-card > .focus-composer { align-self: start; align-items: flex-end; }
-  .focus[data-list] .focus-card > .focus-answer { position: sticky; top: var(--s-2); align-self: start; max-height: 76vh; }
+  .focus[data-list] .focus-card { grid-template-rows: minmax(0, 1fr) auto; }
+  .focus[data-list] .focus-card > .focus-answer { position: sticky; top: var(--s-2); align-self: start; max-height: 80vh; padding-top: var(--s-5); }
+  .focus[data-list] .focus-card > .focus-composer { align-items: flex-end; }
 }
 @media (max-width: 640px) {
+  .focus[data-list] .focus-sheet { padding: 0; }
+  .focus[data-list] .focus-stage { gap: 10px; padding: 0 0 0; }
+  .focus[data-list] .focus-card { min-height: 0; border-radius: var(--r-lg); }
   .focus[data-list] .focus-answer { max-height: none; overflow: visible; border-top: 0; padding-top: 0; }
   .focus[data-list] .focus-foot { display: none !important; }
+  .focus[data-list] .focus-top { position: relative; left: auto; width: auto; flex-direction: row; justify-content: flex-end; min-height: 48px; }
+  .focus[data-list] .focus-notes { right: 100px; }
+  .focus[data-list] .focus-rail[data-place="row"] { position: absolute; z-index: 3; left: 0; top: 12px; right: 100px; color: var(--surface); }
+  .focus[data-list] .focus-rail[data-place="row"] .focus-rail-count b { color: var(--surface); }
+  .focus[data-list] .focus-backdrop { background: color-mix(in srgb, var(--fg) 72%, var(--surface)); }
 }
 
 /* ── the answers beside an enlarged picture ───────────────────────────────── */
@@ -820,9 +837,29 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-zoom-opts .focus-opt-label { white-space: normal !important; overflow-wrap: anywhere; }
 /* The option that belongs to the picture shown (in the card's gallery and beside the enlarged picture): the one
    place that draws this "current" state. */
-.focus-opt[data-match]:not([data-state]) { box-shadow: inset 0 0 0 2px var(--u); }
-.focus-opt[data-match][aria-pressed="true"]:not([data-state]) { box-shadow: inset 0 0 0 2px var(--fg); }
+.focus-arrow { position: absolute; left: 0; top: 0; width: 1px; height: 1px; z-index: 3; overflow: visible; pointer-events: none; fill: none; stroke: var(--fg); stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.focus-answer { position: relative; }
 .focus-zoom-ways { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin: auto 0 0; }
+/* Pictures that each belong to an option, as a grid: all at once, each with the word of its option. */
+.focus-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: var(--s-2); }
+.focus-media[data-view="grid"] > .focus-figure, .focus-media[data-view="grid"] > .focus-thumbs, .focus-media[data-view="one"] > .focus-grid { display: none; }
+.focus-grid-tile { min-width: 0; display: grid; gap: 4px; padding: 4px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line); transition: opacity var(--d-fast), box-shadow var(--d-fast); }
+.focus-grid-tile[data-lit] { box-shadow: 0 0 0 2px var(--u); }
+.focus-media[data-pointing] .focus-grid-tile:not([data-lit]) { opacity: .45; }
+.focus-grid-pic { display: block; width: 100%; aspect-ratio: 4 / 3; overflow: hidden; border-radius: var(--r-sm); background: var(--sunken); cursor: zoom-in; }
+.focus-grid-pic img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; }
+.focus-grid-cap { display: flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 2px 0 6px; font: 700 var(--t-sm)/1.2 var(--display); color: var(--fg); }
+.focus-grid-cap span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-grid-take { flex: none; height: 28px; padding: 0 10px; border-radius: var(--r-sm); background: color-mix(in srgb, var(--u) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); color: color-mix(in srgb, var(--u) 70%, var(--fg)); font: 600 var(--t-xs)/1 var(--font); }
+.focus-grid-take:hover { box-shadow: inset 0 0 0 2px var(--u); }
+.focus-grid-flip, .focus-zoom-flip { justify-self: start; height: 32px; padding: 0 10px; border-radius: var(--r-sm); font-size: var(--t-xs); font-weight: 600; color: var(--muted); }
+.focus-grid-flip:hover, .focus-zoom-flip:hover { background: var(--surface); color: var(--fg); }
+.focus-zoom-flip { flex: none; height: 40px; padding: 0 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); border-radius: var(--r-pill); color: var(--fg); }
+.focus-zoom-grid { flex: 1; min-width: 0; min-height: 0; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); align-content: start; gap: var(--s-3); padding: 72px var(--s-4) var(--s-4); }
+.focus-zoom-tile { display: grid; gap: 6px; padding: 6px 6px 8px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); text-align: left; font: 700 var(--t-sm)/1.2 var(--display); cursor: zoom-in; }
+.focus-zoom-tile img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: cover; object-position: top left; border-radius: var(--r-sm); background: var(--sunken); }
+.focus-zoom-tile span { padding: 0 4px; }
+.focus-zoom-tile[data-lit] { box-shadow: 0 0 0 2px var(--u), var(--shadow-sm); }
 /* ten small pictures do not fit one line beside a text: they wrap */
 .focus-thumbs { flex-wrap: wrap; }
 
@@ -844,7 +881,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 }
 @container focus (min-width: 700px) {
   /* forty tags on one screen: the answers take more of the window */
-  .focus-card[data-opts="tags-wide"] .focus-answer { width: clamp(280px, 42cqi, 540px); }
+  .focus-card[data-opts="tags-wide"] .focus-answer { width: clamp(280px, 38cqi, 500px); }
   /* the picture large, the answers in a column at its right */
   .focus-zoom[data-answer] { flex-direction: row; }
   .focus-zoom-answer { --side: clamp(250px, 27cqi, 336px); width: var(--side); max-height: none; padding: var(--s-5) var(--s-4) var(--s-4); box-shadow: -1px 0 0 var(--line); }
@@ -861,3 +898,6 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-thread { margin-top: var(--s-5); }
   .focus-answer { max-height: 46dvh; }
 }
+
+.focus[data-list] .focus-zoom { border-radius: var(--r-xl); overflow: hidden; box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70
+.focus[data-list] .focus-zoom { border-radius: var(--r-xl); overflow: hidden; box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-lg); }

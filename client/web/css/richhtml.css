@@ -1,0 +1,45 @@
+/* Rich content in a text (js/richhtml.js): the columns of a markdown table, and the frame an agent's
+   HTML stands in. Loaded by the module itself. The table's own rules are in tokens.css (.rich-table). */
+
+/* A column of numbers: right-aligned, figures of one width. */
+.rich-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.rich-table .mid { text-align: center; }
+.rich-table-wrap { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+/* An HTML block: a frame without an edge of its own, as tall as its content, at most most of the screen. */
+.rh { position: relative; display: block; width: 100%; max-width: 100%; min-width: 0; }
+.rh-frame { display: block; width: 100%; height: 96px; max-height: 70vh; border: 0; background: transparent; }
+/* Beyond the cap it scrolls inside, and says so with a rule at its foot. */
+.rh.is-capped .rh-frame { border-bottom: 1px solid var(--line-strong); }
+
+/* "Open large": quiet, at the block's upper right; it stands when the block is cut or wider than its
+   place, and comes on hover or focus otherwise. */
+.rh-open {
+  position: absolute; top: 0; right: 0; z-index: 1; min-height: 26px; padding: 0 10px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--muted);
+  font: 600 var(--t-xs)/1 var(--font); letter-spacing: .02em; white-space: nowrap; cursor: pointer;
+  opacity: 0; pointer-events: none; transition: opacity var(--d-fast) ease-out;
+}
+.rh:hover .rh-open, .rh-open:focus-visible, .rh.is-capped .rh-open, .rh.is-wide .rh-open { opacity: 1; pointer-events: auto; }
+.rh-open:hover { color: var(--fg); border-color: var(--fg); }
+/* Where it always stands it sits under the block, so it never covers a table's head. */
+.rh.is-capped, .rh.is-wide { padding-bottom: 34px; }
+.rh.is-capped .rh-open, .rh.is-wide .rh-open { top: auto; bottom: 0; }
+
+/* The big view. */
+.rh-large {
+  width: min(1100px, calc(100vw - 32px)); height: min(900px, calc(100dvh - 32px)); max-width: none; max-height: none;
+  padding: 0; border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--surface); color: var(--fg);
+  box-shadow: var(--shadow-lg); overflow: hidden;
+}
+.rh-large[open] { display: flex; flex-direction: column; }
+.rh-large::backdrop { background: var(--overlay); }
+.rh-large-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-3) var(--s-2) var(--s-5); border-bottom: 1px solid var(--line); }
+.rh-large-name { font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.rh-large-close { min-height: 36px; padding: 0 var(--s-4); border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.rh-large-close:hover { border-color: var(--fg); }
+.rh-large-stage { flex: 1; min-height: 0; }
+.rh-large-stage .rh-frame { height: 100%; max-height: none; }
+@media (max-width: 600px) {
+  .rh-large { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+}

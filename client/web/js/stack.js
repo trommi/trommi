@@ -173,10 +173,7 @@ function mountDock(dock) {
     }
     const here = units.filter(u => u.online), away = units.filter(u => !u.online)
     const sep = cls => el('i', `dock-sep ${cls}`.trim())
-    // The first place is kept free: the switch between workspaces will stand there.
-    const slot = el('span', 'dock-slot')
-    slot.dataset.slot = 'workspace'
-    dock.replaceChildren(slot, home, table, ...(units.length ? [sep('is-solid')] : []), ...here.map(unit), ...(away.length && here.length ? [sep('')] : []), ...away.map(unit))
+    dock.replaceChildren(home, table, ...(units.length ? [sep('is-solid')] : []), ...here.map(unit), ...(away.length && here.length ? [sep('')] : []), ...away.map(unit))
     if (held) dock.querySelector(`[data-place="${CSS.escape(held)}"]`)?.focus({ preventScroll: true })
   }
   return { render, reset: () => { signature = '' } }
@@ -229,15 +226,18 @@ if (isStack()) {
   }
   subscribe(state => { dock.render(state); now(state); table.render(state); inSight() })
 
+  // "Questions only" has no meaning here: a session's questions always stand beside its conversation.
+  // Asked for by an old link, a key or a line in the conversation, it is taken back at once, in place.
+  const noFilter = () => {
+    if (body.dataset.filter !== 'questions') return
+    delete body.dataset.filter
+    $('filter-questions')?.setAttribute('aria-pressed', 'false')
+    if (/\/questions$/.test(location.pathname)) history.replaceState(history.state, '', location.pathname.replace(/\/questions$/, '') + location.search + location.hash)
+  }
+  noFilter()
   // The page says where it is on <body> (data-page, data-scope, data-filter); the dock follows.
   new MutationObserver(() => {
-    // "Questions only" has no meaning here: a session's questions always stand beside its conversation.
-    // Asked for by an old link, a key or a line in the conversation, it is taken back at once, in place.
-    if (body.dataset.filter === 'questions') {
-      delete body.dataset.filter
-      $('filter-questions')?.setAttribute('aria-pressed', 'false')
-      if (/\/questions$/.test(location.pathname)) history.replaceState(history.state, '', location.pathname.replace(/\/questions$/, '') + location.search + location.hash)
-    }
+    noFilter()
     dock.render(getState())
     table.shown()
     inSight()

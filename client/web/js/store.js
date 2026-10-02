@@ -2,6 +2,7 @@
 // The server sends the whole state on every change. Several sessions can share
 // the board; views see the state through the current scope: nothing (the inbox),
 // one session, or a group of sessions the human laid together.
+import { foldHtml } from './richhtml.js'
 
 const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const EMPTY = { agents: [], archived: [], groups: [], messages: [], cards: [], queue: [], tasks: [], assets: [], speech: false }
@@ -113,12 +114,16 @@ function derive() {
   if (loaded) {
     const open = new Map(raw.cards.filter(c => c.status === 'open').map(c => [c.id, c]))
     // A card put off by asking back returns to its sender's group once the session has answered about it.
-    const answered = (id, since) => since && raw.messages.some(m => m.card_id === id && m.from !== 'user' && m.from !== 'event' && m.ts > since)
+    // (also once the session has revised it: the question is presented again)
+    const answered = (id, since) => since && ((open.get(id)?.revised ?? 0) > since || raw.messages.some(m => m.card_id === id && m.from !== 'user' && m.from !== 'event' && m.ts > since))
     const kept = later.filter(([id, rank, asked]) => open.has(id) && (URGENCY_RANK[open.get(id).urgency] ?? 1) <= rank && !answered(id, asked))
     if (kept.length !== later.length) { later = kept; write(LATER_KEY, later) }
   }
   const cards = raw.cards.filter(mine)
   const ids = new Set(cards.map(c => c.id))
+  // Which cards are with their session is the hub's knowledge (card.with_agent), the same on every device; what this
+  // browser put off by itself comes on top. Both stand at the end of the line.
+  const withAgent = raw.cards.filter(c => c.status === 'open' && c.with_agent && !later.some(([id]) => id === c.id)).map(c => c.id)
   view = {
     agents: raw.agents,
     messages: members.length ? raw.messages.filter(mine) : [],
@@ -129,16 +134,16 @@ function derive() {
     scope,
     members,
     group,
-    later: later.map(([id]) => id),
+    later: [...later.map(([id]) => id), ...withAgent],
     // Of those, the ones handed to their session (asked back, Explain, "Back to agent"): they return by themselves with its reply.
-    handed: later.filter(([, , asked]) => asked).map(([id]) => id),
+    handed: [...later.filter(([, , asked]) => asked).map(([id]) => id), ...withAgent],
     all: raw,
   }
 }
 
 const emit = () => { derive(); for (const fn of listeners) fn(view, online) }
 let lastData = null   // what the server sent last, to lay a changed local order over it again
-const take = data => { lastData = data; raw = normalize(data); answerHere(raw); loaded = true }
+const take = data => { lastData = data; raw = normalize(foldHtml(data)); answerHere(raw); loaded = true }
 
 export function connect() {
   const events = new EventSource('/events')
@@ -202,8 +207,8 @@ async function post(url, body) {
 }
 
 /** Send a chat message to one session; with cardId it is a question back about that card. Rejects with a readable Error. */
-export const sendMessage = (text, agent, cardId, attachments) =>
-  post('/message', { text, agent, ...(cardId ? { card_id: cardId } : {}), ...(attachments?.length ? { attachments } : {}) })
+export const sendMessage = (text, agent, cardId, attachments, flags = {}) =>
+  post('/message', { text, agent, ...(cardId ? { card_id: cardId } : {}), ...(attachments?.length ? { attachments } : {}), ...(flags.handback ? { handback: true } : {}), ...(flags.explain ? { explain: true } : {}) })
 
 /** Rename a session or give it another scribble. */
 export const editSession = (agent, changes) => post('/session', { agent, ...changes })

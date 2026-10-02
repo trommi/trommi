@@ -33,15 +33,12 @@
   scrollbar-width: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
 }
 #stack-dock::-webkit-scrollbar { display: none; }
-/* The first place in the dock is kept free for the switch between workspaces. */
-.dock-slot { flex: none; display: flex; align-items: stretch; }
-.dock-slot:empty { display: none; }
 .dock-entry {
   position: relative; flex: none; display: grid; grid-template-rows: 36px auto; justify-items: center; align-items: center; gap: 3px;
-  width: 78px; padding: 6px 4px 5px; border: 0; border-radius: var(--r-md); background: none; color: var(--muted);
+  width: 88px; padding: 6px 4px 5px; border: 0; border-radius: var(--r-md); background: none; color: var(--muted);
   font: 600 .7rem/1.15 var(--font); transition: background var(--d-fast), color var(--d-fast);
 }
-.dock-entry.is-group { width: 104px; }
+.dock-entry.is-group { width: 124px; }
 .dock-name { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .dock-entry:hover { background: var(--sunken); color: var(--fg); }
 .dock-entry[aria-current="true"] { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-sm), 0 0 0 1px var(--line); }

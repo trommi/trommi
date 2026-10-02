@@ -193,7 +193,7 @@ async function copyText(text) {
 /** rich() with code blocks dressed up: a header with the language and a copy button. */
 export function richPlus(source) {
   const root = rich(source)
-  const langs = [...String(source).matchAll(/```([^\n]*)\n?/g)].filter((_, i) => i % 2 === 0).map(m => m[1].trim())
+  const langs = [...String(source).matchAll(/```([^\n]*)\n?/g)].filter((_, i) => i % 2 === 0).map(m => m[1].trim()).filter(lang => !/^html$/i.test(lang))   // an html block is a layout, not a code box
   root.querySelectorAll('pre').forEach((pre, i) => {
     const wrap = el('div', 'code')
     const head = el('div', 'code-head')
