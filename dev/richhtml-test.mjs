@@ -234,6 +234,50 @@ try {
   const wide = await run(`const f = [...document.querySelectorAll('.rh-frame')].find(x => x.getClientRects().length); return { wide: f.parentElement.classList.contains('is-wide'), open: getComputedStyle(f.parentElement.querySelector('.rh-open')).opacity, page: document.documentElement.scrollWidth <= innerWidth }`)
   equal(wide, { wide: true, open: '1', page: true }, 'a table wider than the phone scrolls inside its frame and offers "Open large"')
 
+  await browser.close()
+
+  // ---- a frame scrolled out under the head of the conversation takes no click there ------------------
+  // As browsers run it: the frame in a process of its own (the first browser above keeps it in the page's,
+  // to look inside it), where the click is placed by asking that process.
+  const real = await launchChromium({ width: 1440, height: 900 })
+  try {
+    const tab = await real.page()
+    await tab.send('Page.enable')
+    await tab.send('Runtime.enable')
+    const eval2 = async script => {
+      const res = await tab.send('Runtime.evaluate', { expression: `(async () => { ${script} })()`, awaitPromise: true, returnByValue: true })
+      if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text)
+      return res.result?.value
+    }
+    for (const url of ['/?t=demo', '/s/api']) { await tab.send('Page.navigate', { url: `${base}${url}` }); await sleep(2600) }
+    const under = await eval2(`
+      const f = document.querySelector('#chat .rh-frame')
+      let box = f; while (box && !/auto|scroll/.test(getComputedStyle(box).overflowY)) box = box.parentElement
+      // room below, so that the frame can be scrolled out at the top
+      const pad = document.createElement('div'); pad.style.height = '1500px'; f.closest('.msg').parentElement.append(pad)
+      const top = box.getBoundingClientRect().top
+      box.scrollTop += f.getBoundingClientRect().top + f.getBoundingClientRect().height / 2 - (top - 40)
+      await new Promise(r => setTimeout(r, 600))
+      window.__clicked = []
+      addEventListener('click', e => window.__clicked.push(e.target.closest('button, a')?.textContent.trim() ?? e.target.tagName), true)
+      const r = f.getBoundingClientRect()
+      return { frame: [Math.round(r.top), Math.round(r.bottom)], top: Math.round(top), controls: [...document.querySelectorAll('button, a')].filter(b => b.getClientRects().length && !box.contains(b)).map(b => { const q = b.getBoundingClientRect(); return { name: b.textContent.trim(), x: q.left + q.width / 2, y: q.top + q.height / 2, over: q.right > r.left && q.left < r.right && q.bottom > r.top && q.top < r.bottom } }).filter(c => c.over && c.name) }`)
+    ok(under.frame[0] < under.top && under.frame[1] > under.top && under.controls.length, `the frame lies under the head of the conversation (${under.frame.join('..')}, the log starts at ${under.top}), behind ${under.controls.map(c => c.name).join(', ')}`)
+    for (const c of under.controls) {
+      for (const type of ['mousePressed', 'mouseReleased']) await tab.send('Input.dispatchMouseEvent', { type, x: c.x, y: c.y, button: 'left', clickCount: 1 })
+      await sleep(350)
+      equal(await eval2('return window.__clicked.splice(0)'), [c.name], `a click on "${c.name}" reaches it, not the frame scrolled out behind it`)
+    }
+    // and where the frame shows, it still takes the click itself
+    const shown = await eval2(`const f = document.querySelector('#chat .rh-frame'); f.scrollIntoView({ block: 'center' }); await new Promise(r => setTimeout(r, 500)); const r = f.getBoundingClientRect(); for (let y = r.top + 8; y < r.bottom; y += 12) if (document.elementFromPoint(r.left + r.width / 2, y) === f) return { x: r.left + r.width / 2, y }; return null`)
+    ok(shown, 'the frame shows again')
+    for (const type of ['mousePressed', 'mouseReleased']) await tab.send('Input.dispatchMouseEvent', { type, x: shown.x, y: shown.y, button: 'left', clickCount: 1 })
+    await sleep(350)
+    equal(await eval2('return window.__clicked.splice(0)'), [], 'a click on the visible frame goes into the frame')
+  } finally {
+    await real.close()
+  }
+
   console.log(JSON.stringify({ ok: true, checks, shots: out, chat: chatShot, dark: chatDark, question: questionShot }))
 } finally {
   await browser.close()
