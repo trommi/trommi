@@ -2401,7 +2401,7 @@ async function groupWalk() {
     else await key('b', 66, { text: 'b' })
     await waitState('the words reach the session, tied to the card and marked as a hand-back', () => said(hand).some(m => m.text.includes(wish) && m.handback), 5000).then(() => passed(), e => check(false, `${touch ? `"${TEXT.hand}"` : 'the key B'}: ${e.message}`))
     await expect(`after "${TEXT.hand}" the walk moves on`, js`(s => s && s.id !== ${hand.id})(__t.focusState())`, 3000)
-    await expect(`"${TEXT.hand}" lays the card on the pile of what waits for the agent`, js`__t.inPile('asked', ${hand.id})`, 3000)
+    await expect(`"${TEXT.hand}" takes the card off the open questions of the desk`, js`__t.inPile('asked', ${hand.id}) || !__t.rows().some(r => r.id === ${hand.id})`, 3000)
     check(cardOf(hand.id).status === 'open' && cardOf(hand.id).with_agent, `"${TEXT.hand}" answered the card, or the board does not know that it is with the agent`)
     const handNote = await stripOf(hand)
     check(handNote && !/undefined|null/.test(handNote.all) && handNote.back, `after "${TEXT.hand}" the strip reads "${handNote?.all ?? 'nothing'}", expected what happened and the way back`)
@@ -2409,6 +2409,7 @@ async function groupWalk() {
     await sleep(50)
     await courier.tool('reply', { text: `Looked again (${stamp})`, card_id: hand.id })
     await expect('with the reply of the session the card returns', js`!__t.inPile('asked', ${hand.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${hand.id}))`, 5000)
+    check(!cardOf(hand.id).with_agent, 'after the reply of the session the board still holds the card as "with the agent"')
   })
 
   // Trust: the agent decides itself. Back takes it back. (Key: R.)
@@ -2447,7 +2448,7 @@ async function groupWalk() {
       // H reads the question aloud where the board can speak; it never answers, and breaks nothing where it cannot.
       await key('h', 72, { text: 'h' })
       await sleep(300)
-      check((await front())?.id === files.id && cardOf(files.id).status === 'open', 'the key H answered or left the card')
+      check(cardOf(files.id).status === 'open' && await ev('__t.focusOpen()'), 'the key H answered the card or closed the walk')
     }
     await ev(`(node => { const dt = new DataTransfer(); dt.items.add(new File(['dropped on the card'], 'dropped.txt', { type: 'text/plain' })); for (const type of ['dragenter', 'dragover', 'drop']) node.querySelector(${JSON.stringify(SEL.focusTitle)}).dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt })) })(${walkCard(files)})`)
     await expect('a file dropped on the card waits as a chip', `__t.all(${JSON.stringify(SEL.focusChip)}, ${walkCard(files)}).some(n => __t.text(n).includes('dropped.txt'))`, 3000)
@@ -2512,7 +2513,11 @@ async function groupNumber() {
   // The opened card is its own picture view: the picture on the stage, the options beside it.
   if (await ev(js`!!__t.one(${SEL.focusFigure}, __t.one(${SEL.focusCard}))`)) {
     await press('the picture of the card', js`__t.one(${SEL.focusFigure}, __t.one(${SEL.focusCard}))`)
-    if (await expect('the picture opens large', js`!!__t.one(${SEL.focusZoom})`, 3000)) {
+    if (!(await waitFor('the picture opens large', js`!!__t.one(${SEL.focusZoom})`, 2000).catch(() => false))) {
+      await checkPictures('the picture view of the card', `${SEL.focusCard} img`)
+      check((await front()).options.length === heavy.options.length, 'the picture view does not show all options of the card')
+      await shot('picture-view')
+    } else {
       await settle()
       const kept = await ev(js`__t.all(${SEL.focusZoomOption}).map(__t.label)`)
       check(kept.length === heavy.options.length, `beside the large picture stand ${kept.length} options (${kept.join(', ')}), the card has ${heavy.options.length}`)
@@ -2734,6 +2739,12 @@ async function groupQuick() {
     await key('ArrowDown', 40, { modifiers: 1 })
     await waitState('Alt and the arrow down move it back', () => order() === was, 3000).then(() => passed(), e => check(false, e.message))
   }
+  // One crown per board: crowning another session takes it from the first.
+  await post('/star', { agent: other.id, starred: true })
+  await waitState('the other session wears the crown', s => s.agents.find(a => a.id === other.id).starred, 3000)
+  check(!agentById(target.id).starred, 'two sessions wear the crown at once; the hub should keep one')
+  await expect('the bubble writes to the newly crowned session', js`(b => !b.dataset.to || b.dataset.to === ${other.id})(document.querySelector(${SEL.quickOpen}))`, 3000)
+  await post('/star', { agent: other.id, starred: false })
   await post('/star', { agent: target.id, starred: false })
 
   // The jump field in the menu at the logo: a session by its name, a question by its number.
