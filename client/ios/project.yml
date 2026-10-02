@@ -1,7 +1,7 @@
 # XcodeGen: `brew install xcodegen && xcodegen` writes Trommi.xcodeproj from this file.
 name: Trommi
 options:
-  bundleIdPrefix: de.trommi
+  bundleIdPrefix: com.trommi
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -26,7 +26,7 @@ targets:
           - Info.plist
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: de.trommi.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.app
         TARGETED_DEVICE_FAMILY: "1,2"
         CODE_SIGN_STYLE: Automatic
         # Only what cannot be said as a build setting lives in Info.plist (App Transport Security).
@@ -51,7 +51,7 @@ targets:
       - target: Trommi
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: de.trommi.app.tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.app.tests
   TrommiUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -61,7 +61,7 @@ targets:
       - target: Trommi
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: de.trommi.app.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.trommi.app.uitests
 schemes:
   Trommi:
     build:

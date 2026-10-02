@@ -14,7 +14,7 @@ static const SecretSchema *schema()
 {
     static SecretSchema s = {};
     if (!s.name) {
-        s.name = "de.trommi.Board";
+        s.name = "com.trommi.Board";
         s.flags = SECRET_SCHEMA_NONE;
         s.attributes[0] = {"app", SECRET_SCHEMA_ATTRIBUTE_STRING};
     }
