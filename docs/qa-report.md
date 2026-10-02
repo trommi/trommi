@@ -1,5 +1,95 @@
 # QA report: web UI
 
+## Round three, 2 October 2026, 12:13 to 13:10
+
+The UI was rebuilt while this ran (Desk rows, the Focus window, the session page, the sidebar badge and the
+Ledger each changed at least once between two runs). The suite follows what stood at 13:05; what moved
+after that is listed under "Stale again". Only `dev/ui-test.mjs` and this file were edited; no app code.
+
+Last full run (13:02): **1017 passing, 27 failing, 5 pending** in 323 s (start of the round: 832 / 32 / 5,
+the coordinator's own run 743 / 23). Every failure of that run is named below, as a real bug with its
+owner or as a check that went stale during the run.
+
+### Real bugs, by owner
+
+**Focus**
+1. **A key acts on another card than the one in front (high).** In the walk: Trust (R) on card A, "Back" on its
+   strip, click card B, press X: card A is shredded, B stays ("in front: Walk: shred; shredded instead:
+   Walk: trust"). Every run of the suite, desktop and phone; not when nothing else changes the board in
+   between, so the jump back to the taken-back card on the next state update (`pendingJump`, 5 s) is the
+   likely cause. `client/web/js/focus.js`, the `back` of a strip in `addStrip` and `sync`.
+2. **Nowhere to write on a card at the end of the round (window being rebuilt).** A click on the title begins
+   no note and "Discuss" opens no field, so a note cannot go along with an answer and Revise sends nothing
+   (desktop and phone, last two runs). At 12:25 the same steps passed: note in the draft, note and a picture
+   of the card with the answer, Revise with words, dropped and pasted files and a scribble reaching the session.
+3. The pen's tools lie over the placeholder of the write field (seen 12:45, `r3` not kept); `Escape` with the
+   pen in the hand closes the whole walk instead of putting the pen down.
+
+**Layout**
+4. **Ledger: "Back" after an answer in a line cannot be clicked (medium).** The note sits at the top left and
+   is covered by `header.ledger-head`. `docs/qa-shots/r3-ledger-note-under-head.png`. `css/ledger.css` (stacking).
+5. **Single session, desktop: "Questions only" is covered by the session's title** (`#pane-who` lies over
+   `#filter-questions` at 1064,76); the filter cannot be clicked. `docs/qa-shots/r3-questions-only-covered.png`.
+   Fails `session` and `urls` on the desktop.
+6. **A phone has no way to archive a disconnected session, to take a session out of a group, to rename it,
+   to choose its drawing or to set its crown.** The Ledger's line only opens the session, and a single
+   session has no title on a phone (`body:not([data-pair]) .pane-who { display: none }`, `css/app.css`).
+7. **The Ledger and the sidebar disagreed about a session's state** (12:20: the Ledger said "working 6" where
+   the sidebar showed the red hand, and it counted snoozed and with-agent cards): `summaryOf` in
+   `js/ledger.js` is an own copy of the rule; `summary()` in `agents.js` is exported for it.
+8. Joined view at 1000 px: the Trommi pill and the two floating buttons lie over the session's tabs
+   ("Scribble" is cut). `docs/qa-shots/r3-joined-1000-dark.png`.
+
+**Keyboard (app.js routing)**
+9. **A card opened by its address over a session (`/s/courier/q/37`) closes to `/`, not to `/s/courier`**: the
+   session is lost. Fails `number` at both sizes.
+10. Ctrl+K and "G J" did not open the jump field until about 13:00 (`go.jump` had no provider); passes since.
+
+**Web UI**
+11. The Desk entry of the sidebar counts "5" (the knocks) where 19 questions are open (13:05). If the entry is
+    meant to count knocks, say so and the check turns; the brief said it holds the count of open questions.
+12. Phone: the logo button is covered by an icon at 272,24 (13:05), so the menu cannot be opened by a tap.
+13. Phone: a picture of a row (and of a card) does not open large any more (13:02), and the address stays `/q/N`
+    (`images`, `number`). Possibly the gallery merge in progress.
+
+**Server:** none found. Checked through the browser: trust, shred and their reopen, hand-back with words
+and files, draft with notes and strokes, `/star`, `/session` (group, archive), messages with attachments.
+
+### What works (checked for real on the suite's own board)
+Quick send (bubble and "/", to the crowned session, the open session is not written to); the jump field
+through the menu (a session by name, a question by number); Alt+arrows move the session one is in and the
+sidebar follows; the walk button inside a joined group's list walks only the group's questions
+(11 of 11 cards, address `/s/a+b/walk`: the known gap is closed); joined view at 1440, 1000 and 400 px, light
+and dark: one combined list, each row naming its session, no sideways overflow; Ledger: answer in the line,
+sort by a column and back, "/" find, arrows, Shift+arrows (sidebar follows), C, Enter; Focus keys B, R, X, S
+and H (H answers nothing and breaks nothing without speech).
+
+Not reachable any more, so not checked: the Whatever tab lighting the advised tile (rows show Snooze only),
+the age clock under four tabs on a phone (one tab now; clock and tab do not overlap: 257..350 against 358..384).
+
+### The suite
+- **Roster retired from the suite.** `agents`, `urls`, `pair` and `sidebar` read and press the Ledger
+  (`#ledger`, `.ledger-line`, `.ledger-mark`, `.ledger-rename`, `.crown-toggle`, `.ledger-with button`,
+  `.ledger-ib`, `.ledger-line.is-archived`); on a phone they go through the session's title, and name the
+  gap where there is none. Nothing in `dev/ui-test.mjs` names `#roster`, `#nav-roster` as a target or
+  `.roster-*` any more (`SEL.navRoster` is only looked for, never required): the old roster can go.
+- New group `quick` (quick send, jump field, Alt+arrows). `walk` rewritten for the write-anywhere card
+  (notes, files, scribble, Snooze, Revise, Trust, Shred, keys), in independent parts: one that cannot run
+  is named and the rest still runs. `number` uses `/q/N`, `/s/<id>/q/N` and still checks old `?q=` links
+  (they work). Sidebar: hand when a question knocks. Ledger keys and the joined list are checked.
+- The word for the inbox is read from `INBOX_WORD` in `ui.js`. No helper reads `state.json`
+  (the suite follows the board through `/events`).
+
+### Stale again (changed after 13:00, for the next round)
+The walk as one card at a time with a toast, the opened card merged with the gallery, quick send as a memo
+slip, the heading with the count inside the walk button, the badge with a number again, quiet lines in a
+session's stream ("With the agent", "Shredded", "Done"), the Revise control on a row, cardclip.
+
+
+---
+
+## Round two (2 October 2026, 10:45 to 11:50), as written then
+
 Round two, 2 October 2026, 10:45 to 11:50. Many workers changed the web client while this ran, and the
 user used the live board at the same time. Line numbers are those of the working tree at 11:50.
 

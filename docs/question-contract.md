@@ -714,3 +714,39 @@ a long list, but a card filed or revised with more than six options gets a
 reminder in the tool result (`Many options (N): keep only the ones you are sure
 of. …`). Nothing changes in the card's shape; clients may still meet cards with
 more than six options and must lay them out.
+
+## 15. Snooze ("Later"), kept on the hub
+
+```
+POST /snooze { "card_id": "…" }                          put off until next morning
+POST /snooze { "card_id": "…", "until": "next_morning" | null | <ms since epoch> }
+POST /snooze { "card_id": "…", "clear": true }           call it back now ("the rest is done")
+→ 200 {"ok":true}
+  400 unknown card, an approval (permission) card, or `until` is not a future time / "next_morning" / null
+  409 the card is not open
+```
+
+- `until` is capped at the next 07:00 in the hub's local time: a card comes back
+  next morning at the latest, whatever was asked for.
+- On the card: `snoozed_until` (ms) and `snoozed_at` (ms) while it is put off;
+  both absent otherwise. The card stays `status: "open"` but is **not in
+  `state.queue`**; the put-off cards are `state.cards.filter(c => c.status ===
+  'open' && c.snoozed_until)`. Do not count them as waiting.
+- Coming back: when its time has come the hub clears both fields, sets
+  `card.unsnoozed = <ms>` and adds the event `{ kind: "unsnoozed", card_id,
+  text: "Back from snooze" }` to the conversation (checked every 30 seconds).
+  `clear: true` does the same without the event. "When the rest is done" is
+  the client's call: when the queue is empty and cards are put off, send
+  `clear: true` for them. `unsnoozed` goes away with the next snooze.
+- Answering, closing, shredding or withdrawing a put-off card ends the
+  put-off. The agent is never told, and `list_cards` does not show it.
+- Replace the `localStorage` snooze by this; every device then agrees.
+
+## 16. One crown
+
+`POST /star { "agent": "<session>", "starred": true | false }` as before. New:
+crowning a session takes the crown from every other one, so at most one agent
+in `state.agents` has `starred: true`; it also gets `starred_at` (ms). A state
+from before this rule with several crowns keeps the one crowned last. The hub
+has no desks or rooms in its state yet, so "one per room" is one per board
+for now.
