@@ -576,9 +576,10 @@ async function main() {
   for (let i = 0; i < walkOrder.length && !((card(await frontId())?.options.length ?? 0) > 2); i++) await key('j', { pause: 400 })
   const many = await frontId()
   await key('c')
-  const firstOpt = (await ev('return __k.active()')).text
+  const optNow = () => ev('const a = document.activeElement; return a?.matches(".focus-opt") ? (a.dataset.key ?? a.getAttribute("aria-label") ?? a.innerText) : ""')
+  const firstOpt = await optNow()
   await key('ArrowDown')
-  const secondOpt = (await ev('return __k.active()')).text
+  const secondOpt = await optNow()
   check(firstOpt && secondOpt && firstOpt !== secondOpt && card(many).status === 'open' && await frontId() === many, `C then the down arrow walk the options without answering ("${firstOpt}" -> "${secondOpt}")`)
   await ev('document.activeElement.blur()')
   const beforeLater = await frontId()
@@ -595,7 +596,7 @@ async function main() {
     await type('Say more, please.')
     await key('Enter', { pause: 300 })
     await until('Enter asks the session about the question in front', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && /Say more, please/.test(m.text)))
-    if ((await ev('return __k.active()')).tag !== 'BODY') await key('Escape', { pause: 300 })
+    if (['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag)) await key('Escape', { pause: 300 })
     await shot('13-explain-in-walk')
   }
   await key('?', { shift: true, pause: 300 })
