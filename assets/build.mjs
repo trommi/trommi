@@ -44,7 +44,7 @@ class Node {
   get childNodes() { return this.children }
   addEventListener() {}
 }
-globalThis.document = { createElementNS: (_, tag) => new Node(tag), createElement: tag => new Node(tag), querySelectorAll: () => [], querySelector: () => null }
+globalThis.document = { createElementNS: (_, tag) => new Node(tag), createElement: tag => new Node(tag), querySelectorAll: () => [], querySelector: () => null, head: new Node('head'), body: new Node('body'), documentElement: new Node('html'), styleSheets: [] }
 globalThis.setInterval = () => 0   // ui.js keeps relative times current; nothing here needs it
 
 const ui = await import(pathToFileURL(path.join(web, 'js', 'ui.js')).href)
@@ -296,28 +296,69 @@ function add(section, group, file, node, o = {}) {
 // -- logo ------------------------------------------------------------------------------------------------
 
 const indexHtml = read('client/web/index.html')
-const brandMarkup = /<svg class="brand-mark"[\s\S]*?<\/svg>/.exec(indexHtml)?.[0]
-if (!brandMarkup) throw new Error('client/web/index.html no longer has the brand mark')
-const brand = fromMarkup(brandMarkup)
-const brandO = { plain: true, styles: { svg: {} } }
-for (const theme of ['light', 'dark']) {
-  const file = `logo/trommi-mark${theme === 'dark' ? '-dark' : ''}.svg`
-  files.set(file, svgText(brand, { ...brandO, theme }) + '\n')
+const logo = await import(pathToFileURL(path.join(here, 'logo.mjs')).href)
+const TILE_FG = { light: lightTokens['--accent-fg'], dark: darkTokens['--accent-fg'] }, TILE_BG = { light: lightTokens['--accent'], dark: darkTokens['--accent'] }
+const penBig = logo.CUTS.big.strokes.map((s, i) => logo.outline(s, { seed: `ring${i}` })).join('')
+const lines = cut => logo.CUTS[cut].strokes.map(s => logo.line(s, logo.CUTS[cut].heavier))
+const strokesOf = (cut, attrs = '') => lines(cut).map(l => `<path${attrs} stroke-width="${l.width}" d="${l.d}"/>`).join('')
+const S = logo.TILE.size
+/** The mark on its tile. cut: big (the pen's pressure, filled) or small / tiny (plain strokes). rx: the tile's corner. shrink: the mark smaller on the tile. */
+function tileSvg({ cut = 'big', theme = 'light', rx = logo.TILE.rx, shrink = 1, size = '' } = {}) {
+  const body = cut === 'big' ? `<path fill="${TILE_FG[theme]}" d="${penBig}"/>` : `<g fill="none" stroke="${TILE_FG[theme]}" stroke-linecap="round" stroke-linejoin="round">${strokesOf(cut)}</g>`
+  const placed = shrink === 1 ? body : `<g transform="translate(${num(S / 2 * (1 - shrink))} ${num(S / 2 * (1 - shrink))}) scale(${shrink})">${body}</g>`
+  return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${S} ${S}"${size}><rect width="${S}" height="${S}"${rx ? ` rx="${rx}"` : ''} fill="${TILE_BG[theme]}"/>${placed}</svg>`
 }
-shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-mark.svg', note: 'the brand mark in index.html, light theme', live: files.get('logo/trommi-mark.svg').replace('<svg ', '<svg width="96" height="96" '), w: 32, h: 32, ground: 'light' })
-shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-mark-dark.svg', note: 'the same, in the dark theme\'s colours', live: files.get('logo/trommi-mark-dark.svg').replace('<svg ', '<svg width="96" height="96" '), w: 32, h: 32, ground: 'dark' })
+const big = ' width="96" height="96"'
+files.set('logo/trommi-mark.svg', tileSvg() + '\n')
+files.set('logo/trommi-mark-dark.svg', tileSvg({ theme: 'dark' }) + '\n')
+files.set('logo/trommi-mark-small.svg', tileSvg({ cut: 'small' }) + '\n')
+files.set('logo/trommi-mark-16.svg', tileSvg({ cut: 'tiny' }) + '\n')
+shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-mark.svg', note: 'the Z in its ring on the green tile; 48 px and up', live: tileSvg({ size: big }), w: S, h: S, ground: 'light' })
+shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-mark-dark.svg', note: 'the same, in the dark theme\'s colours', live: tileSvg({ theme: 'dark', size: big }), w: S, h: S, ground: 'dark' })
+shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-mark-small.svg', note: 'the cut for 20 to 40 px, as the top bar shows it: larger Z, heavier pen', live: tileSvg({ cut: 'small', size: ' width="32" height="32"' }), w: S, h: S, ground: 'light' })
+shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-mark-16.svg', note: 'the cut for 16 px: the Z alone, no ring', live: tileSvg({ cut: 'tiny', size: ' width="16" height="16"' }), w: S, h: S, ground: 'light' })
+// The mark without a tile, in the colour of the text it stands in.
+{
+  const [cx, cy, cs] = logo.CROP
+  const bare = size => `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${cx} ${cy} ${cs} ${cs}"${size} fill="currentColor"><path d="${penBig}"/></svg>`
+  files.set('logo/trommi-z.svg', bare('') + '\n')
+  shown.push({ section: 'logo', group: 'The mark', file: 'logo/trommi-z.svg', note: 'the mark alone, in currentColor', live: bare(big), w: cs, h: cs })
+}
+// The app icon: the tile to the edge, for systems that cut the corners themselves; and one with the mark
+// inside the safe zone of a maskable web icon.
+files.set('logo/app-icon.svg', tileSvg({ rx: 0 }) + '\n')
+files.set('logo/app-icon-maskable.svg', tileSvg({ rx: 0, shrink: .74 }) + '\n')
+shown.push({ section: 'logo', group: 'App icon', file: 'logo/app-icon.svg', note: 'square to the edge: the source for iOS, Android and the web manifest', live: tileSvg({ rx: 0, size: big }), w: S, h: S })
+shown.push({ section: 'logo', group: 'App icon', file: 'logo/app-icon-maskable.svg', note: 'maskable: the mark inside the safe zone', live: tileSvg({ rx: 0, shrink: .74, size: big }), w: S, h: S })
 
-// The favicon is written into the pages as a data address; this is that address, decoded.
-const faviconUrl = /<link rel="icon" href="data:image\/svg\+xml,([^"]+)"/.exec(indexHtml)?.[1]
-if (!faviconUrl) throw new Error('client/web/index.html no longer has its icon')
-const favicon = decodeURIComponent(faviconUrl).replace(/'/g, '"')
+// The icon of a browser tab: one SVG with two cuts. Painted at 16 px it shows the Z alone, from 24 px on the Z in its ring.
+const favicon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${S} ${S}"><style>.s{display:none}@media (min-width:24px){.s{display:inline}.t{display:none}}</style><rect width="${S}" height="${S}" rx="${logo.TILE.rx}" fill="${TILE_BG.light}"/><g fill="none" stroke="${TILE_FG.light}" stroke-linecap="round" stroke-linejoin="round"><g class="t">${strokesOf('tiny')}</g><g class="s">${strokesOf('small')}</g></g></svg>`
 files.set('logo/favicon.svg', favicon + '\n')
-shown.push({ section: 'logo', group: 'The mark', file: 'logo/favicon.svg', note: 'the icon link of every page', live: favicon.replace('<svg ', '<svg width="64" height="64" '), w: 32, h: 32 })
+shown.push({ section: 'logo', group: 'The mark', file: 'logo/favicon.svg', note: 'the icon link of every page: at 16 px the Z alone, larger the Z in its ring', live: tileSvg({ cut: 'small', size: ' width="64" height="64"' }), w: S, h: S })
+
+// What the web client carries of the mark, written into its pages by this build.
+const iconLink = `<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,${favicon.replace(/"/g, "'").replace(/[<>#%{}]/g, c => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)}">`
+const brandMarkup = `<svg class="brand-mark" viewBox="0 0 ${S} ${S}" aria-hidden="true">
+        <rect class="brand-mark-bg" width="${S}" height="${S}" rx="${logo.TILE.rx}"/>
+${lines('small').map(l => `        <path class="brand-mark-pen" stroke-width="${l.width}" d="${l.d}"/>`).join('\n')}
+      </svg>`
+const patched = new Map()
+for (const page of ['index.html', 'admin.html', 'help.html']) {
+  const was = fs.readFileSync(path.join(web, page), 'utf8')
+  if (!/<link rel="icon"[^>]*>/.test(was)) throw new Error(`client/web/${page} no longer has its icon link`)
+  let now = was.replace(/<link rel="icon"[^>]*>/, () => iconLink)
+  if (page === 'index.html') {
+    if (!/<svg class="brand-mark"[\s\S]*?<\/svg>/.test(was)) throw new Error('client/web/index.html no longer has the brand mark')
+    now = now.replace(/<svg class="brand-mark"[\s\S]*?<\/svg>/, () => brandMarkup)
+  }
+  patched.set(path.join(web, page), now)
+}
+need('.brand-mark-pen', 'stroke')   // css/app.css strokes the mark's pen; without the rule the top bar shows a black blot
 
 // Mark and name together, as they stand in the top bar: sizes and weight from `.brand h1` and `.brand-mark`.
 const brandFont = /^(\d+)\s+([\d.]+)rem/.exec(need('.brand h1', 'font'))
 const markPx = parseFloat(need('.brand-mark', 'width')), gapPx = parseFloat(need('.brand', 'gap'))
-const unit = 32 / markPx                                  // the mark is 32 units high
+const unit = 32 / markPx                                  // the mark is 32 units high here
 const textSize = Number(brandFont[2]) * 16 * unit, tracking = parseFloat(need('.brand h1', 'letter-spacing'))
 // How wide "Trommi" runs in Bricolage Grotesque 700 at 1 em, measured in Chromium (--render says when it is off).
 const WORD = 'Trommi', WORD_EM = 3.617
@@ -326,7 +367,7 @@ const fontFile = name => fs.readFileSync(path.join(here, 'fonts', name))
 const haveFonts = fs.existsSync(path.join(here, 'fonts', 'BricolageGrotesque-latin-variable.woff2'))
 const face = (family, file, weight) => `@font-face{font-family:"${family}";font-weight:${weight};src:url(data:font/woff2;base64,${fontFile(file).toString('base64')}) format("woff2")}`
 function lockup(theme, { live = false, embed = true } = {}) {
-  const mark = inner(brand, { live, theme, ...brandO })
+  const mark = `<g transform="scale(${32 / S})">${tileSvg({ theme }).replace(/^<svg[^>]*>/, '').replace(/<\/svg>$/, '')}</g>`
   const fill = live ? 'style="fill:var(--fg)"' : `fill="${TOKENS[theme]['--fg']}"`
   const font = embed && haveFonts ? `<style>${face('Bricolage Grotesque', 'BricolageGrotesque-latin-variable.woff2', '200 800')}</style>` : ''
   return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${lockW} 32"${live ? ` width="${num(lockW * 2)}" height="64"` : ''}>${font}${mark}<text x="${num(textX)}" y="16" dominant-baseline="central" font-family="'Bricolage Grotesque', 'Avenir Next', 'Segoe UI', sans-serif" font-weight="${brandFont[1]}" font-size="${num(textSize)}" letter-spacing="${num(tracking * textSize)}" ${fill}>${WORD}</text></svg>`
@@ -353,9 +394,9 @@ if (hero && defs.every(Boolean)) {
   shown.push({ section: 'logo', group: 'Mark and name', file: 'logo/trommi-handwritten.svg', note: 'the name written by hand and circled (naming.html)', live: make('style="stroke:var(--fg)"', 'style="stroke:var(--urg-high)"', ` width="${num(bw * .8)}" height="${num(bh * .8)}"`), w: bw, h: bh, wide: true })
 }
 
-// The app icon of the iOS client: a picture, copied as it is.
+// The app icon the iOS client ships today (the client is parked): a picture, copied as it is.
 const appIcon = path.join(root, 'client', 'ios', 'Trommi', 'Assets.xcassets', 'AppIcon.appiconset', 'icon-1024.png')
-if (fs.existsSync(appIcon)) files.set('logo/app-icon-1024.png', fs.readFileSync(appIcon))
+if (fs.existsSync(appIcon)) files.set('logo/app-icon-ios-shipped.png', fs.readFileSync(appIcon))
 
 // -- session marks ---------------------------------------------------------------------------------------
 
@@ -420,7 +461,7 @@ const STRETCHED = { 'vector-effect': 'non-scaling-stroke' }
 for (const [name, node] of Object.entries(drawn)) {
   const stretched = node.attrs.preserveAspectRatio === 'none'
   add('icons', 'Drawn by hand: marks of their own', `icons/icon-${kebab(name)}.svg`, node, {
-    note: `${name}()`, pad: 2, vars: { '--go': need('.agent-badge', '--go') },
+    note: `${name}()`, pad: 2,
     ...(stretched ? { show: 1.5, wide: true, styles: { path: STRETCHED } } : {}),
     ...(stretched ? { liveText: svgText(node, { live: true, pad: 2, width: 200, height: 72, styles: { path: STRETCHED } }) } : {}),
   })
@@ -496,48 +537,21 @@ for (const [file, cls, label, key] of [['client/web/js/chat.js', 'ico', 'the con
 }
 
 // -- states: the badge at the end of a session's row -----------------------------------------------------
-
+// (agents.js badge(): a hand in red when the session waits for you, a small stack of cards while it works with
+// questions open; a session that is away shows nothing there, its mark turns grey.)
 {
-  const hand = drawn.bareHand, sweep = drawn.sweepMark
-  const go = need('.agent-badge', '--go')
-  const anim = /([\d.]+)ms\s+cubic-bezier\(([^)]+)\)/.exec(need('.sweep-mark', 'animation'))
-  const handW = parseFloat(need('.bare-hand', 'width')), handH = parseFloat(need('.bare-hand', 'height'))
-  const countSize = parseFloat(TOKENS.light['--t-sm']) * 16, innerSize = parseFloat(need('.agent-sweep b', 'font-size')) * 16
-  const spot = parseFloat(need('.agent-sweep', 'width'))
-  const font = `font-family="'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif" font-weight="700" stroke="none"`
-  /** One badge, 44 by 32 as in the row: the mark in a place of 30, the count of a hand beside it. */
-  function badge({ kind, count, colour, turning = false, offline = false }) {
-    const make = (o, size = '') => {
-      const c = o.live ? `style="color:${colour};fill:currentColor"` : `color="${resolve(colour, 'light')}" fill="${resolve(colour, 'light')}"`
-      let body = ''
-      if (kind === 'hand') {
-        // The hand's box is fitted into its place as the browser fits a viewBox: one scale, centred.
-        const [hx, hy, hw, hh] = boxOf(hand), s = Math.min(handW / hw, handH / hh)
-        body += `<g transform="translate(15 16) rotate(${parseFloat(rule('.bare-hand').rotate) || 0}) scale(${num(s)}) translate(${num(-hx - hw / 2)} ${num(-hy - hh / 2)})"${paint({ ...PEN, 'stroke-width': need('.bare-hand', 'stroke-width') }, o)}>${inner(hand, o)}</g>`
-        if (count) body += `<text x="31" y="16" dominant-baseline="central" font-size="${num(countSize)}" ${font}>${count}</text>`
-      } else {
-        if (kind === 'sweep') {
-          const spin = turning ? `<animateTransform attributeName="transform" type="rotate" from="0 16 16" to="360 16 16" dur="${num(anim[1] / 1000)}s" calcMode="spline" keyTimes="0;1" keySplines="${anim[2].replace(/,\s*/g, ' ')}" repeatCount="indefinite"/>` : ''
-          body += `<g transform="translate(0 1) scale(${num(spot / 32)})"><g fill="none" stroke-linecap="round"${o.live ? ` style="stroke:${go}"` : ` stroke="${resolve(go, 'light')}"`}>${spin}${inner(sweep, { ...o, vars: { '--go': go } })}</g></g>`
-        }
-        if (count) body += `<text x="15" y="16" text-anchor="middle" dominant-baseline="central" font-size="${num(innerSize)}" letter-spacing="-.02em" ${font}>${count}</text>`
-      }
-      return `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 44 32"${size} ${c}>${body}</svg>`
-    }
-    return { text: make({ theme: 'light' }), liveText: make({ live: true }, ' width="88" height="64"') }
-  }
-  const frame = new Node('svg')
-  frame.attrs.viewBox = '0 0 44 32'
-  const states = [
-    ['state-waiting', { kind: 'hand', count: 2, colour: 'var(--urg-critical)' }, 'waiting for you: the hand, and how many questions'],
-    ['state-waiting-one', { kind: 'hand', count: 1, colour: 'var(--urg-critical)' }, 'waiting for you, one question'],
-    ['state-working', { kind: 'sweep', count: 3, colour: 'var(--fg)' }, 'at work, three questions open: one frame of the sweep'],
-    ['state-working-animated', { kind: 'sweep', count: 3, colour: 'var(--fg)', turning: true }, 'the same, turning as in the app'],
-    ['state-working-idle', { kind: 'sweep', count: 0, colour: 'var(--fg)', turning: true }, 'at work, nothing to ask'],
-    ['state-disconnected-waiting', { kind: 'hand', count: 2, colour: 'var(--faint)' }, 'disconnected, was waiting for you'],
-    ['state-disconnected', { kind: 'none', count: 2, colour: 'var(--faint)' }, 'disconnected, two questions open: grey, still'],
-  ]
-  if (hand && sweep) for (const [name, spec, note] of states) add('states', 'The badge of a session row', `states/${name}.svg`, frame, { ...badge(spec), note })
+  const badgeSketch = rule('.agent-badge .sketch') ?? {}
+  if (drawn.bareHand) add('states', 'The badge of a session row', 'states/state-waiting.svg', drawn.bareHand, {
+    note: 'waiting for you: the hand, in red', pad: 2,
+    text: svgText(drawn.bareHand, { pad: 2, styles: { svg: { stroke: need('.agent-badge[data-state="waiting"]', 'color') } } }),
+    liveText: svgText(drawn.bareHand, { live: true, pad: 2, width: 49, height: 62, styles: { svg: { stroke: need('.agent-badge[data-state="waiting"]', 'color') } } }),
+  })
+  const stack = ui.sketch('stack')
+  if (stack.children.length) add('states', 'The badge of a session row', 'states/state-working.svg', stack, {
+    note: 'at work with questions open: a small stack of cards', pad: 1,
+    text: svgText(stack, { pad: 1, styles: { svg: { stroke: need('.agent-badge[data-state="running"]', 'color'), 'stroke-width': badgeSketch['stroke-width'] } } }),
+    liveText: svgText(stack, { live: true, pad: 1, width: 62, height: 62, styles: { svg: { stroke: need('.agent-badge[data-state="running"]', 'color'), 'stroke-width': badgeSketch['stroke-width'] } } }),
+  })
   // A session that is not connected wears its own mark in grey.
   const offline = rule('.agent-avatar.is-offline')
   const mark = ui.doodle('draw:kite')
@@ -589,8 +603,13 @@ const RENDERS = [
   ['logo/trommi-mark-1024.png', 'logo/trommi-mark.svg', 1024, 1024],
   ['logo/trommi-logo-512.png', 'logo/trommi-logo.svg', Math.round(512 * lockW / 32), 512],
   ['logo/trommi-logo-dark-512.png', 'logo/trommi-logo-dark.svg', Math.round(512 * lockW / 32), 512],
+  ['logo/favicon-16.png', 'logo/favicon.svg', 16, 16],
   ['logo/favicon-32.png', 'logo/favicon.svg', 32, 32],
-  ['logo/favicon-180.png', 'logo/favicon.svg', 180, 180],
+  ['logo/favicon-180.png', 'logo/app-icon.svg', 180, 180],
+  ['logo/app-icon-192.png', 'logo/app-icon.svg', 192, 192],
+  ['logo/app-icon-512.png', 'logo/app-icon.svg', 512, 512],
+  ['logo/app-icon-1024.png', 'logo/app-icon.svg', 1024, 1024],
+  ['logo/app-icon-maskable-512.png', 'logo/app-icon-maskable.svg', 512, 512],
   ['palette/swatches.png', 'palette/swatches.svg', null, null],
   ['marks/doodles-sheet.png', 'marks/doodles-sheet.svg', null, null],
 ]
@@ -645,6 +664,14 @@ if (flags.has('--render') || flags.has('--screens')) {
         rendered[png] = { from: svg, sha: sha(text) }
       }
       await page.send('Emulation.setDefaultBackgroundColorOverride', {})
+      // favicon.ico: the two small pictures in one file (an ICO may hold PNGs as they are).
+      const pngs = [16, 32].map(n => [n, fs.readFileSync(path.join(here, `logo/favicon-${n}.png`))])
+      const head = Buffer.alloc(6 + 16 * pngs.length)
+      head.writeUInt16LE(1, 2); head.writeUInt16LE(pngs.length, 4)
+      let at = head.length
+      pngs.forEach(([n, png], i) => { const o = 6 + 16 * i; head[o] = n; head[o + 1] = n; head.writeUInt16LE(1, o + 4); head.writeUInt16LE(32, o + 6); head.writeUInt32LE(png.length, o + 8); head.writeUInt32LE(at, o + 12); at += png.length })
+      fs.writeFileSync(path.join(here, 'logo/favicon.ico'), Buffer.concat([head, ...pngs.map(p => p[1])]))
+      rendered['logo/favicon.ico'] = { from: 'logo/favicon.svg', sha: sha(files.get('logo/favicon.svg')) }
     }
     if (flags.has('--screens')) {
       const { takeScreens } = await import(pathToFileURL(path.join(here, 'screens.mjs')).href)
@@ -694,7 +721,9 @@ function gallery({ embedPictures }) {
   const body = {
     logo: () => groupsOf('logo') + `<h3>As pictures</h3><div class="grid">${[
       ['logo/trommi-mark-512.png', 'the mark'], ['logo/trommi-mark-1024.png', 'the mark'], ['logo/trommi-logo-512.png', 'mark and name', 'on-light'], ['logo/trommi-logo-dark-512.png', 'mark and name, for dark ground', 'on-dark'],
-      ['logo/app-icon-1024.png', 'the iOS app icon'], ['logo/favicon-32.png', 'the favicon'], ['logo/favicon-180.png', 'the favicon, touch size'],
+      ['logo/favicon-16.png', 'the favicon at 16 px: the Z alone'], ['logo/favicon-32.png', 'the favicon at 32 px'], ['logo/favicon-180.png', 'touch icon'],
+      ['logo/app-icon-192.png', 'app icon, web manifest'], ['logo/app-icon-512.png', 'app icon, web manifest'], ['logo/app-icon-1024.png', 'app icon, the source for iOS'], ['logo/app-icon-maskable-512.png', 'app icon, maskable'],
+      ['logo/app-icon-ios-shipped.png', 'what the parked iOS client still ships'],
     ].map(p => pictureTile(...p)).join('')}</div>`,
     marks: () => groupsOf('marks') + `<h3>From a session's id alone <span>${families.flat().length}</span></h3><p class="lead">${name('marks/doodles-sheet.svg')} ${name('marks/doodles-sheet.png')} hold this sheet: ${PER_FAMILY} ids for each of the ${KINDS.length} families, each in the colour its id gives it.</p>` +
       families.map((seeds, i) => `<div class="family"><b>${esc(KINDS[i])}</b>${seeds.map(seed => `<span class="seed" style="--hue:${hueOf(seed)}">${svgText(ui.doodle(seed), { live: true, width: 44, height: 44, pad: 1, styles: doodleStyle })}<i>${esc(seed)}</i></span>`).join('')}</div>`).join(''),
@@ -728,7 +757,7 @@ function gallery({ embedPictures }) {
 <style>
 ${fonts}
 :root{${vars(lightTokens)};--ink-sl:${sl(INK.light)}}
-.tile,.seed{--ink:hsl(var(--hue,${HUES[0]}) var(--ink-sl));--go:${need('.agent-badge', '--go')}}
+.tile,.seed{--ink:hsl(var(--hue,${HUES[0]}) var(--ink-sl))}
 :root[data-theme="dark"]{${vars(tokenBlock(':root[data-theme="dark"]'))};--ink-sl:${sl(INK.dark)}}
 *{box-sizing:border-box}
 html{-webkit-text-size-adjust:100%}
@@ -853,12 +882,12 @@ document.addEventListener('click', e => {
 files.set('index.html', gallery({ embedPictures: false }))
 /** Outside assets/: the board serves only client/web, and follows no link out of it, so the gallery stands
  *  there once more as one page that needs no other file. */
-const outside = new Map([[path.join(web, 'designs', 'assets.html'), gallery({ embedPictures: true })]])
+const outside = new Map([[path.join(web, 'designs', 'assets.html'), gallery({ embedPictures: true })], ...patched])
 
 // ---- write, or check --------------------------------------------------------------------------------------
 
 const GENERATED_DIRS = ['logo', 'marks', 'icons', 'states', 'palette']
-const kept = new Set([...files.keys(), ...RENDERS.map(r => r[0])])
+const kept = new Set([...files.keys(), ...RENDERS.map(r => r[0]), 'logo/favicon.ico'])
 const leftover = GENERATED_DIRS.flatMap(dir => { try { return fs.readdirSync(path.join(here, dir)).map(f => `${dir}/${f}`) } catch { return [] } }).filter(rel => !kept.has(rel))
 const same = (a, b) => b != null && Buffer.compare(Buffer.from(a), b) === 0
 const stale = [...files].filter(([rel, data]) => !same(data, onDisk(rel))).map(([rel]) => `assets/${rel}`)
@@ -882,7 +911,7 @@ for (const [rel, data] of files) {
   fs.mkdirSync(path.dirname(path.join(here, rel)), { recursive: true })
   if (!same(data, onDisk(rel))) fs.writeFileSync(path.join(here, rel), data)
 }
-for (const [abs, data] of outside) fs.writeFileSync(abs, data)
+for (const [abs, data] of outside) if (!same(data, (() => { try { return fs.readFileSync(abs) } catch { return null } })())) fs.writeFileSync(abs, data)
 for (const rel of leftover) fs.rmSync(path.join(here, rel))
 const per = dir => [...files.keys()].filter(f => f.startsWith(`${dir}/`)).length
 console.log(`assets/: ${files.size} files from code (${GENERATED_DIRS.map(d => `${d} ${per(d)}`).join(', ')}), ${stale.length} rewritten, ${leftover.length} removed.`)
