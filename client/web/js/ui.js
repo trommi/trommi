@@ -752,6 +752,8 @@ const SKETCH = {
   bubble: [[[4.4, 8.6], [6, 6.4], [12, 6], [18.2, 6.4], [19.8, 8.8], [19.6, 14.6], [17.8, 16.8], [11.6, 17], [8.4, 20.6], [8.2, 17], [5.8, 16.6], [4.3, 14.4], [4.5, 8.2]]],
   // a small desk: its top, two legs, a drawer with its knob, a sheet lying on it
   desk: [[[3, 9.5], [12, 9.1], [21, 9.5]], [[5, 9.7], [5.2, 15], [5, 20.2]], [[19, 9.7], [18.8, 15], [19, 20.2]], [[12.5, 10], [12.7, 16], [18.8, 16]], [[15.3, 13], [16.1, 13]], [[6.8, 9.2], [7.4, 5.8], [12.4, 6.4], [12.1, 9.2]]],
+  // a shrug: a head, shoulders pulled up, both hands turned out
+  shrug: [[[12, 2.8], [14.3, 3.8], [14.6, 6.4], [12.2, 7.8], [9.6, 6.6], [9.6, 4], [11.6, 2.9]], [[2.6, 8.4], [5.2, 11], [8.8, 11.2], [12, 10.4], [15.4, 11.2], [18.8, 10.8], [21.4, 8.2]], [[.8, 7.8], [4, 7.6]], [[20, 7.4], [23.2, 7.6]], [[9.2, 11.6], [9.6, 16], [9.2, 20.8]], [[14.8, 11.6], [14.4, 16], [14.8, 20.8]]],
   // a table: a sheet ruled into cells
   grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
@@ -783,7 +785,8 @@ export const WHAT_WORD = 'What??'       // ask the session to explain it; it com
 export const WHAT_SKETCH = 'explain'
 
 // Leaving a decision to the agent: the one word for it (the question window's button, the row's quiet action, the Answered pile).
-export const TRUST_WORD = 'Trust'
+export const TRUST_WORD = 'Whatever'   // decided (card Nr. 136); the server's flag is still `trust`
+export const TRUST_SKETCH = 'shrug'
 // Handing a question back to its session to be reworked: the word on the button, and the state of such a card.
 export const HANDBACK_WORD = 'Revise'
 export const HANDBACK_STATE = 'In revision'

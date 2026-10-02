@@ -15,6 +15,7 @@ import { subscribe, getState, reopen } from './store.js'
 import { el } from './ui.js'
 import { mountInbox } from './inbox.js'
 import { say, pageHost } from './back.js'
+import { walkSession } from './app.js'
 
 const body = document.body
 const $ = id => document.getElementById(id)
@@ -63,7 +64,8 @@ function openQuestion(cardId) {
   window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
 }
 const together = mountInbox(groupList, {
-  onOpen: cardId => openQuestion(cardId),
+  // One question: its window. The walk ("Go through them"): only what this group asked (app.js walkSession follows the scope).
+  onOpen: cardId => (cardId == null ? walkSession(getState().scope) : openQuestion(cardId)),
   onDecided: (card, option) => say(pageHost(), { head: `Answered: ${option.label}`, title: card.title, back: () => reopen(card.id) }),
 })
 subscribe(state => {

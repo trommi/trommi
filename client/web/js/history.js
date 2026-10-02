@@ -3,9 +3,8 @@
 // what is done; a tap unfolds what was asked, what was chosen, and the way to answer
 // again), and the files: everything the session ever sent.
 
-import { el, agoNode, URGENCY_LABEL, kindOf, ASSET_LABEL, linkInfo } from './ui.js'
-import { reopen } from './store.js'
-import { icon, attachmentNodes, richPlus, openLightbox } from './chat.js'
+import { el, agoNode, kindOf, ASSET_LABEL, linkInfo } from './ui.js'
+import { icon, openLightbox } from './chat.js'
 
 const LINK = /https?:\/\/[^\s<>)\]]+/g
 const KIND_LABEL = { image: 'Picture', video: 'Video', audio: 'Audio', file: 'File', scribble: 'Your scribble', link: 'Link' }
