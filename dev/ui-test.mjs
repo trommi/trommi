@@ -100,7 +100,14 @@ const SEL = {
   focusSend: '.focus-ask-send',
   focusExplain: '.focus-explain',
   focusHand: '.focus-handback',
-  focusLater: '.focus-later:not(.focus-explain):not(.focus-handback)',
+  focusLater: '.focus-later:not(.focus-explain):not(.focus-handback):not(.focus-shred)',
+  focusShred: '.focus-shred',
+  focusTrust: '.focus-trust',
+  focusMark: '.focus-mark textarea',     // a note written on the card itself
+  focusChip: '.focus-chip',              // a file that waits on the card for the next action
+  focusPen: '.focus-mark-pen',
+  focusInk: '.focus-ink path',
+  focusScroll: '.focus-scroll',
   focusRail: '.focus-rail, .focus-more',   // how far the walk is: a rail of marks, later one line "3 more" at the foot
   focusThread: '.focus-thread',
   focusNote: '.focus-says .says',
@@ -207,7 +214,7 @@ const SEL = {
 // Words of the interface the test relies on.
 const TEXT = {
   inbox: 'Inbox', later: 'Snooze', back: 'Fetch back', choose: 'Choose', split: 'Split',
-  send: 'Send', explain: /^(Explain|What)/, hand: 'Back to agent', answered: 'Answered', movedLater: 'Snoozed', noteBack: 'Back',
+  send: 'Send', explain: /^(Explain|What)/, hand: 'Revise', answered: 'Answered', movedLater: 'Snoozed', noteBack: 'Back',
   model: 'Model', machine: 'Machine', unknown: 'unknown',
   // What dev/fake-agent.mjs answers (its script is German).
   heard: 'Verstanden', scribbleSeen: 'Scribble erhalten',
@@ -227,9 +234,12 @@ const PENDING = [
 ]
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
+// The inbox's name was changed more than once ("Inbox", "Desk"): the app's own word for it is read from its source.
+TEXT.inbox = /export const INBOX_WORD = '([^']+)'/.exec(fs.readFileSync(path.join(ROOT, 'client', 'web', 'js', 'ui.js'), 'utf8'))?.[1] ?? TEXT.inbox
 const DESKTOP = { width: 1440, height: 900 }
 const PHONE = { width: 400, height: 860 }
 const PUBLIC = 'https://board.example.test'   // the board's https address, as links to published assets carry it
+const PIXEL = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='   // a PNG of one pixel
 const COURIER = 'Courier'        // the session the test steers
 const GONE = 'Gone Fishing'      // asks one question, then disconnects
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -2134,7 +2144,12 @@ async function walkTo(card) {
     await ev(`${node}.scrollIntoView({ block: 'center', behavior: 'instant' })`)
     await sleep(250)
     await settle()
-    if (!(await isFront())) await press(`the card "${card.title}" in the walk`, `${node}.querySelector(${JSON.stringify(SEL.focusTitle)})`)
+    if (!(await isFront())) {
+      await press(`the card "${card.title}" in the walk`, `${node}.querySelector(${JSON.stringify(SEL.focusTitle)})`)
+      // (Where one writes anywhere on a card, that click also began a note at the title: an empty note goes when it is left.)
+      await sleep(150)
+      await ev('document.activeElement?.blur?.()')
+    }
     await waitFor(`"${card.title}" is the card in front`, js`__t.focusState()?.id === ${card.id}`, 3000).catch(() => {})
     await settle()
     return isFront()
@@ -2153,49 +2168,64 @@ async function walkTo(card) {
   return isFront()
 }
 const front = () => ev('__t.focusState()')
-const fieldOf = () => js`__t.one(${SEL.focusField}, __t.one(${SEL.focusCard}))`
 const said = card => state().messages.filter(m => m.card_id === card.id && m.from === 'user')
 const screen = () => (touch ? PHONE : DESKTOP)
+const walkCard = card => js`[...document.querySelectorAll(${SEL.focusAnyCard})].find(n => n.dataset.id === ${card.id})`
+const stripOf = card => ev(js`__t.note(true, ${card.title})`)
+/** Begin a note on the card in front: a click on its title puts the caret there (key A does the same). */
+async function beginNote(card, byKey = false) {
+  if (byKey) await key('a', 65, { text: 'a' })
+  else await press(`the title of "${card.title}"`, `${walkCard(card)}.querySelector(${JSON.stringify(SEL.focusTitle)})`)
+  return waitFor('a note opens on the card, ready to write', `(n => !!n && document.activeElement === n)(__t.one(${JSON.stringify(SEL.focusMark)}, ${walkCard(card)}))`, 3000).then(() => true, () => false)
+}
 
 async function groupWalk() {
   const stamp = tag()
   const high = { urgency: 'high', urgency_reason: 'so that the walk comes to it early' }
-  const talk = await fixture.quick(`Walk: only a message (${stamp})?`, high)
+  const talk = await fixture.quick(`Walk: a note, then the answer (${stamp})?`, high)
   const take = await fixture.quick(`Walk: answer and take back (${stamp})?`, high)
-  const off = await fixture.quick(`Walk: later (${stamp})?`, high)
+  const off = await fixture.quick(`Walk: snooze (${stamp})?`, high)
   const explain = await fixture.light(`Walk: explain (${stamp})`, high)
-  const hand = await fixture.light(`Walk: back to the agent (${stamp})`, high)
+  const hand = await fixture.light(`Walk: revise (${stamp})`, high)
+  const trusted = await fixture.light(`Walk: trust (${stamp})`, high)
+  const shredded = await fixture.quick(`Walk: shred (${stamp})?`, high)
+  const files = await fixture.quick(`Walk: files and a scribble (${stamp})?`, high)
+  const all = [talk, take, off, explain, hand, trusted, shredded, files]
   await open('/')
   await goInbox()
-  await waitFor('the new questions are listed', js`!!__t.row(${hand.id})`)
+  await waitFor('the new questions are listed', js`!!__t.row(${files.id})`)
   await settle()
 
-  // The module of the window loads: a broken import would leave "Go through them" dead.
+  // The module of the window loads: a broken import would leave the walk dead.
   const loaded = await ev(`import('/js/focus.js').then(m => typeof m.mountFocus === 'function' ? 'ok' : 'no mountFocus', e => String(e?.message ?? e))`)
   need(loaded === 'ok', `the Focus window does not load: ${loaded}`)
   passed()
 
-  // The circled count in the heading starts the walk, in the big window.
+  // The button in the inbox's heading starts the walk, in the big window, under its own address.
   await ev(js`document.querySelector(${SEL.inbox}).scrollTo?.(0, 0)`)
-  await press('the circled count in the heading', js`__t.one(${SEL.inboxCount})`)
-  await waitFor('the circled count opens the walk', '__t.focusOpen() && !!__t.focusState().id')
+  await press('the walk button in the heading', js`__t.one(${SEL.goThrough})`)
+  await waitFor('the button opens the walk', '__t.focusOpen() && !!__t.focusState().id')
   await settle()
-  check(!(await front()).single, 'the circled count opened the window of one card, not the walk')
-  check((await ev('location.pathname')) === '/walk', `the walk has no address of its own: ${await ev('location.pathname + location.search')}`)   // the walk is /walk
+  check(!(await front()).single, 'the button opened the window of one card, not the walk')
+  check((await ev('location.pathname')) === '/walk', `the walk has no address of its own: ${await ev('location.pathname + location.search')}`)
   check(await ev(js`!!__t.one(${SEL.focusRail})`), 'the walk does not say how far it is (no rail, no "… more" line)')
+  // The pass keeps its order: what stands in the column is the line of open questions as it was when the walk began.
+  const order = await ev(js`[...document.querySelectorAll(${SEL.focusAnyCard})].map(n => n.dataset.id)`)
+  const queueLine = state().queue.filter(id => !putOff.has(id) && cardOf(id)?.status === 'open' && !cardOf(id).with_agent && !agentById(cardOf(id).agent)?.archived)
+  check(order.join() === queueLine.join(), `the walk does not go through the questions in the order of the line: it shows ${order.length}, the line has ${queueLine.length}${order.length === queueLine.length ? ', in another order' : ''}`)
 
-  // One composer, and beside it the ways to leave a card without answering.
+  // No composer: one writes on the card itself. Beside the answers stand the ways to leave a card without answering.
   need(await walkTo(talk), `the walk never came to "${talk.title}"`)
   const fields = await ev(js`__t.all(${SEL.focusField}, __t.one(${SEL.focusCard})).length`)
-  check(fields === 1, `the card in front has ${fields} fields to write in, expected one composer`)
-  const ways = await ev(js`[${SEL.focusSend}, ${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}].map(sel => (n => __t.text(n) || __t.label(n).split(/[ :]/)[0])(__t.one(sel, __t.one(${SEL.focusCard}))))`)
-  check(ways[0] === TEXT.send && TEXT.explain.test(ways[1]) && ways[2] === TEXT.hand && isLater(ways[3]), `with the composer stand "${ways.join('", "')}", expected "${TEXT.send}", "Explain" (or "What??"), "${TEXT.hand}", "${TEXT.later}"`)
+  check(fields === 0, `the card in front shows ${fields} composer field(s); writing anywhere on the card is the default`)
+  const ways = await ev(js`[${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}, ${SEL.focusShred}, ${SEL.focusTrust}].map(sel => (n => __t.text(n) || __t.label(n).split(/[ :]/)[0])(__t.one(sel, __t.one(${SEL.focusCard}))))`)
+  check(TEXT.explain.test(ways[0]) && ways[1] === TEXT.hand && isLater(ways[2]) && ways[3] === 'Shred' && /^Trust/.test(ways[4]), `on the card stand "${ways.join('", "')}", expected "What??", "${TEXT.hand}", "${TEXT.later}", "Shred" and "Trust"`)
   await checkEnglish('the walk')
-  await shot('walk-composer')
+  await shot('walk-card')
   if (touch) {
     // On a phone every one of them has to be on screen and big enough for a finger.
-    const small = await ev(js`[${SEL.focusSend}, ${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}, ${SEL.focusNext}, ${SEL.focusPrev}].flatMap(sel => __t.all(sel, ${SEL.focus}).filter(n => !n.closest(${SEL.focusAnyCard}) || n.closest(${SEL.focusCard}))).concat(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard}))).map(n => ({ name: __t.label(n).slice(0, 24), box: __t.box(n) })).filter(x => x.box.height < 40 || x.box.width < 40 || x.box.right > innerWidth + 1 || x.box.bottom > innerHeight + 1 || x.box.left < -1)`)
-    check(!small.length, `on a phone these controls of the window are off the screen or smaller than a finger (40px): ${small.map(x => `"${x.name}" ${x.box.width}x${x.box.height} at ${x.box.left},${x.box.top}`).join('; ')}`)
+    const small = await ev(js`[${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}, ${SEL.focusShred}, ${SEL.focusTrust}, ${SEL.focusOption}].flatMap(sel => __t.all(sel, __t.one(${SEL.focusCard}))).map(n => ({ name: __t.label(n).slice(0, 24), box: __t.box(n) })).filter(x => x.box.height < 40 || x.box.width < 40 || x.box.right > innerWidth + 1 || x.box.left < -1)`)
+    check(!small.length, `on a phone these controls of the card are off the screen or smaller than a finger (40px): ${small.map(x => `"${x.name}" ${x.box.width}x${x.box.height} at ${x.box.left},${x.box.top}`).join('; ')}`)
   }
 
   // What is about to be pressed stays where it is: the board's state changes all the time (other sessions
@@ -2206,34 +2236,28 @@ async function groupWalk() {
   await sleep(900)
   check(same(await tileTop(), restAt, 1) && (await front())?.id === talk.id, `a message from a session moved the window by itself: the answer in front went from y=${restAt} to y=${await tileTop()}`)
 
-  // A typed message is plain chat about the card: the card stays open, in front, and where it was.
-  const words = `only a remark ynlceub 123 ${stamp}`
-  await press('the composer', fieldOf())
-  await type(words)
-  if (!touch) {
-    // Arrows in the field move the caret, not the walk.
-    await key('ArrowLeft', 37); await key('ArrowRight', 39)
-    check((await front()).id === talk.id, 'an arrow key pressed in the composer turned the page')
+  // A note written on the card is kept as its draft. It answers nothing, sends nothing, and the card stays in front.
+  const words = `only a remark ynlceubrxsh 123 ${stamp}`
+  if (check(await beginNote(talk), 'a click on the title of the card does not begin a note there')) {
+    await type(words)
+    if (!touch) {
+      // Arrows in the note move the caret, not the walk.
+      await key('ArrowLeft', 37); await key('ArrowRight', 39)
+      check((await front()).id === talk.id, 'an arrow key pressed in a note turned the page')
+    }
+    check(cardOf(talk.id).status === 'open', 'letters typed into a note answered the question')
+    if (touch) await ev('document.activeElement?.blur?.()')
+    else await key('Enter', 13, { text: '\r' })
+    await waitState('the note is kept on the board as the draft of its card', () => JSON.stringify(cardOf(talk.id).draft ?? '').includes(words), 5000).then(() => passed(), e => check(false, e.message))
+    await sleep(500)
+    await settle()
+    check((await front())?.id === talk.id, `after a note the walk shows "${(await front())?.title}", the card should stay in front`)
+    check(cardOf(talk.id).status === 'open' && !said(talk).length, 'a note answered the card or was sent to the session before any action')
+    check(!(await ev(js`__t.inPile('later', ${talk.id}) || __t.inPile('asked', ${talk.id})`)), 'a note moved the card onto a pile; only Snooze, What?? and Revise may')
+    await shot('walk-note')
   }
-  check(cardOf(talk.id).status === 'open', 'letters typed into the composer answered the question')
-  if (touch) await press(`"${TEXT.send}"`, js`__t.one(${SEL.focusSend}, __t.one(${SEL.focusCard}))`)
-  else await key('Enter', 13, { text: '\r' })
-  await waitState('the message reaches the session, tied to its card', () => said(talk).some(m => m.text === words), 5000)
-  await sleep(700)
-  await settle()
-  check((await front())?.id === talk.id, `after a typed message the walk shows "${(await front())?.title}", the card should stay in front`)
-  check(cardOf(talk.id).status === 'open', 'a typed message answered the card')
-  check(!(await ev(js`__t.inPile('later', ${talk.id}) || __t.inPile('asked', ${talk.id})`)), 'a typed message moved the card onto a pile; only Later, Explain and Back to agent may')
-  check(await ev(js`!!__t.groups().find(g => !g.pile && g.ids.includes(${talk.id}))`), 'after a typed message the card no longer stands among the questions of its sender')
-  check(await ev(js`__t.text(__t.one(${SEL.focusThread}, __t.one(${SEL.focusCard}))).includes(${words})`), 'the message does not show under the question it is about')
-  check(await ev(`${fieldOf()}.value`) === '', 'the composer was not emptied after sending')
-  await courier.tool('reply', { text: `A word back (${stamp})`, card_id: talk.id })
-  await expect('the reply of the session shows under the question', js`__t.text(__t.one(${SEL.focusThread}, __t.one(${SEL.focusCard}))).includes(${`A word back (${stamp})`})`, 5000)
-  check((await front())?.id === talk.id && cardOf(talk.id).status === 'open', 'the reply of the session moved or closed the card')
-  await shot('walk-chat')
-  await ev('document.activeElement?.blur?.()')
 
-  // The arrows page, in both directions, and never answer; so do the round buttons beside the sheet.
+  // The arrows page, in both directions, and never answer; a finger pushes the column.
   const answered = () => state().cards.filter(c => c.status !== 'open').length
   const before = answered()
   if (!touch) {
@@ -2244,35 +2268,27 @@ async function groupWalk() {
     for (let i = 0; i < 5; i++) { await key('ArrowRight', 39); await sleep(200) }
     for (let i = 0; i < 5; i++) { await key('ArrowLeft', 37); await sleep(200) }
     await settle()
-  } else if (await ev(js`!!__t.one(${SEL.focusNext})`)) {
-    await press('next', js`__t.one(${SEL.focusNext})`)
-    await expect('the next arrow shows the next question', js`(s => s && s.id !== ${talk.id})(__t.focusState())`, 3000)
-    await press('previous', js`__t.one(${SEL.focusPrev})`)
-    await expect('the previous arrow goes back', js`__t.focusState()?.id === ${talk.id}`, 3000)
   } else {
-    // One scrolling column: a finger pushes it up and down, over the answers too.
     const tile = await ev(js`__t.box(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).at(-1))`)
     const from = { x: Math.round(tile.left + tile.width / 2), y: Math.round(tile.top + tile.height / 2) }
-    await drag(line(from, { x: from.x, y: Math.max(40, from.y - 420) }, 14), { pause: 24 })
+    await drag(line(from, { x: from.x, y: Math.max(40, from.y - 420) }), { pause: 24 })
     await sleep(700)
-    await drag(line({ x: from.x, y: 300 }, { x: from.x, y: 720 }, 14), { pause: 24 })
+    await drag(line({ x: from.x, y: 300 }, { x: from.x, y: 720 }), { pause: 24 })
     await sleep(700)
     await settle()
   }
   check(answered() === before, `paging through the questions answered ${answered() - before} of them`)
-  check(cardOf(talk.id).status === 'open', 'paging answered the yes/no question in front')
 
-  // An answer: the walk moves on at once, the note says what was answered, and Back puts the card in front again.
+  // An answer: the walk moves on at once, a strip says what was answered, and Back puts the card in front again.
   need(await walkTo(take), `the walk never came to "${take.title}"`)
   if (touch) await press('the thumb up', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).at(-1)`)
   else await key('y', 89, { text: 'y' })
   await expect('after an answer the walk moves on at once', js`(s => s && s.id !== ${take.id})(__t.focusState())`, 1500)
   await waitState(`"${take.title}" is decided`, () => cardOf(take.id).status !== 'open')
   check(cardOf(take.id).choice === 'yes', `the answer in the walk chose "${cardOf(take.id).choice}", expected "yes"`)
-  const note = await ev(js`__t.note(true, ${take.title})`)
+  const note = await stripOf(take)
   if (check(note, 'in the walk nothing says what was answered, and nothing takes it back')) {
-    check(/Yes$/.test(note.text) && note.back, `the note in the walk reads "${note.all}", expected the answer "Yes" and "${TEXT.noteBack}"`)
-    if (!touch && !note.strip) check(note.box.left < screen().width / 2 && note.box.top < 200, `the note with "${TEXT.noteBack}" is not at the top left of the window: ${JSON.stringify(note.box)}`)
+    check(/Yes$/.test(note.text) && note.back, `the strip in the walk reads "${note.all}", expected the answer "Yes" and "${TEXT.noteBack}"`)
     await shot('walk-answered')
     await press(`"${TEXT.noteBack}" in the walk`, js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${take.title}))`)
     await waitState(`"${take.title}" is open again`, () => cardOf(take.id).status === 'open')
@@ -2281,58 +2297,126 @@ async function groupWalk() {
     await expect('the card taken back stands in the group of its sender again', js`!!__t.groups().find(g => !g.pile && g.ids.includes(${take.id}))`, 3000)
   }
 
-  // Later: a plain put-off. The card leaves, the walk moves on.
+  // The note goes along with the answer: as its words, and as a picture of the card with the note on it.
+  need(await walkTo(talk), `the walk never came back to "${talk.title}"`)
+  if (touch) await press('the thumb up', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).at(-1)`)
+  else await key('y', 89, { text: 'y' })
+  await waitState(`"${talk.title}" is decided`, () => cardOf(talk.id).status !== 'open')
+  check(cardOf(talk.id).note.includes(words), `the answer took "${cardOf(talk.id).note}" along as its note, expected what was written on the card`)
+  check((cardOf(talk.id).note_attachments ?? []).length >= 1, 'the answer did not take a picture of the card with its note along')
+
+  // Snooze: a plain put-off. The card leaves, the walk moves on. (Keys: L or S.)
   need(await walkTo(off), `the walk never came to "${off.title}"`)
-  await press(`"${TEXT.later}" in the walk`, js`__t.one(${SEL.focusLater}, __t.one(${SEL.focusCard}))`)
+  if (touch) await press(`"${TEXT.later}" in the walk`, js`__t.one(${SEL.focusLater}, __t.one(${SEL.focusCard}))`)
+  else await key('s', 83, { text: 's' })
   putOff.add(off.id)
   await expect(`after "${TEXT.later}" the walk moves on`, js`(s => s && s.id !== ${off.id})(__t.focusState())`, 3000)
   await expect(`"${TEXT.later}" lays the card on the "${TEXT.later}" pile`, js`__t.inPile('later', ${off.id})`, 3000)
   check(cardOf(off.id).status === 'open' && !said(off).length, `"${TEXT.later}" answered the card or wrote to the session`)
-  const laterNote = await ev(js`__t.note(true, ${off.title})`)
-  check(saysLater(laterNote?.text) && laterNote.back, `after "${TEXT.later}" the note reads "${laterNote?.all}", expected "${TEXT.movedLater}" and the way back`)
+  const laterNote = await stripOf(off)
+  check(saysLater(laterNote?.text) && laterNote.back, `after "${TEXT.later}" the strip reads "${laterNote?.all}", expected "${TEXT.movedLater}" and the way back`)
 
-  // Explain: one tap asks the session; the card leaves and returns when the session has replied.
+  // What??: one tap asks the session to explain; the card leaves and returns when the session has replied. (Key: E.)
   need(await walkTo(explain), `the walk never came to "${explain.title}"`)
-  await press(`"Explain" in the walk`, js`__t.one(${SEL.focusExplain}, __t.one(${SEL.focusCard}))`)
-  await waitState('the session is asked to explain, tied to the card', () => said(explain).some(m => /^Explain/.test(m.text)), 5000)
-  await expect(`after "Explain" the walk moves on`, js`(s => s && s.id !== ${explain.id})(__t.focusState())`, 3000)
-  await expect(`"Explain" lays the card on the pile of what is with the agent`, js`__t.inPile('asked', ${explain.id})`, 3000)
-  check(cardOf(explain.id).status === 'open', `"Explain" answered the card`)
-  const explainNote = await ev(js`__t.note(true, ${explain.title})`)
-  check(explainNote && !/undefined|null/.test(explainNote.all) && explainNote.back, `after "Explain" the note reads "${explainNote?.all ?? 'nothing'}", expected what happened and the way back`)
-  await sleep(50)
-  await courier.tool('reply', { text: `Explained: it is about the size (${stamp})`, card_id: explain.id })
-  await expect('with the reply of the session the card returns to the questions of its sender', js`!__t.inPile('asked', ${explain.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${explain.id}))`, 5000)
-  if (check(await walkTo(explain), 'the card that returned is not part of the walk again')) {
-    check(await ev(js`__t.text(__t.one(${SEL.focusThread}, __t.one(${SEL.focusCard}))).includes('Explained: it is about the size')`), 'the card that returned does not show what the session explained')
-    await shot('walk-explained')
+  const asked = () => waitState('the session is asked to explain, tied to the card', () => said(explain).length > 0, 3000).then(() => true, () => false)
+  if (!touch) {
+    await key('e', 69, { text: 'e' })
+    if (!check(await asked(), 'the key E does nothing in the walk: the session is not asked to explain (the button "What??" is tried next)')) await press('"What??" in the walk', js`__t.one(${SEL.focusExplain}, __t.one(${SEL.focusCard}))`)
+  } else await press('"What??" in the walk', js`__t.one(${SEL.focusExplain}, __t.one(${SEL.focusCard}))`)
+  if (check(await asked(), '"What??" does not reach the session')) {
+    await expect('after "What??" the walk moves on', js`(s => s && s.id !== ${explain.id})(__t.focusState())`, 3000)
+    await expect('"What??" lays the card on the pile of what waits for the agent', js`__t.inPile('asked', ${explain.id})`, 3000)
+    check(cardOf(explain.id).status === 'open', '"What??" answered the card')
+    const explainNote = await stripOf(explain)
+    check(explainNote && !/undefined|null/.test(explainNote.all) && explainNote.back, `after "What??" the strip reads "${explainNote?.all ?? 'nothing'}", expected what happened and the way back`)
+    await sleep(50)
+    await courier.tool('reply', { text: `Explained: it is about the size (${stamp})`, card_id: explain.id })
+    await expect('with the reply of the session the card returns to the questions of its sender', js`!__t.inPile('asked', ${explain.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${explain.id}))`, 5000)
+    if (check(await walkTo(explain), 'the card that returned is not part of the walk again')) {
+      check(await ev(js`__t.text(${SEL.focusCard}).includes('Explained: it is about the size')`), 'the card that returned does not show what the session explained')
+      await shot('walk-explained')
+    }
   }
 
-  // Back to agent: what stands in the composer goes along; the card leaves and returns with the reply.
+  // Revise: what was written on the card goes to the session; the card leaves and returns with the reply. (Key: B.)
   need(await walkTo(hand), `the walk never came to "${hand.title}"`)
   const wish = `please look at it again ${stamp}`
-  await press('the composer', fieldOf())
-  await type(wish)
-  await press(`"${TEXT.hand}" in the walk`, js`__t.one(${SEL.focusHand}, __t.one(${SEL.focusCard}))`)
-  await waitState('the words reach the session, tied to the card', () => said(hand).some(m => m.text === wish), 5000)
+  if (check(await beginNote(hand, !touch), touch ? 'a tap on the title does not begin a note' : 'the key A does not begin a note on the card in front')) {
+    await type(wish)
+    if (touch) await ev('document.activeElement?.blur?.()')
+    else await key('Enter', 13, { text: '\r' })
+    await sleep(300)
+  }
+  if (touch) await press(`"${TEXT.hand}" in the walk`, js`__t.one(${SEL.focusHand}, __t.one(${SEL.focusCard}))`)
+  else await key('b', 66, { text: 'b' })
+  await waitState('the words reach the session, tied to the card and marked as a hand-back', () => said(hand).some(m => m.text.includes(wish) && m.handback), 5000).then(() => passed(), e => check(false, `${touch ? `"${TEXT.hand}"` : 'the key B'}: ${e.message}`))
   await expect(`after "${TEXT.hand}" the walk moves on`, js`(s => s && s.id !== ${hand.id})(__t.focusState())`, 3000)
-  await expect(`"${TEXT.hand}" lays the card on the pile of what is with the agent`, js`__t.inPile('asked', ${hand.id})`, 3000)
-  check(cardOf(hand.id).status === 'open', `"${TEXT.hand}" answered the card`)
-  const handNote = await ev(js`__t.note(true, ${hand.title})`)
-  check(handNote && !/undefined|null/.test(handNote.all) && handNote.back, `after "${TEXT.hand}" the note reads "${handNote?.all ?? 'nothing'}", expected what happened and the way back`)
-  await shot('walk-handed')
+  await expect(`"${TEXT.hand}" lays the card on the pile of what waits for the agent`, js`__t.inPile('asked', ${hand.id})`, 3000)
+  check(cardOf(hand.id).status === 'open' && cardOf(hand.id).with_agent, `"${TEXT.hand}" answered the card, or the board does not know that it is with the agent`)
+  const handNote = await stripOf(hand)
+  check(handNote && !/undefined|null/.test(handNote.all) && handNote.back, `after "${TEXT.hand}" the strip reads "${handNote?.all ?? 'nothing'}", expected what happened and the way back`)
+  await shot('walk-revise')
   await sleep(50)
   await courier.tool('reply', { text: `Looked again (${stamp})`, card_id: hand.id })
   await expect('with the reply of the session the card returns', js`!__t.inPile('asked', ${hand.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${hand.id}))`, 5000)
+
+  // Trust: the agent decides itself. Back takes it back. (Key: R.)
+  need(await walkTo(trusted), `the walk never came to "${trusted.title}"`)
+  if (touch) await press('"Trust" in the walk', js`__t.one(${SEL.focusTrust}, __t.one(${SEL.focusCard}))`)
+  else await key('r', 82, { text: 'r' })
+  await waitState('the board notes that the decision is left to the agent', () => cardOf(trusted.id).trusted === true, 4000).then(() => passed(), e => check(false, `${touch ? '"Trust"' : 'the key R'}: ${e.message}`))
+  await expect('after "Trust" the walk moves on', js`(s => s && s.id !== ${trusted.id})(__t.focusState())`, 3000)
+  const trustNote = await stripOf(trusted)
+  if (check(trustNote?.back && /Trust/.test(trustNote.text), `after "Trust" the strip reads "${trustNote?.all ?? 'nothing'}", expected "Trusted" and the way back`)) {
+    await press('"Back" on the strip of the trusted card', js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${trusted.title}))`)
+    await waitState('Back takes the trust back: the card is open again', () => cardOf(trusted.id).status === 'open' && !cardOf(trusted.id).trusted, 4000).then(() => passed(), e => check(false, e.message))
+  }
+
+  // Shred: thrown away unanswered. Back fetches it out again. (Key: X.)
+  need(await walkTo(shredded), `the walk never came to "${shredded.title}"`)
+  if (touch) await press('"Shred" in the walk', js`__t.one(${SEL.focusShred}, __t.one(${SEL.focusCard}))`)
+  else await key('x', 88, { text: 'x' })
+  await waitState('the card is shredded', () => cardOf(shredded.id).status === 'shredded', 4000).then(() => passed(), e => check(false, `${touch ? '"Shred"' : 'the key X'}: ${e.message}`))
+  check(cardOf(shredded.id).choice == null, 'a shredded card carries an answer')
+  const shredNote = await stripOf(shredded)
+  if (check(shredNote?.back && /Shred/.test(shredNote.text), `after "Shred" the strip reads "${shredNote?.all ?? 'nothing'}", expected "Shredded" and the way back`)) {
+    await press('"Back" on the strip of the shredded card', js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${shredded.title}))`)
+    await waitState('Back fetches the shredded card out again', () => cardOf(shredded.id).status === 'open', 4000).then(() => passed(), e => check(false, e.message))
+  }
+
+  // Files without a field: dropped or pasted on the card they wait as chips; a scribble is drawn over the card
+  // with the pen (key D). The next action takes all of it to the session.
+  need(await walkTo(files), `the walk never came to "${files.title}"`)
+  if (!touch) {
+    // H reads the question aloud where the board can speak; it never answers, and breaks nothing where it cannot.
+    await key('h', 72, { text: 'h' })
+    await sleep(300)
+    check((await front())?.id === files.id && cardOf(files.id).status === 'open', 'the key H answered or left the card')
+  }
+  await ev(`(node => { const dt = new DataTransfer(); dt.items.add(new File(['dropped on the card'], 'dropped.txt', { type: 'text/plain' })); for (const type of ['dragenter', 'dragover', 'drop']) node.querySelector(${JSON.stringify(SEL.focusTitle)}).dispatchEvent(new DragEvent(type, { bubbles: true, cancelable: true, dataTransfer: dt })) })(${walkCard(files)})`)
+  await expect('a file dropped on the card waits as a chip', `__t.all(${JSON.stringify(SEL.focusChip)}, ${walkCard(files)}).some(n => __t.text(n).includes('dropped.txt'))`, 3000)
+  await ev(`(node => { const dt = new DataTransfer(); dt.items.add(new File([Uint8Array.from(atob(${JSON.stringify(PIXEL)}), c => c.charCodeAt(0))], 'pasted.png', { type: 'image/png' })); node.focus(); node.dispatchEvent(new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt })) })(${walkCard(files)})`)
+  await expect('a picture pasted on the card waits as a second chip', `__t.all(${JSON.stringify(SEL.focusChip)}, ${walkCard(files)}).length === 2`, 3000)
+  if (touch) await press('the pen of the card', `__t.one(${JSON.stringify(SEL.focusPen)}, ${walkCard(files)})`)
+  else await key('d', 68, { text: 'd' })
+  await expect('the pen is in the hand', `__t.one(${JSON.stringify(SEL.focusPen)}, ${walkCard(files)})?.getAttribute('aria-pressed') === 'true'`, 2000)
+  const paper = await ev(`__t.box(${walkCard(files)}.querySelector(${JSON.stringify(SEL.focusScroll)}))`)
+  await drag(Array.from({ length: 10 }, (_, i) => ({ x: Math.round(paper.left + 40 + i * 14), y: Math.round(paper.top + 70 + (i % 2) * 18) })))
+  await expect('a stroke of the pen stays on the card', `${walkCard(files)}.querySelectorAll(${JSON.stringify(SEL.focusInk)}).length >= 1`, 3000)
+  await waitState('the scribble is kept in the draft of the card', () => JSON.stringify(cardOf(files.id).draft ?? '').includes('strokes'), 4000).then(() => passed(), e => check(false, e.message))
+  await shot('walk-scribble')
+  await press('the pen, to put it down', `__t.one(${JSON.stringify(SEL.focusPen)}, ${walkCard(files)})`)
+  await press(`"${TEXT.hand}" on the card with files`, `__t.one(${JSON.stringify(SEL.focusHand)}, ${walkCard(files)})`)
+  await waitState('the session gets the dropped file, the pasted picture and a picture of the scribbled card', () => said(files).some(m => { const names = (m.attachments ?? []).map(a => a.name); return names.includes('dropped.txt') && names.includes('pasted.png') && (m.attachments ?? []).filter(a => a.kind === 'image').length >= 2 }), 6000).then(() => passed(), e => check(false, `${e.message}; it got: ${said(files).flatMap(m => (m.attachments ?? []).map(a => a.name)).join(', ') || 'nothing'}`))
 
   await ev('document.activeElement?.blur?.()')
   await escape()
   await expect('Escape closes the walk', '!__t.focusOpen()', 3000)
   await closeWindows()
   check((await place()).path === '/' && !(await ev('location.search')), `after the walk the address is ${await ev('location.pathname + location.search')}`)
-  // (A draft of the composer is saved a moment after the last key; let it go out before the cards are withdrawn.)
+  // (A draft is saved a moment after the last key; let it go out before the cards are withdrawn.)
   await sleep(700)
-  for (const card of [talk, take, off, explain, hand]) await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
+  for (const card of all) await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
   putOff.delete(off.id)
 }
 
