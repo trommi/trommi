@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="referrer" content="no-referrer">
+<title>Trommi: how the channel works</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231b6a57'/%3E%3Crect x='7' y='11' width='18' height='14' rx='3.5' fill='%23fff' opacity='.45'/%3E%3Crect x='7' y='7' width='18' height='14' rx='3.5' fill='%23fff'/%3E%3Cpath d='M11.5 14.2l2.6 2.6 5-5.2' fill='none' stroke='%231b6a57' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+// Theme before first paint, the same rule as the board: hash flag, then the remembered choice, else light.
+// #diagram shows the picture alone, on white, for a screenshot.
+(function () {
+  var flags = location.hash.slice(1).split(',')
+  var alone = flags.indexOf('diagram') >= 0 || flags.indexOf('diagramm') >= 0
+  var theme = 'light'
+  try { if (localStorage.getItem('agent-board-theme') === 'dark') theme = 'dark' } catch (e) {}
+  if (flags.indexOf('dark') >= 0) theme = 'dark'
+  if (flags.indexOf('light') >= 0 || alone) theme = 'light'
+  if (theme === 'dark') document.documentElement.dataset.theme = 'dark'
+  if (alone) document.documentElement.dataset.only = 'diagram'
+})()
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/help.css">
+<script type="module" src="/js/help.js"></script>
+</head>
+<body>
+<header class="hp-head">
+  <a class="hp-back" href="/">To the board</a>
+  <h1>How the channel works</h1>
+  <p>What travels between a Claude Code session and you, in which direction, and what never makes the trip.</p>
+  <nav class="hp-nav" aria-label="On this page">
+    <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
+  </nav>
+</header>
+
+<main>
+<section id="picture" aria-labelledby="h-picture">
+  <h2 class="hp-title" id="h-picture">The picture <b>four parties, two directions</b></h2>
+  <figure class="hp-figure">
+    <div id="diagram"></div>
+    <figcaption>Every session starts its own <code>server.mjs</code>: that process is the channel. The first one to get the port is also the hub; for it, the hop between channel and hub is a function call. Green arrows run towards the agent, dark ones towards you.</figcaption>
+  </figure>
+</section>
+
+<section id="missing" aria-labelledby="h-missing">
+  <h2 class="hp-title" id="h-missing">What the channel cannot deliver <b>and what stands in</b></h2>
+  <div class="hp-two">
+    <ul class="hp-never">
+      <li>The model's thinking</li>
+      <li>Its tool calls</li>
+      <li>The terminal's output</li>
+      <li>Text while it streams</li>
+    </ul>
+    <div class="hp-prose">
+      <p>A channel is narrow: an MCP server sees the tool calls made <em>to it</em> and nothing else of the session. The agent sees its own thinking; the channel gets none of it, so the board cannot show it.</p>
+      <p><strong>The substitute is a habit, not a feed.</strong> The agent's instructions say: what you should know goes into <code>reply</code>, and the reasoning or evidence into its <code>details</code> field, which the board shows collapsed under the message. Progress goes into <code>set_status</code>.</p>
+      <p>Seeing the session live would need a second road beside the channel (hooks, the Agent SDK, or herdr). Trommi does not have one yet.</p>
+    </div>
+  </div>
+</section>
+
+<section id="events" aria-labelledby="h-events">
+  <h2 class="hp-title" id="h-events">Events <b>everything besides tool calls</b></h2>
+  <p class="hp-lead">What Claude Code is sent, and what it sends by itself. A channel event reaches the model as a <code>&lt;channel&gt;</code> tag: <code>content</code> is the text inside, each <code>meta</code> field an attribute. Meta values are strings.</p>
+  <div id="event-list" class="hp-list"><p class="hp-wait">Loading from the server…</p></div>
+</section>
+
+<section id="tools" aria-labelledby="h-tools">
+  <h2 class="hp-title" id="h-tools">Tools <b id="tool-count">what the agent can do</b></h2>
+  <p class="hp-lead">Every way from the agent to you is a tool call. The descriptions are the words the agent itself is given; this list is read from the running server, so it cannot drift from it.</p>
+  <div id="tool-list" class="hp-list"><p class="hp-wait">Loading from the server…</p></div>
+</section>
+
+<section id="assets" aria-labelledby="h-assets">
+  <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
+  <div class="hp-prose">
+    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file and gets a link back: <code>&lt;board&gt;/a/&lt;id&gt;#&lt;key&gt;</code>. The link opens without a board login. Whoever has the whole link can open the asset; nobody else can, including someone who only has the address before the <code>#</code>.</p>
+    <p><strong>How it is encrypted.</strong> The channel process beside the agent makes a fresh random 256-bit key for each asset and encrypts with AES-256-GCM before anything leaves for the hub. The key is the part of the link after the <code>#</code>, which a browser never sends to a server. The viewer fetches the ciphertext and decrypts it in the browser, which is why the link needs HTTPS or localhost.</p>
+  </div>
+  <div class="hp-facts">
+    <div><dt>Stored on the hub</dt><dd>Ciphertext in <code>data/assets/&lt;id&gt;</code>, its padded size, the time, the session that published it</dd></div>
+    <div><dt>Envelope, version 1</dt><dd><code>"ZWA1"</code>, 12-byte nonce, ciphertext, 16-byte tag. Type, title, file name and true size are inside the ciphertext; the id is bound as associated data</dd></div>
+    <div><dt>Lifetime</dt><dd id="asset-life">Deleted after the retention period unless published with <code>keep</code>; <code>revoke_asset</code> ends a link at once</dd></div>
+  </div>
+  <table class="hp-table hp-sees">
+    <caption>What the hub can see</caption>
+    <thead><tr><th></th><th>Today</th><th>Once the room key exists</th></tr></thead>
+    <tbody>
+      <tr><th>The stored asset</th><td>Ciphertext only</td><td>Ciphertext only</td></tr>
+      <tr><th>Asset shown on the board</th><td><strong>The key, title and note.</strong> The link is posted as a chat message, and messages are not encrypted yet. A hub that wanted to could open the asset.</td><td>Nothing. The asset key is sealed under the room key (<code>wrapped_key</code>), and so is the message.</td></tr>
+      <tr><th>Asset published with <code>silent</code></th><td>Neither key nor title nor type. The agent hands the link out itself.</td><td>The same</td></tr>
+      <tr><th>Always visible</th><td colspan="2">That an asset exists, roughly how large it is, when it was published and fetched, from which address</td></tr>
+    </tbody>
+  </table>
+  <div class="hp-prose">
+    <p><strong>One limit on all of this.</strong> The hub also delivers the viewer, the JavaScript that decrypts. A hub that turned hostile could deliver a different viewer that sends the key home when a link is opened. “The hub cannot read it” therefore holds against a hub that stores and looks, not against one that actively serves altered code.</p>
+    <p><strong>HTML pages run in a sandbox.</strong> A published page may come from an agent that was misled, so the viewer treats it as hostile: it runs in a frame with no origin of its own, cannot read the link's key, the board or its login, cannot open windows, submit forms or load anything from the network. A page must therefore be self-contained: inline CSS and scripts, images as <code>data:</code> URLs. What remains possible: the page can show anything, including a fake form, and can navigate its own frame away. Type nothing secret into a published page.</p>
+  </div>
+</section>
+</main>
+</body>
+</html>
