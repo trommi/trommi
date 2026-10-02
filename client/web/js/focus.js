@@ -1,6 +1,10 @@
-// Fokus-Modus: a full-page overlay for working through every open decision
-// card one after another. One big card, big answer buttons; a tap decides and
-// the next card comes in.
+// Fokus-Modus: a full-page overlay with one big card and big answer tiles.
+// Opened without a card it works through every open decision one after another:
+// a tap decides and the next card comes in, the ones put off with "Später" last.
+// Opened on one card ("Mehr" on a row of the list) it is the window of that card
+// alone: no back and next, and it closes on the answer, so the human is back at
+// the place in the list they came from. onDecided(card, option) then lets the
+// list offer to take the answer back.
 //
 // Every open card keeps one DOM node for as long as it is open and the overlay
 // is up. Cards that are not in front stay laid out but invisible, so a state
@@ -74,7 +78,7 @@ function parsePermission(body) {
   return { desc, raw, rows }
 }
 
-export function mountFocus() {
+export function mountFocus({ onDecided } = {}) {
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const still = () => reduced.matches
 
@@ -151,8 +155,8 @@ export function mountFocus() {
   const loading = el('div', 'focus-loading')
   loading.append(el('span', 'focus-spinner'), el('span', null, 'Entscheidungen werden geladen'))
 
-  // Back and next stand beside the sheet (on a phone in its bottom corners);
-  // the foot only says where in the stack you are.
+  // Back and next stand beside the sheet. On a phone there is no beside: there
+  // the foot is an empty row at the bottom that the two arrows stand in.
   const foot = el('footer', 'focus-foot')
   const prevBtn = button('focus-nav focus-nav-prev', 'Vorherige Karte')
   prevBtn.append(icon('left'))
@@ -172,6 +176,7 @@ export function mountFocus() {
   const decidedLocal = new Map()  // id -> time we decided it here
   let lastState = null
   let isOpen = false
+  let single = false              // opened on one card: its window only, closes on the answer
   let order = []
   let current = null
   let shown = null                // the rec whose node is in front
@@ -190,7 +195,7 @@ export function mountFocus() {
 
   const announce = text => { live.textContent = ''; requestAnimationFrame(() => { live.textContent = text }) }
   const describe = rec =>
-    `Karte ${order.indexOf(rec.id) + 1} von ${order.length}${rec.card.agent_name ? `, ${rec.card.agent_name}` : ''}, ${rec.card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[rec.card.urgency] ?? ''}. ${rec.card.title}`
+    `${single ? 'Karte' : `Karte ${order.indexOf(rec.id) + 1} von ${order.length}`}${rec.card.agent_name ? `, ${rec.card.agent_name}` : ''}, ${rec.card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[rec.card.urgency] ?? ''}. ${rec.card.title}`
   const busyRec = () => { for (const rec of recs.values()) if (rec.busy) return rec; return null }
 
   // ── card nodes ──────────────────────────────────────────────────────────
@@ -326,10 +331,10 @@ export function mountFocus() {
     rec.optButtons = []
     rec.noteNode = null
 
-    // The tiles are the buttons to press: one strong label, the consequence
-    // small beneath. Exactly two options (and every permission) are a yes/no:
-    // the other one on the left, the option the agent leads with on the right,
-    // each under its thumb, as in the inbox.
+    // The tiles are the buttons to press, in the look of the inbox's tiles: one
+    // strong label, the consequence small and grey beneath. Exactly two options
+    // (and every permission) are a yes/no: the other one on the left, the option
+    // the agent leads with on the right and filled, each under its thumb.
     const opts = el('div', 'focus-opts')
     opts.setAttribute('role', 'group')
     opts.setAttribute('aria-label', permission ? 'Freigabe erteilen oder ablehnen' : 'Antwort wählen, ein Tipp entscheidet')
@@ -340,6 +345,7 @@ export function mountFocus() {
     opts.dataset.count = duo ? 'duo' : String(clamp(options.length, 1, 6))
     for (const o of options) {
       const b = button('focus-opt')
+      if (card.recommended === o.key) { b.classList.add('is-advised'); b.title = 'Empfehlung des Agenten' }
       b.dataset.key = o.key
       const mark = el('span', 'focus-opt-mark')
       mark.setAttribute('aria-hidden', 'true')
@@ -432,6 +438,11 @@ export function mountFocus() {
     if (!still()) await wait(300)
     rec.busy = false
     decidedLocal.set(rec.id, Date.now())
+    if (single) {
+      // The window of one card: answered, it closes, and the list it came from offers the way back.
+      if (rec.card.kind !== 'permission') onDecided?.(rec.card, option)
+      return close()
+    }
     sentId = rec.id
     decidedCount++
     if (rec.card.kind !== 'permission') offerUndo(rec.card, option)
@@ -518,7 +529,12 @@ export function mountFocus() {
     }
     const prevOrder = order
     const prevIndex = prevOrder.indexOf(current)
+    // The server's order, most urgent first; what the human put off comes after everything else.
+    const put = id => (state.later ?? []).indexOf(id)
     const next = [...new Set(state.queue)].filter(id => byId.get(id)?.status === 'open' && !decidedLocal.has(id))
+      .sort((a, b) => put(a) - put(b))
+    // The one card this window was opened on is gone (withdrawn, or answered elsewhere): so is the window.
+    if (single && current && !next.includes(current) && busyRec()?.id !== current) return close()
     // a card whose answer is still travelling stays put until the request settles
     const busy = busyRec()
     if (busy && !next.includes(busy.id)) next.splice(clamp(prevOrder.indexOf(busy.id), 0, next.length), 0, busy.id)
@@ -539,7 +555,7 @@ export function mountFocus() {
       let rec = recs.get(id)
       const card = byId.get(id) ?? rec.card
       // Urgency, sender and age are painted in the top bar, so they never rebuild a card.
-      const sigC = JSON.stringify([card.kind, card.title, card.body, card.options, card.attachments])
+      const sigC = JSON.stringify([card.kind, card.title, card.body, card.options, card.recommended, card.attachments])
       if (!rec) {
         rec = createRec(card)
         recs.set(id, rec)
@@ -634,9 +650,8 @@ export function mountFocus() {
     const n = order.length
     const idx = order.indexOf(current)
     const locked = !!busyRec()
-    foot.textContent = n ? `${idx + 1} von ${n}` : ''
-    prevBtn.disabled = idx <= 0 || locked
-    nextBtn.disabled = idx < 0 || idx >= n - 1 || locked
+    prevBtn.disabled = single || idx <= 0 || locked
+    nextBtn.disabled = single || idx < 0 || idx >= n - 1 || locked
     doneText.textContent = decidedCount
       ? `${decidedCount === 1 ? 'Eine Entscheidung' : `${decidedCount} Entscheidungen`} in dieser Runde getroffen. Neue Karten erscheinen hier, sobald ein Agent etwas wissen will.`
       : 'Keine offenen Fragen. Neue Karten erscheinen hier, sobald ein Agent etwas wissen will.'
@@ -660,6 +675,8 @@ export function mountFocus() {
     const from = order.indexOf(current)
     const id = typeof target === 'number' ? order[from + target] : target
     if (!id || id === current || !recs.has(id)) return false
+    single = false   // leaving the one card (a more urgent one was offered and taken): from here on it is the walk
+    delete root.dataset.single
     current = id
     present(order.indexOf(id) > from ? 'next' : 'prev')
     paintChrome()
@@ -716,8 +733,8 @@ export function mountFocus() {
       return handled()
     }
     if (typing || t?.closest('video, audio')) return
-    if (e.key === 'ArrowLeft') { go(-1); return handled() }
-    if (e.key === 'ArrowRight') { go(1); return handled() }
+    if (e.key === 'ArrowLeft') { if (!single) go(-1); return handled() }
+    if (e.key === 'ArrowRight') { if (!single) go(1); return handled() }
     if (/^[1-9]$/.test(e.key) && !e.shiftKey && shown && !e.repeat) {
       const btn = shown.optButtons[Number(e.key) - 1]
       if (!btn) return
@@ -727,6 +744,7 @@ export function mountFocus() {
   }, true)
 
   // ── touch: swipe the card sideways to move without deciding ─────────────
+  // (in the window of one card there is nowhere to go: it only gives a little)
   let swallowClickUntil = 0
   stage.addEventListener('pointerdown', e => {
     if (e.pointerType === 'mouse' || e.button || drag || zoom || !shown || busyRec()) return
@@ -751,7 +769,7 @@ export function mountFocus() {
     }
     const raw = e.clientX - drag.x0
     const idx = order.indexOf(current)
-    const open = raw < 0 ? idx < order.length - 1 : idx > 0
+    const open = !single && (raw < 0 ? idx < order.length - 1 : idx > 0)
     drag.dx = open ? raw : raw * 0.22
     drag.rec.node.style.setProperty('--focus-dx', `${drag.dx.toFixed(1)}px`)
   })
@@ -766,7 +784,7 @@ export function mountFocus() {
     delete node.dataset.drag
     const speed = Math.abs(d.dx) / Math.max(1, e.timeStamp - d.t0)
     const far = Math.abs(d.dx) > 72 || (speed > 0.45 && Math.abs(d.dx) > 24)
-    if (e.type !== 'pointercancel' && far && go(d.dx < 0 ? 1 : -1)) return
+    if (e.type !== 'pointercancel' && far && !single && go(d.dx < 0 ? 1 : -1)) return
     node.dataset.settle = ''
     node.style.setProperty('--focus-dx', '0px')
     setTimeout(() => { node.removeAttribute('data-settle'); if (!node.hasAttribute('data-drag')) node.style.removeProperty('--focus-dx') }, 300)
@@ -851,14 +869,17 @@ export function mountFocus() {
     isOpen = true
     started = false
     decidedCount = 0
-    current = cardId ?? null
+    // A card that is no longer open cannot be shown alone; then the walk starts at the front.
+    single = Boolean(cardId) && Boolean(lastState?.queue.includes(cardId))
+    root.toggleAttribute('data-single', single)
+    current = single ? cardId : null
     root.hidden = false
     root.removeAttribute('data-closing')
     document.documentElement.classList.add('focus-lock')
     inerted = [...document.body.children].filter(n => n !== root && !n.inert && !/^(SCRIPT|STYLE|LINK)$/.test(n.tagName))
     for (const n of inerted) n.inert = true
     sync('none')
-    if (cardId && current !== cardId) { current = order[0] ?? null; present('none'); paintChrome() }
+    if (!isOpen) return
     ;(sheet.dataset.state === 'done' ? doneBtn : shown?.node ?? sheet).focus({ preventScroll: true })
     if (shown) announce(describe(shown))
     spoken = null

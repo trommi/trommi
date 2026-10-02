@@ -1,7 +1,7 @@
 // The page: navigation, a session's three modes, theme, connection feedback, and
 // the glue between conversation, questions, history, and scribble.
 
-import { connect, subscribe, getState, setState, isLoaded, setScope, sendScribble, loadCanvas, saveCanvas } from './store.js'
+import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
 import { mountAgents, mountRoster, avatar } from './agents.js'
 import { mountInbox } from './inbox.js'
 import { mountDictation } from './speech.js'
@@ -11,6 +11,7 @@ import { mountHistory } from './history.js'
 
 const $ = id => document.getElementById(id)
 const root = document.documentElement
+const toast = $('toast')
 const flags = new Set(location.hash.slice(1).split(',').filter(Boolean))
 const store = (key, value) => { try { localStorage.setItem(key, value) } catch {} }
 const phone = matchMedia('(max-width: 860px)')
@@ -59,7 +60,7 @@ function paintView() {
 function setView(view) {
   document.body.dataset.view = view
   paintView()
-  if (!$('toast').hidden) requestAnimationFrame(placeToast)
+  if (!toast.hidden) requestAnimationFrame(placeToast)
   if (view === 'scribble') syncCanvas()
 }
 for (const [name, buttons] of switches) for (const button of buttons) button.addEventListener('click', () => setView(name))
@@ -97,10 +98,10 @@ async function mountScribblePane() {
       onChange: doc => { if (canvasAgent) saveCanvas(canvasAgent, doc).catch(() => {}) },
       send: async payload => {
         await sendScribble(payload)
-        showToast('ok', 'Gesendet. Schreib im Gespräch dazu, was du meinst.', 4000)
-        // The explanation goes into the conversation, so take the human there.
+        // The explanation goes into the conversation, so take the human there: the scribble
+        // stands in the log as sent, and the composer asks for the words to go with it.
         setView('chat')
-        chat.focus()
+        chat.focus('Was meinst du mit dem Scribble?')
       },
     })
   } catch (err) {
@@ -110,14 +111,19 @@ async function mountScribblePane() {
   return scribble
 }
 
-// Put the canvas of the session in scope on the board. While it loads, changes are not saved.
+// Put the canvas of the session in scope on the board. A change to the previous session's
+// canvas that is still waiting is saved first, under that session; then, until the new canvas
+// has arrived (canvasAgent is null), nothing is saved, so a half-loaded board never overwrites one.
 let canvasAgent = null
+let canvasWanted = null
 async function syncCanvas() {
   const agent = getState().scope
   if (!agent) return
   const board = await mountScribblePane()
-  if (!board || getState().scope !== agent || agent === canvasAgent) return
+  if (!board || getState().scope !== agent || agent === canvasAgent || agent === canvasWanted) return
+  board.flush()
   canvasAgent = null
+  canvasWanted = agent
   try {
     const doc = await loadCanvas(agent)
     if (getState().scope !== agent) return
@@ -126,6 +132,8 @@ async function syncCanvas() {
     canvasAgent = agent
   } catch (err) {
     showToast('error', err.message, 4000)
+  } finally {
+    if (canvasWanted === agent) canvasWanted = null
   }
 }
 // The pen in the composer is a shortcut to the canvas; so is a scribble sent earlier.
@@ -136,16 +144,17 @@ chat = mountChat({ onCard: openCard, onScribble: () => setView('scribble'), onUn
 let landing = flags.has('decisions') ? 'decisions' : flags.has('scribble') ? 'scribble' : 'chat'
 const agents = mountAgents($('agents'), {
   onSelect: id => { showPage(null); if (id) { setView(landing); landing = 'chat' } },
-  onPage: page => showPage(page),
 })
 mountDictation($('mic'), $('draft'), { onError: text => showToast('error', text, 6000) })
 
-// Fokus-Modus: all open decisions as one full page. Loaded on first use.
+// Fokus-Modus: the open decisions as one full page each. Loaded on first use.
+// Without a card it walks through all of them. With one ("Mehr" on a row) it is the window
+// of that one card: it closes on the answer, and the list offers to take the answer back.
 let lastScope
 let focusMode = null
 async function openFocus(cardId) {
   try {
-    focusMode ??= (await import('./focus.js')).mountFocus()
+    focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
     focusMode.open(cardId ?? undefined)
   } catch (err) {
     console.error(err)
@@ -153,11 +162,10 @@ async function openFocus(cardId) {
   }
 }
 $('focus-open').addEventListener('click', () => openFocus())
-// A row in the inbox opens its card as a full page; from there one tap decides and the next comes up.
-const inbox = mountInbox($('inbox'), { onOpen: openFocus })
+const inbox = mountInbox($('inbox'), { onOpen: openFocus, onDecided: offerUndo })
 const roster = mountRoster($('roster'))
-// A session's own questions, written out in full.
-const sessionCards = mountInbox(cardsRoot, { onOpen: openFocus, session: true })
+// A session's own questions, in the same rows.
+const sessionCards = mountInbox(cardsRoot, { onOpen: openFocus, onDecided: offerUndo, session: true })
 
 // The title of the pane: which session this is, by its mark and name. The sidebar
 // already tells what it is working on, so here that is only a tooltip.
@@ -178,13 +186,19 @@ function paintTitle(state) {
 function showPage(page) {
   if (page) document.body.dataset.page = page
   else delete document.body.dataset.page
-  $('nav-inbox').toggleAttribute('aria-current', !page && !getState().scope)
-  $('nav-roster').toggleAttribute('aria-current', page === 'roster')
+  paintNav(getState())
   agents.render(getState())
   requestAnimationFrame(() => $('agents').querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest', inline: 'center' }))
 }
+function paintNav(state) {
+  const page = document.body.dataset.page
+  $('nav-inbox').toggleAttribute('aria-current', !page && !state.scope)
+  for (const id of ['nav-roster', 'roster-open']) $(id).toggleAttribute('aria-current', page === 'roster')
+}
 $('nav-inbox').addEventListener('click', () => { setScope(null); showPage(null) })
 $('nav-roster').addEventListener('click', () => showPage('roster'))
+// Phones have no bar with words; there one icon opens the overview and closes it again.
+$('roster-open').addEventListener('click', () => showPage(document.body.dataset.page === 'roster' ? null : 'roster'))
 paintView()
 
 // ---- open count: tab badge and document title ------------------------------
@@ -205,49 +219,61 @@ function paintCount(state) {
 
 const conn = $('conn')
 const connText = $('conn-text')
-const toast = $('toast')
-const CONN_TEXT = { connecting: 'Verbindet', online: 'Verbunden', offline: 'Getrennt' }
+const CONN_TEXT = { connecting: 'Verbindet', online: 'Verbunden', offline: 'Getrennt, verbinde neu' }
 let wasOnline = false
 let connCalls = 0
-let lostTimer = 0
 let toastTimer = 0
 
-// The toast sits just above whatever is fixed to the bottom of the page: the bar, the
-// tab bar, or the composer of a conversation. So it never covers a title or a control.
+// The connection is told by the pill in the bar alone; it turns red while the stream is down.
+function paintConn(online) {
+  // The very first call is the store's initial value; a later "not online" means the stream failed.
+  const state = online ? 'online' : wasOnline || connCalls > 0 ? 'offline' : 'connecting'
+  connCalls++
+  if (online) wasOnline = true
+  if (conn.dataset.state === state) return
+  conn.dataset.state = state
+  connText.textContent = CONN_TEXT[state]
+}
+
+// The one passing notice of the page: an answer that can still be taken back, or something that
+// went wrong. On a wide screen it stands in the empty foot of the sidebar; on a phone just above
+// whatever is fixed to the bottom: the tab bar or the composer. It never moves or covers the list.
 function placeToast() {
   let top = window.innerHeight
-  for (const node of document.querySelectorAll('.topbar, .tabbar, .dock')) {
+  for (const node of document.querySelectorAll(phone.matches ? '.tabbar, .dock, .scr-dock' : '.topbar')) {
     const box = node.getBoundingClientRect()
     if (box.height && box.top > window.innerHeight / 2) top = Math.min(top, box.top)
   }
   toast.style.setProperty('--toast-bottom', `${Math.round(window.innerHeight - top)}px`)
 }
-function showToast(kind, text, ms) {
+function showToast(kind, text, ms, action) {
   clearTimeout(toastTimer)
   placeToast()
   toast.dataset.kind = kind
-  toast.replaceChildren(el('i'), el('span', null, text))
+  const line = el('span')
+  line.append(text)
+  toast.replaceChildren(el('i'), line)
+  if (action) toast.append(action)
   toast.hidden = false
   if (ms) toastTimer = setTimeout(() => { toast.hidden = true }, ms)
 }
-function paintConn(online) {
-  // The very first call is the store's initial value; a later "not online" means the stream failed.
-  const state = online ? 'online' : wasOnline || connCalls > 0 ? 'offline' : 'connecting'
-  connCalls++
-  if (conn.dataset.state !== state) {
-    conn.dataset.state = state
-    connText.textContent = CONN_TEXT[state]
-  }
-  if (online) {
-    clearTimeout(lostTimer)
-    lostTimer = 0
-    if (toast.dataset.kind === 'lost' && !toast.hidden) showToast('back', 'Wieder verbunden', 2400)
-    wasOnline = true
-  } else if (wasOnline && !lostTimer && toast.dataset.kind !== 'lost') {
-    // A short blip reconnects by itself; only speak up if it lasts.
-    lostTimer = setTimeout(() => showToast('lost', 'Verbindung unterbrochen. Ich verbinde neu.'), 1500)
-  }
-  if (online && toast.dataset.kind === 'lost' && toast.hidden) toast.dataset.kind = ''
+// A decision answered in a list (or in the window of one card) can be taken back for a few seconds;
+// later the history offers "Neu entscheiden".
+function offerUndo(card, option) {
+  const back = el('button', null, 'Rückgängig')
+  back.type = 'button'
+  back.addEventListener('click', async () => {
+    back.disabled = true
+    try {
+      await reopen(card.id)
+      toast.hidden = true
+    } catch (err) {
+      showToast('error', `Nicht zurückgenommen: ${err.message}`, 5000)
+    }
+  })
+  const text = document.createDocumentFragment()
+  text.append(`Nr. ${card.number}: `, el('strong', null, option.label))
+  showToast('undo', text, 10000, back)
 }
 
 // ---- state -----------------------------------------------------------------
@@ -263,18 +289,13 @@ subscribe((state, online) => {
   sessionCards.render(state)
   paintTitle(state)
   agents.render(state)
-  $('nav-inbox').toggleAttribute('aria-current', !document.body.dataset.page && !state.scope)
-  $('nav-roster').toggleAttribute('aria-current', document.body.dataset.page === 'roster')
+  paintNav(state)
   inbox.render(state)
   roster.render(state)
-  // The composer measures itself; it could not while its pane was hidden.
+  // On a phone the sessions are a strip that scrolls sideways; keep the chosen one in sight.
   if (lastScope !== state.scope) {
     lastScope = state.scope
-    requestAnimationFrame(() => {
-      $('draft').dispatchEvent(new Event('input'))
-      // On a phone the sessions are a strip that scrolls sideways; keep the chosen one in sight.
-      $('agents').querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest', inline: 'center' })
-    })
+    requestAnimationFrame(() => $('agents').querySelector('[aria-current]')?.scrollIntoView({ block: 'nearest', inline: 'center' }))
   }
   if (document.body.dataset.view === 'scribble') syncCanvas()
   $('mic').hidden = !state.speech
@@ -291,7 +312,9 @@ if (flags.has('skeleton')) {
   connect()
 }
 
-if (flags.has('offline')) { wasOnline = true; conn.dataset.state = 'offline'; connText.textContent = CONN_TEXT.offline; showToast('lost', 'Verbindung unterbrochen. Ich verbinde neu.') }
+if (flags.has('offline')) { wasOnline = true; conn.dataset.state = 'offline'; connText.textContent = CONN_TEXT.offline }
+if (flags.has('toast')) showToast('error', 'Canvas nicht geladen')
+if (flags.has('undo')) offerUndo({ id: 'x', number: 7 }, { label: 'Überspringen' })
 
 // ---- keyboard and viewport -------------------------------------------------
 

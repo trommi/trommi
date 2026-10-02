@@ -3,11 +3,14 @@
 // whatever box its root has, from a phone screen to a wide desktop pane.
 //
 //   const board = mountScribble(root, { send, onChange, draftKey })
-//   send({ doc, png, view, text })   async; png is the whole canvas, view exactly
-//                                    the section on screen; text is always ''
-//                                    (the human writes in the chat afterwards)
-//   onChange(doc)                    a moment after the human changed the canvas;
-//                                    never for load() or clear()
+//   send({ doc, png, view })         async; png is the whole canvas, view exactly
+//                                    the section on screen (both PNG data URLs).
+//                                    What the human means by it, they write in
+//                                    the chat afterwards.
+//   onChange(doc)                    a moment after the human changed the canvas
+//                                    (drawn, erased, undone, redone, cleared, an
+//                                    image added, moved, resized or deleted);
+//                                    never for load() or clear() by the host
 //   draftKey                         IndexedDB key for a local draft; null when
 //                                    the host keeps the canvas (via onChange)
 //   board.load(doc) / clear()        replace the content; a change still waiting
@@ -1136,8 +1139,9 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       // let the button repaint before the canvas is rendered
       await new Promise(r => setTimeout(r, 30))
       await Promise.all(images.map(i => picture(i.src).ready))
-      const payload = { doc: serialise(), png: renderPNG(), view: renderView(), text: '' }
-      await send(payload)
+      // a zoom or fit still in flight: send where it was going, which is what the human asked to see
+      if (anim) { const to = anim.to; anim = null; setView(to.x, to.y, to.z) }
+      await send({ doc: serialise(), png: renderPNG(), view: renderView() })
       setSendState('sent')
       live.textContent = 'Scribble gesendet.'
       sentTimer = setTimeout(() => { setSendState('idle'); live.textContent = '' }, 2400)

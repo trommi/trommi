@@ -1,9 +1,11 @@
 // The inbox: every open decision of every session, grouped by who is asking.
 // Every row is the same height with two tiles at its right edge: no and yes
 // for a yes/no question, otherwise "later" and "more", which opens the options.
+// A card put off with "later" leaves its sender's group for one group at the
+// very end, so that working down the list comes to an end.
 
-import { el, agoNode, URGENCY_LABEL, doodle, kindOf, rich, mediaNodes } from './ui.js'
-import { decide, reopen } from './store.js'
+import { el, agoNode, URGENCY_LABEL, doodle, kindOf } from './ui.js'
+import { decide, putOff } from './store.js'
 import { openLightbox } from './chat.js'
 
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
@@ -22,6 +24,7 @@ const TILE_ICON = {
   other: 'M5 9.500h11.500l-3.200-3.300M19 14.500H7.500l3.200 3.300',
   open: 'M4.500 7.200h15M4.500 12h15M4.500 16.800h9.500',
   later: 'M12 5v12.500M6.500 12.500 12 18l5.500-5.500M5 20.500h14',
+  back: 'M12 19V6.500M6.500 11.500 12 6l5.500 5.500M5 3.500h14',
 }
 const NEGATIVE = /^(nein|nicht|noch nicht|später|ablehnen|lassen|weglassen|behalten|nur |abbrechen|bei .* bleiben)/i
 function tileIcon(kind) {
@@ -37,17 +40,15 @@ function tileIcon(kind) {
 const plain = text => String(text ?? '').replace(/```[\s\S]*?```/g, ' ').replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
 
 /** onOpen(cardId | null): open that card as a full page, or with null start at the most urgent one.
- *  With session: true it lists only the session in scope, in the same rows. */
-export function mountInbox(root, { onOpen, session = false }) {
+ *  onDecided(card, option): a decision was answered in the list; the page offers to take it back.
+ *  (Nothing is added to the list for that: the next row has to land where the answered one was.)
+ *  With session: true it lists only the session in scope, in the same rows.
+ *  Returns { render(state) }. */
+export function mountInbox(root, { onOpen, onDecided, session = false }) {
   let signature = ''
-  let lastState = null
-  let later = []   // cards put off for now, in the order they were put off; they sink to the end
   const head = el('header', 'inbox-head')
-  const undo = el('div', 'inbox-undo')
-  undo.hidden = true
   const list = el('div', 'inbox-groups')
-  root.append(head, undo, list)
-  let undoTimer = 0
+  root.append(head, list)
 
   // A row in the list has a fixed height. A title that needs two lines leaves room for one
   // line of text below it, a one-line title for two. Measured, because it depends on the
@@ -60,127 +61,83 @@ export function mountInbox(root, { onOpen, session = false }) {
     }
   })
 
-  function offerUndo(card, option) {
-    clearTimeout(undoTimer)
-    const back = el('button', null, 'Rückgängig')
-    back.type = 'button'
-    back.addEventListener('click', async () => {
-      back.disabled = true
-      try { await reopen(card.id); undo.hidden = true } catch (err) { back.disabled = false; back.textContent = `Nicht zurückgenommen: ${err.message}` }
-    })
-    const text = el('span')
-    text.append(`Nr. ${card.number} entschieden: `, el('strong', null, option.label))
-    undo.replaceChildren(text, back)
-    undo.hidden = false
-    undoTimer = setTimeout(() => { undo.hidden = true }, 10000)
-  }
-
-  function row(card, vip, full = false) {
-    const node = el('article', full ? 'inbox-row is-full' : 'inbox-row')
+  /** from: the session that asked, named on the row when it no longer stands under its sender. */
+  function row(card, { vip = false, off = false, from = null } = {}) {
+    const node = el('article', 'inbox-row')
     node.dataset.id = card.id
     node.dataset.urgency = card.urgency
+    if (off) node.dataset.later = ''
     const error = el('p', 'inbox-error')
     error.hidden = true
 
-    // Head: the tab strip flush with the corner, as on the cards of the stack.
+    // Head: the tab strip flush with the corner, then who asked (if it is not said above), then the age.
     const head = el('header', 'inbox-row-head')
     const tab = el('span', 'inbox-tab')
     tab.append(el('span', null, `Nr. ${card.number}`), el('span', null, card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[card.urgency] ?? ''))
     if (vip) tab.append(el('span', 'inbox-vip', '★ VIP'))
-    head.append(tab, agoNode(card.created, 'inbox-ago'))
+    head.append(tab)
+    if (from) {
+      const who = el('span', 'inbox-from')
+      who.append(doodle(from.mark ?? from.id), el('span', null, from.name))
+      head.append(who)
+    }
+    head.append(agoNode(card.created, 'inbox-ago'))
 
     const text = el('button', 'inbox-text')
     text.type = 'button'
     const rest = [card.urgency_reason, plain(card.body)].filter(Boolean).join(' · ')
-    text.append(el('strong', 'inbox-question', card.title))
-    if (rest && !full) text.append(el('span', 'inbox-body', rest))
+    const title = el('strong', 'inbox-question', card.title)
+    text.append(title)
+    if (rest) text.append(el('span', 'inbox-body', rest))
     text.addEventListener('click', () => onOpen(card.id))
     const content = el('div', 'inbox-content')
-    content.append(head, text)
-    if (!full) fit.observe(text.firstChild)
-    if (full) {
-      if (card.urgency_reason) content.append(el('p', 'inbox-reason', card.urgency_reason))
-      if (card.body) content.append(rich(card.body))
-      content.append(...mediaNodes(card.attachments))
-    }
+    content.append(head, text, error)
+    fit.observe(title)
 
-    // Pictures are shown small and open large on tap, without leaving the list.
-    let thumbs = null
+    // One small picture stands for all of them; it opens large on tap, without leaving the list.
+    let thumb = null
     const images = (card.attachments ?? []).filter(a => kindOf(a) === 'image')
-    const others = (card.attachments?.length ?? 0) - images.length
     if (images.length) {
-      const strip = el('div', 'inbox-thumbs')
-      images.slice(0, full ? 4 : 2).forEach((a, i) => {
-        const b = el('button', 'inbox-thumb')
-        b.type = 'button'
-        b.setAttribute('aria-label', `${a.name} vergrößern`)
-        const img = el('img')
-        img.src = a.url
-        img.alt = ''
-        img.loading = 'lazy'
-        b.append(img)
-        b.addEventListener('click', () => openLightbox(images, i))
-        strip.append(b)
-      })
-      if (others) strip.append(el('span', 'inbox-note', others === 1 ? '+ 1 Datei' : `+ ${others} Dateien`))
-      thumbs = strip
+      thumb = el('button', 'inbox-thumb')
+      thumb.type = 'button'
+      thumb.setAttribute('aria-label', images.length === 1 ? `${images[0].name} vergrößern` : `${images.length} Bilder ansehen`)
+      const img = el('img')
+      img.src = images[0].url
+      img.alt = ''
+      img.loading = 'lazy'
+      img.addEventListener('error', () => thumb.remove())
+      thumb.append(img)
+      if (images.length > 1) thumb.append(el('b', null, String(images.length)))
+      thumb.addEventListener('click', () => openLightbox(images, 0))
     }
-    content.append(error)
 
-    // The answers stand on the right, large and in one column down the page.
     const actions = el('div', 'inbox-actions')
-    if (full) {
-      // With room to spare, every option is written out and answered where it stands.
-      // A short set stands side by side; long lists stay stacked, in the agent's order.
-      const side = card.options.length <= 3 && card.options.every(o => o.label.length <= 24 && (o.detail ?? '').length <= 70)
-      const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : o === card.options[0])
-      const pair = side && card.options.length === 2
-      // Two answers follow the inbox: the one the agent leads with on the right, the other on the left.
-      const options = pair ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options
-      if (side) actions.dataset.side = String(options.length)
-      for (const o of options) {
-        const b = el('button', 'inbox-choice')
-        b.type = 'button'
-        if (pair && isYes(o)) b.classList.add('is-lead')
-        b.append(el('strong', null, o.label))
-        if (o.detail) b.append(el('span', null, o.detail))
-        b.addEventListener('click', async () => {
-          for (const other of actions.children) other.disabled = true
-          try {
-            await decide(card.id, o.key)
-            if (card.kind === 'decision') offerUndo(card, o)
-          } catch (err) {
-            for (const other of actions.children) other.disabled = false
-            error.textContent = `Nicht übernommen: ${err.message}`
-            error.hidden = false
-          }
-        })
-        actions.append(b)
-      }
-    } else if (quick(card)) {
+    const tile = (cls, kind, label, act) => {
+      const b = el('button', cls ? `inbox-answer ${cls}` : 'inbox-answer')
+      b.type = 'button'
+      const disc = el('span', 'inbox-disc')
+      disc.append(tileIcon(kind))
+      b.append(disc)
+      if (label) b.append(el('span', null, label))
+      b.addEventListener('click', act)
+      return b
+    }
+    if (quick(card)) {
       // No on the left, yes on the right, on every card. The option the agent
       // leads with (its first, or "allow") is the yes.
       const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : o === card.options[0])
       const options = [...card.options].sort((a, b) => isYes(a) - isYes(b))
       // A bare yes/no needs no words: thumb up, thumb down.
       const bare = card.options.every(o => /^(ja|nein|yes|no|ok|okay)$/i.test(o.label.trim()))
-      options.forEach(o => {
-        const b = el('button', 'inbox-answer')
-        b.type = 'button'
+      for (const o of options) {
         const lead = isYes(o)
-        if (lead) b.classList.add('is-lead')
-        const disc = el('span', 'inbox-disc')
-        disc.append(tileIcon(lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other'))
-        b.append(disc)
-        if (bare) b.setAttribute('aria-label', o.label)
-        else b.append(el('span', null, o.label))
-        if (o.detail) b.title = o.detail
-        b.addEventListener('click', async () => {
+        const advised = card.recommended === o.key
+        const b = tile(lead ? 'is-lead' : '', lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other', bare ? '' : o.label, async () => {
           for (const other of actions.children) other.disabled = true
           b.classList.add('is-picked')
           try {
             await decide(card.id, o.key)
-            if (card.kind === 'decision') offerUndo(card, o)
+            if (card.kind === 'decision') onDecided?.(card, o)
           } catch (err) {
             for (const other of actions.children) other.disabled = false
             b.classList.remove('is-picked')
@@ -188,33 +145,22 @@ export function mountInbox(root, { onOpen, session = false }) {
             error.hidden = false
           }
         })
+        if (bare) b.setAttribute('aria-label', o.label)
+        if (o.detail) b.title = o.detail
+        if (advised) { b.classList.add('is-advised'); b.title = 'Empfehlung des Agenten' }
         actions.append(b)
-      })
-    } else {
-      // Not a yes/no: the same two places hold "later" (the card goes to the end
-      // of the list) and "more" (the options open in a window).
-      const tile = (cls, kind, label, act) => {
-        const b = el('button', `inbox-answer ${cls}`)
-        b.type = 'button'
-        const disc = el('span', 'inbox-disc')
-        disc.append(tileIcon(kind))
-        b.append(disc, el('span', null, label))
-        b.addEventListener('click', act)
-        return b
       }
+    } else {
+      // Not a yes/no: the same two places hold "later" (the card moves to the group at
+      // the end; from there the same tile fetches it back) and "more" (the options open).
       actions.append(
-        tile('inbox-later', 'later', 'Später', () => {
-          later = [...later.filter(id => id !== card.id), card.id]
-          signature = ''
-          render(lastState)
-        }),
+        off ? tile('', 'back', 'Zurückholen', () => putOff(card.id, false)) : tile('', 'later', 'Später', () => putOff(card.id)),
         tile('is-lead', 'open', 'Mehr', () => onOpen(card.id)),
       )
     }
-    // In the list every row has the same height, so the next answer lands where the last one was.
-    if (thumbs && full) content.append(thumbs)
-    if (thumbs && !full) node.append(content, thumbs, actions)
-    else node.append(content, actions)
+    node.append(content)
+    if (thumb) node.append(thumb)
+    node.append(actions)
     return node
   }
 
@@ -222,24 +168,23 @@ export function mountInbox(root, { onOpen, session = false }) {
     // The inbox looks across every session; a session's questions only at the one in scope.
     const all = session ? { ...state.all, cards: state.cards, queue: state.queue, agents: state.all.agents.filter(a => a.id === state.scope) } : state.all
     const byId = new Map(all.cards.map(c => [c.id, c]))
-    lastState = state
-    const put = id => later.indexOf(id)
     const open = all.queue.map(id => byId.get(id)).filter(Boolean)
-      .map((c, i) => [c, i]).sort((a, b) => put(a[0].id) - put(b[0].id) || a[1] - b[1]).map(([c]) => c)
-    const next = JSON.stringify([later, open.map(c => [c.id, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.attachments?.length]), all.agents.map(a => [a.id, a.name, a.mark, a.starred])])
+    const off = state.later.map(id => open.find(c => c.id === id)).filter(Boolean)
+    const fresh = open.filter(c => !off.includes(c))
+    const next = JSON.stringify([off.map(c => c.id), open.map(c => [c.id, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.attachments?.length]), all.agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
-    root.classList.toggle('inbox-session', session)
+    // The number counts what is still to be worked down; what was put off is counted at its own group.
     const title = el('div', 'inbox-title')
     const line = el('p')
-    if (open.length) line.append(el('span', 'inbox-circled', String(open.length)), open.length === 1 ? ' Frage wartet auf dich.' : ' Fragen warten auf dich.')
-    else line.append('Nichts wartet auf dich.')
+    if (fresh.length) line.append(el('span', 'inbox-circled', String(fresh.length)), fresh.length === 1 ? ' Frage wartet auf dich.' : ' Fragen warten auf dich.')
+    else line.append(off.length ? 'Nichts Neues. Was du zurückgestellt hast, steht unten.' : 'Nichts wartet auf dich.')
     // A session's pane already carries its name as the title; the inbox has its own.
     if (session) title.append(line)
     else title.append(el('h2', null, 'Posteingang'), line)
     head.replaceChildren(...(session && !open.length ? [] : [title]))
-    if (open.length > 1 && !session) {
+    if (fresh.length > 1 && !session) {
       const go = el('button', 'inbox-go', 'Der Reihe nach durchgehen')
       go.type = 'button'
       go.addEventListener('click', () => onOpen(null))
@@ -249,24 +194,38 @@ export function mountInbox(root, { onOpen, session = false }) {
     // One group per sender. Starred sessions come first, then whoever has the most urgent question.
     const top = cards => Math.max(...cards.map(c => RANK[c.urgency] ?? 1))
     const groups = all.agents
-      .map(agent => ({ agent, cards: open.filter(c => c.agent === agent.id) }))
+      .map(agent => ({ agent, cards: fresh.filter(c => c.agent === agent.id) }))
       .filter(g => g.cards.length)
       .sort((a, b) => Boolean(b.agent.starred) - Boolean(a.agent.starred) || top(b.cards) - top(a.cards))
 
     // Remember where every row was, so that after an answer the rest slides up instead of jumping.
     const before = new Map([...list.querySelectorAll('.inbox-row')].map(n => [n.dataset.id, n.getBoundingClientRect().top]))
+    fit.disconnect()
     list.replaceChildren()
     for (const { agent, cards } of groups) {
       const section = el('section', 'inbox-group')
-      const label = el('h3', 'inbox-sender')
-      const mark = el('span', 'inbox-avatar')
-      mark.append(doodle(agent.mark ?? agent.id))
-      label.append(mark, el('span', null, agent.starred ? `★ ${agent.name}` : agent.name), el('b', null, cards.length === 1 ? '1 Frage' : `${cards.length} Fragen`))
-      if (session) section.append(...cards.map(c => row(c, false)))
-      else section.append(label, ...cards.map(c => row(c, agent.starred)))
+      if (!session) {
+        const label = el('h3', 'inbox-sender')
+        const mark = el('span', 'inbox-avatar')
+        mark.append(doodle(agent.mark ?? agent.id))
+        label.append(mark, el('span', null, agent.starred ? `★ ${agent.name}` : agent.name), el('b', null, cards.length === 1 ? '1 Frage' : `${cards.length} Fragen`))
+        section.append(label)
+      }
+      section.append(...cards.map(c => row(c, { vip: !session && agent.starred })))
       list.append(section)
     }
-    if (!groups.length) list.append(el('p', 'inbox-empty', session ? 'Diese Sitzung hat gerade keine Frage an dich.' : 'Sobald ein Agent eine Frage hat, erscheint sie hier.'))
+    // Put off: one group below all senders, in the order the cards were put off. Its heading is dashed,
+    // because the group is provisional. Each row says who asked, since it no longer stands under its sender.
+    if (off.length) {
+      const section = el('section', 'inbox-group inbox-group-later')
+      const label = el('h3', 'inbox-sender')
+      const mark = el('span', 'inbox-avatar')
+      mark.append(tileIcon('later'))
+      label.append(mark, el('span', null, 'Später'), el('b', null, `${off.length} zurückgestellt`))
+      section.append(label, ...off.map(c => row(c, { off: true, from: session ? null : all.agents.find(a => a.id === c.agent) })))
+      list.append(section)
+    }
+    if (!open.length) list.append(el('p', 'inbox-empty', session ? 'Diese Sitzung hat gerade keine Frage an dich.' : 'Sobald ein Agent eine Frage hat, erscheint sie hier.'))
     if (before.size && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
       for (const node of list.querySelectorAll('.inbox-row')) {
         const was = before.get(node.dataset.id)

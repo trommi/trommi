@@ -133,7 +133,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 
 /* ── stage and cards ────────────────────────────────────────────────────── */
 .focus-stage { flex: 1; min-height: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); overflow: hidden; }
-.focus-sheet:not([data-state="cards"]) .focus-stage, .focus-sheet:not([data-state="cards"]) .focus-foot { display: none; }
+.focus-sheet:not([data-state="cards"]) .focus-stage { display: none; }
 
 .focus-card { grid-area: 1 / 1; min-width: 0; min-height: 0; display: flex; flex-direction: column; visibility: hidden; outline: none; touch-action: pan-y; }
 .focus-card[data-shown], .focus-card[data-out] { visibility: visible; }
@@ -224,7 +224,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-perm-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ── answer ─────────────────────────────────────────────────────────────── */
-.focus-answer { flex: none; display: grid; gap: var(--s-3); padding: var(--s-4) var(--pad) var(--s-2); border-top: 1px solid var(--line); background: var(--surface); }
+.focus-answer { flex: none; display: grid; gap: var(--s-3); padding: var(--s-4) var(--pad) var(--pad); border-top: 1px solid var(--line); background: var(--surface); }
 .focus-answer[data-shake] { animation: focus-shake 360ms var(--ease-out); }
 @keyframes focus-shake { 20% { transform: translateX(-7px); } 45% { transform: translateX(6px); } 70% { transform: translateX(-3px); } }
 .focus-error { margin: 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
@@ -234,52 +234,53 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-note:focus { outline: none; background: var(--surface); box-shadow: inset 0 0 0 2px var(--accent); }
 .focus-note:disabled { opacity: .6; }
 
-/* The tiles are the buttons: tinted in the card's colour, one strong label,
-   the consequence small beneath. Same language as the inbox's answer tiles. */
+/* The tiles are the buttons, in the look of the inbox's answer tiles: a tint of the
+   card's colour, one strong label, the consequence small and grey beneath it. They
+   stand at the foot of the sheet, all the same height, so they are in the same
+   place from card to card. */
 .focus-opts { display: grid; gap: var(--s-2); grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
 .focus-opts[data-count="1"] { --cols: 1; }
 .focus-opts[data-count="2"], .focus-opts[data-count="duo"] { --cols: 2; }
 .focus-opts[data-count="4"] { --cols: 4; }
 
-.focus-opt { --ink: color-mix(in srgb, var(--u) 70%, var(--fg)); position: relative; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 76px; padding: 14px 18px; border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 9%, var(--surface)); color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 24%, transparent); transition: box-shadow var(--d-fast), background var(--d-fast), color var(--d-fast), filter var(--d-fast), transform var(--d-fast) var(--ease-out), opacity var(--d-fast); }
-.focus-opt-words { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.focus-opt-label { font: 700 1.14rem/1.22 var(--font); color: var(--fg); overflow-wrap: anywhere; transition: color var(--d-fast); }
-.focus-opt-detail { font-size: var(--t-sm); line-height: 1.36; overflow-wrap: anywhere; }
+.focus-opt { --ink: color-mix(in srgb, var(--u) 70%, var(--fg)); position: relative; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 112px; padding: var(--s-4) var(--s-5); border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 9%, var(--surface)); color: var(--ink); transition: box-shadow var(--d-fast), background var(--d-fast), color var(--d-fast), filter var(--d-fast), transform var(--d-fast) var(--ease-out), opacity var(--d-fast); }
+.focus-opt-words { flex: 1; min-width: 0; display: grid; gap: 6px; }
+.focus-opt-label { font: 700 1.3rem/1.18 var(--display); letter-spacing: -.008em; overflow-wrap: anywhere; }
+.focus-opt-detail { font-size: var(--t-sm); line-height: 1.36; color: color-mix(in srgb, var(--ink) 45%, var(--muted)); overflow-wrap: anywhere; }
 /* the mark: spinner while the answer travels, a check once it is through */
 .focus-opt-mark { order: 2; flex: none; width: 24px; height: 24px; display: none; place-items: center; }
 .focus-opt-mark > * { grid-area: 1 / 1; }
 .focus-opt-mark .focus-spinner, .focus-opt-mark .focus-icon { display: none; }
 .focus-opt[data-state] .focus-opt-mark { display: grid; }
 @media (hover: hover) and (pointer: fine) {
-  .focus-opt:hover:not(:disabled):not([data-state]) { box-shadow: inset 0 0 0 2px var(--u), var(--shadow-md); transform: translateY(-1px); }
+  .focus-opt:hover:not(:disabled):not([data-state]) { box-shadow: inset 0 0 0 2px var(--u); }
 }
 .focus-opt:active:not(:disabled):not([data-state]) { transform: scale(.985); box-shadow: inset 0 0 0 2px var(--u); }
 .focus-opt:disabled { opacity: .36; }
 .focus-opt[data-state] { cursor: default; box-shadow: inset 0 0 0 2px var(--u); }
 .focus-opt[data-state="pending"] .focus-spinner { display: block; }
 .focus-opt[data-state="done"] { background: var(--u); color: var(--surface); }
-.focus-opt[data-state="done"] .focus-opt-label { color: inherit; }
+.focus-opt[data-state="done"] .focus-opt-detail { color: inherit; opacity: .86; }
 .focus-opt[data-state="done"] .focus-icon:last-child { display: block; stroke-width: 2.6; animation: focus-pop var(--d-med) var(--ease-spring); }
 @keyframes focus-pop { from { transform: scale(.3); opacity: 0; } }
 
 /* Two options are a yes/no: the other one left, the agent's first choice
    right and filled, each under its drawn icon. */
-.focus-opts[data-count="duo"] .focus-opt { flex-direction: column; justify-content: center; gap: var(--s-2); min-height: 108px; padding: 14px var(--s-3); text-align: center; }
+.focus-opts[data-count="duo"] .focus-opt { flex-direction: column; justify-content: center; gap: var(--s-2); text-align: center; }
 .focus-opts[data-count="duo"] .focus-opt-mark { order: 0; display: grid; width: 34px; height: 34px; }
 .focus-opts[data-count="duo"] .focus-opt-words { flex: none; justify-items: center; }
 .focus-opt-mark .focus-opt-icon { display: block; width: 34px; height: 34px; stroke-width: 1.7; }
 .focus-opt[data-state] .focus-opt-icon { display: none; }
-.focus-opt.is-lead { background: var(--u); color: var(--surface); box-shadow: var(--shadow-sm); }
-.focus-opt.is-lead .focus-opt-label { color: inherit; }
-.focus-opt.is-lead .focus-opt-detail { opacity: .86; }
+.focus-opt.is-lead { background: var(--u); color: var(--surface); }
+.focus-opt.is-lead .focus-opt-detail { color: inherit; opacity: .86; }
 .focus-opt.is-lead[data-state] { box-shadow: none; }
 @media (hover: hover) and (pointer: fine) {
-  .focus-opt.is-lead:hover:not(:disabled):not([data-state]) { box-shadow: var(--shadow-md); filter: brightness(.92); }
+  .focus-opt.is-lead:hover:not(:disabled):not([data-state]) { box-shadow: none; filter: brightness(.92); }
 }
 .focus-opt.is-lead:active:not(:disabled):not([data-state]) { box-shadow: none; filter: brightness(.88); }
 
-/* ── foot: where in the stack you are ───────────────────────────────────── */
-.focus-foot { flex: none; min-height: 34px; display: grid; place-items: center; padding-bottom: var(--s-1); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; font-variant-numeric: tabular-nums; color: var(--faint); }
+/* ── foot: on a phone, the row the two arrows stand in ──────────────────── */
+.focus-foot { display: none; }
 
 /* ── all done, loading ──────────────────────────────────────────────────── */
 .focus-done, .focus-loading { flex: 1; min-height: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: var(--s-6) var(--pad) var(--s-10); }
@@ -324,10 +325,11 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 }
 @container focus (max-width: 680px) {
   .focus-opts:not([data-count="duo"]) { --cols: 1; }
-  .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 56px; padding: 10px 14px; }
-  .focus-opt-label { font-size: 1.06rem; }
+  .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 60px; padding: 10px var(--s-4); }
+  .focus-opt-words { gap: 2px; }
+  .focus-opt-label { font-size: 1.1rem; }
   .focus-opt-detail { font-size: .8rem; line-height: 1.32; }
-  .focus-opts[data-count="duo"] .focus-opt { min-height: 92px; padding: 10px var(--s-2); gap: 6px; }
+  .focus-opts[data-count="duo"] .focus-opt { min-height: 96px; padding: 10px var(--s-2); gap: 6px; }
   .focus-opts[data-count="duo"] .focus-opt-mark, .focus-opt-mark .focus-opt-icon { width: 28px; height: 28px; }
   /* undo, hint and info get a line of their own under the tab */
   .focus-top:has(.focus-notes > :not([hidden])) { flex-wrap: wrap; }
@@ -340,10 +342,8 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-top { min-height: 56px; }
   .focus-scroll { padding-bottom: var(--s-4); }
   .focus-body { margin-top: var(--s-4); }
-  .focus-answer { padding-top: var(--s-3); gap: var(--s-2); }
-  .focus-opt { min-height: 62px; padding-top: 10px; padding-bottom: 10px; }
-  .focus-opts[data-count="duo"] .focus-opt { min-height: 88px; }
-  .focus-foot { min-height: 28px; }
+  .focus-answer { padding-top: var(--s-3); padding-bottom: var(--s-5); gap: var(--s-2); }
+  .focus-opt { min-height: 88px; padding-top: 10px; padding-bottom: 10px; }
   .focus-figure img, .focus-media .media video { max-height: 30vh; }
 }
 
@@ -377,10 +377,12 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus .rich, .focus-body[data-layout="text"] .rich { font-size: 1rem; line-height: 1.58; }
   .focus-perm-desc { font-size: .95rem; }
   .focus-answer { max-height: 58dvh; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-3) var(--pad) 0; gap: var(--s-2); }
+  .focus[data-single] .focus-answer { padding-bottom: max(var(--s-4), env(safe-area-inset-bottom)); }
   .focus-note { height: 48px; font-size: 16px; }
-  /* the foot is the row the arrows stand in, so they cover nothing */
-  .focus-foot { min-height: calc(48px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); }
-  .focus-nav { position: absolute; bottom: env(safe-area-inset-bottom); background: none; box-shadow: none; }
+  /* the foot is the row the arrows stand in, so they cover nothing; the window of one card has neither */
+  .focus-sheet[data-state="cards"] .focus-foot { display: block; flex: none; height: calc(52px + env(safe-area-inset-bottom)); }
+  .focus[data-single] .focus-foot { display: none !important; }
+  .focus-nav { position: absolute; bottom: calc(2px + env(safe-area-inset-bottom)); background: none; box-shadow: none; }
   .focus-nav-prev { left: calc(var(--s-1) + env(safe-area-inset-left)); }
   .focus-nav-next { right: calc(var(--s-1) + env(safe-area-inset-right)); }
   .focus-zoom-view { padding: 64px var(--s-2) calc(var(--s-2) + env(safe-area-inset-bottom)); }
@@ -397,7 +399,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-opts { gap: 6px; }
   .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 48px; padding: 6px 12px; }
   .focus-opts[data-count="duo"] .focus-opt { min-height: 76px; }
-  .focus-opt-words { gap: 1px; }
+  .focus-opt-words { gap: 0; }
   .focus-opts:not([data-count="duo"]) .focus-opt-detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .focus-figure img, .focus-media .media video { max-height: 26vh; }
 }

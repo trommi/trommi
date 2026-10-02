@@ -242,15 +242,15 @@ function agentMark() {
 // A drawing the human sent: tapping it puts the canvas back on the scribble board.
 let openScribble = null
 function scribbleCard(a) {
-  const card = button('scribble-card', 'Scribble wieder öffnen')
+  const card = button('scribble-card', 'Scribble gesendet. Zum Canvas der Sitzung')
   const img = el('img')
   img.src = a.url
-  img.alt = 'Scribble'
+  img.alt = ''
   img.loading = 'lazy'
-  const label = el('span', null, 'Scribble öffnen')
-  label.append(el('code', null, a.id))
-  card.append(img, label)
-  card.addEventListener('click', () => openScribble?.(a.id))
+  // The picture can be gone (the server cleans up after a while); the card then stands without it.
+  img.addEventListener('error', () => img.remove())
+  card.append(img, el('span', null, 'Scribble'))
+  card.addEventListener('click', () => openScribble?.())
   return card
 }
 
@@ -379,7 +379,7 @@ function emptyNode(onPick) {
  *   onCard(cardId)   the user tapped a card event
  *   onScribble()     the user tapped a scribble they sent earlier
  *   onUnread(count)  messages arrived that the user has not seen yet
- * Returns { render(state, loaded), unread() }.
+ * Returns { render(state, loaded), unread(), focus(hint) }.
  */
 export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = {}) {
   openScribble = onScribble
@@ -547,6 +547,16 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
   // Fonts change the line height once they arrive.
   document.fonts?.ready.then(fit)
   fit()
+  // The composer cannot measure itself while its pane is hidden; do it when it comes into view.
+  let formWidth = 0
+  new ResizeObserver(() => {
+    const w = form.clientWidth
+    if (w && w !== formWidth) fit()
+    formWidth = w
+  }).observe(form)
+  // A hint in place of the usual placeholder, until the field is left or a message is sent.
+  const PLACEHOLDER = draft.placeholder
+  draft.addEventListener('blur', () => { draft.placeholder = PLACEHOLDER })
 
   form.addEventListener('submit', async e => {
     e.preventDefault()
@@ -560,6 +570,7 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
       await sendMessage(text)
       // Only clear what was sent; the user may already be typing the next message.
       if (draft.value.trim() === text) draft.value = ''
+      draft.placeholder = PLACEHOLDER
       remember()
       pinned = true
       settle()
@@ -601,6 +612,10 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
       for (const fn of demo) fn()
     },
     unread: () => unread,
-    focus: () => draft.focus({ preventScroll: true }),
+    /** Put the caret in the composer; hint, if given, stands in the empty field as what to write. */
+    focus(hint) {
+      draft.focus({ preventScroll: true })
+      if (hint) draft.placeholder = hint
+    },
   }
 }

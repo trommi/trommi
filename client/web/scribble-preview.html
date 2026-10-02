@@ -111,8 +111,8 @@ let loadedJSON = null    // what load() was given, to compare with the next send
 const kb = n => `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`
 const dataBytes = url => Math.floor((url.length - url.indexOf(',') - 1) * 3 / 4)
 
-async function send({ doc, png, view, text }) {
-  pv.payload = { doc, png, view, text }
+async function send({ doc, png, view }) {
+  pv.payload = { doc, png, view }
   await sleep(has('fast') ? 0 : 700)
   if (hang) await new Promise(() => {})
   if (failNext) throw new Error('Der Server hat das Scribble abgelehnt (413: Anhang zu groß).')
@@ -128,7 +128,7 @@ async function send({ doc, png, view, text }) {
   vimg.src = view
   await vimg.decode()
   $('pv-view').src = view
-  $('pv-view-info').textContent = `${vimg.naturalWidth} × ${vimg.naturalHeight} px, ${kb(dataBytes(view))}, text: ${JSON.stringify(text)}`
+  $('pv-view-info').textContent = `${vimg.naturalWidth} × ${vimg.naturalHeight} px, ${kb(dataBytes(view))}`
   if (loadedJSON != null) $('pv-trip').textContent = json === loadedJSON ? 'identisch nach load() ✓' : 'verändert seit load()'
   $('pv-out').hidden = false
   pv.sends++

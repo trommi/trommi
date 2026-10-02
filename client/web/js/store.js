@@ -6,12 +6,24 @@ const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const EMPTY = { agents: [], messages: [], cards: [], queue: [], tasks: [], speech: false }
 
 let raw = EMPTY          // everything the server sent, normalized
-let view = { ...EMPTY, scope: null, all: EMPTY }
+let view = { ...EMPTY, scope: null, later: [], all: EMPTY }
 let scope = null         // an agent id, or null for the inbox across all agents
-let epoch = 0            // bumps whenever the scope changes
 let online = false
 let loaded = false
 const listeners = new Set()
+
+// Cards the human put off with "Später": [card id, urgency rank at that moment], oldest first.
+// Kept in this browser, so a reload does not refill the list that was worked down. An entry
+// goes when its card is no longer open, or when the agent has made it more urgent since.
+const LATER_KEY = 'trommi-later'
+const readLater = () => {
+  try {
+    const list = JSON.parse(localStorage.getItem(LATER_KEY))
+    return Array.isArray(list) ? list.filter(e => Array.isArray(e) && typeof e[0] === 'string') : []
+  } catch { return [] }
+}
+let later = readLater()
+const saveLater = () => { try { localStorage.setItem(LATER_KEY, JSON.stringify(later)) } catch {} }
 
 // Older servers send no agents, urgency or queue; fill those in so views can rely on them.
 function normalize(data) {
@@ -49,6 +61,11 @@ function derive() {
   if (scope && !raw.agents.some(a => a.id === scope)) scope = null
   const active = scope
   const mine = x => !active || x.agent === active
+  if (loaded) {
+    const open = new Map(raw.cards.filter(c => c.status === 'open').map(c => [c.id, c]))
+    const kept = later.filter(([id, rank]) => open.has(id) && (URGENCY_RANK[open.get(id).urgency] ?? 1) <= rank)
+    if (kept.length !== later.length) { later = kept; saveLater() }
+  }
   const cards = raw.cards.filter(mine)
   const ids = new Set(cards.map(c => c.id))
   view = {
@@ -59,6 +76,7 @@ function derive() {
     tasks: raw.tasks.filter(mine),
     speech: raw.speech,
     scope: active,
+    later: later.map(([id]) => id),
     all: raw,
   }
 }
@@ -82,6 +100,17 @@ export function subscribe(fn) {
 
 export const getState = () => view
 
+/** Put a card off (it leaves its sender's group for "Später"), or fetch it back. state.later lists the ids. */
+export function putOff(cardId, off = true) {
+  const card = raw.cards.find(c => c.id === cardId)
+  later = later.filter(([id]) => id !== cardId)
+  if (off && card) later.push([cardId, URGENCY_RANK[card.urgency] ?? 1])
+  saveLater()
+  emit()
+}
+// Another tab of this browser changed the list.
+window.addEventListener('storage', e => { if (e.key === LATER_KEY) { later = readLater(); emit() } })
+
 /** False until the first real state has arrived; before that, state is an empty placeholder. */
 export const isLoaded = () => loaded
 
@@ -89,13 +118,8 @@ export const isLoaded = () => loaded
 export function setScope(id) {
   if (id === scope) return
   scope = id
-  epoch++
   emit()
 }
-export const getScope = () => view.scope
-
-/** Changes whenever the scope does; lets a view tell "new card" from "different agent selected". */
-export const scopeEpoch = () => epoch
 
 /** Test and preview hook: push a state without a server. */
 export function setState(data) {
@@ -137,8 +161,8 @@ export const decide = (cardId, key, note = '') => post('/decide', { card_id: car
 /** Take back the answer on a decided or done decision card; it returns to the stack. */
 export const reopen = cardId => post('/reopen', { card_id: cardId })
 
-/** Send a drawing: the editable doc, its PNG rendering (data URL), and an optional caption. */
-export const sendScribble = ({ doc, png, view, text }) => post('/scribble', { doc, png, view, text, agent: recipient() })
+/** Send a drawing: the editable doc, a PNG of the whole canvas and one of the section on screen (data URLs). */
+export const sendScribble = ({ doc, png, view }) => post('/scribble', { doc, png, view, agent: recipient() })
 
 /** The lasting canvas of the session in scope: null if nothing was drawn yet. */
 export async function loadCanvas(agent) {
@@ -149,13 +173,6 @@ export async function loadCanvas(agent) {
 
 /** Save the canvas of a session while the human draws. */
 export const saveCanvas = (agent, doc) => post('/canvas', { agent, doc })
-
-/** The editable doc of a scribble sent earlier. */
-export async function loadScribble(id) {
-  const res = await fetch(`/scribbles/${encodeURIComponent(id)}.json`)
-  if (!res.ok) throw new Error('Scribble nicht gefunden')
-  return res.json()
-}
 
 /** Recorded audio (a Blob) to text. */
 export async function transcribe(blob) {
