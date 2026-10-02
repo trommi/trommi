@@ -521,6 +521,35 @@ export function pairDoodle(members) {
   return svg
 }
 
+/** A count kept the way one keeps it on paper: pen strokes, five to a gate (four upright and the fifth
+ *  across them). At most `cap` strokes are drawn; what is beyond stands after them as "+15". Returns a
+ *  span (.tally) holding the drawing, in currentColor; the number is its aria-label. */
+export function tally(n, cap = 25) {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded('tally')
+  const shown = Math.min(n, cap), gates = Math.ceil(shown / 5)
+  const svg = document.createElementNS(NS, 'svg')
+  const width = Math.max(1, gates) * 34 - 6
+  svg.setAttribute('viewBox', `0 0 ${width} 24`)
+  svg.setAttribute('class', 'tally-mark')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.style.width = `${width}px`
+  for (let i = 0; i < shown; i++) {
+    const gate = Math.floor(i / 5), at = i % 5, x0 = gate * 34 + 3
+    const path = document.createElementNS(NS, 'path')
+    const w = () => (r() - .5) * 1.6
+    if (at < 4) { const x = x0 + at * 6.4; path.setAttribute('d', penPath([[x + w(), 3.4 + w()], [x + .6 + w() * .5, 12], [x + w(), 20.6 + w()]])) }
+    else path.setAttribute('d', penPath([[x0 - 3 + w(), 17.6 + w()], [x0 + 10, 12 + w()], [x0 + 23.4 + w(), 6.2 + w()]]))
+    svg.append(path)
+  }
+  const node = el('span', 'tally')
+  node.setAttribute('role', 'img')
+  node.setAttribute('aria-label', String(n))
+  node.append(svg)
+  if (n > shown) node.append(el('span', 'tally-more', `+${n - shown}`))
+  return node
+}
+
 /** The loop drawn by hand round a whole group of sessions, marks and names together: squarish, one and
  *  a bit turns, it does not close. Stretched over whatever it is put into (CSS: .group-loop).
  *  seed: the members' ids, so a group always gets the same loop. */
@@ -606,6 +635,11 @@ const SKETCH = {
   // two question marks written by hand, no two alike: the "??" of "What??"
   q1: [[[7.4, 8.6], [8, 5.2], [11.6, 3.4], [15.4, 4.8], [16.2, 8.2], [13.4, 11.4], [11.8, 13.6], [11.9, 16.2]], [[11.8, 20.2], [12.1, 20.8]]],
   q2: [[[8.2, 7.4], [10, 4.4], [13.8, 3.8], [16.6, 6.2], [15.8, 9.8], [12.6, 12], [12, 14.4], [12.4, 16.6]], [[12.3, 20.4], [12.7, 20.9]]],
+  // a clock whose rim is an arrow turning back: the earlier versions of a question
+  timemachine: [[[6.2, 7.8], [9.4, 4.7], [13.8, 4.2], [17.8, 6.6], [19.6, 10.8], [18.6, 15.4], [15.2, 18.6], [10.8, 19], [7, 16.6], [5.2, 12.8]], [[3.2, 8.6], [6.3, 7.6], [7.5, 10.8]], [[12.2, 8.2], [12.1, 12.2], [15, 13.8]]],
+  q3: [[[7.8, 9], [8.6, 5.6], [12, 4], [15.6, 5.2], [16, 8.6], [13, 11], [12.2, 13.4], [12, 16.4]], [[12, 20.2], [12.4, 20.9]]],
+  // two hands that meet: left to the agent
+  trust: [[[3.2, 9.8], [7.4, 8.8], [10.6, 10.4], [13.2, 12.8], [15.6, 14.4]], [[20.8, 9.8], [16.6, 9], [13.8, 9.8], [11.4, 12.2], [9.4, 13.8]], [[9.6, 14], [11.4, 16.6], [13.6, 16.8], [15.4, 14.6]], [[3, 7.4], [3.5, 12.2]], [[21, 7.6], [20.5, 12.2]]],
   // a paperclip, bent in one go: attach something
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
@@ -702,6 +736,9 @@ export const ACK_WORD = 'Acknowledge'   // read and closed
 export const ACK_SKETCH = 'tick'
 export const WHAT_WORD = 'What??'       // ask the session to explain it; it comes back explained
 export const WHAT_SKETCH = 'explain'
+
+// Leaving a decision to the agent: the one word for it (the question window's button, the row's quiet action, the Answered pile).
+export const TRUST_WORD = 'Trust'
 
 // Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
 // (The agents' side still says urgency: high | critical; only the words on screen are these.)

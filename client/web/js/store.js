@@ -310,6 +310,9 @@ const revisedOf = cardId => raw.cards.find(c => c.id === cardId)?.revised ?? nul
 /** Take back the answer on an answered or done card; it returns to the stack. */
 export const reopen = cardId => post('/reopen', { card_id: cardId })
 
+/** Leave a decision to the agent: it takes what it advised, or chooses itself. Taken back with reopen(). */
+export const trust = cardId => post('/decide', { card_id: cardId, trust: true, revised: revisedOf(cardId) })
+
 /** Close an info card: it was read. (The server refuses it for a question, and for one that is closed already.) */
 export const closeInfo = cardId => post('/close', { card_id: cardId })
 

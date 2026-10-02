@@ -6,10 +6,10 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
-import { decide, putOff, sendMessage, reopen, closeInfo } from './store.js'
+import { decide, putOff, sendMessage, reopen, closeInfo, trust } from './store.js'
 import { openLightbox } from './chat.js'
 import { provide, hint } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
@@ -72,12 +72,11 @@ const kindOfRow = node => (node.classList.contains('inbox-done') ? 'done' : 'lat
 // Rows that stand unfolded, by card id: a list that is rebuilt keeps them open.
 const unfolded = new Set()
 
-// ---- a pile that unfolds: what lies below the open questions (put off, with the agent, answered) ----
-// At the foot of the list the piles lie side by side, each small: its drawing, its word and its count,
-// then the top card (one line: the title, and under it a word more, e.g. the answer) with the edges of
-// the cards beneath showing under it, so its height hints at how many there are. A click on a pile, or
-// Enter on its line, fans it open in place: it takes the whole width, its line becomes a dividing line
-// and every sheet its full row. Again, and it is pushed together. One pile is open at a time.
+// ---- a pile that unfolds: what lies below the open questions (snoozed, with the agent, answered) ----
+// At the foot of the list the piles stand side by side, each small: its count as a tally of pen strokes
+// (five to a gate), its name, and under it one line, the latest of what is in it. A click on a pile, or
+// Enter on its line, opens its list in place: it takes the whole width, its line becomes a dividing line
+// and every entry a full row. Again, and it is folded. One pile is open at a time.
 const pilesOpen = new Set()   // piles that stand open, by "<session or empty>:<kind>"; kept while the page lives
 const pileFold = new WeakMap()   // a pile's section -> the function that pushes it together
 /** One pile. kind: 'later' | 'asked' | 'answered' | … (class inbox-group-<kind>, data-pile). label and
@@ -96,7 +95,10 @@ export function pile({ kind, label, icon, count, open = false, onToggle, items, 
   avatar.append(sketch(icon))
   const fold = el('span', 'inbox-pile-fold')
   fold.append(sketch('unfold'))
-  head.append(avatar, el('span', null, label), el('b', null, count), fold)
+  // Folded, the pile shows its count as a tally of pen strokes (five to a gate) above its name.
+  const strokes = tally(items.length)
+  strokes.classList.add('inbox-pile-tally')
+  head.append(strokes, avatar, el('span', null, label), el('b', null, count), fold)
   title.append(head)
   const sheets = el('div', 'inbox-pile-sheets')
   const fulls = items.map(item => {
@@ -203,6 +205,18 @@ export function carries(card) {
   ].filter(Boolean)
 }
 
+// Trust: leave the decision to the agent. Quiet, and it costs a row no space: a small word in the byline
+// of a thumb row, the last entry among the options of an unfolded "Choose" row. What the agent advised
+// is what it will take; with no advice it chooses itself.
+const advisedLabels = card => card.options.filter(o => [].concat(card.recommended ?? []).includes(o.key)).map(o => o.label).join(', ')
+const trustTip = card => (advisedLabels(card) ? `${TRUST_WORD}: leave it to the agent. It advised: ${advisedLabels(card)}` : `${TRUST_WORD}: leave it to the agent. It gave no advice and chooses itself`)
+async function trustCard(card, onFail) {
+  try {
+    await trust(card.id)
+    say(pageHost(), { head: 'Trusted', title: card.title, back: () => reopen(card.id) })
+  } catch (err) { onFail(err) }
+}
+
 // What "Choose" unfolds under a row: the text, every option as a tile, and a line to ask the
 // agent back instead of answering. One tap on an option answers; where several answers are
 // allowed the options are toggles and one tile sends them.
@@ -258,6 +272,18 @@ function unfoldNode(card, { onDecided, full = true }) {
     send.addEventListener('click', () => answer(card.options.map(o => o.key).filter(k => picked.has(k)), send))
     paintSend()
     options.append(send)
+  }
+  if (card.kind === 'decision') {
+    // The last entry: no option of the card's, but leaving it to the agent.
+    const leave = el('button', 'inbox-option inbox-trust-option')
+    leave.type = 'button'
+    leave.title = trustTip(card)
+    leave.append(el('strong', null, TRUST_WORD), el('span', null, advisedLabels(card) ? `the agent takes: ${advisedLabels(card)}` : 'the agent decides'))
+    leave.addEventListener('click', () => {
+      for (const other of options.children) other.disabled = true
+      trustCard(card, err => { for (const other of options.children) other.disabled = false; paintSend(); error.textContent = `Not saved: ${err.message}`; error.hidden = false })
+    })
+    options.append(leave)
   }
   // Asking back: a message to the session, tied to this card. The card stays open and stays where it is;
   // only "Later" and "Explain" make it leave.
@@ -355,6 +381,14 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     byline.append(who, ' · ')
   }
   byline.append(el('span', 'inbox-nr', cardNr(card)), ' · ', agoNode(card.created, 'inbox-ago'))
+  // On a thumb row of a question: "Trust", a small word at the end of the byline.
+  if (card.kind === 'decision' && quick(card)) {
+    const leave = el('button', 'inbox-trust', TRUST_WORD)
+    leave.type = 'button'
+    leave.title = trustTip(card)
+    leave.addEventListener('click', () => { leave.disabled = true; trustCard(card, err => { leave.disabled = false; error.textContent = `Not saved: ${err.message}`; error.hidden = false }) })
+    byline.append(' · ', leave)
+  }
   // What the card carries: a small drawing and the count per kind; the whole list as its tooltip.
   const extra = carries(card)
   if (extra.length) {
@@ -561,7 +595,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     node.tabIndex = -1
     node.dataset.id = card.id
     const picked = card.choices?.length ? card.choices : [card.choice]
-    const labels = card.kind === 'info' ? 'Read' : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
+    const labels = card.kind === 'info' ? 'Read' : card.trusted ? `Trusted${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
     // A yes or no shows its thumb; anything else the drawing of a choice.
     const duo = card.options.length === 2 && !card.multiple
     const mark = el('span', 'inbox-done-mark')
@@ -669,7 +703,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const off = state.later.map(id => open.find(c => c.id === id)).filter(Boolean)
     const fresh = open.filter(c => !off.includes(c))
     // What was answered: the latest first. A card the agent has closed since is still listed; the server lets it be reopened.
-    const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && c.choice != null) || (c.kind === 'info' && c.read)))
+    const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
     const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
@@ -770,7 +804,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       // The same pile as "Later" (pile(), above): a line with the count, the answers pushed together
       // below it, each sheet naming the question and what was said; the rows are built when it unfolds.
       const today = answered.filter(c => sameDay(c.decided ?? 0, Date.now())).length
-      const answerOf = c => { if (c.kind === 'info') return 'Read'; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
+      const answerOf = c => { if (c.kind === 'info') return 'Read'; if (c.trusted) return `Trusted${advisedLabels(c) ? `: ${advisedLabels(c)}` : ''}`; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
       parts.push(pile({
         kind: 'answered', label: 'Answered', icon: 'yes', headClass: 'inbox-answered-toggle', open: answeredOpen && !parts.some(p => p.matches?.('.inbox-pile.is-open')),
         count: today === answered.length ? `${today} today` : today ? `${today} today · ${answered.length} in all` : `${answered.length}`,

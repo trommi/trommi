@@ -700,9 +700,9 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-card-say[aria-pressed="true"] { color: var(--accent); }
 .focus-card-say[aria-pressed="true"] path + path { opacity: 1; }
 .focus[data-list] .focus-nav { display: none; }
-.focus[data-list] .focus-stage { display: flex; flex-direction: column; gap: 18px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; scroll-snap-type: y proximity; padding: 2px 2px 0; }
+.focus[data-list] .focus-stage { display: flex; flex-direction: column; gap: 18px; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; padding: 70px 2px 0; }
 /* A card is at most as high as the window less a strip of the next one; what is more scrolls inside it, the composer stays at its foot. */
-.focus[data-list] .focus-card { flex: none; visibility: visible; width: 100%; min-height: 0; max-height: calc(100vh - 150px); overflow: clip; border-radius: var(--r-xl); background: linear-gradient(180deg, color-mix(in srgb, var(--u-soft) 62%, var(--surface)), var(--surface) 200px); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: none !important; scroll-snap-align: center; content-visibility: auto; contain-intrinsic-size: auto 600px; position: relative; }
+.focus[data-list] .focus-card { flex: none; visibility: visible; width: 100%; min-height: 0; max-height: calc(100vh - 226px); overflow: clip; border-radius: var(--r-xl); background: linear-gradient(180deg, color-mix(in srgb, var(--u-soft) 62%, var(--surface)), var(--surface) 200px); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: none !important; content-visibility: auto; contain-intrinsic-size: auto 600px; position: relative; }
 .focus[data-list] .focus-card.is-tall { scroll-snap-align: none; }
 /* the cards that are not in front lie a little in the shade */
 .focus[data-list] .focus-card::after { content: ""; position: absolute; inset: 0; z-index: 4; border-radius: inherit; background: color-mix(in srgb, var(--fg) 9%, transparent); pointer-events: none; opacity: 1; transition: opacity var(--d-med); }
@@ -859,3 +859,56 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 .focus-opts[data-count="duo"] .focus-opt { height: 100%; }
 .focus-opts[data-count="duo"] .focus-opt-label { overflow-wrap: normal; word-break: keep-all; hyphens: manual; }
 .focus-opt .focus-what .sketch { display: inline-block; width: 1.3em; height: 1.3em; margin: -.1em -.42em 0 -.18em; stroke-width: 2.4; }
+
+/* ── the time machine: an earlier version of a card, to read ── */
+.focus-earlier { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin: 0 0 var(--s-3); padding: 6px 6px 6px 12px; border-radius: var(--r-md); background: var(--sunken); color: var(--muted); font-size: var(--t-sm); }
+.focus-earlier-says { flex: 1 1 14rem; min-width: 0; display: flex; align-items: center; gap: 7px; }
+.focus-earlier-says .sketch { flex: none; width: 20px; height: 20px; }
+.focus-earlier-says b { color: var(--fg); font-weight: 600; white-space: nowrap; }
+.focus-earlier-step { flex: none; height: 34px; padding: 0 12px; border-radius: var(--r-sm); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-weight: 600; }
+.focus-earlier-step:disabled { opacity: .4; }
+.focus-earlier-step:last-child { background: var(--fg); color: var(--surface); box-shadow: none; }
+.focus-card[data-earlier] .focus-answer { filter: grayscale(1); opacity: .55; }
+.focus-card[data-earlier] .focus-lead, .focus-card[data-earlier] .focus-body { opacity: .8; }
+.focus-card[data-earlier] .focus-composer { visibility: hidden; }
+/* where the question was presented anew, in the conversation */
+.focus-turn { align-self: center; display: inline-flex; align-items: center; gap: 7px; margin: var(--s-4) auto 0; height: 30px; padding: 0 12px 0 9px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-xs); font-weight: 600; clear: both; }
+.focus-turn .sketch { width: 16px; height: 16px; }
+.focus-turn:hover { color: var(--fg); }
+.focus-card[data-again] { animation: focus-again 1.4s var(--ease-out) !important; }
+@keyframes focus-again { 0% { box-shadow: 0 0 0 3px var(--u), var(--shadow-md); } 100% { box-shadow: 0 0 0 0 transparent, var(--shadow-md); } }
+
+/* One type for an option's word wherever it stands: tile, tag, the "take this one" tile, a caption in the grid. */
+.focus .focus-opt-label, .focus-zoom-take b, .focus-grid-cap span, .focus-zoom-tile span, .focus-sec-label { font: 700 1.05rem/1.2 var(--display); letter-spacing: 0; }
+.focus-zoom-take b { overflow-wrap: anywhere; }
+
+/* The three ways out beside the field, without words: each a drawing, large, in a plain soft button as high as the
+   field. The word shows on hover and focus; in a narrow window it stands beside the drawing. */
+.focus .focus-way { position: relative; width: 84px; height: 50px; min-height: 50px; padding: 0; justify-content: center; }
+.focus-way-art { display: inline-flex; align-items: center; justify-content: center; }
+.focus .focus-way .focus-way-art .sketch { width: 31px; height: 31px; stroke-width: 1.7; }
+.focus .focus-way .focus-way-art[data-kind="what"] .sketch { width: 27px; height: 31px; margin: 0 -5px; }
+.focus .focus-way .focus-way-word { position: absolute; z-index: 4; left: 50%; bottom: calc(100% + 6px); translate: -50% 0; padding: 5px 9px; border-radius: var(--r-sm); background: var(--fg); color: var(--surface); font: 600 var(--t-xs)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity var(--d-fast); }
+.focus .focus-way:hover .focus-way-word, .focus .focus-way:focus-visible .focus-way-word { opacity: 1; }
+.focus-zoom-ways .focus-way { flex: 1 1 0; width: auto; }
+@media (max-width: 640px) {
+  .focus .focus-way { width: auto; padding: 0 12px 0 8px; gap: 5px; }
+  .focus .focus-way .focus-way-art .sketch { width: 24px; height: 24px; }
+  .focus .focus-way .focus-way-art[data-kind="what"] .sketch { width: 20px; height: 24px; margin: 0 -4px; }
+  .focus .focus-way .focus-way-word { position: static; translate: none; padding: 0; background: none; color: inherit; font: inherit; opacity: 1; }
+}
+/* Trust: an answer that leaves the choice to the session; quiet, under the options. */
+.focus-trust { width: 100%; min-height: 44px; display: flex; align-items: center; gap: 8px; margin-top: 2px; padding: 6px 12px; border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font-size: var(--t-sm); text-align: left; transition: background var(--d-fast), color var(--d-fast); }
+.focus-trust .sketch { flex: none; width: 22px; height: 22px; }
+.focus-trust b { font: 700 var(--t-sm)/1.2 var(--display); color: var(--fg); }
+.focus-trust span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-trust:hover { background: var(--sunken); color: var(--fg); }
+
+/* The end of the field: where the words are. "…" on their way, a tick and "saved" once the board has them. */
+.focus-saved { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 10px 0 4px; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); white-space: nowrap; }
+.focus-saved[data-state="saved"] { color: var(--accent); }
+.focus-saved[data-state="failed"] { color: var(--urg-critical); }
+.focus-saved .focus-icon { width: 15px; height: 15px; stroke-width: 2.6; }
+.focus-saved kbd { margin-left: 8px; padding: 3px 6px; border-radius: 5px; background: var(--sunken); color: var(--muted); font: 500 .68rem/1 var(--mono); }
+.focus-saved-hint { color: var(--muted); }
+@container focus (max-width: 900px) { .focus-saved kbd, .focus-saved-hint { display: none; } }

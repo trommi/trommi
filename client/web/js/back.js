@@ -91,7 +91,12 @@ function anchor(host, node) {
   let left, top
   if (zone) {
     const box = rest(zone)
-    left = box.left - size.width - 12
+    // Rows differ in how far their tiles reach to the left (two thumbs, or one "Choose"): the note stays clear
+    // of the widest of them, or it would lie on the thumb of the row that moves up, and "Back" under the next click.
+    const edge = zone.matches('.inbox-actions')
+      ? Math.min(box.left, ...[...document.querySelectorAll('.inbox-row:not(.is-leaving) .inbox-actions')].filter(live).map(z => z.getBoundingClientRect().left))
+      : box.left
+    left = edge - size.width - 12
     top = y - size.height / 2
   } else {
     const box = button.getBoundingClientRect()

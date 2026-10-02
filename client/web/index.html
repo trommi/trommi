@@ -15,9 +15,6 @@
   if (flags.indexOf('dark') >= 0) theme = 'dark'
   if (flags.indexOf('light') >= 0) theme = 'light'
   if (theme === 'dark') document.documentElement.dataset.theme = 'dark'
-  // A test, one switch on <html> (styles in app.css): data-grouploop="all" draws the loop round a group
-  // in the sidebar round marks and names; anything else round the marks alone. The flag #loop-all turns it on.
-  document.documentElement.dataset.grouploop = flags.indexOf('loop-all') >= 0 ? 'all' : 'marks'
 })()
 </script>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -36,8 +33,9 @@
 <script type="module" src="/js/app.js"></script>
 <script type="module" src="/js/padlink.js"></script>
 <script type="module" src="/js/bar.js"></script>
+<script type="module" src="/js/quicksend.js"></script>
 <script type="module" src="/js/beside.js"></script>
-<script type="module" src="/js/table.js"></script>
+<script type="module" src="/js/ledger.js"></script>
 </head>
 <body data-view="chat" data-scope="all">
 <script>
