@@ -673,6 +673,7 @@ export function mountFocus({ onDecided } = {}) {
         const files = [...(e.clipboardData?.files ?? [])]
         if (!files.length) return
         e.preventDefault()
+        e.stopPropagation()   // handled here, once: not again by the card around it or by the page
         addFiles(rec, files)
       })
       const carriesFiles = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
@@ -681,6 +682,7 @@ export function mountFocus({ onDecided } = {}) {
       ask.addEventListener('drop', e => {
         if (!carriesFiles(e)) return
         e.preventDefault()
+        e.stopPropagation()
         delete ask.dataset.drop
         addFiles(rec, e.dataTransfer.files)
       })
@@ -911,10 +913,14 @@ export function mountFocus({ onDecided } = {}) {
     up.append(icon('up'), el('span', 'focus-up-title', card.title))
     up.hidden = true
     const toTop = () => { if (scroll.scrollTop < 8) title.scrollIntoView({ block: 'start', behavior: still() ? 'instant' : 'smooth' }); else scroll.scrollTo({ top: 0, behavior: still() ? 'instant' : 'smooth' }) }
-    const paintUp = () => { const t = title.getBoundingClientRect(), f = scroll.getBoundingClientRect(); up.hidden = !f.height || !(t.bottom < f.top + 4 || t.top > f.bottom - 4) }
+    const paintUp = () => { const t = title.getBoundingClientRect(), f = scroll.getBoundingClientRect(); up.hidden = !f.height || !(t.bottom < f.top + 4 || t.top > f.bottom - 4); scroll.toggleAttribute('data-more', scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight > 6) }
     up.addEventListener('click', toTop)
     scroll.addEventListener('scroll', paintUp, { passive: true })
     rec.paintUp = paintUp
+    // (what stands in the column grows and shrinks: the thread, a picture loading)
+    rec.growWatch?.disconnect()
+    rec.growWatch = new ResizeObserver(() => paintUp())
+    requestAnimationFrame(() => { for (const n of scroll.children) rec.growWatch.observe(n) })
     node.onkeydown = e => { if (e.key !== 'Home' || e.defaultPrevented || e.target.closest?.('input, textarea, [contenteditable]')) return; e.preventDefault(); rec.scroll.scrollTo({ top: 0, behavior: still() ? 'instant' : 'smooth' }) }
     talk.append(up)
     // In the list every card carries read-aloud and close in its own corner (the window's top bar is not shown there).
@@ -949,8 +955,8 @@ export function mountFocus({ onDecided } = {}) {
       // files and pictures: dropped or pasted anywhere on the card (they wait as chips at its foot until the next action)
       const carries = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
       node.ondragover = e => { if (carries(e)) e.preventDefault() }
-      node.ondrop = e => { if (!carries(e)) return; e.preventDefault(); claim(rec); addFiles(rec, e.dataTransfer.files) }
-      node.onpaste = e => { const files = [...(e.clipboardData?.files ?? [])]; if (!files.length) return; e.preventDefault(); addFiles(rec, files) }
+      node.ondrop = e => { if (e.defaultPrevented || !carries(e)) return; e.preventDefault(); claim(rec); addFiles(rec, e.dataTransfer.files) }
+      node.onpaste = e => { if (e.defaultPrevented) return; const files = [...(e.clipboardData?.files ?? [])]; if (!files.length) return; e.preventDefault(); addFiles(rec, files) }
     }
     // Two columns: what is asked at the left with its own scroll, the answers at the right; the composer under the left.
     // Or (besideTitle) the answers are the first thing in what scrolls and float at its top right.
