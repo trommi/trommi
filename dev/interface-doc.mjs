@@ -159,7 +159,8 @@ const EVENT = {
   decision: ['Act on the choice, then `close_card` with a summary. With `trust="1"`: decide yourself, say what you chose with `reply` and the `card_id`, then `close_card`. Read the option notes in the content.', '`POST /decide`'],
   decision_reopened: ['Stop acting on the old choice, undo what is safe to undo, say so with `reply`, wait for the new answer. With `shredded="1"` there is nothing to undo: the card is simply open again.', '`POST /reopen` on an answered, trusted or shredded card'],
   info_read: ['Nothing.', '`POST /close`'],
-  shredded: ['Do not ask again, in these or other words. Carry on with your own judgement or drop the matter; if nothing can proceed without an answer, say so once in a `reply`.', '`POST /shred` (in the code since today; the running hub did not have it yet when this was written)'],
+  handback_withdrawn: ['Nothing: do not rework or explain the card; it is the human\'s again.', '`POST /handback {clear: true}`'],
+  shredded: ['Do not ask again, in these or other words. Carry on with your own judgement or drop the matter; if nothing can proceed without an answer, say so once in a `reply`.', '`POST /shred`'],
   scribble: ['Read `image_path` (what the human looked at), then `canvas_path` if the surroundings matter. A chat message often follows.', '`POST /scribble`'],
   pad: ['Read `image_path`; the content already holds the words of the selected notes.', '`POST /pad/send`'],
   'notifications/claude/channel/permission': ['Nothing: Claude Code takes the verdict, and decides whether the terminal or the board came first.', '`POST /decide` on an approval card'],
@@ -296,15 +297,16 @@ const RECORDS = [
 
 const ROUTES = [
   ['GET /events', '', 'Event stream: the whole state as one JSON frame, on connect and on every change.', USED],
-  ['POST /message', '`{text, agent, card_id?, handback?, explain?, attachments?: [{name, data}]}`', 'Chat to one session; with `card_id` a question back about an open card; `handback` / `explain` put the card with the agent. Files as base64 data URLs, at most 12 and 96 MB.', USED],
+  ['POST /message', '`{text, agent, card_id?, handback?, explain?, cards?: [id or number], attachments?: [{name, data}]}`', 'Chat to one session; with `card_id` a question back about an open card; `handback` ("Revise") / `explain` ("What??") put the card with the agent. `cards` (at most 5) copies cards, usually another session\'s decision, into the message: the agent gets each in full. Files as base64 data URLs, at most 12 and 96 MB.', USED],
+  ['POST /handback', '`{card_id, clear: true}`', 'Takes a hand-back or a "What??" back before the agent has reworked the card.', USED],
   ['POST /decide', '`{card_id, key | keys, note?, notes?: {key: text}, revised?, attachments?}`', 'Answers a question or an approval. 409 when the card was reworded meanwhile.', USED],
-  ['POST /decide', '`{card_id, trust: true, note?, revised?}`', 'Leaves an open question to the agent. The inbox row has the button; the question window has none yet.', USED],
+  ['POST /decide', '`{card_id, trust: true, note?, revised?}`', 'Leaves an open question to the agent ("Whatever" on screen).', USED],
   ['POST /draft', '`{card_id, keys?, note?, notes?}`', 'Keeps what is ticked and written but not sent; the whole draft every time, an empty one clears it.', USED],
   ['POST /close', '`{card_id}`', 'Closes an info: read.', USED],
-  ['POST /shred', '`{card_id, note?}`', 'Throws an open question or info away unanswered; the agent is told not to ask again. In the code and in the question window since today.', USED],
+  ['POST /shred', '`{card_id, note?}`', 'Throws an open question or info away unanswered; the agent is told not to ask again.', USED],
   ['POST /reopen', '`{card_id}`', 'Takes an answer, a trust, a "read" or a shredding back.', USED],
   ['POST /session', '`{agent, label?, icon?, archived?, group?, before?}`', 'The human\'s name, symbol, group and place for a session; archiving one that is away.', USED],
-  ['POST /star', '`{agent, starred}`', 'Marks a session whose questions lead the inbox.', USED],
+  ['POST /star', '`{agent, starred}`', 'Puts the crown on a session: its questions lead the Desk, and it receives the quick note.', USED],
   ['GET /canvas?agent=', '', 'The lasting drawing of one session, as JSON.', USED],
   ['POST /canvas', '`{agent, doc}`', 'Saves it while the human draws.', USED],
   ['POST /scribble', '`{agent, doc, png, view?, text?}`', 'Sends the drawing to the session. The web client never sends `text` (the caption).', USED],
@@ -377,13 +379,11 @@ const MISMATCH = [
   ['Sent or stored, read by no web client', 'The markers `info`, `read` and `shredded` in the conversation have no label and no icon of their own: they show as "Board" with the question icon.', '`chat.js` (`EVENT_LABEL`, `ICONS`)'],
   ['Expected by one side, not sent by the other', '`POST /scribble` takes `text` (a caption, which becomes the content of the event); the web client sends `{doc, png, view, agent}` only, so the agent always gets the stock sentence.', '`storeScribble`; `store.js` `sendScribble`'],
   ['Expected by one side, not sent by the other', '"Later" is state the client needs and the hub does not have: it lives in `localStorage` per browser.', '`store.js` (`LATER_KEY`)'],
-  ['Expected by one side, not sent by the other', 'The picture on the help page names four event kinds (`chat`, `decision`, `decision_reopened`, `scribble`); the hub sends six (`info_read` and `pad` are missing). The list under the picture is read from the hub and is complete.', '`help.js`'],
   ['Documented, but different', 'The schemas\' `required` is not checked by the hub: `reply` without `text` stores an empty message, `create_decision` without `title` an untitled card. The other way round, `set_status` needs `label` for a new line and `publish_asset` needs `path` or `content`, and neither schema says so.', '`TOOLS`; `runTool`'],
   ['Documented, but different', '`close_card` is described as "move a decided card to Done", but the hub does not look at the status: called on an open question or info it closes it, and no answer will come.', '`runTool`, case `close_card`'],
   ['Documented, but different', '`revise_card`, `set_urgency` and `withdraw_card` say "decision card" in their descriptions; all three work on info cards too.', '`TOOLS`; `runTool`'],
   ['Documented, but different', '`set_status` says the strip is "at the top of the board"; the web client draws the lines as pills in the sessions list and table.', '`TOOLS`; `agents.js`, `table.js`'],
-  ['Documented, but different', '`README.md`, "Was der Agent bekommt": no `info_read`, no `pad`, none of `handback`, `explain`, `trust`, `option_notes`, `files`, `image_path`; the scribble row lacks `canvas_path` and `canvas_doc`. `reply` is listed without `html`. And: "with `card_id` the red line jumps to the card", which no client does.', '`README.md`'],
-  ['Documented, but different', '`TODO.md` lists "file upload by the human" as open; it is built (`/message` and `/decide` take `attachments`). It also says events for absent agents live only in memory; they are in `state.pending` in `state.json`.', '`TODO.md`'],
+  ['Documented, but different', '`README.md`, "Was der Agent bekommt" names every event kind but not every field (`handback`, `explain`, `trust`, `option_notes`, `files`, `marks`, `canvas_path`); it points here for those. `reply` is listed without `html`.', '`README.md`'],
   ['Documented, but different', '`docs/question-contract.md` has two sections numbered 6 (rich content, info cards); the shape of a version\'s attachments in section 5 lacks `title` and `page`, which section 8 adds.', '`docs/question-contract.md`'],
   ['Documented, but different', '`docs/architecture.md` (written this morning) does not know `create_info`, `/close`, trust, or `html` on `reply`.', '`docs/architecture.md`'],
   ['Documented, but different', 'The running hub is older than the code: on 2 October it offered `create_info` and trust, but not yet `/shred` and the `shredded` event. Whatever this document says is true of the code; a hub shows it after a restart.', '`GET /api/tools` on the live hub'],
@@ -442,7 +442,7 @@ const table = (head, rows) => [`| ${head.join(' | ')} |`, `| ${head.map(() => '-
 const PICTURE = `
   Claude Code            channel process              hub                       browser
   (the agent)            server.mjs, one per          server.mjs, port 8790     client/web
-                         session, over stdio          state.json, data/
+                         session, over stdio          data/pad.db, data/
 
   tools/call  ────────►  POST /agent/tool  ────────►  runTool()
                                                       state changes ─────────►  GET /events
@@ -492,7 +492,7 @@ function markdown(m) {
   ]))
 
   say('## 2. Agent to board: the tools')
-  say('Status: **used** = the hub acts on it and, where it is meant to be seen, the web client shows it. **not shown** = accepted and stored, but no web client reads it. **planned** = not built. "Shown where" names the places of the web client: the inbox row, the question card (the Focus window), the conversation.')
+  say('Status: **used** = the hub acts on it and, where it is meant to be seen, the web client shows it. **not shown** = accepted and stored, but no web client reads it. **planned** = not built. "Shown where" names the places of the web client: the inbox row (a row of the list the screen calls the Desk), the question card (the opened card, `focus.js`), the conversation. On screen `trust` is "Whatever", a hand-back is "Revise", `explain` is "What??", putting off is "Snooze", and `urgency: high | critical` are "Knocks".')
   const shared = m.tools.find(t => t.name === 'create_decision').params.filter(p => PARAM[`q.${p.name}`])
   const paramTable = params => table(['Parameter', 'Type', 'Meaning', 'Stored as', 'Shown where', 'Status'], params.map(p => [`\`${p.name}\`${p.required ? ' *' : ''}`, p.type, p.says, p.stored, p.shown, p.status]))
   say('### The question fields')

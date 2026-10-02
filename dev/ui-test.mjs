@@ -136,7 +136,7 @@ const SEL = {
   userMessage: '.log .msg-user',
   agentMessage: '.log .msg-agent',
   messageImage: '.log .shot img',
-  ask: '.log .ask-open',
+  ask: '.log .ask-open, .log .ask-card',   // an open question in the stream of a conversation
   draft: '.composer textarea',
   send: '.composer .send',
   modeChat: '#mode-chat, #tab-chat',
@@ -170,6 +170,9 @@ const SEL = {
   menuAgents: '#menu-agents',
   jumpField: '#jump-field',
   quickOpen: '.quick-open',
+  quickField: '#quick-field',
+  quickSend: '.quick-send',
+  quickNote: '.quick-note',
   // a session's own title: its drawing, its crown, its name (the way to these on a phone)
   paneMark: '#pane-who .pane-mark',
   paneCrown: '#pane-who .crown-toggle',
@@ -209,7 +212,7 @@ const SEL = {
   // These scroll sideways on purpose; everything else must fit the width of a phone.
   sidewaysOk: '#agents, pre, .hist-tabs, .focus-thumbs, .scr-tools, table',
   // What agents and the human wrote. Everything outside of it is the interface and must be English.
-  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-option, .inbox-pile-peek, .inbox-done, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .ledger-name, .ledger-does, .ledger-task, .focus-card, .hist-row, .file-row, .adm-card, .adm-log, .adm-stderr, .adm-links, .focus-rail, .focus-strip, .pane-now, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
+  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-option, .inbox-pile-peek, .inbox-done, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .ledger-name, .ledger-does, .ledger-task, .quick-note, .quick-to, .quick-list, .focus-card, .hist-row, .file-row, .adm-card, .adm-log, .adm-stderr, .adm-links, .focus-rail, .focus-strip, .pane-now, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
 }
 
 // Words of the interface the test relies on.
@@ -366,7 +369,7 @@ const PAGE_LIB = `(() => {
     pane: id => all(SEL.pane).find(p => p.dataset.agent === id) ?? null,
     roster: () => all(SEL.rosterCard).map(c => ({
       name: text(c.querySelector(SEL.rosterName)),
-      id: c.dataset.id, state: text(c.querySelector(SEL.rosterState)), current: c.matches(SEL.rosterCurrent),
+      id: c.dataset.id, state: c.dataset.state ?? text(c.querySelector(SEL.rosterState)), count: text(c.querySelector(SEL.rosterState + ' b')), current: c.matches(SEL.rosterCurrent),
       // (A narrow window drops the columns of model and machine; what the line holds is read either way.)
       facts: (cells => ({ Model: text(cells[0]), Machine: text(cells[1]) }))(c.querySelectorAll(SEL.rosterFact)),
       starred: c.querySelector(SEL.rosterStar)?.getAttribute('aria-pressed') === 'true',
@@ -1583,10 +1586,10 @@ async function groupSidebar() {
   // The badge: a red hand when one of the session's questions knocks (urgent, blocking, a permission), else a small stack of cards.
   const knocks = a => openCards(a.id).some(c => !putOff.has(c.id) && (c.kind === 'permission' || c.urgency === 'high' || c.urgency === 'critical'))
   const blocked = row(COURIER)
-  if (check(blocked, `"${COURIER}" is not in the sidebar`)) check(blocked.badge?.hand && !blocked.badge?.ring, `"${COURIER}" has a blocking question, but its badge is ${JSON.stringify(blocked.badge)}, expected the raised hand`)
+  if (check(blocked, `"${COURIER}" is not in the sidebar`)) check(blocked.badge?.hand, `"${COURIER}" has a blocking question, but its badge is ${JSON.stringify(blocked.badge)}, expected the raised hand`)
   for (const a of scripted().filter(a => openCards(a.id).some(c => !putOff.has(c.id)))) {
     const b = row(nameOf(a))?.badge
-    check(knocks(a) ? b?.hand : b?.ring && !b?.hand, `a question of "${nameOf(a)}" ${knocks(a) ? 'knocks' : 'does not knock'}, but its badge is ${JSON.stringify(b)}, expected ${knocks(a) ? 'the hand' : 'the stack of cards'}`)
+    check(knocks(a) ? b?.hand : b && !b.hand, `a question of "${nameOf(a)}" ${knocks(a) ? 'knocks' : 'does not knock'}, but its badge is ${JSON.stringify(b)}, expected ${knocks(a) ? 'the hand' : 'the stack of cards'}`)
   }
   const busy = scripted().find(a => openCards(a.id).some(c => !putOff.has(c.id)))
   const waiting = openCards(busy?.id).filter(c => !putOff.has(c.id)).length
@@ -1788,7 +1791,7 @@ async function groupAgents() {
     const machine = card.facts[TEXT.machine] ?? ''
     check(machine && machine !== TEXT.unknown && machine.includes(agent.host), `"${nameOf(agent)}" shows the machine "${machine}", it runs on "${agent.host}"`)
     const open = openCards(agent.id).filter(c => !putOff.has(c.id)).length
-    if (open) check(card.state.endsWith(String(open)), `the line of "${nameOf(agent)}" says "${card.state}", it has ${open} open questions`)
+    if (open) check(card.count === String(open), `the line of "${nameOf(agent)}" counts "${card.count}" (${card.state}), it has ${open} open questions`)
   }
   const away = cards.filter(c => /away/.test(c.state)).map(c => c.name)
   check(!away.length || away.join() === state().agents.filter(a => !a.online && !a.archived).map(nameOf).join() && cards.slice(-away.length).every(c => away.includes(c.name)), `the disconnected sessions are not the last lines of the agents page: ${cards.map(c => `${c.name} (${c.state})`).join(', ')}`)
@@ -2641,6 +2644,94 @@ async function groupModules() {
   for (const sheet of sheets) check(sheet.rules > 0, `the stylesheet ${sheet.href} is empty or did not load`)
 }
 
+/** From wherever one is: quick send to the crowned session, the jump field, and moving the session one is in. */
+async function groupQuick() {
+  const stamp = tag()
+  const target = agentNamed(COURIER), other = scripted()[1]
+  const card = await fixture.quick(`Jump to me (${stamp})?`)
+  await open('/')
+  await post('/star', { agent: target.id, starred: true })
+  await waitState('the session wears the crown', s => s.agents.find(a => a.id === target.id).starred)
+  await settle()
+  const arrived = text => waitState(`"${text}" reaches the crowned session`, () => state().messages.some(m => m.agent === target.id && m.from === 'user' && m.text === text && !m.card_id), 5000).then(() => passed(), e => check(false, e.message))
+
+  // The speech bubble with the crown: a small sheet to write in; Enter (or its button) sends to the crowned session.
+  need(await ev(js`!!__t.one(${SEL.quickOpen})`), 'there is no quick-send bubble on the page')
+  await press('the quick-send bubble', js`__t.one(${SEL.quickOpen})`)
+  await waitFor('the bubble opens a field to write in', js`document.activeElement === document.querySelector(${SEL.quickField})`, 3000)
+  const first = `quick hello ${stamp}`
+  await type(first)
+  await shot('quick-send')
+  if (touch) await press('send', js`__t.one(${SEL.quickSend})`)
+  else await key('Enter', 13, { text: '\r' })
+  await arrived(first)
+  await expect('a line says that it went, and to whom', js`__t.text(document.querySelector(${SEL.quickNote})).includes(${`Sent to ${nameOf(target)}`})`, 3000)
+  check(await ev(js`document.querySelector(${SEL.quickField}).value`) === '', 'the quick-send field was not emptied after sending')
+  check((await place()).path === '/', `quick send left the page: ${(await place()).path}`)
+  await checkEnglish('quick send')
+  await escape()
+  await ev('document.activeElement?.blur?.()')
+  await pressAt(touch ? 200 : 700, 400)   // beside it: the sheet closes
+  await settle()
+  if (!touch) {
+    // "/" from anywhere puts the caret into it.
+    await goSession(other)
+    await ev('document.activeElement?.blur?.()')
+    await key('/', 191, { text: '/' })
+    if (await expect('the key "/" opens quick send from a session', js`document.activeElement === document.querySelector(${SEL.quickField})`, 2000)) {
+      const second = `from another place ${stamp}`
+      await type(second)
+      await key('Enter', 13, { text: '\r' })
+      await arrived(second)
+      check(!state().messages.some(m => m.agent === other.id && m.text === second), 'quick send wrote to the session that is open, not to the crowned one')
+    }
+    await escape()
+    await ev('document.activeElement?.blur?.()')
+    // Alt and an arrow move the session one is in up or down the sidebar.
+    const order = () => state().agents.map(a => a.id).join()
+    const was = order()
+    await key('ArrowUp', 38, { modifiers: 1 })
+    await waitState('Alt and the arrow up move the session up', () => order() !== was, 3000).then(() => passed(), e => check(false, e.message))
+    await expect('the sidebar shows the new order', js`(names => names.indexOf(${nameOf(other)}) < names.indexOf(${nameOf(scripted().find(a => a.id !== other.id))}))(__t.sidebar().filter(r => r.name).map(r => r.name))`, 3000)
+    await key('ArrowDown', 40, { modifiers: 1 })
+    await waitState('Alt and the arrow down move it back', () => order() === was, 3000).then(() => passed(), e => check(false, e.message))
+  }
+  await post('/star', { agent: target.id, starred: false })
+
+  // The jump field in the menu at the logo: a session by its name, a question by its number.
+  await open('/')
+  const jumpTo = async (words, how) => {
+    if (how === 'menu') {
+      await press('the logo', js`__t.one(${SEL.brandMenu})`)
+      await waitFor('the menu shows the jump field', js`!!__t.one(${SEL.jumpField})`, 3000)
+      await press('the jump field', js`__t.one(${SEL.jumpField})`)
+    }
+    await type(words)
+    await sleep(250)
+    await key('Enter', 13, { text: '\r' })
+  }
+  await jumpTo(nameOf(target).slice(0, 4).toLowerCase(), 'menu')
+  await expect('the jump field goes to a session by the start of its name', js`location.pathname === ${`/s/${target.id}`} && !!__t.pane(${target.id})`, 3000)
+  check(!(await ev(js`!!__t.one(${SEL.brandDoors})`)), 'after the jump the menu stays open')
+  await jumpTo(String(card.number), 'menu')
+  await expect('the jump field opens a question by its number', js`__t.focusState()?.id === ${card.id}`, 3000)
+  await closeWindows()
+  if (!touch) {
+    // The keys for it: Ctrl+K (Cmd+K), or G then J.
+    await open('/')
+    for (const [what, send] of [['Ctrl+K', () => key('k', 75, { modifiers: 2 })], ['G then J', async () => { await key('g', 71, { text: 'g' }); await key('j', 74, { text: 'j' }) }]]) {
+      await ev('document.activeElement?.blur?.()')
+      await send()
+      const there = await waitFor('the caret is in the jump field', js`document.activeElement === document.querySelector(${SEL.jumpField})`, 1500).catch(() => false)
+      check(there, `${what} does not open the jump field (the table of keys lists it as "jump: type where to go")`)
+      await escape()
+      await settle()
+    }
+  }
+  await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
+  await open('/')
+}
+
 // name, what it covers, sizes it runs at
 const GROUPS = [
   ['login', 'the link sets the cookie, without it nothing is served', groupLogin, ['desktop']],
@@ -2659,6 +2750,7 @@ const GROUPS = [
   ['agents', 'model and machine, rename and mark persist, VIP leads the inbox', groupAgents],
   ['theme', 'the toggle switches and persists', groupTheme],
   ['help', 'the menu at the logo (Help, Admin, Keys) and the help page', groupHelp],
+  ['quick', 'quick send to the crowned session (bubble, "/"), the jump field (menu, Ctrl+K, G J), Alt+arrows move the session', groupQuick],
   ['pad', 'the pad opens from the bar, with P and under /pad, and closes back to where one was', groupPad],
   ['links', 'links to published assets go to https from a plain http page', groupLinks],
   ['admin', 'the admin page behind its own key', groupAdmin],
