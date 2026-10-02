@@ -143,7 +143,7 @@ const SEL = {
   // These scroll sideways on purpose; everything else must fit the width of a phone.
   sidewaysOk: '#agents, pre, .hist-tabs, .focus-thumbs, .scr-tools, table',
   // What agents and the human wrote. Everything outside of it is the interface and must be English.
-  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .roster-card, .roster-archived, .focus-card, .hist-row, .file-row, #pane-who, .chat-pane-head, #toast strong, pre, code',
+  content: '.inbox-question, .inbox-body, .inbox-more-in, .inbox-answer, .inbox-sender, .inbox-from, .msg, .event, .ask, .agent-row, .roster-card, .roster-archived, .focus-card, .hist-row, .file-row, #pane-who, .chat-pane-head, #toast strong, .says, .back, pre, code',
 }
 
 // Words of the interface the test relies on.
@@ -1158,12 +1158,17 @@ async function groupChoose() {
   check(first.id === queue[0], `the walk starts at "${first.title}", not at the most urgent question "${cardOf(queue[0])?.title}"`)
   await shot('walk')
   if (!touch) {
-    // J and K move without answering (the arrows are yes and no on a two-option card).
-    await key('j', 74, { text: 'j' })
-    await expect('J shows the next question', js`(s => s && s.id === ${queue[1]})(__t.focusState())`, 3000)
+    // The arrows and J/K move, and never answer: only Y, N and the digits do.
+    const answered = () => state().cards.filter(c => c.status !== 'open').length
+    const before = answered()
+    await key('ArrowRight', 39)
+    await expect('the arrow key shows the next question', js`(s => s && s.id === ${queue[1]})(__t.focusState())`, 3000)
     await key('k', 75, { text: 'k' })
     await expect('K goes back to the one before', js`(s => s && s.id === ${first.id})(__t.focusState())`, 3000)
-    check(cardOf(queue[0]).status === 'open' && cardOf(queue[1]).status === 'open', 'moving through the walk answered a question')
+    // Walk past a few questions, two-option ones among them, with the arrow alone.
+    for (let i = 0; i < Math.min(6, queue.length - 1); i++) { await key('ArrowRight', 39); await sleep(250) }
+    await settle()
+    check(answered() === before, `walking through the questions with the arrow key answered ${answered() - before} of them`)
   }
   await escape()
   await expect('Escape closes the walk', '!__t.focusOpen()')
