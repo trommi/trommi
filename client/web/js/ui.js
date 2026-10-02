@@ -52,14 +52,14 @@ export function rich(text) {
   return root
 }
 
-export const clock = ts => new Date(ts).toLocaleTimeString('de-DE', { hour: '2-digit', minute: '2-digit' })
+export const clock = ts => new Date(ts).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
 
 export function ago(ts) {
   const min = Math.round((Date.now() - ts) / 60000)
-  if (min < 1) return 'gerade eben'
-  if (min < 60) return `vor ${min} Min.`
-  if (min < 1440) return `vor ${Math.round(min / 60)} Std.`
-  return new Date(ts).toLocaleDateString('de-DE', { day: 'numeric', month: 'short' })
+  if (min < 1) return 'just now'
+  if (min < 60) return `${min} min ago`
+  if (min < 1440) return `${Math.round(min / 60)} h ago`
+  return new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
 
 /** A span whose relative time keeps itself current. */
@@ -72,7 +72,7 @@ setInterval(() => {
   document.querySelectorAll('[data-ts]').forEach(n => { n.textContent = ago(Number(n.dataset.ts)) })
 }, 30000)
 
-export const URGENCY_LABEL = { low: 'Hat Zeit', normal: 'Normal', high: 'Dringend', critical: 'Blockiert' }
+export const URGENCY_LABEL = { low: 'Whenever', normal: 'Normal', high: 'Urgent', critical: 'Blocking' }
 
 /** Older servers only say image yes/no; newer ones name the kind. */
 export const kindOf = a => a.kind ?? (a.image ? 'image' : 'file')
@@ -177,6 +177,99 @@ export function doodle(id) {
   for (const d of paths) {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
     path.setAttribute('d', d)
+    svg.append(path)
+  }
+  return svg
+}
+
+/** Several sessions scribbled together as one mark: their doodles drawn over each other inside one
+ *  loop that was circled by hand and does not quite close. members: [{ id, mark, hue }].
+ *  Each doodle carries data-member, so a pointer can tell which one it is on. */
+export function pairDoodle(members) {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded(members.map(m => m.id).join('+'))
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 46 34')
+  svg.setAttribute('class', 'pair-mark')
+  svg.setAttribute('aria-hidden', 'true')
+  const n = members.length
+  const size = n > 2 ? .56 : .68
+  members.forEach((m, i) => {
+    const g = document.createElementNS(NS, 'g')
+    const own = doodle(m.mark ?? m.id)
+    const x = 4.5 + (n > 1 ? i * ((37 - 32 * size) / (n - 1)) : 0)
+    const y = (34 - 32 * size) / 2 + (i % 2 ? 2.4 : -2.2)
+    const turn = (parseFloat(own.style.rotate) || 0) + (i % 2 ? 9 : -7)
+    g.setAttribute('transform', `translate(${x.toFixed(1)} ${y.toFixed(1)}) scale(${size}) rotate(${turn} 16 16)`)
+    g.dataset.member = m.id
+    g.style.setProperty('--hue', m.hue)
+    const hit = document.createElementNS(NS, 'rect')
+    hit.setAttribute('width', '32')
+    hit.setAttribute('height', '32')
+    g.append(hit, ...own.childNodes)
+    svg.append(g)
+  })
+  // The loop: one and a bit turns round both, starting and ending apart.
+  const start = r() * 6, steps = 15
+  const loop = document.createElementNS(NS, 'path')
+  loop.setAttribute('class', 'pair-loop')
+  loop.setAttribute('d', penPath(Array.from({ length: steps }, (_, i) => {
+    const a = start + (i / (steps - 2)) * Math.PI * 2, drift = i / steps * 1.6
+    return [23 + Math.cos(a) * (20.5 - drift + (r() - .5) * 1.4), 17 + Math.sin(a) * (14.5 - drift + (r() - .5) * 1.4)]
+  })))
+  svg.append(loop)
+  return svg
+}
+
+// ---- sketched icons: the hand, the thumbs, later, choose ------------------------
+
+// Strokes as a pen would make them, in a 24 box. Each is a list of points; the pen wobbles a little
+// (seeded by the name, so an icon always looks the same) and lines neither meet nor end cleanly.
+const flip = strokes => strokes.map(s => s.map(([x, y]) => [24 - x, 24 - y]))
+const THUMB = [
+  [[4.6, 11.2], [4.2, 19.6], [7.3, 19.9], [7.7, 11], [4.3, 10.7]],
+  [[8.2, 11.4], [10, 7.6], [10.8, 3.6], [13.4, 3.9], [13, 7.4], [12.4, 9.9], [17.8, 9.6], [19.8, 10.8], [19.2, 13.4], [18.4, 16.8], [17.2, 19.8], [14, 20.1], [10.2, 19.8], [8.1, 18.9]],
+  [[15.2, 13.2], [18.6, 13.3]],
+  [[14.8, 16.4], [17.9, 16.6]],
+]
+const SKETCH = {
+  yes: THUMB,
+  no: flip(THUMB),
+  // a raised hand: thumb, four fingers, drawn without lifting the pen, then the heel of the hand
+  hand: [
+    [[7.6, 14.6], [5.8, 12.2], [3.9, 11.4], [3.7, 13.3], [5.6, 16.2], [7.4, 19.4], [10, 21.3], [13.6, 21.4], [16.4, 19.6], [17.6, 15.4], [17.8, 8.4], [16.6, 7], [15.6, 8.6], [15.5, 11.6]],
+    [[7.6, 14.2], [7.5, 6.2], [8.6, 4.8], [9.8, 6.2], [10, 11.2]],
+    [[10, 11], [10.1, 4.2], [11.4, 2.7], [12.6, 4.2], [12.6, 11]],
+    [[12.7, 11.2], [13, 5.2], [14.2, 4], [15.3, 5.6], [15.3, 11.8]],
+  ],
+  later: [[[12, 3.8], [12.3, 10], [11.9, 16.4]], [[6.6, 11.6], [12.1, 17.2], [17.4, 11.3]], [[4.6, 20.8], [12, 20.3], [19.6, 20.6]]],
+  back: [[[12.1, 20.2], [11.8, 14], [12.2, 7.6]], [[6.6, 12.6], [12, 6.8], [17.5, 12.3]], [[4.6, 3.6], [12, 3.9], [19.5, 3.4]]],
+  // three options, one of them ticked
+  choose: [
+    [[3.6, 6.6], [5.2, 8.6], [8.4, 4.4]],
+    [[11.4, 6.6], [16, 6.3], [20.6, 6.8]],
+    [[4.4, 12.4], [6.4, 12.3]], [[11.2, 12.4], [15, 12.7], [19, 12.2]],
+    [[4.4, 18], [6.5, 18.2]], [[11.4, 18.2], [14, 17.9], [16.8, 18.3]],
+  ],
+  other: [[[4.6, 8.6], [11, 8.2], [18.8, 8.7]], [[14.6, 4.8], [19.2, 8.6], [14.9, 12.2]], [[19.4, 15.6], [12, 15.9], [5.2, 15.4]], [[9.4, 11.9], [4.8, 15.5], [9.2, 19.3]]],
+  // an hourglass in one go, a little sand below: whenever
+  whenever: [
+    [[6.4, 3.8], [17.8, 3.6], [17.4, 6.4], [12.6, 11.8], [17.6, 17.6], [18, 20.4], [6.2, 20.6], [6.5, 17.8], [11.4, 12.2], [6.6, 6.6], [6.2, 3.4]],
+    [[10.4, 18.4], [12.1, 16.6], [13.8, 18.5]],
+  ],
+}
+
+/** An icon drawn like the session marks: a few uneven pen strokes with a little tilt. Sized and coloured by CSS. */
+export function sketch(name) {
+  const r = seeded(`sketch:${name}`)
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('class', 'sketch')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.style.rotate = `${((r() - .5) * 9).toFixed(1)}deg`
+  for (const stroke of SKETCH[name] ?? []) {
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+    path.setAttribute('d', penPath(stroke.map(([x, y]) => [x + (r() - .5) * .7, y + (r() - .5) * .7])))
     svg.append(path)
   }
   return svg

@@ -31,6 +31,9 @@
 
   --deny: #a8322d;
 
+  /* the golden ticket of a session that matters most: body, highlight, ink on gold */
+  --gold: #c39a1f; --gold-hi: #f0d67a; --gold-ink: #3d2c00;
+
   /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
   --st-decision: #c62f25;  --st-decision-soft: #fbe0de;
   --st-working: #b07a06;   --st-working-soft: #fbf0cf;
@@ -76,6 +79,7 @@
   --urg-high: #f2a56c; --urg-high-soft: #3a2415;
   --urg-critical: #ff8a80; --urg-critical-soft: #41191a;
   --deny: #f08a83;
+  --gold: #d2ab3c; --gold-hi: #f2de96; --gold-ink: #2a1f00;
   --st-decision: #ff8a80; --st-decision-soft: #41191a;
   --st-working: #f2c14e; --st-working-soft: #3a2f10;
   --st-done: #6cd598; --st-done-soft: #14301f;

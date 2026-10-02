@@ -1,8 +1,14 @@
-// The conversation: message log with stable nodes, pinned scrolling, composer,
-// plus the pieces the history shares (icons, attachments, lightbox, code blocks).
+// The conversation: one pane per session (several side by side for a group), each with its
+// message log with stable nodes, pinned scrolling and its own composer. The session's open
+// questions stand in the log as rows where they were asked; two filters lay a list over the
+// log instead: the questions only, or the files. Plus the pieces other modules share
+// (icons, attachments, lightbox, code blocks).
 
-import { sendMessage, decide } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, URGENCY_LABEL } from './ui.js'
+import { sendMessage } from './store.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle } from './ui.js'
+import { questionRow, lineFit, mountInbox } from './inbox.js'
+import { mountHistory, mountFiles } from './history.js'
+import { mountDictation } from './speech.js'
 
 // ---- icons -----------------------------------------------------------------
 
@@ -18,13 +24,14 @@ const ICONS = {
   close: ['M6 6l12 12M18 6 6 18'],
   prev: ['M14.500 5.500 8 12l6.500 6.500'],
   next: ['M9.500 5.500 16 12l-6.500 6.500'],
-  chevron: ['M5.500 9 12 15.500 18.500 9'],
   file: ['M7 3.500h7l4.500 4.500V19a1.500 1.500 0 0 1-1.500 1.500H7A1.500 1.500 0 0 1 5.500 19V5A1.500 1.500 0 0 1 7 3.500z', 'M13.500 3.500V8.500H18.500'],
   external: ['M14 5h5v5', 'M19 5l-8 8', 'M11 6.500H6.500A1.500 1.500 0 0 0 5 8v9.500A1.500 1.500 0 0 0 6.500 19H16a1.500 1.500 0 0 0 1.500-1.500V13'],
   spark: ['M12 3.500c.700 4.500 4 7.800 8.500 8.500-4.500.700-7.800 4-8.500 8.500-.700-4.500-4-7.800-8.500-8.500 4.500-.700 7.800-4 8.500-8.500z'],
   warn: ['M12 9v4.500', 'M12 16.800v.100', 'M10.300 4.500 2.900 17.500a2 2 0 0 0 1.700 3h14.800a2 2 0 0 0 1.700-3L13.700 4.500a2 2 0 0 0-3.400 0z'],
-  stack: ['M6.500 8.500h11a2 2 0 0 1 2 2v7a2 2 0 0 1-2 2h-11a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2z', 'M7.500 5.500h9'],
-  history: ['M4 12a8 8 0 1 0 2.600-5.900', 'M4 4.500V8.500H8', 'M12 8v4.500l3 1.800'],
+  pen: ['M4 20c2.500-1 3-3.500 4.500-5.500S12 11 13.500 12s-1 4 .500 5 3.500-2 6-2.500M15.500 4.500l4 4L11 17l-4.500.500L7 13z'],
+  mic: ['M12 3.500a3 3 0 0 1 3 3v5a3 3 0 0 1-6 0v-5a3 3 0 0 1 3-3z', 'M5.500 11.500a6.500 6.500 0 0 0 13 0M12 18v3'],
+  send: ['M12 19V5M5.500 11.500 12 5l6.500 6.500'],
+  down: ['M12 5v14M5.500 12.500 12 19l6.500-6.500'],
 }
 
 export function icon(name, cls = 'ico') {
@@ -54,12 +61,12 @@ let box = null
 function lightbox() {
   if (box) return box
   const dialog = el('dialog', 'lightbox')
-  dialog.setAttribute('aria-label', 'Bildansicht')
+  dialog.setAttribute('aria-label', 'Picture')
   dialog.tabIndex = -1
   const stage = el('div', 'lightbox-stage')
   const img = el('img', 'lightbox-img')
-  const prev = button('lightbox-nav lightbox-prev', 'Vorheriges Bild')
-  const next = button('lightbox-nav lightbox-next', 'Nächstes Bild')
+  const prev = button('lightbox-nav lightbox-prev', 'Previous picture')
+  const next = button('lightbox-nav lightbox-next', 'Next picture')
   prev.append(icon('prev'))
   next.append(icon('next'))
   stage.append(prev, img, next)
@@ -70,9 +77,9 @@ function lightbox() {
   const open = el('a', 'lightbox-open')
   open.target = '_blank'
   open.rel = 'noopener'
-  open.setAttribute('aria-label', 'Original in neuem Tab öffnen')
+  open.setAttribute('aria-label', 'Open the original in a new tab')
   open.append(icon('external'))
-  const close = button('lightbox-close', 'Schließen')
+  const close = button('lightbox-close', 'Close')
   close.append(icon('close'))
   bar.append(name, count, open, close)
   dialog.append(stage, bar)
@@ -133,7 +140,7 @@ export function attachmentNodes(list = []) {
   if (images.length) {
     const grid = el('div', images.length === 1 ? 'shots shots-one' : 'shots')
     images.forEach((a, i) => {
-      const btn = button('shot', `${a.name} vergrößern`)
+      const btn = button('shot', `Enlarge ${a.name}`)
       const img = el('img')
       img.src = a.url
       img.alt = a.name
@@ -190,16 +197,15 @@ export function richPlus(source) {
     const wrap = el('div', 'code')
     const head = el('div', 'code-head')
     const copy = button('code-copy')
-    const label = el('span', null, 'Kopieren')
-    copy.append(icon('copy'), label)
+    copy.append(icon('copy'), el('span', null, 'Copy'))
     let timer
     copy.addEventListener('click', async () => {
       const ok = await copyText(pre.textContent)
-      copy.replaceChildren(icon(ok ? 'check' : 'warn'), el('span', null, ok ? 'Kopiert' : 'Nicht kopiert'))
+      copy.replaceChildren(icon(ok ? 'check' : 'warn'), el('span', null, ok ? 'Copied' : 'Not copied'))
       copy.classList.toggle('is-done', ok)
       clearTimeout(timer)
       timer = setTimeout(() => {
-        copy.replaceChildren(icon('copy'), el('span', null, 'Kopieren'))
+        copy.replaceChildren(icon('copy'), el('span', null, 'Copy'))
         copy.classList.remove('is-done')
       }, 1800)
     })
@@ -212,7 +218,7 @@ export function richPlus(source) {
 
 // ---- messages --------------------------------------------------------------
 
-const EVENT_LABEL = { asked: 'Neue Frage', decided: 'Entschieden', done: 'Erledigt', urgency: 'Dringlichkeit', reopened: 'Zurückgenommen' }
+const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back' }
 const GROUP_GAP = 5 * 60000
 const WORKING_WINDOW = 10 * 60000
 
@@ -220,11 +226,11 @@ const dayKey = ts => new Date(ts).toDateString()
 function dayLabel(ts) {
   const today = new Date()
   const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1)
-  if (dayKey(ts) === today.toDateString()) return 'Heute'
-  if (dayKey(ts) === yesterday.toDateString()) return 'Gestern'
-  return new Date(ts).toLocaleDateString('de-DE', { weekday: 'long', day: 'numeric', month: 'long' })
+  if (dayKey(ts) === today.toDateString()) return 'Today'
+  if (dayKey(ts) === yesterday.toDateString()) return 'Yesterday'
+  return new Date(ts).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
 }
-const fullTime = ts => new Date(ts).toLocaleString('de-DE', { dateStyle: 'full', timeStyle: 'short' })
+const fullTime = ts => new Date(ts).toLocaleString('en-GB', { dateStyle: 'full', timeStyle: 'short' })
 
 function timeNode(ts, cls) {
   const t = el('time', cls, clock(ts))
@@ -240,9 +246,8 @@ function agentMark() {
 }
 
 // A drawing the human sent: tapping it puts the canvas back on the scribble board.
-let openScribble = null
-function scribbleCard(a) {
-  const card = button('scribble-card', 'Scribble gesendet. Zum Canvas der Sitzung')
+function scribbleCard(a, onOpen) {
+  const card = button('scribble-card', 'Scribble sent. Open the canvas of the session')
   const img = el('img')
   img.src = a.url
   img.alt = ''
@@ -250,105 +255,18 @@ function scribbleCard(a) {
   // The picture can be gone (the server cleans up after a while); the card then stands without it.
   img.addEventListener('error', () => img.remove())
   card.append(img, el('span', null, 'Scribble'))
-  card.addEventListener('click', () => openScribble?.())
+  card.addEventListener('click', onOpen)
   return card
 }
 
-// A question the agent asked stays answerable right where it was asked: while
-// its card is open the marker is a small card with the options, afterwards it
-// shrinks back to one line. asks holds those live nodes so render() can repaint them.
-const asks = new Map()   // message id -> { node, m, onCard, sig }
-
-function paintAsk(entry, card) {
-  const sig = card ? `${card.status}|${card.choice}|${card.urgency}|${card.urgency_reason}` : 'gone'
-  if (entry.sig === sig) return
-  entry.sig = sig
-  const { node, m, onCard } = entry
-  if (card?.status !== 'open' || card.kind !== 'decision') {
-    node.className = 'ask'
-    return node.replaceChildren(eventLine(m, false, card, onCard))
-  }
-  node.className = 'ask ask-open'
-  node.dataset.urgency = card.urgency
-  const head = el('header', 'ask-head')
-  head.append(el('span', 'ask-tab', `Nr. ${card.number} · ${URGENCY_LABEL[card.urgency] ?? ''}`))
-  const more = button('ask-more')
-  more.append('Ganze Karte')
-  more.addEventListener('click', () => onCard?.(card.id))
-  head.append(more)
-  const error = el('p', 'ask-error')
-  error.hidden = true
-  const options = el('div', 'ask-options')
-  for (const o of card.options) {
-    const b = button('ask-option')
-    b.append(el('strong', null, o.label))
-    if (o.detail) b.append(el('span', null, o.detail))
-    // One tap decides, as on the stack; undo lives in the history.
-    b.addEventListener('click', async () => {
-      for (const other of options.children) other.disabled = true
-      try {
-        await decide(card.id, o.key)
-      } catch (err) {
-        for (const other of options.children) other.disabled = false
-        error.textContent = `Nicht übernommen: ${err.message}`
-        error.hidden = false
-      }
-    })
-    options.append(b)
-  }
-  node.replaceChildren(head, el('h3', 'ask-title', card.title))
-  if (card.urgency_reason) node.append(el('p', 'ask-reason', card.urgency_reason))
-  node.append(options, error)
-}
-
-function eventLine(m, cont, card, onCard) {
+function eventLine(m, cont, onCard) {
   const node = button(`event event-${m.kind}${cont ? ' cont' : ''}`)
   const ico = el('span', 'event-ico')
   ico.append(icon(ICONS[m.kind] ? m.kind : 'asked'))
   const body = el('span', 'event-body')
-  body.append(el('span', 'event-kind', EVENT_LABEL[m.kind] ?? 'Board'))
-  if (card?.number != null) body.append(el('span', 'event-nr', `Nr. ${card.number}`))
-  body.append(el('span', 'event-text', m.text))
+  body.append(el('span', 'event-kind', EVENT_LABEL[m.kind] ?? 'Board'), el('span', 'event-text', m.text))
   node.append(ico, body, timeNode(m.ts, 'event-time'))
   node.addEventListener('click', () => onCard?.(m.card_id))
-  return node
-}
-
-function messageNode(m, cont, cards, onCard) {
-  if (m.from === 'event' && m.kind === 'asked') {
-    const entry = { node: el('div', 'ask'), m, onCard, sig: null }
-    asks.set(m.id, entry)
-    paintAsk(entry, cards.find(c => c.id === m.card_id))
-    return entry.node
-  }
-  if (m.from === 'event') return eventLine(m, cont, cards.find(c => c.id === m.card_id), onCard)
-  const node = el('article', `msg msg-${m.from === 'user' ? 'user' : 'agent'}${cont ? ' cont' : ''}`)
-  if (m.from === 'user') {
-    for (const a of (m.attachments ?? []).filter(a => a.kind === 'scribble')) node.append(scribbleCard(a))
-    if (m.text) {
-      const bubble = el('div', 'bubble')
-      bubble.append(el('p', null, m.text))
-      node.append(bubble)
-    }
-    node.append(timeNode(m.ts, 'msg-time'))
-    return node
-  }
-  if (!cont) {
-    const head = el('header', 'msg-head')
-    head.append(agentMark(), el('span', 'msg-name', 'Agent'), timeNode(m.ts, 'msg-time'))
-    node.append(head)
-  } else {
-    node.title = fullTime(m.ts)
-  }
-  const body = richPlus(m.text ?? '')
-  body.append(...attachmentNodes(m.attachments))
-  node.append(body)
-  // What the agent chose to show of its reasoning or evidence, closed until asked for.
-  if (m.details) {
-    const more = el('details', 'msg-details')
-    more.append(el('summary', null, 'Details'), richPlus(m.details))
-    node.append(more)
-  }
   return node
 }
 
@@ -357,7 +275,7 @@ function emptyNode(onPick) {
   const mark = agentMark()
   mark.classList.add('agent-mark-lg')
   const picks = el('div', 'empty-picks')
-  for (const text of ['Wo stehen wir gerade?', 'Was brauchst du von mir?', 'Fass zusammen, was du zuletzt getan hast.']) {
+  for (const text of ['Where do we stand?', 'What do you need from me?', 'Sum up what you did last.']) {
     const b = button('empty-pick')
     b.textContent = text
     b.addEventListener('click', () => onPick(text))
@@ -365,40 +283,89 @@ function emptyNode(onPick) {
   }
   node.append(
     mark,
-    el('h2', null, 'Womit soll der Agent anfangen?'),
-    el('p', null, 'Schreib ihm, woran er arbeiten soll. Wenn er etwas von dir wissen muss, legt er dir eine Karte auf den Stapel.'),
+    el('h2', null, 'What should the agent start with?'),
+    el('p', null, 'Tell it what to work on. When it needs something from you, it puts a question in front of you.'),
     picks,
   )
   return node
 }
 
-// ---- mount -----------------------------------------------------------------
+// ---- one session's pane ------------------------------------------------------
 
-/**
- * Wire up the conversation inside #chat.
- *   onCard(cardId)   the user tapped a card event
- *   onScribble()     the user tapped a scribble they sent earlier
- *   onUnread(count)  messages arrived that the user has not seen yet
- * Returns { render(state, loaded), unread(), focus(hint) }.
- */
-export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = {}) {
-  openScribble = onScribble
-  const $ = id => document.getElementById(id)
-  const log = $('log')
-  const inner = $('log-inner')
-  const jump = $('jump')
-  const jumpText = $('jump-text')
-  const form = $('composer')
-  const draft = $('draft')
-  const send = $('send')
-  const error = $('send-error')
+const filtered = () => Boolean(document.body.dataset.filter)
+
+function createPane(agent, ctx) {
+  const root = el('section', 'chat-pane')
+  root.dataset.agent = agent
+  // Who this column is, shown only when several stand side by side.
+  const head = el('header', 'chat-pane-head')
+  head.hidden = true
+  const log = el('div', 'log')
+  log.tabIndex = -1
+  const inner = el('div', 'column log-inner')
+  inner.setAttribute('role', 'log')
+  inner.setAttribute('aria-live', 'polite')
+  inner.setAttribute('aria-relevant', 'additions')
+  log.append(inner)
+
+  // The two lists a filter lays over the log.
+  const listPane = (cls, ...roots) => {
+    const pane = el('div', `pane-list ${cls}`)
+    const column = el('div', 'column')
+    column.append(...roots)
+    pane.append(column)
+    return pane
+  }
+  const cardsRoot = el('div', 'session-cards')
+  const historyRoot = el('div', 'history')
+  const filesRoot = el('div', 'files-root')
+  const questions = mountInbox(cardsRoot, { onOpen: ctx.onOpen, onDecided: ctx.onDecided, agent })
+  const history = mountHistory(historyRoot, { agent, flags: ctx.flags })
+  const files = mountFiles(filesRoot, { agent })
+  const questionsPane = listPane('pane-questions', cardsRoot, historyRoot)
+  const filesPane = listPane('pane-files', filesRoot)
+  const body = el('div', 'chat-body')
+  body.append(log, questionsPane, filesPane)
+
+  const jump = button('jump')
+  const jumpText = el('span', null, 'To the end')
+  jump.append(icon('down'), jumpText)
+  jump.hidden = true
+  const error = el('p', 'send-error')
+  error.setAttribute('role', 'alert')
+  error.hidden = true
+  const form = el('form', 'composer')
+  const draft = el('textarea')
+  draft.rows = 1
+  draft.autocomplete = 'off'
+  draft.enterKeyHint = 'enter'
+  const pen = button('mic', 'Scribble: draw and show pictures')
+  pen.append(icon('pen'))
+  const mic = button('mic')
+  mic.append(icon('mic'))
+  mic.hidden = true
+  const send = el('button', 'send')
+  send.type = 'submit'
+  send.setAttribute('aria-label', 'Send')
+  send.disabled = true
+  send.append(icon('send'))
+  form.append(draft, pen, mic, send)
+  const hint = el('p', 'hint')
+  hint.setAttribute('aria-hidden', 'true')
+  hint.append(el('kbd', null, 'Enter'), ' sends, ', el('kbd', null, 'Shift'), ' + ', el('kbd', null, 'Enter'), ' for a new line')
+  const dockColumn = el('div', 'column')
+  dockColumn.append(error, form, hint)
+  const dock = el('div', 'dock')
+  dock.append(jump, dockColumn)
+  root.append(head, body, dock)
+
   const fine = matchMedia('(pointer: fine)')
-
   const working = el('div', 'working')
   working.hidden = true
   const dots = el('span', 'dots')
   dots.append(el('i'), el('i'), el('i'))
-  working.append(agentMark(), el('span', null, 'Agent arbeitet'), dots)
+  working.append(agentMark(), el('span', null, 'Agent is working'), dots)
+  inner.append(working)
 
   let order = []            // message ids in the log, in order
   let lastMsg = null        // last rendered message, for grouping and day breaks
@@ -407,23 +374,91 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
   let pinned = true         // the user is at the end and wants to stay there
   let unread = 0
   let empty = null
-  let scope = null          // the session whose conversation is in the log
+  let placeholder = 'Message to the agent'
+  let headSig = ''
+
+  // A question the agent asked stays answerable right where it was asked: while its card is
+  // open the marker is the same row as in the inbox, afterwards it shrinks back to one line.
+  const asks = new Map()   // message id -> { node, m, sig }
+  const fit = lineFit()
+  function paintAsk(entry, state) {
+    const card = state.all.cards.find(c => c.id === entry.m.card_id)
+    const off = state.later.includes(card?.id)
+    const vip = Boolean(state.all.agents.find(a => a.id === agent)?.starred)
+    const sig = card ? JSON.stringify([card.status, card.choice, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.attachments?.length, off, vip]) : 'gone'
+    if (entry.sig === sig) return
+    entry.sig = sig
+    const old = entry.node.querySelector('.inbox-question')
+    if (old) fit.unobserve(old)
+    if (card?.status !== 'open') {
+      entry.node.className = 'ask'
+      return entry.node.replaceChildren(eventLine(entry.m, false, ctx.onCard))
+    }
+    entry.node.className = 'ask ask-open'
+    entry.node.replaceChildren(questionRow(card, { onOpen: ctx.onOpen, onDecided: ctx.onDecided, off, vip, fit }))
+  }
+
+  function messageNode(m, cont, state) {
+    if (m.from === 'event' && m.kind === 'asked') {
+      const entry = { node: el('div', 'ask'), m, sig: null }
+      asks.set(m.id, entry)
+      paintAsk(entry, state)
+      return entry.node
+    }
+    if (m.from === 'event') return eventLine(m, cont, ctx.onCard)
+    const node = el('article', `msg msg-${m.from === 'user' ? 'user' : 'agent'}${cont ? ' cont' : ''}`)
+    if (m.from === 'user') {
+      for (const a of (m.attachments ?? []).filter(a => a.kind === 'scribble')) node.append(scribbleCard(a, () => ctx.onScribble?.(agent)))
+      // Asked back about a question: say which one, and lead there on a tap.
+      const about = m.card_id && state.all.cards.find(c => c.id === m.card_id)
+      if (about) {
+        const ref = button('msg-about')
+        ref.append(el('span', 'caps', 'About'), el('span', null, about.title))
+        ref.addEventListener('click', () => ctx.onCard?.(about.id))
+        node.append(ref)
+      }
+      if (m.text) {
+        const bubble = el('div', 'bubble')
+        bubble.append(el('p', null, m.text))
+        node.append(bubble)
+      }
+      node.append(timeNode(m.ts, 'msg-time'))
+      return node
+    }
+    if (!cont) {
+      const top = el('header', 'msg-head')
+      top.append(agentMark(), el('span', 'msg-name', 'Agent'), timeNode(m.ts, 'msg-time'))
+      node.append(top)
+    } else {
+      node.title = fullTime(m.ts)
+    }
+    const text = richPlus(m.text ?? '')
+    text.append(...attachmentNodes(m.attachments))
+    node.append(text)
+    // What the agent chose to show of its reasoning or evidence, closed until asked for.
+    if (m.details) {
+      const more = el('details', 'msg-details')
+      more.append(el('summary', null, 'Details'), richPlus(m.details))
+      node.append(more)
+    }
+    return node
+  }
 
   // ---- scrolling ----
 
-  const visible = () => log.clientHeight > 0
+  const visible = () => root.isConnected && log.clientHeight > 0 && !filtered()
   const atEnd = () => log.scrollHeight - log.scrollTop - log.clientHeight < 72
   const toEnd = smooth => log.scrollTo({ top: log.scrollHeight, behavior: smooth ? 'smooth' : 'instant' })
 
   function setUnread(n) {
     if (n === unread) return
     unread = n
-    onUnread?.(unread)
+    ctx.onUnread?.()
   }
   function updateJump() {
     jump.hidden = pinned
     jump.classList.toggle('has-unread', unread > 0)
-    jumpText.textContent = unread === 0 ? 'Zum Ende' : unread === 1 ? '1 neue Nachricht' : `${unread} neue Nachrichten`
+    jumpText.textContent = unread === 0 ? 'To the end' : unread === 1 ? '1 new message' : `${unread} new messages`
   }
   function settle() {
     if (!visible()) return
@@ -456,12 +491,12 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     const last = messages.findLast(m => m.from !== 'event')
     working.hidden = !(last?.from === 'user' && Date.now() - last.ts < WORKING_WINDOW)
   }
-  function refreshDays() {
+  function tick() {
+    refreshWorking()
     for (const n of inner.querySelectorAll('.day')) n.firstChild.textContent = dayLabel(Number(n.dataset.day))
   }
-  setInterval(() => { refreshWorking(); refreshDays() }, 30000)
 
-  function append(m, cards, animate) {
+  function append(m, state, animate) {
     if (!lastMsg || dayKey(lastMsg.ts) !== dayKey(m.ts)) {
       const day = el('div', 'day')
       day.dataset.day = m.ts
@@ -471,7 +506,7 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     }
     const sameSide = lastMsg && lastMsg.from === m.from
     const cont = Boolean(sameSide && (m.from === 'event' || m.ts - lastMsg.ts < GROUP_GAP))
-    const node = messageNode(m, cont, cards, onCard)
+    const node = messageNode(m, cont, state)
     node.dataset.id = m.id
     if (animate) node.classList.add('is-new')
     inner.insertBefore(node, working)
@@ -479,27 +514,42 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     lastMsg = m
   }
 
-  function render(state, loaded) {
-    if (!loaded) return
-    messages = state.messages
+  function render(state, several) {
+    const me = state.all.agents.find(a => a.id === agent)
+    const sig = several && me ? JSON.stringify([me.name, me.mark]) : ''
+    if (sig !== headSig) {
+      headSig = sig
+      head.hidden = !sig
+      if (sig) {
+        const mark = el('span', 'chat-pane-mark')
+        mark.append(doodle(me.mark ?? me.id))
+        head.replaceChildren(mark, el('strong', null, me.name))
+      }
+      placeholder = sig ? `Message to ${me.name}` : 'Message to the agent'
+      draft.placeholder = placeholder
+      draft.setAttribute('aria-label', placeholder)
+    }
+    mic.hidden = !state.speech
+
+    messages = state.all.messages.filter(m => m.agent === agent)
     const grows = order.length <= messages.length && order.every((id, i) => messages[i].id === id)
-    // Another session, or a log that was rewritten: start over at its end, with nothing unread.
-    const restart = first || !grows || state.scope !== scope
-    scope = state.scope
+    // A log that was rewritten: start over at its end, with nothing unread.
+    const restart = first || !grows
     if (restart) {
       inner.replaceChildren(working)
       asks.clear()
+      fit.disconnect()
       order = []
       lastMsg = null
       empty = null
     }
     const fresh = messages.slice(order.length)
     const animate = !first && grows
-    for (const m of fresh) append(m, state.cards, animate)
-    for (const entry of asks.values()) paintAsk(entry, state.cards.find(c => c.id === entry.m.card_id))
+    for (const m of fresh) append(m, state, animate)
+    for (const entry of asks.values()) paintAsk(entry, state)
 
     if (!messages.length && !empty) {
-      empty = emptyNode(text => { draft.value = text; fit(); draft.focus() })
+      empty = emptyNode(text => { draft.value = text; fitDraft(); draft.focus() })
       inner.insertBefore(empty, working)
     } else if (messages.length && empty) {
       empty.remove()
@@ -517,15 +567,19 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     }
     first = false
     settle()
+
+    questions.render(state)
+    history.render(state, true)
+    files.render(state, true)
   }
 
   // ---- composer ----
 
   let sending = false
-  const DRAFT_KEY = 'agent-board-draft'
+  const DRAFT_KEY = `agent-board-draft:${agent}`
   const remember = () => { try { localStorage.setItem(DRAFT_KEY, draft.value) } catch {} }
 
-  function fit() {
+  function fitDraft() {
     draft.style.height = 'auto'
     const max = Math.max(120, Math.min(260, window.innerHeight * 0.36))
     draft.style.height = `${Math.min(draft.scrollHeight, max)}px`
@@ -537,26 +591,25 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     error.hidden = false
   }
 
+  draft.placeholder = placeholder
+  draft.setAttribute('aria-label', placeholder)
   try { draft.value = localStorage.getItem(DRAFT_KEY) ?? '' } catch {}
   draft.addEventListener('input', () => {
     error.hidden = true
     remember()
-    fit()
+    fitDraft()
   })
-  window.addEventListener('resize', fit)
-  // Fonts change the line height once they arrive.
-  document.fonts?.ready.then(fit)
-  fit()
-  // The composer cannot measure itself while its pane is hidden; do it when it comes into view.
+  // The composer cannot measure itself while its pane is hidden; do it when it comes into view,
+  // when the window changes, and when the fonts arrive (they change the line height).
   let formWidth = 0
   new ResizeObserver(() => {
     const w = form.clientWidth
-    if (w && w !== formWidth) fit()
+    if (w && w !== formWidth) fitDraft()
     formWidth = w
   }).observe(form)
+  document.fonts?.ready.then(fitDraft)
   // A hint in place of the usual placeholder, until the field is left or a message is sent.
-  const PLACEHOLDER = draft.placeholder
-  draft.addEventListener('blur', () => { draft.placeholder = PLACEHOLDER })
+  draft.addEventListener('blur', () => { draft.placeholder = placeholder })
 
   form.addEventListener('submit', async e => {
     e.preventDefault()
@@ -565,22 +618,22 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
     sending = true
     form.classList.add('is-sending')
     error.hidden = true
-    fit()
+    fitDraft()
     try {
-      await sendMessage(text)
+      await sendMessage(text, agent)
       // Only clear what was sent; the user may already be typing the next message.
       if (draft.value.trim() === text) draft.value = ''
-      draft.placeholder = PLACEHOLDER
+      draft.placeholder = placeholder
       remember()
       pinned = true
       settle()
     } catch (err) {
-      const reason = err instanceof TypeError ? 'keine Verbindung zum Server' : err.message
-      showError(`Nicht gesendet: ${reason}. Dein Text bleibt hier stehen.`)
+      const reason = err instanceof TypeError ? 'no connection to the server' : err.message
+      showError(`Not sent: ${reason}. Your text stays here.`)
     }
     sending = false
     form.classList.remove('is-sending')
-    fit()
+    fitDraft()
   })
 
   // Enter sends with a real keyboard; on touch screens it stays a line break.
@@ -596,26 +649,92 @@ export function mountChat({ onCard, onScribble, onUnread, flags = new Set() } = 
   send.addEventListener('mousedown', e => e.preventDefault())
   // The whole composer box is a target for the caret.
   form.addEventListener('click', e => { if (e.target === form) draft.focus() })
+  // The pen in the composer is a shortcut to the canvas.
+  pen.addEventListener('click', () => ctx.onScribble?.(agent))
+  mountDictation(mic, draft, { onError: ctx.onError })
 
-  if (fine.matches && !flags.has('decisions')) draft.focus({ preventScroll: true })
+  return {
+    root, render, tick, settle, showError,
+    unread: () => unread,
+    /** Shown again after another session was: at its end, with nothing unread. */
+    attached() { pinned = true; setUnread(0); requestAnimationFrame(() => { fitDraft(); settle() }) },
+    focus(text) {
+      draft.focus({ preventScroll: true })
+      if (text) draft.placeholder = text
+    },
+    /** Bring one card into view in the list of questions: its open row, or its line among the answered. */
+    reveal(cardId) {
+      const row = cardsRoot.querySelector(`[data-id="${CSS.escape(cardId)}"]`)
+      if (!row) return history.reveal(cardId)
+      row.scrollIntoView({ block: 'center', behavior: 'smooth' })
+      row.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
+      return true
+    },
+    // states for screenshots
+    stage(name) {
+      if (name === 'scrolled') { log.scrollTop = 0; pinned = false; setUnread(2); updateJump() }
+      if (name === 'lightbox') inner.querySelector('.shot')?.click()
+    },
+    count: () => order.length,
+  }
+}
 
-  // ---- states for screenshots ----
-  if (flags.has('error')) showError('Nicht gesendet: keine Verbindung zum Server. Dein Text bleibt hier stehen.')
-  const once = fn => { let done = false; return () => { if (!done && order.length) { done = true; fn() } } }
-  const demo = []
-  if (flags.has('scrolled')) demo.push(once(() => { log.scrollTop = 0; pinned = false; setUnread(2); updateJump() }))
-  if (flags.has('lightbox')) demo.push(once(() => inner.querySelector('.shot')?.click()))
+// ---- mount -----------------------------------------------------------------
+
+/**
+ * The conversation of whatever is in scope, inside root: one pane for a session, one per member for a group.
+ *   onOpen(cardId)            open a question as a window of its own
+ *   onDecided(card, option)   a question was answered in a row
+ *   onCard(cardId)            the user tapped the line of a card that is no longer open
+ *   onScribble(agentId)       the user wants that session's canvas
+ *   onUnread()                the number of unseen messages changed
+ *   onError(text)             something went wrong that is worth a notice
+ * Returns { render(state, loaded), unread(), focus(hint, agentId), reveal(cardId), setMember(agentId), settle() }.
+ */
+export function mountChat(root, ctx = {}) {
+  const flags = ctx.flags ?? new Set()
+  const panes = new Map()   // session id -> pane; kept, so a session's log is built once
+  let shown = []
+  let member = null
+  setInterval(() => { for (const id of shown) panes.get(id)?.tick() }, 30000)
+  window.addEventListener('resize', () => { for (const id of shown) panes.get(id)?.settle() })
+
+  const once = (name, fn) => { let done = !flags.has(name); return () => { if (!done && panes.get(shown[0])?.count()) { done = true; fn() } } }
+  const demo = [
+    once('error', () => panes.get(shown[0]).showError('Not sent: no connection to the server. Your text stays here.')),
+    once('scrolled', () => panes.get(shown[0]).stage('scrolled')),
+    once('lightbox', () => panes.get(shown[0]).stage('lightbox')),
+  ]
+
+  function paintMember() {
+    for (const [id, pane] of panes) pane.root.classList.toggle('is-member', id === member)
+  }
 
   return {
     render(state, loaded) {
-      render(state, loaded)
+      if (!loaded) return
+      const ids = state.members
+      if (ids.length !== shown.length || ids.some((id, i) => id !== shown[i])) {
+        for (const id of ids) if (!panes.has(id)) panes.set(id, createPane(id, ctx))
+        root.replaceChildren(...ids.map(id => panes.get(id).root))
+        root.dataset.cols = ids.length
+        shown = ids
+        paintMember()
+        for (const id of ids) panes.get(id).attached()
+        // With a real keyboard the caret waits in the composer.
+        if (ids.length === 1 && matchMedia('(pointer: fine)').matches && !flags.has('decisions') && !document.body.dataset.filter) panes.get(ids[0]).focus()
+      }
+      // A session that is gone takes its pane along.
+      for (const id of panes.keys()) if (!shown.includes(id) && !state.all.agents.some(a => a.id === id)) panes.delete(id)
+      for (const id of shown) panes.get(id).render(state, shown.length > 1)
       for (const fn of demo) fn()
     },
-    unread: () => unread,
-    /** Put the caret in the composer; hint, if given, stands in the empty field as what to write. */
-    focus(hint) {
-      draft.focus({ preventScroll: true })
-      if (hint) draft.placeholder = hint
-    },
+    unread: () => shown.reduce((sum, id) => sum + panes.get(id).unread(), 0),
+    /** Put the caret in a composer; hint, if given, stands in the empty field as what to write. */
+    focus(hint, agentId) { panes.get(agentId ?? (shown.includes(member) ? member : shown[0]))?.focus(hint) },
+    reveal(cardId, agentId) { return panes.get(agentId)?.reveal(cardId) ?? false },
+    /** Which member of a group a phone shows, and the canvas belongs to. */
+    setMember(agentId) { member = agentId; paintMember() },
+    settle() { for (const id of shown) panes.get(id).settle() },
   }
 }

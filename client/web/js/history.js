@@ -1,14 +1,17 @@
-// Past decisions, below a session's open questions: one plain list, newest first,
-// what the agent is still working on before what is done. A line per card; a tap
-// unfolds what was asked, what was chosen, and the way to decide again.
+// What lies behind a session's conversation, each as one calm list:
+// the answered questions (newest first, what the agent is still working on before
+// what is done; a tap unfolds what was asked, what was chosen, and the way to answer
+// again), and the files: everything the session ever sent.
 
-import { el, agoNode, URGENCY_LABEL } from './ui.js'
+import { el, agoNode, URGENCY_LABEL, kindOf } from './ui.js'
 import { reopen } from './store.js'
-import { icon, attachmentNodes, richPlus } from './chat.js'
+import { icon, attachmentNodes, richPlus, openLightbox } from './chat.js'
 
 const SHORT = 6   // so many lines stand open to view; the rest wait behind one button
 
-const chosen = card => card.options?.find(o => o.key === card.choice)
+// A card that allowed several answers carries them all in choices; older ones only the one in choice.
+const choices = card => card.choices ?? (card.choice != null ? [card.choice] : [])
+const chosen = card => card.options?.filter(o => choices(card).includes(o.key)).map(o => o.label).join(', ')
 
 function detailNode(card) {
   const box = el('div', 'hist-detail-in')
@@ -17,7 +20,7 @@ function detailNode(card) {
 
   const list = el('ul', 'hist-options')
   for (const o of card.options ?? []) {
-    const picked = o.key === card.choice
+    const picked = choices(card).includes(o.key)
     const li = el('li', picked ? 'is-chosen' : null)
     const mark = el('span', 'hist-mark')
     if (picked) mark.append(icon('check'))
@@ -34,19 +37,19 @@ function detailNode(card) {
     p.append(el('span', 'caps', label), el('span', null, text))
     box.append(p)
   }
-  if (card.note) quote('Deine Anmerkung', card.note)
-  if (card.summary) quote('Ergebnis', card.summary)
+  if (card.note) quote('Your note', card.note)
+  if (card.summary) quote('Result', card.summary)
 
   // When it was asked and answered, and the way back: the card returns to the open
   // questions and the agent is told.
   const foot = el('p', 'hist-foot')
   const when = el('span', 'hist-times')
-  when.append('Gefragt ', agoNode(card.created))
-  if (card.decided) when.append(' · entschieden ', agoNode(card.decided))
-  when.append(' · ', card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[card.urgency] ?? '')
+  when.append(`Question ${card.number} · asked `, agoNode(card.created))
+  if (card.decided) when.append(' · answered ', agoNode(card.decided))
+  when.append(' · ', card.kind === 'permission' ? 'Permission' : URGENCY_LABEL[card.urgency] ?? '')
   foot.append(when)
   if (card.kind === 'decision' && card.choice != null) {
-    const again = el('button', 'hist-reopen', 'Neu entscheiden')
+    const again = el('button', 'hist-reopen', 'Answer again')
     again.type = 'button'
     const fail = el('span', 'hist-reopen-error')
     again.addEventListener('click', async () => {
@@ -55,7 +58,7 @@ function detailNode(card) {
         await reopen(card.id)
       } catch (err) {
         again.disabled = false
-        fail.textContent = `Nicht zurückgenommen: ${err.message}`
+        fail.textContent = `Not taken back: ${err.message}`
       }
     })
     foot.append(fail, again)
@@ -73,14 +76,12 @@ function rowNode(card, expanded, onToggle) {
   head.type = 'button'
   const pick = el('span', 'hist-pick')
   if (card.choice != null) pick.append(icon('check'))
-  pick.append(chosen(card)?.label ?? card.choice ?? 'Ohne Antwort')
-  // One line under the title: the answer, then what became of it.
+  pick.append(chosen(card) || card.choice || 'No answer')
+  // One line under the title: the answer, what became of it, and when.
   const sub = el('span', 'hist-sub')
-  const outcome = card.status === 'done' ? card.summary || 'erledigt' : 'in Arbeit'
-  sub.append(pick, el('span', null, outcome))
-  const when = el('span', 'hist-when')
-  when.append(agoNode(card.decided ?? card.created), icon('chevron'))
-  head.append(el('span', 'hist-nr', `Nr. ${card.number}`), el('span', 'hist-title', card.title), when, sub)
+  const outcome = card.status === 'done' ? card.summary || 'done' : 'in progress'
+  sub.append(pick, el('span', 'hist-outcome', outcome), agoNode(card.decided ?? card.created, 'hist-when'))
+  head.append(el('span', 'hist-title', card.title), sub)
 
   const detail = el('div', 'hist-detail')
   const clip = el('div', 'hist-detail-clip')
@@ -102,11 +103,11 @@ function rowNode(card, expanded, onToggle) {
 }
 
 /**
- * Render the history into root. Returns
+ * Render one session's answered questions into root. Returns
  *   render(state, loaded)
  *   reveal(cardId): unfold that card's line and highlight it; false if the card is not in the history
  */
-export function mountHistory(root, { flags = new Set() } = {}) {
+export function mountHistory(root, { agent, flags = new Set() } = {}) {
   let cards = []
   let lastState = null
   let all = false                 // every line is listed, not only the first few
@@ -116,7 +117,7 @@ export function mountHistory(root, { flags = new Set() } = {}) {
   // The heading is a divider, like the senders' names in the inbox.
   const heading = el('h3', 'hist-heading')
   const count = el('b')
-  heading.append(el('span', null, 'Verlauf'), count)
+  heading.append(el('span', null, 'Answered'), count)
   const list = el('div', 'hist-list')
   const more = el('button', 'hist-more')
   more.type = 'button'
@@ -127,13 +128,13 @@ export function mountHistory(root, { flags = new Set() } = {}) {
   function render(state, loaded) {
     if (!loaded) return
     lastState = state
-    cards = state.cards
+    cards = state.all.cards.filter(c => c.agent === agent)
     // Still in the works first, then what is done; within each the latest answer first.
     const past = cards.filter(c => c.status !== 'open')
       .sort((a, b) => (a.status === 'done') - (b.status === 'done') || (b.decided ?? b.created) - (a.decided ?? a.created))
     root.hidden = !past.length
     const busy = past.filter(c => c.status === 'decided').length
-    count.textContent = [busy && `${busy} in Arbeit`, past.length - busy && `${past.length - busy} erledigt`].filter(Boolean).join(' · ')
+    count.textContent = [busy && `${busy} in progress`, past.length - busy && `${past.length - busy} done`].filter(Boolean).join(' · ')
     const shown = all ? past : past.slice(0, SHORT)
     const nodes = shown.map(card => {
       const sig = JSON.stringify(card)
@@ -148,7 +149,7 @@ export function mountHistory(root, { flags = new Set() } = {}) {
     const same = list.children.length === nodes.length && nodes.every((n, i) => list.children[i] === n)
     if (!same) list.replaceChildren(...nodes)
     more.hidden = shown.length === past.length
-    more.textContent = `Alle ${past.length} zeigen`
+    more.textContent = `Show all ${past.length}`
   }
 
   function reveal(cardId) {
@@ -180,4 +181,77 @@ export function mountHistory(root, { flags = new Set() } = {}) {
     render(state, loaded) { render(state, loaded); stage() },
     reveal,
   }
+}
+
+// ---- files: everything a session ever sent, newest first -------------------------
+
+const LINK = /https?:\/\/[^\s<>)\]]+/g
+const KIND_LABEL = { image: 'Picture', video: 'Video', audio: 'Audio', file: 'File', scribble: 'Your scribble', link: 'Link' }
+
+function gather(all, agent) {
+  const items = []
+  const add = (list, ts, where) => {
+    for (const a of list ?? []) items.push({ ts, where, kind: a.kind === 'scribble' ? 'scribble' : kindOf(a), name: a.name || 'Scribble', url: a.url })
+  }
+  for (const m of all.messages) {
+    if (m.agent !== agent) continue
+    add(m.attachments, m.ts, null)
+    // Published pages and assets arrive as links in what the agent writes.
+    if (m.from !== 'user' && m.from !== 'event') {
+      for (const [url] of String(m.text ?? '').matchAll(LINK)) items.push({ ts: m.ts, where: null, kind: 'link', name: url.replace(/^https?:\/\//, '').replace(/[.,;:!?]+$/, ''), url: url.replace(/[.,;:!?]+$/, '') })
+    }
+  }
+  for (const c of all.cards) if (c.agent === agent) add(c.attachments, c.created, c.title)
+  const seen = new Set()
+  return items.sort((a, b) => b.ts - a.ts).filter(i => !seen.has(i.url) && seen.add(i.url))
+}
+
+/** Render one session's files into root: one list, each line opens its item. Returns { render(state, loaded) }. */
+export function mountFiles(root, { agent }) {
+  let signature = null
+  const heading = el('h3', 'hist-heading')
+  const count = el('b')
+  heading.append(el('span', null, 'Files'), count)
+  const list = el('div', 'file-list')
+  root.append(heading, list)
+
+  function render(state, loaded) {
+    if (!loaded) return
+    const items = gather(state.all, agent)
+    const next = JSON.stringify(items)
+    if (next === signature) return
+    signature = next
+    count.textContent = items.length === 1 ? '1 item' : `${items.length} items`
+    const pictures = items.filter(i => i.kind === 'image' || i.kind === 'scribble')
+    list.replaceChildren(...items.map(item => {
+      const visual = pictures.includes(item)
+      const row = el(visual ? 'button' : 'a', 'file-row')
+      if (visual) {
+        row.type = 'button'
+        row.addEventListener('click', () => openLightbox(pictures, pictures.indexOf(item)))
+      } else {
+        row.href = item.url
+        row.target = '_blank'
+        row.rel = 'noopener noreferrer'
+      }
+      const thumb = el('span', 'file-thumb')
+      if (visual) {
+        const img = el('img')
+        img.src = item.url
+        img.alt = ''
+        img.loading = 'lazy'
+        img.addEventListener('error', () => img.replaceWith(icon('file')))
+        thumb.append(img)
+      } else thumb.append(icon(item.kind === 'link' ? 'external' : 'file'))
+      const meta = el('span', 'file-meta')
+      meta.append(KIND_LABEL[item.kind] ?? 'File', ' · ', agoNode(item.ts))
+      if (item.where) meta.append(' · ', item.where)
+      const text = el('span', 'file-text')
+      text.append(el('strong', null, item.name), meta)
+      row.append(thumb, text)
+      return row
+    }))
+    if (!items.length) list.append(el('p', 'inbox-empty', 'This session has not sent any files yet.'))
+  }
+  return { render }
 }

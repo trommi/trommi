@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
-<title>Fokus-Modus · Vorschau</title>
+<title>Focus · workbench</title>
 <script>
   if (location.hash.slice(1).split(',').indexOf('dark') >= 0) document.documentElement.dataset.theme = 'dark'
 </script>
@@ -31,19 +31,20 @@
 </head>
 <body>
 <div class="pv-page">
-  <h1>Fokus-Modus · Werkbank</h1>
-  <div class="pv-strip" role="toolbar" aria-label="Overlay und Server simulieren">
-    <button class="pv-main" data-do="open">Fokus öffnen</button>
-    <button data-do="critical">Neue kritische Karte</button>
-    <button data-do="raise">Dringlichkeit erhöhen</button>
-    <button data-do="remote">Aktuelle remote entschieden</button>
-    <button data-do="fail" aria-pressed="false">Entscheidung scheitert</button>
-    <button data-do="noise">Fremdes Update</button>
-    <button data-do="edit">Text ändert sich</button>
-    <button data-do="many">Viele Karten</button>
-    <button data-do="clear">Alles erledigt</button>
-    <button data-do="reset">Zurücksetzen</button>
-    <button data-do="theme">Hell / Dunkel</button>
+  <h1>Focus · workbench</h1>
+  <div class="pv-strip" role="toolbar" aria-label="Drive the window and the pretend server">
+    <button class="pv-main" data-do="open">Go through them</button>
+    <button data-do="more">“More” on one card</button>
+    <button data-do="critical">New blocking question</button>
+    <button data-do="raise">Raise an urgency</button>
+    <button data-do="remote">Front one answered elsewhere</button>
+    <button data-do="fail" aria-pressed="false">Answers fail</button>
+    <button data-do="noise">Unrelated update</button>
+    <button data-do="edit">Text changes</button>
+    <button data-do="many">Many cards</button>
+    <button data-do="clear">All answered</button>
+    <button data-do="reset">Reset</button>
+    <button data-do="theme">Light / dark</button>
   </div>
   <div class="pv-fill" id="pv-fill"></div>
   <div id="pv-events"></div>
@@ -57,22 +58,28 @@
   window.addEventListener('unhandledrejection', e => pvLog(`unhandled: ${e.reason?.message ?? e.reason}`))
 </script>
 <script type="module">
-// Workbench for the Fokus-Modus overlay. It feeds the store directly and
-// stands in for the server on /decide and /reopen. Hash flags (comma
-// separated) put the page straight into a state for screenshots:
+// Workbench for the Focus window. It feeds the store directly and stands in
+// for the server on /decide and /reopen. Hash flags (comma separated) put the
+// page straight into a state for screenshots:
 //   dark            theme
-//   closed          do not open the overlay on load
-//   second          start on the second card of the queue
-//   card=<id>       start on that card: c-perm c-migrate c-phone c-video c-theme c-next c-yesno c-duo
-//   fail            decisions fail; the first option is tapped so the message shows
-//   undo            the first decision card is answered so "Rückgängig" shows
-//   hint            a more urgent card arrives while one is in front
-//   gone            the card in front is decided elsewhere
+//   closed          do not open the window on load
+//   card=<id>       open on that card: c-perm c-migrate c-phone c-video c-theme c-next c-yesno c-duo c-long c-six c-multi
+//   walk            the walk ("Go through them one by one"); with card=<id> it starts there.
+//                   Without walk, card=<id> is the window of that one card ("More" on a row).
+//   fail            answers fail; the first tile is tapped so the message shows
+//   thread          the card in front has been asked back about, and the agent has replied
+//   ask             a question is typed into the ask-back field and sent (askfail: it fails)
+//   picked          on c-multi, two options are switched on
+//   undo            one question is answered in the walk so "Undo" shows
+//   hint            a more urgent question arrives while one is in front
+//   gone            the question in front is answered elsewhere
 //   zoom            the first image is enlarged
 //   many            fourteen cards
-//   say             the server offers speech, so the read-aloud toggle shows (sayon: switched on)
+//   say             the server offers speech, so the read-aloud switch shows (sayon: switched on,
+//                   saying / sayload: as while it plays / loads)
 //   done            nothing is open
 //   solo            a single agent, so no card names who is asking
+//   longnames       sessions with long names, to see the top bar give way
 // The same things are scriptable through window.pv (see the bottom of this file).
 import { setState, getState } from '/js/store.js'
 import { mountFocus } from '/js/focus.js'
@@ -82,7 +89,7 @@ const has = f => flags.includes(f)
 const flagValue = name => flags.find(f => f.startsWith(name + '='))?.slice(name.length + 1)
 
 const fill = document.getElementById('pv-fill')
-for (let i = 0; i < 14; i++) fill.append(Object.assign(document.createElement('p'), { textContent: `Seite hinter dem Overlay, Absatz ${i + 1}. Sie darf weder scrollen noch Eingaben bekommen, solange der Fokus-Modus offen ist.` }))
+for (let i = 0; i < 14; i++) fill.append(Object.assign(document.createElement('p'), { textContent: `The page behind the window, paragraph ${i + 1}. It must neither scroll nor take input while Focus is open.` }))
 
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const min = 60000
@@ -107,7 +114,7 @@ async function makeClip() {
       ctx.fillStyle = '#1b6a57'; ctx.fillRect(40, 60, 560, 44)
       ctx.fillStyle = '#dcefe8'
       for (let i = 0; i < 3; i++) ctx.fillRect(40, 130 + i * 62, 560 * Math.min(1, Math.max(0, t * 1.4 - i * 0.3)), 44)
-      ctx.fillStyle = '#ffffff'; ctx.font = '600 22px sans-serif'; ctx.fillText('Einblend-Animation der Kartenliste', 56, 90)
+      ctx.fillStyle = '#ffffff'; ctx.font = '600 22px sans-serif'; ctx.fillText('The list fading in', 56, 90)
       ctx.beginPath(); ctx.arc(80 + t * 240, 330, 10, 0, 7); ctx.fill()
     }
     draw()
@@ -131,79 +138,108 @@ const card = (id, o) => ({
 function freshCards() {
   const cards = [
     card('c-next', {
-      title: 'Was baue ich als Nächstes?', created: now - 30 * min, urgency: 'low', agent: 'planung',
-      body: 'Die mobile Ansicht ist fertig. Als Nächstes stehen drei größere Themen an; ich kann nur eines davon sauber in dieser Woche abschließen.',
+      title: 'What should I build next?', created: now - 30 * min, urgency: 'low', agent: 'planung',
+      body: 'The mobile view is done. Three larger topics are next; I can only finish one of them properly this week.',
       options: [
-        { key: 'mehrere-agenten', label: 'Mehrere Agenten', detail: 'Ein Board für mehrere Sessions' },
-        { key: 'verschluesselung', label: 'Verschlüsselung', detail: 'Ende-zu-Ende zwischen Browser und Agent' },
-        { key: 'live-verlauf', label: 'Live-Verlauf', detail: 'Zeigt, was der Agent gerade tut' },
+        { key: 'mehrere-agenten', label: 'Several agents', detail: 'One board for several sessions' },
+        { key: 'verschluesselung', label: 'Encryption', detail: 'End to end between browser and agent' },
+        { key: 'live-verlauf', label: 'Live activity', detail: 'Shows what the agent is doing right now' },
       ],
     }),
     card('c-theme', {
-      title: 'Welches Standard-Theme?', created: now - 23 * min, urgency: 'normal', agent: 'frontend',
-      body: 'Beide Themes sind fertig. Ich brauche nur den Standard für neue Nutzer.\n\n- **Hell** ist bei Tageslicht besser lesbar und passt zur Startseite\n- **Dunkel** passt zu Terminal und IDE\n- gespeichert wird die Wahl in `localStorage`, sie lässt sich jederzeit ändern',
+      title: 'Which default theme?', created: now - 23 * min, urgency: 'normal', agent: 'frontend', recommended: 'system',
+      body: 'Both themes are finished. I only need the default for new users.\n\n- **Light** reads better in daylight and matches the landing page\n- **Dark** matches terminal and IDE\n- the choice is kept in `localStorage` and can be changed at any time',
       options: [
-        { key: 'hell', label: 'Hell', detail: 'Besser lesbar bei Tageslicht' },
-        { key: 'dunkel', label: 'Dunkel', detail: 'Passt zu Terminal und IDE' },
-        { key: 'system', label: 'Dem System folgen', detail: 'Richtet sich nach der Geräteeinstellung' },
+        { key: 'hell', label: 'Light', detail: 'Reads better in daylight' },
+        { key: 'dunkel', label: 'Dark', detail: 'Matches terminal and IDE' },
+        { key: 'system', label: 'Follow the system', detail: 'Goes by the device setting' },
       ],
       attachments: [img('thema-hell.png'), img('thema-dunkel.png')],
     }),
     card('c-video', {
-      title: 'Soll die Kartenliste beim Laden einblenden?', created: now - 18 * min, urgency: 'normal', agent: 'frontend',
-      body: 'Im Clip siehst du die gestaffelte Einblendung, wie sie jetzt gebaut ist. Sie kostet etwa **240 ms** bis zur letzten Zeile.',
+      title: 'Should the list fade in when it loads?', created: now - 18 * min, urgency: 'normal', agent: 'frontend',
+      body: 'The clip shows the staggered fade as it is built now. It takes about **240 ms** until the last row.',
       options: [
-        { key: 'ja', label: 'So lassen', detail: 'Gestaffelt, 240 ms' },
-        { key: 'kurz', label: 'Kürzer', detail: 'Alle Zeilen zugleich, 120 ms' },
-        { key: 'nein', label: 'Ohne Animation', detail: '' },
+        { key: 'ja', label: 'Keep it', detail: 'Staggered, 240 ms' },
+        { key: 'kurz', label: 'Shorter', detail: 'All rows at once, 120 ms' },
+        { key: 'nein', label: 'No animation', detail: '' },
       ],
       attachments: [
-        { name: 'kartenliste-einblenden.webm', url: clipUrl ?? '/files/kartenliste-einblenden.webm', image: false, kind: 'video' },
-        { name: 'messwerte.csv', url: '/files/messwerte.csv', image: false, kind: 'file' },
+        { name: 'list-fade-in.webm', url: clipUrl ?? '/files/list-fade-in.webm', image: false, kind: 'video' },
+        { name: 'timings.csv', url: '/files/timings.csv', image: false, kind: 'file' },
       ],
     }),
     card('c-phone', {
-      title: 'Wie soll das Board auf dem Handy starten?', created: now - 15 * min, urgency: 'high', agent: 'frontend',
-      urgency_reason: 'Ich baue gerade an der mobilen Ansicht',
-      body: 'Auf dem Handy passt nur eine Ansicht auf den Bildschirm. Links das Gespräch, rechts die Entscheidungen; in den Bildern siehst du beide Varianten.',
+      title: 'How should the board start on a phone?', created: now - 15 * min, urgency: 'high', agent: 'frontend',
+      urgency_reason: 'I am building the mobile view right now',
+      body: 'Only one view fits on a phone screen. The conversation on the left, the questions on the right; the pictures show both variants.',
       options: [
-        { key: 'gespraech', label: 'Mit dem Gespräch', detail: 'Wie eine Chat-App' },
-        { key: 'entscheidungen', label: 'Mit den Entscheidungen', detail: 'Offene Fragen zuerst' },
-        { key: 'zuletzt', label: 'Wo ich zuletzt war', detail: 'Merkt sich die letzte Ansicht' },
+        { key: 'gespraech', label: 'With the conversation', detail: 'Like a chat app' },
+        { key: 'entscheidungen', label: 'With the questions', detail: 'Open questions first' },
+        { key: 'zuletzt', label: 'Where I left off', detail: 'Remembers the last view' },
       ],
       attachments: [img('phone-gespraech.png'), img('phone-entscheidungen.png')],
     }),
     card('c-migrate', {
-      title: 'Migration auf der Produktions-Datenbank ausführen?', created: now - 4 * min, urgency: 'critical', agent: 'deploy',
-      urgency_reason: 'Deploy wartet, alle weiteren Schritte hängen davon ab',
-      body: 'Die Migration `2026_10_02_add_urgency` fügt eine Spalte hinzu und füllt **48.210 Zeilen** nach. Geschätzte Dauer: 40 Sekunden, währenddessen ist die Tabelle gesperrt.\n\n```\nALTER TABLE cards ADD COLUMN urgency text NOT NULL DEFAULT \'normal\';\n```\n\n- Ein Backup von heute 06:00 liegt vor\n- Der Rollback ist getestet und dauert unter einer Sekunde',
+      title: 'Run the migration on the production database?', created: now - 4 * min, urgency: 'critical', agent: 'deploy', recommended: 'tonight',
+      urgency_reason: 'The deploy waits, every further step depends on it',
+      body: 'The migration `2026_10_02_add_urgency` adds a column and backfills **48,210 rows**. Estimated duration: 40 seconds, the table is locked meanwhile.\n\n```\nALTER TABLE cards ADD COLUMN urgency text NOT NULL DEFAULT \'normal\';\n```\n\n- A backup from 06:00 today exists\n- The rollback is tested and takes under a second',
       options: [
-        { key: 'run-now', label: 'Jetzt ausführen', detail: 'Kurze Sperre, Deploy läuft danach durch' },
-        { key: 'tonight', label: 'Heute Nacht um 02:00', detail: 'Kein Nutzer betroffen, Deploy wartet bis morgen' },
-        { key: 'batch', label: 'In Schritten ohne Sperre', detail: 'Etwa zwei Stunden Umbau am Skript' },
-        { key: 'cancel', label: 'Nicht ausführen', detail: 'Ich nehme die Änderung zurück' },
+        { key: 'run-now', label: 'Run it now', detail: 'Short lock, the deploy goes through afterwards' },
+        { key: 'tonight', label: 'Tonight at 02:00', detail: 'No user affected, the deploy waits until tomorrow' },
+        { key: 'batch', label: 'In steps, no lock', detail: 'About two hours of work on the script' },
+        { key: 'cancel', label: 'Do not run it', detail: 'I take the change back' },
       ],
     }),
     card('c-yesno', {
-      title: 'Soll ich die alten Entwürfe löschen?', created: now - 12 * min, urgency: 'normal', agent: 'frontend',
-      body: 'Im Ordner `entwuerfe/` liegen 14 Dateien, die seit dem Umbau niemand mehr geöffnet hat.',
-      options: [{ key: 'ja', label: 'Ja', detail: '' }, { key: 'nein', label: 'Nein', detail: '' }],
+      title: 'Shall I delete the old drafts?', created: now - 12 * min, urgency: 'normal', agent: 'frontend', recommended: 'ja',
+      body: 'The folder `drafts/` holds 14 files nobody has opened since the rebuild.',
+      options: [{ key: 'ja', label: 'Yes', detail: '' }, { key: 'nein', label: 'No', detail: '' }],
     }),
     card('c-duo', {
-      title: 'Soll der Deploy heute noch raus?', created: now - 9 * min, urgency: 'high', agent: 'deploy',
-      urgency_reason: 'Das Wartungsfenster schließt um 18 Uhr',
-      body: 'Alle Tests sind grün. Der einzige offene Punkt ist die Übersetzung der neuen Einstellungsseite.',
+      title: 'Should the deploy go out today?', created: now - 9 * min, urgency: 'high', agent: 'deploy', recommended: 'warten',
+      urgency_reason: 'The maintenance window closes at 6 pm',
+      body: 'All tests are green. The only open point is the translation of the new settings page.',
       options: [
-        { key: 'raus', label: 'Heute ausrollen', detail: 'Die Übersetzung folgt morgen als Nachtrag' },
-        { key: 'warten', label: 'Noch nicht', detail: 'Erst mit fertiger Übersetzung, frühestens Montag' },
+        { key: 'raus', label: 'Roll out today', detail: 'The translation follows tomorrow as a patch' },
+        { key: 'warten', label: 'Not yet', detail: 'Only with the translation done, Monday at the earliest' },
+      ],
+    }),
+    card('c-long', {
+      title: 'Keep the legacy export endpoint alive for the two customers who still call it every night?', created: now - 8 * min, urgency: 'low', agent: 'planung', recommended: 'weg',
+      body: 'It costs us one cron job and a table nobody else reads.',
+      options: [
+        { key: 'weg', label: 'Remove it at the end of the quarter', detail: 'Both customers get a migration guide and three reminders before the endpoint answers with 410 Gone' },
+        { key: 'bleibt', label: 'Keep it for another year', detail: 'We keep the cron job, the table and the on-call rule for it' },
+      ],
+    }),
+    card('c-six', {
+      title: 'Which region for the new replica?', created: now - 7 * min, urgency: 'normal', agent: 'deploy', recommended: 'fra',
+      body: 'Latency from the office and price per month differ; all six are available today.',
+      options: [
+        { key: 'fra', label: 'Frankfurt', detail: '9 ms, 41 € a month' },
+        { key: 'ams', label: 'Amsterdam', detail: '14 ms, 39 € a month' },
+        { key: 'par', label: 'Paris', detail: '17 ms, 40 € a month' },
+        { key: 'lon', label: 'London', detail: '21 ms, 44 € a month' },
+        { key: 'hel', label: 'Helsinki', detail: '31 ms, 33 € a month' },
+        { key: 'none', label: 'No replica for now', detail: '' },
+      ],
+    }),
+    card('c-multi', {
+      title: 'Which browsers should the test run cover?', created: now - 6 * min, urgency: 'normal', agent: 'frontend', multiple: true, recommended: 'chromium',
+      body: 'Each one adds about four minutes to a run. Pick every one you want.',
+      options: [
+        { key: 'chromium', label: 'Chromium', detail: 'The one most people use' },
+        { key: 'firefox', label: 'Firefox', detail: '' },
+        { key: 'webkit', label: 'WebKit', detail: 'Safari on Mac and iPhone' },
       ],
     }),
     { id: 'c-perm', kind: 'permission', status: 'open', urgency: 'critical', urgency_reason: '', request_id: 'abcde', agent: 'deploy',
-      title: 'Freigabe: Bash', body: 'Run the test suite\n\n{"command":"npm test -- --coverage","timeout":120000}',
-      options: [{ key: 'allow', label: 'Erlauben', detail: '' }, { key: 'deny', label: 'Ablehnen', detail: '' }],
+      title: 'Permission: Bash', body: 'Run the test suite\n\n{"command":"npm test -- --coverage","timeout":120000}',
+      options: [{ key: 'allow', label: 'Allow', detail: '' }, { key: 'deny', label: 'Deny', detail: '' }],
       attachments: [], choice: null, note: '', summary: '', created: now - 1 * min, decided: null },
     card('c-db', {
-      title: 'Welche Datenbank?', status: 'decided', created: now - 95 * min, decided: now - 80 * min, choice: 'pg',
+      title: 'Which database?', status: 'decided', created: now - 95 * min, decided: now - 80 * min, choice: 'pg',
       options: [{ key: 'sqlite', label: 'SQLite', detail: '' }, { key: 'pg', label: 'Postgres', detail: '' }],
     }),
   ]
@@ -214,9 +250,9 @@ function freshCards() {
 
 function addMany(cards) {
   for (let i = 0; i < 8; i++) cards.push(card(`c-more-${i}`, {
-    title: `Zusatzfrage ${i + 1}: Welche Variante?`, created: now - (40 + i) * min, urgency: ['low', 'normal', 'high'][i % 3], agent: 'planung',
-    body: 'Nur damit der Stapel lang genug für die begrenzten Fortschrittspunkte ist.',
-    options: [{ key: 'a', label: 'Variante A', detail: '' }, { key: 'b', label: 'Variante B', detail: '' }],
+    title: `Extra question ${i + 1}: which variant?`, created: now - (40 + i) * min, urgency: ['low', 'normal', 'high'][i % 3], agent: 'planung',
+    body: 'Only here to make the stack long.',
+    options: [{ key: 'a', label: 'Variant A', detail: '' }, { key: 'b', label: 'Variant B', detail: '' }],
   }))
 }
 
@@ -233,8 +269,11 @@ const queueOf = list => list.filter(c => c.status === 'open')
 // The store derives each card's agent_name from this list; with a single agent it stays empty.
 const agents = has('solo')
   ? [{ id: 'frontend', name: 'Agent', online: true }]
-  : [{ id: 'frontend', name: 'Frontend', online: true }, { id: 'deploy', name: 'Deploy', online: true }, { id: 'planung', name: 'Planung', online: false }]
-const push = () => setState({ agents, messages: [], cards: structuredClone(has('solo') ? cards.map(c => ({ ...c, agent: 'frontend' })) : cards), queue: queueOf(cards), tasks: [], speech: has('say') || has('sayon') })
+  : has('longnames')
+    ? [{ id: 'frontend', name: 'Web-Frontend Redesign', online: true }, { id: 'deploy', name: 'Infrastructure and Deploy', online: true }, { id: 'planung', name: 'Planning for the next quarter', online: false }]
+    : [{ id: 'frontend', name: 'Frontend', online: true }, { id: 'deploy', name: 'Deploy', online: true }, { id: 'planung', name: 'Planning', online: false }]
+let messages = []
+const push = () => setState({ agents, messages: structuredClone(messages), cards: structuredClone(has('solo') ? cards.map(c => ({ ...c, agent: 'frontend' })) : cards), queue: queueOf(cards), tasks: [], speech: ['say', 'sayon', 'saying', 'sayload'].some(has) })
 const find = id => cards.find(c => c.id === id)
 const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -242,18 +281,31 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const realFetch = window.fetch.bind(window)
 window.fetch = async (url, init) => {
   const path = new URL(String(url), location.href).pathname
-  if (path !== '/decide' && path !== '/reopen') return realFetch(url, init)
+  if (path !== '/decide' && path !== '/reopen' && path !== '/message') return realFetch(url, init)
   const body = JSON.parse(init?.body ?? '{}')
   await sleep(450)
   const c = find(body.card_id)
+  if (path === '/message') {
+    // asking back: the message names its card, and a moment later the agent replies on the same card
+    if (failing) return reply(400, { error: 'The agent cannot be reached right now' })
+    pv.lastMessage = body
+    messages.push({ id: `m${++serial}`, agent: body.agent, from: 'user', text: body.text, card_id: body.card_id, ts: Date.now() })
+    push()
+    setTimeout(() => {
+      messages.push({ id: `m${++serial}`, agent: body.agent, from: 'agent', text: 'Good question. **Yes**, the backup covers that table too; I checked it with `pg_restore --list`.', card_id: body.card_id, ts: Date.now() })
+      push()
+    }, has('fast') ? 50 : 1600)
+    return reply(200, { ok: true })
+  }
   if (path === '/decide') {
-    if (failing) return reply(400, { error: 'Der Agent ist gerade nicht erreichbar' })
-    if (!c || c.status !== 'open') return reply(400, { error: 'Karte ist nicht mehr offen' })
-    if (!c.options.some(o => o.key === body.key)) return reply(400, { error: 'Unbekannte Option' })
-    Object.assign(c, { status: 'decided', choice: body.key, note: body.note ?? '', decided: Date.now() })
-    pv.lastDecision = { card_id: c.id, key: body.key, note: body.note ?? '' }
+    if (failing) return reply(400, { error: 'The agent cannot be reached right now' })
+    if (!c || c.status !== 'open') return reply(400, { error: 'This question is no longer open' })
+    const keys = body.keys ?? [body.key]
+    if (!keys.length || !keys.every(k => c.options.some(o => o.key === k))) return reply(400, { error: 'Unknown option' })
+    Object.assign(c, { status: 'decided', choice: keys[0], choices: keys, note: body.note ?? '', decided: Date.now() })
+    pv.lastDecision = { card_id: c.id, ...(body.keys ? { keys } : { key: body.key }), note: body.note ?? '' }
   } else {
-    if (!c || c.status === 'open') return reply(400, { error: 'Karte ist bereits offen' })
+    if (!c || c.status === 'open') return reply(400, { error: 'This question is already open' })
     Object.assign(c, { status: 'open', choice: null, note: '', decided: null })
   }
   push()
@@ -261,29 +313,30 @@ window.fetch = async (url, init) => {
 }
 
 // ── overlay ─────────────────────────────────────────────────────────────────
-if (has('sayon')) { try { localStorage.setItem('trommi-focus-read', '1') } catch {} }
-const focus = mountFocus()
+if (has('sayon') || has('saying') || has('sayload')) { try { localStorage.setItem('trommi-focus-read', '1') } catch {} }
+const focus = mountFocus({ onDecided: (c, o) => { eventsNode.textContent += `onDecided  ${c.id} -> ${o.key}\n` } })
 const eventsNode = document.getElementById('pv-events')
 for (const name of ['focus:open', 'focus:close']) {
-  document.addEventListener(name, () => { eventsNode.textContent += `${new Date().toLocaleTimeString('de-DE')}  ${name}\n` })
+  document.addEventListener(name, () => { eventsNode.textContent += `${new Date().toLocaleTimeString('en-GB')}  ${name}\n` })
 }
 
 const currentId = () => document.querySelector('.focus-card[data-shown]')?.dataset.id
 const actions = {
   open: () => focus.open(),
+  more: () => focus.open(queueOf(cards)[2]),
   critical() {
     const id = `c-new-${++serial}`
     cards.push(card(id, {
-      number: nextNumber++, title: 'API-Schlüssel läuft in 10 Minuten ab, jetzt erneuern?', created: Date.now(), urgency: 'critical', agent: 'deploy',
-      urgency_reason: 'Danach schlagen alle Deploys fehl',
-      body: 'Der Schlüssel für die Paketquelle läuft ab. Ich kann ihn selbst erneuern, brauche dafür aber dein Okay.',
-      options: [{ key: 'ja', label: 'Erneuern', detail: 'Neuer Schlüssel, alter wird ungültig' }, { key: 'nein', label: 'Nicht jetzt', detail: '' }],
+      number: nextNumber++, title: 'The API key expires in 10 minutes, renew it now?', created: Date.now(), urgency: 'critical', agent: 'deploy',
+      urgency_reason: 'After that every deploy fails',
+      body: 'The key for the package registry expires. I can renew it myself but need your okay.',
+      options: [{ key: 'ja', label: 'Renew', detail: 'New key, the old one stops working' }, { key: 'nein', label: 'Not now', detail: '' }],
     }))
     push()
   },
   raise() {
     const c = cards.find(c => c.status === 'open' && c.urgency === 'low') ?? cards.find(c => c.status === 'open' && c.urgency === 'normal')
-    if (c) Object.assign(c, { urgency: 'critical', urgency_reason: 'Blockiert jetzt den Wochenplan' })
+    if (c) Object.assign(c, { urgency: 'critical', urgency_reason: 'Now blocks the plan for the week' })
     push()
   },
   remote() {
@@ -298,12 +351,12 @@ const actions = {
   noise: () => push(),
   edit() {
     const c = find(currentId())
-    if (c) c.body += '\n\nNachtrag: Ich habe gerade noch eine Kleinigkeit ergänzt.'
+    if (c) c.body += '\n\nPS: I just added one more detail.'
     push()
   },
   many() { addMany(cards); cards.forEach(c => { c.number ??= nextNumber++ }); push() },
   clear() { for (const c of cards) if (c.status === 'open') Object.assign(c, { status: 'decided', choice: c.options[0].key, decided: Date.now() }); push() },
-  reset() { cards = freshCards(); nextNumber = cards.length + 1; push() },
+  reset() { cards = freshCards(); messages = []; nextNumber = cards.length + 1; push() },
   theme() {
     const root = document.documentElement
     if (root.dataset.theme === 'dark') delete root.dataset.theme
@@ -317,12 +370,22 @@ document.querySelector('.pv-strip').addEventListener('click', e => {
 
 // for scripted checks: pv.do('critical'), pv.focus.open('c-theme'), pv.tap(0), pv.state()
 window.pv = {
-  focus, do: name => actions[name]?.(), currentId, getState, lastDecision: null,
+  focus, do: name => actions[name]?.(), currentId, getState, lastDecision: null, lastMessage: null,
+  key: (key, more = {}) => document.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...more })),
+  order: () => getState().later,
   tap: i => document.querySelectorAll('.focus-card[data-shown] .focus-opt')[i]?.click(),
   setFailing: v => { failing = !!v },
 }
 
 if (has('done')) for (const c of cards) if (c.status === 'open') c.status = 'decided'
+if (has('thread')) {
+  const id = flagValue('card') ?? 'c-migrate'
+  messages.push(
+    { id: 'm-a', agent: find(id).agent, from: 'user', text: 'Does the backup from 06:00 include the cards table?', card_id: id, ts: now - 3 * min },
+    { id: 'm-b', agent: find(id).agent, from: 'agent', text: 'Yes. The dump is a full one, **cards** included; restoring only that table takes about ten seconds.', card_id: id, ts: now - 2 * min },
+  )
+}
+try { localStorage.removeItem('trommi-later') } catch {}
 push()
 makeClip().then(url => {
   if (!url) return
@@ -332,25 +395,40 @@ makeClip().then(url => {
 })
 
 if (!has('closed')) {
-  const queue = queueOf(cards)
-  focus.open(flagValue('card') ?? (has('second') ? queue[1] : undefined))
+  const want = flagValue('card')
+  // The walk starts at the most urgent question; asked for a card, it goes there and stays the walk.
+  const walkTo = id => { focus.open(); if (id) focus.open(id) }
+  if (has('walk') || !want) walkTo(want)
+  else focus.open(want)
   if (has('fail')) { await sleep(200); pv.tap(0) }
   if (has('undo')) {
-    if (!flagValue('card')) focus.open('c-phone')
+    if (!want) walkTo('c-phone')
     await sleep(200)
     pv.tap(1)
   }
   if (has('hint')) {
-    if (!flagValue('card')) focus.open('c-theme')
+    if (!want) walkTo('c-theme')
     await sleep(200)
     actions.critical()
   }
   if (has('gone')) { await sleep(200); actions.remote() }
   if (has('zoom')) {
-    if (!flagValue('card')) focus.open('c-phone')
+    if (!want) walkTo('c-phone')
     await sleep(200)
     document.querySelector('.focus-card[data-shown] .focus-figure')?.click()
   }
+  if (has('picked')) { await sleep(200); pv.key('1'); pv.key('3') }
+  if (has('ask') || has('askfail')) {
+    await sleep(200)
+    if (has('askfail')) failing = true
+    document.querySelector('.focus-card[data-shown] .focus-ask-open')?.click()
+    const field = document.querySelector('.focus-card[data-shown] .focus-ask-field')
+    field.value = 'Is the rollback tested on a copy of production?'
+    field.dispatchEvent(new Event('input', { bubbles: true }))
+    field.form.requestSubmit()
+  }
+  // what the switch looks like while audio loads or plays (there is no speech server here)
+  if (has('saying') || has('sayload')) document.querySelector('.focus-say')?.setAttribute('data-speaking', has('saying') ? 'playing' : 'loading')
 }
 </script>
 </body>

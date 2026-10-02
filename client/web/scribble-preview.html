@@ -1,9 +1,9 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Scribble · Vorschau</title>
+<title>Scribble · workbench</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
@@ -36,28 +36,29 @@
 </style>
 </head>
 <body>
-<div class="pv-strip" role="toolbar" aria-label="Vorschau steuern">
-  <button data-do="demo">Demo-Inhalt</button>
-  <button data-do="many">300 Striche</button>
-  <button data-do="fail" aria-pressed="false">Senden scheitert</button>
-  <button data-do="hang" aria-pressed="false">Senden hängt</button>
-  <button data-do="load">Zuletzt Gesendetes laden</button>
+<div class="pv-strip" role="toolbar" aria-label="Drive the workbench">
+  <button data-do="demo">Demo content</button>
+  <button data-do="many">300 strokes</button>
+  <button data-do="fail" aria-pressed="false">Sending fails</button>
+  <button data-do="hang" aria-pressed="false">Sending hangs</button>
+  <button data-do="load">Load what was sent last</button>
+  <button data-do="hide" aria-pressed="false">Hide the pane</button>
   <button data-do="clear">clear()</button>
   <span class="pv-gap"></span>
-  <button data-do="width">Breite</button>
-  <button data-do="theme">Hell / Dunkel</button>
+  <button data-do="width">Width</button>
+  <button data-do="theme">Light / dark</button>
 </div>
 <div class="pv-floor">
   <div class="pv-frame"><section id="scribble"></section></div>
   <div class="pv-out" id="pv-out" hidden>
-    <img id="pv-png" alt="Gesendetes PNG: die ganze Fläche">
-    <img id="pv-view" alt="Gesendetes PNG: der sichtbare Ausschnitt">
+    <img id="pv-png" alt="Sent PNG: the whole canvas">
+    <img id="pv-view" alt="Sent PNG: the section on screen">
     <dl>
       <dt>PNG</dt><dd id="pv-png-info"></dd>
-      <dt>Ausschnitt</dt><dd id="pv-view-info"></dd>
+      <dt>View</dt><dd id="pv-view-info"></dd>
       <dt>Doc</dt><dd id="pv-doc-info"></dd>
-      <dt>onChange</dt><dd id="pv-change">noch nie</dd>
-      <dt>Round trip</dt><dd id="pv-trip">noch nicht geprüft</dd>
+      <dt>onChange</dt><dd id="pv-change">never</dd>
+      <dt>Round trip</dt><dd id="pv-trip">not checked yet</dd>
     </dl>
     <button data-do="load">load()</button>
   </div>
@@ -81,9 +82,9 @@
 //   style              colour and width popover open       confirm   clear-all confirmation open
 //   eraser             erase one demo stroke               hl        marker tool active
 //   zoomout            zoom out with ctrl+wheel            many      300 generated strokes
-//   sending            press Senden and never get an answer
-//   fail               press Senden, the server refuses
-//   sent               press Senden, success (result strip visible)
+//   sending            press send and never get an answer
+//   fail               press send, the server refuses
+//   sent               press send, success (result strip visible)
 //   trip               sent, then load() the sent doc and send again: proves the round trip
 //   fast               the fake server answers at once (scripted checks)
 //   draft              keep a local IndexedDB draft; without it draftKey is null, as in the app
@@ -115,7 +116,7 @@ async function send({ doc, png, view }) {
   pv.payload = { doc, png, view }
   await sleep(has('fast') ? 0 : 700)
   if (hang) await new Promise(() => {})
-  if (failNext) throw new Error('Der Server hat das Scribble abgelehnt (413: Anhang zu groß).')
+  if (failNext) throw new Error('The server refused the scribble (413: attachment too large).')
   const json = JSON.stringify(doc)
   last = JSON.parse(json)
   const img = new Image()
@@ -123,13 +124,13 @@ async function send({ doc, png, view }) {
   await img.decode()
   $('pv-png').src = png
   $('pv-png-info').textContent = `${img.naturalWidth} × ${img.naturalHeight} px, ${kb(dataBytes(png))}`
-  $('pv-doc-info').textContent = `v${doc.v}, ${doc.images.length} Bild(er), ${doc.strokes.length} Striche, ${kb(json.length)}`
+  $('pv-doc-info').textContent = `v${doc.v}, ${doc.images.length} image(s), ${doc.strokes.length} strokes, ${kb(json.length)}`
   const vimg = new Image()
   vimg.src = view
   await vimg.decode()
   $('pv-view').src = view
   $('pv-view-info').textContent = `${vimg.naturalWidth} × ${vimg.naturalHeight} px, ${kb(dataBytes(view))}`
-  if (loadedJSON != null) $('pv-trip').textContent = json === loadedJSON ? 'identisch nach load() ✓' : 'verändert seit load()'
+  if (loadedJSON != null) $('pv-trip').textContent = json === loadedJSON ? 'identical after load() ✓' : 'changed since load()'
   $('pv-out').hidden = false
   pv.sends++
 }
@@ -138,7 +139,7 @@ const root = $('scribble')
 function onChange(doc) {
   pv.changes.push({ at: Math.round(performance.now()), images: doc.images.length, strokes: doc.strokes.length })
   pv.changed = doc
-  $('pv-change').textContent = `${pv.changes.length}×, zuletzt ${doc.images.length} Bild(er), ${doc.strokes.length} Striche`
+  $('pv-change').textContent = `${pv.changes.length}×, last ${doc.images.length} image(s), ${doc.strokes.length} strokes`
 }
 const pv = window.pv = { sends: 0, changes: [], changed: null, payload: null }
 const api = mountScribble(root, { send, onChange, draftKey: has('draft') ? 'preview' : null })
@@ -189,7 +190,7 @@ async function testImage() {
   c.fillStyle = '#ffffff'; c.beginPath(); c.roundRect(90, 90, 1420, 120, [36, 36, 0, 0]); c.fill()
   c.fillStyle = '#141c18'; c.font = '600 44px sans-serif'; c.fillText('Agent Board', 150, 166)
   c.fillStyle = '#1b6a57'; c.beginPath(); c.roundRect(1230, 122, 220, 58, 29); c.fill()
-  c.fillStyle = '#ffffff'; c.font = '600 28px sans-serif'; c.fillText('Neue Karte', 1268, 161)
+  c.fillStyle = '#ffffff'; c.font = '600 28px sans-serif'; c.fillText('New card', 1276, 161)
   for (let i = 0; i < 3; i++) {
     const x = 150 + i * 440
     c.fillStyle = '#ffffff'; c.beginPath(); c.roundRect(x, 270, 400, 300, 24); c.fill()
@@ -223,27 +224,27 @@ async function demo() {
   const ix = cx - iw / 2, iy = cy - H * 0.06 - ih / 2
   const u = iw / 1600
   // circle the green button, arrow to it, underline the title
-  pick('pen', 'Rot', 2)
+  pick('pen', 'Red', 2)
   stroke(ellipse(ix + 1340 * u, iy + 151 * u, 150 * u, 62 * u))
   stroke(line(ix + 1010 * u, iy + ih + 44, ix + 1290 * u, iy + 235 * u, 22, 2))
   stroke([[ix + 1290 * u - 15, iy + 235 * u + 4], [ix + 1290 * u, iy + 235 * u], [ix + 1290 * u + 3, iy + 235 * u + 17]])
-  pick('hl', 'Gelb', 2)
+  pick('hl', 'Yellow', 2)
   stroke(line(ix + 140 * u, iy + 152 * u, ix + 420 * u, iy + 150 * u, 12))
-  pick('pen', 'Blau', 3)
+  pick('pen', 'Blue', 3)
   stroke(line(ix + 150 * u, iy + ih + 36, ix + 590 * u, iy + ih + 36, 30, 3))
-  pick('pen', 'Schwarz', 1)
+  pick('pen', 'Black', 1)
   // a little handwriting-like squiggle under the image
   stroke(Array.from({ length: 70 }, (_, i) => [ix + 20 + i * (iw * 0.5 / 70), iy + ih + 70 + Math.sin(i * 0.9) * 9 + Math.sin(i * 0.23) * 4]))
   if (has('pressure')) {
-    pick('pen', 'Violett', 4)
+    pick('pen', 'Violet', 4)
     stroke(Array.from({ length: 60 }, (_, i) => [ix + 10 + i * (iw - 20) / 60, iy - 34 + Math.sin(i * 0.35) * 14, 0.08 + 0.9 * Math.abs(Math.sin(i * 0.11))]), 'pen')
-    pick('pen', 'Schwarz', 2)
+    pick('pen', 'Black', 2)
   }
   return { ix, iy, iw, ih }
 }
 function many() {
   const r = canvas.getBoundingClientRect()
-  const colours = ['Schwarz', 'Rot', 'Orange', 'Grün', 'Blau', 'Violett']
+  const colours = ['Black', 'Red', 'Orange', 'Green', 'Blue', 'Violet']
   for (let k = 0; k < 300; k++) {
     if (k % 50 === 0) pick('pen', colours[(k / 50) % 6], 1 + (k / 50) % 4)
     const x = 20 + ((k * 37) % (r.width - 80)), y = 70 + ((k * 61) % (r.height - 190))
@@ -260,12 +261,14 @@ const actions = {
   fail(b) { failNext = !failNext; b.setAttribute('aria-pressed', String(failNext)) },
   hang(b) { hang = !hang; b.setAttribute('aria-pressed', String(hang)) },
   load() {
-    if (!last) return pvLog('Noch nichts gesendet.')
+    if (!last) return pvLog('Nothing sent yet.')
     loadedJSON = JSON.stringify(last)
     api.load(last)
-    $('pv-trip').textContent = 'geladen, jetzt erneut senden'
+    $('pv-trip').textContent = 'loaded, now send again'
   },
   clear: () => api.clear(),
+  // the pane as the app hides it: display none, so the canvas has no size
+  hide(b) { const off = frame.style.display !== 'none'; frame.style.display = off ? 'none' : ''; b?.setAttribute('aria-pressed', String(off)) },
   width() { width = widths[(widths.indexOf(width) + 1) % widths.length]; applyWidth() },
   theme() { const d = document.documentElement; if (d.dataset.theme === 'dark') delete d.dataset.theme; else d.dataset.theme = 'dark' },
 }
@@ -299,7 +302,7 @@ if (has('zoomout')) {
   for (let i = 0; i < 3; i++) canvas.dispatchEvent(new WheelEvent('wheel', { ...at(r.width / 2, r.height / 2), deltaY: 30, ctrlKey: true, bubbles: true, cancelable: true }))
 }
 if (has('style')) click('.scr-stylebtn')
-if (has('confirm')) { if (api.isEmpty()) await demo(); q('[aria-label="Alles löschen"]').click() }
+if (has('confirm')) { if (api.isEmpty()) await demo(); q('[aria-label="Clear everything"]').click() }
 if (has('sending') || has('fail') || has('sent') || has('trip')) pressSend()
 if (has('trip')) {
   await sent()
