@@ -66,7 +66,6 @@
 .inbox-answered-toggle { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; }
 .inbox-answered-toggle::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
 .inbox-answered-toggle b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.inbox-answered-caret { order: 4; font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .08em; text-transform: uppercase; color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
 .inbox-answered-toggle:hover { color: var(--fg); }
 .inbox-group-answered .inbox-avatar { background: none; color: var(--muted); outline: 1px solid var(--line-strong); outline-offset: -1px; }
 .inbox-done { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); min-height: 60px; padding: 8px 12px 8px 14px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); scroll-margin: 72px 0 28px; }

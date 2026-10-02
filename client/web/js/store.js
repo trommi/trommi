@@ -313,6 +313,9 @@ export const reopen = cardId => post('/reopen', { card_id: cardId })
 /** Leave a decision to the agent: it takes what it advised, or chooses itself. Taken back with reopen(). */
 export const trust = cardId => post('/decide', { card_id: cardId, trust: true, revised: revisedOf(cardId) })
 
+/** Throw a card away unanswered (a question or an info, never an approval). Taken back with reopen(). */
+export const shred = cardId => post('/shred', { card_id: cardId })
+
 /** Close an info card: it was read. (The server refuses it for a question, and for one that is closed already.) */
 export const closeInfo = cardId => post('/close', { card_id: cardId })
 

@@ -30,9 +30,9 @@ import { subscribe, decide, reopen, putOff, sendMessage, isLoaded, getState, clo
 import { readCard, stopReading, dictationMic, startDictation, stopDictation, isDictating } from './speech.js'
 import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
-import { EXPLAIN_TEXT } from './inbox.js'
+import { EXPLAIN_TEXT, cardNr } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { LATER_WORD, LATER_SKETCH, ACK_WORD, TRUST_WORD, arrowStrokes } from './ui.js'
+import { LATER_WORD, LATER_SKETCH, ACK_WORD, WHAT_WORD, TRUST_WORD, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -102,13 +102,13 @@ const TAG_CHARS = 18
 const TAGS_WIDE_FROM = 16
 const touchOnly = matchMedia('(pointer: coarse)')
 // The word on the button that hands a card to its session.
-const HAND_BACK_LABEL = 'Back to agent'
+const HAND_BACK_LABEL = HANDBACK_WORD
 // An info card (something to read, nothing to decide) has two tiles in the place of options: this one closes it,
 // the other is What??.
 const ACK_KEY = '\u0000ack', WHAT_KEY = '\u0000what'
-const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again.'
+const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
 // The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
-const EXPLAIN_LABEL = 'What??'
+const EXPLAIN_LABEL = WHAT_WORD
 // Where a card's answers stand. false: a column of their own at the right, over the whole height of the card.
 // true: at the top right beside the title, as tall as they need; what is asked flows at their left and takes the
 // whole width under them. ("?head=1" or "?head=0" in the address tries the other.)
@@ -423,12 +423,21 @@ export function mountFocus({ onDecided } = {}) {
         caption.textContent = images.length > 1 ? `${i + 1} / ${images.length} · ${images[i].name}` : images[i].name
         figure.setAttribute('aria-label', `Enlarge image ${i + 1} of ${images.length}: ${images[i].name}`)
         thumbs.forEach((t, k) => t.setAttribute('aria-pressed', String(k === i)))
+        const page = images[i].page?.url
+        pageLink.hidden = !page
+        if (page) { pageLink.href = page; pageLink.lastChild.textContent = images[i].title ? `Open the page: ${images[i].title}` : 'Open the page' }
         rec.gridTiles?.forEach((t, k) => t.toggleAttribute('data-lit', k === i))
         tiePicture(rec, true)
       }
+      // a picture that carries the page it was rendered from: a quiet link right under it
+      const pageLink = el('a', 'focus-page-link')
+      pageLink.target = '_blank'
+      pageLink.rel = 'noopener noreferrer'
+      pageLink.append(sketch('page'), el('span'))
+      pageLink.hidden = true
       rec.showImage = pick
       figure.addEventListener('click', () => openZoom(allImages, allImages.indexOf(images[rec.imageAt]), figure, i => { const at = images.indexOf(allImages[i]); if (at >= 0) pick(at) }, rec))
-      media.append(figure)
+      media.append(figure, pageLink)
       if (images.length > 1) {
         const strip = el('div', 'focus-thumbs')
         images.forEach((a, i) => {
@@ -554,6 +563,7 @@ export function mountFocus({ onDecided } = {}) {
     const session = (pool()?.agents ?? []).find(a => a.id === card.agent)
     who.append(doodle(session?.mark ?? card.agent), el('span', null, card.agent_name || session?.name || 'Agent'))
     if (urgencyWord(card)) who.append(el('b', null, urgencyWord(card)))
+    who.append(el('span', 'focus-nr', cardNr(rec.card)))
     scroll.append(who, lead)
     if (hasMedia || hasText) scroll.append(body)
 
@@ -660,6 +670,8 @@ export function mountFocus({ onDecided } = {}) {
         ...(info ? [] : [wayButton('what', () => { claim(rec); explain() })]),
         wayButton('hand', () => { claim(rec); handBack() }),
         wayButton('snooze', () => { claim(rec); later() }),
+        // apart from the three: throw the question away, unanswered
+        wayButton('shred', () => shredIt(rec)),
       )
       rec.composer = el('div', 'focus-composer')
       rec.composer.append(ask, rec.actionsNode)
@@ -740,7 +752,7 @@ export function mountFocus({ onDecided } = {}) {
         const longest = Math.max(...labelOf(o).split(/[\s-]+/).map(w => w.length))
         if (duo && longest > 9) label.style.fontSize = `${Math.max(.62, 9 / longest).toFixed(2)}em`
         // In a stack of options the pen goes round the words of the advised one (ui.js draws the mark).
-        if (advised && !duo) (tags ? b : label).append(adviceLoop())
+        if (advised) (tags ? b : label).append(adviceLoop())
         words.append(label)
       }
       if (o.detail) words.append(el('span', 'focus-opt-detail', o.detail))
@@ -1656,6 +1668,39 @@ export function mountFocus({ onDecided } = {}) {
     try { await sending } catch (err) { returned(card, note, err) } finally { if (inflight.get(card.id) === sending) inflight.delete(card.id) }
   }
 
+  /** Shred: the question (or info) is thrown away unanswered (POST /shred; what stands in the composer goes along as
+   *  a note). No asking back: its strip carries the way back. The card goes through the shredder in a short motion. */
+  async function shredIt(rec) {
+    claim(rec)
+    if (rec.busy || busyRec() || rec !== shown || rec.card.kind === 'permission') return
+    const card = rec.card
+    const note = rec.askText.trim()
+    const send = async () => {
+      const res = await fetch('/shred', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_id: card.id, note }) })
+      let out = {}
+      try { out = await res.json() } catch {}
+      if (!res.ok) throw new Error(out.error || res.statusText)
+    }
+    clearTimeout(rec.draftTimer)
+    rec.draftTimer = 0
+    if (single) {
+      rec.busy = true
+      try { await send() } catch (err) { rec.busy = false; return refused(rec, err) }
+      rec.busy = false
+      decidedLocal.set(rec.id, Date.now())
+      close()
+      return void say(pageHost(), { head: 'Shredded', title: card.title, back: async () => { await reopen(card.id) } })
+    }
+    if (!still()) { rec.node.dataset.shredding = ''; await wait(320) }
+    if (!recs.has(rec.id)) return
+    decidedLocal.set(rec.id, Date.now())
+    sentId = rec.id
+    const sending = send()
+    offerBack(card, { head: 'Shredded', take: async () => { await sending.catch(() => {}); await reopen(card.id); decidedLocal.delete(card.id) } })
+    sync('sent')
+    try { await sending } catch (err) { returned(card, note, err) }
+  }
+
   /** Say on the card why its answer was not taken. */
   function refused(rec, err) {
     const reason = err?.message || 'The server did not answer.'
@@ -1803,15 +1848,15 @@ export function mountFocus({ onDecided } = {}) {
     if (!recs.has(rec.id)) return
     if (walking && shown === rec && order.length > 1) { pendingJump = order[order.indexOf(rec.id) + 1] ?? order.find(id => id !== rec.id); jumpMotion = 'later' }
     putOff(rec.id, true, true)
-    announce(`With the agent: ${rec.card.title}`)
+    announce(`${HANDBACK_STATE}: ${rec.card.title}`)
     // Taken back (a slip of Enter): the card is here again, and the words are in its field again.
     const fetch = async () => {
       putOff(rec.id, false)
       const now = recs.get(rec.id)
       if (now && words.trim() && !now.askText) now.note = words
     }
-    if (!walking) { close(); return void say(pageHost(), { head: 'With the agent', title: 'It comes back with the reply.', back: fetch }) }
-    offerBack(rec.card, { head: 'With the agent', title: 'It comes back with the reply.', take: fetch })
+    if (!walking) { close(); return void say(pageHost(), { head: HANDBACK_STATE, title: 'It comes back with the reply.', back: fetch }) }
+    offerBack(rec.card, { head: HANDBACK_STATE, title: 'It comes back with the reply.', take: fetch })
   }
   handBtn.addEventListener('click', handBack)
 
@@ -1860,11 +1905,12 @@ export function mountFocus({ onDecided } = {}) {
       what: ['focus-explain', EXPLAIN_LABEL, `${EXPLAIN_LABEL} (E): ask the session to explain this; it returns with the reply`],
       hand: ['focus-handback', HAND_BACK_LABEL, `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`],
       snooze: ['', LATER_WORD, `${LATER_WORD} (L): it waits for you, at the end of the line`],
+      shred: ['focus-shred', SHRED_WORD, `${SHRED_WORD} (X): throw this away, unanswered`],
     }[kind]
     const b = button(`focus-later ${cls} focus-way`, label)
     const art = el('span', 'focus-way-art')
     art.dataset.kind = kind
-    art.append(...(kind === 'what' ? [sketch('q1'), sketch('q2'), sketch('q3')] : [sketch(kind === 'hand' ? 'reverse' : LATER_SKETCH)]))
+    art.append(...(kind === 'what' ? [sketch('q1'), sketch('q2'), sketch('q3')] : [sketch(kind === 'hand' ? 'reverse' : kind === 'shred' ? SHRED_SKETCH : LATER_SKETCH)]))
     b.append(art, el('span', 'focus-way-word', word))
     b.addEventListener('click', act)
     return b
@@ -1878,7 +1924,7 @@ export function mountFocus({ onDecided } = {}) {
   /** A card becomes a strip where it stood: what happened to it (head), its title, and with take() the way back. */
   function addStrip(card, head, take) {
     dropStrip(card.id)
-    const kind = /^(Answered|Trusted):/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === 'With the agent' ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
+    const kind = head === 'Shredded' ? 'shredded' : /^(Answered|Trusted):/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === HANDBACK_STATE ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
     // where it stood: in front of the card that came after it (before it left or moved to the end)
     const moved = !order.includes(card.id) || (lastState?.later ?? []).includes(card.id)
     const from = moved && orderBefore.includes(card.id) ? orderBefore : order
@@ -1887,7 +1933,7 @@ export function mountFocus({ onDecided } = {}) {
     const node = el('div', 'focus-strip')
     node.dataset.kind = kind
     const mark = el('span', 'focus-strip-mark')
-    mark.append(kind === 'answered' ? icon('check') : sketch(kind === 'snoozed' ? LATER_SKETCH : kind === 'handed' ? 'reverse' : kind === 'asked' ? 'explain' : 'other'))
+    mark.append(kind === 'answered' ? icon('check') : kind === 'shredded' ? sketch(SHRED_SKETCH) : sketch(kind === 'snoozed' ? LATER_SKETCH : kind === 'handed' ? 'reverse' : kind === 'asked' ? 'explain' : 'other'))
     const text = el('span', 'focus-strip-text')
     text.append(el('b', null, head), ` · ${card.title}`)
     node.append(mark, text)
@@ -1921,7 +1967,7 @@ export function mountFocus({ onDecided } = {}) {
     const off = new Set(lastState?.later ?? [])
     // a strip is over once its card is back among the open ones by itself (the session replied, or it was fetched back elsewhere)
     for (const x of [...strips]) {
-      if (x.kind === 'answered' || x.kind === 'gone' ? order.includes(x.id) && !decidedLocal.has(x.id) : !off.has(x.id)) dropStrip(x.id)
+      if (x.kind === 'answered' || x.kind === 'gone' || x.kind === 'shredded' ? order.includes(x.id) && !decidedLocal.has(x.id) : !off.has(x.id)) dropStrip(x.id)
     }
     const want = []
     const placed = new Set()
@@ -2309,6 +2355,7 @@ export function mountFocus({ onDecided } = {}) {
       'focus.back': key(() => { const last = strips.findLast(x => x.back); if (inList() && last) last.back(); else backNow() }),
       'focus.explain': key(() => explain()),
       'focus.handback': key(() => handBack()),
+      'focus.shred': key(() => { if (!shown?.askNode) return false; shredIt(shown) }),
       'focus.trust': key(() => { if (!shown?.trustBtn) return false; trustIt(shown) }),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
       'focus.pick': key(n => {
@@ -2452,9 +2499,39 @@ export function mountFocus({ onDecided } = {}) {
       gridBtn.textContent = on ? 'One large picture' : 'All in a grid'
     }
 
+    const pageBtn = el('a', 'focus-zoom-flip')
+    pageBtn.target = '_blank'
+    pageBtn.rel = 'noopener noreferrer'
+    pageBtn.textContent = 'Open the page'
+    const liveBtn = button('focus-zoom-flip')
+    liveBtn.textContent = 'Live'
+    liveBtn.title = 'Show the page itself here, to try it'
+    let live = null
+    const setLive = on => {
+      live?.remove()
+      live = null
+      view.hidden = false
+      liveBtn.setAttribute('aria-pressed', String(on))
+      liveBtn.textContent = on ? 'Picture' : 'Live'
+      if (!on) return
+      live = el('iframe', 'focus-zoom-live')
+      live.setAttribute('sandbox', 'allow-scripts')   // no origin of ours: neither cookies nor storage nor the board's page
+      live.referrerPolicy = 'no-referrer'
+      live.src = images[i].page.url
+      live.title = images[i].title || images[i].name
+      view.hidden = true
+      view.after(live)
+    }
+    liveBtn.addEventListener('click', () => setLive(!live))
+    bar.insertBefore(pageBtn, shut)
+    bar.insertBefore(liveBtn, shut)
+
     let i = start
     const show = to => {
       i = (to + images.length) % images.length
+      setLive(false)
+      pageBtn.hidden = liveBtn.hidden = !images[i].page?.url
+      if (images[i].page?.url) pageBtn.href = images[i].page.url
       bigGrid?.querySelectorAll('.focus-zoom-tile').forEach((t, k) => t.toggleAttribute('data-lit', k === i))
       img.src = images[i].url
       img.alt = images[i].name

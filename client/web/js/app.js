@@ -2,14 +2,14 @@
 // conversation, theme, connection feedback, and the glue between conversation and scribble.
 
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
-import { mountAgents, mountRoster, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor } from './agents.js'
+import { mountAgents, mountRoster, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor, summary } from './agents.js'
 import { mountInbox } from './inbox.js'
 import { el, sketch, setAssetSource, isKnock, knocksText } from './ui.js'
 import { mountChat } from './chat.js'
 import { provide, openSheet } from './keys.js'
 import { say, pageHost, backNow } from './back.js'
 import { togglePad } from './padlink.js'
-import { startDictation, stopDictation, isDictating } from './speech.js'
+import { startDictation, stopDictation, isDictating, readAloud } from './speech.js'
 
 // Links to published assets are named from what the board knows of them.
 setAssetSource(() => getState().all)
@@ -47,18 +47,37 @@ themeToggle.addEventListener('click', () => {
 })
 paintTheme()
 
+// ---- addresses: every place has a real one" up to (not including)
+//   "// ---- modes: a session fills the page with its conversation or its canvas ----"
+// NOT applied: the permission system refused this worker the edit of app.js. Not run, not tested.
+
 // ---- addresses: every place has a real one, so a reload and a shared link land on it ----
 //   /                      the inbox
 //   /agents                the overview of all sessions
 //   /s/<id>                a session's conversation; /s/<id>+<id> sessions laid together
 //   /s/<id>/questions      the conversation filtered to its questions; /files likewise
 //   /s/<id>/scribble       its canvas
-//   ?q=<card number>       on any of them: that question open in its own window ("next": the walk through all)
+//   …/q/<card number>      on any of them: that question open in its own window (/q/102, /s/<id>/q/102)
+//   …/walk                 on any of them: the walk through all open questions
+// Older links still work and are rewritten in place: ?q=102, ?q=<card id>, ?q=next, /q/<card id>.
+// Where no server answers these paths (the page as plain files), the same routes stand behind "#":
+// index.html#/s/<id>/q/102. A page opened that way keeps writing them that way.
+
+const hashRoutes = location.protocol === 'file:' || location.hash.startsWith('#/')
+// May the question be written as a path? Only once the server is known to serve /q/… as the page (a hub
+// from before that keeps ?q=, so a reload never lands on nothing). Asked once per tab; see below.
+let pathsOk = hashRoutes
+try { pathsOk ||= sessionStorage.getItem('trommi-paths') === '1' } catch {}
 
 function readAddress() {
-  const parts = location.pathname.split('/').filter(Boolean)
-  const q = new URLSearchParams(location.search).get('q')
+  const route = location.hash.startsWith('#/') ? location.hash.slice(1).split('?')[0] : hashRoutes ? '/' : location.pathname
+  const parts = route.split('/').filter(Boolean)
   const decode = s => { try { return decodeURIComponent(s) } catch { return s } }
+  let q = new URLSearchParams(location.search).get('q')
+  // The end of the path may name a question or the walk (in a session only after its id: /s/walk is a session).
+  const least = parts[0] === 's' ? 2 : 0
+  if (parts.length > least && parts.at(-1) === 'walk') { q = 'next'; parts.pop() }
+  else if (parts.length - 2 >= least && parts.at(-2) === 'q') { q = decode(parts.at(-1)); parts.splice(-2) }
   if (parts[0] === 'agents') return { page: 'roster', ids: [], view: 'chat', filter: null, q }
   if (parts[0] === 's' && parts[1]) {
     const tail = parts[2]
@@ -66,8 +85,8 @@ function readAddress() {
   }
   return { page: null, ids: [], view: 'chat', filter: null, q }
 }
-let focusCard = null   // what ?q= says: a card id, "next", or null
-// ?q= may carry the number of a question or, as older links do, its id.
+let focusCard = null   // the question the address names: a card id, "next" (the walk), or null
+// A question is named by its number or, as older links do, by its id.
 const cardOf = q => (/^\d+$/.test(q) && getState().all.cards.find(c => c.number === Number(q))?.id) || q
 function addressNow() {
   const state = getState()
@@ -79,10 +98,13 @@ function addressNow() {
     if (tail) path += `/${tail}`
   }
   const params = new URLSearchParams(location.search)
-  // The address names a question by its number, as the board does everywhere else (?q=102).
-  if (focusCard) params.set('q', String(state.all.cards.find(c => c.id === focusCard)?.number ?? focusCard))
-  else params.delete('q')
+  // The address names a question by its number, as the board does everywhere else (/q/102).
+  const nr = focusCard && focusCard !== 'next' ? String(state.all.cards.find(c => c.id === focusCard)?.number ?? focusCard) : null
+  params.delete('q')
+  if (focusCard && pathsOk) path = `${path === '/' ? '' : path}${nr ? `/q/${encodeURIComponent(nr)}` : '/walk'}`
+  else if (focusCard) params.set('q', nr ?? 'next')
   const query = params.toString()
+  if (hashRoutes) return `${location.pathname}${query ? `?${query}` : ''}#${path}`
   return path + (query ? `?${query}` : '') + location.hash
 }
 /** Write the place the page shows into the address bar: a new entry for a step the human took, else in place. */
@@ -91,6 +113,16 @@ function writeAddress(step = true) {
   const url = addressNow()
   if (url === location.pathname + location.search + location.hash) return
   history[step ? 'pushState' : 'replaceState']({ q: focusCard }, '', url)
+}
+// Does the server serve the page under /q/…? Then questions are written as paths from now on, and the
+// address that stands is put right in place.
+if (!pathsOk) {
+  fetch('/q/0', { headers: { Accept: 'text/html' } }).then(res => {
+    if (!res.ok || res.redirected || !/text\/html/.test(res.headers.get('content-type') ?? '')) return
+    pathsOk = true
+    try { sessionStorage.setItem('trommi-paths', '1') } catch {}
+    if (isLoaded()) writeAddress(false)
+  }).catch(() => {})
 }
 
 // ---- modes: a session fills the page with its conversation or its canvas ----
@@ -270,7 +302,9 @@ function paintTitle(state) {
   const picked = memberNow(state)
   // Sessions of the same name carry what tells them apart, as in the sidebar.
   const apart = members.length > 1 ? tellApart(state.all.agents) : new Map()
-  const sig = JSON.stringify([members.map(a => [a.id, a.name, a.mark, a.online, a.task, a.starred, apart.get(a.id)]), members.length > 1 && picked])
+  // Who of them is at work: their mark in the title redraws itself, as in the sidebar.
+  const working = members.filter(a => summary(state.all, [a]).running).map(a => a.id)
+  const sig = JSON.stringify([members.map(a => [a.id, a.name, a.mark, a.online, a.task, a.starred, apart.get(a.id)]), members.length > 1 && picked, working])
   if (sig === titleSig) return
   titleSig = sig
   body.toggleAttribute('data-pair', members.length > 1)
@@ -284,7 +318,7 @@ function paintTitle(state) {
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${agent.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(agent, { vip: false }))
+    mark.append(avatar(agent, { vip: false, working: working.includes(agent.id) }))
     mark.addEventListener('click', () => openMarkPicker(agent, mark))
     const name = el('button', null, agent.name)
     name.type = 'button'
@@ -307,7 +341,7 @@ function paintTitle(state) {
     b.addEventListener('click', () => { pickMember(a.id); if (body.dataset.view === 'chat' && !phone.matches) chat.focus(null, a.id) })
     names.append(b)
   })
-  paneTitle.replaceChildren(pairAvatar(members), names)
+  paneTitle.replaceChildren(pairAvatar(members, working), names)
 }
 
 // The bar's own navigation: the inbox and the list of agents.
@@ -556,6 +590,16 @@ provide('conversation', {
     },
   },
 })
+// Hear it: the open question of the Focus window, the marked row of a list, or the latest message of the
+// conversation is read aloud; the same key again stops it (speech.js). Only where the board can speak.
+const visible = sel => [...document.querySelectorAll(sel)].find(n => n.getClientRects().length && !n.closest('[inert]')) ?? null
+const hear = find => () => { const node = getState().speech && find(); if (!node) return false; readAloud(node) }
+const canHear = id => !/\.read$/.test(id) || Boolean(getState().speech)
+provide('focus', { active: () => Boolean(focusMode?.isOpen()), has: canHear, actions: { 'focus.read': hear(() => visible('.focus .focus-card[data-shown]')) } })
+provide('list', { active: () => Boolean(visible('.inbox-row.is-current')), has: canHear, actions: { 'list.read': hear(() => visible('.inbox-row.is-current')) } })
+provide('conversation', { active: () => inSession() && body.dataset.view === 'chat', has: canHear, actions: { 'chat.read': hear(() => [...$('chat').querySelectorAll('.chat-pane.is-member .log .msg, .chat-pane .log .msg')].filter(n => n.getClientRects().length).at(-1)) } })
+// The agents page hears its own keys (ledger.js); here they are only listed.
+provide('ledger', { active: () => Boolean(visible('#ledger')) })
 // Listed in the sheet only; the composer and the canvas hear these keys themselves.
 provide('writing', { active: () => inSession() && body.dataset.view === 'chat' })
 provide('scribble', { active: () => inSession() && body.dataset.view === 'scribble' })

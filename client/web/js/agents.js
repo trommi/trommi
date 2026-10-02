@@ -83,7 +83,7 @@ export function pairAvatar(members, working = []) {
 const pairName = members => members.map(a => a.name).join(' + ')
 
 // What a session, or several together, need from the human right now.
-function summary(all, members) {
+export function summary(all, members) {
   const ids = new Set(members.map(a => a.id))
   const mine = all.cards.filter(c => ids.has(c.agent) && c.status === 'open' && all.queue.includes(c.id))
   const open = mine.length
@@ -102,7 +102,7 @@ function summary(all, members) {
 // number is small and muted, a disconnected one's faint (its mark is grey). Idle: nothing.
 // With questions open the badge is a button of its own beside the row's entry: a click goes through
 // that session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
-function badge({ open, online, running, stuck }, who = '', walk = null) {
+export function badge({ open, online, running, stuck }, who = '', walk = null) {
   if (!open) return null
   const node = el(walk ? 'button' : 'span', 'agent-badge')
   if (walk) {
