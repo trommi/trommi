@@ -35,11 +35,11 @@ button { cursor: pointer; touch-action: manipulation; }
 
 /* Scrollbars: thin and quiet in the panes, in the house colours, no arrow buttons; none at all on the
    sidebar (it still scrolls by wheel, touch and keys). Text fields keep the system's own. */
-#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--line-strong) 80%, transparent) transparent; }
-:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar { width: 8px; height: 8px; }
-:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-thumb { border-radius: 8px; border: 2px solid transparent; background: var(--line-strong); background-clip: padding-box; }
-:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-track { background: transparent; }
-:is(#inbox, #roster, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-button { display: none; }
+#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--line-strong) 80%, transparent) transparent; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar { width: 8px; height: 8px; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-thumb { border-radius: 8px; border: 2px solid transparent; background: var(--line-strong); background-clip: padding-box; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-track { background: transparent; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-button { display: none; }
 #agents { scrollbar-width: none; }
 #agents::-webkit-scrollbar { display: none; }
 
@@ -281,11 +281,22 @@ body[data-filter] .jump { display: none; }
 .event-about + .event-text::before { content: "→"; margin-right: 8px; color: var(--faint); font-weight: 400; }
 .event-time { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-/* (Quiet: what happened to a question is a note between the messages, not a headline.) */
-.event { min-height: 28px; margin-top: var(--s-4); opacity: .85; }
-.event-ico { width: 18px; height: 18px; background: none; }
-.event-kind { color: var(--faint); font-weight: 500; letter-spacing: .05em; }
+/* (Quiet: what happened to a question is a note between the messages, not a headline: one small line.) */
+.event { min-height: 26px; margin-top: var(--s-3); padding-block: 2px; }
+.event-ico { width: 16px; height: 16px; background: none; color: var(--faint); }
+.event-ico .ico { width: 13px; height: 13px; stroke-width: 2; }
+.event-body { font-size: var(--t-xs); gap: 6px; }
+.event-kind { color: var(--faint); font-weight: 500; letter-spacing: .05em; font-size: .68rem; }
+.event-text, .event-about { color: var(--faint); font-weight: 400; }
 .event-about + .event-text { color: var(--muted); font-weight: 500; }
+.event-about + .event-text::before { margin-right: 6px; }
+.event-time { font-size: .68rem; opacity: 0; transition: opacity var(--d-fast); }
+.event:hover .event-time, .event:focus-visible .event-time { opacity: 1; }
+.event.cont .event-ico::before { content: none; }
+/* A question that waits elsewhere (snoozed, with the agent) keeps a little of its colour. */
+.event-snoozed .event-ico, .event-handed .event-ico { color: var(--urg-high); }
+/* The answer stands where the question was asked (a session on its own): its second line is left out. */
+.chat-pane:not(.is-several) .event-echo { display: none; }
 /* day separators */
 .day { display: flex; align-items: center; gap: var(--s-4); margin-top: var(--s-10); color: var(--faint); }
 .day:first-child { margin-top: 0; }
@@ -359,7 +370,7 @@ body[data-filter] .jump { display: none; }
 .send-error .ico { width: 17px; height: 17px; margin-top: 2px; }
 
 .composer {
-  display: flex; align-items: flex-end; gap: var(--s-2); padding: 7px 7px 7px 18px; cursor: text;
+  display: flex; align-items: flex-end; gap: var(--s-1); padding: 7px; cursor: text;
   background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-xl);
   box-shadow: var(--shadow-md);
   transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-med) var(--ease-out);
@@ -367,15 +378,20 @@ body[data-filter] .jump { display: none; }
 .composer { flex-wrap: wrap; }
 .composer.is-drop { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 /* what is attached: a line of small chips above the words; a click takes one off */
-.composer-files { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 0 2px; }
+.composer-files { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 4px; }
 .composer-files:empty { display: none; }
-.composer-file { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 28px; padding: 0 9px 0 6px; border: 0; border-radius: 8px; background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
-.composer-file .sketch { width: 17px; height: 17px; color: var(--muted); }
+.composer-file { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 32px; padding: 0 4px 0 7px; border: 0; border-radius: 9px; background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
+.composer-file .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
 .composer-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a picture shows itself; the x says that a click takes the chip off */
+.composer-file.has-thumb { padding-left: 4px; }
+.composer-file img { flex: none; width: 24px; height: 24px; border-radius: 6px; object-fit: cover; background: var(--surface); }
+.composer-file em { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; font: 400 15px/1 var(--font); font-style: normal; color: var(--muted); }
+.composer-file:hover em { background: var(--fg); color: var(--bg); }
 .composer-clip .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
 .composer:focus-within { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
 .composer textarea {
-  flex: 1; min-width: 0; height: 40px; padding: 8px 0; resize: none; border: 0; background: none;
+  flex: 1; min-width: 0; height: 40px; padding: 8px 4px; resize: none; border: 0; background: none;
   font-size: 1rem; line-height: 24px; overflow-y: hidden; scrollbar-width: thin;
 }
 .composer textarea:focus-visible { outline: none; }
@@ -544,9 +560,6 @@ body[data-filter] .jump { display: none; }
 .agent-row .crown-toggle { left: 0; top: -5px; }
 .pane-who { position: relative; }
 .pane-who .crown-toggle { left: -13px; top: calc(50% - 26px); }
-.roster-card > header { position: relative; }
-.roster-card .crown-toggle { left: -13px; top: -11px; }
-.roster-card .crown-toggle .crown-mark { width: 24px; }
 /* On a mark without a ground the crown sits a little closer. */
 .agent-avatar .crown-mark { left: -12%; top: -24%; width: 60%; fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); }
 
@@ -671,7 +684,7 @@ button.agent-badge:active { scale: .95; }
 /* ---- inbox: with no session selected, the grouped list of open questions is the whole page ---- */
 #inbox { display: none; }
 body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
-.inbox-head, .inbox-groups { max-width: 760px; margin-inline: auto; }
+.inbox-head, .inbox-groups { max-width: 800px; margin-inline: auto; }
 .inbox-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-8); }
 /* The heading, and on its line the count with its sentence; in a narrow window that wraps below. */
 .inbox-title { flex: 1 1 20rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
@@ -684,10 +697,14 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-circled::after { left: 32%; right: -.1em; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
 /* The way into the walk through all open questions: a plain button beside the heading's sentence, with a small arrow drawn in it. */
 .inbox-tools { display: flex; align-items: center; gap: var(--s-2); }
-.inbox-go { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg); font: inherit; font-weight: 600; white-space: nowrap; text-decoration: underline; text-decoration-color: var(--line-strong); text-decoration-thickness: 2px; text-underline-offset: 4px; cursor: pointer; }
-.inbox-go .sketch { width: 20px; height: 20px; stroke-width: 2; transition: translate 140ms ease-out; }
-.inbox-go:hover, .inbox-go:focus-visible { text-decoration-color: currentColor; }
-.inbox-go:hover .sketch, .inbox-go:focus-visible .sketch { translate: 3px 0; }
+/* The desk's heading is the way into the walk: the words in the display face, the number of what waits
+   in its circle, and a small arrow that steps forward under the pointer or the keyboard. */
+.inbox-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .2em .5em; }
+.inbox-go { display: inline-flex; align-items: center; gap: .32em; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
+.inbox-go .inbox-circled { font: 700 .5em/1.5 var(--font); letter-spacing: 0; margin-left: .2em; }
+.inbox-go .sketch { width: .62em; height: .62em; stroke-width: 2.2; color: var(--faint); transition: translate 140ms ease-out, color 140ms ease-out; }
+.inbox-go:hover .sketch, .inbox-go:focus-visible .sketch { translate: 5px 0; color: var(--fg); }
+.inbox-heading .inbox-knocks { font: 700 var(--t-lg)/1 var(--font); letter-spacing: 0; }
 .inbox-go:active { scale: .98; }
 /* "agents" in the line: the way to the page of all sessions */
 .inbox-agents-link { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; text-decoration-color: var(--line-strong); text-decoration-thickness: 2px; text-underline-offset: 4px; cursor: pointer; }
@@ -709,7 +726,8 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-avatar .sketch { width: 100%; height: 100%; }
 /* One colour drives the whole card: tint, text, border and tab all derive from it. */
 .inbox-row {
-  --card-color: var(--urg-normal);
+  --urg-color: var(--urg-normal);
+  --card-color: var(--urg-color);
   --card-bg: color-mix(in srgb, var(--card-color) 5%, var(--surface));
   --card-ink: color-mix(in srgb, var(--card-color) 70%, var(--fg));
   --card-line: color-mix(in srgb, var(--card-color) 30%, var(--surface));
@@ -720,9 +738,21 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   position: relative; background: var(--card-bg); border-radius: 6px;
   box-shadow: 0 0 0 1px var(--card-line), 0 2px 2px rgb(20 30 25 / .04), 0 5px 5px rgb(20 30 25 / .04), 0 10px 10px rgb(20 30 25 / .03);
 }
-.inbox-row[data-urgency="low"] { --card-color: var(--urg-low); }
-.inbox-row[data-urgency="high"] { --card-color: var(--urg-high); }
-.inbox-row[data-urgency="critical"] { --card-color: var(--urg-critical); }
+.inbox-row[data-urgency="low"] { --urg-color: var(--urg-low); }
+.inbox-row[data-urgency="high"] { --urg-color: var(--urg-high); }
+.inbox-row[data-urgency="critical"] { --urg-color: var(--urg-critical); }
+/* A card that says who asks (the desk) takes that session's colour: a light wash of its hue as the
+   surface, a tone of it as border, text and tiles. What knocks keeps its warning colour on top: the
+   label and the leading tile, so urgency still wins the eye. */
+.inbox-row[data-from] { --card-color: hsl(var(--hue) 46% 31%); --card-bg: color-mix(in srgb, hsl(var(--hue) 70% 50%) 7%, var(--surface)); --card-line: color-mix(in srgb, hsl(var(--hue) 55% 42%) 36%, var(--surface)); }
+:root[data-theme="dark"] .inbox-row[data-from] { --card-color: hsl(var(--hue) 52% 74%); --card-bg: color-mix(in srgb, hsl(var(--hue) 60% 60%) 9%, var(--surface)); --card-line: color-mix(in srgb, hsl(var(--hue) 50% 62%) 34%, var(--surface)); }
+.inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--urg-color); }
+/* The sender's drawing, small, before the title; the text stands beside it. The byline then does not
+   say who asks a second time. */
+.inbox-text.has-sender { position: relative; padding-left: 36px; }
+.inbox-sender.inbox-from-mark { position: absolute; left: 0; top: 3px; width: 26px; height: 26px; color: hsl(var(--hue) 62% 30%); }
+:root[data-theme="dark"] .inbox-sender.inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+.inbox-row[data-from] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
 .inbox-row > :not(.inbox-more) { grid-row: 1; }
 /* The row the keyboard is on. */
 .inbox-row.is-current { outline: 3px solid var(--fg); outline-offset: 3px; }
@@ -737,7 +767,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-content:has(> .inbox-row-head:empty) { padding-top: 13px; }
 /* Only what stands out carries a tab: blocking and urgent. A normal question has none. */
 .inbox-tab { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 7px 10px; border-radius: 6px 0 6px 0; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
-.inbox-tab { background: var(--card-color); color: var(--surface); }
+.inbox-tab { background: var(--urg-color); color: var(--surface); }
 /* A knock wears the small drawing of knuckles on a door before its word. */
 .inbox-tab .sketch { width: 15px; height: 15px; margin: -3px 0 -3px -2px; stroke-width: 2.1; }
 /* "It knocks": a row that has just arrived urgent or blocking gives two quick small nudges (js/knock.js);
@@ -763,32 +793,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-byline .inbox-from-mark { width: 17px; height: 17px; color: hsl(var(--hue) 62% 30%); }
 :root[data-theme="dark"] .inbox-byline .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
 .inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
-.inbox-gutter { display: none; }
-/* ---- the gutter: who asks stands outside the cards, at their left, once for a whole run of rows ----
-   Where the page is wide enough (its left margin gives the room, so the cards keep their width; a
-   little narrower and the list makes the room itself): the session's mark and name at the top of
-   its run, keeping in sight while a long run scrolls by; a bracket drawn by hand down the run; and
-   beside every row its note: number, age, and the two quiet actions. The cards then hold only the
-   knock label, title, text and the picture with what the card carries. */
-@container inboxpage (min-width: 821px) {
-  .inbox-group[data-sender] { position: relative; }
-  .inbox-gutter { display: block; position: absolute; left: -100px; top: 0; bottom: 0; width: 86px; pointer-events: none; }
-  /* beside the middle of the run's first row; it keeps in sight while a long run scrolls by */
-  .inbox-gutter-who { position: sticky; top: 40px; z-index: 1; display: grid; justify-items: center; gap: 3px; margin-top: 40px; padding: 4px 0 6px; text-align: center; background: var(--surface); }
-  .inbox-gutter-who .inbox-avatar { width: 36px; height: 36px; }
-  .inbox-gutter-who b { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 .78rem/1.2 var(--font); color: var(--fg); }
-  .run-bracket { position: absolute; right: -9px; top: 3px; width: 9px; height: calc(100% - 6px); overflow: visible; fill: none; stroke: var(--line-strong); stroke-linecap: round; stroke-linejoin: round; }
-  .run-bracket path { vector-effect: non-scaling-stroke; stroke-width: 1.5px; }
-  /* (Number and age stay in the card, as its byline; who asks is said by the gutter.) */
-  .inbox-group[data-sender] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
-  /* (The keyboard's arrow would stand in the gutter: the frame round the row marks it there.) */
-  .inbox-group[data-sender] .inbox-row.is-current::before { display: none; }
-}
-@container inboxpage (min-width: 821px) and (max-width: 1000px) { .inbox-groups { padding-left: 100px; } }
-/* No room for a gutter: the first row of a run says who asks, the rows after it do not repeat it. */
-@container inboxpage (max-width: 820px) {
-  .inbox-group[data-sender] .inbox-row ~ .inbox-row :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
-}
 .inbox-from-mark .crown-mark { left: -36%; top: -20%; width: 78%; stroke-width: 2.4; }
 /* (Tightened by a few pixels, so that the byline has its line below two lines of title and one of text.) */
 .inbox-text { display: grid; gap: 2px; padding: 2px 0 0; border: 0; background: none; text-align: left; min-width: 0; }
@@ -930,7 +934,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-asked { flex-basis: 100%; font-size: var(--t-sm); color: var(--card-ink); }
 .inbox-asked:empty { display: none; }
 /* Put off: dashed, because where these cards stand is provisional. */
-.roster-archive .inbox-sender::after { border-top-style: dashed; }
 /* The dashed edge is an outline, so the row and its tiles are exactly as large as an open one. */
 .inbox-row[data-later] { background: none; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--card-color) 45%, var(--surface)); outline-offset: -1px; }
 /* ---- piles (inbox.js pile()): "Snoozed", "With the agent", "Answered" ----
@@ -1014,10 +1017,12 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   .inbox-tabs .inbox-tab-act:last-child { border-radius: 0 6px 0 7px; }
   /* the note is a quiet line at the top of the card; later rows of a run drop the mark and the name */
   .inbox-byline { position: static; order: -1; flex-wrap: wrap; row-gap: 2px; margin: 10px 0 0; padding-right: 26px; }
+  /* (the line keeps its height when it has nothing to say: the clock at the right stands in it) */
+  .inbox-row[data-from] .inbox-byline { min-height: 18px; }
+  .inbox-row[data-from] .inbox-row-head:not(:empty) ~ .inbox-byline { min-height: 0; margin-top: 0; }
   .inbox-row-head { order: -2; }
   .inbox-row-head:not(:empty) + .inbox-text { margin-top: 0; }
   .inbox-content:has(> .inbox-row-head:empty) { padding-top: 0; }
-  .inbox-group[data-sender] .inbox-row ~ .inbox-row :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
   .inbox-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 var(--s-3) var(--s-4); }
   .inbox-answer { width: auto; }
   .inbox-answer.is-wide { grid-column: 1 / -1; }
@@ -1036,6 +1041,61 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* ---- a question inside the conversation: the same row as in the inbox, where it was asked ---- */
 .ask { margin-top: var(--s-4); }
 .ask-open { container: rows / inline-size; margin-block: var(--s-6) var(--s-2); }
+/* A session on its own: the question is the Desk's row itself, answerable in the stream (js/chat.js). */
+.ask-card { container: rows / inline-size; margin-block: var(--s-6) var(--s-3); }
+.ask > .event { margin-left: -6px; }
+.ask > .event[aria-expanded="true"] .event-about { color: var(--fg); }
+/* An answered question, unfolded where it was asked: read-only, with the way back. */
+.ask-past { margin: var(--s-2) 0 var(--s-3); padding: var(--s-4) var(--s-5); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface-2); display: grid; gap: var(--s-3); justify-items: start; animation: arrive var(--d-med) var(--ease-out) both; }
+.ask-past > strong { font: 700 1.05rem/1.3 var(--display); letter-spacing: -.01em; }
+.ask-past > .rich { color: var(--muted); font-size: var(--t-sm); max-width: 100%; }
+.ask-past-options { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+.ask-past-options li { display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 3px 11px; border: 1px solid var(--line); border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-sm); }
+.ask-past-options li.is-chosen { border-color: var(--accent); background: var(--accent-soft); color: var(--fg); font-weight: 600; }
+.ask-past-options .ico { width: 15px; height: 15px; color: var(--accent); stroke-width: 2.4; }
+.ask-past-note { font-size: var(--t-sm); color: var(--muted); }
+.ask-past-take { min-height: 34px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sm); font-weight: 600; }
+.ask-past-take:hover { border-color: var(--fg); }
+/* What the human sent along stands at the right, under each other's edge like the bubbles. */
+.msg.msg-user:has(.shots) { width: min(82%, 34rem); }
+.msg.msg-user .shots { align-self: stretch; margin-left: 0; grid-template-columns: repeat(auto-fit, minmax(0, 11rem)); justify-content: end; max-width: none; }
+.msg.msg-user .shots-one { grid-template-columns: minmax(0, 18rem); }
+.msg.msg-user .files { justify-content: flex-end; margin-bottom: var(--s-2); }
+/* Between a phone and a wide window the logo's pill and the two small round buttons stand over the top edge:
+   a session's title line starts below them. */
+@media (min-width: 861px) and (max-width: 1199px) {
+  body:not([data-pair]):not([data-scope="all"]):not([data-page]) .pane-title { padding-top: 46px; }
+}
+/* Open questions out of sight: how many, and the way to the next one. Beside "To the end", at the column's right edge. */
+.open-jump {
+  position: absolute; z-index: 2; bottom: calc(100% + var(--s-3)); right: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter)));
+  display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 9px 0 13px;
+  border: 0; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface);
+  box-shadow: var(--shadow-md); font-size: var(--t-sm); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.open-jump .ico { width: 16px; height: 16px; stroke-width: 2.2; }
+.open-jump.is-up .ico { rotate: 180deg; }
+.open-jump:hover { filter: brightness(.94); }
+.open-jump:active { scale: .97; }
+body[data-filter] .open-jump { display: none; }
+/* On a wide window a session used to be split in two (css/beside.css: its questions in a column of their own,
+   the conversation narrow beside it). It is one stream again; these lines take that split back for a session
+   on its own. Sessions laid together keep their layout. */
+@media (min-width: 1200px) {
+  body:not([data-pair]):not([data-scope="all"]) .pane-title { grid-template-columns: minmax(0, 1fr); }
+  body:not([data-pair]):not([data-scope="all"]) .pane-title::after { content: none; }
+  body:not([data-pair]):not([data-scope="all"]) .pane-who,
+  body:not([data-pair]):not([data-scope="all"]) .pane-now { margin-inline: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))) max(21rem, calc((100% - 47.5rem) / 2 + var(--gutter))); }
+  body:not([data-pair]):not([data-scope="all"]) .pane-title { border-bottom: 1px solid var(--line); }
+  body:not([data-pair]):not([data-scope="all"]) .modes { grid-column: 1; margin: 0 calc(var(--s-4) + 84px) 6px 0; justify-self: end; }
+  body:not([data-pair]):not([data-scope="all"]) .filters { grid-column: 1; }
+  body:not([data-pair]):not([data-scope="all"]) #chat .chat-pane { display: flex; }
+  body:not([data-pair]):not([data-scope="all"]) #chat .chat-body { display: grid; }
+  body:not([data-pair]):not([data-scope="all"]) #chat .pane-questions { visibility: hidden; }
+  body:not([data-pair]):not([data-scope="all"]) #chat :is(.log, .pane-files, .pane-questions) { grid-area: 1 / 1; }
+  body:not([data-pair]):not([data-scope="all"]) #chat :is(.log, .pane-files, .dock) { --gutter: var(--s-6); border-left: 0; }
+  body:not([data-pair]):not([data-scope="all"]) #chat .log-inner { padding-block: var(--s-6) var(--s-6); }
+}
 
 .msg-details { margin-top: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
 .msg-details summary { cursor: pointer; padding: 8px var(--s-3); font-size: var(--t-sm); font-weight: 600; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
@@ -1067,52 +1127,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .file-meta { font-size: var(--t-xs); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- overview of all sessions ---- */
-#roster { display: none; }
 body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: none; }
-body[data-page="roster"] #roster { display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
-.roster-head, .roster-list, .roster-archive, .roster-links { max-width: 820px; margin-inline: auto; }
-.roster-head { margin-bottom: var(--s-6); }
-.roster-head h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
-.roster-head p { margin-top: var(--s-2); font-size: var(--t-lg); color: var(--muted); }
-.roster-list { display: grid; gap: var(--s-4); }
-.roster-card { display: grid; gap: var(--s-4); padding: var(--s-4) var(--s-5); border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 2px 2px rgb(20 30 25 / .04), 0 5px 5px rgb(20 30 25 / .04); }
-.roster-card[data-online="false"] { box-shadow: none; outline: 1px dashed var(--line-strong); background: none; }
-.roster-card > header { display: flex; align-items: center; gap: var(--s-3); }
-.roster-card .agent-avatar { width: 44px; height: 44px; border-radius: 14px; padding: 2px; }
-.roster-edit { flex: none; padding: 0; border: 0; background: none; border-radius: 14px; }
-.roster-name { flex: 1; min-width: 0; display: grid; }
-.roster-name strong { font: 800 1.25rem/1.2 var(--display); }
-.roster-rename { justify-self: start; max-width: 100%; padding: 0; border: 0; background: none; text-align: left; }
-@media (any-hover: hover) { .roster-rename:hover strong { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); } }
-.roster-name span { color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.roster-state { flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--st-done); }
-.roster-card[data-online="false"] .roster-state { color: var(--faint); }
-.roster-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); }
-.roster-facts > div { padding: var(--s-3) var(--s-3) var(--s-2) 0; min-width: 0; }
-.roster-facts > div:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
-.roster-facts > div:not(:nth-child(3n)) { border-right: 1px solid var(--line); margin-right: var(--s-3); }
-.roster-facts dt { font: 600 var(--t-xs)/1.4 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
-.roster-facts dd { margin: 0; font-size: var(--t-md); overflow-wrap: anywhere; }
-.roster-facts .is-unknown dd { color: var(--faint); font-style: italic; }
-.roster-tasks { display: flex; flex-wrap: wrap; gap: 6px; }
-.roster-task { display: inline-flex; align-items: center; gap: 6px; padding: 3px 10px; border-radius: var(--r-pill); background: var(--st-working-soft); font-size: var(--t-sm); }
-.roster-task::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--st-working); }
-.roster-task[data-state="decision"] { background: var(--st-decision-soft); }
-.roster-task[data-state="decision"]::before { background: var(--st-decision); }
-.roster-task[data-state="done"] { background: var(--st-done-soft); }
-.roster-task[data-state="done"]::before { background: var(--st-done); }
-/* What can be done with a session, as quiet words under its facts. */
-.roster-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s-5); margin-top: calc(-1 * var(--s-2)); }
-.roster-act { min-height: 40px; max-width: 100%; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 600; text-decoration: underline; text-decoration-color: var(--line-strong); text-decoration-thickness: 1px; text-underline-offset: 4px; }
-select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer; text-overflow: ellipsis; }
-.roster-act:hover { color: var(--fg); text-decoration-color: currentColor; }
-.roster-paired { font-size: var(--t-sm); color: var(--muted); margin-right: calc(-1 * var(--s-3)); }
-/* Put away: one line per session. */
-.roster-archive { margin-top: var(--s-10); display: grid; gap: var(--s-2); }
-.roster-archive .inbox-sender { color: var(--muted); margin-bottom: var(--s-2); }
-.roster-archived { display: flex; align-items: center; gap: var(--s-3); }
-.roster-archived .roster-name strong { font: 600 1rem/1.3 var(--font); }
-.roster-links { display: none; }
 
 /* ---- rename a session, pick its scribble ---- */
 .session-editor { border: 0; padding: 0; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); width: min(420px, calc(100vw - 32px)); }
@@ -1189,73 +1204,23 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
 :root[data-theme="dark"] #theme-toggle .ico-sun { display: block; }
 /* The sheet of keys: only where there is a keyboard. */
 @media (pointer: coarse) { .topbar #keys-open { display: none; } }
-/* ---- quick send (js/quicksend.js): a slim field in the middle of the bar, to the crowned session ----
-   A plain quiet field: the receiver's mark with its crown at the left, the words, the microphone. It is
-   one line high; with more than one line it grows upward over the page and falls back after sending. */
-.quick { position: relative; flex: 1 1 auto; min-width: 0; max-width: 560px; margin-inline: auto; display: flex; align-items: center; gap: 4px; height: 36px; padding: 0 4px 0 6px; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); transition: box-shadow var(--d-fast); }
-.quick:focus-within { box-shadow: 0 0 0 1px var(--fg); }
-.quick.is-drop { box-shadow: 0 0 0 2px var(--accent); }
-.quick[data-none] { background: none; box-shadow: 0 0 0 1px var(--line-strong); }
-.quick-to { flex: none; position: relative; display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 0 2px; border: 0; border-radius: 8px; background: none; color: var(--muted); }
-.quick-to:hover { background: var(--sunken); }
-.quick-to .agent-avatar { width: 24px; height: 24px; }
-.quick-to > .sketch { width: 20px; height: 20px; }
-.quick-switch { display: inline-flex; color: var(--faint); rotate: 180deg; }
-.quick-switch .sketch { width: 13px; height: 13px; stroke-width: 2.4; }
-.quick-box { flex: 1; min-width: 0; position: relative; height: 36px; }
-.quick-field { position: absolute; left: 0; right: 0; bottom: 0; width: 100%; height: 36px; padding: 8px 6px; border: 0; background: none; resize: none; font: 400 var(--t-md)/20px var(--font); color: var(--fg); overflow-y: auto; scrollbar-width: thin; }
-.quick-field:focus-visible { outline: 0; }
-.quick-field::placeholder { color: var(--faint); opacity: 1; }
-.quick[data-none] .quick-field { cursor: pointer; }
-/* more than one line: it stands over the page, on paper of its own */
-.quick[data-tall] .quick-field { left: -40px; right: -80px; width: auto; bottom: -1px; padding: 9px 12px; border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--fg), var(--shadow-lg); z-index: 3; }
-.quick-files { position: absolute; left: 0; bottom: calc(100% + 8px); display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; }
-.quick-file { display: inline-flex; align-items: center; gap: 5px; max-width: 220px; height: 28px; padding: 0 9px 0 6px; border: 0; border-radius: 8px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
-.quick-file .sketch { width: 17px; height: 17px; color: var(--muted); }
-.quick-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.quick .dictate-mic { flex: none; width: 30px; height: 30px; }
-.quick-send { flex: none; width: 30px; height: 30px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--fg); color: var(--bg); }
-.quick-send .sketch { width: 18px; height: 18px; stroke-width: 2.1; }
-.quick-send[hidden] { display: none; }
-.quick[aria-busy] .quick-send { opacity: .5; }
-.quick-note { position: absolute; left: 0; bottom: calc(100% + 8px); margin: 0; padding: 7px 12px; border-radius: 8px; background: var(--fg); color: var(--bg); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; box-shadow: var(--shadow-md); animation: drop var(--d-med) var(--ease-out) both; }
-.quick-go { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; }
-.quick-list { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 6; min-width: 240px; max-height: 50vh; overflow-y: auto; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
-.quick-list .caps { margin: 0; padding: 6px 10px 4px; color: var(--faint); }
-.quick-list button { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 8px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; }
-.quick-list button:hover, .quick-list button:focus-visible { background: var(--sunken); }
-.quick-list button[aria-current="true"] { font-weight: 700; }
-.quick-list .agent-avatar { width: 26px; height: 26px; }
-.quick-list i { margin-left: auto; padding-left: var(--s-4); font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
-/* Two small round buttons float at the bottom right of every page: the speech bubble wearing the crown
-   (quick send to the crowned session; its field opens above them) and the pad's drawing. In a session
+/* Two small round buttons float at the bottom right of every page: the memo pad showing the crowned
+   session (quick send, the memo slip: css/quicksend.css) and the pad's drawing. In a session
    they stand above the composer, so they never lie on its send button. */
 .quick-open, .topbar .padlink-open {
   position: fixed; z-index: 6; bottom: calc(var(--s-4) + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: 44px; height: 44px; min-height: 0; padding: 0; margin: 0;
   display: grid; place-items: center; border: 0; border-radius: 50%; rotate: none; background: var(--surface); color: var(--fg);
   box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); transition: box-shadow var(--d-fast), translate var(--d-fast);
 }
-.topbar .quick-open { right: var(--s-4); width: 44px; height: 44px; border-radius: 50%; }
 .topbar .padlink-open { right: calc(var(--s-4) + 52px); }
 .quick-open:hover, .topbar .padlink-open:hover { background: var(--surface); box-shadow: 0 0 0 1px var(--fg), var(--shadow-md); translate: 0 -1px; rotate: none; }
 .quick-open[aria-expanded="true"], .topbar .padlink-open[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
-.quick-open .sketch { width: 22px; height: 22px; stroke-width: 1.8; }
-.quick-open .crown-mark { left: 7px; top: 3px; width: 16px; rotate: -17deg; stroke-width: 2.2; }
 .topbar .padlink-open span { display: none; }
 .topbar .padlink-ico { width: 22px; height: 22px; }
 /* In a session the two do not float over the conversation: they stand small at the top right, beside its title. */
 body:not([data-scope="all"]):not([data-page]) :is(.quick-open, .topbar .padlink-open) { bottom: auto; top: 8px; width: 36px; height: 36px; box-shadow: 0 0 0 1px var(--line); }
-body:not([data-scope="all"]):not([data-page]) .quick { bottom: auto; top: 52px; }
 body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: calc(var(--s-4) + 44px); }
-.quick { display: none; position: fixed; z-index: 6; right: var(--s-4); bottom: calc(var(--s-4) + 54px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: min(520px, calc(100vw - 2 * var(--s-4))); max-width: none; margin: 0; height: 44px; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
-.quick:focus-within { box-shadow: 0 0 0 1px var(--fg), var(--shadow-lg); }
-.quick.is-sheet { display: flex; }
-.quick-box, .quick-field { height: 44px; }
-.quick-field { padding-block: 12px; }
-.quick[data-tall] .quick-field { left: 0; right: 0; }
 @media (max-width: 860px) {
-  .quick-field { font-size: 16px; }
-  body:not([data-scope="all"]):not([data-page]) .quick-open { right: 56px; top: 6px; }
   body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: 100px; top: 6px; }
 }
 /* ---- wide screens: no bar. The logo with its menu floats at the top centre of the page, a small
@@ -1265,7 +1230,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   body { grid-template-rows: minmax(0, 1fr); }
   #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
   #agents > .agent-row:first-child { position: sticky; top: 0; z-index: 4; padding-block: var(--s-3) var(--s-1); background: var(--bg); }
-  #session, #inbox, #roster, #ledger { grid-row: 1; }
+  #session, #inbox, #ledger { grid-row: 1; }
   /* (centred by its margins, not by a transform: the floating buttons below are its children and must stay the page's) */
   .topbar { position: fixed; z-index: 7; top: 6px; left: 256px; right: 0; width: fit-content; margin-inline: auto; min-height: 0; height: 34px; padding: 0 4px; border: 0; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
   .brand { margin-right: 0; }
@@ -1274,7 +1239,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .brand-open { min-height: 28px; margin-left: 0; padding: 0 6px 0 4px; gap: 7px; border-radius: var(--r-pill); }
   .sidedoors { left: 50%; translate: -50% 0; bottom: auto; top: calc(100% + 8px); width: 300px; }
   /* room for the pill above the pages' headings */
-  body[data-scope="all"] #inbox, body[data-page="roster"] #roster, body[data-page="roster"] #ledger { padding-top: 52px; }
+  body[data-scope="all"] #inbox, body[data-page="roster"] #ledger { padding-top: 52px; }
 }
 /* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
    with the connection and two small switches. One thin rule between the parts. */
@@ -1326,18 +1291,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   body[data-scope="all"] #inbox { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
   .inbox-head { margin-bottom: var(--s-5); }
   body[data-scope="all"] .tabbar { display: none; }
-  body[data-page="roster"] #roster { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
   body[data-page="roster"] .tabbar { display: none; }
-  .roster-card { padding: var(--s-4); }
-  .roster-card > header { flex-wrap: wrap; }
-  .roster-state { order: 5; flex-basis: 100%; }
-  .roster-facts { grid-template-columns: 1fr 1fr; }
-  .roster-facts > div:nth-child(-n+4) { border-bottom: 1px solid var(--line); }
-  .roster-facts > div:not(:nth-child(3n)) { border-right: 0; margin-right: 0; }
-  /* The two side doors, at the foot of the overview. */
-  .roster-links { display: flex; gap: var(--s-5); margin-top: var(--s-8); }
-  .roster-links .sketch { width: 17px; height: 17px; margin-right: 5px; stroke-width: 1.9; }
-  .roster-links a { min-height: 44px; display: inline-flex; align-items: center; color: var(--muted); font-size: var(--t-sm); font-weight: 600; text-underline-offset: 4px; }
   .agent-heading, .agent-archive, .agent-cut, .agent-row .crown-toggle[aria-pressed="false"] { display: none; }
   .agent-row .crown-toggle { left: -4px; top: -6px; pointer-events: none; }
   .agent-row.is-group .agent-entry { min-height: 44px; }
@@ -1378,7 +1332,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .event-time { display: none; }
   .dock { padding-bottom: var(--s-3); }
   .hint { display: none; }
-  .composer { border-radius: var(--r-xl); padding: 5px 5px 5px 16px; }
+  .composer { border-radius: var(--r-xl); padding: 5px; gap: 0; }
   .composer textarea { height: 44px; padding-block: 10px; font-size: 16px; }   /* below 16px iOS zooms the page on focus */
   .send { width: 44px; height: 44px; }
   #chat .rich pre code { font-size: .8rem; }

@@ -4,7 +4,7 @@
 // log instead: the questions only, or the files. Plus the pieces other modules share
 // (icons, attachments, lightbox, code blocks).
 
-import { sendMessage } from './store.js'
+import { sendMessage, reopen } from './store.js'
 import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, sketch } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountFiles } from './history.js'
@@ -228,7 +228,9 @@ export function richPlus(source) {
 
 // ---- messages --------------------------------------------------------------
 
-const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised' }
+const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: 'Trusted', snoozed: 'Snoozed', handed: 'With the agent', shredded: 'Shredded' }
+const MAX_FILES = 12        // as the server takes them in one message
+const MAX_BYTES = 88e6      // the server reads 96 MB of a message at most
 const GROUP_GAP = 5 * 60000
 const WORKING_WINDOW = 10 * 60000
 
@@ -316,11 +318,64 @@ function eventLine(m, cont, onCard, card) {
   ico.append(icon(ICONS[m.kind] ? m.kind : 'asked'))
   const body = el('span', 'event-body')
   body.append(el('span', 'event-kind', EVENT_LABEL[m.kind] ?? 'Board'))
-  if (card && card.title !== m.text) body.append(el('span', 'event-about', card.title))
-  body.append(el('span', 'event-text', m.text))
+  if (card && (card.title !== m.text || !m.text)) body.append(el('span', 'event-about', card.title))
+  if (m.text) body.append(el('span', 'event-text', m.text))
   node.append(ico, body, timeNode(m.ts, 'event-time'))
   node.addEventListener('click', () => onCard?.(m.card_id))
   return node
+}
+
+/** The labels of what was chosen on a card, joined by ", "; '' while there is no answer. */
+function choiceLabel(card) {
+  const keys = card.choices?.length ? card.choices : card.choice ? [card.choice] : []
+  return keys.map(key => (card.options ?? []).find(o => o.key === key)?.label ?? key).join(', ')
+}
+
+// A question in a session's own stream that is not in front of the human right now: one quiet line where it
+// was asked, saying what became of it. One that still waits (snoozed, with the agent) opens as its window;
+// one that is over (answered, shredded, done) unfolds in place: what was asked, what was chosen, "Take back".
+function askLine(m, card, state, { onOpen, onError }) {
+  const over = card.status !== 'open'
+  const [kind, text] = card.status === 'decided' ? [card.trusted ? 'trusted' : 'decided', choiceLabel(card) || (card.trusted ? 'your call' : '')]
+    : card.status === 'shredded' ? ['shredded', '']
+    : over ? ['done', card.summary ?? '']
+    : state.handed.includes(card.id) ? ['handed', ''] : ['snoozed', '']
+  // (The line is named after the question: a text that only repeats the title is left out.)
+  const line = eventLine({ kind, text: text === card.title ? '' : text, ts: m.ts, card_id: card.id }, false, over ? () => unfold() : onOpen, { ...card, title: card.title || m.text })
+  if (!over) return [line]
+  let past = null
+  line.setAttribute('aria-expanded', 'false')
+  function unfold() {
+    if (past) { past.remove(); past = null } else { past = pastCard(card, onError); line.after(past) }
+    line.setAttribute('aria-expanded', String(Boolean(past)))
+  }
+  return [line]
+}
+// What an answered question was, read-only: its text, the options with the chosen ones marked, the note, the way back.
+function pastCard(card, onError) {
+  const box = el('div', 'ask-past')
+  box.append(el('strong', null, card.title))
+  if (card.body) box.append(richPlus(card.body))
+  const chosen = card.choices?.length ? card.choices : card.choice ? [card.choice] : []
+  if (card.options?.length) {
+    const list = el('ul', 'ask-past-options')
+    for (const o of card.options) {
+      const item = el('li', chosen.includes(o.key) ? 'is-chosen' : null)
+      if (chosen.includes(o.key)) item.append(icon('check'))
+      item.append(el('span', null, o.label))
+      list.append(item)
+    }
+    box.append(list)
+  }
+  if (card.note) box.append(el('p', 'ask-past-note', `Your note: ${card.note}`))
+  const take = button('ask-past-take')
+  take.textContent = card.status === 'decided' ? 'Take back' : 'Fetch back'
+  take.addEventListener('click', async () => {
+    take.disabled = true
+    try { await reopen(card.id) } catch (err) { take.disabled = false; onError?.(`Not taken back: ${err.message}`) }
+  })
+  box.append(take)
+  return box
 }
 
 // A message that belongs to a question (asked back about it, or the answer to that): say which one, and lead there on a tap.
@@ -391,6 +446,11 @@ function createPane(agent, ctx) {
   const jumpText = el('span', null, 'To the end')
   jump.append(icon('down'), jumpText)
   jump.hidden = true
+  // Open questions that stand in the stream but out of sight: how many, and the way to the next one.
+  const openJump = button('open-jump')
+  const openText = el('span')
+  openJump.append(openText, icon('down'))
+  openJump.hidden = true
   const error = el('p', 'send-error')
   error.setAttribute('role', 'alert')
   error.hidden = true
@@ -399,14 +459,15 @@ function createPane(agent, ctx) {
   draft.rows = 1
   draft.autocomplete = 'off'
   draft.enterKeyHint = 'enter'
-  // What goes along with the words: pictures and files, by the clip, by paste, or dropped on the field.
+  // What goes along with the words: pictures and files, by the clip, by paste, or dropped on the conversation.
   let attached = []   // [{ name, data }], data a data: URL, as the server takes them
   const chips = el('div', 'composer-files')
   const picker = el('input')
   picker.type = 'file'
   picker.multiple = true
   picker.hidden = true
-  const clip = button('mic composer-clip', 'Attach a picture or a file (or paste it, or drop it here)')
+  const clip = button('mic composer-clip', 'Attach a picture or a file (or paste it, or drop it on the conversation)')
+  clip.title = 'Attach a picture or a file'
   clip.append(sketch('clip'))
   // speak instead of typing: the words appear in the draft while you talk (speech.js)
   const mic = dictationMic(draft, { key: `chat:${agent}`, onError: text => ctx.onError?.(text) })
@@ -415,7 +476,7 @@ function createPane(agent, ctx) {
   send.setAttribute('aria-label', 'Send')
   send.disabled = true
   send.append(icon('send'))
-  form.append(chips, draft, picker, clip, mic, send)
+  form.append(chips, clip, draft, picker, mic, send)
   // A copied decision goes along as a chip (cardclip.js): offered above the field, or Ctrl+V.
   const clipped = pasteChip(draft, { host: form, onChange: () => fitDraft() })
   const hint = el('p', 'hint')
@@ -424,7 +485,7 @@ function createPane(agent, ctx) {
   const dockColumn = el('div', 'column')
   dockColumn.append(error, form, hint)
   const dock = el('div', 'dock')
-  dock.append(jump, dockColumn)
+  dock.append(jump, openJump, dockColumn)
   root.append(head, body, dock)
 
   const fine = matchMedia('(pointer: fine)')
@@ -444,20 +505,36 @@ function createPane(agent, ctx) {
   let empty = null
   let placeholder = 'Message to the agent'
   let headSig = ''
+  let several = false       // this pane stands beside others (sessions laid together)
 
   // A question the agent asked stays answerable right where it was asked: while its card is
   // open the marker is the same row as in the inbox, afterwards it shrinks back to one line.
   const asks = new Map()   // message id -> { node, m, sig }
   const fit = lineFit()
+  // A session on its own: ONE stream. Its question is the real, answerable row (the Desk's) right where it
+  // was asked (.ask-card); answered, snoozed or with the agent it is one quiet line there. Sessions laid
+  // together keep their combined list beside the conversations, and the log only points at it (.ask-open).
   function paintAsk(entry, state) {
     const card = state.all.cards.find(c => c.id === entry.m.card_id)
     const off = state.later.includes(card?.id)
-    const sig = card ? JSON.stringify([card.status, card.choice, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments?.length, off]) : 'gone'
+    const sig = card ? JSON.stringify([card.status, card.choice, card.choices, card.trusted, card.summary, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments?.length, card.version, off, state.handed.includes(card.id), several]) : 'gone'
     if (entry.sig === sig) return
     entry.sig = sig
     const old = entry.node.querySelector('.inbox-question')
     if (old) fit.unobserve(old)
-    if (card?.status !== 'open') {
+    if (!card) {
+      entry.node.className = 'ask'
+      return entry.node.replaceChildren(eventLine(entry.m, false, ctx.onCard, card))
+    }
+    if (!several) {
+      if (card.status !== 'open' || off) {
+        entry.node.className = 'ask'
+        return entry.node.replaceChildren(...askLine(entry.m, card, state, ctx))
+      }
+      entry.node.className = 'ask ask-card'
+      return entry.node.replaceChildren(questionRow(card, { onOpen: ctx.onOpen, onDecided: ctx.onDecided, fit }))
+    }
+    if (card.status !== 'open') {
       entry.node.className = 'ask'
       return entry.node.replaceChildren(eventLine(entry.m, false, ctx.onCard, card))
     }
@@ -482,14 +559,19 @@ function createPane(agent, ctx) {
       return entry.node
     }
     const about = m.card_id && state.all.cards.find(c => c.id === m.card_id)
-    if (m.from === 'event') return eventLine(m, cont, ctx.onCard, about)
+    if (m.from === 'event') {
+      const line = eventLine(m, cont, ctx.onCard, about)
+      // The answer already stands where the question was asked (a session on its own): no second line for it.
+      if (m.kind === 'decided' && [...asks.values()].some(entry => entry.m.card_id === m.card_id)) line.classList.add('event-echo')
+      return line
+    }
     const node = el('article', `msg msg-${m.from === 'user' ? 'user' : 'agent'}${cont ? ' cont' : ''}`)
     if (m.from === 'user') {
       for (const a of (m.attachments ?? []).filter(a => a.kind === 'scribble')) node.append(scribbleCard(a, () => ctx.onScribble?.(agent)))
-      // What the human sent from the pad: the picture of the selection, as the session got it.
-      node.append(...attachmentNodes((m.attachments ?? []).filter(a => a.pad)))
+      // What the human sent along: pictures and files from the composer, and the picture of a selection on the pad.
+      node.append(...attachmentNodes((m.attachments ?? []).filter(a => a.kind !== 'scribble')))
       if (about) node.append(aboutNode(about, ctx.onCard))
-      if (m.cards?.length) node.append(cardChips(m.cards, id => ctx.onOpen?.(id)))
+      if (m.cards?.length) node.append(cardChips(m.cards, (id, open) => (open ? ctx.onOpen : ctx.onCard)?.(id)))
       if (m.text) {
         const bubble = el('div', 'bubble')
         bubble.append(el('p', null, m.text))
@@ -542,6 +624,20 @@ function createPane(agent, ctx) {
     jump.classList.toggle('has-unread', unread > 0)
     jumpText.textContent = unread === 0 ? 'To the end' : unread === 1 ? '1 new message' : `${unread} new messages`
   }
+  // The open questions of the stream that are scrolled out of sight, and which of them comes next.
+  let nextOpen = null
+  function updateOpen() {
+    const box = log.getBoundingClientRect()
+    const away = several || !visible() ? [] : [...inner.querySelectorAll('.ask-card')].map(node => ({ node, r: node.getBoundingClientRect() }))
+      .filter(({ r }) => r.bottom < box.top + 48 || r.top > box.bottom - 48)
+    const below = away.find(({ r }) => r.top > box.top)
+    nextOpen = (below ?? away.at(-1))?.node ?? null
+    openJump.hidden = !nextOpen
+    if (!nextOpen) return
+    openJump.classList.toggle('is-up', !below)
+    openText.textContent = `${away.length} open`
+    openJump.setAttribute('aria-label', away.length === 1 ? 'One open question out of sight: go to it' : `${away.length} open questions out of sight: go to the next one`)
+  }
   function settle() {
     if (!visible()) return
     if (pinned) {
@@ -549,13 +645,22 @@ function createPane(agent, ctx) {
       setUnread(0)
     }
     updateJump()
+    updateOpen()
   }
   log.addEventListener('scroll', () => {
     if (!visible()) return
     pinned = atEnd()
     if (pinned) setUnread(0)
     updateJump()
+    updateOpen()
   }, { passive: true })
+  const calm = matchMedia('(prefers-reduced-motion: reduce)')
+  openJump.addEventListener('click', () => {
+    if (!nextOpen) return
+    pinned = false
+    nextOpen.scrollIntoView({ block: 'center', behavior: calm.matches ? 'instant' : 'smooth' })
+    nextOpen.querySelector('.inbox-row')?.focus({ preventScroll: true })
+  })
   jump.addEventListener('click', () => {
     pinned = true
     setUnread(0)
@@ -596,7 +701,9 @@ function createPane(agent, ctx) {
     lastMsg = m
   }
 
-  function render(state, several) {
+  function render(state, beside) {
+    several = beside
+    root.classList.toggle('is-several', several)
     const me = state.all.agents.find(a => a.id === agent)
     // Columns of the same name carry what tells them apart, as in the sidebar.
     const apart = several ? tellApart(state.all.agents).get(agent) ?? '' : ''
@@ -674,12 +781,22 @@ function createPane(agent, ctx) {
     send.disabled = sending || (!draft.value.trim() && !attached.length && !clipped.ids())
   }
   function paintChips() {
-    chips.replaceChildren(...attached.map((a, i) => {
-      const chip = button('composer-file', `${a.name}: take it off`)
-      chip.append(sketch(/^data:image\//.test(a.data) ? 'picture' : 'page'), el('span', null, a.name))
-      chip.addEventListener('click', () => { attached.splice(i, 1); paintChips() })
-      return chip
-    }))
+    chips.replaceChildren(
+      ...attached.map((a, i) => {
+        const chip = button('composer-file', `${a.name}: take it off`)
+        chip.title = `${a.name}: click to take it off`
+        if (/^data:image\//.test(a.data)) {
+          const thumb = el('img')
+          thumb.src = a.data
+          thumb.alt = ''
+          chip.classList.add('has-thumb')
+          chip.append(thumb)
+        } else chip.append(sketch('page'))
+        chip.append(el('span', null, a.name), el('em', null, '×'))
+        chip.addEventListener('click', () => { attached.splice(i, 1); paintChips() })
+        return chip
+      }),
+    )
     form.toggleAttribute('data-files', attached.length > 0)
     fitDraft()
   }
@@ -692,8 +809,18 @@ function createPane(agent, ctx) {
   async function attach(list) {
     const got = [...list].filter(f => f instanceof File)
     if (!got.length) return
+    error.hidden = true
+    if (attached.length + got.length > MAX_FILES) return showError(`At most ${MAX_FILES} files in one message.`)
+    // (A data: URL is a third longer than the file.)
+    if ((attached.reduce((sum, a) => sum + a.data.length, 0) + got.reduce((sum, f) => sum + f.size * 4 / 3, 0)) > MAX_BYTES) return showError('Too large for one message: about 60 MB of files at most.')
     try { attached.push(...await Promise.all(got.map(readFile))) } catch { showError('That file could not be read.') }
     paintChips()
+  }
+  /** What a paste brings: files and pictures are attached; text stays text (a copied decision is cardclip.js's). True when the paste was taken. */
+  function paste(e) {
+    const data = e.clipboardData
+    if (data?.files?.length) { e.preventDefault(); attach(data.files); return true }
+    return false
   }
   function showError(text) {
     error.replaceChildren(icon('warn'), el('span', null, text))
@@ -763,13 +890,22 @@ function createPane(agent, ctx) {
   form.addEventListener('click', e => { if (e.target === form) draft.focus() })
   clip.addEventListener('click', () => picker.click())
   picker.addEventListener('change', () => { attach(picker.files); picker.value = '' })
-  draft.addEventListener('paste', e => { if (e.clipboardData?.files?.length) { e.preventDefault(); attach(e.clipboardData.files) } })
-  form.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); form.classList.add('is-drop') } })
-  form.addEventListener('dragleave', () => form.classList.remove('is-drop'))
-  form.addEventListener('drop', e => { form.classList.remove('is-drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files) } })
+  draft.addEventListener('paste', paste)
+  // A file dropped anywhere on the conversation goes into the message (and never replaces the page).
+  const carriesFiles = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
+  root.addEventListener('dragover', e => { if (carriesFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; form.classList.add('is-drop') } })
+  root.addEventListener('dragleave', e => { if (!root.contains(e.relatedTarget)) form.classList.remove('is-drop') })
+  root.addEventListener('drop', e => {
+    form.classList.remove('is-drop')
+    if (!carriesFiles(e)) return
+    e.preventDefault()
+    attach(e.dataTransfer.files)
+    draft.focus({ preventScroll: true })
+  })
+  paintChips()
 
   return {
-    root, render, tick, settle, showError,
+    root, render, tick, settle, showError, paste,
     unread: () => unread,
     /** Shown again after another session was: at its end, with nothing unread. */
     attached() { pinned = true; setUnread(0); requestAnimationFrame(() => { fitDraft(); settle() }) },
@@ -779,6 +915,14 @@ function createPane(agent, ctx) {
     },
     /** Bring one card into view in the list of questions: its open row, or its line among the answered. */
     reveal(cardId) {
+      // In the stream of a session on its own the card stands where it was asked.
+      const asked = !several && !filtered() && [...asks.values()].find(entry => entry.m.card_id === cardId)?.node
+      if (asked) {
+        pinned = false
+        asked.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        asked.firstElementChild?.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
+        return true
+      }
       const row = cardsRoot.querySelector(`[data-id="${CSS.escape(cardId)}"]`)
       if (!row) return questions.reveal(cardId)
       row.scrollIntoView({ block: 'center', behavior: 'smooth' })
@@ -824,6 +968,13 @@ export function mountChat(root, ctx = {}) {
   function paintMember() {
     for (const [id, pane] of panes) pane.root.classList.toggle('is-member', id === member)
   }
+  // Ctrl+V with the caret in no field: what the clipboard holds goes into the composer of the conversation in sight.
+  window.addEventListener('paste', e => {
+    if (e.defaultPrevented || e.target?.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
+    const pane = panes.get(shown.includes(member) ? member : shown[0])
+    if (!pane || !pane.root.offsetParent || pane.root.closest('[inert]') || document.body.dataset.filter) return
+    if (pane.paste(e)) pane.focus()
+  })
 
   return {
     render(state, loaded) {

@@ -384,6 +384,19 @@ export function questionRow(card, { onOpen, onDecided, onGallery = null, off = f
   const about = [cardNote(card), card.urgency_reason].filter(Boolean).join(' · ')
   const words = plain(card.body)
   const title = el('strong', 'inbox-question', card.title)
+  // Who asks: the session's drawing, small, before the title (its crown on it, its name as the tooltip),
+  // and the card takes that session's colour (CSS: .inbox-row[data-from]).
+  if (from) {
+    node.dataset.from = from.id
+    node.style.setProperty('--hue', hueFor(from))
+    const sender = smallMark(from)
+    sender.classList.add('inbox-sender')
+    sender.title = from.name
+    sender.setAttribute('role', 'img')
+    sender.setAttribute('aria-label', `From ${from.name}`)
+    text.classList.add('has-sender')
+    text.append(sender)
+  }
   text.append(title)
   // Beside the title: a small clock for the card's age (its hands show it; the words are its tooltip),
   // and the card's number, which shows only under the pointer or the keyboard.
@@ -673,6 +686,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     if (sender) { const who = el('span', 'inbox-done-who'); who.append(doodle(sender.mark ?? sender.id), sender.name); sub.append(who) }
     if (card.decided) sub.append(agoNode(card.decided, 'inbox-done-ago'))
     if (card.status === 'done') sub.append(el('span', 'inbox-done-closed', 'done by the agent'))
+    sub.append(copyButton(card))
     text.append(el('strong', null, card.title), sub)
     const take = el('button', 'inbox-takeback', 'Take back')
     take.type = 'button'
@@ -793,29 +807,28 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     const knocking = fresh.filter(isKnock).length
     const knocks = el('span', 'inbox-knocks')
     if (knocking) knocks.append(sketch(KNOCK_SKETCH), knocksText(knocking))
+    let heading = null   // the desk's own heading; a session's list keeps its sentence
     if (fresh.length && !agent) {
-      // "3 questions need you from 4 agents": a sentence, with "agents" as the way to the page of all
-      // sessions. The way into the walk (every open question, one after the other, in the big window;
-      // also when there is only one) stands in the same sentence, as words to press.
-      const senders = new Set(fresh.map(c => c.agent)).size
-      const who = el('button', 'inbox-agents-link', senders === 1 ? '1 agent' : `${senders} agents`)
-      who.type = 'button'
-      who.title = 'The agents: every session, where it runs and what it does'
-      who.addEventListener('click', () => document.getElementById('nav-roster')?.click())
-      line.append(...(knocking ? [knocks, el('span', 'inbox-dot', '·')] : []), ...(asking || !toRead ? [circled, needs.trim().replace(/\.$/, '')] : [reading]), ' from ', who, ...(toRead && asking ? [el('span', 'inbox-dot', '·'), reading] : []))
+      // The desk's heading is the way into the walk, and nothing else: "Next, please" with the number of
+      // what waits in a circle drawn by hand (every open card, one after the other, in the big window;
+      // also when there is only one). Knocks, if any, stand beside it as their small mark and number.
       const walk = el('button', 'inbox-walk inbox-go')
       walk.type = 'button'
       walk.title = `${WALK_WORD}: every open question, one after the other (G F)`
+      walk.setAttribute('aria-label', `${WALK_WORD}: ${fresh.length === 1 ? '1 open question' : `${fresh.length} open questions`}`)
       walk.setAttribute('aria-keyshortcuts', 'G F')
-      walk.append(el('span', null, WALK_WORD), sketch('go'))
+      circled.textContent = String(fresh.length)
+      walk.append(el('span', null, WALK_WORD), circled, sketch('go'))
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
-      // Words in the sentence, not a button beside it (the user's word; how it should look is still open).
-      line.append(el('span', 'inbox-dot', '·'), walk)
+      heading = el('h2', 'inbox-heading')
+      heading.append(walk)
+      if (knocking) { knocks.replaceChildren(sketch(KNOCK_SKETCH), String(knocking)); knocks.title = knocksText(knocking); heading.append(knocks) }
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : agent ? 'Nothing needs you.' : `${INBOX_WORD} is clear.`)
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
-    else title.append(el('h2', null, INBOX_WORD), line)
+    else if (heading) title.append(heading)
+    else title.append(el('h2', null, `${INBOX_WORD} is clear.`), ...(off.length ? [el('p', null, 'What you snoozed is below.')] : []))
     lastState = state
     head.replaceChildren(...(agent && !open.length ? [] : [title]), ...(walkTools ? [walkTools] : []))
     // (The sheet of keys opens from the "?" in the bar, index.html #keys-open, and by the key "?".)
@@ -846,18 +859,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
         section.dataset.run = cards.length > 1 ? 'many' : 'single'
         section.setAttribute('aria-label', `${sender.name}: ${cards.length === 1 ? '1 question' : `${cards.length} questions`}`)
         if (sender.starred) section.dataset.vip = ''
-        // The gutter at the left of the cards: the session's mark and name once for the whole run of its
-        // rows (it keeps in sight while a long run scrolls by), and a bracket drawn down the run.
-        const gutter = el('div', 'inbox-gutter')
-        gutter.setAttribute('aria-hidden', 'true')
-        const who = el('div', 'inbox-gutter-who')
-        const mark = el('span', 'inbox-avatar')
-        mark.style.setProperty('--hue', hueFor(sender))
-        mark.append(doodle(sender.mark ?? sender.id))
-        if (sender.starred) mark.append(crown())
-        who.append(mark, el('b', null, sender.name))
-        gutter.append(who)
-        section.append(gutter)
+        // (No gutter beside the cards: every card wears its sender's mark and colour itself.)
       }
       section.append(...cards.map(c => row(c, { from: agent ? null : sender })))
       parts.push(section)
@@ -1081,6 +1083,13 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
           say(pageHost(), { head: 'Asked to explain', title: 'It comes back with the answer.', back: async () => putOff(card.id, false) })
         }, err => error(`Not asked: ${why(err)}`))
       }),
+      // Revise: the card opens with Discuss ready, to say what should change (what the Revise tab did).
+      'list.revise': marked(node => {
+        const card = cards.get(node.dataset.id)
+        if (!card || card.kind === 'permission' || kindOfRow(node) === 'done') return false
+        onOpen?.(card.id, { revise: true })
+        return true
+      }),
       // On an answered row: its answer is taken back, and the question stands in its group again.
       'list.takeback': marked(node => (kindOfRow(node) === 'done' ? press(node.querySelector('.inbox-takeback')) : false)),
       'list.leave': marked(node => {
@@ -1097,7 +1106,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
   })
 
   /** Bring an answered card into view: its pile is opened and its row shown. Returns whether it is there. */
-  function reveal(cardId) {
+  function revealCard(cardId) {
     if (!lastState) return false
     answeredOpen = true
     signature = ''
@@ -1108,5 +1117,5 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     row.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
     return true
   }
-  return { render, reveal }
+  return { render, reveal: revealCard }
 }

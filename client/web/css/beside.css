@@ -1,29 +1,22 @@
-/* A session on a wide window: its open questions lie BESIDE its conversation (js/beside.js).
-   Left the questions, as the rows of the inbox, answerable there, with the session's piles and its
-   answered ones at the foot; right the conversation in a column of its own, under the two modes.
-   Nothing in the page is rebuilt for it: every session's pane already holds its list of questions
-   (js/chat.js, .pane-questions, until now shown by the "Questions only" filter); here it is laid
-   next to the log. Sessions laid together: one list of the questions of all of them (js/beside.js
-   mounts it) in the wide column, their conversations narrow beside it, one above the other.
-   Below 1200px nothing here applies: the questions stand in the conversation and behind
-   "Questions only", as before. */
+/* A session's title on a wide window, and the view of sessions laid together (js/beside.js).
+   One session is one stream (js/chat.js): its questions stand in its conversation. Here is only the
+   head of its page on a wide window: a large mark, the name, a line with what it is at.
+   Sessions laid together: one list of the questions of all of them (js/beside.js mounts it) in a wide
+   column, their conversations narrow beside it, one above the other; below 1200px that list stands
+   above the conversations. */
 
 .pane-now { display: none; }
 
 @media (min-width: 1200px) {
   body { --beside-col: 50.5rem; --talk-w: clamp(340px, 30vw, 440px); }
 
-  /* "Questions only" has nothing to do here. */
-  #filter-questions { display: none; }
-  body[data-filter="questions"] .log { visibility: visible; }
-
-  /* ---- one session: the title is the head of the left column, the modes head the right one ---- */
+  /* ---- one session: the title is a head of its own: mark, name, a line; the modes at its right end ---- */
   body:not([data-pair]) .pane-title {
-    display: grid; grid-template-columns: minmax(0, 1fr) var(--talk-w); grid-template-rows: auto auto; align-items: center; gap: 0;
-    min-height: 0; padding: 0; border-bottom: 0;
+    display: grid; grid-template-rows: auto auto; align-items: center; gap: 0;
+    min-height: 0; padding: 0;
   }
   body:not([data-pair]) .pane-who {
-    grid-column: 1; grid-row: 1; gap: var(--s-4);
+    grid-column: 1 / -1; grid-row: 1; gap: var(--s-4);
     margin: var(--s-6) max(var(--gutter), calc((100% - var(--beside-col)) / 2 + var(--gutter))) 0;
   }
   body:not([data-pair]) .pane-who .agent-avatar { width: 56px; height: 56px; border-radius: 16px; }
@@ -32,30 +25,17 @@
   body:not([data-pair]) .pane-title h2 { font-size: clamp(1.7rem, 2.6vw, 2.2rem); line-height: 1.1; letter-spacing: -.025em; }
   /* Under the name: what the session is at, its model and machine. */
   body:not([data-pair]) .pane-now {
-    grid-column: 1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--s-3); min-height: 1.5em;
+    grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--s-3); min-height: 1.5em;
     margin: -14px max(var(--gutter), calc((100% - var(--beside-col)) / 2 + var(--gutter))) var(--s-3);
     padding-left: calc(56px + var(--s-4)); color: var(--muted); font-size: var(--t-md);
   }
   .pane-now .caps { color: var(--faint); font-size: .66rem; white-space: nowrap; }
   .pane-now span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  body:not([data-pair]) .pane-title::after {
-    content: ""; grid-column: 2; grid-row: 1 / -1; align-self: stretch; border-left: 1px solid var(--line); border-bottom: 1px solid var(--line); pointer-events: none;
-  }
-  body:not([data-pair]) .modes { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: start; margin: 0 0 6px var(--s-2); }
-  body:not([data-pair]) .filters { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-4) 10px 0; }
-  body[data-view="scribble"]:not([data-pair]) .pane-title::after { border-left: 0; }
-
-  body:not([data-pair]) #chat .chat-pane { display: grid; grid-template-columns: minmax(0, 1fr) var(--talk-w); grid-template-rows: minmax(0, 1fr) auto; }
-  body:not([data-pair]) #chat .chat-body { display: contents; }
-  body:not([data-pair]) #chat .pane-questions { grid-column: 1; grid-row: 1 / -1; visibility: visible; padding-block: var(--s-3) var(--s-10); }
-  body:not([data-pair]) #chat .pane-questions > .column { max-width: var(--beside-col); }
-  body:not([data-pair]) #chat .log,
-  body:not([data-pair]) #chat .pane-files { grid-column: 2; grid-row: 1; --gutter: var(--s-4); border-left: 1px solid var(--line); }
-  body:not([data-pair]) #chat .dock { grid-column: 2; grid-row: 2; --gutter: var(--s-4); border-left: 1px solid var(--line); }
-  body:not([data-pair]) #chat .log-inner { padding-block: var(--s-5) var(--s-5); }
-  body:not([data-pair]) #chat .msg { margin-top: var(--s-6); }
-  body:not([data-pair]) #chat .msg.cont { margin-top: var(--s-3); }
-  body:not([data-pair]) #chat .hint { display: none; }
+  /* The name's column, then the filters, then the two modes, on the title's lower line. (The longer
+     selectors outweigh the lines in app.css that once took the old split back.) */
+  body:not([data-pair]):not([data-scope="all"]) .pane-title { grid-template-columns: minmax(0, 1fr) auto auto; }
+  body:not([data-pair]):not([data-scope="all"]) .filters { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-3) 10px 0; }
+  body:not([data-pair]):not([data-scope="all"]) .modes { grid-column: 3; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-4) 6px 0; }
 
   /* ---- sessions laid together: one wide column with the questions of all of them, the conversations
      narrow beside it, one above the other, each with its own name and composer ---- */
@@ -69,9 +49,9 @@
   body[data-pair] #chat .log-inner { padding-block: var(--s-4) var(--s-4); }
   body[data-pair] #chat .msg { margin-top: var(--s-5); }
   body[data-pair] #chat .hint { display: none; }
-  /* The card the reference pointed at, for a moment. */
-  .pane-questions .inbox-row.is-pointed { outline: 3px solid var(--fg); outline-offset: 3px; }
 }
+/* The card a reference in a conversation pointed at, for a moment. */
+.group-questions .inbox-row.is-pointed { outline: 3px solid var(--fg); outline-offset: 3px; }
 
 /* ---- sessions laid together, at every width: the combined list of their questions ---- */
 .group-questions { display: none; }
@@ -92,6 +72,11 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
 .group-questions .rich a { color: var(--accent); text-underline-offset: 3px; }
 .group-questions .rich :not(pre) > code { font: .86em/1.4 var(--mono); padding: .12em .4em; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line); }
 .group-questions .rich pre { margin: 0; padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font: .84rem/1.6 var(--mono); }
+/* Between a phone and a wide window the pill at the top centre and the two round buttons at the top right
+   lie over the title's line: it starts lower, as a single session's does (app.css). */
+@media (min-width: 861px) and (max-width: 1199px) {
+  body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-top: 46px; }
+}
 /* Narrow, with nothing open: the list takes no room. */
 @media (max-width: 1199px) {
   body[data-pair][data-view="chat"]:not([data-page]) .group-questions { flex: none; max-height: min(46dvh, 480px); padding: var(--s-4) var(--gutter) var(--s-5); border-bottom: 1px solid var(--line-strong); }
@@ -101,17 +86,17 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
 /* ---- an open question inside the conversation: a small reference to its card in the column ----
    Only its title is left, on one quiet line in the question's colour; a click brings the card into
    view beside (js/beside.js). */
-body[data-beside] #chat .log .ask-open { container: none; margin-block: var(--s-4) 0; }
-body[data-beside] #chat .log .ask-open .inbox-row {
+body[data-pair] #chat .log .ask-open { container: none; margin-block: var(--s-4) 0; }
+body[data-pair] #chat .log .ask-open .inbox-row {
     min-height: 0; display: block; padding: 0; border-radius: var(--r-sm); background: none; box-shadow: none; outline: 0; cursor: pointer;
   }
-body[data-beside] #chat .log .ask-open .inbox-row > :not(.inbox-content),
-body[data-beside] #chat .log .ask-open .inbox-content > :not(.inbox-text),
-body[data-beside] #chat .log .ask-open .inbox-text > :not(.inbox-question) { display: none; }
-body[data-beside] #chat .log .ask-open .inbox-content { display: block; padding: 0; overflow: visible; }
-body[data-beside] #chat .log .ask-open .inbox-text { display: flex; align-items: baseline; gap: var(--s-2); width: 100%; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); border-left: 3px solid var(--card-color); background: var(--card-bg); }
-body[data-beside] #chat .log .ask-open .inbox-text::before { content: "Question"; flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--card-color); }
-body[data-beside] #chat .log .ask-open .inbox-text::after { content: "←"; flex: none; margin-left: auto; color: var(--card-color); }
-body[data-beside] #chat .log .ask-open .inbox-question { display: block; font: 600 var(--t-sm)/1.35 var(--font); letter-spacing: 0; text-wrap: wrap; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+body[data-pair] #chat .log .ask-open .inbox-row > :not(.inbox-content),
+body[data-pair] #chat .log .ask-open .inbox-content > :not(.inbox-text),
+body[data-pair] #chat .log .ask-open .inbox-text > :not(.inbox-question) { display: none; }
+body[data-pair] #chat .log .ask-open .inbox-content { display: block; padding: 0; overflow: visible; }
+body[data-pair] #chat .log .ask-open .inbox-text { display: flex; align-items: baseline; gap: var(--s-2); width: 100%; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); border-left: 3px solid var(--card-color); background: var(--card-bg); }
+body[data-pair] #chat .log .ask-open .inbox-text::before { content: "Question"; flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--card-color); }
+body[data-pair] #chat .log .ask-open .inbox-text::after { content: "←"; flex: none; margin-left: auto; color: var(--card-color); }
+body[data-pair] #chat .log .ask-open .inbox-question { display: block; font: 600 var(--t-sm)/1.35 var(--font); letter-spacing: 0; text-wrap: wrap; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1199px) { body[data-pair] #chat .log .ask-open .inbox-text::after { content: "↑"; } }
-@media (any-hover: hover) { body[data-beside] #chat .log .ask-open .inbox-text:hover { background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); } }
+@media (any-hover: hover) { body[data-pair] #chat .log .ask-open .inbox-text:hover { background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); } }

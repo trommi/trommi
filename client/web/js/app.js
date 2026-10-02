@@ -2,7 +2,7 @@
 // conversation, theme, connection feedback, and the glue between conversation and scribble.
 
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
-import { mountAgents, mountRoster, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor, summary } from './agents.js'
+import { mountAgents, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor, summary } from './agents.js'
 import { mountInbox } from './inbox.js'
 import { el, sketch, setAssetSource, isKnock, knocksText } from './ui.js'
 import { mountChat } from './chat.js'
@@ -295,7 +295,6 @@ export function walkSession(id) {
 }
 const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
 const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onDecided: offerUndo })
-const roster = mountRoster($('roster'))
 
 // The title of the pane: which session this is, by its mark and name. For sessions laid
 // together, their joint mark and each name; a name picks that one for the canvas, and on a
@@ -467,7 +466,6 @@ subscribe((state, online) => {
   agents.render(state)
   paintNav(state)
   inbox.render(state)
-  roster.render(state)
   // On a phone the sessions are a strip that scrolls sideways; keep the chosen one in sight.
   if (lastScope !== state.scope) {
     lastScope = state.scope
