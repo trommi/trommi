@@ -1229,6 +1229,47 @@ await call('withdraw_card', { card_id: looks })
   assert.doesNotMatch(await iconProp(), /One of:/)
 }
 
+// a picture comes with the page it was rendered from: given outright, found by its name, or as a link; the page is served as a stranger
+{
+  const dir = fs.mkdtempSync(path.join(data, 'pages-'))
+  const put = (name, text) => { const file = path.join(dir, name); fs.writeFileSync(file, text); return file }
+  const bild = name => { const file = path.join(dir, name); fs.copyFileSync(shot, file); return file }
+  const seite = put('entwurf.html', '<!doctype html><button onclick="this.textContent=1">Klick</button>')
+  put('zwilling.html', '<p>Zwilling</p>')
+  let out = textOf(await call('create_decision', {
+    title: 'Mit Seiten', options: [option('a'), option('b')],
+    attachments: [{ path: bild('a.png'), page: seite, title: ' Variante A ' }, bild('zwilling.png'), { path: bild('b.png'), page: '/designs/s5.html' }, { path: bild('c.png'), page: 'https://example.org/x?y=1' }, bild('allein.png'), { path: put('notiz.txt', 'x') }],
+  }))
+  const paged = out.match(/^card (\w+) /)[1]
+  assert.match(out, /\nLinked by name, so the human can open the page under the picture: zwilling\.png → zwilling\.html$/)
+  let k = await onBoard(paged)
+  assert.deepEqual(k.attachments.map(a => [a.name, a.title, a.page?.kind, a.page?.kind === 'link' ? a.page.url : undefined]),
+    [['a.png', 'Variante A', 'file', undefined], ['zwilling.png', undefined, 'file', undefined], ['b.png', undefined, 'link', '/designs/s5.html'], ['c.png', undefined, 'link', 'https://example.org/x?y=1'], ['allein.png', undefined, undefined, undefined], ['notiz.txt', undefined, undefined, undefined]])
+  const pageUrl = k.attachments[0].page.url
+  assert.match(pageUrl, /^\/files\/[0-9a-f]+\.html$/)
+  // the page renders, with scripts, but sandboxed into an origin of its own and loading nothing from anywhere
+  assert.equal((await fetch(base + pageUrl)).status, 401)
+  const shown = await fetch(base + pageUrl, { headers: { Cookie: cookie } })
+  assert.deepEqual([shown.status, shown.headers.get('content-type'), shown.headers.get('x-content-type-options'), await shown.text()], [200, 'text/html; charset=utf-8', 'nosniff', fs.readFileSync(seite, 'utf8')])
+  const csp = shown.headers.get('content-security-policy')
+  assert.match(csp, /^sandbox allow-scripts; default-src 'none'; /)
+  assert.ok(!/allow-same-origin|connect-src|https?:/.test(csp) && /script-src 'unsafe-inline'/.test(csp) && /img-src data:/.test(csp), csp)
+  assert.equal((await fetch(base + k.attachments[0].url, { headers: { Cookie: cookie } })).headers.get('content-security-policy'), "default-src 'none'; style-src 'unsafe-inline'; sandbox", 'a picture is served as before')
+  // a reply takes the same, and a page that is nothing is refused
+  out = textOf(await call('reply', { text: 'so sieht es aus', attachments: [{ path: bild('d.png'), page: seite }] }))
+  assert.equal(out, 'sent')
+  assert.equal((await state()).messages.at(-1).attachments[0].page.kind, 'file')
+  await refused('reply', { text: 'x', attachments: [{ path: bild('e.png'), page: path.join(dir, 'fehlt.html').slice(1) }] }, /page not found/)
+  await refused('reply', { text: 'x', attachments: [{ path: bild('e.png'), page: path.join(dir, 'notiz.txt') }] }, /page must be an HTML file/)
+  await refused('reply', { text: 'x', attachments: [{ page: seite }] }, /an attachment must be the path of a file, or \{ path, page, title \}/)
+  // an earlier version keeps its pictures and their pages; a section still finds its picture by name
+  await call('revise_card', { card_id: paged, attachments: [{ path: bild('neu.png'), page: seite }], text: 'Zwei.\n\n[a] A: so.\npicture: neu.png\n\n[b] B: anders.' })
+  k = await onBoard(paged)
+  assert.deepEqual([k.attachments.length, k.attachments[0].page.kind, k.sections[1].picture, k.versions[0].attachments[0].page.url], [1, 'file', 0, pageUrl])
+  assert.equal((await fetch(base + pageUrl, { headers: { Cookie: cookie } })).status, 200)
+  await call('withdraw_card', { card_id: paged })
+}
+
 // a card filed the old way is what it always was: no sections anywhere
 const oldStyle = await ask('wie früher', { body: 'kurz', recommended: 'a' })
 c = await onBoard(oldStyle)
@@ -2264,5 +2305,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)
