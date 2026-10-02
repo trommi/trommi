@@ -216,3 +216,4 @@ Aus `docs/gelernt.md` eingelöst: versionierte, einmalige, kurzlebige Einladunge
 - **Sprache ist nicht Ende-zu-Ende verschlüsselt.** Was du diktierst oder dir vorlesen lässt, sieht der Hub (Abschnitt 7).
 
 Als Nächstes am Server gewählt: Einschreiben und Schlüssel, und stabile Agenten-IDs. Das Protokoll dafür steht in `docs/pairing.md`, die Hub-Seite als getestetes Modul in `crypto/hub.mjs`.
+- **Ein neuer Agent darf ältere Nachrichten lesen.** Kein neuer Raumschlüssel pro neuem Agenten; der Schlüssel wechselt nur beim Entfernen und bei der Wiederherstellung.
