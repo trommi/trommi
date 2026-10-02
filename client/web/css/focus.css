@@ -1225,3 +1225,27 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus-opt-send .focus-opt-count, .focus-opt-send small { white-space: normal; overflow-wrap: anywhere; }
 .focus-opt-send { height: auto; }
 .focus-opt-send .focus-opt-detail { white-space: normal !important; overflow: visible; text-overflow: clip; }
+.focus-card .focus-opt-send .focus-opt-words { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.focus-card .focus-opt-send .focus-opt-detail { display: block; max-width: 100%; font-size: var(--t-xs); }
+.focus-sec-group { margin: var(--s-5) 0 var(--s-2); padding-bottom: 4px; border-bottom: 1px solid var(--line); font: 700 1.05rem/1.2 var(--display); }
+.focus-secs > .focus-sec-group:first-child { margin-top: 0; }
+@container focus (max-width: 699.9px) {
+  .focus-card[data-pictures] .focus-stage-bar { padding: 40px 0 0; flex-wrap: nowrap; }
+  .focus-card[data-pictures] .focus-talk:has(> .focus-up:not([hidden])) .focus-stage-where { visibility: visible; }
+  .focus-up { max-width: calc(100% - 130px); left: 12px; }
+}
+
+/* ══ The same card unfolded in a row of the page (openInline): no window, no backdrop; its height follows its
+   content, the buttons column stays in sight while the card is taller than the screen. ══ */
+.focus[data-inline] { position: static; z-index: auto; display: block; padding: 0; animation: none; }
+.focus[data-inline] > .focus-backdrop, .focus[data-inline] > .focus-nav, .focus[data-inline] .focus-more, .focus[data-inline] .focus-up { display: none !important; }
+.focus[data-inline] .focus-sheet { height: auto; max-height: none; overflow: clip; animation: none; border-radius: var(--r-lg); box-shadow: 0 0 0 1px var(--line); }
+.focus[data-inline] .focus-stage { display: block; overflow: visible; }
+.focus[data-inline] .focus-card { height: auto; max-height: none; overflow: visible; }
+.focus[data-inline] .focus-card:not([data-shown]) { display: none; }
+.focus[data-inline] .focus-talk, .focus[data-inline] .focus-scroll { height: auto; max-height: none; overflow: visible; flex: none; }
+.focus[data-inline] .focus-card > .focus-answer { position: sticky; top: 8px; align-self: start; max-height: calc(100dvh - 16px); overflow-y: auto; scrollbar-width: none; border: 0; margin: 8px 8px 8px 0; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); }
+.focus[data-inline] .focus-card[data-pictures] .focus-figure { height: clamp(220px, 52vh, 620px); }
+.focus[data-inline] .focus-card .focus-answer > .focus-actions { margin-top: var(--s-4); }
+/* dark: the buttons column has a clear edge against the stage */
+:root[data-theme="dark"] .focus .focus-card > .focus-answer { background: color-mix(in srgb, var(--surface) 90%, #fff); box-shadow: -1px 0 0 var(--line-strong); }

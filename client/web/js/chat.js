@@ -5,7 +5,7 @@
 // (icons, attachments, lightbox, code blocks).
 
 import { sendMessage, reopen } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, sketch } from './ui.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, sketch, TRUST_WORD } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountFiles } from './history.js'
 import { dictationMic } from './speech.js'
@@ -228,7 +228,7 @@ export function richPlus(source) {
 
 // ---- messages --------------------------------------------------------------
 
-const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: 'Trusted', snoozed: 'Snoozed', handed: 'With the agent', shredded: 'Shredded' }
+const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised', trusted: TRUST_WORD, snoozed: 'Snoozed', handed: 'With the agent', shredded: 'Shredded' }
 const MAX_FILES = 12        // as the server takes them in one message
 const MAX_BYTES = 88e6      // the server reads 96 MB of a message at most
 const GROUP_GAP = 5 * 60000
@@ -933,6 +933,7 @@ function createPane(agent, ctx) {
         const { mountScribble } = await import('./scribble.js')
         board = mountScribble(stage, {
           draftKey: null,
+          sendLabel: 'Add to message', sendTip: 'The drawing goes along with your message as a picture',
           send: async ({ png }) => {
             if (!png) throw new Error('Nothing drawn yet.')
             attached.push({ name: `drawing-${new Date().toTimeString().slice(0, 8).replaceAll(':', '')}.png`, data: png })
@@ -940,11 +941,6 @@ function createPane(agent, ctx) {
             closeSheet()
           },
         })
-        // The canvas says "Send this view"; here it only adds the drawing to the message.
-        const label = stage.querySelector('.scr-send-label')
-        const name = () => { if (label && label.textContent === 'Send this view') label.textContent = 'Add to message' }
-        if (label) new MutationObserver(name).observe(label, { childList: true, characterData: true, subtree: true })
-        name()
       } catch (err) {
         console.error(err)
         sheet.remove()

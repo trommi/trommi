@@ -1313,7 +1313,8 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .pane-list { padding-block: var(--s-5) var(--s-8); }
   #agents { grid-row: 2; flex-direction: row; gap: var(--s-1); overflow-x: auto; overflow-y: hidden; padding: var(--s-2) var(--s-3); border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
   #agents::-webkit-scrollbar { display: none; }
-  body[data-scope="all"] #inbox { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
+  /* (room at the foot, so the last row can be scrolled clear of the two floating buttons) */
+  body[data-scope="all"] #inbox { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) 96px; }
   .inbox-head { margin-bottom: var(--s-5); }
   body[data-scope="all"] .tabbar { display: none; }
   body[data-page="roster"] .tabbar { display: none; }

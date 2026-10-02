@@ -127,6 +127,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
   .ledger-acts .ledger-menu { display: grid; width: 44px; height: 44px; }
   .ledger-with button { width: 36px; height: 36px; }
   .ledger-line { grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 0 var(--s-3); min-height: 60px; padding: 0; }
+  /* A line of a pair holds the name and "with …" under it: room above and below, so the name does not touch the rule. */
+  .ledger-line:has(.ledger-with) { padding-block: 8px; }
   .ledger-line.is-archived { grid-template-columns: 44px minmax(0, 1fr) auto auto; }
   .ledger-line.is-archived .ledger-state { display: none; }
   .ledger-find { max-width: none; }

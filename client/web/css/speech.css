@@ -53,6 +53,8 @@
 .focus-card:hover .focus-title .say { opacity: .7; }
 .say:hover { background: var(--sunken); color: var(--fg); }
 .say:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Under a finger the small speaker takes a tap from 38px around it; what is seen stays 26px. */
+@media (pointer: coarse) { .say::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; } }
 .say > * { grid-area: 1 / 1; }
 .say-speaker { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
 .say-stop { display: none; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
