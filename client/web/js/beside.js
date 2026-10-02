@@ -48,6 +48,22 @@ group.setAttribute('aria-label', 'Questions of the sessions laid together')
 const groupList = el('div', 'session-cards group-list')
 group.append(groupList)
 $('chat')?.before(group)
+// On a phone the list is folded to one line above the conversation ("5 questions"); a tap opens it as
+// the whole view, and the same line leads back to the conversation.
+const bar = el('button', 'group-bar')
+bar.type = 'button'
+const barWords = el('span'), barWay = el('b')
+bar.append(barWords, barWay)
+group.before(bar)
+const paintBar = n => {
+  const open = body.hasAttribute('data-joined-list')
+  bar.hidden = !n && !open
+  bar.setAttribute('aria-expanded', String(open))
+  barWords.textContent = n === 1 ? '1 question waits for you' : `${n} questions wait for you`
+  barWay.textContent = open ? 'Conversation' : 'Show'
+}
+let waiting = 0
+bar.addEventListener('click', () => { body.toggleAttribute('data-joined-list'); paintBar(waiting) })
 /** One question as a window of its own (null: go through them): by its address, which the page follows. */
 function openQuestion(cardId) {
   const params = new URLSearchParams(location.search)
@@ -61,12 +77,16 @@ const together = mountInbox(groupList, {
   onDecided: (card, option) => say(pageHost(), { head: `Answered: ${option.label}`, title: card.title, back: () => reopen(card.id) }),
 })
 subscribe(state => {
-  if (state.members.length < 2) return
+  if (state.members.length < 2) { body.removeAttribute('data-joined-list'); return }
   // The inbox's list, shown only what the group's sessions asked.
   const mine = new Set(state.members)
   const cards = state.all.cards.filter(c => mine.has(c.agent))
   const ids = new Set(cards.map(c => c.id))
-  together.render({ ...state, all: { ...state.all, cards, queue: state.all.queue.filter(id => ids.has(id)) } })
+  const queue = state.all.queue.filter(id => ids.has(id))
+  together.render({ ...state, all: { ...state.all, cards, queue } })
+  waiting = queue.filter(id => !state.later.includes(id)).length
+  if (!waiting) body.removeAttribute('data-joined-list')
+  paintBar(waiting)
 })
 
 // ---- a question named in the conversation: bring its card into view beside ----
@@ -76,6 +96,7 @@ $('chat')?.addEventListener('click', e => {
   if (!ref) return
   e.preventDefault()
   e.stopPropagation()
+  if (!body.hasAttribute('data-joined-list') && bar.getClientRects().length) { body.setAttribute('data-joined-list', ''); paintBar(waiting) }
   const card = group.querySelector(`.inbox-row[data-id="${CSS.escape(ref.dataset.id)}"]`)
   if (!card) return
   // One that was snoozed lies in a pile that may be pushed together: open it first.

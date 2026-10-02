@@ -74,15 +74,10 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
 .group-questions .rich a { color: var(--accent); text-underline-offset: 3px; }
 .group-questions .rich :not(pre) > code { font: .86em/1.4 var(--mono); padding: .12em .4em; border-radius: 6px; background: var(--sunken); border: 1px solid var(--line); }
 .group-questions .rich pre { margin: 0; padding: 12px 14px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); font: .84rem/1.6 var(--mono); }
-/* Between a phone and a wide window the pill at the top centre and the two round buttons at the top right
-   lie over the title's line: it starts lower, as a single session's does (app.css). */
-@media (min-width: 861px) and (max-width: 1199px) {
-  body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-top: 46px; }
-}
-/* On a wide window the title stays one line; the two round buttons stand at its right end, so the modes
-   ("Conversation", "Scribble") end before them instead of under them. */
-@media (min-width: 1200px) {
-  body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: 120px; }
+/* The two round buttons (memo, Scratchpad) stand at the top right of a session: the joined title's
+   controls end before them. */
+@media (min-width: 861px) {
+  body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: 108px; }
 }
 /* Narrow, with nothing open: the list takes no room. */
 @media (max-width: 1199px) {
@@ -107,3 +102,16 @@ body[data-pair] #chat .log .ask-open .inbox-text::after { content: "←"; flex: 
 body[data-pair] #chat .log .ask-open .inbox-question { display: block; font: 600 var(--t-sm)/1.35 var(--font); letter-spacing: 0; text-wrap: wrap; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1199px) { body[data-pair] #chat .log .ask-open .inbox-text::after { content: "↑"; } }
 @media (any-hover: hover) { body[data-pair] #chat .log .ask-open .inbox-text:hover { background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); } }
+
+/* ---- sessions laid together on a phone: the list is one line above the conversation, or the whole view ---- */
+.group-bar { display: none; }
+@media (max-width: 860px) {
+  body[data-pair][data-view="chat"]:not([data-page]) .group-bar:not([hidden]) {
+    flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); min-height: 44px; padding: 0 var(--gutter);
+    border: 0; border-bottom: 1px solid var(--line); background: var(--surface-2); color: var(--fg); font: 600 var(--t-sm)/1.2 var(--font); text-align: left;
+  }
+  .group-bar b { flex: none; padding: 6px 12px; border-radius: var(--r-pill); background: var(--fg); color: var(--bg); font-weight: 600; }
+  body[data-pair][data-view="chat"]:not([data-page]) .group-questions { display: none; }
+  body[data-pair][data-joined-list][data-view="chat"]:not([data-page]) .group-questions { display: block; flex: 1; max-height: none; border-bottom: 0; }
+  body[data-pair][data-joined-list][data-view="chat"]:not([data-page]) #chat { display: none; }
+}
