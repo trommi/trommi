@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # The client against the real server with demo data (dev/serve.sh, token
 # "demo", its own temporary data directory): login, the event stream,
-# decide, reopen, message.
+# decide, reopen, message; and with a session of its own that plays the agent:
+# several answers at once, a card reworded while it is answered (409), a
+# card handed back, sessions laid together, crowned and moved.
 #   bin/test-live [PORT]      PORT defaults to 8817; never 8790, the real board.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -14,11 +16,16 @@ here=$PWD
 (cd "$build/tests/live" && qmake6 "$here/tests/live/live.pro" >/dev/null && make -s -j"$(nproc)")
 
 log=$(mktemp)
-../../dev/serve.sh "$port" 60 >"$log" 2>&1 &
+../../dev/serve.sh "$port" 90 >"$log" 2>&1 &
 server=$!
-trap 'kill "$server" 2>/dev/null || true; rm -f "$log"' EXIT
+# A session of its own on that board plays the agent: it files a card, rewords it, takes it back.
+export BOARD_PORT=$port BOARD_TOKEN=demo BOARD_DATA=${TMPDIR:-/tmp}/board-dev-$port
+trap 'kill "$server" ${agent:-} 2>/dev/null || true; rm -f "$log"' EXIT
 for _ in $(seq 1 50); do
-  curl -s -o /dev/null "http://127.0.0.1:$port/?t=demo" && break
+  curl --noproxy '*' -s -o /dev/null "http://127.0.0.1:$port/?t=demo" && break
   sleep 0.2
 done
-TROMMI_TEST_URL="http://127.0.0.1:$port/?t=demo" "$build/tests/live/tst_live"
+node ../../dev/session.mjs link Fixture &
+agent=$!
+sleep 1
+TROMMI_TEST_SESSION="$here/../../dev/session.mjs" TROMMI_TEST_URL="http://127.0.0.1:$port/?t=demo" "$build/tests/live/tst_live" "${@:2}"

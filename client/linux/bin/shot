@@ -6,7 +6,7 @@
 # "tab c type:Hallo_du enter"). The window shows the demo state in
 # tests/fixtures/, or the board in TROMMI_LINK if that is set.
 # TROMMI_THEME=dark|light picks the look, SHOT_MS (1500) when the picture
-# is taken, SHOT_BACKEND=software draws without a GPU.
+# is taken, KEYS_MS (600) when the keys are pressed, SHOT_STATE another demo state, SHOT_BACKEND=software draws without a GPU.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -23,5 +23,5 @@ backend=(QT_QUICK_BACKEND=rhi QSG_RHI_BACKEND=opengl)
 # and the file instead of the Secret Service.
 env -u QT_QPA_PLATFORMTHEME QT_QPA_PLATFORM=offscreen QT_FORCE_STDERR_LOGGING=1 "${backend[@]}" \
   XDG_RUNTIME_DIR="$run" XDG_CACHE_HOME="$run/cache" XDG_CONFIG_HOME="$run/config" TROMMI_NO_KEYRING=1 \
-  TROMMI_SHOT="$out" TROMMI_KEYS="${2:-}" TROMMI_SIZE="${3:-}" TROMMI_SHOT_MS="${SHOT_MS:-1500}" \
+  TROMMI_SHOT="$out" TROMMI_KEYS="${2:-}" TROMMI_KEYS_MS="${KEYS_MS:-600}" TROMMI_SIZE="${3:-}" TROMMI_SHOT_MS="${SHOT_MS:-1500}" \
   "$build/app/trommi" "${args[@]}"

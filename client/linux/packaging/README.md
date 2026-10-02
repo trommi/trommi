@@ -24,7 +24,8 @@ flatpak-builder --user --install --force-clean build-flatpak packaging/com.tromm
 
 Offen:
 
-- Die App-ID. Das Programm meldet sich als `trommi` (`setDesktopFileName` in `app/src/main.cpp`); im Flatpak muss das `com.trommi.Trommi` sein, sonst ordnet der Desktop Fenster und Benachrichtigungen nicht zu.
+- Die App-ID ist erledigt: im Flatpak meldet sich das Programm mit `FLATPAK_ID` (`setDesktopFileName` in `app/src/main.cpp`), sonst als `trommi`. Ungeprüft, weil das Flatpak noch nie gebaut wurde.
+- Das Pad öffnet den Browser über `QDesktopServices`; im Flatpak geht das durch das Portal.
 - Eine AppStream-Datei (`metainfo.xml`) und ein Icon, ohne die Flathub nichts annimmt.
 - `hyprctl` ist in der Sandbox nicht erreichbar: das Nach-vorn-Holen bei einem zweiten Start fällt dort weg.
 - Die 0600-Datei läge unter `~/.var/app/com.trommi.Trommi/config/trommi/board`.

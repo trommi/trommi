@@ -35,6 +35,10 @@ Item {
     property string info: ""           // one line in the window: what happened, or went wrong
     property bool infoBad: false
 
+    // The words on the ways a question can leave without an answer, in one place
+    // (the web keeps them in LATER_WORD, EXPLAIN_LABEL, HAND_BACK_LABEL).
+    readonly property var word: ({ later: "Later", explain: "Explain", handBack: "Back to agent" })
+
     // ── the layout: every key, as data; "?" lists it ────────────────────
     readonly property var layout: [
         { scope: "app", title: "Anywhere", keys: [
@@ -43,7 +47,7 @@ Item {
             [["."], "next session"], [[","], "previous session"], [["U", "⌫"], "back: take the last answer back"],
             [["T"], "light or dark"], [["Esc"], "leave a field"]] },
         { scope: "list", title: "A list of questions", keys: [
-            [["J", "↓"], "next question"], [["K", "↑"], "previous question"], [["Home"], "first question"], [["End"], "last question"],
+            [["J", "↓"], "next question; after the last, the piles below (Enter unfolds one)"], [["K", "↑"], "previous question"], [["Home"], "first question"], [["End"], "last question"],
             [["←", "→"], "next option, where choices are open"], [["Y"], "yes: the thumb up"], [["N"], "no: the thumb down"],
             [["Enter"], "send, where several answers are allowed"], [["Enter", "C"], "open the choices, or the question as a window"],
             [["1…9"], "pick that option"], [["Space"], "pick the option in focus"], [["A"], "ask back instead of answering"],
@@ -54,7 +58,7 @@ Item {
             [["N"], "no: the thumb down"], [["1…9"], "pick that option"], [["Enter"], "send, where several answers are allowed"],
             [["C"], "go to the options"], [["↑", "↓"], "next option, once the keyboard is on one"],
             [["A"], "write to the session about the question"], [["E"], "explain: ask the session to say more"],
-            [["L"], "later: on to the next"], [["U", "⌫"], "back: take the last answer back"], [["Esc"], "leave a field, then close"]] },
+            [["B"], "back to agent: hand the question back, with what you wrote"], [["L"], "later: on to the next"], [["U", "⌫"], "back: take the last answer back"], [["Esc"], "leave a field, then close"]] },
         { scope: "session", title: "In a session", keys: [
             [["R"], "write to the session"], [["Q"], "questions only, and back"], [["O"], "the other session of a pair"]] },
         { scope: "writing", title: "While writing", keys: [[["Enter"], "send"], [["⇧", "Enter"], "new line"]] },
@@ -71,11 +75,13 @@ Item {
     readonly property var units: board.sessions
     function unit(id) { return units.find(u => u.id === id) || null }
     function openPile() { return board.piles.find(p => p.kind === pile) || null }
-    // The rows the keys can reach, top to bottom: a folded pile's rows are out of reach.
+    // The rows the keys can reach, top to bottom: the questions, then the piles
+    // (each one stop; a folded pile's rows are out of reach), then the rows of the one that is open.
     function rows() {
         if (view === "session") return board.inbox.filter(r => !r.head && r.agent === agentId)
         const p = openPile()
-        return board.inbox.filter(r => !r.head).concat(p ? p.rows : [])
+        const heaps = board.piles.filter(x => x.kind !== pile).map(x => ({ id: "pile:" + x.kind, heap: x.kind }))
+        return board.inbox.filter(r => !r.head).concat(heaps, p ? [{ id: "pile:" + p.kind, heap: p.kind }].concat(p.rows) : [])
     }
     function row(id) {
         const all = board.inbox
@@ -146,6 +152,7 @@ Item {
     function togglePile(kind) {
         pile = pile === kind ? "" : kind
         if (sel && !rows().some(r => r.id === sel)) sel = ""
+        if (sel) mark(sel)
     }
 
     // ── the question window ─────────────────────────────────────────────
@@ -336,6 +343,10 @@ Item {
         // A letter acts on the marked row. With none marked it marks one and does
         // nothing else: nothing is answered that was not pointed at first.
         if (!r) { mark(all[0].id); return true }
+        if (r.heap) { // a pile: Enter unfolds it, or pushes it together again
+            if (k === "enter" || k === "c" || k === "space") togglePile(r.heap)
+            return true
+        }
         if (r.done) return true // nothing to open; its key is "take back"
         switch (k) {
         case "y": case "n": {
@@ -399,6 +410,7 @@ Item {
         case "a": focusWindow.compose(); return true
         case "v": say("Dictation is not in this client yet. It is on the web and on the phone."); return true
         case "e": focusWindow.explain(); return true
+        case "b": focusWindow.handBack(); return true
         case "l": focusLater(); return true
         case "u": case "backspace": if (!board.backNow()) say("Nothing to take back."); return true
         }

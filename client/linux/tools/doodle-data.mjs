@@ -18,7 +18,7 @@ const { NAMED, SKETCH, HAND, CROWN } = new Function(`
   ${cut('const CROWN =', '/** The mark of a starred session')}
   ${cut('const flip =', '/** An icon drawn like the session marks')}
   ${cut('const HAND = [', '/** The mark of the agent')}
-  return { NAMED, SKETCH, HAND, CROWN }`)()
+  return { NAMED, SKETCH, HAND, CROWN }`.replace(/^(\s*)export /gm, '$1'))()
 
 const num = n => (Number.isInteger(n) ? `${n}` : `${n}`)
 const stroke = s => `{${s.straight ? 'true' : 'false'}, {${s.map(([x, y]) => `{${num(x)}, ${num(y)}}`).join(', ')}}}`
