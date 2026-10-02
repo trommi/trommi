@@ -18,6 +18,7 @@ import { fileURLToPath } from 'node:url'
 import { cleanFences, htmlBeside, strippedHint, fences, HTML_MAX } from './richhtml.mjs'
 import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_ID, ASSET_KEY, ASSET_BLOB_MAX, prepareAsset, assetUpload, assetLink } from './asset-envelope.mjs'
 import { padRoutes, padSupport } from './pad.mjs'
+import { openBoard, MOVED_NAME } from './board-store.mjs'
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.BOARD_PORT || 8790)
@@ -137,15 +138,36 @@ const URGENCY_LABEL = { low: 'Whenever', normal: 'Normal', high: 'Urgent', criti
 
 // State files from before urgency existed have no number, urgency or queue,
 // and agent messages without attachments; fill those in instead of failing.
+// The state rests in SQLite (board-store.mjs, the same file as the pad). state.json is where it was before:
+// it is read once, when the database holds no board yet, and from then on neither read nor written.
+// BOARD_STORE=json keeps the old way, as does a Node without SQLite.
+let board = null
+let movedMarked = false
+// Set by load() when what it returned came from state.json and the database is still empty.
+let fromJson = false
+let jsonCounts = {}
 function load(owner) {
-  let raw = {}
-  try {
+  if (process.env.BOARD_STORE !== 'json' && !board) {
+    try { board = openBoard(DATA) } catch (err) { console.error(`[board] the state stays in state.json: ${err.message}`) }
+  }
+  if (!board && fs.existsSync(path.join(DATA, MOVED_NAME))) {
+    // state.json is from the day the board moved; starting from it would show the past and then write over nothing.
+    console.error(`[board] this board rests in SQLite (${path.join(DATA, 'pad.db')}), which this hub ${process.env.BOARD_STORE === 'json' ? 'was told not to use (BOARD_STORE=json)' : `cannot open on Node ${process.versions.node}`}. Start it on Node 22.13 or newer, or go back to state.json first: node server/board-store.mjs back ${DATA}`)
+    process.exit(1)
+  }
+  let raw = board?.read() ?? null
+  fromJson = false
+  if (!raw) try {
     raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('not an object')
+    fromJson = Boolean(board)
+    // What the file holds, counted before anything is filled in or dropped: the database must not come up with less.
+    jsonCounts = Object.fromEntries(['cards', 'messages', 'agents'].map(k => [k, Array.isArray(raw[k]) ? raw[k].filter(x => x && typeof x === 'object').length : 0]))
   } catch (err) {
     raw = {}
+    if (err.code !== 'ENOENT' && board) console.error(`[board] state file unreadable (${err.message}); it is left as it is, starting empty`)
     // The next commit would overwrite a file that could not be read; keep it for a look.
-    if (err.code !== 'ENOENT') {
+    else if (err.code !== 'ENOENT') {
       const aside = path.join(DATA, `state.broken-${Date.now()}.json`)
       try { fs.renameSync(STATE_FILE, aside) } catch {}
       console.error(`[board] state file unreadable (${err.message}); kept as ${aside}, starting empty`)
@@ -230,6 +252,16 @@ const newId = () => crypto.randomBytes(4).toString('hex')
 function save() {
   clearTimeout(saveTimer)
   saveTimer = null
+  // Only the records that changed are written, all of them or none.
+  if (board) {
+    board.write(state)
+    if (!movedMarked) {
+      movedMarked = true
+      const marker = path.join(DATA, MOVED_NAME)
+      if (!fs.existsSync(marker)) fs.writeFileSync(marker, `The board's state rests in pad.db since ${new Date().toISOString()}. state.json, if there is one, is the backup of that day and is not read any more.\n`, { mode: 0o600 })
+    }
+    return
+  }
   const tmp = `${STATE_FILE}.${process.pid}.tmp`
   fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 })
   fs.renameSync(tmp, STATE_FILE)
@@ -2890,6 +2922,32 @@ mcp.oninitialized = () => {
 let cleaning = false
 let hubSince = 0
 
+// Once: the board that state.json held goes into the database, and is read back to see that it arrived whole.
+// state.json is not touched; it stays as the backup of the day the board moved.
+function moveIn() {
+  let off
+  try {
+    board.write(state)
+    off = board.differences({ ...state })
+    // The plainest sign that something went wrong: the file had cards, messages or sessions and the database has none.
+    const arrived = board.read() ?? {}
+    for (const [kind, n] of Object.entries(jsonCounts)) if (n > 0 && !(arrived[kind]?.length > 0)) off.push(`state.json has ${n} ${kind}, the database none`)
+  } catch (err) {
+    off = [err.message]
+  }
+  if (off.length) {
+    // Rather the old way than a board that lost something: the database is emptied again and state.json stays the truth.
+    console.error(`[board] the state did not arrive whole in ${board.file} (${off.join(', ')}); staying with state.json`)
+    try { board.write({}) } catch {}
+    try { board.clear() } catch {}
+    board.close()
+    board = null
+    process.env.BOARD_STORE = 'json'
+    return
+  }
+  console.error(`[board] the state moved from state.json into ${board.file}: ${state.cards.length} cards, ${state.messages.length} messages, ${state.agents.length} sessions. state.json is kept as it was and no longer written`)
+}
+
 function becomeHub() {
   role = 'hub'
   misses = 0
@@ -2901,6 +2959,7 @@ function becomeHub() {
   const takeover = selfId != null
   links.clear()
   state = load(slug(SELF.name))
+  if (fromJson) moveIn()
   // A hub of its own usually starts while sessions are running that were linked to the hub before it.
   reservedUntil = takeover || HUB_ONLY ? Date.now() + 3000 : 0
   if (!HUB_ONLY) selfId = register({ ...SELF, id: selfId }, { instance: INSTANCE, strict: true, send: notifySelf })
