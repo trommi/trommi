@@ -29,6 +29,9 @@ const needsWindow = card =>
   (card.body ?? '').length > 480 || /```/.test(card.body ?? '') || card.options.length > 6 ||
   (card.attachments ?? []).filter(a => kindOf(a) === 'image').length > 1 || (card.attachments ?? []).some(a => kindOf(a) !== 'image')
 
+// What the agent would pick: one option, or several where several are allowed.
+const advised = (card, key) => [].concat(card.recommended ?? []).includes(key)
+
 // Rows that stand unfolded, by card id: a list that is rebuilt keeps them open.
 const unfolded = new Set()
 
@@ -84,7 +87,7 @@ function unfoldNode(card, { onDecided }) {
     b.dataset.key = o.key
     b.append(el('kbd', null, String(i + 1)), el('strong', null, o.label))
     if (o.detail) b.append(el('span', null, o.detail))
-    if (card.recommended === o.key) { b.classList.add('is-advised'); b.title = 'The agent recommends this' }
+    if (advised(card, o.key)) { b.classList.add('is-advised'); b.title = 'The agent recommends this' }
     if (card.multiple) {
       b.setAttribute('aria-pressed', 'false')
       b.addEventListener('click', () => {
@@ -242,7 +245,7 @@ export function questionRow(card, { onOpen, onDecided, vip = false, off = false,
       })
       b.setAttribute('aria-label', o.label)
       if (o.detail) b.title = o.detail
-      if (card.recommended === o.key) { b.classList.add('is-advised'); b.title = 'The agent recommends this' }
+      if (advised(card, o.key)) { b.classList.add('is-advised'); b.title = 'The agent recommends this' }
       actions.append(b)
     }
   } else {

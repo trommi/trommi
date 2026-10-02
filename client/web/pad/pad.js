@@ -543,7 +543,6 @@ function openEditor(spec, text = '') {
   editor.style.lineHeight = '1.35'
   editor.style.color = resolveInk(spec.color, dark())
   editor.style.maxWidth = `${spec.wrap ?? TEXT_WRAP * (spec.size / TEXT_SIZE)}px`
-  editor.style.width = spec.wrap ? `${spec.wrap}px` : ''
   editor.style.paddingLeft = spec.type === 'voice' ? `${14 * (spec.size / TEXT_SIZE)}px` : '0'
   $('caret-tip').hidden = Boolean(spec.id || text)
   refresh()
@@ -557,11 +556,17 @@ function openEditor(spec, text = '') {
     getSelection().addRange(range)
   }
 }
+/** The width a new note at this spot may take before its lines break: the default,
+ *  or less when the edge of the screen is nearer (a phone). null means the default. */
+function wrapAt(wx) {
+  const room = (W - 16 - (wx * view.z + view.x)) / view.z
+  return room < TEXT_WRAP ? r2(Math.max(160 / view.z, room)) : null
+}
 /** Put the cursor on empty paper. The click point is the middle of the first line. */
 function placeCaret(wx, wy) {
   const size = TEXT_SIZE
   sel.clear()
-  openEditor({ id: null, type: 'text', x: r2(wx), y: r2(wy - (size * 1.35) / 2), size, color: style.pen.color, wrap: null })
+  openEditor({ id: null, type: 'text', x: r2(wx), y: r2(wy - (size * 1.35) / 2), size, color: style.pen.color, wrap: wrapAt(wx) })
 }
 function editElement(el) {
   sel.clear()
@@ -588,7 +593,7 @@ function commitEditor() {
       out = els.get(el.id)
     } else out = el ?? null
   } else if (text) {
-    out = makeText('text', spec.x, spec.y, { text, size: spec.size, color: spec.color, wrap: null })
+    out = makeText('text', spec.x, spec.y, { text, size: spec.size, color: spec.color, wrap: spec.wrap })
     add([out])
   }
   refresh()
@@ -634,7 +639,7 @@ async function startRecording(wx, wy, held = false) {
   const mine = rec
   $('rec').hidden = false
   $('rec').dataset.state = 'recording'
-  $('rec-label').textContent = stub ? 'Demo recording (no speech service)' : 'Recording'
+  $('rec-label').textContent = (stub ? 'Demo recording (no speech service)' : 'Recording') + (held ? ' · let go to finish' : '')
   $('rec-stop').hidden = held
   $('rec-time').textContent = '0:00'
   rec.timer = setInterval(() => { $('rec-time').textContent = fmt(performance.now() - mine.t0) }, 250)
@@ -703,7 +708,7 @@ async function finishRecording(r) {
   if (rec !== r) return
   endRecording()
   const size = TEXT_SIZE
-  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: null, audio, ms, stub: r.stub })
+  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: wrapAt(r.x), audio, ms, stub: r.stub })
   add([el])
   sel.clear()
   sel.add(el.id)
@@ -1056,7 +1061,7 @@ document.addEventListener('paste', e => {
   if (!text) return
   e.preventDefault()
   const [wx, wy] = spot()
-  const el = makeText('text', r2(wx), r2(wy - (TEXT_SIZE * 1.35) / 2), { text, size: TEXT_SIZE, color: style.pen.color, wrap: TEXT_WRAP })
+  const el = makeText('text', r2(wx), r2(wy - (TEXT_SIZE * 1.35) / 2), { text, size: TEXT_SIZE, color: style.pen.color, wrap: wrapAt(wx) })
   add([el])
   sel.clear()
   sel.add(el.id)

@@ -374,7 +374,7 @@ export function mountRoster(root) {
     // Phones have no bar with words; the two side doors stand here.
     const links = el('p', 'roster-links')
     const link = (href, text) => { const a = el('a', null, text); a.href = href; return a }
-    links.append(link('/hilfe.html', 'Help'), link('/admin.html', 'Admin'))
+    links.append(link('/help.html', 'Help'), link('/admin.html', 'Admin'))
     parts.push(links)
     root.replaceChildren(...parts)
   }

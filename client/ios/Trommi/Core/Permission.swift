@@ -1,7 +1,7 @@
 import Foundation
 
 /// The body of a card that asks for a tool approval: a sentence, then the tool
-/// input, usually JSON. Follows parsePermission() in public/js/focus.js.
+/// input, usually JSON. Follows parsePermission() in client/web/js/focus.js.
 struct PermissionBody: Equatable {
     var description: String
     /// The input as sent, for the monospace box.

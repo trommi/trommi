@@ -1,6 +1,6 @@
 // The light markdown agents write: paragraphs, bullet lists, **bold**, `code`,
 // fenced code blocks and bare links. Parses to plain values; the view decides
-// how they look. Follows rich() and inline() in public/js/ui.js.
+// how they look. Follows rich() and inline() in client/web/js/ui.js.
 import Foundation
 
 enum Inline: Equatable, Sendable {

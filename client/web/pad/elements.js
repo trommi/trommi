@@ -8,7 +8,8 @@
 //   stroke  { tool: 'pen' | 'hl', color, size, box: [w0, h0], pts: [x0, y0, …], pr?: [p0, …] }
 //           pts are relative to the box as it was drawn (w0 x h0); the box may since
 //           have been moved or scaled, the points never change
-//   text    { text, size, color, wrap }       wrap: width the text breaks at, null = as typed
+//   text    { text, size, color, wrap }       wrap: the width lines break at; null = the default
+//           (TEXT_WRAP, scaled with the size). The box is as wide as the longest line.
 //   voice   a text that was spoken: { text, size, color, wrap, audio, ms, stub }
 //           audio is a blob id or null
 //   image   { blob, mime, nw, nh, name }      blob id; the bytes live in the blob store
@@ -183,7 +184,7 @@ export function layoutText(data, type = 'text') {
   }
   for (const l of lines) widest = Math.max(widest, c.measureText(l).width)
   const lh = data.size * LINE
-  out = { lines, inset, lh, w: r2(Math.max(data.size * 0.6, data.wrap ?? Math.ceil(widest) + inset + 2)), h: r2(Math.max(1, lines.length) * lh) }
+  out = { lines, inset, lh, w: r2(Math.max(data.size * 0.6, Math.ceil(widest) + inset + 2)), h: r2(Math.max(1, lines.length) * lh) }
   layoutCache.set(data, out)
   return out
 }

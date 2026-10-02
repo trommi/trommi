@@ -226,6 +226,20 @@ body[data-filter] .jump { display: none; }
 :is(#chat, #inbox) .rich .file-chip{ color: var(--fg); }
 .file-chip:hover { border-color: var(--accent); }
 
+/* something the session published under a link of its own */
+.asset-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3) var(--s-4); max-width: 34rem; padding: var(--s-3) var(--s-4); border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 2px rgb(20 30 25 / .04), 0 5px 5px rgb(20 30 25 / .04); }
+.asset-text { flex: 1 1 14rem; min-width: 0; display: grid; gap: 2px; }
+.asset-text .caps { color: var(--faint); }
+.asset-text strong { font: 800 1.15rem/1.25 var(--display); overflow-wrap: anywhere; }
+.asset-text span:not(.caps) { color: var(--muted); font-size: var(--t-sm); }
+.asset-actions { flex: none; display: flex; gap: var(--s-2); }
+.asset-open, .asset-copy { min-height: 40px; display: inline-flex; align-items: center; padding: 0 var(--s-4); border: 1px solid var(--fg); border-radius: var(--r-pill); font-size: var(--t-sm); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.asset-open { background: var(--fg); color: var(--bg); }
+.asset-copy { background: none; color: var(--fg); border-color: var(--line-strong); }
+.asset-copy:hover { border-color: var(--fg); }
+.asset-card.is-gone { background: none; box-shadow: none; border: 1px dashed var(--line-strong); }
+.asset-card.is-gone strong { color: var(--muted); }
+
 /* board events: a quiet timeline between the messages */
 .event {
   --tone: var(--accent); --tone-soft: var(--accent-soft);
@@ -745,6 +759,7 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .file-text { min-width: 0; display: grid; gap: 1px; }
 .file-text strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .file-row:hover strong { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.file-row.is-gone strong { color: var(--faint); text-decoration: line-through; }
 .file-meta { font-size: var(--t-xs); letter-spacing: .05em; text-transform: uppercase; color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ---- overview of all sessions ---- */

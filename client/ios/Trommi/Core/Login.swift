@@ -10,10 +10,10 @@ enum LoginError: Error, Equatable {
 
     var message: String {
         switch self {
-        case .empty: return "Füge den Link aus data/url.txt ein."
-        case .notALink: return "Das ist keine Adresse. Erwartet wird ein Link wie http://rechner:8790/?t=TOKEN."
-        case .unsupportedScheme: return "Der Link muss mit http:// oder https:// beginnen."
-        case .noToken: return "Im Link fehlt das Token (?t=...). Nimm den ganzen Link aus data/url.txt."
+        case .empty: return "Paste the link from data/url.txt."
+        case .notALink: return "That is not an address. Expected is a link like http://computer:8790/?t=TOKEN."
+        case .unsupportedScheme: return "The link must start with http:// or https://."
+        case .noToken: return "The link has no token (?t=...). Take the whole link from data/url.txt."
         }
     }
 }
@@ -98,7 +98,8 @@ struct SessionCookie: Equatable, Sendable {
 
     /// The cookie the server set for the login request. Its name may depend on
     /// the port (board_8790), so it is read from Set-Cookie: the cookie that
-    /// carries the token, else one whose name starts with "board", else board=<token>.
+    /// carries the token, else one whose name starts with "board", else board=<token>
+    /// (the server names it board_<port> and still accepts the plain name).
     static func from(setCookie header: String?, token: String) -> SessionCookie {
         let cookies = parse(setCookie: header ?? "")
         if let exact = cookies.first(where: { $0.value == token }) { return exact }
