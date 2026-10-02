@@ -1,0 +1,37 @@
+{
+  "logo/trommi-mark-512.png": {
+    "from": "logo/trommi-mark.svg",
+    "sha": "9274dfeb3d42d405"
+  },
+  "logo/trommi-mark-1024.png": {
+    "from": "logo/trommi-mark.svg",
+    "sha": "9274dfeb3d42d405"
+  },
+  "logo/trommi-logo-512.png": {
+    "from": "logo/trommi-logo.svg",
+    "sha": "0675e9f1a83a1211"
+  },
+  "logo/trommi-logo-dark-512.png": {
+    "from": "logo/trommi-logo-dark.svg",
+    "sha": "207acb55f7a78dcb"
+  },
+  "logo/favicon-32.png": {
+    "from": "logo/favicon.svg",
+    "sha": "81009eab4240d778"
+  },
+  "logo/favicon-180.png": {
+    "from": "logo/favicon.svg",
+    "sha": "81009eab4240d778"
+  },
+  "palette/swatches.png": {
+    "from": "palette/swatches.svg",
+    "sha": "fed52a1fa306e692"
+  },
+  "marks/doodles-sheet.png": {
+    "from": "marks/doodles-sheet.svg",
+    "sha": "7948c7bbf9041ff3"
+  },
+  "screens": {
+    "taken": "2026-10-02"
+  }
+}
