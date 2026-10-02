@@ -5,10 +5,16 @@
 //     by an old link, a key or a line in the conversation, it is taken back at once, in place
 //   - an open question inside the conversation is a small reference: a click brings its card into
 //     view in the column beside, it does not open anything
-// Below 1200px none of it applies.
+//   - sessions laid together: ONE list of the questions of all of them (each row names its session
+//     with its mark), in a wide column; the conversations stand narrow beside it, one above the other.
+//     It is the inbox's own list (mountInbox) shown a state cut down to the group's sessions.
+// One session below 1200px: none of it applies. Sessions laid together below 1200px: the combined
+// list stands above the conversations.
 
-import { subscribe } from './store.js'
+import { subscribe, getState, reopen } from './store.js'
 import { el } from './ui.js'
+import { mountInbox } from './inbox.js'
+import { say, pageHost } from './back.js'
 
 const body = document.body
 const $ = id => document.getElementById(id)
@@ -31,23 +37,53 @@ subscribe(state => {
 
 // ---- no "Questions only" while the questions are in sight anyway ----
 function noFilter() {
-  if (!wide.matches || body.dataset.filter !== 'questions') return
+  if (!(wide.matches || body.hasAttribute('data-pair')) || body.dataset.filter !== 'questions') return
   delete body.dataset.filter
   $('filter-questions')?.setAttribute('aria-pressed', 'false')
   if (/\/questions$/.test(location.pathname)) history.replaceState(history.state, '', location.pathname.replace(/\/questions$/, '') + location.search + location.hash)
 }
 noFilter()
-new MutationObserver(noFilter).observe(body, { attributes: true, attributeFilter: ['data-filter'] })
-wide.addEventListener('change', noFilter)
+// The questions stand beside (or above) the conversation: one session on a wide window, or sessions laid together.
+const paintBeside = () => body.toggleAttribute('data-beside', wide.matches || body.hasAttribute('data-pair'))
+paintBeside()
+new MutationObserver(() => { paintBeside(); noFilter() }).observe(body, { attributes: true, attributeFilter: ['data-filter', 'data-pair'] })
+wide.addEventListener('change', () => { paintBeside(); noFilter() })
+
+// ---- sessions laid together: one list of all their questions ----
+const group = el('section', 'group-questions')
+group.setAttribute('aria-label', 'Questions of the sessions laid together')
+const groupList = el('div', 'session-cards group-list')
+group.append(groupList)
+$('chat')?.before(group)
+/** One question as a window of its own (null: go through them): by its address, which the page follows. */
+function openQuestion(cardId) {
+  const params = new URLSearchParams(location.search)
+  params.set('q', cardId == null ? 'next' : String(getState().all.cards.find(c => c.id === cardId)?.number ?? cardId))
+  history.pushState({ q: cardId ?? 'next' }, '', `${location.pathname}?${params}${location.hash}`)
+  window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
+}
+const together = mountInbox(groupList, {
+  onOpen: cardId => openQuestion(cardId),
+  onDecided: (card, option) => say(pageHost(), { head: `Answered: ${option.label}`, title: card.title, back: () => reopen(card.id) }),
+})
+subscribe(state => {
+  if (state.members.length < 2) return
+  // The inbox's list, shown only what the group's sessions asked.
+  const mine = new Set(state.members)
+  const cards = state.all.cards.filter(c => mine.has(c.agent))
+  const ids = new Set(cards.map(c => c.id))
+  together.render({ ...state, all: { ...state.all, cards, queue: state.all.queue.filter(id => ids.has(id)) } })
+})
 
 // ---- a question named in the conversation: bring its card into view beside ----
 $('chat')?.addEventListener('click', e => {
-  if (!wide.matches) return
+  if (!body.hasAttribute('data-beside')) return
   const ref = e.target.closest?.('.log .ask-open .inbox-row')
   if (!ref) return
   e.preventDefault()
   e.stopPropagation()
-  const card = ref.closest('.chat-pane')?.querySelector(`.pane-questions .inbox-row[data-id="${CSS.escape(ref.dataset.id)}"]`)
+  const where = body.hasAttribute('data-pair') ? group : ref.closest('.chat-pane')?.querySelector('.pane-questions')
+  const card = where?.querySelector(`.inbox-row[data-id="${CSS.escape(ref.dataset.id)}"]`)
   if (!card) return
   // One that was snoozed lies in a pile that may be pushed together: open it first.
   const pile = card.closest('.inbox-pile:not(.is-open)')

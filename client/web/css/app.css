@@ -780,7 +780,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
    pointer or the keyboard; otherwise it is offered once the card is open. */
 .inbox-shred { display: none; }
 body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-shred { display: inline-flex; color: var(--urg-critical); }
-.inbox-sep:has(+ .inbox-acts:not(:has(.inbox-trust))) { display: none; }
+.inbox-sep:has(+ .inbox-acts.is-shift-only) { display: none; }
 body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .inbox-acts) { display: inline; }
 .inbox-shred-open { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--card-ink); font-size: var(--t-sm); font-weight: 600; opacity: .75; }
 .inbox-shred-open .sketch { width: 18px; height: 18px; }
@@ -799,41 +799,32 @@ body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .
 .inbox-carries { display: inline-flex; align-items: center; gap: .7em; min-width: 0; }
 .inbox-carries > span { display: inline-flex; align-items: center; gap: 4px; }
 .inbox-carries .sketch { width: 15px; height: 15px; stroke-width: 1.9; }
-/* Snooze: the row's top right corner (class .inbox-later, key L). Everything about its look and its
-   motion is in this block, so another way of unfolding can take its place.
-   The button is a strip of its own to the right of the answer tiles (the tiles are set in by its
-   width): it alone takes the click. What is seen is drawn inside it and takes no click:
-   - at rest the corner is only slightly bent: a small turned tip, a hint;
-   - under the pointer or the keyboard (and after a finger's first tap, .is-unfolded, and on the row
-     the keys are on) the corner folds down properly: a flap turns about the diagonal fold line, the
-     page shows where the corner was, and on the flap, the paper's underside, stand z z z and the word.
-   Under reduced motion the flap simply lies folded down. */
-.inbox-later { --ear: 66px; --tip: 12px; position: absolute; z-index: 2; top: 0; right: 0; width: 30px; height: 46px; padding: 0; border: 0; background: none; color: var(--card-ink); }
+/* Snooze: "slide" (class .inbox-later, key L). Everything about its look and motion is in this block.
+   A paper label is tucked behind the row's edge at the top right; only a nub with z z z peeks out.
+   Under the pointer or the keyboard (after a finger's first tap: .is-unfolded; on the row the keys are
+   on) it slides out and shows the word, eased, with a soft shadow.
+   Two places: in the inbox on a wide page it lies wholly outside the row, in the right margin, so no
+   click on a tile can land on it; everywhere else (narrow pages, a session's own list, a phone) it
+   sits inside the right edge and slides inward over the text, and the tiles are set in to clear it. */
+.inbox-later { --nub: 26px; position: absolute; z-index: 2; top: 0; right: 0; height: 26px; width: max-content; max-width: var(--nub); padding: 0; border: 0; background: none; color: var(--card-ink); overflow: hidden; border-radius: 0 6px 0 8px; filter: drop-shadow(0 1px 2px rgb(20 30 25 / .10)); transition: max-width 260ms cubic-bezier(.22, .9, .25, 1), filter 260ms ease-out; }
 .inbox-later:focus-visible { outline: 0; }
-/* The corner is a square that grows from the tip: as with a page that is being turned, the fold line
-   travels in from the corner, eased. Its upper right half is the page showing through where the paper
-   left; its lower left half is the flap, the paper's underside: lit along the fold, darker toward
-   the tip, with a soft shadow that it throws on the card. */
-.inbox-later-ear { position: absolute; top: -1px; right: -1px; width: var(--tip); height: var(--tip); pointer-events: none; transition: width 320ms cubic-bezier(.22, .9, .25, 1), height 320ms cubic-bezier(.22, .9, .25, 1); }
-.inbox-later-ear::before { content: ""; position: absolute; inset: 0; clip-path: polygon(0 0, 100% 0, 100% 100%); background: var(--surface); }
-.inbox-later-ear::after { content: ""; position: absolute; left: -7%; bottom: -7%; width: 100%; height: 100%; z-index: 0; clip-path: polygon(0 4%, 96% 100%, 0 100%); background: rgb(20 30 25 / .16); filter: blur(4px); opacity: 0; transition: opacity 320ms ease-out; }
-.inbox-later-flap {
-  position: absolute; inset: 0; z-index: 1; clip-path: polygon(0 0, 100% 100%, 0 100%); border-radius: 0 0 0 16%;
-  background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 30%, #fff) 50%, color-mix(in srgb, var(--card-color) 8%, var(--surface)) calc(50% + 2px), color-mix(in srgb, var(--card-color) 14%, var(--surface)) 62%, color-mix(in srgb, var(--card-color) 30%, var(--surface)) 100%);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card-color) 26%, var(--surface));
-}
-.inbox-row[data-later] .inbox-later-flap { background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 30%, #fff) 50%, var(--surface-2) calc(50% + 2px), color-mix(in srgb, var(--card-color) 20%, var(--surface)) 100%); }
-.inbox-later-flap .sketch, .inbox-later-flap b { opacity: 0; transition: opacity 120ms linear; }
-.inbox-later-flap .sketch { position: absolute; left: 7px; bottom: 7px; width: 15px; height: 15px; stroke-width: 2.3; }
-.inbox-later-flap b { position: absolute; left: 50%; top: 50%; translate: -50% -50%; rotate: 45deg; margin: 6px 0 0 -6px; font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear { width: var(--ear); height: var(--ear); }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-ear::after { opacity: 1; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap :is(.sketch, b) { opacity: 1; transition: opacity 160ms linear 170ms; }
+.inbox-later-ear { display: block; }
+.inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 26px; padding: 0 9px 0 6px; background: color-mix(in srgb, var(--card-color) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
+.inbox-later-flap .sketch { flex: none; width: 15px; height: 15px; stroke-width: 2.3; opacity: .8; }
+.inbox-later-flap b { font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) { max-width: 150px; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap { background: color-mix(in srgb, var(--card-color) 8%, var(--surface)); }
+:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded) .inbox-later-flap .sketch { opacity: 1; }
+.inbox-later:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
 .inbox-later:active .inbox-later-flap { filter: brightness(.95); }
-/* the key's cap on the row the keys are on: at the foot of the strip */
-.inbox-row.is-current > .inbox-later.inbox-later[data-cap]::after { position: absolute; left: 4px; top: auto; right: auto; bottom: -4px; margin: 0; rotate: 0deg; }
+/* in the margin: tucked behind the row's right edge, sliding out sideways; the nub (z z z) leads */
+@container inboxpage (min-width: 1001px) {
+  .inbox-group[data-sender] .inbox-later, .inbox-group-later .inbox-later, .inbox-group-asked .inbox-later { top: 10px; right: auto; left: 100%; height: 30px; border-radius: 0 7px 7px 0; --nub: 23px; }
+  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-later-flap { flex-direction: row-reverse; float: right; height: 30px; padding: 0 5px 0 12px; }
+  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-actions { padding-right: 12px; }
+}
 /* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
-   (Set in from the right by the corner's strip: no tile lies under what takes the corner's click.) */
+   (Set in from the right where the Snooze label sits inside the row's edge.) */
 .inbox-actions { display: flex; justify-content: flex-end; gap: 8px; padding: 12px 31px 12px 0; }
 .inbox-answer { flex: none; width: 124px; aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
@@ -1260,15 +1251,47 @@ body:not([data-scope="all"]):not([data-page]) { --float-up: 92px; }
   .quick-field { font-size: 16px; }
   body:not([data-scope="all"]):not([data-page]) { --float-up: 150px; }
 }
-/* ---- wide screens: no bar. The sidebar: the Inbox entry stays at its top while the sessions scroll,
-   and the logo with its menu is pinned at its very bottom (the menu opens upward). ---- */
+/* ---- wide screens: no bar. The logo with its menu floats at the top centre of the page, a small
+   pill; the menu drops down centred under it. In the sidebar the Inbox entry stays at the top while
+   the sessions scroll. ---- */
 @media (min-width: 861px) {
-  body { grid-template-rows: minmax(0, 1fr) auto; }
+  body { grid-template-rows: minmax(0, 1fr); }
   #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
   #agents > .agent-row:first-child { position: sticky; top: 0; z-index: 4; padding-block: var(--s-3) var(--s-1); background: var(--bg); }
-  .topbar { grid-column: 1; grid-row: 2; min-height: 50px; padding: 0 var(--s-3) 0 var(--s-4); border: 0; border-top: 1px solid var(--line); border-right: 1px solid var(--line); background: var(--bg); }
-  #session, #inbox, #roster, #ledger { grid-row: 1 / 3; }
+  #session, #inbox, #roster, #ledger { grid-row: 1; }
+  /* (centred by its margins, not by a transform: the floating buttons below are its children and must stay the page's) */
+  .topbar { position: fixed; z-index: 7; top: 6px; left: 256px; right: 0; width: fit-content; margin-inline: auto; min-height: 0; height: 34px; padding: 0 4px; border: 0; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
   .brand { margin-right: 0; }
+  .brand h1 { font-size: .92rem; }
+  .brand-mark { width: 20px; height: 20px; }
+  .brand-open { min-height: 28px; margin-left: 0; padding: 0 6px 0 4px; gap: 7px; border-radius: var(--r-pill); }
+  .sidedoors { left: 50%; translate: -50% 0; bottom: auto; top: calc(100% + 8px); width: 300px; }
+  /* room for the pill above the pages' headings */
+  body[data-scope="all"] #inbox, body[data-page="roster"] #roster, body[data-page="roster"] #ledger { padding-top: 52px; }
+}
+/* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
+   with the connection and two small switches. One thin rule between the parts. */
+.topbar .sidedoors { width: 244px; min-width: 0; gap: 0; padding: 6px; border-radius: 14px; }
+#jump-field { width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 9px; background: var(--sunken); color: var(--fg); font: 400 var(--t-sm)/1 var(--font); }
+#jump-field:focus-visible { outline: 0; box-shadow: inset 0 0 0 1px var(--line-strong); }
+#jump-results { display: grid; gap: 1px; margin-top: 4px; }
+#jump-results:empty { display: none; }
+.topbar .sidedoors #jump-results button { min-height: 30px; font-size: var(--t-sm); }
+#jump-results button[aria-selected="true"] { background: var(--sunken); }
+.menu-project { margin: 0; padding: 7px 10px 6px; font-size: var(--t-xs); color: var(--faint); }
+.menu-project b { font-weight: 600; color: var(--muted); }
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: 4px; border-top: 1px solid var(--line); }
+.topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 32px; gap: 7px; padding: 0 8px; font-size: var(--t-sm); }
+.topbar .sidedoors .sketch { width: 17px; height: 17px; }
+.menu-foot { display: flex; align-items: center; gap: 2px; padding-top: 4px; border-top: 1px solid var(--line); }
+.topbar .sidedoors .menu-foot .conn { flex: 1; margin: 0; padding: 0 8px; height: 30px; border: 0; font-size: var(--t-xs); }
+.topbar .sidedoors .menu-foot .conn[data-state="offline"] { margin: 0; padding: 0 8px; border-radius: 8px; }
+.topbar .sidedoors .menu-foot button { flex: none; width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
+.topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: var(--sunken); }
+.topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) .sketch { color: var(--fg); }
+@media (min-width: 861px) {
+  /* one edge on the pill: the logo button has no ground of its own in it */
+  .brand-open:hover, .brand-open[aria-expanded="true"] { background: none; }
 }
 
 /* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */

@@ -616,7 +616,6 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 /* where nothing hovers it is always there, faint */
 @media (hover: none) { .focus-opt-pen { opacity: .55; } }
 .focus-opt[data-state] .focus-opt-pen { display: none; }
-.focus-zoom-opts .focus-opt-pen { display: none; }
 .focus-opt-note { display: flex; align-items: center; gap: 6px; min-width: 0; height: 38px; margin: -2px 0 2px; padding: 0 10px; border-radius: var(--r-sm); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--urg-high); }
 .focus-opt-note:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
 .focus-opt-note .sketch { flex: none; width: 16px; height: 16px; }
@@ -944,3 +943,28 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 /* the end of a pass: what is snoozed or with its session, to go through on purpose; a card that is here again says why */
 .focus-list-piles { margin-top: var(--s-2); height: 38px; padding: 0 14px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-sm); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
 .focus-came-back { font-style: normal; padding: 4px 8px; border-radius: var(--r-sm); background: var(--fg); color: var(--surface); letter-spacing: .04em; }
+
+/* ── writing and scribbling anywhere on the card (WRITE_ANYWHERE in focus.js; js/focus-marks.js) ── */
+.focus-card[data-marks] .focus-scroll { position: relative; cursor: text; }
+/* no field: only what is attached shows at the foot, beside the ways out */
+.focus-card[data-marks] .focus-composer .focus-ask { flex: 1 1 0; padding: 0; background: none; box-shadow: none; cursor: default; }
+.focus-card[data-marks] .focus-composer .focus-ask > :not(.focus-chips) { display: none; }
+.focus-card[data-marks] .focus-composer { justify-content: flex-end; }
+.focus-ink { position: absolute; left: 0; top: 0; width: 100%; z-index: 3; overflow: visible; pointer-events: none; fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.focus-ink[data-pen] { pointer-events: auto; cursor: crosshair; touch-action: none; }
+.focus-ink[data-rub] { cursor: cell; }
+.focus-ink[data-rub] path { pointer-events: stroke; stroke-width: 9; stroke-opacity: .5; }
+/* a note: your words in the hand's colour, at the place they belong to */
+.focus-mark { display: flex; align-items: flex-start; gap: 6px; max-width: 34rem; margin: 6px 0 10px 10px; padding: 4px 8px 4px 8px; border-left: 2px solid var(--urg-high); color: var(--urg-high); cursor: text; }
+.focus-mark .sketch { flex: none; width: 15px; height: 15px; margin-top: 5px; }
+.focus-mark textarea { flex: 1; min-width: 0; padding: 0; border: 0; background: none; resize: none; overflow: hidden; font: 500 1rem/1.5 var(--font); color: inherit; outline: none; }
+.focus-mark textarea::placeholder { color: color-mix(in srgb, var(--urg-high) 55%, transparent); }
+.focus-answer .focus-mark, .focus-mark[data-kind="option"] { margin: -2px 0 2px 6px; max-width: none; }
+.focus-opts[data-count="duo"] .focus-mark { grid-column: 1 / -1; }
+.focus-opts[data-count="tags"] .focus-mark { flex: 1 0 100%; }
+.focus-mark-tools { display: inline-flex; gap: 2px; margin-right: 6px; }
+.focus-card-ends .focus-mark-tool .sketch { width: 18px; height: 18px; }
+.focus-card-ends .focus-mark-tool[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
+/* (the window of one card shows its corner too when notes are written on the card) */
+.focus[data-single] .focus-card[data-marks] .focus-card-ends { position: absolute; z-index: 3; right: 10px; top: 6px; display: flex; }
+.focus[data-single] .focus-card[data-marks] .focus-card-ends > button { display: none; }

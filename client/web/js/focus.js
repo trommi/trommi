@@ -31,6 +31,7 @@ import { readCard, stopReading, dictationMic, startDictation, stopDictation, isD
 import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT, cardNr } from './inbox.js'
+import { cardMarks } from './focus-marks.js'
 import { richPlus, attachmentNodes } from './chat.js'
 import { LATER_WORD, LATER_SKETCH, ACK_WORD, WHAT_WORD, TRUST_WORD, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
@@ -113,6 +114,10 @@ const EXPLAIN_LABEL = WHAT_WORD
 // true: at the top right beside the title, as tall as they need; what is asked flows at their left and takes the
 // whole width under them. ("?head=1" or "?head=0" in the address tries the other.)
 const ANSWERS_BESIDE_TITLE = false
+// Writing on the card itself. false: a field at the foot of the card. true: no field; a click anywhere on what is
+// asked begins a note at that place, the pen scribbles over everything (js/focus-marks.js), all of it is part of
+// the card's draft, and the next action takes it along. ("?marks=1" or "?marks=0" in the address tries the other.)
+const WRITE_ANYWHERE = true
 
 /** Which picture belongs to which option: a Map of option key -> index in images, or null when that is
  *  not plain to see. It is plain when every picture names exactly one option in its file name (the key or
@@ -486,6 +491,14 @@ export function mountFocus({ onDecided } = {}) {
             cap.append(take)
           }
           tile.append(pic, cap)
+          if (a.page?.url) {
+            const link = el('a', 'focus-page-link')
+            link.href = a.page.url
+            link.target = '_blank'
+            link.rel = 'noopener noreferrer'
+            link.append(sketch('page'), el('span', null, 'Open the page'))
+            tile.append(link)
+          }
           for (const type of ['pointerenter', 'focusin']) tile.addEventListener(type, () => { if (rec.imageAt !== i) pick(i) })
           grid.append(tile)
           return tile
@@ -862,6 +875,24 @@ export function mountFocus({ onDecided } = {}) {
     closeTwin.append(icon('close'))
     closeTwin.addEventListener('click', close)
     ends.append(sayTwin, closeTwin)
+    // Writing anywhere: the card is the surface, its tools stand in its corner.
+    rec.marksUi = null
+    node.toggleAttribute('data-marks', writeAnywhere && !permission && !earlier)
+    if (writeAnywhere && !permission && !earlier) {
+      rec.marksUi = cardMarks({
+        scroll,
+        blocks: () => [...scroll.querySelectorAll('.focus-lead .focus-title, .focus-text > .rich > :not(.focus-mark), .focus-secs > .rich > :not(.focus-mark), .focus-sec')],
+        labelOf: key => { const o = card.options.find(x => x.key === key); return o ? labelOf(o) : key },
+        onChange: () => { rec.marks = rec.marksUi.get(); paintDraft(rec); queueDraft(rec) },
+      })
+      rec.marksUi.set(rec.marks ?? [])
+      ends.prepend(rec.marksUi.controls)
+      // files and pictures: dropped or pasted anywhere on the card (they wait as chips at its foot until the next action)
+      const carries = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
+      node.ondragover = e => { if (carries(e)) e.preventDefault() }
+      node.ondrop = e => { if (!carries(e)) return; e.preventDefault(); claim(rec); addFiles(rec, e.dataTransfer.files) }
+      node.onpaste = e => { const files = [...(e.clipboardData?.files ?? [])]; if (!files.length) return; e.preventDefault(); addFiles(rec, files) }
+    }
     // Two columns: what is asked at the left with its own scroll, the answers at the right; the composer under the left.
     // Or (besideTitle) the answers are the first thing in what scrolls and float at its top right.
     node.toggleAttribute('data-head', besideTitle)
@@ -1059,7 +1090,7 @@ export function mountFocus({ onDecided } = {}) {
     pen.setAttribute('aria-label', `Write a note on ${label}`)
     pen.title = 'A note on this option'
     pen.append(sketch('pen'))
-    const open = e => { e.preventDefault(); e.stopPropagation(); optNoteRow(rec, key, true) }
+    const open = e => { e.preventDefault(); e.stopPropagation(); if (rec.marksUi) rec.marksUi.note({ kind: 'option', key }); else optNoteRow(rec, key, true) }
     pen.addEventListener('click', open)
     pen.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') open(e) })
     return pen
@@ -1106,7 +1137,7 @@ export function mountFocus({ onDecided } = {}) {
   // ── drafts: what is ticked and written but not sent is kept on the hub ──
   function draftOf(rec) {
     const keys = rec.multi ? rec.card.options.map(o => o.key).filter(k => rec.picked.has(k)) : rec.wasKeys
-    return { card_id: rec.id, keys, note: rec.askText, notes: Object.fromEntries([...rec.optNotes].filter(([, text]) => text.trim())) }
+    return { card_id: rec.id, keys, note: rec.askText, notes: Object.fromEntries([...rec.optNotes].filter(([, text]) => text.trim())), ...(writeAnywhere ? { marks: rec.marks ?? [] } : {}) }
   }
   /** Save the draft of a card a moment after it changed (POST /draft; an empty one clears it). */
   function queueDraft(rec) {
@@ -1163,6 +1194,8 @@ export function mountFocus({ onDecided } = {}) {
     rec.wasKeys = rec.multi ? [] : keys
     rec.optNotes = new Map(Object.entries(draft?.notes ?? {}).filter(([k]) => known.has(k)))
     rec.askText = draft?.note ?? ''
+    rec.marks = draft?.marks ?? []
+    rec.marksUi?.set(rec.marks)
     rec.draftSent = JSON.stringify(draftOf(rec))
     if (rec.askField) rec.askField.value = rec.askText
     for (const [key, row] of rec.optRows) {
@@ -1473,6 +1506,7 @@ export function mountFocus({ onDecided } = {}) {
    *  Resolves true when the session has it. */
   async function askBack(rec, fixed = null, flags = fixed ? { explain: true } : {}) {
     if (!fixed && pad?.rec === rec) await closePad(true)   // what is on the scratchpad goes along
+    await carryMarks(rec)
     // (handed back with nothing written: a plain sentence says so, since a message needs words)
     const text = (fixed ?? rec.askText).trim() || (flags.handback && !rec.files.length ? HAND_BACK_TEXT : '')
     // what is attached in the composer goes with what is typed there (never with the fixed request of What??)
@@ -1540,6 +1574,8 @@ export function mountFocus({ onDecided } = {}) {
   async function submit(rec, keys) {
     claim(rec)
     if (rec.version != null) return   // an earlier version is only read
+    await carryMarks(rec)
+    if (rec !== shown || !recs.has(rec.id)) return
     if (rec.card.kind === 'info') return keys[0] === WHAT_KEY ? explain() : acknowledge(rec)
     if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return
     if (pad?.rec === rec) { await closePad(true); if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return }   // what is on the scratchpad goes along
@@ -1639,6 +1675,7 @@ export function mountFocus({ onDecided } = {}) {
   async function trustIt(rec) {
     claim(rec)
     if (rec.busy || busyRec() || rec !== shown || rec.version != null || rec.card.kind !== 'decision') return
+    await carryMarks(rec)
     const card = rec.card
     const note = rec.note.trim()
     const advice = card.options.filter(o => [].concat(card.recommended ?? []).includes(o.key)).map(o => o.label).join(', ')
@@ -1675,6 +1712,7 @@ export function mountFocus({ onDecided } = {}) {
   async function shredIt(rec) {
     claim(rec)
     if (rec.busy || busyRec() || rec !== shown || rec.card.kind === 'permission') return
+    await carryMarks(rec)
     const card = rec.card
     const note = rec.askText.trim()
     const send = async () => {
@@ -1705,6 +1743,23 @@ export function mountFocus({ onDecided } = {}) {
 
   /** A hand-back taken back: the hub no longer counts the card as being with its session. */
   const unhand = id => globalThis.fetch('/handback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ card_id: id, clear: true }) }).catch(() => {})
+
+  /** What was written and scribbled on the card goes along with whatever is done next: the notes as words, each with
+   *  what it refers to (those on options as the options' notes), and one picture of the card as the human saw it. */
+  async function carryMarks(rec) {
+    const ui = rec.marksUi
+    if (!ui || !ui.count() || rec.carrying) return
+    rec.carrying = true
+    try {
+      const words = ui.text()
+      if (words) rec.askText = [rec.askText.trim(), words].filter(Boolean).join('\n')
+      for (const [key, text] of Object.entries(ui.optionNotes())) rec.optNotes.set(key, text)
+      const data = await ui.picture()
+      if (data) rec.files.push({ name: 'The card with my notes.png', data, image: true, drawn: true, size: 0 })
+      rec.marks = []
+      ui.set([])
+    } finally { rec.carrying = false }
+  }
 
   /** Say on the card why its answer was not taken. */
   function refused(rec, err) {
@@ -1887,6 +1942,8 @@ export function mountFocus({ onDecided } = {}) {
   // that was answered, snoozed or handed to its session leaves a slim strip where it stood, with the way back on it.
   // (The window of one card, opened from a row or a link, stays what it was: that card alone, closed by its answer.)
   const inList = () => root.hasAttribute('data-list')
+  const marksWish = new URLSearchParams(location.search).get('marks')
+  const writeAnywhere = marksWish === '1' ? true : marksWish === '0' ? false : WRITE_ANYWHERE
   const headWish = new URLSearchParams(location.search).get('head')
   const besideTitle = headWish === '1' ? true : headWish === '0' ? false : ANSWERS_BESIDE_TITLE
   const strips = []        // { id, card, kind, node, anchor, back }: anchor is the card it stands in front of
@@ -2380,6 +2437,7 @@ export function mountFocus({ onDecided } = {}) {
   }
   /** Open the line to ask back on the card that is up. */
   function ask() {
+    if (shown?.marksUi) return void shown.marksUi.note()   // a general note on the card
     const open = shown?.askNode?.querySelector('.focus-ask-open')
     if (!open) return false
     open.click()
@@ -2401,6 +2459,8 @@ export function mountFocus({ onDecided } = {}) {
       'focus.explain': key(() => explain()),
       'focus.handback': key(() => handBack()),
       'focus.shred': key(() => { if (!shown?.askNode) return false; shredIt(shown) }),
+      'focus.draw': key(() => { if (!shown?.marksUi) return false; shown.marksUi.setPen(!shown.marksUi.penOn()) }),
+      'focus.note': key(() => { if (!shown?.marksUi) return ask(); shown.marksUi.note() }),
       'focus.trust': key(() => { if (!shown?.trustBtn) return false; trustIt(shown) }),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
       'focus.pick': key(n => {
@@ -2642,6 +2702,11 @@ export function mountFocus({ onDecided } = {}) {
       words.append(el('span', 'focus-opt-label', rec.labelOf(o)))
       if (advised) words.append(el('span', 'focus-sr', ', recommended by the agent'))
       b.append(words)
+      if (rec.marksUi) {
+        const pen = optionPencil(rec, o.key, rec.labelOf(o))
+        pen.addEventListener('click', () => shut(), true)   // the note is written on the card, at the option
+        b.append(pen)
+      }
       b.addEventListener('click', () => { if (multi) { toggle(rec, o.key); paint() } else answer([o.key]) })
       const look = () => {
         line.replaceChildren(el('b', null, rec.labelOf(o)), o.detail ? `: ${o.detail}` : '', advised ? ' · the agent would take it' : '')
