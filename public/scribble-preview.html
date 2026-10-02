@@ -19,12 +19,12 @@
   .pv-strip button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
   .pv-strip .pv-gap { flex: 1; }
   .pv-floor { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 0 0; }
-  /* stands in for the shell's panel: it gives #scribble its box */
-  .pv-frame { flex: 1; min-height: 0; width: min(100%, var(--pv-w, 400px)); background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; box-shadow: 0 0 0 1px var(--line), var(--shadow-md); overflow: hidden; }
+  /* stands in for the session's main pane: it gives #scribble its box */
+  .pv-frame { flex: 1; min-height: 0; width: min(100%, var(--pv-w, 1100px)); background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; box-shadow: 0 0 0 1px var(--line), var(--shadow-md); overflow: hidden; }
   #scribble { height: 100%; }
   .pv-out { flex: none; order: -1; width: min(100% - 20px, 880px); display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
   .pv-out[hidden] { display: none; }
-  .pv-out img { flex: none; height: 96px; max-width: 45%; object-fit: contain; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line-strong); background: var(--surface); }
+  .pv-out img { flex: none; height: 96px; max-width: 28%; object-fit: contain; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line-strong); background: var(--surface); }
   .pv-out dl { flex: 1; min-width: 0; margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font: 400 var(--t-xs)/1.4 var(--mono); }
   .pv-out dt { color: var(--faint); text-transform: uppercase; letter-spacing: .07em; font: 600 var(--t-xs)/1.6 var(--font); }
   .pv-out dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -50,11 +50,13 @@
 <div class="pv-floor">
   <div class="pv-frame"><section id="scribble"></section></div>
   <div class="pv-out" id="pv-out" hidden>
-    <img id="pv-png" alt="Gesendetes PNG">
+    <img id="pv-png" alt="Gesendetes PNG: die ganze Fläche">
+    <img id="pv-view" alt="Gesendetes PNG: der sichtbare Ausschnitt">
     <dl>
       <dt>PNG</dt><dd id="pv-png-info"></dd>
+      <dt>Ausschnitt</dt><dd id="pv-view-info"></dd>
       <dt>Doc</dt><dd id="pv-doc-info"></dd>
-      <dt>Text</dt><dd id="pv-text"></dd>
+      <dt>onChange</dt><dd id="pv-change">noch nie</dd>
       <dt>Round trip</dt><dd id="pv-trip">noch nicht geprüft</dd>
     </dl>
     <button data-do="load">load()</button>
@@ -71,7 +73,7 @@
 <script type="module">
 // Workbench for Scribble. Hash flags (comma separated) put the page straight
 // into a state for screenshots:
-//   dark | light       theme            w320 w360 w400 w520 w900   frame width
+//   dark | light       theme            w360 w700 w1100 w1400 (any w<px>)   pane width
 //   bare               hide the control strip (scribble fills the window)
 //   demo               an image and some strokes, drawn through real pointer and drop events
 //   pressure           adds a stylus stroke with varying pressure
@@ -79,13 +81,13 @@
 //   style              colour and width popover open       confirm   clear-all confirmation open
 //   eraser             erase one demo stroke               hl        marker tool active
 //   zoomout            zoom out with ctrl+wheel            many      300 generated strokes
-//   caption            type a caption
 //   sending            press Senden and never get an answer
 //   fail               press Senden, the server refuses
 //   sent               press Senden, success (result strip visible)
 //   trip               sent, then load() the sent doc and send again: proves the round trip
 //   fast               the fake server answers at once (scripted checks)
-//   draft              keep the IndexedDB draft (off whenever a state flag is given)
+//   draft              keep a local IndexedDB draft; without it draftKey is null, as in the app
+// onChange is always wired; the result strip and pv.changes show when it fired.
 import { mountScribble } from './js/scribble.js'
 
 const flags = decodeURIComponent(location.hash.slice(1)).split(',').map(f => f.trim()).filter(Boolean)
@@ -95,8 +97,8 @@ const $ = id => document.getElementById(id)
 
 if (has('dark')) document.documentElement.dataset.theme = 'dark'
 if (has('bare')) document.body.classList.add('pv-bare')
-const widths = [400, 360, 320, 520, 900]
-let width = Number(flags.find(f => /^w\d+$/.test(f))?.slice(1)) || 400
+const widths = [1100, 1400, 700, 360]
+let width = Number(flags.find(f => /^w\d+$/.test(f))?.slice(1)) || 1100
 const frame = document.querySelector('.pv-frame')
 const applyWidth = () => frame.style.setProperty('--pv-w', `${width}px`)
 applyWidth()
@@ -109,7 +111,8 @@ let loadedJSON = null    // what load() was given, to compare with the next send
 const kb = n => `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`
 const dataBytes = url => Math.floor((url.length - url.indexOf(',') - 1) * 3 / 4)
 
-async function send({ doc, png, text }) {
+async function send({ doc, png, view, text }) {
+  pv.payload = { doc, png, view, text }
   await sleep(has('fast') ? 0 : 700)
   if (hang) await new Promise(() => {})
   if (failNext) throw new Error('Der Server hat das Scribble abgelehnt (413: Anhang zu groß).')
@@ -121,17 +124,26 @@ async function send({ doc, png, text }) {
   $('pv-png').src = png
   $('pv-png-info').textContent = `${img.naturalWidth} × ${img.naturalHeight} px, ${kb(dataBytes(png))}`
   $('pv-doc-info').textContent = `v${doc.v}, ${doc.images.length} Bild(er), ${doc.strokes.length} Striche, ${kb(json.length)}`
-  $('pv-text').textContent = text ? `„${text}“` : '(leer)'
+  const vimg = new Image()
+  vimg.src = view
+  await vimg.decode()
+  $('pv-view').src = view
+  $('pv-view-info').textContent = `${vimg.naturalWidth} × ${vimg.naturalHeight} px, ${kb(dataBytes(view))}, text: ${JSON.stringify(text)}`
   if (loadedJSON != null) $('pv-trip').textContent = json === loadedJSON ? 'identisch nach load() ✓' : 'verändert seit load()'
   $('pv-out').hidden = false
   pv.sends++
 }
 
 const root = $('scribble')
-const state = flags.some(f => !/^(dark|light|bare|draft|fast|w\d+)$/.test(f))
-const api = mountScribble(root, { send, draftKey: has('draft') || !state ? 'preview' : null })
+function onChange(doc) {
+  pv.changes.push({ at: Math.round(performance.now()), images: doc.images.length, strokes: doc.strokes.length })
+  pv.changed = doc
+  $('pv-change').textContent = `${pv.changes.length}×, zuletzt ${doc.images.length} Bild(er), ${doc.strokes.length} Striche`
+}
+const pv = window.pv = { sends: 0, changes: [], changed: null, payload: null }
+const api = mountScribble(root, { send, onChange, draftKey: has('draft') ? 'preview' : null })
 // for scripted checks (dev/cdp.mjs): draw, send, and read back what was sent
-const pv = window.pv = { api, sends: 0, last: () => last, stroke: (...a) => stroke(...a), line: (...a) => line(...a), send: () => pressSend() }
+Object.assign(pv, { api, last: () => last, stroke: (...a) => stroke(...a), line: (...a) => line(...a), send: () => pressSend(), demo: () => demo(), dropImage: (...a) => dropImage(...a) })
 
 // ── demo content, made the way a user makes it ─────────────────────────────
 const canvas = root.querySelector('.scr-canvas')
@@ -268,7 +280,7 @@ document.querySelector('[data-do="hang"]').setAttribute('aria-pressed', String(h
 await document.fonts?.ready
 await sleep(60)
 let placed = null
-const needsContent = ['demo', 'select', 'eraser', 'zoomout', 'sending', 'fail', 'sent', 'trip', 'pressure', 'caption'].some(has)
+const needsContent = ['demo', 'select', 'eraser', 'zoomout', 'sending', 'fail', 'sent', 'trip', 'pressure'].some(has)
 if (needsContent && !has('many')) placed = await demo()
 if (has('many')) many()
 if (has('hl')) pick('hl')
@@ -288,11 +300,6 @@ if (has('zoomout')) {
 }
 if (has('style')) click('.scr-stylebtn')
 if (has('confirm')) { if (api.isEmpty()) await demo(); q('[aria-label="Alles löschen"]').click() }
-if (has('caption') || has('sent') || has('trip') || has('fail') || has('sending')) {
-  const ta = q('.scr-caption')
-  ta.value = 'Der Knopf oben rechts soll größer werden, und die Überschrift bitte in Grün.'
-  ta.dispatchEvent(new Event('input', { bubbles: true }))
-}
 if (has('sending') || has('fail') || has('sent') || has('trip')) pressSend()
 if (has('trip')) {
   await sent()

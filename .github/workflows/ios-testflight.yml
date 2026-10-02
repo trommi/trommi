@@ -1,0 +1,103 @@
+# Puts every change to the app on your own iPhone through TestFlight, without a Mac.
+# A push that touches ios/ builds, signs and uploads; internal testers get the
+# build as soon as Apple has processed it, with no review in between.
+#
+# One-time setup, all in the browser:
+#   1. App Store Connect > Apps: create the app with bundle id de.trommi.app.
+#   2. Users and Access > Integrations > App Store Connect API: create a team
+#      key with the role "App Manager" and download the .p8 file.
+#   3. TestFlight > Internal Testing: create a group, add yourself, switch on
+#      automatic distribution.
+#   4. In the GitHub repository settings add these secrets:
+#        ASC_KEY_ID        the key's id
+#        ASC_ISSUER_ID     the issuer id shown above the key list
+#        ASC_KEY_P8        the content of the .p8 file
+#        APPLE_TEAM_ID     your ten-character team id
+#   5. On the phone: install TestFlight and switch on automatic updates for Trommi.
+#
+# Not run yet: this workflow was written on Linux and has never executed.
+name: iOS TestFlight
+
+on:
+  push:
+    branches: [main, trommi-board]
+    paths: ['ios/**', '.github/workflows/ios-testflight.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ios-testflight
+  cancel-in-progress: true
+
+jobs:
+  upload:
+    runs-on: macos-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: ios
+    env:
+      ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+      ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Stop early when the signing secrets are missing
+        run: |
+          for name in ASC_KEY_ID ASC_ISSUER_ID APPLE_TEAM_ID; do
+            [ -n "${!name}" ] || { echo "::error::Secret $name is not set"; exit 1; }
+          done
+
+      - name: The API key as a file, where Xcode's tools look for it
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p ~/.appstoreconnect/private_keys
+          printf '%s' "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      # The run number is the build number, so every upload is newer than the last.
+      # With the API key Xcode asks Apple for certificate and profile itself.
+      - name: Archive
+        run: |
+          xcodebuild archive \
+            -project Trommi.xcodeproj -scheme Trommi \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Trommi.xcarchive" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
+            DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"
+
+      - name: Upload to TestFlight
+        run: |
+          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>method</key><string>app-store-connect</string>
+            <key>destination</key><string>upload</string>
+            <key>signingStyle</key><string>automatic</string>
+            <key>teamID</key><string>${APPLE_TEAM_ID}</string>
+            <key>testFlightInternalTestingOnly</key><true/>
+          </dict></plist>
+          EOF
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Trommi.xcarchive" \
+            -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyID "$ASC_KEY_ID" \
+            -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+
+      - name: Remove the key again
+        if: always()
+        run: rm -f ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8

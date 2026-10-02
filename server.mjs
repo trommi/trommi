@@ -28,6 +28,15 @@ const STATE_FILE = path.join(DATA, 'state.json')
 const MAX_ATTACHMENT = Number(process.env.BOARD_MAX_ATTACHMENT_MB || 1024) * 1024 * 1024
 // Answered cards and their attachments are deleted after this many days.
 const RETENTION_DAYS = Number(process.env.BOARD_RETENTION_DAYS || 30)
+// A spoke never waits longer than this for the hub. Generous, because a tool
+// call may copy a large video or wait for the speech service.
+const HUB_TIMEOUT = Number(process.env.BOARD_HUB_TIMEOUT_MS || 120000)
+// How long a tool call waits for a link that is being re-made before it fails.
+const LINK_WAIT = Math.min(HUB_TIMEOUT, 5000)
+// The hub writes to every spoke this often, so a spoke can tell a stuck hub from a quiet one.
+const PING = Number(process.env.BOARD_PING_MS || 15000)
+// Notifications kept for an agent whose session is away; older ones give way to newer ones.
+const PENDING_MAX = 100
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif'])
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.webm', '.mov'])
 const AUDIO_EXT = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac'])
@@ -57,6 +66,9 @@ const SELF = {
   name: process.env.BOARD_AGENT || path.basename(process.cwd()) || 'agent', cwd: process.cwd(),
   host: os.hostname(), platform: `${os.type()} ${os.arch()}`,
 }
+// One per process. An agent keeps its id for as long as this stays the same,
+// through reconnects and through a change of hub.
+const INSTANCE = crypto.randomBytes(8).toString('hex')
 const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent'
 
 fs.mkdirSync(FILES, { recursive: true })
@@ -66,15 +78,19 @@ fs.mkdirSync(SPEECH, { recursive: true })
 // The token is the only thing between the network and this session, so it is
 // kept across restarts and never logged to the chat.
 const TOKEN_FILE = path.join(DATA, 'token')
-let TOKEN = process.env.BOARD_TOKEN
-if (!TOKEN) {
-  try {
-    TOKEN = fs.readFileSync(TOKEN_FILE, 'utf8').trim()
-  } catch {}
+const readToken = () => {
+  try { return fs.readFileSync(TOKEN_FILE, 'utf8').trim() } catch { return '' }
 }
+let TOKEN = process.env.BOARD_TOKEN || readToken()
 if (!TOKEN) {
-  TOKEN = crypto.randomBytes(24).toString('base64url')
-  fs.writeFileSync(TOKEN_FILE, TOKEN, { mode: 0o600 })
+  // Two sessions that start together must agree on one token: the file is put
+  // in place whole and never replaced, and whoever comes second reads it.
+  const fresh = crypto.randomBytes(24).toString('base64url')
+  const tmp = `${TOKEN_FILE}.${process.pid}`
+  fs.writeFileSync(tmp, fresh, { mode: 0o600 })
+  try { fs.linkSync(tmp, TOKEN_FILE) } catch {}
+  fs.rmSync(tmp, { force: true })
+  TOKEN = readToken() || fresh
 }
 
 // ---- state ---------------------------------------------------------------
@@ -88,14 +104,25 @@ const URGENCY_LABEL = { low: 'Hat Zeit', normal: 'Normal', high: 'Dringend', cri
 function load(owner) {
   let raw = {}
   try {
-    raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')) ?? {}
-  } catch {}
+    raw = JSON.parse(fs.readFileSync(STATE_FILE, 'utf8'))
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error('not an object')
+  } catch (err) {
+    raw = {}
+    // The next commit would overwrite a file that could not be read; keep it for a look.
+    if (err.code !== 'ENOENT') {
+      const aside = path.join(DATA, `state.broken-${Date.now()}.json`)
+      try { fs.renameSync(STATE_FILE, aside) } catch {}
+      console.error(`[board] state file unreadable (${err.message}); kept as ${aside}, starting empty`)
+    }
+  }
+  const list = key => (Array.isArray(raw[key]) ? raw[key] : []).filter(x => x && typeof x === 'object')
   // Before several agents could share a board nothing named its agent; those
   // records belong to whoever loads them first.
-  const messages = (Array.isArray(raw.messages) ? raw.messages : [])
+  const messages = list('messages')
     .map(m => ({ agent: owner, ...(m.from === 'agent' ? { attachments: [] } : {}), ...m }))
-  const cards = (Array.isArray(raw.cards) ? raw.cards : []).map(c => ({
-    agent: owner, urgency_reason: '', attachments: [], ...c,
+  const cards = list('cards').filter(c => c.id).map(c => ({
+    agent: owner, urgency_reason: '', ...c,
+    options: Array.isArray(c.options) ? c.options : [], attachments: Array.isArray(c.attachments) ? c.attachments : [],
     urgency: c.kind === 'permission' || !URGENCIES.includes(c.urgency) ? defaultUrgency(c.kind) : c.urgency,
   }))
   // An approval request belongs to the session that asked; after a restart
@@ -110,10 +137,16 @@ function load(owner) {
   let next = Math.max(1, numbered(raw.next_number) ? raw.next_number : 1, ...cards.filter(c => numbered(c.number)).map(c => c.number + 1))
   // Cards are stored in creation order, so numbering them in place keeps that order.
   for (const c of cards) if (!numbered(c.number)) c.number = next++
-  const tasks = (Array.isArray(raw.tasks) ? raw.tasks : [])
-    .filter(t => t && t.id && STATUSES.includes(t.state)).map(t => ({ agent: owner, ...t }))
-  const agents = (Array.isArray(raw.agents) ? raw.agents : []).map(a => ({ ...a, online: false }))
-  return { agents, messages, cards, tasks, queue: queueOf(cards), next_number: next }
+  const tasks = list('tasks')
+    .filter(t => t.id && STATUSES.includes(t.state)).map(t => ({ agent: owner, ...t }))
+  const agents = list('agents').filter(a => a.id).map(a => ({ ...a, online: false }))
+  // Spokes of the hub that just went away are probably still running and about to link again.
+  reserved = new Map(list('agents').filter(a => a.online && a.instance && a.id !== raw.hub).map(a => [a.id, a.instance]))
+  const pending = {}
+  for (const [id, queue] of Object.entries(raw.pending && typeof raw.pending === 'object' ? raw.pending : {})) {
+    if (Array.isArray(queue)) pending[id] = queue.filter(e => e && typeof e.method === 'string').slice(-PENDING_MAX)
+  }
+  return { agents, messages, cards, tasks, queue: queueOf(cards), next_number: next, pending }
 }
 
 // The traffic light the human reads at a glance: red waits on them, yellow is
@@ -134,21 +167,40 @@ function queueOf(cards) {
 
 let state = null   // set when this process becomes the hub
 
-// Agents that are connected right now: id -> function that hands them a notification.
+// Agents that are connected right now: id -> { instance, send, end }. send hands
+// the agent a notification and says whether it could.
 const links = new Map()
-// What an agent missed while its session was away, delivered when it returns.
-const pending = new Map()
+// Ids of agents that were linked to the previous hub, held for them for a moment
+// after a takeover so that a session starting in the same folder cannot grab one.
+let reserved = new Map()
+let reservedUntil = 0
 
 const clients = new Set()
 const newId = () => crypto.randomBytes(4).toString('hex')
+
+// Written whole and then swapped in: a hub that dies in the middle of a write
+// leaves the previous file behind, not half of a new one.
+function save() {
+  const tmp = `${STATE_FILE}.${process.pid}.tmp`
+  fs.writeFileSync(tmp, JSON.stringify(state, null, 2), { mode: 0o600 })
+  fs.renameSync(tmp, STATE_FILE)
+}
+
+// The page gets everything except what is still waiting to be delivered to agents.
+const frameOf = () => `data: ${JSON.stringify({ ...state, pending: undefined })}\n\n`
 
 function commit() {
   state.queue = queueOf(state.cards)
   for (const a of state.agents) a.online = links.has(a.id)
   state.speech = Boolean(speechKey())
-  fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2))
-  const frame = `data: ${JSON.stringify(state)}\n\n`
-  for (const res of clients) res.write(frame)
+  save()
+  const frame = frameOf()
+  // A page on a slow connection gets the latest state once it has caught up,
+  // not a growing backlog of every state in between.
+  for (const res of clients) {
+    if (res.writableNeedDrain) res.behind = true
+    else res.write(frame)
+  }
 }
 
 function addMessage(agent, from, text, attachments = [], extra = {}) {
@@ -180,22 +232,49 @@ function findCard(agent, id) {
 
 // ---- agents --------------------------------------------------------------
 
-function register({ name, cwd, host = '', platform = '' }, link) {
+// An id is the slug of the agent's name, with -2, -3 for further sessions of
+// the same name. A process that comes back gets the id it had; a new process
+// gets the plain slug only if no running session holds it.
+function agentId(name, wanted, instance) {
+  const taken = id => {
+    const link = links.get(id)
+    if (link) return link.instance !== instance
+    return Date.now() < reservedUntil && reserved.has(id) && reserved.get(id) !== instance
+  }
+  if (wanted && !taken(wanted) && state.agents.some(a => a.id === wanted && a.instance === instance)) return wanted
   let id = slug(name)
-  for (let n = 2; links.has(id); n++) id = `${slug(name)}-${n}`
-  links.set(id, link)
-  const known = state.agents.find(a => a.id === id)
-  const now = Date.now()
-  if (known) Object.assign(known, { name, cwd, host, platform, connected: now, seen: now })
-  else state.agents.push({ id, name, cwd, host, platform, model: '', client: '', task: '', joined: now, connected: now, seen: now, online: true })
-  commit()
-  for (const [method, params] of pending.get(id) ?? []) link(method, params)
-  pending.delete(id)
+  for (let n = 2; taken(id); n++) id = `${slug(name)}-${n}`
   return id
 }
 
-function unregister(id) {
-  if (!links.delete(id)) return
+function register({ name, cwd, host = '', platform = '', id: wanted }, link) {
+  const id = agentId(name, wanted, link.instance)
+  // The same process linking again before its old connection was seen to close.
+  links.get(id)?.end?.()
+  links.set(id, link)
+  const known = state.agents.find(a => a.id === id)
+  const now = Date.now()
+  const fields = { name, cwd, host, platform, instance: link.instance, connected: now, seen: now }
+  if (known) Object.assign(known, fields)
+  else state.agents.push({ id, model: '', client: '', task: '', joined: now, online: true, ...fields })
+  commit()
+  return id
+}
+
+// What the agent missed while it was away. An entry leaves the queue only once it was handed over.
+function flush(id) {
+  const link = links.get(id)
+  const queue = state.pending[id]
+  if (!link || !queue?.length) return
+  while (queue.length && link.send(queue[0].method, queue[0].params)) queue.shift()
+  if (!queue.length) delete state.pending[id]
+  save()
+}
+
+function unregister(id, link) {
+  // A newer link of the same agent may already have taken this one's place.
+  if (links.get(id) !== link) return
+  links.delete(id)
   // Its approval requests die with the session.
   for (const c of state.cards) {
     if (c.agent === id && c.kind === 'permission' && c.status === 'open') {
@@ -212,6 +291,14 @@ function unregister(id) {
 // markers in the conversation go together. Open cards are never touched.
 function purge() {
   const cutoff = Date.now() - RETENTION_DAYS * 86400000
+  // An agent that never came back does not keep its mail forever either.
+  for (const [id, queue] of Object.entries(state.pending)) {
+    const fresh = queue.filter(e => !(e.ts < cutoff))
+    if (fresh.length === queue.length) continue
+    if (fresh.length) state.pending[id] = fresh
+    else delete state.pending[id]
+    save()
+  }
   const old = state.cards.filter(c => c.status !== 'open' && (c.decided ?? c.created) < cutoff)
   if (!old.length) return
   const ids = new Set(old.map(c => c.id))
@@ -233,11 +320,12 @@ function setProfile(id, fields) {
   commit()
 }
 
+// The queue of an agent that is away lives in the state file, so it outlasts the hub.
 async function deliver(agent, method, params) {
-  const link = links.get(agent)
-  if (link) return link(method, params)
-  const queue = pending.get(agent) ?? []
-  pending.set(agent, [...queue, [method, params]].slice(-50))
+  if (links.get(agent)?.send(method, params)) return
+  const queue = state.pending[agent] ?? []
+  state.pending[agent] = [...queue, { method, params, ts: Date.now() }].slice(-PENDING_MAX)
+  save()
 }
 
 function urgencyArg(value, fallback) {
@@ -247,6 +335,7 @@ function urgencyArg(value, fallback) {
 }
 
 function storeAttachment(file) {
+  if (typeof file !== 'string' || !file) throw new Error('an attachment must be the path of a file')
   const src = path.resolve(file)
   const stat = fs.statSync(src)
   if (!stat.isFile()) throw new Error(`not a file: ${file}`)
@@ -439,20 +528,28 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: TOOLS }))
 
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = req.params.arguments ?? {}
-  await ready
+  // The hub copies attachments; a relative path must mean this session's folder, not the hub's.
+  if (Array.isArray(args.attachments)) args.attachments = args.attachments.map(f => (typeof f === 'string' && f ? path.resolve(f) : f))
+  await whenUp()
   if (role === 'hub') return text(await runTool(selfId, req.params.name, args))
-  return text((await hubPost('/agent/tool', { id: selfId, name: req.params.name, args })).text)
+  return text((await hubPost('/agent/tool', { name: req.params.name, args })).text)
 })
+
+const listArg = (value, what) => {
+  if (value != null && !Array.isArray(value)) throw new Error(`${what} must be a list`)
+  return value ?? []
+}
 
 // Runs on the hub, for the hub's own agent and on behalf of spokes.
 function runTool(agent, name, args) {
+  if (!args || typeof args !== 'object') args = {}
   switch (name) {
     case 'reply':
-      addMessage(agent, 'agent', String(args.text ?? ''), (args.attachments ?? []).map(storeAttachment), args.details ? { details: String(args.details) } : {})
+      addMessage(agent, 'agent', String(args.text ?? ''), listArg(args.attachments, 'attachments').map(storeAttachment), args.details ? { details: String(args.details) } : {})
       return 'sent'
     case 'create_decision': {
-      const options = (args.options ?? []).map(o => ({
-        key: String(o.key), label: String(o.label), detail: o.detail ? String(o.detail) : '',
+      const options = listArg(args.options, 'options').map(o => ({
+        key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
       }))
       const keys = new Set(options.map(o => o.key))
       if (options.length < 2 || keys.size !== options.length) {
@@ -462,7 +559,7 @@ function runTool(agent, name, args) {
       const card = addCard(agent, 'decision', {
         urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
         title: String(args.title ?? ''), body: String(args.body ?? ''),
-        options, attachments: (args.attachments ?? []).map(storeAttachment),
+        options, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),
       })
       addEvent('asked', card, card.title)
       commit()
@@ -498,6 +595,8 @@ function runTool(agent, name, args) {
     }
     case 'close_card': {
       const card = findCard(agent, args.card_id)
+      // Same reason as in withdraw_card: Claude Code is waiting for the human's verdict.
+      if (card.kind === 'permission' && card.status === 'open') throw new Error('an open permission card cannot be closed; only the human answers it')
       card.status = 'done'
       card.summary = String(args.summary ?? '')
       addEvent('done', card, card.summary || card.title)
@@ -509,6 +608,8 @@ function runTool(agent, name, args) {
       if (!id) throw new Error('id is required')
       if (!STATUSES.includes(args.state)) throw new Error(`state must be one of ${STATUSES.join(', ')}; got "${args.state}"`)
       let task = state.tasks.find(t => t.agent === agent && t.id === id)
+      // Checked before anything changes, so a refused call leaves no half-made line behind.
+      if (args.card_id) findCard(agent, args.card_id)
       if (!task) {
         if (!args.label) throw new Error(`label is required for the new status line "${id}"`)
         task = { agent, id, label: '', state: 'working', detail: '', card_id: null, updated: 0 }
@@ -516,7 +617,6 @@ function runTool(agent, name, args) {
       }
       if (args.label) task.label = String(args.label)
       if (args.detail != null) task.detail = String(args.detail)
-      if (args.card_id) findCard(agent, args.card_id)
       task.state = args.state
       task.card_id = args.state === 'decision' ? args.card_id ?? task.card_id : null
       task.updated = Date.now()
@@ -552,13 +652,24 @@ mcp.setNotificationHandler(
     }),
   }),
   async ({ params }) => {
-    await ready
-    if (role === 'hub') addPermission(selfId, params)
-    else await hubPost('/agent/permission', { id: selfId, params })
+    // Claude Code asks only once. If the hub is changing hands right now, try
+    // again rather than lose the card.
+    for (let attempt = 1; ; attempt++) {
+      try {
+        await whenUp()
+        if (role === 'hub') return addPermission(selfId, params)
+        return await hubPost('/agent/permission', { params }, Math.min(HUB_TIMEOUT, 10000))
+      } catch (err) {
+        if (attempt === 5) return console.error(`[board] approval request not relayed: ${err.message}`)
+        await new Promise(resolve => setTimeout(resolve, 500))
+      }
+    }
   },
 )
 
 function addPermission(agent, params) {
+  // A spoke repeats a request it got no answer for; that must not make a second card.
+  if (state.cards.some(c => c.agent === agent && c.kind === 'permission' && c.status === 'open' && c.request_id === params.request_id)) return
   addCard(agent, 'permission', {
     request_id: params.request_id,
     title: `Freigabe: ${params.tool_name}`,
@@ -660,7 +771,7 @@ async function reopen(cardId) {
 async function speechFetch(route, init) {
   const key = speechKey()
   if (!key) throw new Error('Sprachfunktionen sind nicht eingerichtet (TINFOIL_API_KEY oder data/tinfoil.key fehlt)')
-  const res = await fetch(SPEECH_API + route, { ...init, headers: { ...init.headers, Authorization: `Bearer ${key}` } })
+  const res = await fetch(SPEECH_API + route, { ...init, headers: { ...init.headers, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(HUB_TIMEOUT) })
   if (!res.ok) {
     let reason = `${res.status}`
     try { reason = (await res.json()).error?.message ?? reason } catch {}
@@ -745,9 +856,15 @@ const sameOrigin = req => {
 
 const readJson = (req, limit = 1e6) => new Promise((resolve, reject) => {
   let raw = ''
+  let over = false
   req.on('data', chunk => {
+    if (over) return
     raw += chunk
-    if (raw.length > limit) reject(new Error('body too large'))
+    if (raw.length <= limit) return
+    // Stop keeping what still arrives; the limit is there to bound memory.
+    over = true
+    raw = ''
+    reject(new Error('body too large'))
   })
   req.on('end', () => {
     try { resolve(JSON.parse(raw || '{}')) } catch (err) { reject(err) }
@@ -784,13 +901,30 @@ async function agentRoute(req, res, url) {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
       const write = msg => res.write(`data: ${JSON.stringify(msg)}\n\n`)
       const q = url.searchParams
-      const id = register({ name: q.get('name') || 'agent', cwd: q.get('cwd') || '', host: q.get('host') || '', platform: q.get('platform') || '' }, async (method, params) => { write({ method, params }) })
-      write({ hello: id })
-      req.on('close', () => unregister(id))
+      const link = {
+        // A spoke running an older server.mjs names no instance; it is taken at its word.
+        instance: q.get('instance') || newId(), strict: Boolean(q.get('instance')),
+        send: (method, params) => {
+          if (res.destroyed || res.writableEnded) return false
+          write({ method, params })
+          return true
+        },
+        end: () => res.end(),
+      }
+      const id = register({ name: q.get('name') || 'agent', cwd: q.get('cwd') || '', host: q.get('host') || '', platform: q.get('platform') || '', id: q.get('id') }, link)
+      write({ hello: id, ping: PING })
+      flush(id)
+      const beat = setInterval(() => res.write(': ping\n\n'), PING)
+      req.on('close', () => {
+        clearInterval(beat)
+        unregister(id, link)
+      })
       return
     }
     const body = await readJson(req)
-    if (!links.has(body.id)) return send(res, 409, '{"error":"agent is not linked"}')
+    const link = links.get(body?.id)
+    // The id alone is not proof: after a change of hub it may belong to another session.
+    if (!link || (link.strict && link.instance !== body.instance)) return send(res, 409, '{"error":"agent is not linked"}')
     if (req.method === 'POST' && url.pathname === '/agent/tool') {
       return send(res, 200, JSON.stringify({ text: await runTool(body.id, String(body.name), body.args ?? {}) }))
     }
@@ -809,14 +943,20 @@ async function agentRoute(req, res, url) {
 }
 
 const httpServer = http.createServer(async (req, res) => {
-  const url = new URL(req.url, `http://localhost:${PORT}`)
+  let url
+  // Runs before any check, so a request line that is no URL ("//") must not throw.
+  try {
+    url = new URL(req.url, `http://localhost:${PORT}`)
+  } catch {
+    return send(res, 400, '{"error":"bad request"}')
+  }
   if (url.pathname.startsWith('/agent/')) return agentRoute(req, res, url)
-  if (req.method === 'GET' && url.searchParams.get('t') === TOKEN) {
+  if (req.method === 'GET' && tokenMatches(url.searchParams.get('t'))) {
     res.writeHead(302, {
       // Lax, so following a link to the board from another app still arrives logged in;
       // writes are guarded by the Origin check, which Lax does not weaken.
       'Set-Cookie': `${COOKIE}=${TOKEN}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`,
-      Location: url.pathname,
+      Location: url.pathname.replace(/^\/+/, '/'),
     })
     return res.end()
   }
@@ -833,8 +973,13 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
-      res.write(`data: ${JSON.stringify(state)}\n\n`)
+      res.write(frameOf())
       clients.add(res)
+      res.on('drain', () => {
+        if (!res.behind) return
+        res.behind = false
+        res.write(frameOf())
+      })
       req.on('close', () => clients.delete(res))
       return
     }
@@ -861,10 +1006,11 @@ const httpServer = http.createServer(async (req, res) => {
           return res.end()
         }
         res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 })
-        return fs.createReadStream(file, { start, end }).pipe(res)
+        return fs.createReadStream(file, { start, end }).on('error', () => res.destroy()).pipe(res)
       }
       res.writeHead(200, { ...headers, 'Content-Length': size })
-      return fs.createReadStream(file).pipe(res)
+      // The cleanup may delete the file between the check above and the read.
+      return fs.createReadStream(file).on('error', () => res.destroy()).pipe(res)
     }
     if (req.method === 'POST' && url.pathname === '/message') {
       const body = await readJson(req)
@@ -940,44 +1086,97 @@ const httpServer = http.createServer(async (req, res) => {
 
 let role = 'starting'
 let selfId = null
-let markReady
-const ready = new Promise(resolve => { markReady = resolve })
+// True while this process can act for its agent: it is the hub, or its link to the hub stands.
+let up = false
+const waiting = new Set()
+const RETRY = 'the board is restarting and did not take this call; try again in a moment'
 
-const notifySelf = (method, params) => mcp.notification({ method, params }).catch(err => console.error(`[board] notify failed: ${err.message}`))
+function setUp(value) {
+  up = value
+  if (!up) return
+  for (const go of waiting) go()
+  waiting.clear()
+}
 
-async function hubPost(route, body) {
-  const res = await fetch(`http://127.0.0.1:${PORT}${route}`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', 'x-board-token': TOKEN }, body: JSON.stringify(body),
-  }).catch(() => { throw new Error('the board is restarting, try again in a moment') })
-  const out = await res.json()
-  if (!res.ok) throw new Error(out.error ?? 'the board refused the request')
+// A call made while the hub changes hands waits a moment for the new link and
+// then fails in a way the agent can retry, instead of hanging.
+const whenUp = () => (up ? Promise.resolve() : new Promise((resolve, reject) => {
+  const go = () => { clearTimeout(timer); resolve() }
+  const timer = setTimeout(() => { waiting.delete(go); reject(new Error(RETRY)) }, LINK_WAIT)
+  waiting.add(go)
+}))
+
+// Nothing may be sent to Claude Code before it has finished the MCP handshake,
+// or the first message after a start is lost.
+let markInitialized
+const initialized = new Promise(resolve => { markInitialized = resolve })
+const notifySelf = (method, params) => {
+  initialized.then(() => mcp.notification({ method, params })).catch(err => console.error(`[board] notify failed: ${err.message}`))
+  return true
+}
+
+// Set while a link to the hub stands: drops it and links again.
+let relink = () => {}
+let misses = 0
+
+async function hubPost(route, body, ms = HUB_TIMEOUT) {
+  let res, out
+  try {
+    res = await fetch(`http://127.0.0.1:${PORT}${route}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-board-token': TOKEN },
+      body: JSON.stringify({ id: selfId, instance: INSTANCE, ...body }), signal: AbortSignal.timeout(ms),
+    })
+    out = await res.json()
+  } catch (err) {
+    if (err.name === 'TimeoutError') throw new Error(`the board did not answer within ${Math.round(ms / 1000)} s; the call may or may not have gone through, so check (e.g. with list_cards) before repeating it`)
+    throw new Error(RETRY)
+  }
+  // The hub does not know this session (any more), whatever this process believes.
+  if (res.status === 409) {
+    if (up) relink()
+    throw new Error(RETRY)
+  }
+  if (!res.ok) throw new Error(out?.error ?? 'the board refused the request')
   return out
 }
 
 // The program on the other end of stdio names itself when MCP initialises.
 function reportClient() {
   const info = mcp.getClientVersion()
-  if (!info || !selfId) return
+  if (!info || !selfId || !up) return
   const fields = { client: [info.name, info.version].filter(Boolean).join(' ') }
   if (role === 'hub') setProfile(selfId, fields)
-  else hubPost('/agent/profile', { id: selfId, fields }).catch(() => {})
+  else hubPost('/agent/profile', { fields }, Math.min(HUB_TIMEOUT, 10000)).catch(() => {})
 }
-mcp.oninitialized = reportClient
+mcp.oninitialized = () => {
+  markInitialized()
+  reportClient()
+}
+
+let cleaning = false
 
 function becomeHub() {
   role = 'hub'
+  misses = 0
+  // Only a spoke that takes over has fellow spokes on their way back.
+  const takeover = selfId != null
   links.clear()
   state = load(slug(SELF.name))
-  selfId = register(SELF, notifySelf)
+  reservedUntil = takeover ? Date.now() + 3000 : 0
+  selfId = register({ ...SELF, id: selfId }, { instance: INSTANCE, strict: true, send: notifySelf })
+  state.hub = selfId
+  commit()
+  flush(selfId)
+  setUp(true)
   reportClient()
   purge()
-  setInterval(() => { if (role === 'hub') purge() }, 6 * 3600000).unref()
+  if (!cleaning) setInterval(purge, 6 * 3600000).unref()
+  cleaning = true
   const lan = Object.values(os.networkInterfaces()).flat().find(i => i.family === 'IPv4' && !i.internal)
   const hosts = HOST === '0.0.0.0' ? ['localhost', lan?.address].filter(Boolean) : [HOST]
   const urls = hosts.map(h => `http://${h}:${PORT}/?t=${TOKEN}`)
   fs.writeFileSync(path.join(DATA, 'url.txt'), urls.join('\n') + '\n', { mode: 0o600 })
   console.error(`[board] hub on ${HOST}:${PORT} as "${selfId}", links in ${path.join(DATA, 'url.txt')}`)
-  markReady()
 }
 
 // Someone else has the port: link to them and stay linked. If the link drops,
@@ -985,46 +1184,77 @@ function becomeHub() {
 function joinHub() {
   role = 'spoke'
   let over = false
+  let watchdog
   const retry = () => {
     if (over) return
     over = true
-    setTimeout(start, 150 + Math.random() * 500)
+    clearTimeout(watchdog)
+    setUp(false)
+    req.destroy()
+    // Quick while a takeover is likely, slower when the port is held by something that will not link.
+    setTimeout(start, (misses++ > 3 ? 2000 : 150) + Math.random() * 500)
   }
-  const query = new URLSearchParams(SELF)
+  // Silence means the hub is gone or stuck, even if the connection still looks open.
+  const expect = ms => {
+    clearTimeout(watchdog)
+    watchdog = setTimeout(retry, ms)
+  }
+  const query = new URLSearchParams({ ...SELF, id: selfId ?? '', instance: INSTANCE })
   const req = http.get({ host: '127.0.0.1', port: PORT, path: `/agent/link?${query}`, headers: { 'x-board-token': TOKEN } }, res => {
-    if (res.statusCode !== 200) { res.resume(); return retry() }
+    if (res.statusCode !== 200) {
+      res.resume()
+      // Refused: the hub may hold a token that was written after this process read the file.
+      if (!process.env.BOARD_TOKEN) TOKEN = readToken() || TOKEN
+      return retry()
+    }
     let buffer = ''
+    let beat = 0
     res.setEncoding('utf8')
     res.on('data', chunk => {
+      if (beat) expect(beat * 3)
       buffer += chunk
       for (let at; (at = buffer.indexOf('\n\n')) >= 0;) {
         const frame = buffer.slice(0, at)
         buffer = buffer.slice(at + 2)
         if (!frame.startsWith('data: ')) continue
-        const msg = JSON.parse(frame.slice(6))
+        let msg
+        try { msg = JSON.parse(frame.slice(6)) } catch { return retry() }
         if (msg.hello) {
           selfId = msg.hello
+          misses = 0
+          // A hub running an older server.mjs sends no pings; then only a closed connection counts.
+          beat = Number(msg.ping) || 0
+          if (beat) expect(beat * 3)
+          else clearTimeout(watchdog)
           console.error(`[board] linked to the hub on port ${PORT} as "${selfId}"`)
-          markReady()
+          setUp(true)
           reportClient()
-        } else notifySelf(msg.method, msg.params)
+        } else if (msg.method) notifySelf(msg.method, msg.params)
       }
     })
     res.on('close', retry)
   })
   req.on('error', retry)
+  relink = retry
+  expect(LINK_WAIT)
 }
 
 function start() {
-  httpServer.once('error', err => {
-    if (err.code === 'EADDRINUSE') return joinHub()
-    console.error(`[board] http error: ${err.message}`)
-  })
-  httpServer.listen(PORT, HOST, () => {
-    httpServer.removeAllListeners('error')
+  // listen() keeps its callback registered after a failed attempt, so both
+  // listeners are taken off by hand; otherwise a takeover runs becomeHub twice.
+  const failed = err => {
+    httpServer.off('listening', listening)
+    if (err.code !== 'EADDRINUSE') console.error(`[board] http error: ${err.message}`)
+    joinHub()
+  }
+  const listening = () => {
+    httpServer.off('error', failed)
     httpServer.on('error', err => console.error(`[board] http error: ${err.message}`))
     becomeHub()
-  })
+  }
+  httpServer.once('error', failed)
+  httpServer.once('listening', listening)
+  httpServer.listen(PORT, HOST)
 }
 start()
 

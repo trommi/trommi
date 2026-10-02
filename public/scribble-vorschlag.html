@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trommi: Scribble im Gespräch</title>
+<style>
+@page { size: A4; margin: 14mm 16mm; }
+:root { --fg:#141c18; --muted:#55615b; --line:#d5dbd4; --accent:#1b6a57; --soft:#e6f2ee; --paper:#fbfbf8; --ink:#b4551b; }
+* { box-sizing: border-box; }
+body { margin: 0 auto; max-width: 178mm; padding: 16px; color: var(--fg); font: 10pt/1.45 "IBM Plex Sans","Segoe UI",Arial,sans-serif; }
+@media print { body { padding: 0; } }
+h1 { font-size: 22pt; line-height: 1.1; margin: 0 0 4px; }
+.sub { color: var(--muted); margin: 0 0 12px; }
+h2 { font-size: 12.5pt; margin: 0 0 4px; }
+p { margin: 0 0 6px; }
+.v { display: grid; grid-template-columns: 62mm 1fr; gap: 14px; padding: 12px 0; border-top: 1px solid var(--line); break-inside: avoid; }
+.mock { border: 1px solid var(--line); border-radius: 10px; background: #fff; height: 46mm; display: flex; flex-direction: column; overflow: hidden; font-size: 7pt; }
+.chat { flex: 1; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; justify-content: flex-end; }
+.a { color: var(--fg); } .u { align-self: flex-end; background: #eceee8; border-radius: 7px; padding: 2px 6px; }
+.comp { margin: 0 8px 7px; border: 1px solid var(--line); border-radius: 99px; padding: 3px 8px; color: #8a958f; display: flex; justify-content: space-between; }
+.pad { margin: 0 8px 5px; height: 17mm; border-radius: 8px; background: var(--paper); border: 1px dashed var(--ink); position: relative; }
+.pad svg, .img svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+.img { align-self: flex-start; width: 34mm; height: 18mm; border-radius: 6px; background: linear-gradient(135deg,#dfe6e2,#f4f5f1); border: 1px solid var(--line); position: relative; }
+.full { flex: 1; background: var(--paper); position: relative; }
+.tools { display: flex; gap: 3px; padding: 4px 8px; border-top: 1px solid var(--line); }
+.tools i { width: 12px; height: 12px; border-radius: 50%; background: #eceee8; }
+.tools b { margin-left: auto; background: var(--accent); color: #fff; border-radius: 99px; padding: 1px 8px; font-weight: 600; }
+.tag { display: inline-block; font-size: 7.5pt; font-weight: 600; letter-spacing: .08em; text-transform: uppercase; color: var(--accent); }
+.pro, .con { padding-left: 14px; position: relative; }
+.pro::before { content: "+"; position: absolute; left: 0; color: var(--accent); font-weight: 700; }
+.con::before { content: "–"; position: absolute; left: 0; color: var(--ink); font-weight: 700; }
+.rec { background: var(--soft); border-left: 3px solid var(--accent); padding: 9px 12px; margin-top: 10px; break-inside: avoid; }
+</style></head><body>
+<h1>Scribble im Gespräch</h1>
+<p class="sub">Drei Wege, das Zeichnen näher ans Eingabefeld zu holen. Heute öffnet der Stift-Knopf das Canvas rechts neben dem Gespräch. Entwurf vom 2. Oktober 2026.</p>
+
+<div class="v"><div class="mock"><div class="chat"><span class="a">Ich habe zwei Varianten gebaut.</span><span class="u">Eher so:</span></div><div class="pad"><svg viewBox="0 0 100 40" fill="none" stroke="#b4551b" stroke-width="1.4" stroke-linecap="round"><path d="M8 28c8-14 14-16 22-6s12 10 20-4 14-10 20 2"/><path d="M70 10l12 4-9 8"/></svg></div><div class="comp"><span>Nachricht</span><span>✎ ◉ ↑</span></div></div>
+<div><span class="tag">Variante A</span><h2>Zeichenfläche klappt über dem Eingabefeld auf</h2>
+<p>Der Stift-Knopf schiebt eine flache Zeichenfläche zwischen Verlauf und Eingabefeld. Du kritzelst, schreibst darunter deinen Satz, und beides geht als eine Nachricht raus.</p>
+<p class="pro">Kein Wechsel der Ansicht, Zeichnung und Text gehören sichtbar zusammen. Gut für schnelle Skizzen und Pfeile.</p>
+<p class="con">Wenig Platz: kein unendliches Canvas, eher ein Notizzettel. Der Verlauf wird kürzer, solange sie offen ist.</p></div></div>
+
+<div class="v"><div class="mock"><div class="chat"><span class="a">So sieht der Posteingang jetzt aus:</span><div class="img"><svg viewBox="0 0 100 52" fill="none" stroke="#b4551b" stroke-width="1.6" stroke-linecap="round"><ellipse cx="68" cy="20" rx="18" ry="10"/><path d="M40 44l14-14"/><path d="M50 30h5v5"/></svg></div><span class="u">Der Knopf hier ist zu groß.</span></div><div class="comp"><span>Nachricht</span><span>✎ ◉ ↑</span></div></div>
+<div><span class="tag">Variante B</span><h2>Direkt auf ein Bild im Verlauf malen</h2>
+<p>Tippst du ein Bild an, das der Agent geschickt hat, kannst du sofort darüber zeichnen. „Senden“ schickt das markierte Bild als deine Antwort, das Original bleibt unverändert.</p>
+<p class="pro">Trifft den häufigsten Fall: „das hier meine ich“. Kein leeres Blatt, keine Werkzeugleiste zum Suchen.</p>
+<p class="con">Geht nur, wenn schon ein Bild da ist. Für eigene Skizzen braucht es weiter das Canvas.</p></div></div>
+
+<div class="v"><div class="mock"><div class="full"><svg viewBox="0 0 100 60" fill="none" stroke="#b4551b" stroke-width="1.3" stroke-linecap="round"><rect x="10" y="8" width="30" height="20" rx="2" stroke="#8a958f"/><rect x="56" y="26" width="32" height="22" rx="2" stroke="#8a958f"/><path d="M40 20c8 2 10 8 16 12"/><path d="M52 30l4 2-3 4"/><path d="M14 44c6-6 12 6 18 0"/></svg></div><div class="tools"><i></i><i></i><i></i><i></i><b>Senden</b></div></div>
+<div><span class="tag">Variante C</span><h2>Canvas bleibt eigene Fläche, aber als Blatt über dem Gespräch</h2>
+<p>Der Stift-Knopf legt das große Canvas als Blatt über das Gespräch (auf dem Handy bildschirmfüllend). Nach „Senden“ klappt es zu und der Ausschnitt steht als Nachricht im Verlauf.</p>
+<p class="pro">Das unendliche, dauerhafte Canvas bleibt erhalten, der Agent sieht weiter das Ganze. Viel Platz zum Arbeiten.</p>
+<p class="con">Das Gespräch ist währenddessen verdeckt. Für einen einzelnen Pfeil ist es ein großer Schritt.</p></div></div>
+
+<div class="rec"><strong>Empfehlung: B und C zusammen, A weglassen.</strong> B deckt das schnelle Markieren ab und fühlt sich am natürlichsten an. C behält das dauerhafte Canvas für alles Größere und ersetzt die heutige Platzierung in der Seitenleiste. A wäre eine dritte Zeichenfläche mit eigenen Grenzen und bringt gegenüber B wenig. Ob Zeichnen direkt im Eingabefeld eine gute Idee ist: eher nein, es macht das Feld unruhig und auf dem Handy zu klein.</div>
+</body></html>

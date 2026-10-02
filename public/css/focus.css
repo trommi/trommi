@@ -10,9 +10,13 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   position: fixed;
   inset: 0;
   z-index: 2000;
+  /* back, the sheet, next: the arrows stand beside the sheet, never on it */
   display: grid;
-  place-items: center;
-  padding: clamp(12px, 3.2vmin, 36px);
+  grid-template: minmax(0, 1fr) / 48px minmax(0, 1240px) 48px;
+  justify-content: center;
+  align-items: center;
+  gap: var(--s-3);
+  padding: clamp(12px, 3.2vmin, 36px) clamp(10px, 2vmin, 24px);
   box-sizing: border-box;
   font: 400 var(--t-md)/1.5 var(--font);
   color: var(--fg);
@@ -43,7 +47,8 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   --pad: clamp(20px, 3.2cqi, 40px);
   container: focus / inline-size;
   position: relative;
-  width: min(100%, 1240px);
+  grid-area: 1 / 2;
+  width: 100%;
   height: min(100%, 900px);
   display: flex;
   flex-direction: column;
@@ -59,20 +64,48 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-sheet > * { position: relative; }
 .focus[data-closing] .focus-backdrop { animation: focus-fade-out 200ms var(--ease-in-out) forwards; }
 .focus[data-closing] .focus-sheet { animation: focus-sheet-out 200ms var(--ease-in-out) forwards; }
+.focus[data-closing] > .focus-nav { animation: focus-fade-out 200ms var(--ease-in-out) forwards; }
 @keyframes focus-fade { from { opacity: 0; } }
 @keyframes focus-fade-out { to { opacity: 0; } }
 @keyframes focus-sheet-in { from { opacity: 0; transform: translateY(18px) scale(.975); } }
 @keyframes focus-sheet-out { to { opacity: 0; transform: translateY(10px) scale(.985); } }
 
-/* ── top bar: name, notes, close ────────────────────────────────────────── */
-.focus-top { flex: none; display: flex; align-items: center; gap: var(--s-3); min-height: 60px; padding: var(--s-2) var(--s-3) var(--s-1) var(--pad); }
-.focus-brand { flex: none; display: flex; align-items: baseline; gap: var(--s-2); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .09em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
-.focus-brand-count { color: var(--faint); font-variant-numeric: tabular-nums; }
-.focus-brand-count:not(:empty)::before { content: "·"; margin-right: var(--s-2); }
-.focus-notes { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); }
-.focus-close { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); background: color-mix(in srgb, var(--surface) 70%, transparent); box-shadow: 0 0 0 1px var(--line); transition: background var(--d-fast), color var(--d-fast), transform var(--d-fast) var(--ease-out); }
-.focus-close:hover { background: var(--sunken); color: var(--fg); }
-.focus-close:active { transform: scale(.92); }
+/* ── back and next, beside the sheet ────────────────────────────────────── */
+.focus-nav { position: relative; grid-row: 1; width: 48px; height: 48px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: focus-fade var(--d-slow) var(--ease-out); transition: opacity var(--d-fast), visibility var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.focus-nav-prev { grid-column: 1; }
+.focus-nav-next { grid-column: 3; }
+.focus-nav .focus-icon { width: 22px; height: 22px; transition: transform var(--d-fast) var(--ease-out); }
+@media (hover: hover) and (pointer: fine) {
+  .focus-nav-prev:hover .focus-icon { transform: translateX(-2px); }
+  .focus-nav-next:hover .focus-icon { transform: translateX(2px); }
+}
+.focus-nav:active { transform: scale(.92); }
+/* nothing in that direction, or a picture is open: the arrow steps aside */
+.focus-nav:disabled, .focus[data-zoom] > .focus-nav { opacity: 0; visibility: hidden; }
+
+/* ── top bar: corner tab, age, notes, read aloud, close ─────────────────── */
+.focus-top { flex: none; display: flex; align-items: flex-start; gap: var(--s-2) var(--s-3); min-height: 60px; padding-right: var(--s-3); }
+/* One tab, flush with the corner, in the card's colour: who is asking and how urgent it is. */
+.focus-tab { flex: 0 1 auto; min-width: 0; display: flex; align-items: stretch; padding-left: calc(var(--pad) - 12px); border-radius: 0 0 var(--r-sm) 0; background: var(--u); color: var(--surface); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; transition: background var(--d-med); }
+.focus-tab span { padding: 11px 12px 10px; }
+.focus-tab-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.focus-tab-urg { flex: none; }
+.focus-tab-who:not([hidden]) + .focus-tab-urg { border-left: 1px solid color-mix(in srgb, var(--surface) 40%, transparent); }
+/* the age gives way before the name does */
+.focus-ago { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-top: 11px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; color: color-mix(in srgb, var(--u) 60%, var(--muted)); }
+.focus-notes { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); margin-top: 10px; }
+.focus-round { flex: none; width: 44px; height: 44px; margin-top: var(--s-2); display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--muted); background: color-mix(in srgb, var(--surface) 70%, transparent); box-shadow: 0 0 0 1px var(--line); transition: background var(--d-fast), color var(--d-fast), box-shadow var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.focus-round:hover { background: var(--sunken); color: var(--fg); }
+.focus-round:active { transform: scale(.92); }
+/* read-aloud toggle: three bars, filled while on, moving while it speaks */
+.focus-say { gap: 3px; }
+.focus-say i { width: 3px; height: 9px; border-radius: 2px; background: currentColor; }
+.focus-say i:nth-child(2) { height: 16px; animation-delay: .12s; }
+.focus-say i:nth-child(3) { animation-delay: .24s; }
+.focus-say[aria-pressed="true"], .focus-say[aria-pressed="true"]:hover { background: var(--accent); color: var(--accent-fg); box-shadow: none; }
+.focus-say[data-speaking] i { animation: focus-say .7s var(--ease-in-out) infinite; }
+.focus-say[data-speaking="loading"] i { animation-duration: 1.1s; opacity: .6; }
+@keyframes focus-say { 50% { transform: scaleY(.4); } }
 
 .focus-hint, .focus-undo, .focus-info { min-width: 0; max-width: 100%; min-height: 40px; display: inline-flex; align-items: center; gap: var(--s-2); border-radius: var(--r-pill); font-size: var(--t-sm); line-height: 1.25; animation: focus-note-in var(--d-slow) var(--ease-out); }
 @keyframes focus-note-in { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
@@ -127,25 +160,8 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 @keyframes focus-out-sent { to { opacity: 0; transform: translate3d(0, -40px, 0) scale(.97); } }
 @keyframes focus-out-gone { to { opacity: 0; transform: scale(.98); } }
 
-/* meta line: id chip, agent, kind and age */
-.focus-meta { flex: none; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-3); padding: var(--s-1) var(--pad) 0; }
-.focus-chip { display: inline-flex; align-items: stretch; height: 28px; border-radius: var(--r-sm); background: var(--u); color: var(--surface); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
-.focus-chip > span { display: flex; align-items: center; gap: 6px; padding: 0 10px; }
-.focus-chip > span + span { border-left: 1px solid color-mix(in srgb, var(--surface) 40%, transparent); }
-.focus-chip-nr { font-variant-numeric: tabular-nums; }
-.focus-chip-nr small { font-size: inherit; opacity: .72; margin-right: -2px; }
-.focus-dot { width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
-.focus-card[data-urgency="critical"] .focus-dot { animation: focus-breathe 2.4s var(--ease-in-out) infinite; }
-.focus-card[data-urgency="low"] .focus-dot { background: none; box-shadow: inset 0 0 0 1.5px currentColor; }
-@keyframes focus-breathe { 50% { opacity: .35; transform: scale(.7); } }
-.focus-agent { display: inline-flex; align-items: center; gap: 6px; height: 28px; max-width: 100%; padding: 0 10px 0 7px; border-radius: var(--r-sm); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); font: 500 var(--t-sm)/1 var(--font); color: var(--fg); }
-.focus-agent .focus-icon { width: 16px; height: 16px; color: var(--muted); }
-.focus-agent-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.focus-kind { display: inline-flex; align-items: center; gap: 7px; font-size: var(--t-sm); color: var(--muted); white-space: nowrap; }
-.focus-kind i { font-style: normal; color: var(--faint); }
-
 /* scrolling content */
-.focus-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-4) var(--pad) var(--s-6); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.focus-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-2) var(--pad) var(--s-6); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .focus-lead { display: grid; gap: var(--s-3); max-width: 62rem; }
 .focus-title { margin: 0; font: 650 clamp(1.5rem, 1.05rem + 1.7cqi, 2.2rem)/1.12 var(--display); letter-spacing: -.018em; text-wrap: balance; overflow-wrap: anywhere; }
 .focus-reason { position: relative; margin: 0; padding: 1px 0 1px var(--s-3); font-size: var(--t-md); font-weight: 500; line-height: 1.4; color: var(--u); overflow-wrap: anywhere; }
@@ -208,7 +224,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-perm-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 /* ── answer ─────────────────────────────────────────────────────────────── */
-.focus-answer { flex: none; display: grid; gap: var(--s-3); padding: var(--s-4) var(--pad); border-top: 1px solid var(--line); background: var(--surface); }
+.focus-answer { flex: none; display: grid; gap: var(--s-3); padding: var(--s-4) var(--pad) var(--s-2); border-top: 1px solid var(--line); background: var(--surface); }
 .focus-answer[data-shake] { animation: focus-shake 360ms var(--ease-out); }
 @keyframes focus-shake { 20% { transform: translateX(-7px); } 45% { transform: translateX(6px); } 70% { transform: translateX(-3px); } }
 .focus-error { margin: 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
@@ -218,76 +234,52 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-note:focus { outline: none; background: var(--surface); box-shadow: inset 0 0 0 2px var(--accent); }
 .focus-note:disabled { opacity: .6; }
 
-.focus-opts { display: grid; gap: var(--s-3); grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
+/* The tiles are the buttons: tinted in the card's colour, one strong label,
+   the consequence small beneath. Same language as the inbox's answer tiles. */
+.focus-opts { display: grid; gap: var(--s-2); grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
 .focus-opts[data-count="1"] { --cols: 1; }
-.focus-opts[data-count="2"] { --cols: 2; }
-.focus-opts[data-count="3"] { --cols: 3; }
+.focus-opts[data-count="2"], .focus-opts[data-count="duo"] { --cols: 2; }
 .focus-opts[data-count="4"] { --cols: 4; }
-.focus-opts[data-count="5"] { --cols: 5; }
-.focus-opts[data-count="6"] { --cols: 3; }
 
-.focus-opt { position: relative; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 68px; padding: 14px 14px 14px 16px; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong), var(--shadow-sm); transition: box-shadow var(--d-fast), background var(--d-fast), color var(--d-fast), transform var(--d-fast) var(--ease-out), opacity var(--d-fast); }
+.focus-opt { --ink: color-mix(in srgb, var(--u) 70%, var(--fg)); position: relative; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 76px; padding: 14px 18px; border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 9%, var(--surface)); color: var(--ink); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 24%, transparent); transition: box-shadow var(--d-fast), background var(--d-fast), color var(--d-fast), filter var(--d-fast), transform var(--d-fast) var(--ease-out), opacity var(--d-fast); }
 .focus-opt-words { flex: 1; min-width: 0; display: grid; gap: 3px; }
-.focus-opt-label { font-weight: 600; font-size: 1rem; line-height: 1.3; overflow-wrap: anywhere; }
-.focus-opt-detail { font-size: var(--t-sm); line-height: 1.38; color: var(--muted); overflow-wrap: anywhere; transition: color var(--d-fast); }
-.focus-opt-mark { flex: none; width: 22px; height: 22px; display: grid; place-items: center; }
+.focus-opt-label { font: 700 1.14rem/1.22 var(--font); color: var(--fg); overflow-wrap: anywhere; transition: color var(--d-fast); }
+.focus-opt-detail { font-size: var(--t-sm); line-height: 1.36; overflow-wrap: anywhere; }
+/* the mark: spinner while the answer travels, a check once it is through */
+.focus-opt-mark { order: 2; flex: none; width: 24px; height: 24px; display: none; place-items: center; }
 .focus-opt-mark > * { grid-area: 1 / 1; }
-.focus-opt-mark kbd { display: none; width: 22px; height: 22px; place-items: center; border-radius: 6px; box-shadow: inset 0 0 0 1px var(--line-strong); font: 500 var(--t-xs)/1 var(--mono); color: var(--faint); transition: color var(--d-fast), box-shadow var(--d-fast); }
 .focus-opt-mark .focus-spinner, .focus-opt-mark .focus-icon { display: none; }
+.focus-opt[data-state] .focus-opt-mark { display: grid; }
 @media (hover: hover) and (pointer: fine) {
-  .focus-opt-mark kbd { display: grid; }
-  .focus-opt:hover:not(:disabled):not([data-state]) { background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface)); box-shadow: inset 0 0 0 1.5px var(--accent), var(--shadow-md); transform: translateY(-1px); }
-  .focus-opt:hover:not(:disabled):not([data-state]) kbd { color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  .focus-opt:hover:not(:disabled):not([data-state]) { box-shadow: inset 0 0 0 2px var(--u), var(--shadow-md); transform: translateY(-1px); }
 }
-.focus-opt:active:not(:disabled):not([data-state]) { transform: scale(.985); background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); }
-.focus-opt:disabled { opacity: .42; box-shadow: inset 0 0 0 1px var(--line); }
-.focus-opt[data-state] { cursor: default; }
-.focus-opt[data-state] kbd { display: none; }
-.focus-opt[data-state="pending"] { background: var(--accent-soft); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent); }
+.focus-opt:active:not(:disabled):not([data-state]) { transform: scale(.985); box-shadow: inset 0 0 0 2px var(--u); }
+.focus-opt:disabled { opacity: .36; }
+.focus-opt[data-state] { cursor: default; box-shadow: inset 0 0 0 2px var(--u); }
 .focus-opt[data-state="pending"] .focus-spinner { display: block; }
-.focus-opt[data-state="done"] { background: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); color: var(--accent-fg); }
-.focus-opt[data-state="done"] .focus-opt-detail { color: color-mix(in srgb, var(--accent-fg) 80%, transparent); }
-.focus-opt[data-state="done"] .focus-icon { display: block; stroke-width: 2.6; animation: focus-pop var(--d-med) var(--ease-spring); }
+.focus-opt[data-state="done"] { background: var(--u); color: var(--surface); }
+.focus-opt[data-state="done"] .focus-opt-label { color: inherit; }
+.focus-opt[data-state="done"] .focus-icon:last-child { display: block; stroke-width: 2.6; animation: focus-pop var(--d-med) var(--ease-spring); }
 @keyframes focus-pop { from { transform: scale(.3); opacity: 0; } }
 
-/* permission: two verdicts, allow is the primary one */
-.focus-verdict { --cols: 2; }
-.focus-verdict .focus-opt { align-items: center; min-height: 60px; text-align: center; padding-left: 50px; }
-.focus-verdict .focus-opt-label { font-size: 1.05rem; }
-.focus-deny { color: var(--deny); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--deny) 45%, var(--line-strong)), var(--shadow-sm); }
-.focus-allow { background: var(--accent); color: var(--accent-fg); box-shadow: inset 0 0 0 1.5px var(--accent), var(--shadow-sm); }
-.focus-allow .focus-opt-mark kbd { color: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent-fg) 50%, transparent); }
-.focus-deny .focus-opt-mark kbd { color: inherit; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--deny) 45%, transparent); }
+/* Two options are a yes/no: the other one left, the agent's first choice
+   right and filled, each under its drawn icon. */
+.focus-opts[data-count="duo"] .focus-opt { flex-direction: column; justify-content: center; gap: var(--s-2); min-height: 108px; padding: 14px var(--s-3); text-align: center; }
+.focus-opts[data-count="duo"] .focus-opt-mark { order: 0; display: grid; width: 34px; height: 34px; }
+.focus-opts[data-count="duo"] .focus-opt-words { flex: none; justify-items: center; }
+.focus-opt-mark .focus-opt-icon { display: block; width: 34px; height: 34px; stroke-width: 1.7; }
+.focus-opt[data-state] .focus-opt-icon { display: none; }
+.focus-opt.is-lead { background: var(--u); color: var(--surface); box-shadow: var(--shadow-sm); }
+.focus-opt.is-lead .focus-opt-label { color: inherit; }
+.focus-opt.is-lead .focus-opt-detail { opacity: .86; }
+.focus-opt.is-lead[data-state] { box-shadow: none; }
 @media (hover: hover) and (pointer: fine) {
-  .focus-allow:hover:not(:disabled):not([data-state]) { background: var(--accent-hover); box-shadow: inset 0 0 0 1.5px var(--accent-hover), var(--shadow-md); }
-  .focus-allow:hover:not(:disabled):not([data-state]) kbd { color: inherit; box-shadow: inset 0 0 0 1px currentColor; }
-  .focus-deny:hover:not(:disabled):not([data-state]) { background: color-mix(in srgb, var(--deny) 9%, var(--surface)); box-shadow: inset 0 0 0 1.5px var(--deny), var(--shadow-md); }
-  .focus-deny:hover:not(:disabled):not([data-state]) kbd { color: inherit; box-shadow: inset 0 0 0 1px currentColor; }
+  .focus-opt.is-lead:hover:not(:disabled):not([data-state]) { box-shadow: var(--shadow-md); filter: brightness(.92); }
 }
-.focus-allow:active:not(:disabled):not([data-state]) { background: var(--accent-hover); box-shadow: inset 0 0 0 1.5px var(--accent-hover); }
-.focus-deny:active:not(:disabled):not([data-state]) { background: color-mix(in srgb, var(--deny) 14%, var(--surface)); box-shadow: inset 0 0 0 1.5px var(--deny); }
-.focus-allow[data-state="pending"] { background: var(--accent); color: var(--accent-fg); }
-.focus-deny[data-state="pending"] { background: color-mix(in srgb, var(--deny) 12%, var(--surface)); color: var(--deny); box-shadow: inset 0 0 0 1.5px var(--deny); }
-.focus-deny[data-state="done"] { background: var(--deny); color: var(--surface); box-shadow: inset 0 0 0 1.5px var(--deny); }
+.focus-opt.is-lead:active:not(:disabled):not([data-state]) { box-shadow: none; filter: brightness(.88); }
 
-/* ── footer: back, progress, next ───────────────────────────────────────── */
-.focus-foot { flex: none; display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; gap: var(--s-3); padding: var(--s-2) calc(var(--pad) - 14px) var(--s-3); border-top: 1px solid var(--line); background: var(--surface-2); }
-.focus-nav { justify-self: start; display: inline-flex; align-items: center; gap: var(--s-2); height: 44px; padding: 0 14px; border-radius: var(--r-pill); font-weight: 600; font-size: var(--t-sm); color: var(--fg); white-space: nowrap; transition: background var(--d-fast), color var(--d-fast), transform var(--d-fast) var(--ease-out); }
-.focus-nav-next { justify-self: end; }
-.focus-nav .focus-icon { width: 18px; height: 18px; color: var(--muted); transition: transform var(--d-fast) var(--ease-out); }
-.focus-nav:hover:not(:disabled) { background: var(--sunken); }
-.focus-nav-prev:hover:not(:disabled) .focus-icon { transform: translateX(-2px); }
-.focus-nav-next:hover:not(:disabled) .focus-icon { transform: translateX(2px); }
-.focus-nav:active:not(:disabled) { transform: scale(.96); }
-.focus-nav:disabled { color: var(--faint); }
-.focus-nav:disabled .focus-icon { color: var(--line-strong); }
-.focus-progress { display: flex; align-items: center; gap: var(--s-3); min-width: 0; }
-.focus-dots { display: flex; align-items: center; gap: 5px; }
-.focus-dot-step { flex: none; width: 7px; height: 7px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--u) 40%, var(--surface-2)); transition: width var(--d-med) var(--ease-out), background var(--d-med), transform var(--d-med) var(--ease-out); }
-.focus-dot-step[data-at="past"] { background: var(--line-strong); }
-.focus-dot-step[data-at="now"] { width: 22px; background: var(--u); }
-.focus-dot-step[data-more] { transform: scale(.6); }
-.focus-pos { font-size: var(--t-sm); font-weight: 500; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* ── foot: where in the stack you are ───────────────────────────────────── */
+.focus-foot { flex: none; min-height: 34px; display: grid; place-items: center; padding-bottom: var(--s-1); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; font-variant-numeric: tabular-nums; color: var(--faint); }
 
 /* ── all done, loading ──────────────────────────────────────────────────── */
 .focus-done, .focus-loading { flex: 1; min-height: 0; display: none; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: var(--s-6) var(--pad) var(--s-10); }
@@ -329,48 +321,52 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 }
 @container focus (max-width: 1040px) {
   .focus-opts[data-count="4"] { --cols: 2; }
-  .focus-opts[data-count="5"] { --cols: 3; }
 }
 @container focus (max-width: 680px) {
-  .focus-opts:not(.focus-verdict) { --cols: 1 !important; gap: var(--s-2); }
-  .focus-opts:not(.focus-verdict) .focus-opt { min-height: 52px; padding: 10px 14px; align-items: center; }
+  .focus-opts:not([data-count="duo"]) { --cols: 1; }
+  .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 56px; padding: 10px 14px; }
+  .focus-opt-label { font-size: 1.06rem; }
   .focus-opt-detail { font-size: .8rem; line-height: 1.32; }
-  .focus-brand-count { display: none; }
-  .focus-top:has(.focus-notes > :not([hidden])) .focus-brand { display: none; }
-  .focus-notes { justify-content: flex-start; }
+  .focus-opts[data-count="duo"] .focus-opt { min-height: 92px; padding: 10px var(--s-2); gap: 6px; }
+  .focus-opts[data-count="duo"] .focus-opt-mark, .focus-opt-mark .focus-opt-icon { width: 28px; height: 28px; }
+  /* undo, hint and info get a line of their own under the tab */
+  .focus-top:has(.focus-notes > :not([hidden])) { flex-wrap: wrap; }
+  .focus-top:has(.focus-notes > :not([hidden])) .focus-ago { margin-right: auto; }
+  .focus-top:has(.focus-notes > :not([hidden])) .focus-notes { order: 5; flex: none; width: 100%; justify-content: flex-start; margin: 0; padding: 0 0 var(--s-1) var(--pad); }
 }
 
 /* a short window: give the body the room */
 @media (max-height: 760px) and (min-width: 641px) {
-  .focus-top { min-height: 52px; }
-  .focus-scroll { padding-top: var(--s-3); padding-bottom: var(--s-4); }
+  .focus-top { min-height: 56px; }
+  .focus-scroll { padding-bottom: var(--s-4); }
   .focus-body { margin-top: var(--s-4); }
-  .focus-answer { padding-top: var(--s-3); padding-bottom: var(--s-3); gap: var(--s-2); }
-  .focus-opt { min-height: 58px; padding-top: 10px; padding-bottom: 10px; }
+  .focus-answer { padding-top: var(--s-3); gap: var(--s-2); }
+  .focus-opt { min-height: 62px; padding-top: 10px; padding-bottom: 10px; }
+  .focus-opts[data-count="duo"] .focus-opt { min-height: 88px; }
+  .focus-foot { min-height: 28px; }
   .focus-figure img, .focus-media .media video { max-height: 30vh; }
 }
 
-/* ── phone: the sheet is the screen ─────────────────────────────────────── */
+/* ── phone: the sheet is the screen, the arrows sit in its bottom corners ── */
 @media (max-width: 640px) {
-  .focus { padding: 0; }
+  .focus { display: block; padding: 0; }
   .focus-backdrop { -webkit-backdrop-filter: none; backdrop-filter: none; }
   .focus-sheet {
     --pad: 16px;
-    width: 100%;
     height: 100%;
     border-radius: 0;
     box-shadow: none;
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   }
   .focus-sheet::before { height: 160px; }
-  .focus-top { min-height: 56px; padding: var(--s-1) var(--s-2) 0 var(--pad); align-items: flex-start; }
-  .focus-brand { min-height: 48px; align-items: center; }
-  .focus-notes { padding: 2px 0 var(--s-1); }
-  .focus-close { width: 48px; height: 48px; box-shadow: none; background: none; }
+  .focus-top { min-height: 52px; padding-right: var(--s-1); column-gap: var(--s-2); }
+  .focus-tab { padding-left: calc(var(--pad) - 10px); }
+  .focus-tab span { padding-inline: 10px; }
+  .focus-round { width: 48px; height: 48px; margin-top: 2px; box-shadow: none; background: none; }
+  .focus-say[aria-pressed="true"] { box-shadow: inset 0 0 0 5px var(--surface); }
   .focus-hint, .focus-undo, .focus-info { min-height: 44px; }
   .focus-undo-cta { height: 36px; }
-  .focus-meta { padding-top: 0; gap: 6px var(--s-2); }
-  .focus-scroll { padding: var(--s-3) var(--pad) var(--s-5); }
+  .focus-scroll { padding: var(--s-1) var(--pad) var(--s-5); }
   .focus-title { font-size: clamp(1.32rem, 1rem + 1.9cqi, 1.6rem); line-height: 1.16; }
   .focus-reason { font-size: var(--t-sm); }
   .focus-body { margin-top: var(--s-4); gap: var(--s-4); }
@@ -380,14 +376,13 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-thumb { width: 56px; height: 44px; }
   .focus .rich, .focus-body[data-layout="text"] .rich { font-size: 1rem; line-height: 1.58; }
   .focus-perm-desc { font-size: .95rem; }
-  .focus-answer { max-height: 56dvh; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-3) var(--pad); gap: var(--s-2); }
+  .focus-answer { max-height: 58dvh; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-3) var(--pad) 0; gap: var(--s-2); }
   .focus-note { height: 48px; font-size: 16px; }
-  .focus-verdict { gap: var(--s-2); }
-  .focus-verdict .focus-opt { min-height: 56px; justify-content: center; text-align: center; }
-  .focus-foot { padding: var(--s-1) var(--s-1) calc(var(--s-1) + env(safe-area-inset-bottom)); gap: var(--s-1); }
-  .focus-nav { height: 48px; padding: 0 12px; }
-  .focus-progress { flex-direction: column; gap: 5px; }
-  .focus-pos { font-size: var(--t-xs); }
+  /* the foot is the row the arrows stand in, so they cover nothing */
+  .focus-foot { min-height: calc(48px + env(safe-area-inset-bottom)); padding-bottom: env(safe-area-inset-bottom); }
+  .focus-nav { position: absolute; bottom: env(safe-area-inset-bottom); background: none; box-shadow: none; }
+  .focus-nav-prev { left: calc(var(--s-1) + env(safe-area-inset-left)); }
+  .focus-nav-next { right: calc(var(--s-1) + env(safe-area-inset-right)); }
   .focus-zoom-view { padding: 64px var(--s-2) calc(var(--s-2) + env(safe-area-inset-bottom)); }
   .focus-done { padding-bottom: calc(var(--s-10) + env(safe-area-inset-bottom)); }
 }
@@ -396,13 +391,14 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 @media (max-width: 640px) and (max-height: 700px) {
   .focus-top { min-height: 48px; }
   .focus-title { font-size: 1.25rem; }
-  .focus-scroll { padding-top: var(--s-2); padding-bottom: var(--s-4); }
-  .focus-answer { padding-top: var(--s-2); padding-bottom: var(--s-2); gap: 6px; }
+  .focus-scroll { padding-bottom: var(--s-4); }
+  .focus-answer { padding-top: var(--s-2); gap: 6px; }
   .focus-note { height: 44px; }
-  .focus-opts:not(.focus-verdict) { gap: 6px; }
-  .focus-opts:not(.focus-verdict) .focus-opt { min-height: 48px; padding: 6px 12px; }
+  .focus-opts { gap: 6px; }
+  .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 48px; padding: 6px 12px; }
+  .focus-opts[data-count="duo"] .focus-opt { min-height: 76px; }
   .focus-opt-words { gap: 1px; }
-  .focus-opt-detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .focus-opts:not([data-count="duo"]) .focus-opt-detail { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .focus-figure img, .focus-media .media video { max-height: 26vh; }
 }
 
@@ -410,43 +406,5 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus *, .focus *::before, .focus *::after { animation-duration: 1ms !important; animation-delay: 0s !important; transition-duration: 1ms !important; }
   .focus .focus-spinner { animation-duration: 1.4s !important; }
   .focus .focus-undo-time { animation-duration: 10s !important; }
-  .focus .focus-dot { animation: none !important; }
+  .focus .focus-say i { animation: none !important; }
 }
-
-/* read-aloud toggle: three bars, filled while on, moving while it speaks */
-.focus-say { flex: none; width: 44px; height: 44px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; border: 0; border-radius: 50%; background: color-mix(in srgb, var(--surface) 70%, transparent); box-shadow: 0 0 0 1px var(--line); cursor: pointer; }
-.focus-say[hidden] { display: none; }
-.focus-say i { width: 3px; height: 9px; border-radius: 2px; background: var(--muted); }
-.focus-say i:nth-child(2) { height: 16px; }
-.focus-say[aria-pressed="true"] { background: var(--accent); box-shadow: none; }
-.focus-say[aria-pressed="true"] i { background: var(--accent-fg); }
-.focus-say[data-speaking] i { animation: focus-say .7s var(--ease-in-out) infinite; }
-.focus-say[data-speaking="loading"] i { animation-duration: 1.1s; opacity: .6; }
-.focus-say i:nth-child(2) { animation-delay: .12s; }
-.focus-say i:nth-child(3) { animation-delay: .24s; }
-@keyframes focus-say { 50% { transform: scaleY(.4); } }
-@media (prefers-reduced-motion: reduce) { .focus-say i { animation: none !important; } }
-
-/* ---- pared down: fewer elements, clearer answers ---- */
-.focus-brand { visibility: hidden; }
-.focus-dots { display: none; }
-.focus-foot { display: flex; justify-content: center; padding-block: 6px 10px; border-top: 0; background: none; }
-.focus-pos { font-size: var(--t-xs); color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
-/* back and next: round arrows at the sides of the sheet */
-.focus-sheet { position: relative; }
-.focus-sheet > .focus-nav { position: absolute; top: 50%; translate: 0 -50%; z-index: 5; width: 48px; height: 48px; padding: 0; justify-content: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
-.focus-sheet > .focus-nav-prev { left: 12px; }
-.focus-sheet > .focus-nav-next { right: 12px; }
-.focus-sheet > .focus-nav:disabled { opacity: 0; pointer-events: none; }
-.focus-sheet > .focus-nav .focus-icon { width: 22px; height: 22px; color: var(--fg); }
-@media (max-width: 640px) {
-  .focus-sheet > .focus-nav { top: auto; bottom: 6px; translate: none; width: 44px; height: 44px; box-shadow: none; background: none; }
-  .focus-sheet > .focus-nav-prev { left: 6px; }
-  .focus-sheet > .focus-nav-next { right: 6px; }
-}
-/* answers that read as buttons: one strong label, the consequence small beneath, no key caps */
-.focus-opt { background: color-mix(in srgb, var(--u, var(--accent)) 9%, var(--surface)); border: 0; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u, var(--accent)) 30%, transparent); border-radius: 14px; }
-.focus-opt:hover:not(:disabled) { box-shadow: inset 0 0 0 2px var(--u, var(--accent)); }
-.focus-opt-label { font: 700 1.12rem/1.25 var(--font); color: var(--fg); }
-.focus-opt-detail { font-size: var(--t-sm); color: var(--muted); }
-.focus-opt-mark kbd { display: none; }

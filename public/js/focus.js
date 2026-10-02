@@ -9,13 +9,12 @@
 
 import { subscribe, decide, reopen, isLoaded, getState } from './store.js'
 import { readCard, stopReading } from './speech.js'
-import { el, rich, agoNode, URGENCY_LABEL, kindOf, mediaNodes } from './ui.js'
+import { el, rich, ago, agoNode, URGENCY_LABEL, kindOf, mediaNodes } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
 const LOCAL_DECIDED_TTL = 20000  // hide a card decided here until the server confirms, at most this long
 const UNDO_MS = 10000
 const INFO_MS = 6000
-const MAX_DOTS = 7
 const OUT_MS = 420
 
 const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v))
@@ -33,9 +32,15 @@ const ICON = {
   file: 'M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8zM14 3v5h5',
   zoom: 'M11 4a7 7 0 1 0 0 14 7 7 0 0 0 0-14zM20 20l-4-4M11 8v6M8 11h6',
   undo: 'M4 9h10a5 5 0 0 1 0 10H9M4 9l4-4M4 9l4 4',
-  agent: 'M12 3v3M7 6h10a3 3 0 0 1 3 3v6a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V9a3 3 0 0 1 3-3zM9 11v2M15 11v2',
   shield: 'M12 3l7 3v5c0 4.500-3 8.200-7 10-4-1.800-7-5.500-7-10V6z',
+  // The hand-drawn answer icons of the inbox (TILE_ICON in inbox.js): thumb up, thumb down, the other way.
+  yes: 'M7.200 11.200 10.400 4.700c1.500-.2 2.300.9 2.100 2.300l-.5 3h4.700c1.300 0 2.100 1.100 1.800 2.300l-1.200 5c-.3 1.100-1.100 1.700-2.200 1.700H7.300M7.200 11v8.100H4.600V11z',
+  no: 'M16.800 12.800 13.600 19.300c-1.500.2-2.300-.9-2.100-2.300l.5-3H7.300c-1.300 0-2.100-1.100-1.800-2.300l1.200-5c.3-1.100 1.100-1.700 2.200-1.700h7.800M16.800 13V4.900h2.600V13z',
+  other: 'M5 9.500h11.500l-3.200-3.300M19 14.500H7.500l3.200 3.300',
 }
+// Same tests as the inbox, so a card gets the same icons in both places.
+const NEGATIVE = /^(nein|nicht|noch nicht|später|ablehnen|lassen|weglassen|behalten|nur |abbrechen|bei .* bleiben)/i
+const BARE = /^(ja|nein|yes|no|ok|okay)$/i
 function icon(name, cls = 'focus-icon') {
   const svg = document.createElementNS(SVG_NS, 'svg')
   svg.setAttribute('viewBox', '0 0 24 24')
@@ -86,10 +91,14 @@ export function mountFocus() {
   sheet.tabIndex = -1
   sheet.dataset.state = 'loading'
 
+  // Top bar: the corner tab says who is asking and how urgent it is, then the
+  // age. That it is a decision goes without saying.
   const top = el('header', 'focus-top')
-  const brand = el('div', 'focus-brand')
-  const brandCount = el('span', 'focus-brand-count')
-  brand.append(el('span', 'focus-brand-name', 'Fokus'), brandCount)
+  const tab = el('div', 'focus-tab')
+  const tabWho = el('span', 'focus-tab-who')
+  const tabUrg = el('span', 'focus-tab-urg')
+  tab.append(tabWho, tabUrg)
+  const agoSlot = agoNode(Date.now(), 'focus-ago')
   const notes = el('div', 'focus-notes')
   const hintBtn = button('focus-hint')
   hintBtn.hidden = true
@@ -98,10 +107,11 @@ export function mountFocus() {
   const infoNode = el('p', 'focus-info')
   infoNode.hidden = true
   notes.append(hintBtn, undoBtn, infoNode)
-  const closeBtn = button('focus-close', 'Fokus-Modus schließen')
+  const closeBtn = button('focus-round focus-close', 'Fokus-Modus schließen')
+  closeBtn.title = 'Schließen (Esc)'
   closeBtn.append(icon('close'))
   // Read each card aloud as it comes up; the choice is remembered.
-  const sayBtn = button('focus-say', 'Karten vorlesen')
+  const sayBtn = button('focus-round focus-say', 'Karten vorlesen')
   sayBtn.append(el('i'), el('i'), el('i'))
   let autoRead = false
   try { autoRead = localStorage.getItem('trommi-focus-read') === '1' } catch {}
@@ -109,6 +119,7 @@ export function mountFocus() {
   const paintSay = () => {
     sayBtn.hidden = !getState().speech
     sayBtn.setAttribute('aria-pressed', String(autoRead))
+    sayBtn.title = autoRead ? 'Vorlesen ist an: jede Karte wird vorgelesen' : 'Karten vorlesen'
   }
   function voice() {
     paintSay()
@@ -125,7 +136,7 @@ export function mountFocus() {
     if (autoRead) voice()
     else { stopReading(); paintSay() }
   })
-  top.append(brand, notes, sayBtn, closeBtn)
+  top.append(tab, agoSlot, notes, sayBtn, closeBtn)
 
   const stage = el('div', 'focus-stage')
 
@@ -140,27 +151,20 @@ export function mountFocus() {
   const loading = el('div', 'focus-loading')
   loading.append(el('span', 'focus-spinner'), el('span', null, 'Entscheidungen werden geladen'))
 
+  // Back and next stand beside the sheet (on a phone in its bottom corners);
+  // the foot only says where in the stack you are.
   const foot = el('footer', 'focus-foot')
-  const prevBtn = button('focus-nav focus-nav-prev')
-  prevBtn.setAttribute('aria-label', 'Vorherige Karte')
+  const prevBtn = button('focus-nav focus-nav-prev', 'Vorherige Karte')
   prevBtn.append(icon('left'))
-  const nextBtn = button('focus-nav focus-nav-next')
-  nextBtn.setAttribute('aria-label', 'Nächste Karte')
+  const nextBtn = button('focus-nav focus-nav-next', 'Nächste Karte')
   nextBtn.append(icon('right'))
-  const progress = el('div', 'focus-progress')
-  const dots = el('div', 'focus-dots')
-  dots.setAttribute('aria-hidden', 'true')
-  const pos = el('span', 'focus-pos')
-  progress.append(dots, pos)
-  // Only the position stays in the foot; the arrows stand at the sides of the sheet.
-  foot.append(progress)
 
   const live = el('div', 'focus-sr')
   live.setAttribute('aria-live', 'polite')
   live.setAttribute('role', 'status')
 
-  sheet.append(top, stage, done, loading, foot, live, prevBtn, nextBtn)
-  root.append(backdrop, sheet)
+  sheet.append(top, stage, done, loading, foot, live)
+  root.append(backdrop, sheet, prevBtn, nextBtn)
   document.body.append(root)
 
   // ── model ───────────────────────────────────────────────────────────────
@@ -182,12 +186,11 @@ export function mountFocus() {
   let closeTimer = 0
   let undoTimer = 0
   let infoTimer = 0
-  let dotSig = ''
   let sentId = null              // the card whose answer just went through here
 
   const announce = text => { live.textContent = ''; requestAnimationFrame(() => { live.textContent = text }) }
   const describe = rec =>
-    `Karte ${order.indexOf(rec.id) + 1} von ${order.length}: Nr. ${rec.card.number}, ${URGENCY_LABEL[rec.card.urgency] ?? ''}. ${rec.card.title}`
+    `Karte ${order.indexOf(rec.id) + 1} von ${order.length}${rec.card.agent_name ? `, ${rec.card.agent_name}` : ''}, ${rec.card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[rec.card.urgency] ?? ''}. ${rec.card.title}`
   const busyRec = () => { for (const rec of recs.values()) if (rec.busy) return rec; return null }
 
   // ── card nodes ──────────────────────────────────────────────────────────
@@ -196,7 +199,7 @@ export function mountFocus() {
     node.dataset.id = card.id
     node.tabIndex = -1
     node.inert = true
-    return { id: card.id, card, node, sigC: '', sigU: '', note: '', busy: false, outTimer: 0, optButtons: [], imageAt: 0 }
+    return { id: card.id, card, node, sigC: '', note: '', busy: false, outTimer: 0, optButtons: [], imageAt: 0 }
   }
 
   function fill(rec) {
@@ -211,26 +214,13 @@ export function mountFocus() {
     const titleId = `focus-title-${card.id}`
     node.setAttribute('aria-labelledby', titleId)
 
-    // meta line: id chip coloured by urgency, the asking agent, kind and age
-    const meta = el('header', 'focus-meta')
-    const chip = el('span', 'focus-chip')
-    // One tab says who is asking and how urgent it is; that it is a decision goes without saying.
-    const nr = el('span', 'focus-chip-nr')
-    if (card.agent_name) nr.append(card.agent_name)
-    else nr.append(el('small', null, 'Nr.'), ` ${card.number}`)
-    rec.urgNode = el('span', 'focus-chip-urg')
-    chip.append(nr, rec.urgNode)
-    meta.append(chip)
-    const kind = el('span', 'focus-kind')
-    if (permission) kind.append('Freigabe', el('i', null, '·'))
-    kind.append(agoNode(card.created, 'focus-ago'))
-    meta.append(kind)
-
     const scroll = el('div', 'focus-scroll')
     rec.scroll = scroll
     const title = el('h2', 'focus-title', card.title)
     title.id = titleId
     rec.reasonNode = el('p', 'focus-reason')
+    rec.reasonNode.textContent = card.urgency_reason || ''
+    rec.reasonNode.hidden = !card.urgency_reason
     const lead = el('div', 'focus-lead')
     lead.append(title, rec.reasonNode)
 
@@ -336,34 +326,43 @@ export function mountFocus() {
     rec.optButtons = []
     rec.noteNode = null
 
+    // The tiles are the buttons to press: one strong label, the consequence
+    // small beneath. Exactly two options (and every permission) are a yes/no:
+    // the other one on the left, the option the agent leads with on the right,
+    // each under its thumb, as in the inbox.
     const opts = el('div', 'focus-opts')
     opts.setAttribute('role', 'group')
     opts.setAttribute('aria-label', permission ? 'Freigabe erteilen oder ablehnen' : 'Antwort wählen, ein Tipp entscheidet')
-    const tile = (o, cls, label) => {
-      const b = button(`focus-opt ${cls}`)
+    const duo = card.options.length === 2
+    const isYes = o => (permission ? o.key === 'allow' : o === card.options[0])
+    const options = duo ? [...card.options].sort((x, y) => isYes(x) - isYes(y)) : card.options
+    const bare = duo && card.options.every(o => BARE.test(o.label.trim()))
+    opts.dataset.count = duo ? 'duo' : String(clamp(options.length, 1, 6))
+    for (const o of options) {
+      const b = button('focus-opt')
       b.dataset.key = o.key
-      const words = el('span', 'focus-opt-words')
-      words.append(el('span', 'focus-opt-label', label))
-      if (o.detail) words.append(el('span', 'focus-opt-detail', o.detail))
       const mark = el('span', 'focus-opt-mark')
       mark.setAttribute('aria-hidden', 'true')
-      mark.append(el('kbd', null, String(rec.optButtons.length + 1)), el('span', 'focus-spinner'), icon('check'))
-      b.append(words, mark)
+      if (duo) {
+        const lead = isYes(o)
+        if (lead) b.classList.add('is-lead')
+        mark.append(icon(lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other', 'focus-icon focus-opt-icon'))
+      }
+      mark.append(el('span', 'focus-spinner'), icon('check'))
+      const words = el('span', 'focus-opt-words')
+      // A bare yes or no needs no word: the thumb says it.
+      if (bare) b.setAttribute('aria-label', o.label)
+      else words.append(el('span', 'focus-opt-label', o.label))
+      if (o.detail) words.append(el('span', 'focus-opt-detail', o.detail))
+      b.append(mark)
+      if (words.childNodes.length) b.append(words)
       b.addEventListener('click', () => submit(rec, o.key))
       rec.optButtons.push(b)
       opts.append(b)
     }
     if (permission) {
-      opts.classList.add('focus-verdict')
-      const allow = card.options.find(o => o.key === 'allow')
-      const deny = card.options.find(o => o.key === 'deny')
-      if (deny) tile(deny, 'focus-deny', 'Ablehnen')
-      for (const o of card.options) if (o !== allow && o !== deny) tile(o, '', o.label)
-      if (allow) tile(allow, 'focus-allow', 'Erlauben')
       answer.append(rec.errorNode, opts)
     } else {
-      card.options.forEach(o => tile(o, '', o.label))
-      opts.dataset.count = String(clamp(card.options.length, 1, 6))
       const note = el('input', 'focus-note')
       note.type = 'text'
       note.placeholder = 'Anmerkung dazu?'
@@ -377,8 +376,7 @@ export function mountFocus() {
       answer.append(rec.errorNode, note, opts)
     }
 
-    node.replaceChildren(meta, scroll, answer)
-    paintUrgency(rec)
+    node.replaceChildren(scroll, answer)
     scroll.scrollTop = scrollTop
     if (noteSel && rec.noteNode) {
       rec.noteNode.focus({ preventScroll: true })
@@ -386,14 +384,6 @@ export function mountFocus() {
     } else if (hadFocus) {
       node.focus({ preventScroll: true })
     }
-  }
-
-  function paintUrgency(rec) {
-    const { card, node } = rec
-    node.dataset.urgency = RANK[card.urgency] != null ? card.urgency : 'normal'
-    rec.urgNode.replaceChildren(el('i', 'focus-dot'), URGENCY_LABEL[card.urgency] ?? card.urgency)
-    rec.reasonNode.textContent = card.urgency_reason || ''
-    rec.reasonNode.hidden = !card.urgency_reason
   }
 
   function setError(rec, text) {
@@ -548,8 +538,8 @@ export function mountFocus() {
     for (const id of order) {
       let rec = recs.get(id)
       const card = byId.get(id) ?? rec.card
-      const sigC = JSON.stringify([card.kind, card.number, card.title, card.body, card.options, card.attachments, card.created, card.agent_name ?? ''])
-      const sigU = `${card.urgency}|${card.urgency_reason ?? ''}`
+      // Urgency, sender and age are painted in the top bar, so they never rebuild a card.
+      const sigC = JSON.stringify([card.kind, card.title, card.body, card.options, card.attachments])
       if (!rec) {
         rec = createRec(card)
         recs.set(id, rec)
@@ -559,8 +549,12 @@ export function mountFocus() {
         promoted.push(rec)
       }
       rec.card = card
-      if (rec.sigC !== sigC) { rec.sigC = sigC; rec.sigU = sigU; fill(rec) }
-      else if (rec.sigU !== sigU) { rec.sigU = sigU; paintUrgency(rec) }
+      rec.node.dataset.urgency = RANK[card.urgency] != null ? card.urgency : 'normal'
+      if (rec.sigC !== sigC) { rec.sigC = sigC; fill(rec) }
+      else {
+        rec.reasonNode.textContent = card.urgency_reason || ''
+        rec.reasonNode.hidden = !card.urgency_reason
+      }
     }
 
     const before = current
@@ -615,7 +609,6 @@ export function mountFocus() {
         void next.node.offsetWidth
         next.node.dataset.in = motion
       }
-      sheet.dataset.urgency = next.node.dataset.urgency
       if (hadFocus) next.node.focus({ preventScroll: true })
     }
   }
@@ -641,28 +634,25 @@ export function mountFocus() {
     const n = order.length
     const idx = order.indexOf(current)
     const locked = !!busyRec()
-    brandCount.textContent = n ? `${n} offen` : ''
-    pos.textContent = n ? `${idx + 1} von ${n}` : ''
+    foot.textContent = n ? `${idx + 1} von ${n}` : ''
     prevBtn.disabled = idx <= 0 || locked
     nextBtn.disabled = idx < 0 || idx >= n - 1 || locked
     doneText.textContent = decidedCount
       ? `${decidedCount === 1 ? 'Eine Entscheidung' : `${decidedCount} Entscheidungen`} in dieser Runde getroffen. Neue Karten erscheinen hier, sobald ein Agent etwas wissen will.`
       : 'Keine offenen Fragen. Neue Karten erscheinen hier, sobald ein Agent etwas wissen will.'
 
-    // at most MAX_DOTS dots: a window around the current card, smaller at an edge that hides more
-    const size = Math.min(n, MAX_DOTS)
-    const from = clamp(idx - Math.floor(MAX_DOTS / 2), 0, Math.max(0, n - size))
-    const sig = `${n}|${idx}|${order.slice(from, from + size).map(id => recs.get(id)?.card.urgency).join()}`
-    if (sig === dotSig) return
-    dotSig = sig
-    dots.replaceChildren(...order.slice(from, from + size).map((id, k) => {
-      const i = from + k
-      const d = el('i', 'focus-dot-step')
-      d.dataset.at = i < idx ? 'past' : i === idx ? 'now' : 'next'
-      d.dataset.urgency = recs.get(id)?.card.urgency ?? 'normal'
-      if ((k === 0 && from > 0) || (k === size - 1 && from + size < n)) d.dataset.more = ''
-      return d
-    }))
+    // the corner tab and the sheet's colour follow the card in front
+    const card = shown?.card
+    tab.hidden = agoSlot.hidden = !card
+    if (!card) return
+    sheet.dataset.urgency = shown.node.dataset.urgency
+    tabWho.textContent = card.agent_name || ''
+    tabWho.hidden = !card.agent_name
+    tabUrg.textContent = card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[card.urgency] ?? card.urgency
+    if (Number(agoSlot.dataset.ts) !== card.created) {
+      agoSlot.dataset.ts = card.created
+      agoSlot.textContent = ago(card.created)
+    }
   }
 
   function go(target) {
@@ -681,7 +671,7 @@ export function mountFocus() {
   }
 
   // ── focus handling ──────────────────────────────────────────────────────
-  const scope = () => zoom?.box ?? sheet
+  const scope = () => zoom?.box ?? root
   function focusables() {
     const within = scope()
     return [...within.querySelectorAll('button, [href], input, textarea, select, video[controls], audio[controls], [tabindex]:not([tabindex="-1"])')]
@@ -697,7 +687,7 @@ export function mountFocus() {
   function trapTab(e) {
     const list = focusables()
     e.preventDefault()
-    if (!list.length) return scope().focus?.({ preventScroll: true })
+    if (!list.length) return (zoom?.box ?? sheet).focus({ preventScroll: true })
     const at = list.indexOf(document.activeElement)
     const to = at < 0 ? (e.shiftKey ? list.length - 1 : 0) : (at + (e.shiftKey ? list.length - 1 : 1)) % list.length
     list[to].focus()
@@ -829,6 +819,7 @@ export function mountFocus() {
       zoom = null
       box.remove()
       for (const n of [top, stage, foot]) n.inert = false
+      delete root.dataset.zoom
       openerNode?.focus?.({ preventScroll: true })
       rescueFocus()
     }
@@ -841,6 +832,7 @@ export function mountFocus() {
       else closeZoom()
     })
     for (const n of [top, stage, foot]) n.inert = true
+    root.dataset.zoom = ''
     sheet.append(box)
     zoom = { box, closeBtn: shut, close: closeZoom, step: d => { if (images.length > 1) show(i + d) } }
     show(start)
@@ -889,7 +881,6 @@ export function mountFocus() {
     shown = null
     order = []
     current = null
-    dotSig = ''
     stage.replaceChildren()
   }
 

@@ -1,5 +1,20 @@
 // Scribble: an infinite canvas to draw on, drop images onto, and send to the
-// agent. The module owns its state; nothing outside re-renders it.
+// agent. The module owns its state; nothing outside re-renders it. It fills
+// whatever box its root has, from a phone screen to a wide desktop pane.
+//
+//   const board = mountScribble(root, { send, onChange, draftKey })
+//   send({ doc, png, view, text })   async; png is the whole canvas, view exactly
+//                                    the section on screen; text is always ''
+//                                    (the human writes in the chat afterwards)
+//   onChange(doc)                    a moment after the human changed the canvas;
+//                                    never for load() or clear()
+//   draftKey                         IndexedDB key for a local draft; null when
+//                                    the host keeps the canvas (via onChange)
+//   board.load(doc) / clear()        replace the content; a change still waiting
+//                                    to be reported is reported first
+//   board.flush()                    report a waiting change right now, e.g.
+//                                    before the host switches to another canvas
+//   board.isEmpty()
 //
 // Doc format (v1), plain JSON, world units are CSS pixels at 100 % zoom:
 //   { v: 1,
@@ -58,7 +73,10 @@ const PLACEHOLDER = '#e6e9e3'
 const MIN_Z = 0.05, MAX_Z = 8
 const MAX_IMG = 2000        // longest side of an imported image
 const KEEP_BYTES = 350_000  // smaller files are embedded untouched
-const PNG_MAX = 2400
+const PNG_MAX = 2400         // longest side of the whole-canvas picture
+const VIEW_MAX = 2000        // longest side of the picture of the visible section
+const CHANGE_MS = 900        // onChange fires this long after the hand stops
+const DOCK_BELOW = 520       // narrower than this, Senden gets a bar of its own under the canvas
 const UNDO_MAX = 200
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
@@ -391,34 +409,38 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   const bDel = btn('scr-btn scr-danger', 'Bild löschen', 'trash', 'Löschen · Entf')
   ctxBar.append(bFront, bBack, el('span', 'scr-sep'), bDel)
 
-  stage.append(canvas, hint, drop, top, confirmEl, ctxBar, toastEl, bar)
-
-  // composer
+  // send: one button. With room it stands at the end of the toolbar, on a
+  // narrow screen in a bar of its own under the canvas (see placeSend).
+  const SEND_TIP = 'Schickt dem Agenten, was du gerade siehst, und dazu die ganze Fläche'
+  const bSend = el('button', 'scr-send')
+  bSend.type = 'button'
+  bSend.dataset.tip = SEND_TIP
+  bSend.dataset.tipPos = 'above-end'
+  const sendIcon = el('span', 'scr-send-icon')
+  const sendLabel = el('span', 'scr-send-label')
+  bSend.append(sendIcon, sendLabel)
+  bar.append(bSend)
   const dock = el('div', 'scr-dock')
+
   const errorEl = el('div', 'scr-error')
   errorEl.setAttribute('role', 'alert')
   errorEl.hidden = true
   const errorText = el('span', 'scr-error-text')
   const bErrClose = btn('scr-error-close', 'Meldung schließen', 'close', 'Schließen')
   errorEl.append(icon('alert'), errorText, bErrClose)
-  const form = el('div', 'scr-form')
-  const caption = el('textarea', 'scr-caption')
-  caption.rows = 1
-  caption.placeholder = 'Notiz dazu (optional)'
-  caption.setAttribute('aria-label', 'Notiz an den Agenten')
-  const bSend = el('button', 'scr-send')
-  bSend.type = 'button'
-  const sendIcon = el('span', 'scr-send-icon')
-  const sendLabel = el('span', 'scr-send-label', 'Senden')
-  bSend.append(sendIcon, sendLabel)
-  // No note field here: after sending, the human writes in the chat composer.
-  form.append(bSend)
   const live = el('div', 'scr-sr')
   live.setAttribute('aria-live', 'polite')
-  dock.append(errorEl, form, live, file)
 
-  scr.append(stage, dock)
+  stage.append(canvas, hint, drop, top, confirmEl, ctxBar, toastEl, errorEl, bar)
+  scr.append(stage, dock, live, file)
   root.append(scr)
+
+  function placeSend() {
+    const w = W || root.clientWidth
+    const home = w && w < DOCK_BELOW ? dock : bar
+    if (bSend.parentNode !== home) home.append(bSend)
+  }
+  placeSend()
 
   // ── view ─────────────────────────────────────────────────────────────────
   const theme = () => (document.documentElement.dataset.theme === 'dark' ? 'dark' : 'light')
@@ -430,7 +452,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   function setView(x, y, z) {
     view.x = x; view.y = y; view.z = z
     bZoom.textContent = `${Math.round(z * 100)} %`
-    saveSoon()
+    saveDraftSoon()
     dirty()
   }
   function animateTo(x, y, z, animate = true) {
@@ -538,7 +560,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       view.z = done ? b.z : z
       bZoom.textContent = `${Math.round(view.z * 100)} %`
       staticDirty = true
-      if (done) { anim = null; saveSoon() } else raf = requestAnimationFrame(paint)
+      if (done) { anim = null; saveDraftSoon() } else raf = requestAnimationFrame(paint)
     }
     if (staticDirty) { paintLayer(); staticDirty = false }
     ctx.setTransform(1, 0, 0, 1, 0, 0)
@@ -601,11 +623,13 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     if (undo.length > UNDO_MAX) undo.shift()
     redo.length = 0
   }
-  function changed() {
+  /** The doc is different now. quiet: the host put it there itself, so it is not told. */
+  function changed(quiet = false) {
     gen++
     if (sel && !images.some(i => i.id === sel)) sel = null
     sync()
-    saveSoon()
+    saveDraftSoon()
+    if (!quiet) notifySoon()
     dirty()
   }
   function commit(next) {
@@ -648,7 +672,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       b.addEventListener('click', () => {
         style[drawTool].color = color
         if (tool !== drawTool) setTool(drawTool); else sync()
-        saveSoon()
+        saveDraftSoon()
       })
       return b
     }))
@@ -666,7 +690,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   function setWidth(i) {
     style[drawTool].w = i
     if (tool !== drawTool) setTool(drawTool); else sync()
-    saveSoon()
+    saveDraftSoon()
   }
   const closeStyle = () => { delete scr.dataset.style; bStyle.setAttribute('aria-expanded', 'false') }
   function toggleStyle() {
@@ -799,7 +823,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       if (strokes !== g.base.strokes) { const now = strokes; strokes = g.base.strokes; commit({ strokes: now }) }
     } else if (g.type === 'move' || g.type === 'resize') {
       images = g.base.images
-      changed()
+      changed(true)
     }
   }
   function startPinch() {
@@ -987,7 +1011,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     drop.hidden = true
     addImages(e.dataTransfer.files, local(e))
   })
-  const visible = () => root.offsetParent !== null
+  const visible = () => scr.getClientRects().length > 0
   const typing = t => !!t?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
   document.addEventListener('paste', e => {
     if (!visible()) return
@@ -1068,9 +1092,13 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     return cv.toDataURL('image/png')
   }
 
-  // Exactly what is on screen right now, at twice the resolution.
+  /** The section on screen right now, as the human sees it: same pan and zoom,
+   *  images under strokes, on white paper without the dot grid, the selection
+   *  frame or the toolbars. Twice the CSS size (whatever the screen's own pixel
+   *  ratio is), less on a pane so large that the picture would pass VIEW_MAX. */
   function renderView() {
-    const scale = Math.min(3, Math.max(1, 2400 / Math.max(W, H)), 2)
+    if (!W || !H) return renderPNG()
+    const scale = Math.min(2, VIEW_MAX / Math.max(W, H))
     const cv = document.createElement('canvas')
     cv.width = Math.max(1, Math.round(W * scale))
     cv.height = Math.max(1, Math.round(H * scale))
@@ -1078,8 +1106,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     c.fillStyle = PAPER.light
     c.fillRect(0, 0, cv.width, cv.height)
     c.setTransform(view.z * scale, 0, 0, view.z * scale, view.x * scale, view.y * scale)
-    paintContent(c, -Infinity, -Infinity, Infinity, Infinity, images, [])
-    for (const s of strokes) paintStroke(c, s, geom(s))
+    const [x0, y0] = toWorld(0, 0), [x1, y1] = toWorld(W, H)
+    paintContent(c, x0, y0, x1, y1, images, strokes)
     return cv.toDataURL('image/png')
   }
 
@@ -1088,9 +1116,9 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     sending = state === 'sending'
     bSend.dataset.state = state
     sendIcon.replaceChildren(state === 'sending' ? el('span', 'scr-spinner') : icon(state === 'sent' ? 'check' : 'send'))
-    sendLabel.textContent = state === 'sending' ? 'Sendet …' : state === 'sent' ? 'Gesendet' : 'Senden'
+    sendLabel.textContent = state === 'sending' ? 'Sendet …' : state === 'sent' ? 'Gesendet' : 'Ausschnitt senden'
+    bSend.setAttribute('aria-label', state === 'idle' ? `Ausschnitt senden. ${SEND_TIP}.` : sendLabel.textContent)
     bSend.setAttribute('aria-busy', String(sending))
-    caption.readOnly = sending
     sync()
   }
   function showError(msg) {
@@ -1108,11 +1136,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       // let the button repaint before the canvas is rendered
       await new Promise(r => setTimeout(r, 30))
       await Promise.all(images.map(i => picture(i.src).ready))
-      const payload = { doc: serialise(), png: renderPNG(), view: renderView(), text: caption.value.trim() }
+      const payload = { doc: serialise(), png: renderPNG(), view: renderView(), text: '' }
       await send(payload)
-      caption.value = ''
-      autosize()
-      saveSoon()
       setSendState('sent')
       live.textContent = 'Scribble gesendet.'
       sentTimer = setTimeout(() => { setSendState('idle'); live.textContent = '' }, 2400)
@@ -1123,42 +1148,51 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   }
   bSend.addEventListener('click', doSend)
   bErrClose.addEventListener('click', () => { errorEl.hidden = true })
-  function autosize() {
-    caption.style.height = 'auto'
-    caption.style.height = `${Math.min(caption.scrollHeight, 132)}px`
-  }
-  caption.addEventListener('input', () => { autosize(); saveSoon() })
-  caption.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' || e.isComposing || e.shiftKey) return
-    // Enter sends with a keyboard and mouse; on touch it is a line break, and Strg/⌘+Enter sends
-    if (desktop || e.ctrlKey || e.metaKey) { e.preventDefault(); doSend() }
-  })
 
   // ── draft ────────────────────────────────────────────────────────────────
+  // The local draft (IndexedDB, only with a draftKey) keeps doc, view and pen.
   let saveTimer = 0
   function saveNow() {
     clearTimeout(saveTimer)
     saveTimer = 0
     if (!draftKey) return
-    if (isEmpty() && !caption.value) return void draftOp('readwrite', s => s.delete(draftKey))
-    const rec = { doc: { v: 1, images, strokes }, view: { ...view }, text: caption.value, style: clone(style), tool: drawTool }
+    if (isEmpty()) return void draftOp('readwrite', s => s.delete(draftKey))
+    const rec = { doc: { v: 1, images, strokes }, view: { ...view }, style: clone(style), tool: drawTool }
     draftOp('readwrite', s => s.put(rec, draftKey))
   }
-  let changeTimer = 0
-  function saveSoon() {
-    // Tell the host about every change, a moment after the hand stops.
-    if (onChange) {
-      clearTimeout(changeTimer)
-      changeTimer = setTimeout(() => onChange(serialise()), 900)
-    }
+  function saveDraftSoon() {
     if (!draftKey || saveTimer) return
     saveTimer = setTimeout(saveNow, 700)
   }
-  const flush = () => { if (saveTimer) saveNow() }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flush() })
-  window.addEventListener('pagehide', flush)
+
+  // The host hears about every change to the doc (not the view), a moment
+  // after the hand stops. Never in the middle of erasing or dragging, when
+  // the doc is in a state the human has not let go of yet.
+  let changeTimer = 0
+  function notifySoon() {
+    if (!onChange) return
+    clearTimeout(changeTimer)
+    changeTimer = setTimeout(notify, CHANGE_MS)
+  }
+  function notify() {
+    clearTimeout(changeTimer)
+    changeTimer = 0
+    if (gesture && gesture.type !== 'pan' && gesture.type !== 'pinch') return notifySoon()
+    try { onChange(serialise()) } catch (err) { console.error(err) }
+  }
+  /** Report a change that is still waiting, now. */
+  function flush() {
+    if (!changeTimer) return
+    if (gesture) abortGesture()
+    notify()
+  }
+  const flushAll = () => { if (saveTimer) saveNow(); flush() }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushAll() })
+  window.addEventListener('pagehide', flushAll)
 
   function replace(doc) {
+    // what the human drew before belongs to the old canvas: report it before it goes
+    flush()
     images = doc.images
     strokes = doc.strokes
     undo.length = redo.length = 0
@@ -1168,7 +1202,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     pointers.clear()
     errorEl.hidden = true
     closePopovers()
-    changed()
+    changed(true)
   }
   function load(doc) {
     if (!doc || doc.v !== 1 || !Array.isArray(doc.images) || !Array.isArray(doc.strokes)) {
@@ -1190,6 +1224,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     if (W && H && w && h) { view.x += (w - W) / 2; view.y += (h - H) / 2 }
     W = w; H = h
     if (!W || !H) return
+    // moving the button changes the stage's height, so not inside this callback
+    requestAnimationFrame(placeSend)
     sizeCanvas()
     if (pendingFit) { pendingFit = false; fit(false) }
     cancelQueued()
@@ -1200,7 +1236,6 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   buildSwatches()
   setSendState('idle')
   bZoom.textContent = '100 %'
-  autosize()
 
   if (draftKey) {
     draftOp('readonly', s => s.get(draftKey)).then(rec => {
@@ -1210,13 +1245,11 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
         strokes = rec.doc.strokes ?? []
         if (rec.style?.pen && rec.style?.hl) Object.assign(style, rec.style)
         if (rec.tool === 'hl') { drawTool = tool = 'hl'; buildSwatches() }
-        caption.value = rec.text ?? ''
-        autosize()
         changed()
         if (rec.view && W) { pendingFit = false; setView(rec.view.x, rec.view.y, clamp(rec.view.z, MIN_Z, MAX_Z)) } else fit(false)
       } catch { images = []; strokes = []; changed() }
     })
   }
 
-  return { load, clear, isEmpty }
+  return { load, clear, isEmpty, flush }
 }

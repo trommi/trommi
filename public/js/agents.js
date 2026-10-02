@@ -62,8 +62,21 @@ function badge({ open, running, blocked }) {
   return node
 }
 
+// The mark of the overview: a few heads, drawn like the tray of the inbox.
+function people() {
+  const node = el('span', 'agent-avatar agent-all agent-people')
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+  svg.setAttribute('viewBox', '0 0 24 24')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('d', 'M9 11.200a3.100 3.100 0 1 0 0-6.200 3.100 3.100 0 0 0 0 6.200zM3.500 19c.3-3.200 2.500-5 5.500-5s5.200 1.800 5.500 5M15.500 5.300a3 3 0 0 1 0 5.700M17.300 14.300c1.900.7 3 2.300 3.200 4.700')
+  svg.append(path)
+  node.append(svg)
+  return node
+}
+
 /** The sidebar. onSelect(agentId | null) is called when the user picks an entry. */
-export function mountAgents(root, { onSelect }) {
+export function mountAgents(root, { onSelect, onPage }) {
   let signature = ''
 
   function entry({ id, label, sub, open, light, lead, active, page = null, mark = null }) {
@@ -74,11 +87,12 @@ export function mountAgents(root, { onSelect }) {
     text.append(el('strong', null, label))
     if (sub) text.append(el('small', null, sub))
     btn.append(lead, text)
+    if (page) btn.classList.add('agent-entry-page')
     if (mark) btn.append(mark)
     else if (open) btn.append(el('b', 'agent-count', String(open)))
     btn.addEventListener('click', () => {
       // The overview is a page of its own; everything else is the inbox or a session.
-      if (page) document.body.dataset.page = page
+      if (page) onPage?.(page)
       else { delete document.body.dataset.page; setScope(id); onSelect?.(id) }
       signature = ''
       render(lastState)
@@ -110,6 +124,8 @@ export function mountAgents(root, { onSelect }) {
         sub: r.agent.online ? r.agent.task || '' : 'getrennt',
         open: 0, light: null, lead: avatar(r.agent), active: scope === r.agent.id, mark: badge(r),
       })),
+      // Phones have no bottom bar; there the overview of all sessions closes the strip.
+      entry({ id: null, label: 'Agenten', lead: people(), active: false, page: 'roster' }),
     )
   }
 

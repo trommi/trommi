@@ -1,0 +1,97 @@
+# Builds the iOS app and runs its tests when the app changes, or when the
+# server does: the core tests run against a live server.mjs, so a change to its
+# interface must show up here. Everything else in the repository skips this,
+# because macOS minutes are the expensive ones.
+name: iOS
+
+on:
+  push:
+    paths: ['ios/**', 'server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs', '.github/workflows/ios.yml']
+  workflow_dispatch:
+
+concurrency:
+  group: ios-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: macos-latest
+    timeout-minutes: 40
+    defaults:
+      run:
+        working-directory: ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Demo data in the app and in the tests are the same file
+        run: cmp Trommi/Resources/demo-state.json TrommiTests/Fixtures/demo-state.json
+
+      # The part without UI, also against a real server.mjs with demo data:
+      # login, cookie, Origin, the event stream, decide, reopen, message, files.
+      - name: Core package tests, with a live server
+        run: |
+          (cd .. && npm ci && (dev/serve.sh 8801 600 > /tmp/trommi-server.log 2>&1 &))
+          for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8801/?t=demo" && break; sleep 1; done
+          TROMMI_TEST_LINK='http://127.0.0.1:8801/?t=demo' swift test
+
+      - name: Generate the Xcode project
+        run: |
+          brew install xcodegen
+          xcodegen generate
+
+      - name: Pick a simulator
+        run: |
+          UDID=$(xcrun simctl list devices available -j | python3 -c "
+          import json, sys
+          runtimes = json.load(sys.stdin)['devices']
+          ios = sorted((k for k in runtimes if 'iOS' in k), key=lambda k: [int(n) for n in k.split('iOS-')[1].split('-')], reverse=True)
+          print(next(d['udid'] for k in ios for d in runtimes[k] if d['name'].startswith('iPhone')))")
+          echo "SIMULATOR=$UDID" >> "$GITHUB_ENV"
+          xcrun simctl list devices available | grep "$UDID"
+
+      - name: Unit and UI tests on the simulator
+        run: |
+          mkdir -p build
+          status=0
+          xcodebuild test \
+            -project Trommi.xcodeproj -scheme Trommi \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" \
+            -derivedDataPath build/derived \
+            -resultBundlePath build/Trommi.xcresult \
+            CODE_SIGNING_ALLOWED=NO > build-log.txt 2>&1 || status=$?
+          grep -E "^Test (Suite|Case)|error:|\*\* " build-log.txt || true
+          exit $status
+
+      - name: Collect screenshots and the simulator build
+        if: always()
+        run: |
+          mkdir -p build/screenshots
+          xcrun xcresulttool export attachments --path build/Trommi.xcresult --output-path build/screenshots || true
+          APP=build/derived/Build/Products/Debug-iphonesimulator/Trommi.app
+          if [ -d "$APP" ]; then (cd "$(dirname "$APP")" && zip -qr "$OLDPWD/build/Trommi-simulator.zip" Trommi.app); fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-test-results
+          path: |
+            ios/build/Trommi.xcresult
+            ios/build-log.txt
+          if-no-files-found: warn
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-screenshots
+          path: ios/build/screenshots
+          if-no-files-found: warn
+
+      - name: Upload simulator build
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-simulator-app
+          path: ios/build/Trommi-simulator.zip
+          if-no-files-found: warn

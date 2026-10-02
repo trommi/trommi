@@ -1,6 +1,7 @@
 import SwiftUI
 
 @main
+@MainActor
 struct TrommiApp: App {
     @State private var model = AppModel.launch()
     @Environment(\.scenePhase) private var scenePhase

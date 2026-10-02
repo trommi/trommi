@@ -63,13 +63,14 @@
 //   dark            theme
 //   closed          do not open the overlay on load
 //   second          start on the second card of the queue
-//   card=<id>       start on that card: c-perm c-migrate c-phone c-video c-theme c-next
+//   card=<id>       start on that card: c-perm c-migrate c-phone c-video c-theme c-next c-yesno c-duo
 //   fail            decisions fail; the first option is tapped so the message shows
 //   undo            the first decision card is answered so "Rückgängig" shows
 //   hint            a more urgent card arrives while one is in front
 //   gone            the card in front is decided elsewhere
 //   zoom            the first image is enlarged
-//   many            fourteen cards, for the capped progress dots
+//   many            fourteen cards
+//   say             the server offers speech, so the read-aloud toggle shows (sayon: switched on)
 //   done            nothing is open
 //   solo            a single agent, so no card names who is asking
 // The same things are scriptable through window.pv (see the bottom of this file).
@@ -183,6 +184,20 @@ function freshCards() {
         { key: 'cancel', label: 'Nicht ausführen', detail: 'Ich nehme die Änderung zurück' },
       ],
     }),
+    card('c-yesno', {
+      title: 'Soll ich die alten Entwürfe löschen?', created: now - 12 * min, urgency: 'normal', agent: 'frontend',
+      body: 'Im Ordner `entwuerfe/` liegen 14 Dateien, die seit dem Umbau niemand mehr geöffnet hat.',
+      options: [{ key: 'ja', label: 'Ja', detail: '' }, { key: 'nein', label: 'Nein', detail: '' }],
+    }),
+    card('c-duo', {
+      title: 'Soll der Deploy heute noch raus?', created: now - 9 * min, urgency: 'high', agent: 'deploy',
+      urgency_reason: 'Das Wartungsfenster schließt um 18 Uhr',
+      body: 'Alle Tests sind grün. Der einzige offene Punkt ist die Übersetzung der neuen Einstellungsseite.',
+      options: [
+        { key: 'raus', label: 'Heute ausrollen', detail: 'Die Übersetzung folgt morgen als Nachtrag' },
+        { key: 'warten', label: 'Noch nicht', detail: 'Erst mit fertiger Übersetzung, frühestens Montag' },
+      ],
+    }),
     { id: 'c-perm', kind: 'permission', status: 'open', urgency: 'critical', urgency_reason: '', request_id: 'abcde', agent: 'deploy',
       title: 'Freigabe: Bash', body: 'Run the test suite\n\n{"command":"npm test -- --coverage","timeout":120000}',
       options: [{ key: 'allow', label: 'Erlauben', detail: '' }, { key: 'deny', label: 'Ablehnen', detail: '' }],
@@ -219,7 +234,7 @@ const queueOf = list => list.filter(c => c.status === 'open')
 const agents = has('solo')
   ? [{ id: 'frontend', name: 'Agent', online: true }]
   : [{ id: 'frontend', name: 'Frontend', online: true }, { id: 'deploy', name: 'Deploy', online: true }, { id: 'planung', name: 'Planung', online: false }]
-const push = () => setState({ agents, messages: [], cards: structuredClone(has('solo') ? cards.map(c => ({ ...c, agent: 'frontend' })) : cards), queue: queueOf(cards), tasks: [] })
+const push = () => setState({ agents, messages: [], cards: structuredClone(has('solo') ? cards.map(c => ({ ...c, agent: 'frontend' })) : cards), queue: queueOf(cards), tasks: [], speech: has('say') || has('sayon') })
 const find = id => cards.find(c => c.id === id)
 const reply = (status, body) => new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } })
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -246,6 +261,7 @@ window.fetch = async (url, init) => {
 }
 
 // ── overlay ─────────────────────────────────────────────────────────────────
+if (has('sayon')) { try { localStorage.setItem('trommi-focus-read', '1') } catch {} }
 const focus = mountFocus()
 const eventsNode = document.getElementById('pv-events')
 for (const name of ['focus:open', 'focus:close']) {

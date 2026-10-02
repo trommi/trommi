@@ -2,6 +2,8 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import assert from 'node:assert/strict'
+import { spawn } from 'node:child_process'
+import http from 'node:http'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -32,13 +34,18 @@ fs.writeFileSync(path.join(data, 'state.json'), JSON.stringify({
 process.env.BOARD_RETENTION_DAYS = '100000'
 
 const received = []
-async function start(name = 'main', sink = received) {
+// What the servers write to stderr, to check what they did and how often.
+const logs = []
+const serverEnv = (name, env) => ({ ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data, BOARD_TOKEN: 'secret', BOARD_AGENT: name, TINFOIL_API_KEY: '', ...env })
+async function start(name = 'main', sink = received, env = {}) {
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { sink.push(n) }
-  await client.connect(new StdioClientTransport({
-    command: 'node', args: ['./server.mjs'],
-    env: { ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data, BOARD_TOKEN: 'secret', BOARD_AGENT: name, TINFOIL_API_KEY: '' },
-  }))
+  const transport = new StdioClientTransport({ command: 'node', args: ['./server.mjs'], env: serverEnv(name, env), stderr: 'pipe' })
+  transport.stderr.on('data', chunk => {
+    logs.push(...String(chunk).split('\n').filter(Boolean))
+    process.stderr.write(chunk)
+  })
+  await client.connect(transport)
   return client
 }
 let client = await start()
@@ -75,6 +82,30 @@ const until = async test => {
   for (let i = 0; i < 50 && !test(); i++) await new Promise(r => setTimeout(r, 20))
   assert.ok(test(), 'timed out waiting for notification')
 }
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+// Like until, for things that take a moment longer and need a look at the server.
+const eventually = async (test, what) => {
+  for (let i = 0; i < 150; i++) {
+    try { if (await test()) return } catch {}
+    await sleep(40)
+  }
+  assert.fail(`timed out waiting for ${what}`)
+}
+// A tool call by any session that must be refused, whichever way the SDK reports it.
+const fails = async (who, name, args, pattern) => {
+  let message
+  try {
+    const res = await who.callTool({ name, arguments: args })
+    assert.ok(res.isError, `${name} should have been refused`)
+    message = res.content[0].text
+  } catch (err) {
+    message = err.message
+  }
+  assert.match(message, pattern)
+}
+const agentPost = (route, body, token = 'secret') => fetch(`http://127.0.0.1:${PORT}${route}`, {
+  method: 'POST', headers: { 'Content-Type': 'application/json', 'x-board-token': token }, body: JSON.stringify(body),
+})
 
 assert.deepEqual(
   (await client.listTools()).tools.map(t => t.name),
@@ -196,6 +227,7 @@ s = await state()
 assert.deepEqual(s.queue, [perm.id, low, high, normal2], 'an approval goes on top of everything')
 await refused('set_urgency', { card_id: perm.id, urgency: 'low' }, /always critical/)
 await refused('withdraw_card', { card_id: perm.id }, /cannot be withdrawn/)
+await refused('close_card', { card_id: perm.id }, /cannot be closed/)
 assert.equal((await post('/decide', { card_id: perm.id, key: 'allow' })).status, 200)
 await until(() => received.length === 1)
 assert.equal(received[0].method, 'notifications/claude/channel/permission')
@@ -213,6 +245,37 @@ assert.match(login.headers.get('set-cookie'), /^board_8791=secret; HttpOnly; Sam
 // a login from before the cookie was named after the port still works
 assert.equal((await fetch(`${base}/`, { headers: { Cookie: 'board=secret' } })).status, 200)
 assert.equal(fs.readFileSync(path.join(data, 'url.txt'), 'utf8').split('\n')[0], `${base}/?t=secret`)
+
+// malformed input is refused and never takes the server down
+const rawGet = reqPath => new Promise((resolve, reject) => {
+  http.get({ host: '127.0.0.1', port: PORT, path: reqPath }, res => { res.resume(); resolve(res.statusCode) }).on('error', reject)
+})
+assert.equal(await rawGet('//'), 400, 'a request line that is no URL is answered, not thrown')
+const rawPost = (url, text) => fetch(base + url, { method: 'POST', headers: { Origin: base, Cookie: cookie }, body: text })
+assert.equal((await rawPost('/message', 'null')).status, 400)
+assert.equal((await rawPost('/message', '{"text":')).status, 400)
+assert.equal((await rawPost('/decide', '[]')).status, 400)
+assert.equal((await rawPost('/message', JSON.stringify({ text: 'x'.repeat(2e6) }))).status, 400)
+await refused('reply', { text: 'x', attachments: 'kein Feld' }, /attachments must be a list/)
+await refused('reply', { text: 'x', attachments: [7] }, /path of a file/)
+await refused('create_decision', { title: 'x', options: [null, null] }, /unique keys/)
+await refused('create_decision', { title: 'x', options: 'a,b' }, /options must be a list/)
+// a refused status line leaves nothing behind
+await refused('set_status', { id: 'halb', label: 'Halb', state: 'decision', card_id: 'nope' }, /no card nope/)
+await call('set_status', { id: 'ganz', label: 'Ganz', state: 'working' })
+assert.deepEqual((await state()).tasks.map(t => t.id), ['ganz'])
+await call('clear_status', {})
+// the routes for spokes need the token, and an agent that is linked
+assert.equal((await fetch(`http://127.0.0.1:${PORT}/agent/link?name=x`)).status, 403)
+assert.equal((await agentPost('/agent/tool', { id: 'main', name: 'reply', args: { text: 'x' } }, 'wrong')).status, 403)
+assert.equal((await agentPost('/agent/tool', { id: 'nobody', name: 'reply', args: { text: 'x' } })).status, 409)
+assert.equal((await agentPost('/agent/tool', null)).status, 409)
+// the hub's own agent cannot be spoken for by someone who merely knows its id
+assert.equal((await agentPost('/agent/tool', { id: 'main', name: 'reply', args: { text: 'x' } })).status, 409)
+assert.equal((await state()).messages.some(m => m.text === 'x'), false)
+// the state file is replaced whole, and only its owner may read it
+assert.equal(fs.statSync(path.join(data, 'state.json')).mode & 0o077, 0)
+assert.deepEqual(fs.readdirSync(data).filter(f => f.includes('.tmp')), [])
 
 // taking an answer back: the card returns to the stack and the agent hears about it
 const redo = await ask('zum Zurücknehmen', {})
@@ -351,7 +414,12 @@ assert.equal((await post('/decide', { card_id: spokePerm.id, key: 'deny' })).sta
 for (let i = 0; i < 50 && gotApi.length < 2; i++) await new Promise(r => setTimeout(r, 20))
 assert.deepEqual(gotApi[1].params, { request_id: 'spoke', behavior: 'deny' })
 
+// a spoke is known by more than its id: another process cannot act under it
+assert.equal((await agentPost('/agent/tool', { id: 'api', instance: 'falsch', name: 'reply', args: { text: 'untergeschoben' } })).status, 409)
+assert.equal((await state()).messages.some(m => m.text === 'untergeschoben'), false)
+
 // the hub's session ends: a spoke takes the port over and nothing is lost
+let mark = logs.length
 await client.close()
 let after
 for (let i = 0; i < 100; i++) {
@@ -362,6 +430,7 @@ for (let i = 0; i < 100; i++) {
   } catch {}
 }
 assert.deepEqual(after.agents.map(a => [a.id, a.online]), [['main', false], ['api', true], ['infra', true]])
+assert.equal(logs.slice(mark).filter(l => l.includes('] hub on ')).length, 1, 'exactly one spoke became the hub, once')
 assert.equal(after.cards.length, s.cards.length + 1)
 gotApi.length = gotInfra.length = 0
 assert.equal((await post('/message', { text: 'noch da?', agent: 'api' })).status, 200)
@@ -397,6 +466,146 @@ assert.deepEqual(s.messages.map(m => m.id), ['e2'])
 assert.equal(fs.existsSync(path.join(data, 'files', 'old.png')), false)
 assert.equal(fs.existsSync(path.join(data, 'files', 'young.png')), true)
 await client.close()
-fs.rmSync(data, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check')
+
+// ---- a second board, to look at who is who and at what waits for whom ----
+const portFree = () => eventually(() => fetch(base).then(() => false, () => true), 'the port to be free')
+await portFree()
+const data2 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+const on2 = { BOARD_DATA: data2 }
+const file2 = () => JSON.parse(fs.readFileSync(path.join(data2, 'state.json'), 'utf8'))
+const say = (who, name, args) => who.callTool({ name, arguments: args })
+const got1 = [], got2 = [], gotAway = []
+const hub = await start('Hub', [], on2)
+await say(hub, 'introduce', { model: 'm', task: 'hub' })
+// two sessions in the same folder: the first is "twin", the second "twin-2"
+const twin1 = await start('Twin', got1, on2)
+await say(twin1, 'introduce', { model: 'm', task: 'eins' })
+const twin2 = await start('Twin', got2, on2)
+await say(twin2, 'introduce', { model: 'm', task: 'zwei' })
+let away = await start('Away', gotAway, on2)
+await say(away, 'introduce', { model: 'm', task: 'weg' })
+s = await state()
+assert.deepEqual(s.agents.map(a => [a.id, a.task]), [['hub', 'hub'], ['twin', 'eins'], ['twin-2', 'zwei'], ['away', 'weg']])
+assert.equal(s.hub, 'hub')
+
+// what an away agent missed is kept in the state file, the newest hundred of it, and is not sent to the page
+await away.close()
+await eventually(async () => !(await state()).agents[3].online, 'the away agent to be seen as gone')
+for (let i = 1; i <= 105; i++) assert.equal((await post('/message', { text: `m${i}`, agent: 'away' })).status, 200)
+assert.deepEqual([file2().pending.away.length, file2().pending.away[0].params.content, file2().pending.away.at(-1).params.content], [100, 'm6', 'm105'])
+assert.equal('pending' in (await state()), false)
+
+// the hub dies: calls made in the gap fail fast with a message that says to retry, or succeed; none hangs
+mark = logs.length
+await hub.close()
+for (let done = false, tries = 0; !done; tries++) {
+  assert.ok(tries < 40, 'the spoke never got its link back')
+  const began = Date.now()
+  try {
+    const res = await say(twin1, 'list_cards', {})
+    assert.ok(!res.isError)
+    done = true
+  } catch (err) {
+    assert.match(err.message, /try again in a moment/)
+    await sleep(50)
+  }
+  assert.ok(Date.now() - began < 7000, 'a call during the takeover was answered in time')
+}
+// whoever won the port, both twins are who they were
+await say(twin1, 'reply', { text: 'ich bin eins' })
+await say(twin2, 'reply', { text: 'ich bin zwei' })
+s = await state()
+assert.deepEqual(s.messages.filter(m => m.from === 'agent').map(m => [m.agent, m.text]), [['twin', 'ich bin eins'], ['twin-2', 'ich bin zwei']])
+assert.deepEqual(s.agents.map(a => [a.id, a.task, a.online]), [['hub', 'hub', false], ['twin', 'eins', true], ['twin-2', 'zwei', true], ['away', 'weg', false]])
+assert.ok(['twin', 'twin-2'].includes(s.hub))
+assert.equal(logs.slice(mark).filter(l => l.includes('] hub on ')).length, 1)
+got1.length = got2.length = 0
+assert.equal((await post('/message', { text: 'an zwei', agent: 'twin-2' })).status, 200)
+await until(() => got2.length === 1)
+assert.equal(got1.length, 0)
+
+// the queue outlived the old hub; the agent gets all of it, in order, when it returns
+assert.equal(file2().pending.away.length, 100)
+away = await start('Away', gotAway, on2)
+await eventually(() => gotAway.length === 100, 'the queued messages')
+assert.deepEqual([gotAway[0].params.content, gotAway[99].params.content], ['m6', 'm105'])
+assert.equal(file2().pending.away, undefined)
+assert.equal((await state()).agents.find(a => a.id === 'away').online, true, 'a new process in the folder takes the folder\'s id when nobody holds it')
+
+// it also outlives the end of every session, and nothing is sent before the MCP handshake is done
+assert.equal((await post('/message', { text: 'für den Hub', agent: 'hub' })).status, 200)
+await Promise.all([twin1.close(), twin2.close(), away.close()])
+await portFree()
+assert.equal(file2().pending.hub[0].params.content, 'für den Hub')
+const raw = spawn('node', ['./server.mjs'], { env: serverEnv('Hub', on2), stdio: ['pipe', 'pipe', 'inherit'] })
+const lines = []
+let partial = ''
+raw.stdout.on('data', chunk => {
+  partial += chunk
+  const parts = partial.split('\n')
+  partial = parts.pop()
+  lines.push(...parts.filter(Boolean).map(l => JSON.parse(l)))
+})
+await eventually(async () => (await state()).agents[0].online, 'the raw session to be the hub')
+await sleep(200)
+assert.deepEqual(lines, [], 'nothing reaches Claude Code before it has initialised')
+raw.stdin.write(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'initialize', params: { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 'raw', version: '0' } } }) + '\n')
+await eventually(() => lines.length === 1, 'the answer to initialize')
+raw.stdin.write(JSON.stringify({ jsonrpc: '2.0', method: 'notifications/initialized' }) + '\n')
+await eventually(() => lines.length === 2, 'the message that waited')
+assert.deepEqual(lines[1].params, { content: 'für den Hub', meta: { kind: 'chat' } })
+assert.equal(file2().pending.hub, undefined)
+raw.stdin.end()
+await portFree()
+
+// ---- a hub that accepts the link but never answers: the spoke gives up, says so, and tries again ----
+let linkTries = 0, greet = false
+const stuck = http.createServer((req, res) => {
+  if (req.url.startsWith('/agent/link')) {
+    linkTries++
+    res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+    res.write(greet ? `data: ${JSON.stringify({ hello: 'ghost', ping: 100 })}\n\n` : ': nichts\n\n')
+  }
+})
+await new Promise(resolve => stuck.listen(PORT, '127.0.0.1', resolve))
+const ghost = await start('Ghost', [], { ...on2, BOARD_HUB_TIMEOUT_MS: '400' })
+let began = Date.now()
+await fails(ghost, 'list_cards', {}, /try again in a moment/)
+assert.ok(Date.now() - began < 3000, 'a call without a link fails instead of waiting for ever')
+await eventually(() => linkTries >= 2, 'a second attempt after a link that never said hello')
+greet = true
+const seen = linkTries
+began = Date.now()
+await eventually(async () => {
+  try { await say(ghost, 'list_cards', {}) } catch (err) { return /did not answer within/.test(err.message) }
+}, 'a call to a silent hub to time out')
+assert.ok(Date.now() - began < 5000)
+await eventually(() => linkTries >= seen + 2, 'the spoke to drop a link that went silent')
+await ghost.close()
+stuck.closeAllConnections()
+await new Promise(resolve => stuck.close(resolve))
+await portFree()
+
+// ---- two sessions start at the same moment on an empty data directory whose state file is damaged ----
+const data3 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+fs.writeFileSync(path.join(data3, 'state.json'), '{"cards": [{"id": "halb')
+const on3 = { BOARD_DATA: data3, BOARD_TOKEN: '' }
+const pair = await Promise.all([start('Eins', [], on3), start('Zwei', [], on3)])
+await Promise.all(pair.map(c => say(c, 'introduce', { model: 'm' })))
+// both agree on one token, so the one that lost the port could link
+const token3 = fs.readFileSync(path.join(data3, 'token'), 'utf8')
+const res3 = await fetch(`${base}/events`, { headers: { Cookie: `board_8791=${token3}` } })
+const reader3 = res3.body.getReader()
+const state3 = JSON.parse(new TextDecoder().decode((await reader3.read()).value).replace(/^data: /, ''))
+await reader3.cancel()
+assert.deepEqual(state3.agents.map(a => [a.model, a.online]), [['m', true], ['m', true]])
+assert.deepEqual(fs.readdirSync(data3).filter(f => f.startsWith('token')), ['token'])
+// the damaged file was put aside, not overwritten
+const aside = fs.readdirSync(data3).filter(f => f.startsWith('state.broken-'))
+assert.equal(aside.length, 1)
+assert.equal(fs.readFileSync(path.join(data3, aside[0]), 'utf8'), '{"cards": [{"id": "halb')
+await Promise.all(pair.map(c => c.close()))
+
+for (const dir of [data, data2, data3]) fs.rmSync(dir, { recursive: true })
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file')
 process.exit(0)
