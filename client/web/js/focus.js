@@ -280,11 +280,11 @@ export function mountFocus({ onDecided } = {}) {
 
   const done = el('div', 'focus-done')
   const doneArt = el('div', 'focus-done-art')
-  doneArt.append(el('i'), el('i'), icon('check'))
+  doneArt.append(sketch('tick'))
   const doneText = el('p', 'focus-done-text')
   const doneBtn = button('focus-done-btn')
   doneBtn.textContent = 'Close'
-  done.append(doneArt, el('h2', 'focus-done-title', 'All answered'), doneText, doneBtn)
+  done.append(doneArt, doneText, doneBtn)
 
   const loading = el('div', 'focus-loading')
   loading.append(el('span', 'focus-spinner'), el('span', null, 'Loading questions'))
@@ -636,7 +636,6 @@ export function mountFocus({ onDecided } = {}) {
       // No Send: what is written is kept as it is written (the card's draft on the hub, the same on every device),
       // and the next thing the human does takes it along: an answer as its note, Back to agent and What?? as the
       // message, Trust as the note; Snooze leaves it on the card. The end of the field says where the words are.
-      send.hidden = true
       rec.saveNode = el('span', 'focus-saved')
       rec.saveNode.setAttribute('role', 'status')
       ask.append(rec.chipsNode, askOpen, clip, pen, picker, field, send, rec.saveNode)
@@ -666,31 +665,46 @@ export function mountFocus({ onDecided } = {}) {
         if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return
         // Enter: back to the agent, with these words (nothing happens on an empty field: no card leaves by a slip).
         // Ctrl/Cmd+Enter: say it and stay on the card. On a touch screen Enter is a line break; the buttons act.
-        if (e.ctrlKey || e.metaKey) { e.preventDefault(); return void askBack(rec) }
-        if (touchOnly.matches) return
+        if (touchOnly.matches && !e.ctrlKey && !e.metaKey) return
         e.preventDefault()
-        if (field.value.trim() || rec.files.length) { claim(rec); handBack() }
+        if (!field.value.trim() && !rec.files.length) return
+        claim(rec)
+        if (rec.asking) { rec.asking = false; field.placeholder = 'Write to the agent'; explain() }
+        else askBack(rec)
       })
       send.addEventListener('mousedown', e => e.preventDefault())   // the caret stays in the field
       ask.addEventListener('submit', e => { e.preventDefault(); askBack(rec) })
       rec.askNode = ask
       rec.askField = field
       rec.askSend = send
-      // The field is as wide as the conversation above it. At its right, on the same line: the ways to leave the
-      // card without answering (What??, Back to agent, Later: one set of buttons that moves along with the card
-      // in front, see paintChrome).
+      // Under the answers: Revise (hand the card back to its session) and, apart and quiet, the wastebasket.
+      // Snooze is no button here: it is the label that slides out at the card's edge, as on a row of the inbox.
       rec.actionsNode = el('div', 'focus-actions')
-      // Each card has its own three; a tap makes the card the one in front first, then does what the button says.
-      rec.actionsNode.append(
-        ...(info ? [] : [wayButton('what', () => { claim(rec); explain() })]),
-        wayButton('hand', () => { claim(rec); handBack() }),
-        wayButton('snooze', () => { claim(rec); later() }),
-        // apart from the three: throw the question away, unanswered
-        wayButton('shred', () => shredIt(rec)),
-      )
-      rec.composer = el('div', 'focus-composer')
-      rec.composer.append(ask, rec.actionsNode)
-      scroll.append(rec.threadNode)
+      rec.actionsNode.append(wayButton('hand', () => { claim(rec); handBack() }), wayButton('shred', () => shredIt(rec)))
+      // Discuss: the small chat about this card at its right. What was said, a field to write in (paste and drop
+      // files and pictures, the microphone), always there: nothing to switch to.
+      rec.composer = el('aside', 'focus-discuss')
+      rec.composer.setAttribute('aria-label', 'Discuss: the conversation with the agent about this question')
+      const talkBox = el('div', 'focus-discuss-talk')
+      talkBox.append(rec.threadNode)
+      rec.discussScroll = talkBox
+      rec.composer.append(el('h3', 'focus-discuss-head', 'Discuss'), talkBox, ask)
+      const snooze = el('button', 'inbox-later focus-snooze')
+      snooze.type = 'button'
+      snooze.setAttribute('aria-label', `${LATER_WORD}: put this question off; it waits for you`)
+      const ear = el('i', 'inbox-later-ear'), flap = el('i', 'inbox-later-flap')
+      flap.append(sketch(LATER_SKETCH), el('b', null, LATER_WORD))
+      ear.append(flap)
+      snooze.append(ear)
+      // a finger has no hover: its first tap slides the label out, the second snoozes (as in the inbox)
+      let byTouch = false
+      snooze.addEventListener('pointerdown', e => { byTouch = e.pointerType === 'touch' })
+      snooze.addEventListener('click', () => {
+        if (byTouch && !snooze.classList.contains('is-unfolded')) { snooze.classList.add('is-unfolded'); return void setTimeout(() => snooze.classList.remove('is-unfolded'), 2600) }
+        claim(rec)
+        later()
+      })
+      rec.snoozeNode = snooze
     }
 
     // The answers: one tap answers. The tiles are the row's tiles grown large: exactly
@@ -806,6 +820,7 @@ export function mountFocus({ onDecided } = {}) {
       rec.trustBtn = trustBtn
       answer.append(trustBtn)
     }
+    if (rec.actionsNode && !earlier) answer.append(rec.actionsNode)
     rec.noteTag = null
     if (tags) {
       const line = el('p', 'focus-tag-line')
@@ -897,7 +912,7 @@ export function mountFocus({ onDecided } = {}) {
     // Or (besideTitle) the answers are the first thing in what scrolls and float at its top right.
     node.toggleAttribute('data-head', besideTitle)
     if (besideTitle) scroll.prepend(answer)
-    node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends].filter(Boolean))
+    node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends, earlier ? null : rec.snoozeNode].filter(Boolean))
     answer.inert = Boolean(earlier)   // an earlier version cannot be answered
     if (multi) paintPicked(rec)
     rec.toEnd = false
@@ -1498,7 +1513,8 @@ export function mountFocus({ onDecided } = {}) {
     // the newest is in view, as in any chat
     if (grew) {
       rec.toEnd = true
-      if (rec.scroll?.isConnected) rec.scroll.scrollTop = rec.scroll.scrollHeight
+      const box = rec.discussScroll ?? rec.scroll
+      if (box?.isConnected) box.scrollTop = box.scrollHeight
     }
   }
 
@@ -1553,6 +1569,12 @@ export function mountFocus({ onDecided } = {}) {
   async function explain() {
     const rec = shown
     if (!isOpen || !rec || rec.busy || !rec.askNode || explaining) return false
+    // What?? is writing in Discuss: with nothing written yet, the key puts the caret there, and Enter then asks.
+    if (rec.card.kind !== 'info' && !rec.askText.trim() && rec.askField && document.activeElement !== rec.askField) {
+      rec.asking = true
+      rec.askField.placeholder = 'What is unclear? Enter asks'
+      return void rec.askField.focus({ preventScroll: true })
+    }
     explaining = true
     explainBtn.disabled = true
     const walking = !single
@@ -1953,7 +1975,12 @@ export function mountFocus({ onDecided } = {}) {
   let quietUntil = 0       // while the list scrolls by itself, the reading line does not pick another card
   const listEnd = el('div', 'focus-list-end')
   const endPiles = button('focus-list-piles')
-  listEnd.append(sketch('choose'), el('p', null, 'That is all for now. The next question shows up here.'), endPiles)
+  const endClose = button('focus-list-close')
+  endClose.textContent = 'Close'
+  endClose.addEventListener('click', () => close())
+  const endRow = el('div', 'focus-list-row')
+  endRow.append(endPiles, endClose)
+  listEnd.append(sketch('tick'), el('p', null, 'All answered. The next question shows up here.'), endRow)
 
   // ── one pass through the stack ──────────────────────────────────────────
   // The order of a pass is fixed when it starts: every open question once. What arrives later is appended at the
@@ -2076,6 +2103,8 @@ export function mountFocus({ onDecided } = {}) {
       want.push(recs.get(id).node)
     }
     for (const x of strips) if (!placed.has(x)) want.push(x.node)
+    // the one sentence at the end: all answered, or simply the end of the stack
+    listEnd.querySelector('p').textContent = order.length ? 'That was the last one.' : 'All answered. The next question shows up here.'
     want.push(listEnd)
     const mine = n => n.classList.contains('focus-card') || n.classList.contains('focus-strip') || n === listEnd
     const have = [...stage.children].filter(mine)
@@ -2309,7 +2338,7 @@ export function mountFocus({ onDecided } = {}) {
     const locked = !!busyRec()
     prevBtn.disabled = single || idx <= 0 || locked
     nextBtn.disabled = single || idx < 0 || idx >= n - 1 || locked
-    doneText.textContent = `${decidedCount ? `${decidedCount === 1 ? 'One question' : `${decidedCount} questions`} answered in this round.` : 'No open questions.'} The next question shows up here by itself: you can leave this window open.`
+    doneText.textContent = 'All answered. The next question shows up here.'
 
     // the head of the card and the sheet's colour follow the card in front
     const card = shown?.card
@@ -2437,7 +2466,6 @@ export function mountFocus({ onDecided } = {}) {
   }
   /** Open the line to ask back on the card that is up. */
   function ask() {
-    if (shown?.marksUi) return void shown.marksUi.note()   // a general note on the card
     const open = shown?.askNode?.querySelector('.focus-ask-open')
     if (!open) return false
     open.click()
@@ -2460,7 +2488,7 @@ export function mountFocus({ onDecided } = {}) {
       'focus.handback': key(() => handBack()),
       'focus.shred': key(() => { if (!shown?.askNode) return false; shredIt(shown) }),
       'focus.draw': key(() => { if (!shown?.marksUi) return false; shown.marksUi.setPen(!shown.marksUi.penOn()) }),
-      'focus.note': key(() => { if (!shown?.marksUi) return ask(); shown.marksUi.note() }),
+      'focus.note': key(ask),   // a general note is written in Discuss
       'focus.trust': key(() => { if (!shown?.trustBtn) return false; trustIt(shown) }),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
       'focus.pick': key(n => {

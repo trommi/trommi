@@ -1,8 +1,8 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText } from './ui.js'
-import { setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText, INBOX_WORD, INBOX_SKETCH } from './ui.js'
+import { getState, setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
 
@@ -83,15 +83,18 @@ export function pairAvatar(members, working = []) {
 const pairName = members => members.map(a => a.name).join(' + ')
 
 // What a session, or several together, need from the human right now.
-export function summary(all, members) {
+// Only what waits on the human counts: an open question that is neither snoozed nor handed back to its
+// session (with the agent). later: the ids put off in this browser; left out, the store's own list.
+export function summary(all, members, later = null) {
   const ids = new Set(members.map(a => a.id))
-  const mine = all.cards.filter(c => ids.has(c.agent) && c.status === 'open' && all.queue.includes(c.id))
+  const off = new Set(later ?? getState().later ?? [])
+  const mine = all.cards.filter(c => ids.has(c.agent) && c.status === 'open' && all.queue.includes(c.id) && !off.has(c.id) && !c.with_agent)
   const open = mine.length
   const tasks = all.tasks.filter(t => ids.has(t.agent))
   const online = members.some(a => a.online)
-  // Running: it has work in progress. Stuck: something of it cannot go on without the human.
+  // Running: it has work in progress. Stuck: one of its open questions knocks (urgent, blocking, a permission).
   const running = members.some(a => a.online && tasks.some(t => t.agent === a.id && t.state === 'working'))
-  const stuck = mine.some(c => c.urgency === 'critical' || c.kind === 'permission')
+  const stuck = mine.some(isKnock)
   return { open, tasks, online, running, stuck }
 }
 
@@ -111,7 +114,8 @@ export function badge({ open, online, running, stuck }, who = '', walk = null) {
     node.addEventListener('click', e => { e.stopPropagation(); walk() })
   }
   const questions = open === 1 ? '1 question' : `${open} questions`
-  const hand = online ? stuck || !running : stuck
+  // The hand only when a question of it knocks; else the stack of cards.
+  const hand = stuck
   node.dataset.state = hand ? 'waiting' : online ? 'running' : 'open'
   // How many is beside the point here: a hand when the session waits for you, else a small stack of
   // cards, the same for one question or twelve. (The number is in the tooltip and in the inbox.)
@@ -198,7 +202,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
       if (!group) units.push({ id: a.id, members: [a] })
       else if (!units.some(u => u.id === group.id)) units.push({ id: group.id, members: group.members })
     }
-    for (const u of units) Object.assign(u, summary(all, u.members))
+    for (const u of units) Object.assign(u, summary(all, u.members, state.later))
     const fresh = all.queue.filter(id => !state.later.includes(id)).length
     // Of those, the knocks (urgent and blocking): they are what the inbox's badge shows first.
     const knocking = all.cards.filter(c => c.status === 'open' && isKnock(c) && all.queue.includes(c.id) && !state.later.includes(c.id)).length
@@ -252,11 +256,10 @@ export function mountAgents(root, { onSelect, onWalk }) {
     }
 
     const tray = el('span', 'agent-avatar agent-all')
-    tray.append(el('i'), el('i'), el('i'))
+    tray.append(sketch(INBOX_SKETCH))
     const here = units.filter(u => u.online), away = units.filter(u => !u.online)
     root.replaceChildren(
-      entry({ id: null, label: 'Inbox', lead: tray, active: scope == null, mark: inboxCount(fresh, knocking) }),
-      el('h2', 'caps agent-heading', 'Sessions'),
+      entry({ id: null, label: INBOX_WORD, lead: tray, active: scope == null, mark: inboxCount(fresh, knocking) }),
       ...here.map(unitRow),
       ...(away.length ? [el('h2', 'caps agent-heading agent-heading-away', 'Disconnected'), ...away.map(unitRow)] : []),
     )

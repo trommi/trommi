@@ -5,7 +5,7 @@
 // state of the connection. A click on the logo (or Enter) opens that small menu; the arrows walk it, Escape or a click beside it closes it.
 // House rule: the controls are plain and quiet, the drawing inside each is what is done by hand.
 
-import { sketch, KNOCK_SKETCH } from './ui.js'
+import { sketch, KNOCK_SKETCH, INBOX_WORD, INBOX_SKETCH } from './ui.js'
 import { knockSound, setKnockSound } from './knock.js'
 
 const $ = id => document.getElementById(id)
@@ -102,7 +102,7 @@ function places(query) {
   // The page follows its address (app.js listens to popstate; "?q=<number>" is one of the forms it reads): no reload.
   if (nr) add(`Question Nr. ${nr[1]}`, 'stack', () => { history.pushState({ q: nr[1] }, '', `${location.pathname}?q=${nr[1]}`); window.dispatchEvent(new PopStateEvent('popstate', { state: history.state })) })
   const match = text => !q || text.toLowerCase().includes(q)
-  if (match('inbox')) add('Inbox', 'tray', () => $('nav-inbox')?.click())
+  if (match(`${INBOX_WORD} inbox`)) add(INBOX_WORD, INBOX_SKETCH, () => $('nav-inbox')?.click())   // "inbox" still finds it
   if (match('agents')) add('Agents', 'heads', () => $('nav-roster')?.click())
   if (match('scratchpad pad')) add('Scratchpad', 'pen', () => $('pad-open')?.click())
   for (const row of document.querySelectorAll('#agents .agent-row[data-unit]')) {

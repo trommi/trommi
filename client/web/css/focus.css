@@ -946,10 +946,6 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 
 /* ── writing and scribbling anywhere on the card (WRITE_ANYWHERE in focus.js; js/focus-marks.js) ── */
 .focus-card[data-marks] .focus-scroll { position: relative; cursor: text; }
-/* no field: only what is attached shows at the foot, beside the ways out */
-.focus-card[data-marks] .focus-composer .focus-ask { flex: 1 1 0; padding: 0; background: none; box-shadow: none; cursor: default; }
-.focus-card[data-marks] .focus-composer .focus-ask > :not(.focus-chips) { display: none; }
-.focus-card[data-marks] .focus-composer { justify-content: flex-end; }
 .focus-ink { position: absolute; left: 0; top: 0; width: 100%; z-index: 3; overflow: visible; pointer-events: none; fill: none; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
 .focus-ink[data-pen] { pointer-events: auto; cursor: crosshair; touch-action: none; }
 .focus-ink[data-rub] { cursor: cell; }
@@ -968,3 +964,64 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 /* (the window of one card shows its corner too when notes are written on the card) */
 .focus[data-single] .focus-card[data-marks] .focus-card-ends { position: absolute; z-index: 3; right: 10px; top: 6px; display: flex; }
 .focus[data-single] .focus-card[data-marks] .focus-card-ends > button { display: none; }
+
+/* ══ The opened question in two parts: the decision (about three quarters) and, at its right, Discuss ══ */
+/* Discuss: the small chat about this card. What was said scrolls; the field stands at its foot. */
+.focus-discuss { order: 4; min-width: 0; min-height: 0; display: flex; flex-direction: column; gap: var(--s-2); padding: var(--s-3) var(--pad) var(--s-3); border-top: 1px solid var(--line); }
+.focus-discuss-head { margin: 0; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.focus-discuss-talk { flex: 1 1 auto; min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.focus-discuss .focus-thread { max-width: none; margin: 0; padding: 0; border: 0; clear: none; }
+.focus-discuss .focus-thread .msg:first-child { margin-top: 0; }
+.focus .focus-discuss .focus-thread .rich { font-size: .95rem; }
+.focus-discuss .bubble { font-size: .95rem; padding: 8px 12px; }
+.focus-discuss .focus-ask { position: relative; flex: none; display: flex; flex-wrap: wrap; align-items: flex-end; gap: 2px; margin: 0; max-width: none; padding: 4px; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); cursor: text; }
+.focus-discuss .focus-ask:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
+.focus-discuss .focus-ask-open, .focus-discuss .focus-pen { display: none; }
+.focus-discuss .focus-ask-send { flex: none; width: 34px; height: 36px; display: grid; place-items: center; border-radius: var(--r-sm); background: var(--u); color: var(--surface); }
+.focus-discuss .focus-ask-send .sketch { width: 20px; height: 20px; stroke-width: 2.1; }
+.focus-discuss .focus-ask-send:disabled { background: none; color: var(--faint); }
+.focus-discuss .focus-saved span, .focus-discuss .focus-saved kbd { display: none; }
+.focus-discuss .focus-ask-field { flex: 1 1 4rem; min-width: 0; height: 36px; min-height: 36px; padding: 6px 4px; border-radius: 0; background: none; box-shadow: none; resize: none; line-height: 24px; font-size: .95rem; color: var(--fg); }
+.focus-discuss .focus-ask-field:hover, .focus-discuss .focus-ask-field:focus { background: none; box-shadow: none; }
+.focus-discuss .focus-ask-field::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.focus-discuss .focus-clip, .focus-discuss .focus-ask > .dictate-mic { width: 34px; height: 36px; }
+.focus-discuss .focus-saved { height: 36px; padding: 0 6px 0 2px; }
+.focus-discuss .focus-saved kbd, .focus-discuss .focus-saved-hint { display: none; }
+/* Under the answers: Revise, and apart from it the wastebasket. */
+.focus-answer > .focus-actions { min-height: 0; margin-top: var(--s-2); gap: 8px; }
+.focus-answer > .focus-actions .focus-way { width: auto; height: 44px; min-height: 44px; padding: 0 14px 0 10px; gap: 6px; }
+.focus-answer > .focus-actions .focus-way .focus-way-art .sketch { width: 24px; height: 24px; }
+.focus-answer > .focus-actions .focus-way .focus-way-word { position: static; translate: none; padding: 0; background: none; color: inherit; font: 700 var(--t-sm)/1 var(--display); opacity: 1; }
+.focus-answer > .focus-actions .focus-way.focus-shred { margin-left: auto; width: 44px; padding: 0; box-shadow: none; }
+.focus-answer > .focus-actions .focus-way.focus-shred .focus-way-word { display: none; }
+/* Snooze: the label that slides out at the card's right edge, the same one as on a row of the inbox (app.css, .inbox-later) */
+.focus-card { --card-color: var(--u); --card-ink: color-mix(in srgb, var(--u) 70%, var(--fg)); --card-line: color-mix(in srgb, var(--u) 22%, transparent); }
+.focus-card > .focus-snooze { top: 46px; right: 0; border-radius: 8px 0 0 8px; }
+@container focus (min-width: 900px) {
+  .focus-card { grid-template: minmax(0, 1fr) / minmax(0, 1fr) auto minmax(230px, 24%); }
+  .focus-card > .focus-talk { grid-area: 1 / 1; }
+  .focus-card > .focus-answer { grid-area: 1 / 2; }
+  .focus-card > .focus-discuss { grid-area: 1 / 3; border-top: 0; border-left: 1px solid var(--line); padding: 44px var(--s-4) var(--s-4); }
+  .focus-card > .focus-answer { width: clamp(250px, 26cqi, 340px); }
+  .focus-card[data-opts="tags-wide"] > .focus-answer { width: clamp(280px, 32cqi, 420px); }
+}
+@container focus (min-width: 700px) and (max-width: 899.9px) {
+  .focus-card > .focus-discuss { grid-area: 2 / 1 / 3 / 3; max-height: 36vh; }
+}
+@media (max-width: 640px) { .focus-discuss { max-height: 44dvh; padding: var(--s-2) var(--pad) var(--s-3); } }
+/* The end of the stack, and "all answered": one tick drawn by hand, one sentence, Close. */
+.focus-list-end .sketch, .focus-done-art .sketch { width: 46px; height: 46px; stroke-width: 1.6; color: var(--accent); }
+.focus-list-end .sketch { color: var(--surface); }
+.focus-done-art { width: auto; height: auto; margin-bottom: var(--s-3); }
+.focus-list-row { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s-2); margin-top: var(--s-2); }
+.focus-list-close { height: 38px; padding: 0 18px; border-radius: var(--r-pill); background: var(--fg); color: var(--surface); font: 600 var(--t-sm)/1 var(--font); }
+.focus-list-piles { margin-top: 0; }
+/* Phone: a card is as long as what it holds (the decision, then Discuss under it); the list scrolls. */
+@media (max-width: 640px) {
+  .focus[data-list] .focus-card { max-height: none; }
+  .focus[data-list] .focus-card > .focus-answer { max-height: none; }
+  .focus[data-list] .focus-discuss { max-height: none; }
+  .focus-answer > .focus-actions .focus-way .focus-way-word { display: inline; }
+}
+/* the pen's tools stand in the card's corner over Discuss; where there is no column for it they get a line of their own */
+@container focus (max-width: 899.9px) { .focus[data-single] .focus-card[data-marks] > .focus-talk { padding-top: 40px; } }
