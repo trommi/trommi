@@ -39,7 +39,7 @@ const PERSONAS = {
     intro: 'Die Migration ist geschrieben und lokal getestet. Für die Produktion brauche ich dein Okay, der Deploy hängt daran.',
     status: [['migration', 'Migration', 'working', 'lokal grün'], ['tests', 'Tests', 'working', '42 von 48 grün']],
     cards: [
-      { title: 'Migration auf der Produktions-Datenbank ausführen?', urgency: 'critical', urgency_reason: 'Deploy wartet, alles Weitere hängt davon ab', status: 'migration',
+      { title: 'Migration auf der Produktions-Datenbank ausführen?', urgency: 'high', urgency_reason: 'Der Deploy wartet darauf', status: 'migration',
         body: 'Die Migration `2026_10_02_add_urgency` fügt eine Spalte hinzu und füllt **48.210 Zeilen** nach. Geschätzte Dauer: 40 Sekunden, währenddessen ist die Tabelle gesperrt.\n\n```\nALTER TABLE cards ADD COLUMN urgency text NOT NULL DEFAULT \'normal\';\n```',
         options: [['run-now', 'Jetzt ausführen', 'Kurze Sperre, Deploy läuft danach durch'], ['tonight', 'Heute Nacht um 02:00', 'Kein Nutzer betroffen, Deploy wartet bis morgen'], ['batch', 'In Schritten ohne Sperre', 'Etwa zwei Stunden Umbau am Skript'], ['cancel', 'Nicht ausführen', 'Ich nehme die Änderung zurück']] },
       { title: 'Darf ich die fehlschlagenden Tests überspringen?', urgency: 'high', urgency_reason: 'Sechs Tests blockieren den Merge', status: 'tests',
@@ -148,7 +148,7 @@ for (const card of persona.cards) {
   const id = out.match(/^card (\w+) /)?.[1]
   if (id && status) {
     statusOfCard.set(id, status)
-    await call('set_status', { id: status, state: 'decision', card_id: id })
+    // The line stays "working": a real agent files its question and carries on.
   }
   await sleep(500)
 }

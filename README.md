@@ -150,12 +150,33 @@ dev/trio.sh 8795 600        # drei simulierte Agenten auf http://<host>:8795/?t=
 
 `dev/demo-state.mjs` schreibt die Demodaten. Nachrichten und Entscheidungen werden angenommen, aber niemand antwortet, weil kein Agent angeschlossen ist.
 
+## Verwaltung
+
+`/admin.html` ist eine Seite für die Person, die den Hub betreibt. Sie zeigt, was der Server tut, und erledigt, wofür sonst eine Shell nötig wäre:
+
+- **Übersicht:** Version, Hub-Prozess, Adresse, Größe des Datenordners, Zahl der Nachrichten und Karten.
+- **Sitzungen:** jede bekannte Sitzung; eine abwesende lässt sich vergessen (auf Wunsch samt Gespräch, Karten und Dateien), Wartendes lässt sich verwerfen.
+- **Aufräumen:** was die Frist als Nächstes löscht, und verwaiste Dateien; beides zeigt erst die Anzahl.
+- **Zugang:** die Anmelde-Links zum Kopieren, und ein neues Token. Danach müssen sich alle Browser und Apps neu anmelden; laufende Sitzungen der Agenten arbeiten weiter. Ist das Token über `BOARD_TOKEN` gesetzt, wird es nicht getauscht.
+- **Daten:** der Zustand als JSON (ohne Token, Schlüssel und wartende Benachrichtigungen) und ein Protokoll der letzten 300 Handgriffe in `data/admin-log.jsonl`.
+- **Diagnose:** die letzten 200 Zeilen des Hubs auf stderr, offene Seiten, Verbindung jeder Sitzung.
+
+Die Seite verlangt neben der Anmeldung am Board einen zweiten Schlüssel, weil der Link zum Board auf vielen Geräten liegt und nicht reichen soll, um Daten zu löschen:
+
+```bash
+cat data/admin-token
+```
+
+Der Schlüssel gilt zwölf Stunden pro Browser und bis zum nächsten Wechsel des Hubs. Alle Routen liegen unter `/admin/api/`, nur der Hub beantwortet sie, und alles, was löscht oder ersetzt, ist ein POST mit dem Feld `confirm`.
+
 ## Einstellungen
 
 - `BOARD_PORT` (Standard 8790)
 - `BOARD_HOST` (Standard `0.0.0.0`; `127.0.0.1` für nur lokal)
 - `BOARD_TOKEN` (Standard: zufällig erzeugt, in `data/token` gespeichert)
 - `BOARD_DATA` (Standard `./data`): Zustand und Anhänge
+- `BOARD_ADMIN_TOKEN` (Standard: zufällig erzeugt, in `data/admin-token` gespeichert): Schlüssel für die Verwaltung
+- `BOARD_PUBLIC_URL`: weitere Adressen des Boards, durch Komma getrennt, etwa der HTTPS-Name aus `tailscale serve`; sie erscheinen in `data/url.txt` und in der Verwaltung
 - `BOARD_AGENT` (Standard: Ordnername): Name des Agenten in der Seitenleiste
 - `TINFOIL_API_KEY`, `BOARD_STT_MODEL` (Standard `whisper-large-v3-turbo`), `BOARD_TTS_MODEL` (Standard `qwen3-tts`): Sprachfunktionen
 - `BOARD_RETENTION_DAYS` (Standard 30): so lange bleiben beantwortete Karten und ihre Anhänge

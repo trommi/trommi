@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<meta name="referrer" content="no-referrer">
+<title>Trommi: Verwaltung</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='9' fill='%231b6a57'/%3E%3Crect x='7' y='11' width='18' height='14' rx='3.5' fill='%23fff' opacity='.45'/%3E%3Crect x='7' y='7' width='18' height='14' rx='3.5' fill='%23fff'/%3E%3Cpath d='M11.5 14.2l2.6 2.6 5-5.2' fill='none' stroke='%231b6a57' stroke-width='2.4' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+<script>
+// Theme before first paint, the same rule as the board: hash flag, then the remembered choice, else light.
+(function () {
+  var flags = location.hash.slice(1).split(',')
+  var theme = 'light'
+  try { if (localStorage.getItem('agent-board-theme') === 'dark') theme = 'dark' } catch (e) {}
+  if (flags.indexOf('dark') >= 0) theme = 'dark'
+  if (flags.indexOf('light') >= 0) theme = 'light'
+  if (theme === 'dark') document.documentElement.dataset.theme = 'dark'
+})()
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/admin.css">
+<script type="module" src="/js/admin.js"></script>
+</head>
+<body>
+<header class="adm-head">
+  <a class="adm-back" href="/">Zum Board</a>
+  <h1>Verwaltung</h1>
+  <p id="lead">Was der Hub gerade tut, und die Handgriffe, für die du sonst eine Shell brauchst.</p>
+</header>
+
+<form id="gate" class="adm-gate" hidden autocomplete="off">
+  <h2>Schlüssel für die Verwaltung</h2>
+  <p>Hier lassen sich Daten löschen und der Zugang austauschen. Darum reicht der Link zum Board nicht: Die Seite fragt nach einem zweiten Schlüssel, den nur lesen kann, wer am Rechner des Hubs sitzt.</p>
+  <pre>cat data/admin-token</pre>
+  <div class="adm-gate-row">
+    <input id="gate-key" type="password" aria-label="Schlüssel" placeholder="Schlüssel einfügen" autocomplete="off" spellcheck="false" required>
+    <button class="adm-btn is-primary">Öffnen</button>
+  </div>
+  <p id="gate-error" class="adm-error" role="alert" hidden></p>
+</form>
+
+<main id="admin" hidden>
+  <section id="overview" aria-labelledby="h-overview"></section>
+  <section id="sessions" aria-labelledby="h-sessions"></section>
+  <section id="cleanup" aria-labelledby="h-cleanup"></section>
+  <section id="access" aria-labelledby="h-access"></section>
+  <section id="data" aria-labelledby="h-data"></section>
+  <section id="diagnose" aria-labelledby="h-diagnose"></section>
+  <footer class="adm-foot"><button id="logout" class="adm-btn">Verwaltung schließen</button></footer>
+</main>
+
+<p id="toast" class="adm-toast" role="status" hidden></p>
+</body>
+</html>
