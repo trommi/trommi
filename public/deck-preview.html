@@ -1,0 +1,292 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kartenstapel · Vorschau</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/deck.css">
+<style>
+  /* Workbench chrome only. The deck itself is styled by deck.css. */
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; background: var(--sunken); color: var(--fg); font: 400 var(--t-sm)/1.4 var(--font); }
+  .pv-strip { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .pv-strip button { font: 500 var(--t-xs)/1 var(--font); padding: 8px 10px; border-radius: var(--r-pill); border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--fg); cursor: pointer; }
+  .pv-strip button:hover { border-color: var(--accent); color: var(--accent); }
+  .pv-strip button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .pv-strip .pv-gap { flex: 1; }
+  .pv-floor { flex: 1; min-height: 0; display: flex; justify-content: center; padding: 14px 0 0; }
+  /* stands in for the shell's #decisions column: it gives #deck its box */
+  .pv-frame { width: min(100%, var(--pv-w, 400px)); height: 100%; background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; box-shadow: 0 0 0 1px var(--line), var(--shadow-md); overflow: hidden; }
+  #deck { height: 100%; }
+  #pv-log { position: fixed; left: 8px; bottom: 8px; z-index: 2147483600; max-width: 90vw; padding: 6px 10px; border-radius: var(--r-sm); background: var(--urg-critical); color: var(--surface); font: 500 var(--t-xs)/1.4 var(--mono); white-space: pre-wrap; }
+  #pv-log:empty { display: none; }
+  body.pv-bare .pv-strip { display: none; }
+  body.pv-bare .pv-floor { padding: 0; }
+  body.pv-bare .pv-frame { border-radius: 0; }
+</style>
+</head>
+<body>
+<div class="pv-strip" role="toolbar" aria-label="Server simulieren">
+  <button data-do="critical">Neue kritische Karte</button>
+  <button data-do="raise">Dringlichkeit erhöhen</button>
+  <button data-do="remote">Oberste remote entschieden</button>
+  <button data-do="fail" aria-pressed="false">Entscheidung scheitert</button>
+  <button data-do="noise">Fremdes Update</button>
+  <button data-do="edit">Text ändert sich</button>
+  <button data-do="clear">Alles erledigt</button>
+  <button data-do="reset">Zurücksetzen</button>
+  <span class="pv-gap"></span>
+  <button data-do="width">Breite</button>
+  <button data-do="theme">Hell / Dunkel</button>
+</div>
+<div class="pv-floor"><div class="pv-frame"><section id="deck"></section></div></div>
+<div id="pv-log"></div>
+
+<script>
+  // errors go on screen so a screenshot shows them
+  const pvLog = msg => { document.getElementById('pv-log').textContent += msg + '\n' }
+  window.onerror = (msg, src, line, col) => pvLog(`${msg} @ ${String(src).split('/').pop()}:${line}:${col}`)
+  window.addEventListener('unhandledrejection', e => pvLog(`unhandled: ${e.reason?.message ?? e.reason}`))
+</script>
+<script type="module">
+// Workbench for the card stack. Hash flags (comma separated) put the page
+// straight into a state for screenshots:
+//   dark | light       theme            w320 w360 w400 w520 w560   frame width
+//   bare               hide the control strip (phone-like, deck fills the window)
+//   noperm             start without the permission card
+//   card:<id>          bring that card to the front (via deck:focus)
+//   next               step one card forward     later    press "Später"
+//   select  note       pick the second option / type a note on the front card
+//   sending            confirm and never get an answer (stamp visible)
+//   fail               confirm, the server refuses
+//   decided            confirm, success (next card in front)
+//   critical  raise    the agent files a critical card / raises the last card
+//   held               select, then a critical card arrives (banner)
+//   drag  dragback     freeze the front card mid-drag to the left / to the right
+//   lightbox           open the first image of the front card
+//   long               give the front decision card a very long body
+//   empty              nothing open
+//   do:<action>        run a control-strip action (critical, raise, remote, noise, edit, clear)
+//   keys:2|Enter       press keys in order
+import { setState, getState } from './js/store.js'
+import { mountDeck } from './js/deck.js'
+
+const flags = decodeURIComponent(location.hash.slice(1)).split(',').map(f => f.trim()).filter(Boolean)
+const has = f => flags.includes(f)
+const param = name => flags.find(f => f.startsWith(name + ':'))?.slice(name.length + 1)
+
+if (has('dark')) document.documentElement.dataset.theme = 'dark'
+if (has('bare')) document.body.classList.add('pv-bare')
+const widths = [400, 360, 320, 520, 560]
+let width = Number(flags.find(f => /^w\d+$/.test(f))?.slice(1)) || 400
+const frame = document.querySelector('.pv-frame')
+const applyWidth = () => frame.style.setProperty('--pv-w', `${width}px`)
+applyWidth()
+
+// ── demo data, shaped like dev/demo-state.mjs ─────────────────────────────
+const min = 60000
+const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
+const img = name => ({ name, url: `/files/${name}`, image: true })
+const card = (id, o) => ({
+  id, kind: 'decision', status: 'open', urgency: 'normal', urgency_reason: '', body: '', attachments: [],
+  choice: null, note: '', summary: '', decided: null, ...o,
+})
+
+function demo() {
+  const now = Date.now()
+  const cards = [
+    card('c-theme', {
+      number: 4, title: 'Welches Standard-Theme?', created: now - 22 * min,
+      body: 'Beide Themes sind fertig. Ich brauche nur den Standard für neue Nutzer.',
+      options: [
+        { key: 'hell', label: 'Hell', detail: 'Besser lesbar bei Tageslicht' },
+        { key: 'dunkel', label: 'Dunkel', detail: 'Passt zu Terminal und IDE' },
+        { key: 'system', label: 'Dem System folgen', detail: 'Richtet sich nach der Geräteeinstellung' },
+      ],
+      attachments: [img('thema-hell.png'), img('thema-dunkel.png')],
+    }),
+    card('c-migrate', {
+      number: 6, title: 'Migration auf der Produktions-Datenbank ausführen?', created: now - 4 * min, urgency: 'critical',
+      urgency_reason: 'Deploy wartet, alle weiteren Schritte hängen davon ab',
+      body: 'Die Migration `2026_10_02_add_urgency` fügt eine Spalte hinzu und füllt **48.210 Zeilen** nach. Geschätzte Dauer: 40 Sekunden, währenddessen ist die Tabelle gesperrt.\n\n```\nALTER TABLE cards ADD COLUMN urgency text NOT NULL DEFAULT \'normal\';\n```',
+      options: [
+        { key: 'run-now', label: 'Jetzt ausführen', detail: 'Kurze Sperre, Deploy läuft danach durch' },
+        { key: 'tonight', label: 'Heute Nacht um 02:00', detail: 'Kein Nutzer betroffen, Deploy wartet bis morgen' },
+        { key: 'batch', label: 'In Schritten ohne Sperre', detail: 'Etwa zwei Stunden Umbau am Skript' },
+        { key: 'cancel', label: 'Nicht ausführen', detail: 'Ich nehme die Änderung zurück' },
+      ],
+    }),
+    card('c-phone', {
+      number: 5, title: 'Wie soll das Board auf dem Handy starten?', created: now - 15 * min, urgency: 'high',
+      urgency_reason: 'Ich baue gerade an der mobilen Ansicht',
+      body: 'Auf dem Handy passt nur eine Ansicht auf den Bildschirm.',
+      options: [
+        { key: 'gespraech', label: 'Mit dem Gespräch', detail: 'Wie eine Chat-App' },
+        { key: 'entscheidungen', label: 'Mit den Entscheidungen', detail: 'Offene Fragen zuerst' },
+        { key: 'zuletzt', label: 'Wo ich zuletzt war', detail: 'Merkt sich die letzte Ansicht' },
+      ],
+      attachments: [img('phone-gespraech.png'), img('phone-entscheidungen.png')],
+    }),
+    { id: 'c-perm', number: 7, kind: 'permission', status: 'open', urgency: 'critical', urgency_reason: '',
+      title: 'Freigabe: Bash', body: 'Run the test suite\n\n{"command":"npm test -- --coverage"}',
+      options: [{ key: 'allow', label: 'Erlauben', detail: '' }, { key: 'deny', label: 'Ablehnen', detail: '' }],
+      attachments: [], choice: null, note: '', summary: '', created: now - 1 * min, decided: null },
+    card('c-next', {
+      number: 3, title: 'Was baue ich als Nächstes?', created: now - 30 * min, urgency: 'low',
+      options: [
+        { key: 'mehrere-agenten', label: 'Mehrere Agenten', detail: 'Ein Board für mehrere Sessions' },
+        { key: 'verschluesselung', label: 'Verschlüsselung', detail: 'Ende-zu-Ende zwischen Browser und Agent' },
+        { key: 'live-verlauf', label: 'Live-Verlauf', detail: 'Zeigt, was der Agent gerade tut' },
+      ],
+    }),
+    card('c-db', {
+      number: 2, title: 'Welche Datenbank?', status: 'decided', created: now - 95 * min, decided: now - 80 * min, choice: 'pg',
+      options: [{ key: 'sqlite', label: 'SQLite', detail: '' }, { key: 'pg', label: 'Postgres', detail: '' }],
+    }),
+  ]
+  return { messages: [], cards: has('noperm') ? cards.filter(c => c.id !== 'c-perm') : cards }
+}
+
+// The server's order: permission requests, then urgency, then oldest first.
+const queueOf = cards => cards
+  .filter(c => c.status === 'open')
+  .sort((a, b) => (b.kind === 'permission') - (a.kind === 'permission') || RANK[b.urgency] - RANK[a.urgency] || a.created - b.created)
+  .map(c => c.id)
+
+let data = demo()
+let serial = 20
+const push = () => setState({ ...data, cards: data.cards.map(c => ({ ...c })), queue: queueOf(data.cards) })
+
+// ── the server, simulated: /decide answers after a moment ─────────────────
+let failNext = false
+let hang = false
+const realFetch = window.fetch.bind(window)
+window.fetch = async (url, init) => {
+  if (!String(url).endsWith('/decide')) return realFetch(url, init)
+  if (hang) return new Promise(() => {})
+  await new Promise(r => setTimeout(r, has('fail') || has('decided') ? 0 : 420))
+  const body = JSON.parse(init.body)
+  const target = data.cards.find(c => c.id === body.card_id)
+  if (failNext || !target || target.status !== 'open') {
+    return new Response(JSON.stringify({ error: failNext ? 'Der Agent ist gerade nicht erreichbar.' : 'Karte ist nicht mehr offen.' }), { status: 400 })
+  }
+  return new Response('{}', { status: 200 })
+}
+
+const root = document.getElementById('deck')
+// The preview is not connected to /events, so it applies the decision itself.
+root.addEventListener('deck:decided', e => {
+  const c = data.cards.find(c => c.id === e.detail.cardId)
+  if (c) Object.assign(c, { status: 'decided', choice: e.detail.key, decided: Date.now() })
+  push()
+})
+root.addEventListener('deck:count', e => { document.title = `(${e.detail.open}) Kartenstapel · Vorschau` })
+
+const actions = {
+  critical() {
+    const n = ++serial
+    data.cards.push(card(`c-new-${n}`, {
+      number: n, title: 'Deploy ist fehlgeschlagen. Zurückrollen?', created: Date.now(), urgency: 'critical',
+      urgency_reason: 'Produktion liefert seit zwei Minuten Fehler 502',
+      body: 'Der Healthcheck nach dem Deploy schlägt fehl. Ich kann auf das letzte Release zurückgehen oder den Fehler live untersuchen.',
+      options: [
+        { key: 'rollback', label: 'Zurückrollen', detail: 'Letztes Release, etwa 30 Sekunden' },
+        { key: 'debug', label: 'Live untersuchen', detail: 'Produktion bleibt solange gestört' },
+      ],
+    }))
+    push()
+  },
+  raise() {
+    const open = queueOf(data.cards).map(id => data.cards.find(c => c.id === id))
+    const target = [...open].reverse().find(c => c.kind !== 'permission' && c.urgency !== 'critical')
+    if (!target) return
+    target.urgency = 'critical'
+    target.urgency_reason = 'Ohne diese Antwort kann ich nicht weiterarbeiten'
+    push()
+  },
+  remote() {
+    const top = data.cards.find(c => c.id === queueOf(data.cards)[0])
+    if (top) Object.assign(top, { status: 'decided', choice: top.options[0].key, decided: Date.now() })
+    push()
+  },
+  fail(btn) {
+    failNext = !failNext
+    btn?.setAttribute('aria-pressed', String(failNext))
+  },
+  noise() {
+    data.messages = [...data.messages, { id: `m${++serial}`, from: 'user', text: 'Nur eine Chatnachricht.', ts: Date.now() }]
+    push()
+  },
+  edit() {
+    const top = data.cards.find(c => c.id === queueOf(data.cards).find(id => data.cards.find(c => c.id === id).kind !== 'permission'))
+    if (top) top.body = `${top.body}\n\nNachtrag vom Agenten: Ich habe das noch einmal geprüft (${new Date().toLocaleTimeString('de-DE')}).`
+    push()
+  },
+  clear() {
+    for (const c of data.cards) if (c.status === 'open') Object.assign(c, { status: 'decided', choice: c.options[0].key, decided: Date.now() })
+    push()
+  },
+  reset() { data = demo(); push() },
+  width() { width = widths[(widths.indexOf(width) + 1) % widths.length]; applyWidth() },
+  theme() {
+    const html = document.documentElement
+    if (html.dataset.theme === 'dark') delete html.dataset.theme
+    else html.dataset.theme = 'dark'
+  },
+}
+document.querySelector('.pv-strip').addEventListener('click', e => {
+  const btn = e.target.closest('button[data-do]')
+  if (btn) actions[btn.dataset.do](btn)
+})
+
+if (has('empty')) data.cards = data.cards.filter(c => c.status !== 'open')
+push()
+mountDeck(root)
+
+// ── screenshot states ─────────────────────────────────────────────────────
+const front = () => root.querySelector('.deck-card[data-front]')
+const fire = (node, type, x, y) => node.dispatchEvent(new PointerEvent(type, {
+  bubbles: true, cancelable: true, pointerId: 7, pointerType: 'touch', isPrimary: true, button: 0, clientX: x, clientY: y,
+}))
+
+if (param('card')) root.dispatchEvent(new CustomEvent('deck:focus', { detail: { cardId: param('card') } }))
+if (has('next')) root.querySelector('.deck-iconbtn[aria-label="Nächste Karte"]').click()
+if (has('later')) root.querySelector('.deck-later').click()
+if (has('long')) {
+  const c = data.cards.find(c => c.id === front()?.dataset.id)
+  if (c) c.body = Array.from({ length: 9 }, (_, i) => `Absatz ${i + 1}: Die Migration betrifft mehrere Tabellen, und ich möchte sicher sein, dass der Ablauf zu deinem Zeitplan passt. **Wichtig** ist vor allem die Sperre auf \`cards\`.`).join('\n\n')
+  push()
+}
+if (has('select') || has('held') || has('sending') || has('fail') || has('decided')) front()?.querySelectorAll('.deck-opt')[1]?.click()
+if (has('note')) {
+  const note = front()?.querySelector('.deck-note')
+  if (note) { note.value = 'Bitte vorher ein Backup ziehen.'; note.dispatchEvent(new Event('input', { bubbles: true })) }
+}
+if (has('sending')) hang = true
+if (has('fail')) failNext = true
+if (has('sending') || has('fail') || has('decided')) (front()?.querySelector('.deck-confirm') ?? front()?.querySelector('.deck-allow'))?.click()
+if (has('critical') || has('held')) actions.critical()
+if (has('raise')) actions.raise()
+if (has('lightbox')) front()?.querySelector('.deck-thumb')?.click()
+// do:<action> presses a control-strip button, keys:a|b|c presses keys in order
+for (const f of flags) {
+  if (f.startsWith('do:')) actions[f.slice(3)]?.()
+  if (f.startsWith('keys:')) for (const key of f.slice(5).split('|')) {
+    (document.activeElement ?? document.body).dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  }
+}
+if (has('drag') || has('dragback')) {
+  const head = front().querySelector('.deck-head')
+  const r = head.getBoundingClientRect()
+  const x = r.left + r.width / 2, y = r.top + 12, dir = has('drag') ? -1 : 1
+  fire(head, 'pointerdown', x, y)
+  fire(head, 'pointermove', x + dir * 20, y)
+  fire(head, 'pointermove', x + dir * 150, y + 2)
+}
+</script>
+</body>
+</html>

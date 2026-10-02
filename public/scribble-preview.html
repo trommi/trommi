@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Scribble · Vorschau</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/scribble.css">
+<style>
+  /* Workbench chrome only. Scribble itself is styled by scribble.css. */
+  html, body { height: 100%; margin: 0; }
+  body { display: flex; flex-direction: column; background: var(--sunken); color: var(--fg); font: 400 var(--t-sm)/1.4 var(--font); }
+  .pv-strip { flex: none; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; background: var(--surface); border-bottom: 1px solid var(--line); }
+  .pv-strip button, .pv-out button { font: 500 var(--t-xs)/1 var(--font); padding: 8px 10px; border-radius: var(--r-pill); border: 1px solid var(--line-strong); background: var(--surface-2); color: var(--fg); cursor: pointer; }
+  .pv-strip button:hover, .pv-out button:hover { border-color: var(--accent); color: var(--accent); }
+  .pv-strip button[aria-pressed="true"] { background: var(--accent); border-color: var(--accent); color: var(--accent-fg); }
+  .pv-strip .pv-gap { flex: 1; }
+  .pv-floor { flex: 1; min-height: 0; display: flex; flex-direction: column; align-items: center; gap: 10px; padding: 14px 0 0; }
+  /* stands in for the shell's panel: it gives #scribble its box */
+  .pv-frame { flex: 1; min-height: 0; width: min(100%, var(--pv-w, 400px)); background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; box-shadow: 0 0 0 1px var(--line), var(--shadow-md); overflow: hidden; }
+  #scribble { height: 100%; }
+  .pv-out { flex: none; order: -1; width: min(100% - 20px, 880px); display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+  .pv-out[hidden] { display: none; }
+  .pv-out img { flex: none; height: 96px; max-width: 45%; object-fit: contain; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line-strong); background: var(--surface); }
+  .pv-out dl { flex: 1; min-width: 0; margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; font: 400 var(--t-xs)/1.4 var(--mono); }
+  .pv-out dt { color: var(--faint); text-transform: uppercase; letter-spacing: .07em; font: 600 var(--t-xs)/1.6 var(--font); }
+  .pv-out dd { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  #pv-log { position: fixed; left: 8px; bottom: 8px; z-index: 2147483600; max-width: 90vw; padding: 6px 10px; border-radius: var(--r-sm); background: var(--urg-critical); color: var(--surface); font: 500 var(--t-xs)/1.4 var(--mono); white-space: pre-wrap; }
+  #pv-log:empty { display: none; }
+  body.pv-bare .pv-strip { display: none; }
+  body.pv-bare .pv-floor { padding: 0; }
+  body.pv-bare .pv-frame { border-radius: 0; }
+</style>
+</head>
+<body>
+<div class="pv-strip" role="toolbar" aria-label="Vorschau steuern">
+  <button data-do="demo">Demo-Inhalt</button>
+  <button data-do="many">300 Striche</button>
+  <button data-do="fail" aria-pressed="false">Senden scheitert</button>
+  <button data-do="hang" aria-pressed="false">Senden hängt</button>
+  <button data-do="load">Zuletzt Gesendetes laden</button>
+  <button data-do="clear">clear()</button>
+  <span class="pv-gap"></span>
+  <button data-do="width">Breite</button>
+  <button data-do="theme">Hell / Dunkel</button>
+</div>
+<div class="pv-floor">
+  <div class="pv-frame"><section id="scribble"></section></div>
+  <div class="pv-out" id="pv-out" hidden>
+    <img id="pv-png" alt="Gesendetes PNG">
+    <dl>
+      <dt>PNG</dt><dd id="pv-png-info"></dd>
+      <dt>Doc</dt><dd id="pv-doc-info"></dd>
+      <dt>Text</dt><dd id="pv-text"></dd>
+      <dt>Round trip</dt><dd id="pv-trip">noch nicht geprüft</dd>
+    </dl>
+    <button data-do="load">load()</button>
+  </div>
+</div>
+<div id="pv-log"></div>
+
+<script>
+  // errors go on screen so a screenshot shows them
+  const pvLog = msg => { document.getElementById('pv-log').textContent += msg + '\n' }
+  window.onerror = (msg, src, line, col) => pvLog(`${msg} @ ${String(src).split('/').pop()}:${line}:${col}`)
+  window.addEventListener('unhandledrejection', e => pvLog(`unhandled: ${e.reason?.message ?? e.reason}`))
+</script>
+<script type="module">
+// Workbench for Scribble. Hash flags (comma separated) put the page straight
+// into a state for screenshots:
+//   dark | light       theme            w320 w360 w400 w520 w900   frame width
+//   bare               hide the control strip (scribble fills the window)
+//   demo               an image and some strokes, drawn through real pointer and drop events
+//   pressure           adds a stylus stroke with varying pressure
+//   select             select tool with the demo image selected
+//   style              colour and width popover open       confirm   clear-all confirmation open
+//   eraser             erase one demo stroke               hl        marker tool active
+//   zoomout            zoom out with ctrl+wheel            many      300 generated strokes
+//   caption            type a caption
+//   sending            press Senden and never get an answer
+//   fail               press Senden, the server refuses
+//   sent               press Senden, success (result strip visible)
+//   trip               sent, then load() the sent doc and send again: proves the round trip
+//   fast               the fake server answers at once (scripted checks)
+//   draft              keep the IndexedDB draft (off whenever a state flag is given)
+import { mountScribble } from './js/scribble.js'
+
+const flags = decodeURIComponent(location.hash.slice(1)).split(',').map(f => f.trim()).filter(Boolean)
+const has = f => flags.includes(f)
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const $ = id => document.getElementById(id)
+
+if (has('dark')) document.documentElement.dataset.theme = 'dark'
+if (has('bare')) document.body.classList.add('pv-bare')
+const widths = [400, 360, 320, 520, 900]
+let width = Number(flags.find(f => /^w\d+$/.test(f))?.slice(1)) || 400
+const frame = document.querySelector('.pv-frame')
+const applyWidth = () => frame.style.setProperty('--pv-w', `${width}px`)
+applyWidth()
+
+// ── the lead's send(), simulated ───────────────────────────────────────────
+let failNext = has('fail')
+let hang = has('sending')
+let last = null          // the last doc that was sent, as the server would store it
+let loadedJSON = null    // what load() was given, to compare with the next send
+const kb = n => `${(n / 1024).toFixed(n < 10240 ? 1 : 0)} KB`
+const dataBytes = url => Math.floor((url.length - url.indexOf(',') - 1) * 3 / 4)
+
+async function send({ doc, png, text }) {
+  await sleep(has('fast') ? 0 : 700)
+  if (hang) await new Promise(() => {})
+  if (failNext) throw new Error('Der Server hat das Scribble abgelehnt (413: Anhang zu groß).')
+  const json = JSON.stringify(doc)
+  last = JSON.parse(json)
+  const img = new Image()
+  img.src = png
+  await img.decode()
+  $('pv-png').src = png
+  $('pv-png-info').textContent = `${img.naturalWidth} × ${img.naturalHeight} px, ${kb(dataBytes(png))}`
+  $('pv-doc-info').textContent = `v${doc.v}, ${doc.images.length} Bild(er), ${doc.strokes.length} Striche, ${kb(json.length)}`
+  $('pv-text').textContent = text ? `„${text}“` : '(leer)'
+  if (loadedJSON != null) $('pv-trip').textContent = json === loadedJSON ? 'identisch nach load() ✓' : 'verändert seit load()'
+  $('pv-out').hidden = false
+  pv.sends++
+}
+
+const root = $('scribble')
+const state = flags.some(f => !/^(dark|light|bare|draft|fast|w\d+)$/.test(f))
+const api = mountScribble(root, { send, draftKey: has('draft') || !state ? 'preview' : null })
+// for scripted checks (dev/cdp.mjs): draw, send, and read back what was sent
+const pv = window.pv = { api, sends: 0, last: () => last, stroke: (...a) => stroke(...a), line: (...a) => line(...a), send: () => pressSend() }
+
+// ── demo content, made the way a user makes it ─────────────────────────────
+const canvas = root.querySelector('.scr-canvas')
+const q = sel => root.querySelector(sel)
+const click = sel => q(sel).click()
+const at = (x, y) => { const r = canvas.getBoundingClientRect(); return { clientX: r.left + x, clientY: r.top + y } }
+let pid = 10
+
+/** Draw through the pointer handlers: points are [x, y, pressure?] in canvas pixels. */
+function stroke(points, type = 'mouse') {
+  const id = ++pid
+  const ev = (name, [x, y, p = 0.5]) => canvas.dispatchEvent(new PointerEvent(name, {
+    ...at(x, y), pointerId: id, pointerType: type, pressure: name === 'pointerup' ? 0 : p, button: 0, buttons: name === 'pointerup' ? 0 : 1, isPrimary: true, bubbles: true, cancelable: true,
+  }))
+  ev('pointerdown', points[0])
+  for (const pt of points.slice(1)) ev('pointermove', pt)
+  ev('pointerup', points[points.length - 1])
+}
+const line = (x0, y0, x1, y1, n = 24, wobble = 0) => Array.from({ length: n + 1 }, (_, i) => {
+  const t = i / n
+  return [x0 + (x1 - x0) * t + Math.sin(t * 9) * wobble, y0 + (y1 - y0) * t + Math.cos(t * 7) * wobble]
+})
+const ellipse = (cx, cy, rx, ry, n = 44) => Array.from({ length: n + 1 }, (_, i) => {
+  const a = -2.2 + (i / n) * Math.PI * 2.12
+  return [cx + Math.cos(a) * rx * (1 + i / n * 0.05), cy + Math.sin(a) * ry]
+})
+const pick = (tool, colour, w) => {
+  const b = q(`.scr-tool[data-tool="${tool}"]`)
+  if (b.getAttribute('aria-pressed') !== 'true') b.click()   // a second tap on the active pen opens its style popover
+  if (colour) q(`.scr-swatch[aria-label="${colour}"]`).click()
+  if (w) root.querySelectorAll('.scr-width')[w - 1].click()
+}
+
+/** A fake app screenshot, so the annotations have something to point at. */
+async function testImage() {
+  const cv = document.createElement('canvas')
+  cv.width = 1600; cv.height = 1080
+  const c = cv.getContext('2d')
+  const sky = c.createLinearGradient(0, 0, 1600, 1080)
+  sky.addColorStop(0, '#20443c'); sky.addColorStop(1, '#3b7d6b')
+  c.fillStyle = sky; c.fillRect(0, 0, 1600, 1080)
+  c.fillStyle = '#f5f6f2'; c.beginPath(); c.roundRect(90, 90, 1420, 900, 36); c.fill()
+  c.fillStyle = '#ffffff'; c.beginPath(); c.roundRect(90, 90, 1420, 120, [36, 36, 0, 0]); c.fill()
+  c.fillStyle = '#141c18'; c.font = '600 44px sans-serif'; c.fillText('Agent Board', 150, 166)
+  c.fillStyle = '#1b6a57'; c.beginPath(); c.roundRect(1230, 122, 220, 58, 29); c.fill()
+  c.fillStyle = '#ffffff'; c.font = '600 28px sans-serif'; c.fillText('Neue Karte', 1268, 161)
+  for (let i = 0; i < 3; i++) {
+    const x = 150 + i * 440
+    c.fillStyle = '#ffffff'; c.beginPath(); c.roundRect(x, 270, 400, 300, 24); c.fill()
+    c.fillStyle = ['#b3261e', '#b4551b', '#1b6a57'][i]; c.beginPath(); c.roundRect(x, 270, 150, 46, [24, 0, 16, 0]); c.fill()
+    c.fillStyle = '#141c18'; c.fillRect(x + 32, 360, 260, 18)
+    c.fillStyle = '#c9d0c8'; c.fillRect(x + 32, 404, 330, 12); c.fillRect(x + 32, 434, 300, 12); c.fillRect(x + 32, 464, 210, 12)
+  }
+  // noise, so the file compresses like a photo and not like a flat graphic
+  const d = c.getImageData(0, 620, 1600, 370)
+  for (let i = 0; i < d.data.length; i += 4) { const n = (Math.random() - 0.5) * 34; d.data[i] += n; d.data[i + 1] += n; d.data[i + 2] += n }
+  c.putImageData(d, 0, 620)
+  const blob = await new Promise(r => cv.toBlob(r, 'image/jpeg', 0.92))
+  return new File([blob], 'screenshot.jpg', { type: 'image/jpeg' })
+}
+async function dropImage(x, y) {
+  const dt = new DataTransfer()
+  dt.items.add(await testImage())
+  const before = root.querySelector('.scr-tool[data-tool="select"]').getAttribute('aria-pressed')
+  q('.scr-stage').dispatchEvent(new DragEvent('drop', { ...at(x, y), dataTransfer: dt, bubbles: true, cancelable: true }))
+  // the import is asynchronous; it ends by switching to the select tool
+  for (let i = 0; i < 100 && (api.isEmpty() || before === 'true' && i < 8); i++) await sleep(50)
+  await sleep(120)
+}
+
+async function demo() {
+  const r = canvas.getBoundingClientRect()
+  const W = r.width, H = r.height, cx = W / 2, cy = H / 2 - 10
+  await dropImage(cx, cy - H * 0.06)
+  // where the image landed: scribble.js fits it into the view around the drop point
+  const iw = 1600 * Math.min(1, W * 0.74 / 1600, 0.6 * Math.max(120, H - 150) / 1080), ih = iw * 1080 / 1600
+  const ix = cx - iw / 2, iy = cy - H * 0.06 - ih / 2
+  const u = iw / 1600
+  // circle the green button, arrow to it, underline the title
+  pick('pen', 'Rot', 2)
+  stroke(ellipse(ix + 1340 * u, iy + 151 * u, 150 * u, 62 * u))
+  stroke(line(ix + 1010 * u, iy + ih + 44, ix + 1290 * u, iy + 235 * u, 22, 2))
+  stroke([[ix + 1290 * u - 15, iy + 235 * u + 4], [ix + 1290 * u, iy + 235 * u], [ix + 1290 * u + 3, iy + 235 * u + 17]])
+  pick('hl', 'Gelb', 2)
+  stroke(line(ix + 140 * u, iy + 152 * u, ix + 420 * u, iy + 150 * u, 12))
+  pick('pen', 'Blau', 3)
+  stroke(line(ix + 150 * u, iy + ih + 36, ix + 590 * u, iy + ih + 36, 30, 3))
+  pick('pen', 'Schwarz', 1)
+  // a little handwriting-like squiggle under the image
+  stroke(Array.from({ length: 70 }, (_, i) => [ix + 20 + i * (iw * 0.5 / 70), iy + ih + 70 + Math.sin(i * 0.9) * 9 + Math.sin(i * 0.23) * 4]))
+  if (has('pressure')) {
+    pick('pen', 'Violett', 4)
+    stroke(Array.from({ length: 60 }, (_, i) => [ix + 10 + i * (iw - 20) / 60, iy - 34 + Math.sin(i * 0.35) * 14, 0.08 + 0.9 * Math.abs(Math.sin(i * 0.11))]), 'pen')
+    pick('pen', 'Schwarz', 2)
+  }
+  return { ix, iy, iw, ih }
+}
+function many() {
+  const r = canvas.getBoundingClientRect()
+  const colours = ['Schwarz', 'Rot', 'Orange', 'Grün', 'Blau', 'Violett']
+  for (let k = 0; k < 300; k++) {
+    if (k % 50 === 0) pick('pen', colours[(k / 50) % 6], 1 + (k / 50) % 4)
+    const x = 20 + ((k * 37) % (r.width - 80)), y = 70 + ((k * 61) % (r.height - 190))
+    stroke(Array.from({ length: 40 }, (_, i) => [x + i * 1.6 + Math.sin(i * 0.5 + k) * 6, y + Math.cos(i * 0.4 + k) * 12]))
+  }
+}
+const pressSend = () => q('.scr-send').click()
+const sent = async () => { for (let i = 0; i < 80 && $('pv-out').hidden; i++) await sleep(100) }
+
+// ── control strip ──────────────────────────────────────────────────────────
+const actions = {
+  demo,
+  many,
+  fail(b) { failNext = !failNext; b.setAttribute('aria-pressed', String(failNext)) },
+  hang(b) { hang = !hang; b.setAttribute('aria-pressed', String(hang)) },
+  load() {
+    if (!last) return pvLog('Noch nichts gesendet.')
+    loadedJSON = JSON.stringify(last)
+    api.load(last)
+    $('pv-trip').textContent = 'geladen, jetzt erneut senden'
+  },
+  clear: () => api.clear(),
+  width() { width = widths[(widths.indexOf(width) + 1) % widths.length]; applyWidth() },
+  theme() { const d = document.documentElement; if (d.dataset.theme === 'dark') delete d.dataset.theme; else d.dataset.theme = 'dark' },
+}
+document.addEventListener('click', e => {
+  const b = e.target.closest('[data-do]')
+  if (b) actions[b.dataset.do](b)
+})
+document.querySelector('[data-do="fail"]').setAttribute('aria-pressed', String(failNext))
+document.querySelector('[data-do="hang"]').setAttribute('aria-pressed', String(hang))
+
+// ── flags ──────────────────────────────────────────────────────────────────
+await document.fonts?.ready
+await sleep(60)
+let placed = null
+const needsContent = ['demo', 'select', 'eraser', 'zoomout', 'sending', 'fail', 'sent', 'trip', 'pressure', 'caption'].some(has)
+if (needsContent && !has('many')) placed = await demo()
+if (has('many')) many()
+if (has('hl')) pick('hl')
+if (has('eraser') && placed) {
+  click('.scr-tool[data-tool="eraser"]')
+  const { ix, iy, iw, ih } = placed
+  stroke(line(ix + iw * 0.3, iy + ih + 20, ix + iw * 0.3, iy + ih + 52, 8))
+  canvas.dispatchEvent(new PointerEvent('pointermove', { ...at(ix + iw * 0.3, iy + ih + 52), pointerType: 'mouse', bubbles: true }))
+}
+if (has('select') && placed) {
+  click('.scr-tool[data-tool="select"]')
+  stroke([[placed.ix + placed.iw / 2, placed.iy + placed.ih * 0.7], [placed.ix + placed.iw / 2, placed.iy + placed.ih * 0.7]])
+}
+if (has('zoomout')) {
+  const r = canvas.getBoundingClientRect()
+  for (let i = 0; i < 3; i++) canvas.dispatchEvent(new WheelEvent('wheel', { ...at(r.width / 2, r.height / 2), deltaY: 30, ctrlKey: true, bubbles: true, cancelable: true }))
+}
+if (has('style')) click('.scr-stylebtn')
+if (has('confirm')) { if (api.isEmpty()) await demo(); q('[aria-label="Alles löschen"]').click() }
+if (has('caption') || has('sent') || has('trip') || has('fail') || has('sending')) {
+  const ta = q('.scr-caption')
+  ta.value = 'Der Knopf oben rechts soll größer werden, und die Überschrift bitte in Grün.'
+  ta.dispatchEvent(new Event('input', { bubbles: true }))
+}
+if (has('sending') || has('fail') || has('sent') || has('trip')) pressSend()
+if (has('trip')) {
+  await sent()
+  actions.load()
+  await sleep(200)
+  pressSend()
+}
+window.pvReady = true
+</script>
+</body>
+</html>
