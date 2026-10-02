@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#ffffff">
 <meta name="referrer" content="no-referrer">
-<title>Trommi: how the channel works</title>
+<title>Trommi: help</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Cstyle%3E.s%7Bdisplay:none%7D@media (min-width:24px)%7B.s%7Bdisplay:inline%7D.t%7Bdisplay:none%7D%7D%3C/style%3E%3Crect width='64' height='64' rx='18' fill='%231b6a57'/%3E%3Cg fill='none' stroke='%23ffffff' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg class='t'%3E%3Cpath stroke-width='10' d='M17 18C19.5 17.8 27 17.3 32 17C37 16.8 44.5 16.6 47 16.5C44.5 19.2 37 27.3 32 32.5C27 37.8 19.5 45.4 17 48C19.5 47.9 26.8 47.7 32 47.5C37.2 47.3 45.3 47.1 48 47'/%3E%3C/g%3E%3Cg class='s'%3E%3Cpath stroke-width='3.2' d='M12.8 11.7C14.7 10.6 20.2 6 24.3 5.1C28.5 4.2 33.4 5.2 37.7 6.1C42 7.1 46.8 8.2 50 10.7C53.1 13.2 55 17.5 56.7 21.2C58.4 24.9 60.1 28.9 60.2 32.9C60.2 36.8 59.3 41.6 57.1 44.9C55 48.3 50.9 50.8 47.3 52.9C43.8 55 39.7 57.3 35.8 57.7C31.8 58.1 27.4 56.6 23.5 55.3C19.6 54.1 15.2 52.7 12.4 50.1C9.5 47.5 7.4 43.3 6.4 39.6C5.4 36 5.8 31.9 6.4 28.1C7.1 24.4 8.1 20.2 10.3 17.2C12.6 14.2 18.4 11.3 20 10.1'/%3E%3Cpath stroke-width='7.6' d='M19.5 21.5C21.6 21.3 27.8 20.8 32 20.5C36.2 20.3 42.4 20.1 44.5 20C42.4 22.1 36.2 28.4 32 32.5C27.8 36.6 21.6 42.5 19.5 44.5C21.6 44.4 27.7 44.2 32 44C36.3 43.8 43.3 43.6 45.5 43.5'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E">
 <script>
 // Theme before first paint, the same rule as the board: hash flag, then the remembered choice, else light.
@@ -26,19 +26,113 @@
 <link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
 <link rel="stylesheet" href="/css/tokens.css">
 <link rel="stylesheet" href="/css/help.css">
+<style>
+/* The guide's own few rules; everything else is help.css. */
+kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface-2); color: var(--fg); font: 500 .8rem/1.5 var(--mono); text-align: center; white-space: nowrap; }
+.hp-word { font-weight: 600; color: var(--fg); white-space: nowrap; }
+.hp-ways { max-width: 70ch; }
+.hp-ways dt { font: 700 var(--t-md)/1.5 var(--display); }
+.hp-ways dt kbd { margin-left: var(--s-2); }
+.hp-keys { columns: 2 24rem; column-gap: var(--s-10); }
+.hp-keys > div { break-inside: avoid; margin-bottom: var(--s-8); }
+.hp-keys h3 { margin-bottom: var(--s-1); font: 600 var(--t-xs)/1.4 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.hp-keys .hp-params > div { grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr); }
+.hp-keys dt i { margin: 0 .35em; font: 400 var(--t-xs)/1 var(--font); color: var(--faint); }
+.hp-keys dt kbd + kbd { margin-left: 3px; }
+.hp-part { margin-top: var(--s-10); padding-top: var(--s-6); border-top: 2px solid var(--fg); }
+.hp-part h2 { font: 800 clamp(1.7rem, 3vw, 2.2rem)/1.1 var(--display); letter-spacing: -.02em; }
+.hp-part p { margin-top: var(--s-2); max-width: 70ch; color: var(--muted); }
+</style>
 <script type="module" src="/js/help.js"></script>
 </head>
 <body>
 <header class="hp-head">
   <a class="hp-back" href="/">To the board</a>
-  <h1>How the channel works</h1>
-  <p>What travels between a Claude Code session and you, in which direction, and what never makes the trip.</p>
+  <h1>How Trommi works</h1>
+  <p>Your agents ask, you answer. Two minutes, and you know the whole app.</p>
   <nav class="hp-nav" aria-label="On this page">
-    <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
+    <a href="#desk">Desk</a><a href="#answer">Answering</a><a href="#ways">Four other ways</a><a href="#sessions">Sessions</a><a href="#notes">Notes</a><a href="#keys">Keys</a><a href="#agents">For agents</a>
   </nav>
 </header>
 
 <main>
+<section id="desk" aria-labelledby="h-desk">
+  <h2 class="hp-title" id="h-desk"><span>The <span data-word="INBOX_WORD">Desk</span></span> <b>everything that needs you</b></h2>
+  <div class="hp-prose">
+    <p>The <strong data-word="INBOX_WORD">Desk</strong> is one list of every open question from every session. Its heading counts them (“12 on your desk”). When nothing is left it says “Desk is clear.”</p>
+    <p><strong>Knocks come first.</strong> A knock is a question that will not wait: <span class="hp-word" data-word="KNOCK_WORD">Knock</span> is urgent, <span class="hp-word" data-word="KNOCK_BLOCKING_WORD">Knock! Blocking</span> means the agent cannot go on without you, <span class="hp-word" data-word="KNOCK_PERMISSION_WORD">Knock! Permission</span> is a tool the session wants your leave to use.</p>
+    <p><strong><span data-word="WALK_WORD">Next, please</span></strong> is the button that walks you through all open questions, one after the other. Answer one and the next is in front of you.</p>
+    <p>Some cards ask nothing: a report or a finding to read. Close one with <span class="hp-word" data-word="ACK_WORD">Acknowledge</span>.</p>
+  </div>
+</section>
+
+<section id="answer" aria-labelledby="h-answer">
+  <h2 class="hp-title" id="h-answer">Answering <b>one tap, or a few words</b></h2>
+  <div class="hp-prose">
+    <p><strong>Yes or no:</strong> thumb up or thumb down, right in the list. <strong>More options:</strong> open the question and pick one. Where several answers are allowed, tick them and send.</p>
+    <p>The option the agent would pick itself is marked by hand. It is advice; you decide.</p>
+    <p><strong>Say more if you like.</strong> Open a card to add a note to your answer or to a single option. On an opened card you can write right where your remark belongs and draw on it with the pen; the agent gets your notes together with the answer.</p>
+    <p><strong>Wrong tap?</strong> “Back” takes the last answer back. The question returns, and the agent is told to stop acting on the old answer.</p>
+  </div>
+</section>
+
+<section id="ways" aria-labelledby="h-ways">
+  <h2 class="hp-title" id="h-ways">Four other ways <b>when you do not want to answer</b></h2>
+  <dl class="hp-params hp-ways">
+    <div><dt data-word="LATER_WORD" data-key="list.later">Snooze</dt><dd>Not now. The question leaves the list and waits in the Snoozed pile at the foot of the Desk, in this browser. It comes back by itself if the agent makes it more urgent.</dd></div>
+    <div><dt data-word="HANDBACK_WORD" data-key="focus.handback">Revise</dt><dd>Hand the question back to the agent and say what should change. It returns as the same card, reworded.</dd></div>
+    <div><dt data-word="TRUST_WORD" data-key="list.trust">Whatever</dt><dd>You do not mind. The agent takes its own recommendation and tells you what it chose.</dd></div>
+    <div><dt data-word="SHRED_WORD" data-key="list.shred">Shred</dt><dd>Throw the question away unanswered. The agent is told not to ask it again.</dd></div>
+  </dl>
+  <div class="hp-prose">
+    <p><strong data-word="WHAT_WORD">What??</strong> is for a question you do not understand: write what is unclear, and the agent explains it in writing. The card stays yours to answer.</p>
+    <p>Each of these can be taken back, from the note that appears or from the piles at the foot of the Desk.</p>
+  </div>
+</section>
+
+<section id="sessions" aria-labelledby="h-sessions">
+  <h2 class="hp-title" id="h-sessions">Sessions and the crown <b>who is asking</b></h2>
+  <div class="hp-prose">
+    <p>Every agent is a <strong>session</strong> with a page of its own: its conversation with you, its questions, its files, and Scribble, a canvas to draw on and send.</p>
+    <p><strong>The crown.</strong> Put the crown on the session that matters most. Its questions come first on the Desk, and it receives your quick note.</p>
+    <p><strong>Laying sessions together.</strong> Sessions that belong to one piece of work can be stacked: one combined list of their questions, with their conversations beside it.</p>
+    <p><strong>The Ledger</strong> lists every session, one line each: what it works on, whether it waits for you, and the switches to rename, crown, lay together or archive it.</p>
+    <p><strong>Passing a decision on.</strong> A decision can be copied and pasted into a message to another session. That agent then reads the whole card: the question, the options and your answer.</p>
+  </div>
+  <p class="hp-label">Every place has an address</p>
+  <table class="hp-table">
+    <tbody>
+      <tr><th><code>/</code></th><td>The Desk</td></tr>
+      <tr><th><code>/q/&lt;n&gt;</code></th><td>Question number n, opened</td></tr>
+      <tr><th><code>/walk</code></th><td>“Next, please”: the walk through all open questions</td></tr>
+      <tr><th><code>/s/&lt;id&gt;</code></th><td>A session; <code>/s/&lt;a&gt;+&lt;b&gt;</code> sessions laid together</td></tr>
+      <tr><th><code>/agents</code></th><td>The Ledger</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="notes" aria-labelledby="h-notes">
+  <h2 class="hp-title" id="h-notes"><span>Quick note and <span data-word="PAD_WORD">Scratchpad</span></span> <b>two places to write</b></h2>
+  <div class="hp-prose">
+    <p><strong>A quick note goes to an agent.</strong> From wherever you are, write a few words to the crowned session. It arrives as a plain message, no card. Pictures and files can go along.</p>
+    <p><strong>The <span data-word="PAD_WORD">Scratchpad</span> stays with you.</strong> It is your own notebook for notes, drawings and pictures, open from anywhere. No agent reads it; an agent sees only what you select there and send.</p>
+  </div>
+</section>
+
+<section id="keys" aria-labelledby="h-keys">
+  <h2 class="hp-title" id="h-keys">Keys <b>the whole app without the mouse</b></h2>
+  <p class="hp-lead">Plain keys, no Ctrl or Alt unless shown. They rest while you type in a field. In the app, <kbd>?</kbd> shows the keys that work where you are. This list is read from the app's own key table.</p>
+  <div id="key-list" class="hp-keys"><p class="hp-wait">Loading the keys…</p></div>
+</section>
+
+<header class="hp-part" id="agents">
+  <h2>For agents, and for whoever sets them up</h2>
+  <p>How an agent should ask (one structured text, options, advice, pictures, versions, hand-back) is written down in <code>docs/question-contract.md</code>; every tool, event and stored field in <code>docs/interface.md</code>. Below: what travels between a Claude Code session and you, in which direction, and what never makes the trip.</p>
+  <nav class="hp-nav" aria-label="The channel">
+    <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
+  </nav>
+</header>
+
 <section id="picture" aria-labelledby="h-picture">
   <h2 class="hp-title" id="h-picture">The picture <b>four parties, two directions</b></h2>
   <figure class="hp-figure">

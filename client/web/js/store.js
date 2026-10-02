@@ -207,8 +207,8 @@ async function post(url, body) {
 }
 
 /** Send a chat message to one session; with cardId it is a question back about that card. Rejects with a readable Error. */
-export const sendMessage = (text, agent, cardId, attachments, flags = {}) =>
-  post('/message', { text, agent, ...(cardId ? { card_id: cardId } : {}), ...(attachments?.length ? { attachments } : {}), ...(flags.handback ? { handback: true } : {}), ...(flags.explain ? { explain: true } : {}) })
+export const sendMessage = (text, agent, cardId, attachments, flags = {}, cards) =>
+  post('/message', { text, agent, ...(cardId ? { card_id: cardId } : {}), ...(attachments?.length ? { attachments } : {}), ...(flags.handback ? { handback: true } : {}), ...(flags.explain ? { explain: true } : {}), ...(cards?.length ? { cards } : {}) })
 
 /** Rename a session or give it another scribble. */
 export const editSession = (agent, changes) => post('/session', { agent, ...changes })

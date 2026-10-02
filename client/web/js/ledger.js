@@ -1,5 +1,5 @@
 // The Ledger: the overview of the sessions at /agents (css/ledger.css). One line per session:
-// its mark, its name, its state, what it asks or does (a yes/no is answered right in the line), its
+// its mark, its name, its state (the sidebar's ring), what it asks or does (a yes/no is answered right in the line), its
 // model, its machine, when it was last seen, and what can be done with it.
 //   - a click on a column's head sorts by it (again: the other way round); "Back to your order" returns
 //   - in your own order a line is moved by its grip: between two lines it moves there (the server's
@@ -20,8 +20,9 @@
 //   A          archive (disconnected only)         Shift+↑↓  move the line     Esc   let go
 
 import { subscribe, getState, pair, unpair, archive, moveSession, decide, reopen } from './store.js'
-import { avatar, crownToggle, tellApart, openMarkPicker, openEditor } from './agents.js'
-import { el, sketch, ago, bareHand } from './ui.js'
+import { avatar, crownToggle, tellApart, openMarkPicker, openEditor, summary, badge } from './agents.js'
+import { el, sketch, ago } from './ui.js'
+import { walkSession } from './app.js'
 import { say, pageHost } from './back.js'
 
 const $ = id => document.getElementById(id)
@@ -30,16 +31,14 @@ const typingIn = node => Boolean(node?.closest?.('input, textarea, select, [cont
 const button = (cls, text) => { const b = el('button', cls, text); b.type = 'button'; return b }
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 
-// ---- what a session needs right now (the sidebar's rule, js/agents.js summary()) ----
-function summaryOf(all, a) {
-  const cards = all.queue.map(id => all.cards.find(c => c.id === id)).filter(c => c && c.agent === a.id && c.status === 'open')
-  const tasks = all.tasks.filter(t => t.agent === a.id)
-  const running = Boolean(a.online && tasks.some(t => t.state === 'working'))
-  const stuck = cards.some(c => c.urgency === 'critical' || c.kind === 'permission')
-  // The hand: it is stopped and waits for the human.
-  const hand = cards.length > 0 && (a.online ? stuck || !running : stuck)
+// ---- what a session needs right now: the sidebar's own rule (js/agents.js summary()), plus its first question ----
+function summaryOf(all, a, later) {
+  const s = summary(all, [a], later)
+  // Which questions those are, in the order of the queue: the line names the first one.
+  const off = new Set(later ?? [])
+  const cards = all.queue.map(id => all.cards.find(c => c.id === id)).filter(c => c && c.agent === a.id && c.status === 'open' && !off.has(c.id) && !c.with_agent)
   const top = cards.length ? Math.max(...cards.map(c => RANK[c.urgency] ?? 1)) : -1
-  return { cards, open: cards.length, tasks, online: Boolean(a.online), running, stuck, hand, top }
+  return { ...s, cards, hand: Boolean(s.open && s.stuck), top }
 }
 const stateWord = s => (!s.online ? 'away' : s.hand ? 'waiting' : s.running ? 'working' : s.open ? 'asking' : 'idle')
 // How much it needs the human, for sorting by state: waiting first, then by urgency, away last.
@@ -55,12 +54,8 @@ function openQuestion(cardId) {
   history.pushState({ q: cardId }, '', `${location.pathname}?${params}${location.hash}`)
   window.dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
 }
-/** A session's questions, one after the other: the walk the sidebar's badge starts; else its first one alone. */
-function walk(id, s) {
-  const badge = sideRow(id)?.querySelector('button.agent-badge')
-  if (badge && (sideRow(id).dataset.members ?? id) === id) return badge.click()
-  if (s.cards[0]) openQuestion(s.cards[0].id)
-}
+/** A session's questions, one after the other, in the question window (js/app.js). */
+const walk = id => walkSession(id)
 
 function mountLedger(root) {
   const view = { find: '', sort: 'order', down: false, cur: '', pairFrom: '' }
@@ -160,7 +155,7 @@ function mountLedger(root) {
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${a.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(a, { vip: false, working: s.running }))
+    mark.append(avatar(a, { vip: false }))
     mark.addEventListener('click', e => { if (phone.matches) return; e.stopPropagation(); openMarkPicker(a, mark) })   // a phone's line only opens
     face.append(mark, crownToggle(a, 'ledger-crown'))
 
@@ -184,12 +179,14 @@ function mountLedger(root) {
       name.append(chip)
     }
 
-    // State: stopped and waiting, a red hand with the count; at work, the word (and its count, quiet); else a word.
+    // State: the sidebar's own ring (js/agents.js badge()): the count in it, the hand in red for a knock, a
+    // trace running round while it works; a click on it goes through its questions. Beside it, a word.
     const state = el('span', 'ledger-state')
     const word = stateWord(s)
-    if (s.hand) state.append(bareHand(), el('b', null, String(s.open)))
-    else state.append(el('span', null, word === 'asking' ? 'asks' : word), ...(s.open ? [el('b', null, String(s.open))] : []))
-    state.title = s.open ? `${word}, ${s.open === 1 ? '1 question' : `${s.open} questions`} open` : word
+    const ring = badge(s, a.name, () => walk(a.id))
+    if (ring) state.append(ring)
+    state.append(el('span', null, word === 'asking' ? 'asks' : word))
+    if (s.hand) state.append(el('b', null, String(s.open)))   // the hand's ring holds no number
 
     // What it asks (its first question, a yes/no answered right here) or what it does.
     const does = el('span', 'ledger-does')
@@ -199,7 +196,7 @@ function mountLedger(root) {
       title.title = `${card.title}: open it as a window`
       title.addEventListener('click', e => { e.stopPropagation(); openQuestion(card.id) })
       does.append(title)
-      if (s.open > 1) { const more = button('ledger-more', `+${s.open - 1}`); more.title = 'Go through its questions'; more.addEventListener('click', e => { e.stopPropagation(); walk(a.id, s) }); does.append(more) }
+      if (s.open > 1) { const more = button('ledger-more', `+${s.open - 1}`); more.title = 'Go through its questions'; more.addEventListener('click', e => { e.stopPropagation(); walk(a.id) }); does.append(more) }
       if (quick(card)) {
         const yes = yesOf(card), no = card.options.find(o => o !== yes)
         const advised = o => [card.recommended].flat().includes(o.key)
@@ -224,7 +221,7 @@ function mountLedger(root) {
     const cell = text => el('span', 'ledger-cell', text || '')
     const acts = el('span', 'ledger-acts')
     acts.append(icon('go', 'Open the conversation', () => go(a.id)))
-    if (s.open) acts.append(icon('tray', 'Its questions, one after the other', () => walk(a.id, s)))
+    if (s.open) acts.append(icon('tray', 'Its questions, one after the other', () => walk(a.id)))
     if (!group && all.agents.length > 1) acts.append(icon('heads', 'Lay together with…', () => togglePair(a.id)))
     if (!a.online) acts.append(icon('archive', 'Archive: put this session away', () => act(archive(a.id))))
 
@@ -236,7 +233,7 @@ function mountLedger(root) {
   function render(state) {
     last = state
     const all = state.all
-    sums = new Map(all.agents.map(a => [a.id, summaryOf(all, a)]))
+    sums = new Map(all.agents.map(a => [a.id, summaryOf(all, a, state.later)]))
     if (view.cur && !agentOf(view.cur)) view.cur = ''
     if (view.pairFrom && !agentOf(view.pairFrom)) view.pairFrom = ''
     const apart = tellApart(all.agents)
@@ -456,7 +453,7 @@ function mountLedger(root) {
     }
     const row = list.querySelector('.ledger-line.is-cur')
     const keys = {
-      q: () => walk(a.id, s),
+      q: () => walk(a.id),
       r: () => openEditor(a),
       d: () => openMarkPicker(a, row.querySelector('.ledger-mark')),
       c: () => row.querySelector('.crown-toggle')?.click(),
@@ -476,7 +473,7 @@ function mountLedger(root) {
   const node = el('main')
   node.id = 'ledger'
   node.setAttribute('aria-label', 'Agents')
-  $('roster')?.after(node)
+  ($('roster') ?? $('inbox'))?.after(node)   // #roster: the old list of cards, while it still exists
   const ledger = mountLedger(node)
   subscribe(state => ledger.render(state))
   // "Last seen" moves on by itself.

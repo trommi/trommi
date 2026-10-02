@@ -1,5 +1,6 @@
-// The help page: draws the picture of the channel and renders the reference of
-// tools and events from /api/tools, the same tables the agent is given.
+// The help page: a short guide to the app (its words come from ui.js and its key list from keys.js,
+// so neither can drift from the app), then the picture of the channel and the reference of tools and
+// events from /api/tools, the same tables the agent is given.
 
 const $ = id => document.getElementById(id)
 const el = (tag, cls, text) => {
@@ -20,15 +21,15 @@ const svg = (tag, attrs = {}, text) => {
 const LANES = [
   { name: 'Claude Code', sub: 'the session: model and terminal' },
   { name: 'Channel', sub: 'server.mjs, MCP over stdio' },
-  { name: 'Hub', sub: 'HTTP, SSE, state in data/' },
+  { name: 'Hub', sub: 'HTTP, SSE, state in data/pad.db' },
   { name: 'Browser, apps', short: 'Browser', sub: 'you', human: true },
 ]
 // A hop goes from one lane to another. Lines are names on the wire; a line that starts with ~ is an explanation.
 const hop = (from, to, ...lines) => ({ from, to, lines })
 const BANDS = [
   { title: 'You → agent', rows: [
-    [hop(3, 2, 'POST /message  /decide', 'POST /reopen  /scribble'), hop(2, 1, 'SSE /agent/link'),
-      hop(1, 0, 'notifications/claude/channel', 'content, meta.kind = chat | decision', '| decision_reopened | scribble')],
+    [hop(3, 2, 'POST /message  /decide', 'POST /reopen  /shred  /close …'), hop(2, 1, 'SSE /agent/link'),
+      hop(1, 0, 'notifications/claude/channel', 'content, meta.kind = chat | decision', '| decision_reopened | shredded | …', '~all kinds: see Events below')],
     [hop(3, 2, 'POST /decide', '~on an approval card'), hop(2, 1, 'SSE /agent/link'),
       hop(1, 0, 'notifications/claude/channel/', 'permission', 'request_id, behavior')],
   ] },
@@ -132,6 +133,70 @@ function drawDiagram(narrow) {
 const alone = document.documentElement.dataset.only === 'diagram'
 $('diagram').replaceChildren(drawDiagram(false), drawDiagram(true))
 
+// ---- the guide: the app's own words, and its own key table -----------------------
+
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
+const KEY_NAMES = { Mod: MOD, Shift: '⇧', ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', ' ': 'Space', Delete: 'Del', Backspace: '⌫' }
+// One key of the table as caps: 'g i' is G then I, 'Shift+ArrowUp' is ⇧ ↑.
+function caps(spec) {
+  const nodes = []
+  ;(spec === ' ' ? [spec] : spec.split(' ')).forEach((part, i) => {
+    if (i) nodes.push(el('i', null, 'then'))
+    for (const p of part === '+' ? [part] : part.split('+')) nodes.push(el('kbd', null, KEY_NAMES[p] ?? (p.length === 1 ? p.toUpperCase() : p)))
+  })
+  return nodes
+}
+
+// The key list, from LAYOUT in keys.js: one block per title, a quiet entry lends its key to its twin.
+function drawKeys(layout) {
+  const blocks = new Map()
+  for (const group of layout) {
+    if (!blocks.has(group.title)) {
+      const block = el('div')
+      block.append(el('h3', null, group.title), el('dl', 'hp-params'))
+      blocks.set(group.title, block)
+    }
+    const list = blocks.get(group.title).lastChild
+    for (const entry of group.keys) {
+      if (entry.quiet) continue
+      const twin = group.keys.find(k => k.quiet && k.id === entry.id.replace('.next', '.prev'))
+      const row = el('div')
+      const dt = row.appendChild(el('dt'))
+      ;[...(twin?.keys ?? []), ...entry.keys].forEach((spec, i) => { if (i) dt.append(el('i', null, twin ? '' : 'or')); dt.append(...caps(spec)) })
+      row.append(el('dd', null, entry.verb ?? entry.does))
+      list.append(row)
+    }
+  }
+  $('key-list').replaceChildren(...blocks.values())
+}
+
+async function loadGuide() {
+  // The words as the app says them today; the page's own text stands in where they cannot be read.
+  try {
+    const words = { ...(await import('./ui.js')), ...(await import('/pad/name.js').catch(() => ({}))) }
+    for (const node of document.querySelectorAll('[data-word]')) {
+      const word = words[node.dataset.word]
+      if (typeof word === 'string') node.textContent = word
+    }
+  } catch {}
+  try {
+    const { LAYOUT, cap } = await import('./keys.js')
+    drawKeys(LAYOUT)
+    // The key of each of the four ways, beside its word.
+    for (const node of document.querySelectorAll('[data-key]')) { try { node.append(el('kbd', null, cap(node.dataset.key))) } catch {} }
+  } catch {
+    $('key-list').replaceChildren(el('p', 'hp-wait', 'The key list could not be read. In the app, press ? to see it.'))
+  }
+}
+
+// keys.js listens for "?" to open its sheet; on this page the list is the page, so "?" goes there.
+window.addEventListener('keydown', e => {
+  if (e.key !== '?' || e.ctrlKey || e.metaKey || e.altKey || e.target?.closest?.('input, textarea, select')) return
+  e.preventDefault()
+  e.stopImmediatePropagation()
+  $('keys')?.scrollIntoView()
+}, true)
+
 // ---- the reference -------------------------------------------------------------
 
 function typeOf(prop) {
@@ -219,4 +284,4 @@ for (const row of document.querySelectorAll('.hp-sees tbody tr')) {
   if (cells.length === 2) ['Today', 'Once the room key exists'].forEach((when, i) => { cells[i].dataset.when = when })
 }
 
-if (!alone) loadReference()
+if (!alone) { loadGuide(); loadReference() }

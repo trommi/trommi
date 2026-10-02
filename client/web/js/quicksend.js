@@ -12,6 +12,7 @@ import { subscribe, getState, sendMessage, star } from './store.js'
 import { el, sketch, crown } from './ui.js'
 import { avatar } from './agents.js'
 import { dictationMic } from './speech.js'
+import { pasteChip } from './cardclip.js'
 
 const KEY = 'trommi-king'
 const bar = document.querySelector('.topbar')
@@ -146,13 +147,16 @@ form.addEventListener('dragover', e => { if (e.dataTransfer?.types?.includes('Fi
 form.addEventListener('dragleave', () => form.classList.remove('is-drop'))
 form.addEventListener('drop', e => { form.classList.remove('is-drop'); if (e.dataTransfer?.files?.length) { e.preventDefault(); attach(e.dataTransfer.files) } })
 
+// A copied decision goes along as a chip (cardclip.js): offered above the field, or Ctrl+V.
+const clipped = pasteChip(field, { host: box, onChange: () => fit() })
+
 // ---- the field: one line, more while it holds more ----
 function fit() {
   field.style.height = 'auto'
   const lines = field.value.includes('\n') || field.scrollHeight > 44
   form.toggleAttribute('data-tall', lines)
   field.style.height = lines ? `${Math.min(field.scrollHeight, window.innerHeight * .4)}px` : ''
-  send.hidden = !field.value.trim() && !attached.length
+  send.hidden = !field.value.trim() && !attached.length && !clipped.ids()
 }
 field.addEventListener('input', fit)
 field.addEventListener('keydown', e => {
@@ -170,11 +174,12 @@ form.addEventListener('submit', async e => {
   e.preventDefault()
   const text = field.value.trim()
   if (!receiver) return openList()
-  if (!text && !attached.length) return field.focus()
+  if (!text && !attached.length && !clipped.ids()) return field.focus()
   const target = receiver
   form.setAttribute('aria-busy', 'true')
   try {
-    await sendMessage(text, target.id, null, attached)
+    await sendMessage(text, target.id, null, attached, {}, clipped.ids())
+    clipped.clear(true)
     field.value = ''
     attached = []
     paintFiles()

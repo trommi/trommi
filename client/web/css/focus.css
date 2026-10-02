@@ -1094,3 +1094,20 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 /* many pictures: one large picture and a single strip of small ones that scrolls sideways */
 .focus-thumbs { overflow-x: auto; scrollbar-width: thin; padding-bottom: 2px; }
 .focus-thumbs .focus-figure-name { flex: none; position: sticky; right: 0; padding-left: var(--s-2); background: var(--sunken); }
+.focus-composer .focus-pen { display: none; }
+.focus-answer > .focus-actions { order: 9; }
+
+/* Writing on the card, made unambiguous: words go into the field at the foot; a note on a paragraph begins with the
+   small pencil in its margin; the pen draws only in its own mode, which the row names. */
+.focus-card[data-marks] .focus-scroll { cursor: auto; }
+.focus-mark-quill { position: absolute; z-index: 2; width: 24px; height: 24px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.focus-mark-quill .sketch { width: 14px; height: 14px; }
+.focus-mark-quill:hover { color: var(--urg-high); box-shadow: 0 0 0 1px var(--urg-high); }
+.focus-composer .focus-mark-tools { align-items: center; }
+.focus-mark-state { padding: 0 4px 0 2px; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--urg-high); white-space: nowrap; }
+.focus-mark-done, .focus-mark-clear { flex: none; height: 30px; padding: 0 10px; border-radius: var(--r-sm); font: 600 var(--t-xs)/1 var(--font); white-space: nowrap; color: var(--muted); }
+.focus-mark-done { background: var(--fg); color: var(--surface); margin-left: 4px; }
+.focus-mark-clear:hover { color: var(--urg-critical); background: var(--sunken); }
+.focus-composer .focus-ask:has(.focus-mark-tools[data-pen]) .focus-ask-field { min-width: 0; flex-basis: 0; }
+.focus-asset-quiet { background: none; padding: 0 4px; opacity: .8; }
+.focus-mark-done { margin-right: 8px; }

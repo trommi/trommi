@@ -9,6 +9,7 @@ import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, ref
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountFiles } from './history.js'
 import { dictationMic } from './speech.js'
+import { pasteChip, cardChips } from './cardclip.js'
 import { tellApart } from './agents.js'
 
 // ---- icons -----------------------------------------------------------------
@@ -415,6 +416,8 @@ function createPane(agent, ctx) {
   send.disabled = true
   send.append(icon('send'))
   form.append(chips, draft, picker, clip, mic, send)
+  // A copied decision goes along as a chip (cardclip.js): offered above the field, or Ctrl+V.
+  const clipped = pasteChip(draft, { host: form, onChange: () => fitDraft() })
   const hint = el('p', 'hint')
   hint.setAttribute('aria-hidden', 'true')
   hint.append(el('kbd', null, 'Enter'), ' sends, ', el('kbd', null, 'Shift'), ' + ', el('kbd', null, 'Enter'), ' for a new line')
@@ -486,6 +489,7 @@ function createPane(agent, ctx) {
       // What the human sent from the pad: the picture of the selection, as the session got it.
       node.append(...attachmentNodes((m.attachments ?? []).filter(a => a.pad)))
       if (about) node.append(aboutNode(about, ctx.onCard))
+      if (m.cards?.length) node.append(cardChips(m.cards, id => ctx.onOpen?.(id)))
       if (m.text) {
         const bubble = el('div', 'bubble')
         bubble.append(el('p', null, m.text))
@@ -667,7 +671,7 @@ function createPane(agent, ctx) {
     const max = Math.max(120, Math.min(260, window.innerHeight * 0.36))
     draft.style.height = `${Math.min(draft.scrollHeight, max)}px`
     draft.style.overflowY = draft.scrollHeight > max ? 'auto' : 'hidden'
-    send.disabled = sending || (!draft.value.trim() && !attached.length)
+    send.disabled = sending || (!draft.value.trim() && !attached.length && !clipped.ids())
   }
   function paintChips() {
     chips.replaceChildren(...attached.map((a, i) => {
@@ -719,14 +723,15 @@ function createPane(agent, ctx) {
   form.addEventListener('submit', async e => {
     e.preventDefault()
     const text = draft.value.trim()
-    if ((!text && !attached.length) || sending) return
+    if ((!text && !attached.length && !clipped.ids()) || sending) return
     sending = true
     form.classList.add('is-sending')
     error.hidden = true
     fitDraft()
     try {
       const files = attached
-      await sendMessage(text, agent, null, files)
+      await sendMessage(text, agent, null, files, {}, clipped.ids())
+      clipped.clear(true)
       // Only clear what was sent; the user may already be typing the next message.
       if (draft.value.trim() === text) draft.value = ''
       if (attached === files) { attached = []; paintChips() }
