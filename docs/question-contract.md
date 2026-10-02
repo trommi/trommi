@@ -1,7 +1,7 @@
 # Question contract: sections, option notes, drafts, session order, versions and hand-back
 
 What the hub puts into a card and takes from a page, for whoever renders the
-Focus window or another client. Seven things, all additive: a client that
+Focus window or another client. All of it is additive: a client that
 knows none of them keeps working with `body`, `options`, `recommended`,
 `note`.
 
@@ -471,3 +471,48 @@ is expected of it.
   file). `GET /api/tools` returns the same list as `drawings` (`[]` when the
   file is missing), and the `introduce` tool lists the names with meanings.
   Without the file any lower-case name is accepted.
+
+## 8. A picture and the page it was rendered from
+
+An attachment may carry its page, so the human can open and try what the
+picture shows, right under it.
+
+### Shape
+
+Every stored attachment (on messages, cards, and inside `card.versions[i]`):
+
+```js
+{
+  name: "variant-a.png", url: "/files/3f9a1c2e.png", kind: "image", image: true, size: 48211,
+  title: "Variant A",                                 // optional caption
+  page: { url: "/files/7b20d4aa.html", kind: "file" } // optional
+  //    { url: "/designs/s5.html",     kind: "link" }
+  //    { url: "https://…/a/<id>#<key>", kind: "link" }
+}
+```
+
+- `page.kind === "file"`: a self-contained HTML file the agent sent with the
+  picture, stored beside it under `/files/`. It is served behind the login as
+  `text/html` with `Content-Security-Policy: sandbox allow-scripts;
+  default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src
+  data:; script-src 'unsafe-inline'`. The sandbox (no `allow-same-origin`)
+  gives the page an origin of its own: it runs its inline scripts, but has
+  neither the board's cookies nor its storage and can load or call nothing.
+  Open it in a new tab or in an `<iframe sandbox="allow-scripts">`; never
+  inject its markup into the board's own document.
+- `page.kind === "link"`: a path on the board (starts with `/`), an asset link
+  or an `http(s)` URL. Open it as a link (new tab).
+- No `page`: just a picture (or file), as before.
+- Any kind of attachment may carry `title`; `page` is meant for pictures.
+
+### How it gets there (for reference)
+
+Agents pass attachments as a path or as `{ path, page?, title? }`. A file
+`foo.html` beside an attached picture `foo.png` is linked by itself, and the
+tool result says so. Human uploads have no `page`.
+
+### What the client does
+
+Under each picture with `page`, a link or button "Open page" (the `title` as
+caption if there is one). Earlier versions of a card keep their pictures and
+pages; the files live as long as the card.
