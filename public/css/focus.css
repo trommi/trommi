@@ -426,3 +426,27 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-say i:nth-child(3) { animation-delay: .24s; }
 @keyframes focus-say { 50% { transform: scaleY(.4); } }
 @media (prefers-reduced-motion: reduce) { .focus-say i { animation: none !important; } }
+
+/* ---- pared down: fewer elements, clearer answers ---- */
+.focus-brand { visibility: hidden; }
+.focus-dots { display: none; }
+.focus-foot { display: flex; justify-content: center; padding-block: 6px 10px; border-top: 0; background: none; }
+.focus-pos { font-size: var(--t-xs); color: var(--faint); letter-spacing: .06em; text-transform: uppercase; }
+/* back and next: round arrows at the sides of the sheet */
+.focus-sheet { position: relative; }
+.focus-sheet > .focus-nav { position: absolute; top: 50%; translate: 0 -50%; z-index: 5; width: 48px; height: 48px; padding: 0; justify-content: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+.focus-sheet > .focus-nav-prev { left: 12px; }
+.focus-sheet > .focus-nav-next { right: 12px; }
+.focus-sheet > .focus-nav:disabled { opacity: 0; pointer-events: none; }
+.focus-sheet > .focus-nav .focus-icon { width: 22px; height: 22px; color: var(--fg); }
+@media (max-width: 640px) {
+  .focus-sheet > .focus-nav { top: auto; bottom: 6px; translate: none; width: 44px; height: 44px; box-shadow: none; background: none; }
+  .focus-sheet > .focus-nav-prev { left: 6px; }
+  .focus-sheet > .focus-nav-next { right: 6px; }
+}
+/* answers that read as buttons: one strong label, the consequence small beneath, no key caps */
+.focus-opt { background: color-mix(in srgb, var(--u, var(--accent)) 9%, var(--surface)); border: 0; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u, var(--accent)) 30%, transparent); border-radius: 14px; }
+.focus-opt:hover:not(:disabled) { box-shadow: inset 0 0 0 2px var(--u, var(--accent)); }
+.focus-opt-label { font: 700 1.12rem/1.25 var(--font); color: var(--fg); }
+.focus-opt-detail { font-size: var(--t-sm); color: var(--muted); }
+.focus-opt-mark kbd { display: none; }

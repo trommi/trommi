@@ -1,14 +1,13 @@
 // The page around the card stack: views, theme, connection feedback, and the
 // glue between conversation, history, and deck.
 
-import { connect, subscribe, getState, setState, isLoaded, sendScribble, loadCanvas, saveCanvas } from './store.js'
+import { connect, subscribe, getState, setState, isLoaded, setScope, sendScribble, loadCanvas, saveCanvas } from './store.js'
 import { mountAgents, mountRoster } from './agents.js'
 import { mountInbox } from './inbox.js'
 import { mountDictation } from './speech.js'
 import { el } from './ui.js'
 import { mountChat, icon } from './chat.js'
 import { mountHistory } from './history.js'
-import { mountStatus } from './status.js'
 
 const $ = id => document.getElementById(id)
 const root = document.documentElement
@@ -68,11 +67,14 @@ const history = mountHistory($('history'), { flags, onToggle: open => { deckRoot
 function openCard(cardId) {
   const card = getState().cards.find(c => c.id === cardId)
   if (!card) return
+  setPanel(true)
   setView('decisions')
   setPane('deck')
   if (card.status === 'open') {
     history.close()
-    deckRoot.dispatchEvent(new CustomEvent('deck:focus', { detail: { cardId } }))
+    const row = deckRoot.querySelector(`[data-id="${CSS.escape(cardId)}"]`)
+    row?.scrollIntoView({ block: 'center', behavior: 'smooth' })
+    row?.animate([{ outline: '3px solid var(--accent)' }, { outline: '3px solid transparent' }], { duration: 1400 })
   } else {
     history.reveal(cardId)
   }
@@ -81,7 +83,6 @@ function openCard(cardId) {
 // ---- side panel: decisions or scribble, and its width ----------------------
 
 const panel = $('decisions')
-const paneTabs = { deck: $('pane-deck'), scribble: $('pane-scribble') }
 let scribble = null   // the mounted canvas, loaded on first use
 
 async function mountScribblePane() {
@@ -109,7 +110,6 @@ async function mountScribblePane() {
 
 function setPane(name) {
   panel.dataset.pane = name
-  for (const [key, tab] of Object.entries(paneTabs)) tab.setAttribute('aria-selected', String(key === name))
   if (name === 'scribble') syncCanvas()
 }
 
@@ -130,7 +130,9 @@ async function syncCanvas() {
     showToast('error', err.message, 4000)
   }
 }
-for (const [name, tab] of Object.entries(paneTabs)) tab.addEventListener('click', () => setPane(name))
+// Scribble opens from the composer and closes back to the questions.
+$('scribble-open').addEventListener('click', () => { setPanel(true); setView('decisions'); setPane('scribble') })
+$('scribble-close').addEventListener('click', () => setPane('deck'))
 
 // A scribble in the conversation leads back to the session's canvas.
 function openScribble() {
@@ -178,7 +180,6 @@ resizer.addEventListener('keydown', e => {
 
 chat = mountChat({ onCard: openCard, onScribble: openScribble, onUnread: paintView, flags })
 if (flags.has('scribble')) setPane('scribble')
-const status = mountStatus($('status'), { onCard: openCard })
 // Picking an agent on a phone should land in its conversation.
 const agents = mountAgents($('agents'), { onSelect: id => setView(id ? 'chat' : 'decisions') })
 mountDictation($('mic'), $('draft'), { onError: text => showToast('error', text, 6000) })
@@ -199,27 +200,42 @@ $('focus-open').addEventListener('click', () => openFocus())
 // A row in the inbox opens its card as a full page; from there one tap decides and the next comes up.
 const inbox = mountInbox($('inbox'), { onOpen: openFocus })
 const roster = mountRoster($('roster'))
+// A session's own questions, written out in full beside its conversation.
+const sessionCards = mountInbox(deckRoot, { onOpen: openFocus, session: true })
+
+// The questions beside a conversation fold away; the choice is remembered.
+function setPanel(shown) {
+  if (shown) delete document.body.dataset.panel
+  else document.body.dataset.panel = 'hidden'
+  $('panel-toggle').setAttribute('aria-pressed', String(shown))
+  store('trommi-panel', shown ? 'shown' : 'hidden')
+}
+try { if (localStorage.getItem('trommi-panel') === 'hidden') setPanel(false) } catch {}
+$('panel-toggle').addEventListener('click', () => setPanel(document.body.dataset.panel === 'hidden'))
+
+// The bar's own navigation: the inbox and the list of agents.
+function showPage(page) {
+  if (page) document.body.dataset.page = page
+  else delete document.body.dataset.page
+  $('nav-inbox').toggleAttribute('aria-current', !page && !getState().scope)
+  $('nav-roster').toggleAttribute('aria-current', page === 'roster')
+  agents.render(getState())
+}
+$('nav-inbox').addEventListener('click', () => { setScope(null); showPage(null) })
+$('nav-roster').addEventListener('click', () => showPage('roster'))
 paintView()
 
 // ---- open count: tab badge and document title ------------------------------
 
 const badge = $('open-badge')
-let deckCount = null   // from the deck once it reports; until then the queue length
 
 function paintCount(state) {
-  const open = deckCount ?? state.queue.length
+  const open = state.queue.length
   badge.textContent = open > 99 ? '99+' : open
   badge.hidden = open === 0
-  $('pane-count').textContent = badge.textContent
-  $('pane-count').hidden = open === 0
   tabs.decisions.setAttribute('aria-label', open ? `Entscheidungen, ${open} offen` : 'Entscheidungen')
   document.title = open ? `(${open}) Trommi` : 'Trommi'
 }
-deckRoot.addEventListener('deck:count', e => {
-  if (typeof e.detail?.open !== 'number') return
-  deckCount = e.detail.open
-  paintCount(getState())
-})
 
 // ---- connection feedback ---------------------------------------------------
 
@@ -262,7 +278,6 @@ function paintConn(online) {
 // ---- state -----------------------------------------------------------------
 
 const boot = getState()   // the store's placeholder; anything else came from the server
-let placeholderCount = null
 
 subscribe((state, online) => {
   const loaded = isLoaded() || state !== boot
@@ -270,8 +285,11 @@ subscribe((state, online) => {
   paintConn(online)
   chat.render(state, loaded)
   history.render(state, loaded)
-  status.render(state)
+  sessionCards.render(state)
+  $('panel-count').textContent = state.scope && state.queue.length ? String(state.queue.length) : ''
   agents.render(state)
+  $('nav-inbox').toggleAttribute('aria-current', !document.body.dataset.page && !state.scope)
+  $('nav-roster').toggleAttribute('aria-current', document.body.dataset.page === 'roster')
   inbox.render(state)
   roster.render(state)
   // The composer measures itself; it could not while its pane was hidden.
@@ -281,21 +299,11 @@ subscribe((state, online) => {
   if (panel.dataset.pane === 'scribble') syncCanvas()
   $('mic').hidden = !state.speech
   if (loaded) paintCount(state)
-  if (placeholderCount) placeholderCount.textContent = loaded ? openLine(state.queue.length) : ''
   paintView()
 })
 
 function openLine(n) {
   return n === 0 ? 'Gerade ist nichts offen.' : n === 1 ? '1 offene Entscheidung wartet.' : `${n} offene Entscheidungen warten.`
-}
-
-// The deck is built separately; without it the page still works.
-function deckPlaceholder() {
-  const box = el('div', 'stack-missing')
-  placeholderCount = el('p', 'stack-missing-count', getState() !== boot ? openLine(getState().queue.length) : '')
-  box.append(icon('stack'), el('h2', null, 'Der Kartenstapel ist gerade nicht verfügbar'), placeholderCount,
-    el('p', null, 'Das Gespräch und der Verlauf funktionieren weiter. Lade die Seite neu, um es noch einmal zu versuchen.'))
-  deckRoot.replaceChildren(box)
 }
 
 if (flags.has('skeleton')) {
@@ -304,15 +312,6 @@ if (flags.has('skeleton')) {
   setState({ messages: [], cards: [], queue: [] })
 } else {
   connect()
-}
-
-try {
-  if (flags.has('nodeck')) throw new Error('nodeck flag')
-  const deck = await import('./deck.js')
-  deck.mountDeck(deckRoot)
-} catch (err) {
-  console.warn('Kartenstapel nicht geladen:', err)
-  deckPlaceholder()
 }
 
 if (flags.has('offline')) { wasOnline = true; conn.dataset.state = 'offline'; connText.textContent = CONN_TEXT.offline; showToast('lost', 'Verbindung unterbrochen. Ich verbinde neu.') }
