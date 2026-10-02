@@ -1294,3 +1294,4 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
   .focus-opt-pen { position: relative; }
   .focus-opt-pen::after { content: ''; position: absolute; inset: -8px; }
 }
+.focus-done-work { margin-bottom: var(--s-5); }

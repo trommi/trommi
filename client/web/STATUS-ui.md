@@ -286,3 +286,15 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   > .inbox-inline`, filled by focus.js `openInline`; app.js `unfoldCard`). One at a time, wider than the column where
   there is room, address `/q/<n>` while unfolded. A phone (≤ 860px), the keyboard's open, the walk and direct loads
   keep the window.
+
+## Desk back in the sidebar, In revision (2 Oct, later)
+
+- The Desk is a block at the top of the sidebar again (the fixed `.topbar` at the sidebar's head on wide screens:
+  `#desk-go` with the desk drawing, name, `#desk-state`; `#brand-menu` is the caret, the menu opens under the block).
+  Nothing floats at the top centre. The phone keeps the top bar.
+- "In revision": `section.inbox-revising` after Snoozed, before Answered: `.inbox-revising-row` per card that is with
+  its session (`.inbox-revising-open` with the turning ring, title, `.inbox-revising-sent`; `.inbox-revising-tail`;
+  `.inbox-revising-take` → store `takeBack()` = POST /handback clear). It replaces the "Waiting" pile.
+- `list.revise` (B) hands the marked card back at once (`focusMode.revise(id)` through `openFocus(id, …, { revise })`).
+- Not connected: a dot on the caret, no sentence. Phone: 44px pile heads and menu entries. Dark: edge on quiet tiles.
+

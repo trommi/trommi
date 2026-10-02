@@ -778,6 +778,8 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-revising-row:hover .inbox-revising-take, .inbox-revising-take:focus-visible { opacity: 1; color: var(--fg); }
 @media (hover: none) { .inbox-revising-take { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) { .inbox-revising-open .ring-loop { opacity: 1; stroke-dasharray: 91 9; } }
+/* In the dark the quiet tile (No, Deny) is nearly the card's own ground: an edge makes it a button. */
+:root[data-theme="dark"] .inbox-answer:not(.is-lead):not(:hover):not(.is-picked):not(.is-hinted) { box-shadow: inset 0 0 0 1px var(--card-line); }
 /* ---- a row unfolded in place: it holds the whole card (js/focus.js, inline) and nothing of its own ----
    Its compact content is hidden while the card shows it; where the page has room the row is wider
    than the column. */
@@ -1230,8 +1232,9 @@ body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: no
 .sidedoors .conn[data-state="offline"] { margin: 4px -6px -6px; padding: 10px 18px 12px 20px; border-radius: 0 0 var(--r-md) var(--r-md); }
 /* When the connection is not there it must be seen without opening anything: the logo carries a mark,
    and the word stands beside it in the bar. */
-.brand:has(.conn[data-state="offline"]) .brand-open::after, .brand:has(.conn[data-state="connecting"]) .brand-open::after { content: "Connecting"; margin-left: 4px; padding: 5px 10px; border-radius: var(--r-pill); font: 500 var(--t-xs)/1 var(--font); letter-spacing: .01em; color: var(--muted); background: var(--sunken); }
-.brand:has(.conn[data-state="offline"]) .brand-open::after { content: "Disconnected, reconnecting"; background: var(--urg-high-soft); color: var(--urg-high); animation: blink 1.6s var(--ease-in-out) infinite; }
+/* Not connected: a small dot on the caret (the words stand in the menu's foot; a sentence here broke the bar). */
+.brand:has(.conn[data-state="offline"]) .brand-open::after, .brand:has(.conn[data-state="connecting"]) .brand-open::after { content: ""; flex: none; width: 8px; height: 8px; margin-left: 3px; border-radius: 50%; background: var(--faint); }
+.brand:has(.conn[data-state="offline"]) .brand-open::after { background: var(--urg-high); animation: blink 1.6s var(--ease-in-out) infinite; }
 .brand:has(.conn[data-state="offline"]) .brand-mark-bg { fill: var(--urg-high); }
 /* The two tools, and on wide screens the two places: one shape. */
 .topbar .focus-open, .topbar .padlink-open, .footnav button {
@@ -1442,4 +1445,13 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
     animation-duration: .01ms !important; animation-iteration-count: 1 !important;
     transition-duration: .01ms !important; transition-delay: 0s !important; scroll-behavior: auto !important;
   }
+}
+
+/* A finger needs 44px: the one-line pile heads and the menu's entries. */
+@media (pointer: coarse), (max-width: 860px) {
+  .inbox-pile-head { min-height: 44px; }
+  .topbar .sidedoors .menu-grid :is(a, button, #keys-open), .topbar .sidedoors .menu-desk, .topbar .sidedoors #jump-results button { min-height: 44px; }
+  .topbar .sidedoors .menu-foot button { width: 44px; min-height: 44px; }
+  #jump-field { height: 44px; }
+  .inbox-revising-row, .inbox-revising-open { min-height: 44px; }
 }
