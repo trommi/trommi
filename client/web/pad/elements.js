@@ -3,16 +3,18 @@
 //
 // One element is one record (see docs/pad.md):
 //   { id, pad, type, x, y, w, h, rotation, z, group, author, created, updated, rev,
-//     data, sent: [{ session, at, message_id }] }
+//     blob, data, sent: [{ session, at, message_id, rev }] }
+// blob is the id of the element's bytes in the blob store (the picture of an image,
+// the audio of a voice note) or null; it stands outside data so that a server can
+// keep and delete the file without reading data.
 // x, y, w, h is the box in world units (CSS pixels at 100 % zoom). data by type:
 //   stroke  { tool: 'pen' | 'hl', color, size, box: [w0, h0], pts: [x0, y0, …], pr?: [p0, …] }
 //           pts are relative to the box as it was drawn (w0 x h0); the box may since
 //           have been moved or scaled, the points never change
 //   text    { text, size, color, wrap }       wrap: the width lines break at; null = the default
 //           (TEXT_WRAP, scaled with the size). The box is as wide as the longest line.
-//   voice   a text that was spoken: { text, size, color, wrap, audio, ms, stub }
-//           audio is a blob id or null
-//   image   { blob, mime, nw, nh, name }      blob id; the bytes live in the blob store
+//   voice   a text that was spoken: { text, size, color, wrap, ms, stub }
+//   image   { mime, nw, nh, name }
 
 export const INK = 'ink'   // the one colour that follows the theme: dark on light paper, light on dark
 export const PEN_COLORS = [[INK, 'Ink'], ['#e03131', 'Red'], ['#f08c00', 'Orange'], ['#2f9e44', 'Green'], ['#1971c2', 'Blue'], ['#9c36b5', 'Violet']]
@@ -203,7 +205,7 @@ export function paintElement(c, el, env) {
     paintStroke(c, d, env.dark)
     c.restore()
   } else if (el.type === 'image') {
-    const rec = env.picture(d.blob)
+    const rec = el.blob ? env.picture(el.blob) : null
     if (rec?.ok) { c.imageSmoothingQuality = 'high'; c.drawImage(rec.img, el.x, el.y, el.w, el.h) }
     else { c.fillStyle = env.placeholder; c.fillRect(el.x, el.y, el.w, el.h) }
   } else if (isText(el)) {
