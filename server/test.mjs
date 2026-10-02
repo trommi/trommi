@@ -236,6 +236,15 @@ await client.notification({ method: 'notifications/claude/channel/permission_req
 } })
 let perm
 for (let i = 0; i < 50 && !perm; i++) { perm = (await state()).cards.find(c => c.kind === 'permission' && c.status === 'open'); await new Promise(r => setTimeout(r, 20)) }
+// an approval gates what the agent may do: it cannot be left to the agent
+{
+  const no = await post('/decide', { card_id: perm.id, trust: true })
+  assert.deepEqual([no.status, /cannot be left to the agent/.test((await no.json()).error), (await state()).cards.find(c => c.id === perm.id).status], [400, true, 'open'])
+{
+  const no = await post('/shred', { card_id: perm.id })
+  assert.deepEqual([no.status, /cannot be thrown away/.test((await no.json()).error), (await state()).cards.find(c => c.id === perm.id).status], [400, true, 'open'])
+}
+}
 assert.ok(perm, 'permission card created')
 assert.equal(perm.urgency, 'critical')
 assert.equal(perm.number, 10)
@@ -455,6 +464,70 @@ received.length = 0
   // the agent may take it away itself; then there is nothing to take back
   await call('withdraw_card', { card_id: info, reason: 'überholt' })
   assert.equal((await post('/reopen', { card_id: info })).status, 400)
+  received.length = 0
+}
+
+// "Shred": the human throws a card away unanswered; it leaves the stack for good, the agent is told not to ask again, and it can be fished out
+{
+  const onBoard = async id => (await state()).cards.find(c => c.id === id)
+  received.length = 0
+  const junk = await ask('Brauche ich nicht?')
+  await post('/draft', { card_id: junk, keys: ['a'] })
+  await call('set_status', { id: 'wartet', label: 'Wartet', state: 'decision', card_id: junk })
+  assert.equal((await post('/shred', { card_id: junk }, 'https://evil.example')).status, 403)
+  assert.equal((await post('/shred', { card_id: 'gibtsnicht' })).status, 400)
+  assert.equal((await post('/shred', { card_id: junk, note: ' egal ' })).status, 200)
+  await until(() => received.length === 1)
+  assert.deepEqual(received[0].params, {
+    content: 'The human threw the question "Brauche ich nicht?" away unanswered. That is neither a yes nor a no. Do not ask it again, in these or other words; carry on without an answer, using your own judgement, or drop the matter.\n\nTheir note: egal',
+    meta: { kind: 'shredded', card_id: junk },
+  })
+  s = await state()
+  let k = s.cards.find(c => c.id === junk)
+  assert.deepEqual([k.status, k.shredded > 0, k.choice, k.choices, k.note, 'draft' in k, s.queue.includes(junk)], ['shredded', true, null, [], 'egal', false, false])
+  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], ['shredded', junk, 'Brauche ich nicht? · egal'])
+  assert.deepEqual((({ state: st, card_id }) => [st, card_id])(s.tasks.find(t => t.id === 'wartet')), ['working', null])
+  await call('clear_status', { id: 'wartet' })
+  const listed = JSON.parse((await call('list_cards', {})).content[0].text).find(c => c.id === junk)
+  assert.deepEqual([listed.status, listed.shredded, listed.queue_position], ['shredded', k.shredded, null])
+  // it is no longer there to answer, shred, revise or withdraw
+  assert.equal((await post('/shred', { card_id: junk })).status, 409)
+  assert.equal((await post('/decide', { card_id: junk, key: 'a' })).status, 400)
+  await refused('revise_card', { card_id: junk, title: 'nochmal?' }, /already done/)
+  await refused('withdraw_card', { card_id: junk }, /already done/)
+  // fished out again it is open as it was, and the agent hears it
+  assert.equal((await post('/reopen', { card_id: junk })).status, 200)
+  await until(() => received.length === 2)
+  assert.deepEqual(received[1].params.meta, { kind: 'decision_reopened', card_id: junk, previous_choice: '', shredded: '1' })
+  s = await state()
+  k = s.cards.find(c => c.id === junk)
+  assert.deepEqual([k.status, k.shredded, k.note, s.queue.includes(junk), s.messages.at(-1).kind], ['open', null, '', true, 'reopened'])
+  assert.equal((await post('/shred', { card_id: junk })).status, 200)
+  await until(() => received.length === 3)
+  // an info can be thrown away too; an approval cannot (checked with the approvals)
+  const leaflet = (await call('create_info', { title: 'ungelesen weg', body: 'x' })).content[0].text.match(/^info (\w+)/)[1]
+  assert.equal((await post('/shred', { card_id: leaflet })).status, 200)
+  await until(() => received.length === 4)
+  assert.deepEqual([received[3].params.content, received[3].params.meta, (await onBoard(leaflet)).status], ['The human threw "ungelesen weg" away unread. Do not send it again.', { kind: 'shredded', card_id: leaflet }, 'shredded'])
+  received.length = 0
+}
+
+// the human hands a card back and thinks better of it: the card is theirs again and the agent is told it need not rework it
+{
+  received.length = 0
+  const back = await ask('Doch nicht zurück?')
+  assert.equal((await post('/handback', { card_id: back, clear: true })).status, 409, 'it is not with the agent')
+  assert.equal((await post('/message', { text: 'mach neu', card_id: back, handback: true })).status, 200)
+  await until(() => received.length === 1)
+  assert.ok((await state()).cards.find(c => c.id === back).with_agent > 0)
+  assert.equal((await post('/handback', { card_id: back })).status, 400)
+  assert.equal((await post('/handback', { card_id: 'gibtsnicht', clear: true })).status, 400)
+  assert.equal((await post('/handback', { card_id: back, clear: true })).status, 200)
+  await until(() => received.length === 2)
+  assert.deepEqual(received[1].params, { content: 'The human took "Doch nicht zurück?" back; there is no need to rework or explain it. If you already have, that is fine.', meta: { kind: 'handback_withdrawn', card_id: back } })
+  s = await state()
+  assert.deepEqual(['with_agent' in s.cards.find(c => c.id === back), s.messages.at(-1).kind, s.messages.at(-1).card_id], [false, 'handback_withdrawn', back])
+  await call('withdraw_card', { card_id: back })
   received.length = 0
 }
 
@@ -778,7 +851,7 @@ for (const tool of reference.tools) {
 }
 // and the events as they really arrive: every kind this test has received so far, with exactly those meta fields
 const kinds = reference.events.filter(e => e.kind)
-assert.deepEqual(kinds.map(e => e.kind), ['chat', 'decision', 'decision_reopened', 'info_read', 'scribble', 'pad'])
+assert.deepEqual(kinds.map(e => e.kind), ['chat', 'decision', 'decision_reopened', 'shredded', 'handback_withdrawn', 'info_read', 'scribble', 'pad'])
 for (const event of kinds) {
   const real = heard.find(n => n.method === event.method && n.params.meta.kind === event.kind)
   assert.deepEqual(Object.keys(real.params.meta).sort(), Object.keys(event.meta).sort(), event.kind)
@@ -787,9 +860,9 @@ for (const event of kinds) {
 const verdict = reference.events.find(e => e.method === 'notifications/claude/channel/permission')
 assert.deepEqual(Object.keys(heard.find(n => n.method === verdict.method).params).sort(), Object.keys(verdict.params).sort())
 assert.deepEqual(Object.keys(reference.events.find(e => e.method.endsWith('/permission_request')).params), ['request_id', 'tool_name', 'description', 'input_preview'])
-assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'files', 'image_path'], ['choices', 'option_notes', 'files', 'image_path'], ['previous_choices'], [], [], []])
+assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'marks', 'files', 'image_path'], ['choices', 'trust', 'marks', 'option_notes', 'files', 'image_path'], ['previous_choices', 'trust', 'shredded'], ['marks', 'files', 'image_path'], [], [], [], []])
 assert.ok(reference.tools[0].inputSchema.properties.card_id)
-assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
+assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
 
 // status strip: upsert, link to a card, and turn yellow when that card is answered
 await call('set_status', { id: 'srv', label: 'Server', state: 'working', detail: 'läuft' })
@@ -811,13 +884,13 @@ received.length = 0
 // the stack and the numbering survive a restart
 const saved = JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8'))
 assert.deepEqual(saved.queue, [low, high, normal2])
-assert.equal(saved.next_number, 18)
+assert.equal(saved.next_number, 21)
 await client.close()
 client = await start()
 assert.deepEqual((await state()).queue, [low, high, normal2])
 const late = await ask('nach dem Neustart', { urgency: 'high' })
 s = await state()
-assert.equal(s.cards.at(-1).number, 18)
+assert.equal(s.cards.at(-1).number, 21)
 assert.deepEqual(s.queue, [low, high, late, normal2])
 
 // asking back about a card instead of answering it: the message names the card, the agent hears which, and the card stays open
@@ -1268,6 +1341,136 @@ await call('withdraw_card', { card_id: looks })
   assert.deepEqual([k.attachments.length, k.attachments[0].page.kind, k.sections[1].picture, k.versions[0].attachments[0].page.url], [1, 'file', 0, pageUrl])
   assert.equal((await fetch(base + pageUrl, { headers: { Cookie: cookie } })).status, 200)
   await call('withdraw_card', { card_id: paged })
+}
+
+// "Trust": the human leaves the decision to the agent; what it advised stands as the choice, and it can be taken back like any answer
+{
+  received.length = 0
+  const sure = await ask('Mit Empfehlung überlassen?', { options: [{ key: 'a', label: 'Anton' }, { key: 'b', label: 'Berta' }], recommended: 'b' })
+  await post('/draft', { card_id: sure, keys: ['a'] })
+  assert.equal((await post('/decide', { card_id: sure, trust: true, key: 'a' })).status, 400, 'trust is no choice')
+  assert.equal((await post('/decide', { card_id: sure, trust: true, note: ' mach du ' })).status, 200)
+  await until(() => received.length === 1)
+  assert.deepEqual(received[0].params, {
+    content: 'The human trusts you with "Mit Empfehlung überlassen?": decide yourself (your advice was: Berta [b]). Say in one line what you chose with reply and this card_id, then close_card; do not ask again.\n\nTheir note: mach du',
+    meta: { kind: 'decision', card_id: sure, choice: 'b', trust: '1' },
+  })
+  s = await state()
+  let k = s.cards.find(c => c.id === sure)
+  assert.deepEqual([k.status, k.trusted, k.choice, k.choices, k.note, k.answered_version, 'draft' in k], ['decided', true, 'b', ['b'], 'mach du', 1, false])
+  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).text, s.messages.at(-1).trusted], ['decided', 'Trusted: your call · Berta', true])
+  assert.equal((await mine(sure)).trusted, true)
+  assert.equal((await post('/decide', { card_id: sure, trust: true })).status, 400, 'once is enough')
+  // taking it back: open again, nothing ticked, the note still there, and the agent hears what no longer holds
+  assert.equal((await post('/reopen', { card_id: sure })).status, 200)
+  await until(() => received.length === 2)
+  assert.deepEqual(received[1].params.meta, { kind: 'decision_reopened', card_id: sure, previous_choice: 'b', trust: '1' })
+  k = await onBoard(sure)
+  assert.deepEqual([k.status, k.trusted, k.choice, k.choices, k.answered_version, k.draft.keys, k.draft.note], ['open', false, null, [], null, [], 'mach du'])
+  assert.equal((await post('/decide', { card_id: sure, key: 'a' })).status, 200)
+  await until(() => received.length === 3)
+  assert.deepEqual([received[2].params.meta, (await onBoard(sure)).trusted], [{ kind: 'decision', card_id: sure, choice: 'a' }, false])
+  await call('close_card', { card_id: sure })
+  // without advice the choice stays empty, with several pieces of advice all of them stand; the agent closes the card as ever
+  const open1 = await ask('Ohne Empfehlung überlassen?')
+  const many = await ask('Mehrere überlassen?', { multiple: true, options: [option('a'), option('b'), option('c')], recommended: ['a', 'c'] })
+  received.length = 0
+  assert.equal((await post('/decide', { card_id: open1, trust: true })).status, 200)
+  assert.equal((await post('/decide', { card_id: many, trust: true })).status, 200)
+  await until(() => received.length === 2)
+  assert.deepEqual(received.map(n => n.params.meta), [{ kind: 'decision', card_id: open1, choice: '', trust: '1' }, { kind: 'decision', card_id: many, choice: 'a', choices: 'a,c', trust: '1' }])
+  assert.match(received[0].params.content, /decide yourself \(you gave no advice\)/)
+  s = await state()
+  assert.deepEqual([s.cards.find(c => c.id === open1).choice, s.cards.find(c => c.id === open1).choices, s.cards.find(c => c.id === many).choices, s.messages.at(-2).text, s.messages.at(-1).text], [null, [], ['a', 'c'], 'Trusted: your call', 'Trusted: your call · a, c'])
+  assert.equal(textOf(await call('close_card', { card_id: open1, summary: 'a genommen' })), 'closed')
+  assert.equal((await post('/reopen', { card_id: open1 })).status, 200, 'a trusted card without a choice can be taken back too')
+  await call('withdraw_card', { card_id: open1 })
+  await call('close_card', { card_id: many })
+  // only a question can be left to the agent
+  const told = textOf(await call('create_info', { title: 'nur lesen', body: 'x' })).match(/^info (\w+)/)[1]
+  const no = await post('/decide', { card_id: told, trust: true })
+  assert.deepEqual([no.status, (await no.json()).error], [400, 'only a question can be left to the agent; an info is closed with /close'])
+  assert.equal((await post('/decide', { card_id: 'gibtsnicht', trust: true })).status, 400)
+  await call('withdraw_card', { card_id: told })
+  received.length = 0
+}
+
+// notes and drawings pinned to places on a card: kept in the draft, sent with the answer, a question back or the shredder, and read by the agent as lines
+{
+  received.length = 0
+  const pin = textOf(await call('create_decision', { title: 'Wo anheften?', attachments: [shot], text: 'Der Hub merkt sich alles.\n\n[split] Split: zwei Spalten.\n\n[stack] Stapel: untereinander.' })).match(/^card (\w+) /)[1]
+  const marks = [
+    { id: 'm1', anchor: { kind: 'option', key: 'split', x: 0.5, y: 0.25, unsinn: 1 }, text: ' zu eng ' },
+    { id: 'm2', anchor: { kind: 'section', index: 2 }, text: 'gefällt mir' },
+    { id: 'm3', anchor: { kind: 'picture', index: 0, x: 0.1, y: 0.9 }, strokes: [[1, 2, 3, 4], [5, 6, 7, 8]] },
+    { id: 'm4', anchor: { kind: 'text', quote: 'Der Hub merkt sich alles.' }, text: 'wirklich alles?', strokes: [[0, 0, 1, 1]] },
+    { id: 'm5', anchor: { kind: 'card' }, text: 'insgesamt gut' },
+    { id: 'leer', anchor: { kind: 'card' }, text: '  ' },
+  ]
+  const kept = [
+    { id: 'm1', anchor: { kind: 'option', key: 'split', x: 0.5, y: 0.25 }, text: 'zu eng' },
+    { id: 'm2', anchor: { kind: 'section', index: 2 }, text: 'gefällt mir' },
+    { id: 'm3', anchor: { kind: 'picture', index: 0, x: 0.1, y: 0.9 }, strokes: [[1, 2, 3, 4], [5, 6, 7, 8]] },
+    { id: 'm4', anchor: { kind: 'text', quote: 'Der Hub merkt sich alles.' }, text: 'wirklich alles?', strokes: [[0, 0, 1, 1]] },
+    { id: 'm5', anchor: { kind: 'card' }, text: 'insgesamt gut' },
+  ]
+  // in the draft: stored whole, an empty one dropped, what points nowhere dropped, too much refused
+  assert.equal((await post('/draft', { card_id: pin, marks: [...marks, { id: 'weg', anchor: { kind: 'option', key: 'gibtsnicht' }, text: 'x' }, { id: 'weg2', anchor: { kind: 'section', index: 9 }, text: 'x' }] })).status, 200)
+  let k = await onBoard(pin)
+  assert.deepEqual([k.draft.marks, k.draft.keys, k.draft.notes], [kept, [], {}])
+  for (const wrong of [{ marks: 'x' }, { marks: [{ text: 'x' }] }, { marks: [{ anchor: { kind: 'wo' }, text: 'x' }] }, { marks: [{ anchor: { kind: 'card' }, text: 'x'.repeat(2001) }] }, { marks: [{ anchor: { kind: 'card' }, strokes: 'x' }] },
+    { marks: [{ anchor: { kind: 'card' }, strokes: [Array(40000).fill(1)] }] }, { marks: Array(201).fill({ anchor: { kind: 'card' }, text: 'x' }) }, { marks: Array(20).fill({ anchor: { kind: 'card' }, strokes: [Array(30000).fill(1)] }) }]) {
+    const res = await post('/draft', { card_id: pin, ...wrong })
+    assert.equal(res.status, 400, JSON.stringify(wrong).slice(0, 80))
+  }
+  assert.deepEqual((await onBoard(pin)).draft.marks, kept, 'a refused draft changes nothing')
+  // the agent rewrites the card: marks on an option or paragraph that is gone go, the others stay
+  await call('revise_card', { card_id: pin, text: 'Der Hub merkt sich alles.\n\n[split] Split: zwei Spalten.' + '\n\n[tabs] Reiter: nebeneinander.' })
+  assert.deepEqual((await onBoard(pin)).draft.marks.map(m => m.id), ['m1', 'm2', 'm3', 'm4', 'm5'])
+  await call('revise_card', { card_id: pin, text: '[stack] Stapel: untereinander.\n\n[tabs] Reiter: nebeneinander.' })
+  assert.deepEqual((await onBoard(pin)).draft.marks.map(m => m.id), ['m3', 'm4', 'm5'])
+  await call('revise_card', { card_id: pin, text: 'Der Hub merkt sich alles.\n\n[split] Split: zwei Spalten.\n\n[stack] Stapel: untereinander.' })
+  await sleep(300)
+  // with a question back: on the message, and as lines for the agent, with the picture of the annotated card
+  received.length = 0
+  assert.equal((await post('/message', { text: '', card_id: pin, marks: [marks[0]], attachments: [{ name: 'karte.png', data: dot }] })).status, 200)
+  await until(() => received.length === 1)
+  s = await state()
+  assert.deepEqual([s.messages.at(-1).marks, s.messages.at(-1).attachments.length], [[kept[0]], 1])
+  assert.match(received[0].params.content, /^The human sent a file: karte\.png\. .*\n\nNotes pinned to the card:\n- on option "Split" \[split\]: zu eng$/)
+  assert.deepEqual([received[0].params.meta.marks, received[0].params.meta.card_id, /\.png$/.test(received[0].params.meta.image_path)], ['1', pin, true])
+  assert.equal((await post('/message', { text: '', card_id: pin, marks: [marks[5]] })).status, 400, 'nothing said, nothing pinned')
+  assert.equal((await post('/message', { text: 'x', card_id: pin, marks: [{ anchor: { kind: 'option', key: 'gibtsnicht' }, text: 'x' }] })).status, 409, 'a mark on what the card no longer has')
+  // with the answer: on the card, counted in the conversation, read by the agent, and what was pinned to an option is a note on it too
+  assert.equal((await post('/decide', { card_id: pin, key: 'stack', notes: { split: 'eigentlich nicht' }, marks, attachments: [{ name: 'karte.png', data: dot }] })).status, 200)
+  await until(() => received.length === 2)
+  assert.equal(received[1].params.content, [
+    'Decision on "Wo anheften?": stack', '', 'Notes on options:', '- Split [split], not chosen: eigentlich nicht', '', 'Notes pinned to the card:',
+    '- on option "Split" [split]: zu eng', '- on option "Stapel" [stack]: gefällt mir', '- on the picture mock.png: (drawn; see the picture)',
+    '- on the text "Der Hub merkt sich alles.": wirklich alles? (also drawn; see the picture)', '- general: insgesamt gut',
+  ].join('\n'))
+  assert.deepEqual((({ image_path, files, ...rest }) => [rest, /\.png$/.test(image_path)])(received[1].params.meta), [{ kind: 'decision', card_id: pin, choice: 'stack', option_notes: 'split', marks: '5' }, true])
+  s = await state()
+  k = s.cards.find(c => c.id === pin)
+  assert.deepEqual([k.marks, k.option_notes, 'draft' in k, k.note_attachments.length], [kept, { split: 'eigentlich nicht\nzu eng', stack: 'gefällt mir' }, false, 1])
+  assert.equal(s.messages.at(-1).text, 'Stapel · Split: eigentlich nicht · 5 notes')
+  // taken back, the marks are the draft's again
+  assert.equal((await post('/reopen', { card_id: pin })).status, 200)
+  k = await onBoard(pin)
+  assert.deepEqual([k.draft.marks, k.draft.keys, 'marks' in k], [kept, ['stack'], false])
+  // into the shredder with a last word pinned to it, and out again
+  await until(() => received.length === 3)
+  assert.equal((await post('/shred', { card_id: pin, marks: [marks[4]], attachments: [{ name: 'karte.png', data: dot }] })).status, 200)
+  await until(() => received.length === 4)
+  assert.match(received[3].params.content, /\n\nNotes pinned to the card:\n- general: insgesamt gut$/)
+  assert.deepEqual([received[3].params.meta.kind, received[3].params.meta.marks, /\.png$/.test(received[3].params.meta.image_path)], ['shredded', '1', true])
+  s = await state()
+  assert.deepEqual([s.cards.find(c => c.id === pin).marks, s.messages.at(-1).text], [[kept[4]], 'Wo anheften? · 1 note'])
+  assert.equal((await post('/reopen', { card_id: pin })).status, 200)
+  assert.deepEqual([(await onBoard(pin)).draft.marks, 'marks' in await onBoard(pin)], [[kept[4]], false])
+  await call('withdraw_card', { card_id: pin })
+  assert.equal('draft' in await onBoard(pin), false)
+  received.length = 0
 }
 
 // a card filed the old way is what it always was: no sections anywhere
@@ -2305,5 +2508,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)

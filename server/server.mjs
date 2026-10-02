@@ -342,7 +342,7 @@ function unregister(id, link) {
 
 // Old answers are not kept forever: the card, its attachment files, and its
 // markers in the conversation go together. Open cards are never touched.
-const expired = cutoff => state.cards.filter(c => c.status !== 'open' && (c.decided ?? c.created) < cutoff)
+const expired = cutoff => state.cards.filter(c => c.status !== 'open' && (c.decided ?? c.shredded ?? c.created) < cutoff)
 
 function purge() {
   const cutoff = Date.now() - RETENTION_DAYS * 86400000
@@ -618,6 +618,7 @@ const mcp = new Server(
       'Before filing a question, call list_cards. If you already have an open question on the same subject, do not add another: rewrite the open one with revise_card, which keeps its number and place, or replace several by one with merge_cards. Do this on your own initiative, without being asked; the human should never get many small questions that are really one.',
       'Prefer one question with multiple: true ("tick what you agree to", your advice as a recommended list) over several yes/no questions on one theme. More than about three open questions of yours on one theme is a sign to merge them.',
       'When a question needs explaining per option, do not write a body with one paragraph per option next to a separate options list: hand in ONE structured text, as sections (a list of blocks) or as text (one string), and flag the paragraphs that are options. The board then shows each paragraph tied to its option: the human ticks the paragraph itself. In text, paragraphs are separated by a blank line, and a paragraph starting with [key] Label: becomes the option "key" with that paragraph as its explanation ([key*] marks the one you would pick); every other paragraph is plain context. Keep labels to about four words and each paragraph short. Plain options stay right for simple questions.',
+      'The human may answer, ask back or shred with notes pinned to parts of the question and drawings on it: they come as lines under "Notes pinned to the card:" (marks="N" in the event), with a picture of the annotated card in image_path. Read them together with the picture; they are part of the answer.',
       'The human can write a note on any option, chosen or not ("not this, because ..."). Such notes come with the decision: its text lists them as lines "- Label [key], chosen or not chosen: note" after the general note, and option_notes names the keys that have one. Read them before acting.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
@@ -627,6 +628,8 @@ const mcp = new Server(
       'critical: you are blocked and nothing else can proceed. high: it blocks your current task, but you have other work. normal (default): needed soon, nothing waits on it yet. low: nice to know, no work depends on it.',
       'For high and critical, give an urgency_reason: one short phrase, in the human\'s language, saying what is waiting. If everything is urgent, nothing is; most cards are normal.',
       'Keep the stack true as your work moves: when an open card starts blocking you, raise it with set_urgency; lower it if the pressure is gone; and call withdraw_card as soon as a question became moot, so the human never answers something you no longer need. list_cards shows the current stack.',
+      'When the human trusts you with a question (the decision event carries trust="1"), the decision is yours: take the option you recommended or, if you recommended none, choose yourself. Then say in one line what you chose, with reply and that card_id, and call close_card with a summary. Do not ask again.',
+      'The human can throw a question away unanswered: <channel source="board" kind="shredded" card_id="...">. That is not a yes and not a no. Do not file it again, nor a rewording of it; carry on with your own judgement or drop the matter. If you truly cannot proceed without an answer, say so once in a reply, not as a new question.',
       'The choice arrives later as <channel source="board" kind="decision" card_id="..." choice="KEY">; the body is the human\'s note if they wrote one. Act on it, then call close_card with a one-line summary of what you did.',
       'Do not block waiting for a decision: keep working on whatever does not depend on it.',
       'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and when the question back shows the card was unclear, do not only reply: rewrite the card with revise_card, so the question itself is clear.',
@@ -949,21 +952,32 @@ const TOOL_EXAMPLES = {
 const CHANNEL_EVENTS = [
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
-    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
+    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision', when: 'The human answered a decision card.',
     content: 'the human\'s note, or a sentence naming the card and the chosen key; when the human wrote notes on single options, a blank line and "Notes on options:" follow, with one line "- Label [key], chosen: note" or "- Label [key], not chosen: note" per note, in the order of the options',
     meta: { kind: 'decision', card_id: 'the card', choice: 'key of the chosen option; of several, the first' },
-    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options', option_notes: 'only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content', files: 'absolute paths of what the human attached to the note of the answer, comma-separated', image_path: 'the first attached picture, when there is one' },
+    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options', trust: '"1" when the human left the decision to you: choice is then the option you recommended, or empty if you recommended none; decide, say what you chose with reply and the card_id, and close the card', marks: 'how many notes and drawings the human pinned to parts of the card; they are lines of the content under "Notes pinned to the card:"', option_notes: 'only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content', files: 'absolute paths of what the human attached to the note of the answer, comma-separated', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="decision" card_id="a1b2c3d4" choice="tonight">After the backup, please.</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision_reopened', when: 'The human took an answer back; the card is open again.',
     content: 'a sentence saying which answer was taken back', meta: { kind: 'decision_reopened', card_id: 'the card', previous_choice: 'key of the answer that no longer holds' },
-    optional: { previous_choices: 'only for a card made with multiple: true: every key that was chosen, comma-separated' },
+    optional: { previous_choices: 'only for a card made with multiple: true: every key that was chosen, comma-separated', trust: '"1" when what is taken back is the human leaving the decision to you', shredded: '"1" when the human took a card back out of the shredder; previous_choice is then empty' },
     example: '<channel source="board" kind="decision_reopened" card_id="a1b2c3d4" previous_choice="tonight">…</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'shredded', when: 'The human threw a question (or an info) away unanswered.',
+    content: 'a sentence saying so and what to do: do not ask again, carry on with your own judgement or drop the matter; then the human\'s note, if they wrote one', meta: { kind: 'shredded', card_id: 'the card' },
+    optional: { marks: 'how many notes and drawings the human pinned to the card before throwing it away; they are lines of the content', files: 'absolute paths of the pictures that came with it, comma-separated', image_path: 'the first picture' },
+    example: '<channel source="board" kind="shredded" card_id="a1b2c3d4">The human threw the question "Which font?" away unanswered. …</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'handback_withdrawn', when: 'The human took back a card they had handed to you (or asked you to explain) before you reworked it.',
+    content: 'a sentence saying there is no need to rework it', meta: { kind: 'handback_withdrawn', card_id: 'the card' },
+    example: '<channel source="board" kind="handback_withdrawn" card_id="a1b2c3d4">The human took "Which font?" back; there is no need to rework or explain it.</channel>',
   },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'info_read', when: 'The human read an info card (create_info) and closed it. Nothing is expected of you.',
@@ -1400,7 +1414,7 @@ function runTool(agent, name, args) {
         id: c.id, number: c.number, kind: c.kind, status: c.status,
         urgency: c.urgency, urgency_reason: c.urgency_reason,
         queue_position: state.queue.indexOf(c.id) + 1 || null,
-        title: c.title, version: c.version ?? (c.revisions ?? 0) + 1, ...(c.answered_version ? { answered_version: c.answered_version } : {}), ...(c.with_agent ? { with_agent: c.with_agent } : {}),
+        title: c.title, ...(c.trusted ? { trusted: true } : {}), ...(c.status === 'shredded' ? { shredded: c.shredded } : {}), version: c.version ?? (c.revisions ?? 0) + 1, ...(c.answered_version ? { answered_version: c.answered_version } : {}), ...(c.with_agent ? { with_agent: c.with_agent } : {}),
         multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
         ...(c.status === 'open' && c.kind !== 'permission' ? { body: c.body, ...(c.html ? { html: c.html } : {}), options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
         ...(c.revised ? { revised: c.revised } : {}),
@@ -1499,6 +1513,66 @@ function optionNotes(card, notes, strict) {
   return out
 }
 
+// Notes and drawings the human pinned to places on a card:
+// [{ id, anchor: { kind: 'card' | 'option' | 'section' | 'picture' | 'text', key?, index?, x?, y?, quote? }, text?, strokes? }].
+// strict: a mark on something the card does not have is refused (an answer); otherwise it is dropped (a draft, a rewrite).
+const MARKS_MAX = 200
+const MARK_BYTES = 64 * 1024
+const MARKS_BYTES = 1024 * 1024
+const MARK_KINDS = ['card', 'option', 'section', 'picture', 'text']
+function marksOf(card, marks, strict) {
+  if (marks == null) return []
+  if (!Array.isArray(marks)) throw new Error('marks must be a list')
+  if (marks.length > MARKS_MAX) throw new Error(`at most ${MARKS_MAX} marks on one card; got ${marks.length}`)
+  const num = v => (typeof v === 'number' && Number.isFinite(v) ? v : undefined)
+  const out = []
+  for (const [i, m] of marks.entries()) {
+    const a = m?.anchor
+    if (!a || !MARK_KINDS.includes(a.kind)) throw new Error(`mark ${i + 1} needs an anchor with kind ${MARK_KINDS.join(', ')}`)
+    const key = a.key == null ? undefined : String(a.key)
+    const index = Number.isInteger(a.index) && a.index >= 0 ? a.index : undefined
+    const gone = (a.kind === 'option' && !card.options.some(o => o.key === key))
+      || (a.kind === 'section' && !(index < (card.sections?.length ?? 0)))
+      || (strict && a.kind === 'picture' && index != null && !(index < card.attachments.length))
+    if (gone) {
+      if (!strict) continue
+      throw card.revised ? fail(409, STALE_ANSWER) : new Error(`mark ${i + 1} points at ${a.kind === 'option' ? `the option "${key}"` : `${a.kind} ${a.index}`}, which this card does not have`)
+    }
+    const text = typeof m.text === 'string' ? m.text.trim() : ''
+    if (text.length > NOTE_MAX) throw new Error(`the text of mark ${i + 1} is longer than ${NOTE_MAX} characters`)
+    if (m.strokes != null && !Array.isArray(m.strokes)) throw new Error(`the strokes of mark ${i + 1} must be a list`)
+    const strokes = m.strokes?.length ? m.strokes : undefined
+    if (!text && !strokes) continue
+    const mark = {
+      id: String(m.id ?? newId()).slice(0, 40),
+      anchor: { kind: a.kind, ...(key === undefined ? {} : { key }), ...(index === undefined ? {} : { index }), ...(num(a.x) === undefined ? {} : { x: a.x }), ...(num(a.y) === undefined ? {} : { y: a.y }), ...(typeof a.quote === 'string' && a.quote ? { quote: a.quote.slice(0, 500) } : {}) },
+      ...(text ? { text } : {}), ...(strokes ? { strokes } : {}),
+    }
+    if (JSON.stringify(mark).length > MARK_BYTES) throw new Error(`mark ${i + 1} is larger than ${MARK_BYTES / 1024} KB; draw less in one mark`)
+    out.push(mark)
+  }
+  if (JSON.stringify(out).length > MARKS_BYTES) throw new Error(`the marks together are larger than ${MARKS_BYTES / 1024 / 1024} MB`)
+  return out
+}
+
+// The marks as the agent reads them: one line each, saying what it is pinned to.
+function markLines(card, marks) {
+  return marks.map(m => {
+    const a = m.anchor
+    const option = a.key == null ? null : card.options.find(o => o.key === a.key)
+    const section = a.kind === 'section' ? card.sections?.[a.index] : null
+    const where = a.kind === 'option' ? `on option "${option?.label ?? a.key}" [${a.key}]`
+      : a.kind === 'section' ? (section?.key ? `on option "${section.label}" [${section.key}]` : `on the paragraph "${brief(section?.text ?? '', 50)}"`)
+      : a.kind === 'picture' ? `on the picture ${card.attachments[a.index]?.name ?? (a.index ?? 0) + 1}`
+      : a.kind === 'text' ? `on the text "${brief(a.quote ?? '', 80)}"`
+      : 'general'
+    const drawn = m.strokes ? (m.text ? ' (also drawn; see the picture)' : '(drawn; see the picture)') : ''
+    return `- ${where}: ${(m.text ?? '').replace(/\s*\n\s*/g, ' ')}${drawn}`
+  })
+}
+const marksBlock = (card, marks) => (marks.length ? ['', 'Notes pinned to the card:', ...markLines(card, marks)] : [])
+const marksCount = marks => `${marks.length} ${marks.length === 1 ? 'note' : 'notes'}`
+
 // What the human ticked and wrote but has not sent. Kept on the open card so that every page shows it; the agent never sees it.
 function setDraft(cardId, body) {
   const card = state.cards.find(c => c.id === cardId)
@@ -1509,9 +1583,10 @@ function setDraft(cardId, body) {
   const ticked = new Set((body.keys ?? []).map(String))
   const note = String(body.note ?? '')
   if (note.length > NOTE_MAX * 5) throw new Error(`the note is longer than ${NOTE_MAX * 5} characters`)
-  const draft = { keys: card.options.filter(o => ticked.has(o.key)).map(o => o.key), note, notes: optionNotes(card, body.notes, false) }
-  const empty = !draft.keys.length && !note.trim() && !Object.keys(draft.notes).length
-  const same = d => JSON.stringify([d?.keys ?? [], d?.note ?? '', d?.notes ?? {}])
+  const marks = marksOf(card, body.marks, false)
+  const draft = { keys: card.options.filter(o => ticked.has(o.key)).map(o => o.key), note, notes: optionNotes(card, body.notes, false), ...(marks.length ? { marks } : {}) }
+  const empty = !draft.keys.length && !note.trim() && !Object.keys(draft.notes).length && !marks.length
+  const same = d => JSON.stringify([d?.keys ?? [], d?.note ?? '', d?.notes ?? {}, d?.marks ?? []])
   if (same(empty ? null : draft) === same(card.draft)) return
   if (empty) delete card.draft
   else card.draft = { ...draft, ts: Date.now() }
@@ -1524,8 +1599,13 @@ function trimDraft(card) {
   const has = key => card.options.some(o => o.key === key)
   const keys = card.draft.keys.filter(has)
   const notes = Object.fromEntries(Object.entries(card.draft.notes).filter(([key]) => has(key)))
-  if (!keys.length && !card.draft.note.trim() && !Object.keys(notes).length) delete card.draft
-  else Object.assign(card.draft, { keys, notes })
+  // Marks on options or paragraphs that are gone go too; those on the card, its text or its pictures stay.
+  const marks = marksOf(card, card.draft.marks, false)
+  if (!keys.length && !card.draft.note.trim() && !Object.keys(notes).length && !marks.length) delete card.draft
+  else {
+    Object.assign(card.draft, { keys, notes, marks })
+    if (!marks.length) delete card.draft.marks
+  }
 }
 
 const brief = (said, max = 80) => { const line = said.replace(/\s+/g, ' '); return line.length > max ? `${line.slice(0, max - 1)}…` : line }
@@ -1533,7 +1613,7 @@ const brief = (said, max = 80) => { const line = said.replace(/\s+/g, ' '); retu
 // answer is one key, or for a card that takes several a list of keys.
 // seen is the card's revised stamp as the page that answers last saw it; pages that do not send it are not checked for it.
 // notes: what the human wrote on single options, { key: text }.
-async function decide(cardId, answer, note, seen, notes, files = []) {
+async function decide(cardId, answer, note, seen, notes, files = [], marks) {
   const card = state.cards.find(c => c.id === cardId)
   if (!card) throw new Error('unknown card')
   if (card.status !== 'open') throw new Error('card already decided')
@@ -1549,6 +1629,7 @@ async function decide(cardId, answer, note, seen, notes, files = []) {
   const key = chosen[0].key
   const remarks = card.kind === 'decision' ? optionNotes(card, notes, true) : {}
   const remarked = card.options.filter(o => remarks[o.key])
+  const pinned = card.kind === 'decision' ? marksOf(card, marks, true) : []
   card.choices = chosen.map(o => o.key)
   // The first one, for clients and agents that know only one answer.
   card.choice = key
@@ -1556,7 +1637,11 @@ async function decide(cardId, answer, note, seen, notes, files = []) {
   // What the human attached to the note: kept with the card's own attachments' rules (served from /files, cleaned up with the card).
   if (files.length) card.note_attachments = files
   else delete card.note_attachments
-  if (card.kind === 'decision') card.option_notes = remarks
+  // What was pinned to an option is a note on that option too, for readers that know only those.
+  const onOption = key => pinned.filter(m => m.text && (m.anchor.kind === 'option' ? m.anchor.key : m.anchor.kind === 'section' ? card.sections?.[m.anchor.index]?.key : null) === key).map(m => m.text)
+  if (card.kind === 'decision') card.option_notes = Object.fromEntries(card.options.map(o => [o.key, [remarks[o.key], ...onOption(o.key)].filter(Boolean).join('\n')]).filter(([, said]) => said))
+  if (pinned.length) card.marks = pinned
+  else delete card.marks
   // An answer holds for the version it was given to.
   card.answered_version = card.version ?? (card.revisions ?? 0) + 1
   delete card.with_agent
@@ -1564,7 +1649,7 @@ async function decide(cardId, answer, note, seen, notes, files = []) {
   card.decided = Date.now()
   // A permission verdict needs no follow-up from Claude, so it is done at once.
   card.status = card.kind === 'permission' ? 'done' : 'decided'
-  if (card.kind === 'decision') addEvent('decided', card, [chosen.map(o => o.label).join(', '), ...remarked.map(o => `${o.label}: ${brief(remarks[o.key])}`)].join(' · '))
+  if (card.kind === 'decision') addEvent('decided', card, [chosen.map(o => o.label).join(', '), ...remarked.map(o => `${o.label}: ${brief(remarks[o.key])}`), ...(pinned.length ? [marksCount(pinned)] : [])].join(' · '))
   // The human has answered, so the stream that waited on this card is moving again.
   for (const t of state.tasks) {
     if (t.agent === card.agent && t.card_id === card.id && t.state === 'decision') Object.assign(t, { state: 'working', card_id: null, updated: Date.now() })
@@ -1580,15 +1665,81 @@ async function decide(cardId, answer, note, seen, notes, files = []) {
       content: [
         note || `Decision on "${card.title}": ${card.choices.join(', ')}`,
         ...(remarked.length ? ['', 'Notes on options:', ...remarked.map(o => `- ${o.label} [${o.key}], ${given.has(o.key) ? 'chosen' : 'not chosen'}: ${remarks[o.key].replace(/\s*\n\s*/g, ' ')}`)] : []),
+        ...marksBlock(card, pinned),
       ].join('\n'),
       // meta values are strings, so several keys travel as one, comma-separated.
       meta: {
         kind: 'decision', card_id: card.id, choice: key, ...(card.multiple ? { choices: card.choices.join(',') } : {}),
         ...(remarked.length ? { option_notes: remarked.map(o => o.key).join(',') } : {}),
+        ...(pinned.length ? { marks: String(pinned.length) } : {}),
         ...uploadMeta(files),
       },
     })
   }
+}
+
+// "Trust": the human leaves the decision to the agent. The card is decided; what the agent advised stands as the choice,
+// so the list shows what will happen, and without advice the choice stays empty until the agent says what it took.
+async function trust(cardId, note, seen) {
+  const card = state.cards.find(c => c.id === cardId)
+  if (!card) throw new Error('unknown card')
+  if (card.kind === 'permission') throw new Error('an approval cannot be left to the agent: it gates what the agent may do, so answer it with Allow or Deny')
+  if (card.kind !== 'decision') throw new Error('only a question can be left to the agent; an info is closed with /close')
+  if (card.status !== 'open') throw new Error('card already decided')
+  if (card.revised && ((seen !== undefined && seen !== card.revised) || Date.now() - card.revised < REVISE_GRACE)) throw fail(409, STALE_ANSWER)
+  const advised = card.options.filter(o => [card.recommended ?? []].flat().includes(o.key))
+  Object.assign(card, {
+    trusted: true, choices: advised.map(o => o.key), choice: advised[0]?.key ?? null, note, option_notes: {},
+    answered_version: card.version ?? (card.revisions ?? 0) + 1, decided: Date.now(), status: 'decided',
+  })
+  delete card.note_attachments
+  delete card.with_agent
+  delete card.draft
+  addEvent('decided', card, `Trusted: your call${advised.length ? ` · ${advised.map(o => o.label).join(', ')}` : ''}`)
+  state.messages.at(-1).trusted = true
+  for (const t of state.tasks) {
+    if (t.agent === card.agent && t.card_id === card.id && t.state === 'decision') Object.assign(t, { state: 'working', card_id: null, updated: Date.now() })
+  }
+  commit()
+  await deliver(card.agent, 'notifications/claude/channel', {
+    content: [
+      `The human trusts you with "${card.title}": decide yourself (${advised.length ? `your advice was: ${advised.map(o => `${o.label} [${o.key}]`).join(', ')}` : 'you gave no advice'}). Say in one line what you chose with reply and this card_id, then close_card; do not ask again.`,
+      ...(note ? ['', `Their note: ${note}`] : []),
+    ].join('\n'),
+    meta: { kind: 'decision', card_id: card.id, choice: card.choice ?? '', ...(card.multiple ? { choices: card.choices.join(',') } : {}), trust: '1' },
+  })
+}
+
+// "Shred": the human throws a card away unanswered. It is neither a yes nor a no; the card is gone from the stack for good,
+// kept only so that it can be taken back, and the agent is told not to ask again.
+async function shred(cardId, note, marks, files = []) {
+  const card = state.cards.find(c => c.id === cardId)
+  if (!card) throw new Error('unknown card')
+  if (card.kind === 'permission') throw new Error('an approval cannot be thrown away: the agent is waiting on it, so answer it with Allow or Deny')
+  if (card.status !== 'open') throw fail(409, card.status === 'shredded' ? 'card already shredded' : 'card already decided')
+  const pinned = marksOf(card, marks, true)
+  Object.assign(card, { status: 'shredded', shredded: Date.now(), choice: null, choices: [], note })
+  if (pinned.length) card.marks = pinned
+  else delete card.marks
+  if (files.length) card.note_attachments = files
+  else delete card.note_attachments
+  delete card.with_agent
+  delete card.draft
+  addEvent('shredded', card, [card.title, ...(note ? [brief(note)] : []), ...(pinned.length ? [marksCount(pinned)] : [])].join(' · '))
+  for (const t of state.tasks) {
+    if (t.agent === card.agent && t.card_id === card.id && t.state === 'decision') Object.assign(t, { state: 'working', card_id: null, updated: Date.now() })
+  }
+  commit()
+  await deliver(card.agent, 'notifications/claude/channel', {
+    content: [
+      card.kind === 'info'
+        ? `The human threw "${card.title}" away unread. Do not send it again.`
+        : `The human threw the question "${card.title}" away unanswered. That is neither a yes nor a no. Do not ask it again, in these or other words; carry on without an answer, using your own judgement, or drop the matter.`,
+      ...(note ? ['', `Their note: ${note}`] : []),
+      ...marksBlock(card, pinned),
+    ].join('\n'),
+    meta: { kind: 'shredded', card_id: card.id, ...(pinned.length ? { marks: String(pinned.length) } : {}), ...uploadMeta(files) },
+  })
 }
 
 // The human read an info and closed it. Nothing was asked, so the card is done at once; the agent is told quietly.
@@ -1650,6 +1801,19 @@ async function storeScribble(agent, body) {
 async function reopen(cardId) {
   const card = state.cards.find(c => c.id === cardId)
   if (!card) throw new Error('unknown card')
+  if (card.status === 'shredded') {
+    // Fished out again: the card is open as it was, and the agent may count on an answer after all.
+    // What they had pinned to it is theirs again, unsent.
+    if (card.kind === 'decision' && (card.marks?.length || card.note)) card.draft = { keys: [], note: card.note ?? '', notes: {}, ...(card.marks?.length ? { marks: card.marks } : {}), ts: Date.now() }
+    delete card.marks
+    Object.assign(card, { status: 'open', shredded: null, note: '', summary: '' })
+    addEvent('reopened', card, card.title)
+    commit()
+    return deliver(card.agent, 'notifications/claude/channel', {
+      content: `The human took "${card.title}" back out of the shredder; it is open again${card.kind === 'info' ? '' : ' and they may answer it after all'}.`,
+      meta: { kind: 'decision_reopened', card_id: card.id, previous_choice: '', shredded: '1' },
+    })
+  }
   if (card.kind === 'info') {
     // Taken back, it lies in the stack unread again; the agent has nothing to undo and is not told.
     if (card.status === 'open') throw new Error('card is already open')
@@ -1660,12 +1824,25 @@ async function reopen(cardId) {
   }
   if (card.kind !== 'decision') throw new Error('only decisions can be reopened')
   if (card.status === 'open') throw new Error('card is already open')
-  if (card.choice == null) throw new Error('the agent withdrew this card')
+  if (card.choice == null && !card.trusted) throw new Error('the agent withdrew this card')
+  if (card.trusted) {
+    // The trust is taken back, not a choice of the human's: nothing is ticked on the open card, only their note is still there.
+    const was = card.choices ?? []
+    const draft = card.note ? { draft: { keys: [], note: card.note, notes: {}, ts: Date.now() } } : {}
+    Object.assign(card, { status: 'open', trusted: false, choice: null, choices: [], note: '', option_notes: {}, summary: '', decided: null, answered_version: null, ...draft })
+    addEvent('reopened', card, card.title)
+    commit()
+    return deliver(card.agent, 'notifications/claude/channel', {
+      content: `The human took back leaving "${card.title}" to you. Stop acting on what you chose, undo what you safely can, and wait for their answer.`,
+      meta: { kind: 'decision_reopened', card_id: card.id, previous_choice: was[0] ?? '', ...(card.multiple ? { previous_choices: was.join(',') } : {}), trust: '1' },
+    })
+  }
   const previous = card.choice
   const all = card.choices?.length ? card.choices : [previous]
   const label = all.map(key => card.options.find(o => o.key === key)?.label ?? key).join(', ')
   // Nothing the human ticked or wrote is lost: the answer they took back is what they have not sent yet.
-  const draft = { keys: card.options.filter(o => all.includes(o.key)).map(o => o.key), note: card.note ?? '', notes: card.option_notes ?? {}, ts: Date.now() }
+  const draft = { keys: card.options.filter(o => all.includes(o.key)).map(o => o.key), note: card.note ?? '', notes: card.option_notes ?? {}, ...(card.marks?.length ? { marks: card.marks } : {}), ts: Date.now() }
+  delete card.marks
   Object.assign(card, { status: 'open', choice: null, choices: [], note: '', option_notes: {}, summary: '', decided: null, answered_version: null, draft })
   addEvent('reopened', card, card.title)
   commit()
@@ -2462,10 +2639,14 @@ const httpServer = http.createServer(async (req, res) => {
     if (req.method === 'POST' && url.pathname === '/message') {
       const body = await readJson(req, UPLOAD_BODY)
       const msg = String(body.text ?? '').trim()
-      if (!msg && !(Array.isArray(body.attachments) && body.attachments.length)) return send(res, 400, '{"error":"empty message"}')
+      if (!msg && !(Array.isArray(body.attachments) && body.attachments.length) && !(Array.isArray(body.marks) && body.marks.length)) return send(res, 400, '{"error":"empty message"}')
       // The body may be large for the files' sake only; the words keep their old limit.
       if (msg.length > 1e6) throw new Error('body too large')
       const agent = targetAgent(body.agent)
+      // Notes and drawings pinned to the card the message is about; without such a card they have nothing to hold on to.
+      const noted = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
+      const pinned = noted ? marksOf(noted, body.marks, true) : []
+      if (!msg && !pinned.length && !(Array.isArray(body.attachments) && body.attachments.length)) return send(res, 400, '{"error":"empty message"}')
       // Files and pictures the human attached; a message may be nothing but them.
       const files = storeUploads(body.attachments)
       // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
@@ -2474,8 +2655,11 @@ const httpServer = http.createServer(async (req, res) => {
       // The human gave the card back to be reworked, or asked for it to be explained: until the agent answers, it is with the agent.
       const turn = asked && asked.kind !== 'permission' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
       if (Object.keys(turn).length) asked.with_agent = Date.now()
-      addMessage(agent, 'user', msg, files, { ...about, ...turn })
-      await deliver(agent, 'notifications/claude/channel', { content: msg || uploadLine(files), meta: { kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...uploadMeta(files) } })
+      addMessage(agent, 'user', msg, files, { ...about, ...turn, ...(pinned.length ? { marks: pinned } : {}) })
+      await deliver(agent, 'notifications/claude/channel', {
+        content: [msg || (files.length ? uploadLine(files) : 'The human pinned notes to the card.'), ...(pinned.length ? marksBlock(noted, pinned) : [])].join('\n'),
+        meta: { kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...(pinned.length ? { marks: String(pinned.length) } : {}), ...uploadMeta(files) },
+      })
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'GET' && /^\/scribbles\/[0-9a-f]+\.(json|png)$/.test(url.pathname)) {
@@ -2562,7 +2746,24 @@ const httpServer = http.createServer(async (req, res) => {
       // What the human attached to the note of the answer. An answer that is not taken keeps none of it.
       const files = storeUploads(body.attachments)
       try {
-        await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim(), body.revised === undefined ? undefined : body.revised ?? null, body.notes, files)
+        const seen = body.revised === undefined ? undefined : body.revised ?? null
+        if (body.trust === true) {
+          // Leaving it to the agent is no choice of options; it carries a note at most.
+          if (body.key != null || body.keys != null) throw new Error('trust leaves the choice to the agent; send it without key or keys')
+          await trust(String(body.card_id), String(body.note ?? '').trim(), seen)
+          for (const a of files) fs.rmSync(uploadPath(a), { force: true })
+        } else await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim(), seen, body.notes, files, body.marks)
+      } catch (err) {
+        for (const a of files) fs.rmSync(uploadPath(a), { force: true })
+        throw err
+      }
+      return send(res, 200, '{"ok":true}')
+    }
+    if (req.method === 'POST' && url.pathname === '/shred') {
+      const body = await readJson(req, UPLOAD_BODY)
+      const files = storeUploads(body.attachments)
+      try {
+        await shred(String(body.card_id), String(body.note ?? '').trim().slice(0, NOTE_MAX), body.marks, files)
       } catch (err) {
         for (const a of files) fs.rmSync(uploadPath(a), { force: true })
         throw err
@@ -2575,8 +2776,25 @@ const httpServer = http.createServer(async (req, res) => {
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'POST' && url.pathname === '/draft') {
-      const body = await readJson(req)
+      // Room for the marks, which may hold drawings.
+      const body = await readJson(req, 2 * MARKS_BYTES)
       setDraft(String(body.card_id), body)
+      return send(res, 200, '{"ok":true}')
+    }
+    if (req.method === 'POST' && url.pathname === '/handback') {
+      // The human takes a card back that they had handed to the agent, before the agent reworked it.
+      const body = await readJson(req)
+      if (body.clear !== true) throw new Error('handback takes { card_id, clear: true }; a card is handed back with /message and handback: true')
+      const card = state.cards.find(c => c.id === String(body.card_id))
+      if (!card) throw new Error('unknown card')
+      if (card.status !== 'open' || card.with_agent == null) throw fail(409, 'this card is not with the agent')
+      delete card.with_agent
+      addEvent('handback_withdrawn', card, card.title)
+      commit()
+      await deliver(card.agent, 'notifications/claude/channel', {
+        content: `The human took "${card.title}" back; there is no need to rework or explain it. If you already have, that is fine.`,
+        meta: { kind: 'handback_withdrawn', card_id: card.id },
+      })
       return send(res, 200, '{"ok":true}')
     }
     if (url.pathname.startsWith('/pad/') && await padRoute(req, res, url)) return
