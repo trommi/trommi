@@ -75,7 +75,7 @@ try {
   equal(seen.length, 1, 'one HTML block in the conversation')
   equal(seen[0].sandbox, 'allow-scripts', 'the frame is sandboxed, with scripts only: no same-origin, no forms, no popups, no top navigation')
   equal(seen[0].src, null, 'it is written into the frame, not fetched')
-  equal(seen[0].policy, "default-src 'none'; style-src 'unsafe-inline'; img-src data:; script-src 'nonce-N'; base-uri 'none'; form-action 'none'", 'the policy inside the frame')
+  equal(seen[0].policy, "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'nonce-N'; base-uri 'none'; form-action 'none'", 'the policy inside the frame')
   ok(!/allow-same-origin|allow-forms|allow-popups|allow-top-navigation/.test(seen[0].sandbox), 'nothing else is allowed')
 
   // The walls, from the inside.
@@ -90,7 +90,7 @@ try {
     // a script added later has no nonce
     const s = document.createElement('script'); s.textContent = 'window.__late = 1'; document.body.append(s); s.remove(); tried.lateScript = window.__late === 1 ? 'ran' : 'blocked'
     document.body.insertAdjacentHTML('beforeend', '<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" onerror="window.__handler = 1" onload="window.__handler = 1">')
-    await new Promise(r => setTimeout(r, 200)); tried.handler = window.__handler === 1 ? 'ran' : 'blocked'
+    await new Promise(r => setTimeout(r, 200)); document.body.lastElementChild.remove(); tried.handler = window.__handler === 1 ? 'ran' : 'blocked'
     try { const w = window.open('about:blank'); tried.popup = w ? 'opened' : 'blocked' } catch (e) { tried.popup = 'blocked' }
     try { top.location = 'about:blank'; tried.topNavigation = 'asked' } catch (e) { tried.topNavigation = e.name }
     tried.origin = origin
@@ -109,6 +109,11 @@ try {
   const light = await run('return getComputedStyle(document.documentElement).getPropertyValue("--fg").trim()')
   ok(m.color.replace(/\s/g, '') === await run('const p = document.createElement("p"); p.style.color = "var(--fg)"; document.body.append(p); const c = getComputedStyle(p).color; p.remove(); return c.replace(/\\s/g, "")'), 'the text in the frame has the board\'s ink')
   ok(/IBM Plex Sans/.test(m.font), 'and the board\'s font stack')
+  // The fonts are handed in as data (the frame fetches nothing); where this machine has no way to the font files, the frame stands in the system's face.
+  const faces = [await run('await document.fonts.ready; return document.fonts.check("16px \\"IBM Plex Sans\\"")'), (await inFrames('await new Promise(r => setTimeout(r, 400)); await document.fonts.ready; return [...document.fonts].filter(f => f.status === "loaded").map(f => f.family.replace(/"/g, ""))'))[0]]
+  if (faces[0]) ok(faces[1].includes('IBM Plex Sans'), `the frame shows the board's own face (${faces[1].join(', ')})`)
+  else console.error('note: the board itself has no web font here, so the frame was not checked for it')
+  await run(`[...document.querySelectorAll('#chat .rich-table')].at(-1).closest('.msg').scrollIntoView({ block: 'start' })`)
   const chatShot = await shot('chat-light')
 
   // ---- hostile HTML that reaches the client uncleaned (old state, another sender) ----------------
@@ -127,7 +132,6 @@ try {
     document.getElementById('js').click(); document.getElementById('send')?.click()
     await new Promise(r => setTimeout(r, 300))
     return { agent: window.__agent ?? null, title: document.title, scripts: document.scripts.length, frames: document.querySelectorAll('iframe, meta[http-equiv=refresh], base, form').length, js: document.getElementById('js').getAttribute('href'), target: document.getElementById('out').target, here: location.href }`))
-  console.error(JSON.stringify(hostileAll))
   const hostile = hostileAll.find(Boolean)
   equal(hostile, { agent: null, title: '', scripts: 1, frames: 0, js: '#', target: '_blank', here: 'about:srcdoc' }, 'a script, a handler, a frame, a redirect and a form in agent HTML do nothing')
   equal(await run('return [window.__heard, document.title.includes("ran"), location.pathname]'), [[], false, '/s/api'], 'and the board heard nothing of it')
@@ -170,7 +174,7 @@ try {
   await run(`document.documentElement.dataset.theme = 'light'`)
   await go('/')
   const rows = await run(`return [...document.querySelectorAll('.inbox-row')].filter(r => /Hoster|Lasttests/.test(r.textContent)).map(r => ({ title: r.querySelector('.inbox-question').textContent, carries: r.querySelector('.inbox-carries')?.textContent ?? '', text: r.querySelector('.inbox-body-text')?.textContent ?? '', frames: r.querySelectorAll('iframe, table').length, h: Math.round(r.getBoundingClientRect().height) }))`)
-  equal(rows.map(r => [r.title, r.carries, r.frames]).sort(), [['Welcher Hoster für Staging?', 'a layout', 0], ['Wie oft sollen die Lasttests laufen?', 'a table', 0]], 'a row names what the card carries and draws none of it')
+  equal(rows.map(r => [r.title, r.carries, r.frames]).sort(), [['Welcher Hoster für Staging?', 'a table', 0], ['Wie oft sollen die Lasttests laufen?', 'a table', 0]], 'a row names what the card carries and draws none of it')
   ok(rows.every(r => !/[|<]|```/.test(r.text)), `no pipes and no markup in a row's line of text: ${JSON.stringify(rows.map(r => r.text))}`)
   equal(new Set(rows.map(r => r.h)).size, 1, 'rows keep their one height')
   await shot('inbox')
@@ -200,6 +204,14 @@ try {
   m = (await inFrames(`return { content: Math.ceil(document.documentElement.getBoundingClientRect().height), view: innerHeight, rows: document.querySelectorAll('tr').length }`)).find(x => x.rows === 4)
   ok(m.view === m.content && m.view > before, `the frame grew with what was unfolded in it (${before} -> ${m.view})`)
   const questionShot = await shot('question-html-open')
+  // The big view over the question window: Escape closes it, and only it.
+  await run(`[...document.querySelectorAll('.focus .rh-open')].find(b => b.getClientRects().length).click()`)
+  await sleep(700)
+  ok(await run(`return document.querySelector('dialog.rh-large').open`), '"Open large" works from the question window')
+  await shot('question-large')
+  for (const type of ['keyDown', 'keyUp']) await page.send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
+  await sleep(500)
+  equal(await run(`return [document.querySelector('dialog.rh-large').open, Boolean(document.querySelector('.focus')?.getClientRects().length), new URLSearchParams(location.search).has('q')]`), [false, true, true], 'Escape closes the big view and leaves the question open')
   const q2 = await question(ids[1], 'question-table')
   ok(q2.found.focus && q2.found.table, 'the question window shows a markdown table in a body')
   equal(q2.found.table.align, ['left', 'right', 'right'], 'with its numbers right-aligned')
