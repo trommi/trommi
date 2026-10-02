@@ -817,12 +817,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-trust-option strong .sketch { width: 20px; height: 20px; }
 .inbox-trust:hover, .inbox-trust:focus-visible, .inbox-shred:hover, .inbox-shred:focus-visible { color: var(--card-ink); text-decoration-color: currentColor; }
 .inbox-shred:hover span, .inbox-shred:focus-visible span { text-decoration: underline; text-underline-offset: 3px; }
-/* "Shred" is not on the row: it shows only while Shift is held (bar.js sets body[data-shift]), on the row under the
-   pointer or the keyboard; otherwise it is offered once the card is open. */
-.inbox-shred { display: none; }
-body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-shred { display: inline-flex; color: var(--urg-critical); }
-.inbox-sep:has(+ .inbox-acts.is-shift-only) { display: none; }
-body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .inbox-acts) { display: inline; }
 .inbox-shred-open { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--card-ink); font-size: var(--t-sm); font-weight: 600; opacity: .75; }
 .inbox-shred-open .sketch { width: 18px; height: 18px; }
 .inbox-shred-open:hover { opacity: 1; background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
@@ -840,27 +834,35 @@ body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .
 .inbox-carries { display: inline-flex; align-items: center; gap: .7em; min-width: 0; }
 .inbox-carries > span { display: inline-flex; align-items: center; gap: 4px; }
 .inbox-carries .sketch { width: 15px; height: 15px; stroke-width: 1.9; }
-/* Snooze: "slide" (class .inbox-later, key L). Everything about its look and motion is in this block.
-   A paper label is tucked behind the row's edge at the top right; only a nub with z z z peeks out.
-   Under the pointer or the keyboard (after a finger's first tap: .is-unfolded; on the row the keys are
-   on) it slides out and shows the word, eased, with a soft shadow.
-   Two places: in the inbox on a wide page it lies wholly outside the row, in the right margin, so no
-   click on a tile can land on it; everywhere else (narrow pages, a session's own list, a phone) it
-   sits inside the right edge and slides inward over the text, and the tiles are set in to clear it. */
-.inbox-later { --nub: 26px; position: absolute; z-index: 2; top: 0; right: 0; height: 26px; width: max-content; max-width: var(--nub); padding: 0; border: 0; background: none; color: var(--card-ink); overflow: hidden; border-radius: 0 6px 0 8px; filter: drop-shadow(0 1px 2px rgb(20 30 25 / .10)); transition: max-width 260ms cubic-bezier(.22, .9, .25, 1), filter 260ms ease-out; }
-.inbox-later:focus-visible { outline: 0; }
-.inbox-later-ear { display: block; }
-.inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 26px; padding: 0 9px 0 6px; background: color-mix(in srgb, var(--card-color) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
-.inbox-later-flap .sketch { flex: none; width: 15px; height: 15px; stroke-width: 2.3; opacity: .8; }
+/* The row's ways out (.inbox-tabs): small paper tabs down its right edge, in the order of the opened
+   card: Snooze (.inbox-later, key L), Revise (.inbox-revise), Whatever (.inbox-trust), Shred
+   (.inbox-shred). Each is tucked behind the edge with only its drawing showing; under the pointer or
+   the keyboard (after a finger's first tap: .is-unfolded) it slides out and shows its word, eased,
+   with a soft shadow. Two places: in the desk on a wide page they lie wholly outside the row, in the
+   right margin, so no click on a tile can land on them; everywhere else (narrow pages, a session's own
+   list) they sit inside the right edge and slide inward, and the tiles are set in to clear them; on a
+   phone they are a short line at the card's top right. */
+.inbox-tabs { position: absolute; z-index: 2; top: 0; right: 0; display: grid; justify-items: end; gap: 3px; }
+.inbox-tab-act { --nub: 26px; position: relative; height: 26px; width: max-content; max-width: var(--nub); padding: 0; border: 0; background: none; color: var(--card-ink); overflow: hidden; border-radius: 8px 0 0 8px; filter: drop-shadow(0 1px 2px rgb(20 30 25 / .10)); transition: max-width 260ms cubic-bezier(.22, .9, .25, 1), filter 260ms ease-out; }
+.inbox-tab-act:first-child { border-radius: 8px 6px 0 8px; }
+.inbox-tab-act:focus-visible { outline: 0; }
+.inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 100%; padding: 0 9px 0 6px; background: color-mix(in srgb, var(--card-color) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
+.inbox-later-flap .sketch { flex: none; width: 15px; height: 15px; stroke-width: 2.2; opacity: .8; }
 .inbox-later-flap b { font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) { max-width: 150px; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded, .inbox-row.is-current > .inbox-later) .inbox-later-flap { background: color-mix(in srgb, var(--card-color) 8%, var(--surface)); }
-:is(.inbox-later:hover, .inbox-later:focus-visible, .inbox-later.is-unfolded) .inbox-later-flap .sketch { opacity: 1; }
-.inbox-later:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
-.inbox-later:active .inbox-later-flap { filter: brightness(.95); }
-/* in the margin: tucked behind the row's right edge, sliding out sideways; the nub (z z z) leads */
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) { max-width: 150px; z-index: 1; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .inbox-later-flap { background: color-mix(in srgb, var(--card-color) 8%, var(--surface)); }
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .sketch { opacity: 1; }
+.inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
+.inbox-tab-act:active .inbox-later-flap { filter: brightness(.95); }
+.inbox-shred:is(:hover, :focus-visible, .is-unfolded) { color: var(--urg-critical); }
+/* on the row the keys are on, each tab wears its key */
+.inbox-row.is-current .inbox-tab-act[data-cap]::after { content: none; }
+/* Whatever under the pointer: the tile the agent would take lights up */
+.inbox-answer.is-hinted { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--card-color); }
+/* in the margin: tucked behind the row's right edge, sliding out sideways; the drawing leads */
 @container inboxpage (min-width: 1001px) {
-  .inbox-group[data-sender] .inbox-later, .inbox-group-later .inbox-later, .inbox-group-asked .inbox-later { top: 10px; right: auto; left: 100%; height: 30px; border-radius: 0 7px 7px 0; --nub: 23px; }
+  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-tabs { top: 12px; right: auto; left: 100%; justify-items: start; gap: 5px; }
+  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-tab-act { height: 30px; --nub: 24px; border-radius: 0 7px 7px 0; }
   :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-later-flap { flex-direction: row-reverse; float: right; height: 30px; padding: 0 5px 0 12px; }
   :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-actions { padding-right: 12px; }
 }
@@ -1003,6 +1005,10 @@ body[data-shift] :is(.inbox-row:hover, .inbox-row.is-current) .inbox-sep:has(+ .
   .inbox-pics .inbox-carries { display: none; }
   .inbox-thumb { display: block; width: 72px; height: 54px; }
   .inbox-row-head { padding-right: 30px; }
+  /* a phone: the four tabs are a short line at the card's top right */
+  .inbox-tabs { display: flex; gap: 2px; }
+  .inbox-tab-act, .inbox-tab-act:first-child { border-radius: 0 0 7px 7px; }
+  .inbox-tabs .inbox-tab-act:last-child { border-radius: 0 6px 0 7px; }
   /* the note is a quiet line at the top of the card; later rows of a run drop the mark and the name */
   .inbox-byline { position: static; order: -1; flex-wrap: wrap; row-gap: 2px; margin: 10px 0 0; padding-right: 26px; }
   .inbox-row-head { order: -2; }

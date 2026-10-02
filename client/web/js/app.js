@@ -250,12 +250,13 @@ async function syncCanvas() {
 // of that one card: it closes on the answer, and the list offers to take the answer back.
 let focusMode = null
 let routing = false   // the address is being followed, not written
-async function openFocus(cardId, step = true, { ask = false } = {}) {
+async function openFocus(cardId, step = true, { ask = false, revise = false } = {}) {
   try {
     focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
     focusMode.open(cardId ?? undefined)
     if (!focusMode.isOpen()) return
     if (ask) focusMode.ask()   // opened to ask back: the line for it is ready
+    if (revise) focusMode.revise?.()   // opened to revise: Discuss is open and asks what should change
     focusCard = cardId ?? 'next'
     writeAddress(step)
   } catch (err) {

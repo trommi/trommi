@@ -6,7 +6,7 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
@@ -408,34 +408,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     who.append(smallMark(from), el('span', null, from.name))
     byline.append(who, sep())
   }
-  const acts = el('span', 'inbox-acts')
-  if (card.kind === 'decision' && quick(card)) {
-    const leave = el('button', 'inbox-trust')
-    leave.append(sketch(TRUST_SKETCH), el('span', null, TRUST_WORD))
-    leave.type = 'button'
-    leave.title = trustTip(card)
-    leave.addEventListener('click', () => { leave.disabled = true; trustCard(card, err => { leave.disabled = false; error.textContent = `Not saved: ${err.message}`; error.hidden = false }) })
-    acts.append(leave)
-  }
-  if (card.kind !== 'permission') {
-    const away = el('button', 'inbox-shred')
-    away.type = 'button'
-    away.title = `${SHRED_WORD}: throw this away unanswered. The session is told; it will not ask again`
-    away.setAttribute('aria-label', `${SHRED_WORD}: throw "${card.title}" away unanswered`)
-    away.append(sketch(SHRED_SKETCH), el('span', null, SHRED_WORD))
-    away.addEventListener('click', async () => {
-      away.disabled = true
-      try {
-        await shred(card.id)
-        say(pageHost(), { head: 'Shredded', title: card.title, back: () => reopen(card.id) })
-      } catch (err) { away.disabled = false; error.textContent = `Not shredded: ${err.message}`; error.hidden = false }
-    })
-    hint(away, 'list.shred')
-    acts.append(away)
-  }
-  // (With nothing but Shred in it, it and its dot show only while Shift is held.)
-  if (!acts.querySelector('.inbox-trust')) acts.classList.add('is-shift-only')
-  if (acts.firstChild) byline.append(acts)
+  // (The row's actions are the four tabs at its right edge, below.)
   // What the card carries: a small drawing and the count per kind; the whole list as its tooltip.
   // (Beside a picture it stands under the picture; this copy is for where there is no room for that.)
   const extra = carries(card)
@@ -471,38 +444,67 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     byline.prepend(thumb)
   }
 
-  // Snooze is always possible, at the row's top right corner. At rest the corner is only slightly bent:
-  // a hint. Under the pointer or the keyboard it folds down properly, a real flap, and on the flap (the
-  // paper's underside) stand the small drawing (z z z) and the word. A click then puts the question
-  // off, down to the pile at the foot of the list. A finger has no hover: the first tap folds the corner
-  // down, the second one snoozes. On a row in that pile the same corner wakes the question up (a sun
-  // coming up). The button is a strip of its own to the right of the answer tiles, so no click meant
-  // for a tile can land on it; the flap is only drawn (it takes no click). Everything about its look
-  // and its motion is in app.css under ".inbox-later": one place, so another unfolding can replace it.
-  const later = el('button', 'inbox-later')
-  later.type = 'button'
-  later.setAttribute('aria-label', off ? `${WAKE_WORD}: fetch this question back` : `${LATER_WORD}: put this question off; it waits for you below`)
-  const ear = el('i', 'inbox-later-ear')
-  const flap = el('i', 'inbox-later-flap')
-  flap.append(sketch(off ? WAKE_SKETCH : LATER_SKETCH), el('b', null, off ? WAKE_WORD : LATER_WORD))
-  ear.append(flap)
-  later.append(ear)
-  let byTouch = false, folding = 0
-  later.addEventListener('pointerdown', e => { byTouch = e.pointerType === 'touch' })
-  later.addEventListener('click', e => {
-    if (!byTouch || later.classList.contains('is-unfolded')) return
-    // The first tap of a finger only unfolds it; it folds again by itself.
-    e.stopImmediatePropagation()
-    later.classList.add('is-unfolded')
-    clearTimeout(folding)
-    folding = setTimeout(() => later.classList.remove('is-unfolded'), 4000)
-  })
-  later.addEventListener('click', () => {
-    putOff(card.id, !off)
-    // Say where it went, with the way back.
-    if (!off) say(pageHost(), { head: 'Snoozed', title: card.title, back: async () => putOff(card.id, false) })
-  })
+  // The row's ways out, as small paper tabs down its right edge, in the order of the opened card: Snooze
+  // (z z z; "Wake up" on a snoozed row), Revise (say what should change), Whatever (leave it to the
+  // agent) and Shred (throw it away unanswered). Each is tucked behind the edge with its drawing
+  // showing; under the pointer or the keyboard it slides out with its word, and a click acts. A finger
+  // has no hover: its first tap slides the tab out, the second acts. Look and motion: app.css, ".inbox-tabs".
+  const tabs = el('div', 'inbox-tabs')
+  const tab = (cls, drawing, word, label, act) => {
+    const b = el('button', `inbox-tab-act ${cls}`)
+    b.type = 'button'
+    b.setAttribute('aria-label', label)
+    const flap = el('i', 'inbox-later-flap')
+    flap.append(sketch(drawing), el('b', null, word))
+    b.append(flap)
+    let byTouch = false, folding = 0
+    b.addEventListener('pointerdown', e => { byTouch = e.pointerType === 'touch' })
+    b.addEventListener('click', e => {
+      if (byTouch && !b.classList.contains('is-unfolded')) {
+        // The first tap of a finger only slides it out; it goes back by itself.
+        for (const other of tabs.children) other.classList.remove('is-unfolded')
+        b.classList.add('is-unfolded')
+        clearTimeout(folding)
+        folding = setTimeout(() => b.classList.remove('is-unfolded'), 4000)
+        return
+      }
+      act(b)
+    })
+    tabs.append(b)
+    return b
+  }
+  const failed = (b, what) => err => { b.disabled = false; error.textContent = `${what}: ${err.message}`; error.hidden = false }
+  const later = tab('inbox-later', off ? WAKE_SKETCH : LATER_SKETCH, off ? WAKE_WORD : LATER_WORD,
+    off ? `${WAKE_WORD}: fetch this question back` : `${LATER_WORD}: put this question off; it waits for you below`, () => {
+      putOff(card.id, !off)
+      // Say where it went, with the way back.
+      if (!off) say(pageHost(), { head: 'Snoozed', title: card.title, back: async () => putOff(card.id, false) })
+    })
   hint(later, 'list.later')
+  if (card.kind !== 'permission') {
+    // Revise: the card opens with Discuss ready, to say what should change; nothing is sent before that.
+    const revise = tab('inbox-revise', 'reverse', HANDBACK_WORD, `${HANDBACK_WORD}: say what should change; the session reworks the question`, () => onOpen?.(card.id, { revise: true }))
+    revise.title = `${HANDBACK_WORD}: say what should change`
+  }
+  if (card.kind === 'decision') {
+    const leave = tab('inbox-trust', TRUST_SKETCH, TRUST_WORD, trustTip(card), b => { b.disabled = true; trustCard(card, failed(b, 'Not saved')) })
+    leave.title = trustTip(card)
+    // While the pointer or the keyboard is on it, the tile the agent would take lights up.
+    const light = on => { for (const t of node.querySelectorAll('.inbox-answer.is-advised')) t.classList.toggle('is-hinted', on) }
+    for (const [name, on] of [['mouseenter', true], ['focus', true], ['mouseleave', false], ['blur', false]]) leave.addEventListener(name, () => light(on))
+    hint(leave, 'list.trust')
+  }
+  if (card.kind !== 'permission') {
+    const away = tab('inbox-shred', SHRED_SKETCH, SHRED_WORD, `${SHRED_WORD}: throw "${card.title}" away unanswered`, async b => {
+      b.disabled = true
+      try {
+        await shred(card.id)
+        say(pageHost(), { head: 'Shredded', title: card.title, back: () => reopen(card.id) })
+      } catch (err) { failed(b, 'Not shredded')(err) }
+    })
+    away.title = `${SHRED_WORD}: throw this away unanswered. The session is told; it will not ask again`
+    hint(away, 'list.shred')
+  }
 
   const actions = el('div', 'inbox-actions')
   const tile = (cls, kind, label, act) => {
@@ -515,7 +517,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     b.addEventListener('click', act)
     return b
   }
-  node.append(later, actions, error)
+  node.append(tabs, actions, error)
   if (card.kind === 'info') {
     // Something to read, nothing to decide: two tiles of the board's own where the answers stand. Left
     // "What??": the session is asked to explain it, and the card comes back explained. Right
