@@ -235,7 +235,34 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   works. Idle with nothing open: no ring. Reduced motion: still ring with a small gap. The stack symbol is gone from rows.
 - The Desk entry says "N working" under its name (`.agent-working`, only when > 0; not on the phone strip).
 - Desk list: the bracket line in the sender gutter is gone, the drawing and name alone mark a run.
-- "Next, please" is inline words in the heading sentence (`.inbox-walk.inbox-go`, now inside `.inbox-title p`;
-  `.inbox-tools` is no longer rendered). Interim: proposals for its look are being prepared.
+- The Desk's heading is the walk control itself: `h2.inbox-heading > button.inbox-walk.inbox-go` with the words
+  "Next, please", the count of every open card in `.inbox-circled`, a small arrow; knocks beside it as mark and
+  number (`.inbox-knocks`). No "Desk" word, no sentence (`.inbox-title p`, `.inbox-agents-link`, `.inbox-tools` are
+  gone on the Desk; a session's own list keeps its sentence). Nothing open: `h2` "Desk is clear."
+- No gutter beside the cards (`.inbox-gutter*`, `.run-bracket` gone). Every Desk card has `data-from` and `--hue`:
+  it takes its sender's colour (`--card-color` from the hue; `--urg-color` keeps the knock label and the leading
+  tile of a knock in the warning colour) and wears the sender's drawing before the title (`.inbox-sender`, name as
+  tooltip). `.inbox-from` in the byline is hidden on such rows. List width 800px.
+- The row shows one edge tab, Snooze. Revise, Whatever, Shred are built but `hidden` (`EDGE_TABS` in inbox.js);
+  keys still work: `list.trust`, `list.shred`, and new `list.revise` (opens the card with Discuss ready).
+- Picture stack on a Desk row: `onGallery` (app.js) asks the Focus window for `gallery()`; until focus.js has
+  it, the pictures open in the lightbox as before.
+- `mountInbox`: the inner `reveal(cardId)` is now `revealCard` (it shadowed the row scroll); the returned API is
+  still `{ render, reveal }`. bar.js provides `go.jump`.
+- The old roster is retired: `mountRoster`, `#roster`, `.roster-*` rules (kept: `#nav-roster`, `.roster-open`).
 - Since the last section also: Desk (was Inbox), Whatever (was Trust), taller cards with picture stack and age clock,
   four edge tabs (Snooze, Revise, Whatever, Shred).
+
+## Quick send is the memo slip (card Nr. 134; `js/quicksend.js`, `css/quicksend.css`)
+- Closed: `.quick-open.memo-open` at the bottom right beside the pad's control shows the receiver's drawing with its crown
+  (`data-to` = session id; `data-none` without a crown; `data-draft` = a dot while an unsent memo lies there). In a session
+  it stands small at the top right (the shared placement rules stay in app.css with `.topbar .padlink-open`).
+- Open: `.memo[data-state=closed|open|sending]` on `body` holds `.memo-slip` (form): `.memo-head` (MEMO, To, From),
+  `.memo-body` (the cardclip bar first: chips above the field; `#quick-field.memo-field` on ruled lines), `.memo-files`
+  (`.memo-file`), `.memo-foot` (`.memo-clip`, `.dictate-mic`, `.quick-send.memo-send` "Tear off and send"). Enter sends,
+  Shift+Enter a new line, "/" opens, Esc or a click beside it closes and keeps the draft. Sent: it tears off (not with
+  reduced motion), then `.quick-note` "Sent to <name>." (no Undo: the store cannot take a message back).
+- One receiver, shown, never picked: the crowned session (of several crowns, the one crowned last in this browser). No
+  crown: `.memo-none` "No session wears the crown." and `.memo-ledger` opens /agents. A phone: a sheet at the bottom.
+- Gone: `.quick`, `.quick-to`, `.quick-list`, `.quick-box`, `.quick-files` (and their rules in app.css; the
+  `.quick .cardclip-bar` rules in cardclip.css match nothing now).

@@ -15,7 +15,7 @@
 import { subscribe, getState, sendMessage } from './store.js'
 import { el, sketch } from './ui.js'
 import { avatar } from './agents.js'
-import { dictationMic } from './speech.js'
+import { dictationMic, isDictating } from './speech.js'
 import { pasteChip } from './cardclip.js'
 
 const KEY = 'trommi-king'
@@ -80,7 +80,9 @@ const opener = button('icon-btn quick-open memo-open')
 opener.setAttribute('aria-haspopup', 'dialog')
 opener.setAttribute('aria-controls', form.id)
 opener.setAttribute('aria-expanded', 'false')
-if (bar) (bar.querySelector('.footnav') ?? bar.lastElementChild)?.after(opener, memo, note)
+if (bar) (bar.querySelector('.footnav') ?? bar.lastElementChild)?.after(opener)
+// The slip and its line stand on the page itself, not in the bar: a phone's sheet lies over everything there.
+document.body.append(memo, note)
 
 const isOpen = () => memo.dataset.state !== 'closed'
 function setOpen(open) {
@@ -94,12 +96,15 @@ function setOpen(open) {
 opener.addEventListener('click', () => setOpen(!isOpen()))
 document.addEventListener('pointerdown', e => { if (isOpen() && !memo.contains(e.target) && !opener.contains(e.target)) setOpen(false) })
 // Esc closes; what was written stays on the slip.
-memo.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || e.defaultPrevented) return
+// (Heard at the window, before the table of keys takes Esc to leave the field; a running dictation keeps its Esc.)
+window.addEventListener('keydown', e => {
+  if (e.key !== 'Escape' || !isOpen() || isDictating() || document.querySelector('dialog[open]')) return
+  if (!memo.contains(e.target) && e.target !== document.body) return
+  e.preventDefault()
   e.stopPropagation()
   setOpen(false)
-  opener.focus()
-})
+  opener.focus({ preventScroll: true })
+}, true)
 ledger.addEventListener('click', () => { setOpen(false); document.getElementById('nav-roster')?.click() })
 
 // ---- who receives: the one crowned session ----

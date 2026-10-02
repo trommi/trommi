@@ -8,6 +8,7 @@
 
 import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, tally, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
 import { hueFor } from './agents.js'
+import { loopPath, penSeed, INBOX_SKETCH } from './ui.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './store.js'
 import { openLightbox } from './chat.js'
@@ -159,6 +160,20 @@ export function pile({ kind, label, icon, count, open = false, onToggle, items, 
   section.append(title, sheets)
   return section
 }
+/** The circle round a count, drawn with the pen (the same hand as the sidebar's ring); it stretches to its number. */
+const CIRCLE = loopPath(penSeed('count circle'), { rad: 14.2, drift: 1.4, jitter: .8, start: 4.1 })
+function penCircle() {
+  const NS = 'http://www.w3.org/2000/svg'
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 32 32')
+  svg.setAttribute('preserveAspectRatio', 'none')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS(NS, 'path')
+  path.setAttribute('d', CIRCLE)
+  svg.append(path)
+  return svg
+}
+
 /** A session's mark, small, for a line that names who asked; a starred one wears its crown. */
 function smallMark(session) {
   const mark = el('span', 'inbox-from-mark')
@@ -214,7 +229,7 @@ const trustTip = card => (advisedLabels(card) ? `${TRUST_WORD}: leave it to the 
 async function trustCard(card, onFail) {
   try {
     await trust(card.id)
-    say(pageHost(), { head: 'Trusted', title: card.title, back: () => reopen(card.id) })
+    say(pageHost(), { head: TRUST_WORD, title: card.title, back: () => reopen(card.id) })
   } catch (err) { onFail(err) }
 }
 
@@ -390,7 +405,7 @@ export function questionRow(card, { onOpen, onDecided, onGallery = null, off = f
     node.dataset.from = from.id
     node.style.setProperty('--hue', hueFor(from))
     const sender = smallMark(from)
-    sender.classList.add('inbox-sender')
+    sender.classList.add('inbox-who')
     sender.title = from.name
     sender.setAttribute('role', 'img')
     sender.setAttribute('aria-label', `From ${from.name}`)
@@ -675,7 +690,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     node.tabIndex = -1
     node.dataset.id = card.id
     const picked = card.choices?.length ? card.choices : [card.choice]
-    const labels = card.status === 'shredded' ? 'Shredded' : card.kind === 'info' ? 'Read' : card.trusted ? `Trusted${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
+    const labels = card.status === 'shredded' ? 'Shredded' : card.kind === 'info' ? 'Read' : card.trusted ? `${TRUST_WORD}${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
     // A yes or no shows its thumb; anything else the drawing of a choice.
     const duo = card.options.length === 2 && !card.multiple
     const mark = el('span', 'inbox-done-mark')
@@ -757,7 +772,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     // amount: a step taken while the last one still glides would otherwise add up.
     const go = to => box.scrollTo({ top: to, behavior: smooth && Math.abs(to - box.scrollTop) < frame.height && !matchMedia('(prefers-reduced-motion: reduce)').matches ? 'smooth' : 'instant' })
     if (node === nodes()[0] && box.contains(head)) return go(0)
-    const lead = node.previousElementSibling?.matches('.inbox-sender') ? node.previousElementSibling : node
+    const lead = node.previousElementSibling?.matches('.inbox-sender, .inbox-run-tab') ? node.previousElementSibling : node
     const top = lead.getBoundingClientRect().top - 16 - frame.top
     const bottom = node.getBoundingClientRect().bottom + 24 - frame.bottom
     // Too far up: down to it. Too far down: up, but never so far that its top leaves.
@@ -798,7 +813,9 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     // "4 questions need you · 2 to read".
     const toRead = fresh.filter(c => c.kind === 'info').length, asking = fresh.length - toRead
     let walkTools = null   // the button into the walk, put into the head below
-    const circled = el('span', 'inbox-circled', String(asking))
+    const circled = el('span', 'inbox-circled')
+    const count = n => circled.replaceChildren(String(n), penCircle())
+    count(asking)
     // On the desk it reads "12 on your desk"; in a session's own list "12 questions need you."
     const needs = !agent ? ' on your desk.' : asking === 1 ? ' question needs you.' : ' questions need you.'
     const reading = el('span', 'inbox-toread-count')
@@ -817,12 +834,12 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
       walk.title = `${WALK_WORD}: every open question, one after the other (G F)`
       walk.setAttribute('aria-label', `${WALK_WORD}: ${fresh.length === 1 ? '1 open question' : `${fresh.length} open questions`}`)
       walk.setAttribute('aria-keyshortcuts', 'G F')
-      circled.textContent = String(fresh.length)
+      count(fresh.length)
       walk.append(el('span', null, WALK_WORD), circled, sketch('go'))
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
       heading = el('h2', 'inbox-heading')
       heading.append(walk)
-      if (knocking) { knocks.replaceChildren(sketch(KNOCK_SKETCH), String(knocking)); knocks.title = knocksText(knocking); heading.append(knocks) }
+      // (The knocks are counted by the floating Desk above; the heading does not say them a second time.)
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : agent ? 'Nothing needs you.' : `${INBOX_WORD} is clear.`)
     // A session's pane already carries its name as the title; the inbox has its own.
@@ -859,7 +876,14 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
         section.dataset.run = cards.length > 1 ? 'many' : 'single'
         section.setAttribute('aria-label', `${sender.name}: ${cards.length === 1 ? '1 question' : `${cards.length} questions`}`)
         if (sender.starred) section.dataset.vip = ''
-        // (No gutter beside the cards: every card wears its sender's mark and colour itself.)
+        // A divider tab on the first card of the run: the session's drawing, its crown, its name, in the
+        // session's colour. The run's cards stand close behind it and do not repeat the drawing. It belongs
+        // to the run, not to a card: when the first card is answered, the tab stands on the next.
+        section.style.setProperty('--hue', hueFor(sender))
+        const tab = el('div', 'inbox-run-tab')
+        tab.setAttribute('aria-hidden', 'true')   // the section's label says it
+        tab.append(smallMark(sender), el('b', null, sender.name))
+        section.append(tab)
       }
       section.append(...cards.map(c => row(c, { from: agent ? null : sender })))
       parts.push(section)
@@ -893,7 +917,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
       // The same pile as "Later" (pile(), above): a line with the count, the answers pushed together
       // below it, each sheet naming the question and what was said; the rows are built when it unfolds.
       const today = answered.filter(c => sameDay(c.decided ?? 0, Date.now())).length
-      const answerOf = c => { if (c.kind === 'info') return 'Read'; if (c.trusted) return `Trusted${advisedLabels(c) ? `: ${advisedLabels(c)}` : ''}`; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
+      const answerOf = c => { if (c.kind === 'info') return 'Read'; if (c.trusted) return `${TRUST_WORD}${advisedLabels(c) ? `: ${advisedLabels(c)}` : ''}`; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
       parts.push(pile({
         kind: 'answered', label: 'Answered', icon: 'yes', headClass: 'inbox-answered-toggle', open: answeredOpen && !parts.some(p => p.matches?.('.inbox-pile.is-open')),
         count: today === answered.length ? `${today} today` : today ? `${today} today · ${answered.length} in all` : `${answered.length}`,
@@ -912,7 +936,12 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
         items: shredded.map(c => ({ title: c.title, tail: 'Shredded', node: () => doneRow(c, all.agents.find(a => a.id === c.agent)) })),
       }))
     }
-    if (!open.length) parts.push(el('p', 'inbox-empty', agent ? 'This session has no question for you right now.' : 'As soon as an agent has a question, it shows up here.'))
+    if (!open.length) {
+      // Nothing open: the desk, drawn, and one sentence under it. No box.
+      const empty = el('div', 'inbox-empty')
+      empty.append(sketch(agent ? 'tick' : INBOX_SKETCH), el('p', null, agent ? 'This session has no question for you right now.' : 'As soon as an agent has a question, it shows up here.'))
+      parts.push(empty)
+    }
     list.replaceChildren(...parts)
     for (const [id, { node }] of rows) {
       if (node.isConnected) continue

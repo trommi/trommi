@@ -1,9 +1,7 @@
 /* The Ledger (js/ledger.js): the overview of the sessions at /agents, one line per session.
-   It takes the place of the list of cards (#roster is still built, not shown).
    Plain lines and plain controls; by hand are only the marks, the crown, the hand, the small drawings. */
 
 #ledger { display: none; }
-body[data-page="roster"] #roster { display: none; }
 body[data-page="roster"] #ledger {
   display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
   padding: var(--s-8) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
@@ -73,6 +71,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-state b { font-weight: 700; font-variant-numeric: tabular-nums; }
 .ledger-line[data-state="waiting"] .ledger-state { color: var(--urg-critical); }
 .ledger-state .agent-badge { flex: none; margin: 0; }
+.ledger-sep { font-style: normal; color: var(--faint); margin-inline: -2px; }
+.ledger-acts .ledger-edit { display: none; }
 .ledger-line[data-state="away"] .ledger-state, .ledger-line.is-archived .ledger-state { color: var(--faint); }
 .ledger-line[data-state="away"] .ledger-name strong { font-weight: 600; color: var(--muted); }
 .ledger-does { min-width: 0; display: flex; align-items: center; gap: 6px; }
@@ -115,8 +115,10 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 /* ---- phone: mark, name, state and count; a tap opens ---- */
 @media (max-width: 860px) {
   body[data-page="roster"] #ledger { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
-  .ledger-line.is-head, .ledger-grip, .ledger-does, .ledger-acts .ledger-ib, .ledger-with button, .ledger-find kbd, .ledger-tools .ledger-link { display: none; }
-  .ledger-line { grid-template-columns: 44px minmax(0, 1fr) auto; gap: 0 var(--s-3); min-height: 60px; padding: 0; }
+  .ledger-line.is-head, .ledger-grip, .ledger-does, .ledger-acts .ledger-ib:not(.ledger-edit), .ledger-find kbd, .ledger-tools .ledger-link { display: none; }
+  .ledger-acts .ledger-edit { display: grid; width: 44px; height: 44px; }
+  .ledger-with button { width: 36px; height: 36px; }
+  .ledger-line { grid-template-columns: 44px minmax(0, 1fr) auto auto; gap: 0 var(--s-3); min-height: 60px; padding: 0; }
   .ledger-line.is-archived { grid-template-columns: 44px minmax(0, 1fr) auto auto; }
   .ledger-line.is-archived .ledger-state { display: none; }
   .ledger-find { max-width: none; }

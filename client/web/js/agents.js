@@ -241,12 +241,21 @@ export function mountAgents(root, { onSelect, onWalk }) {
   }
 
   // The inbox's badge: the knocks first (the drawing of knuckles and their number), then every open question.
+  // The Desk's badges: the knocks (the knuckles and THEIR number, on the warning colour), and beside them
+  // everything that is open (the stack of cards and its number, quiet). Two marks, two numbers.
   function inboxCount(fresh, knocking) {
     if (!fresh) return null
-    // No number: the stack of cards when anything is open, the knuckles when something knocks.
-    const box = el('span', knocking ? 'agent-count is-knock' : 'agent-count')
-    box.title = [knocking ? knocksText(knocking) : '', fresh === 1 ? '1 open question' : `${fresh} open questions`].filter(Boolean).join(' · ')
-    box.append(sketch(knocking ? KNOCK_SKETCH : 'stack'), String(fresh))   // the inbox says how many; the session rows do not
+    const box = el('span', 'agent-counts')
+    if (knocking) {
+      const knocks = el('span', 'agent-count is-knock')
+      knocks.title = knocksText(knocking)
+      knocks.append(sketch(KNOCK_SKETCH), String(knocking))
+      box.append(knocks)
+    }
+    const total = el('span', 'agent-count is-total')
+    total.title = fresh === 1 ? '1 open question' : `${fresh} open questions`
+    total.append(sketch('stack'), String(fresh))
+    box.append(total)
     return box
   }
   // Under the Desk's name: how many sessions are at work right now, behind a small turning ring.
@@ -322,14 +331,22 @@ export function mountAgents(root, { onSelect, onWalk }) {
       return row
     }
 
-    const tray = el('span', 'agent-avatar agent-all')
-    tray.append(sketch(INBOX_SKETCH))
+    // The Desk is not a row here: it floats at the top (index.html #desk-go). Its state is painted there.
+    paintDesk(fresh, knocking, working, scope == null && document.body.dataset.page !== 'roster')
     const here = units.filter(u => u.online), away = units.filter(u => !u.online)
     root.replaceChildren(
-      entry({ id: null, label: INBOX_WORD, lead: tray, active: scope == null, mark: inboxCount(fresh, knocking), sub: workingLine(working) }),
       ...here.map(unitRow),
       ...(away.length ? [el('h2', 'caps agent-heading agent-heading-away', 'Disconnected'), ...away.map(unitRow)] : []),
     )
+  }
+  // The floating Desk says what waits and who works: every open card, the knocks, the sessions at work.
+  function paintDesk(fresh, knocking, working, current) {
+    const go = document.getElementById('desk-go'), box = document.getElementById('desk-state')
+    if (!go || !box) return
+    go.toggleAttribute('aria-current', current)
+    box.replaceChildren(...[inboxCount(fresh, knocking), workingLine(working)].filter(Boolean))
+    const open = document.getElementById('desk-open')
+    if (open) open.textContent = `${fresh} open`
   }
 
   // ---- carrying a session: lay it on another, move it to another place, pull it out of its group ----
