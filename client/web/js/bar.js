@@ -99,7 +99,8 @@ function places(query) {
   const out = []
   const add = (label, sketchName, go) => out.push({ label, sketchName, go })
   const nr = /^(?:nr\.?\s*|#)?(\d+)$/.exec(q)
-  if (nr) add(`Question Nr. ${nr[1]}`, 'stack', () => { location.href = `/?q=${nr[1]}` })
+  // The page follows its address (app.js listens to popstate; "?q=<number>" is one of the forms it reads): no reload.
+  if (nr) add(`Question Nr. ${nr[1]}`, 'stack', () => { history.pushState({ q: nr[1] }, '', `${location.pathname}?q=${nr[1]}`); window.dispatchEvent(new PopStateEvent('popstate', { state: history.state })) })
   const match = text => !q || text.toLowerCase().includes(q)
   if (match('inbox')) add('Inbox', 'tray', () => $('nav-inbox')?.click())
   if (match('agents')) add('Agents', 'heads', () => $('nav-roster')?.click())

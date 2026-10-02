@@ -38,6 +38,8 @@ function detailNode(card) {
     box.append(p)
   }
   if (card.note) quote('Your note', card.note)
+  // What the human attached to that note (pictures, a drawing, files).
+  box.append(...attachmentNodes(card.note_attachments ?? []))
   if (card.summary) quote('Result', card.summary)
 
   // When it was asked and answered, and the way back: the card returns to the open

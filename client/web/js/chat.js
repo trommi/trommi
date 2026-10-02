@@ -151,6 +151,14 @@ export function attachmentNodes(list = []) {
       btn.append(img)
       btn.addEventListener('click', () => openLightbox(images, i))
       grid.append(btn)
+      // A picture of a page that can be tried: the way to the page itself stands with it.
+      if (a.page?.url) {
+        const link = el('a', 'focus-page-link', 'Open the page')
+        link.href = a.page.url
+        link.target = '_blank'
+        link.rel = 'noopener noreferrer'
+        grid.append(link)
+      }
     })
     nodes.push(grid)
   }

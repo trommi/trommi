@@ -23,9 +23,13 @@ Files of this work: `css/beside.css`, `js/beside.js`, `css/ledger.css`, `js/ledg
   hidden, and the filter is taken back in place when something asks for it (`beside.js`).
 - An open question inside the conversation is one small line ("QUESTION title ←"); a click scrolls the column to
   its card and marks it for a moment. It opens nothing.
-- Sessions laid together: the columns side by side as before, each with its own questions folded above its
-  conversation (at most 44% of the height, scrolls on its own; hidden when it has none). The answered history is
-  not shown in that form.
+- Sessions laid together (the user chose "Stacked", card Nr. 129, drafts `designs/joined-*.html`): ONE list of the
+  questions of all of them in the wide column, each row naming its session with its mark; the conversations narrow
+  beside it, one above the other, each with its name and its own composer ("Message to <name>"). The list is the
+  inbox's own `mountInbox`, mounted by `beside.js` into `.group-questions` (before `#chat`) and rendered with the
+  state cut down to the group's cards and queue: no change in `inbox.js` or `chat.js`. Below 1200px the list stands
+  above the conversations (at most 46% of the height; gone when nothing is open); on a phone the names in the title
+  still pick the one conversation. "Go through them" in that list walks all open questions, not only the group's.
 - Scribble takes the whole width under the head. Files replaces the log in the right column.
 
 ### Ledger: the Agents page (`css/ledger.css`, `js/ledger.js`)

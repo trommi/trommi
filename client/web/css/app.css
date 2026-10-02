@@ -58,9 +58,7 @@ button { cursor: pointer; touch-action: manipulation; }
 .brand h1 { font: 700 1.08rem/1 var(--display); letter-spacing: -.012em; white-space: nowrap; }
 .brand-mark { width: 26px; height: 26px; flex: none; }
 .brand-mark-bg { fill: var(--accent); }
-.brand-mark-back { fill: var(--accent-fg); opacity: .45; }
-.brand-mark-front { fill: var(--accent-fg); }
-.brand-mark-tick { fill: none; stroke: var(--accent); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; }
+.brand-mark-pen { fill: none; stroke: var(--accent-fg); stroke-linecap: round; stroke-linejoin: round; }
 
 .conn {
   display: inline-flex; align-items: center; gap: 7px;
