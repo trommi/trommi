@@ -1,6 +1,6 @@
 // What just happened, and the way back. Whenever a question leaves the view (answered, put
 // off, asked about), one small note at the top left says so in plain words ("Answered: Yes",
-// "Moved to Later") and carries "Back", which undoes it. The note stays a few seconds; a
+// "Snoozed") and carries "Back", which undoes it. The note stays a few seconds; a
 // scribbled line under it runs out, and waits while the pointer rests on the note or the
 // keyboard is in it. The key for "back" works a little longer than the note is shown.
 // One wording and one place, on the page and in the Focus window.

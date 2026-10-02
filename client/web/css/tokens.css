@@ -95,21 +95,45 @@
 .media audio { display: block; width: 100%; }
 .media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The agent's advice: the option it would pick is circled by hand. In the Focus window's pair of
-   squares that is two strokes that do not quite meet; everywhere else it is a loop drawn with the
-   pen (ui.js adviceLoop, the one place that draws the mark), stretched round the tile or the label
-   a little outside its edge, so it never runs through the words, however many lines they take. */
+/* The agent's advice: a small hand drawn with the pen points at the option it would pick (ui.js
+   adviceLoop, the one place that draws the mark; it is appended to the option or to its label).
+   By default it stands at the option's left edge, its finger just inside, and points right. On a
+   square tile it comes from below and points up, so it never lies on the tile's own drawing; in the
+   Focus window's pair of squares, which appends nothing, the same hand is laid on as a mask. Where
+   many options are advised at once the hands are smaller and paler, so they do not become a queue.
+   Ink: --advice. Under the ink a wider stroke in --advice-paper, where the hand crosses a filled edge. */
 .is-advised { position: relative; }
-.focus-opt.is-advised::before, .focus-opt.is-advised::after { content: ""; position: absolute; top: 7%; bottom: 5%; border: 2.500px solid var(--advice, var(--urg-high)); pointer-events: none; rotate: -3deg; }
-.focus-opt.is-advised::before { left: 5%; right: 46%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
-.focus-opt.is-advised::after { left: 34%; right: 4%; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
-.advice-loop { position: absolute; z-index: 1; left: -5px; top: -5px; width: calc(100% + 10px); height: calc(100% + 10px); overflow: visible; pointer-events: none; fill: none; stroke: var(--advice, var(--urg-high)); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
-.advice-loop path { vector-effect: non-scaling-stroke; }
-.inbox-answer.is-lead.is-advised, .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 70%, white); }
+.advice-hand { position: absolute; z-index: 1; left: -19px; top: 50%; width: 27px; height: auto; translate: 0 -50%; rotate: -3deg; overflow: visible; pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.advice-hand-ink { stroke: var(--advice, var(--urg-high)); stroke-width: 1.8; }
+.advice-hand-paper { stroke: var(--advice-paper, transparent); stroke-width: 5; }
+/* a square thumb tile: from below, the finger at the foot of the tile */
+.inbox-answer.is-thumb > .advice-hand { --advice-paper: var(--surface); left: 50%; top: calc(100% - 4px); translate: -50% -50%; rotate: -90deg; }
+/* an option tile: the hand has its own place in the tile's left margin */
+.inbox-option.is-advised { padding-left: 38px; }
+.inbox-option > .advice-hand { left: 7px; width: 25px; }
+.inbox-option[aria-pressed="true"] > .advice-hand { --advice: color-mix(in srgb, var(--urg-high) 45%, white); }
+/* many advised at once (a multi-select): smaller, paler */
+.inbox-options:has(.is-advised ~ .is-advised ~ .is-advised) .inbox-option.is-advised { padding-left: 32px; }
+.inbox-options:has(.is-advised ~ .is-advised ~ .is-advised) .advice-hand { left: 8px; width: 19px; opacity: .8; }
+.focus-opts:has(.is-advised ~ .is-advised ~ .is-advised) .advice-hand { width: 19px; left: -14px; opacity: .8; }
+/* a small tag: the hand stays on the tag's own left edge and does not lean into its neighbour */
+.focus-opts[data-count="tags"] .focus-opt > .advice-hand { left: -7px; width: 18px; --advice-paper: var(--surface); }
+/* the Focus window's pair of squares: from below, as on a thumb tile */
 .focus-opt.is-advised { --advice: var(--urg-high); }
-.focus-opt.is-advised::before, .focus-opt.is-advised::after { top: -6px; bottom: -8px; }
-.focus-opt.is-advised::before { left: -6px; }
-.focus-opt.is-advised::after { right: -8px; }
+.focus-opt.is-advised::before { content: none; }
+.focus .focus-opts[data-count="duo"] .focus-opt.is-advised::after {
+  content: ""; position: absolute; z-index: 1; left: 50%; right: auto; top: auto; bottom: -15px; width: 30px; height: 21px; translate: -50% 0; rotate: -90deg; pointer-events: none;
+  border: 0; border-radius: 0; background: var(--advice, var(--urg-high));
+  -webkit-mask: var(--advice-hand) center / contain no-repeat; mask: var(--advice-hand) center / contain no-repeat;
+}
+:root { --advice-hand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 2 32 22' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.6 7.6 Q8.9 7.2 10.2 5.8 Q11.4 4.4 12.8 4.2 Q14.2 4.0 14.6 4.9 Q15.1 5.8 14.2 7.1 Q13.3 8.3 16.1 8.4 Q18.8 8.4 23.0 8.7 Q27.2 8.9 28.5 9.8 Q29.7 10.6 28.6 11.5 Q27.5 12.4 24.0 12.4 Q20.5 12.3 19.0 12.4 L17.6 12.6'/%3E%3Cpath d='M17.3 12.4 Q19.8 13.2 20.1 14.1 Q20.3 15.0 19.0 15.5 Q17.6 16.1 18.4 16.4 Q19.2 16.6 19.3 17.5 Q19.3 18.4 18.1 18.7 Q16.9 19.1 17.3 19.4 Q17.8 19.8 17.1 20.7 Q16.4 21.6 14.9 21.5 Q13.4 21.4 11.0 21.1 Q8.5 20.8 5.4 20.6 L2.3 20.5'/%3E%3Cpath d='M5.3 5.9 Q5.7 13.7 5.7 18.0 L5.7 22.4'/%3E%3C/svg%3E"); }
+
+/* Words the agent underlined (`__so__` in its text; ui.js rich()): a line drawn under them by hand, in
+   the accent colour. The line is a drawn stroke repeated along the words, so it follows them over
+   line breaks. */
+.rich-under { padding-bottom: 3px; background: var(--under-ink) repeat-x 0 100% / 72px 7px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+:root { --under-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 7' preserveAspectRatio='none' fill='none' stroke='%231b6a57' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M0.0 4.0 Q9.0 3.2 14.5 3.9 Q20.0 4.6 26.5 4.0 Q33.0 3.4 39.5 4.0 Q46.0 4.5 52.0 3.9 Q58.0 3.3 65.0 3.6 L72.0 4.0'/%3E%3C/svg%3E"); }
+:root[data-theme="dark"] { --under-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 7' preserveAspectRatio='none' fill='none' stroke='%236fd0b5' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M0.0 4.0 Q9.0 3.2 14.5 3.9 Q20.0 4.6 26.5 4.0 Q33.0 3.4 39.5 4.0 Q46.0 4.5 52.0 3.9 Q58.0 3.3 65.0 3.6 L72.0 4.0'/%3E%3C/svg%3E"); }
 
 /* Shared primitive: a table in a text (ui.js rich()): ruled like a sheet, a heavier rule under its head.
    Wider than its column, it scrolls sideways on its own. */

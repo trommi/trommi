@@ -310,7 +310,7 @@ async function main() {
   await sleep(450)
   const afterLater = await cur()
   check(Math.abs(afterLater.y - y0) <= 1 && afterLater.id !== c.b2, `after L the mark stays in place, on the row that moved up (${y0} -> ${afterLater.y}, ${afterLater.id === c.b2 ? 'same row' : 'next row'})`)
-  check(/Moved to Later/.test((await back())?.text ?? ''), 'a note says "Moved to Later"')
+  check(/Snoozed/.test((await back())?.text ?? ''), 'a note says "Snoozed"')
   await shot('03-moved-to-later')
   // What was put off lies in a pile at the foot of the list. J goes on from the last row to the pile's line; Enter unfolds it.
   check(await ev(`return Boolean(__k.row(${JSON.stringify(c.b2)})) || Boolean(__k.list().querySelector('.inbox-group-later'))`), 'a "Later" pile stands at the foot of the list')
@@ -602,7 +602,7 @@ async function main() {
   const beforeLater = await frontId()
   await key('l', { pause: 700 })
   check(await frontId() !== beforeLater && watch.state.cards.find(x => x.id === beforeLater).status === 'open', 'L puts the question off and the next one comes')
-  check(/Moved to Later/.test((await back())?.text ?? ''), 'a note says "Moved to Later"')
+  check(/Snoozed/.test((await back())?.text ?? ''), 'a note says "Snoozed"')
   await key('u', { pause: 700 })
   await until('U fetches it back to the front', async () => await frontId() === beforeLater)
   await key('l', { pause: 700 })

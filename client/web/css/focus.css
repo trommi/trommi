@@ -661,70 +661,97 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-card[data-opts="tags-wide"] .focus-opts .focus-opt-label { font-size: .95rem; }
 
 /* ── the rail: how far the walk is ────────────────────────────────────────── */
-/* Where it stands is one setting in focus.js (RAIL_PLACE); the rail carries it as data-place. The marks are
-   the same everywhere; a place only says whether they run down or along, and on what they lie. */
+/* How it shows is one setting in focus.js (RAIL_PLACE); the rail carries it as data-place, the window as
+   data-rail and data-rail-seat. Plain surfaces; the session marks and the ticks are what is drawn by hand. */
 .focus-rail { flex: none; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 0; color: var(--muted); }
-.focus-rail[hidden], .focus-sheet:not([data-state="cards"]) .focus-rail, .focus[data-single] .focus-rail { display: none; }
+.focus-rail[hidden], .focus-sheet:not([data-state="cards"]) .focus-rail, .focus[data-single] .focus-rail, .focus-rail[data-place="arrows"] { display: none; }
 .focus[data-closing] > .focus-rail { animation: focus-fade-out 200ms var(--ease-in-out) forwards; }
 .focus[data-zoom] > .focus-rail { visibility: hidden; }
 .focus-rail-count { flex: none; margin: 0; white-space: nowrap; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
 .focus-rail-count b { font: 800 1.1rem/1 var(--display); letter-spacing: -.01em; color: var(--fg); }
-.focus-rail-marks { flex: 0 1 auto; min-width: 0; min-height: 0; display: flex; align-items: center; overflow: hidden; }
-.focus-rail-mark { flex: 0 1 20px; min-width: 5px; height: 26px; display: grid; place-items: center; color: color-mix(in srgb, var(--fg) 46%, var(--surface)); transition: scale var(--d-fast) var(--ease-out); }
+.focus-rail-marks { flex: 0 1 auto; min-width: 0; min-height: 0; display: flex; align-items: center; gap: 2px; }
+.focus-rail-mark { position: relative; flex: 0 1 30px; min-width: 5px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: color-mix(in srgb, var(--fg) 62%, var(--surface)); transition: scale var(--d-fast) var(--ease-out), background var(--d-fast); }
 .focus-rail-mark svg { display: block; width: 100%; max-width: 18px; height: 18px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.focus-rail-mark .doodle { max-width: 19px; height: 19px; stroke-width: 2.2; }
 .focus-rail-mark[data-urgency="low"] { color: var(--faint); }
 .focus-rail-mark[data-urgency="high"] { color: var(--urg-high); }
 .focus-rail-mark[data-urgency="critical"] { color: var(--urg-critical); }
 .focus-rail-mark[data-state="done"] { color: var(--faint); }
-.focus-rail-mark[data-state="later"] { color: var(--muted); }
+.focus-rail-mark[data-state="later"] { opacity: .45; }
 .focus-rail-dot { fill: currentColor; stroke-width: 2; }
 .focus-rail-hollow { stroke-width: 2.8; }
 .focus-rail-tick { stroke-width: 3.6; }
 .focus-rail-ring { stroke: var(--fg); stroke-width: 1.7; }
-.focus-rail-mark[data-front] { flex: 0 0 30px; }
-.focus-rail-mark[data-front] svg { max-width: 28px; height: 28px; }
-@media (hover: hover) and (pointer: fine) { .focus-rail-mark:hover:not(:disabled) { scale: 1.3; } }
-.focus-rail-mark[data-gap="sender"], .focus-rail-who[data-gap="sender"] { margin-left: 7px; }
-.focus-rail-mark[data-gap="part"] { margin-left: 12px; }
-.focus-rail-who { display: none; }
-.focus-rail-who .doodle { width: 15px; height: 15px; stroke-width: 2.4; }
-.focus-rail[data-size="few"] .focus-rail-who { flex: none; display: block; color: var(--muted); opacity: .75; }
-.focus-rail[data-size="few"] .focus-rail-who + .focus-rail-mark { margin: 0; }
+.focus-rail-started { stroke: var(--urg-high); stroke-width: 3; }
+/* the question in front: a plain ring round its mark */
+.focus-rail-mark[data-front]:has(.doodle) { flex-shrink: 0; background: var(--surface); box-shadow: 0 0 0 2px var(--fg); }
+.focus-rail-mark[data-started]:has(.doodle)::after { content: ""; position: absolute; right: 2px; top: 2px; width: 7px; height: 7px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--surface); }
+@media (hover: hover) and (pointer: fine) { .focus-rail-mark:hover:not(:disabled) { scale: 1.2; } }
+.focus-rail-more, .focus-rail-word { flex: none; padding: 0 4px; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .05em; color: var(--muted); white-space: nowrap; }
+.focus-rail-word { text-transform: uppercase; }
 
-/* along: a thin row. In a narrow window ("row") and at the top it stands under the top bar, at the bottom above the composer. */
-.focus-rail[data-place="row"], .focus-rail[data-place="top"] { padding: 0 var(--pad) 2px; }
-.focus-rail[data-place="top"] { padding-bottom: var(--s-2); }
+/* a narrow window: a thin row of dots under the top bar */
+.focus-rail[data-place="row"] { padding: 0 var(--pad) 2px; }
+.focus-rail[data-place="row"] .focus-rail-marks { gap: 0; overflow: hidden; }
 .focus-rail[data-place="row"] .focus-rail-mark { flex-basis: 16px; height: 24px; }
 .focus-rail[data-place="row"] .focus-rail-mark svg { max-width: 14px; height: 14px; }
-.focus-rail[data-place="row"] .focus-rail-mark[data-front] { flex-basis: 26px; }
+.focus-rail[data-place="row"] .focus-rail-mark[data-front] { flex: 0 0 26px; }
 .focus-rail[data-place="row"] .focus-rail-mark[data-front] svg { max-width: 24px; height: 24px; }
-.focus-rail[data-place="row"] .focus-rail-who { display: none; }
-.focus-rail[data-place="bottom"] { padding: var(--s-1) var(--pad) 0; }
 
-/* down: the marks one under the other, the count at the foot */
-.focus-rail[data-place="outside"], .focus-rail[data-place="gutter"] { flex-direction: column; gap: var(--s-2); }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-count { order: 2; display: grid; justify-items: center; gap: 3px; font-size: .62rem; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-marks { width: 100%; flex-direction: column; overflow-y: auto; scrollbar-width: none; padding: 3px 0; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark { flex: 0 1 24px; width: 100%; min-width: 0; min-height: 11px; height: auto; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark svg { width: 18px; max-width: none; height: 100%; max-height: 18px; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark[data-front] { flex: 0 0 30px; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark[data-front] svg { width: 28px; height: 28px; max-height: none; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) :is(.focus-rail-mark, .focus-rail-who)[data-gap="sender"] { margin: 7px 0 0; }
-.focus-rail:is([data-place="outside"], [data-place="gutter"]) .focus-rail-mark[data-gap="part"] { margin: 13px 0 0; }
-/* in the window, in a gutter of its own: a dashed line between it and the conversation. It begins under the
-   place of the passing note at the top left ("what just happened, Back"), so that note does not cover it. */
-.focus-rail[data-place="gutter"] { position: absolute; z-index: 1; left: 0; top: 104px; bottom: var(--s-4); width: 58px; border-right: 1px dashed var(--line-strong); }
-.focus-sheet[data-rail] .focus-rail[data-place="gutter"] ~ .focus-stage :is(.focus-talk, .focus-composer) { padding-left: 46px; }
-.focus-sheet[data-rail] .focus-rail[data-place="gutter"] ~ .focus-stage .focus-composer { padding-left: calc(var(--pad) + 46px); }
-
-/* beside the window, or under it: a slim strip of paper of its own on the dimmed page */
-.focus-rail:is([data-place="outside"], [data-place="below"]) { position: relative; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: focus-fade var(--d-slow) var(--ease-out); }
-.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) { grid-template-columns: 48px 46px minmax(0, 1240px) 48px; column-gap: 10px; }
-.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) > .focus-sheet { grid-column: 3; }
-.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) > .focus-nav-next { grid-column: 4; }
-.focus-rail[data-place="outside"] { grid-area: 1 / 2; align-self: center; max-height: min(100%, 900px); width: 46px; padding: 12px 0 14px; border-radius: var(--r-pill); }
-.focus[data-rail="below"]:has(> .focus-rail:not([hidden])) { grid-template-rows: minmax(0, 1fr) auto; row-gap: 10px; }
-.focus-rail[data-place="below"] { grid-area: 2 / 2; justify-self: center; max-width: 100%; height: 44px; padding: 0 20px 0 18px; border-radius: var(--r-pill); }
+/* the pill: a strip of paper of its own. Under the window (pill, senders, next3, unroll, dock), or on its top edge (tab). */
+.focus-rail:is([data-place="pill"], [data-place="senders"], [data-place="next3"], [data-place="unroll"], [data-place="tab"]) { position: relative; height: 46px; padding: 0 16px 0 20px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: focus-fade var(--d-slow) var(--ease-out); }
+.focus[data-rail-seat="below"]:has(> .focus-rail:not([hidden])) { grid-template-rows: minmax(0, 1fr) auto; row-gap: 10px; }
+.focus[data-rail-seat="below"] > .focus-rail { grid-area: 2 / 2; justify-self: center; max-width: 100%; }
+.focus-rail[data-place="tab"] { grid-area: 1 / 2; z-index: 2; align-self: start; justify-self: center; max-width: 80%; height: 40px; translate: 0 -45%; }
+/* one chip per session */
+.focus-rail[data-place="senders"] { padding-right: 6px; }
+.focus-rail-chip { flex: none; height: 34px; display: inline-flex; align-items: center; gap: 7px; padding: 0 10px 0 8px; border-radius: var(--r-pill); color: var(--fg); font-size: var(--t-sm); font-weight: 500; transition: background var(--d-fast), box-shadow var(--d-fast); }
+.focus-rail-chip .doodle { width: 19px; height: 19px; stroke-width: 2.2; color: var(--muted); }
+.focus-rail-chip b { min-width: 20px; height: 20px; display: grid; place-items: center; padding: 0 6px; border-radius: var(--r-pill); background: var(--sunken); font: 700 var(--t-xs)/1 var(--font); color: var(--fg); }
+.focus-rail-chip:hover { background: var(--sunken); }
+.focus-rail-chip[data-front] { background: var(--sunken); box-shadow: inset 0 0 0 1.5px var(--fg); }
+.focus-rail-chip[data-front] b { background: var(--fg); color: var(--surface); }
+/* the pill that unrolls into the list */
+.focus-rail-list { position: absolute; left: 50%; bottom: calc(100% + 8px); translate: -50% 0; width: min(30rem, 90vw); max-height: min(60vh, 520px); overflow-y: auto; display: none; padding: 6px; border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); }
+.focus-rail[data-place="unroll"]:is(:hover, :focus-within) .focus-rail-list { display: grid; }
+.focus-rail[data-place="unroll"]::before { content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 10px; }
+.focus-rail-row { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 4px 10px; border-radius: var(--r-sm); text-align: left; color: var(--fg); font-size: var(--t-sm); }
+.focus-rail-row:hover:not(:disabled) { background: var(--sunken); }
+.focus-rail-row[data-front] { background: var(--sunken); font-weight: 600; }
+.focus-rail-row[data-state="done"] { color: var(--faint); }
+.focus-rail-row-mark { flex: none; width: 22px; height: 22px; display: grid; place-items: center; color: var(--muted); }
+.focus-rail-row-mark .doodle, .focus-rail-row-mark .focus-icon { width: 19px; height: 19px; stroke-width: 2.2; }
+.focus-rail-row-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-rail-row-who { flex: none; font-size: var(--t-xs); letter-spacing: .05em; text-transform: uppercase; color: var(--muted); }
+/* the dock: one small tile per question */
+.focus-rail[data-place="dock"] { gap: var(--s-3); padding: 6px 14px 6px 8px; border-radius: var(--r-lg); background: color-mix(in srgb, var(--surface) 86%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: focus-fade var(--d-slow) var(--ease-out); }
+.focus-rail[data-place="dock"] .focus-rail-marks { order: -1; gap: 5px; align-items: flex-end; }
+.focus-rail[data-place="dock"] .focus-rail-mark { flex: 0 0 38px; height: 38px; border-radius: var(--r-sm); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.focus-rail[data-place="dock"] .focus-rail-mark[data-front] { flex-basis: 46px; height: 46px; box-shadow: 0 0 0 2px var(--fg), var(--shadow-sm); }
+.focus-rail[data-place="dock"] .focus-rail-mark[data-front] .doodle { max-width: 24px; height: 24px; }
+.focus-rail[data-place="dock"] .focus-rail-mark[data-state="done"] { background: none; box-shadow: none; flex-basis: 24px; }
+/* in the top bar, after who asks */
+.focus-rail[data-place="topbar"] { align-self: flex-start; height: 44px; margin: var(--s-2) 0 0 var(--s-2); gap: var(--s-2); }
+.focus-rail[data-place="topbar"] .focus-rail-mark { flex-basis: 26px; height: 26px; }
+/* over the title */
+.focus-rail[data-place="title"] { align-self: flex-start; height: 38px; margin: 0 0 var(--s-1) calc(var(--pad) - 14px); padding: 0 10px 0 14px; border-radius: var(--r-pill); background: color-mix(in srgb, var(--u) 8%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); }
+/* a line of segments along the bottom edge of the window */
+.focus-rail[data-place="bar"] { position: absolute; z-index: 1; left: 0; right: 0; bottom: 0; top: auto; height: 16px; gap: var(--s-2); padding: 0 var(--pad) 0 14px; align-items: flex-end; }
+.focus-rail[data-place="bar"] .focus-rail-count { order: 2; padding-bottom: 5px; font-size: .62rem; }
+.focus-rail[data-place="bar"] .focus-rail-count b { font-size: .8rem; }
+.focus-rail[data-place="bar"] .focus-rail-marks { flex: 1 1 auto; gap: 3px; align-items: flex-end; height: 100%; }
+.focus-rail[data-place="bar"] .focus-rail-mark { flex: 1 1 0; height: 100%; border-radius: 0; scale: none; }
+.focus-rail[data-place="bar"] .focus-rail-mark::before { content: ""; position: absolute; left: 0; right: 0; bottom: 4px; height: 4px; border-radius: 2px; background: currentColor; opacity: .55; transition: height var(--d-fast), opacity var(--d-fast); }
+.focus-rail[data-place="bar"] .focus-rail-mark[data-state="done"]::before { opacity: .3; }
+.focus-rail[data-place="bar"] .focus-rail-mark[data-front]::before { height: 9px; opacity: 1; background: var(--fg); }
+.focus-rail[data-place="bar"] .focus-rail-mark:hover:not(:disabled)::before { height: 9px; opacity: 1; }
+.focus[data-rail="bar"] .focus-composer { padding-bottom: calc(var(--s-4) + 8px); }
+/* on the arrow to the next question: how many come after this one, and whose is next */
+.focus-nav-count, .focus-nav-who { display: none; }
+.focus[data-rail="arrows"]:not([data-single]) .focus-nav-count:not(:empty) { position: absolute; right: -4px; top: -6px; min-width: 22px; height: 22px; display: grid; place-items: center; padding: 0 6px; border-radius: var(--r-pill); background: var(--fg); color: var(--surface); font: 700 var(--t-xs)/1 var(--font); }
+.focus[data-rail="arrows"]:not([data-single]) .focus-nav-who:not(:empty) { position: absolute; left: 50%; top: calc(100% + 8px); translate: -50% 0; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-sm); }
+.focus-nav-who .doodle { width: 18px; height: 18px; stroke-width: 2.2; }
+@media (max-width: 640px) { .focus-nav-count, .focus-nav-who { display: none !important; } }
 
 /* ── the answers beside an enlarged picture ───────────────────────────────── */
 .focus-zoom-answer { flex: none; display: flex; flex-direction: column; gap: var(--s-3); max-height: 46%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--s-3) var(--pad) var(--s-3); background: var(--surface); box-shadow: 0 -1px 0 var(--line); }
@@ -735,8 +762,10 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-zoom-take:active { transform: scale(.985); }
 .focus-zoom-take.is-advised { --advice: color-mix(in srgb, var(--u) 35%, var(--surface)); }
 .focus-zoom-opts .focus-opt-label { white-space: normal !important; overflow-wrap: anywhere; }
-.focus-zoom-opts .focus-opt[data-match] { box-shadow: inset 0 0 0 2px var(--u); }
-.focus-zoom-opts .focus-opt[data-match][aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--fg); }
+/* The option that belongs to the picture shown (in the card's gallery and beside the enlarged picture): the one
+   place that draws this "current" state. */
+.focus-opt[data-match]:not([data-state]) { box-shadow: inset 0 0 0 2px var(--u); }
+.focus-opt[data-match][aria-pressed="true"]:not([data-state]) { box-shadow: inset 0 0 0 2px var(--fg); }
 .focus-zoom-ways { flex: none; display: flex; flex-wrap: wrap; gap: 6px; margin: auto 0 0; }
 /* ten small pictures do not fit one line beside a text: they wrap */
 .focus-thumbs { flex-wrap: wrap; }
