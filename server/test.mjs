@@ -83,9 +83,16 @@ const post = (url, body, origin = base) => fetch(base + url, {
 const state = async (as = cookie) => {
   const res = await fetch(`${base}/events`, { headers: { Cookie: as } })
   const reader = res.body.getReader()
-  const { value } = await reader.read()
+  // The first frame is the whole state; a long one arrives in several pieces.
+  const decoder = new TextDecoder()
+  let frame = ''
+  while (!frame.includes('\n\n')) {
+    const { value, done } = await reader.read()
+    if (done) break
+    frame += decoder.decode(value, { stream: true })
+  }
   await reader.cancel()
-  return JSON.parse(new TextDecoder().decode(value).replace(/^data: /, ''))
+  return JSON.parse(frame.slice(0, frame.indexOf('\n\n')).replace(/^data: /, ''))
 }
 const until = async test => {
   for (let i = 0; i < 50 && !test(); i++) await new Promise(r => setTimeout(r, 20))
@@ -406,6 +413,43 @@ assert.equal((await state()).messages.at(-1).details, 'lang und **ausführlich**
 assert.equal((await fetch(`${base}/scribbles/..%2Ftoken`, { headers: { Cookie: cookie } })).status, 404)
 received.length = 0
 
+// files from the browser: a chat message carries them, they are stored and served, and the agent is told where they lie
+const uploadNote = 'data:text/plain;base64,' + Buffer.from('hallo').toString('base64')
+assert.equal((await post('/message', { text: 'schau mal', attachments: [{ name: 'bild.png', data: dot }, { name: '../../notiz.txt', data: uploadNote }] })).status, 200)
+await until(() => received.length === 1)
+const uploadedMsg = (await state()).messages.at(-1)
+assert.deepEqual(uploadedMsg.attachments.map(a => [a.name, a.kind, a.size]), [['bild.png', 'image', fs.statSync(shot).size], ['notiz.txt', 'file', 5]])
+const uploadPaths = received[0].params.meta.files.split(',')
+assert.deepEqual([received[0].params.content, received[0].params.meta.kind, received[0].params.meta.image_path], ['schau mal', 'chat', uploadPaths[0]])
+assert.deepEqual(fs.readFileSync(uploadPaths[0]), fs.readFileSync(shot))
+assert.equal(fs.readFileSync(uploadPaths[1], 'utf8'), 'hallo')
+assert.ok(uploadPaths.every(p => path.dirname(p) === path.join(data, 'files')), 'a name cannot place a file anywhere else')
+assert.equal((await fetch(base + uploadedMsg.attachments[0].url, { headers: { Cookie: cookie } })).headers.get('content-type'), 'image/png')
+// a message may be nothing but a file; the agent then reads a sentence that names it
+received.length = 0
+assert.equal((await post('/message', { text: '', attachments: [{ name: 'nur.png', data: dot }] })).status, 200)
+await until(() => received.length === 1)
+assert.match(received[0].params.content, /nur\.png/)
+// what is no data URL is refused, and one bad entry stores none of them
+const uploadsBefore = fs.readdirSync(path.join(data, 'files')).length
+assert.equal((await post('/message', { text: 'x', attachments: [{ name: 'gut.png', data: dot }, { name: 'boese', data: 'http://example.org/x.png' }] })).status, 400)
+assert.equal((await post('/message', { text: 'x', attachments: 'bild' })).status, 400)
+assert.equal((await post('/message', { text: '', attachments: [] })).status, 400)
+assert.equal(fs.readdirSync(path.join(data, 'files')).length, uploadsBefore)
+assert.equal((await post('/message', { text: 'x', attachments: [{ name: 'bild.png', data: dot }] }, 'http://evil.example')).status, 403)
+// with an answer: the files belong to its note; an answer that is not taken keeps none. (An open card is
+// answered and taken back again, so that the stack stays as the checks further down expect it.)
+received.length = 0
+assert.equal((await post('/decide', { card_id: low, key: 'zzz', attachments: [{ name: 'skizze.png', data: dot }] })).status, 400)
+assert.equal(fs.readdirSync(path.join(data, 'files')).length, uploadsBefore)
+assert.equal((await post('/decide', { card_id: low, key: 'a', note: 'so', attachments: [{ name: 'skizze.png', data: dot }] })).status, 200)
+await until(() => received.length === 1)
+assert.deepEqual(fs.readFileSync(received[0].params.meta.image_path), fs.readFileSync(shot))
+assert.deepEqual((await state()).cards.find(c => c.id === low).note_attachments.map(a => [a.name, a.kind]), [['skizze.png', 'image']])
+assert.equal((await post('/reopen', { card_id: low })).status, 200)
+await until(() => received.length === 2)
+received.length = 0
+
 // the pad: one record per element, behind the login, with a running number for every change
 const padGet = async (query = '') => (await fetch(`${base}/pad/elements?pad=global${query}`, { headers: { Cookie: cookie } })).json()
 const padEl = (id, rev, rest = {}) => ({ id, pad: 'global', type: 'text', x: 10, y: 20, w: 100, h: 27, rotation: 0, z: 1, group: null, author: 'human', created: 5, updated: 5, rev, blob: null, data: { text: 'Notiz', size: 20, color: 'ink', wrap: null }, sent: [{ session: 'erfunden' }], ...rest })
@@ -673,7 +717,7 @@ for (const event of kinds) {
 const verdict = reference.events.find(e => e.method === 'notifications/claude/channel/permission')
 assert.deepEqual(Object.keys(heard.find(n => n.method === verdict.method).params).sort(), Object.keys(verdict.params).sort())
 assert.deepEqual(Object.keys(reference.events.find(e => e.method.endsWith('/permission_request')).params), ['request_id', 'tool_name', 'description', 'input_preview'])
-assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id'], ['choices'], ['previous_choices'], [], []])
+assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'files', 'image_path'], ['choices', 'option_notes', 'files', 'image_path'], ['previous_choices'], [], []])
 assert.ok(reference.tools[0].inputSchema.properties.card_id)
 assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
 
@@ -891,6 +935,208 @@ await call('withdraw_card', { card_id: wordy })
 received.length = 0
 }
 
+{
+// a question as one structured text: flagged blocks become the options, and body and recommended are derived
+const textOf = res => res.content[0].text
+const mine = async id => JSON.parse(textOf(await call('list_cards', {}))).find(c => c.id === id)
+const onBoard = async id => (await state()).cards.find(c => c.id === id)
+const blocks = [
+  { text: '  Drei Teile, kreuze an.  ' },
+  { key: 'sqlite', label: 'SQLite', recommended: true, text: 'Eine Datei, kein Server.' },
+  'Dazwischen ein Satz.',
+  { key: 'files', label: 'Dateien', text: 'Bilder als Dateien.', picture: 'mock.png' },
+  { key: 'sync', label: 'Abgleich', recommended: true, text: '', picture: 0 },
+]
+let out = textOf(await call('create_decision', { title: 'Speicherplan?', multiple: true, sections: blocks, attachments: [shot] }))
+const sec = out.match(/^card (\w+) /)[1]
+assert.doesNotMatch(out, /a lot to read/)
+let c = await onBoard(sec)
+assert.deepEqual(c.sections, [
+  { text: 'Drei Teile, kreuze an.' },
+  { key: 'sqlite', label: 'SQLite', text: 'Eine Datei, kein Server.', recommended: true },
+  { text: 'Dazwischen ein Satz.' },
+  { key: 'files', label: 'Dateien', text: 'Bilder als Dateien.', recommended: false, picture: 0 },
+  { key: 'sync', label: 'Abgleich', text: '', recommended: true, picture: 0 },
+])
+assert.deepEqual(c.options, [{ key: 'sqlite', label: 'SQLite', detail: '' }, { key: 'files', label: 'Dateien', detail: '' }, { key: 'sync', label: 'Abgleich', detail: '' }])
+assert.deepEqual([c.recommended, c.multiple, c.attachments[0].name], [['sqlite', 'sync'], true, 'mock.png'])
+assert.equal(c.body, 'Drei Teile, kreuze an.\n\n**SQLite**: Eine Datei, kein Server.\n\nDazwischen ein Satz.\n\n**Dateien**: Bilder als Dateien.\n\n**Abgleich**')
+// the agent gets its blocks back to revise them, and the answer arrives by key as ever
+assert.deepEqual((await mine(sec)).sections, c.sections)
+
+// what is refused: both forms at once, a flagged block without a label, fewer than two options, twice the same key, a picture the card does not have, two marks on a card with one answer
+const two = [{ key: 'a', label: 'A', text: 'x' }, { key: 'b', label: 'B', text: 'y' }]
+await refused('create_decision', { title: 'x', sections: two, options: [option('a'), option('b')] }, /sections and options cannot be combined/)
+await refused('create_decision', { title: 'x', text: '[a] A: x\n\n[b] B: y', options: [option('a'), option('b')] }, /text and options cannot be combined/)
+await refused('create_decision', { title: 'x', sections: two, body: 'vorweg' }, /sections and body cannot be combined/)
+await refused('create_decision', { title: 'x', sections: two, text: '[a] A: x\n\n[b] B: y' }, /sections or text, not both/)
+await refused('create_decision', { title: 'x', sections: [{ key: 'a', text: 'x' }, two[1]] }, /section "a" has a key, so it becomes an option and needs a label/)
+await refused('create_decision', { title: 'x', sections: [{ text: 'nur Text' }, two[0]] }, /at least two options with unique keys: flag at least two blocks/)
+await refused('create_decision', { title: 'x', sections: [two[0], two[0]] }, /unique keys/)
+await refused('create_decision', { title: 'x', sections: [{ text: ' ' }, ...two] }, /section 1 is empty/)
+await refused('create_decision', { title: 'x', sections: 'kein Feld' }, /sections must be a list/)
+await refused('create_decision', { title: 'x', sections: [{ ...two[0], picture: 'fehlt.png' }, two[1]], attachments: [shot] }, /section "a" names the picture "fehlt\.png", which is not among this card's attachments \(0: mock\.png\)/)
+await refused('create_decision', { title: 'x', sections: [{ ...two[0], picture: 1 }, two[1]], attachments: [shot] }, /names the picture "1"/)
+await refused('create_decision', { title: 'x', sections: [{ ...two[0], picture: 'mock.png' }, two[1]] }, /it has none/)
+await refused('create_decision', { title: 'x', sections: two.map(b => ({ ...b, recommended: true })) }, /recommended as a list needs multiple: true/)
+await refused('create_decision', { title: 'x', sections: two, recommended: 'zzz' }, /recommended must be the key of one of the options; got "zzz"/)
+assert.equal((await state()).cards.at(-1).id, sec, 'a refused question leaves no card')
+
+// recommended said outright wins over the marks, and the marks follow it
+out = textOf(await call('create_decision', { title: 'eine Antwort', sections: [{ ...two[0], recommended: true }, two[1]], recommended: 'b' }))
+const single = out.match(/^card (\w+) /)[1]
+c = await onBoard(single)
+assert.deepEqual([c.recommended, c.multiple, c.sections.map(b => b.recommended)], ['b', false, [false, true]])
+await call('withdraw_card', { card_id: single })
+
+// the same as one text block: paragraphs, of which those starting with [key] are options
+out = textOf(await call('create_decision', {
+  title: 'Export?', attachments: [shot],
+  text: 'Der Export läuft in ein Limit.\r\n\r\n[limit*] Limit anheben: 60 statt 30 Sekunden.\nGeht schnell.\n\n\n[async] Im Hintergrund (recommended)\nDie Datei kommt per Mail: etwa zwei Tage.\npicture: mock.png\n\n  [page] Nur blättern  \n\nSiehe [das Protokoll](https://example.org) dazu.\n\n[x.y-z] Zeit 12:30 Uhr:\nPICTURE: 0',
+  multiple: true,
+}))
+const block = out.match(/^card (\w+) /)[1]
+c = await onBoard(block)
+assert.deepEqual(c.sections, [
+  { text: 'Der Export läuft in ein Limit.' },
+  { key: 'limit', label: 'Limit anheben', text: '60 statt 30 Sekunden.\nGeht schnell.', recommended: true },
+  { key: 'async', label: 'Im Hintergrund', text: 'Die Datei kommt per Mail: etwa zwei Tage.', recommended: true, picture: 0 },
+  { key: 'page', label: 'Nur blättern', text: '', recommended: false },
+  { text: 'Siehe [das Protokoll](https://example.org) dazu.' },
+  { key: 'x.y-z', label: 'Zeit 12:30 Uhr', text: '', recommended: false, picture: 0 },
+])
+assert.deepEqual([c.options.map(o => o.key), c.recommended], [['limit', 'async', 'page', 'x.y-z'], ['limit', 'async']])
+await refused('create_decision', { title: 'x', text: 'Nur ein Absatz.\n\n[a] A: allein' }, /paragraphs starting with \[key\] Label:/)
+await refused('create_decision', { title: 'x', text: '[a]\n\n[b] B: y' }, /section "a" has a key/)
+await call('withdraw_card', { card_id: block })
+
+// a long block draws the hint, the derived body does not, and no block is refused for its length
+out = textOf(await call('create_decision', { title: 'lang', sections: [{ text: 'x'.repeat(400) }, { key: 'a', label: 'A', text: 'y'.repeat(401) }, { key: 'b', label: 'B', text: 'z'.repeat(400) }, { text: 'w'.repeat(450) }] }))
+const lengthy = out.match(/^card (\w+) /)[1]
+assert.match(out, /\nThis is a lot to read: the section text of "a" \(401\), block 4 \(450\) is longer than about 400 characters/)
+assert.doesNotMatch(out, /the body has/)
+await call('withdraw_card', { card_id: lengthy })
+
+// revising with blocks replaces body and options; number and place stay
+const before = await onBoard(sec)
+out = textOf(await call('revise_card', { card_id: sec, text: 'Zwei Teile.\n\n[sqlite] SQLite: Eine Datei.\npicture: 0\n\n[files*] Dateien: Wie bisher.', note: 'Abgleich gestrichen' }))
+assert.match(out, new RegExp(`^card ${sec} revised, still Nr\\. ${before.number}`))
+c = await onBoard(sec)
+assert.deepEqual([c.options.map(o => o.key), c.recommended, c.multiple, c.revisions], [['sqlite', 'files'], ['files'], true, 1])
+assert.deepEqual(c.sections.map(b => [b.key, b.recommended, b.picture]), [[undefined, undefined, undefined], ['sqlite', false, 0], ['files', true, undefined]])
+assert.equal(c.body, 'Zwei Teile.\n\n**SQLite**: Eine Datei.\n\n**Dateien**: Wie bisher.')
+// only the title, the advice or the kind of card: the blocks stand, and their marks follow
+await call('revise_card', { card_id: sec, title: 'Speicherplan, zweiter Anlauf?' })
+assert.deepEqual([(await onBoard(sec)).sections, (await onBoard(sec)).recommended], [c.sections, ['files']])
+await call('revise_card', { card_id: sec, recommended: ['sqlite'] })
+c = await onBoard(sec)
+assert.deepEqual([c.recommended, c.sections.map(b => b.recommended)], [['sqlite'], [undefined, true, false]])
+await call('revise_card', { card_id: sec, recommended: [] })
+c = await onBoard(sec)
+assert.deepEqual([c.recommended, c.sections.map(b => b.recommended)], [null, [undefined, false, false]])
+// a block that points at a picture holds the card to having one
+await refused('revise_card', { card_id: sec, attachments: [] }, /section "sqlite" names the picture "0"/)
+await refused('revise_card', { card_id: sec, sections: two, options: [option('a'), option('b')] }, /sections and options cannot be combined/)
+await refused('revise_card', { card_id: sec, text: '[a] A: x\n\n[b] B: y', body: 'vorweg' }, /text and body cannot be combined/)
+assert.equal((await onBoard(sec)).body, c.body)
+// plain options make it a plain card again, and the agent is told
+out = textOf(await call('revise_card', { card_id: sec, options: [option('a'), option('b')] }))
+assert.match(out, /it is a plain card now: body and options replaced its sections/)
+c = await onBoard(sec)
+assert.deepEqual(['sections' in c, c.options.map(o => o.key), c.body, 'sections' in await mine(sec)], [false, ['a', 'b'], 'Zwei Teile.\n\n**SQLite**: Eine Datei.\n\n**Dateien**: Wie bisher.', false])
+// and a plain card becomes a sectioned one the same way
+await call('revise_card', { card_id: sec, sections: two })
+assert.deepEqual((await onBoard(sec)).sections.map(b => b.key), ['a', 'b'])
+
+// merging takes blocks too
+const part = await ask('ein Teil')
+out = textOf(await call('merge_cards', { card_ids: [sec, part], title: 'Alles zusammen?', multiple: true, text: 'Kreuze an.\n\n[eins*] Erstens: so.\n\n[zwei] Zweitens: oder so.' }))
+const merged = out.match(/^card (\w+) /)[1]
+c = await onBoard(merged)
+assert.deepEqual([c.sections.length, c.options.map(o => o.key), c.recommended, c.merged_from.map(m => m.id)], [3, ['eins', 'zwei'], ['eins'], [sec, part]])
+await refused('merge_cards', { card_ids: [merged, late], title: 'x', sections: two, options: [option('a'), option('b')] }, /cannot be combined/)
+
+// a question about looks that shows nothing draws a reminder, never a refusal; a picture or a link to a page settles it
+out = textOf(await call('create_decision', { title: 'Which layout for the sidebar?', options: [option('a'), option('b')] }))
+const looks = out.match(/^card (\w+) /)[1]
+assert.match(out, /\nThis reads like a question about how something looks, and it shows nothing\. Add a picture with revise_card: .* named <anything>-<key>\.png .*\(publish_asset\)/)
+assert.equal((await onBoard(looks)).status, 'open')
+assert.match(textOf(await call('revise_card', { card_id: looks, title: 'Welche Farbe für den Knopf?' })), /about how something looks/)
+assert.doesNotMatch(textOf(await call('revise_card', { card_id: looks, body: 'Zum Ausprobieren: `/designs/s5.html`' })), /about how something looks/)
+assert.match(textOf(await call('revise_card', { card_id: looks, body: 'ohne Bild' })), /about how something looks/)
+assert.doesNotMatch(textOf(await call('revise_card', { card_id: looks, attachments: [shot] })), /about how something looks/)
+assert.doesNotMatch(textOf(await call('revise_card', { card_id: looks, title: 'Outlook-Konto anbinden?', attachments: [] })), /about how something looks/)
+assert.match(textOf(await call('revise_card', { card_id: looks, text: 'Zwei Wege.\n\n[a] Icon links: so.\n\n[b] Rechts: so.' })), /about how something looks/)
+await call('withdraw_card', { card_id: looks })
+
+// a card filed the old way is what it always was: no sections anywhere
+const oldStyle = await ask('wie früher', { body: 'kurz', recommended: 'a' })
+c = await onBoard(oldStyle)
+assert.deepEqual(['sections' in c, 'draft' in c, c.body, c.options, c.recommended, 'sections' in await mine(oldStyle)], [false, false, 'kurz', [option('a'), option('b')], 'a', false])
+await call('withdraw_card', { card_id: oldStyle })
+
+// a draft: what the human ticked and wrote without sending is kept on the card, for every page, and the agent hears nothing
+received.length = 0
+const draft = body => post('/draft', { card_id: merged, ...body })
+assert.equal((await post('/draft', { card_id: merged, keys: ['zwei'] }, 'https://evil.example')).status, 403)
+assert.equal((await fetch(`${base}/draft`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ card_id: merged, keys: ['zwei'] }) })).status, 401)
+assert.equal((await draft({ keys: ['zwei', 'eins', 'gibtsnicht'], note: ' halb fertig', notes: { eins: ' ja, aber später ', zwei: '  ', gibtsnicht: 'x' } })).status, 200)
+c = await onBoard(merged)
+assert.deepEqual((({ ts, ...rest }) => rest)(c.draft), { keys: ['eins', 'zwei'], note: ' halb fertig', notes: { eins: 'ja, aber später' } })
+assert.ok(c.draft.ts > 0 && c.status === 'open')
+const stamp = c.draft.ts
+// the same draft again changes nothing; the file follows within a moment
+assert.equal((await draft({ keys: ['eins', 'zwei'], note: ' halb fertig', notes: { eins: 'ja, aber später' } })).status, 200)
+assert.equal((await onBoard(merged)).draft.ts, stamp)
+await eventually(async () => JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).cards.find(k => k.id === merged).draft?.keys.length === 2, 'the draft to reach the state file')
+assert.equal('draft' in await mine(merged), false, 'list_cards does not show a draft')
+for (const wrong of [{ keys: 'eins' }, { notes: ['x'] }, { notes: { eins: 'x'.repeat(2001) } }, { note: 'x'.repeat(10001) }]) assert.equal((await draft(wrong)).status, 400, JSON.stringify(wrong))
+assert.equal((await post('/draft', { card_id: 'gibtsnicht', keys: [] })).status, 400)
+assert.equal((await onBoard(merged)).draft.ts, stamp, 'a refused draft changes nothing')
+// the agent rewrites the card: what the draft says about options that are gone goes with them
+await call('revise_card', { card_id: merged, text: 'Kreuze an.\n\n[zwei] Zweitens: oder so.\n\n[drei] Drittens: ganz anders.' })
+assert.deepEqual((({ ts, ...rest }) => rest)((await onBoard(merged)).draft), { keys: ['zwei'], note: ' halb fertig', notes: {} })
+// an empty draft clears it
+assert.equal((await draft({ keys: [], note: '', notes: {} })).status, 200)
+assert.equal('draft' in await onBoard(merged), false)
+assert.equal(received.length, 0, 'a draft is none of the agent\'s business')
+
+// an answer can carry a note per option, chosen or not; the agent reads them in the text and finds their keys in option_notes
+await draft({ keys: ['drei'], notes: { drei: 'vielleicht' } })
+await sleep(300)
+for (const wrong of [{ notes: 'x' }, { notes: { vier: 'x' } }, { notes: { zwei: 'x'.repeat(2001) } }]) assert.ok([400, 409].includes((await post('/decide', { card_id: merged, keys: ['zwei'], ...wrong })).status), JSON.stringify(wrong))
+assert.equal((await onBoard(merged)).status, 'open')
+assert.equal((await post('/decide', { card_id: merged, keys: ['zwei'], note: 'so machen wir es', notes: { drei: ' nicht das,\nzu teuer ', zwei: 'aber erst morgen', } })).status, 200)
+await until(() => received.length === 1)
+assert.deepEqual(received[0].params, {
+  content: 'so machen wir es\n\nNotes on options:\n- Zweitens [zwei], chosen: aber erst morgen\n- Drittens [drei], not chosen: nicht das, zu teuer',
+  meta: { kind: 'decision', card_id: merged, choice: 'zwei', choices: 'zwei', option_notes: 'zwei,drei' },
+})
+s = await state()
+c = s.cards.find(k => k.id === merged)
+assert.deepEqual([c.status, c.note, c.option_notes, 'draft' in c], ['decided', 'so machen wir es', { zwei: 'aber erst morgen', drei: 'nicht das,\nzu teuer' }, false])
+assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).text], ['decided', 'Zweitens · Zweitens: aber erst morgen · Drittens: nicht das, zu teuer'])
+assert.equal((await draft({ keys: ['zwei'] })).status, 409, 'an answered card keeps no draft')
+// taking the answer back loses nothing: ticks and notes are the draft of the open card
+assert.equal((await post('/reopen', { card_id: merged })).status, 200)
+await until(() => received.length === 2)
+c = await onBoard(merged)
+assert.deepEqual([c.status, c.choices, c.note, c.option_notes], ['open', [], '', {}])
+assert.deepEqual((({ ts, ...rest }) => rest)(c.draft), { keys: ['zwei'], note: 'so machen wir es', notes: { zwei: 'aber erst morgen', drei: 'nicht das, zu teuer'.replace(', ', ',\n') } })
+// without notes the event is what it always was, and withdrawing or closing a card drops its draft
+assert.equal((await post('/decide', { card_id: merged, key: 'drei' })).status, 200)
+await until(() => received.length === 3)
+assert.deepEqual(received[2].params, { content: 'Decision on "Alles zusammen?": drei', meta: { kind: 'decision', card_id: merged, choice: 'drei', choices: 'drei' } })
+assert.deepEqual((await onBoard(merged)).option_notes, {})
+await call('close_card', { card_id: merged })
+const drafted = await ask('mit Entwurf')
+await post('/draft', { card_id: drafted, keys: ['b'] })
+assert.deepEqual((await onBoard(drafted)).draft.keys, ['b'])
+await call('withdraw_card', { card_id: drafted })
+assert.equal('draft' in await onBoard(drafted), false)
+received.length = 0
+}
+
 // several agents on one board: the first process is the hub, the others link to it
 const gotApi = [], gotInfra = []
 const api = await start('API', gotApi)
@@ -1007,6 +1253,29 @@ assert.equal((await post('/session', { agent: 'infra', group: 'paar-1', label: '
 assert.equal((await post('/session', { agent: 'main', group: 'x'.repeat(50) })).status, 200)
 s = await state()
 assert.deepEqual(s.agents.map(a => [a.group, a.label ?? '']), [['x'.repeat(40), ''], ['paar-1', 'Schnittstelle'], ['paar-1', 'Unterbau']])
+// the order of the sidebar is the human's: a session is put before another one or at the end, a group moves as one, and each carries its position
+{
+  const order = async () => (await state()).agents.map(a => a.id)
+  const move = (agent, before) => post('/session', { agent, before })
+  assert.deepEqual((await state()).agents.map(a => [a.id, a.position]), [['main', 0], ['api', 1], ['infra', 2]])
+  assert.equal((await move('infra', 'main')).status, 200)
+  assert.deepEqual(await order(), ['api', 'infra', 'main'], 'the group came along')
+  assert.equal((await move('infra', 'api')).status, 200)
+  assert.deepEqual(await order(), ['infra', 'api', 'main'], 'before a member of its own group: within the group')
+  assert.equal((await move('main', 'api')).status, 200)
+  assert.deepEqual(await order(), ['main', 'infra', 'api'], 'before a group, not into it')
+  assert.equal((await move('api', 'infra')).status, 200)
+  assert.equal((await move('api', 'api')).status, 200)
+  assert.deepEqual(await order(), ['main', 'api', 'infra'])
+  assert.equal((await move('main', null)).status, 200)
+  assert.deepEqual((await state()).agents.map(a => [a.id, a.position]), [['api', 0], ['infra', 1], ['main', 2]])
+  assert.deepEqual(JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8')).agents.map(a => [a.id, a.position]), [['api', 0], ['infra', 1], ['main', 2]])
+  assert.equal((await move('api', 'niemand')).status, 400)
+  assert.equal((await post('/session', { agent: 'niemand', before: null })).status, 400)
+  assert.deepEqual(await order(), ['api', 'infra', 'main'], 'a refused move changes nothing')
+  assert.equal((await post('/session', { agent: 'api', before: null, label: 'Schnittstelle' })).status, 200)
+  assert.deepEqual(await order(), ['main', 'api', 'infra'])
+}
 assert.equal((await post('/session', { agent: 'infra', group: null })).status, 200)
 assert.equal((await post('/session', { agent: 'api', label: 'Schnittstelle' })).status, 200, 'other fields leave the group alone')
 assert.deepEqual((await state()).agents.map(a => a.group), ['x'.repeat(40), 'paar-1', null])
@@ -1699,5 +1968,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation')
 process.exit(0)

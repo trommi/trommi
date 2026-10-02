@@ -6,15 +6,16 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, kindOf, tidyLinks, adviceLoop, cardNote } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, adviceLoop, cardNote } from './ui.js'
+import { hueOf } from './agents.js'
 import { decide, putOff, sendMessage, reopen } from './store.js'
 import { openLightbox } from './chat.js'
-import { provide, hint, openSheet } from './keys.js'
+import { provide, hint } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
 
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
-// What a starred session's rows are called. The word is not settled; it lives here alone.
-export const VIP_LABEL = 'VIP'
+// A card's number, as it is written wherever a card is named: small and quiet, for looking it up.
+export const cardNr = card => `Nr. ${card.number}`
 // What "Explain" asks the session, about a card, in one tap.
 export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
 
@@ -60,7 +61,104 @@ const kindOfRow = node => (node.classList.contains('inbox-done') ? 'done' : 'lat
 // Rows that stand unfolded, by card id: a list that is rebuilt keeps them open.
 const unfolded = new Set()
 
+// ---- a pile that unfolds: what lies below the open questions (put off, with the agent, answered) ----
+// At the foot of the list the piles lie side by side, each small: its drawing, its word and its count,
+// then the top card (one line: the title, and under it a word more, e.g. the answer) with the edges of
+// the cards beneath showing under it, so its height hints at how many there are. A click on a pile, or
+// Enter on its line, fans it open in place: it takes the whole width, its line becomes a dividing line
+// and every sheet its full row. Again, and it is pushed together. One pile is open at a time.
+const pilesOpen = new Set()   // piles that stand open, by "<session or empty>:<kind>"; kept while the page lives
+const pileFold = new WeakMap()   // a pile's section -> the function that pushes it together
+/** One pile. kind: 'later' | 'asked' | 'answered' | … (class inbox-group-<kind>, data-pile). label and
+ *  count: the words on its line. icon: a sketch() name. open: how it stands at first. onToggle(open).
+ *  items: [{ title, lead?, tail?, node }]: title and tail are what a folded card shows, lead a small
+ *  mark before them; node is the full row, or a function that builds it when the pile is first opened.
+ *  headClass: one more class for the line's button. Returns the section; piles that are siblings in
+ *  one list are a row of piles (CSS: .inbox-groups > .inbox-pile). */
+export function pile({ kind, label, icon, count, open = false, onToggle, items, headClass = '' }) {
+  const section = el('section', `inbox-group inbox-pile inbox-group-${kind}`)
+  section.dataset.pile = kind
+  const title = el('h3', 'inbox-sender inbox-pile-title')
+  const head = el('button', `inbox-pile-head ${headClass}`.trim())
+  head.type = 'button'
+  const avatar = el('span', 'inbox-avatar')
+  avatar.append(sketch(icon))
+  const fold = el('span', 'inbox-pile-fold')
+  fold.append(sketch('unfold'))
+  head.append(avatar, el('span', null, label), el('b', null, count), fold)
+  title.append(head)
+  const sheets = el('div', 'inbox-pile-sheets')
+  const fulls = items.map(item => {
+    const sheet = el('div', 'inbox-pile-item')
+    const peek = el('div', 'inbox-pile-peek')
+    peek.setAttribute('aria-hidden', 'true')
+    const words = el('span', 'inbox-pile-words')
+    words.append(el('strong', null, item.title))
+    if (item.tail) words.append(el('span', null, item.tail))
+    if (item.lead) peek.append(item.lead)
+    peek.append(words)
+    const full = el('div', 'inbox-pile-full')
+    if (typeof item.node !== 'function') full.append(item.node)
+    sheet.append(peek, full)
+    sheets.append(sheet)
+    return full
+  })
+  const isOpen = () => section.classList.contains('is-open')
+  const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches
+  const set = (to, moving) => {
+    moving = moving && section.isConnected && !calm()
+    const sheetsNow = [...sheets.children]
+    const others = moving ? [...section.parentElement.children].filter(n => n !== section && n.matches('.inbox-pile')) : []
+    const read = () => sheetsNow.map(n => { const cs = getComputedStyle(n); return { width: `${n.offsetWidth}px`, height: `${n.offsetHeight}px`, marginTop: cs.marginTop, marginLeft: cs.marginLeft, rotate: cs.rotate, opacity: cs.opacity } })
+    const from = moving ? read() : null
+    const places = others.map(n => n.getBoundingClientRect())
+    // Rows that are built on demand are built when the pile first opens.
+    if (to) items.forEach((item, i) => { if (typeof item.node === 'function' && !fulls[i].firstChild) fulls[i].append(item.node()) })
+    section.classList.toggle('is-open', to)
+    head.setAttribute('aria-expanded', String(to))
+    head.title = to ? 'Push them together again' : 'Unfold'
+    for (const full of fulls) full.inert = !to
+    if (!moving) return
+    // Each sheet grows from the card or the edge it was to its row (or back), one a moment after the
+    // other; a pile beside this one glides to where it now lies.
+    const after = read()
+    section.classList.add('is-moving')
+    const runs = sheetsNow.map((n, i) => n.animate([from[i], after[i]], { duration: 360, delay: Math.min(i, 7) * 26, fill: 'backwards', easing: 'cubic-bezier(.3, .9, .3, 1)' }))
+    if (to) for (const full of fulls) full.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 260, easing: 'ease-out' })
+    Promise.allSettled(runs.map(r => r.finished)).then(() => section.classList.remove('is-moving'))
+    others.forEach((n, i) => {
+      const now = n.getBoundingClientRect()
+      if (now.left !== places[i].left || now.top !== places[i].top) n.animate([{ translate: `${places[i].left - now.left}px ${places[i].top - now.top}px` }, { translate: '0 0' }], { duration: 360, easing: 'cubic-bezier(.3, .9, .3, 1)' })
+    })
+  }
+  const toggle = to => {
+    // One pile is open at a time: the others are pushed together first.
+    if (to) for (const other of section.parentElement?.children ?? []) if (other !== section && other.matches('.inbox-pile.is-open')) pileFold.get(other)?.()
+    set(to, true)
+    onToggle?.(to)
+  }
+  pileFold.set(section, () => { set(false, true); onToggle?.(false) })
+  head.addEventListener('click', () => toggle(!isOpen()))
+  // The folded pile itself is the way in: a click anywhere on it unfolds it.
+  sheets.addEventListener('click', () => { if (!isOpen()) { toggle(true); head.focus({ preventScroll: true }) } })
+  set(open, false)
+  section.append(title, sheets)
+  return section
+}
+/** A session's mark, small, for a line that names who asked; a starred one wears its crown. */
+function smallMark(session) {
+  const mark = el('span', 'inbox-from-mark')
+  mark.style.setProperty('--hue', hueOf(session.id))
+  mark.append(doodle(session.mark ?? session.id))
+  if (session.starred) mark.append(crown())
+  return mark
+}
+
 // The body as one line of plain words; a link stands as what it is, never as its long address.
+// Why something did not get through, as a sentence a human can read: the browser's own word for
+// a lost connection is "Failed to fetch".
+const why = err => (err instanceof TypeError ? 'no connection to the board' : err?.message || 'the board did not answer')
+
 const plain = text => tidyLinks(String(text ?? '').replace(/```[\s\S]*?```/g, ' ')).replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
 
 /** A row in a list has a fixed height. A title that needs two lines leaves room for one
@@ -78,9 +176,10 @@ export const lineFit = () => new ResizeObserver(entries => {
 // What "Choose" unfolds under a row: the text, every option as a tile, and a line to ask the
 // agent back instead of answering. One tap on an option answers; where several answers are
 // allowed the options are toggles and one tile sends them.
-function unfoldNode(card, { onDecided }) {
+function unfoldNode(card, { onDecided, full = true }) {
   const box = el('div', 'inbox-more-in')
-  if (card.body) box.append(rich(card.body))
+  // The text in full, unless the row above already shows all of it: nothing is said twice.
+  if (card.body && full) box.append(rich(card.body))
   const error = el('p', 'inbox-error')
   error.hidden = true
   const options = el('div', 'inbox-options')
@@ -97,7 +196,7 @@ function unfoldNode(card, { onDecided }) {
       for (const other of options.children) other.disabled = false
       button.classList.remove('is-picked')
       paintSend()
-      error.textContent = `Not saved: ${err.message}`
+      error.textContent = `Not saved: ${why(err)}`
       error.hidden = false
     }
   }
@@ -153,7 +252,7 @@ function unfoldNode(card, { onDecided }) {
       field.value = ''
       said.textContent = 'Asked. The reply comes in the conversation.'
     } catch (err) {
-      said.textContent = `Not sent: ${err.message}`
+      said.textContent = `Not sent: ${why(err)}`
     }
     go.disabled = false
   })
@@ -163,17 +262,17 @@ function unfoldNode(card, { onDecided }) {
 
 /** One question as a row.
  *  onOpen(cardId): open the card as a window of its own. onDecided(card, option): it was answered here.
- *  vip: the session is starred and nothing around the row says so (it stands among other sessions' rows),
- *  so the row carries the small golden tab itself.
  *  off: the card was put off. from: the session that asked, named on the
  *  row when nothing around it says so. fit: the list's lineFit(). */
-export function questionRow(card, { onOpen, onDecided, vip = false, off = false, from = null, fit = null } = {}) {
+export function questionRow(card, { onOpen, onDecided, off = false, from = null, fit = null } = {}) {
   const node = el('article', 'inbox-row')
   node.tabIndex = -1   // the keyboard's mark puts the focus here, so Tab goes on from the marked row
   node.dataset.id = card.id
   node.dataset.urgency = card.urgency
   if (off) node.dataset.later = ''
-  const error = el('p', 'inbox-error')
+  // What went wrong with an answer: a line of its own on the row's lower edge, outside the text that is cut to whole lines.
+  const error = el('p', 'inbox-error inbox-row-error')
+  error.setAttribute('role', 'alert')
   error.hidden = true
 
   // Head: only what stands out gets a tab flush with the corner. A blocking question a red one,
@@ -190,25 +289,31 @@ export function questionRow(card, { onOpen, onDecided, vip = false, off = false,
     mark.append(sketch('whenever'))
     head.append(mark)
   }
-  if (vip) head.append(el('span', 'inbox-vip', VIP_LABEL))
   if (from) {
+    // Who asked, where nothing around the row says so; a starred session wears its crown on the mark.
     const who = el('span', 'inbox-from')
-    who.append(doodle(from.mark ?? from.id), el('span', null, from.name))
+    who.append(smallMark(from), el('span', null, from.name))
     head.append(who)
   }
-  head.append(agoNode(card.created, 'inbox-ago'))
+  // The number is for looking a card up, not for reading along: small, at the far end, before the age.
+  head.append(el('span', 'inbox-nr', cardNr(card)), agoNode(card.created, 'inbox-ago'))
 
   const text = el('button', 'inbox-text')
   text.type = 'button'
-  // The number is for looking a card up, not for reading along.
-  text.title = `Question ${card.number}: open it as a window`
-  const rest = [cardNote(card), card.urgency_reason, plain(card.body)].filter(Boolean).join(' · ')
+  text.title = `${cardNr(card)}: open it as a window`
+  // Under the title, one or two lines: what the card says of itself, why it is urgent, then its text.
+  // The text is a part of its own: an unfolded row that shows the text in full below drops it here.
+  const about = [cardNote(card), card.urgency_reason].filter(Boolean).join(' · ')
+  const words = plain(card.body)
   const title = el('strong', 'inbox-question', card.title)
   text.append(title)
-  if (rest) text.append(el('span', 'inbox-body', rest))
+  const body = el('span', 'inbox-body')
+  if (about) body.append(el('span', 'inbox-body-about', about))
+  if (words) body.append(el('span', 'inbox-body-text', about ? ` · ${words}` : words))
+  if (about || words) text.append(body)
   text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
-  content.append(head, text, error)
+  content.append(head, text)
   fit?.observe(title)
   node.append(content)
 
@@ -254,7 +359,7 @@ export function questionRow(card, { onOpen, onDecided, vip = false, off = false,
     b.addEventListener('click', act)
     return b
   }
-  node.append(later, actions)
+  node.append(later, actions, error)
   if (quick(card)) {
     // Thumbs are the rule: down on the left, up on the right, on every card. The option the agent
     // leads with (its first, or "allow") is the up. The option's own word stands under its thumb
@@ -273,7 +378,7 @@ export function questionRow(card, { onOpen, onDecided, vip = false, off = false,
         } catch (err) {
           for (const other of actions.children) other.disabled = false
           b.classList.remove('is-picked')
-          error.textContent = `Not saved: ${err.message}`
+          error.textContent = `Not saved: ${why(err)}`
           error.hidden = false
         }
       })
@@ -294,8 +399,14 @@ export function questionRow(card, { onOpen, onDecided, vip = false, off = false,
     const choose = tile('is-wide is-lead', 'choose', 'Choose', () => (inline ? unfold(!node.classList.contains('is-open')) : onOpen?.(card.id)))
     choose.append(el('small', null, count))
     hint(choose, 'list.open')
+    // Is the text more than the row shows: it is cut there, or it has a shape (a list, code, a link, lines).
+    const cut = () => body.scrollHeight > body.clientHeight + 2 || /\n|```|`|\*\*|https?:\/\//.test(card.body ?? '')
     const unfold = open => {
-      if (open && !clip.firstChild) clip.append(unfoldNode(card, { onDecided }))   // built on first use
+      if (open && !clip.firstChild) {   // built on first use
+        const full = Boolean(card.body) && (!body.isConnected || !body.clientHeight || cut())
+        clip.append(unfoldNode(card, { onDecided, full }))
+        node.toggleAttribute('data-fulltext', full)
+      }
       node.classList.toggle('is-open', open)
       choose.setAttribute('aria-expanded', String(open))
       clip.inert = !open
@@ -317,7 +428,7 @@ export function questionRow(card, { onOpen, onDecided, vip = false, off = false,
   return node
 }
 
-const rowSig = (card, opts) => JSON.stringify([card.revised, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments?.length, opts.vip, opts.off, opts.from && [opts.from.name, opts.from.mark]])
+const rowSig = (card, opts) => JSON.stringify([card.revised, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments?.length, opts.off, opts.from && [opts.from.name, opts.from.mark, opts.from.starred]])
 
 /** A list of question rows in root.
  *  onOpen(cardId | null): open that card as a window, or with null walk through all of them there.
@@ -370,7 +481,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     take.addEventListener('click', async () => {
       take.disabled = true
       fetching = card.id
-      try { await reopen(card.id) } catch (err) { fetching = null; take.disabled = false; error(`Not taken back: ${err.message}`) }
+      try { await reopen(card.id) } catch (err) { fetching = null; take.disabled = false; error(`Not taken back: ${why(err)}`) }
     })
     node.append(mark, text, take)
     return node
@@ -391,7 +502,9 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
 
   // ---- the row the keyboard is on ----
   let current = null   // { id, index, off }
-  const nodes = () => [...list.querySelectorAll('.inbox-row:not(.is-leaving), .inbox-done')]
+  const nodes = () => [...list.querySelectorAll('.inbox-row:not(.is-leaving), .inbox-done')].filter(n => !n.closest('.inbox-pile:not(.is-open)'))   // a folded pile's rows are out of reach
+  // A pile was pushed together: the mark does not stay on a row that is no longer in reach.
+  const folded = open => { if (!open && current && !nodes().some(n => n.dataset.id === current.id)) mark(null) }
   // Bring a row wholly into view: with its sender's heading if it is the first of its group, with the
   // tag that hangs below its edge, and with the page's own title if it is the very first row.
   function reveal(node, smooth = true) {
@@ -432,37 +545,34 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     // What was answered: the latest first. A card the agent has closed since is still listed; the server lets it be reopened.
     const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && c.kind === 'decision' && c.choice != null)
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
-    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), off.map(c => c.id), open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
+    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
     // The number counts what is still to be worked down; what was put off is counted at its own group.
     const title = el('div', 'inbox-title')
     const line = el('p')
-    if (fresh.length) line.append(el('span', 'inbox-circled', String(fresh.length)), fresh.length === 1 ? ' question needs you.' : ' questions need you.')
+    const circled = el('span', 'inbox-circled', String(fresh.length))
+    const needs = fresh.length === 1 ? ' question needs you.' : ' questions need you.'
+    if (fresh.length && !agent) {
+      // The count and its sentence are the way into the walk: every open question, one after the other,
+      // in the big window (answer or Later, and the next one comes). Also when there is only one.
+      const walk = el('button', 'inbox-walk')
+      walk.type = 'button'
+      walk.title = 'Go through them, one after the other'
+      walk.setAttribute('aria-label', `${fresh.length}${needs} Go through them, one after the other.`)
+      const arrow = el('span', 'inbox-walk-go')
+      arrow.append(sketch('go'))
+      walk.append(circled, el('span', null, needs.trim()), arrow)
+      walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
+      line.append(walk)
+    } else if (fresh.length) line.append(circled, needs)
     else line.append(off.length ? 'Nothing new. What you put off is below.' : 'Nothing needs you.')
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
     else title.append(el('h2', null, 'Inbox'), line)
     head.replaceChildren(...(agent && !open.length ? [] : [title]))
-    if (fresh.length > 1 && !agent) {
-      // Working down the list happens in the list: the first row is marked, and the keys take over.
-      const go = el('button', 'inbox-go', 'Go through them')
-      go.type = 'button'
-      // The button shows the questions one after the other in the big window: answer or Later, and the next one comes.
-      // Working down the list itself stays with the keys (arrows, then the letters).
-      go.addEventListener('click', () => { go.blur(); onOpen?.(null) })
-      // Which keys: the sheet of all keys, behind a "?" (the key "?" opens it too).
-      const help = el('button', 'inbox-keys-toggle', '?')
-      help.type = 'button'
-      help.title = 'Keys (?)'
-      help.setAttribute('aria-label', 'Keys: what the keyboard does here')
-      help.setAttribute('aria-haspopup', 'dialog')
-      help.addEventListener('click', () => openSheet())
-      const tools = el('div', 'inbox-tools')
-      tools.append(help, go)
-      head.append(tools)
-    }
+    // (The sheet of keys opens from the "?" in the bar, index.html #keys-open, and by the key "?".)
 
     // One group per sender. Starred sessions come first, then whoever has the most urgent question.
     const top = cards => Math.max(...cards.map(c => RANK[c.urgency] ?? 1))
@@ -485,47 +595,53 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       if (!agent) {
         const label = el('h3', 'inbox-sender')
         const avatar = el('span', 'inbox-avatar')
+        avatar.style.setProperty('--hue', hueOf(sender.id))
         avatar.append(doodle(sender.mark ?? sender.id))
+        // A starred session is marked once, here: the crown on its mark. Its rows below stay plain.
+        if (sender.starred) { label.dataset.vip = ''; avatar.append(crown()) }
         label.append(avatar, el('span', null, sender.name))
-        // A starred session is marked once, here; its rows below stay plain.
-        if (sender.starred) { label.dataset.vip = ''; label.append(el('span', 'inbox-vip', VIP_LABEL)) }
         label.append(el('b', null, cards.length === 1 ? '1 question' : `${cards.length} questions`))
         section.append(label)
       }
       section.append(...cards.map(c => row(c)))
       parts.push(section)
     }
-    // Put off: one group below all senders, in the order the cards were put off. Its heading is dashed,
-    // because the group is provisional. Each row says who asked, since it no longer stands under its sender.
-    if (off.length) {
-      const section = el('section', 'inbox-group inbox-group-later')
-      const label = el('h3', 'inbox-sender')
-      const avatar = el('span', 'inbox-avatar')
-      avatar.append(sketch('later'))
-      label.append(avatar, el('span', null, 'Later'), el('b', null, `${off.length} put off`))
-      section.append(label, ...off.map(c => {
-        const sender = all.agents.find(a => a.id === c.agent)
-        return row(c, { off: true, vip: Boolean(!agent && sender?.starred), from: agent ? null : sender })
+    // Put off: below all senders and behind a dividing line, a pile in the order the cards were put off,
+    // pushed together until it is unfolded (pile(), above). The line is dashed, because where these cards
+    // stand is provisional. Each row says who asked, since it no longer stands under its sender.
+    // A card that was handed back to its session ("Explain") waits for the agent, not for the human: those
+    // are a pile of their own, "With the agent"; each comes back by itself when the session has answered.
+    const asked = new Set(state.handed ?? [])
+    const offPile = (kind, label, icon, cards, count) => {
+      if (!cards.length) return
+      const key = `${agent ?? ''}:${kind}`
+      // Only one pile stands open; a state from before that rule is put right here.
+      const open = pilesOpen.has(key) && !parts.some(p => p.matches?.('.inbox-pile.is-open'))
+      parts.push(pile({
+        kind, label, icon, count, open, headClass: `inbox-${kind}-toggle`,
+        onToggle: to => { pilesOpen[to ? 'add' : 'delete'](key); folded(to) },
+        items: cards.map(c => {
+          const sender = agent ? null : all.agents.find(a => a.id === c.agent)
+          return { title: c.title, lead: sender ? smallMark(sender) : null, tail: sender ? `${sender.name} · ${cardNr(c)}` : cardNr(c), node: row(c, { off: true, from: sender ?? null }) }
+        }),
       }))
-      parts.push(section)
     }
+    const waiting = off.filter(c => asked.has(c.id)), put = off.filter(c => !asked.has(c.id))
+    offPile('later', 'Later', 'later', put, `${put.length} put off`)
+    offPile('asked', 'With the agent', 'explain', waiting, `${waiting.length} asked`)
     // Answered: one more group below everything, folded to a line. Unfolded, every answer is a slim row
     // with the way to take it back, for the wrong answer that is noticed only later.
     if (answered.length) {
-      const section = el('section', 'inbox-group inbox-group-answered')
-      const label = el('h3', 'inbox-sender')
-      const toggle = el('button', 'inbox-answered-toggle')
-      toggle.type = 'button'
-      toggle.setAttribute('aria-expanded', String(answeredOpen))
-      const avatar = el('span', 'inbox-avatar')
-      avatar.append(sketch('yes'))
+      // The same pile as "Later" (pile(), above): a line with the count, the answers pushed together
+      // below it, each sheet naming the question and what was said; the rows are built when it unfolds.
       const today = answered.filter(c => sameDay(c.decided ?? 0, Date.now())).length
-      toggle.append(avatar, el('span', null, 'Answered'), el('b', null, today === answered.length ? `${today} today` : today ? `${today} today · ${answered.length} in all` : `${answered.length}`), el('i', 'inbox-answered-caret', answeredOpen ? 'Hide' : 'Show'))
-      toggle.addEventListener('click', () => { answeredOpen = !answeredOpen; signature = ''; render(state); list.querySelector('.inbox-answered-toggle')?.focus({ preventScroll: true }) })
-      label.append(toggle)
-      section.append(label)
-      if (answeredOpen) section.append(...answered.map(c => doneRow(c, all.agents.find(a => a.id === c.agent))))
-      parts.push(section)
+      const answerOf = c => { const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
+      parts.push(pile({
+        kind: 'answered', label: 'Answered', icon: 'yes', headClass: 'inbox-answered-toggle', open: answeredOpen && !parts.some(p => p.matches?.('.inbox-pile.is-open')),
+        count: today === answered.length ? `${today} today` : today ? `${today} today · ${answered.length} in all` : `${answered.length}`,
+        onToggle: open => { answeredOpen = open; folded(open) },
+        items: answered.map(c => ({ title: c.title, tail: answerOf(c), node: () => doneRow(c, all.agents.find(a => a.id === c.agent)) })),
+      }))
     }
     if (!open.length) parts.push(el('p', 'inbox-empty', agent ? 'This session has no question for you right now.' : 'As soon as an agent has a question, it shows up here.'))
     list.replaceChildren(...parts)
@@ -669,7 +785,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
         sendMessage(EXPLAIN_TEXT, card.agent, card.id).then(() => {
           putOff(card.id, true, true)
           say(pageHost(), { head: 'Asked to explain', title: 'It comes back with the answer.', back: async () => putOff(card.id, false) })
-        }, err => error(`Not asked: ${err.message}`))
+        }, err => error(`Not asked: ${why(err)}`))
       }),
       // On an answered row: its answer is taken back, and the question stands in its group again.
       'list.takeback': marked(node => (kindOfRow(node) === 'done' ? press(node.querySelector('.inbox-takeback')) : false)),

@@ -1,0 +1,257 @@
+# Question contract: sections, option notes, drafts, session order
+
+What the hub puts into a card and takes from a page, for whoever renders the
+Focus window or another client. Four things, all additive: a client that
+knows none of them keeps working with `body`, `options`, `recommended`,
+`note`.
+
+Everything below is in the state every page gets over `/events`, on the card
+itself (`state.cards[i]`).
+
+## 1. `card.sections`: one structured text, paragraphs tied to options
+
+An agent may hand in a question as one structured text instead of `body` plus
+`options`. The hub then stores the blocks on the card and derives the old
+fields from them.
+
+### Shape
+
+`card.sections` is **absent** on a card filed the old way (test with
+`Array.isArray(card.sections)`), otherwise an ordered list of blocks, each one
+of two kinds:
+
+```js
+// plain block: context, introduction, a remark between options
+{ text: "Three parts, each stands on its own. Tick what I may build." }
+
+// flagged block: this paragraph IS an option
+{
+  key: "sync",            // the option's key; card.options has an entry with the same key
+  label: "Sync between hubs", // short tile label, the same string as that option's label
+  text: "Two machines show the same board. About two days more.", // markdown, may be ""
+  recommended: false,     // always present on a flagged block; mirrors card.recommended
+  picture: 0              // optional: index into card.attachments (0 = first); absent when none
+}
+```
+
+Guarantees:
+
+- A block is flagged exactly when it has `key`. Plain blocks have only `text`,
+  never empty.
+- The flagged blocks, in order, are exactly `card.options`, in order:
+  `options[i] = { key, label, detail: '' }`. There are at least two, keys unique.
+- `recommended` on a block is true exactly when its key is in
+  `card.recommended` (a key, a list of keys for `multiple`, or `null`). The hub
+  keeps both in step, whichever the agent gave or revised.
+- `picture`, when present, is a valid index into `card.attachments` at the time
+  of the call. Several blocks may point at the same attachment. Attachments no
+  block points at belong to the card as a whole.
+- `text` is markdown, as `body` is. It may be `""` for a flagged block (an
+  option that needs no explanation).
+- `card.body` is the same text for old clients: the blocks joined by a blank
+  line, flagged ones as `**Label**: text` (just `**Label**` when the text is
+  empty). `card.multiple` is whatever the agent set (default false).
+- `revise_card` may replace the blocks, drop them (the card becomes a plain
+  one: `sections` disappears, `body` and `options` stand alone) or add them to
+  a plain card. `card.revised` changes as for any rewording, so treat
+  `sections` like `body`: re-render when the card changes.
+
+### What the client does
+
+- **Left side:** when `card.sections` is there, render the blocks in order
+  instead of `card.body`. A plain block is a paragraph. A flagged block is a
+  paragraph with its `label` as its heading, visibly belonging to its option.
+- **Tie between paragraph and tile:** hovering or focusing either the
+  paragraph or its option tile highlights both (`key` is the join).
+- **Answering from the text:** on a `multiple` card the paragraph carries the
+  option's checkbox; a tap on the paragraph (or its checkbox) toggles the
+  option, exactly as its tile does, and both show the same state. On a card
+  with one answer a tap on the paragraph selects that option the way its tile
+  does (send as before: `POST /decide {card_id, key}`).
+- **Advice:** the mark for the agent's recommendation shows on both, the
+  paragraph and the tile (`block.recommended`).
+- **Picture:** a block with `picture` shows `card.attachments[picture]` with
+  its paragraph. The gallery's tie between pictures and options, where it
+  exists, should use this link rather than position.
+- **Answer:** unchanged. `POST /decide {card_id, key}` or `{card_id, keys}`
+  with the option keys; the agent hears `choice` / `choices`.
+
+### Fallback
+
+- No `sections`: render `body` and `options` as before.
+- A client that does not know `sections` shows `body` (which already contains
+  every paragraph, labels in bold) and the option tiles with their labels and
+  empty details. Nothing is lost but the tie.
+
+### What the agent sends (for reference)
+
+`create_decision`, `revise_card`, `merge_cards` take `sections` (the list
+above; `picture` may be given as a file name or an index) or `text`, the same
+thing as one string:
+
+```
+The export times out for large accounts. Tick what I may build.
+
+[limit*] Raise the limit: 60 instead of 30 seconds. Done in five minutes.
+
+[async] Export in the background: The file arrives by mail. About two days.
+picture: sketch.png
+
+[page] Paginate the export
+Smaller files, but every consumer of the API has to follow.
+```
+
+Paragraphs are separated by a blank line. `[key] Label: text` flags one;
+without a colon the first line is the label. `[key*]` or `(recommended)` after
+the label is the advice; a last line `picture: name-or-index` ties an
+attachment. The hub parses `text` into `sections`; the card never carries the
+raw string.
+
+## 2. Notes on single options
+
+The human can write a note on any option, chosen or not, besides the general
+note.
+
+### Sending
+
+```
+POST /decide
+{ "card_id": "…", "key": "a" | "keys": ["a", "c"],
+  "note": "general note, optional",
+  "notes": { "a": "but not before Monday", "b": "not this, too expensive" },
+  "revised": <card.revised as the page knows it, optional> }
+```
+
+- `notes` is optional: an object from option key to text. Notes for options
+  that are **not** chosen are welcome.
+- Each note is trimmed; empty ones are dropped. A note over 2000 characters or
+  a `notes` that is not an object is refused with 400. A key the card does not
+  have is refused with 400, or with 409 and the "revised while you were
+  answering" message when the card has been revised (same handling as for
+  `key`/`keys`). Nothing is stored on a refusal.
+
+### Stored
+
+```js
+card.note          // the general note, as before
+card.option_notes  // { "<key>": "text", … } in the order of the options; {} when none.
+                   // Absent on cards answered before this existed: read it as card.option_notes ?? {}
+```
+
+The `decided` event in the conversation (`message.kind === 'decided'`) has as
+its `text` the chosen labels, then ` · Label: note` for each note (shortened
+to 80 characters), e.g. `Zweitens · Zweitens: aber erst morgen · Drittens: nicht das, zu teuer`.
+
+### What the agent gets
+
+The channel event keeps its shape; the notes are lines of its text, and
+`option_notes` in meta names the keys that have one:
+
+```
+<channel source="board" kind="decision" card_id="…" choice="a" choices="a,c" option_notes="a,b">
+general note
+
+Notes on options:
+- Anton [a], chosen: but not before Monday
+- Berta [b], not chosen: not this, too expensive
+</channel>
+```
+
+Without a general note the first line is the usual `Decision on "<title>": a, c`.
+
+### What the client does
+
+A small scribble mark on each option tile (and on its paragraph, for a
+sectioned card) opens a line to write on that option. Show existing notes on
+decided cards from `card.option_notes`.
+
+## 3. Drafts: ticked but not sent
+
+What the human ticked and wrote on an open card without sending is kept on the
+hub, so "Later" loses nothing and another device shows the same ticks.
+
+### Sending
+
+```
+POST /draft   (same login and Origin rules as /decide)
+{ "card_id": "…", "keys": ["a", "c"], "note": "half a sentence", "notes": { "b": "…" } }
+→ 200 {"ok":true}
+```
+
+- Always send the **whole** draft; it replaces the previous one. All three
+  fields are optional; a draft with no keys, no note text and no notes
+  **clears** it.
+- Keys and note keys the card does not have are dropped silently (the card may
+  have been revised meanwhile). `keys` come back in the order of the options.
+  `note` is stored as typed (not trimmed, so a draft does not eat the space
+  you just typed); option notes are trimmed, as in an answer.
+- 400: unknown card, a permission card, `keys` not a list, `notes` not an
+  object, an option note over 2000 or a note over 10000 characters.
+  409: the card is no longer open.
+- Sending the same draft again is a no-op: no state push, `ts` unchanged.
+- Debouncing is the client's job; every changed draft pushes the state to all
+  pages. The state file follows within a second.
+
+### Stored
+
+```js
+card.draft = { keys: ["a", "c"], note: "half a sentence", notes: { b: "…" }, ts: 1790930354077 }
+// absent when there is none
+```
+
+- Only on open decision cards. For a card with one answer `keys` holds what
+  the human had selected (normally at most one).
+- Gone when the card is answered, withdrawn, merged away or closed.
+- When the agent revises the card, keys and notes for options that no longer
+  exist drop out; if nothing is left, the draft is gone.
+- When the human takes an answer back (`POST /reopen`), the answer becomes the
+  draft: `keys` = the former choices, `note` = the former note, `notes` = the
+  former `option_notes` (which is `{}` again on the open card). So a reopened
+  card shows the ticks and notes it was sent with.
+- The agent is not told and `list_cards` does not show it.
+
+### What the client does
+
+Take `card.draft` as the initial state of ticks, note and option notes
+whenever a card is shown; write it back with `POST /draft` (debounced) on
+every change; when the state arrives with a different `draft.ts` and the human
+is not typing in that card, adopt it. After a successful `/decide` there is
+nothing to clear: the hub drops the draft.
+
+## 4. Order of the sessions in the sidebar
+
+The human drags sessions into an order of their own; the hub keeps it.
+
+### Sending
+
+```
+POST /session   (the route that also takes label, icon, archived, group)
+{ "agent": "<id of the session that was dragged>", "before": "<id of the session it was dropped in front of>" }
+{ "agent": "<id>", "before": null }      // dropped at the very end
+→ 200 {"ok":true}        400 when either id is unknown; nothing moves
+```
+
+- `before` may be combined with the other fields of `/session`; leaving the
+  key out leaves the order alone (`"before": null` is a move to the end, an
+  absent `before` is not a move).
+- Members of a group stay together. Dragging a session that has a `group`
+  moves the whole group (in its current inner order) in front of the target.
+  A target that belongs to another group stands for its group: the dragged
+  block lands before that group's first member, never inside it. Only when
+  the target is a member of the dragged session's **own** group does the
+  session alone move, which reorders within the group.
+- `before` equal to `agent` is accepted and changes nothing.
+
+### Stored
+
+- `state.agents` **is** the order: render the sidebar in array order. Each
+  agent also carries `position` (0, 1, 2, …, its index in that list), kept
+  across reconnects, restarts and hub changes. A new session is appended at
+  the end; forgetting a session closes the gap.
+- Only the sidebar follows this order. `state.queue` and the inbox's sorting
+  of sender groups (VIP, urgency) are untouched.
+
+### What the client does
+
+On drop, send one `POST /session {agent, before}` and render from the state
+that comes back over `/events`; do not keep an order of its own.

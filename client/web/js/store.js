@@ -112,6 +112,8 @@ function derive() {
     members,
     group,
     later: later.map(([id]) => id),
+    // Of those, the ones handed to their session (asked back, Explain, "Back to agent"): they return by themselves with its reply.
+    handed: later.filter(([, , asked]) => asked).map(([id]) => id),
     all: raw,
   }
 }
@@ -181,7 +183,8 @@ async function post(url, body) {
 }
 
 /** Send a chat message to one session; with cardId it is a question back about that card. Rejects with a readable Error. */
-export const sendMessage = (text, agent, cardId) => post('/message', cardId ? { text, agent, card_id: cardId } : { text, agent })
+export const sendMessage = (text, agent, cardId, attachments) =>
+  post('/message', { text, agent, ...(cardId ? { card_id: cardId } : {}), ...(attachments?.length ? { attachments } : {}) })
 
 /** Rename a session or give it another scribble. */
 export const editSession = (agent, changes) => post('/session', { agent, ...changes })

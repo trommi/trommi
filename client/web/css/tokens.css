@@ -31,8 +31,8 @@
 
   --deny: #a8322d;
 
-  /* the golden ticket of a session that matters most: body, highlight, ink on gold */
-  --gold: #c39a1f; --gold-hi: #f0d67a; --gold-ink: #3d2c00;
+  /* the crown of a session that matters most: the wash inside it, and the pen it is drawn with */
+  --gold: #c39a1f; --gold-pen: #a8820f;
 
   /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
   --st-decision: #c62f25;  --st-decision-soft: #fbe0de;
@@ -79,7 +79,7 @@
   --urg-high: #f2a56c; --urg-high-soft: #3a2415;
   --urg-critical: #ff8a80; --urg-critical-soft: #41191a;
   --deny: #f08a83;
-  --gold: #d2ab3c; --gold-hi: #f2de96; --gold-ink: #2a1f00;
+  --gold: #d2ab3c; --gold-pen: #dcb84e;
   --st-decision: #ff8a80; --st-decision-soft: #41191a;
   --st-working: #f2c14e; --st-working-soft: #3a2f10;
   --st-done: #6cd598; --st-done-soft: #14301f;
@@ -110,6 +110,15 @@
 .focus-opt.is-advised::before, .focus-opt.is-advised::after { top: -6px; bottom: -8px; }
 .focus-opt.is-advised::before { left: -6px; }
 .focus-opt.is-advised::after { right: -8px; }
+
+/* Shared primitive: a table in a text (ui.js rich()): ruled like a sheet, a heavier rule under its head.
+   Wider than its column, it scrolls sideways on its own. */
+.rich-table-wrap { max-width: 100%; overflow-x: auto; }
+.rich-table { border-collapse: collapse; font-size: .95em; line-height: 1.4; }
+.rich-table th, .rich-table td { padding: 6px 14px 6px 0; text-align: left; vertical-align: top; white-space: normal; border-bottom: 1px solid var(--line-strong); }
+.rich-table th { font-weight: 600; border-bottom: 2px solid var(--fg); white-space: nowrap; }
+.rich-table tr:last-child td { border-bottom: 0; }
+.rich-table th:last-child, .rich-table td:last-child { padding-right: 0; }
 
 /* Shared primitive: a link to something a session published, as a compact card (ui.js assetLink):
    a small picture or a drawn sign of its kind, its type, its title. Used wherever rich() runs. */

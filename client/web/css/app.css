@@ -462,8 +462,10 @@ body[data-filter] .jump { display: none; }
 .agent-entry[aria-current="true"] { background: var(--surface); box-shadow: var(--shadow-sm); }
 .agent-text { flex: 1; min-width: 0; display: grid; }
 .agent-text strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* Sessions laid together: one name per line. */
-.agent-text strong + strong::before { content: "+ "; color: var(--faint); font-weight: 500; }
+/* Sessions laid together: one name per line. The ones that were laid on lie a little crooked and
+   a little to the side, as if put there by hand: that is the plus. */
+.agent-text strong + strong { rotate: -1.8deg; translate: 7px 0; transform-origin: 0 60%; }
+.agent-text strong + strong + strong { rotate: 1.3deg; translate: 3px 1px; }
 .agent-text:has(strong + strong) { line-height: 1.3; }
 .agent-text small { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-row.is-offline .agent-text strong { font-weight: 500; color: var(--muted); }
@@ -483,6 +485,41 @@ body[data-filter] .jump { display: none; }
 :root[data-theme="dark"] .pair-mark g { stroke: hsl(var(--hue) 70% 76%); }
 .pair-mark rect { stroke: none; pointer-events: all; }
 .pair-loop { stroke: var(--muted); stroke-width: 1.1; }
+/* A session that matters most (VIP): a scribbled crown, crooked on the corner of its mark. In the
+   joint mark of a group it sits on that session's scribble. */
+.crown-mark { position: absolute; left: -24%; top: -34%; width: 68%; height: auto; rotate: -17deg; overflow: visible; fill: color-mix(in srgb, var(--gold) 34%, var(--surface)); stroke: var(--gold-pen); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.pair-mark g .pair-crown { fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); stroke: var(--gold-pen); stroke-width: 2.2; }
+/* The crown as a switch (agents.js crownToggle): a button of its own on the corner of the mark, 28 px
+   to hit, beside the mark and not in it. Gold while the session is VIP. Otherwise a faint outline
+   that shows when the pointer or the keyboard is on the row or the mark (always, faintly, where
+   nothing hovers and on the Agents page), and a click puts it on. */
+.crown-toggle { position: absolute; z-index: 2; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; transition: opacity var(--d-fast), scale var(--d-fast); }
+.crown-toggle .crown-mark { position: static; width: 20px; rotate: -17deg; pointer-events: none; }
+.crown-toggle[aria-pressed="false"] .crown-mark { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.crown-toggle[aria-pressed="false"] { opacity: .45; }
+.crown-toggle:hover, .crown-toggle:focus-visible { opacity: 1; scale: 1.12; }
+.crown-toggle[aria-pressed="false"]:hover .crown-mark { stroke: var(--gold-pen); }
+@media (hover: hover) {
+  .agent-row .crown-toggle[aria-pressed="false"], .pane-who .crown-toggle[aria-pressed="false"] { opacity: 0; }
+  .agent-row:hover .crown-toggle[aria-pressed="false"], .pane-who:hover .crown-toggle[aria-pressed="false"] { opacity: .5; }
+  .agent-row .crown-toggle[aria-pressed="false"]:is(:hover, :focus-visible), .pane-who .crown-toggle[aria-pressed="false"]:is(:hover, :focus-visible) { opacity: 1; }
+  body.is-pairing .crown-toggle { visibility: hidden; }
+}
+.agent-row { position: relative; }
+.agent-row .crown-toggle { left: 0; top: -5px; }
+.pane-who { position: relative; }
+.pane-who .crown-toggle { left: -13px; top: calc(50% - 26px); }
+.roster-card > header { position: relative; }
+.roster-card .crown-toggle { left: -13px; top: -11px; }
+.roster-card .crown-toggle .crown-mark { width: 24px; }
+/* A test, on by default: marks without the coloured tile behind them, the drawing alone, in the
+   session's colour. <html data-marks="tile"> brings the tiles back (index.html, flag #tiles). */
+:root[data-marks="bare"] .agent-avatar:not(.agent-all) { padding: 1px; background: none; color: hsl(var(--hue) 62% 30%); }
+:root[data-marks="bare"][data-theme="dark"] .agent-avatar:not(.agent-all) { color: hsl(var(--hue) 70% 76%); }
+:root[data-marks="bare"] .agent-avatar .doodle { stroke-width: 2; }
+:root[data-marks="bare"] .agent-avatar .crown-mark { left: -12%; top: -24%; width: 60%; fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); }
+:root[data-marks="bare"] .agent-ghost { padding: 5px; background: var(--surface); }
+
 /* Carrying a session: its mark follows the pointer, the row it would join shows a dashed edge. */
 .agent-ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; rotate: -7deg; box-shadow: var(--shadow-lg); }
 .agent-row.is-dragging { opacity: .4; }
@@ -497,15 +534,32 @@ body[data-filter] .jump { display: none; }
 .agent-text strong[data-member] { cursor: grab; }
 .agent-row.is-drop { outline: 2px dashed var(--fg); outline-offset: -2px; background: var(--surface); }
 body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
-/* Cutting a group apart: scribbled scissors under the badge, on the badge's axis, so nothing in the
-   row gives way to them. Muted at rest; under the pointer they darken and the loop round the group
-   opens up, which says what they do without a tooltip. */
+/* Cutting a group apart: scribbled scissors that show only while the pointer is on the row (or the
+   keyboard on them), in the gap before the badge, so nothing in the row gives way to them and the
+   row is no taller than its names. Under the pointer they darken and the loop round the
+   group opens up, which says what they do without a tooltip. */
 .agent-row.is-group { position: relative; }
-.agent-row.is-group .agent-entry { min-height: 76px; padding-right: 52px; }
-.agent-row.is-group .agent-badge { position: absolute; right: var(--s-3); top: 6px; }
-.agent-cut { position: absolute; right: var(--s-3); bottom: 4px; width: 32px; height: 32px; padding: 5px; border: 0; border-radius: 50%; background: none; color: var(--faint); transition: color var(--d-fast), background var(--d-fast); }
-.agent-cut .sketch { width: 22px; height: 22px; stroke-width: 1.8; }
-.agent-cut:hover, .agent-cut:focus-visible { background: var(--sunken); color: var(--fg); }
+.agent-row.is-group .agent-entry { position: relative; min-height: 52px; }
+.agent-cut { position: absolute; z-index: 1; right: 49px; top: 50%; translate: 0 -50%; width: 28px; height: 28px; padding: 4px; border: 0; border-radius: 50%; background: var(--sunken); color: var(--muted); rotate: -12deg; transition: color var(--d-fast), background var(--d-fast), opacity var(--d-fast); }
+.agent-cut .sketch { width: 20px; height: 20px; stroke-width: 1.8; }
+.agent-cut:hover, .agent-cut:focus-visible { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong); }
+.agent-entry[aria-current="true"] + .agent-cut { background: var(--surface); }
+@media (hover: hover) {
+  .agent-cut { opacity: 0; }
+  .agent-row:hover .agent-cut, .agent-cut:focus-visible { opacity: 1; }
+  body.is-pairing .agent-cut { opacity: 0; }
+}
+/* Where nothing hovers (a tablet), the group that is picked shows them. */
+@media (hover: none) { .agent-entry:not([aria-current="true"]) + .agent-cut { display: none; } }
+/* The loop round the whole group, marks and names (ui.js groupLoop). A test beside the loop round the
+   marks alone: <html data-grouploop="all"> shows this one, anything else the other. */
+.group-loop { display: none; position: absolute; left: 1px; top: 1px; width: calc(100% - 2px); height: calc(100% - 2px); overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+.group-loop path { vector-effect: non-scaling-stroke; stroke-width: 1.4px; }
+:root[data-grouploop="all"] .group-loop { display: block; }
+:root[data-grouploop="all"] .agent-row .pair-mark > .pair-loop { display: none; }
+:root[data-grouploop="all"] .agent-row.is-group .agent-entry { padding-block: 9px; }
+:root[data-grouploop="all"] .agent-row.is-group + .agent-row, :root[data-grouploop="all"] .agent-row + .agent-row.is-group { margin-top: 4px; }
+:root[data-grouploop="all"] .agent-row.is-group .agent-pair { margin-inline: -6px -8px; }
 .agent-row:has(.agent-cut:hover) .pair-loop, .agent-row:has(.agent-cut:focus-visible) .pair-loop { stroke-dasharray: 9 7; stroke: var(--fg); animation: loop-open 700ms linear infinite; }
 /* Putting a disconnected session away: shows on hover or focus; where nothing hovers, it is always there. */
 .agent-archive { flex: none; width: 30px; height: 30px; margin-right: 6px; padding: 5px; border: 0; border-radius: 50%; background: none; color: var(--faint); overflow: hidden; }
@@ -516,8 +570,6 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
   .agent-row:hover .agent-archive, .agent-row:focus-within .agent-archive { width: 30px; margin-right: 6px; padding-inline: 5px; opacity: 1; }
   body.is-pairing .agent-archive { display: none; }
 }
-/* A disconnected group: the box moves to the left of the scissors' column. */
-.agent-row.is-group .agent-archive { position: absolute; right: 48px; bottom: 5px; }
 
 /* ---- session badge: a ring while it works, a hand when it waits for you, grey when it is disconnected ---- */
 .agent-badge { flex: none; position: relative; min-width: 32px; height: 32px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-pill); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; background: var(--sunken); color: var(--fg); }
@@ -546,8 +598,6 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 .mic[data-rec="recording"] { background: var(--st-decision); color: var(--surface); animation: blink 1.2s var(--ease-in-out) infinite; }
 .mic[data-rec="working"] { color: var(--accent); animation: blink .8s var(--ease-in-out) infinite; }
 .focus-open .ico { width: 18px; height: 18px; }
-.topbar .focus-open { display: inline-flex; align-items: center; gap: 6px; min-height: 36px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-weight: 600; font-size: var(--t-sm); }
-.topbar .focus-open:hover { border-color: var(--line-strong); }
 /* Wide screens reach the overview of all sessions from the bar's words; phones from one icon in the top bar. */
 .roster-open { display: none; }
 .roster-open[aria-current] { background: var(--accent-soft); color: var(--accent); }
@@ -557,28 +607,36 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
 .inbox-head, .inbox-groups { max-width: 760px; margin-inline: auto; }
 .inbox-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-8); }
-.inbox-title { flex: 1 1 20rem; min-width: 0; }
+/* The heading, and on its line the count with its sentence; in a narrow window that wraps below. */
+.inbox-title { flex: 1 1 20rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
 .inbox-title h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
-.inbox-title p { margin-top: var(--s-2); font-size: var(--t-lg); color: var(--muted); }
-/* Beside "Go through them" a "?" opens the sheet of keys (keys.js); only where there is a keyboard. */
-.inbox-tools { display: flex; align-items: center; gap: var(--s-2); }
-.inbox-keys-toggle { width: 44px; height: 44px; padding: 0; border: 1px dashed var(--line-strong); border-radius: 50%; background: none; color: var(--muted); font: 700 1.05rem/1 var(--display); }
-.inbox-keys-toggle:hover { color: var(--fg); border-color: var(--fg); }
-@media (pointer: coarse), (max-width: 860px) { .inbox-keys-toggle { display: none; } }
+.inbox-title p { font-size: var(--t-lg); color: var(--muted); }
 /* A number circled by hand: two half ellipses that do not quite meet. */
 .inbox-circled { position: relative; display: inline-block; padding: 0 .45em; font-weight: 700; color: var(--fg); }
 .inbox-circled::before, .inbox-circled::after { content: ""; position: absolute; top: -.12em; bottom: -.18em; border: 2px solid var(--urg-high); opacity: .7; }
 .inbox-circled::before { left: 0; right: 48%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
 .inbox-circled::after { left: 32%; right: -.1em; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
-.inbox-go { min-height: 44px; padding: 0 1.2em; border: 1px solid var(--fg); border-radius: var(--r-pill); background: var(--fg); color: var(--bg); font-weight: 600; transition: filter 100ms ease-out; }
-.inbox-go:hover { filter: brightness(1.25); }
+/* The count and its sentence are the way into the walk through all of them: a link, with a small
+   arrow drawn after it. Under the pointer or the keyboard the circle is drawn over once more
+   (thicker, fully inked), the words darken and the arrow moves on. */
+.inbox-walk { display: inline-flex; align-items: center; gap: .3em; margin: -4px -8px; padding: 4px 8px; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+.inbox-walk-go { display: inline-flex; margin-left: .15em; color: var(--urg-high); opacity: .8; transition: translate 140ms ease-out, opacity 100ms; }
+.inbox-walk-go .sketch { width: 22px; height: 22px; stroke-width: 2; }
+.inbox-walk .inbox-circled::before, .inbox-walk .inbox-circled::after { transition: border-width 100ms ease-out, opacity 100ms ease-out, rotate 160ms ease-out; }
+.inbox-walk:hover, .inbox-walk:focus-visible { color: var(--fg); }
+.inbox-walk:hover .inbox-circled::before, .inbox-walk:hover .inbox-circled::after, .inbox-walk:focus-visible .inbox-circled::before, .inbox-walk:focus-visible .inbox-circled::after { border-width: 3px; opacity: 1; rotate: -4deg; }
+.inbox-walk:hover .inbox-walk-go, .inbox-walk:focus-visible .inbox-walk-go { translate: 4px 0; opacity: 1; }
+.inbox-walk:active { scale: .98; }
 .inbox-groups { display: grid; gap: var(--s-10); container: rows / inline-size; }
-.inbox-group { display: grid; gap: var(--s-4); }
+.inbox-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
 /* The sender's name is the divider: a rule beside it. */
 .inbox-sender { display: flex; align-items: center; gap: var(--s-3); font: 800 1.2rem/1 var(--display); color: var(--fg); }
 .inbox-sender::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
 .inbox-sender b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
-.inbox-avatar { display: block; width: 38px; height: 38px; padding: 6px; border-radius: var(--r-md); background: var(--sunken); color: var(--fg); }
+.inbox-avatar { position: relative; display: block; width: 38px; height: 38px; padding: 6px; border-radius: var(--r-md); background: var(--sunken); color: var(--fg); }
+:root[data-marks="bare"] .inbox-avatar[style*="--hue"] { padding: 2px; background: none; color: hsl(var(--hue) 62% 30%); }
+:root[data-marks="bare"][data-theme="dark"] .inbox-avatar[style*="--hue"] { color: hsl(var(--hue) 70% 76%); }
+:root[data-marks="bare"] .inbox-avatar .crown-mark { left: -10%; top: -22%; width: 58%; }
 .inbox-avatar .sketch { width: 100%; height: 100%; }
 /* One colour drives the whole card: tint, text, border and tab all derive from it. */
 .inbox-row {
@@ -606,23 +664,30 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-content > * { min-width: 0; }
 .inbox-row-head { height: 26px; display: flex; align-items: flex-start; gap: var(--s-3); margin-left: calc(-1 * var(--s-5)); }
 /* Only what stands out carries a tab: blocking and urgent. A normal question has none. */
-.inbox-tab, .inbox-vip { flex: none; padding: 7px 10px; border-radius: 6px 0 6px 0; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.inbox-tab { flex: none; padding: 7px 10px; border-radius: 6px 0 6px 0; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
 .inbox-tab { background: var(--card-color); color: var(--surface); }
 /* One that can wait: no tab, a small hourglass scribbled in a soft colour. */
 .inbox-whenever { flex: none; margin: 5px 0 0 var(--s-4); color: color-mix(in srgb, var(--card-color) 55%, var(--surface)); }
 .inbox-whenever .sketch { width: 21px; height: 21px; stroke-width: 1.9; }
 .inbox-ago, .inbox-from { padding-top: 7px; font: 500 var(--t-xs)/1 var(--font); text-transform: uppercase; letter-spacing: .06em; color: var(--card-ink); white-space: nowrap; }
-.inbox-ago { flex: none; margin-left: auto; opacity: .75; }
+.inbox-ago { flex: none; opacity: .75; }
+/* The card's number: there for looking it up, never in the way of the title. */
+.inbox-nr { flex: none; margin-left: auto; padding-top: 7px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; font-variant-numeric: tabular-nums; color: var(--card-ink); opacity: .5; white-space: nowrap; }
+.inbox-nr + .inbox-ago { margin-left: calc(-1 * var(--s-1)); }
+.inbox-nr + .inbox-ago::before { content: "· "; }
 /* Who asked, on a row that no longer stands under its sender. */
 .inbox-from { min-width: 0; display: flex; align-items: center; gap: 6px; padding-top: 4px; font-weight: 600; }
 .inbox-row-head > .inbox-from:first-child { padding-left: var(--s-5); }
-.inbox-from .doodle { flex: none; width: 18px; height: 18px; }
+.inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
+.inbox-from-mark .crown-mark { left: -36%; top: -20%; width: 78%; stroke-width: 2.4; }
 .inbox-from span { overflow: hidden; text-overflow: ellipsis; }
 .inbox-text { display: grid; gap: 6px; padding: var(--s-2) 0 0; border: 0; background: none; text-align: left; min-width: 0; }
 .inbox-question, .inbox-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .inbox-question { font: 800 1.45rem/28px var(--display); letter-spacing: -.012em; text-wrap: balance; color: var(--fg); }
 .inbox-body { color: var(--card-ink); font-size: var(--t-lg); line-height: 25px; }
 .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 1; }
+/* Unfolded with its text in full below: the row itself does not say it a second time. */
+.inbox-row.is-open[data-fulltext] .inbox-body-text { display: none; }
 /* At most one small picture, beside the text; the rest are behind it. */
 .inbox-thumb { position: relative; align-self: center; width: 64px; height: 64px; margin-right: var(--s-2); padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line); cursor: zoom-in; transition: scale 100ms ease-out; }
 @media (any-hover: hover) { .inbox-thumb:hover { scale: 1.05; } }
@@ -695,21 +760,67 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-askback button:hover { background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
 .inbox-asked { flex-basis: 100%; font-size: var(--t-sm); color: var(--card-ink); }
 .inbox-asked:empty { display: none; }
-/* Put off: the group at the very end. Dashed, because where these cards stand is provisional. */
-.inbox-group-later .inbox-sender { color: var(--muted); }
-.inbox-group-later .inbox-sender::after, .roster-archive .inbox-sender::after { border-top-style: dashed; }
-.inbox-group-later .inbox-avatar { background: none; color: var(--muted); outline: 1px dashed var(--line-strong); outline-offset: -1px; }
-.inbox-row[data-later] { background: none; box-shadow: none; border: 1px dashed color-mix(in srgb, var(--card-color) 45%, var(--surface)); grid-template-rows: 146px auto; min-height: 146px; }
-/* A session that matters most is marked once, quietly, and its rows stay as plain as any other.
-   In the inbox the mark is at the group's heading: the session's scribble on gold foil and a small
-   golden tab behind its name; a session's own page carries the tab in its title. A row carries the
-   tab itself only where it stands among other sessions' rows (put off). No frame, no tint: the
-   urgency colour is left alone. */
-.inbox-vip { background: linear-gradient(135deg, var(--gold-hi), var(--gold) 55%, color-mix(in srgb, var(--gold) 80%, var(--gold-ink))); color: var(--gold-ink); font-weight: 700; box-shadow: inset 0 -1px 0 color-mix(in srgb, var(--gold-ink) 22%, transparent); }
-.inbox-tab + .inbox-vip { margin-left: calc(-1 * var(--s-3)); border-radius: 0 0 6px 0; }
-.inbox-sender .inbox-vip, .pane-who .inbox-vip { order: 1; padding: 5px 8px; border-radius: 4px; }
-.pane-members .inbox-vip { display: inline-block; margin-left: .6em; vertical-align: .25em; }
-.inbox-sender[data-vip] .inbox-avatar { background: linear-gradient(135deg, var(--gold-hi), var(--gold) 60%, color-mix(in srgb, var(--gold) 80%, var(--gold-ink))); color: var(--gold-ink); }
+/* Put off: dashed, because where these cards stand is provisional. */
+.roster-archive .inbox-sender::after { border-top-style: dashed; }
+/* The dashed edge is an outline, so the row and its tiles are exactly as large as an open one. */
+.inbox-row[data-later] { background: none; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--card-color) 45%, var(--surface)); outline-offset: -1px; }
+/* ---- piles (inbox.js pile()): "Later", "With the agent", "Answered" ----
+   At the foot of the list they lie side by side, two to a row (one under the other in a narrow
+   column). Folded, a pile is small: a line with its drawing, its word and its count, and under it the
+   top card with the edges of the cards beneath showing below it, up to three, so the pile's height
+   hints at how many there are. Open, it takes the whole width: its line is a dividing line with a rule
+   and a stroke that points up, and its cards are rows like any other. Plain cards; only the drawing
+   and the slight tilt of the edges are by hand. */
+.inbox-groups { grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: var(--s-6); }
+.inbox-groups > * { grid-column: 1 / -1; }
+.inbox-groups > .inbox-pile:not(.is-open) { grid-column: span 3; }
+/* Three of them: three to a row. */
+.inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: span 2; }
+.inbox-pile { gap: var(--s-3); align-content: start; }
+.inbox-pile-title { color: var(--muted); }
+.inbox-pile-title::after { content: none; }
+.inbox-pile-head { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; }
+.inbox-pile-head::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
+.inbox-group-later .inbox-pile-head::after, .inbox-group-asked .inbox-pile-head::after { border-top-style: dashed; }
+.inbox-pile-head b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.inbox-pile-fold { order: 4; flex: none; color: var(--muted); rotate: 180deg; }
+.inbox-pile-fold .sketch { width: 20px; height: 20px; stroke-width: 2; }
+.inbox-pile-head:hover, .inbox-pile-head:hover b, .inbox-pile-head:hover .inbox-pile-fold { color: var(--fg); }
+.inbox-pile .inbox-avatar { background: none; color: inherit; outline: 1px solid var(--line-strong); outline-offset: -1px; }
+.inbox-group-later .inbox-avatar, .inbox-group-asked .inbox-avatar { outline-style: dashed; }
+.inbox-pile-sheets { display: flex; flex-direction: column; min-width: 0; }
+.inbox-pile-item { position: relative; min-width: 0; margin-top: var(--s-4); }
+.inbox-pile-item:first-child { margin-top: var(--s-1); }
+.inbox-group-answered .inbox-pile-item { margin-top: var(--s-2); }
+.inbox-pile-peek { display: none; align-items: center; gap: var(--s-3); height: 58px; padding: 0 var(--s-4); }
+.inbox-pile-words { min-width: 0; display: grid; gap: 4px; }
+.inbox-pile-words strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 700 1.02rem/1.2 var(--display); letter-spacing: -.005em; color: var(--fg); }
+.inbox-pile-words span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; color: var(--muted); }
+.inbox-group-answered .inbox-pile-words span { font: 600 var(--t-sm)/1.1 var(--font); letter-spacing: 0; text-transform: none; color: var(--accent); }
+.inbox-pile-peek .inbox-from-mark { width: 22px; height: 22px; color: hsl(var(--hue) 62% 30%); }
+:root[data-theme="dark"] .inbox-pile-peek .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+/* folded */
+.inbox-pile:not(.is-open) { gap: var(--s-2); }
+.inbox-pile:not(.is-open) .inbox-pile-title { font-size: 1.02rem; }
+.inbox-pile:not(.is-open) .inbox-pile-head { gap: var(--s-2); }
+.inbox-pile:not(.is-open) .inbox-pile-head::after, .inbox-pile:not(.is-open) .inbox-pile-fold { display: none; }
+.inbox-pile:not(.is-open) .inbox-pile-head b { order: 0; margin-left: var(--s-1); }
+.inbox-pile:not(.is-open) .inbox-avatar { width: 28px; height: 28px; padding: 4px; outline: 0; }
+.inbox-pile:not(.is-open) .inbox-pile-sheets { cursor: pointer; padding-bottom: 2px; }
+.inbox-pile:not(.is-open) .inbox-pile-item { height: 7px; margin: 0 9px; overflow: hidden; border-radius: 0 0 7px 7px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line-strong); z-index: 3; rotate: .35deg; }
+.inbox-pile:not(.is-open) .inbox-pile-item:first-child { height: 58px; margin: 0; border-radius: 8px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 3px rgb(20 30 25 / .06); z-index: 4; rotate: none; transition: translate 120ms ease-out, box-shadow 120ms ease-out; }
+.inbox-pile:not(.is-open) .inbox-pile-item:nth-child(3) { margin-inline: 18px; z-index: 2; rotate: -.5deg; }
+.inbox-pile:not(.is-open) .inbox-pile-item:nth-child(4) { margin-inline: 27px; z-index: 1; rotate: .4deg; }
+.inbox-pile:not(.is-open) .inbox-pile-item:nth-child(n+5) { height: 0; margin-inline: 36px; opacity: 0; }
+.inbox-pile:not(.is-open) .inbox-pile-peek { display: flex; }
+.inbox-pile:not(.is-open) .inbox-pile-item:not(:first-child) .inbox-pile-peek { visibility: hidden; }
+.inbox-pile:not(.is-open) .inbox-pile-full { display: none; }
+@media (any-hover: hover) {
+  .inbox-pile:not(.is-open):hover .inbox-pile-item:first-child { translate: 0 -2px; box-shadow: 0 0 0 1px var(--fg), 0 4px 8px rgb(20 30 25 / .08); }
+  .inbox-pile:not(.is-open):hover .inbox-pile-head, .inbox-pile:not(.is-open):hover .inbox-pile-head b { color: var(--fg); }
+}
+/* While the sheets move, each is cut at its own edge. */
+.inbox-pile.is-moving .inbox-pile-item { overflow: hidden; }
 /* Nothing here yet: dashed and a little crooked, so it reads as not-yet-real. */
 .inbox-empty { justify-self: center; width: fit-content; margin-inline: auto; rotate: -2deg; margin-top: var(--s-8); padding: var(--s-6) var(--s-8); border: 2px dashed var(--line-strong); border-radius: 6px; color: var(--muted); text-align: center; }
 /* A narrower column: the text keeps its width, the picture waits behind the title. */
@@ -720,7 +831,9 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 }
 /* Narrow (a phone, or sessions side by side): rows are as tall as their text, the answers stand below it. */
 @container rows (max-width: 560px) {
-  .inbox-row, .inbox-row[data-later] { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
+  .inbox-row { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
+  .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; }
+  .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-4)); }
   .inbox-row > :not(.inbox-more) { grid-row: auto; }
   .inbox-content { grid-column: 1 / -1; padding: 0 var(--s-4) var(--s-3); overflow: visible; }
   .inbox-row-head { height: auto; min-height: 26px; margin-left: calc(-1 * var(--s-4)); }
@@ -846,9 +959,6 @@ body[data-page="roster"] #roster { display: block; grid-column: 2; min-width: 0;
 .roster-name span { color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .roster-state { flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--st-done); }
 .roster-card[data-online="false"] .roster-state { color: var(--faint); }
-.roster-star { flex: none; width: 44px; height: 44px; border: 0; border-radius: 50%; background: none; font-size: 1.4rem; line-height: 1; color: var(--faint); }
-.roster-star[aria-pressed="true"] { color: var(--gold); }
-@media (any-hover: hover) { .roster-star:hover { background: var(--sunken); } }
 .roster-facts { margin: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-top: 1px solid var(--line); }
 .roster-facts > div { padding: var(--s-3) var(--s-3) var(--s-2) 0; min-width: 0; }
 .roster-facts > div:nth-child(-n+3) { border-bottom: 1px solid var(--line); }
@@ -898,21 +1008,57 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
 .session-error { color: var(--deny); font-size: var(--t-sm); }
 .session-error:empty { display: none; }
 
-/* ---- the bar sits at the bottom on wide screens: where to go, two side doors, the connection, the theme ---- */
-.footnav, .sidedoors { display: none; }
+/* ---- the bar: at the bottom on wide screens ----
+   One calm line: the logo (a door to Help, Admin and Keys), where to go, the two tools, the state.
+   Every control in it is the same plain shape, 36 high with a quiet rounded ground; what is drawn by
+   hand is the small drawing inside each, nothing else. (The pad's control comes from padlink.js with
+   a look of its own; here it is brought into line with the others.) */
+.footnav { display: none; }
+.brand h1 { display: flex; }
+.brand-open { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; margin-left: -8px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; transition: background var(--d-fast); }
+.brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
+.brand-fold { display: inline-flex; margin-left: -4px; color: var(--faint); rotate: 180deg; transition: rotate var(--d-med) var(--ease-out), color var(--d-fast); }
+.brand-fold .sketch { width: 16px; height: 16px; stroke-width: 2.2; }
+.brand-open:hover .brand-fold { color: var(--muted); }
+.brand-open[aria-expanded="true"] .brand-fold { rotate: 0deg; color: var(--fg); }
+/* The menu: a small sheet above the logo (below it on a phone, where the bar is at the top). */
+.sidedoors { position: absolute; z-index: 6; left: max(var(--s-3), env(safe-area-inset-left, 0px)); bottom: calc(100% + 6px); min-width: 208px; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
+.topbar .sidedoors a { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
+.topbar .sidedoors a:hover, .topbar .sidedoors :focus-visible { background: var(--sunken); text-decoration: none; }
+.topbar .sidedoors :focus-visible { outline-offset: -2px; }
+.sidedoors .sketch { width: 20px; height: 20px; stroke-width: 1.8; color: var(--muted); }
+/* The two tools, and on wide screens the two places: one shape. */
+.topbar .focus-open, .topbar .padlink-open, .footnav button {
+  display: inline-flex; align-items: center; gap: 7px; height: 36px; min-height: 36px; padding: 0 14px 0 10px;
+  border: 0; border-radius: 10px; background: var(--sunken); color: var(--fg); rotate: none;
+  font: 600 var(--t-sm)/1 var(--font); letter-spacing: 0; white-space: nowrap;
+  transition: background var(--d-fast), color var(--d-fast), box-shadow var(--d-fast);
+}
+.topbar .focus-open:hover, .topbar .padlink-open:hover { rotate: none; background: var(--sunken); box-shadow: inset 0 0 0 2px var(--line-strong); }
+.topbar .padlink-open[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.topbar .focus-open .sketch, .topbar .padlink-ico, .footnav .sketch { width: 20px; height: 20px; stroke-width: 1.8; }
+/* The theme: a scribbled moon while it is light, a sun while it is dark. */
+.topbar .icon-btn { width: 36px; height: 36px; border-radius: 10px; }
+#theme-toggle .ico-sun, :root[data-theme="dark"] #theme-toggle .ico-moon { display: none; }
+:root[data-theme="dark"] #theme-toggle .ico-sun { display: block; }
+#theme-toggle .sketch, #keys-open .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
+/* The sheet of keys: only where there is a keyboard. */
+@media (pointer: coarse), (max-width: 860px) { .topbar #keys-open { display: none; } }
+/* The connection is a small mark; it speaks only while it is not there. */
+.conn[data-state="online"] { padding: 0 6px; }
+.conn[data-state="online"] span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @media (min-width: 861px) {
   body { grid-template-rows: minmax(0, 1fr) auto; }
-  .topbar { grid-row: 2; border-bottom: 0; border-top: 1px solid var(--line); background: var(--bg); }
+  .topbar { grid-row: 2; gap: 0 var(--s-2); border-bottom: 0; border-top: 1px solid var(--line); background: var(--bg); }
   .brand { margin-right: 0; }
   .footnav { display: flex; align-items: center; gap: var(--s-1); margin-inline: auto; }
-  .footnav button { min-height: 36px; padding: 0 var(--s-4); border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font-weight: 500; }
+  /* A place is a tool without a ground; the one you are at lies on paper, as in the sidebar. */
+  .footnav button { background: none; color: var(--muted); font-weight: 500; }
   .footnav button:hover { color: var(--fg); background: var(--sunken); }
-  .footnav button[aria-current] { color: var(--fg); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
-  /* Help and administration: there, but out of the way. */
-  .sidedoors { display: flex; align-items: center; gap: var(--s-4); margin-right: var(--s-2); }
-  .sidedoors a { display: inline-flex; align-items: center; gap: 4px; font-size: var(--t-xs); color: var(--faint); text-decoration: none; }
-  .sidedoors .sketch { width: 15px; height: 15px; stroke-width: 2; }
-  .sidedoors a:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+  .footnav button[aria-current] { color: var(--fg); font-weight: 600; background: var(--surface); box-shadow: var(--shadow-sm), 0 0 0 1px var(--line); }
+  .topbar .conn { order: 5; }
+  .topbar #keys-open { order: 6; margin-right: -6px; }
+  .topbar #theme-toggle { order: 7; }
 }
 
 /* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */
@@ -952,29 +1098,33 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
   .roster-links { display: flex; gap: var(--s-5); margin-top: var(--s-8); }
   .roster-links .sketch { width: 17px; height: 17px; margin-right: 5px; stroke-width: 1.9; }
   .roster-links a { min-height: 44px; display: inline-flex; align-items: center; color: var(--muted); font-size: var(--t-sm); font-weight: 600; text-underline-offset: 4px; }
-  .agent-heading, .agent-archive, .agent-cut { display: none; }
-  .agent-row.is-group .agent-entry { min-height: 44px; padding-right: 10px; }
-  .agent-row.is-group .agent-badge { position: relative; right: auto; top: auto; }
+  .agent-heading, .agent-archive, .agent-cut, .agent-row .crown-toggle[aria-pressed="false"] { display: none; }
+  .agent-row .crown-toggle { left: -4px; top: -6px; pointer-events: none; }
+  .agent-row.is-group .agent-entry { min-height: 44px; }
   .agent-row { flex: none; }
-  .topbar .focus-open { padding: 0; width: 44px; justify-content: center; border: 0; }
+  .topbar .focus-open, .topbar .padlink-open { padding: 0; width: 44px; height: 40px; justify-content: center; margin-inline: 2px; }
+  .topbar .padlink-open span { display: none; }
+  .sidedoors { bottom: auto; top: calc(100% + 6px); }
+  .brand-open { margin-left: -6px; padding: 0 6px; gap: 8px; }
+  .topbar .icon-btn { width: 44px; height: 40px; }
   .roster-open { display: grid; }
   .toast { left: var(--gutter); right: var(--gutter); width: auto; flex-wrap: nowrap; padding: 6px 6px 6px var(--s-4); border-radius: var(--r-pill); }
   .toast:not(:has(button)) { padding-block: 10px; border-radius: var(--r-md); }
   .toast button { flex: none; }
-  /* A phone's bar is short: while connected a dot says so, words only when it is not. */
-  .conn { padding: 0 9px; }
-  .conn[data-state="online"] span { display: none; }
   .agent-entry { width: auto; flex: none; min-height: 44px; padding: 4px 10px 4px 6px; border-radius: var(--r-pill); gap: var(--s-2); }
   .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1px var(--line-strong); }
   .agent-text small { display: none; }
   .agent-avatar { width: 30px; height: 30px; border-radius: 50%; }
   .agent-pair { margin-inline: -4px 0; height: 36px; width: 49px; }
   .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
+  .agent-text strong + strong { rotate: none; translate: none; }
+  .agent-text strong + strong::before { content: "+ "; color: var(--faint); font-weight: 500; }
   .agent-badge { min-width: 28px; height: 28px; }
   .agent-badge[data-state="waiting"], .agent-badge[data-state="running"] { width: 28px; }
   .focus-open span { display: none; }
   .mic { width: 44px; height: 44px; }
-  .topbar { padding-left: max(var(--s-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--s-1), env(safe-area-inset-right, 0px)); }
+  .topbar { gap: 0 2px; padding-left: max(var(--s-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--s-1), env(safe-area-inset-right, 0px)); }
+  .brand-fold { display: none; }
   .icon-btn { width: 44px; height: 44px; }
 
   .log { scrollbar-gutter: auto; }
