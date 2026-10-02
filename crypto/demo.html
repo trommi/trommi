@@ -1,0 +1,169 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>zcrypto demo</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --ink: #1c1b19; --dim: #6b675f; --line: #d9d4c8; --card: #fffdf8;
+    --ok: #1f7a4d; --ok-bg: #e2f2e9; --bad: #a3271f; --bad-bg: #f8e3e0; --hub: #7a5a12; --hub-bg: #f6ecd2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151412; --ink: #ece8df; --dim: #9a958a; --line: #34312b; --card: #1d1b18;
+      --ok: #6fd3a0; --ok-bg: #16301f; --bad: #f08a80; --bad-bg: #3a1a17; --hub: #e2c06a; --hub-bg: #33290f;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 15px/1.45 system-ui, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 20px 16px 48px; }
+  h1 { font-size: 22px; margin: 0 0 2px; font-weight: 800; }
+  .lead { color: var(--dim); margin: 0 0 16px; }
+  ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; }
+  li { background: var(--card); border: 1px solid var(--line); border-radius: 6px; padding: 9px 12px; display: grid; grid-template-columns: 26px 1fr auto; gap: 4px 10px; align-items: start; }
+  .n { color: var(--dim); font-variant-numeric: tabular-nums; }
+  .t { font-weight: 650; }
+  .who { font-size: 11px; letter-spacing: .06em; text-transform: uppercase; color: var(--dim); margin-right: 6px; }
+  .who.hub { color: var(--hub); }
+  .d { grid-column: 2 / 4; color: var(--dim); font: 12.5px/1.45 ui-monospace, monospace; overflow-wrap: anywhere; white-space: pre-wrap; }
+  .b { font-size: 12px; font-weight: 700; padding: 1px 9px; border-radius: 999px; white-space: nowrap; }
+  .b.ok { color: var(--ok); background: var(--ok-bg); }
+  .b.bad { color: var(--bad); background: var(--bad-bg); }
+  .b.hub { color: var(--hub); background: var(--hub-bg); }
+  #sum { margin-top: 14px; font-weight: 700; }
+</style>
+</head>
+<body>
+<main>
+  <h1>zcrypto: invite, join, send, tamper, detect</h1>
+  <p class="lead">Everything below runs in this page with WebCrypto. A phone founds a room and invites an agent; the hub in between is hostile.</p>
+  <ol id="steps"></ol>
+  <p id="sum">Running…</p>
+</main>
+<script type="module">
+const list = document.getElementById('steps')
+const sum = document.getElementById('sum')
+let count = 0, failed = 0
+function row(who, title, detail, badge, cls) {
+  const li = document.createElement('li')
+  const el = (c, text) => { const e = document.createElement('span'); e.className = c; e.textContent = text; return e }
+  const t = el('t', '')
+  t.append(el('who' + (who === 'hub' ? ' hub' : ''), who), title)
+  li.append(el('n', String(++count)), t, el('b ' + cls, badge), el('d', detail))
+  list.append(li)
+}
+const short = (b, n = 16) => z.hex(b.slice(0, n)) + (b.length > n ? '…' : '')
+/** A step that must succeed. */
+async function step(who, title, fn) {
+  try { row(who, title, await fn(), 'ok', 'ok') }
+  catch (e) { failed++; row(who, title, String(e?.message ?? e), 'failed', 'bad') }
+}
+/** An attack that must be refused with the given code. */
+async function attack(title, expect, fn) {
+  try { await fn(); failed++; row('hub', title, 'NOT DETECTED: the client accepted it', 'missed', 'bad') }
+  catch (e) {
+    if (e?.code === expect) row('hub', title, 'refused: ' + e.message, 'detected', 'hub')
+    else { failed++; row('hub', title, `refused, but with ${e?.code ?? e} instead of ${expect}: ${e?.message}`, 'unexpected', 'bad') }
+  }
+}
+
+let z
+try {
+  z = await import('./zcrypto.mjs')
+} catch (e) {
+  failed++
+  row('page', 'Load zcrypto.mjs', `${e.message}\nA browser refuses module imports from file:// unless started with --allow-file-access-from-files. Serve this folder instead: python3 -m http.server -d crypto 8000, then open http://localhost:8000/demo.html`, 'failed', 'bad')
+}
+
+if (z) {
+  const flip = (bytes, at) => { const out = bytes.slice(); out[at] ^= 1; return out }
+  const text = b => new TextDecoder().decode(b)
+  const hub = { log: [], envelopes: [] }
+  const phone = { chains: z.newChains(), secrets: new Map() }
+  const agent = { chains: z.newChains(), secrets: new Map() }
+  let room, made, joinReq, accepted, done, e1, e2, e3
+
+  await step('page', 'Runtime has Ed25519, X25519, AES-GCM, HKDF, HMAC', async () => {
+    const r = await z.requireRuntime()
+    if (!r.ok) throw new Error('missing: ' + r.missing.join(', '))
+    return `secure context: ${isSecureContext} · ${navigator.userAgent.match(/(Chrome|Firefox|Version)\/[\d.]+/)?.[0] ?? navigator.userAgent}`
+  })
+  await step('phone', 'Generate device keys and a recovery code, found the room', async () => {
+    phone.device = await z.generateDevice()
+    const code = z.generateRecoveryCode()
+    room = await z.createRoom({ device: phone.device, name: 'Phone', recovery: await z.recoveryDevice(code) })
+    hub.log.push(room.entry)
+    phone.state = room.state
+    phone.secrets.set(1, room.secret)
+    return `room id = hash of the genesis entry: ${short(room.roomId)}\nrecovery code: ${code}\nprivate keys extractable: ${phone.device.signKey.extractable}`
+  })
+  await step('phone', 'Create an invite for an agent (ten minutes, single use)', async () => {
+    made = await z.createInvite({ state: phone.state, inviter: phone.device, hub: 'https://hub.example', role: z.ROLE.AGENT })
+    hub.offer = made.offer
+    return `${made.link}\nthe hub only sees the invite id ${z.hex(made.invite.inviteId)} and the signed offer (${made.offer.length} bytes)`
+  })
+  await step('agent', 'Verify the log against the room id in the link, send the join request', async () => {
+    agent.device = await z.generateDevice()
+    joinReq = await z.createJoinRequest({ link: made.link, offer: hub.offer, log: hub.log, device: agent.device, name: 'Builder' })
+    return `request: ${joinReq.request.length} bytes, HMAC with the link secret over room, hub, role, name and both public keys, plus the agent's signature`
+  })
+  await step('phone', 'Check the request, burn the invite, reveal the committed number', async () => {
+    accepted = await z.acceptJoinRequest({ invite: made.invite, request: joinReq.request, inviter: phone.device })
+    return `check code on the phone: ${accepted.code}`
+  })
+  await step('agent', 'Check the reveal against the commitment, show the same code', async () => {
+    const code = await z.checkReveal({ join: joinReq.join, reveal: accepted.reveal, log: hub.log })
+    if (code !== accepted.code) throw new Error(`codes differ: ${code} vs ${accepted.code}`)
+    return `check code on the agent: ${code}`
+  })
+  await step('phone', 'Human confirmed the code: sign the membership entry, seal the room key to the agent', async () => {
+    done = await z.finalizeInvite({ invite: made.invite, state: phone.state, inviter: phone.device, secret: room.secret, codeConfirmed: true })
+    hub.log.push(done.entry)
+    phone.state = done.state
+    return `log entry 1 (${done.entry.length} bytes), sealed room key (${done.wrap.length} bytes)`
+  })
+  await step('agent', 'Verify the whole log, find itself in it, open the room key', async () => {
+    const joined = await z.completeJoin({ join: joinReq.join, device: agent.device, log: hub.log, wrap: done.wrap })
+    agent.state = joined.state
+    agent.secrets.set(1, joined.secret)
+    return `members: ${z.activeMembers(agent.state).map(m => `${m.name} (${m.role === 1 ? 'human' : 'agent'})`).join(', ')} · epoch ${agent.state.epoch} · history key: ${joined.secret.hist ? 'yes' : 'no (agents get none)'}`
+  })
+  await step('phone', 'Send three messages to the agent', async () => {
+    const send = t => z.sealEnvelope({ device: phone.device, state: phone.state, secret: room.secret, chains: phone.chains, kind: z.KIND.CHAT, payload: z.utf8(t), recipient: agent.device.id })
+    e1 = await send('run the tests'); e2 = await send('then deploy to staging'); e3 = await send('and tell me when it is done')
+    hub.envelopes.push(e1.bytes, e2.bytes, e3.bytes)
+    return `what the hub stores for message 1 (${e1.bytes.length} bytes): ${short(e1.bytes, 40)}`
+  })
+  const open = bytes => z.openEnvelope(bytes, { state: agent.state, chains: agent.chains, secrets: agent.secrets, self: agent.device.id })
+  await step('agent', 'Open message 1: signature, membership, chain, then decrypt', async () => {
+    const got = await open(e1.bytes)
+    z.authoriseCommand(got, { state: agent.state, agentId: agent.device.id })
+    return `"${text(got.payload)}" from ${got.member.name}, number ${got.header.seq}`
+  })
+  await attack('Flip one bit in the ciphertext of message 2', 'bad-signature', () => open(flip(e2.bytes, e2.bytes.length - 100)))
+  await attack('Rewrite the recipient in the cleartext header of message 2', 'bad-signature', () => open(flip(e2.bytes, 4 + 190 - 9)))
+  await attack('Deliver message 1 a second time', 'replay', () => open(e1.bytes))
+  await attack('Drop message 2 and deliver message 3', 'gap', () => open(e3.bytes))
+  await attack('Sign message 2 with a key of its own', 'bad-signature', async () => {
+    const own = await z.generateDevice()
+    return open(z.concat(e2.bytes.slice(0, -64), await z.sign(own, z.LABEL.envelopeSig, e2.hash)))
+  })
+  await attack('Append a member entry signed by itself', 'bad-entry', async () => {
+    const own = await z.generateDevice()
+    return z.addMember(agent.state, own, { member: { role: z.ROLE.HUMAN, name: 'Hub', signPub: own.signPub, kexPub: own.kexPub } })
+  })
+  await attack('Serve the log without its last entry', 'log-rollback', async () => {
+    return z.checkLogAgainstPin(await z.verifyLog(hub.log.slice(0, 1), agent.state.roomId), z.pinOf(agent.state))
+  })
+  await attack('Replay the join request on the used invite', 'invite-used', () => z.acceptJoinRequest({ invite: made.invite, request: joinReq.request, inviter: phone.device }))
+  await step('agent', 'Messages 2 and 3, untouched and in order, still go through', async () => {
+    const a = await open(e2.bytes), b = await open(e3.bytes)
+    return `"${text(a.payload)}" · "${text(b.payload)}"`
+  })
+}
+sum.textContent = failed ? `${failed} of ${count} steps did not behave as expected.` : `All ${count} steps behaved as expected.`
+document.body.dataset.result = failed ? 'failed' : 'ok'
+</script>
+</body>
+</html>
