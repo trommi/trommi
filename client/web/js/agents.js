@@ -1,8 +1,8 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, groupLoop, crown, sketch, raisedHand, loopPath, penSeed, ago, DRAWINGS, drawingMark } from './ui.js'
-import { setScope, star, editSession, pair, unpair, archive } from './store.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, sweepMark, ago, DRAWINGS, drawingMark } from './ui.js'
+import { setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
 
@@ -67,74 +67,35 @@ function summary(all, members) {
   return { open, tasks, online, running, stuck }
 }
 
-// At work: a ring circled by hand, and a drop that travels through it as through a soft tube.
-// The ring stands still: one and a bit turns of the pen that do not quite close, like the loop
-// round the waiting hand. The drop is drawn on its own and goes round: a bulge of liquid, round and
-// full where it leads, drawn out to a thin tail behind, and it thins to nothing at both ends, so it
-// has no start and no end to see. It swells to both sides of the line, more outward than inward, and
-// its two edges are not quite even. It is drawn twice, the second a moment behind the first: where
-// the drop is slow the two lie on each other, where it is quick they pull apart a little, and the
-// drop stretches as liquid does. The movement is CSS (app.css); every ring is on the same clock,
-// so a list that is rebuilt does not send its drop back to the start.
-const RING = { c: 16, r: 14.3, turn: 4600, lag: 150 }
-const DROP = { swell: 3.1, lead: 34, trail: 104, power: 1.2, tail: 2.1 }
-const RING_LOOP = loopPath(penSeed('working ring'), { rad: 14.55, drift: .5, jitter: .6, start: 1.1 })
-const DROP_PATH = (() => {
-  const r = penSeed('working drop')
-  const phase = [r() * 6, r() * 6, r() * 6, r() * 6]
-  // A slow unevenness along the drop, different for its outer and its inner edge.
-  const uneven = (t, k) => 1 + .06 * (Math.sin(3.1 * t + phase[k]) * .6 + Math.sin(7.3 * t + phase[k + 1]) * .4)
-  const steps = 96
-  const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
-    const deg = -DROP.trail + (DROP.trail + DROP.lead) * i / steps   // from the thickest place; ahead is clockwise
-    const t = deg * Math.PI / 180
-    // Ahead of its thickest place the drop is round like a bead; behind, it is drawn out into a tail.
-    const wave = ((1 + Math.cos(Math.PI * deg / (deg < 0 ? DROP.trail : DROP.lead))) / 2) ** (deg < 0 ? DROP.tail : DROP.power)
-    const rad = RING.r + side * DROP.swell * wave * (side > 0 ? 1 : .72) * uneven(t, side > 0 ? 0 : 2)
-    return `${(RING.c + Math.sin(t) * rad).toFixed(3)} ${(RING.c - Math.cos(t) * rad).toFixed(3)}`
-  })
-  return `M${edge(1).join(' L')} L${edge(-1).reverse().join(' L')} Z`
-})()
-function ring() {
-  const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', `0 0 ${RING.c * 2} ${RING.c * 2}`)
-  svg.setAttribute('class', 'agent-ring')
-  svg.setAttribute('aria-hidden', 'true')
-  svg.style.setProperty('--ring-turn', `${RING.turn}ms`)
-  const at = -RING.turn - (Date.now() % RING.turn)
-  const loop = document.createElementNS(NS, 'path')
-  loop.setAttribute('class', 'ring-loop')
-  loop.setAttribute('d', RING_LOOP)
-  svg.append(loop)
-  for (const lag of [0, RING.lag]) {
-    const drop = document.createElementNS(NS, 'path')
-    drop.setAttribute('class', 'ring-drop')
-    drop.setAttribute('d', DROP_PATH)
-    drop.style.animationDelay = `${at + lag}ms`
-    svg.append(drop)
-  }
-  return svg
-}
-
-// The badge at the end of a session row carries its state: a calm ring with the number of
-// questions while it works, a raised hand in a loop drawn by hand when it is stopped waiting for
-// the human, and the same hand or number in grey when the session is disconnected. Ring and loop
-// are a pair: the same size, each on a soft ground of its own colour, so the badges line up down
-// the column.
+// The mark at the end of a session row carries its state, with no ground under it: colour and stroke
+// say everything. Stopped and waiting for the human: a hand drawn in red, the number of its open
+// questions beside it. At work: a stroke swept round by hand that turns about the number (or about
+// nothing, when it has no question open); every sweep is on the same clock, so a list that is
+// rebuilt does not send it back to the start. Disconnected: the same in grey, standing still.
+// Hand and sweep stand on one axis down the column; the number beside a hand has its own narrow place.
+const SWEEP_TURN = 3400
 function badge({ open, online, running, stuck }) {
   if (!open && !(online && running)) return null
   const node = el('span', 'agent-badge')
   const questions = open === 1 ? '1 question' : `${open} questions`
   const hand = online ? stuck || !running : stuck
+  const count = open ? el('b', null, String(open)) : null
   if (hand) {
     node.dataset.state = 'waiting'
     node.title = online ? `Waiting for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`
-    node.append(raisedHand())
+    node.append(bareHand())
+    if (count) node.append(count)
   } else {
     node.dataset.state = online ? 'running' : 'open'
     node.title = online ? (open ? `Working, ${questions} open` : 'Working') : `Disconnected, ${questions} open`
-    if (online) node.append(ring())
-    if (open) node.append(el('b', null, String(open)))
+    const spot = el('span', 'agent-sweep')
+    if (online) {
+      const sweep = sweepMark()
+      sweep.style.animationDelay = `${-(Date.now() % SWEEP_TURN)}ms`
+      spot.append(sweep)
+    }
+    if (count) spot.append(count)
+    node.append(spot)
   }
   if (!online) node.dataset.offline = ''
   return node
@@ -267,13 +228,42 @@ export function mountAgents(root, { onSelect }) {
     )
   }
 
-  // ---- laying sessions together: drag one onto another, pull one out of its group ----
+  // ---- carrying a session: lay it on another, move it to another place, pull it out of its group ----
   // A mouse drags at once; a finger holds still for a moment first, so the strip still scrolls.
+  // Where it is let go decides: on the middle of another row the two are laid together (the loop
+  // drawn round that row opens up); on the upper or lower quarter of a row, or between rows, it is
+  // moved there (a thin line shows the place), a group as one; clear of the list, one that was
+  // carried out of a group leaves it.
 
-  let drag = null   // { agent, grouped, x, y, row, ghost, target, timer }
-  const rowAt = (x, y) => {
-    const row = document.elementFromPoint(x, y)?.closest?.('.agent-row[data-unit]')
-    return row && row !== drag.row && root.contains(row) ? row : null
+  let drag = null   // { agent, grouped, x, y, row, ghost, at, timer }; at: where it would land now
+  const dropLoop = groupLoop('drop')
+  dropLoop.classList.add('drop-loop')
+  const rowsNow = () => [...root.querySelectorAll('.agent-row[data-unit]')]
+  /** What letting go at (x, y) would do: { pair: row } | { insert: row, after } | { out: true } | null (nothing). */
+  function landing(x, y) {
+    const rows = rowsNow()
+    const flat = getComputedStyle(root).flexDirection === 'row'   // a phone's strip runs sideways
+    const box = root.getBoundingClientRect()
+    const span = r => (flat ? [r.left, r.right] : [r.top, r.bottom])
+    const along = flat ? x : y, across = flat ? y : x
+    const [c0, c1] = flat ? [box.top, box.bottom] : [box.left, box.right]
+    const [first] = span(rows[0].getBoundingClientRect()), [, last] = span(rows.at(-1).getBoundingClientRect())
+    if (across < c0 - 8 || across > c1 + 8 || along < first - 16 || along > last + 40) return { out: true }
+    const own = rows.indexOf(drag.row)
+    // Before or after its own row nothing would move.
+    const insert = (row, after) => {
+      const to = rows.indexOf(row) + (after ? 1 : 0)
+      return to === own || to === own + 1 ? null : { insert: row, after }
+    }
+    for (const row of rows) {
+      const [a, b] = span(row.getBoundingClientRect())
+      if (along < a) return insert(row, false)   // in the gap before this row (or under a heading)
+      if (along > b) continue
+      if (row === drag.row) return null
+      const quarter = (b - a) / 4
+      return along < a + quarter ? insert(row, false) : along > b - quarter ? insert(row, true) : { pair: row }
+    }
+    return insert(rows.at(-1), true)
   }
   function begin() {
     const agent = lastState?.all.agents.find(a => a.id === drag.agent)
@@ -287,20 +277,21 @@ export function mountAgents(root, { onSelect }) {
     document.body.classList.add('is-pairing')
     move(drag.x, drag.y)
   }
-  // Carried clear of its group's row, a session will leave it when let go.
-  const outside = (x, y) => {
-    const box = drag.row.getBoundingClientRect()
-    return x < box.left - 10 || x > box.right + 10 || y < box.top - 10 || y > box.bottom + 10
+  const unmark = () => {
+    for (const n of root.querySelectorAll('.is-drop, .is-insert-before, .is-insert-after')) n.classList.remove('is-drop', 'is-insert-before', 'is-insert-after')
+    dropLoop.remove()
   }
   function move(x, y) {
     drag.ghost.style.translate = `${x - 17}px ${y - 17}px`
-    const target = rowAt(x, y)
+    const at = landing(x, y)
     // The loop round the group opens up while one of them is on its way out.
-    drag.row.classList.toggle('is-leaving', drag.grouped && outside(x, y))
-    if (target === drag.target) return
-    drag.target?.classList.remove('is-drop')
-    drag.target = target
-    target?.classList.add('is-drop')
+    drag.row.classList.toggle('is-leaving', Boolean(drag.grouped && at?.out))
+    const same = (a, b) => a?.pair === b?.pair && a?.insert === b?.insert && a?.after === b?.after && Boolean(a?.out) === Boolean(b?.out)
+    if (same(at, drag.at)) return
+    drag.at = at
+    unmark()
+    if (at?.pair) { at.pair.classList.add('is-drop'); at.pair.append(dropLoop) }
+    if (at?.insert) at.insert.classList.add(at.after ? 'is-insert-after' : 'is-insert-before')
   }
   function end() {
     if (!drag) return
@@ -308,17 +299,44 @@ export function mountAgents(root, { onSelect }) {
     drag.ghost?.remove()
     drag.row.classList.remove('is-dragging', 'is-leaving')
     for (const n of drag.row.querySelectorAll('.is-carried')) n.classList.remove('is-carried')
-    drag.target?.classList.remove('is-drop')
+    unmark()
     document.body.classList.remove('is-pairing')
     drag = null
   }
+  /** The session a move names as "before": the first of the row after the place, or null for the end. */
+  const beforeOf = (row, after) => {
+    const rows = rowsNow()
+    const next = after ? rows[rows.indexOf(row) + 1] : row
+    return next ? next.dataset.members.split(' ')[0] : null
+  }
+  /** Move the row that holds the keyboard (or, with none, the session in view) one place up or down. */
+  function step(by) {
+    const rows = rowsNow()
+    const row = document.activeElement?.closest?.('.agent-row[data-unit]') ?? root.querySelector('.agent-entry[aria-current="true"]')?.closest('.agent-row[data-unit]')
+    const at = rows.indexOf(row)
+    if (at < 0 || !rows[at + by]) return false
+    const held = row.contains(document.activeElement)
+    const unit = row.dataset.unit
+    moveSession(row.dataset.members.split(' ')[0], by < 0 ? beforeOf(rows[at - 1], false) : beforeOf(rows[at + 1], true)).catch(() => {})
+      .finally(() => { if (held) setTimeout(() => root.querySelector(`.agent-row[data-unit="${CSS.escape(unit)}"] .agent-entry`)?.focus(), 60) })
+    if (held) root.querySelector(`.agent-row[data-unit="${CSS.escape(unit)}"] .agent-entry`)?.focus()
+    return true
+  }
+  // Alt and an arrow move it (up/down in the sidebar, left/right in a phone's strip). The table of keys
+  // (keys.js) does not know this one yet; until it does, the sidebar hears it itself.
+  window.addEventListener('keydown', e => {
+    if (!e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return
+    const by = { ArrowUp: -1, ArrowLeft: -1, ArrowDown: 1, ArrowRight: 1 }[e.key]
+    if (!by || document.querySelector('dialog[open]') || e.target.closest?.('input, textarea, select, [contenteditable]')) return
+    if (step(by)) { e.preventDefault(); e.stopImmediatePropagation() }
+  }, true)
   root.addEventListener('pointerdown', e => {
     const row = e.target.closest('.agent-row[data-unit]')
     if (!row || e.button || e.target.closest('.agent-archive, .agent-cut, .crown-toggle')) return
     const ids = row.dataset.members.split(' ')
     // In a group the scribble under the pointer is the one that is taken out.
     const agent = e.target.closest('[data-member]')?.dataset.member ?? ids.at(-1)
-    drag = { agent, grouped: ids.length > 1, x: e.clientX, y: e.clientY, row, ghost: null, target: null, timer: 0 }
+    drag = { agent, grouped: ids.length > 1, x: e.clientX, y: e.clientY, row, ghost: null, at: null, timer: 0 }
     if (e.pointerType === 'touch') drag.timer = setTimeout(() => drag && begin(), 380)
   })
   window.addEventListener('pointermove', e => {
@@ -331,9 +349,11 @@ export function mountAgents(root, { onSelect }) {
   window.addEventListener('pointerup', e => {
     if (!drag) return
     if (drag.ghost) {
-      const { agent, grouped, target } = drag
-      if (target) pair(agent, target.dataset.members.split(' ')[0]).catch(() => {})
-      else if (grouped && outside(e.clientX, e.clientY)) unpair(agent).catch(() => {})
+      const { agent, grouped } = drag
+      const at = landing(e.clientX, e.clientY)
+      if (at?.pair) pair(agent, at.pair.dataset.members.split(' ')[0]).catch(() => {})
+      else if (at?.insert) moveSession(agent, beforeOf(at.insert, at.after)).catch(() => {})
+      else if (at?.out && grouped) unpair(agent).catch(() => {})
       // The release is not a tap on the row.
       const swallow = ev => { ev.stopPropagation(); ev.preventDefault() }
       window.addEventListener('click', swallow, { capture: true, once: true })
@@ -346,7 +366,7 @@ export function mountAgents(root, { onSelect }) {
   root.addEventListener('touchmove', e => { if (drag?.ghost) e.preventDefault() }, { passive: false })
   root.addEventListener('contextmenu', e => { if (drag) e.preventDefault() })
 
-  return { render }
+  return { render, move: step }
 }
 
 /** The overview page: every session, where it runs, as what, and since when. */

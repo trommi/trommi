@@ -469,8 +469,10 @@ body[data-filter] .jump { display: none; }
 .agent-text:has(strong + strong) { line-height: 1.3; }
 .agent-text small { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-row.is-offline .agent-text strong { font-weight: 500; color: var(--muted); }
-.agent-avatar { --hue: 162; flex: none; position: relative; width: 34px; height: 34px; padding: 5px; display: grid; place-items: center; border-radius: 11px; background: hsl(var(--hue) 55% 90%); color: hsl(var(--hue) 60% 26%); }
-:root[data-theme="dark"] .agent-avatar { background: hsl(var(--hue) 35% 22%); color: hsl(var(--hue) 70% 78%); }
+/* A session's mark stands without a ground: the drawing alone, in the session's colour. */
+.agent-avatar { --hue: 162; flex: none; position: relative; width: 34px; height: 34px; padding: 1px; display: grid; place-items: center; border-radius: 11px; color: hsl(var(--hue) 62% 30%); }
+:root[data-theme="dark"] .agent-avatar { color: hsl(var(--hue) 70% 76%); }
+.agent-avatar .doodle { stroke-width: 2; }
 .agent-avatar.is-offline, .agent-pair.is-offline { filter: grayscale(1); opacity: .6; }
 .agent-all { background: var(--sunken); padding: 0; }
 .agent-all i { grid-area: 1 / 1; width: 18px; height: 13px; border-radius: 4px; background: var(--surface); box-shadow: 0 0 0 1.500px var(--muted); }
@@ -512,16 +514,11 @@ body[data-filter] .jump { display: none; }
 .roster-card > header { position: relative; }
 .roster-card .crown-toggle { left: -13px; top: -11px; }
 .roster-card .crown-toggle .crown-mark { width: 24px; }
-/* A test, on by default: marks without the coloured tile behind them, the drawing alone, in the
-   session's colour. <html data-marks="tile"> brings the tiles back (index.html, flag #tiles). */
-:root[data-marks="bare"] .agent-avatar:not(.agent-all) { padding: 1px; background: none; color: hsl(var(--hue) 62% 30%); }
-:root[data-marks="bare"][data-theme="dark"] .agent-avatar:not(.agent-all) { color: hsl(var(--hue) 70% 76%); }
-:root[data-marks="bare"] .agent-avatar .doodle { stroke-width: 2; }
-:root[data-marks="bare"] .agent-avatar .crown-mark { left: -12%; top: -24%; width: 60%; fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); }
-:root[data-marks="bare"] .agent-ghost { padding: 5px; background: var(--surface); }
+/* On a mark without a ground the crown sits a little closer. */
+.agent-avatar .crown-mark { left: -12%; top: -24%; width: 60%; fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); }
 
 /* Carrying a session: its mark follows the pointer, the row it would join shows a dashed edge. */
-.agent-ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; rotate: -7deg; box-shadow: var(--shadow-lg); }
+.agent-ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; rotate: -7deg; padding: 5px; background: var(--surface); box-shadow: var(--shadow-lg); }
 .agent-row.is-dragging { opacity: .4; }
 /* One of a group is being carried: it fades where it stood. Carried clear of the row, the loop
    round the group opens up: let go now and it leaves. */
@@ -532,7 +529,14 @@ body[data-filter] .jump { display: none; }
 @keyframes loop-open { to { stroke-dashoffset: -16; } }
 /* A name in a group is a handle. */
 .agent-text strong[data-member] { cursor: grab; }
-.agent-row.is-drop { outline: 2px dashed var(--fg); outline-offset: -2px; background: var(--surface); }
+/* Let go here and the two are laid together: the loop drawn round the row is open and runs. */
+.agent-row.is-drop { background: var(--surface); }
+.group-loop.drop-loop { display: block; z-index: 1; }
+.drop-loop .pair-loop { stroke: var(--fg); stroke-dasharray: 9 7; animation: loop-open 700ms linear infinite; }
+/* Let go here and it is moved to this place: a thin line between the rows. */
+.agent-row.is-insert-before::after, .agent-row.is-insert-after::after { content: ""; position: absolute; z-index: 2; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--fg); pointer-events: none; }
+.agent-row.is-insert-before::after { top: -2px; }
+.agent-row.is-insert-after::after { bottom: -2px; }
 body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 /* Cutting a group apart: scribbled scissors that show only while the pointer is on the row (or the
    keyboard on them), in the gap before the badge, so nothing in the row gives way to them and the
@@ -571,26 +575,23 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
   body.is-pairing .agent-archive { display: none; }
 }
 
-/* ---- session badge: a ring while it works, a hand when it waits for you, grey when it is disconnected ---- */
-.agent-badge { flex: none; position: relative; min-width: 32px; height: 32px; padding: 0 8px; display: inline-flex; align-items: center; justify-content: center; border-radius: var(--r-pill); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; background: var(--sunken); color: var(--fg); }
-/* Waiting: a hand scribbled in red inside a loop circled by hand, on a soft red ground (drawn in ui.js). */
-.agent-badge[data-state="waiting"] { --hand-soft: var(--urg-critical-soft); width: 32px; padding: 0; background: none; color: var(--urg-critical); }
-.agent-badge[data-state="running"] { width: 32px; padding: 0; background: none; }
-.agent-badge[data-offline] { --hand-soft: var(--sunken); background: var(--sunken); color: var(--faint); }
-.agent-badge[data-state="waiting"][data-offline] { background: none; }
-.hand-mark { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; }
-.hand-loop { fill: var(--hand-soft); stroke-width: 1.5; }
-.hand-pen { stroke-width: 1.45; }
-/* At work: a ring circled by hand on a soft green ground, as the waiting hand stands on a soft red
-   one, and a drop that runs through it (both drawn in agents.js). It goes round slowly and not at
-   one pace: unhurried over the top, quicker through the bottom, as something heavy would.
-   Under reduced motion the scribbled ring stands alone. */
-.agent-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; color: color-mix(in srgb, var(--accent) 72%, var(--bg)); }
-.ring-loop { fill: var(--accent-soft); stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.ring-drop { fill: currentColor; transform-box: view-box; transform-origin: 50% 50%; animation: agent-flow var(--ring-turn, 4600ms) cubic-bezier(.42, .2, .58, .8) infinite; }
-.agent-badge b { position: relative; }
-@keyframes agent-flow { to { rotate: 360deg; } }
-@media (prefers-reduced-motion: reduce) { .ring-drop { display: none; } }
+/* ---- a session's state at the end of its row: no ground, colour and stroke carry it ----
+   Waiting for you: a hand drawn in red, the count beside it. At work: a stroke swept round the count
+   by hand, turning. Disconnected: grey, still. Hand and sweep stand in the same 30 px place, so they
+   line up down the column; the count beside a hand has a narrow place of its own to the right. */
+.agent-badge { --go: color-mix(in srgb, var(--accent) 82%, var(--bg)); flex: none; display: inline-grid; grid-template-columns: 30px 14px; align-items: center; justify-items: center; height: 32px; margin-right: -4px; font-size: var(--t-sm); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
+.agent-badge b { position: relative; min-width: 1.1em; text-align: center; }
+.agent-sweep b { font-size: .76rem; letter-spacing: -.02em; }
+.agent-badge[data-state="waiting"] { color: var(--urg-critical); }
+.agent-badge[data-state="waiting"] b { justify-self: start; }
+.agent-badge[data-offline], .agent-badge[data-state="waiting"][data-offline] { color: var(--faint); }
+.bare-hand { display: block; width: 21px; height: 30px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.75; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; }
+.agent-sweep { position: relative; width: 30px; height: 30px; display: grid; place-items: center; }
+.sweep-mark { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke: var(--go); stroke-linecap: round; animation: agent-sweep 3400ms cubic-bezier(.42, .2, .58, .8) infinite; }
+.sweep-lead { stroke-width: 2.6; }
+.sweep-tail { stroke-width: 1.1; opacity: .6; }
+@keyframes agent-sweep { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) { .sweep-mark { animation: none; } }
 
 /* ---- microphone and focus button ---- */
 .mic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); }
@@ -634,9 +635,10 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-sender::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
 .inbox-sender b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .inbox-avatar { position: relative; display: block; width: 38px; height: 38px; padding: 6px; border-radius: var(--r-md); background: var(--sunken); color: var(--fg); }
-:root[data-marks="bare"] .inbox-avatar[style*="--hue"] { padding: 2px; background: none; color: hsl(var(--hue) 62% 30%); }
-:root[data-marks="bare"][data-theme="dark"] .inbox-avatar[style*="--hue"] { color: hsl(var(--hue) 70% 76%); }
-:root[data-marks="bare"] .inbox-avatar .crown-mark { left: -10%; top: -22%; width: 58%; }
+/* A sender's mark has no ground either (the piles' own drawings keep their outline). */
+.inbox-avatar[style*="--hue"] { padding: 2px; background: none; color: hsl(var(--hue) 62% 30%); }
+:root[data-theme="dark"] .inbox-avatar[style*="--hue"] { color: hsl(var(--hue) 70% 76%); }
+.inbox-avatar .crown-mark { left: -10%; top: -22%; width: 58%; }
 .inbox-avatar .sketch { width: 100%; height: 100%; }
 /* One colour drives the whole card: tint, text, border and tab all derive from it. */
 .inbox-row {
@@ -950,7 +952,7 @@ body[data-page="roster"] #roster { display: block; grid-column: 2; min-width: 0;
 .roster-card { display: grid; gap: var(--s-4); padding: var(--s-4) var(--s-5); border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), 0 2px 2px rgb(20 30 25 / .04), 0 5px 5px rgb(20 30 25 / .04); }
 .roster-card[data-online="false"] { box-shadow: none; outline: 1px dashed var(--line-strong); background: none; }
 .roster-card > header { display: flex; align-items: center; gap: var(--s-3); }
-.roster-card .agent-avatar { width: 44px; height: 44px; border-radius: 14px; padding: 7px; }
+.roster-card .agent-avatar { width: 44px; height: 44px; border-radius: 14px; padding: 2px; }
 .roster-edit { flex: none; padding: 0; border: 0; background: none; border-radius: 14px; }
 .roster-name { flex: 1; min-width: 0; display: grid; }
 .roster-name strong { font: 800 1.25rem/1.2 var(--display); }
@@ -1102,6 +1104,9 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
   .agent-row .crown-toggle { left: -4px; top: -6px; pointer-events: none; }
   .agent-row.is-group .agent-entry { min-height: 44px; }
   .agent-row { flex: none; }
+  .agent-row.is-insert-before::after, .agent-row.is-insert-after::after { left: auto; right: auto; top: 4px; bottom: 4px; width: 3px; height: auto; }
+  .agent-row.is-insert-before::after { left: -4px; }
+  .agent-row.is-insert-after::after { right: -4px; }
   .topbar .focus-open, .topbar .padlink-open { padding: 0; width: 44px; height: 40px; justify-content: center; margin-inline: 2px; }
   .topbar .padlink-open span { display: none; }
   .sidedoors { bottom: auto; top: calc(100% + 6px); }
@@ -1119,8 +1124,9 @@ select.roster-act { appearance: none; -webkit-appearance: none; cursor: pointer;
   .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
   .agent-text strong + strong { rotate: none; translate: none; }
   .agent-text strong + strong::before { content: "+ "; color: var(--faint); font-weight: 500; }
-  .agent-badge { min-width: 28px; height: 28px; }
-  .agent-badge[data-state="waiting"], .agent-badge[data-state="running"] { width: 28px; }
+  .agent-badge { height: 28px; margin-right: 0; grid-template-columns: 28px auto; }
+  .agent-sweep { width: 28px; height: 28px; }
+  .bare-hand { width: 19px; height: 27px; }
   .focus-open span { display: none; }
   .mic { width: 44px; height: 44px; }
   .topbar { gap: 0 2px; padding-left: max(var(--s-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--s-1), env(safe-area-inset-right, 0px)); }

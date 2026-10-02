@@ -6,7 +6,7 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, adviceLoop, cardNote } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH } from './ui.js'
 import { hueOf } from './agents.js'
 import { decide, putOff, sendMessage, reopen } from './store.js'
 import { openLightbox } from './chat.js'
@@ -339,12 +339,12 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   const later = el('button', 'inbox-later')
   later.type = 'button'
   // No tooltip (it would lie over the next row): the word slides out of the tag on hover and focus.
-  later.setAttribute('aria-label', off ? 'Fetch back' : 'Later: push this question down')
-  later.append(sketch(off ? 'back' : 'later'), el('span', null, off ? 'Fetch back' : 'Later'))
+  later.setAttribute('aria-label', off ? 'Fetch back' : `${LATER_WORD}: put this question off; it waits for you below`)
+  later.append(sketch(off ? 'back' : LATER_SKETCH), el('span', null, off ? 'Fetch back' : LATER_WORD))
   later.addEventListener('click', () => {
     putOff(card.id, !off)
     // Say where it went, with the way back.
-    if (!off) say(pageHost(), { head: 'Moved to Later', title: card.title, back: async () => putOff(card.id, false) })
+    if (!off) say(pageHost(), { head: 'Snoozed', title: card.title, back: async () => putOff(card.id, false) })
   })
   hint(later, 'list.later')
 
@@ -507,10 +507,37 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
   const folded = open => { if (!open && current && !nodes().some(n => n.dataset.id === current.id)) mark(null) }
   // Bring a row wholly into view: with its sender's heading if it is the first of its group, with the
   // tag that hangs below its edge, and with the page's own title if it is the very first row.
-  function reveal(node, smooth = true) {
-    let box = node.parentElement
+  // What scrolls the list: the page of the inbox, or the pane of a session's questions.
+  const scroller = from => {
+    let box = from.parentElement
     while (box && box !== document.body && !/auto|scroll/.test(getComputedStyle(box).overflowY)) box = box.parentElement
-    if (!box || box === document.body) return node.scrollIntoView({ block: 'nearest' })
+    return box && box !== document.body ? box : null
+  }
+  // "If I do not move the pointer, I can always click": the row that follows one that left lands exactly
+  // where that one stood, also across the heading of the next sender (which is taller than the gap
+  // between two rows). Where the layout alone does not bring it there, the list is scrolled by what is
+  // missing; at the end of the list, room for that is added below and taken away again once it is out of sight.
+  let slack = 0
+  function landOn(row, top) {
+    const box = scroller(list)
+    if (!box) return
+    const by = Math.round(row.getBoundingClientRect().top - top)
+    if (!by) return
+    const short = by - (box.scrollHeight - box.clientHeight - box.scrollTop)
+    if (short > 0) { slack += Math.ceil(short); list.style.paddingBottom = `${slack}px` }
+    box.scrollTop += by
+    if (slack && !box.dataset.slack) {
+      box.dataset.slack = ''
+      box.addEventListener('scroll', function release() {
+        if (!slack) return
+        // Out of sight again: the added room goes, and nothing moves.
+        if (box.scrollTop + box.clientHeight <= box.scrollHeight - slack) { slack = 0; list.style.paddingBottom = '' }
+      }, { passive: true })
+    }
+  }
+  function reveal(node, smooth = true) {
+    const box = scroller(node)
+    if (!box) return node.scrollIntoView({ block: 'nearest' })
     const frame = box.getBoundingClientRect()
     // A step glides; a jump (Home, End, a held key) is there at once. Always to a place, never by an
     // amount: a step taken while the last one still glides would otherwise add up.
@@ -567,7 +594,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
       line.append(walk)
     } else if (fresh.length) line.append(circled, needs)
-    else line.append(off.length ? 'Nothing new. What you put off is below.' : 'Nothing needs you.')
+    else line.append(off.length ? 'Nothing new. What you snoozed is below.' : 'Nothing needs you.')
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
     else title.append(el('h2', null, 'Inbox'), line)
@@ -627,8 +654,8 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       }))
     }
     const waiting = off.filter(c => asked.has(c.id)), put = off.filter(c => !asked.has(c.id))
-    offPile('later', 'Later', 'later', put, `${put.length} put off`)
-    offPile('asked', 'With the agent', 'explain', waiting, `${waiting.length} asked`)
+    offPile('later', 'Snoozed', LATER_SKETCH, put, String(put.length))
+    offPile('asked', 'With the agent', 'explain', waiting, String(waiting.length))
     // Answered: one more group below everything, folded to a line. Unfolded, every answer is a slim row
     // with the way to take it back, for the wrong answer that is noticed only later.
     if (answered.length) {
@@ -667,6 +694,12 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     // The row that left stays a moment as a ghost in its old place and goes: an answered one off to
     // the side, one that was put off down towards "Later". Nothing can be pressed on it, and it is no row any more.
     const leavers = signature && shown() ? old.filter(o => !o.node.isConnected && !o.off && !openNow.has(o.id)) : []
+    // One open row left: the row that followed it takes its place, to the pixel (landOn, above).
+    if (leavers.length === 1) {
+      const was = old.filter(o => !o.off), at = was.indexOf(leavers[0])
+      const next = was.slice(at + 1).find(o => o.node.isConnected && openNow.has(o.id))
+      if (next) landOn(next.node, leavers[0].box.top)
+    }
     const frame = leavers.length ? list.getBoundingClientRect() : null
     for (const { node, id, box } of leavers) {
       node.classList.remove('is-current', 'is-open')
@@ -710,10 +743,27 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
   const here = () => (current && nodes().find(n => n.dataset.id === current.id)) || null
   // With no row marked yet, start at the first one that is in sight.
   const firstInSight = all => all.find(n => n.getBoundingClientRect().top >= (root.closest('main, .pane-list')?.getBoundingClientRect().top ?? 0)) ?? all[0]
+  // Below the rows lie the piles (Later, With the agent, Answered), pushed together. The keyboard goes on
+  // from the last row to their lines, one after the other; Enter on a line unfolds the pile, and its rows
+  // are then rows like the others.
+  const pileHeads = () => [...list.querySelectorAll('.inbox-pile:not(.is-open) .inbox-pile-head')]
+  const toHead = head => { mark(null); head.focus({ preventScroll: true }); head.scrollIntoView({ block: 'nearest' }) }
   const move = (to, edge = false) => (_, e) => {
-    const all = nodes()
-    if (!all.length) return false
+    const all = nodes(), heads = pileHeads()
+    const dir = edge ? 0 : to(0)
     const at = all.indexOf(here())
+    const head = document.activeElement?.closest?.('.inbox-pile-head')
+    if (head && dir && at < 0) {
+      // On the line of a pile: into it if it is unfolded, else on to the next line, or back up to the rows.
+      const inside = dir > 0 ? all.find(n => head.closest('.inbox-pile.is-open')?.contains(n)) : null
+      if (inside) return void mark(inside, true, !e?.repeat)
+      const next = heads[heads.indexOf(head) + dir]
+      if (next) return void toHead(next)
+      if (dir < 0 && all.length) mark(all.at(-1), true, !e?.repeat)
+      return
+    }
+    if (!all.length) return heads.length && dir >= 0 ? void toHead(heads[0]) : false
+    if (at === all.length - 1 && dir > 0 && heads.length) { if (!e?.repeat) toHead(heads[0]); return }
     mark(at < 0 && !edge ? firstInSight(all) : all[Math.max(0, Math.min(all.length - 1, to(at, all.length)))], true, !e?.repeat)
   }
   // A letter acts on the marked row. With none marked it marks one and does nothing else:

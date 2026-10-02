@@ -1,8 +1,8 @@
 # Trommi Krypto-Konzept
 
-Zero Trust: Der Hub ist ein feindlicher Briefkasten. Zweiter Entwurf vom 2. Oktober 2026, zur Entscheidung, noch nicht gebaut.
+Zero Trust: Der Hub ist ein feindlicher Briefkasten. Stand 2. Oktober 2026: Die offenen Fragen sind entschieden (letzter Abschnitt), der Text ist darauf angepasst. Die Bibliothek liegt in `crypto/`, das Protokoll fürs Einschreiben in `docs/pairing.md`. Im Produkt ist noch nichts davon verdrahtet.
 
-> **Kern.** Jedes Gerät und jeder Agent hat eigene Schlüssel. Wer dazugehört, steht in einer signierten Mitgliederliste, die der Server weder fälschen noch unbemerkt zurückdrehen kann. Ein einziger Raumschlüssel verschlüsselt die Inhalte, ohne Ratchet. Jede Nachricht ist vom Absendergerät signiert und verkettet. Ein Agent führt nur aus, was nachweislich von einem zugelassenen Gerät eines Menschen stammt. Der Server sieht Chiffretext und genau die Metadaten, die er zum Zustellen und zum Löschen nach 30 Tagen braucht.
+> **Kern.** Jedes Gerät und jeder Agent hat eigene Schlüssel. Wer dazugehört, steht in einer signierten Mitgliederliste, die der Server weder fälschen noch unbemerkt zurückdrehen kann. Ein einziger Raumschlüssel verschlüsselt die Inhalte, ohne Ratchet; er wird nur erneuert, wenn ein Mitglied entfernt wird. Jede Nachricht ist vom Absendergerät signiert und verkettet. Ein Agent führt nur aus, was nachweislich von einem zugelassenen Gerät eines Menschen stammt. Der Server sieht Chiffretext und genau die Metadaten, die er zum Zustellen und zum Löschen nach 30 Tagen braucht.
 
 **Aus säckel übernommen:** Schlüssel werden je Mitglied mit dessen öffentlichem Schlüssel versiegelt (X25519, HKDF, AES-256-GCM); Entfernen rotiert den Schlüssel; ein Wiederherstellungscode mit 256 Bit; jeder Chiffretext ist an seinen Ort gebunden (zusätzliche Daten); Versionspräfix in jedem Format; Auffüllen gegen verräterische Längen; eine offene Liste der Klartext-Metadaten. **Anders als säckel:** Dort entschlüsselt der Server im Arbeitsspeicher, mit Schlüsseln aus dem Passwort; ein übernommener laufender Server liest mit. Bei Trommi entschlüsseln nur die Endpunkte. säckel hat noch keine Signaturen und nennt als Grenze, dass der Server einen falschen öffentlichen Schlüssel unterschieben kann. Das löst hier die Mitgliederliste.
 
@@ -28,7 +28,7 @@ Zero Trust: Der Hub ist ein feindlicher Briefkasten. Zweiter Entwurf vom 2. Okto
 | Wiederherstellungsschlüssel | Ed25519 und X25519, per HKDF aus dem Wiederherstellungscode | Nur auf Papier oder im Passwortmanager. Der öffentliche Teil steht im Gründungseintrag. |
 | Raumschlüssel | 32 zufällige Bytes je Epoche | Bei jedem Mitglied, im selben Speicher wie die Geräteschlüssel. Auf dem Server nur versiegelt. |
 
-**Mitgliederliste.** Ein Protokoll, an das nur angehängt wird. Jeder Eintrag (Gerät hinzu, Gerät entfernt, neue Epoche) trägt Nummer, Hash des Vorgängers und die Signatur eines Menschengeräts oder des Wiederherstellungsschlüssels. Agenten dürfen nichts eintragen. Der erste Eintrag (Gründung) nennt das erste Gerät und den Wiederherstellungsschlüssel. **Die Raum-ID ist der Hash des Gründungseintrags.** Wer die Raum-ID aus dem Link kennt, kann die ganze Liste ohne Vertrauen in den Server prüfen.
+**Mitgliederliste.** Ein Protokoll, an das nur angehängt wird. Jeder Eintrag (Gerät hinzu; Gerät entfernt, damit neuer Raumschlüssel; Wiederherstellung) trägt Nummer, Hash des Vorgängers und die Signatur eines Menschengeräts oder des Wiederherstellungsschlüssels. Jedes deiner Geräte darf eintragen, es gibt kein Hauptgerät. Agenten dürfen nichts eintragen. Der erste Eintrag (Gründung) nennt das erste Gerät und den Wiederherstellungsschlüssel. **Die Raum-ID ist der Hash des Gründungseintrags.** Wer die Raum-ID aus dem Link kennt, kann die ganze Liste ohne Vertrauen in den Server prüfen.
 
 **Zurückdrehen und Gabeln.** Jedes Gerät merkt sich Nummer und Hash des neuesten Eintrags und nimmt nie einen älteren Stand an. Jede Nachricht nennt den Stand der Liste, den ihr Absender kennt. Zeigt der Server zwei Geräten verschiedene Listen, fällt das mit der ersten Nachricht zwischen ihnen auf: gleiche Nummer, anderer Hash. Der Client hält dann an und meldet es. Ein Eintrag des Wiederherstellungsschlüssels schlägt jeden Eintrag eines Geräts.
 
@@ -52,18 +52,18 @@ sequenceDiagram
 - **Link:** `https://app…/join#v1.hub.raum-id.s` mit 256 Bit Geheimnis `s`. Die Version steht vorn. Der Server kennt nur die Einladungs-ID, die per HKDF aus `s` entsteht.
 - **Der HMAC bindet:** Version, Raum-ID, Hub-Adresse, Einladungs-ID, Rolle, Name und beide öffentlichen Schlüssel des neuen Geräts. Der Server kann keinen Schlüssel austauschen. Die Signatur des neuen Geräts beweist, dass es den privaten Schlüssel hat.
 - **Einmalig und kurz:** zehn Minuten, eine Anfrage. Beides setzt dein Gerät durch, nicht der Server. Dein Gerät muss dafür online sein.
-- **Prüfcode:** sechs Ziffern aus dem Hash des ganzen Ablaufs und einer Zufallszahl, die dein Gerät erst nach Eingang der Anfrage aufdeckt (Festlegen, dann aufdecken, wie bei ZRTP und der Matrix-Verifikation). Ohne diese Reihenfolge könnte ein Angreifer Schlüssel durchprobieren, bis der Code passt.
+- **Prüfcode:** Pflicht, wenn ein Gerät eines Menschen beitritt: Du liest die sechs Ziffern auf dem neuen Gerät ab und tippst sie auf dem alten ein. Ein Agent, dem du den Link in den Prompt legst, tritt ohne Prüfcode bei, weil dort niemand ablesen kann (`docs/pairing.md` sagt, was das kostet). Sechs Ziffern aus dem Hash des ganzen Ablaufs und einer Zufallszahl, die dein Gerät erst nach Eingang der Anfrage aufdeckt (Festlegen, dann aufdecken, wie bei ZRTP und der Matrix-Verifikation). Ohne diese Reihenfolge könnte ein Angreifer Schlüssel durchprobieren, bis der Code passt.
 - **Gestohlener Link:** Ohne Prüfcode gilt: Wer zuerst kommt, ist drin. Dann begrenzen drei Dinge den Schaden. Der Link trägt eine Rolle; ein Agenten-Link ergibt nie ein Gerät, das Befehle geben darf. Agenten bekommen keine alten Epochenschlüssel. Kommt der echte Empfänger zu spät, meldet er „Einladung schon verbraucht“, und du entfernst den Fremden mit einem Tipp (Rotation).
 
 ## 4. Der eine Raumschlüssel
 
 - **Entstehen:** Das erste Gerät würfelt den Schlüssel der Epoche 1.
 - **Verpacken:** Für jedes Mitglied eine versiegelte Kopie, wie `Vault.seal` in säckel: flüchtiger X25519-Schlüssel, HKDF-SHA-256 über das gemeinsame Geheimnis mit beiden öffentlichen Schlüsseln als Salt, AES-256-GCM. Das ist das Muster von HPKE (RFC 9180). Raum-ID, Epoche und Empfänger sind als zusätzliche Daten gebunden.
-- **Rotieren:** sofort beim Entfernen eines Mitglieds, sonst alle 30 Tage. Ein Menschengerät würfelt den neuen Schlüssel, versiegelt ihn für alle Verbleibenden und trägt die neue Epoche in die Liste ein. Abwesende Geräte holen ihre Kopie später. Anders als in säckel wird nichts neu verschlüsselt: Das Protokoll wird nur fortgeschrieben.
+- **Erneuern:** nur beim Entfernen eines Mitglieds (und bei der Wiederherstellung, die Geräte entfernt), dann sofort. Nicht nach Zeitplan. Das entfernende Gerät würfelt den neuen Schlüssel, versiegelt ihn für alle Verbleibenden, auch für die Agenten, und trägt Entfernen und neue Epoche in einem Eintrag in die Liste ein. Abwesende Geräte holen ihre Kopie später. Anders als in säckel wird nichts neu verschlüsselt: Das Protokoll wird nur fortgeschrieben.
 - **Alte Epochen:** Jeder neue Schlüssel verschlüsselt seinen Vorgänger. Menschengeräte lesen so den ganzen Verlauf, Agenten bekommen diese Kette nicht.
 - **Entferntes Mitglied:** liest weiter, was es schon hatte, und jede alte Epoche, deren Chiffretext es noch bekommt. Nichts Neues.
 
-> **Was „kein Ratchet“ kostet.** Keine Vorwärtsgeheimhaltung: Wer einen Epochenschlüssel und die Chiffretexte hat, liest die ganze Epoche, als Mensch auch alle früheren. Keine Selbstheilung: Wer den privaten Schlüssel eines Geräts hat, packt auch jede künftige Epoche aus, bis das Gerät entfernt ist. Die Rotation nach Zeitplan hilft nur gegen einen Raumschlüssel, der einzeln abgeflossen ist. Und ein Schlüssel für alle heißt: Jeder Agent kann die Gespräche aller anderen Agenten lesen. Signaturen bleiben davon unberührt: Mit dem Raumschlüssel allein lässt sich kein Befehl fälschen. Die 30-Tage-Löschung begrenzt, was an Karten und Anhängen überhaupt noch da ist.
+> **Was „kein Ratchet“ kostet.** Keine Vorwärtsgeheimhaltung: Wer einen Epochenschlüssel und die Chiffretexte hat, liest die ganze Epoche, als Mensch auch alle früheren. Keine Selbstheilung: Wer den privaten Schlüssel eines Geräts hat, packt auch jede künftige Epoche aus, bis das Gerät entfernt ist. Ohne Rotation nach Zeitplan dauert eine Epoche so lange, bis jemand entfernt wird: Ein abgeflossener Raumschlüssel öffnet alles seit dem letzten Entfernen, und ein neuer Agent kann bis dorthin zurücklesen, wenn der Hub ihm die alten Umschläge gibt. Und ein Schlüssel für alle heißt: Jeder Agent kann die Gespräche aller anderen Agenten lesen. Signaturen bleiben davon unberührt: Mit dem Raumschlüssel allein lässt sich kein Befehl fälschen. Die 30-Tage-Löschung begrenzt, was an Karten und Anhängen überhaupt noch da ist.
 
 ## 5. Umschlag einer Nachricht
 
@@ -79,12 +79,12 @@ sequenceDiagram
 
 Kette: „Vorgänger-Hash“ ist der Hash des vorigen Umschlags desselben Absenders. „Gesehen“ nennt den letzten Stand der anderen. Der Server prüft die Signatur ebenfalls und weist Fremdes ab. Verlassen muss sich darauf niemand.
 
-- **Kopf:** Version, Raum-ID, Epoche, Absendergerät, laufende Nummer, Hash des Vorgängers, Stand der Mitgliederliste, Empfänger (ein Agent oder alle), Zeit, „gesehen“ (Nummer und Hash des letzten Umschlags der anderen Absender). Dazu nur bei Bedarf: Karten-ID, Kartenstatus, Antwortzeit, Verweise auf Anhänge.
-- **Nonce, sicher für einen langlebigen Schlüssel auf vielen Geräten:** Niemand verschlüsselt mit dem Raumschlüssel selbst. Jeder Absender leitet je Epoche einen eigenen Schlüssel ab: HKDF(Raumschlüssel, Raum-ID, Epoche, Geräte-ID). Zwei Geräte können sich so nie in die Quere kommen. Darunter ist die Nonce 96 Bit Zufall. NIST erlaubt dafür 2^32 Nachrichten je Schlüssel; ein Gerät kommt in 30 Tagen nicht in die Nähe. Zufall statt Zähler, weil ein zurückgesetzter Zähler (zwei Tabs, wiederhergestelltes Profil) bei GCM Klartext und Echtheit preisgibt.
+- **Kopf:** Version, Raum-ID, Epoche, Absendergerät, laufende Nummer, Hash des Vorgängers, Stand der Mitgliederliste, Empfänger (ein Agent oder alle), Zeit, „gesehen“ (Nummer und Hash des letzten Umschlags der anderen Absender). Dazu nur bei Karten: Karten-ID, Kartenstatus (offen, beantwortet, geschlossen), Dringlichkeit, Antwortzeit. Und Verweise auf Anhänge.
+- **Nonce, sicher für einen langlebigen Schlüssel auf vielen Geräten:** Niemand verschlüsselt mit dem Raumschlüssel selbst. Jeder Absender leitet je Epoche einen eigenen Schlüssel ab: HKDF(Raumschlüssel, Raum-ID, Epoche, Geräte-ID). Zwei Geräte können sich so nie in die Quere kommen. Darunter ist die Nonce 96 Bit Zufall. NIST erlaubt dafür 2^32 Nachrichten je Schlüssel; ein Gerät kommt auch in einer langen Epoche nicht in die Nähe. Zufall statt Zähler, weil ein zurückgesetzter Zähler (zwei Tabs, wiederhergestelltes Profil) bei GCM Klartext und Echtheit preisgibt.
 - **Signiert werden Bytes, kein JSON.** Der Kopf reist als fertige Bytefolge; der Empfänger prüft erst und liest dann. Das erspart eine kanonische JSON-Form.
 - **Was der Server damit nicht mehr kann.** Wiederholen: Jede Nummer gilt je Absender einmal. Weglassen und Umsortieren: Nummer und Hash des Vorgängers passen nicht. Zusammenstückeln: Raum, Epoche und Absender stecken in Schlüssel, zusätzlichen Daten und Signatur. Der Client zeigt eine Lücke an und fordert gezielt nach; Nummer und Geräte-ID dienen zugleich als Client-ID gegen doppelte Zustellung.
 - **Was bleibt:** Das Ende zurückhalten kann der Server immer. Es fällt auf, sobald irgendein Umschlag ankommt, dessen „gesehen“ weiter ist als der eigene Stand. Sonst zeigt der Client nur, seit wann ein Absender schweigt.
-- **Löschen ohne Kettenbruch:** Der Hash eines Umschlags geht über Kopf und Hash des Chiffretexts. Nach 30 Tagen löscht der Server den Chiffretext und behält Kopf und Hash (rund 300 Bytes).
+- **Löschen ohne Kettenbruch:** Der Hash eines Umschlags geht über Kopf und Hash des Chiffretexts. 30 Tage nach der Antwort löscht der Server den Chiffretext einer Karte und behält Kopf und Hash (rund 300 Bytes).
 
 ## 6. Was ein Agent ausführt
 
@@ -103,13 +103,13 @@ Karten, Statuszeilen und Antworten eines Agenten nimmt ein Client nur von diesem
 
 | Verborgen | Bewusst im Klartext, signiert | Unvermeidbar sichtbar |
 | --- | --- | --- |
-| Text von Nachrichten und Karten, Optionen, Anmerkungen, gewählte Option, Dringlichkeit, Statuszeilen, Namen der Sitzungen, Anhänge, Canvas, Dateinamen und Dateitypen | Raum, Epoche, Absender, Empfänger, Nummern und Hashes; Karten-ID, Kartenstatus und Antwortzeit (für die Löschung nach 30 Tagen); Verweise auf Anhänge; ein Bit „Push senden“ | Wer Mitglied ist und in welcher Rolle, wer wann online ist, IP-Adressen, Zeitpunkte, Größen (in Stufen aufgefüllt) |
+| Text von Nachrichten und Karten, Optionen, Anmerkungen, gewählte Option, Statuszeilen, Namen der Sitzungen, Anhänge, Canvas, Dateinamen und Dateitypen | Raum, Epoche, Absender, Empfänger, Nummern und Hashes; Karten-ID, Kartenstatus und Antwortzeit (für die Löschung nach 30 Tagen); Dringlichkeit (danach entscheidet der Hub über Push-Mitteilungen); Verweise auf Anhänge; ein Bit „Push senden“ | Wer Mitglied ist, in welcher Rolle und unter welchem Gerätenamen, wer wann online ist, IP-Adressen, Zeitpunkte, Größen (in Stufen aufgefüllt) |
 
 „Zero Knowledge“ gilt für Inhalte, nicht für Metadaten. Die Karten-Metadaten sind signiert: Der Server liest sie, kann sie aber nicht ändern.
 
 - **Anhänge:** Jede Datei bekommt einen eigenen Zufallsschlüssel (wie Dokumente in säckel) und wird in Stücken von 64 KiB verschlüsselt, mit Stücknummer und Schlussmarke in der Nonce (STREAM-Konstruktion, wie in age und Tink). So bleiben Spulen und Teilabrufe möglich. Dateischlüssel, Hash, Name und Typ stehen in der verschlüsselten Nachricht, im Kopf nur die Blob-ID. Der Server löscht Blobs mit der Karte.
 - **Canvas:** ein verschlüsselter Blob je Sitzung, signiert und mit Versionsnummer. Clients nehmen keine ältere Version an. Gespeichert wird mit Verzögerung, nicht bei jedem Strich.
-- **Sprache** braucht Klartext und darf deshalb nur an Endpunkten geschehen. `create_voiceover` läuft im Channel-Prozess des Agenten. Diktat und Vorlesen: auf iOS mit der Erkennung und Stimme des Geräts oder direkt bei Tinfoil; im Browser direkt bei Tinfoil. Der Tinfoil-Schlüssel wird dazu als verschlüsselte Raum-Einstellung verteilt. Der Hub ruft Tinfoil nicht mehr auf.
+- **Sprache** läuft über den Hub und ist damit **nicht** Ende-zu-Ende verschlüsselt: Diktat und Vorlesen schickt das Gerät an den Hub, der Hub ruft Tinfoil auf. Der Hub sieht dabei Ton und Text dessen, was du diktierst oder dir vorlesen lässt, und nur das. Der Tinfoil-Schlüssel bleibt auf dem Hub und erreicht nie einen Browser. `create_voiceover` läuft weiter beim Agenten. Die iOS-App darf später einen eigenen Tinfoil-Schlüssel aus dem Schlüsselbund nutzen; dann sieht der Hub auch das nicht mehr.
 
 ## 8. Anmelden am Server ohne Inhaber-Token
 
@@ -134,20 +134,20 @@ Wer das JavaScript liefert, kann Schlüssel benutzen und Klartext abgreifen. Nic
 
 **Ungelöst:** Ein gewöhnlicher Browser-Tab vertraut bei jedem Laden der Adresse, die den Code liefert. Auch ein Service Worker hilft nicht, weil dieselbe Adresse ihn ersetzen darf.
 
-**Empfehlung:** Web-Client von einer festen, vom Hub getrennten Adresse, mit strenger Content Security Policy, SRI und signierten Git-Tags. Keine fremden Quellen mehr: Die Schriften von Google Fonts werden selbst ausgeliefert. Wer selbst betreibt, liefert den Client vom eigenen Rechner. Die nativen Apps sind der Vertrauensanker: Neue Menschengeräte einschreiben und Geräte entfernen sollte man dort tun. Der Browser bekommt dieselben Rechte, aber der Text sagt ehrlich, dass er dem Auslieferer vertraut.
+**Entschieden:** Web-Client von einer festen, vom Hub getrennten Adresse, mit strenger Content Security Policy, SRI und signierten Git-Tags. Keine fremden Quellen mehr: Die Schriften von Google Fonts werden selbst ausgeliefert. Wer selbst betreibt, liefert den Client vom eigenen Rechner. Die nativen Apps sind der Vertrauensanker. Der Browser bekommt dieselben Rechte wie jedes deiner Geräte, aber der Text sagt ehrlich, dass er dem Auslieferer vertraut.
 
 ## 10. Verlust und Wiederherstellung
 
 | Fall | Folge |
 | --- | --- |
-| Ein Gerät verloren | Auf einem anderen Gerät entfernen. Das rotiert den Raumschlüssel. |
-| Alle Geräte verloren, Code vorhanden | Neues Gerät, Code eingeben. Der Wiederherstellungsschlüssel trägt das neue Gerät ein, entfernt alle alten und öffnet die Epochenschlüssel. Danach gibt es einen neuen Code, wie in säckel. |
+| Ein Gerät verloren | Auf irgendeinem anderen deiner Geräte entfernen. Das erneuert den Raumschlüssel. |
+| Alle Geräte verloren, Code vorhanden | Neues Gerät, Code eingeben. Der Wiederherstellungsschlüssel trägt das neue Gerät ein, entfernt alle deine alten Geräte und öffnet die Epochenschlüssel. Die Agenten bleiben Mitglieder und bekommen den neuen Raumschlüssel; sie arbeiten ohne neue Einladung weiter. Danach gibt es einen neuen Code, wie in säckel. |
 | Alle Geräte und Code verloren | Der Raum ist verloren. Neuer Raum, Agenten neu einladen. Kein Reset per E-Mail: Er könnte nichts entschlüsseln. |
 | Schlüsseldatei eines Agenten verloren | Agenten neu einladen. Er bekommt eine neue Identität. |
 | Browser löscht seinen Speicher | Wie ein verlorenes Gerät. Safari löscht Skript-Speicher nach sieben Tagen ohne Besuch; zum Home-Bildschirm hinzugefügte Seiten sind ausgenommen. |
 | Server verliert Daten | Backups enthalten nur Chiffretext und dürfen überall liegen. Clients halten nur einen Cache. |
 
-Der Code hat 256 Bit und wird einmal angezeigt, in Vierergruppen (Crockford-Base32, wie in säckel). Für jede Epoche liegt eine versiegelte Kopie des Raumschlüssels für den Wiederherstellungsschlüssel auf dem Server.
+Der Code ist Pflicht: Ohne ihn lässt sich kein Raum anlegen. Er hat 256 Bit und wird einmal angezeigt, in Vierergruppen (Crockford-Base32, wie in säckel). Für jede Epoche liegt eine versiegelte Kopie des Raumschlüssels für den Wiederherstellungsschlüssel auf dem Server.
 
 ## 11. Verfahren und Leistung
 
@@ -162,7 +162,7 @@ Der Code hat 256 Bit und wird einmal angezeigt, in Vierergruppen (Crockford-Base
 - **Ein Modul für zwei Orte:** Web-Client und Channel-Prozess können dieselbe JavaScript-Datei nutzen, weil Node dieselbe Schnittstelle hat. Kein Build-Schritt, keine Krypto-Bibliothek.
 - **ChaCha20-Poly1305** gibt es in WebCrypto nicht, also AES-GCM überall. XAES-256-GCM wäre die benannte Konstruktion für lange Zufalls-Nonces; die Ableitung je Absender erreicht hier dasselbe mit Bordmitteln.
 - **Kein Rückfall auf JavaScript-Krypto.** Ältere Browser bekommen eine klare Meldung. Eine Bibliothek in JavaScript hielte die Schlüssel als lesbare Bytes.
-- **Secure Enclave** kann klassisch nur P-256, kein Curve25519. Auf iOS liegen die Schlüssel deshalb im Keychain, auf Wunsch zusätzlich mit einem Enclave-Schlüssel verpackt (offene Entscheidung 1).
+- **Secure Enclave** kann klassisch nur P-256, kein Curve25519. Auf iOS liegen die Schlüssel deshalb im Keychain, auf Wunsch zusätzlich mit einem Enclave-Schlüssel verpackt. Entschieden: Curve25519 überall, kein P-256.
 - **Gemessen** (Node 26, WebCrypto, dieser Rechner): signieren 42 µs, prüfen 88 µs, 1 KiB verschlüsseln 18 µs. Eine Nachricht kostet unter 0,2 ms. 10 000 Umschläge beim ersten Laden prüfen: etwa eine Sekunde. Browser und Telefon sind nicht gemessen; dort ist mit dem Zwei- bis Fünffachen zu rechnen.
 - **Voraussetzung:** WebCrypto gibt es nur über HTTPS oder auf localhost. TLS (etwa `tailscale serve`) ist damit Pflicht.
 
@@ -173,31 +173,31 @@ Jeder Schritt hinterlässt ein lauffähiges System.
 1. **Fester Hub und TLS.** Ein eigener Hub-Prozess statt „erste Sitzung ist der Hub“. Jeder Channel-Prozess ist ein gewöhnlicher Client. Stabile Agenten-IDs.
 2. **Ereignisprotokoll statt Gesamtzustand,** noch im Klartext: Nummer je Absender, Client-ID, gezieltes Nachholen. Clients setzen den Zustand selbst zusammen und sortieren den Stapel selbst nach Dringlichkeit. Der Server vergibt nur eine Abrufnummer.
 3. **Geräteschlüssel, Mitgliederliste, Einladung v1, Anmeldung per Signatur.** Token und Cookie entfallen, Geräte lassen sich einzeln sperren. Befehle sind signiert, Agenten prüfen sie. Inhalte noch im Klartext. Das ist der größte Sicherheitsgewinn.
-4. **Hash-Kette und Verschlüsselung** mit dem Raumschlüssel. Anhänge und Canvas verschlüsselt, Sprache an die Endpunkte. Der Server behält nur Köpfe und Blobs.
-5. **Rotation, Wiederherstellungscode, Prüfcode.**
+4. **Hash-Kette und Verschlüsselung** mit dem Raumschlüssel. Anhänge und Canvas verschlüsselt; Sprache bleibt beim Hub. Der Server behält nur Köpfe und Blobs.
+5. **Neuer Raumschlüssel beim Entfernen, Wiederherstellungscode, Prüfcode.**
 6. **Client von eigener Adresse,** SRI, signierte Versionen; iOS und Linux ziehen nach.
 
 Aus `docs/gelernt.md` eingelöst: versionierte, einmalige, kurzlebige Einladungen; ein Zugang je Gerät, einzeln sperrbar; laufende Nummer und Client-ID; fester Hub. Für später: verschlüsselte Schnappschüsse, damit ein neues Gerät nicht das ganze Protokoll prüfen muss.
 
-## 13. Offene Entscheidungen
+## 13. Die neun Fragen, entschieden
 
-| Nr. | Entweder, oder | Empfehlung |
+| Nr. | Frage | Entschieden |
 | --- | --- | --- |
-| 1 | Curve25519 überall, oder P-256, damit der iOS-Schlüssel in der Secure Enclave liegt | Curve25519. Ein Verfahren, wie in säckel, keine ECDSA-Fallen. |
-| 2 | Ein Raumschlüssel für alle Agenten, oder ein Schlüssel je Agenten-Sitzung (weiter ohne Ratchet) | Einer, wie entschieden. Das Format führt eine Schlüssel-ID, damit der zweite Weg offen bleibt. |
-| 3 | Prüfcode immer, oder nur für Menschengeräte | Pflicht für Menschengeräte. Für Agenten voreingestellt an, abschaltbar. |
-| 4 | Jedes Menschengerät darf Mitglieder ändern, oder nur ein Hauptgerät | Jedes. Der Wiederherstellungsschlüssel überstimmt. |
-| 5 | Dringlichkeit im Klartext, damit der Server sortiert, oder verborgen | Verborgen. Clients sortieren, der Server sieht nur „Push senden“. |
-| 6 | Web-Client vom Hub, oder von fester eigener Adresse | Eigene Adresse; heikle Schritte in den nativen Apps. |
-| 7 | Rotation nur beim Entfernen, oder zusätzlich alle 30 Tage | Zusätzlich alle 30 Tage. Kostet fast nichts. |
-| 8 | Sprache im Browser direkt bei Tinfoil, oder nur in den nativen Apps | Direkt, falls Tinfoil Aufrufe aus dem Browser zulässt. Sonst nur nativ. |
-| 9 | Wiederherstellungscode Pflicht, oder freiwillig | Pflicht beim Anlegen des Raums. |
+| 1 | Curve25519 überall, oder P-256 für die Secure Enclave | Curve25519 auf allen Geräten. |
+| 2 | Ein Raumschlüssel für alle, oder einer je Agenten-Sitzung | Einer für alle. Das Format führt eine Schlüssel-ID, damit der zweite Weg offen bleibt. |
+| 3 | Prüfcode immer, oder nur für Menschengeräte | Pflicht für Menschengeräte. Ein Agent mit Link im Prompt tritt ohne bei. |
+| 4 | Jedes Menschengerät darf Mitglieder ändern, oder nur ein Hauptgerät | Jedes. Der Wiederherstellungscode steht darüber. |
+| 5 | Dringlichkeit im Klartext, oder verborgen | Lesbar für den Hub, zusammen mit Karten-ID, Status und Antwortzeit. Inhalte sind Chiffretext. |
+| 6 | Web-Client vom Hub, oder von fester eigener Adresse | Eigene feste Adresse. |
+| 7 | Neuer Raumschlüssel nur beim Entfernen, oder zusätzlich alle 30 Tage | Nur beim Entfernen. |
+| 8 | Sprache im Browser direkt bei Tinfoil, oder anders | Über den Hub. Der Tinfoil-Schlüssel erreicht nie einen Browser. |
+| 9 | Wiederherstellungscode Pflicht, oder freiwillig | Pflicht. |
 
-**Nicht nachgeprüft:** ob Safari einen nicht exportierbaren X25519-Schlüssel in IndexedDB zuverlässig speichert (ein Bericht sagt nein; vor Schritt 3 testen, Ausweg: den Schlüssel mit einem nicht exportierbaren AES-Schlüssel verpackt ablegen); ab welcher Version jeder Browser X25519 kann (die Versionen oben sind für Ed25519 belegt); `integrity` in der Import Map (berichtet: Chrome 127, Safari 18.4, Firefox 138); ob Tinfoil Aufrufe aus dem Browser erlaubt (CORS); Zeiten in Browser und iOS. Trommi · Entwurf, zur Entscheidung.
+**Nicht nachgeprüft:** ob Safari einen nicht exportierbaren X25519-Schlüssel in IndexedDB zuverlässig speichert (ein Bericht sagt nein; vor Schritt 3 testen, Ausweg: den Schlüssel mit einem nicht exportierbaren AES-Schlüssel verpackt ablegen); ab welcher Version jeder Browser X25519 kann (die Versionen oben sind für Ed25519 belegt); `integrity` in der Import Map (berichtet: Chrome 127, Safari 18.4, Firefox 138); Zeiten in Browser und iOS.
 
 ## Entschieden
 
-- 2. Oktober 2026: Prüfcode beim Beitritt ist Pflicht für menschliche Geräte, voreingestellt für Agenten (Board-Karte Nr. 39).
+- 2. Oktober 2026: Prüfcode beim Beitritt ist Pflicht für menschliche Geräte (Board-Karte Nr. 39). Ein Agent, der über einen Link in seinem Prompt beitritt, braucht keinen.
 
 ## Entscheidungen vom 2.10.2026 (Christopher, auf dem Board)
 
@@ -207,5 +207,12 @@ Aus `docs/gelernt.md` eingelöst: versionierte, einmalige, kurzlebige Einladunge
 - **Raumschlüssel nur beim Entfernen eines Mitglieds erneuern**, nicht zusätzlich alle 30 Tage.
 - **Wiederherstellung behält die Agenten als Mitglieder**; entfernt werden nur die menschlichen Geräte.
 - **Wiederherstellungscode ist Pflicht**, ebenso der Prüfcode beim Beitritt für Menschen.
-- **Dringlichkeit bleibt für den Hub lesbar**, weil er danach über Push-Mitteilungen entscheidet.
+- **Dringlichkeit bleibt für den Hub lesbar**, weil er danach über Push-Mitteilungen entscheidet. Ebenso der Status einer Karte (offen oder beantwortet, ID, Antwortzeit); die Inhalte sind Chiffretext. Beantwortete Karten löscht der Hub nach 30 Tagen.
 - **Sprache läuft über den Hub.** Direkt vom Browser zu Tinfoil ist verworfen: der API-Schlüssel läge im Browser. Die iOS-App darf später einen eigenen Tinfoil-Schlüssel aus dem Schlüsselbund nutzen.
+
+**Was daraus folgt, und wo es steht.** Bibliothek und Testvektoren sind angepasst (`crypto/FORMAT.md`, Abschnitt 16): Den Eintrag „neue Epoche nach Zeitplan“ gibt es nicht mehr; eine Wiederherstellung, die einen Agenten entfernt oder ein Menschengerät übrig lässt, ist ungültig; die Dringlichkeit steht im signierten Kopf. Zwei Folgen, die man kennen sollte:
+
+- **Lange Epochen.** Ein Raumschlüssel gilt jetzt, bis jemand entfernt wird. Ein neuer Agent kann bis zum letzten Entfernen zurücklesen, wenn der Hub ihm die alten Umschläge gibt (Abschnitt 4).
+- **Sprache ist nicht Ende-zu-Ende verschlüsselt.** Was du diktierst oder dir vorlesen lässt, sieht der Hub (Abschnitt 7).
+
+Als Nächstes am Server gewählt: Einschreiben und Schlüssel, und stabile Agenten-IDs. Das Protokoll dafür steht in `docs/pairing.md`, die Hub-Seite als getestetes Modul in `crypto/hub.mjs`.

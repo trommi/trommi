@@ -5,7 +5,7 @@
 // (icons, attachments, lightbox, code blocks).
 
 import { sendMessage } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks } from './ui.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountHistory, mountFiles } from './history.js'
 import { mountDictation } from './speech.js'
@@ -263,7 +263,7 @@ function scribbleCard(a, onOpen) {
 
 // A page or file the session published under a link that opens without a login: what it is,
 // and the two things to do with it. Once revoked or expired only its name is left, dashed.
-function assetCard(asset) {
+function assetCard(asset, said = '') {
   const card = el('div', 'asset-card')
   const kind = el('span', 'caps', [ASSET_LABEL[asset.type] ?? 'File', !asset.gone && asset.size ? sizeText(asset.size) : ''].filter(Boolean).join(' · '))
   const text = el('div', 'asset-text')
@@ -276,7 +276,11 @@ function assetCard(asset) {
   }
   if (asset.note) text.append(el('span', null, asset.note))
   const open = el('a', 'asset-open', 'Open')
-  open.href = asset.url
+  // The message carries the link under the board's public address. On a plain http page (the board over
+  // the LAN) a browser cannot decrypt, so the link goes there instead of staying on this address (linkInfo).
+  const full = String(said).split(/\s+/).find(word => word.endsWith(asset.url) && word !== asset.url)
+  const href = (full && linkInfo(full).asset?.href) || asset.url
+  open.href = href
   open.target = '_blank'
   open.rel = 'noopener'
   const copy = button('asset-copy')
@@ -284,7 +288,7 @@ function assetCard(asset) {
   let timer
   copy.addEventListener('click', async () => {
     // The link carries its key after the #; anyone who has it can open the page.
-    const ok = await copyText(new URL(asset.url, location.href).href)
+    const ok = await copyText(new URL(href, location.href).href)
     copy.textContent = ok ? 'Copied' : 'Not copied'
     clearTimeout(timer)
     timer = setTimeout(() => { copy.textContent = 'Copy link' }, 1800)
@@ -451,7 +455,7 @@ function createPane(agent, ctx) {
     const sig = JSON.stringify(m.asset)
     if (entry.sig === sig) return
     entry.sig = sig
-    entry.node.replaceChildren(assetCard(m.asset))
+    entry.node.replaceChildren(assetCard(m.asset, m.text))
   }
 
   function messageNode(m, cont, state) {

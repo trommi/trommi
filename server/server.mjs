@@ -66,6 +66,15 @@ const SPEECH = path.join(DATA, 'speech')
 const SPEECH_API = process.env.BOARD_SPEECH_API || 'https://inference.tinfoil.sh/v1'
 const STT_MODEL = process.env.BOARD_STT_MODEL || 'whisper-large-v3-turbo'
 const TTS_MODEL = process.env.BOARD_TTS_MODEL || 'qwen3-tts'
+// The voice, and what a text in a known language is spoken with instead ("de", "en"). Each of the
+// per-language settings is optional: BOARD_TTS_MODEL_DE, BOARD_TTS_VOICE_DE, BOARD_TTS_LANGUAGE_DE.
+const TTS_VOICE = process.env.BOARD_TTS_VOICE || ''
+const TTS_LANGS = { de: 'German', en: 'English' }
+const ttsFor = lang => {
+  const known = Object.hasOwn(TTS_LANGS, lang) ? lang : ''
+  const env = name => (known && process.env[`BOARD_TTS_${name}_${known.toUpperCase()}`]) || ''
+  return { model: env('MODEL') || TTS_MODEL, voice: env('VOICE') || TTS_VOICE, language: env('LANGUAGE') || TTS_LANGS[known] || '' }
+}
 const speechKey = () => {
   if (process.env.TINFOIL_API_KEY) return process.env.TINFOIL_API_KEY
   try { return fs.readFileSync(path.join(DATA, 'tinfoil.key'), 'utf8').trim() } catch { return '' }
@@ -522,7 +531,7 @@ const mcp = new Server(
       'You are connected to Trommi, a web page with a chat and a stack of decision cards. The human is on that page, often on a phone, and cannot see this terminal.',
       'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
       'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
-      'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
+      'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. For the one thing the human must not miss, write __two underscores around a few words__: the board underlines them by hand. Use it rarely; a text that underlines much is shown plain. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
       'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and where it helps a detail of a few words naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
       'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
@@ -1447,21 +1456,25 @@ async function speechFetch(route, init) {
   return res
 }
 
-// Text to an MP3 file. The same sentence is only synthesised once.
-async function speak(input, instructions = '') {
+// Text to an audio file. The same sentence is only synthesised once. lang ("de", "en") picks the
+// voice for that language and tells the model which one it is; without it the model guesses.
+async function speak(input, instructions = '', lang = '') {
   const clean = String(input ?? '').trim().slice(0, 4000)
   if (!clean) throw new Error('nothing to say')
-  const file = path.join(SPEECH, `${crypto.createHash('sha256').update(`${TTS_MODEL}|${instructions}|${clean}`).digest('hex').slice(0, 24)}.mp3`)
+  const { model, voice, language } = ttsFor(lang)
+  const file = path.join(SPEECH, `${crypto.createHash('sha256').update(`${model}|${voice}|${language}|${instructions}|${clean}`).digest('hex').slice(0, 24)}.mp3`)
   if (!fs.existsSync(file)) {
     const res = await speechFetch('/audio/speech', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ model: TTS_MODEL, input: clean, response_format: 'mp3', ...(instructions ? { instructions } : {}) }),
+      body: JSON.stringify({ model, input: clean, response_format: 'mp3', ...(voice ? { voice } : {}), ...(language ? { language } : {}), ...(instructions ? { instructions } : {}) }),
     })
     fs.writeFileSync(file, Buffer.from(await res.arrayBuffer()))
   }
   return file
 }
+// The service answers with MP3 or WAV, whatever was asked for; the page is told which it is.
+const audioType = audio => (audio.subarray(0, 4).toString('latin1') === 'RIFF' ? 'audio/wav' : 'audio/mpeg')
 
 async function transcribe(audio, type) {
   const form = new FormData()
@@ -2253,6 +2266,14 @@ const httpServer = http.createServer(async (req, res) => {
       else if (verb) return send(res, 404, '{"error":"not found"}')
       else liveAudio(id, await readRaw(req, 2e6))
       return send(res, 200, '{"ok":true}')
+    }
+    // Any text read aloud: a message, a question. The page sends it in pieces, cleaned of markup.
+    if (req.method === 'POST' && url.pathname === '/speech/say') {
+      const body = await readJson(req)
+      if (typeof body.text !== 'string' || !body.text.trim()) throw fail(400, 'text is missing')
+      if (!speechKey()) throw fail(503, 'Speech is not set up (TINFOIL_API_KEY or data/tinfoil.key is missing)')
+      const audio = fs.readFileSync(await speak(body.text, '', String(body.lang ?? '')))
+      return send(res, 200, audio, audioType(audio))
     }
     if (req.method === 'GET' && url.pathname.startsWith('/speech/card/')) {
       const card = state.cards.find(c => c.id === path.basename(url.pathname))
