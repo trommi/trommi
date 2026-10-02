@@ -38,7 +38,8 @@ function indexedStore(idb) {
   const tx = (stores, mode, fn) => new Promise((resolve, reject) => {
     const t = idb.transaction(stores, mode)
     const out = fn(t)
-    t.oncomplete = () => resolve(out?.result ?? out)
+    // a request that found nothing has the result undefined: that, not the request, is the answer
+    t.oncomplete = () => resolve(out instanceof IDBRequest ? out.result : out)
     t.onerror = t.onabort = () => reject(t.error)
   })
   return {

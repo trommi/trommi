@@ -40,9 +40,9 @@ Was wir uns bei anderen abgeschaut haben, steht in `docs/gelernt.md`.
 Jede Session, die den Channel lädt, startet ihr eigenes `server.mjs`. Der erste Prozess bekommt den Port und wird zum Hub: Er hält den Zustand und liefert die Oberfläche aus. Jeder weitere verbindet sich als Speiche mit dem Hub und erscheint als eigener Agent in der Seitenleiste. Endet die Session des Hubs, übernimmt eine Speiche den Port; der Zustand liegt in `data/` und geht dabei nicht verloren.
 
 - Der Name eines Agenten ist der Ordnername seiner Session, oder `BOARD_AGENT`.
-- „Alle“ zeigt eine Übersicht und einen Stapel mit den Fragen aller Agenten. Ein einzelner Agent zeigt sein Gespräch und nur seine Karten.
+- Der Posteingang zeigt die offenen Fragen aller Sitzungen, eine einzelne Sitzung ihr Gespräch mit ihren Fragen darin (siehe „The web UI“).
 - Ein Agent sieht und ändert nur seine eigenen Karten und Statuszeilen.
-- Die Übersicht (unten in der Seitenleiste) zeigt je Sitzung Modell, Rechner, Ordner und Programm. Mit dem Stern markierst du eine Sitzung als VIP; ihre Fragen stehen im Posteingang oben.
+- Die Seite „Agents“ (in der Leiste unten) zeigt je Sitzung Modell, Rechner, Ordner und Programm. Mit dem Stern markierst du eine Sitzung als VIP; ihre Fragen stehen im Posteingang oben.
 - Nachrichten an einen Agenten, dessen Session gerade nicht läuft, warten, bis er wieder da ist.
 - Eine abwesende Sitzung lässt sich archivieren (`POST /session {agent, archived: true}`): Ihre offenen Karten bleiben erhalten, verlassen aber den Stapel, bis sie wieder hervorgeholt wird oder sich neu verbindet. Für eine Sitzung, die online ist, wird das abgelehnt. Mit `group` (freier Text, höchstens 40 Zeichen, `null` löscht) bilden Sitzungen mit demselben Wert ein Paar.
 
@@ -63,7 +63,7 @@ Ein Channel ist schmal. Trommi zeigt alles an, was darüber kommt:
 | `reply` mit Text | Nachricht im Gespräch, Markdown wird dargestellt |
 | `reply` mit `details` | aufklappbarer Abschnitt „Details“ unter der Nachricht: Begründung, Protokolle, Diffs |
 | `reply` mit `attachments` | Bilder als Galerie, Video und Audio zum Abspielen, sonst Download |
-| `create_decision`, `set_urgency`, `withdraw_card`, `close_card` | Karten im Posteingang, im Stapel und im Gespräch |
+| `create_decision`, `revise_card`, `merge_cards`, `set_urgency`, `withdraw_card`, `close_card` | Karten im Posteingang, im Stapel und im Gespräch |
 | `publish_asset` | Nachricht mit einem Link auf die verschlüsselte Seite oder Datei |
 | `set_status`, `clear_status` | Ampel-Zeilen der Sitzung |
 | `introduce` | Modell und Auftrag in der Agenten-Übersicht |
@@ -90,13 +90,16 @@ Das Bild dazu, alle Ereignisse mit ihren Feldern und jedes Tool mit Beispiel zei
 - `reply(text, details, attachments[Pfade], card_id)`: Nachricht in den Chat; `details` erscheint eingeklappt darunter, Anhänge als Bilder, Video, Audio oder Datei. Mit `card_id` gehört die Antwort zu einer Karte, zu der der Mensch zurückgefragt hat (`POST /message {text, agent, card_id}`).
 - `introduce(model, task)`: sich vorstellen, für die Agenten-Übersicht
 - `create_decision(title, body, options[{key, label, detail}], attachments[Pfade], urgency, urgency_reason, recommended, multiple)`: Karte anlegen. Mit `multiple: true` darf der Mensch mehrere Optionen ankreuzen (`POST /decide {card_id, keys: [...]}`); die Karte speichert `choices` und als `choice` die erste. `recommended` ist ein Schlüssel oder, bei `multiple`, eine Liste.
+- `revise_card(card_id, title, body, options, attachments, urgency, urgency_reason, recommended, multiple, note)`: eine eigene offene Karte an Ort und Stelle umschreiben; nur angeben, was sich ändert. Die Karte behält Kennung, Nummer und Platz, bekommt den Zeitstempel `revised`, und im Gespräch steht „Question revised“ mit `note`. Entschiedene Karten lassen sich nicht umschreiben. Eine Antwort gilt für die Fassung, die der Mensch gelesen hat: `POST /decide` kann `revised` mitschicken (der Stand, den die Seite kennt); passt er nicht, gibt es die gewählte Option nicht mehr oder liegt die Änderung weniger als 1,5 Sekunden zurück (`BOARD_REVISE_GRACE_MS`), antwortet der Hub mit 409 und einem lesbaren Grund, und nichts wird gespeichert.
+- `merge_cards(card_ids[], title, body, options, attachments, urgency, urgency_reason, recommended, multiple)`: mehrere eigene offene Karten in einem Schritt durch eine neue ersetzen, typisch mit `multiple: true` und einer Option je früherer Frage. Die alten Karten sind erledigt („Merged into Nr. …“, `merged_into`), die neue nennt in `merged_from` ihre Nummern und Titel, übernimmt die höchste Dringlichkeit und das Alter der ältesten. Rückfragen zu den alten Karten bleiben im Gespräch.
+- Der Hub erinnert, ohne abzulehnen: Wer eine Frage stellt, während schon drei eigene offen sind, bekommt im Ergebnis den Hinweis auf `merge_cards` und `revise_card` samt Liste seiner offenen Karten; ist der Text über 300 Zeichen oder ein `detail` über 60 Zeichen lang, steht auch das im Ergebnis.
 - `set_urgency(card_id, urgency, reason)`: Dringlichkeit einer offenen Karte ändern; die Karte rückt im Stapel entsprechend vor oder zurück
 - `withdraw_card(card_id, reason)`: offene Frage zurückziehen, die sich erledigt hat
 - `set_status(id, label, state, detail, card_id)`: eine Zeile der Statusleiste anlegen oder ändern. `decision` = rot (wartet auf dich), `working` = gelb (in Arbeit), `done` = grün (umgesetzt). Mit `card_id` springt die rote Zeile zur Karte und wird nach deiner Antwort von selbst gelb.
 - `clear_status(id)`: eine Zeile entfernen, ohne `id` alle
 - `close_card(card_id, summary)`: entschiedene Karte nach „Erledigt“ schieben
 - `create_voiceover(text, style)`: Text als MP3 sprechen lassen, gibt den Dateipfad zurück (für Videos oder als Anhang)
-- `list_cards()`: Stand aller Karten mit Nummer, Dringlichkeit und Platz im Stapel
+- `list_cards()`: Stand aller Karten mit Nummer, Dringlichkeit und Platz im Stapel; offene Karten mit Text und Optionen, damit der Agent vor einer neuen Frage sieht, was er schon gefragt hat
 - `publish_asset(path | content, type, title, note, silent, keep)`: eine Seite oder Datei verschlüsselt ablegen und einen Link zurückbekommen, siehe „Assets und Links“
 - `list_assets()`, `revoke_asset(id)`: eigene Assets auflisten, einen Link beenden
 
@@ -117,15 +120,37 @@ Im Board heißen die Stufen Blocking, Urgent, Normal und Whenever; alle Texte, d
 
 Zustandsdateien der Vorversion werden beim Start übernommen: fehlende Nummern, Dringlichkeiten und der Stapel werden ergänzt.
 
-## Entscheiden
+## The web UI
 
-Ein Tipp auf eine Option entscheidet sofort. Danach bietet eine Leiste zwölf Sekunden lang „Rückgängig“ an; später geht es im Verlauf über „Neu entscheiden“. Die Karte kommt dann zurück auf den Stapel und der Agent erfährt, dass er die alte Wahl nicht weiter umsetzen soll. Der Fokus-Modus zeigt die offenen Karten nacheinander als ganze Seite.
+Hand-written ES modules and CSS in `client/web/`, English, light unless the human picks dark. Three places: the **Inbox**, one **session** (or several laid together), and the **Agents** page.
 
-## Posteingang und Sitzungen
+**Inbox.** Every open question of every session, grouped by who asks; a starred session's group comes first, then whoever has the most urgent question. Every row is the same height (148px) with its answer at the right edge, always in the same place, so after an answer the next row stands under the pointer.
 
-Die Seitenleiste zeigt oben den Posteingang, darunter die Sitzungen. Der Posteingang listet alle offenen Fragen, gruppiert nach Absender: Kurze Fragen (bis drei knappe Optionen, kein Anhang) beantwortest du direkt in der Liste, längere öffnen sich als ganze Seite. Eine Sitzung füllt die Seite mit genau einer von drei Ansichten: **Gespräch** (jede offene Frage steht als Karte an der Stelle, an der sie gestellt wurde), **Fragen** (ihre offenen Fragen ausgeschrieben, darunter der Verlauf der entschiedenen und erledigten) und **Scribble** (ihr Canvas). Umgeschaltet wird in der Leiste unten, auf dem Handy in der Tab-Leiste.
+- **Thumbs or Choose.** A two-way question is answered by thumb: down on the left, up on the right. The option's own word stands under its thumb when the pair says more than yes and no, whole, in at most two lines; a label that would not fit that way sends the card to Choose instead (`fitsTile` in `inbox.js` is the one rule). Everything else gets one wide **Choose**.
+- **Inline expansion.** Choose unfolds the row in place: the text, every option as a tile, and a line to ask back. Only a card with too much for that (long text, code, several pictures, files, more than six options) opens as a window of its own, the Focus window; a tap on a row's text opens that window too.
+- **Multi-select.** A card made with `multiple: true` has options that toggle and a Send tile that sends them together (`POST /decide {card_id, keys}`).
+- **The agent's advice.** The option named in `recommended` is circled by hand; the human still decides.
+- **Ask back.** Instead of answering, write a question to the session about this card (`POST /message {text, agent, card_id}`). The card stays open and waits under Later until the session has replied; message and reply are marked "About <question>" in the conversation.
+- **Later.** A small tag with an arrow hangs over the bottom edge of every row. It puts the question off: the row leaves its sender's group for one dashed group, **Later**, at the very end, so working down the list comes to an end. The same tag fetches it back. What was put off is kept in this browser; a card the agent makes more urgent returns by itself.
+- **Undo.** An answer can be taken back for a few seconds from the note that says "Answered" ("Back"), and later with "Answer again" in the list of answered questions. The card returns to the stack and the agent is told to stop acting on the old choice.
+- **VIP.** A starred session is marked once: its scribble on gold and a small tab at its group's heading, and the tab in the title of its own page. Its rows stay as plain as any other. The word lives in `VIP_LABEL` (`inbox.js`).
+- **Urgency.** Blocking and Urgent carry a coloured tab at the row's corner, Normal carries none, Whenever a small scribbled hourglass. One colour per urgency drives tint, text and edge of the whole row.
 
-Beantwortete Karten werden nach 30 Tagen samt Anhängen und Markern im Gespräch gelöscht (`BOARD_RETENTION_DAYS`). Offene Karten bleiben.
+**A session.** One conversation, with the session's questions inside it: while a question is open it stands in the log as the same row as in the inbox, right where it was asked; once answered it shrinks to one line that names the question and the answer. Two filters in the title lay a list over the log and keep its scroll position: **Questions only** (the open ones, then the answered ones, each unfolding what was asked, what was chosen, and the way to answer again) and **Files** (everything the session sent: pictures, video, audio, files, scribbles, links, published assets). The second mode of a session is **Scribble**, its canvas. On a phone the two modes are a tab bar.
+
+- **Published assets.** A message that carries an `asset` is a card: type, size, title, note, "Open" in a new tab, "Copy link"; once revoked or expired it is dashed and opens nothing. A link to an asset inside any text (`…/a/<id>#<key>`) becomes a compact card with the asset's title, its type and, for a picture, a small preview; the key is never printed. Other long links are shortened to host and start of path.
+- **The picture is the way to the drawing.** A click on a session's mark opens forty drawings right under it; one click picks and saves (`POST /session {agent, icon: "draw:<name>"}`). A click on the name renames.
+
+**Sidebar.** The inbox on top, the sessions below, disconnected ones under a dashed heading. The badge at the end of a row tells the state: a ring circled by hand with the number of open questions while the session works (a drop travels through the ring; under reduced motion it stands still), a raised hand in a red loop when it is stopped waiting for the human, grey when it is disconnected. Sessions of the same name get a second line that tells them apart: the folder, else the machine, else since when.
+
+- **Pairs.** Drag one session onto another and they become one entry with a joint mark and one page: their conversations side by side, each with its own composer (on a phone one column, the names switch). Grab a name or a scribble inside the entry and carry it out, and that session stands alone again; the scissors under the badge cut the whole group apart; the Agents page has "Put together with…" and "Split". The server keeps it (`group` on the session), so every browser shows the same pairs.
+- **Archive.** A disconnected session can be put away (the box on its row, or "Archive" on the Agents page; `POST /session {agent, archived: true}`). Its questions leave the inbox; it is listed under Archive on the Agents page, comes back with "Fetch back", and by itself when it reconnects.
+
+**Addresses.** Every place has a real address, so a reload and a shared link land on it: `/` the inbox, `/agents`, `/s/<id>` a session, `/s/<a>+<b>` sessions laid together, `/s/<id>/questions`, `/s/<id>/files`, `/s/<id>/scribble`, and `?q=<card id>` on any of them for that question in its own window.
+
+**Keyboard.** The inbox can be worked down without the mouse: the arrows pick a row, letters answer it, put it off or open its choices, and one key takes the last answer back. `?` (or "Keys" in the bar) shows every key; they are defined in one place, `js/keys.js`.
+
+Answered cards are deleted after 30 days together with their attachments and their markers in the conversation (`BOARD_RETENTION_DAYS`). Open cards stay.
 
 ## Scribble
 
@@ -148,7 +173,7 @@ data/          Zustand, Anhänge, Token (nicht in Git)
 
 Server und Clients liegen bewusst in einem Repository: Ändert sich die Schnittstelle, werden alle im selben Commit angepasst, und die Tests der Clients laufen gegen den Server aus demselben Stand. Die Web-Oberfläche liefert der Server aus dem Nachbarordner aus; `package.json` bleibt im Wurzelordner, weil Server und `dev/` dieselben Abhängigkeiten nutzen.
 
-In `client/web/js/`: `store.js` hält den Zustand und die gewählte Sitzung, `inbox.js` Posteingang und Fragen, `chat.js` das Gespräch, `focus.js` den Fokus-Modus, `scribble.js` das Canvas, `agents.js` Seitenleiste und Agenten-Übersicht, `history.js` den Verlauf, `speech.js` Diktat und Vorlesen.
+In `client/web/js/`: `store.js` holds the state and what is in scope (the inbox, a session, a group), `app.js` the page, its addresses and the theme, `inbox.js` the question rows and the lists made of them, `chat.js` the conversation with its filters and the asset cards, `history.js` the answered questions and the files, `agents.js` the sidebar, the badges, pairs, the Agents page and the choice of drawing, `ui.js` the shared helpers and everything drawn by hand (session marks, icons, the advice loop, links to assets), `focus.js` the window of one question, `scribble.js` the canvas, `keys.js` the keys, `speech.js` dictation and reading aloud.
 
 ## Vorschau
 

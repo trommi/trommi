@@ -6,7 +6,6 @@
 const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const EMPTY = { agents: [], archived: [], groups: [], messages: [], cards: [], queue: [], tasks: [], assets: [], speech: false }
 
-let source = null        // what the server sent last, untouched
 let raw = EMPTY          // the same, normalized
 let view = { ...EMPTY, scope: null, members: [], group: null, later: [], all: EMPTY }
 let scope = null         // a session id, a group id, or null for the inbox across all sessions
@@ -28,26 +27,17 @@ const readLater = () => {
 }
 let later = readLater()
 
-// Groups and the archive belong to the server (agent.group, agent.archived). A server that does
-// not know them yet ignores the request, so this browser keeps its own copy and uses it until
-// the server's records carry the fields.
-const GROUPS_KEY = 'trommi-groups'       // { session id: group id }
-const ARCHIVED_KEY = 'trommi-archived'   // [session id]
-const plainObject = v => (v && typeof v === 'object' && !Array.isArray(v) ? v : {})
-let localGroups = plainObject(read(GROUPS_KEY, {}))
-let localArchived = new Set([].concat(read(ARCHIVED_KEY, [])).filter(id => typeof id === 'string'))
+// Groups and the archive belong to the server (agent.group, agent.archived): every browser sees the
+// same pairs and the same shelf. What an older version of this page kept for itself is cleared away.
+try { localStorage.removeItem('trommi-groups'); localStorage.removeItem('trommi-archived') } catch {}
 
 // Older servers send no agents, urgency or queue; fill those in so views can rely on them.
 function normalize(data) {
   const sent = data.agents?.length ? data.agents : [{ id: 'main', name: 'Agent', online: true }]
-  const knowsGroups = sent.some(a => a.group !== undefined)
-  const knowsArchive = sent.some(a => a.archived !== undefined)
   // The human may have renamed a session or picked another mark for it; views only ever see the result.
   const everyone = sent.map(a => ({
     ...a, given: a.name, name: a.label || a.name, mark: a.icon || a.id,
-    // A session that comes back is no longer archived.
-    archived: knowsArchive ? Boolean(a.archived) : localArchived.has(a.id) && !a.online,
-    group: (knowsGroups ? a.group : localGroups[a.id]) || null,
+    archived: Boolean(a.archived), group: a.group || null,
   }))
   const agents = everyone.filter(a => !a.archived)
   // A group is two or more sessions that are still here; one alone is just a session.
@@ -104,7 +94,9 @@ function derive() {
   const mine = x => !members.length || members.includes(x.agent)
   if (loaded) {
     const open = new Map(raw.cards.filter(c => c.status === 'open').map(c => [c.id, c]))
-    const kept = later.filter(([id, rank]) => open.has(id) && (URGENCY_RANK[open.get(id).urgency] ?? 1) <= rank)
+    // A card put off by asking back returns to its sender's group once the session has answered about it.
+    const answered = (id, since) => since && raw.messages.some(m => m.card_id === id && m.from !== 'user' && m.from !== 'event' && m.ts > since)
+    const kept = later.filter(([id, rank, asked]) => open.has(id) && (URGENCY_RANK[open.get(id).urgency] ?? 1) <= rank && !answered(id, asked))
     if (kept.length !== later.length) { later = kept; write(LATER_KEY, later) }
   }
   const cards = raw.cards.filter(mine)
@@ -125,8 +117,7 @@ function derive() {
 }
 
 const emit = () => { derive(); for (const fn of listeners) fn(view, online) }
-const take = data => { source = data; raw = normalize(data); loaded = true }
-const renormalize = () => { if (source) raw = normalize(source); emit() }
+const take = data => { raw = normalize(data); answerHere(raw); loaded = true }
 
 export function connect() {
   const events = new EventSource('/events')
@@ -147,20 +138,17 @@ export function subscribe(fn) {
 
 export const getState = () => view
 
-/** Put a card off (it leaves its sender's group for "Later"), or fetch it back. state.later lists the ids. */
-export function putOff(cardId, off = true) {
+/** Put a card off (it leaves its sender's group for "Later"), or fetch it back. state.later lists the ids.
+ *  asked: it was put off by asking back, and comes back by itself when the session answers. */
+export function putOff(cardId, off = true, asked = false) {
   const card = raw.cards.find(c => c.id === cardId)
   later = later.filter(([id]) => id !== cardId)
-  if (off && card) later.push([cardId, URGENCY_RANK[card.urgency] ?? 1])
+  if (off && card) later.push([cardId, URGENCY_RANK[card.urgency] ?? 1, asked ? Date.now() : 0])
   write(LATER_KEY, later)
   emit()
 }
-// Another tab of this browser changed one of the lists.
-window.addEventListener('storage', e => {
-  if (e.key === LATER_KEY) { later = readLater(); emit() }
-  if (e.key === GROUPS_KEY) { localGroups = plainObject(read(GROUPS_KEY, {})); renormalize() }
-  if (e.key === ARCHIVED_KEY) { localArchived = new Set([].concat(read(ARCHIVED_KEY, []))); renormalize() }
-})
+// Another tab of this browser put a card off or fetched one back.
+window.addEventListener('storage', e => { if (e.key === LATER_KEY) { later = readLater(); emit() } })
 
 /** False until the first real state has arrived; before that, state is an empty placeholder. */
 export const isLoaded = () => loaded
@@ -201,16 +189,8 @@ export const editSession = (agent, changes) => post('/session', { agent, ...chan
 /** Mark a session as one whose questions matter most; they lead the inbox. */
 export const star = (agent, starred) => post('/star', { agent, starred })
 
-// Give sessions a group, or none: here at once, then on the server.
-function assign(changes) {
-  for (const [agent, group] of changes) {
-    if (group) localGroups[agent] = group
-    else delete localGroups[agent]
-  }
-  write(GROUPS_KEY, localGroups)
-  renormalize()
-  return Promise.all([...changes].map(([agent, group]) => post('/session', { agent, group })))
-}
+// Give sessions a group, or none. The server's next state shows it, here and in every other browser.
+const assign = changes => Promise.all([...changes].map(([agent, group]) => post('/session', { agent, group })))
 
 /** Lay one session together with another (or with the group the other is in). They show as one. */
 export function pair(agentId, targetId) {
@@ -235,19 +215,46 @@ export function unpair(agentId) {
   return assign(new Map(leaving.map(id => [id, null])))
 }
 
-/** Put a disconnected session away, or fetch it back. The server clears the flag when the session reconnects. */
-export function archive(agentId, archived = true) {
-  if (archived) localArchived.add(agentId)
-  else localArchived.delete(agentId)
-  write(ARCHIVED_KEY, [...localArchived])
-  renormalize()
-  return post('/session', { agent: agentId, archived })
-}
+/** Put a disconnected session away, or fetch it back. The server refuses it for a session that is
+ *  online, and clears the flag by itself when the session reconnects. */
+export const archive = (agentId, archived = true) => post('/session', { agent: agentId, archived })
 
 /** Answer a card. key is one of card.options[].key, or a list of them where the card allows several.
  *  Rejects with a readable Error. */
-export const decide = (cardId, key, note = '') =>
-  post('/decide', Array.isArray(key) ? { card_id: cardId, keys: key, key: key[0], note } : { card_id: cardId, key, note })
+export async function decide(cardId, key, note = '') {
+  const keys = [key].flat()
+  const revised = revisedOf(cardId)
+  // The row leaves at once; the request travels behind it. A state that arrives in between
+  // (other sessions keep posting) still shows the card as answered, until the server has said so itself.
+  answering.set(cardId, keys)
+  answerHere(raw)
+  emit()
+  try {
+    return await post('/decide', { ...(Array.isArray(key) ? { card_id: cardId, keys: key, key: key[0], note } : { card_id: cardId, key, note }), revised })
+  } catch (err) {
+    // Not taken: the card is open again, as the server has it.
+    answering.delete(cardId)
+    const card = raw.cards.find(c => c.id === cardId)
+    if (card?.answeredHere) Object.assign(card, { status: 'open', choice: null, choices: [], decided: null, answeredHere: false })
+    if (card && !raw.queue.includes(cardId)) raw.queue = [...raw.queue, cardId]
+    emit()
+    throw err
+  }
+}
+
+// Answers on their way to the server, by card id.
+const answering = new Map()
+function answerHere(data) {
+  for (const [id, keys] of answering) {
+    const card = data.cards.find(c => c.id === id)
+    if (!card || card.status !== 'open') { answering.delete(id); continue }
+    Object.assign(card, { status: 'decided', choice: keys[0], choices: keys, decided: Date.now(), answeredHere: true })
+    data.queue = data.queue.filter(q => q !== id)
+  }
+}
+
+// Which wording of a card this page holds: the server refuses an answer given to an earlier one.
+const revisedOf = cardId => raw.cards.find(c => c.id === cardId)?.revised ?? null
 
 /** Take back the answer on an answered or done card; it returns to the stack. */
 export const reopen = cardId => post('/reopen', { card_id: cardId })

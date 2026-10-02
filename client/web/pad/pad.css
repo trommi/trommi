@@ -170,3 +170,4 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
   .pad-payload img { max-height: 30vh; }
   .pad-caret-tip span { display: none; }
 }
+.pad-status[data-kind="warn"] { color: var(--urg-high, var(--muted)); }

@@ -99,6 +99,11 @@ Object.assign(PERSONAS, {
       yesNo('Screenshots im README einbetten?', 'Fünf Bilder, zusammen etwa 2 MB.', 'Einbetten', 'Verlinken'),
       yesNo('Changelog ab jetzt führen?', '', 'Ja', 'Nein', { urgency: 'low' }),
     ],
+    // Three small questions on one subject: a moment later this session bundles them into one, as a real agent should.
+    merge: {
+      title: 'Was soll ins README?', body: 'Kreuze an, was ich umsetzen darf.', multiple: true, recommended: ['englisch', 'changelog'],
+      options: [['englisch', 'Englische Fassung', ''], ['bilder', 'Screenshots einbetten', 'Etwa 2 MB'], ['changelog', 'Changelog führen', '']],
+    },
   },
 })
 
@@ -108,6 +113,7 @@ if (!persona) {
   process.exit(1)
 }
 
+const filed = []
 const client = new Client({ name: 'fake-agent', version: '0' }, { capabilities: {} })
 const call = async (name, args) => (await client.callTool({ name, arguments: args })).content?.[0]?.text ?? ''
 const statusOfCard = new Map()   // card id -> status line id
@@ -127,7 +133,9 @@ client.fallbackNotificationHandler = async ({ method, params }) => {
   } else if (kind === 'decision_reopened') {
     await call('reply', { text: 'Zurückgenommen. Ich warte auf deine neue Wahl.' })
   } else if (kind === 'scribble') {
-    await call('reply', { text: `Scribble erhalten. Das Bild liegt unter \`${params.meta.image_path}\`.` })
+    await call('reply', { text: `Scribble erhalten. Das Bild liegt unter \`${params.meta.image_path}\`.` })  } else if (kind === 'pad') {
+    const n = String(params.meta.elements ?? '').split(',').filter(Boolean).length
+    await call('reply', { text: `Vom Pad erhalten: ${n} ${n === 1 ? 'Element' : 'Elemente'}. Das Bild liegt unter \`${params.meta.image_path}\`.` })
   }
 }
 
@@ -146,11 +154,19 @@ for (const card of persona.cards) {
   const { status, options, ...rest } = card
   const out = await call('create_decision', { ...rest, options: options.map(([key, label, detail]) => ({ key, label, detail })) })
   const id = out.match(/^card (\w+) /)?.[1]
+  if (id) filed.push(id)
   if (id && status) {
     statusOfCard.set(id, status)
     // The line stays "working": a real agent files its question and carries on.
   }
   await sleep(500)
+}
+if (persona.merge && filed.length > 1) {
+  await sleep(6000)
+  const { options, ...rest } = persona.merge
+  // Boards started before merging existed do not know this tool; cards answered in the meantime make it refuse.
+  await call('merge_cards', { ...rest, card_ids: filed, options: options.map(([key, label, detail]) => ({ key, label, detail })) })
+    .then(() => call('reply', { text: 'Ich habe meine drei Fragen zum README zu **einer** zusammengefasst.' })).catch(() => {})
 }
 console.error(`[fake-agent] ${persona.name} is up`)
 // Stay connected until killed.

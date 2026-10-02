@@ -57,3 +57,40 @@ Running notes, newest at the bottom. Nothing here is committed by the worker.
 - Asset hook: a message with `asset` is a card in the conversation (type, size, title, note, Open, Copy link; dashed
   "No longer available" when gone) and a line in Files. Verified with a synthetic state only.
 - Help link is `/help.html`.
+
+## Round three (second UI worker): hooks finished, polish, and what the user said while it ran
+Checked on an own demo board (trio on 8797, own data folder) with a scripted counterpart (`dev/session.mjs link/call/publish`
+against that board), headless Chromium at 1440x900 and 400x860, light and dark.
+
+- **Server contracts.** The localStorage fallbacks for `group` and `archived` are gone from store.js (old keys are removed
+  once). Verified against the real server: archive (409 for an online session; offline: `archived: true`, queue 17 -> 16,
+  row gone, cleared by itself on reconnect), pair made in browser A through the Agents page shows in a fresh browser B and
+  "Split" in B shows in A, multi-select (`choices: [lint, e2e]`, the agent got `choices="lint,e2e"`), ask back (the agent got
+  `kind: chat` with `card_id`, its `reply` with `card_id` shows "About <question>" too).
+- **Assets.** Real assets published with `session.mjs publish`: card in the conversation, line in Files, revoked one dashed.
+  The card is now repainted when its message changes (it used to stay as it was first drawn). A link to an asset inside any
+  text is a compact card (`assetLink` in ui.js, styles in tokens.css): title and type from what the board knows, pictures
+  decrypted in the page as a thumbnail (up to 4 MB, only on https or localhost), the key never printed; the collapsed row
+  shows `[title]`. Other long links: host and start of path; an address in backticks is a link, not a code box.
+- **Working ring.** A ring circled by hand on a soft green ground and a drop drawn on its own that goes round (4.6 s a turn,
+  slower over the top, drawn twice 150 ms apart so it stretches where it is quick). Reduced motion: the ring alone.
+- **Waiting hand.** Redrawn as one scribbled stroke (no palm line) in a loop circled by hand, on soft red. Ring and hand are
+  both 32px on one axis (28px on a phone).
+- **VIP.** No frame, no sheen, no tint. The mark stands once: gold scribble tile and a small tab at the group heading in the
+  inbox, the tab in a session's title. A row carries the tab only in Later. (A design worker is redoing the label.)
+- **Later.** A small tag hanging over the row's bottom edge (11px out, 16px gap between rows), word slides out on hover or
+  focus, no tooltip. Row height and tiles unchanged (148 / 124).
+- **Pairs.** Names on separate lines, never cut; the title uses the whole width and shows what tells twins apart; the mark is
+  60x44. Pull one out by its name line or its scribble (the loop opens while it is carried clear), scissors under the badge
+  cut the whole group. Verified with real pointer events: three -> two plus one -> none.
+- **Drawings.** 40 named drawings (`DRAWINGS` in ui.js, mark `draw:<name>`): the eight kinds plus star zigzag eight arrow leaf
+  eye key anchor kite comb ladder heart moon cloud drop flag house tree fish bird cup bell cross triangle square diamond grid
+  mountain umbrella crown flame boat. Existing seeds draw as before (the iOS fixtures are byte-identical). A click on the
+  picture (session title, Agents page) opens the grid; a click on the name renames.
+- **Answered marker** names the question: "Answered  <question> -> <answer>". **Thumb labels**: `fitsTile` in inbox.js.
+- **Advice.** The circle is drawn in one place, `adviceLoop()` in ui.js, a squarish pen loop stretched round the tile, so it
+  clears two-line labels. The mark itself is waiting for the user's choice between five proposals.
+- **Admin** in the bar carries a small scribbled key. **Archive** has its own box icon.
+- Not verified: copying a link (headless Chromium has no clipboard), touch drag on a real phone, Safari.
+- Others work in these files now: keys (inbox.js, app.js, index.html), Focus (focus.js, focus.css), the coordinator (store.js).
+

@@ -1,6 +1,8 @@
 // Development only: drive the pad in headless Chromium with real pointer, touch,
 // wheel and key input (DevTools protocol), check what it did, and save screenshots.
 //   dev/trio.sh 8861 600 &   then   node client/web/pad/dev-check.mjs "http://localhost:8861/pad/?t=demo" OUT_DIR
+//   On a board it goes on to the board itself: the pad opened from the inbox, a session, a pair, the agents page
+//   and the Focus window, closed again, reloaded, a selection sent to a demo agent, a second browser as another device.
 //   without a board:  (cd client/web && python3 -m http.server 8872)  and  …/dev-check.mjs http://localhost:8872/pad/ OUT_DIR
 // Needs the command sandbox disabled (Chromium), like dev/cdp.mjs. Exit code 1 if a check fails.
 import fs from 'node:fs'
@@ -14,7 +16,9 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const results = []
 const check = (name, ok, detail = '') => { results.push({ name, ok: Boolean(ok), detail }); console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${detail ? `  (${detail})` : ''}`) }
 
-async function session(width, height, { mobile = false, hash = '' } = {}) {
+const origin = new URL(url).origin
+const token = new URL(url).search   // "?t=demo" on a demo board
+async function session(width, height, { mobile = false, hash = '', at = url, wipe = true } = {}) {
   // a fake microphone, so that a board with a speech key can start a real recording
   const browser = await launchChromium({ width, height, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
   const page = await browser.page()
@@ -25,16 +29,27 @@ async function session(width, height, { mobile = false, hash = '' } = {}) {
   await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: mobile ? 2 : 1, mobile })
   if (mobile) await page.send('Emulation.setTouchEmulationEnabled', { enabled: true })
   await page.send('Page.enable')
-  const go = async () => { await page.send('Page.navigate', { url: url + hash }); await sleep(3200) }
+  const go = async (to = at) => { await page.send('Page.navigate', { url: to + hash }); await sleep(3200) }
   await go()
   const js = async expr => {
     const res = await page.send('Runtime.evaluate', { expression: `(async () => { ${expr} })()`, awaitPromise: true, returnByValue: true })
     if (res.exceptionDetails) throw new Error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text)
     return res.result.value
   }
+  // The pad of a board is one and it lasts: start every run from an empty one.
+  if (wipe) {
+    const had = await js(`
+      const res = await fetch('/pad/elements?pad=global').catch(() => null)
+      if (!res?.ok) return 0
+      const all = (await res.json()).elements ?? []
+      for (const e of all) await fetch('/pad/elements/' + e.id, { method: 'DELETE' })
+      return all.length`)
+    if (had) await go()
+  }
   const mouse = (type, x, y, extra = {}) => page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1, ...extra })
   return {
     page, js, errors, go,
+    reload: async () => { await page.send('Page.reload'); await sleep(3200) },
     close: () => browser.close(),
     shot: async name => {
       await sleep(350)
@@ -69,7 +84,7 @@ async function session(width, height, { mobile = false, hash = '' } = {}) {
   }
 }
 const CTRL = 2, SHIFT = 8
-const summary = `return { n: pad.elements().length, types: pad.elements().map(e => e.type), sel: pad.selection().length, ...pad.state(), view: pad.view() }`
+const summary = `await pad.settled?.(3000); return { n: pad.elements().length, types: pad.elements().map(e => e.type), sel: pad.selection().length, ...pad.state(), view: pad.view() }`
 
 // ── desktop, light ──────────────────────────────────────────────────────────
 {
@@ -158,6 +173,10 @@ const summary = `return { n: pad.elements().length, types: pad.elements().map(e 
   await s.click(380, 250, SHIFT)
   check('shift-click again takes it out', (await s.js(`return pad.selection().length`)) === 1)
   await s.key('Escape')
+  await sleep(500)
+  await s.click(380, 250)   // on the first line of the note, where the highlighter stroke lies over it
+  check('a click on a note under a highlighter stroke selects the note, not the stroke', (await s.js(`const [id] = pad.selection(); return pad.elements().find(e => e.id === id)?.type`)) === 'text')
+  await s.key('Escape')
   await s.drag([[200, 150], [1300, 720]])
   st = await s.js(summary)
   check('a marquee selects everything it touches', st.sel === st.n && st.n === n + 2, `${st.sel} of ${st.n}`)
@@ -243,16 +262,23 @@ const summary = `return { n: pad.elements().length, types: pad.elements().map(e 
   fs.writeFileSync(path.join(outDir, 'payload.json'), JSON.stringify(payload, null, 2))
   await s.shot('09-send-dialog')
   await s.js(`document.getElementById('send-go').click(); await new Promise(r => setTimeout(r, 900))`)
-  const result = await s.js(`return { open: document.getElementById('send-dialog').open, note: document.getElementById('send-result').hidden ? null : document.getElementById('send-result').textContent, sent: pad.elements().filter(e => e.sent.length).length }`)
-  check('with no /pad/send (or no board), sending says so and marks nothing as sent', result.open && /Not sent/.test(result.note ?? '') && result.sent === 0, result.note ?? 'no note')
-  await s.shot('10-send-not-sent')
-  await s.js(`document.getElementById('send-dialog').close()`)
+  const result = await s.js(`return { open: document.getElementById('send-dialog').open, note: document.getElementById('send-result').hidden ? null : document.getElementById('send-result').textContent, sent: pad.elements().filter(e => e.sent.length).length, toast: document.getElementById('toast').textContent }`)
+  if (st.sync.mode === 'local') {
+    check('with no board behind the page, sending says so and marks nothing as sent', result.open && /Not sent/.test(result.note ?? '') && result.sent === 0, result.note ?? 'no note')
+    await s.shot('10-send-not-sent')
+    await s.js(`document.getElementById('send-dialog').close()`)
+  } else {
+    check('on a board, Send delivers: the dialog closes and every element carries where it went', !result.open && result.sent === n + 2 && /^Sent to /.test(result.toast), `${result.toast}; ${result.sent} marked`)
+    await s.shot('10-sent')
+    const server = await s.js(`return (await (await fetch('/pad/elements?pad=global')).json()).elements.map(e => e.sent.length)`)
+    check('the server keeps the elements and their "sent"', server.length === n + 2 && server.every(k => k === 1), server.join(','))
+  }
 
   // persistence: reload, same records
   const ids = await s.js(`return pad.elements().map(e => e.id + ':' + e.rev).join(',')`)
   await s.go()
   const ids2 = await s.js(`return pad.elements().map(e => e.id + ':' + e.rev).join(',')`)
-  check('after a reload the same records come back from IndexedDB', ids === ids2 && ids.length > 0, `${ids2.split(',').length} elements`)
+  check('after a reload the same records come back', ids === ids2 && ids.length > 0, `${ids2.split(',').length} elements, ${(await s.js(summary)).sync.mode}`)
   const rec0 = await s.js(`return pad.records().then(r => r.find(x => x.type === 'stroke'))`)
   check('a stored record has the documented fields', ['id', 'pad', 'type', 'x', 'y', 'w', 'h', 'rotation', 'z', 'group', 'author', 'created', 'updated', 'rev', 'blob', 'data', 'sent'].every(k => k in rec0), Object.keys(rec0).join(','))
   fs.writeFileSync(path.join(outDir, 'record.json'), JSON.stringify(rec0, null, 2))
@@ -310,6 +336,205 @@ for (const [name, hash] of [['light', ''], ['dark', '#dark']]) {
   const fits = await s.js(`return [...document.querySelectorAll('.pad-top, .pad-tools, #send-dialog')].every(n => { const r = n.getBoundingClientRect(); return r.left >= 0 && r.right <= innerWidth + 0.5 })`)
   check(`phone ${name}: bars and dialog fit the 400 px screen, no errors`, fits && !s.errors.length, s.errors.join(' | '))
   await s.close()
+}
+
+// ── inside the board: the pad from anywhere ─────────────────────────────────
+// Only on a board (the address carries its login). The board is driven like a human would:
+// the control in the bar, the key, Esc, Back, a reload.
+const onBoard = await fetch(`${origin}/healthz`).then(r => r.ok && r.headers.get('content-type')?.includes('json'), () => false)
+if (onBoard) {
+  const FRAME = `const frame = document.querySelector('#padlink iframe'); const pad = frame?.contentWindow?.pad; const doc = frame?.contentDocument;`
+  const app = `${origin}/${token}`
+  const where = `return { path: location.pathname + location.search, open: document.getElementById('padlink')?.hasAttribute('data-open') ?? false, pressed: document.getElementById('pad-open')?.getAttribute('aria-pressed'), scope: document.body.dataset.scope, page: document.body.dataset.page ?? null, focus: Boolean(document.querySelector('.focus')) }`
+  const rectOf = (s, sel, inFrame = false) => s.js(`${FRAME} const n = (${inFrame} ? doc : document).querySelector(${JSON.stringify(sel)}); if (!n) return null; const r = n.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height]`)
+  const clickOn = async (s, sel, inFrame = false) => { const r = await rectOf(s, sel, inFrame); if (!r) throw new Error(`nothing matches ${sel}`); await s.click(r[0], r[1]); await sleep(350) }
+  const padSummary = `${FRAME} await pad.settled?.(3000); return { n: pad.elements().length, types: pad.elements().map(e => e.type), sel: pad.selection().length, sent: pad.elements().filter(e => e.sent.length).length, ...pad.state() }`
+
+  const s = await session(1440, 900, { at: app })
+  let at = await s.js(where)
+  const btn = await rectOf(s, '#pad-open')
+  check('board: the control is in the bar, on every page', Boolean(btn) && btn[1] > 840 && at.path === '/' && !at.open, btn ? `at ${Math.round(btn[0])},${Math.round(btn[1])}` : 'missing')
+  await s.shot('30-board-inbox')
+
+  // from the inbox
+  await clickOn(s, '#pad-open')
+  at = await s.js(where)
+  let st = await s.js(padSummary)
+  check('board: the control lays the pad over the inbox, at /pad', at.open && at.path === '/pad' && at.pressed === 'true' && st.embed && st.host.open && st.board.sessions.length === 3, `${at.path}, sessions=${st.board.sessions.map(x => x.name).join('/')}`)
+  await s.click(420, 300)
+  await s.type('Thought in the inbox')
+  await s.key('Escape')
+  await s.click(1200, 760); await s.key('Escape')
+  await s.drag([[640, 420], [720, 380], [800, 460], [900, 400]])
+  st = await s.js(padSummary)
+  check('board: typing and drawing land on the pad and reach the server', st.n === 2 && st.sync.mode === 'online' && st.sync.pending === 0 && (await s.js(`return (await (await fetch('/pad/elements?pad=global')).json()).elements.length`)) === 2, `${st.types.join(',')}, ${st.sync.mode}`)
+  await s.shot('31-board-pad-over-inbox')
+  await s.key('Escape')
+  at = await s.js(where)
+  check('board: Esc closes it, back in the inbox', !at.open && at.path === '/' && at.scope === 'all' && at.pressed === 'false', at.path)
+
+  // from a session: the key, Back, and the session is where sending goes
+  await s.js(`[...document.querySelectorAll('#agents .agent-entry')][1].click(); await new Promise(r => setTimeout(r, 400))`)
+  const sessionPath = (await s.js(where)).path
+  await s.js(`document.activeElement?.blur?.()`)
+  const t0 = Date.now()
+  await s.key('p')
+  at = await s.js(where)
+  st = await s.js(padSummary)
+  const label = await s.js(`${FRAME} return [...pad.elements()].length && doc.getElementById('send-to-label').textContent`)
+  check('board: P opens it from a session; nothing is fetched again', at.open && at.path === '/pad' && st.n === 2 && /^\/s\/[^/+]+$/.test(sessionPath), `${sessionPath} → ${at.path} in ${Date.now() - t0} ms incl. checks`)
+  await s.key('a', { modifiers: CTRL })
+  await sleep(200)
+  const direct = await s.js(`${FRAME} return { label: doc.getElementById('send-to-label').textContent, other: !doc.getElementById('send-other').hidden, prefer: pad.state().host.prefer }`)
+  check('board: from a session, "Send to" names that session', /^Send to Web-Frontend$/.test(direct.label) && direct.other && direct.prefer.length === 1, `${direct.label} ${JSON.stringify(direct.prefer)}`)
+  await s.shot('32-board-pad-from-session')
+  await s.js(`history.back(); await new Promise(r => setTimeout(r, 500))`)
+  at = await s.js(where)
+  check('board: browser Back closes it, back in that session', !at.open && at.path === sessionPath, at.path)
+
+  // a reload on the pad stays on the pad; closing then still goes back to the session
+  await s.key('p')
+  await s.reload()
+  at = await s.js(where)
+  st = await s.js(padSummary)
+  check('board: a reload stays on the pad with everything on it', at.open && at.path === '/pad' && st.n === 2 && st.host.prefer.length === 1, `${st.n} elements, prefer ${JSON.stringify(st.host.prefer)}`)
+  await clickOn(s, '#back', true)
+  at = await s.js(where)
+  check('board: the pad\'s close button goes back to the session, also after the reload', !at.open && at.path === sessionPath && at.scope !== 'all', at.path)
+
+  // send the selection to the session: the agent gets it, the conversation shows it
+  const before = await s.js(`const m = (await import('/js/store.js')).getState().all.messages; return m.length`)
+  await s.key('p')
+  await s.key('v')
+  await s.key('a', { modifiers: CTRL })
+  await sleep(200)
+  await clickOn(s, '#send-to', true)
+  await sleep(500)
+  const dialog = await s.js(`${FRAME} return { open: doc.getElementById('send-dialog').open, title: doc.getElementById('send-title').textContent }`)
+  await s.shot('33-board-send-dialog')
+  await clickOn(s, '#send-go', true)
+  await sleep(1200)
+  st = await s.js(padSummary)
+  check('board: Send delivers the selection to that session and marks the elements', dialog.open && dialog.title === 'Send to Web-Frontend' && st.sent === 2, `${dialog.title}; ${st.sent} marked`)
+  await s.shot('34-board-sent')
+  await s.key('Escape'); await s.key('Escape')
+  await sleep(3500)   // the demo agent answers after a moment
+  const talk = await s.js(`const st = (await import('/js/store.js')).getState(); return st.all.messages.slice(${before}).map(m => ({ from: m.from, agent: m.agent, text: m.text, att: (m.attachments ?? []).map(a => a.name + ' ' + a.url) }))`)
+  const mine = talk.find(m => m.from === 'user' && m.att.some(a => a.startsWith('From the pad /files/pad-')))
+  const reply = talk.find(m => m.from === 'agent' && /Pad erhalten|image_path|pad-[0-9a-f]+\.png/.test(m.text))
+  check('board: the conversation shows what was sent, with its picture', Boolean(mine) && mine.text.includes('Thought in the inbox'), JSON.stringify(mine ?? talk).slice(0, 200))
+  check('board: the demo agent received it: it names the elements and the PNG it was given', Boolean(reply), reply ? reply.text : 'no reply: ' + JSON.stringify(talk).slice(0, 200))
+  const png = reply?.text.match(/`([^`]+\.png)`/)?.[1]
+  check('board: the PNG the agent was pointed to exists on disk and is a PNG', Boolean(png) && fs.existsSync(png) && fs.readFileSync(png).subarray(1, 4).toString() === 'PNG', png ?? '')
+  if (png) fs.copyFileSync(png, path.join(outDir, '35-what-the-agent-got.png'))
+  at = await s.js(where)
+  check('board: after sending and closing, the session is still where the human is', !at.open && at.path === sessionPath, at.path)
+  await s.shot('36-board-conversation-after-send')
+
+  // a second device: another browser with its own profile sees the change as it happens
+  const other = await session(1100, 800, { wipe: false })
+  const seen0 = (await other.js(summary)).n
+  await s.key('p')
+  await s.key('p')   // inside the pad, P is the pen
+  await s.drag([[300, 600], [380, 640], [460, 590]])
+  await sleep(1200)
+  const seen1 = (await other.js(summary))
+  check('two devices: what is drawn on one appears on the other without a reload', seen0 === 2 && seen1.n === 3 && seen1.sync.mode === 'online', `${seen0} → ${seen1.n}`)
+  await other.click(550, 400); await other.type('from the second device'); await other.key('Escape')
+  await sleep(1200)
+  st = await s.js(padSummary)
+  check('two devices: and the other way round, into the pad inside the board', st.n === 4 && st.types.filter(t => t === 'text').length === 2, st.types.join(','))
+  // delete there, undo there: the tombstone and its undo both travel
+  await other.key('Delete')
+  await sleep(1000)
+  const gone = (await s.js(padSummary)).n
+  await other.key('z', { modifiers: CTRL })
+  await sleep(1000)
+  st = await s.js(padSummary)
+  check('two devices: a delete travels, and so does its undo', gone === 3 && st.n === 4, `${gone} → ${st.n}`)
+  await other.close()
+  await s.key('Escape'); await s.key('Escape')
+
+  // a pair
+  await s.js(`const store = await import('/js/store.js'); const a = store.getState().all.agents; await store.pair(a[1].id, a[2].id); await new Promise(r => setTimeout(r, 600))`)
+  await s.js(`[...document.querySelectorAll('#agents .agent-entry')].find(n => n.querySelector('.agent-pair'))?.click(); await new Promise(r => setTimeout(r, 400))`)
+  const pairPath = (await s.js(where)).path
+  await clickOn(s, '#pad-open')
+  await s.key('v'); await s.key('a', { modifiers: CTRL })
+  await sleep(200)
+  await clickOn(s, '#send-to', true)
+  const menu = await s.js(`${FRAME} return [...doc.querySelectorAll('#send-menu .pad-menu-item')].map(b => b.textContent)`)
+  check('board: from a pair, the menu lists its two sessions first', pairPath.includes('+') && menu.length === 3 && menu.slice(0, 2).every(t => t.includes('where you were')) && !menu[2].includes('where you were'), `${pairPath}: ${menu.join(' | ')}`)
+  await s.shot('37-board-pad-from-pair')
+  await s.key('Escape'); await s.key('Escape'); await s.key('Escape')
+  at = await s.js(where)
+  check('board: closed, back in the pair', !at.open && at.path === pairPath, at.path)
+  await s.js(`const store = await import('/js/store.js'); await store.unpair(store.getState().members[0]); await new Promise(r => setTimeout(r, 500))`)
+
+  // the agents page, and over the Focus window
+  await s.js(`document.getElementById('nav-roster').click(); await new Promise(r => setTimeout(r, 300))`)
+  await clickOn(s, '#pad-open')
+  at = await s.js(where)
+  await s.key('Escape')
+  const back = await s.js(where)
+  check('board: from the agents page and back', at.open && back.path === '/agents' && back.page === 'roster' && !back.open, back.path)
+  await s.js(`document.getElementById('focus-open').click(); await new Promise(r => setTimeout(r, 700))`)
+  const inFocus = await s.js(where)
+  await s.js(`document.activeElement?.blur?.()`)
+  await s.key('p')
+  at = await s.js(where)
+  const onTop = await s.js(`const n = document.elementFromPoint(700, 450); return n?.tagName`)
+  await s.shot('38-board-pad-over-focus')
+  await s.key('Escape')
+  const after = await s.js(where)
+  check('board: P opens it over the Focus window, Esc returns into Focus', inFocus.focus && at.open && onTop === 'IFRAME' && !after.open && after.focus && after.path === inFocus.path, `${inFocus.path} → ${at.path} → ${after.path}`)
+  await s.key('Escape')
+
+  // arriving on the address itself
+  await s.go(`${origin}/pad`)
+  at = await s.js(where)
+  await s.key('Escape')
+  const home = await s.js(where)
+  check('board: /pad opened directly shows the pad; closing lands in the inbox', at.open && at.path === '/pad' && !home.open && home.path === '/', `${at.path} → ${home.path}`)
+
+  // dark, through the board's own switch, and through the pad's
+  await s.js(`document.getElementById('theme-toggle').click()`)
+  await clickOn(s, '#pad-open')
+  const darkIn = await s.js(`${FRAME} return doc.documentElement.dataset.theme`)
+  await s.shot('39-board-pad-dark')
+  await clickOn(s, '#theme', true)
+  const lightOut = await s.js(`${FRAME} return [doc.documentElement.dataset.theme ?? 'light', document.documentElement.dataset.theme ?? 'light']`)
+  check('board: the theme is one: the board\'s switch darkens the pad, the pad\'s switch lightens the board', darkIn === 'dark' && lightOut.join() === 'light,light', `${darkIn} → ${lightOut}`)
+  await s.key('Escape')
+  check('board: no script errors on desktop', !s.errors.length, s.errors.join(' | '))
+  await s.close()
+
+  // phone
+  for (const [name, hash] of [['light', ''], ['dark', '#dark']]) {
+    const p = await session(400, 860, { mobile: true, hash, at: app, wipe: false })
+    const tap = async (x, y) => { await p.touch('touchStart', [[x, y]]); await sleep(40); await p.touch('touchEnd', []); await sleep(350) }
+    const b = await rectOf(p, '#pad-open')
+    const fitsBar = await p.js(`return [...document.querySelectorAll('.topbar > *')].every(n => { const r = n.getBoundingClientRect(); return !r.width || (r.left >= 0 && r.right <= innerWidth + 0.5) })`)
+    check(`board phone ${name}: the control is in the top bar, thumb-sized, and the bar still fits`, Boolean(b) && b[2] >= 40 && b[3] >= 40 && fitsBar, b ? `${Math.round(b[2])}x${Math.round(b[3])} at ${Math.round(b[0])},${Math.round(b[1])}` : 'missing')
+    await p.js(`[...document.querySelectorAll('#agents .agent-entry')][1].click(); await new Promise(r => setTimeout(r, 400))`)
+    const from = (await p.js(where)).path
+    await p.shot(`40-phone-${name}-session`)
+    await tap(b[0], b[1])
+    let w = await p.js(where)
+    const n0 = (await p.js(padSummary)).n
+    await p.touch('touchStart', [[80, 520]])
+    for (let i = 1; i <= 10; i++) { await p.touch('touchMove', [[80 + i * 22, 520 + Math.sin(i / 2) * 30]]); await sleep(12) }
+    await p.touch('touchEnd', [])
+    await sleep(400)
+    const pst = await p.js(padSummary)
+    check(`board phone ${name}: a tap opens the pad over the session, a finger draws`, w.open && w.path === '/pad' && pst.n === n0 + 1 && pst.sync.pending === 0, `${n0} → ${pst.n}`)
+    await p.shot(`41-phone-${name}-pad`)
+    const close = await rectOf(p, '#back', true)
+    await tap(close[0], close[1])
+    w = await p.js(where)
+    check(`board phone ${name}: its close button goes back to the session, no errors`, !w.open && w.path === from && !p.errors.length, `${w.path} ${p.errors.join(' | ')}`)
+    await p.close()
+  }
 }
 
 const failed = results.filter(r => !r.ok)
