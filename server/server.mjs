@@ -24,9 +24,15 @@ const DATA = process.env.BOARD_DATA || path.join(ROOT, '..', 'data')
 const PUBLIC = path.join(ROOT, '..', 'client', 'web')
 const FILES = path.join(DATA, 'files')
 const SCRIBBLES = path.join(DATA, 'scribbles')
+const ASSETS = path.join(DATA, 'assets')
 const STATE_FILE = path.join(DATA, 'state.json')
 // Rendered videos are the big case; the file is copied once and streamed with Range requests.
 const MAX_ATTACHMENT = Number(process.env.BOARD_MAX_ATTACHMENT_MB || 1024) * 1024 * 1024
+// An asset is decrypted in the browser's memory in one piece, so it stays far smaller than an attachment.
+const MAX_ASSET = Number(process.env.BOARD_MAX_ASSET_MB || 64) * 1024 * 1024
+// A hub that is nobody's session: it holds the state and serves the pages, but is
+// no agent itself. For a hub that runs as a service, with nothing on stdin.
+const HUB_ONLY = /^(1|true|yes)$/i.test(process.env.BOARD_HUB_ONLY ?? '')
 // Answered cards and their attachments are deleted after this many days.
 const RETENTION_DAYS = Number(process.env.BOARD_RETENTION_DAYS || 30)
 // A spoke never waits longer than this for the hub. Generous, because a tool
@@ -57,14 +63,16 @@ process.stderr.write = (chunk, ...rest) => {
 const IMAGE_EXT = new Set(['.png', '.jpg', '.jpeg', '.gif', '.webp', '.svg', '.avif'])
 const VIDEO_EXT = new Set(['.mp4', '.m4v', '.webm', '.mov'])
 const AUDIO_EXT = new Set(['.mp3', '.m4a', '.wav', '.ogg', '.flac'])
+const HTML_EXT = new Set(['.html', '.htm'])
 const kindOf = ext => (IMAGE_EXT.has(ext) ? 'image' : VIDEO_EXT.has(ext) ? 'video' : AUDIO_EXT.has(ext) ? 'audio' : 'file')
 const MIME = {
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif',
   '.webp': 'image/webp', '.svg': 'image/svg+xml', '.avif': 'image/avif', '.pdf': 'application/pdf',
   '.mp4': 'video/mp4', '.m4v': 'video/mp4', '.webm': 'video/webm', '.mov': 'video/quicktime',
   '.mp3': 'audio/mpeg', '.m4a': 'audio/mp4', '.wav': 'audio/wav', '.ogg': 'audio/ogg', '.flac': 'audio/flac',
-  '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.html': 'text/html; charset=utf-8', '.htm': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.txt': 'text/plain; charset=utf-8', '.md': 'text/plain; charset=utf-8', '.json': 'application/json',
+  '.mjs': 'text/javascript; charset=utf-8', '.ico': 'image/x-icon', '.woff2': 'font/woff2',
 }
 
 // Speech runs on Tinfoil's OpenAI-compatible API. Without a key the board
@@ -88,9 +96,8 @@ const SELF = {
 const INSTANCE = crypto.randomBytes(8).toString('hex')
 const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || 'agent'
 
-fs.mkdirSync(FILES, { recursive: true })
-fs.mkdirSync(SCRIBBLES, { recursive: true })
-fs.mkdirSync(SPEECH, { recursive: true })
+// Everything in here is the owner's alone, like the state file.
+for (const dir of [FILES, SCRIBBLES, SPEECH, ASSETS]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
 
 // The token is the only thing between the network and this session, so it is
 // kept across restarts and never logged to the chat.
@@ -129,8 +136,9 @@ let adminKey = ''
 // ---- state ---------------------------------------------------------------
 
 const URGENCIES = ['low', 'normal', 'high', 'critical']
-// Same wording as URGENCY_LABEL in public/js/ui.js, so timeline and card agree.
-const URGENCY_LABEL = { low: 'Hat Zeit', normal: 'Normal', high: 'Dringend', critical: 'Blockiert' }
+const SESSION_ENDED = 'Session ended before the approval was answered'
+// Same wording as URGENCY_LABEL in client/web/js/ui.js, so timeline and card agree.
+const URGENCY_LABEL = { low: 'Whenever', normal: 'Normal', high: 'Urgent', critical: 'Blocking' }
 
 // State files from before urgency existed have no number, urgency or queue,
 // and agent messages without attachments; fill those in instead of failing.
@@ -154,8 +162,9 @@ function load(owner) {
   const messages = list('messages')
     .map(m => ({ agent: owner, ...(m.from === 'agent' ? { attachments: [] } : {}), ...m }))
   const cards = list('cards').filter(c => c.id).map(c => ({
-    agent: owner, urgency_reason: '', ...c,
+    agent: owner, urgency_reason: '', multiple: false, ...c,
     options: Array.isArray(c.options) ? c.options : [], attachments: Array.isArray(c.attachments) ? c.attachments : [],
+    choices: Array.isArray(c.choices) ? c.choices : c.choice != null ? [c.choice] : [],
     urgency: c.kind === 'permission' || !URGENCIES.includes(c.urgency) ? defaultUrgency(c.kind) : c.urgency,
   }))
   // An approval request belongs to the session that asked; after a restart
@@ -163,7 +172,7 @@ function load(owner) {
   for (const c of cards) {
     if (c.kind === 'permission' && c.status === 'open') {
       c.status = 'done'
-      c.summary = 'Sitzung beendet, bevor die Freigabe beantwortet wurde'
+      c.summary = SESSION_ENDED
     }
   }
   const numbered = n => Number.isInteger(n) && n > 0
@@ -179,7 +188,8 @@ function load(owner) {
   for (const [id, queue] of Object.entries(raw.pending && typeof raw.pending === 'object' ? raw.pending : {})) {
     if (Array.isArray(queue)) pending[id] = queue.filter(e => e && typeof e.method === 'string').slice(-PENDING_MAX)
   }
-  return { agents, messages, cards, tasks, queue: queueOf(cards), next_number: next, pending }
+  const assets = list('assets').filter(a => ASSET_ID.test(a.id))
+  return { agents, messages, cards, tasks, assets, queue: queueOf(cards, agents), next_number: next, pending }
 }
 
 // The traffic light the human reads at a glance: red waits on them, yellow is
@@ -190,10 +200,12 @@ const defaultUrgency = kind => (kind === 'permission' ? 'critical' : 'normal')
 
 // The stack the human works through: approvals first because Claude Code is
 // waiting on them, then by urgency, then oldest first.
-function queueOf(cards) {
+function queueOf(cards, agents = []) {
   const rank = c => (c.kind === 'permission' ? URGENCIES.length : URGENCIES.indexOf(c.urgency))
+  // The questions of an archived session stay open, but nobody is asked to answer them.
+  const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
   return cards
-    .filter(c => c.status === 'open')
+    .filter(c => c.status === 'open' && !shelved.has(c.agent))
     .sort((a, b) => rank(b) - rank(a) || a.created - b.created || a.number - b.number)
     .map(c => c.id)
 }
@@ -223,7 +235,7 @@ function save() {
 const frameOf = () => `data: ${JSON.stringify({ ...state, pending: undefined })}\n\n`
 
 function commit() {
-  state.queue = queueOf(state.cards)
+  state.queue = queueOf(state.cards, state.agents)
   for (const a of state.agents) a.online = links.has(a.id)
   state.speech = Boolean(speechKey())
   save()
@@ -250,7 +262,7 @@ function addCard(agent, kind, fields) {
   const card = {
     id: newId(), agent, number: state.next_number++, kind, status: 'open',
     urgency: defaultUrgency(kind), urgency_reason: '', title: '', body: '', options: [], attachments: [],
-    choice: null, note: '', summary: '', created: Date.now(), decided: null, ...fields,
+    multiple: false, choice: null, choices: [], note: '', summary: '', created: Date.now(), decided: null, ...fields,
   }
   state.cards.push(card)
   return card
@@ -287,7 +299,8 @@ function register({ name, cwd, host = '', platform = '', id: wanted }, link) {
   links.set(id, link)
   const known = state.agents.find(a => a.id === id)
   const now = Date.now()
-  const fields = { name, cwd, host, platform, instance: link.instance, connected: now, seen: now }
+  // A session that is back is no longer archived.
+  const fields = { name, cwd, host, platform, instance: link.instance, connected: now, seen: now, archived: false }
   if (known) Object.assign(known, fields)
   else state.agents.push({ id, model: '', client: '', task: '', joined: now, online: true, ...fields })
   commit()
@@ -312,7 +325,7 @@ function unregister(id, link) {
   for (const c of state.cards) {
     if (c.agent === id && c.kind === 'permission' && c.status === 'open') {
       c.status = 'done'
-      c.summary = 'Sitzung beendet, bevor die Freigabe beantwortet wurde'
+      c.summary = SESSION_ENDED
     }
   }
   const agent = state.agents.find(a => a.id === id)
@@ -333,6 +346,12 @@ function purge() {
     if (fresh.length) state.pending[id] = fresh
     else delete state.pending[id]
     save()
+  }
+  const stale = staleAssets(cutoff)
+  if (stale.length) {
+    dropAssets(stale, `removed after ${RETENTION_DAYS} days`)
+    commit()
+    console.error(`[board] removed ${stale.length} assets published more than ${RETENTION_DAYS} days ago`)
   }
   const old = expired(cutoff)
   if (!old.length) return
@@ -382,6 +401,141 @@ function storeAttachment(file) {
   return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size }
 }
 
+// ---- assets --------------------------------------------------------------
+
+// A page or a file the agent publishes under a link. Whoever has the link can
+// open it, without a login: the key stands behind the # of the link, which a
+// browser never sends. The process beside the agent encrypts, hub or spoke, so
+// what the hub stores and serves is ciphertext.
+//
+// The blob, version 1:
+//   "ZWA1" | nonce, 12 bytes | AES-256-GCM ciphertext | tag, 16 bytes
+//   associated data: "ZWA1/" + asset id, so a blob opens only under its own address
+//   plaintext: header length (uint32, big endian) | header, JSON | content | zeros
+//   header: { v: 1, type, title, name, mime, size, created }
+// The zeros pad the plaintext to a step, so the length says little about the
+// content. Each asset has a key and a nonce of its own, used once. One piece,
+// not the 64 KiB chunks docs/krypto-konzept.md plans for attachments: the viewer
+// decrypts in memory, which is why assets have a size limit of their own.
+const ASSET_TYPES = ['html', 'image', 'video', 'audio', 'file']
+const ASSET_LABEL = { html: 'HTML page', image: 'Image', video: 'Video', audio: 'Audio', file: 'File' }
+const ASSET_MAGIC = Buffer.from('ZWA1')
+// 128 random bits in base64url: the address cannot be guessed, and it cannot name a path.
+const ASSET_ID = /^[A-Za-z0-9_-]{22}$/
+const ASSET_KEY = /^[A-Za-z0-9_-]{43}$/
+
+// Padmé: at most about 12 % on top, and only log(log(size)) bits of the length left to see.
+function padded(size) {
+  const e = Math.floor(Math.log2(size))
+  const step = 2 ** (e - Math.floor(Math.log2(e)) - 1)
+  return Math.max(1024, Math.ceil(size / step) * step)
+}
+const ASSET_BLOB_MAX = padded(MAX_ASSET + 4096) + 64
+
+// What publish_asset was given, as the bytes to encrypt and what to say about them inside the envelope.
+function readAsset(args) {
+  const file = typeof args.path === 'string' && args.path ? path.resolve(args.path) : null
+  if (file ? args.content != null : typeof args.content !== 'string') throw new Error('give either path (a file) or content (a string)')
+  if (file && !fs.statSync(file).isFile()) throw new Error(`not a file: ${args.path}`)
+  if ((file ? fs.statSync(file).size : Buffer.byteLength(args.content)) > MAX_ASSET) throw new Error(`asset larger than ${MAX_ASSET / 1024 / 1024} MB`)
+  const ext = file ? path.extname(file).toLowerCase() : ''
+  const type = args.type ?? (!file || HTML_EXT.has(ext) ? 'html' : kindOf(ext))
+  if (!ASSET_TYPES.includes(type)) throw new Error(`type must be one of ${ASSET_TYPES.join(', ')}; got ${JSON.stringify(type)}`)
+  const name = file ? path.basename(file) : type === 'html' ? 'page.html' : 'asset.txt'
+  const mime = type === 'html' ? 'text/html' : MIME[ext]?.split(';')[0] ?? (file ? 'application/octet-stream' : 'text/plain')
+  const title = String(args.title ?? '').trim().slice(0, 200) || name
+  return { meta: { type, title, name, mime }, content: file ? fs.readFileSync(file) : Buffer.from(args.content) }
+}
+
+function sealAsset(meta, content) {
+  const id = crypto.randomBytes(16).toString('base64url')
+  const key = crypto.randomBytes(32)
+  const nonce = crypto.randomBytes(12)
+  const header = Buffer.from(JSON.stringify({ v: 1, ...meta, size: content.length, created: Date.now() }))
+  const length = Buffer.alloc(4)
+  length.writeUInt32BE(header.length)
+  const size = 4 + header.length + content.length
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, nonce)
+  cipher.setAAD(Buffer.from(`ZWA1/${id}`))
+  const sealed = [length, header, content, Buffer.alloc(padded(size) - size)].map(part => cipher.update(part))
+  return { id, key: key.toString('base64url'), blob: Buffer.concat([ASSET_MAGIC, nonce, ...sealed, cipher.final(), cipher.getAuthTag()]) }
+}
+
+// Runs in the process that got the tool call. The hub is handed the key only
+// for an asset it has to show on the board; of a silent one it learns the
+// address and the size, nothing else.
+async function publishAsset(args) {
+  const { meta, content } = readAsset(args)
+  const { id, key, blob } = sealAsset(meta, content)
+  const silent = args.silent === true
+  const shown = silent ? {} : { type: meta.type, title: meta.title, note: String(args.note ?? '').trim().slice(0, 2000), key }
+  const record = { id, keep: args.keep === true, silent, ...shown }
+  const { bases } = role === 'hub' ? storeAsset(selfId, record, blob) : await hubFetch(`/agent/asset?${new URLSearchParams({ id: selfId, instance: INSTANCE })}`, {
+    headers: { 'Content-Type': 'application/octet-stream', 'x-asset': Buffer.from(JSON.stringify(record)).toString('base64url') }, body: blob,
+  })
+  const [link, ...more] = bases.map(base => `${base}/a/${id}#${key}`)
+  return [
+    `asset ${id} published (${meta.type}, ${blob.length} bytes encrypted, ${record.keep ? 'kept until revoked' : `deleted after ${RETENTION_DAYS} days`}).`,
+    `Link, opens without a board login for anyone who has it: ${link}`,
+    ...more.map(other => `Same asset under the board's other address: ${other}`),
+    silent ? 'Not shown on the board. The hub never saw the key: this link is the only copy, so hand it on yourself.' : 'Shown in the conversation on the board.',
+  ].join('\n')
+}
+
+// Addresses a link can be opened under: WebCrypto needs HTTPS or localhost, so a plain LAN address is not one.
+const assetBases = () => [...PUBLIC_URLS, `http://localhost:${PORT}`]
+
+// Runs on the hub: keeps the ciphertext and, unless the asset is silent, shows the link in the conversation.
+function storeAsset(agent, given, blob) {
+  const id = String(given?.id ?? '')
+  const silent = given.silent === true
+  if (!ASSET_ID.test(id) || state.assets.some(a => a.id === id)) throw new Error('an asset needs a fresh id of 22 base64url characters')
+  if (blob.length < 32 || blob.length > ASSET_BLOB_MAX || !blob.subarray(0, 4).equals(ASSET_MAGIC)) throw new Error('not an asset blob')
+  if (!silent && !(ASSET_TYPES.includes(given.type) && ASSET_KEY.test(given.key))) throw new Error('an asset shown on the board needs its type and key')
+  fs.writeFileSync(path.join(ASSETS, id), blob, { mode: 0o600, flag: 'wx' })
+  const title = silent ? '' : String(given.title ?? '').slice(0, 200)
+  state.assets.push({
+    id, agent, type: silent ? null : given.type, title, size: blob.length, created: Date.now(), keep: given.keep === true, silent,
+    // Empty until the room key exists (docs/krypto-konzept.md, sections 4 and 7). Planned: the asset key sealed
+    // with AES-256-GCM under a key derived from the room key by HKDF-SHA-256, with room, epoch and asset id as
+    // associated data. From then on the board gets the key from here, and the hub stops seeing it in a message.
+    wrapped_key: null,
+  })
+  const bases = assetBases()
+  if (silent) commit()
+  else {
+    const url = `/a/${id}#${given.key}`
+    const note = String(given.note ?? '').trim()
+    // The link in the text is what today's page turns into an anchor; the asset field is for a card of its own.
+    addMessage(agent, 'agent', [`**${title}** (${ASSET_LABEL[given.type]})`, note, bases[0] + url].filter(Boolean).join('\n\n'), [], { asset: { id, type: given.type, title, note, url, size: blob.length } })
+  }
+  return { id, bases }
+}
+
+const staleAssets = cutoff => state.assets.filter(a => !a.keep && a.created < cutoff)
+
+// Blob and record go, and the message that showed the link keeps only the title: with it the hub forgets the key.
+function dropAssets(gone, why) {
+  const ids = new Set(gone.map(a => a.id))
+  for (const a of gone) removeFile(ASSETS, a.id)
+  state.assets = state.assets.filter(a => !ids.has(a.id))
+  for (const m of state.messages) {
+    if (!ids.has(m.asset?.id)) continue
+    m.text = `**${m.asset.title}** (${why})`
+    m.asset = { id: m.asset.id, type: m.asset.type, title: m.asset.title, gone: true }
+  }
+}
+
+function listAssets(agent) {
+  const shown = id => state.messages.find(m => m.asset?.id === id)?.asset.url
+  return state.assets.filter(a => a.agent === agent).map(a => ({
+    id: a.id, type: a.type, title: a.title, bytes: a.size, created: new Date(a.created).toISOString(),
+    expires: a.keep ? null : new Date(a.created + RETENTION_DAYS * 86400000).toISOString(), silent: a.silent,
+    // Of a silent asset the hub has no key, so it cannot repeat the link.
+    link: a.silent ? null : assetBases()[0] + shown(a.id),
+  }))
+}
+
 // ---- MCP side ------------------------------------------------------------
 
 const mcp = new Server(
@@ -397,19 +551,23 @@ const mcp = new Server(
       'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
       'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
       'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and ideally a one-line detail naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
+      'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
+      'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
       'The human sees one card at a time, the top of the stack; urgency decides the order (most urgent first, then oldest first), so set it honestly on every card.',
       'critical: you are blocked and nothing else can proceed. high: it blocks your current task, but you have other work. normal (default): needed soon, nothing waits on it yet. low: nice to know, no work depends on it.',
       'For high and critical, give an urgency_reason: one short phrase, in the human\'s language, saying what is waiting. If everything is urgent, nothing is; most cards are normal.',
       'Keep the stack true as your work moves: when an open card starts blocking you, raise it with set_urgency; lower it if the pressure is gone; and call withdraw_card as soon as a question became moot, so the human never answers something you no longer need. list_cards shows the current stack.',
       'The choice arrives later as <channel source="board" kind="decision" card_id="..." choice="KEY">; the body is the human\'s note if they wrote one. Act on it, then call close_card with a one-line summary of what you did.',
       'Do not block waiting for a decision: keep working on whatever does not depend on it.',
+      'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and if your answer changes the question, update the card: withdraw it and ask again with the clearer wording or options.',
       'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
       'Other agents may share this board; the human sees all stacks merged into one, ordered by urgency. You only see and change your own cards and status lines.',
       'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply. The human may dictate messages, so expect transcription slips in chat and read them charitably.',
       'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
       'The human answers with one tap and can take an answer back: <channel source="board" kind="decision_reopened" card_id="..." previous_choice="KEY"> means the card is open again. Stop acting on the old choice, undo what you safely can, tell them briefly via reply what you rolled back, and wait for the new choice.',
+      'To hand the human, or anyone they choose, a page or a file as a link, call publish_asset: a self-contained HTML page (inline CSS and scripts, images as data: URLs; nothing is loaded from the network), an image, a video, an audio file or any other file. It is encrypted before it leaves this process and the key is part of the link, so whoever has the link can open it without a login. revoke_asset ends a link.',
       'Keep the status strip current with set_status: one line per work stream or subagent, a traffic light the human reads at a glance. decision (red) = waiting on the human, pass the card_id of the question; working (yellow) = in progress; done (green) = finished. Update a line the moment its state changes and clear the strip with clear_status when a new piece of work starts.',
     ].join(' '),
   },
@@ -429,6 +587,7 @@ const TOOLS = [
           description: 'Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link',
           items: { type: 'string' },
         },
+        card_id: { type: 'string', description: 'When you answer a question the human asked back about a card (a chat message that carried card_id): that card. The board shows your answer with the card.' },
       },
       required: ['text'],
     },
@@ -466,7 +625,11 @@ const TOOLS = [
           description: 'Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know',
         },
         urgency_reason: { type: 'string', description: 'What is waiting on this, one short phrase; expected for high and critical' },
-        recommended: { type: 'string', description: 'The key of the option you would pick yourself. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference.' },
+        multiple: { type: 'boolean', description: 'true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides.' },
+        recommended: {
+          anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+          description: 'The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference.',
+        },
       },
       required: ['title', 'options'],
     },
@@ -557,6 +720,95 @@ const TOOLS = [
     description: 'List all cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open).',
     inputSchema: { type: 'object', properties: {} },
   },
+  {
+    name: 'publish_asset',
+    description: 'Publish a page or a file under a link that opens without a board login, e.g. a report or mockup as an HTML page for the human to pass on. The asset is encrypted here with a key of its own; the key is the part of the link after the #, and the board stores only ciphertext. Anyone who has the link can open it. Returns the link.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of the file to publish. Give this or content.' },
+        content: { type: 'string', description: 'The asset itself as a string, e.g. the HTML of a page. Give this or path.' },
+        type: { type: 'string', enum: ASSET_TYPES, description: 'How the viewer shows it. html: a page in a sandboxed frame, which must be self-contained (inline CSS and scripts, data: images), because nothing is loaded from the network; image, video, audio: shown or played; file: offered as a download. Left out: inferred from the file extension, html for content.' },
+        title: { type: 'string', description: 'Shown above the asset and on the board; defaults to the file name' },
+        note: { type: 'string', description: 'Optional line shown with the link on the board, e.g. what the page is for' },
+        silent: { type: 'boolean', description: 'true: do not show the asset on the board. The hub then never sees the key or the title; the returned link is the only copy.' },
+        keep: { type: 'boolean', description: `true: keep until revoked. Default: deleted after ${RETENTION_DAYS} days.` },
+      },
+    },
+  },
+  {
+    name: 'list_assets',
+    description: 'List the assets you published: id, type, title, size, when each expires, and the link for those shown on the board.',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'revoke_asset',
+    description: 'End a published asset: the stored ciphertext is deleted and the link stops working for everyone.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'The asset id returned by publish_asset' } }, required: ['id'] },
+  },
+]
+
+// One call per tool that does something sensible, for the help page. The test checks each against its schema.
+const TOOL_EXAMPLES = {
+  reply: { text: 'The migration is written and **green locally**.', details: 'Ran `npm test`: 48 of 48 pass.\nThe slow one was the index on `orders`.', attachments: ['/home/me/project/out/before-after.png'] },
+  create_decision: {
+    title: 'Run the migration on production now?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
+    options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
+  },
+  set_urgency: { card_id: 'a1b2c3d4', urgency: 'critical', reason: 'nothing else is left to do' },
+  withdraw_card: { card_id: 'a1b2c3d4', reason: 'the staging run answered it' },
+  close_card: { card_id: 'a1b2c3d4', summary: 'Migration ran at 02:00, 38 seconds' },
+  set_status: { id: 'migration', label: 'Migration', state: 'decision', detail: 'waiting for the go-ahead', card_id: 'a1b2c3d4' },
+  clear_status: { id: 'migration' },
+  introduce: { model: 'Claude Opus 5.5', task: 'Prepare migration and deploy' },
+  create_voiceover: { text: 'The deploy went through. Two things need your answer.', style: 'calm, friendly' },
+  list_cards: {},
+  publish_asset: { path: '/home/me/project/out/report.html', title: 'Load test, 2 October', note: 'Charts for the three variants' },
+  list_assets: {},
+  revoke_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A' },
+}
+
+// Everything that travels over the channel besides tool calls, for the help page.
+// to_agent: what this process sends Claude Code. from_client: what Claude Code sends this process.
+const CHANNEL_EVENTS = [
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
+    content: 'the message', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id' },
+    example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision', when: 'The human answered a decision card.',
+    content: 'the human\'s note, or a sentence naming the card and the chosen key', meta: { kind: 'decision', card_id: 'the card', choice: 'key of the chosen option; of several, the first' },
+    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options' },
+    example: '<channel source="board" kind="decision" card_id="a1b2c3d4" choice="tonight">After the backup, please.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision_reopened', when: 'The human took an answer back; the card is open again.',
+    content: 'a sentence saying which answer was taken back', meta: { kind: 'decision_reopened', card_id: 'the card', previous_choice: 'key of the answer that no longer holds' },
+    optional: { previous_choices: 'only for a card made with multiple: true: every key that was chosen, comma-separated' },
+    example: '<channel source="board" kind="decision_reopened" card_id="a1b2c3d4" previous_choice="tonight">…</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'scribble', when: 'The human drew on the canvas and pressed send.',
+    content: 'the caption, or a sentence explaining the two pictures',
+    meta: { kind: 'scribble', scribble_id: 'this moment of the canvas', image_path: 'PNG of what the human was looking at', canvas_path: 'PNG of the whole canvas', canvas_doc: 'the drawing as JSON' },
+    example: '<channel source="board" kind="scribble" scribble_id="9f2c41d07a3e" image_path="/…/scribbles/9f2c41d07a3e.png" canvas_path="/…/scribbles/canvas-api.png" canvas_doc="/…/scribbles/canvas-api.json">This button, further left.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel/permission', kind: null, when: 'The human answered an approval card. Claude Code decides whether this or the terminal came first.',
+    params: { request_id: 'the id from the request', behavior: 'allow or deny' },
+    example: '{ "request_id": "abcde", "behavior": "allow" }',
+  },
+  {
+    direction: 'from_client', method: 'notifications/claude/channel/permission_request', kind: null, when: 'Claude Code wants approval for a tool call. It becomes a card with Allow and Deny, always on top of the stack.',
+    params: { request_id: 'echoed in the verdict', tool_name: 'e.g. Bash', description: 'what the tool does', input_preview: 'the arguments, shortened' },
+    example: '{ "request_id": "abcde", "tool_name": "Bash", "description": "Run shell command", "input_preview": "{\\"command\\":\\"npm test\\"}" }',
+  },
+  {
+    direction: 'from_client', method: 'initialize', kind: null, when: 'Once, when the MCP connection starts. The name appears as "Program" in the sessions overview.',
+    params: { 'clientInfo.name': 'the program on the other end of stdio', 'clientInfo.version': 'its version' },
+    example: '{ "clientInfo": { "name": "claude-code", "version": "2.1.0" } }',
+  },
 ]
 
 const text = t => ({ content: [{ type: 'text', text: t }] })
@@ -568,6 +820,8 @@ mcp.setRequestHandler(CallToolRequestSchema, async req => {
   // The hub copies attachments; a relative path must mean this session's folder, not the hub's.
   if (Array.isArray(args.attachments)) args.attachments = args.attachments.map(f => (typeof f === 'string' && f ? path.resolve(f) : f))
   await whenUp()
+  // The one tool that does its work here, beside the agent, before anything goes to the hub.
+  if (req.params.name === 'publish_asset') return text(await publishAsset(args))
   if (role === 'hub') return text(await runTool(selfId, req.params.name, args))
   return text((await hubPost('/agent/tool', { name: req.params.name, args })).text)
 })
@@ -581,9 +835,11 @@ const listArg = (value, what) => {
 function runTool(agent, name, args) {
   if (!args || typeof args !== 'object') args = {}
   switch (name) {
-    case 'reply':
-      addMessage(agent, 'agent', String(args.text ?? ''), listArg(args.attachments, 'attachments').map(storeAttachment), args.details ? { details: String(args.details) } : {})
+    case 'reply': {
+      const about = args.card_id == null ? {} : { card_id: findCard(agent, args.card_id).id }
+      addMessage(agent, 'agent', String(args.text ?? ''), listArg(args.attachments, 'attachments').map(storeAttachment), { ...(args.details ? { details: String(args.details) } : {}), ...about })
       return 'sent'
+    }
     case 'create_decision': {
       const options = listArg(args.options, 'options').map(o => ({
         key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
@@ -593,10 +849,14 @@ function runTool(agent, name, args) {
         throw new Error('options need at least two entries with unique keys')
       }
       const urgency = urgencyArg(args.urgency, 'normal')
-      const recommended = args.recommended == null ? null : String(args.recommended)
-      if (recommended != null && !keys.has(recommended)) throw new Error(`recommended must be the key of one of the options; got "${recommended}"`)
+      const multiple = args.multiple === true
+      // One key, or for a card that takes several answers a list of them; stored the way it was given.
+      const advised = args.recommended == null ? [] : [args.recommended].flat().map(String)
+      const stray = advised.find(key => !keys.has(key))
+      if (stray != null) throw new Error(`recommended must be the key of one of the options; got "${stray}"`)
+      if (Array.isArray(args.recommended) && !multiple) throw new Error('recommended as a list needs multiple: true; a card with one answer has one recommendation')
       const card = addCard(agent, 'decision', {
-        recommended,
+        multiple, recommended: Array.isArray(args.recommended) ? advised : advised[0] ?? null,
         urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
         title: String(args.title ?? ''), body: String(args.body ?? ''),
         options, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),
@@ -629,7 +889,7 @@ function runTool(agent, name, args) {
       if (card.status !== 'open') throw new Error(`card ${card.id} is already done`)
       card.status = 'done'
       card.summary = String(args.reason ?? '').trim()
-      addEvent('done', card, card.summary ? `Zurückgezogen: ${card.summary}` : 'Zurückgezogen')
+      addEvent('done', card, card.summary ? `Withdrawn: ${card.summary}` : 'Withdrawn')
       commit()
       return 'withdrawn'
     }
@@ -677,8 +937,19 @@ function runTool(agent, name, args) {
         id: c.id, number: c.number, kind: c.kind, status: c.status,
         urgency: c.urgency, urgency_reason: c.urgency_reason,
         queue_position: state.queue.indexOf(c.id) + 1 || null,
-        title: c.title, choice: c.choice, note: c.note,
+        title: c.title, multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
       })), null, 2)
+    case 'list_assets':
+      return JSON.stringify(listAssets(agent), null, 2)
+    case 'revoke_asset': {
+      const asset = state.assets.find(a => a.id === args.id && a.agent === agent)
+      if (!asset) throw new Error(`no asset ${args.id}`)
+      dropAssets([asset], 'withdrawn')
+      commit()
+      return 'revoked: the stored asset is deleted and its link no longer opens'
+    }
+    case 'publish_asset':
+      throw new Error('publish_asset encrypts in the process beside the agent; this server.mjs is older than the hub, restart the session')
   }
   throw new Error(`unknown tool: ${name}`)
 }
@@ -712,27 +983,36 @@ function addPermission(agent, params) {
   if (state.cards.some(c => c.agent === agent && c.kind === 'permission' && c.status === 'open' && c.request_id === params.request_id)) return
   addCard(agent, 'permission', {
     request_id: params.request_id,
-    title: `Freigabe: ${params.tool_name}`,
+    title: `Approval: ${params.tool_name}`,
     body: `${params.description}\n\n${params.input_preview}`,
     options: [
-      { key: 'allow', label: 'Erlauben', detail: '' },
-      { key: 'deny', label: 'Ablehnen', detail: '' },
+      { key: 'allow', label: 'Allow', detail: '' },
+      { key: 'deny', label: 'Deny', detail: '' },
     ],
   })
   commit()
 }
 
-async function decide(cardId, key, note) {
+// answer is one key, or for a card that takes several a list of keys.
+async function decide(cardId, answer, note) {
   const card = state.cards.find(c => c.id === cardId)
   if (!card) throw new Error('unknown card')
   if (card.status !== 'open') throw new Error('card already decided')
-  if (!card.options.some(o => o.key === key)) throw new Error('unknown option')
+  if (Array.isArray(answer) && !card.multiple) throw new Error('this card takes one answer; send key, not keys')
+  const given = new Set([answer].flat().map(String))
+  if (!given.size) throw new Error('keys must name at least one option')
+  if ([...given].some(k => !card.options.some(o => o.key === k))) throw new Error('unknown option')
+  // In the order of the options, whatever order they were ticked in.
+  const chosen = card.options.filter(o => given.has(o.key))
+  const key = chosen[0].key
+  card.choices = chosen.map(o => o.key)
+  // The first one, for clients and agents that know only one answer.
   card.choice = key
   card.note = note
   card.decided = Date.now()
   // A permission verdict needs no follow-up from Claude, so it is done at once.
   card.status = card.kind === 'permission' ? 'done' : 'decided'
-  if (card.kind === 'decision') addEvent('decided', card, card.options.find(o => o.key === key).label)
+  if (card.kind === 'decision') addEvent('decided', card, chosen.map(o => o.label).join(', '))
   // The human has answered, so the stream that waited on this card is moving again.
   for (const t of state.tasks) {
     if (t.agent === card.agent && t.card_id === card.id && t.state === 'decision') Object.assign(t, { state: 'working', card_id: null, updated: Date.now() })
@@ -744,8 +1024,9 @@ async function decide(cardId, key, note) {
     })
   } else {
     await deliver(card.agent, 'notifications/claude/channel', {
-      content: note || `Decision on "${card.title}": ${key}`,
-      meta: { kind: 'decision', card_id: card.id, choice: key },
+      content: note || `Decision on "${card.title}": ${card.choices.join(', ')}`,
+      // meta values are strings, so several keys travel as one, comma-separated.
+      meta: { kind: 'decision', card_id: card.id, choice: key, ...(card.multiple ? { choices: card.choices.join(',') } : {}) },
     })
   }
 }
@@ -796,13 +1077,14 @@ async function reopen(cardId) {
   if (card.status === 'open') throw new Error('card is already open')
   if (card.choice == null) throw new Error('the agent withdrew this card')
   const previous = card.choice
-  const label = card.options.find(o => o.key === previous)?.label ?? previous
-  Object.assign(card, { status: 'open', choice: null, note: '', summary: '', decided: null })
+  const all = card.choices?.length ? card.choices : [previous]
+  const label = all.map(key => card.options.find(o => o.key === key)?.label ?? key).join(', ')
+  Object.assign(card, { status: 'open', choice: null, choices: [], note: '', summary: '', decided: null })
   addEvent('reopened', card, card.title)
   commit()
   await deliver(card.agent, 'notifications/claude/channel', {
     content: `The human took back their answer "${label}" on "${card.title}". Stop acting on it, undo what you safely can, and wait for the new choice.`,
-    meta: { kind: 'decision_reopened', card_id: card.id, previous_choice: previous },
+    meta: { kind: 'decision_reopened', card_id: card.id, previous_choice: previous, ...(card.multiple ? { previous_choices: all.join(',') } : {}) },
   })
 }
 
@@ -810,12 +1092,12 @@ async function reopen(cardId) {
 
 async function speechFetch(route, init) {
   const key = speechKey()
-  if (!key) throw new Error('Sprachfunktionen sind nicht eingerichtet (TINFOIL_API_KEY oder data/tinfoil.key fehlt)')
+  if (!key) throw new Error('Speech is not set up (TINFOIL_API_KEY or data/tinfoil.key is missing)')
   const res = await fetch(SPEECH_API + route, { ...init, headers: { ...init.headers, Authorization: `Bearer ${key}` }, signal: AbortSignal.timeout(HUB_TIMEOUT) })
   if (!res.ok) {
     let reason = `${res.status}`
     try { reason = (await res.json()).error?.message ?? reason } catch {}
-    throw new Error(`Sprachdienst: ${reason}`)
+    throw new Error(`Speech service: ${reason}`)
   }
   return res
 }
@@ -850,7 +1132,7 @@ function cardScript(card) {
     .replace(/```[\s\S]*?```/g, ' ').replace(/`([^`]+)`/g, '$1').replace(/\*\*([^*]+)\*\*/g, '$1')
     .replace(/^\s*[-*]\s+/gm, '').replace(/https?:\/\/\S+/g, 'Link').replace(/\s+/g, ' ').trim()
   const options = card.kind === 'permission'
-    ? 'Erlauben oder ablehnen?'
+    ? 'Allow or deny?'
     : card.options.map((o, i) => `Option ${i + 1}: ${o.label}${o.detail ? `. ${o.detail}` : ''}`).join('. ')
   return [card.title, card.urgency_reason, plain, options].filter(Boolean).join('. ').replace(/([.?!])\./g, '$1')
     // The voice stumbles over German number formats: 48.210 and 02:00.
@@ -862,7 +1144,7 @@ const readRaw = (req, limit) => new Promise((resolve, reject) => {
   let size = 0
   req.on('data', chunk => {
     size += chunk.length
-    if (size > limit) reject(new Error('audio too large'))
+    if (size > limit) reject(new Error('body too large'))
     else chunks.push(chunk)
   })
   req.on('end', () => resolve(Buffer.concat(chunks)))
@@ -933,8 +1215,12 @@ const sameSecret = (given, secret) => {
 const tokenMatches = given => sameSecret(given, TOKEN)
 
 // Spokes talk to the hub here: same machine only, and they must know the token.
+// A reverse proxy on this machine (tailscale serve) connects from loopback too,
+// on behalf of someone who is not on this machine. It says so in these headers.
+const proxied = req => req.headers['x-forwarded-for'] != null || req.headers['tailscale-user-login'] != null
+
 async function agentRoute(req, res, url) {
-  if (!LOOPBACK.has(req.socket.remoteAddress) || !tokenMatches(req.headers['x-board-token'])) {
+  if (!LOOPBACK.has(req.socket.remoteAddress) || proxied(req) || !tokenMatches(req.headers['x-board-token'])) {
     return send(res, 403, '{"error":"forbidden"}')
   }
   try {
@@ -953,7 +1239,8 @@ async function agentRoute(req, res, url) {
         end: () => res.end(),
       }
       const id = register({ name: q.get('name') || 'agent', cwd: q.get('cwd') || '', host: q.get('host') || '', platform: q.get('platform') || '', id: q.get('id') }, link)
-      write({ hello: id, ping: PING })
+      // dedicated: this hub is nobody's session and comes back by itself, so a spoke waits for it instead of taking the port.
+      write({ hello: id, ping: PING, dedicated: HUB_ONLY })
       flush(id)
       const beat = setInterval(() => res.write(': ping\n\n'), PING)
       req.on('close', () => {
@@ -962,10 +1249,17 @@ async function agentRoute(req, res, url) {
       })
       return
     }
-    const body = await readJson(req)
+    // An asset arrives as bytes, so who sends it stands in the address instead of the body.
+    const upload = req.method === 'POST' && url.pathname === '/agent/asset'
+    const body = upload ? Object.fromEntries(url.searchParams) : await readJson(req)
     const link = links.get(body?.id)
     // The id alone is not proof: after a change of hub it may belong to another session.
     if (!link || (link.strict && link.instance !== body.instance)) return send(res, 409, '{"error":"agent is not linked"}')
+    if (upload) {
+      const blob = await readRaw(req, ASSET_BLOB_MAX)
+      const given = JSON.parse(Buffer.from(String(req.headers['x-asset'] ?? ''), 'base64url').toString() || 'null')
+      return send(res, 200, JSON.stringify(storeAsset(body.id, given, blob)))
+    }
     if (req.method === 'POST' && url.pathname === '/agent/tool') {
       return send(res, 200, JSON.stringify({ text: await runTool(body.id, String(body.name), body.args ?? {}) }))
     }
@@ -1003,7 +1297,7 @@ const fail = (status, message) => Object.assign(new Error(message), { status })
 // them would eat ordinary words.
 function scrubber() {
   const secrets = [TOKEN, adminKey, speechKey()].filter(s => s.length >= 6).flatMap(s => [s, JSON.stringify(s).slice(1, -1)])
-  return text => secrets.reduce((out, s) => out.split(s).join('[entfernt]'), String(text))
+  return text => secrets.reduce((out, s) => out.split(s).join('[removed]'), String(text))
 }
 const scrub = text => scrubber()(text)
 
@@ -1066,7 +1360,11 @@ function orphans() {
   const owners = new Set([...state.agents.map(a => a.id), ...state.messages.map(m => m.agent), ...state.cards.map(c => c.agent)].filter(Boolean))
   const used = new Set([...filesOf([...state.messages, ...state.cards]), ...[...owners].flatMap(canvasFiles)].map(([dir, name]) => path.join(dir, name)))
   const loose = dir => listFiles(dir).filter(f => !used.has(path.join(dir, f.name)))
-  return { files: loose(FILES), scribbles: loose(SCRIBBLES), speech: listFiles(SPEECH).filter(f => Date.now() - f.mtime > SPEECH_KEEP) }
+  const known = new Set(state.assets.map(a => a.id))
+  return {
+    files: loose(FILES), scribbles: loose(SCRIBBLES), speech: listFiles(SPEECH).filter(f => Date.now() - f.mtime > SPEECH_KEEP),
+    assets: listFiles(ASSETS).filter(f => !known.has(f.name)),
+  }
 }
 
 // What purge() would take if it ran now.
@@ -1079,6 +1377,7 @@ function purgePreview() {
     cutoff, cards: old.length, ...tally(listFiles(FILES).filter(f => names.has(f.name))),
     markers: state.messages.filter(m => m.from === 'event' && ids.has(m.card_id)).length,
     queued: Object.values(state.pending).flat().filter(e => e.ts < cutoff).length,
+    assets: staleAssets(cutoff).length,
   }
 }
 
@@ -1096,6 +1395,11 @@ function forgetSession(id, withData) {
       gone.files++
       gone.bytes += size
     }
+    for (const asset of state.assets.filter(mine)) {
+      gone.files++
+      gone.bytes += asset.size
+    }
+    dropAssets(state.assets.filter(mine), 'withdrawn')
     gone.messages = state.messages.filter(mine).length
     gone.cards = state.cards.filter(mine).length
     state.messages = state.messages.filter(m => !mine(m))
@@ -1139,7 +1443,7 @@ function overview() {
     version: VERSION, node: process.version, now: Date.now(), uptime: Math.round(process.uptime()),
     hub: { id: selfId, pid: process.pid, host: os.hostname(), since: hubSince },
     port: PORT, bind: HOST, speech: Boolean(speechKey()), token_fixed: Boolean(process.env.BOARD_TOKEN), retention_days: RETENTION_DAYS,
-    data: { dir: path.resolve(DATA), state: size(STATE_FILE), files: tally(listFiles(FILES)), scribbles: tally(listFiles(SCRIBBLES)), speech: tally(listFiles(SPEECH)) },
+    data: { dir: path.resolve(DATA), state: size(STATE_FILE), files: tally(listFiles(FILES)), scribbles: tally(listFiles(SCRIBBLES)), speech: tally(listFiles(SPEECH)), assets: tally(listFiles(ASSETS)) },
     counts: {
       messages: state.messages.length, cards: { open: cards('open'), decided: cards('decided'), done: cards('done') },
       queued: Object.fromEntries(Object.keys(state.pending).map(id => [id, queued(id)])), sse: clients.size,
@@ -1193,7 +1497,7 @@ const ADMIN_ROUTES = new Map(Object.entries({
     method: 'GET',
     run() {
       const loose = orphans()
-      return { retention_days: RETENTION_DAYS, purge: purgePreview(), orphans: { files: tally(loose.files), scribbles: tally(loose.scribbles), speech: tally(loose.speech) } }
+      return { retention_days: RETENTION_DAYS, purge: purgePreview(), orphans: Object.fromEntries(Object.entries(loose).map(([kind, files]) => [kind, tally(files)])) }
     },
   },
   log: { method: 'GET', run: () => ({ max: ADMIN_LOG_MAX, entries: adminLog }) },
@@ -1226,7 +1530,7 @@ const ADMIN_ROUTES = new Map(Object.entries({
     method: 'POST', confirm: body => String(body.id),
     run({ req, body }) {
       const gone = forgetSession(String(body.id), body.data === true)
-      audit(req, 'forget', `${body.id}${body.data === true ? `, mit ${gone.messages} Nachrichten, ${gone.cards} Karten, ${gone.files} Dateien` : ', Daten behalten'}`)
+      audit(req, 'forget', `${body.id}${body.data === true ? `, with ${gone.messages} messages, ${gone.cards} cards, ${gone.files} files` : ', data kept'}`)
       return { ok: true, ...gone }
     },
   },
@@ -1238,7 +1542,7 @@ const ADMIN_ROUTES = new Map(Object.entries({
       if (!queued && !state.agents.some(a => a.id === id)) throw fail(404, `no session ${id}`)
       delete state.pending[id]
       save()
-      audit(req, 'clear-queue', `${id}, ${queued} Benachrichtigungen`)
+      audit(req, 'clear-queue', `${id}, ${queued} notifications`)
       return { ok: true, removed: queued }
     },
   },
@@ -1247,7 +1551,7 @@ const ADMIN_ROUTES = new Map(Object.entries({
     run({ req }) {
       const { cutoff, ...removed } = purgePreview()
       purge()
-      audit(req, 'purge', `${removed.cards} Karten, ${removed.count} Dateien`)
+      audit(req, 'purge', `${removed.cards} cards, ${removed.count} files${removed.assets ? `, ${removed.assets} assets` : ''}`)
       return { ok: true, ...removed }
     },
   },
@@ -1256,7 +1560,7 @@ const ADMIN_ROUTES = new Map(Object.entries({
     run({ req }) {
       const loose = Object.values(orphans()).flat()
       const bytes = loose.reduce((sum, f) => sum + removeFile(f.dir, f.name), 0)
-      audit(req, 'orphans', `${loose.length} Dateien`)
+      audit(req, 'orphans', `${loose.length} files`)
       return { ok: true, removed: loose.length, bytes }
     },
   },
@@ -1295,6 +1599,75 @@ async function adminRoute(req, res, url) {
   }
 }
 
+// The viewer and the blobs are the only things served without a login: the link
+// is the permission, and all the server hands out is ciphertext and the static
+// viewer. The viewer runs under the board's address, where the human's login
+// cookie lives, so it may load nothing but its own files, and it never puts
+// decrypted content into its own page.
+const VIEWER_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; media-src blob:; frame-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
+// An HTML asset is written into this empty page, which the viewer loads in a
+// sandboxed frame. The page brings its own policy rather than inheriting the
+// viewer's: the asset's own inline scripts and styles run, in an origin of
+// their own that is nobody's, and nothing is fetched from anywhere. It lives
+// here and not in client/web, so it is never served without that policy.
+const FRAME_CSP = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts"
+const ASSET_FRAME = `<!doctype html><meta charset="utf-8"><title>Asset</title><script>
+addEventListener('message', function take(e) {
+  if (e.source !== parent || !e.data || typeof e.data.html !== 'string') return
+  removeEventListener('message', take)
+  document.open()
+  document.write(e.data.html)
+  document.close()
+})
+parent.postMessage('ready', '*')
+</script>`
+const VIEWER_FILES = { 'asset.js': 'js/asset.js', 'asset.css': 'css/asset.css', 'tokens.css': 'css/tokens.css' }
+
+function assetRoute(req, res, url) {
+  const [id, rest, ...more] = url.pathname.split('/').slice(2)
+  const out = (code, body, type = 'application/json', csp = "default-src 'none'; sandbox") => {
+    res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Security-Policy': csp, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' })
+    res.end(body)
+  }
+  const missing = () => out(404, '{"error":"not found"}')
+  if (req.method !== 'GET' || more.length) return missing()
+  if (id === '-' && rest === 'frame.html') return out(200, ASSET_FRAME, MIME['.html'], FRAME_CSP)
+  if (id === '-') return Object.hasOwn(VIEWER_FILES, rest) ? out(200, fs.readFileSync(path.join(PUBLIC, VIEWER_FILES[rest])), MIME[path.extname(rest)]) : missing()
+  if (!ASSET_ID.test(id)) return missing()
+  // The page is the same for every id, so asking for it does not tell whether an asset exists.
+  if (rest == null) return out(200, fs.readFileSync(path.join(PUBLIC, 'a.html')), MIME['.html'], VIEWER_CSP)
+  if (rest !== 'blob' || !state.assets.some(a => a.id === id)) return missing()
+  // A revoke may delete the file between the check above and the read.
+  fs.readFile(path.join(ASSETS, id), (err, blob) => (err ? missing() : out(200, blob, 'application/octet-stream')))
+}
+
+// A file of the web client, or nothing: only the kinds a page is made of, no
+// dotfiles, nothing reached through a link, nothing outside client/web. A
+// folder answers with its index.html.
+const STATIC_EXT = new Set(['.html', '.css', '.js', '.mjs', '.json', '.png', '.svg', '.webp', '.ico', '.woff2'])
+function staticFile(pathname) {
+  let parts
+  try { parts = decodeURIComponent(pathname).split('/').filter(Boolean) } catch { return null }
+  if (parts.some(part => part.startsWith('.') || /[\\\0]/.test(part))) return null
+  const file = path.join(PUBLIC, ...parts)
+  const kind = name => { try { return fs.lstatSync(name) } catch { return null } }
+  if (!file.startsWith(PUBLIC + path.sep)) return null
+  if (kind(file)?.isDirectory()) {
+    if (!kind(path.join(file, 'index.html'))?.isFile()) return null
+    // Without the slash at the end the folder's relative links would point one level up.
+    return pathname.endsWith('/') ? { file: path.join(file, 'index.html') } : { redirect: `/${parts.join('/')}/` }
+  }
+  return STATIC_EXT.has(path.extname(file).toLowerCase()) && kind(file)?.isFile() ? { file } : null
+}
+
+// The page keeps its place in the address (History API), so these paths are the page too.
+const APP_PATH = /^\/($|s\/|agents$|inbox$)/
+const withoutToken = url => {
+  const rest = new URLSearchParams(url.search)
+  rest.delete('t')
+  return rest.size ? `?${rest}` : ''
+}
+
 const httpServer = http.createServer(async (req, res) => {
   let url
   // Runs before any check, so a request line that is no URL ("//") must not throw.
@@ -1303,27 +1676,30 @@ const httpServer = http.createServer(async (req, res) => {
   } catch {
     return send(res, 400, '{"error":"bad request"}')
   }
+  // For a supervisor or a proxy: says that the process answers, and nothing else.
+  if (req.method === 'GET' && url.pathname === '/healthz') return send(res, 200, '{"ok":true}')
   if (url.pathname.startsWith('/agent/')) return agentRoute(req, res, url)
   if (req.method === 'GET' && tokenMatches(url.searchParams.get('t'))) {
     res.writeHead(302, {
       // Lax, so following a link to the board from another app still arrives logged in;
       // writes are guarded by the Origin check, which Lax does not weaken.
       'Set-Cookie': `${COOKIE}=${TOKEN}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`,
-      Location: url.pathname.replace(/^\/+/, '/'),
+      // The page asked for is where the login ends, with whatever else the link carried, e.g. ?q=<card>.
+      Location: url.pathname.replace(/^\/+/, '/') + withoutToken(url),
     })
     return res.end()
   }
-  if (!authed(req)) return send(res, 401, 'Zugang nur über den Link aus data/url.txt', 'text/plain; charset=utf-8')
+  if (url.pathname.startsWith('/a/')) return assetRoute(req, res, url)
+  if (!authed(req)) return send(res, 401, 'Access only through the link in data/url.txt', 'text/plain; charset=utf-8')
   if (req.method !== 'GET' && !sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}')
   if (url.pathname.startsWith('/admin/api/')) return adminRoute(req, res, url)
   try {
-    if (req.method === 'GET' && url.pathname === '/') {
+    if (req.method === 'GET' && APP_PATH.test(url.pathname)) {
       return send(res, 200, fs.readFileSync(path.join(PUBLIC, 'index.html')), 'text/html; charset=utf-8')
     }
-    if (req.method === 'GET' && /^\/((css|js)\/|[\w-]+\.html$)/.test(url.pathname)) {
-      const file = path.join(PUBLIC, path.normalize(url.pathname))
-      if (!file.startsWith(PUBLIC + path.sep) || !fs.existsSync(file)) return send(res, 404, '{"error":"not found"}')
-      return send(res, 200, fs.readFileSync(file), MIME[path.extname(file)] ?? 'application/octet-stream')
+    if (req.method === 'GET' && url.pathname === '/api/tools') {
+      // The help page renders its reference from the same tables the agent is given.
+      return send(res, 200, JSON.stringify({ version: VERSION, retention_days: RETENTION_DAYS, max_asset_mb: MAX_ASSET / 1024 / 1024, tools: TOOLS.map(t => ({ ...t, example: TOOL_EXAMPLES[t.name] })), events: CHANNEL_EVENTS }))
     }
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
@@ -1371,8 +1747,10 @@ const httpServer = http.createServer(async (req, res) => {
       const msg = String(body.text ?? '').trim()
       if (!msg) return send(res, 400, '{"error":"empty message"}')
       const agent = targetAgent(body.agent)
-      addMessage(agent, 'user', msg)
-      await deliver(agent, 'notifications/claude/channel', { content: msg, meta: { kind: 'chat' } })
+      // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
+      const about = state.cards.some(c => c.id === body.card_id && c.agent === agent && c.status === 'open') ? { card_id: body.card_id } : {}
+      addMessage(agent, 'user', msg, [], about)
+      await deliver(agent, 'notifications/claude/channel', { content: msg, meta: { kind: 'chat', ...about } })
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'GET' && /^\/scribbles\/[0-9a-f]+\.(json|png)$/.test(url.pathname)) {
@@ -1408,6 +1786,11 @@ const httpServer = http.createServer(async (req, res) => {
       // The human's own name and mark for a session; they outlive reconnects.
       const body = await readJson(req)
       const agent = state.agents.find(a => a.id === targetAgent(body.agent))
+      // Archiving is for sessions that are gone; one that is online would keep asking into the void.
+      if (body.archived === true && links.has(agent.id)) return send(res, 409, '{"error":"a session that is online cannot be archived"}')
+      if (body.archived != null) agent.archived = body.archived === true
+      // Sessions that share a group are shown as a pair; null takes a session out of its group.
+      if ('group' in body) agent.group = body.group == null ? null : String(body.group).trim().slice(0, 40) || null
       if (body.label != null) agent.label = String(body.label).trim().slice(0, 60)
       if (body.icon != null) agent.icon = String(body.icon).slice(0, 80)
       commit()
@@ -1427,8 +1810,18 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/decide') {
       const body = await readJson(req)
-      await decide(String(body.card_id), String(body.key), String(body.note ?? '').trim())
+      if (body.keys != null && !Array.isArray(body.keys)) throw new Error('keys must be a list')
+      await decide(String(body.card_id), body.keys ?? String(body.key), String(body.note ?? '').trim())
       return send(res, 200, '{"ok":true}')
+    }
+    // Last, so no file can stand in for a route: whatever else lies in client/web, mockups and prototypes included.
+    if (req.method === 'GET') {
+      const found = staticFile(url.pathname)
+      if (found?.redirect) {
+        res.writeHead(302, { Location: found.redirect + url.search })
+        return res.end()
+      }
+      if (found) return send(res, 200, fs.readFileSync(found.file), MIME[path.extname(found.file)])
     }
     return send(res, 404, '{"error":"not found"}')
   } catch (err) {
@@ -1472,14 +1865,15 @@ const notifySelf = (method, params) => {
 // Set while a link to the hub stands: drops it and links again.
 let relink = () => {}
 let misses = 0
+// True once a hub of its own has greeted this spoke: from then on the port is the hub's to keep.
+let dedicated = false
 
-async function hubPost(route, body, ms = HUB_TIMEOUT, again = true) {
+const hubPost = (route, body, ms) => hubFetch(route, { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: selfId, instance: INSTANCE, ...body }) }, ms)
+
+async function hubFetch(route, init, ms = HUB_TIMEOUT, again = true) {
   let res, out
   try {
-    res = await fetch(`http://127.0.0.1:${PORT}${route}`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json', 'x-board-token': TOKEN },
-      body: JSON.stringify({ id: selfId, instance: INSTANCE, ...body }), signal: AbortSignal.timeout(ms),
-    })
+    res = await fetch(`http://127.0.0.1:${PORT}${route}`, { method: 'POST', ...init, headers: { ...init.headers, 'x-board-token': TOKEN }, signal: AbortSignal.timeout(ms) })
     out = await res.json()
   } catch (err) {
     if (err.name === 'TimeoutError') throw new Error(`the board did not answer within ${Math.round(ms / 1000)} s; the call may or may not have gone through, so check (e.g. with list_cards) before repeating it`)
@@ -1491,7 +1885,7 @@ async function hubPost(route, body, ms = HUB_TIMEOUT, again = true) {
     throw new Error(RETRY)
   }
   // The token was rotated while the link stood; the file has the new one.
-  if (res.status === 403 && again && adoptToken()) return hubPost(route, body, ms, false)
+  if (res.status === 403 && again && adoptToken()) return hubFetch(route, init, ms, false)
   if (!res.ok) throw new Error(out?.error ?? 'the board refused the request')
   return out
 }
@@ -1523,8 +1917,9 @@ function becomeHub() {
   const takeover = selfId != null
   links.clear()
   state = load(slug(SELF.name))
-  reservedUntil = takeover ? Date.now() + 3000 : 0
-  selfId = register({ ...SELF, id: selfId }, { instance: INSTANCE, strict: true, send: notifySelf })
+  // A hub of its own usually starts while sessions are running that were linked to the hub before it.
+  reservedUntil = takeover || HUB_ONLY ? Date.now() + 3000 : 0
+  if (!HUB_ONLY) selfId = register({ ...SELF, id: selfId }, { instance: INSTANCE, strict: true, send: notifySelf })
   state.hub = selfId
   commit()
   flush(selfId)
@@ -1534,7 +1929,7 @@ function becomeHub() {
   if (!cleaning) setInterval(purge, 6 * 3600000).unref()
   cleaning = true
   writeLinks()
-  console.error(`[board] hub on ${HOST}:${PORT} as "${selfId}", links in ${path.join(DATA, 'url.txt')}${process.env.BOARD_ADMIN_TOKEN ? '' : `, admin key in ${ADMIN_FILE}`}`)
+  console.error(`[board] hub on ${HOST}:${PORT} ${HUB_ONLY ? 'without a session of its own' : `as "${selfId}"`}, links in ${path.join(DATA, 'url.txt')}${process.env.BOARD_ADMIN_TOKEN ? '' : `, admin key in ${ADMIN_FILE}`}`)
 }
 
 // Someone else has the port: link to them and stay linked. If the link drops,
@@ -1550,7 +1945,7 @@ function joinHub() {
     setUp(false)
     req.destroy()
     // Quick while a takeover is likely, slower when the port is held by something that will not link.
-    setTimeout(start, (misses++ > 3 ? 2000 : 150) + Math.random() * 500)
+    setTimeout(dedicated ? joinHub : start, (misses++ > 3 ? 2000 : 150) + Math.random() * 500)
   }
   // Silence means the hub is gone or stuck, even if the connection still looks open.
   const expect = ms => {
@@ -1579,6 +1974,7 @@ function joinHub() {
         try { msg = JSON.parse(frame.slice(6)) } catch { return retry() }
         if (msg.hello) {
           selfId = msg.hello
+          dedicated = msg.dedicated === true
           misses = 0
           // A hub running an older server.mjs sends no pings; then only a closed connection counts.
           beat = Number(msg.ping) || 0
@@ -1603,6 +1999,8 @@ function start() {
   const failed = err => {
     httpServer.off('listening', listening)
     if (err.code !== 'EADDRINUSE') console.error(`[board] http error: ${err.message}`)
+    // With no agent to speak for there is nothing to link; wait for the port instead.
+    if (HUB_ONLY) return setTimeout(start, 200)
     joinHub()
   }
   const listening = () => {
@@ -1617,7 +2015,9 @@ function start() {
 start()
 
 // Claude Code owns this process: when it closes the pipe, stop serving too.
-process.stdin.on('end', () => process.exit(0))
-process.stdin.on('close', () => process.exit(0))
-
-await mcp.connect(new StdioServerTransport())
+// A hub of its own has no Claude Code and runs until it is stopped.
+if (!HUB_ONLY) {
+  process.stdin.on('end', () => process.exit(0))
+  process.stdin.on('close', () => process.exit(0))
+  await mcp.connect(new StdioServerTransport())
+}

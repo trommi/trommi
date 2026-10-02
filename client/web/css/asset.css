@@ -1,0 +1,48 @@
+/* The viewer for a published asset. Colours from tokens.css only; no font is
+   loaded from elsewhere, because this page may load nothing but its own files. */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { height: 100%; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; display: flex; flex-direction: column; min-height: 100dvh;
+  background: var(--bg); color: var(--fg);
+  font: 15px/1.55 var(--font); -webkit-font-smoothing: antialiased;
+}
+h1, p { margin: 0; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.as-head, .as-foot { padding-inline: max(var(--s-5), env(safe-area-inset-left, 0px)) max(var(--s-5), env(safe-area-inset-right, 0px)); }
+.as-head { padding-top: var(--s-5); padding-bottom: var(--s-4); }
+/* Small caps over a heavy title, as on the board. */
+.as-mark { font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--faint); }
+.as-mark span { color: var(--accent); margin-left: var(--s-2); }
+.as-head h1 { margin-top: var(--s-2); font: 800 clamp(1.5rem, 3.4vw, 2.2rem)/1.1 var(--display); letter-spacing: -.02em; overflow-wrap: anywhere; text-wrap: balance; }
+.as-meta { margin-top: var(--s-1); font-size: var(--t-sm); color: var(--muted); }
+.as-link { color: var(--accent); font-weight: 600; text-decoration: none; }
+.as-link:hover { text-decoration: underline; }
+
+.as-stage { flex: 1; min-height: 0; display: flex; flex-direction: column; padding: 0 max(var(--s-5), env(safe-area-inset-right, 0px)) 0 max(var(--s-5), env(safe-area-inset-left, 0px)); }
+/* The published page gets the room: a sheet with a hairline, edge to edge on a phone. */
+.as-frame { flex: 1; width: 100%; min-height: 60dvh; border: 0; border-radius: var(--r-sm); background: #fff; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
+.as-media { display: block; max-width: 100%; max-height: 78dvh; margin: 0 auto; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line); }
+audio.as-media { width: min(100%, 560px); box-shadow: none; margin-top: var(--s-8); }
+video.as-media { background: #000; }
+
+.as-file, .as-problem { align-self: flex-start; max-width: 560px; padding: var(--s-5) var(--s-6); border-radius: var(--r-sm); background: var(--surface); }
+.as-file { display: grid; gap: var(--s-2); justify-items: start; box-shadow: 0 0 0 1px var(--line-strong); }
+.as-file-name { font: 500 var(--t-md)/1.3 var(--mono); overflow-wrap: anywhere; }
+/* Dashed, because nothing was opened. */
+.as-problem { border: 1.5px dashed var(--line-strong); color: var(--muted); font-size: var(--t-lg); text-wrap: pretty; }
+.as-btn {
+  display: inline-flex; align-items: center; min-height: 44px; margin-top: var(--s-2); padding: 0 1.3em; border-radius: var(--r-pill);
+  background: var(--fg); color: var(--bg); font-weight: 600; text-decoration: none;
+}
+
+.as-foot { padding-top: var(--s-3); padding-bottom: max(var(--s-4), env(safe-area-inset-bottom, 0px)); font-size: var(--t-xs); color: var(--faint); max-width: 900px; text-wrap: pretty; }
+.as-error { padding: var(--s-5); color: var(--urg-critical); }
+
+@media (max-width: 600px) {
+  .as-stage[data-type="html"] { padding-inline: 0; }
+  .as-frame { border-radius: 0; }
+}
