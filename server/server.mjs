@@ -398,6 +398,7 @@ const mcp = new Server(
       'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
       'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and ideally a one-line detail naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
+      'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'The human sees one card at a time, the top of the stack; urgency decides the order (most urgent first, then oldest first), so set it honestly on every card.',
       'critical: you are blocked and nothing else can proceed. high: it blocks your current task, but you have other work. normal (default): needed soon, nothing waits on it yet. low: nice to know, no work depends on it.',
       'For high and critical, give an urgency_reason: one short phrase, in the human\'s language, saying what is waiting. If everything is urgent, nothing is; most cards are normal.',
@@ -465,6 +466,7 @@ const TOOLS = [
           description: 'Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know',
         },
         urgency_reason: { type: 'string', description: 'What is waiting on this, one short phrase; expected for high and critical' },
+        recommended: { type: 'string', description: 'The key of the option you would pick yourself. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference.' },
       },
       required: ['title', 'options'],
     },
@@ -591,7 +593,10 @@ function runTool(agent, name, args) {
         throw new Error('options need at least two entries with unique keys')
       }
       const urgency = urgencyArg(args.urgency, 'normal')
+      const recommended = args.recommended == null ? null : String(args.recommended)
+      if (recommended != null && !keys.has(recommended)) throw new Error(`recommended must be the key of one of the options; got "${recommended}"`)
       const card = addCard(agent, 'decision', {
+        recommended,
         urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
         title: String(args.title ?? ''), body: String(args.body ?? ''),
         options, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),

@@ -90,3 +90,14 @@
 .media video { display: block; width: 100%; max-height: min(60vh, 480px); border-radius: var(--r-md); background: #000; }
 .media audio { display: block; width: 100%; }
 .media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The agent's advice: the option it would pick is circled by hand, two strokes that do not quite meet. */
+.is-advised { position: relative; }
+.is-advised::before, .is-advised::after { content: ""; position: absolute; top: 7%; bottom: 5%; border: 2.500px solid var(--advice, var(--urg-high)); pointer-events: none; rotate: -3deg; }
+.is-advised::before { left: 5%; right: 46%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
+.is-advised::after { left: 34%; right: 4%; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
+.inbox-answer.is-lead.is-advised, .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 70%, white); }
+.focus-opt.is-advised { --advice: var(--urg-high); }
+.focus-opt.is-advised::before, .focus-opt.is-advised::after { top: -6px; bottom: -8px; }
+.focus-opt.is-advised::before { left: -6px; }
+.focus-opt.is-advised::after { right: -8px; }

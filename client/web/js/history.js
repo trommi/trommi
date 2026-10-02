@@ -1,21 +1,12 @@
-// Past decisions, as a section below a session's open questions that unfolds in place.
-// Two groups: "In Arbeit" (status decided) and "Erledigt" (status done). The two
-// tabs in the bar choose which one is listed; there is one column, nothing beside it.
+// Past decisions, below a session's open questions: one plain list, newest first,
+// what the agent is still working on before what is done. A line per card; a tap
+// unfolds what was asked, what was chosen, and the way to decide again.
 
 import { el, agoNode, URGENCY_LABEL } from './ui.js'
 import { reopen } from './store.js'
 import { icon, attachmentNodes, richPlus } from './chat.js'
 
-const GROUPS = [
-  { key: 'decided', name: 'In Arbeit', lead: 'Entschieden, der Agent setzt es um', none: 'Gerade ist nichts in Arbeit.' },
-  { key: 'done', name: 'Erledigt', lead: 'Abgeschlossen, mit Ergebnis', none: 'Noch nichts erledigt.' },
-]
-
-function button(cls) {
-  const node = el('button', cls)
-  node.type = 'button'
-  return node
-}
+const SHORT = 6   // so many lines stand open to view; the rest wait behind one button
 
 const chosen = card => card.options?.find(o => o.key === card.choice)
 
@@ -34,23 +25,26 @@ function detailNode(card) {
     text.append(el('b', null, o.label))
     if (o.detail) text.append(el('span', null, o.detail))
     li.append(mark, text)
-    if (picked) li.append(el('span', 'hist-picked', 'Gewählt'))
     list.append(li)
   }
   if (list.children.length) box.append(list)
 
-  if (card.note) {
-    const note = el('p', 'hist-quote')
-    note.append(el('span', 'caps', 'Deine Anmerkung'), el('span', null, card.note))
-    box.append(note)
+  const quote = (label, text) => {
+    const p = el('p', 'hist-quote')
+    p.append(el('span', 'caps', label), el('span', null, text))
+    box.append(p)
   }
-  if (card.summary) {
-    const sum = el('p', 'hist-quote hist-result')
-    sum.append(el('span', 'caps', 'Ergebnis'), el('span', null, card.summary))
-    box.append(sum)
-  }
+  if (card.note) quote('Deine Anmerkung', card.note)
+  if (card.summary) quote('Ergebnis', card.summary)
 
-  // A mistake is fixed here: the card goes back on the stack and the agent is told.
+  // When it was asked and answered, and the way back: the card returns to the open
+  // questions and the agent is told.
+  const foot = el('p', 'hist-foot')
+  const when = el('span', 'hist-times')
+  when.append('Gefragt ', agoNode(card.created))
+  if (card.decided) when.append(' · entschieden ', agoNode(card.decided))
+  when.append(' · ', card.kind === 'permission' ? 'Freigabe' : URGENCY_LABEL[card.urgency] ?? '')
+  foot.append(when)
   if (card.kind === 'decision' && card.choice != null) {
     const again = el('button', 'hist-reopen', 'Neu entscheiden')
     again.type = 'button'
@@ -64,24 +58,9 @@ function detailNode(card) {
         fail.textContent = `Nicht zurückgenommen: ${err.message}`
       }
     })
-    const row = el('p', 'hist-reopen-row')
-    row.append(again, fail)
-    box.append(row)
+    foot.append(fail, again)
   }
-
-  const meta = el('dl', 'hist-meta')
-  const cell = (term, value) => {
-    const c = el('div')
-    const dd = el('dd')
-    dd.append(value)
-    c.append(el('dt', null, term), dd)
-    meta.append(c)
-  }
-  cell('Gefragt', agoNode(card.created))
-  if (card.decided) cell('Entschieden', agoNode(card.decided))
-  if (card.kind === 'permission') cell('Art', 'Freigabe')
-  else if (URGENCY_LABEL[card.urgency]) cell('Dringlichkeit', URGENCY_LABEL[card.urgency])
-  box.append(meta)
+  box.append(foot)
   return box
 }
 
@@ -90,18 +69,18 @@ function rowNode(card, expanded, onToggle) {
   row.dataset.card = card.id
   row.dataset.status = card.status
 
-  const head = button('hist-head')
-  const tab = el('span', 'hist-tab')
-  const pick = el('span', 'hist-tab-pick')
+  const head = el('button', 'hist-head')
+  head.type = 'button'
+  const pick = el('span', 'hist-pick')
   if (card.choice != null) pick.append(icon('check'))
-  pick.append(el('span', null, chosen(card)?.label ?? card.choice ?? 'Ohne Antwort'))
-  tab.append(el('b', null, `Nr. ${card.number}`), pick)
+  pick.append(chosen(card)?.label ?? card.choice ?? 'Ohne Antwort')
+  // One line under the title: the answer, then what became of it.
+  const sub = el('span', 'hist-sub')
+  const outcome = card.status === 'done' ? card.summary || 'erledigt' : 'in Arbeit'
+  sub.append(pick, el('span', null, outcome))
   const when = el('span', 'hist-when')
   when.append(agoNode(card.decided ?? card.created), icon('chevron'))
-  const sub = card.status === 'done'
-    ? card.summary || 'Abgeschlossen'
-    : card.note ? `„${card.note}“` : 'Der Agent arbeitet daran.'
-  head.append(tab, when, el('span', 'hist-title', card.title), el('span', 'hist-sub', sub))
+  head.append(el('span', 'hist-nr', `Nr. ${card.number}`), el('span', 'hist-title', card.title), when, sub)
 
   const detail = el('div', 'hist-detail')
   const clip = el('div', 'hist-detail-clip')
@@ -125,126 +104,61 @@ function rowNode(card, expanded, onToggle) {
 /**
  * Render the history into root. Returns
  *   render(state, loaded)
- *   reveal(cardId): unfold the history on that card and highlight it; false if the card is not in the history
+ *   reveal(cardId): unfold that card's line and highlight it; false if the card is not in the history
  */
 export function mountHistory(root, { flags = new Set() } = {}) {
-  let open = false
-  let active = null               // group key shown as a list; null until there is data to choose from
   let cards = []
+  let lastState = null
+  let all = false                 // every line is listed, not only the first few
   const expanded = new Set()
   const rows = new Map()          // card id -> { sig, node }; unchanged cards keep their node
 
-  const sheet = el('div', 'hist-sheet')
-  const bar = el('div', 'hist-bar')
-  const label = el('span', 'hist-label')
-  label.append(icon('history'), el('span', null, 'Verlauf'))
-  const tabs = el('div', 'hist-tabs')
-  tabs.setAttribute('role', 'tablist')
-  const toggle = button('hist-toggle')
-  toggle.append(icon('chevron'))
-  const body = el('div', 'hist-body')
-  body.id = 'history-body'
-  toggle.setAttribute('aria-controls', body.id)
-  const panes = el('div', 'hist-panes')
-  body.append(panes)
-
-  const parts = {}
-  for (const g of GROUPS) {
-    const tab = button('hist-group-tab')
-    tab.dataset.group = g.key
-    tab.setAttribute('role', 'tab')
-    const count = el('b', null, '·')
-    tab.append(count, el('span', null, g.name))
-    tab.addEventListener('click', e => {
-      e.stopPropagation()
-      if (open && active === g.key) return setOpen(false)
-      active = g.key
-      setOpen(true)
-    })
-    tabs.append(tab)
-
-    const pane = el('div', 'hist-pane')
-    pane.dataset.group = g.key
-    pane.setAttribute('role', 'tabpanel')
-    pane.setAttribute('aria-label', g.name)
-    const lead = el('p', 'hist-lead', g.lead)
-    const list = el('div', 'hist-list')
-    pane.append(lead, list)
-    parts[g.key] = { tab, count, pane, list, lead }
-  }
-  panes.append(parts.decided.pane, parts.done.pane)
-  bar.append(label, tabs, toggle)
-  sheet.append(bar, body)
-  root.append(sheet)
-
-  function paint() {
-    root.dataset.open = String(open)
-    body.inert = !open
-    toggle.setAttribute('aria-expanded', String(open))
-    toggle.setAttribute('aria-label', open ? 'Verlauf schließen' : 'Verlauf öffnen')
-    const shown = active ?? 'decided'
-    for (const g of GROUPS) {
-      const p = parts[g.key]
-      const on = g.key === shown
-      p.tab.setAttribute('aria-selected', String(open && on))
-      p.pane.hidden = !on
-    }
-  }
-  function setOpen(value) {
-    open = value
-    paint()
-  }
-  toggle.addEventListener('click', e => { e.stopPropagation(); setOpen(!open) })
-  bar.addEventListener('click', () => setOpen(!open))
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && open && !document.querySelector('dialog[open]')) setOpen(false)
-  })
+  // The heading is a divider, like the senders' names in the inbox.
+  const heading = el('h3', 'hist-heading')
+  const count = el('b')
+  heading.append(el('span', null, 'Verlauf'), count)
+  const list = el('div', 'hist-list')
+  const more = el('button', 'hist-more')
+  more.type = 'button'
+  more.addEventListener('click', () => { all = true; render(lastState, true) })
+  root.append(heading, list, more)
+  root.hidden = true
 
   function render(state, loaded) {
-    if (!loaded) return paint()
+    if (!loaded) return
+    lastState = state
     cards = state.cards
-    // Nothing answered yet: no heading for an empty history.
-    root.hidden = !cards.some(c => c.status !== 'open')
-    const seen = new Set()
-    for (const g of GROUPS) {
-      const p = parts[g.key]
-      const list = cards.filter(c => c.status === g.key).sort((a, b) => (b.decided ?? b.created) - (a.decided ?? a.created))
-      p.count.textContent = list.length
-      p.tab.classList.toggle('is-zero', list.length === 0)
-      const nodes = list.map(card => {
-        seen.add(card.id)
-        const sig = JSON.stringify(card)
-        const cached = rows.get(card.id)
-        if (cached?.sig === sig) return cached.node
-        const node = rowNode(card, expanded.has(card.id), (id, on) => on ? expanded.add(id) : expanded.delete(id))
-        rows.set(card.id, { sig, node })
-        return node
-      })
-      if (!nodes.length) {
-        const none = el('div', 'hist-none')
-        none.append(icon(g.key === 'done' ? 'done' : 'spark'), el('p', null, g.none))
-        if (!cards.some(c => c.status !== 'open')) none.append(el('p', 'hist-none-more', 'Sobald du eine Karte beantwortest, erscheint sie hier.'))
-        nodes.push(none)
-      }
-      p.lead.hidden = list.length === 0
-      const same = p.list.children.length === nodes.length && nodes.every((n, i) => p.list.children[i] === n)
-      if (!same) p.list.replaceChildren(...nodes)
-    }
-    for (const id of rows.keys()) if (!seen.has(id)) rows.delete(id)
-    // First data: show the group that has something in it, work in progress first.
-    if (active == null) active = cards.some(c => c.status === 'decided') || !cards.some(c => c.status === 'done') ? 'decided' : 'done'
-    paint()
+    // Still in the works first, then what is done; within each the latest answer first.
+    const past = cards.filter(c => c.status !== 'open')
+      .sort((a, b) => (a.status === 'done') - (b.status === 'done') || (b.decided ?? b.created) - (a.decided ?? a.created))
+    root.hidden = !past.length
+    const busy = past.filter(c => c.status === 'decided').length
+    count.textContent = [busy && `${busy} in Arbeit`, past.length - busy && `${past.length - busy} erledigt`].filter(Boolean).join(' · ')
+    const shown = all ? past : past.slice(0, SHORT)
+    const nodes = shown.map(card => {
+      const sig = JSON.stringify(card)
+      const cached = rows.get(card.id)
+      if (cached?.sig === sig) return cached.node
+      const node = rowNode(card, expanded.has(card.id), (id, on) => on ? expanded.add(id) : expanded.delete(id))
+      rows.set(card.id, { sig, node })
+      return node
+    })
+    const keep = new Set(shown.map(c => c.id))
+    for (const id of rows.keys()) if (!keep.has(id)) rows.delete(id)
+    const same = list.children.length === nodes.length && nodes.every((n, i) => list.children[i] === n)
+    if (!same) list.replaceChildren(...nodes)
+    more.hidden = shown.length === past.length
+    more.textContent = `Alle ${past.length} zeigen`
   }
 
   function reveal(cardId) {
     const card = cards.find(c => c.id === cardId)
-    const entry = rows.get(cardId)
-    if (!card || !entry || card.status === 'open') return false
-    active = card.status
-    setOpen(true)
-    const row = entry.node
+    if (!card || card.status === 'open') return false
+    if (!rows.has(cardId)) { all = true; render(lastState, true) }
+    const row = rows.get(cardId)?.node
+    if (!row) return false
     if (!row.classList.contains('is-open')) row.querySelector('.hist-head').click()
-    // Wait for the section to be laid out at its open size before scrolling to the row.
+    // Wait for the pane to be laid out before scrolling to the line.
     setTimeout(() => {
       row.scrollIntoView({ block: 'center', behavior: 'smooth' })
       row.classList.remove('is-flash')
@@ -254,20 +168,16 @@ export function mountHistory(root, { flags = new Set() } = {}) {
     return true
   }
 
-  // ---- states for screenshots ----
+  // ---- state for screenshots: #expand unfolds the first line ----
   let staged = false
   function stage() {
-    if (staged || !cards.length) return
+    if (staged || !list.firstChild || !flags.has('expand')) return
     staged = true
-    if (flags.has('history-done')) active = 'done'
-    if (flags.has('history') || flags.has('history-done') || flags.has('expand')) setOpen(true)
-    if (flags.has('expand')) parts[active].list.querySelector('.hist-head')?.click()
+    list.querySelector('.hist-head')?.click()
   }
 
-  paint()
   return {
     render(state, loaded) { render(state, loaded); stage() },
     reveal,
-    close: () => setOpen(false),
   }
 }

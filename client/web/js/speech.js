@@ -37,7 +37,6 @@ export function readCard(cardId, button) {
 }
 
 export const stopReading = stopSpeaking
-export const readingCard = () => speaking?.cardId ?? null
 
 // ---- dictation -------------------------------------------------------------
 

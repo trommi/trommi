@@ -302,6 +302,12 @@ assert.equal((await state()).messages.some(m => m.text === 'x'), false)
 assert.equal(fs.statSync(path.join(data, 'state.json')).mode & 0o077, 0)
 assert.deepEqual(fs.readdirSync(data).filter(f => f.includes('.tmp')), [])
 
+// the agent's advice travels with the card and must name a real option
+const advised = await ask('mit Empfehlung', { recommended: 'b' })
+assert.equal((await state()).cards.find(c => c.id === advised).recommended, 'b')
+await refused('create_decision', { title: 'x', options: [option('a'), option('b')], recommended: 'zzz' }, /recommended must be/)
+await call('withdraw_card', { card_id: advised })
+
 // taking an answer back: the card returns to the stack and the agent hears about it
 const redo = await ask('zum Zurücknehmen', {})
 assert.equal((await post('/reopen', { card_id: redo })).status, 400, 'open cards cannot be reopened')
@@ -387,13 +393,13 @@ received.length = 0
 // the stack and the numbering survive a restart
 const saved = JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8'))
 assert.deepEqual(saved.queue, [low, high, normal2])
-assert.equal(saved.next_number, 13)
+assert.equal(saved.next_number, 14)
 await client.close()
 client = await start()
 assert.deepEqual((await state()).queue, [low, high, normal2])
 const late = await ask('nach dem Neustart', { urgency: 'high' })
 s = await state()
-assert.equal(s.cards.at(-1).number, 13)
+assert.equal(s.cards.at(-1).number, 14)
 assert.deepEqual(s.queue, [low, high, late, normal2])
 
 // several agents on one board: the first process is the hub, the others link to it
