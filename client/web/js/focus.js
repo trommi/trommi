@@ -2243,6 +2243,7 @@ export function mountFocus({ onDecided } = {}) {
   }
   /** Make a card the one in front without moving anything: it was tapped, typed in, or answered. */
   function claim(rec) {
+    pendingJump = null   // the human chose a card: a card on its way back does not take the front from it
     if (!inList() || rec === shown || recs.get(rec.id) !== rec) return
     current = rec.id
     present('scroll')
@@ -2262,6 +2263,7 @@ export function mountFocus({ onDecided } = {}) {
       if (r.bottom > line) break
     }
     if (!best || best === current) return
+    pendingJump = null
     current = best
     present('scroll')
     paintChrome()
@@ -2553,6 +2555,13 @@ export function mountFocus({ onDecided } = {}) {
   }, true)
   // While a picture is enlarged, the window's keys rest.
   const key = act => (arg, e) => (zoom ? false : act(arg, e))
+  /** Is the card in front really the one in sight? A key that cannot be taken back lightly acts only then. */
+  const inSight = rec => {
+    if (!rec?.node.isConnected) return false
+    if (!inList()) return true
+    const r = rec.node.getBoundingClientRect(), f = stage.getBoundingClientRect()
+    return Math.min(r.bottom, f.bottom) - Math.max(r.top, f.top) >= Math.min(r.height, f.height) * .4
+  }
   // In the time machine the arrows step through the versions, and nothing answers.
   function stepVersion(by) {
     const all = [...shown.card.versions.map(v => v.n), shown.card.version ?? shown.card.versions.at(-1).n + 1]
@@ -2592,10 +2601,10 @@ export function mountFocus({ onDecided } = {}) {
       'focus.back': key(() => { const last = strips.findLast(x => x.back); if (inList() && last) last.back(); else backNow() }),
       'focus.explain': key(() => explain()),
       'focus.handback': key(() => handBack()),
-      'focus.shred': key(() => { if (!shown?.askNode) return false; shredIt(shown) }),
+      'focus.shred': key(() => { if (!shown?.askNode || !inSight(shown)) return false; shredIt(shown) }),
       'focus.draw': key(() => { if (!shown?.marksUi) return false; shown.marksUi.setPen(!shown.marksUi.penOn()) }),
       'focus.note': key(ask),   // a general note is written in Discuss
-      'focus.trust': key(() => { if (!shown?.trustBtn) return false; trustIt(shown) }),
+      'focus.trust': key(() => { if (!shown?.trustBtn || !inSight(shown)) return false; trustIt(shown) }),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
       'focus.pick': key(n => {
         const btn = shown?.optButtons[n - 1]

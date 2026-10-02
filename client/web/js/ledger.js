@@ -113,6 +113,8 @@ function mountLedger(root) {
     const note = card.kind === 'decision' ? say(pageHost(), { head: `Answered: ${option.label}`, title: card.title, back: () => reopen(card.id), ms: 8000 }) : null
     try {
       await decide(card.id, option.key)
+      // The board has it: "Back" may be pressed at once (the note's own short rest is for a second tap in a list).
+      if (note) delete note.node.dataset.fresh
     } catch (err) {
       note?.stop()
       for (const b of buttons) b.disabled = false
@@ -229,13 +231,41 @@ function mountLedger(root) {
     if (s.open) acts.append(icon('tray', 'Its questions, one after the other', () => walk(a.id)))
     if (!group && all.agents.length > 1) acts.append(icon('heads', 'Lay together with…', () => togglePair(a.id)))
     if (!a.online) acts.append(icon('archive', 'Archive: put this session away', () => act(archive(a.id))))
-    // A phone's line only opens the session; renaming it has a small control of its own there.
-    const edit = icon('pen', `Rename ${a.name}`, () => openEditor(a))
-    edit.classList.add('ledger-edit')
-    acts.append(edit)
+    // A phone's line only opens the session; what else can be done with it is behind "…" there.
+    const more = button('ledger-ib ledger-menu', '…')
+    more.title = `More: ${a.name}`
+    more.setAttribute('aria-label', `More for ${a.name}: rename, drawing, crown, group, archive`)
+    more.setAttribute('aria-haspopup', 'dialog')
+    more.addEventListener('click', e => { e.stopPropagation(); openSheet(a, group, mark) })
+    acts.append(more)
 
     row.append(grip, face, name, state, does, cell(a.model), cell(a.host), cell(a.online ? 'now' : ago(a.seen ?? a.joined ?? Date.now())), acts)
     return row
+  }
+
+  // ---- a phone's sheet for one line: everything the wide line offers beside it ----
+  let sheet = null
+  function openSheet(a, group, mark) {
+    sheet?.remove()
+    const dialog = sheet = el('dialog', 'ledger-sheet')
+    dialog.setAttribute('aria-label', `Actions for ${a.name}`)
+    const item = (label, run) => {
+      const b = button('ledger-sheet-item', label)
+      b.addEventListener('click', () => { dialog.close(); run() })
+      return b
+    }
+    dialog.append(el('h3', null, a.name), item('Open the conversation', () => go(a.id)), item('Rename', () => openEditor(a)), item('Choose a drawing', () => openMarkPicker(a, mark)),
+      item(a.starred ? 'Take the crown off' : 'Crown it (VIP)', () => act(star(a.id, !a.starred))))
+    if (group) dialog.append(item(`Take out of the group with ${group.members.filter(m => m.id !== a.id).map(m => m.name).join(' + ')}`, () => act(unpair(a.id))))
+    else if (last.all.agents.length > 1) dialog.append(item('Lay together with…', () => togglePair(a.id)))
+    if (!a.online) dialog.append(item('Archive', () => act(archive(a.id))))
+    const close = button('ledger-sheet-item is-close', 'Close')
+    close.addEventListener('click', () => dialog.close())
+    dialog.append(close)
+    dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
+    dialog.addEventListener('close', () => dialog.remove())
+    document.body.append(dialog)
+    dialog.showModal()
   }
 
   let signature = ''

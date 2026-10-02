@@ -27,6 +27,15 @@ const readLater = () => {
   return Array.isArray(list) ? list.filter(e => Array.isArray(e) && typeof e[0] === 'string') : []
 }
 let later = readLater()
+// Snooze lives on the hub (POST /snooze; card.snoozed_until), the same on every device. What this page
+// has asked for and the hub's state does not show yet: card id -> true (put off) | false (called back).
+const snoozing = new Map()
+const isSnoozed = c => c.status === 'open' && (snoozing.has(c.id) ? snoozing.get(c.id) : Boolean(c.snoozed_until))
+const snooze = (id, off) => {
+  snoozing.set(id, off)
+  post('/snooze', off ? { card_id: id } : { card_id: id, clear: true }).catch(() => { snoozing.delete(id); emit() })
+}
+let waitedBefore = null, snoozedBefore = 0   // to see the moment the rest is done
 
 // Groups and the archive belong to the server (agent.group, agent.archived): every browser sees the
 // same pairs and the same shelf. What an older version of this page kept for itself is cleared away.
@@ -118,7 +127,28 @@ function derive() {
     const answered = (id, since) => since && ((open.get(id)?.revised ?? 0) > since || raw.messages.some(m => m.card_id === id && m.from !== 'user' && m.from !== 'event' && m.ts > since))
     const kept = later.filter(([id, rank, asked]) => open.has(id) && (URGENCY_RANK[open.get(id).urgency] ?? 1) <= rank && !answered(id, asked))
     if (kept.length !== later.length) { later = kept; write(LATER_KEY, later) }
+    // What an older version of this page put off in this browser alone goes to the hub, once.
+    const local = later.filter(([, , asked]) => !asked)
+    if (local.length) {
+      later = later.filter(([, , asked]) => asked)
+      write(LATER_KEY, later)
+      for (const [id] of local) if (open.get(id)?.kind !== 'permission' && !open.get(id)?.snoozed_until) snooze(id, true)
+    }
+    // The hub has caught up with what was asked for here.
+    for (const [id, off] of snoozing) { const c = open.get(id); if (!c || Boolean(c.snoozed_until) === off) snoozing.delete(id) }
+    // "When the rest is done": the last waiting card was answered and snoozed ones remain, so they come
+    // back. (Not when the desk was emptied by snoozing its last card: that one stays put off.)
+    const put = raw.cards.filter(isSnoozed)
+    const waiting = raw.queue.filter(id => open.has(id) && !open.get(id).with_agent && !isSnoozed(open.get(id)) && !later.some(([l]) => l === id)).length
+    if (!waiting && put.length && (waitedBefore == null || (waitedBefore > 0 && put.length <= snoozedBefore))) for (const c of put) snooze(c.id, false)
+    waitedBefore = waiting
+    snoozedBefore = raw.cards.filter(isSnoozed).length
   }
+  // A snoozed card is out of the hub's queue; the views list it with the open ones, at the end, and
+  // tell it apart by state.later. So it is put back into the line they are given.
+  const put = raw.cards.filter(isSnoozed).sort((a, b) => (a.snoozed_at ?? Infinity) - (b.snoozed_at ?? Infinity)).map(c => c.id)
+  const called = raw.cards.filter(c => c.status === 'open' && snoozing.get(c.id) === false).map(c => c.id)
+  const all = { ...raw, queue: [...raw.queue, ...[...put, ...called].filter(id => !raw.queue.includes(id))] }
   const cards = raw.cards.filter(mine)
   const ids = new Set(cards.map(c => c.id))
   // Which cards are with their session is the hub's knowledge (card.with_agent), the same on every device; what this
@@ -128,16 +158,16 @@ function derive() {
     agents: raw.agents,
     messages: members.length ? raw.messages.filter(mine) : [],
     cards,
-    queue: raw.queue.filter(id => ids.has(id)),
+    queue: all.queue.filter(id => ids.has(id)),
     tasks: raw.tasks.filter(mine),
     speech: raw.speech,
     scope,
     members,
     group,
-    later: [...later.map(([id]) => id), ...withAgent],
+    later: [...put, ...later.map(([id]) => id).filter(id => !put.includes(id)), ...withAgent.filter(id => !put.includes(id))],
     // Of those, the ones handed to their session (asked back, Explain, "Back to agent"): they return by themselves with its reply.
     handed: [...later.filter(([, , asked]) => asked).map(([id]) => id), ...withAgent],
-    all: raw,
+    all,
   }
 }
 
@@ -169,8 +199,11 @@ export const getState = () => view
 export function putOff(cardId, off = true, asked = false) {
   const card = raw.cards.find(c => c.id === cardId)
   later = later.filter(([id]) => id !== cardId)
-  if (off && card) later.push([cardId, URGENCY_RANK[card.urgency] ?? 1, asked ? Date.now() : 0])
+  // Asked back: this page remembers since when, to see the session's answer. Snoozed: the hub keeps it.
+  if (off && card && asked) later.push([cardId, URGENCY_RANK[card.urgency] ?? 1, Date.now()])
   write(LATER_KEY, later)
+  if (card && !asked && off) snooze(cardId, true)
+  else if (card && !off && isSnoozed(card)) snooze(cardId, false)
   emit()
 }
 // Another tab of this browser put a card off or fetched one back.

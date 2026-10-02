@@ -396,7 +396,7 @@ export function questionRow(card, { onOpen, onDecided, onGallery = null, off = f
   text.title = `${cardNr(card)}: open it as a window`
   // Under the title, one or two lines: what the card says of itself, why it is urgent, then its text.
   // The text is a part of its own: an unfolded row that shows the text in full below drops it here.
-  const about = [cardNote(card), card.urgency_reason].filter(Boolean).join(' · ')
+  const about = [cardNote(card), card.unsnoozed && !card.snoozed_until ? 'Back from snooze' : '', card.urgency_reason].filter(Boolean).join(' · ')
   const words = plain(card.body)
   const title = el('strong', 'inbox-question', card.title)
   // Who asks: the session's drawing, small, before the title (its crown on it, its name as the tooltip),
@@ -802,7 +802,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = 
     // (In a session's own list: that session's answers. One code path for the inbox and for a session.)
     const answered = all.cards.filter(c => (!agent || c.agent === agent) && c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
-    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), all.cards.filter(c => c.status === 'shredded').map(c => c.id), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
+    const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), all.cards.filter(c => c.status === 'shredded').map(c => c.id), off.map(c => c.id), state.handed, open.map(c => [c.id, c.unsnoozed, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
