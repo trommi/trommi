@@ -98,49 +98,50 @@ export function summary(all, members, later = null) {
   return { open, tasks, online, running, stuck }
 }
 
-// At work: a ring circled by hand, and a drop that travels through it as through a soft tube, so one
-// SEES that the session works. The ring stands still; the drop goes round (CSS, app.css), every ring on
-// the same clock, so a list that is rebuilt does not send its drop back to the start. Under reduced
-// motion the ring stands alone.
-const RING = { c: 16, r: 14.3, turn: 4600, lag: 150 }
-const DROP = { swell: 3.1, lead: 34, trail: 104, power: 1.2, tail: 2.1 }
-const RING_LOOP = loopPath(penSeed('working ring'), { rad: 14.55, drift: .5, jitter: .6, start: 1.1 })
-const DROP_PATH = (() => {
-  const r = penSeed('working drop')
-  const phase = [r() * 6, r() * 6, r() * 6, r() * 6]
-  // A slow unevenness along the drop, different for its outer and its inner edge.
-  const uneven = (t, k) => 1 + .06 * (Math.sin(3.1 * t + phase[k]) * .6 + Math.sin(7.3 * t + phase[k + 1]) * .4)
-  const steps = 96
-  const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
-    const deg = -DROP.trail + (DROP.trail + DROP.lead) * i / steps   // from the thickest place; ahead is clockwise
-    const t = deg * Math.PI / 180
-    // Ahead of its thickest place the drop is round like a bead; behind, it is drawn out into a tail.
-    const wave = ((1 + Math.cos(Math.PI * deg / (deg < 0 ? DROP.trail : DROP.lead))) / 2) ** (deg < 0 ? DROP.tail : DROP.power)
-    const rad = RING.r + side * DROP.swell * wave * (side > 0 ? 1 : .72) * uneven(t, side > 0 ? 0 : 2)
-    return `${(RING.c + Math.sin(t) * rad).toFixed(3)} ${(RING.c - Math.cos(t) * rad).toFixed(3)}`
+// At work: a thin ring circled by hand, and a short pen stroke that goes round it again and again, as
+// if the ring were being drawn anew each turn. The stroke tapers: three dashes of the same closed path,
+// each shorter and a little heavier than the one before, all ending at the same point, the pen's tip.
+// Every ring runs on the same clock, so a list that is rebuilt does not send its stroke back to the
+// start. Under reduced motion the ring stands still, with a small gap (CSS, app.css).
+const RING = { turn: 1900 }
+const RING_LOOP = loopPath(penSeed('working ring'), { rad: 13.6, drift: .5, jitter: .6, start: 1.1 })
+// The way the stroke takes: closed, so that it runs on without a jump, and uneven like a hand's circle.
+const RING_WAY = (() => {
+  const r = penSeed('working way'), phase = [r() * 6, r() * 6], n = 28
+  const pts = Array.from({ length: n }, (_, i) => {
+    const t = -Math.PI / 2 + i / n * Math.PI * 2
+    const rad = 13.5 + .32 * Math.sin(2 * t + phase[0]) + .22 * Math.sin(3 * t + phase[1])
+    return [16 + Math.cos(t) * rad, 16 + Math.sin(t) * rad * .975]
   })
-  return `M${edge(1).join(' L')} L${edge(-1).reverse().join(' L')} Z`
+  const mid = (a, b) => `${((a[0] + b[0]) / 2).toFixed(2)} ${((a[1] + b[1]) / 2).toFixed(2)}`
+  return `M${mid(pts[n - 1], pts[0])}` + pts.map((p, i) => ` Q${p[0].toFixed(2)} ${p[1].toFixed(2)} ${mid(p, pts[(i + 1) % n])}`).join('') + ' Z'
 })()
+const RING_STROKE = [[30, 1.15, .45], [19, 1.75, .8], [8, 2.3, 1]]   // length (of 100), width, opacity: tail to tip
 function ring() {
   const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', `0 0 ${RING.c * 2} ${RING.c * 2}`)
+  svg.setAttribute('viewBox', '0 0 32 32')
   svg.setAttribute('class', 'agent-ring')
   svg.setAttribute('aria-hidden', 'true')
   svg.style.setProperty('--ring-turn', `${RING.turn}ms`)
-  const at = -RING.turn - (Date.now() % RING.turn)
   const loop = document.createElementNS(NS, 'path')
   loop.setAttribute('class', 'ring-loop')
   loop.setAttribute('d', RING_LOOP)
-  svg.append(loop)
-  for (const lag of [0, RING.lag]) {
-    const drop = document.createElementNS(NS, 'path')
-    drop.setAttribute('class', 'ring-drop')
-    drop.setAttribute('d', DROP_PATH)
-    drop.style.animationDelay = `${at + lag}ms`
-    svg.append(drop)
+  loop.setAttribute('pathLength', '100')
+  const trace = document.createElementNS(NS, 'g')
+  trace.setAttribute('class', 'ring-drop')
+  trace.style.animationDelay = `${-(Date.now() % RING.turn)}ms`
+  for (const [len, width, opacity] of RING_STROKE) {
+    const dash = document.createElementNS(NS, 'path')
+    dash.setAttribute('d', RING_WAY)
+    dash.setAttribute('pathLength', '100')
+    dash.setAttribute('stroke-dasharray', `${len} ${100 - len}`)
+    dash.setAttribute('stroke-dashoffset', String(len))   // every dash ends at the path's start: one tip
+    dash.setAttribute('stroke-width', String(width))
+    dash.setAttribute('opacity', String(opacity))
+    trace.append(dash)
   }
+  svg.append(loop, trace)
   return svg
-
 }
 
 /** The ring alone, small, turning: for a line that says how many sessions are at work. */
@@ -171,7 +172,7 @@ export function badge({ open, online, running, stuck }, who = '', walk = null) {
   }
   else {
     const svg = ring()
-    if (!busy) for (const drop of svg.querySelectorAll('.ring-drop')) drop.remove()
+    if (!busy) svg.querySelector('.ring-drop').remove()
     node.append(svg)
     if (open) node.append(el('b', null, String(open)))
   }

@@ -32,6 +32,7 @@ import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT, cardNr } from './inbox.js'
 import { cardMarks } from './focus-marks.js'
+import { copyButton } from './cardclip.js'
 import { richPlus, attachmentNodes } from './chat.js'
 import { LATER_WORD, LATER_SKETCH, ACK_WORD, WHAT_WORD, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
@@ -883,7 +884,7 @@ export function mountFocus({ onDecided } = {}) {
     closeTwin.title = 'Close (Esc)'
     closeTwin.append(icon('close'))
     closeTwin.addEventListener('click', close)
-    ends.append(sayTwin, closeTwin)
+    ends.append(copyButton(card), sayTwin, closeTwin)
     // Writing anywhere: the card is the surface, its tools stand in its corner.
     rec.marksUi = null
     node.toggleAttribute('data-marks', writeAnywhere && !permission && !earlier)
@@ -1208,6 +1209,9 @@ export function mountFocus({ onDecided } = {}) {
     rec.optNotes = new Map(Object.entries(draft?.notes ?? {}).filter(([k]) => known.has(k)))
     rec.askText = draft?.note ?? ''
     rec.marks = draft?.marks ?? []
+    // (a general note written on the card in the earlier way moves into the field at its foot)
+    const general = rec.marks.filter(m => m.anchor?.kind === 'card' && m.text?.trim()).map(m => m.text.trim())
+    if (general.length) { rec.marks = rec.marks.filter(m => !(m.anchor?.kind === 'card' && m.text != null)); rec.askText = [rec.askText.trim(), ...general].filter(Boolean).join('\n') }
     rec.marksUi?.set(rec.marks)
     rec.draftSent = JSON.stringify(draftOf(rec))
     if (rec.askField) rec.askField.value = rec.askText
@@ -1379,14 +1383,18 @@ export function mountFocus({ onDecided } = {}) {
     const said = rec.threadNode?.querySelectorAll('.msg').length ?? 0
     const chips = [
       ...(said ? [chip('other', said === 1 ? '1 message below' : `${said} messages below`, goTo('.focus-thread'))] : []),
-      ...(versions ? [chip('timemachine', `v${card.version ?? versions.at(-1).n + 1}`, () => viewVersion(rec, rec.version == null ? versions.at(-1).n : null))] : []),
-      ...(pictures ? [chip('picture', pictures === 1 ? '1 picture' : `${pictures} pictures`, goTo('.focus-media, .focus-sec-pic'))] : []),
       ...(plays ? [chip('play', plays === 1 ? '1 to play' : `${plays} to play`, goTo('.focus-media .media'))] : []),
       ...[...links.values()].map(x => chip(x.drawing, x.label, x.href)),
       ...files.map(a => chip('clip', a.name, a.url)),
       ...(tables ? [chip('choose', tables === 1 ? 'a table' : `${tables} tables`, goTo('table'))] : []),
       ...(layouts ? [chip('page', layouts === 1 ? 'a layout' : `${layouts} layouts`, goTo('iframe'))] : []),
     ]
+    // the version is small text at the end of the line; the time machine opens from it
+    if (versions) {
+      const v = chip('timemachine', `version ${card.version ?? versions.at(-1).n + 1}`, () => viewVersion(rec, rec.version == null ? versions.at(-1).n : null))
+      v.classList.add('focus-asset-quiet')
+      chips.push(v)
+    }
     slot.hidden = !chips.length
     slot.replaceChildren(...chips)
   }
@@ -2529,6 +2537,7 @@ export function mountFocus({ onDecided } = {}) {
       'focus.leave': key((_, e) => {
         const typing = e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
         if (typing) { typing.blur(); (shown?.node ?? sheet).focus({ preventScroll: true }) }
+        else if (shown?.marksUi?.penOn()) shown.marksUi.setPen(false)   // out of drawing first
         else if (shown?.version != null) viewVersion(shown, null)   // out of the time machine first
         else close()
       }),

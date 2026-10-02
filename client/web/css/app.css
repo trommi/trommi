@@ -623,13 +623,18 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
 .agent-badge { flex: none; position: relative; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
 .agent-badge b { position: relative; }
 .agent-ring, .hand-mark { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.agent-ring { color: color-mix(in srgb, var(--fg) 46%, var(--bg)); }
-.ring-loop { fill: var(--sunken); stroke: currentColor; stroke-width: 1.5; }
-.agent-badge[data-state="running"] .agent-ring { color: color-mix(in srgb, var(--accent) 72%, var(--bg)); }
-.agent-badge[data-state="running"] .ring-loop { fill: var(--accent-soft); }
-.ring-drop { fill: currentColor; stroke: none; transform-box: view-box; transform-origin: 50% 50%; animation: agent-flow var(--ring-turn, 4600ms) cubic-bezier(.42,.2,.58,.8) infinite; }
+.agent-ring { color: color-mix(in srgb, var(--fg) 50%, var(--bg)); }
+.ring-loop { stroke: currentColor; stroke-width: 1.25; }
+/* Working: the ring itself steps back, and a short tapered stroke in the accent goes round it. The whole
+   stroke turns as one (the tip leads), eased, so each turn reads as one sweep of the pen. */
+.agent-badge[data-state="running"] .agent-ring, .agent-working .agent-ring { color: var(--accent); }
+.agent-badge[data-state="running"] .ring-loop, .agent-working .ring-loop { opacity: .38; }
+.ring-drop { stroke: currentColor; transform-box: view-box; transform-origin: 50% 50%; animation: agent-flow var(--ring-turn, 1900ms) cubic-bezier(.45,.12,.55,.88) infinite; }
 @keyframes agent-flow { to { rotate: 360deg; } }
-@media (prefers-reduced-motion: reduce) { .ring-drop { display: none; } }
+@media (prefers-reduced-motion: reduce) {
+  .ring-drop { display: none; }
+  .agent-badge[data-state="running"] .ring-loop, .agent-working .ring-loop { opacity: 1; stroke-dasharray: 91 9; }
+}
 .agent-badge[data-state="waiting"] { --hand-soft: var(--urg-critical-soft); color: var(--urg-critical); }
 .hand-mark { stroke: currentColor; }
 .agent-badge[data-state="waiting"] .agent-ring { color: var(--urg-critical); }
@@ -649,8 +654,9 @@ button.agent-badge:active { scale: .95; }
 
 /* The Desk entry says how many sessions are at work: a small turning ring and the number. */
 .agent-working { display: inline-flex; align-items: center; gap: 5px; color: var(--muted); }
-.agent-working .agent-ring { position: static; flex: none; width: 13px; height: 13px; color: color-mix(in srgb, var(--accent) 72%, var(--bg)); }
-.agent-working .ring-loop { fill: none; stroke-width: 2.6; }
+.agent-working .agent-ring { position: static; flex: none; width: 13px; height: 13px; }
+.agent-working .ring-loop { stroke-width: 2.4; }
+.agent-working .ring-drop path { stroke-width: 3.4; }
 
 /* ---- microphone and focus button ---- */
 .mic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); }
@@ -678,9 +684,9 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-circled::after { left: 32%; right: -.1em; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
 /* The way into the walk through all open questions: a plain button beside the heading's sentence, with a small arrow drawn in it. */
 .inbox-tools { display: flex; align-items: center; gap: var(--s-2); }
-.inbox-go { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px 0 16px; border: 0; border-radius: 10px; background: var(--fg); color: var(--bg); font: 600 var(--t-md)/1 var(--font); white-space: nowrap; cursor: pointer; transition: filter 100ms ease-out; }
+.inbox-go { display: inline-flex; align-items: center; gap: 6px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--fg); font: inherit; font-weight: 600; white-space: nowrap; text-decoration: underline; text-decoration-color: var(--line-strong); text-decoration-thickness: 2px; text-underline-offset: 4px; cursor: pointer; }
 .inbox-go .sketch { width: 20px; height: 20px; stroke-width: 2; transition: translate 140ms ease-out; }
-.inbox-go:hover { filter: brightness(1.2); }
+.inbox-go:hover, .inbox-go:focus-visible { text-decoration-color: currentColor; }
 .inbox-go:hover .sketch, .inbox-go:focus-visible .sketch { translate: 3px 0; }
 .inbox-go:active { scale: .98; }
 /* "agents" in the line: the way to the page of all sessions */
@@ -841,6 +847,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-tabs { position: absolute; z-index: 2; top: 0; right: 0; display: grid; justify-items: end; gap: 3px; }
 .inbox-tab-act { --nub: 26px; position: relative; height: 26px; width: max-content; max-width: var(--nub); padding: 0; border: 0; background: none; color: var(--card-ink); overflow: hidden; border-radius: 8px 0 0 8px; filter: drop-shadow(0 1px 2px rgb(20 30 25 / .10)); transition: max-width 260ms cubic-bezier(.22, .9, .25, 1), filter 260ms ease-out; }
 .inbox-tab-act:first-child { border-radius: 8px 6px 0 8px; }
+.inbox-tab-act[hidden] { display: none; }
 .inbox-tab-act:focus-visible { outline: 0; }
 .inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 100%; padding: 0 9px 0 6px; background: color-mix(in srgb, var(--card-color) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
 .inbox-later-flap .sketch { flex: none; width: 15px; height: 15px; stroke-width: 2.2; opacity: .8; }

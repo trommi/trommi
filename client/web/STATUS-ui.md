@@ -226,3 +226,16 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   again; elsewhere it sits inside the right edge, slides inward, and the tiles are set in 31 px. One CSS block, `.inbox-later`.
 - **The centre menu is compact** (244 px): jump field, a quiet project line, Agents / Help / Admin / Keys two by two, and a
   foot with the connection and two small switches (knock sound, theme).
+
+## Rings back in the sidebar, Desk head (2 Oct)
+
+- Session rows end in a hand-drawn ring again (`agents.js` `badge()`, `ring()`): the number of open questions in it;
+  while the session works a short tapered pen stroke goes round it (`.ring-drop`, 1.9 s a turn, one clock for all rings);
+  a knock is the raised hand in a red loop (`data-state="waiting"`), with the stroke still going round if the session
+  works. Idle with nothing open: no ring. Reduced motion: still ring with a small gap. The stack symbol is gone from rows.
+- The Desk entry says "N working" under its name (`.agent-working`, only when > 0; not on the phone strip).
+- Desk list: the bracket line in the sender gutter is gone, the drawing and name alone mark a run.
+- "Next, please" is inline words in the heading sentence (`.inbox-walk.inbox-go`, now inside `.inbox-title p`;
+  `.inbox-tools` is no longer rendered). Interim: proposals for its look are being prepared.
+- Since the last section also: Desk (was Inbox), Whatever (was Trust), taller cards with picture stack and age clock,
+  four edge tabs (Snooze, Revise, Whatever, Shred).

@@ -27,7 +27,7 @@ body[data-page="roster"] #ledger {
 .ledger { display: grid; user-select: none; -webkit-user-select: none; }
 .ledger-line {
   --c: var(--urg-normal);
-  position: relative; display: grid; grid-template-columns: 18px 44px minmax(0, 1.3fr) 84px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px 132px;
+  position: relative; display: grid; grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px 132px;
   align-items: center; gap: 0 var(--s-3); min-height: 56px; padding: 0 6px; border-bottom: 1px solid var(--line); outline: 0;
 }
 .ledger-line[data-urgency="high"] { --c: var(--urg-high); }
@@ -72,7 +72,7 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-state { display: inline-flex; align-items: center; gap: 6px; font-size: var(--t-sm); color: var(--muted); white-space: nowrap; }
 .ledger-state b { font-weight: 700; font-variant-numeric: tabular-nums; }
 .ledger-line[data-state="waiting"] .ledger-state { color: var(--urg-critical); }
-.ledger-line[data-state="waiting"] .bare-hand { width: 17px; height: 24px; }
+.ledger-state .agent-badge { flex: none; margin: 0; }
 .ledger-line[data-state="away"] .ledger-state, .ledger-line.is-archived .ledger-state { color: var(--faint); }
 .ledger-line[data-state="away"] .ledger-name strong { font-weight: 600; color: var(--muted); }
 .ledger-does { min-width: 0; display: flex; align-items: center; gap: 6px; }
@@ -105,11 +105,11 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-line[data-drop="pair"] { outline: 2px dashed var(--fg); outline-offset: -2px; border-radius: var(--r-sm); }
 
 @media (max-width: 1500px) {
-  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 84px minmax(0, 1.9fr) minmax(0, 104px) 88px 132px; }
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) 88px 132px; }
   .ledger-line > :nth-child(7) { display: none; }
 }
 @media (max-width: 1240px) {
-  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 84px minmax(0, 1.8fr) 132px; }
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 104px minmax(0, 1.8fr) 132px; }
   .ledger-line > :nth-child(6), .ledger-line > :nth-child(8) { display: none; }
 }
 /* ---- phone: mark, name, state and count; a tap opens ---- */

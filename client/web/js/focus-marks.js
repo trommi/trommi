@@ -98,26 +98,38 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
     return b
   }
   const penBtn = control('focus-mark-pen', 'Draw on the card (D)', 'pen', () => setPen(!pen))
+  // While the pen is in the hand the row says so, and offers the way out and a clean sheet.
+  const state = el('span', 'focus-mark-state', 'Drawing')
+  const doneBtn = el('button', 'focus-mark-done', 'Done')
+  doneBtn.type = 'button'
+  doneBtn.title = 'Stop drawing (Esc)'
+  doneBtn.addEventListener('click', () => setPen(false))
+  const clearBtn = el('button', 'focus-mark-clear', 'Clear drawing')
+  clearBtn.type = 'button'
+  clearBtn.addEventListener('click', () => { for (const m of list) if (m.strokes) m.strokes = []; changed(); paintTools() })
   const inkBtn = control('focus-mark-ink', 'The other colour', 'pen', () => { ink = (ink + 1) % INK.length; erasing = false; paintTools() })
   const rubBtn = control('focus-mark-rub', 'Eraser: rub a line away', 'no', () => { erasing = !erasing; paintTools() })
   const undoBtn = control('focus-mark-undo', 'Undo the last line', 'back', () => { const mark = list.findLast(m => m.strokes?.length); mark?.strokes.pop(); changed() })
   const controls = el('span', 'focus-mark-tools')
-  controls.append(undoBtn, rubBtn, inkBtn, penBtn)
+  controls.append(penBtn, state, undoBtn, rubBtn, inkBtn, clearBtn, doneBtn)
   function paintTools() {
     penBtn.setAttribute('aria-pressed', String(pen))
     rubBtn.setAttribute('aria-pressed', String(erasing))
     inkBtn.style.color = INK[ink]
-    inkBtn.hidden = rubBtn.hidden = undoBtn.hidden = !pen
+    inkBtn.hidden = rubBtn.hidden = undoBtn.hidden = state.hidden = doneBtn.hidden = !pen
+    // a drawing that is there can be cleared without taking the pen up first
+    clearBtn.hidden = !list.some(m => m.strokes?.length)
+    controls.toggleAttribute('data-pen', pen)
     layer.toggleAttribute('data-pen', pen)
     layer.toggleAttribute('data-rub', pen && erasing)
   }
-  function setPen(on) { pen = on; erasing = false; paintTools() }
+  function setPen(on) { pen = on; erasing = false; quill.hidden = true; paintTools() }
 
   // ── written notes ──
   const anchorOf = target => {
     const all = blocks()
     const block = all.find(b => b.contains(target))
-    if (!block || block.classList.contains('focus-title')) return { kind: 'card' }
+    if (!block || block.classList.contains('focus-title')) return null
     if (block.dataset.key) return { kind: 'option', key: block.dataset.key }
     return { kind: 'text', quote: block.textContent.trim().replace(/\s+/g, ' ').slice(0, 48) }
   }
@@ -159,7 +171,8 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
       node.grow()
     }
   }
-  function note(anchor = { kind: 'card' }) {
+  function note(anchor) {
+    if (!anchor || anchor.kind === 'card') return   // words about the whole card go into the field at its foot
     // one note per place: a second click there goes on writing the first
     let mark = list.find(m => m.text != null && m.anchor.kind === anchor.kind && m.anchor.key === anchor.key && (anchor.kind !== 'text' || m.anchor.quote === anchor.quote))
     if (!mark) { mark = { id: newId(), anchor, text: '' }; list.push(mark) }
@@ -168,17 +181,39 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
   }
   // A click on what is asked begins a note there. Not on what does something itself (a link, a button, a picture
   // that opens large, a field), not while text is being selected, not while the pen is in the hand.
-  scroll.addEventListener('click', e => {
-    if (pen || e.defaultPrevented || e.button) return
-    if (e.target.closest('a, button, input, textarea, select, label, summary, iframe, video, audio, .focus-mark, .focus-answer, .focus-thread, .focus-media, .focus-earlier')) return
-    if (String(getSelection()).trim()) return
-    note(anchorOf(e.target))
+  // A note never begins by a plain click on the text (that happens by accident while reading and selecting). Under
+  // the pointer a paragraph shows a small pencil in its margin; the pencil begins the note. Selecting text in a
+  // paragraph shows the same pencil.
+  const quill = el('button', 'focus-mark-quill')
+  quill.type = 'button'
+  quill.title = 'Write a note on this paragraph'
+  quill.setAttribute('aria-label', 'Write a note on this paragraph')
+  quill.append(sketch('pen'))
+  quill.hidden = true
+  scroll.append(quill)
+  let quillAt = null
+  const offer = block => {
+    if (pen || !block || block.classList.contains('focus-title') || block.dataset.key) { if (!quill.matches(':hover')) quill.hidden = true; return }
+    quillAt = block
+    const box = scroll.getBoundingClientRect(), r = block.getBoundingClientRect()
+    quill.style.left = `${Math.max(2, r.left - box.left + scroll.scrollLeft - 28)}px`
+    quill.style.top = `${r.top - box.top + scroll.scrollTop}px`
+    quill.hidden = false
+  }
+  scroll.addEventListener('pointerover', e => { if (e.target === quill || quill.contains(e.target)) return; offer(blocks().find(b => b.contains(e.target))) })
+  scroll.addEventListener('pointerleave', () => { quill.hidden = true })
+  document.addEventListener('selectionchange', () => {
+    const sel = getSelection()
+    if (!sel || sel.isCollapsed || !scroll.contains(sel.anchorNode)) return
+    offer(blocks().find(b => b.contains(sel.anchorNode)))
   })
+  quill.addEventListener('click', () => { if (!quillAt) return; quill.hidden = true; note(anchorOf(quillAt)) })
 
   function changed() {
     list = list.filter(m => m.text != null || m.strokes?.length)
     paintInk()
     paintNotes()
+    paintTools()
     onChange()
   }
 
@@ -267,9 +302,10 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
     penOn: () => pen,
     get: () => list.map(m => ({ ...m, strokes: m.strokes?.map(s => ({ color: s.color, pts: [...s.pts] })) })),
     set(next) {
-      list = (Array.isArray(next) ? next : []).filter(m => m && m.id && m.anchor).map(m => ({ id: m.id, anchor: m.anchor, ...(m.text != null ? { text: String(m.text) } : {}), ...(m.strokes ? { strokes: m.strokes } : {}) }))
+      list = (Array.isArray(next) ? next : []).filter(m => m && m.id && m.anchor && !(m.anchor.kind === 'card' && m.text != null)).map(m => ({ id: m.id, anchor: m.anchor, ...(m.text != null ? { text: String(m.text) } : {}), ...(m.strokes ? { strokes: m.strokes } : {}) }))
       fit()
       paintNotes()
+      paintTools()
     },
     count: () => list.filter(m => m.text?.trim() || m.strokes?.length).length,
     refit: fit,

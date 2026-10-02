@@ -250,15 +250,19 @@ async function syncCanvas() {
 // of that one card: it closes on the answer, and the list offers to take the answer back.
 let focusMode = null
 let routing = false   // the address is being followed, not written
-async function openFocus(cardId, step = true, { ask = false, revise = false } = {}) {
+async function openFocus(cardId, step = true, { ask = false, revise = false, gallery = false } = {}) {
   try {
     focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
+    // Opened for its pictures: only if the window can show them at once (focus.js gallery()); the caller
+    // hears false otherwise and shows them its own way.
+    if (gallery && !focusMode.gallery) return false
     focusMode.open(cardId ?? undefined)
-    if (!focusMode.isOpen()) return
+    if (!focusMode.isOpen()) return false
     if (ask) focusMode.ask()   // opened to ask back: the line for it is ready
     if (revise) focusMode.revise?.()   // opened to revise: Discuss is open and asks what should change
     focusCard = cardId ?? 'next'
     writeAddress(step)
+    return gallery ? focusMode.gallery() !== false : true
   } catch (err) {
     console.error(err)
     showToast('error', 'The focus window could not be loaded.', 4000)
@@ -290,7 +294,7 @@ export function walkSession(id) {
   return openFocus()
 }
 const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
-const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onDecided: offerUndo })
+const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onDecided: offerUndo })
 const roster = mountRoster($('roster'))
 
 // The title of the pane: which session this is, by its mark and name. For sessions laid

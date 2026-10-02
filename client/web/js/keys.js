@@ -24,9 +24,10 @@ export const LAYOUT = [
   { scope: 'app', title: 'Anywhere', keys: [
     { id: 'help', keys: ['?'], does: 'this list', always: true },
     { id: 'pad', keys: ['p', 'g p'], does: 'pad', verb: 'the pad, from anywhere', always: true },
-    { id: 'go.inbox', keys: ['g i'], does: 'inbox', verb: 'go to the inbox' },
+    { id: 'go.inbox', keys: ['g i'], does: 'Desk', verb: 'go to the Desk' },
+    { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'jump', verb: 'jump: type where to go' },
     { id: 'go.agents', keys: ['g a'], does: 'agents', verb: 'go to the agents' },
-    { id: 'go.focus', keys: ['g f'], does: 'Focus', verb: 'Focus: every open question, one after the other' },
+    { id: 'go.focus', keys: ['g f'], does: 'Next, please', verb: 'Next, please: every open question, one after the other' },
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar' },
     { id: 'session.next', keys: ['.'], does: 'next session' },
     { id: 'session.prev', keys: [','], does: 'previous session' },
@@ -58,21 +59,22 @@ export const LAYOUT = [
     { id: 'list.option.next', keys: ['ArrowRight'], does: 'next option, where choices are open', repeat: true, control: true },
     { id: 'list.option.prev', keys: ['ArrowLeft'], does: 'previous option', repeat: true, control: true, quiet: true },
     { id: 'list.yes', keys: ['y'], does: 'yes: the thumb up; on a note from the agent: acknowledge' },
-    { id: 'list.no', keys: ['n'], does: 'no: the thumb down; on a note from the agent: What??' },
+    { id: 'list.no', keys: ['n'], does: 'no: the thumb down; on a note from the agent: ask it to explain' },
     { id: 'list.send', keys: ['Enter'], does: 'send, where several answers are allowed', control: true },
     { id: 'list.open', keys: ['Enter', 'c'], does: 'open the choices, or the question as a window; a note from the agent: acknowledge' },
     { id: 'list.pick', keys: ['1…9'], does: 'pick that option' },
     { id: 'list.toggle', keys: [' '], does: 'pick the option in focus', native: true },
     { id: 'list.ask', keys: ['a'], does: 'ask back instead of answering' },
     { id: 'list.read', keys: ['h'], does: 'hear it: read the marked question aloud, again to stop' },
-    { id: 'list.trust', keys: ['r'], does: 'trust: the agent decides' },
+    { id: 'list.revise', keys: ['b'], does: 'revise: back to the agent' },
+    { id: 'list.trust', keys: ['r'], does: 'whatever: the agent decides' },
     { id: 'list.shred', keys: ['x'], does: 'shred: throw it away unanswered' },
-    { id: 'list.explain', keys: ['e'], does: 'What??: show all of it, then ask the session to explain' },
+    { id: 'list.explain', keys: ['e'], does: 'explain: show all of it, then ask the session to explain' },
     { id: 'list.later', keys: ['l'], does: 'snooze, or fetch it back' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'on an answered row: take that answer back' },
     { id: 'list.leave', keys: ['Escape'], does: 'close the choices, then drop the mark' },
   ] },
-  { scope: 'focus', title: 'Focus: one question per page', modal: true, keys: [
+  { scope: 'focus', title: 'An opened question, and "Next, please"', modal: true, keys: [
     { id: 'focus.next', keys: ['ArrowRight', 'j'], does: 'next question, without answering (in the time machine: the next version)', repeat: true },
     { id: 'focus.prev', keys: ['ArrowLeft', 'k'], does: 'previous question (or version)', repeat: true },
     { id: 'focus.yes', keys: ['y'], does: 'yes: the thumb up' },
@@ -84,9 +86,9 @@ export const LAYOUT = [
     { id: 'focus.option.prev', keys: ['ArrowUp'], does: 'previous option', repeat: true, control: true, quiet: true },
     { id: 'focus.ask', keys: ['a'], does: 'write to the session about the question' },
     { id: 'focus.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
-    { id: 'focus.explain', keys: ['e'], does: 'What??: ask the session to explain' },
+    { id: 'focus.explain', keys: ['e'], does: 'explain: write what is unclear, Enter asks the session' },
     { id: 'focus.handback', keys: ['b'], does: 'revise: back to the agent, with what you wrote' },
-    { id: 'focus.trust', keys: ['r'], does: 'trust: the agent decides' },
+    { id: 'focus.trust', keys: ['r'], does: 'whatever: the agent decides' },
     { id: 'focus.shred', keys: ['x'], does: 'shred: throw it away unanswered' },
     { id: 'focus.draw', keys: ['d'], does: 'draw on the question' },
     { id: 'focus.note', keys: ['a'], does: 'start a note' },
@@ -139,7 +141,8 @@ export function provide(scope, provider) {
   return () => providers.get(scope).delete(provider)
 }
 
-const NAMES = { ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', ' ': 'Space', Delete: 'Del', Backspace: '⌫' }
+const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
+const NAMES = { Mod: MOD, ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→', Escape: 'Esc', ' ': 'Space', Delete: 'Del', Backspace: '⌫' }
 const capOf = part => part.split('+').map(p => (p === 'Shift' ? '⇧' : NAMES[p] ?? (p.length === 1 ? p.toUpperCase() : p)))
 const entryOf = id => { for (const group of LAYOUT) for (const entry of group.keys) if (entry.id === id) return entry }
 
@@ -250,7 +253,12 @@ function run(name, e, { typing, control }) {
 }
 
 document.addEventListener('keydown', e => {
-  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || e.isComposing || e.keyCode === 229) return
+  if (e.defaultPrevented || e.altKey || e.isComposing || e.keyCode === 229) return
+  // With Ctrl or Cmd nothing is taken, except what the table names as such (one entry: the jump field).
+  if (e.ctrlKey || e.metaKey) {
+    if (e.key.length === 1 && !e.shiftKey && !document.querySelector('dialog[open]') && !document.body.hasAttribute('data-pad') && run(`Mod+${e.key.toLowerCase()}`, e, {})) { e.preventDefault(); e.stopPropagation() }
+    return
+  }
   if (['Shift', 'Control', 'Alt', 'Meta', 'AltGraph', 'CapsLock', 'Tab', 'Dead'].includes(e.key)) return
   // A key that is held for an action repeats into nothing, not into the field the action may have focused.
   if (held && e.key === held.key && e.repeat) { e.preventDefault(); e.stopPropagation(); return }

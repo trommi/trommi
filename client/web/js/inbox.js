@@ -13,6 +13,7 @@ import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred } from './
 import { openLightbox } from './chat.js'
 import { provide, hint } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
+import { copyButton } from './cardclip.js'
 
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 // A card's number, as it is written wherever a card is named: small and quiet, for looking it up.
@@ -331,11 +332,14 @@ function unfoldNode(card, { onDecided, full = true }) {
   return box
 }
 
+// Which of the row's ways out show as a tab at its edge (of inbox-later, inbox-revise, inbox-trust, inbox-shred).
+const EDGE_TABS = ['inbox-later']
+
 /** One question as a row.
  *  onOpen(cardId): open the card as a window of its own. onDecided(card, option): it was answered here.
  *  off: the card was put off. from: the session that asked, named on the
  *  row when nothing around it says so. fit: the list's lineFit(). */
-export function questionRow(card, { onOpen, onDecided, off = false, from = null, fit = null } = {}) {
+export function questionRow(card, { onOpen, onDecided, onGallery = null, off = false, from = null, fit = null } = {}) {
   const node = el('article', 'inbox-row')
   node.tabIndex = -1   // the keyboard's mark puts the focus here, so Tab goes on from the marked row
   node.dataset.id = card.id
@@ -388,7 +392,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   told()
   when.addEventListener('mouseenter', told)
   const sr = agoNode(card.created, 'inbox-ago')
-  when.append(el('span', 'inbox-nr', cardNr(card)), ageClock(card.created), sr)
+  when.append(copyButton(card), el('span', 'inbox-nr', cardNr(card)), ageClock(card.created), sr)
   const body = el('span', 'inbox-body')
   if (about) body.append(el('span', 'inbox-body-about', about))
   if (words) body.append(el('span', 'inbox-body-text', about ? ` · ${words}` : words))
@@ -440,7 +444,9 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
       img.addEventListener('error', () => { img.remove(); if (!thumb.querySelector('img')) thumb.remove() })
       thumb.append(img)
     }
-    thumb.addEventListener('click', () => openLightbox(images, 0))
+    // On the Desk the pictures open in the big window's own picture view, with the options beside them
+    // (onGallery, given by the page, says whether it did); elsewhere, or until then, large over the list.
+    thumb.addEventListener('click', async () => { if (!(await onGallery?.(card.id))) openLightbox(images, 0) })
     byline.prepend(thumb)
   }
 
@@ -505,6 +511,10 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     away.title = `${SHRED_WORD}: throw this away unanswered. The session is told; it will not ask again`
     hint(away, 'list.shred')
   }
+  // At rest the row shows Snooze alone (the user took the four stacked tabs back: "das geht gar nicht").
+  // The others stay built but hidden: the list keys still press them, and the opened card shows all
+  // four. To bring one back to the row's edge, name it in EDGE_TABS.
+  for (const b of tabs.children) if (!EDGE_TABS.some(cls => b.classList.contains(cls))) b.hidden = true
 
   const actions = el('div', 'inbox-actions')
   const tile = (cls, kind, label, act) => {
@@ -625,7 +635,7 @@ const rowSig = (card, opts) => JSON.stringify([card.revised, card.urgency, card.
  *  (Nothing is added to the list for that: the next row has to land where the answered one was.)
  *  With agent (a session id) it lists only that session's questions, without the big heading.
  *  Returns { render(state) }. */
-export function mountInbox(root, { onOpen, onDecided, agent = null }) {
+export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = null }) {
   let signature = ''
   let lastState = null
   const head = el('header', 'inbox-head')
@@ -639,7 +649,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const cached = rows.get(card.id)
     if (cached?.sig === sig) return cached.node
     if (cached) fit.unobserve(cached.node.querySelector('.inbox-question'))
-    const node = questionRow(card, { onOpen, onDecided, fit, ...opts })
+    const node = questionRow(card, { onOpen, onDecided, onGallery, fit, ...opts })
     cards.set(card.id, card)
     rows.set(card.id, { sig, node })
     return node
@@ -786,7 +796,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     if (fresh.length && !agent) {
       // "3 questions need you from 4 agents": a sentence, with "agents" as the way to the page of all
       // sessions. The way into the walk (every open question, one after the other, in the big window;
-      // also when there is only one) is a real button beside it.
+      // also when there is only one) stands in the same sentence, as words to press.
       const senders = new Set(fresh.map(c => c.agent)).size
       const who = el('button', 'inbox-agents-link', senders === 1 ? '1 agent' : `${senders} agents`)
       who.type = 'button'
@@ -799,8 +809,8 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       walk.setAttribute('aria-keyshortcuts', 'G F')
       walk.append(el('span', null, WALK_WORD), sketch('go'))
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
-      walkTools = el('div', 'inbox-tools')
-      walkTools.append(walk)
+      // Words in the sentence, not a button beside it (the user's word; how it should look is still open).
+      line.append(el('span', 'inbox-dot', '·'), walk)
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : agent ? 'Nothing needs you.' : `${INBOX_WORD} is clear.`)
     // A session's pane already carries its name as the title; the inbox has its own.
@@ -847,7 +857,6 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
         if (sender.starred) mark.append(crown())
         who.append(mark, el('b', null, sender.name))
         gutter.append(who)
-        if (cards.length > 1) gutter.append(runBracket(sender.id))
         section.append(gutter)
       }
       section.append(...cards.map(c => row(c, { from: agent ? null : sender })))
