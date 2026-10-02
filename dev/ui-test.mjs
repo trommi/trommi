@@ -168,6 +168,9 @@ const SEL = {
   rosterSplit: '.ledger-with button',
   rosterCurrent: '.is-cur',
   menuAgents: '#menu-agents',
+  deskGo: '#desk-go',
+  deskTotal: '#desk-state .agent-count.is-total',
+  deskKnocks: '#desk-state .agent-count.is-knock',
   jumpField: '#jump-field',
   quickOpen: '.quick-open',
   quickField: '#quick-field',
@@ -901,7 +904,8 @@ async function closeWindows() {
 }
 async function goInbox() {
   await closeWindows()
-  await press('the inbox in the sidebar', js`__t.entry(${TEXT.inbox})`)
+  // The Desk is the pill at the top centre (it was a row of the sidebar before).
+  await press('the Desk pill', js`__t.one(${SEL.deskGo}) ?? __t.entry(${TEXT.inbox})`)
   await waitFor('the inbox shows', js`__t.vis(document.querySelector(${SEL.inbox}))`)
   await settle()
 }
@@ -1596,7 +1600,8 @@ async function groupSidebar() {
   // How many questions a session has open: a number in its badge, or (where the badge is a drawing alone) its tooltip.
   if (busy && waiting) check(Number(row(nameOf(busy))?.badge?.number) === waiting || (row(nameOf(busy))?.badge?.number === '' && row(nameOf(busy))?.badge?.title.includes(`${waiting} question`)), `the badge of "${nameOf(busy)}" reads "${row(nameOf(busy))?.badge?.number}" with the tooltip "${row(nameOf(busy))?.badge?.title}", expected its ${waiting} open questions as a number or in the tooltip`)
   const fresh = openCards().filter(c => !putOff.has(c.id) && !agentById(c.agent)?.archived).length
-  check(Number(list.find(r => r.name === TEXT.inbox)?.count) === fresh, `the inbox entry counts "${list.find(r => r.name === TEXT.inbox)?.count}", ${fresh} questions need an answer`)
+  const deskCount = () => ev(js`(n => n ? __t.text(n) : (__t.sidebar().find(r => r.name === ${TEXT.inbox})?.count ?? ''))(document.querySelector(${SEL.deskTotal}))`)
+  check(Number(await deskCount()) === fresh, `the Desk counts "${await deskCount()}", ${fresh} questions need an answer`)
 
   // Disconnected sessions: at the bottom, under their own heading, with an archive action.
   const names = list.filter(r => r.name && r.name !== TEXT.inbox)
@@ -1635,7 +1640,7 @@ async function groupSidebar() {
   }
   await waitState(`"${GONE}" is archived`, s => s.agents.find(a => a.id === gone.id)?.archived === true)
   await expect(`"${GONE}" leaves the sidebar`, js`!__t.unit(${GONE})`, 3000)
-  await expect('its question leaves the inbox count', js`Number(__t.sidebar().find(r => r.name === ${TEXT.inbox})?.count) === ${without}`, 3000)
+  await expect('its question leaves the inbox count', js`Number((n => n ? __t.text(n) : (__t.sidebar().find(r => r.name === ${TEXT.inbox})?.count ?? ''))(document.querySelector(${SEL.deskTotal}))) === ${without}`, 3000)
   await goRoster()
   const shelf = await expect('the agents page keeps the archived session', js`__t.all(${SEL.rosterArchived}).map(__t.text).find(t => t.includes(${GONE}))`, 3000)
   await shot('archived')
