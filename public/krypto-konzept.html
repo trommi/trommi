@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Trommi Krypto-Konzept</title>
+<style>
+  @page { size: A4; margin: 13mm 16mm 13mm; }
+  :root { --fg: #141c18; --muted: #55615b; --line: #d5dbd4; --accent: #1b6a57; --soft: #e6f2ee; --warn: #b4551b; --warn-soft: #fbe9dc; }
+  * { box-sizing: border-box; }
+  body { margin: 0 auto; max-width: 178mm; padding: 16px; color: var(--fg); font: 9.8pt/1.45 "IBM Plex Sans", "Segoe UI", "Helvetica Neue", Arial, sans-serif; }
+  @media print { body { padding: 0; } }
+  h1 { font-size: 24pt; line-height: 1.1; margin: 0 0 4px; letter-spacing: -.01em; }
+  .sub { color: var(--muted); margin: 0 0 14px; }
+  h2 { font-size: 12.5pt; margin: 12px 0 5px; padding-top: 8px; border-top: 1px solid var(--line); break-after: avoid; }
+  p { margin: 0 0 8px; }
+  ul, ol { margin: 0 0 8px; padding-left: 18px; }
+  li { margin-bottom: 3px; }
+  code { font: 9pt "IBM Plex Mono", ui-monospace, Menlo, monospace; background: #eef0ec; padding: 1px 4px; border-radius: 3px; }
+  .lead { background: var(--soft); border-left: 3px solid var(--accent); padding: 9px 12px; margin: 0 0 12px; }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 0 20px; }
+  table { width: 100%; border-collapse: collapse; margin: 4px 0 10px; font-size: 9.5pt; break-inside: avoid; }
+  th, td { text-align: left; vertical-align: top; padding: 5px 8px 5px 0; border-bottom: 1px solid var(--line); }
+  th { font-size: 8pt; letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+  .warn { background: var(--warn-soft); border-left: 3px solid var(--warn); padding: 9px 12px; break-inside: avoid; }
+  svg { display: block; width: 100%; height: auto; margin: 6px 0 10px; break-inside: avoid; }
+  svg text { font: 8.5pt "IBM Plex Sans", "Segoe UI", Arial, sans-serif; fill: var(--fg); }
+  .foot { margin-top: 14px; color: var(--muted); font-size: 8.5pt; }
+  section { break-inside: avoid; }
+</style>
+</head>
+<body>
+<h1>Trommi Krypto-Konzept</h1>
+<p class="sub">Einladungslink, Schlüsseltausch und ein Server, der Inhalte nicht lesen kann. Entwurf vom 2. Oktober 2026, noch nicht gebaut.</p>
+
+<p class="lead"><strong>Kern:</strong> Ein Geheimnis im Einladungslink, das der Server nie sieht, beglaubigt den Beitritt. Ein Raumschlüssel, den nur die Teilnehmer kennen, verschlüsselt alle Inhalte. Jede Nachricht ist vom Gerät des Absenders signiert, damit ein Agent nur ausführt, was wirklich von dir kommt.</p>
+
+<h2>1. Einladen: der Link kommt in die KI</h2>
+<svg viewBox="0 0 680 232" role="img" aria-label="Ablauf der Einladung zwischen Browser, Server und Agent">
+  <g fill="none" stroke="#141c18" stroke-width="1">
+    <rect x="10" y="8" width="150" height="26" rx="6" fill="#e6f2ee" stroke="#1b6a57"/>
+    <rect x="265" y="8" width="150" height="26" rx="6" fill="#f1f2ee" stroke="#8a958f"/>
+    <rect x="520" y="8" width="150" height="26" rx="6" fill="#e6f2ee" stroke="#1b6a57"/>
+    <line x1="85" y1="34" x2="85" y2="226" stroke="#8a958f" stroke-dasharray="3 3"/>
+    <line x1="340" y1="34" x2="340" y2="226" stroke="#8a958f" stroke-dasharray="3 3"/>
+    <line x1="595" y1="34" x2="595" y2="226" stroke="#8a958f" stroke-dasharray="3 3"/>
+  </g>
+  <text x="85" y="25" text-anchor="middle" font-weight="600">Dein Browser</text>
+  <text x="340" y="25" text-anchor="middle" font-weight="600">Server (blind)</text>
+  <text x="595" y="25" text-anchor="middle" font-weight="600">Agent</text>
+  <defs><marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0 10 5 0 10z" fill="#141c18"/></marker></defs>
+  <g stroke="#141c18" stroke-width="1.2" marker-end="url(#a)">
+    <path d="M85 62 C 200 46, 480 46, 595 62" fill="none" stroke="#b4551b" stroke-dasharray="5 3"/>
+    <line x1="595" y1="104" x2="342" y2="104"/>
+    <line x1="340" y1="132" x2="87" y2="132"/>
+    <line x1="85" y1="176" x2="338" y2="176"/>
+    <line x1="340" y1="204" x2="593" y2="204"/>
+  </g>
+  <text x="340" y="80" text-anchor="middle" fill="#b4551b">1. Link mit Geheimnis hinter dem #, von dir in die KI kopiert (nie über den Server)</text>
+  <text x="468" y="98" text-anchor="middle">2. öffentlicher Schlüssel + Prüfcode</text>
+  <text x="213" y="126" text-anchor="middle">3. Beitrittsanfrage</text>
+  <text x="213" y="156" text-anchor="middle" fill="#55615b">Browser prüft den Code mit dem Geheimnis</text>
+  <text x="213" y="170" text-anchor="middle">4. Raumschlüssel, für den Agenten verpackt</text>
+  <text x="468" y="198" text-anchor="middle">5. verpackter Raumschlüssel</text>
+  <text x="595" y="222" text-anchor="middle" fill="#55615b">packt aus, ist drin</text>
+</svg>
+<ol>
+  <li>Dein Browser erzeugt <code>https://host/join#raum.geheimnis</code>. Alles hinter dem <code>#</code> schickt ein Browser nicht an den Server.</li>
+  <li>Der Channel-Prozess des Agenten erzeugt ein Schlüsselpaar und meldet den öffentlichen Schlüssel an, beglaubigt mit einem Code, der aus dem Geheimnis abgeleitet ist (HMAC).</li>
+  <li>Dein Browser prüft den Code. Der Server kann ihn nicht fälschen, weil er das Geheimnis nicht kennt.</li>
+  <li>Der Browser verschlüsselt den Raumschlüssel für den öffentlichen Schlüssel des Agenten (X25519) und legt ihn auf dem Server ab.</li>
+  <li>Der Link gilt einmal und läuft nach wenigen Minuten ab. Ein neues eigenes Gerät tritt genauso bei, per Link oder QR-Code.</li>
+</ol>
+
+<h2>2. Im Betrieb</h2>
+<div class="cols">
+  <section>
+    <p><strong>Inhalt.</strong> Nachrichten, Karten und Anhänge werden beim Absender mit dem Raumschlüssel verschlüsselt (AES-256-GCM). Der Server speichert und verteilt nur Blobs.</p>
+    <p><strong>Echtheit.</strong> Jede Nachricht trägt die Signatur des Absendergeräts (Ed25519). Der Agent führt nur aus, was von einem deiner Geräte signiert ist. Für die Kontrolle von Agenten ist das der wichtigste Teil.</p>
+  </section>
+  <section>
+    <p><strong>Reihenfolge.</strong> Fortlaufende Nummern und eine Hash-Kette je Absender: Der Server kann nichts unbemerkt weglassen, wiederholen oder umsortieren.</p>
+    <p><strong>Browser.</strong> Alles über WebCrypto, Schlüssel nicht exportierbar in IndexedDB. Symmetrische Verschlüsselung kostet praktisch keine Zeit, der Schlüsseltausch geschieht einmal pro Einladung.</p>
+  </section>
+</div>
+
+<h2>3. Was der Server sieht und was nicht</h2>
+<table>
+  <tr><th style="width:34%">Verborgen</th><th style="width:34%">Bewusst im Klartext</th><th>Unvermeidbar sichtbar</th></tr>
+  <tr>
+    <td>Text von Nachrichten und Karten, Optionen, Anmerkungen, Anhänge, Scribbles, Statuszeilen</td>
+    <td>Kartenstatus und Zeitpunkt der Antwort (für das Löschen nach 30 Tagen), Verweis auf Anhang-Dateien, optional die Dringlichkeitsstufe</td>
+    <td>Welche Konten und Geräte in einem Raum sind, wann und wie viel sie senden</td>
+  </tr>
+</table>
+<p>„Zero Knowledge“ gilt also für Inhalte, nicht für Metadaten.</p>
+
+<h2>4. Was dafür umgebaut werden muss</h2>
+<table>
+  <tr><th style="width:26%">Bereich</th><th>Heute</th><th>Mit Verschlüsselung</th></tr>
+  <tr><td>Zustand</td><td>Server hält und verschickt den fertigen Gesamtzustand</td><td>Server verschickt ein verschlüsseltes Ereignisprotokoll, Browser und Agent setzen es zusammen. Größter Umbau.</td></tr>
+  <tr><td>Stapel-Reihenfolge</td><td>Server sortiert nach Dringlichkeit</td><td>Browser sortiert, oder die Stufe bleibt als einziges Inhaltsfeld im Klartext</td></tr>
+  <tr><td>Löschen nach 30 Tagen</td><td>Server kennt Status und Anhänge</td><td>Bleibt möglich: Status, Zeitpunkt und Dateiverweise sind Klartext-Metadaten</td></tr>
+  <tr><td>Sprache</td><td>Server ruft Tinfoil auf</td><td>Browser und Agent rufen Tinfoil selbst auf, der Server sieht den Text nicht mehr</td></tr>
+  <tr><td>Tool-Aufrufe des Agenten</td><td>Hub führt sie im Klartext aus</td><td>Agent verschlüsselt selbst und schickt Ereignisse; der Hub leitet nur weiter</td></tr>
+</table>
+
+<h2>5. Bewusst einfach gehalten</h2>
+<ul>
+  <li><strong>Kein Ratchet</strong> wie bei Signal oder Matrix. Ein neuer Raumschlüssel entsteht, wenn ein Teilnehmer entfernt wird, und optional täglich.</li>
+  <li><strong>Preis:</strong> Ein gestohlener Raumschlüssel macht alles bis zur nächsten Rotation lesbar. Signaturen verhindern trotzdem, dass damit Befehle gefälscht werden.</li>
+  <li><strong>Wiederherstellung:</strong> Verlierst du alle Geräte, ist der Verlauf weg, außer du sicherst einen Wiederherstellungsschlüssel.</li>
+</ul>
+
+<div class="warn"><strong>Schwachstelle des Ansatzes.</strong> Der Link ist ein Inhaberpapier: Wer ihn zuerst einlöst, ist drin. Einmalgültigkeit und kurze Laufzeit begrenzen das. Wer mehr will, bestätigt den Beitritt im Browser anhand eines kurzen Prüfcodes, den der Agent anzeigt.</div>
+
+<h2>6. Reihenfolge beim Bauen</h2>
+<ol>
+  <li>Geräteschlüssel im Browser und beim Agenten, Einladungslink, Schlüsseltausch. Inhalte noch im Klartext, aber Befehle schon signiert.</li>
+  <li>Ereignisprotokoll statt Gesamtzustand, zunächst unverschlüsselt, mit Nummern und Hash-Kette.</li>
+  <li>Inhalte verschlüsseln, Anhänge stückweise, Sprache auf die Endpunkte verlagern.</li>
+  <li>Rotation des Raumschlüssels, Wiederherstellungsschlüssel, Prüfcode beim Beitritt.</li>
+</ol>
+
+<p class="foot">Trommi · Entwurf, zur Entscheidung. Algorithmen: X25519 für den Schlüsseltausch, Ed25519 für Signaturen, AES-256-GCM für Inhalte, HMAC-SHA-256 für den Prüfcode der Einladung.</p>
+</body>
+</html>

@@ -1,0 +1,92 @@
+/* Shared design tokens. Every colour, shadow, radius, and easing in the app
+   comes from here; component files never use literal colours. */
+:root {
+  /* surfaces */
+  --bg: #f5f6f2;
+  --surface: #ffffff;
+  --surface-2: #fafbf8;
+  --sunken: #eceee8;
+  --overlay: rgb(12 18 15 / .55);
+
+  /* text */
+  --fg: #141c18;
+  --muted: #5c6862;
+  --faint: #8a958f;
+
+  /* lines */
+  --line: #e1e5df;
+  --line-strong: #c9d0c8;
+
+  /* brand */
+  --accent: #1b6a57;
+  --accent-hover: #155646;
+  --accent-soft: #dcefe8;
+  --accent-fg: #ffffff;
+
+  /* urgency, set by the agent per card: fg colour and soft background */
+  --urg-low: #6b7771;       --urg-low-soft: #eceee8;
+  --urg-normal: #1b6a57;    --urg-normal-soft: #dcefe8;
+  --urg-high: #b4551b;      --urg-high-soft: #fbe9dc;
+  --urg-critical: #b3261e;  --urg-critical-soft: #fbe0de;
+
+  --deny: #a8322d;
+
+  /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
+  --st-decision: #c62f25;  --st-decision-soft: #fbe0de;
+  --st-working: #b07a06;   --st-working-soft: #fbf0cf;
+  --st-done: #1f8a4c;      --st-done-soft: #dcf2e4;
+
+  /* elevation */
+  --shadow-sm: 0 1px 2px rgb(20 30 25 / .06);
+  --shadow-md: 0 1px 2px rgb(20 30 25 / .06), 0 8px 24px -10px rgb(20 30 25 / .16);
+  --shadow-lg: 0 2px 4px rgb(20 30 25 / .06), 0 24px 48px -16px rgb(20 30 25 / .28);
+
+  /* shape */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* spacing scale */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
+
+  /* type */
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --t-xs: .72rem; --t-sm: .84rem; --t-md: .95rem; --t-lg: 1.1rem; --t-xl: 1.35rem; --t-2xl: 1.7rem;
+
+  /* motion */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --d-fast: 140ms; --d-med: 260ms; --d-slow: 480ms;
+}
+
+/* Light is the default for everyone. Dark applies only when the user picks it
+   (data-theme="dark" on <html>), never from the system setting. */
+:root[data-theme="dark"] {
+  --bg: #0e1311; --surface: #171d1a; --surface-2: #1c2420; --sunken: #111715; --overlay: rgb(0 0 0 / .65);
+  --fg: #e9eeea; --muted: #9aa8a0; --faint: #6c7a73;
+  --line: #252f2a; --line-strong: #35423b;
+  --accent: #6fd0b5; --accent-hover: #8adcc5; --accent-soft: #17332b; --accent-fg: #08130f;
+  --urg-low: #8b9891; --urg-low-soft: #1c2420;
+  --urg-normal: #6fd0b5; --urg-normal-soft: #17332b;
+  --urg-high: #f2a56c; --urg-high-soft: #3a2415;
+  --urg-critical: #ff8a80; --urg-critical-soft: #41191a;
+  --deny: #f08a83;
+  --st-decision: #ff8a80; --st-decision-soft: #41191a;
+  --st-working: #f2c14e; --st-working-soft: #3a2f10;
+  --st-done: #6cd598; --st-done-soft: #14301f;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px -12px rgb(0 0 0 / .7);
+  --shadow-lg: 0 2px 4px rgb(0 0 0 / .4), 0 28px 56px -18px rgb(0 0 0 / .85);
+  color-scheme: dark;
+}
+
+/* Shared primitive: inline video and audio attachments, used by chat and cards alike. */
+.media { margin: 0; display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+.media video { display: block; width: 100%; max-height: min(60vh, 480px); border-radius: var(--r-md); background: #000; }
+.media audio { display: block; width: 100%; }
+.media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
