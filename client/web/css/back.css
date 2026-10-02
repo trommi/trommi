@@ -1,0 +1,58 @@
+/* What just happened, and "Back" (js/back.js): one note at the top left of the view, in ink,
+   tilted a little like a slip of paper laid on the page. It names what happened to the question
+   that just left and takes it back; a scribbled line under it runs out. It never lies over the
+   answers, which are at the right. */
+.says-host { position: absolute; z-index: 30; pointer-events: none; }
+.says-page { position: fixed; }
+.says {
+  position: relative; pointer-events: auto; display: flex; align-items: center; gap: var(--s-3); width: max-content; max-width: min(430px, calc(100vw - 28px));
+  padding: 9px 10px 13px 14px; border-radius: 10px 13px 9px 12px; background: var(--fg); color: var(--bg);
+  box-shadow: 0 2px 3px rgb(20 30 25 / .12), 0 12px 26px -10px rgb(20 30 25 / .5);
+  rotate: -.7deg; transform-origin: 0 0; animation: says-in 260ms cubic-bezier(.25, 1.4, .5, 1);
+}
+@keyframes says-in { from { opacity: 0; translate: -10px -8px; } }
+.says-words { min-width: 0; display: grid; gap: 2px; }
+.says-words b { font: 800 1.02rem/1.15 var(--display); letter-spacing: -.005em; overflow-wrap: anywhere; }
+.says-words span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--t-sm)/1.3 var(--font); opacity: .8; }
+.says-back { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 10px 0 8px; border: 0; border-radius: var(--r-pill); background: var(--bg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); transition: scale 100ms ease-out; }
+.says-back:hover { filter: brightness(.94); }
+.says-back:active { scale: .96; }
+.says-back:disabled { opacity: .5; }
+.says-back:focus-visible { outline: 3px solid var(--bg); outline-offset: 2px; }
+.back-arrow { flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+.says-back kbd { min-width: 20px; padding: 3px 5px; border-radius: 5px; background: color-mix(in srgb, var(--fg) 10%, transparent); font: 500 .7rem/1 var(--mono); text-align: center; }
+@media (pointer: coarse) { .says-back kbd { display: none; } .says-back { min-height: 44px; padding-inline: 12px 14px; } }
+/* The time left runs out along a scribbled line. */
+.back-line { position: absolute; left: 14px; bottom: 4px; width: calc(100% - 28px); height: 6px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; opacity: .6; overflow: visible; pointer-events: none; }
+.back-line path { vector-effect: non-scaling-stroke; stroke-dasharray: 100; animation: back-time var(--back-ms, 4s) linear forwards; }
+.says[data-paused] .back-line path { animation-play-state: paused; }
+@keyframes back-time { to { stroke-dashoffset: 100; } }
+/* The line is the clock, not an ornament: it keeps running where motion is reduced. */
+@media (prefers-reduced-motion: reduce) {
+  .says.says { animation: none !important; }
+  .says.says .back-line path { animation-duration: var(--back-ms, 4s) !important; }
+}
+/* In the Focus window: its own top left corner, over the tab of the top bar for these few seconds. */
+.focus-says { top: 10px; left: 12px; }
+.focus-says .says { max-width: min(430px, calc(100cqi - 24px)); }
+
+/* ---- a question leaves: one calm motion that shows where it goes ---- */
+/* In a list the row that left stays for a moment as a ghost in its old place: an answered one
+   slides off to the side, one that was put off (Later, asked to explain) sinks towards the
+   "Later" group at the end. The rows below move up once it is on its way (inbox.js). */
+.inbox-groups { position: relative; }
+.inbox-row.is-leaving { position: absolute; z-index: 0; margin: 0; pointer-events: none; animation: row-answered 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
+.inbox-row.is-leaving[data-leave="later"] { animation-name: row-later; }
+@keyframes row-answered { to { opacity: 0; translate: 72px -6px; rotate: 1.2deg; } }
+@keyframes row-later { to { opacity: 0; translate: 0 64px; scale: .96; } }
+/* In the Focus window the same two motions, a little longer than the window's own steps. */
+.focus-card[data-out="sent"] { animation: focus-leave-answered 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
+.focus-card[data-out="later"] { animation: focus-leave-later 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
+.focus-card[data-in="sent"], .focus-card[data-in="later"] { animation-delay: 170ms; animation-fill-mode: backwards; }
+@keyframes focus-leave-answered { to { opacity: 0; transform: translate3d(0, -64px, 0) rotate(-.6deg); } }
+@keyframes focus-leave-later { to { opacity: 0; transform: translate3d(0, 88px, 0) scale(.95); } }
+@media (prefers-reduced-motion: reduce) {
+  .inbox-row.is-leaving.is-leaving { animation: row-fade 160ms linear forwards !important; }
+  .focus .focus-card[data-out="sent"], .focus .focus-card[data-out="later"] { animation: row-fade 160ms linear forwards !important; }
+}
+@keyframes row-fade { to { opacity: 0; } }

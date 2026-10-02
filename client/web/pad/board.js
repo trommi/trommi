@@ -18,8 +18,11 @@ export const boardState = () => state
 export function onBoard(fn) { listeners.add(fn); fn(state); return () => listeners.delete(fn) }
 
 /** Look for a board. Resolves once it is known whether there is one (at most ~2.5 s). */
-export async function connectBoard() {
+export async function connectBoard(embedded = false) {
   if (!/^https?:$/.test(location.protocol)) return state
+  // Inside the board the page around the pad already listens to it and passes on what the
+  // pad needs (setBoard); a second stream of the whole board would be one connection too many.
+  if (embedded) return state
   try {
     // An absolute path on purpose: the pad may be served from /pad/ or from anywhere else.
     store = await import('/js/store.js')
@@ -41,8 +44,23 @@ export async function connectBoard() {
   })
 }
 
+/** What the board around an embedded pad says about itself. */
+export function setBoard({ sessions, speech }) {
+  state.board = true
+  state.speech = Boolean(speech)
+  state.sessions = sessions.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online) }))
+  for (const fn of listeners) fn(state)
+}
+
 /** Recorded audio to text, through the board. Only call when boardState().speech is true. */
-export const transcribe = blob => store.transcribe(blob)
+export async function transcribe(blob) {
+  if (store) return store.transcribe(blob)
+  const res = await fetch('/speech/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob })
+  let out = {}
+  try { out = await res.json() } catch {}
+  if (!res.ok) throw new Error(out.error || res.statusText)
+  return out.text ?? ''
+}
 
 /** Send a selection to a session. Resolves with { message_id } or rejects with a
  *  readable Error; it never pretends. payload is described in docs/pad.md. */

@@ -3,9 +3,9 @@
 // what is done; a tap unfolds what was asked, what was chosen, and the way to answer
 // again), and the files: everything the session ever sent.
 
-import { el, agoNode, URGENCY_LABEL, kindOf } from './ui.js'
+import { el, agoNode, URGENCY_LABEL, kindOf, ASSET_LABEL, linkInfo } from './ui.js'
 import { reopen } from './store.js'
-import { icon, attachmentNodes, richPlus, openLightbox, ASSET_LABEL } from './chat.js'
+import { icon, attachmentNodes, richPlus, openLightbox } from './chat.js'
 
 const SHORT = 6   // so many lines stand open to view; the rest wait behind one button
 
@@ -203,7 +203,13 @@ function gather(all, agent) {
     }
     // Other pages arrive as links in what the agent writes.
     if (m.from !== 'user' && m.from !== 'event') {
-      for (const [url] of String(m.text ?? '').matchAll(LINK)) items.push({ ts: m.ts, where: null, kind: 'link', name: url.replace(/^https?:\/\//, '').replace(/[.,;:!?]+$/, ''), url: url.replace(/[.,;:!?]+$/, '') })
+      for (const [found] of String(m.text ?? '').matchAll(LINK)) {
+        const url = found.replace(/[.,;:!?`]+$/, '')
+        const { asset, text } = linkInfo(url)
+        // A link to something published is listed as what it is; its key is never printed.
+        if (asset) items.push({ ts: m.ts, where: null, kind: 'asset', label: asset.known ? ASSET_LABEL[asset.type] ?? 'File' : 'link', name: asset.title || 'Untitled', url: asset.href, key: asset.id })
+        else items.push({ ts: m.ts, where: null, kind: 'link', name: text, url })
+      }
     }
   }
   for (const c of all.cards) if (c.agent === agent) add(c.attachments, c.created, c.title)

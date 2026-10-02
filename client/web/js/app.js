@@ -2,10 +2,18 @@
 // conversation, theme, connection feedback, and the glue between conversation and scribble.
 
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
-import { mountAgents, mountRoster, avatar, pairAvatar } from './agents.js'
-import { mountInbox } from './inbox.js'
-import { el } from './ui.js'
+import { mountAgents, mountRoster, avatar, pairAvatar, tellApart, openMarkPicker, openEditor } from './agents.js'
+import { mountInbox, VIP_LABEL } from './inbox.js'
+import { el, sketch, setAssetSource } from './ui.js'
 import { mountChat } from './chat.js'
+import { provide, openSheet } from './keys.js'
+import { say, pageHost, backNow } from './back.js'
+
+// Links to published assets are named from what the board knows of them.
+setAssetSource(() => getState().all)
+
+// The side door to the administration carries a small scribbled key: it opens with a key of its own.
+document.querySelector('.sidedoors a[href="/admin.html"]')?.prepend(sketch('key'))
 
 const $ = id => document.getElementById(id)
 const root = document.documentElement
@@ -74,6 +82,7 @@ function addressNow() {
 }
 /** Write the place the page shows into the address bar: a new entry for a step the human took, else in place. */
 function writeAddress(step = true) {
+  if (location.pathname === '/pad') return   // the pad lies over the page and holds the address (padlink.js)
   const url = addressNow()
   if (url === location.pathname + location.search + location.hash) return
   history[step ? 'pushState' : 'replaceState']({ q: focusCard }, '', url)
@@ -204,11 +213,12 @@ async function syncCanvas() {
 // of that one card: it closes on the answer, and the list offers to take the answer back.
 let focusMode = null
 let routing = false   // the address is being followed, not written
-async function openFocus(cardId, step = true) {
+async function openFocus(cardId, step = true, { ask = false } = {}) {
   try {
     focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
     focusMode.open(cardId ?? undefined)
     if (!focusMode.isOpen()) return
+    if (ask) focusMode.ask()   // opened to ask back: the line for it is ready
     focusCard = cardId ?? 'next'
     writeAddress(step)
   } catch (err) {
@@ -227,12 +237,12 @@ document.addEventListener('focus:close', () => {
 $('focus-open').addEventListener('click', () => openFocus())
 
 chat = mountChat($('chat'), {
-  onOpen: id => openFocus(id), onDecided: offerUndo, onCard: openCard,
+  onOpen: (id, how) => openFocus(id, true, how), onDecided: offerUndo, onCard: openCard,
   onScribble: agent => { pickMember(agent); setView('scribble') },
   onUnread: paintView, onError: text => showToast('error', text, 6000), flags,
 })
 const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 } })
-const inbox = mountInbox($('inbox'), { onOpen: id => openFocus(id), onDecided: offerUndo })
+const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onDecided: offerUndo })
 const roster = mountRoster($('roster'))
 
 // The title of the pane: which session this is, by its mark and name. For sessions laid
@@ -243,7 +253,9 @@ let titleSig = ''
 function paintTitle(state) {
   const members = state.members.map(id => state.all.agents.find(a => a.id === id)).filter(Boolean)
   const picked = memberNow(state)
-  const sig = JSON.stringify([members.map(a => [a.id, a.name, a.mark, a.online, a.task, a.starred]), members.length > 1 && picked])
+  // Sessions of the same name carry what tells them apart, as in the sidebar.
+  const apart = members.length > 1 ? tellApart(state.all.agents) : new Map()
+  const sig = JSON.stringify([members.map(a => [a.id, a.name, a.mark, a.online, a.task, a.starred, apart.get(a.id)]), members.length > 1 && picked])
   if (sig === titleSig) return
   titleSig = sig
   body.toggleAttribute('data-pair', members.length > 1)
@@ -251,7 +263,22 @@ function paintTitle(state) {
   if (members.length === 1) {
     const [agent] = members
     paneTitle.title = agent.online ? agent.task || '' : 'disconnected'
-    return paneTitle.replaceChildren(avatar(agent), el('h2', null, agent.name))
+    // The picture opens the choice of drawing right under it; the name is the way to rename.
+    const mark = el('button', 'pane-mark')
+    mark.type = 'button'
+    mark.title = 'Choose a drawing'
+    mark.setAttribute('aria-label', `${agent.name}: choose a drawing`)
+    mark.setAttribute('aria-haspopup', 'dialog')
+    mark.append(avatar(agent))
+    mark.addEventListener('click', () => openMarkPicker(agent, mark))
+    const name = el('button', null, agent.name)
+    name.type = 'button'
+    name.title = 'Rename'
+    name.addEventListener('click', () => openEditor(agent))
+    const heading = el('h2', 'pane-name')
+    heading.append(name)
+    // A starred session is marked once, here; its questions below stay plain.
+    return paneTitle.replaceChildren(mark, heading, ...(agent.starred ? [el('span', 'inbox-vip', VIP_LABEL)] : []))
   }
   paneTitle.title = ''
   const names = el('h2', 'pane-members')
@@ -259,6 +286,8 @@ function paintTitle(state) {
     if (i) names.append(el('span', null, '+'))
     const b = el('button', null, a.name)
     b.type = 'button'
+    if (apart.get(a.id)) b.append(el('small', null, apart.get(a.id)))
+    if (a.starred) b.append(el('span', 'inbox-vip', VIP_LABEL))
     b.setAttribute('aria-pressed', String(a.id === picked))
     b.addEventListener('click', () => { pickMember(a.id); if (body.dataset.view === 'chat' && !phone.matches) chat.focus(null, a.id) })
     names.append(b)
@@ -355,23 +384,14 @@ function showToast(kind, text, ms, action) {
   toast.hidden = false
   if (ms) toastTimer = setTimeout(() => { toast.hidden = true }, ms)
 }
-// A question answered in a list (or in the window of one card) can be taken back for a few seconds;
-// later the list of answered questions offers "Answer again".
+// A question answered in a list (or in the window of one card): the note at the top left says so and
+// takes the answer back for a few seconds ("Back", see back.js). Later the list of answered questions does.
 function offerUndo(card, option) {
-  const back = el('button', null, 'Undo')
-  back.type = 'button'
-  back.addEventListener('click', async () => {
-    back.disabled = true
-    try {
-      await reopen(card.id)
-      toast.hidden = true
-    } catch (err) {
-      showToast('error', `Not taken back: ${err.message}`, 5000)
-    }
+  say(pageHost(), {
+    head: `Answered: ${option.label}`, title: card.title,
+    back: () => reopen(card.id),
+    onFail: err => showToast('error', `Not taken back: ${err.message}`, 5000),
   })
-  const text = document.createDocumentFragment()
-  text.append('Answered: ', el('strong', null, option.label))
-  showToast('undo', text, 10000, back)
 }
 
 // ---- state -----------------------------------------------------------------
@@ -422,7 +442,7 @@ if (flags.has('skeleton')) {
 
 if (flags.has('offline')) { wasOnline = true; conn.dataset.state = 'offline'; connText.textContent = CONN_TEXT.offline }
 if (flags.has('toast')) showToast('error', 'Canvas did not load')
-if (flags.has('undo')) offerUndo({ id: 'x', number: 7 }, { label: 'Skip' })
+if (flags.has('undo')) offerUndo({ id: 'x', number: 7, title: 'A question' }, { label: 'Skip' })
 
 // ---- keyboard and viewport -------------------------------------------------
 
@@ -447,16 +467,70 @@ const coarse = matchMedia('(pointer: coarse)')
 $('chat').addEventListener('focusin', e => { if (e.target.matches('.composer textarea') && coarse.matches && phone.matches) root.dataset.typing = '' })
 $('chat').addEventListener('focusout', () => { delete root.dataset.typing })
 
-// Start typing anywhere to write to the agent. Where a list of questions is up, U takes the last answer back.
-document.addEventListener('keydown', e => {
-  // Letters only: digits, arrows, and Enter belong to the cards' shortcuts.
-  if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey || !/^\p{L}$/u.test(e.key)) return
-  const t = document.activeElement
-  if (t && t !== body && !t.classList.contains('log') && !(t.tagName === 'BUTTON' && t.closest('.inbox-row, .inbox-head'))) return
-  if (document.querySelector('dialog[open]')) return
-  const undo = toast.dataset.kind === 'undo' && !toast.hidden && toast.querySelector('button')
-  if (e.key.toLowerCase() === 'u' && undo && !body.dataset.page && (body.dataset.scope === 'all' || body.dataset.filter === 'questions')) return undo.click()
-  // Only where a composer is on screen: a session's conversation.
-  if (body.dataset.view !== 'chat' || body.dataset.scope === 'all' || body.dataset.page) return
-  chat.focus()
+// ---- keys: what the page itself can do; which key does it is written in keys.js ----
+
+const typingIn = node => Boolean(node?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))
+const inSession = () => !body.dataset.page && body.dataset.scope !== 'all'
+// The sidebar as it stands: the inbox first, then every session and pair, top to bottom.
+const places = () => [...$('agents').querySelectorAll('.agent-entry')]
+// Going somewhere by key leaves the keys in charge: the caret does not land in the composer.
+function goTo(entry) {
+  if (!entry) return false
+  entry.click()
+  entry.scrollIntoView({ block: 'nearest', inline: 'center' })
+  if (typingIn(document.activeElement)) document.activeElement.blur()
+}
+const stepPlace = by => () => {
+  const all = places()
+  const at = all.findIndex(n => n.hasAttribute('aria-current'))
+  return goTo(all[at < 0 ? (by > 0 ? 0 : all.length - 1) : (at + by + all.length) % all.length])
+}
+provide('app', {
+  active: () => true,
+  actions: {
+    'go.inbox': () => { $('nav-inbox').click() },
+    'go.agents': () => { $('nav-roster').click() },
+    'go.focus': () => { openFocus() },
+    'go.session': n => goTo(places()[n]),
+    'session.next': stepPlace(1),
+    'session.prev': stepPlace(-1),
+    theme: () => themeToggle.click(),
+    // The pad lives in a module of its own (padlink.js); it is fetched when first asked for.
+    pad: () => {
+      import('./padlink.js').then(m => (m.togglePad ?? m.openPad ?? m.default)(), () => showToast('error', 'The pad could not be loaded.', 3000))
+    },
+    // The last answer, or whatever else the note at the top left offers to take back.
+    back: () => backNow(),
+    // Out of a field, to whatever holds it: the question's row, or the conversation.
+    'field.leave': (_, e) => {
+      const field = e.target
+      const to = field.closest('.inbox-row') ?? field.closest('.chat-pane')?.querySelector('.log')
+      field.blur()
+      to?.focus({ preventScroll: true })
+    },
+  },
 })
+provide('session', {
+  active: inSession,
+  actions: { 'session.scribble': () => setView(body.dataset.view === 'scribble' ? 'chat' : 'scribble') },
+})
+provide('conversation', {
+  active: () => inSession() && body.dataset.view === 'chat',
+  has: id => id !== 'chat.pane' || getState().members.length > 1,
+  actions: {
+    'chat.write': () => chat.focus(),
+    'chat.questions': () => $('filter-questions').click(),
+    'chat.files': () => $('filter-files').click(),
+    'chat.pane': () => {
+      const { members } = getState()
+      if (members.length < 2) return false
+      pickMember(members[(members.indexOf(memberNow()) + 1) % members.length])
+      // The keyboard goes along: its log scrolls, and "write" means this one.
+      $('chat').querySelector('.chat-pane.is-member .log')?.focus({ preventScroll: true })
+    },
+  },
+})
+// Listed in the sheet only; the composer and the canvas hear these keys themselves.
+provide('writing', { active: () => inSession() && body.dataset.view === 'chat' })
+provide('scribble', { active: () => inSession() && body.dataset.view === 'scribble' })
+$('keys-open').addEventListener('click', () => openSheet())

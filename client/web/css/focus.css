@@ -347,10 +347,10 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-opts[data-count="duo"] .focus-opt.is-advised::before { left: -6px; }
 .focus-opts[data-count="duo"] .focus-opt.is-advised::after { right: -6px; }
 .focus-opts[data-count="stack"] .focus-opt.is-advised::before, .focus-opts[data-count="stack"] .focus-opt.is-advised::after { content: none; }
-.focus-opts[data-count="stack"] .is-advised .focus-opt-label { position: relative; justify-self: start; }
-.focus-opts[data-count="stack"] .is-advised .focus-opt-label::before, .focus-opts[data-count="stack"] .is-advised .focus-opt-label::after { content: ""; position: absolute; top: -.36em; bottom: -.36em; border: 2.5px solid var(--advice); pointer-events: none; rotate: -2deg; }
-.focus-opts[data-count="stack"] .is-advised .focus-opt-label::before { left: -.62em; right: 46%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
-.focus-opts[data-count="stack"] .is-advised .focus-opt-label::after { left: 34%; right: -.7em; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
+/* In a stack a loop drawn with the pen (ui.js adviceLoop) goes round the advised label, a little
+   outside its box on every side, so it clears both lines of a label that wraps. */
+.focus-opts[data-count="stack"] .focus-opt-label:has(> .advice-loop) { position: relative; justify-self: start; }
+.focus-opt-label > .advice-loop { left: -.75em; top: -.42em; width: calc(100% + 1.5em); height: calc(100% + .84em); rotate: -1deg; }
 .focus-opt[data-state="done"].is-advised { --advice: color-mix(in srgb, var(--surface) 80%, transparent); }
 
 /* ── foot: on a phone, the row the two arrows stand in ──────────────────── */
@@ -496,4 +496,141 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus .focus-spinner { animation-duration: 1.4s !important; }
   .focus .focus-undo-time { animation-duration: 10s !important; }
   .focus .focus-say path { animation: none !important; }
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
+   The conversation about a card, options as tags, the rail of the walk, and
+   the answers beside an enlarged picture. One block, after everything above,
+   so that it only adds.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── the conversation column: the question, what was said about it, the composer at its foot ── */
+.focus-talk { flex: 1 1 auto; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+.focus-talk > .focus-scroll { flex: 1 1 0; }
+/* What was said about the card, in the look of the session's conversation (the .msg and .bubble of app.css). */
+.focus-thread { display: flex; flex-direction: column; gap: 0; max-width: 48rem; margin-top: var(--s-6); padding-top: var(--s-1); border-top: 1px dashed var(--line-strong); }
+.focus-thread .msg { margin-top: var(--s-4); }
+.focus-thread .msg.cont { margin-top: var(--s-2); }
+.focus-thread .msg-head { gap: var(--s-2); margin-bottom: 2px; }
+.focus-thread .msg-name { font-size: var(--t-xs); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.focus-msg-mark { flex: none; width: 22px; height: 22px; color: color-mix(in srgb, var(--u) 60%, var(--muted)); }
+.focus-msg-mark .doodle { width: 22px; height: 22px; stroke-width: 2.1; }
+.focus .focus-thread .rich { font-size: 1.02rem; }
+.focus-thread .msg-user .bubble { border-radius: 15px 18px 5px 16px; background: color-mix(in srgb, var(--u) 11%, var(--surface)); color: var(--fg); }
+.focus-thread .msg-user[data-state="sending"] .bubble { opacity: .55; }
+.focus-thread .focus-msg-state { margin: 4px 4px 0 0; font-size: var(--t-xs); color: var(--muted); }
+.focus-thread .msg-user[data-state="failed"] .focus-msg-state { color: var(--urg-critical); font-weight: 500; }
+.focus-thread .focus-thread-wait { align-self: flex-end; margin: var(--s-2) 4px 0 0; font-size: var(--t-xs); color: var(--faint); }
+
+/* The composer: always there, the only field of the card. Under it, Explain and Later, and what the field does. */
+.focus-composer { flex: none; width: 100%; max-width: calc(48rem + 2 * var(--pad)); padding: var(--s-2) var(--pad) var(--s-3); }
+.focus-composer .focus-ask { max-width: none; margin: 0; align-items: flex-end; gap: var(--s-2); padding: 5px 5px 5px 16px; border-radius: 15px 19px 14px 18px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line-strong), var(--shadow-sm); cursor: text; transition: box-shadow var(--d-fast); }
+.focus-composer .focus-ask:focus-within { box-shadow: inset 0 0 0 2px var(--accent), var(--shadow-sm); }
+.focus-composer .focus-ask-open { display: none; }
+.focus-composer .focus-ask-field { display: block; height: 40px; min-height: 40px; padding: 8px 0; border-radius: 0; background: none; box-shadow: none; resize: none; line-height: 24px; overflow-y: hidden; scrollbar-width: thin; }
+.focus-composer .focus-ask-field:hover, .focus-composer .focus-ask-field:focus { background: none; box-shadow: none; }
+.focus-composer .focus-ask-send { width: 40px; height: 40px; }
+.focus-composer-foot { display: flex; align-items: center; gap: var(--s-3); min-height: 38px; padding-top: 2px; }
+.focus-actions { flex: none; display: flex; align-items: center; gap: 2px; margin-left: -8px; }
+.focus-actions .focus-later, .focus-zoom-ways .focus-later { width: auto; height: 36px; margin-top: 0; padding: 0 12px 0 8px; gap: 5px; }
+.focus-actions .focus-later span, .focus-zoom-ways .focus-later span { display: inline; }
+.focus-actions .focus-later .sketch, .focus-zoom-ways .focus-later .sketch { width: 20px; height: 20px; }
+.focus-ask-hint { flex: 1 1 0; min-width: 0; margin: 0; text-align: right; font-size: var(--t-xs); line-height: 1.3; color: var(--faint); text-wrap: balance; }
+/* Under the tiles, while something stands in the composer: it goes along with the answer. */
+.focus-note-tag { display: flex; align-items: center; gap: 6px; margin: 0; font-size: var(--t-sm); font-weight: 500; color: color-mix(in srgb, var(--u) 70%, var(--fg)); animation: focus-note-in var(--d-med) var(--ease-out); }
+.focus-note-tag .sketch { flex: none; width: 20px; height: 20px; }
+
+/* ── many short options: tags ─────────────────────────────────────────────── */
+.focus-opts[data-count="tags"] { display: flex; flex-wrap: wrap; align-content: flex-start; gap: 8px 7px; }
+.focus-opts[data-count="tags"] .focus-opt { flex: 0 1 auto; max-width: 100%; min-height: 40px; padding: 4px 13px; gap: 6px; border-radius: 11px 14px 10px 13px; aspect-ratio: auto; }
+.focus-opts[data-count="tags"] .focus-opt:nth-child(3n) { border-radius: 13px 10px 14px 11px; }
+.focus-opts[data-count="tags"] .focus-opt-words { flex: 0 1 auto; display: block; }
+.focus-opts[data-count="tags"] .focus-opt-label { display: block; font: 650 1rem/1.15 var(--display); letter-spacing: 0; white-space: nowrap; overflow: visible; }
+.focus-opts[data-count="tags"] .focus-opt-detail { display: none; }
+.focus-opts[data-count="tags"] .focus-opt-mark { width: 18px; height: 18px; }
+.focus-opts[data-count="tags"] .focus-opt-mark .focus-icon { width: 16px; height: 16px; }
+/* several answers: a ticked tag is filled, no box */
+.focus-opts[data-count="tags"][data-multi] .focus-opt:not(.focus-opt-send) .focus-opt-mark { display: none; }
+.focus-opts[data-count="tags"] .focus-opt[aria-pressed="true"] { background: var(--u); box-shadow: none; color: var(--surface); }
+.focus-opts[data-count="tags"] .focus-opt-send { flex: 1 0 100%; min-height: 46px; margin-top: 4px; }
+.focus-opts[data-count="tags"] .focus-opt-send .focus-opt-words { display: flex; align-items: baseline; gap: var(--s-2); }
+.focus-opts[data-count="tags"] .focus-opt-send .focus-opt-detail { display: inline; }
+/* the agent's advice: the pen goes round the whole tag (ui.js adviceLoop) */
+.focus-opts[data-count="tags"] .focus-opt.is-advised::before, .focus-opts[data-count="tags"] .focus-opt.is-advised::after { content: none; }
+.focus-opts[data-count="tags"] .focus-opt > .advice-loop { left: -5px; top: -6px; width: calc(100% + 10px); height: calc(100% + 12px); rotate: -1.5deg; }
+.focus-opts[data-count="tags"] .focus-opt[aria-pressed="true"].is-advised, .focus-opts[data-count="tags"] .focus-opt[data-state="done"].is-advised { --advice: color-mix(in srgb, var(--urg-high) 55%, var(--fg)); }
+/* what the tag under the pointer or the keyboard leads to */
+.focus-tag-line { margin: 0; min-height: 1.4em; font-size: var(--t-sm); line-height: 1.4; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.focus-tag-line b { font-weight: 600; color: var(--fg); }
+.focus-card[data-opts="tags-wide"] .focus-opts .focus-opt { padding-inline: 11px; }
+.focus-card[data-opts="tags-wide"] .focus-opts .focus-opt-label { font-size: .95rem; }
+
+/* ── the rail: how far the walk is ────────────────────────────────────────── */
+.focus-rail { flex: none; display: flex; align-items: center; gap: var(--s-3); min-width: 0; padding: 0 var(--pad) 2px; color: var(--muted); }
+.focus-sheet:not([data-state="cards"]) .focus-rail, .focus[data-single] .focus-rail { display: none; }
+.focus-rail-count { flex: none; margin: 0; white-space: nowrap; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
+.focus-rail-count b { font: 800 1.1rem/1 var(--display); letter-spacing: -.01em; color: var(--fg); }
+.focus-rail-marks { flex: 0 1 auto; min-width: 0; min-height: 0; display: flex; align-items: center; overflow: hidden; }
+.focus-rail-mark { flex: 0 1 18px; min-width: 5px; height: 24px; display: grid; place-items: center; color: color-mix(in srgb, var(--fg) 46%, var(--surface)); transition: scale var(--d-fast) var(--ease-out); }
+.focus-rail-mark svg { display: block; width: 100%; max-width: 16px; height: 16px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; }
+.focus-rail-mark[data-urgency="low"] { color: var(--faint); }
+.focus-rail-mark[data-urgency="high"] { color: var(--urg-high); }
+.focus-rail-mark[data-urgency="critical"] { color: var(--urg-critical); }
+.focus-rail-mark[data-state="done"] { color: var(--faint); }
+.focus-rail-mark[data-state="later"] { color: var(--muted); }
+.focus-rail-dot { fill: currentColor; stroke-width: 2; }
+.focus-rail-hollow { stroke-width: 2.8; }
+.focus-rail-tick { stroke-width: 3.6; }
+.focus-rail-ring { stroke: var(--fg); stroke-width: 1.7; }
+.focus-rail-mark[data-front] { flex: 0 0 26px; }
+.focus-rail-mark[data-front] svg { max-width: 24px; height: 24px; }
+@media (hover: hover) and (pointer: fine) { .focus-rail-mark:hover:not(:disabled) { scale: 1.3; } }
+.focus-rail-mark[data-gap="sender"], .focus-rail-who[data-gap="sender"] { margin-left: 7px; }
+.focus-rail-mark[data-gap="part"] { margin-left: 12px; }
+.focus-rail-who { display: none; }
+.focus-rail-who .doodle { width: 15px; height: 15px; stroke-width: 2.4; }
+
+/* ── the answers beside an enlarged picture ───────────────────────────────── */
+.focus-zoom-answer { flex: none; display: flex; flex-direction: column; gap: var(--s-3); max-height: 46%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--s-3) var(--pad) var(--s-3); background: var(--surface); box-shadow: 0 -1px 0 var(--line); }
+.focus-zoom-take { position: relative; flex: none; display: grid; gap: 3px; padding: 11px 16px 12px; border-radius: 13px 16px 12px 15px; background: var(--u); color: var(--surface); transition: filter var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.focus-zoom-take small { font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; opacity: .86; }
+.focus-zoom-take b { font: 800 1.2rem/1.15 var(--display); overflow-wrap: anywhere; }
+.focus-zoom-take:hover { filter: brightness(.93); }
+.focus-zoom-take:active { transform: scale(.985); }
+.focus-zoom-take.is-advised { --advice: color-mix(in srgb, var(--urg-high) 55%, var(--fg)); }
+.focus-zoom-opts .focus-opt-label { white-space: normal !important; overflow-wrap: anywhere; }
+.focus-zoom-opts .focus-opt[data-match] { box-shadow: inset 0 0 0 2px var(--u); }
+.focus-zoom-opts .focus-opt[data-match][aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--fg); }
+.focus-zoom-ways { flex: none; display: flex; gap: 2px; margin: auto 0 0 -8px; }
+
+@container focus (min-width: 700px) {
+  /* the rail stands at the left edge, under the top bar; the conversation moves in a little */
+  .focus-rail { position: absolute; z-index: 1; left: 0; top: 62px; bottom: var(--s-4); width: 46px; flex-direction: column; gap: var(--s-2); padding: 0; }
+  .focus-rail-count { display: grid; justify-items: center; gap: 3px; font-size: .62rem; }
+  .focus-rail-marks { flex: 0 1 auto; width: 100%; flex-direction: column; overflow-y: auto; scrollbar-width: none; padding: 3px 0; }
+  .focus-rail-mark { flex: 0 1 24px; width: 100%; min-width: 0; min-height: 11px; height: auto; }
+  .focus-rail-mark svg { width: 18px; max-width: none; height: 100%; max-height: 18px; }
+  .focus-rail-mark[data-front] { flex: 0 0 30px; }
+  .focus-rail-mark[data-front] svg { width: 28px; max-width: none; height: 28px; max-height: none; }
+  .focus-rail-mark[data-gap="sender"], .focus-rail-who[data-gap="sender"] { margin: 7px 0 0; }
+  .focus-rail-mark[data-gap="part"] { margin: 13px 0 0; }
+  .focus-rail[data-size="few"] .focus-rail-who { flex: none; display: block; margin-bottom: 1px; color: var(--muted); opacity: .75; }
+  .focus-rail[data-size="few"] .focus-rail-who + .focus-rail-mark { margin-top: 0; }
+  .focus-sheet[data-rail] .focus-talk { padding-left: 18px; }
+  /* forty tags on one screen: the answers take more of the window */
+  .focus-card[data-opts="tags-wide"] .focus-answer { width: clamp(280px, 48cqi, 600px); }
+  /* the picture large, the answers in a column at its right */
+  .focus-zoom[data-answer] { flex-direction: row; }
+  .focus-zoom-answer { --side: clamp(250px, 27cqi, 336px); width: var(--side); max-height: none; padding: 68px var(--s-4) var(--s-4); box-shadow: -1px 0 0 var(--line); }
+  .focus-zoom[data-answer] .focus-zoom-next { right: calc(clamp(250px, 27cqi, 336px) + var(--s-3)); }
+  .focus-zoom[data-answer] .focus-zoom-bar { right: clamp(250px, 27cqi, 336px); }
+}
+@media (max-width: 640px) {
+  .focus-composer { padding: var(--s-1) var(--pad) var(--s-2); }
+  .focus-composer .focus-ask-field { font-size: 16px; }
+  .focus-composer-foot { min-height: 34px; }
+  .focus-ask-hint { display: none; }
+  .focus-thread { margin-top: var(--s-5); }
+  .focus-answer { max-height: 46dvh; }
+  .focus-rail { padding-bottom: 0; }
 }

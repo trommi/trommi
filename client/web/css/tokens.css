@@ -95,13 +95,32 @@
 .media audio { display: block; width: 100%; }
 .media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The agent's advice: the option it would pick is circled by hand, two strokes that do not quite meet. */
+/* The agent's advice: the option it would pick is circled by hand. In the Focus window's pair of
+   squares that is two strokes that do not quite meet; everywhere else it is a loop drawn with the
+   pen (ui.js adviceLoop, the one place that draws the mark), stretched round the tile or the label
+   a little outside its edge, so it never runs through the words, however many lines they take. */
 .is-advised { position: relative; }
-.is-advised::before, .is-advised::after { content: ""; position: absolute; top: 7%; bottom: 5%; border: 2.500px solid var(--advice, var(--urg-high)); pointer-events: none; rotate: -3deg; }
-.is-advised::before { left: 5%; right: 46%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
-.is-advised::after { left: 34%; right: 4%; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
+.focus-opt.is-advised::before, .focus-opt.is-advised::after { content: ""; position: absolute; top: 7%; bottom: 5%; border: 2.500px solid var(--advice, var(--urg-high)); pointer-events: none; rotate: -3deg; }
+.focus-opt.is-advised::before { left: 5%; right: 46%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
+.focus-opt.is-advised::after { left: 34%; right: 4%; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
+.advice-loop { position: absolute; z-index: 1; left: -5px; top: -5px; width: calc(100% + 10px); height: calc(100% + 10px); overflow: visible; pointer-events: none; fill: none; stroke: var(--advice, var(--urg-high)); stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+.advice-loop path { vector-effect: non-scaling-stroke; }
 .inbox-answer.is-lead.is-advised, .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 70%, white); }
 .focus-opt.is-advised { --advice: var(--urg-high); }
 .focus-opt.is-advised::before, .focus-opt.is-advised::after { top: -6px; bottom: -8px; }
 .focus-opt.is-advised::before { left: -6px; }
 .focus-opt.is-advised::after { right: -8px; }
+
+/* Shared primitive: a link to something a session published, as a compact card (ui.js assetLink):
+   a small picture or a drawn sign of its kind, its type, its title. Used wherever rich() runs. */
+.asset-link { display: flex; align-items: center; gap: var(--s-3); width: fit-content; max-width: min(100%, 26rem); margin-block: 2px; padding: 6px var(--s-4) 6px 6px; border-radius: var(--r-sm); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--fg); text-decoration: none; white-space: normal; transition: box-shadow 100ms ease-out; }
+a.asset-link:hover { box-shadow: 0 0 0 1px var(--fg); }
+.asset-thumb { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 5px; overflow: hidden; background: var(--sunken); color: var(--muted); }
+.asset-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.asset-thumb svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.asset-link-text { min-width: 0; display: grid; gap: 3px; }
+.asset-link-text .caps { font: 600 .72rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.asset-link-text strong { font: 700 1rem/1.25 var(--display); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-link.is-gone { background: none; box-shadow: none; outline: 1px dashed var(--line-strong); outline-offset: -1px; }
+.asset-link.is-gone strong { color: var(--muted); font-weight: 600; }
+

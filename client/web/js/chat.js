@@ -5,10 +5,11 @@
 // (icons, attachments, lightbox, code blocks).
 
 import { sendMessage } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, doodle } from './ui.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountHistory, mountFiles } from './history.js'
 import { mountDictation } from './speech.js'
+import { tellApart } from './agents.js'
 
 // ---- icons -----------------------------------------------------------------
 
@@ -218,7 +219,7 @@ export function richPlus(source) {
 
 // ---- messages --------------------------------------------------------------
 
-const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back' }
+const EVENT_LABEL = { asked: 'New question', decided: 'Answered', done: 'Done', urgency: 'Urgency', reopened: 'Taken back', revised: 'Question revised' }
 const GROUP_GAP = 5 * 60000
 const WORKING_WINDOW = 10 * 60000
 
@@ -259,8 +260,6 @@ function scribbleCard(a, onOpen) {
   return card
 }
 
-export const ASSET_LABEL = { html: 'Page', image: 'Picture', video: 'Video', audio: 'Audio', file: 'File' }
-const sizeText = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} kB`)
 
 // A page or file the session published under a link that opens without a login: what it is,
 // and the two things to do with it. Once revoked or expired only its name is left, dashed.
@@ -296,15 +295,27 @@ function assetCard(asset) {
   return card
 }
 
-function eventLine(m, cont, onCard) {
+// One line for something that happened to a question. Unless the line's text is the question itself,
+// the question is named first, briefly, and what happened to it follows: "Answered  <question> → Yes".
+function eventLine(m, cont, onCard, card) {
   const node = button(`event event-${m.kind}${cont ? ' cont' : ''}`)
   const ico = el('span', 'event-ico')
   ico.append(icon(ICONS[m.kind] ? m.kind : 'asked'))
   const body = el('span', 'event-body')
-  body.append(el('span', 'event-kind', EVENT_LABEL[m.kind] ?? 'Board'), el('span', 'event-text', m.text))
+  body.append(el('span', 'event-kind', EVENT_LABEL[m.kind] ?? 'Board'))
+  if (card && card.title !== m.text) body.append(el('span', 'event-about', card.title))
+  body.append(el('span', 'event-text', m.text))
   node.append(ico, body, timeNode(m.ts, 'event-time'))
   node.addEventListener('click', () => onCard?.(m.card_id))
   return node
+}
+
+// A message that belongs to a question (asked back about it, or the answer to that): say which one, and lead there on a tap.
+function aboutNode(card, onCard) {
+  const ref = button('msg-about')
+  ref.append(el('span', 'caps', 'About'), el('span', null, card.title))
+  ref.addEventListener('click', () => onCard?.(card.id))
+  return ref
 }
 
 function emptyNode(onPick) {
@@ -421,18 +432,26 @@ function createPane(agent, ctx) {
   function paintAsk(entry, state) {
     const card = state.all.cards.find(c => c.id === entry.m.card_id)
     const off = state.later.includes(card?.id)
-    const vip = Boolean(state.all.agents.find(a => a.id === agent)?.starred)
-    const sig = card ? JSON.stringify([card.status, card.choice, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.attachments?.length, off, vip]) : 'gone'
+    const sig = card ? JSON.stringify([card.status, card.choice, card.urgency, card.urgency_reason, card.title, card.body, card.options, card.recommended, card.multiple, card.attachments?.length, off]) : 'gone'
     if (entry.sig === sig) return
     entry.sig = sig
     const old = entry.node.querySelector('.inbox-question')
     if (old) fit.unobserve(old)
     if (card?.status !== 'open') {
       entry.node.className = 'ask'
-      return entry.node.replaceChildren(eventLine(entry.m, false, ctx.onCard))
+      return entry.node.replaceChildren(eventLine(entry.m, false, ctx.onCard, card))
     }
     entry.node.className = 'ask ask-open'
-    entry.node.replaceChildren(questionRow(card, { onOpen: ctx.onOpen, onDecided: ctx.onDecided, off, vip, fit }))
+    entry.node.replaceChildren(questionRow(card, { onOpen: ctx.onOpen, onDecided: ctx.onDecided, off, fit }))
+  }
+
+  // What a session published can be revoked or expire later: its card is repainted when the message changes.
+  const published = new Map()   // message id -> { node, sig }
+  function paintAsset(entry, m) {
+    const sig = JSON.stringify(m.asset)
+    if (entry.sig === sig) return
+    entry.sig = sig
+    entry.node.replaceChildren(assetCard(m.asset))
   }
 
   function messageNode(m, cont, state) {
@@ -442,18 +461,12 @@ function createPane(agent, ctx) {
       paintAsk(entry, state)
       return entry.node
     }
-    if (m.from === 'event') return eventLine(m, cont, ctx.onCard)
+    const about = m.card_id && state.all.cards.find(c => c.id === m.card_id)
+    if (m.from === 'event') return eventLine(m, cont, ctx.onCard, about)
     const node = el('article', `msg msg-${m.from === 'user' ? 'user' : 'agent'}${cont ? ' cont' : ''}`)
     if (m.from === 'user') {
       for (const a of (m.attachments ?? []).filter(a => a.kind === 'scribble')) node.append(scribbleCard(a, () => ctx.onScribble?.(agent)))
-      // Asked back about a question: say which one, and lead there on a tap.
-      const about = m.card_id && state.all.cards.find(c => c.id === m.card_id)
-      if (about) {
-        const ref = button('msg-about')
-        ref.append(el('span', 'caps', 'About'), el('span', null, about.title))
-        ref.addEventListener('click', () => ctx.onCard?.(about.id))
-        node.append(ref)
-      }
+      if (about) node.append(aboutNode(about, ctx.onCard))
       if (m.text) {
         const bubble = el('div', 'bubble')
         bubble.append(el('p', null, m.text))
@@ -469,9 +482,14 @@ function createPane(agent, ctx) {
     } else {
       node.title = fullTime(m.ts)
     }
+    if (about) node.append(aboutNode(about, ctx.onCard))
     // Something published under a link of its own stands as a card; the text only repeats it.
-    if (m.asset) node.append(assetCard(m.asset))
-    else {
+    if (m.asset) {
+      const entry = { node: el('div', 'asset-slot'), sig: null }
+      published.set(m.id, entry)
+      paintAsset(entry, m)
+      node.append(entry.node)
+    } else {
       const text = richPlus(m.text ?? '')
       text.append(...attachmentNodes(m.attachments))
       node.append(text)
@@ -557,7 +575,9 @@ function createPane(agent, ctx) {
 
   function render(state, several) {
     const me = state.all.agents.find(a => a.id === agent)
-    const sig = several && me ? JSON.stringify([me.name, me.mark]) : ''
+    // Columns of the same name carry what tells them apart, as in the sidebar.
+    const apart = several ? tellApart(state.all.agents).get(agent) ?? '' : ''
+    const sig = several && me ? JSON.stringify([me.name, me.mark, apart]) : ''
     if (sig !== headSig) {
       headSig = sig
       head.hidden = !sig
@@ -565,6 +585,7 @@ function createPane(agent, ctx) {
         const mark = el('span', 'chat-pane-mark')
         mark.append(doodle(me.mark ?? me.id))
         head.replaceChildren(mark, el('strong', null, me.name))
+        if (apart) head.append(el('small', null, apart))
       }
       placeholder = sig ? `Message to ${me.name}` : 'Message to the agent'
       draft.placeholder = placeholder
@@ -579,6 +600,7 @@ function createPane(agent, ctx) {
     if (restart) {
       inner.replaceChildren(working)
       asks.clear()
+      published.clear()
       fit.disconnect()
       order = []
       lastMsg = null
@@ -588,6 +610,7 @@ function createPane(agent, ctx) {
     const animate = !first && grows
     for (const m of fresh) append(m, state, animate)
     for (const entry of asks.values()) paintAsk(entry, state)
+    if (published.size) for (const m of messages) if (published.has(m.id) && m.asset) paintAsset(published.get(m.id), m)
 
     if (!messages.length && !empty) {
       empty = emptyNode(text => { draft.value = text; fitDraft(); draft.focus() })

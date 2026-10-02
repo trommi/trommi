@@ -1,7 +1,7 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, sketch, ago } from './ui.js'
+import { el, doodle, pairDoodle, sketch, raisedHand, loopPath, penSeed, ago, DRAWINGS, drawingMark } from './ui.js'
 import { setScope, star, editSession, pair, unpair, archive } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -33,7 +33,7 @@ export function pairAvatar(members) {
   return node
 }
 
-export const pairName = members => members.map(a => a.name).join(' + ')
+const pairName = members => members.map(a => a.name).join(' + ')
 
 // What a session, or several together, need from the human right now.
 function summary(all, members) {
@@ -48,36 +48,59 @@ function summary(all, members) {
   return { open, tasks, online, running, stuck }
 }
 
-// At work: one thin ring, and a swelling that travels through it like a drop through a tube.
-// The swelling is a filled shape that is as thin as the ring at both ends and three times
-// as thick in its middle, so it has no ends to see.
-const RING_R = 11.2, RING_W = 1.5
+// At work: a ring circled by hand, and a drop that travels through it as through a soft tube.
+// The ring stands still: one and a bit turns of the pen that do not quite close, like the loop
+// round the waiting hand. The drop is drawn on its own and goes round: a swelling whose thickness
+// rises and falls along one smooth wave, steeper where it leads than where it trails, and thins to
+// nothing at both ends, so it has no start and no end to see. Its two edges are not quite even,
+// as when a pen is pressed harder. It is drawn twice, the second a moment behind the first: where
+// the drop is slow the two lie on each other, where it is quick they pull apart a little, and the
+// drop stretches as liquid does. The movement is CSS (app.css); every ring is on the same clock,
+// so a list that is rebuilt does not send its drop back to the start.
+const RING = { c: 16, r: 14.3, turn: 4600, lag: 150 }
+const DROP = { swell: 1.95, lead: 95, trail: 150, power: 1.6 }
+const RING_LOOP = loopPath(penSeed('working ring'), { rad: 14.55, drift: .5, jitter: .6, start: 1.1 })
+const DROP_PATH = (() => {
+  const r = penSeed('working drop')
+  const phase = [r() * 6, r() * 6, r() * 6, r() * 6]
+  // A slow unevenness along the drop, different for its outer and its inner edge.
+  const uneven = (t, k) => 1 + .17 * (Math.sin(3.1 * t + phase[k]) * .6 + Math.sin(7.3 * t + phase[k + 1]) * .4)
+  const steps = 96
+  const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
+    const deg = -DROP.trail + (DROP.trail + DROP.lead) * i / steps   // from the thickest place; ahead is clockwise
+    const t = deg * Math.PI / 180
+    const wave = ((1 + Math.cos(Math.PI * deg / (deg < 0 ? DROP.trail : DROP.lead))) / 2) ** DROP.power
+    const rad = RING.r + side * DROP.swell * wave * (side > 0 ? 1 : .8) * uneven(t, side > 0 ? 0 : 2)
+    return `${(RING.c + Math.sin(t) * rad).toFixed(3)} ${(RING.c - Math.cos(t) * rad).toFixed(3)}`
+  })
+  return `M${edge(1).join(' L')} L${edge(-1).reverse().join(' L')} Z`
+})()
 function ring() {
   const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', '0 0 28 28')
+  svg.setAttribute('viewBox', `0 0 ${RING.c * 2} ${RING.c * 2}`)
   svg.setAttribute('class', 'agent-ring')
   svg.setAttribute('aria-hidden', 'true')
-  const circle = document.createElementNS(NS, 'circle')
-  circle.setAttribute('cx', '14')
-  circle.setAttribute('cy', '14')
-  circle.setAttribute('r', String(RING_R))
-  circle.setAttribute('stroke-width', String(RING_W))
-  const span = Math.PI * .62, steps = 28
-  const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
-    const t = i / steps, a = -Math.PI / 2 + (t - .5) * span
-    const half = RING_W / 2 + RING_W * Math.sin(Math.PI * t) ** 2
-    const rad = RING_R + side * half
-    return `${(14 + Math.cos(a) * rad).toFixed(2)} ${(14 + Math.sin(a) * rad).toFixed(2)}`
-  })
-  const drop = document.createElementNS(NS, 'path')
-  drop.setAttribute('d', `M${edge(1).join(' L')} L${edge(-1).reverse().join(' L')} Z`)
-  svg.append(circle, drop)
+  svg.style.setProperty('--ring-turn', `${RING.turn}ms`)
+  const at = -RING.turn - (Date.now() % RING.turn)
+  const loop = document.createElementNS(NS, 'path')
+  loop.setAttribute('class', 'ring-loop')
+  loop.setAttribute('d', RING_LOOP)
+  svg.append(loop)
+  for (const lag of [0, RING.lag]) {
+    const drop = document.createElementNS(NS, 'path')
+    drop.setAttribute('class', 'ring-drop')
+    drop.setAttribute('d', DROP_PATH)
+    drop.style.animationDelay = `${at + lag}ms`
+    svg.append(drop)
+  }
   return svg
 }
 
 // The badge at the end of a session row carries its state: a calm ring with the number of
-// questions while it works, a raised hand when it is stopped waiting for the human, and the
-// same hand or number in grey when the session is disconnected.
+// questions while it works, a raised hand in a loop drawn by hand when it is stopped waiting for
+// the human, and the same hand or number in grey when the session is disconnected. Ring and loop
+// are a pair: the same size, each on a soft ground of its own colour, so the badges line up down
+// the column.
 function badge({ open, online, running, stuck }) {
   if (!open && !(online && running)) return null
   const node = el('span', 'agent-badge')
@@ -86,7 +109,7 @@ function badge({ open, online, running, stuck }) {
   if (hand) {
     node.dataset.state = 'waiting'
     node.title = online ? `Waiting for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`
-    node.append(sketch('hand'))
+    node.append(raisedHand())
   } else {
     node.dataset.state = online ? 'running' : 'open'
     node.title = online ? (open ? `Working, ${questions} open` : 'Working') : `Disconnected, ${questions} open`
@@ -99,7 +122,7 @@ function badge({ open, online, running, stuck }) {
 
 // Sessions that share a name get a second line that tells them apart: the folder, else the
 // machine, else since when they are connected. Returns a Map of session id to that line.
-function tellApart(agents) {
+export function tellApart(agents) {
   const lines = new Map()
   const byName = new Map()
   for (const a of agents) byName.set(a.name, [...(byName.get(a.name) ?? []), a])
@@ -129,7 +152,13 @@ export function mountAgents(root, { onSelect }) {
     if (active && document.body.dataset.page !== 'roster') btn.setAttribute('aria-current', 'true')
     if (tip) btn.title = tip
     const text = el('span', 'agent-text')
-    text.append(el('strong', null, label))
+    // Sessions laid together: every name on a line of its own, so none is cut short, and each
+    // line can be grabbed to pull that session out again.
+    for (const line of [].concat(label)) {
+      const name = el('strong', null, line.text ?? line)
+      if (line.member) name.dataset.member = line.member
+      text.append(name)
+    }
     if (sub) text.append(el('small', null, sub))
     btn.append(lead, text)
     if (mark) btn.append(mark)
@@ -166,7 +195,7 @@ export function mountAgents(root, { onSelect }) {
       const single = u.members.length === 1 ? u.members[0] : null
       const row = entry({
         id: u.id,
-        label: single ? single.name : pairName(u.members),
+        label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
         lead: single ? avatar(single) : pairAvatar(u.members),
         active: scope === u.id,
@@ -175,13 +204,26 @@ export function mountAgents(root, { onSelect }) {
       })
       row.dataset.unit = u.id
       row.dataset.members = u.members.map(a => a.id).join(' ')
+      if (!single) {
+        // Without dragging: scissors cut the group apart, every session stands alone again.
+        // (One session alone is taken out on the Agents page, with "Split".)
+        // It stands under the badge, on the badge's axis. No tooltip (it would lie over the next row):
+        // while the pointer is on it, the loop round the group opens up, which says what it does.
+        row.classList.add('is-group')
+        const cut = el('button', 'agent-cut')
+        cut.type = 'button'
+        cut.setAttribute('aria-label', `Pull apart ${pairName(u.members)}`)
+        cut.append(sketch('scissors'))
+        cut.addEventListener('click', () => { for (const a of u.members) editSession(a.id, { group: null }).catch(() => {}) })
+        row.append(cut)
+      }
       if (!u.online) {
         row.classList.add('is-offline')
         const away = el('button', 'agent-archive')
         away.type = 'button'
         away.title = 'Archive: put this session away'
         away.setAttribute('aria-label', `Archive ${single ? single.name : pairName(u.members)}`)
-        away.append(sketch('later'))
+        away.append(sketch('archive'))
         away.addEventListener('click', () => { for (const a of u.members) archive(a.id).catch(() => {}) })
         row.append(away)
       }
@@ -214,12 +256,21 @@ export function mountAgents(root, { onSelect }) {
     drag.ghost.classList.add('agent-ghost')
     document.body.append(drag.ghost)
     drag.row.classList.add('is-dragging')
+    // Out of a group: the one that is carried fades where it stood.
+    if (drag.grouped) for (const n of drag.row.querySelectorAll(`[data-member="${CSS.escape(drag.agent)}"]`)) n.classList.add('is-carried')
     document.body.classList.add('is-pairing')
     move(drag.x, drag.y)
+  }
+  // Carried clear of its group's row, a session will leave it when let go.
+  const outside = (x, y) => {
+    const box = drag.row.getBoundingClientRect()
+    return x < box.left - 10 || x > box.right + 10 || y < box.top - 10 || y > box.bottom + 10
   }
   function move(x, y) {
     drag.ghost.style.translate = `${x - 17}px ${y - 17}px`
     const target = rowAt(x, y)
+    // The loop round the group opens up while one of them is on its way out.
+    drag.row.classList.toggle('is-leaving', drag.grouped && outside(x, y))
     if (target === drag.target) return
     drag.target?.classList.remove('is-drop')
     drag.target = target
@@ -229,14 +280,15 @@ export function mountAgents(root, { onSelect }) {
     if (!drag) return
     clearTimeout(drag.timer)
     drag.ghost?.remove()
-    drag.row.classList.remove('is-dragging')
+    drag.row.classList.remove('is-dragging', 'is-leaving')
+    for (const n of drag.row.querySelectorAll('.is-carried')) n.classList.remove('is-carried')
     drag.target?.classList.remove('is-drop')
     document.body.classList.remove('is-pairing')
     drag = null
   }
   root.addEventListener('pointerdown', e => {
     const row = e.target.closest('.agent-row[data-unit]')
-    if (!row || e.button || e.target.closest('.agent-archive')) return
+    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut')) return
     const ids = row.dataset.members.split(' ')
     // In a group the scribble under the pointer is the one that is taken out.
     const agent = e.target.closest('[data-member]')?.dataset.member ?? ids.at(-1)
@@ -254,9 +306,8 @@ export function mountAgents(root, { onSelect }) {
     if (!drag) return
     if (drag.ghost) {
       const { agent, grouped, target } = drag
-      const far = Math.hypot(e.clientX - drag.x, e.clientY - drag.y)
       if (target) pair(agent, target.dataset.members.split(' ')[0]).catch(() => {})
-      else if (grouped && far > 48) unpair(agent).catch(() => {})
+      else if (grouped && outside(e.clientX, e.clientY)) unpair(agent).catch(() => {})
       // The release is not a tap on the row.
       const swallow = ev => { ev.stopPropagation(); ev.preventDefault() }
       window.addEventListener('click', swallow, { capture: true, once: true })
@@ -301,20 +352,28 @@ export function mountRoster(root) {
       const card = el('article', 'roster-card')
       card.dataset.online = String(Boolean(agent.online))
       const top = el('header')
+      // The name is the way to rename it; the picture is the way to its drawing.
       const name = el('div', 'roster-name')
-      name.append(el('strong', null, agent.name), el('span', null, agent.task || 'no task named'))
+      const rename = el('button', 'roster-rename')
+      rename.type = 'button'
+      rename.title = 'Rename'
+      rename.append(el('strong', null, agent.name))
+      rename.addEventListener('click', () => openEditor(agent))
+      name.append(rename, el('span', null, agent.task || 'no task named'))
       const status = el('span', 'roster-state', agent.online ? 'connected' : `disconnected, last seen ${ago(agent.seen ?? agent.joined ?? Date.now())}`)
       const vip = el('button', 'roster-star', agent.starred ? '★' : '☆')
       vip.type = 'button'
       vip.setAttribute('aria-pressed', String(Boolean(agent.starred)))
       vip.setAttribute('aria-label', agent.starred ? 'Remove the VIP mark' : 'Mark as VIP')
       vip.addEventListener('click', () => star(agent.id, !agent.starred).catch(() => {}))
-      // Tap the mark to rename the session or pick another scribble.
+      // Tap the picture to choose another drawing, right there.
       const edit = el('button', 'roster-edit')
       edit.type = 'button'
-      edit.setAttribute('aria-label', `${agent.name}: change name and mark`)
+      edit.title = 'Choose a drawing'
+      edit.setAttribute('aria-label', `${agent.name}: choose a drawing`)
+      edit.setAttribute('aria-haspopup', 'dialog')
       edit.append(avatar(agent))
-      edit.addEventListener('click', () => openEditor(agent))
+      edit.addEventListener('click', () => openMarkPicker(agent, edit))
       top.append(edit, name, status, vip)
       const facts = el('dl', 'roster-facts')
       facts.append(
@@ -337,7 +396,7 @@ export function mountRoster(root) {
       }
       // What can be done with the session, as quiet words: rename, lay together or split, put away.
       const actions = el('footer', 'roster-actions')
-      actions.append(act('Change name or mark', () => openEditor(agent)))
+      actions.append(act('Rename', () => openEditor(agent)))
       const group = all.groups.find(g => g.id === agent.group)
       if (group) {
         const others = group.members.filter(a => a !== agent).map(a => a.name).join(', ')
@@ -374,17 +433,72 @@ export function mountRoster(root) {
     // Phones have no bar with words; the two side doors stand here.
     const links = el('p', 'roster-links')
     const link = (href, text) => { const a = el('a', null, text); a.href = href; return a }
-    links.append(link('/help.html', 'Help'), link('/admin.html', 'Admin'))
+    const admin = link('/admin.html', 'Admin')
+    admin.prepend(sketch('key'))
+    links.append(link('/help.html', 'Help'), admin)
     parts.push(links)
     root.replaceChildren(...parts)
   }
   return { render }
 }
 
-// ---- rename a session, pick its scribble -------------------------------------
+// ---- pick a session's drawing, rename it ---------------------------------------
+
+/** The choice of drawing, right at the mark that was clicked: forty of them, one click picks and saves.
+ *  Escape or a click beside it closes. anchor is the element the grid opens under. */
+let picker = null
+export function openMarkPicker(agent, anchor) {
+  picker?.remove()
+  const dialog = picker = el('dialog', 'mark-picker')
+  dialog.setAttribute('aria-label', `Choose a drawing for ${agent.name}`)
+  dialog.style.setProperty('--hue', hueOf(agent.id))
+  const grid = el('div', 'mark-grid')
+  grid.setAttribute('role', 'radiogroup')
+  grid.setAttribute('aria-label', 'Drawing')
+  const error = el('p', 'session-error')
+  for (const name of DRAWINGS) {
+    const b = el('button', 'mark-tile')
+    b.type = 'button'
+    b.title = name
+    b.setAttribute('role', 'radio')
+    b.setAttribute('aria-label', name)
+    b.setAttribute('aria-checked', String(agent.mark === drawingMark(name)))
+    b.append(doodle(drawingMark(name)))
+    b.addEventListener('click', async () => {
+      for (const other of grid.children) other.setAttribute('aria-checked', String(other === b))
+      try {
+        await editSession(agent.id, { icon: drawingMark(name) })
+        dialog.close()
+      } catch (err) {
+        error.textContent = `Not saved: ${err.message}`
+      }
+    })
+    grid.append(b)
+  }
+  // The arrows walk the grid.
+  grid.addEventListener('keydown', e => {
+    const tiles = [...grid.children], at = tiles.indexOf(document.activeElement)
+    const cols = getComputedStyle(grid).gridTemplateColumns.split(' ').length
+    const step = { ArrowLeft: -1, ArrowRight: 1, ArrowUp: -cols, ArrowDown: cols }[e.key]
+    if (!step || at < 0) return
+    e.preventDefault()
+    tiles[Math.max(0, Math.min(tiles.length - 1, at + step))].focus()
+  })
+  dialog.append(grid, error)
+  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
+  dialog.addEventListener('close', () => dialog.remove())
+  document.body.append(dialog)
+  dialog.showModal()
+  // Under the mark, or above it where there is no room below; never outside the window.
+  const a = anchor.getBoundingClientRect(), w = dialog.offsetWidth, h = dialog.offsetHeight
+  const top = a.bottom + 8 + h > window.innerHeight - 8 ? Math.max(8, a.top - h - 8) : a.bottom + 8
+  dialog.style.left = `${Math.max(8, Math.min(a.left, window.innerWidth - w - 8))}px`
+  dialog.style.top = `${top}px`
+  ;(grid.querySelector('[aria-checked="true"]') ?? grid.firstChild).focus()
+}
 
 let editor = null
-function openEditor(agent) {
+export function openEditor(agent) {
   editor?.remove()
   const dialog = editor = el('dialog', 'session-editor')
   const form = el('form')
@@ -395,24 +509,6 @@ function openEditor(agent) {
   name.value = agent.name
   name.maxLength = 60
   name.setAttribute('aria-label', 'Name of the session')
-  let picked = agent.mark
-  const grid = el('div', 'session-marks')
-  grid.setAttribute('role', 'radiogroup')
-  grid.setAttribute('aria-label', 'Mark')
-  // The current mark first, then a handful of fresh scribbles from the same family.
-  const seeds = [agent.mark, ...Array.from({ length: 11 }, (_, i) => `${agent.id}:${i + 1}`)].filter((s, i, all) => all.indexOf(s) === i)
-  for (const seed of seeds) {
-    const b = el('button', 'session-mark')
-    b.type = 'button'
-    b.setAttribute('role', 'radio')
-    b.setAttribute('aria-checked', String(seed === picked))
-    b.append(doodle(seed))
-    b.addEventListener('click', () => {
-      picked = seed
-      for (const other of grid.children) other.setAttribute('aria-checked', String(other === b))
-    })
-    grid.append(b)
-  }
   const error = el('p', 'session-error')
   const row = el('div', 'session-buttons')
   const cancel = el('button', null, 'Cancel')
@@ -421,13 +517,15 @@ function openEditor(agent) {
   const save = el('button', 'is-lead', 'Save')
   save.type = 'submit'
   row.append(cancel, save)
-  form.append(el('h2', null, 'Change the session'), el('label', 'caps', 'Name'), name, el('span', 'caps', 'Mark'), grid, error, row)
+  const label = el('label', 'caps', 'Name')
+  label.htmlFor = name.id
+  form.append(el('h2', null, 'Rename the session'), label, name, error, row)
   form.addEventListener('submit', async e => {
     e.preventDefault()
     save.disabled = true
     try {
       // An emptied name falls back to the one the session gave itself.
-      await editSession(agent.id, { label: name.value.trim() === agent.given ? '' : name.value.trim(), icon: picked === agent.id ? '' : picked })
+      await editSession(agent.id, { label: name.value.trim() === agent.given ? '' : name.value.trim() })
       dialog.close()
     } catch (err) {
       save.disabled = false

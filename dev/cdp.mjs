@@ -2,6 +2,7 @@
 //
 // As a command: run a script in a page, print the result, optionally save a screenshot afterwards.
 //   node dev/cdp.mjs URL WIDTH,HEIGHT 'async js returning a value' [OUT.png]
+// Exit code 1 when the script throws (the error goes to stderr), 2 on wrong usage.
 // As a module (see dev/ui-test.mjs):
 //   const browser = await launchChromium({ width, height })
 //   const page = await browser.page()          // { send(method, params), on(event, fn), close() }
@@ -116,7 +117,12 @@ export async function launchChromium({ width = 1440, height = 900, args = [] } =
 async function main() {
   const [url, size = '1440,900', script = 'null', out] = process.argv.slice(2)
   const [width, height] = size.split(',').map(Number)
+  if (!url || !width || !height) {
+    console.error("usage: node dev/cdp.mjs URL WIDTH,HEIGHT 'async js returning a value' [OUT.png]")
+    return 2
+  }
   const browser = await launchChromium({ width, height })
+  let failed = false
   try {
     const page = await browser.page()
     await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 })
@@ -124,7 +130,13 @@ async function main() {
     await page.send('Page.navigate', { url })
     await sleep(2500)
     const res = await page.send('Runtime.evaluate', { expression: `(async () => { ${script} })()`, awaitPromise: true, returnByValue: true })
-    console.log(JSON.stringify(res.result?.value ?? res.exceptionDetails ?? null, null, 2))
+    if (res.exceptionDetails) {
+      // The script threw: say what, still take the screenshot (it shows the state it failed in), and fail.
+      failed = true
+      console.error(res.exceptionDetails.exception?.description ?? res.exceptionDetails.text)
+    } else {
+      console.log(JSON.stringify(res.result?.value ?? null, null, 2))
+    }
     if (out) {
       await sleep(900)
       const shot = await page.send('Page.captureScreenshot', { format: 'png' })
@@ -133,10 +145,8 @@ async function main() {
   } finally {
     await browser.close()
   }
+  return failed ? 1 : 0
 }
 
 const isMain = process.argv[1] && fs.realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)
-if (isMain) {
-  await main()
-  process.exit(0)
-}
+if (isMain) process.exit(await main())

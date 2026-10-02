@@ -42,8 +42,8 @@
 
   <div class="pad-top">
     <div class="pad-pill pad-title">
-      <a class="pad-icon-btn" href="/" data-icon="back" aria-label="Back to the board" data-tip="Board"></a>
-      <strong>Pad</strong><span id="pad-name">global</span>
+      <a class="pad-icon-btn" id="back" href="/" data-icon="back" aria-label="Back to the board" data-tip="Board"></a>
+      <strong id="pad-word">Pad</strong><span id="pad-name">global</span>
     </div>
     <span class="pad-gap"></span>
     <div class="pad-pill">
@@ -64,7 +64,8 @@
 
   <!-- actions for what is selected; pad.js places it above the selection -->
   <div class="pad-pill pad-selbar" id="selbar" role="toolbar" aria-label="Selection" hidden>
-    <button type="button" class="pad-send" id="send-to" data-icon="send" aria-haspopup="menu" aria-expanded="false">Send to…</button>
+    <button type="button" class="pad-send" id="send-to" data-icon="send" aria-haspopup="menu" aria-expanded="false"><span id="send-to-label">Send to…</span></button>
+    <button type="button" class="pad-icon-btn" id="send-other" data-icon="more" aria-label="Send to another session" data-tip="Another session" hidden></button>
     <span class="pad-sep"></span>
     <button type="button" class="pad-icon-btn" id="to-front" data-icon="front" aria-label="Bring to front" data-tip="To front · ]"></button>
     <button type="button" class="pad-icon-btn" id="to-back" data-icon="back-z" aria-label="Send to back" data-tip="To back · ["></button>

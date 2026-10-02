@@ -13,9 +13,17 @@ import {
   buildGeom, paintStroke, strokeFromWorld, layoutText, isText, paintElement, hitElement, strokeNear, inRect,
   unionBox, scaled, textOf, renderPNG,
 } from './elements.js'
-import { connectBoard, onBoard, boardState, transcribe, sendSelection, SAMPLE_TRANSCRIPT } from './board.js'
+import { connectBoard, onBoard, boardState, setBoard, transcribe, sendSelection, SAMPLE_TRANSCRIPT } from './board.js'
+import { startSync } from './sync.js'
+import { PAD_WORD } from './name.js'
 
-const PAD = new URLSearchParams(location.search).get('pad') || 'global'
+const QUERY = new URLSearchParams(location.search)
+const PAD = QUERY.get('pad') || 'global'
+// Inside the board (js/padlink.js lays this page over whatever is shown): the board says who
+// the sessions are and where the human came from, and "close" goes back there.
+const EMBED = QUERY.has('embed') && window.parent !== window
+const tell = (type, extra = {}) => { if (EMBED) window.parent.postMessage({ trommi: 'pad', type, ...extra }, location.origin) }
+let host = { open: !EMBED, prefer: [] }   // what the board last said: is the pad in sight, which session is behind it
 const AUTHOR = 'human'   // with device keys this becomes the device id (docs/krypto-konzept.md)
 const MIN_Z = 0.05, MAX_Z = 8
 const UNDO_MAX = 200
@@ -34,6 +42,7 @@ const lctx = layer.getContext('2d', { alpha: false })
 
 // ── icons ───────────────────────────────────────────────────────────────────
 const ICONS = {
+  more: ['M6 9l6 6 6-6'],
   select: ['M5 3.5l13.5 6.6-5.7 1.9-2 5.7z', 'M13.5 13.5l5 5'],
   pen: ['M4 20l1.2-4.4L16.6 4.2a2 2 0 012.9 0l.3.3a2 2 0 010 2.9L8.4 18.8z', 'M14.5 6.5l3 3'],
   hl: ['M14.5 4l5.5 5.5-8 8H7.5v-4.5z', 'M11.5 7l5.5 5.5', 'M4 21h10'],
@@ -72,6 +81,7 @@ for (const node of document.querySelectorAll('[data-icon]')) node.prepend(icon(n
 
 // ── state ───────────────────────────────────────────────────────────────────
 let db = null
+let sync = null                // the link to the server (sync.js)
 let els = new Map()            // id → record; tombstones are not in here
 const revs = new Map()         // id → highest revision seen, tombstones included
 let order = null               // records back to front, rebuilt when z changes
@@ -103,7 +113,7 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 // ── records ─────────────────────────────────────────────────────────────────
 const nextRev = id => { const r = (revs.get(id) ?? 0) + 1; revs.set(id, r); return r }
 /** A record as it is written: every write gets a time and the next revision. */
-const stamp = el => ({ ...el, updated: Date.now(), rev: nextRev(el.id) })
+const stamp = el => ({ ...el, updated: Date.now(), rev: nextRev(el.id), sent: els.get(el.id)?.sent ?? el.sent ?? [] })
 const tombstone = el => ({ id: el.id, pad: el.pad, deleted: true, author: AUTHOR, updated: Date.now(), rev: nextRev(el.id) })
 const topZ = () => ordered().reduce((m, e) => Math.max(m, e.z), 0)
 function make(type, box, data, z = topZ() + 1, blob = null) {
@@ -119,6 +129,18 @@ function makeText(type, x, y, data, blob = null) {
 let saveError = false
 function persist(records) {
   db.put(records).then(() => { saveError = false; renderStatus() }, () => { saveError = true; renderStatus() })
+  sync.push(records)
+}
+/** Records that came from the server: another tab or device changed them, or the server
+ *  confirmed ours (with its time, its running number, and where they were sent). */
+function applyRemote(records) {
+  for (const r of records) {
+    revs.set(r.id, Math.max(revs.get(r.id) ?? 0, r.rev ?? 1))
+    if (r.deleted) { els.delete(r.id); sel.delete(r.id) }
+    else els.set(r.id, r)
+  }
+  order = null
+  refresh()
 }
 /** Change the pad. changes: [{ id, before, after }]; after null deletes. One call is one undo step. */
 function apply(changes, record = true) {
@@ -166,7 +188,7 @@ function picture(id) {
   if (!p) {
     const img = new Image()
     p = { img, ok: false, ready: null }
-    p.ready = db.getBlob(id).then(found => new Promise(resolve => {
+    p.ready = sync.getBlob(id).then(found => new Promise(resolve => {
       if (!found) return resolve()
       img.onload = () => { p.ok = true; dirty(); resolve() }
       img.onerror = () => resolve()
@@ -393,10 +415,18 @@ function refresh() {
 function renderStatus() {
   const b = boardState()
   const n = els.size
-  const where = saveError ? 'could not be saved' : db?.kind === 'memory' ? 'not kept (this browser refuses storage)' : 'saved on this device'
+  const s = sync?.state() ?? { mode: 'starting', pending: 0 }
+  const waiting = s.pending ? `, ${s.pending} to send` : ''
+  const where = saveError ? 'could not be saved on this device'
+    : s.error ? `the board refused a change (${s.error})`
+    : s.mode === 'online' ? (s.pending ? `saving ${s.pending}…` : 'saved on the board')
+    : s.mode === 'offline' ? `no connection: kept on this device${waiting}`
+    : s.mode === 'starting' ? 'loading'
+    : db?.kind === 'memory' ? 'not kept (this browser refuses storage)' : 'saved on this device only'
   const board = b.board ? `board: ${b.sessions.length} session${b.sessions.length === 1 ? '' : 's'}${b.speech ? '' : ', speech is a stub'}` : 'no board: sample sessions, speech is a stub'
   $('status').textContent = `${n} element${n === 1 ? '' : 's'} · ${where} · ${board}`
-  $('status').dataset.kind = saveError ? 'error' : ''
+  $('status').dataset.kind = saveError || s.error ? 'error' : s.mode === 'offline' ? 'warn' : ''
+  pad.dataset.sync = s.mode
 }
 function updateCursor(mode) {
   pad.dataset.cursor = mode ?? (spaceDown ? 'grab' : tool === 'select' ? 'select' : tool === 'eraser' ? 'eraser' : 'draw')
@@ -477,8 +507,15 @@ function select(el, additive) {
 function topAt(wx, wy, touch) {
   const tol = (touch ? 14 : 6) / view.z
   const list = ordered()
-  for (let k = list.length - 1; k >= 0; k--) if (hitElement(list[k], wx, wy, tol)) return list[k]
-  return null
+  // A highlighter stroke is see-through: what lies under it at this point is what the click means.
+  // The stroke itself is picked where nothing else is under it.
+  let marker = null
+  for (let k = list.length - 1; k >= 0; k--) {
+    if (!hitElement(list[k], wx, wy, tol)) continue
+    if (list[k].type !== 'stroke' || list[k].data.tool !== 'hl') return list[k]
+    marker ??= list[k]
+  }
+  return marker
 }
 /** The corner handle of the selection under a screen point: [sx, sy] with ±1 each, or null. */
 function hitHandle(px, py, touch) {
@@ -699,7 +736,7 @@ async function finishRecording(r) {
       text = (await transcribe(blob)).trim()
       if (!text) throw new Error('no words were heard')
       audio = newId()
-      await db.putBlob({ id: audio, type: blob.type, blob })
+      await sync.putBlob({ id: audio, type: blob.type, blob })
     }
   } catch (err) {
     if (rec === r) endRecording()
@@ -713,6 +750,19 @@ async function finishRecording(r) {
   sel.clear()
   sel.add(el.id)
   refresh()
+  reveal(el)
+}
+/** Pan just enough that the element is clear of the bars: a note spoken at the foot of a
+ *  phone screen would otherwise land under the toolbar. */
+function reveal(el) {
+  const top = 64, bottom = H - 96, left = 8, right = W - 8
+  const x0 = el.x * view.z + view.x, y0 = el.y * view.z + view.y, x1 = x0 + el.w * view.z, y1 = y0 + el.h * view.z
+  let dx = 0, dy = 0
+  if (y1 > bottom) dy = bottom - y1
+  if (y0 + dy < top) dy = top - y0
+  if (x1 > right) dx = right - x1
+  if (x0 + dx < left) dx = left - x0
+  if (dx || dy) animateTo(view.x + dx, view.y + dy, view.z)
 }
 /** Where a note lands when no spot was clicked: the open cursor, else the middle of the screen. */
 function spot() {
@@ -765,7 +815,7 @@ async function addImages(files, at) {
     try {
       const { blob, nw, nh } = await importImage(f)
       const id = newId()
-      await db.putBlob({ id, type: blob.type, blob })
+      await sync.putBlob({ id, type: blob.type, blob })
       await picture(id).ready
       const k = Math.min(1, (0.6 * W) / view.z / nw, (0.5 * Math.max(120, H - 150)) / view.z / nh)
       const w = r2(nw * k), h = r2(nh * k)
@@ -979,7 +1029,7 @@ function pointerEnd(e) {
       const now = performance.now()
       const twice = lastClick.id === g.hit.id && now - lastClick.t < 420
       lastClick = { id: g.hit.id, t: now }
-      if (twice && isText(g.hit)) editElement(els.get(g.hit.id))
+      if (twice && !g.shift && isText(g.hit)) editElement(els.get(g.hit.id))
       else if (g.shift && !g.fresh) select(g.hit, true)
       else if (!g.shift) select(g.hit, false)
     }
@@ -1030,10 +1080,15 @@ $('delete').addEventListener('click', () => remove(selected()))
 for (const b of document.querySelectorAll('.pad-tool')) {
   b.addEventListener('click', () => { if (tool === b.dataset.tool && (tool === 'pen' || tool === 'hl')) toggleStyle(); else setTool(b.dataset.tool) })
 }
+function setTheme(next) {
+  if (next === dark()) return
+  if (next) root.dataset.theme = 'dark'; else delete root.dataset.theme
+}
 $('theme').addEventListener('click', () => {
   const next = !dark()
-  if (next) root.dataset.theme = 'dark'; else delete root.dataset.theme
+  setTheme(next)
   try { localStorage.setItem('agent-board-theme', next ? 'dark' : 'light') } catch {}
+  tell('theme', { theme: next ? 'dark' : 'light' })   // the board around the pad follows
 })
 $('help-btn').addEventListener('click', () => $('help').showModal())
 for (const dialog of document.querySelectorAll('dialog')) {
@@ -1078,6 +1133,7 @@ document.addEventListener('keydown', e => {
     if (rec) stopRecording(true)
     else if (!$('style').hidden || !$('send-menu').hidden) closePopovers()
     else if (sel.size) { sel.clear(); refresh() }
+    else tell('close')   // nothing left to let go of: back to where the human came from
     return
   }
   if (cmd) {
@@ -1117,7 +1173,7 @@ document.addEventListener('keydown', e => {
   else if (key >= '1' && key <= '4') setWidth(Number(key) - 1)
   else if (key === 'm') toggleRecording()
   else if (key === 'i') $('file').click()
-  else if (key === 's') { if (sel.size) openSendMenu() }
+  else if (key === 's') { if (sel.size) $('send-to').click() }
   else if (key === 'f') fit(true)
   else if (key === '0') zoomAt(W / 2, H / 2, 1 / view.z, true)
   else if (key === '+' || key === '=') zoomAt(W / 2, H / 2, 1.3, true)
@@ -1143,13 +1199,14 @@ function openSendMenu() {
   const menu = $('send-menu')
   const b = boardState()
   const head = Object.assign(document.createElement('p'), { className: 'pad-menu-head', textContent: b.board ? 'Sessions on this board' : 'Sample sessions (no board)' })
-  const items = b.sessions.map(s => {
+  const here = new Set(host.prefer)
+  const items = [...b.sessions].sort((a, c) => here.has(c.id) - here.has(a.id)).map(s => {
     const item = document.createElement('button')
     item.type = 'button'
     item.className = 'pad-menu-item'
     item.setAttribute('role', 'menuitem')
     item.dataset.online = String(s.online)
-    item.append(Object.assign(document.createElement('span'), { className: 'pad-menu-dot' }), s.name, Object.assign(document.createElement('small'), { textContent: s.online ? '' : 'away' }))
+    item.append(Object.assign(document.createElement('span'), { className: 'pad-menu-dot' }), s.name, Object.assign(document.createElement('small'), { textContent: [here.has(s.id) ? 'where you were' : '', s.online ? '' : 'away'].filter(Boolean).join(' · ') }))
     item.addEventListener('click', () => { closeSendMenu(); openSendDialog(s) })
     return item
   })
@@ -1160,7 +1217,20 @@ function openSendMenu() {
   placeOverlays(selectionBox())
   menu.querySelector('button')?.focus({ preventScroll: true })
 }
-$('send-to').addEventListener('click', () => ($('send-menu').hidden ? openSendMenu() : closeSendMenu()))
+/** The session the human was in when the pad was opened, if it was exactly one: sending goes there first. */
+const preferred = () => (host.prefer.length === 1 ? boardState().sessions.find(s => s.id === host.prefer[0]) ?? null : null)
+function paintSendTo() {
+  const to = preferred()
+  $('send-to-label').textContent = to ? `Send to ${to.name}` : 'Send to…'
+  $('send-other').hidden = !to
+  if (to) $('send-to').removeAttribute('aria-haspopup'); else $('send-to').setAttribute('aria-haspopup', 'menu')
+}
+$('send-to').addEventListener('click', () => {
+  const to = preferred()
+  if (to) { closeSendMenu(); return openSendDialog(to) }
+  if ($('send-menu').hidden) openSendMenu(); else closeSendMenu()
+})
+$('send-other').addEventListener('click', () => ($('send-menu').hidden ? openSendMenu() : closeSendMenu()))
 
 /** What a session receives for a selection (docs/pad.md, "Sending a selection"). */
 async function buildPayload(session, list) {
@@ -1201,18 +1271,20 @@ async function openSendDialog(session) {
 }
 $('send-go').addEventListener('click', async () => {
   if (!sending) return
-  const { session, payload, list } = sending
+  const { session, payload } = sending
   const out = $('send-result')
   $('send-go').disabled = true
   $('send-go').textContent = 'Sending…'
   try {
-    const { message_id } = await sendSelection(payload)
-    // The element remembers where it went and in which revision. That is no change to the
-    // element itself (no new revision, no undo step): on a server these are link rows.
-    const at = Date.now()
-    apply(list.map(e => els.get(e.id)).filter(Boolean).map(e => ({ id: e.id, before: e, after: { ...e, sent: [...(e.sent ?? []), { session: session.id, at, message_id, rev: e.rev }] } })), false)
+    // The server sends what it has: everything selected must have arrived there first.
+    if (sync.state().mode !== 'local' && !(await sync.settled())) throw new Error('The selection has not reached the board yet (no connection). Try again in a moment.')
+    const answer = await sendSelection({ ...payload, client_id: sync.clientId })
+    // Where an element went is the server's to note (no new revision, no undo step);
+    // it hands the records back with "sent" filled in.
+    if (answer.elements) sync.take(answer.elements, answer.seq ?? 0)
     $('send-dialog').close()
     toast(`Sent to ${session.name}`)
+    tell('sent', { session: session.id, message_id: answer.message_id })
   } catch (err) {
     out.textContent = `Not sent. ${err.message}`
     out.hidden = false
@@ -1241,10 +1313,43 @@ new MutationObserver(() => {
 window.addEventListener('pagehide', () => commitEditor())
 document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden' && edit && editor.textContent) commitEditor() })
 
+// ── inside the board ────────────────────────────────────────────────────────
+function hostSays(msg) {
+  if (msg.type !== 'context') return
+  const was = host.open
+  host = { open: Boolean(msg.open), prefer: Array.isArray(msg.prefer) ? msg.prefer : [] }
+  if (msg.sessions) setBoard({ sessions: msg.sessions, speech: Boolean(msg.speech) })
+  if (msg.theme) setTheme(msg.theme === 'dark')
+  paintSendTo()
+  if (host.open && !was) { sync?.resume(); window.focus() }
+  if (!host.open && was) {
+    // Out of sight: keep what was being typed, drop what was being recorded, stop listening.
+    commitEditor()
+    if (rec) stopRecording(true)
+    closePopovers()
+    for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close()
+    sync?.pause()
+  }
+}
+if (EMBED) {
+  root.dataset.embed = ''
+  window.addEventListener('message', e => { if (e.origin === location.origin && e.source === window.parent && e.data?.trommi === 'pad') hostSays(e.data) })
+  const back = $('back')
+  back.replaceChildren(icon('close'))
+  back.setAttribute('aria-label', 'Close and go back to where you were')
+  back.dataset.tip = 'Close · Esc'
+  back.addEventListener('click', e => { e.preventDefault(); tell('close') })
+}
+
 async function start() {
   readTheme()
+  document.title = `${PAD_WORD} · Trommi`
+  $('pad-word').textContent = PAD_WORD
+  $('canvas').setAttribute('aria-label', `${PAD_WORD}: an endless surface for notes, drawings and pictures`)
   $('pad-name').textContent = PAD
   db = await openStore()
+  sync = startSync({ pad: PAD, db, onRemote: applyRemote, onState: renderStatus })
+  if (!host.open) sync.pause()
   const [records, saved] = await Promise.all([db.list(PAD), db.meta(`view:${PAD}`)])
   for (const r of records) {
     revs.set(r.id, r.rev ?? 1)
@@ -1261,8 +1366,9 @@ async function start() {
   $('zoom').textContent = `${Math.round(view.z * 100)} %`
   buildSwatches()
   refresh()
-  onBoard(renderStatus)
-  connectBoard()
+  onBoard(() => { renderStatus(); paintSendTo() })
+  connectBoard(EMBED)
+  tell('ready')
 }
 start()
 
@@ -1271,7 +1377,8 @@ window.pad = {
   elements: () => ordered(),
   selection: () => [...sel],
   view: () => ({ ...view }),
-  state: () => ({ tool, editing: Boolean(edit), recording: rec?.state ?? null, undo: undo.length, redo: redo.length, store: db?.kind, board: boardState() }),
+  state: () => ({ tool, editing: Boolean(edit), recording: rec?.state ?? null, undo: undo.length, redo: redo.length, store: db?.kind, board: boardState(), sync: sync?.state(), embed: EMBED, host }),
+  settled: ms => sync.settled(ms),
   records: () => db.list(PAD),
   payload: async session => (await buildPayload(session ?? boardState().sessions[0], selected())).payload,
   wipe: async () => { await db.wipe(); location.reload() },
