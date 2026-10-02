@@ -235,6 +235,7 @@ final class LiveServerTests: XCTestCase {
         XCTAssertFalse(decided.queue.contains(card.id))
 
         // What the app shows while it waits is what the server then sends.
+        XCTAssertEqual(decided.card(card.id)?.choices, [card.options[0].key])
         var predicted = first
         try predicted.decide(cardID: card.id, key: card.options[0].key, note: "from the test", now: 0)
         XCTAssertEqual(predicted.queue, decided.queue)
@@ -255,6 +256,22 @@ final class LiveServerTests: XCTestCase {
         let sent = try await wait("the message") { $0.messages.last?.text == text }
         XCTAssertEqual(sent.messages.last?.from, .user)
         XCTAssertEqual(sent.messages.last?.agent, agent)
+        XCTAssertNil(sent.messages.last?.cardID)
+
+        // Asking back about an open card: the message names the card, and the card stays open.
+        try await client.sendMessage("Why? \(text)", agent: agent, about: card.id)
+        let asked = try await wait("the question back") { $0.messages.last?.text == "Why? \(text)" }
+        XCTAssertEqual(asked.messages.last?.cardID, card.id)
+        XCTAssertEqual(asked.card(card.id)?.status, .open)
+        XCTAssertEqual(asked.thread(of: card.id).last?.from, .user)
+
+        // Several keys on a card that takes one answer are refused.
+        do {
+            try await client.decide(cardID: card.id, answer: .several([card.options[0].key]), note: "")
+            XCTFail("keys on a card with one answer must fail")
+        } catch {
+            XCTAssertEqual(readable(error), "This question takes one answer.")
+        }
     }
 
     func testAttachmentBytesAndMissingFile() async throws {

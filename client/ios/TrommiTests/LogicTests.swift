@@ -7,11 +7,11 @@ import XCTest
 
 /// A card built by hand, for the rules that depend on its options, text and attachments.
 func makeCard(_ options: [String], id: String = "x", body: String = "", attachments: [AttachmentKind] = [], kind: CardKind = .decision,
-              urgency: Urgency = .normal, keys: [String]? = nil, recommended: String? = nil) -> Card {
+              urgency: Urgency = .normal, keys: [String]? = nil, recommended: String? = nil, multiple: Bool = false) -> Card {
     Card(id: id, agent: "a", number: 1, kind: kind, status: .open, urgency: urgency, urgencyReason: "", title: "T", body: body,
          options: options.enumerated().map { CardOption(key: keys?[$0.offset] ?? "k\($0.offset)", label: $0.element, detail: "") },
          attachments: attachments.enumerated().map { Attachment(name: "f\($0.offset)", url: "/files/f\($0.offset)", kind: $0.element, size: nil) },
-         choice: nil, note: "", summary: "", created: 0, decided: nil, recommended: recommended)
+         choice: nil, note: "", summary: "", created: 0, decided: nil, recommended: recommended.map { [$0] } ?? [], multiple: multiple)
 }
 
 final class QuestionRuleTests: XCTestCase {
@@ -45,6 +45,7 @@ final class QuestionRuleTests: XCTestCase {
     func testQuickCardsOfTheFixture() throws {
         let state = try Fixture.multi()
         XCTAssertEqual(state.openCards.filter(\.isQuick).map(\.id), ["c-perm", "c-nav", "c-ship"])
+        XCTAssertFalse(makeCard(["Yes", "No"], multiple: true).isQuick, "where several answers are allowed, a thumb cannot answer")
     }
 
     // MARK: tiles
@@ -75,12 +76,14 @@ final class QuestionRuleTests: XCTestCase {
         let permission = try XCTUnwrap(try Fixture.multi().card("c-perm"))
         guard case .answer(let tiles) = permission.rowActions else { return XCTFail("expected tiles") }
         XCTAssertEqual(tiles.map(\.option.key), ["deny", "allow"])
-        XCTAssertEqual(tiles.map(\.label), ["Deny", "Allow"])
+        XCTAssertEqual(tiles.map(\.label), [nil, nil], "allow and deny need no word under their thumbs")
+        XCTAssertEqual(tiles.map(\.spoken), ["Deny", "Allow"])
         XCTAssertEqual(tiles.map(\.sketch), [.no, .yes])
         // The order of the options as sent does not matter.
         let swapped = makeCard(["Erlauben", "Ablehnen"], kind: .permission, keys: ["allow", "deny"])
         guard case .answer(let other) = swapped.rowActions else { return XCTFail("expected tiles") }
         XCTAssertEqual(other.map(\.option.key), ["deny", "allow"])
+        XCTAssertEqual(other.map(\.label), ["Ablehnen", "Erlauben"], "other words are shown")
         XCTAssertEqual(swapped.cardTiles.map(\.label), ["Deny", "Allow"], "the card names them the same on every permission")
     }
 
@@ -91,14 +94,17 @@ final class QuestionRuleTests: XCTestCase {
         XCTAssertEqual(makeCard(["Yes", "No"], attachments: [.file]).rowActions, .laterChoose)
     }
 
-    func testSecondOptionThatIsNoRefusalGetsTheOtherSketch() {
-        guard case .answer(let tiles) = makeCard(["Postgres", "SQLite"]).rowActions else { return XCTFail("expected tiles") }
+    func testThumbsAreTheRuleInARow() {
+        let card = makeCard(["Postgres", "SQLite"])
+        guard case .answer(let tiles) = card.rowActions else { return XCTFail("expected tiles") }
         XCTAssertEqual(tiles.map(\.option.label), ["SQLite", "Postgres"])
-        XCTAssertEqual(tiles.map(\.sketch), [.other, .yes])
+        XCTAssertEqual(tiles.map(\.sketch), [.no, .yes], "down on the left, up on the right, on every card")
+        XCTAssertEqual(card.cardTiles.map(\.sketch), [.other, .yes], "on the whole card a second option that is no refusal gets no thumb down")
+        XCTAssertEqual(makeCard(["Run it", "Never"]).cardTiles.map(\.sketch), [.no, .yes])
     }
 
     func testNegativeWords() {
-        for label in ["No", "no, thanks", "Not now", "Don't", "Do not run it", "Later", "Deny", "Skip it", "Keep", "Cancel", "Only locally", "Stay",
+        for label in ["No", "no, thanks", "Not now", "Don't", "Do not run it", "Never", "Reject", "Later", "Deny", "Skip it", "Keep", "Cancel", "Only locally", "Stay",
                       "Nein", "Nicht jetzt", "Noch nicht", "Später", "Ablehnen", "Behalten", "Nur lokal", "Abbrechen", "Bei SQLite bleiben"] {
             XCTAssertTrue(AnswerWords.isNegative(label), label)
         }
@@ -109,7 +115,8 @@ final class QuestionRuleTests: XCTestCase {
 
     func testCardTilesStackMoreThanTwoInTheAgentsOrder() throws {
         let migrate = try XCTUnwrap(try Fixture.multi().card("c-migrate"))
-        XCTAssertFalse(migrate.answersAsPair)
+        XCTAssertEqual(migrate.answerMode, .stack)
+        XCTAssertEqual(try XCTUnwrap(try Fixture.multi().card("c-nav")).answerMode, .pair)
         XCTAssertEqual(migrate.cardTiles.map(\.option.key), ["run-now", "tonight", "batch", "cancel"])
         XCTAssertEqual(migrate.cardTiles.map(\.advised), [false, true, false, false])
         XCTAssertEqual(migrate.cardTiles.map(\.isLead), [false, false, false, false], "a stack has no filled tile")
@@ -127,6 +134,49 @@ final class QuestionRuleTests: XCTestCase {
         guard case .answer(let tiles) = makeCard(["Delete", "Keep"], keys: ["delete", "keep"], recommended: "keep").rowActions else { return XCTFail("expected tiles") }
         XCTAssertEqual(tiles.map(\.advised), [true, false])
         XCTAssertEqual(tiles.map(\.isLead), [false, true], "advice does not change which tile is the yes")
+    }
+
+    // MARK: several answers
+
+    func testACardThatTakesSeveralAnswers() throws {
+        var state = try Fixture.multi()
+        let parts = try XCTUnwrap(state.card("c-parts"))
+        XCTAssertTrue(parts.multiple)
+        XCTAssertEqual(parts.answerMode, .several)
+        XCTAssertEqual(parts.rowActions, .laterChoose)
+        XCTAssertEqual(parts.recommended, ["start", "board"])
+        XCTAssertEqual(parts.cardTiles.map(\.advised), [true, true, false, false], "the agent may recommend several")
+        XCTAssertTrue(parts.cardTiles.allSatisfy { !$0.isLead && $0.sketch == .other })
+        XCTAssertEqual(Card.sendDetail(0), "Choose one or more")
+        XCTAssertEqual(Card.sendDetail(2), "2 chosen")
+
+        try state.decide(cardID: "c-parts", answer: .several(["admin", "start"]), note: "", now: 9)
+        let decided = try XCTUnwrap(state.card("c-parts"))
+        XCTAssertEqual(decided.choices, ["start", "admin"], "in the order of the options, whatever order they were ticked in")
+        XCTAssertEqual(decided.choice, "start", "the first one, for whoever knows only one answer")
+        XCTAssertEqual(decided.choiceLabel, "Getting started, Administration")
+        XCTAssertEqual(state.messages.last?.text, "Getting started, Administration")
+        try state.reopen(cardID: "c-parts", now: 10)
+        XCTAssertEqual(state.card("c-parts")?.choices, [])
+        XCTAssertNil(state.card("c-parts")?.choice)
+    }
+
+    func testSeveralAnswersRefusals() throws {
+        var state = try Fixture.multi()
+        XCTAssertThrowsError(try state.decide(cardID: "c-nav", answer: .several(["keep"]), note: "", now: 1)) { XCTAssertEqual($0 as? BoardError, .oneAnswerOnly) }
+        XCTAssertThrowsError(try state.decide(cardID: "c-parts", answer: .several([]), note: "", now: 1)) { XCTAssertEqual($0 as? BoardError, .noAnswer) }
+        XCTAssertThrowsError(try state.decide(cardID: "c-parts", answer: .several(["start", "nope"]), note: "", now: 1)) { XCTAssertEqual($0 as? BoardError, .unknownOption) }
+        try state.decide(cardID: "c-parts", answer: .one("board"), note: "", now: 1)
+        XCTAssertEqual(state.card("c-parts")?.choices, ["board"], "one key answers such a card too")
+        XCTAssertEqual(state.card("c-db")?.choices, ["pg"])
+    }
+
+    func testDecideBodyAsTheServerReadsIt() throws {
+        func json(_ answer: Answer) throws -> String {
+            String(decoding: try JSONSerialization.data(withJSONObject: answer.body(cardID: "c", note: "n"), options: [.sortedKeys]), as: UTF8.self)
+        }
+        XCTAssertEqual(try json(.one("a")), #"{"card_id":"c","key":"a","note":"n"}"#)
+        XCTAssertEqual(try json(.several(["a", "b"])), #"{"card_id":"c","key":"a","keys":["a","b"],"note":"n"}"#)
     }
 
     // MARK: urgency
@@ -161,9 +211,10 @@ final class InboxTests: XCTestCase {
         XCTAssertEqual(inbox.groups[0].cards.map(\.id), ["c-perm", "c-migrate"])
         XCTAssertEqual(inbox.groups[1].cards.map(\.id), ["c-phone", "c-theme", "c-nav", "c-next"])
         XCTAssertEqual(inbox.groups[1].countLabel, "4 questions")
-        XCTAssertEqual(inbox.groups[2].countLabel, "1 question")
-        XCTAssertEqual(inbox.sentence, "8 questions need you.")
-        XCTAssertEqual(inbox.circled, 8)
+        XCTAssertEqual(inbox.groups[2].countLabel, "2 questions")
+        XCTAssertEqual(inbox.groups[3].countLabel, "1 question")
+        XCTAssertEqual(inbox.sentence, "9 questions need you.")
+        XCTAssertEqual(inbox.circled, 9)
         XCTAssertTrue(inbox.offersWalk)
         XCTAssertTrue(inbox.later.isEmpty)
     }
@@ -214,9 +265,9 @@ final class InboxTests: XCTestCase {
         XCTAssertEqual(inbox.later.map { $0.sender?.id }, ["web-frontend", "api"], "each row says who asked")
         XCTAssertEqual(inbox.groups.first { $0.agent.id == "api" }?.cards.map(\.id), ["c-perm"])
         XCTAssertEqual(inbox.groups.first { $0.agent.id == "web-frontend" }?.cards.map(\.id), ["c-phone", "c-nav", "c-next"])
-        XCTAssertEqual(inbox.sentence, "6 questions need you.", "what was put off is not counted")
+        XCTAssertEqual(inbox.sentence, "7 questions need you.", "what was put off is not counted")
         XCTAssertEqual(inbox.laterCountLabel, "2 put off")
-        XCTAssertEqual(state.freshCount(later: later), 6)
+        XCTAssertEqual(state.freshCount(later: later), 7)
 
         later.fetchBack("c-theme")
         XCTAssertEqual(state.inbox(later: later).later.map(\.card.id), ["c-migrate"])
@@ -296,8 +347,8 @@ final class InboxTests: XCTestCase {
         let server = try Fixture.multi()
         var store = BoardStore()
         store.receive(server)
-        XCTAssertTrue(store.begin(cardID: "c-nav", key: "keep", note: ""))
-        XCTAssertFalse(store.begin(cardID: "c-nav", key: "delete", note: ""), "one answer at a time per card")
+        XCTAssertTrue(store.begin(cardID: "c-nav", answer: .one("keep"), note: ""))
+        XCTAssertFalse(store.begin(cardID: "c-nav", answer: .one("delete"), note: ""), "one answer at a time per card")
         XCTAssertTrue(store.isPending("c-nav"))
         let shown = store.shown(now: 7)
         XCTAssertEqual(shown.card("c-nav")?.choice, "keep")
@@ -309,14 +360,14 @@ final class InboxTests: XCTestCase {
         XCTAssertEqual(store.shown(now: 8), server)
 
         // Once the server knows the answer, the pending one changes nothing more.
-        XCTAssertTrue(store.begin(cardID: "c-nav", key: "keep", note: ""))
+        XCTAssertTrue(store.begin(cardID: "c-nav", answer: .one("keep"), note: ""))
         var confirmed = server
         try confirmed.decide(cardID: "c-nav", key: "keep", note: "", now: 8)
         store.receive(confirmed)
         XCTAssertEqual(store.shown(now: 9), confirmed)
 
         // A pending answer for a card that vanished is ignored.
-        XCTAssertEqual(server.applying([PendingDecision(cardID: "gone", key: "x", note: "")], now: 7), server)
+        XCTAssertEqual(server.applying([PendingDecision(cardID: "gone", answer: .one("x"), note: "")], now: 7), server)
     }
 
     func testStorePrunesTheLaterListWhenAStateArrives() throws {
@@ -340,7 +391,7 @@ final class LocalChangeTests: XCTestCase {
         XCTAssertEqual(card.choice, "tonight")
         XCTAssertEqual(card.note, "quietly please")
         XCTAssertEqual(card.decided, 5)
-        XCTAssertEqual(state.queue, ["c-perm", "c-phone", "c-theme", "c-nav", "c-ship", "c-next", "c-backup"])
+        XCTAssertEqual(state.queue, ["c-perm", "c-phone", "c-theme", "c-nav", "c-ship", "c-parts", "c-next", "c-backup"])
         XCTAssertEqual(state.messages.last?.kind, "decided")
         XCTAssertEqual(state.messages.last?.text, "Tonight at 2")
         let deploy = try XCTUnwrap(state.tasks.first { $0.taskID == "deploy" })
@@ -389,6 +440,20 @@ final class LocalChangeTests: XCTestCase {
         XCTAssertEqual(state.conversation(of: "api").last?.from, .user)
         XCTAssertThrowsError(try state.addUserMessage("   ", agent: "api", now: 9)) { XCTAssertEqual($0 as? BoardError, .emptyMessage) }
         XCTAssertThrowsError(try state.addUserMessage("x", agent: "who", now: 9)) { XCTAssertEqual($0 as? BoardError, .unknownAgent) }
+    }
+
+    func testAskingBackNamesTheCardAndLeavesItOpen() throws {
+        var state = try Fixture.multi()
+        try state.addUserMessage("Why tonight?", agent: "api", about: "c-migrate", now: 9)
+        XCTAssertEqual(state.messages.last?.cardID, "c-migrate")
+        XCTAssertEqual(state.card("c-migrate")?.status, .open)
+        XCTAssertEqual(state.thread(of: "c-migrate").map(\.text), ["Why tonight?"])
+        XCTAssertTrue(state.threadAwaitsReply("c-migrate"))
+        // Only an open card of this session counts.
+        try state.addUserMessage("About what?", agent: "api", about: "c-db", now: 10)
+        XCTAssertNil(state.messages.last?.cardID, "an answered card")
+        try state.addUserMessage("Wrong session", agent: "api", about: "c-nav", now: 11)
+        XCTAssertNil(state.messages.last?.cardID, "another session's card")
     }
 
     func testServerErrorsAreSaidTheAppsWay() {
@@ -479,10 +544,18 @@ final class FocusWalkTests: XCTestCase {
         XCTAssertFalse(walk.sync(queue: ["b", "d"], later: []), "its own card left: the window closes")
     }
 
-    func testOpeningOnACardThatIsNotOpenStartsTheWalk() {
-        let walk = FocusWalk(start: "gone", queue: queue, later: [])
-        XCTAssertFalse(walk.single)
-        XCTAssertEqual(walk.current, "a")
+    func testOpeningOnAnAnsweredCardLooksBackAtIt() {
+        var walk = FocusWalk(start: "answered", queue: queue, later: [])
+        XCTAssertTrue(walk.single)
+        XCTAssertTrue(walk.looksBack)
+        XCTAssertEqual(walk.current, "answered")
+        XCTAssertFalse(walk.canGoForward)
+        XCTAssertTrue(walk.sync(queue: ["a", "b"], later: []), "it stays while the stack changes")
+        XCTAssertEqual(walk.current, "answered")
+        // "Answer again": the card is an open question now, and closes on the next answer like any single card.
+        XCTAssertTrue(walk.sync(queue: ["a", "b", "answered"], later: []))
+        XCTAssertFalse(walk.looksBack)
+        XCTAssertFalse(walk.sync(queue: ["a", "b"], later: []))
     }
 
     func testUndoBringsTheCardBackInFront() {

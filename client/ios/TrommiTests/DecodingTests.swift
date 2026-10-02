@@ -70,7 +70,7 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(state.card("c-nav")?.agent, "web-frontend")
         XCTAssertEqual(state.messages.first { $0.id == "w1" }?.details.isEmpty, false)
         XCTAssertEqual(state.tasks.first { $0.taskID == "deploy" }?.cardID, "c-migrate")
-        XCTAssertEqual(state.queue, ["c-perm", "c-migrate", "c-phone", "c-theme", "c-nav", "c-ship", "c-next", "c-backup"])
+        XCTAssertEqual(state.queue, ["c-perm", "c-migrate", "c-phone", "c-theme", "c-nav", "c-ship", "c-parts", "c-next", "c-backup"])
     }
 
     func testSessionFields() throws {
@@ -110,13 +110,14 @@ final class DecodingTests: XCTestCase {
 
     func testRecommendedOption() throws {
         let state = try Fixture.multi()
-        XCTAssertEqual(state.card("c-migrate")?.recommended, "tonight")
-        XCTAssertNil(state.card("c-next")?.recommended, "null means no advice")
+        XCTAssertEqual(state.card("c-migrate")?.recommended, ["tonight"])
+        XCTAssertEqual(state.card("c-next")?.recommended, [], "null means no advice")
+        XCTAssertEqual(state.card("c-parts")?.recommended, ["start", "board"], "a list on a card that takes several answers")
         let json = #"{"cards": [{"id": "x", "status": "open", "recommended": "gone", "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]},"#
             + #"{"id": "y", "status": "open", "recommended": 2, "options": [{"key": "1", "label": "One"}, {"key": 2, "label": "Two"}]}]}"#
         let odd = try BoardState.decode(json)
-        XCTAssertNil(odd.card("x")?.recommended, "advice that names no option is dropped")
-        XCTAssertEqual(odd.card("y")?.recommended, "2")
+        XCTAssertEqual(odd.card("x")?.recommended, [], "advice that names no option is dropped")
+        XCTAssertEqual(odd.card("y")?.recommended, ["2"])
     }
 
     func testMessageDetailsAndAsset() throws {
@@ -133,6 +134,28 @@ final class DecodingTests: XCTestCase {
         let gone = try BoardState.decode(#"{"messages": [{"id": "g", "from": "agent", "text": "**T** (withdrawn)", "asset": {"id": "abc", "type": "html", "title": "T", "gone": true}}, {"id": "h", "asset": "broken"}]}"#)
         XCTAssertEqual(gone.messages[0].asset?.gone, true)
         XCTAssertNil(gone.messages[1].asset)
+    }
+
+    func testMultipleAndChoices() throws {
+        let state = try Fixture.multi()
+        XCTAssertEqual(state.card("c-parts")?.multiple, true)
+        XCTAssertEqual(state.card("c-nav")?.multiple, false)
+        XCTAssertEqual(state.card("c-db")?.choices, ["pg"])
+        let json = #"{"cards": [{"id": "old", "status": "decided", "choice": "a", "options": [{"key": "a", "label": "A"}]},"#
+            + #"{"id": "new", "status": "decided", "multiple": true, "choice": "a", "choices": ["a", "b"], "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]}]}"#
+        let cards = try BoardState.decode(json)
+        XCTAssertEqual(cards.card("old")?.choices, ["a"], "a server from before several answers: the one choice")
+        XCTAssertEqual(cards.card("new")?.choices, ["a", "b"])
+        XCTAssertEqual(cards.card("new")?.choiceLabel, "A, B")
+    }
+
+    func testMessagesAboutACard() throws {
+        let state = try Fixture.multi()
+        XCTAssertEqual(state.thread(of: "c-ship").map(\.id), ["d3", "d4"], "asked back, and the agent's reply")
+        XCTAssertFalse(state.threadAwaitsReply("c-ship"))
+        XCTAssertEqual(state.question(about: try XCTUnwrap(state.messages.first { $0.id == "d3" }))?.id, "c-ship")
+        XCTAssertNil(state.question(about: try XCTUnwrap(state.messages.first { $0.id == "d2" })), "the marker of a card is no message about it")
+        XCTAssertTrue(state.thread(of: "c-nav").isEmpty)
     }
 
     func testArchivedSessionsQuestionsAreNotInTheStack() throws {

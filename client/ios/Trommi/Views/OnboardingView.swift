@@ -17,15 +17,15 @@ struct OnboardingView: View {
                 VStack(alignment: .leading, spacing: 18) {
                     VStack(alignment: .leading, spacing: 6) {
                         Text("Trommi").font(.largeTitle.weight(.bold)).foregroundStyle(Theme.fg)
-                        Text("Deine Agenten legen Fragen als Karten ab. Hier beantwortest du sie, die dringendste zuerst.")
+                        Text("Your agents put questions in front of you. Here you answer them, the most urgent first.")
                             .font(.body)
                             .foregroundStyle(Theme.muted)
                     }
                     .padding(.top, 24)
 
                     VStack(alignment: .leading, spacing: 10) {
-                        Text("Link zum Server").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.fg)
-                        TextField("http://rechner:8790/?t=TOKEN", text: $link, axis: .vertical)
+                        Text("Link to the server").font(.subheadline.weight(.semibold)).foregroundStyle(Theme.fg)
+                        TextField("http://computer:8790/?t=TOKEN", text: $link, axis: .vertical)
                             .lineLimit(1...4)
                             .font(.system(.callout, design: .monospaced))
                             .textInputAutocapitalization(.never)
@@ -36,7 +36,7 @@ struct OnboardingView: View {
                             .background(Theme.surface, in: RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
                             .overlay(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous).strokeBorder(Theme.lineStrong, lineWidth: 1))
                             .accessibilityIdentifier("login-link")
-                        Text("Der Link steht auf dem Rechner des Servers in data/url.txt. Nimm die Zeile mit der Adresse im Netzwerk, nicht localhost.")
+                        Text("The link is on the server's machine in data/url.txt. Take the line with the address in the network, not localhost.")
                             .font(.footnote)
                             .foregroundStyle(Theme.muted)
                         HStack(spacing: 10) {
@@ -45,7 +45,7 @@ struct OnboardingView: View {
                             }
                             .labelStyle(.titleAndIcon)
                             if DataScannerViewController.isSupported {
-                                Button { scanning = true } label: { Label("QR-Code scannen", systemImage: "qrcode.viewfinder") }
+                                Button { scanning = true } label: { Label("Scan QR code", systemImage: "qrcode.viewfinder") }
                                     .buttonStyle(.bordered)
                                     .accessibilityIdentifier("login-scan")
                             }
@@ -57,7 +57,7 @@ struct OnboardingView: View {
                     Button(action: connect) {
                         HStack(spacing: 8) {
                             if working { ProgressView().tint(Theme.accentFg) }
-                            Text(working ? "Verbindet" : "Verbinden")
+                            Text(working ? "Connecting" : "Connect")
                         }
                         .frame(maxWidth: .infinity)
                     }
@@ -65,7 +65,7 @@ struct OnboardingView: View {
                     .disabled(working || link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     .accessibilityIdentifier("login-connect")
 
-                    Button("Demo ansehen") { model.startDemo() }
+                    Button("Look at the demo") { model.startDemo() }
                         .frame(maxWidth: .infinity)
                         .accessibilityIdentifier("login-demo")
                 }
@@ -95,11 +95,11 @@ struct OnboardingView: View {
             return
         }
         working = true
-        Task { @MainActor in
+        Task {
             do {
                 try await withTimeout(seconds: 12) { try await model.signIn(parsed) }
             } catch {
-                self.error = "Nicht verbunden: \(readable(error))"
+                self.error = "Not connected: \(readable(error))"
             }
             working = false
         }
@@ -131,26 +131,25 @@ private struct ScannerSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                switch allowed {
-                case .some(true):
+                if allowed == true {
                     LinkScanner(onFound: onFound).ignoresSafeArea(edges: .bottom)
-                case .some(false):
+                } else if allowed == false {
                     VStack(spacing: 10) {
                         Image(systemName: "camera.fill").font(.largeTitle).foregroundStyle(Theme.faint)
-                        Text("Kein Zugriff auf die Kamera. Erlaube ihn in den Einstellungen, oder füge den Link ein.")
+                        Text("No access to the camera. Allow it in Settings, or paste the link.")
                             .multilineTextAlignment(.center)
                             .foregroundStyle(Theme.muted)
                     }
                     .padding(32)
-                case .none:
+                } else {
                     ProgressView()
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .navigationTitle("QR-Code scannen")
+            .navigationTitle("Scan QR code")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
-                ToolbarItem(placement: .cancellationAction) { Button("Abbrechen") { dismiss() } }
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
             }
             .task { allowed = await AVCaptureDevice.requestAccess(for: .video) }
         }
@@ -177,6 +176,7 @@ private struct LinkScanner: UIViewControllerRepresentable {
         scanner.stopScanning()
     }
 
+    @MainActor
     final class Coordinator: NSObject, DataScannerViewControllerDelegate {
         let onFound: (String) -> Void
         private var done = false
@@ -188,7 +188,7 @@ private struct LinkScanner: UIViewControllerRepresentable {
             for item in addedItems {
                 if case .barcode(let code) = item, let text = code.payloadStringValue, (try? ServerLink.parse(text)) != nil {
                     done = true
-                    Haptics.tap()
+                    Haptics.play(.tap)
                     onFound(text)
                     return
                 }

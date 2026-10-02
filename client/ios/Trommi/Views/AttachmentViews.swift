@@ -1,96 +1,121 @@
-// Attachments of cards and messages: pictures open in a zoomable viewer,
+// Attachments of questions and messages: pictures open in a zoomable viewer,
 // video and audio play in place, anything else opens in Quick Look.
 import SwiftUI
 import AVKit
+import Combine
 import QuickLook
+import UIKit
 
 struct AttachmentList: View {
     let attachments: [Attachment]
-    @State private var zoom: ZoomRequest?
+    @State private var viewer: ViewerRequest?
 
     private var images: [Attachment] { attachments.filter { $0.kind == .image || $0.kind == .scribble } }
 
     var body: some View {
         if !attachments.isEmpty {
             VStack(alignment: .leading, spacing: 10) {
-                if images.count == 1, let only = images.first {
-                    thumbnail(only, index: 0).frame(maxHeight: 320)
-                } else if images.count > 1 {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(Array(images.enumerated()), id: \.element.id) { index, image in
-                                thumbnail(image, index: index).frame(height: 180)
-                            }
-                        }
+                pictures
+                ForEach(attachments.filter { $0.kind == .video }) { video in
+                    VideoAttachment(attachment: video)
+                }
+                ForEach(attachments.filter { $0.kind == .audio }) { audio in
+                    AudioAttachment(attachment: audio)
+                }
+                ForEach(attachments.filter { $0.kind == .file }) { file in
+                    FileAttachment(attachment: file)
+                }
+            }
+            .fullScreenCover(item: $viewer) { request in
+                ImageViewer(images: images, start: request.index)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var pictures: some View {
+        if images.count == 1, let only = images.first {
+            thumbnail(only, index: 0).frame(maxHeight: 320)
+        } else if images.count > 1 {
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(Array(images.enumerated()), id: \.offset) { index, image in
+                        thumbnail(image, index: index).frame(height: 180)
                     }
                 }
-                ForEach(attachments.filter { $0.kind == .video }) { VideoAttachment(attachment: $0) }
-                ForEach(attachments.filter { $0.kind == .audio }) { AudioAttachment(attachment: $0) }
-                ForEach(attachments.filter { $0.kind == .file }) { FileAttachment(attachment: $0) }
-            }
-            .fullScreenCover(item: $zoom) { request in
-                ImageViewer(images: images, start: request.index)
             }
         }
     }
 
     private func thumbnail(_ image: Attachment, index: Int) -> some View {
         Button {
-            zoom = ZoomRequest(index: index)
+            viewer = ViewerRequest(index: index)
         } label: {
             RemoteImage(attachment: image)
                 .clipShape(RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous))
                 .overlay(RoundedRectangle(cornerRadius: Theme.radiusSmall, style: .continuous).strokeBorder(Theme.line, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Bild \(index + 1) von \(images.count) vergrößern: \(image.name)")
+        .accessibilityLabel("Enlarge image \(index + 1) of \(images.count): \(image.name)")
     }
-}
-
-private struct ZoomRequest: Identifiable {
-    let id = UUID()
-    var index: Int
 }
 
 /// A picture behind the cookie. Shows a spinner while loading and the file name if it cannot be shown.
 struct RemoteImage: View {
-    @Environment(AppModel.self) private var model
+    @Environment(Media.self) private var media
     let attachment: Attachment
+    /// Fill the frame and crop, for small square thumbnails; otherwise fit.
+    var fill = false
     @State private var image: UIImage?
     @State private var failed = false
 
     var body: some View {
-        Group {
-            if let image {
+        content
+            .task(id: attachment.url) {
+                await load()
+            }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let image {
+            if fill {
+                Color.clear.overlay(Image(uiImage: image).resizable().scaledToFill()).clipped()
+            } else {
                 Image(uiImage: image).resizable().scaledToFit()
-            } else if failed {
-                VStack(spacing: 6) {
-                    Image(systemName: "photo").font(.title2)
+            }
+        } else if failed {
+            VStack(spacing: 6) {
+                Image(systemName: "photo").font(.title2)
+                if !fill {
                     Text(attachment.name).font(.caption).lineLimit(2).multilineTextAlignment(.center)
                 }
-                .foregroundStyle(Theme.faint)
-                .padding(16)
-                .frame(minWidth: 140, minHeight: 100)
+            }
+            .foregroundStyle(Theme.faint)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(minWidth: fill ? 0 : 140, minHeight: fill ? 0 : 100)
+            .background(Theme.sunken)
+        } else {
+            ProgressView()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .frame(minWidth: fill ? 0 : 140, minHeight: fill ? 0 : 100)
                 .background(Theme.sunken)
-            } else {
-                ProgressView().frame(minWidth: 140, minHeight: 100).background(Theme.sunken)
-            }
         }
-        .task(id: attachment.url) {
-            do {
-                image = try await model.images.image(attachment.url)
-                failed = false
-            } catch {
-                failed = !(error is CancellationError)
-            }
+    }
+
+    private func load() async {
+        do {
+            image = try await media.images.image(attachment.url)
+            failed = false
+        } catch {
+            failed = !(error is CancellationError)
         }
     }
 }
 
-/// Full screen pictures: swipe between them, pinch or double tap to zoom.
+/// Full screen pictures: back and next between them, pinch or double tap to zoom.
 struct ImageViewer: View {
     @Environment(\.dismiss) private var dismiss
-    @Environment(AppModel.self) private var model
     let images: [Attachment]
     @State private var index: Int
 
@@ -99,41 +124,74 @@ struct ImageViewer: View {
         _index = State(initialValue: start)
     }
 
+    private var current: Attachment? { images.indices.contains(index) ? images[index] : nil }
+
+    private var title: String {
+        guard let current else { return "" }
+        return images.count > 1 ? "\(index + 1) / \(images.count) · \(current.name)" : current.name
+    }
+
     var body: some View {
         NavigationStack {
-            TabView(selection: $index) {
-                ForEach(Array(images.enumerated()), id: \.element.id) { i, image in
-                    ZoomPage(attachment: image).tag(i)
+            page
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(Color.black)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Close") { dismiss() }
+                            .accessibilityLabel("Close image view")
+                            .accessibilityIdentifier("viewer-close")
+                    }
+                    ToolbarItemGroup(placement: .bottomBar) {
+                        if images.count > 1 {
+                            Button {
+                                index -= 1
+                            } label: {
+                                Label("Previous image", systemImage: "chevron.left")
+                            }
+                            .disabled(index <= 0)
+                            Spacer()
+                            Button {
+                                index += 1
+                            } label: {
+                                Label("Next image", systemImage: "chevron.right")
+                            }
+                            .disabled(index >= images.count - 1)
+                        }
+                    }
                 }
-            }
-            .tabViewStyle(.page(indexDisplayMode: images.count > 1 ? .automatic : .never))
-            .background(Color.black)
-            .ignoresSafeArea(edges: .bottom)
-            .navigationTitle(images.indices.contains(index) ? "\(index + 1) / \(images.count) · \(images[index].name)" : "")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Schließen") { dismiss() }.accessibilityLabel("Bildansicht schließen")
-                }
-            }
+        }
+    }
+
+    @ViewBuilder
+    private var page: some View {
+        if let current {
+            ZoomPage(attachment: current).id(current.url)
         }
     }
 }
 
 private struct ZoomPage: View {
-    @Environment(AppModel.self) private var model
+    @Environment(Media.self) private var media
     let attachment: Attachment
     @State private var image: UIImage?
 
     var body: some View {
-        Group {
-            if let image {
-                ZoomableImage(image: image).accessibilityLabel(attachment.name)
-            } else {
-                ProgressView().tint(.white)
+        content
+            .task {
+                image = try? await media.images.image(attachment.url)
             }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if let image {
+            ZoomableImage(image: image).accessibilityLabel(attachment.name)
+        } else {
+            ProgressView().tint(.white)
         }
-        .task { image = try? await model.images.image(attachment.url) }
     }
 }
 
@@ -166,6 +224,7 @@ private struct ZoomableImage: UIViewRepresentable {
         context.coordinator.imageView?.image = image
     }
 
+    @MainActor
     final class Coordinator: NSObject, UIScrollViewDelegate {
         weak var imageView: UIImageView?
 
@@ -191,23 +250,28 @@ struct VideoAttachment: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
-            Group {
-                if let player {
-                    VideoPlayer(player: player)
-                } else {
-                    ZStack {
-                        Color.black
-                        Image(systemName: "play.slash").font(.title).foregroundStyle(.white.opacity(0.7))
-                    }
-                }
-            }
-            .aspectRatio(16 / 9, contentMode: .fit)
-            .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
+            screen
+                .aspectRatio(16 / 9, contentMode: .fit)
+                .clipShape(RoundedRectangle(cornerRadius: Theme.radius, style: .continuous))
             Text(attachment.name).font(.caption).foregroundStyle(Theme.faint).lineLimit(1)
         }
-        .onAppear { if player == nil { player = model.client?.media?.player(path: attachment.url) } }
+        .onAppear {
+            if player == nil { player = model.client?.media?.player(path: attachment.url) }
+        }
         .onDisappear { player?.pause() }
         .accessibilityLabel("Video: \(attachment.name)")
+    }
+
+    @ViewBuilder
+    private var screen: some View {
+        if let player {
+            VideoPlayer(player: player)
+        } else {
+            ZStack {
+                Color.black
+                Image(systemName: "play.slash").font(.title).foregroundStyle(Color.white.opacity(0.7))
+            }
+        }
     }
 }
 
@@ -220,16 +284,13 @@ struct AudioAttachment: View {
     var body: some View {
         HStack(spacing: 12) {
             Button {
-                if player == nil { player = model.client?.media?.player(path: attachment.url) }
-                guard let player else { return }
-                if playing { player.pause() } else { player.play() }
-                playing.toggle()
+                toggle()
             } label: {
                 Image(systemName: playing ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 34))
             }
             .buttonStyle(.plain)
             .foregroundStyle(Theme.accent)
-            .accessibilityLabel(playing ? "Pause: \(attachment.name)" : "Abspielen: \(attachment.name)")
+            .accessibilityLabel(playing ? "Pause: \(attachment.name)" : "Play: \(attachment.name)")
             Text(attachment.name).font(.subheadline).foregroundStyle(Theme.fg).lineLimit(2)
             Spacer(minLength: 0)
         }
@@ -245,10 +306,17 @@ struct AudioAttachment: View {
             playing = false
         }
     }
+
+    private func toggle() {
+        if player == nil { player = model.client?.media?.player(path: attachment.url) }
+        guard let player else { return }
+        if playing { player.pause() } else { player.play() }
+        playing.toggle()
+    }
 }
 
 struct FileAttachment: View {
-    @Environment(AppModel.self) private var model
+    @Environment(Media.self) private var media
     let attachment: Attachment
     @State private var preview: URL?
     @State private var loading = false
@@ -257,15 +325,14 @@ struct FileAttachment: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
             Button {
-                loading = true
-                error = nil
-                Task {
-                    do { preview = try await model.images.file(attachment) } catch { self.error = "Nicht geladen: \(readable(error))" }
-                    loading = false
-                }
+                load()
             } label: {
                 HStack(spacing: 10) {
-                    if loading { ProgressView() } else { Image(systemName: "doc") }
+                    if loading {
+                        ProgressView()
+                    } else {
+                        Image(systemName: "doc")
+                    }
                     Text(attachment.name).lineLimit(2)
                     Spacer(minLength: 0)
                 }
@@ -276,9 +343,22 @@ struct FileAttachment: View {
             .buttonStyle(.plain)
             .foregroundStyle(Theme.fg)
             .disabled(loading)
-            .accessibilityLabel("Datei öffnen: \(attachment.name)")
+            .accessibilityLabel("Open file: \(attachment.name)")
             InlineError(text: error)
         }
         .quickLookPreview($preview)
+    }
+
+    private func load() {
+        loading = true
+        error = nil
+        Task {
+            do {
+                preview = try await media.images.file(attachment)
+            } catch {
+                self.error = "Not loaded: \(readable(error))"
+            }
+            loading = false
+        }
     }
 }

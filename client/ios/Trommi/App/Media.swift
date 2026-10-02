@@ -2,6 +2,7 @@
 // them itself; reading a card aloud and dictation go through the server too.
 import SwiftUI
 import AVFoundation
+import UIKit
 
 /// Pictures of attachments, loaded once and kept while memory allows.
 @MainActor
@@ -116,6 +117,9 @@ final class Dictation {
     var failure: String?
     @ObservationIgnored private var recorder: AVAudioRecorder?
     @ObservationIgnored private let file = FileManager.default.temporaryDirectory.appendingPathComponent("dictation.m4a")
+
+    /// Views keep one as @State, whose initial value is made outside the main actor's knowledge.
+    nonisolated init() {}
 
     /// VoiceOver label, as in speech.js.
     var label: String { phase == .recording ? "Stop recording" : "Dictate a message" }

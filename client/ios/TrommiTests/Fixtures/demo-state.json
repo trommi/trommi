@@ -253,6 +253,32 @@
       "ts": 1790920138695
     },
     {
+      "id": "d3",
+      "agent": "docs",
+      "from": "user",
+      "card_id": "c-ship",
+      "text": "Does it cover the admin page?",
+      "ts": 1790920168695
+    },
+    {
+      "id": "d4",
+      "agent": "docs",
+      "from": "agent",
+      "card_id": "c-ship",
+      "attachments": [],
+      "text": "Yes, as its own chapter, **Administration**.",
+      "ts": 1790920186695
+    },
+    {
+      "id": "d5",
+      "agent": "docs",
+      "from": "event",
+      "kind": "asked",
+      "card_id": "c-parts",
+      "text": "Which chapters go into the first release?",
+      "ts": 1790920198695
+    },
+    {
       "id": "r1",
       "agent": "docs-review",
       "from": "agent",
@@ -316,7 +342,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": "8790",
+      "choices": [],
       "note": "",
       "summary": "Port 8790 set as the default",
       "decided": 1790896858695,
@@ -346,7 +374,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": "agent-board",
+      "choices": [],
       "note": "",
       "summary": "Folder and package.json renamed",
       "decided": 1790903158695,
@@ -376,7 +406,11 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": "pg",
+      "choices": [
+        "pg"
+      ],
       "note": "with Docker",
       "summary": "",
       "decided": 1790915758695,
@@ -411,7 +445,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -461,7 +497,9 @@
           "size": 48000
         }
       ],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -511,7 +549,9 @@
           "size": 48000
         }
       ],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -551,7 +591,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -581,7 +623,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -612,7 +656,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -647,7 +693,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -677,12 +725,59 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
       "recommended": "yes",
       "created": 1790920138695
+    },
+    {
+      "id": "c-parts",
+      "agent": "docs",
+      "number": 13,
+      "kind": "decision",
+      "status": "open",
+      "urgency": "normal",
+      "urgency_reason": "",
+      "title": "Which chapters go into the first release?",
+      "body": "Tick every chapter that should be in. The others follow later.",
+      "options": [
+        {
+          "key": "start",
+          "label": "Getting started",
+          "detail": ""
+        },
+        {
+          "key": "board",
+          "label": "The board",
+          "detail": ""
+        },
+        {
+          "key": "agents",
+          "label": "Writing agents",
+          "detail": "Still rough"
+        },
+        {
+          "key": "admin",
+          "label": "Administration",
+          "detail": ""
+        }
+      ],
+      "attachments": [],
+      "multiple": true,
+      "choice": null,
+      "choices": [],
+      "note": "",
+      "summary": "",
+      "decided": null,
+      "recommended": [
+        "start",
+        "board"
+      ],
+      "created": 1790920198695
     },
     {
       "id": "c-spike",
@@ -707,7 +802,9 @@
         }
       ],
       "attachments": [],
+      "multiple": false,
       "choice": null,
+      "choices": [],
       "note": "",
       "summary": "",
       "decided": null,
@@ -770,10 +867,11 @@
     "c-theme",
     "c-nav",
     "c-ship",
+    "c-parts",
     "c-next",
     "c-backup"
   ],
-  "next_number": 13,
+  "next_number": 14,
   "hub": "api",
   "speech": false
 }

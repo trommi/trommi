@@ -6,8 +6,9 @@ import Foundation
 protocol BoardClient: AnyObject, Sendable {
     /// The whole state, once now and again on every change. Ends with an error when the connection drops.
     func events() -> AsyncThrowingStream<BoardState, Error>
-    func sendMessage(_ text: String, agent: String) async throws
-    func decide(cardID: String, key: String, note: String) async throws
+    /// A chat message to one session. `about`: the open question the human asks back about instead of answering it.
+    func sendMessage(_ text: String, agent: String, about cardID: String?) async throws
+    func decide(cardID: String, answer: Answer, note: String) async throws
     func reopen(cardID: String) async throws
     /// The human's own name and mark for a session, the archive, and laying sessions together (POST /session).
     func editSession(agent: String, changes: SessionChanges) async throws
@@ -19,6 +20,17 @@ protocol BoardClient: AnyObject, Sendable {
     func data(path: String) async throws -> Data
     /// Address and cookie for players that stream by themselves (video, audio); nil when there is no server.
     var media: MediaAccess? { get }
+}
+
+extension BoardClient {
+    func sendMessage(_ text: String, agent: String) async throws {
+        try await sendMessage(text, agent: agent, about: nil)
+    }
+
+    /// One answer to a card that takes one.
+    func decide(cardID: String, key: String, note: String) async throws {
+        try await decide(cardID: cardID, answer: .one(key), note: note)
+    }
 }
 
 struct MediaAccess: Sendable {

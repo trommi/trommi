@@ -1,12 +1,21 @@
 # Builds the iOS app and runs its tests when the app changes, or when the
 # server does: the core tests run against a live server.mjs, so a change to its
 # interface must show up here. Everything else in the repository skips this,
-# because macOS minutes are the expensive ones.
+# because macOS minutes are the expensive ones. A change to this file alone
+# does not start it either: press "Run workflow".
+#
+# Two jobs side by side:
+#   core  on Linux, two minutes: models, rules, the model the views hang on, and the
+#         server connection against a live server.mjs.
+#   app   on macOS: the same core tests with Apple's URLSession, then the app itself.
+#         Building and testing are separate steps, so "does not compile" and "a test
+#         fails" are told apart at a glance. Each step writes the first errors into the
+#         job summary; the logs are in the artifact ios-logs.
 name: iOS
 
 on:
   push:
-    paths: ['client/ios/**', 'server/server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs', '.github/workflows/ios.yml']
+    paths: ['client/ios/**', 'server/server.mjs', 'dev/serve.sh', 'dev/demo-state.mjs']
   workflow_dispatch:
 
 concurrency:
@@ -14,29 +23,119 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    runs-on: macos-latest
-    timeout-minutes: 40
+  core:
+    name: Core on Linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
     defaults:
       run:
         working-directory: client/ios
     steps:
       - uses: actions/checkout@v4
 
-      - name: Demo data in the app and in the tests are the same file
-        run: cmp Trommi/Resources/demo-state.json TrommiTests/Fixtures/demo-state.json
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Fixtures are what their generators write
+        run: |
+          cmp Trommi/Resources/demo-state.json TrommiTests/Fixtures/demo-state.json
+          node tools/demo-state.mjs
+          node tools/doodle-fixtures.mjs
+          # The marks must match the web: a change to doodle() in client/web/js/ui.js shows up here.
+          git diff --exit-code -- Trommi/Resources TrommiTests/Fixtures
+
+      - name: Cache the SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: client/ios/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('client/ios/Package.swift', 'client/ios/Trommi/Core/**', 'client/ios/Trommi/Net/**', 'client/ios/TrommiTests/**') }}
+          restore-keys: spm-${{ runner.os }}-
+
+      # The runner image brings Swift; if a future image does not, it is installed here.
+      - name: Is Swift there?
+        id: swift
+        run: command -v swift >/dev/null && swift --version || echo "missing=true" >> "$GITHUB_OUTPUT"
+
+      - uses: swift-actions/setup-swift@v2
+        if: steps.swift.outputs.missing == 'true'
+        with:
+          swift-version: "6.1"
+
+      - name: Core tests, with a live server
+        run: |
+          (cd ../.. && npm ci && (dev/serve.sh 8851 600 > /tmp/trommi-server.log 2>&1 &))
+          for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8851/?t=demo" && break; sleep 1; done
+          set -o pipefail
+          TROMMI_TEST_LINK='http://127.0.0.1:8851/?t=demo' swift test 2>&1 | tee swift-test.log
+          {
+            echo "### Core on Linux"
+            grep -E "Executed [0-9]+ tests" swift-test.log | tail -1
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: What failed
+        if: failure()
+        run: |
+          {
+            echo "### Core on Linux failed"
+            echo '```'
+            grep -E "error:|failed" swift-test.log | head -40 || true
+            tail -20 /tmp/trommi-server.log || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  app:
+    name: App on the simulator
+    # macos-latest is this image since June 2026; named, so the Xcode in use does not change by itself.
+    runs-on: macos-26
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: client/ios
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Tools on this runner
+        run: |
+          {
+            echo "### Runner"
+            echo '```'
+            xcodebuild -version
+            swift --version 2>&1 | head -2
+            command -v xcbeautify >/dev/null && echo "xcbeautify $(xcbeautify --version)" || echo "xcbeautify: not installed"
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Cache the SwiftPM build
+        uses: actions/cache@v4
+        with:
+          path: client/ios/.build
+          key: spm-${{ runner.os }}-${{ hashFiles('client/ios/Package.swift', 'client/ios/Trommi/Core/**', 'client/ios/Trommi/Net/**', 'client/ios/TrommiTests/**') }}
+          restore-keys: spm-${{ runner.os }}-
 
       # The part without UI, also against a real server.mjs with demo data:
-      # login, cookie, Origin, the event stream, decide, reopen, message, files.
-      - name: Core package tests, with a live server
+      # login, cookie, Origin, the event stream, answering, sessions, files.
+      # The same tests as in the Linux job, here with Apple's URLSession.
+      - name: Core tests, with a live server
         run: |
-          (cd ../.. && npm ci && (dev/serve.sh 8801 600 > /tmp/trommi-server.log 2>&1 &))
-          for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8801/?t=demo" && break; sleep 1; done
-          TROMMI_TEST_LINK='http://127.0.0.1:8801/?t=demo' swift test
+          (cd ../.. && npm ci && (dev/serve.sh 8851 900 > /tmp/trommi-server.log 2>&1 &))
+          for i in $(seq 1 30); do curl -s -o /dev/null "http://127.0.0.1:8851/?t=demo" && break; sleep 1; done
+          set -o pipefail
+          TROMMI_TEST_LINK='http://127.0.0.1:8851/?t=demo' swift test 2>&1 | tee swift-test.log
+          {
+            echo "### Core on macOS"
+            grep -E "Executed [0-9]+ tests" swift-test.log | tail -1
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Generate the Xcode project
         run: |
-          brew install xcodegen
+          command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate
 
       - name: Pick a simulator
@@ -47,38 +146,66 @@ jobs:
           ios = sorted((k for k in runtimes if 'iOS' in k), key=lambda k: [int(n) for n in k.split('iOS-')[1].split('-')], reverse=True)
           print(next(d['udid'] for k in ios for d in runtimes[k] if d['name'].startswith('iPhone')))")
           echo "SIMULATOR=$UDID" >> "$GITHUB_ENV"
-          xcrun simctl list devices available | grep "$UDID"
+          xcrun simctl list devices available | grep "$UDID" | tee -a "$GITHUB_STEP_SUMMARY"
 
-      - name: Unit and UI tests on the simulator
+      # Compiles the app, its unit tests and its UI tests, and nothing else.
+      # If the app does not build, this is the step that is red.
+      - name: Build
+        id: build
         run: |
-          mkdir -p build
-          status=0
-          xcodebuild test \
+          tools/ci-xcodebuild.sh build "Build" build-for-testing \
             -project Trommi.xcodeproj -scheme Trommi \
             -destination "platform=iOS Simulator,id=$SIMULATOR" \
             -derivedDataPath build/derived \
-            -resultBundlePath build/Trommi.xcresult \
-            CODE_SIGNING_ALLOWED=NO > build-log.txt 2>&1 || status=$?
-          grep -E "^Test (Suite|Case)|error:|\*\* " build-log.txt || true
-          exit $status
+            CODE_SIGNING_ALLOWED=NO COMPILER_INDEX_STORE_ENABLE=NO
+
+      - name: Unit tests
+        run: |
+          tools/ci-xcodebuild.sh unit-tests "Unit tests on the simulator" test-without-building \
+            -project Trommi.xcodeproj -scheme Trommi \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" \
+            -derivedDataPath build/derived \
+            -only-testing:TrommiTests \
+            -resultBundlePath build/TrommiTests.xcresult
+
+      # Also when a unit test failed: the two say different things.
+      - name: UI tests
+        if: always() && steps.build.outcome == 'success'
+        run: |
+          tools/ci-xcodebuild.sh ui-tests "UI tests" test-without-building \
+            -project Trommi.xcodeproj -scheme Trommi \
+            -destination "platform=iOS Simulator,id=$SIMULATOR" \
+            -derivedDataPath build/derived \
+            -only-testing:TrommiUITests \
+            -resultBundlePath build/TrommiUITests.xcresult
 
       - name: Collect screenshots and the simulator build
         if: always()
         run: |
-          mkdir -p build/screenshots
-          xcrun xcresulttool export attachments --path build/Trommi.xcresult --output-path build/screenshots || true
+          mkdir -p build/screenshots build/logs
+          cp swift-test.log /tmp/trommi-server.log build/logs/ 2>/dev/null || true
+          if [ -d build/TrommiUITests.xcresult ]; then
+            xcrun xcresulttool export attachments --path build/TrommiUITests.xcresult --output-path build/screenshots || true
+          fi
           APP=build/derived/Build/Products/Debug-iphonesimulator/Trommi.app
           if [ -d "$APP" ]; then (cd "$(dirname "$APP")" && zip -qr "$OLDPWD/build/Trommi-simulator.zip" Trommi.app); fi
+
+      # First thing to open when the run is red: NAME.txt is the short log, NAME.raw.log everything.
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-logs
+          path: client/ios/build/logs
+          if-no-files-found: warn
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: ios-test-results
-          path: |
-            client/ios/build/Trommi.xcresult
-            client/ios/build-log.txt
-          if-no-files-found: warn
+          path: client/ios/build/*.xcresult
+          if-no-files-found: ignore
 
       - name: Upload screenshots
         if: always()
@@ -86,7 +213,7 @@ jobs:
         with:
           name: ios-screenshots
           path: client/ios/build/screenshots
-          if-no-files-found: warn
+          if-no-files-found: ignore
 
       - name: Upload simulator build
         if: always()
@@ -94,4 +221,4 @@ jobs:
         with:
           name: ios-simulator-app
           path: client/ios/build/Trommi-simulator.zip
-          if-no-files-found: warn
+          if-no-files-found: ignore

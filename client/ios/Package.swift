@@ -9,7 +9,7 @@ let package = Package(
     platforms: [.iOS(.v17), .macOS(.v14)],
     products: [.library(name: "TrommiCore", targets: ["TrommiCore"])],
     targets: [
-        .target(name: "TrommiCore", path: "Trommi", exclude: ["App", "Views", "Resources", "Info.plist"], sources: ["Core", "Net"]),
+        .target(name: "TrommiCore", path: "Trommi", exclude: ["App", "Views", "Resources", "Assets.xcassets", "Info.plist"], sources: ["Core", "Net"]),
         .testTarget(
             name: "TrommiCoreTests",
             dependencies: ["TrommiCore"],
