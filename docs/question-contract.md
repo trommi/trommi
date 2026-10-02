@@ -597,3 +597,84 @@ card.note     = "…"            // the human's note, if any
 (`status: "open"`, `shredded: null`, back in the queue), with a `reopened`
 event. The agent hears `decision_reopened` with `shredded="1"` and an empty
 `previous_choice`. The draft is not restored (it was dropped on shredding).
+
+## 11. Marks: notes and drawings pinned to places on a card
+
+### A mark
+
+```js
+{
+  id: "m1",                 // the client's id, at most 40 characters; the hub makes one if missing
+  anchor: {
+    kind: "card" | "option" | "section" | "picture" | "text",
+    key: "split",           // option: the option's key (required, must exist)
+    index: 2,               // section: index into card.sections (required, must exist); picture: index into card.attachments
+    x: 0.5, y: 0.25,        // optional numbers, the client's own coordinates within the anchored thing
+    quote: "The hub…"       // text: the passage it is pinned to, at most 500 characters
+  },
+  text: "too narrow",       // optional, trimmed, at most 2000 characters
+  strokes: [[x, y, x, y, …], …]  // optional; any JSON list, kept as sent (the hub does not interpret it)
+}
+```
+
+- A mark needs `text` or `strokes`; one with neither is dropped silently.
+- Unknown anchor fields are dropped. `kind: "card"` needs nothing else.
+- Limits, each refused with 400 and a readable error: 200 marks per card,
+  64 KB per mark (as JSON), 1 MB for all marks together, 2000 characters of
+  text per mark.
+
+### In the draft
+
+`POST /draft {card_id, keys, note, notes, marks}`: `marks` is the whole list
+each time, like the rest. Stored as `card.draft.marks` (the key is absent when
+there are none); a draft with only marks is a draft. In a draft, marks on an
+option or section the card does not have are dropped silently. When the agent
+revises the card, marks whose option key is gone or whose section index is
+beyond the end drop out; `card`, `text` and `picture` marks stay. The draft
+(marks included) goes with answer, withdraw, merge, close and shred.
+
+### Sent with an answer, a question back, or the shredder
+
+```
+POST /decide  { card_id, key | keys, note?, notes?, marks?, attachments? }
+POST /message { text, agent, card_id, marks?, attachments?, handback?, explain? }
+POST /shred   { card_id, note?, marks?, attachments? }
+```
+
+`attachments` are uploads as elsewhere (`[{ name, data: "data:image/png;base64,…" }]`):
+send the picture(s) of the annotated card there.
+
+- Here marks are checked strictly: one on an option, section or picture the
+  card does not have is refused (400, or 409 "revised while you were
+  answering" when the card has been revised). Nothing is stored then.
+- `/message`: marks only count with the `card_id` of an open card; a message
+  may consist of marks alone. Not on `/decide` with `trust: true`.
+- Stored: `card.marks` on the decided or shredded card, `message.marks` on the
+  chat message; the pictures as `card.note_attachments` / `message.attachments`.
+- Marks pinned to an option (or to a section that is an option) and carrying
+  text also land in `card.option_notes[key]`, after an explicit note for that
+  key, one per line, so older readers see them.
+- The `decided` and `shredded` events end with ` · 3 notes` (` · 1 note`).
+- The agent reads them in the event content, under `Notes pinned to the
+  card:`, one line each: `- on option "Split" [split]: …`, `- on the paragraph
+  "…": …`, `- on the picture design-b.png: …`, `- on the text "The hub…": …`,
+  `- general: …`; a mark with strokes says `(drawn; see the picture)`. The meta
+  carries `marks="<count>"` and the uploaded pictures' paths (`files`,
+  `image_path`).
+- Take-back (`POST /reopen`): `card.marks` moves back into `card.draft.marks`
+  (after an answer together with keys, note and notes; after a shred with the
+  note).
+
+## 12. Taking back a hand-back
+
+```
+POST /handback { "card_id": "…", "clear": true }
+→ 200 {"ok":true}
+  400 unknown card, or `clear` is not true
+  409 the card is not open or not with the agent
+```
+
+Clears `card.with_agent`, adds the event `{ kind: "handback_withdrawn",
+card_id, text: <title> }` to the conversation, and tells the agent quietly
+(`kind: "handback_withdrawn"`): no need to rework or explain the card. I chose
+a route of its own over `/reopen`, which keeps meaning "take an answer back".
