@@ -1,0 +1,14 @@
+#!/usr/bin/env bash
+# Build and run the tests that need neither a window nor the real server:
+# models, decoding, order, the quick-card rule, markdown, the event stream,
+# login and cookie, and the client against a stand-in server.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+build=${TROMMI_BUILD:-build}
+for t in core live; do
+  mkdir -p "$build/tests/$t"
+  (cd "$build/tests/$t" && qmake6 "$OLDPWD/tests/$t/$t.pro" >/dev/null && make -s -j"$(nproc)")
+done
+"$build/tests/core/tst_core" "$@"
+"$build/tests/live/tst_live" "$@"

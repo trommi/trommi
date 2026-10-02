@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=Trommi
+GenericName=Agent Inbox
+Comment=Answer the questions of your coding agents
+Exec=trommi %u
+Icon=internet-chat
+StartupWMClass=trommi
+Categories=Network;InstantMessaging;
+Keywords=agent;claude;board;inbox;
+MimeType=x-scheme-handler/trommi;
+Terminal=false
