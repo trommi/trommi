@@ -940,3 +940,7 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
   .focus .focus-way .focus-way-word { display: none; }
   .focus .focus-way .focus-way-art { overflow: hidden; }
 }
+
+/* the end of a pass: what is snoozed or with its session, to go through on purpose; a card that is here again says why */
+.focus-list-piles { margin-top: var(--s-2); height: 38px; padding: 0 14px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-sm); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
+.focus-came-back { font-style: normal; padding: 4px 8px; border-radius: var(--r-sm); background: var(--fg); color: var(--surface); letter-spacing: .04em; }

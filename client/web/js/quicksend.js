@@ -9,7 +9,7 @@
 // a click offers the sessions: picking one crowns it.
 
 import { subscribe, getState, sendMessage, star } from './store.js'
-import { el, sketch } from './ui.js'
+import { el, sketch, crown } from './ui.js'
 import { avatar } from './agents.js'
 import { dictationMic } from './speech.js'
 
@@ -43,12 +43,15 @@ form.append(to, box, mic, send, note)
 const opener = el('button', 'icon-btn quick-open')
 opener.type = 'button'
 opener.setAttribute('aria-label', 'Quick send to the crowned session')
-opener.append(sketch('send'))
-opener.addEventListener('click', () => { const open = form.classList.toggle('is-sheet'); opener.setAttribute('aria-expanded', String(open)); if (open) field.focus() })
+opener.title = 'Write to the crowned session ( / )'
+opener.append(sketch('bubble'), crown())
+const setSheet = open => { form.classList.toggle('is-sheet', open); opener.setAttribute('aria-expanded', String(open)); if (open) { if (receiver) field.focus(); else openList() } }
+opener.addEventListener('click', () => setSheet(!form.classList.contains('is-sheet')))
+document.addEventListener('pointerdown', e => { if (form.classList.contains('is-sheet') && !form.contains(e.target) && !opener.contains(e.target)) setSheet(false) })
 if (bar) {
   const after = bar.querySelector('.footnav')
-  if (after) after.after(form, opener)
-  else bar.append(form, opener)
+  if (after) after.after(opener, form)
+  else bar.append(opener, form)
 }
 
 // ---- who receives ----
@@ -109,7 +112,7 @@ field.addEventListener('pointerdown', e => { if (!receiver) { e.preventDefault()
 document.addEventListener('pointerdown', e => { if (list && !form.contains(e.target)) closeList() })
 form.addEventListener('keydown', e => {
   if (e.key !== 'Escape') return
-  if (list) { e.stopPropagation(); closeList(); to.focus() } else if (document.activeElement === field) { e.stopPropagation(); field.blur(); form.classList.remove('is-sheet') }
+  if (list) { e.stopPropagation(); closeList(); to.focus() } else { e.stopPropagation(); setSheet(false); opener.focus() }
 })
 
 // ---- what goes along: pictures and files, pasted or dropped ----
@@ -193,10 +196,8 @@ window.addEventListener('keydown', e => {
   if (e.key !== '/' || e.ctrlKey || e.metaKey || e.altKey) return
   if (e.target.closest?.('input, textarea, select, [contenteditable]') || document.querySelector('dialog[open]')) return
   e.preventDefault()
-  if (opener.offsetParent) { form.classList.add('is-sheet'); opener.setAttribute('aria-expanded', 'true') }
-  if (!receiver) openList()
-  else field.focus()
+  setSheet(true)
 })
 
 /** Put the keyboard into the quick-send field (for the table of keys). */
-export function focusQuickSend() { if (receiver) field.focus(); else openList() }
+export function focusQuickSend() { setSheet(true) }

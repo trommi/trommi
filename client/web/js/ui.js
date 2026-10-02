@@ -726,6 +726,10 @@ const SKETCH = {
   wake: [[[6.2, 16.2], [7.6, 11.6], [12, 9.4], [16.4, 11.4], [17.8, 16.2]], [[3, 16.6], [12, 16.2], [21, 16.5]], [[12, 3.6], [12.1, 6.2]], [[5.4, 7.2], [7.2, 9]], [[18.6, 7], [16.9, 8.8]]],
   // a tick, made in one move: read, fine
   tick: [[[4.6, 12.8], [7.4, 15.2], [9.8, 18], [13, 12.4], [19.6, 5.6]]],
+  // a small stack of cards: there are questions here
+  stack: [[[4.6, 11], [12, 10.6], [19.4, 11], [19.7, 15.4], [19.4, 19.8], [12, 20.1], [4.6, 19.8], [4.3, 15.4], [4.7, 10.7]], [[5.8, 10.4], [6.6, 7.4], [12, 7], [17.4, 7.4], [18.2, 10.4]], [[7.6, 6.8], [8.6, 4.2], [12, 3.9], [15.4, 4.2], [16.4, 6.8]], [[8.6, 15.4], [12, 15.2], [15.4, 15.5]]],
+  // a speech bubble with its tail: write to someone
+  bubble: [[[4.4, 8.6], [6, 6.4], [12, 6], [18.2, 6.4], [19.8, 8.8], [19.6, 14.6], [17.8, 16.8], [11.6, 17], [8.4, 20.6], [8.2, 17], [5.8, 16.6], [4.3, 14.4], [4.5, 8.2]]],
   // a table: a sheet ruled into cells
   grid: [[[4, 5.6], [12, 5.3], [20, 5.6], [20.2, 12], [20, 18.6], [12, 18.8], [4.2, 18.5], [3.9, 12], [4.1, 5.3]], [[4.4, 10], [19.8, 10.2]], [[10, 5.8], [10.2, 18.4]]],
   // three options, one of them ticked
@@ -764,6 +768,9 @@ export const HANDBACK_STATE = 'In revision'
 // Throwing a question away unanswered; and the name of its drawing for sketch().
 export const SHRED_WORD = 'Shred'
 export const SHRED_SKETCH = 'shred'
+
+// Going through every open question, one after the other, in the question window: the word on its button.
+export const WALK_WORD = 'Power through'
 
 // Knocks: the questions that will not wait. An urgent one knocks, a blocking one knocks and says so.
 // (The agents' side still says urgency: high | critical; only the words on screen are these.)
@@ -862,7 +869,8 @@ export function adviceLoop() {
         path.setAttribute('d', penPath([[x0, y + .9 + w(0) * .2], [x0 + (x1 - x0) * .4, y - .2 + w(1) * .2], [x0 + (x1 - x0) * .75, y + .5 + w(2) * .2], [x1, y - .8 + w(3) * .2]]))
         path.style.strokeWidth = '2.4px'
       } else {
-        const y = l.y + l.h * .54, x0 = l.x - 4, x1 = l.x + l.w + 5
+        // (kept inside its own box, so it never makes what holds it scroll sideways)
+        const y = l.y + l.h * .54, x0 = Math.max(0, l.x - 4), x1 = Math.min(frame.width * k, l.x + l.w + 5)
         path.setAttribute('d', penPath([[x0, y + 1.2 + w(0) * .5], [x0 + (x1 - x0) * .35, y - .6 + w(1) * .5], [x0 + (x1 - x0) * .7, y + .8 + w(2) * .5], [x1, y - 1.2 + w(3) * .5]]))
         path.style.strokeWidth = `${(l.h * .78).toFixed(1)}px`
       }

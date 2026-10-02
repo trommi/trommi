@@ -569,18 +569,20 @@ function voiceKey(field) {
   startDictation(field)
   return ms => { if (ms > 300) stopDictation() }
 }
+const pressShown = button => { if (!button.getClientRects().length) return false; button.click() }
 provide('session', {
   active: inSession,
   actions: { 'session.scribble': () => setView(body.dataset.view === 'scribble' ? 'chat' : 'scribble') },
 })
 provide('conversation', {
   active: () => inSession() && body.dataset.view === 'chat',
-  has: id => (id === 'chat.pane' ? getState().members.length > 1 : id === 'chat.voice' ? Boolean(getState().speech) : true),
+  has: id => (id === 'chat.pane' ? getState().members.length > 1 : id === 'chat.voice' ? Boolean(getState().speech) : id === 'chat.questions' ? $('filter-questions').getClientRects().length > 0 : id === 'chat.files' ? $('filter-files').getClientRects().length > 0 : true),
   actions: {
     'chat.write': () => chat.focus(),
     'chat.voice': () => voiceKey($('chat').querySelector('.chat-pane.is-member .composer textarea') ?? $('chat').querySelector('.composer textarea')),
-    'chat.questions': () => $('filter-questions').click(),
-    'chat.files': () => $('filter-files').click(),
+    // (Only where the filter is offered: a hidden button is not pressed by key either.)
+    'chat.questions': () => pressShown($('filter-questions')),
+    'chat.files': () => pressShown($('filter-files')),
     'chat.pane': () => {
       const { members } = getState()
       if (members.length < 2) return false

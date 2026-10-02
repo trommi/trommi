@@ -28,6 +28,9 @@ lead($('nav-inbox'), 'tray')
 lead($('nav-roster'), 'heads')
 redraw($('theme-toggle'), 'sun', 'moon')
 redraw($('roster-open'), 'heads')
+// The page of all sessions, reachable from anywhere.
+lead($('menu-agents'), 'heads')
+$('menu-agents')?.addEventListener('click', () => $('nav-roster')?.click())
 // (The key before "Admin" is put there by app.js.)
 if (menu) lead(menu.querySelector('a[href="/help.html"]'), 'page')
 // A soft double knock when an urgent or blocking question arrives: off unless switched on here.
@@ -88,3 +91,9 @@ if (opener && menu) {
   document.addEventListener('pointerdown', e => { if (isOpen() && !e.target.closest('.brand')) close(false) })
   menu.addEventListener('focusout', e => { if (isOpen() && e.relatedTarget && !e.relatedTarget.closest?.('.brand')) close(false) })
 }
+
+// While Shift is held, a row's quiet action is "Shred" (inbox.js, app.css: body[data-shift]).
+const shift = e => document.body.toggleAttribute('data-shift', e.shiftKey && !e.target.closest?.('input, textarea, select, [contenteditable]'))
+window.addEventListener('keydown', shift, true)
+window.addEventListener('keyup', shift, true)
+window.addEventListener('blur', () => document.body.removeAttribute('data-shift'))

@@ -177,3 +177,23 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
 - Not verified: the Focus window with the new advice mark and the card number (it failed to load for part of the round: an
   error in focus.js), touch drag on a real phone, Safari, the knock sound by ear, dictation in the quick-send field, a real
   file dropped into it.
+
+## Round four (same worker): what changed after the round-three notes above
+- **Rows are "Side with Span"**: in the inbox the sender stands in a gutter at the left of the cards (`.inbox-gutter`: mark and
+  name once per run of a session's rows, sticky inside a long run, a `runBracket()` down the run); each row's note
+  (`.inbox-byline`: number, age, and on hover "Trust" / "Shred") stands beside it in the gutter. The cards hold the knock
+  label, title, text, and the picture with what the card carries under it (`.inbox-pics`). The gutter takes the page's left
+  margin from 1000 px of inbox width (cards keep 760), is made inside the list from 821 px, and below that the note is a
+  line of the card (top line on a phone; later rows of a run drop mark and name). A session's own list is unchanged.
+- **Shred** (`SHRED_WORD`, `SHRED_SKETCH`, `shred()` in store.js -> `POST /shred`): a quiet action in the row's note, key
+  action `list.shred` (not in the key table yet), the row leaves in strips, Back note, and a fourth pile "Shredded" (today's).
+- **Bar**: symbols only. Logo menu at the left; at the right a speech bubble wearing the crown (opens quick send as a small
+  sheet above the bar; "/" opens it too) and the pad's drawing. No Inbox/Agents buttons (`.footnav` stays in the page,
+  hidden, for the keys and the wiring); the Agents page is reached from "agents" in the inbox's line:
+  "4 knocks · 16 questions need you from 4 agents · 1 to read".
+- **Sidebar has no numbers**: a small `sketch('stack')` when a session has questions, the red hand alone when it waits for
+  you, nothing for idle and disconnected; the Inbox entry shows the stack, or the knuckles when something knocks. The symbol
+  is still the button into that session's questions; the numbers are in the tooltips.
+- The working trace is in the session title too. `summary()` and `badge()` are exported for the Ledger.
+- The old roster (`mountRoster`, `.roster-*`) is still built and hidden by ledger.css; `dev/ui-test.mjs` names its selectors
+  in forty places, so it was left for QA and the Layout worker to retire together.
