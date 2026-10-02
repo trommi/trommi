@@ -72,12 +72,12 @@ final class StubBoardClient: BoardClient, @unchecked Sendable {
         for listener in all { listener.yield(now) }
     }
 
-    func sendMessage(_ text: String, agent: String) async throws {
-        try change("message") { try $0.addUserMessage(text, agent: agent, now: $1) }
+    func sendMessage(_ text: String, agent: String, about cardID: String?) async throws {
+        try change("message") { try $0.addUserMessage(text, agent: agent, about: cardID, now: $1) }
     }
 
-    func decide(cardID: String, key: String, note: String) async throws {
-        try change("decide") { try $0.decide(cardID: cardID, key: key, note: note, now: $1) }
+    func decide(cardID: String, answer: Answer, note: String) async throws {
+        try change("decide") { try $0.decide(cardID: cardID, answer: answer, note: note, now: $1) }
     }
 
     func reopen(cardID: String) async throws {

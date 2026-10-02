@@ -105,8 +105,13 @@ struct Card: Equatable, Sendable, Identifiable {
     /// Milliseconds since 1970, as the server writes them.
     var created: Double
     var decided: Double?
-    /// The key of the option the agent would pick itself; nil when it has no preference.
-    var recommended: String? = nil
+    /// The keys of the options the agent would pick itself: one, or several on a card
+    /// that takes several answers; empty when it has no preference.
+    var recommended: [String] = []
+    /// The human may tick several options and sends them together.
+    var multiple: Bool = false
+    /// Every chosen key in the order of the options; `choice` is the first of them.
+    var choices: [String] = []
 }
 
 struct Message: Equatable, Sendable, Identifiable {
@@ -115,6 +120,8 @@ struct Message: Equatable, Sendable, Identifiable {
     var from: Sender
     /// Only for events: asked, decided, done, urgency, reopened.
     var kind: String
+    /// The card an event is about. On a chat message: the question the human asked back
+    /// about, or the agent answers to.
     var cardID: String?
     var text: String
     /// Longer material the agent chose to show, collapsed under the message.
@@ -211,6 +218,12 @@ private struct Fields {
         if let b = try? box.decode(Bool.self, forKey: k) { return b }
         if let i = try? box.decode(Int.self, forKey: k) { return i != 0 }
         return false
+    }
+
+    /// One string or a list of strings; empty when missing or null.
+    func strings(_ key: String) -> [String] {
+        if let one = optionalString(key) { return [one] }
+        return array(key, of: QueueID.self).map(\.value)
     }
 
     /// A nested object, nil when missing, null or unreadable.
@@ -316,9 +329,13 @@ extension Card: Decodable {
         summary = f.string("summary")
         created = f.double("created") ?? 0
         decided = f.double("decided")
-        // Advice only counts when it names one of the options.
-        let advised = f.optionalString("recommended")
-        recommended = options.contains { $0.key == advised } ? advised : nil
+        // Advice only counts when it names one of the options. One key, or a list of them.
+        let keys = Set(options.map(\.key))
+        let advised = f.strings("recommended")
+        recommended = advised.filter { keys.contains($0) }
+        multiple = f.bool("multiple")
+        let chosen = f.strings("choices")
+        choices = chosen.isEmpty ? (choice.map { [$0] } ?? []) : chosen
     }
 }
 
@@ -401,7 +418,7 @@ extension BoardState: Decodable {
     }
 }
 
-/// A queue entry is a card id; tolerate numbers.
+/// A card id or an option key in a list; tolerate numbers.
 private struct QueueID: Decodable {
     var value: String
     init(from decoder: Decoder) throws {

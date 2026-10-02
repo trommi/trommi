@@ -1,28 +1,51 @@
-# Puts every change to the app on your own iPhone through TestFlight, without a Mac.
-# A push that touches client/ios/ builds, signs and uploads; internal testers get the
-# build as soon as Apple has processed it, with no review in between.
+# Puts the app on your own iPhone through TestFlight, without a Mac of your own.
+# It builds, signs and uploads; internal testers get the build as soon as Apple
+# has processed it, with no review in between.
+#
+# Started by hand for now ("Run workflow"): the app has not been built on a Mac
+# yet, so get the workflow "iOS" green first. To upload on every push to main
+# that touches the app, add under "on:":
+#     push:
+#       branches: [main]
+#       paths: ['client/ios/**']
 #
 # One-time setup, all in the browser:
-#   1. App Store Connect > Apps: create the app with bundle id de.trommi.app.
-#   2. Users and Access > Integrations > App Store Connect API: create a team
-#      key with the role "App Manager" and download the .p8 file.
-#   3. TestFlight > Internal Testing: create a group, add yourself, switch on
-#      automatic distribution.
-#   4. In the GitHub repository settings add these secrets:
+#   1. App Store Connect > Apps: create the app with bundle id de.trommi.app
+#      (or change the id in client/ios/project.yml first; it must be yours).
+#   2. Users and Access > Integrations > App Store Connect API > Team Keys:
+#      create a key with the role "Admin" and download the .p8 file. Signing
+#      for distribution uses a certificate Apple keeps for the team ("cloud
+#      managed"); keys with a lesser role cannot use it.
+#   3. TestFlight > Internal Testing: create a group and add yourself.
+#   4. In the GitHub repository settings > Secrets and variables > Actions add:
 #        ASC_KEY_ID        the key's id
 #        ASC_ISSUER_ID     the issuer id shown above the key list
-#        ASC_KEY_P8        the content of the .p8 file
-#        APPLE_TEAM_ID     your ten-character team id
+#        ASC_KEY_P8        the content of the .p8 file, all lines
+#        APPLE_TEAM_ID     your ten-character team id (developer.apple.com > Membership)
 #   5. On the phone: install TestFlight and switch on automatic updates for Trommi.
 #
-# Not run yet: this workflow was written on Linux and has never executed.
+# What was checked, and what was not (this workflow was written on Linux and has never run):
+#   checked against Apple's and GitHub's documentation, October 2026:
+#     - xcodebuild -allowProvisioningUpdates with -authenticationKeyPath, -authenticationKeyID
+#       and -authenticationKeyIssuerID (man xcodebuild, since Xcode 13)
+#     - export options: method "app-store-connect" (the name "app-store" is deprecated since
+#       Xcode 15.3), destination "upload", testFlightInternalTestingOnly (since Xcode 15)
+#     - the runner image macos-26 and its Xcode
+#   NOT verified, likely places for the first failure:
+#     - archiving unsigned and signing only at export. It avoids a new development
+#       certificate per run (Apple allows a team only a few; a fresh runner makes one each
+#       time), and this app has no entitlements that need a profile at build time. If the
+#       export refuses the unsigned archive, run again with "Sign the archive" ticked.
+#     - whether the role "Admin" is really required; reports say "App Manager" fails at export.
 name: iOS TestFlight
 
 on:
-  push:
-    branches: [main, trommi-board]
-    paths: ['client/ios/**', '.github/workflows/ios-testflight.yml']
   workflow_dispatch:
+    inputs:
+      sign_archive:
+        description: Sign the archive with a development certificate (only if the unsigned archive was refused at export)
+        type: boolean
+        default: false
 
 concurrency:
   group: ios-testflight
@@ -30,7 +53,8 @@ concurrency:
 
 jobs:
   upload:
-    runs-on: macos-latest
+    # Uploads to App Store Connect must be built with a current Xcode; this image has it.
+    runs-on: macos-26
     timeout-minutes: 45
     defaults:
       run:
@@ -43,42 +67,55 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Stop early when the signing secrets are missing
-        run: |
-          for name in ASC_KEY_ID ASC_ISSUER_ID APPLE_TEAM_ID; do
-            [ -n "${!name}" ] || { echo "::error::Secret $name is not set"; exit 1; }
-          done
-
-      - name: The API key as a file, where Xcode's tools look for it
         env:
           ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
         run: |
-          mkdir -p ~/.appstoreconnect/private_keys
-          printf '%s' "$ASC_KEY_P8" > ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
-          chmod 600 ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+          missing=0
+          for name in ASC_KEY_ID ASC_ISSUER_ID APPLE_TEAM_ID ASC_KEY_P8; do
+            [ -n "${!name}" ] || { echo "::error::Secret $name is not set"; missing=1; }
+          done
+          exit $missing
+
+      - name: The API key as a file
+        env:
+          ASC_KEY_P8: ${{ secrets.ASC_KEY_P8 }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/keys"
+          KEY="$RUNNER_TEMP/keys/AuthKey_${ASC_KEY_ID}.p8"
+          printf '%s\n' "$ASC_KEY_P8" > "$KEY"
+          chmod 600 "$KEY"
+          grep -q "BEGIN PRIVATE KEY" "$KEY" || { echo "::error::ASC_KEY_P8 does not look like a .p8 file (no BEGIN PRIVATE KEY line)"; exit 1; }
+          echo "ASC_KEY_FILE=$KEY" >> "$GITHUB_ENV"
 
       - name: Generate the Xcode project
         run: |
-          brew install xcodegen
+          command -v xcodegen >/dev/null || brew install xcodegen
           xcodegen generate
+          xcodebuild -version | tee -a "$GITHUB_STEP_SUMMARY"
 
       # The run number is the build number, so every upload is newer than the last.
-      # With the API key Xcode asks Apple for certificate and profile itself.
       - name: Archive
         run: |
-          xcodebuild archive \
-            -project Trommi.xcodeproj -scheme Trommi \
+          if [ "${{ inputs.sign_archive }}" = "true" ]; then
+            # Xcode asks Apple for a development certificate and profile itself.
+            SIGNING=(-allowProvisioningUpdates
+              -authenticationKeyPath "$ASC_KEY_FILE" -authenticationKeyID "$ASC_KEY_ID" -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+              CODE_SIGN_STYLE=Automatic)
+          else
+            SIGNING=(CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY=)
+          fi
+          tools/ci-xcodebuild.sh archive "Archive" archive \
+            -project Trommi.xcodeproj -scheme Trommi -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Trommi.xcarchive" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
-            -authenticationKeyID "$ASC_KEY_ID" \
-            -authenticationKeyIssuerID "$ASC_ISSUER_ID" \
             DEVELOPMENT_TEAM="$APPLE_TEAM_ID" \
-            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER"
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            "${SIGNING[@]}"
 
-      - name: Upload to TestFlight
+      # Signs with the team's distribution certificate, which Apple holds, and uploads.
+      - name: Sign and upload to TestFlight
         run: |
-          cat > "$RUNNER_TEMP/export.plist" <<EOF
+          cat > "$RUNNER_TEMP/export.plist" <<PLIST
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
           <plist version="1.0"><dict>
@@ -87,17 +124,34 @@ jobs:
             <key>signingStyle</key><string>automatic</string>
             <key>teamID</key><string>${APPLE_TEAM_ID}</string>
             <key>testFlightInternalTestingOnly</key><true/>
+            <key>manageAppVersionAndBuildNumber</key><false/>
+            <key>uploadSymbols</key><true/>
           </dict></plist>
-          EOF
-          xcodebuild -exportArchive \
+          PLIST
+          tools/ci-xcodebuild.sh export "Sign and upload" -exportArchive \
             -archivePath "$RUNNER_TEMP/Trommi.xcarchive" \
             -exportOptionsPlist "$RUNNER_TEMP/export.plist" \
             -exportPath "$RUNNER_TEMP/export" \
             -allowProvisioningUpdates \
-            -authenticationKeyPath ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8 \
+            -authenticationKeyPath "$ASC_KEY_FILE" \
             -authenticationKeyID "$ASC_KEY_ID" \
             -authenticationKeyIssuerID "$ASC_ISSUER_ID"
+          echo "Build $GITHUB_RUN_NUMBER was handed to App Store Connect. It shows up in TestFlight once Apple has processed it, usually within minutes." >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Remove the key again
+      # The logs name the key id, the issuer id and the team; take them out before anyone downloads them.
+      - name: Remove the key and clean the logs
         if: always()
-        run: rm -f ~/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8
+        run: |
+          rm -rf "$RUNNER_TEMP/keys"
+          for file in build/logs/*; do
+            [ -f "$file" ] || continue
+            sed -i '' -e "s/${ASC_KEY_ID:-NO_KEY_ID}/[key id]/g" -e "s/${ASC_ISSUER_ID:-NO_ISSUER}/[issuer id]/g" -e "s/${APPLE_TEAM_ID:-NO_TEAM}/[team id]/g" "$file"
+          done
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-testflight-logs
+          path: client/ios/build/logs
+          if-no-files-found: ignore

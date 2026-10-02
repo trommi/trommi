@@ -99,12 +99,14 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
         _ = try await send(request)
     }
 
-    func sendMessage(_ text: String, agent: String) async throws {
-        try await post("/message", ["text": text, "agent": agent])
+    func sendMessage(_ text: String, agent: String, about cardID: String?) async throws {
+        var body = ["text": text, "agent": agent]
+        if let cardID { body["card_id"] = cardID }
+        try await post("/message", body)
     }
 
-    func decide(cardID: String, key: String, note: String) async throws {
-        try await post("/decide", ["card_id": cardID, "key": key, "note": note])
+    func decide(cardID: String, answer: Answer, note: String) async throws {
+        try await post("/decide", answer.body(cardID: cardID, note: note))
     }
 
     func reopen(cardID: String) async throws {

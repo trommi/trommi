@@ -78,7 +78,7 @@ final class AppModel {
     var notice: String?
     /// Shown on the first screen, e.g. after the server refused the stored token.
     var onboardingMessage: String?
-    /// A link the human tapped; the root view shows it in the in-app browser.
+    /// A link the human tapped; the root view hands it to the in-app browser and clears it.
     var browser: BrowserRequest?
 
     @ObservationIgnored private(set) var client: (any BoardClient)?
@@ -213,12 +213,20 @@ final class AppModel {
     /// question comes back and the reason is returned (and shown as a notice).
     @discardableResult
     func decide(_ card: Card, _ option: CardOption, note: String = "") async -> String? {
+        await decide(card, [option], note: note)
+    }
+
+    /// Answers a question with the given options: one, or several where the card takes several.
+    @discardableResult
+    func decide(_ card: Card, _ options: [CardOption], note: String = "") async -> String? {
         guard let client else { return "No connection to the server." }
-        guard store.begin(cardID: card.id, key: option.key, note: note) else { return nil }
+        guard let first = options.first else { return "Not saved: \(BoardError.noAnswer.message)" }
+        let answer: Answer = card.multiple ? .several(options.map(\.key)) : .one(first.key)
+        guard store.begin(cardID: card.id, answer: answer, note: note) else { return nil }
         refresh()
         hooks.feedback(.decided)
         do {
-            try await client.decide(cardID: card.id, key: option.key, note: note)
+            try await client.decide(cardID: card.id, answer: answer, note: note)
         } catch {
             store.settle(cardID: card.id)
             refresh()
@@ -227,7 +235,7 @@ final class AppModel {
             notice = reason
             return reason
         }
-        if card.kind == .decision { offerUndo(card, option) }
+        if card.kind == .decision { offerUndo(card, options) }
         // The server's own state normally arrives before this line. Keep our
         // version a little longer in case it is late, then let the server win.
         let cardID = card.id
@@ -239,9 +247,9 @@ final class AppModel {
         return nil
     }
 
-    private func offerUndo(_ card: Card, _ option: CardOption) {
+    private func offerUndo(_ card: Card, _ options: [CardOption]) {
         undoTimer?.cancel()
-        let offer = UndoOffer(cardID: card.id, title: card.title, label: option.label)
+        let offer = UndoOffer(cardID: card.id, title: card.title, label: options.map(\.label).joined(separator: ", "))
         undo = offer
         undoTimer = Task { [weak self] in
             try? await Task.sleep(nanoseconds: UInt64(AppModel.undoSeconds * 1_000_000_000))
@@ -298,9 +306,10 @@ final class AppModel {
     // MARK: chat
 
     /// Sends a chat message; throws a readable reason and leaves the text with the caller.
-    func send(_ text: String, to agent: String) async throws {
+    /// `about`: the open question the human asks back about instead of answering it.
+    func send(_ text: String, to agent: String, about cardID: String? = nil) async throws {
         guard let client else { throw ClientError.unreachable("") }
-        try await client.sendMessage(text, agent: agent)
+        try await client.sendMessage(text, agent: agent, about: cardID)
     }
 
     func transcribe(_ audio: Data) async throws -> String {

@@ -99,6 +99,8 @@ enum BoardError: Error, Equatable {
     case emptyMessage
     case unknownAgent
     case onlineNotArchived
+    case oneAnswerOnly
+    case noAnswer
 
     var message: String {
         switch self {
@@ -111,6 +113,8 @@ enum BoardError: Error, Equatable {
         case .emptyMessage: return "The message is empty."
         case .unknownAgent: return "This session no longer exists."
         case .onlineNotArchived: return "A session that is connected cannot be archived."
+        case .oneAnswerOnly: return "This question takes one answer."
+        case .noAnswer: return "Choose at least one option."
         }
     }
 
@@ -122,6 +126,7 @@ enum BoardError: Error, Equatable {
             ("card is already open", .alreadyOpen), ("the agent withdrew this card", .withdrawn),
             ("empty message", .emptyMessage), ("no agent ", .unknownAgent),
             ("a session that is online cannot be archived", .onlineNotArchived),
+            ("this card takes one answer", .oneAnswerOnly), ("keys must name at least one option", .noAnswer),
         ]
         for (text, error) in known where serverText.hasPrefix(text) { return error.message }
         if serverText == "forbidden" { return "The server refused the request." }
@@ -132,10 +137,32 @@ enum BoardError: Error, Equatable {
 
 // MARK: - Local changes
 
+/// What the human answers: one option, or several on a card that takes several.
+/// POST /decide sends `key` for the first and `keys` for the second.
+enum Answer: Equatable, Sendable {
+    case one(String)
+    case several([String])
+
+    var keys: [String] {
+        switch self {
+        case .one(let key): return [key]
+        case .several(let keys): return keys
+        }
+    }
+
+    /// The JSON body of POST /decide, as server.mjs reads it.
+    func body(cardID: String, note: String) -> [String: Any] {
+        switch self {
+        case .one(let key): return ["card_id": cardID, "key": key, "note": note]
+        case .several(let keys): return ["card_id": cardID, "keys": keys, "key": keys.first ?? "", "note": note]
+        }
+    }
+}
+
 /// An answer the human gave that the server has not confirmed yet.
 struct PendingDecision: Equatable, Sendable {
     var cardID: String
-    var key: String
+    var answer: Answer
     var note: String
 }
 
@@ -169,12 +196,24 @@ struct SessionChanges: Equatable, Sendable {
 }
 
 extension BoardState {
-    /// What decide() in server.mjs does to the state.
+    /// One answer to a card: decide() with a single key.
     mutating func decide(cardID: String, key: String, note: String, now: Double) throws {
+        try decide(cardID: cardID, answer: .one(key), note: note, now: now)
+    }
+
+    /// What decide() in server.mjs does to the state.
+    mutating func decide(cardID: String, answer: Answer, note: String, now: Double) throws {
         guard let i = cards.firstIndex(where: { $0.id == cardID }) else { throw BoardError.unknownCard }
         guard cards[i].status == .open else { throw BoardError.alreadyDecided }
-        guard let option = cards[i].options.first(where: { $0.key == key }) else { throw BoardError.unknownOption }
-        cards[i].choice = key
+        if case .several = answer, !cards[i].multiple { throw BoardError.oneAnswerOnly }
+        let given = Set(answer.keys)
+        guard !given.isEmpty else { throw BoardError.noAnswer }
+        guard given.allSatisfy({ key in cards[i].options.contains { $0.key == key } }) else { throw BoardError.unknownOption }
+        // In the order of the options, whatever order they were ticked in.
+        let chosen = cards[i].options.filter { given.contains($0.key) }
+        cards[i].choices = chosen.map(\.key)
+        // The first one, for clients and agents that know only one answer.
+        cards[i].choice = chosen.first?.key
         cards[i].note = note.trimmingCharacters(in: .whitespacesAndNewlines)
         cards[i].decided = now
         // A permission verdict needs no follow-up from the agent, so it is done at once.
@@ -182,7 +221,7 @@ extension BoardState {
         let card = cards[i]
         if card.kind == .decision {
             messages.append(Message(id: "local-\(messages.count)-decided-\(card.id)", agent: card.agent, from: .event, kind: "decided",
-                                    cardID: card.id, text: option.label, details: "", attachments: [], ts: now))
+                                    cardID: card.id, text: chosen.map(\.label).joined(separator: ", "), details: "", attachments: [], ts: now))
         }
         for t in tasks.indices where tasks[t].agent == card.agent && tasks[t].cardID == card.id && tasks[t].state == .decision {
             tasks[t].state = .working
@@ -200,6 +239,7 @@ extension BoardState {
         guard cards[i].choice != nil else { throw BoardError.withdrawn }
         cards[i].status = .open
         cards[i].choice = nil
+        cards[i].choices = []
         cards[i].note = ""
         cards[i].summary = ""
         cards[i].decided = nil
@@ -209,13 +249,15 @@ extension BoardState {
         queue = BoardState.queueOf(cards, agents: agents)
     }
 
-    /// What POST /message does to the state.
-    mutating func addUserMessage(_ text: String, agent: String, now: Double) throws {
+    /// What POST /message does to the state. `about`: the question the human asks back
+    /// about instead of answering it; only an open card of this session counts, and it stays open.
+    mutating func addUserMessage(_ text: String, agent: String, about: String? = nil, now: Double) throws {
         let clean = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !clean.isEmpty else { throw BoardError.emptyMessage }
         guard agents.contains(where: { $0.id == agent }) else { throw BoardError.unknownAgent }
+        let card = cards.first { $0.id == about && $0.agent == agent && $0.status == .open }
         messages.append(Message(id: "local-\(messages.count)-message", agent: agent, from: .user, kind: "",
-                                cardID: nil, text: clean, details: "", attachments: [], ts: now))
+                                cardID: card?.id, text: clean, details: "", attachments: [], ts: now))
     }
 
     /// What POST /session does to the state.
@@ -247,7 +289,7 @@ extension BoardState {
     func applying(_ pending: [PendingDecision], now: Double) -> BoardState {
         guard !pending.isEmpty else { return self }
         var copy = self
-        for p in pending { try? copy.decide(cardID: p.cardID, key: p.key, note: p.note, now: now) }
+        for p in pending { try? copy.decide(cardID: p.cardID, answer: p.answer, note: p.note, now: now) }
         return copy
     }
 }

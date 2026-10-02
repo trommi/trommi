@@ -5,8 +5,11 @@ struct RootView: View {
 
     var body: some View {
         content
-            .sheet(item: browserBinding) { request in
-                SafariView(url: request.url).ignoresSafeArea()
+            // A link the human tapped, wherever in the app: shown over whatever is on screen.
+            .onChange(of: model.browser?.id) { _, _ in
+                guard let request = model.browser else { return }
+                model.browser = nil
+                Browser.open(request.url)
             }
     }
 
@@ -16,11 +19,6 @@ struct RootView: View {
         case .onboarding: OnboardingView()
         case .board: BoardView()
         }
-    }
-
-    /// The link the human tapped; closing the browser clears it.
-    private var browserBinding: Binding<BrowserRequest?> {
-        Binding(get: { model.browser }, set: { model.browser = $0 })
     }
 }
 
