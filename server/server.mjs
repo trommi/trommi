@@ -364,7 +364,7 @@ function purge() {
   if (!old.length) return
   const ids = new Set(old.map(c => c.id))
   for (const card of old) {
-    for (const a of [card, ...(card.versions ?? [])].flatMap(v => v.attachments ?? [])) fs.rmSync(path.join(FILES, path.basename(a.url)), { force: true })
+    for (const name of [card, ...(card.versions ?? [])].flatMap(v => v.attachments ?? []).flatMap(filesOfAttachment)) fs.rmSync(path.join(FILES, name), { force: true })
   }
   state.cards = state.cards.filter(c => !ids.has(c.id))
   state.messages = state.messages.filter(m => !(m.from === 'event' && ids.has(m.card_id)))
@@ -428,8 +428,42 @@ function urgencyArg(value, fallback) {
   return value
 }
 
-function storeAttachment(file) {
-  if (typeof file !== 'string' || !file) throw new Error('an attachment must be the path of a file')
+// Pictures that found their page by name in this call (foo.png beside foo.html), for the tool result.
+let paired = []
+const pairedHint = () => {
+  const said = paired.length ? `\nLinked by name, so the human can open the page under the picture: ${paired.join(', ')}` : ''
+  paired = []
+  return said
+}
+// The files a stored attachment consists of: itself and, if it brought one, its page.
+const filesOfAttachment = a => [a?.url, a?.page?.kind === 'file' ? a.page.url : null].filter(u => typeof u === 'string' && u.startsWith('/files/')).map(u => path.basename(u))
+
+// The page a picture was rendered from: a self-contained HTML file, stored and served beside the picture
+// (sandboxed, see /files), or a link: a path on the board, an asset link, a URL. A file that exists wins.
+function pageOf(page) {
+  if (typeof page !== 'string' || !page.trim()) throw new Error('page must be the path of an HTML file, a path on the board or a URL')
+  const ref = page.trim()
+  const link = /^https?:\/\//i.test(ref)
+  const src = link ? null : path.isAbsolute(ref) ? ref : null
+  if (src && fs.existsSync(src) && fs.statSync(src).isFile()) {
+    const ext = path.extname(src).toLowerCase()
+    if (ext !== '.html' && ext !== '.htm') throw new Error(`page must be an HTML file; got ${ref}`)
+    if (fs.statSync(src).size > MAX_ATTACHMENT) throw new Error(`page larger than ${MAX_ATTACHMENT / 1024 / 1024} MB: ${ref}`)
+    const stored = `${newId()}.html`
+    fs.copyFileSync(src, path.join(FILES, stored))
+    return { url: `/files/${stored}`, kind: 'file' }
+  }
+  // A path whose folder exists on this machine was meant as a file and is missing; any other /path is one on the board.
+  const lost = src && path.dirname(src) !== '/' && fs.existsSync(path.dirname(src))
+  if (link || (!lost && ref.startsWith('/') && !ref.startsWith('//'))) return { url: ref.slice(0, 2000), kind: 'link' }
+  throw new Error(`page not found: ${ref} is neither an existing HTML file, nor a path on the board (/…), nor a URL`)
+}
+
+// entry: a path, or { path, page?, title? }.
+function storeAttachment(entry) {
+  const given = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : { path: entry }
+  const file = given.path
+  if (typeof file !== 'string' || !file) throw new Error('an attachment must be the path of a file, or { path, page, title }')
   const src = path.resolve(file)
   const stat = fs.statSync(src)
   if (!stat.isFile()) throw new Error(`not a file: ${file}`)
@@ -438,7 +472,13 @@ function storeAttachment(file) {
   const stored = `${newId()}${ext}`
   fs.copyFileSync(src, path.join(FILES, stored))
   const kind = kindOf(ext)
-  return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size }
+  // A picture is almost always a rendering of a page; one that lies beside it under the same name is taken to be it.
+  const beside = src.slice(0, src.length - ext.length) + '.html'
+  const twin = given.page == null && kind === 'image' && fs.existsSync(beside) && fs.statSync(beside).isFile() ? beside : null
+  if (twin) paired.push(`${path.basename(src)} → ${path.basename(twin)}`)
+  const page = given.page != null && given.page !== '' ? pageOf(given.page) : twin ? pageOf(twin) : null
+  const title = String(given.title ?? '').trim().slice(0, 200)
+  return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size, ...(title ? { title } : {}), ...(page ? { page } : {}) }
 }
 
 // What the human attaches in the browser (a file, a pasted screenshot, a drawing): a list of
@@ -581,6 +621,7 @@ const mcp = new Server(
       'The human can write a note on any option, chosen or not ("not this, because ..."). Such notes come with the decision: its text lists them as lines "- Label [key], chosen or not chosen: note" after the general note, and option_notes names the keys that have one. Read them before acting.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
+      'A picture of something you built is almost always a rendering of a page: send the page with it, as an attachment { path, page }, so the human can open and try it right under the picture (a file foo.html beside foo.png is linked by itself). page is a self-contained HTML file, a path on the board or a link. A plain photo or diagram needs none.',
       'A question about how something looks or is laid out (UI, design, layout, wording or naming seen on screen) MUST carry a picture; words alone are not enough for it. Attach a screenshot, mockup or drawing per option where possible, each file named after its option key (<anything>-<key>.png), so the board shows each picture with its option; in sections, picture ties one to its block. For something that must be tried, link a clickable page: publish_asset, or a path on the board in backticks. When the human asks you to explain such a question, answer with a picture too.',
       'The human sees one card at a time, the top of the stack; urgency decides the order (most urgent first, then oldest first), so set it honestly on every card.',
       'critical: you are blocked and nothing else can proceed. high: it blocks your current task, but you have other work. normal (default): needed soon, nothing waits on it yet. low: nice to know, no work depends on it.',
@@ -652,8 +693,8 @@ const QUESTION_PROPS = {
   },
   attachments: {
     type: 'array',
-    description: 'Absolute paths of files to show on the card; images render inline',
-    items: { type: 'string' },
+    description: 'Files to show on the card, each an absolute path or { path, page, title }; images render inline. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
+    items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' } }, required: ['path'] }] },
   },
   urgency: {
     type: 'string',
@@ -680,8 +721,8 @@ const TOOLS = [
         details: { type: 'string', description: 'Optional longer material shown collapsed under the message: your reasoning, what you tried, command output, a diff. Markdown. The human opens it only if they want to.' },
         attachments: {
           type: 'array',
-          description: 'Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link',
-          items: { type: 'string' },
+          description: 'Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link. Each is an absolute path or { path, page, title }: a picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
+          items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' } }, required: ['path'] }] },
         },
         card_id: { type: 'string', description: 'When you answer a question the human asked back about a card (a chat message that carried card_id): that card. The board shows your answer with the card.' },
       },
@@ -873,7 +914,7 @@ const TOOL_EXAMPLES = {
     options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
   },
   create_info: {
-    title: 'How the nightly migration works', attachments: ['/home/me/project/out/migration.png'], urgency: 'low',
+    title: 'How the nightly migration works', attachments: [{ path: '/home/me/project/out/migration.png', page: '/home/me/project/out/migration.html', title: 'The three steps' }], urgency: 'low',
     sections: [
       { text: 'You asked why the deploy waits until 2. In short: the migration locks `orders`, and at 2 nobody is writing to it.' },
       { text: '**Order of events.** Backup at midnight, migration at 2, deploy right after. The picture shows the three steps.' },
@@ -973,7 +1014,10 @@ mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: toolsNow() }
 mcp.setRequestHandler(CallToolRequestSchema, async req => {
   const args = req.params.arguments ?? {}
   // The hub copies attachments; a relative path must mean this session's folder, not the hub's.
-  if (Array.isArray(args.attachments)) args.attachments = args.attachments.map(f => (typeof f === 'string' && f ? path.resolve(f) : f))
+  const here = f => (typeof f === 'string' && f ? path.resolve(f) : f)
+  // A page may also be a link or a path on the board; only what is a relative path of a file here is this folder's.
+  const pageHere = p => (typeof p === 'string' && p && !/^(https?:)?\//i.test(p) && fs.existsSync(path.resolve(p)) ? path.resolve(p) : p)
+  if (Array.isArray(args.attachments)) args.attachments = args.attachments.map(f => (f && typeof f === 'object' && !Array.isArray(f) ? { ...f, path: here(f.path), ...(f.page == null ? {} : { page: pageHere(f.page) }) } : here(f)))
   await whenUp()
   // The one tool that does its work here, beside the agent, before anything goes to the hub.
   if (req.params.name === 'publish_asset') return text(await publishAsset(args))
@@ -1107,7 +1151,7 @@ function infoFields(args, names = []) {
     title: String(args.title), body, ...(html ? { html } : {}), ...(sections ? { sections } : {}),
   }
 }
-const namesOf = args => listArg(args.attachments, 'attachments').map(f => path.basename(String(f)))
+const namesOf = args => listArg(args.attachments, 'attachments').map(f => path.basename(String(f?.path ?? f)))
 
 const openQuestions = agent => state.cards.filter(c => c.agent === agent && c.kind === 'decision' && c.status === 'open')
 const placeOf = card => `position ${state.queue.indexOf(card.id) + 1} of ${state.queue.length} in the stack`
@@ -1148,6 +1192,7 @@ const visualHint = card => (card.attachments.length || card.html || card.section
 function runTool(agent, name, args) {
   if (!args || typeof args !== 'object') args = {}
   strippedHint()   // what an earlier, refused call lost is not this call's news
+  paired = []
   switch (name) {
     case 'reply': {
       const about = args.card_id == null ? {} : { card_id: findCard(agent, args.card_id).id }
@@ -1156,7 +1201,7 @@ function runTool(agent, name, args) {
       const text = cleanFences(String(args.text ?? ''), 'text')
       const html = htmlBeside(args.html, text)
       addMessage(agent, 'agent', text, listArg(args.attachments, 'attachments').map(storeAttachment), { ...(html ? { html } : {}), ...(args.details ? { details: cleanFences(String(args.details), 'details') } : {}), ...about })
-      return `sent${strippedHint()}`
+      return `sent${strippedHint()}${pairedHint()}`
     }
     case 'create_decision': {
       const fields = questionFields(args, namesOf(args))
@@ -1164,14 +1209,14 @@ function runTool(agent, name, args) {
       const card = addCard(agent, 'decision', { ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment) })
       addEvent('asked', card, card.title)
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}${visualHint(card)}${strippedHint()}`
+      return `card ${card.id} created as Nr. ${card.number}, ${placeOf(card)}; the choice will arrive as a channel event${crowdHint(others, card)}${lengthHint(card)}${visualHint(card)}${strippedHint()}${pairedHint()}`
     }
     case 'create_info': {
       const fields = infoFields(args, namesOf(args))
       const card = addCard(agent, 'info', { ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment) })
       addEvent('info', card, card.title)
       commit()
-      return `info ${card.id} put on the board as Nr. ${card.number}, ${placeOf(card)}; when the human has read and closed it, info_read arrives, which needs no answer${strippedHint()}`
+      return `info ${card.id} put on the board as Nr. ${card.number}, ${placeOf(card)}; when the human has read and closed it, info_read arrives, which needs no answer${strippedHint()}${pairedHint()}`
     }
     case 'revise_card': {
       const card = findCard(agent, args.card_id)
@@ -1230,8 +1275,8 @@ function runTool(agent, name, args) {
         card.versions = [...(card.versions ?? []), was]
         // The oldest go first; a file only they showed goes with them.
         for (const gone of card.versions.splice(0, Math.max(0, card.versions.length - VERSIONS_MAX))) {
-          const kept = new Set([card, ...card.versions].flatMap(v => v.attachments).map(a => a.url))
-          for (const a of gone.attachments) if (!kept.has(a.url)) fs.rmSync(path.join(FILES, path.basename(a.url)), { force: true })
+          const kept = new Set([card, ...card.versions].flatMap(v => v.attachments).flatMap(filesOfAttachment))
+          for (const name of gone.attachments.flatMap(filesOfAttachment)) if (!kept.has(name)) fs.rmSync(path.join(FILES, name), { force: true })
         }
         // After a hand-back the rewording is what puts the card in front of the human again.
         addEvent('revised', card, `${again ? 'Presented again: ' : ''}${card.revision_note || card.title}`)
@@ -1239,7 +1284,7 @@ function runTool(agent, name, args) {
       }
       if (card.urgency !== level) addEvent('urgency', card, card.urgency_reason ? `${URGENCY_LABEL[card.urgency]}: ${card.urgency_reason}` : URGENCY_LABEL[card.urgency])
       commit()
-      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${info ? '' : lengthHint(card) + visualHint(card)}${strippedHint()}`
+      return `card ${card.id} ${reworded ? 'revised' : 'unchanged in wording'}, still Nr. ${card.number}, ${placeOf(card)}${unsectioned ? '; it is a plain card now: body and options replaced its sections, so its paragraphs are no longer tied to its options' : ''}${info ? '' : lengthHint(card) + visualHint(card)}${strippedHint()}${pairedHint()}`
     }
     case 'merge_cards': {
       // Checked below for each card: only questions merge.
@@ -1274,7 +1319,7 @@ function runTool(agent, name, args) {
       // A status line that waited on one of the old cards now waits on the new one.
       for (const t of state.tasks) if (t.agent === agent && ids.includes(t.card_id)) t.card_id = card.id
       commit()
-      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}${visualHint(card)}${strippedHint()}`
+      return `card ${card.id} created as Nr. ${card.number}, replacing Nr. ${old.map(c => c.number).join(', ')}, ${placeOf(card)}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${lengthHint(card)}${visualHint(card)}${strippedHint()}${pairedHint()}`
     }
     case 'set_urgency': {
       const card = findCard(agent, args.card_id)
@@ -2007,7 +2052,7 @@ function filesOf(items) {
   // A card's earlier versions keep their pictures for as long as the card lives.
   return items.flatMap(item => [item, ...(item.versions ?? [])]).flatMap(item => [...(item.attachments ?? []), ...(item.note_attachments ?? [])]).flatMap(a => {
     if (a?.kind === 'scribble' && a.id) return [[SCRIBBLES, `${a.id}.png`], [SCRIBBLES, `${a.id}.json`]]
-    return typeof a?.url === 'string' && a.url.startsWith('/files/') ? [[FILES, path.basename(a.url)]] : []
+    return filesOfAttachment(a).map(name => [FILES, name])
   })
 }
 const canvasFiles = agent => ['json', 'png'].map(ext => [SCRIBBLES, path.basename(canvasFile(agent, ext))])
@@ -2384,13 +2429,18 @@ const httpServer = http.createServer(async (req, res) => {
       const name = path.basename(url.pathname)
       const file = path.join(FILES, name)
       if (!fs.existsSync(file)) return send(res, 404, '{"error":"not found"}')
-      const type = MIME[path.extname(name).toLowerCase()] ?? 'application/octet-stream'
+      // The page a picture was rendered from is shown as a page, but as a stranger: the sandbox gives it an origin of its own,
+      // so it has neither the board's cookies nor its storage, and it may load nothing but what it carries inline.
+      const page = /\.html?$/i.test(name)
+      const type = page ? 'text/html; charset=utf-8' : MIME[path.extname(name).toLowerCase()] ?? 'application/octet-stream'
       const size = fs.statSync(file).size
       const headers = {
         'Content-Type': type,
         'Accept-Ranges': 'bytes',
-        // Attachments come from the agent's workspace; never let one run as a page.
-        'Content-Security-Policy': "default-src 'none'; style-src 'unsafe-inline'; sandbox",
+        // Attachments come from the agent's workspace; never let one run as a page of the board.
+        'Content-Security-Policy': page
+          ? "sandbox allow-scripts; default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'unsafe-inline'"
+          : "default-src 'none'; style-src 'unsafe-inline'; sandbox",
         'X-Content-Type-Options': 'nosniff',
       }
       // Browsers (Safari always) fetch video in ranges and need them to seek.
