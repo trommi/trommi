@@ -63,7 +63,7 @@ For the iPhone at the Mac mini: pair the device once in Xcode, enter the team in
 
 One-time setup, all in the browser:
 
-1. Join the Apple Developer Program. In App Store Connect create an app with the bundle id `de.trommi.app`, or change the id in `project.yml` first; it must be one your team owns.
+1. Join the Apple Developer Program. In App Store Connect create an app with the bundle id `com.trommi.app`, or change the id in `project.yml` first; it must be one your team owns.
 2. Users and Access → Integrations → App Store Connect API → Team Keys: create a key with the role **Admin**, download the `.p8` file (once only).
 3. TestFlight → Internal Testing: create a group and add yourself.
 4. Repository settings → Secrets and variables → Actions: `ASC_KEY_ID`, `ASC_ISSUER_ID`, `ASC_KEY_P8` (the content of the file), `APPLE_TEAM_ID`.

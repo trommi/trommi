@@ -4,7 +4,7 @@ import Foundation
 import Security
 
 enum Keychain {
-    private static let service = "de.trommi.app.login"
+    private static let service = "com.trommi.app.login"
     private static let account = "server"
 
     private static var query: [String: Any] {

@@ -10,7 +10,7 @@
 #       paths: ['client/ios/**']
 #
 # One-time setup, all in the browser:
-#   1. App Store Connect > Apps: create the app with bundle id de.trommi.app
+#   1. App Store Connect > Apps: create the app with bundle id com.trommi.app
 #      (or change the id in client/ios/project.yml first; it must be yours).
 #   2. Users and Access > Integrations > App Store Connect API > Team Keys:
 #      create a key with the role "Admin" and download the .p8 file. Signing
