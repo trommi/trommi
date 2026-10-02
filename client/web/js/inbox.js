@@ -859,7 +859,13 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
     else if (heading) title.append(heading)
-    else title.append(el('h2', null, `${INBOX_WORD} is clear.`), ...(off.length ? [el('p', null, 'What you snoozed is below.')] : []))
+    else {
+      // Only what is true: the desk is clear, and what still lies below it, by name.
+      const handed = new Set(state.handed ?? [])
+      const revising = off.filter(c => handed.has(c.id)).length, snoozed = off.length - revising
+      const below = [revising ? `${revising} in revision` : '', snoozed ? `${snoozed} snoozed` : ''].filter(Boolean).join(' · ')
+      title.append(el('h2', null, `${INBOX_WORD} is clear.`), ...(below ? [el('p', null, below)] : []))
+    }
     lastState = state
     head.replaceChildren(...(agent && !open.length ? [] : [title]), ...(walkTools ? [walkTools] : []))
     // (The sheet of keys opens from the "?" in the bar, index.html #keys-open, and by the key "?".)

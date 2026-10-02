@@ -1297,3 +1297,8 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus-done-work { margin-bottom: var(--s-5); }
 /* on a phone the walk's way back has a line of its own above the cards */
 @media (max-width: 700px) { .focus[data-list]:not([data-inline]) { padding-top: 56px; } }
+/* the walk's top line: the way back, and beside it the note of what happened; the cards start under it */
+.focus[data-list]:not([data-inline]) { padding-top: 60px; }
+.focus[data-list] .focus-says { inset: 8px auto auto 112px !important; }
+@container focus (max-width: 699.9px) { .focus[data-list] .focus-says { inset: 8px auto auto 100px !important; } }
+.focus-opts[data-count="stack"]:has(> .focus-opt:nth-of-type(5)) .focus-opt { height: auto; flex: none; }

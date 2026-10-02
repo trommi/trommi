@@ -263,7 +263,10 @@ export function mountAgents(root, { onSelect, onWalk }) {
     if (!n) return null
     const line = el('small', 'agent-working')
     line.title = n === 1 ? '1 session is working' : `${n} sessions are working`
-    line.append(ring(), el('span', null, `${n} working`))
+    line.dataset.n = n
+    line.setAttribute('role', 'img')
+    line.setAttribute('aria-label', line.title)
+    line.append(ring(), el('b', null, String(n)), el('span', null, `${n} working`))
     return line
   }
   function render(state) {

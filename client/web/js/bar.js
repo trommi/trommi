@@ -42,6 +42,12 @@ if (sound) {
   sound.addEventListener('click', e => { e.stopPropagation(); setKnockSound(!knockSound()); paint() })
   paint()
 }
+// The two switches say what they are, in words (their state stands at the right: CSS).
+const word = (button, text) => { if (button && !button.querySelector('.menu-word')) { const w = document.createElement('span'); w.className = 'menu-word'; w.textContent = text; button.append(w) } }
+word(sound, 'Knock sound')
+word($('theme-toggle'), 'Theme')
+// The jump field's key, as this machine writes it.
+if (/Mac|iPhone|iPad/.test(navigator.platform)) { const k = $('jump-key'); if (k) k.textContent = '⌘K' }
 // The sheet of keys (keys.js owns the sheet, app.js binds the click).
 lead($('keys-open'), 'keycap')
 if (opener) {
