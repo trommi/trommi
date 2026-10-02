@@ -443,7 +443,7 @@ async function main() {
   await key('i')
   await until('G then I opens the inbox', () => ev('return location.pathname === "/"'))
   await keys('g', '1')
-  await until('G then 1 opens the first session', () => ev('return location.pathname === "/s/alpha"'))
+  if (!(await until('G then 1 opens the first session', () => ev('return location.pathname === "/s/alpha"')))) console.log('     ', JSON.stringify(await ev('return { path: location.pathname, places: [...document.querySelectorAll("#agents .agent-entry")].map(n => n.innerText.replace(/\\s+/g, " ").slice(0, 20)), pending: document.body.dataset.keys ?? null, active: document.activeElement.tagName + "." + document.activeElement.className, dialogs: document.querySelectorAll("dialog[open]").length }')))
   await sleep(400)
   check((await ev('return __k.active()')).tag !== 'TEXTAREA', 'arriving by key leaves the keys in charge (the caret is not in the composer)')
   await key('.')
