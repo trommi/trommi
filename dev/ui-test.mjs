@@ -1291,7 +1291,7 @@ async function groupChoose() {
   const behind = await ev('__t.reachableBehind()')
   check(behind.length === 0, `the page behind the window is not inert: ${behind.join('; ')}`)
   await checkPictures('the window of the card', `${SEL.focusCard} img`, null, 1)
-  check((await place()).path === '/' && /[?&]q=/.test(await ev('location.search')), `the window has no address of its own: ${await ev('location.pathname + location.search')}`)
+  check(/^\/q\/\d+$/.test(await ev('location.pathname')), `the window has no address of its own: ${await ev('location.pathname + location.search')}`)   // a question is /q/<number>
   await checkEnglish('the window of a card')
   await shot('window')
   await press('the option "Tonight at 02:00"', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => __t.label(n).startsWith('Tonight'))`)
@@ -2046,7 +2046,7 @@ async function groupWalk() {
   await waitFor('the circled count opens the walk', '__t.focusOpen() && !!__t.focusState().id')
   await settle()
   check(!(await front()).single, 'the circled count opened the window of one card, not the walk')
-  check((await place()).path === '/' && /[?&]q=next\b/.test(await ev('location.search')), `the walk has no address of its own: ${await ev('location.pathname + location.search')}`)
+  check((await ev('location.pathname')) === '/walk', `the walk has no address of its own: ${await ev('location.pathname + location.search')}`)   // the walk is /walk
   check(await ev(js`!!__t.one(${SEL.focusRail})`), 'the walk does not say how far it is (no rail, no "… more" line)')
 
   // One composer, and beside it the ways to leave a card without answering.
