@@ -45,7 +45,7 @@ const received = []
 const heard = []
 // What the servers write to stderr, to check what they did and how often.
 const logs = []
-const serverEnv = (name, env) => ({ ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data, BOARD_TOKEN: 'secret', BOARD_AGENT: name, BOARD_ADMIN_TOKEN: 'adminkey', BOARD_PUBLIC_URL: '', TINFOIL_API_KEY: '', ...env })
+const serverEnv = (name, env) => ({ ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data, BOARD_TOKEN: 'secret', BOARD_AGENT: name, BOARD_ADMIN_TOKEN: 'adminkey', BOARD_PUBLIC_URL: '', TINFOIL_API_KEY: '', BOARD_DRAWINGS: path.join(data, 'drawings.json'), ...env })
 async function start(name = 'main', sink = received, env = {}) {
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { sink.push(n); heard.push(n) }
@@ -125,7 +125,7 @@ const agentPost = (route, body, token = 'secret') => fetch(`http://127.0.0.1:${P
 
 assert.deepEqual(
   (await client.listTools()).tools.map(t => t.name),
-  ['reply', 'create_decision', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'create_voiceover', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset'],
+  ['reply', 'create_decision', 'create_info', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'create_voiceover', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset'],
 )
 
 // migration: old cards get numbers in creation order, an urgency, and a queue
@@ -263,7 +263,7 @@ assert.equal((await fetch(`${base}/`, { headers: { Cookie: 'board=secret' } })).
 assert.equal(fs.readFileSync(path.join(data, 'url.txt'), 'utf8').split('\n')[0], `${base}/?t=secret`)
 // the page keeps its place in the address: those paths are the page, behind the login, and the login keeps path and query
 const home = await (await fetch(`${base}/`, { headers: { Cookie: cookie } })).text()
-for (const place of ['/s/api', '/s/api/fragen', '/agents', '/inbox', '/pad']) {
+for (const place of ['/s/api', '/s/api/fragen', '/agents', '/inbox', '/pad', '/walk', '/q/12', '/q/abc12345', '/s/api/q/12', '/s/api/q/abc12345']) {
   assert.equal((await fetch(base + place)).status, 401, place)
   const there = await fetch(base + place, { headers: { Cookie: cookie } })
   assert.deepEqual([there.status, there.headers.get('content-type'), await there.text()], [200, 'text/html; charset=utf-8', home], place)
@@ -387,6 +387,76 @@ assert.equal((await post('/reopen', { card_id: redo })).status, 200, 'done cards
 await call('withdraw_card', { card_id: redo })
 assert.equal((await post('/reopen', { card_id: redo })).status, 400, 'withdrawn cards stay closed')
 received.length = 0
+
+// an info: something to read that asks nothing; the human closes it, the agent hears it quietly, and it can be taken back
+{
+  const textOf = res => res.content[0].text
+  const onBoard = async id => (await state()).cards.find(c => c.id === id)
+  const question = await ask('gleich dringend, später gestellt', { urgency: 'low' })
+  let out = textOf(await call('create_info', { title: 'So läuft die Migration', urgency: 'low', attachments: [shot], sections: [{ text: 'Du wolltest wissen, warum.' }, 'Erst Backup, dann Migration.'] }))
+  const info = out.match(/^info (\w+) put on the board as Nr\. \d+, position \d+ of \d+ in the stack; when the human has read and closed it, info_read arrives/)[1]
+  s = await state()
+  let c = s.cards.find(k => k.id === info)
+  assert.deepEqual([c.kind, c.status, c.options, c.multiple, c.recommended, c.version, c.body, c.sections, c.attachments[0].name],
+    ['info', 'open', [], false, null, 1, 'Du wolltest wissen, warum.\n\nErst Backup, dann Migration.', [{ text: 'Du wolltest wissen, warum.' }, { text: 'Erst Backup, dann Migration.' }], 'mock.png'])
+  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).card_id], ['info', info])
+  const early = await call('create_info', { title: 'früher, aber nur zu lesen', body: 'x', urgency: 'low' }).then(r => textOf(r).match(/^info (\w+)/)[1])
+  const later = await ask('noch später gestellt', { urgency: 'low' })
+  s = await state()
+  assert.deepEqual(s.queue.filter(id => [question, info, early, later].includes(id)), [question, later, info, early], 'among equally urgent cards, questions come before what is only to be read')
+  await call('withdraw_card', { card_id: early })
+  await call('withdraw_card', { card_id: later })
+  await call('withdraw_card', { card_id: question })
+  // it has nothing to choose, and it is no question
+  await refused('create_info', { title: 'x', body: 'y', options: [option('a'), option('b')] }, /an info has no options/)
+  await refused('create_info', { title: 'x', text: 'Text.\n\n[a] A: x' }, /no block may have a key \(got "a"\)/)
+  await refused('create_info', { title: 'x', body: 'y', recommended: 'a' }, /an info has no recommended/)
+  await refused('create_info', { title: 'x' }, /needs something to read/)
+  await refused('create_info', { title: ' ', body: 'y' }, /needs a title/)
+  await refused('create_info', { title: 'x', body: 'y', sections: ['z'] }, /sections and body cannot be combined/)
+  await refused('merge_cards', { card_ids: [info, advised], title: 'x', options: [option('a'), option('b')] }, /is an info, not a question/)
+  await refused('revise_card', { card_id: info, options: [option('a'), option('b')] }, /an info has no options/)
+  for (const wrong of [{ key: 'a' }, { keys: ['a'] }, {}]) assert.equal((await post('/decide', { card_id: info, ...wrong })).status, 400, JSON.stringify(wrong))
+  assert.equal((await post('/draft', { card_id: info, keys: [] })).status, 400)
+  assert.equal((await post('/reopen', { card_id: info })).status, 400)
+  const listed = JSON.parse(textOf(await call('list_cards', {}))).find(k => k.id === info)
+  assert.deepEqual([listed.kind, listed.status, listed.options, listed.body.length > 0, listed.sections.length], ['info', 'open', [], true, 2])
+  // the human hands it back; the agent reworks it, and it is the same card in a new version
+  received.length = 0
+  assert.equal((await post('/message', { text: 'zu knapp', card_id: info, handback: true })).status, 200)
+  await until(() => received.length === 1)
+  assert.deepEqual([received[0].params.meta, (await onBoard(info)).with_agent > 0], [{ kind: 'chat', card_id: info, handback: '1' }, true])
+  out = textOf(await call('revise_card', { card_id: info, body: 'Ausführlicher: erst Backup, dann Migration, dann Deploy.', note: 'ausführlicher' }))
+  assert.match(out, new RegExp(`^card ${info} revised`))
+  assert.doesNotMatch(out, /a lot to read|how something looks/)
+  s = await state()
+  c = s.cards.find(k => k.id === info)
+  assert.deepEqual([c.kind, c.version, c.versions.length, 'sections' in c, c.options, 'with_agent' in c, c.attachments.length], ['info', 2, 1, false, [], false, 1])
+  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).text, s.messages.at(-1).again], ['revised', 'Presented again: ausführlicher', true])
+  // closing it is all there is to do
+  assert.equal((await post('/close', { card_id: advised })).status, 400, 'a question is not closed by reading it')
+  assert.equal((await post('/close', { card_id: 'gibtsnicht' })).status, 400)
+  assert.equal((await post('/close', { card_id: info }, 'https://evil.example')).status, 403)
+  assert.equal((await post('/close', { card_id: info })).status, 200)
+  await until(() => received.length === 2)
+  assert.deepEqual(received[1].params, { content: 'The human read "So läuft die Migration" and closed it. Nothing is expected of you.', meta: { kind: 'info_read', card_id: info } })
+  s = await state()
+  c = s.cards.find(k => k.id === info)
+  assert.deepEqual([c.status, c.read > 0, c.decided === c.read, c.choice, s.queue.includes(info)], ['done', true, true, null, false])
+  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).card_id], ['read', info])
+  assert.equal((await post('/close', { card_id: info })).status, 409)
+  // taken back it is unread again, and the agent is not bothered
+  assert.equal((await post('/reopen', { card_id: info })).status, 200)
+  s = await state()
+  c = s.cards.find(k => k.id === info)
+  assert.deepEqual([c.status, c.read, c.decided, s.queue.includes(info), s.messages.at(-1).kind], ['open', null, null, true, 'reopened'])
+  await sleep(100)
+  assert.equal(received.length, 2)
+  // the agent may take it away itself; then there is nothing to take back
+  await call('withdraw_card', { card_id: info, reason: 'überholt' })
+  assert.equal((await post('/reopen', { card_id: info })).status, 400)
+  received.length = 0
+}
 
 // scribble: doc and picture are stored, the chat gets an attachment, the agent gets the picture's path
 const dot = 'data:image/png;base64,' + fs.readFileSync(shot).toString('base64')
@@ -708,7 +778,7 @@ for (const tool of reference.tools) {
 }
 // and the events as they really arrive: every kind this test has received so far, with exactly those meta fields
 const kinds = reference.events.filter(e => e.kind)
-assert.deepEqual(kinds.map(e => e.kind), ['chat', 'decision', 'decision_reopened', 'scribble', 'pad'])
+assert.deepEqual(kinds.map(e => e.kind), ['chat', 'decision', 'decision_reopened', 'info_read', 'scribble', 'pad'])
 for (const event of kinds) {
   const real = heard.find(n => n.method === event.method && n.params.meta.kind === event.kind)
   assert.deepEqual(Object.keys(real.params.meta).sort(), Object.keys(event.meta).sort(), event.kind)
@@ -717,9 +787,9 @@ for (const event of kinds) {
 const verdict = reference.events.find(e => e.method === 'notifications/claude/channel/permission')
 assert.deepEqual(Object.keys(heard.find(n => n.method === verdict.method).params).sort(), Object.keys(verdict.params).sort())
 assert.deepEqual(Object.keys(reference.events.find(e => e.method.endsWith('/permission_request')).params), ['request_id', 'tool_name', 'description', 'input_preview'])
-assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'files', 'image_path'], ['choices', 'option_notes', 'files', 'image_path'], ['previous_choices'], [], []])
+assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'files', 'image_path'], ['choices', 'option_notes', 'files', 'image_path'], ['previous_choices'], [], [], []])
 assert.ok(reference.tools[0].inputSchema.properties.card_id)
-assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
+assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
 
 // status strip: upsert, link to a card, and turn yellow when that card is answered
 await call('set_status', { id: 'srv', label: 'Server', state: 'working', detail: 'läuft' })
@@ -741,13 +811,13 @@ received.length = 0
 // the stack and the numbering survive a restart
 const saved = JSON.parse(fs.readFileSync(path.join(data, 'state.json'), 'utf8'))
 assert.deepEqual(saved.queue, [low, high, normal2])
-assert.equal(saved.next_number, 14)
+assert.equal(saved.next_number, 18)
 await client.close()
 client = await start()
 assert.deepEqual((await state()).queue, [low, high, normal2])
 const late = await ask('nach dem Neustart', { urgency: 'high' })
 s = await state()
-assert.equal(s.cards.at(-1).number, 14)
+assert.equal(s.cards.at(-1).number, 18)
 assert.deepEqual(s.queue, [low, high, late, normal2])
 
 // asking back about a card instead of answering it: the message names the card, the agent hears which, and the card stays open
@@ -1126,6 +1196,37 @@ await call('withdraw_card', { card_id: looks })
   assert.equal((await fetch(base + pictured, { headers: { Cookie: cookie } })).status, 404)
   await call('withdraw_card', { card_id: life })
   received.length = 0
+}
+
+// the agent picks the drawing that fits its task; the list comes from a file, and what the human picked by hand stays
+{
+  const iconOf = async () => (({ icon, icon_by }) => [icon, icon_by])((await state()).agents.find(a => a.id === 'main'))
+  const iconProp = async () => (await client.listTools()).tools.find(t => t.name === 'introduce').inputSchema.properties.icon.description
+  // without the file any plain name is taken, and no list is offered
+  assert.doesNotMatch(await iconProp(), /One of:/)
+  assert.equal(textOf(await call('introduce', { model: 'm', task: 'bauen', icon: 'rocket' })), 'noted; symbol "rocket"')
+  assert.deepEqual(await iconOf(), ['draw:rocket', 'agent'])
+  await refused('introduce', { model: 'anders', icon: 'Kein Name' }, /lower-case letters only; got "Kein Name"/)
+  assert.equal((await state()).agents.find(a => a.id === 'main').model, 'm', 'a refused symbol changes nothing')
+  // with the file the name must be one of the drawings, and the agent is shown them
+  fs.writeFileSync(path.join(data, 'drawings.json'), JSON.stringify([{ name: 'server', meaning: 'backend work', hue: 200 }, { name: 'brush', meaning: 'design', hue: 20 }, { nichts: 1 }]))
+  assert.match(await iconProp(), /One of: server \(backend work\), brush \(design\)$/)
+  assert.deepEqual((await (await fetch(`${base}/api/tools`, { headers: { Cookie: cookie } })).json()).drawings, [{ name: 'server', meaning: 'backend work', hue: 200 }, { name: 'brush', meaning: 'design', hue: 20 }])
+  await refused('introduce', { model: 'm', icon: 'rocket' }, /no drawing "rocket"; choose one of: server \(backend work\), brush \(design\)/)
+  assert.equal(textOf(await call('introduce', { model: 'm', icon: 'draw:brush' })), 'noted; symbol "brush"')
+  assert.deepEqual(await iconOf(), ['draw:brush', 'agent'])
+  assert.equal(textOf(await call('introduce', { model: 'm' })), 'noted')
+  // the human's own choice wins, until they clear it
+  assert.equal((await post('/session', { agent: 'main', icon: 'draw:server' })).status, 200)
+  assert.deepEqual(await iconOf(), ['draw:server', 'human'])
+  assert.match(textOf(await call('introduce', { model: 'm', icon: 'brush' })), /^noted; the human chose this session's symbol by hand, so it stays$/)
+  assert.deepEqual(await iconOf(), ['draw:server', 'human'])
+  assert.equal((await post('/session', { agent: 'main', icon: '' })).status, 200)
+  assert.deepEqual(await iconOf(), ['', undefined])
+  await call('introduce', { model: 'm', icon: 'brush' })
+  assert.deepEqual(await iconOf(), ['draw:brush', 'agent'])
+  fs.rmSync(path.join(data, 'drawings.json'))
+  assert.doesNotMatch(await iconProp(), /One of:/)
 }
 
 // a card filed the old way is what it always was: no sections anywhere
@@ -2163,5 +2264,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)
