@@ -180,6 +180,8 @@ export function say(host, { head, title = '', back = null, onFail, ms = BACK_MS 
   host.style.removeProperty('top')
   if (host === pageNode) pageHost()
   if (!phone.matches) anchor(host, node)
+  // On a phone the strip may be lower than the note is tall: the note stays wholly on the screen.
+  else if (host === pageNode) host.style.top = `${Math.round(Math.min(parseFloat(host.style.top) || 0, window.innerHeight - node.getBoundingClientRect().height - 6))}px`
   if (host === pageNode) document.body.dataset.says = ''
   // A second tap meant for the next answer must not land on "Back": for a moment the note lets taps through.
   node.dataset.fresh = ''

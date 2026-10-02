@@ -93,7 +93,7 @@
 /* A phone has no free corner: while a note is up, the view gives it a strip at its lower edge
    (above the tab bar; the composer moves up with the view), so the note lies over nothing. */
 @media (max-width: 860px) {
-  body[data-says] main { margin-bottom: 62px; }
+  body[data-says] main { margin-bottom: 72px; }
   .says-page .says { rotate: 0deg; max-width: calc(100vw - 16px); padding-block: 7px 11px; }
   .focus-says .says { max-width: calc(100cqi - 120px); }
 }
