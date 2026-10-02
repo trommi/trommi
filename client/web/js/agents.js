@@ -213,14 +213,13 @@ export function mountAgents(root, { onSelect, onWalk }) {
         id: u.id,
         label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
-        lead: single ? avatar(single, { vip: false }) : pairAvatar(u.members),
+        lead: single ? avatar(single) : pairAvatar(u.members),
         active: scope === u.id,
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
       })
       row.dataset.unit = u.id
       row.dataset.members = u.members.map(a => a.id).join(' ')
-      // The crown on the mark's corner is its own switch. (In a group the crowns are part of the joint drawing.)
-      if (single) row.append(crownToggle(single))
+      // (A VIP session shows its crown here; the switch for it is in the session's title and on the Agents page.)
       if (!single) {
         // Without dragging: scissors cut the group apart, every session stands alone again.
         // (One session alone is taken out on the Agents page, with "Split".)

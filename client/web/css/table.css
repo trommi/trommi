@@ -1,14 +1,22 @@
-/* The Table (js/table.js): the overview of the sessions in the Stack layout, at /agents.
-   Shown only under <html data-layout="stack">; with the switch off #table does not exist.
+/* The Table (js/table.js): a second form of the overview of the sessions at /agents, beside the list.
+   Shown under <html data-agents="table"> (the switch at the top right of the page, remembered in this
+   browser); the list of cards is the default.
    Controls and surfaces are plain; by hand are only the marks themselves, the loop round a group,
    and the slight tilt a mark lies at. */
 
 #table { display: none; }
-:root[data-layout="stack"] body[data-page="roster"] #table {
-  display: block; grid-column: 1; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
+:root[data-agents="table"] body[data-page="roster"] #roster { display: none; }
+:root[data-agents="table"] body[data-page="roster"] #table {
+  display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface);
   padding: var(--s-8) var(--gutter) var(--s-10); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent;
 }
-.table-page { max-width: 1180px; margin-inline: auto; display: grid; gap: var(--s-5); }
+/* The switch between the two forms: two plain words at the top right of the page. */
+.roster-head, .table-head { position: relative; }
+.agents-view { position: absolute; right: 0; top: 6px; display: flex; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: var(--sunken); }
+.agents-view button { min-height: 30px; padding: 0 14px; border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); }
+.agents-view button:hover { color: var(--fg); }
+.agents-view button[aria-pressed="true"] { background: var(--surface); color: var(--fg); box-shadow: var(--shadow-sm); }
+.table-page { max-width: 1120px; margin-inline: auto; display: grid; gap: var(--s-5); }
 .table-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
 .table-head h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
 .table-head p { font-size: var(--t-lg); color: var(--muted); }
@@ -34,7 +42,7 @@
 .t-tidy button[aria-pressed="true"] { color: var(--fg); text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
 
 /* ---- the table top and the slip beside it ---- */
-.table-body { display: grid; grid-template-columns: minmax(0, 1fr) 388px; gap: var(--s-5); align-items: start; }
+.table-body { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--s-5); align-items: start; }
 .table-main { display: grid; gap: var(--s-3); min-width: 0; }
 .table-top {
   position: relative; min-height: 420px; display: grid; align-content: start; gap: var(--s-6); padding: var(--s-5) var(--s-5) var(--s-8);
@@ -146,7 +154,7 @@
 .t-archived-text span { color: var(--muted); font-size: var(--t-sm); }
 
 /* ---- narrower: the slip goes under the table ---- */
-@media (max-width: 1100px) {
+@media (max-width: 1380px) {
   .table-body { grid-template-columns: minmax(0, 1fr); }
   .table-slip { position: static; max-height: none; }
   .table-slip.is-empty { display: none; }
@@ -154,7 +162,8 @@
 
 /* ---- phone: a plain list of marks with their counts ---- */
 @media (max-width: 860px) {
-  :root[data-layout="stack"] body[data-page="roster"] #table { grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
+  :root[data-agents="table"] body[data-page="roster"] #table { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) var(--s-8); }
+  .agents-view { position: static; flex: none; margin-top: var(--s-2); }
   .table-page { gap: var(--s-4); }
   .t-find { flex-basis: 100%; max-width: none; }
   .t-tidy { margin-left: 0; }

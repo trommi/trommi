@@ -1,8 +1,8 @@
 // The bar: the menu that opens from the logo, and the small drawings on the bar's controls.
 //
-// The bar itself is calm: the logo, where to go (Inbox, Agents), the two tools (Pad, Focus), then the
-// quiet end (the connection, the keys' "?", the theme). Help and Admin are behind the logo: a click on
-// it (or Enter) opens a small menu; the arrows walk it, Escape or a click beside it closes it.
+// The bar itself is calm: the logo, where to go (Inbox, Agents), and at its right end the pad's control
+// alone. Everything else is behind the logo: Help, Admin, Keys, the knock sound, the theme, and the
+// state of the connection. A click on the logo (or Enter) opens that small menu; the arrows walk it, Escape or a click beside it closes it.
 // House rule: the controls are plain and quiet, the drawing inside each is what is done by hand.
 
 import { sketch, KNOCK_SKETCH } from './ui.js'
@@ -26,7 +26,6 @@ const redraw = (button, ...names) => {
 }
 lead($('nav-inbox'), 'tray')
 lead($('nav-roster'), 'heads')
-redraw($('focus-open'), 'frame')
 redraw($('theme-toggle'), 'sun', 'moon')
 redraw($('roster-open'), 'heads')
 // (The key before "Admin" is put there by app.js.)
@@ -41,8 +40,8 @@ if (sound) {
   sound.addEventListener('click', e => { e.stopPropagation(); setKnockSound(!knockSound()); paint() })
   paint()
 }
-// The sheet of keys: a question mark in the bar (keys.js owns the sheet, app.js binds the click).
-lead($('keys-open'), 'question')
+// The sheet of keys (keys.js owns the sheet, app.js binds the click).
+lead($('keys-open'), 'keycap')
 if (opener) {
   const fold = document.createElement('span')
   fold.className = 'brand-fold'

@@ -6,10 +6,10 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
 import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
-import { decide, putOff, sendMessage, reopen } from './store.js'
+import { decide, putOff, sendMessage, reopen, closeInfo } from './store.js'
 import { openLightbox } from './chat.js'
 import { provide, hint } from './keys.js'
 import { say, pageHost, backUsedAt } from './back.js'
@@ -36,9 +36,19 @@ export function fitsTile(label) {
 
 // Answerable by thumb: a two-way question. Two options whose labels fit a tile, at most about
 // three lines of text, and nothing attached beyond pictures, which the row shows.
-const quick = card =>
-  !card.multiple && (card.kind === 'permission' ||
-  (card.options.length === 2 && card.options.every(o => fitsTile(o.label)) && (card.attachments ?? []).every(a => kindOf(a) === 'image') && (card.body ?? '').length <= 240))
+const quick = card => !card.multiple && (card.kind === 'permission' || card.options.length === 2)
+// How a pair of labels stands under its thumbs: at the usual size if both fit a tile whole, smaller if
+// both fit then (three shorter lines), and not at all otherwise: then the thumbs stand alone and each
+// label is its tile's tooltip. A word is never broken inside.
+const fitsSmall = label => {
+  let lines = 1, used = 0
+  for (const word of String(label).trim().replace(/-(?=\S)/g, '- ').split(/\s+/)) {
+    if (word.length > 17) return false
+    if (used && used + 1 + word.length > 17) { lines++; used = word.length } else used += (used ? 1 : 0) + word.length
+  }
+  return lines <= 3
+}
+const labelSize = options => (options.every(o => fitsTile(o.label)) ? 'usual' : options.every(o => fitsSmall(o.label)) ? 'small' : 'none')
 
 // A plain yes or no needs no word under its thumb.
 const BARE = /^(yes|no|ok|okay|allow|deny|ja|nein)$/i
@@ -298,19 +308,27 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   // Head: only what stands out gets a tab flush with the corner. A blocking question a red one,
   // an urgent one its own; a normal question none; one that can wait a small scribbled hourglass.
   const head = el('header', 'inbox-row-head')
+  let quiet = null   // a small mark that is no tab (can wait, to read): it stands in the byline, so the title is the first thing in the row
   const blocking = card.kind === 'permission' || card.urgency === 'critical'
   if (blocking || card.urgency === 'high') {
     // A knock: the small drawing of knuckles on a door, and the word.
     const tab = el('span', 'inbox-tab')
     tab.append(sketch(KNOCK_SKETCH), knockWord(card))
     head.append(tab)
+  } else if (card.kind === 'info') {
+    const mark = el('span', 'inbox-whenever inbox-toread')
+    mark.title = 'To read: nothing to decide'
+    mark.setAttribute('role', 'img')
+    mark.setAttribute('aria-label', 'To read')
+    mark.append(sketch('page'))
+    quiet = mark
   } else if (card.urgency === 'low') {
     const mark = el('span', 'inbox-whenever')
     mark.title = 'Whenever: nothing waits on this'
     mark.setAttribute('role', 'img')
     mark.setAttribute('aria-label', 'Whenever')
     mark.append(sketch('whenever'))
-    head.append(mark)
+    quiet = mark
   }
 
   const text = el('button', 'inbox-text')
@@ -329,6 +347,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   // The byline under the text: the card's number (for looking it up) and its age. One quiet line that
   // always stands; under a title of two lines it is the text above it that gives way.
   const byline = el('p', 'inbox-byline')
+  if (quiet) byline.append(quiet)
   if (from) {
     // Who asks, where the list holds more than one session: its mark (with the crown, if it wears one) and name.
     const who = el('span', 'inbox-from')
@@ -366,21 +385,22 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     node.append(thumb)
   }
 
-  // Snooze is always possible: the row's top right corner is a dog-ear, folded down, with the small
-  // drawing (z z z) on it. Under the pointer or the keyboard it unfolds like paper: the flap turns back
-  // to where it came from, and a small tab with the word turns up from behind the row's top edge
-  // beside it. A click then puts the question off, down to the pile at the foot of the list. A finger
-  // has no hover: the first tap unfolds it, the second one snoozes. On a row in that pile the same ear
-  // wakes the question up (a sun coming up). The ear stands in a strip of its own to the right of the
-  // answer tiles, so no click meant for a tile can land on it.
+  // Snooze is always possible, at the row's top right corner. At rest the corner is only slightly bent:
+  // a hint. Under the pointer or the keyboard it folds down properly, a real flap, and on the flap (the
+  // paper's underside) stand the small drawing (z z z) and the word. A click then puts the question
+  // off, down to the pile at the foot of the list. A finger has no hover: the first tap folds the corner
+  // down, the second one snoozes. On a row in that pile the same corner wakes the question up (a sun
+  // coming up). The button is a strip of its own to the right of the answer tiles, so no click meant
+  // for a tile can land on it; the flap is only drawn (it takes no click). Everything about its look
+  // and its motion is in app.css under ".inbox-later": one place, so another unfolding can replace it.
   const later = el('button', 'inbox-later')
   later.type = 'button'
   later.setAttribute('aria-label', off ? `${WAKE_WORD}: fetch this question back` : `${LATER_WORD}: put this question off; it waits for you below`)
   const ear = el('i', 'inbox-later-ear')
-  ear.append(el('i', 'inbox-later-flap'))
-  later.append(ear, sketch(off ? WAKE_SKETCH : LATER_SKETCH))
-  const laterWord = el('span', 'inbox-later-word', off ? WAKE_WORD : LATER_WORD)
-  laterWord.setAttribute('aria-hidden', 'true')
+  const flap = el('i', 'inbox-later-flap')
+  flap.append(sketch(off ? WAKE_SKETCH : LATER_SKETCH), el('b', null, off ? WAKE_WORD : LATER_WORD))
+  ear.append(flap)
+  later.append(ear)
   let byTouch = false, folding = 0
   later.addEventListener('pointerdown', e => { byTouch = e.pointerType === 'touch' })
   later.addEventListener('click', e => {
@@ -397,7 +417,6 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     if (!off) say(pageHost(), { head: 'Snoozed', title: card.title, back: async () => putOff(card.id, false) })
   })
   hint(later, 'list.later')
-  laterWord.dataset.cap = later.dataset.cap
 
   const actions = el('div', 'inbox-actions')
   const tile = (cls, kind, label, act) => {
@@ -410,17 +429,45 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     b.addEventListener('click', act)
     return b
   }
-  node.append(later, laterWord, actions, error)
-  if (quick(card)) {
+  node.append(later, actions, error)
+  if (card.kind === 'info') {
+    // Something to read, nothing to decide: two tiles of the board's own where the answers stand. Left
+    // "What??": the session is asked to explain it, and the card comes back explained. Right
+    // "Acknowledge": read, closed. (The text opens it as a card, as on a question.)
+    node.dataset.kind = 'info'
+    const fail = (what, err) => { for (const b of actions.children) b.disabled = false; error.textContent = `${what}: ${err.message}`; error.hidden = false }
+    const busy = () => { for (const b of actions.children) b.disabled = true }
+    const what = tile('is-thumb is-what', WHAT_SKETCH, WHAT_WORD, async () => {
+      busy()
+      try {
+        await sendMessage(EXPLAIN_TEXT, card.agent, card.id, undefined, { explain: true })
+        putOff(card.id, true, true)
+        say(pageHost(), { head: `Asked: ${WHAT_WORD}`, title: 'It comes back with the answer.', back: async () => putOff(card.id, false) })
+      } catch (err) { fail('Not asked', err) }
+    })
+    what.title = `${WHAT_WORD}: ask the session to explain this; it comes back explained`
+    hint(what, 'list.no')
+    const ack = tile('is-thumb is-lead is-ack', ACK_SKETCH, ACK_WORD, async () => {
+      busy()
+      try {
+        await closeInfo(card.id)
+        say(pageHost(), { head: 'Read', title: card.title, back: () => reopen(card.id) })
+      } catch (err) { fail('Not closed', err) }
+    })
+    ack.title = `${ACK_WORD}: read, close it`
+    hint(ack, 'list.yes')
+    actions.append(what, ack)
+  } else if (quick(card)) {
     // Thumbs are the rule: down on the left, up on the right, on every card. The option the agent
     // leads with (its first, or "allow") is the up. The option's own word stands under its thumb
     // only when the pair says more than yes and no.
     const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : o === card.options[0])
     const options = [...card.options].sort((a, b) => isYes(a) - isYes(b))
     const bare = card.options.every(o => BARE.test(o.label.trim()))
+    const size = bare ? 'none' : labelSize(card.options)
     for (const o of options) {
       const lead = isYes(o)
-      const b = tile(lead ? 'is-thumb is-lead' : 'is-thumb', lead ? 'yes' : 'no', bare ? '' : o.label, async () => {
+      const b = tile(`is-thumb${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}`, lead ? 'yes' : 'no', size === 'none' ? '' : o.label, async () => {
         for (const other of actions.children) other.disabled = true
         b.classList.add('is-picked')
         try {
@@ -435,18 +482,19 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
       })
       b.setAttribute('aria-label', o.label)
       hint(b, lead ? 'list.yes' : 'list.no')
-      if (o.detail) b.title = o.detail
+      if (o.detail || (size === 'none' && !bare)) b.title = [size === 'none' && !bare ? o.label : '', o.detail].filter(Boolean).join(': ')
       if (advised(card, o.key)) { b.classList.add('is-advised'); b.title = 'The agent recommends this'; b.append(adviceLoop()) }
       actions.append(b)
     }
   } else {
-    // More than two ways: one wide tile. The row unfolds downward with its options, and folds
-    // again on a second tap or Escape. Only a card with too much for that opens as a window.
+    // More than two ways: one tile, "Choose", in the place of the right-hand thumb (its class is still
+    // called is-wide). The row unfolds downward with its options, and folds again on a second tap or
+    // Escape. Only a card with too much for that opens as a window.
     const inline = !needsWindow(card)
     const more = el('div', 'inbox-more')
     const clip = el('div', 'inbox-more-clip')
     more.append(clip)
-    const count = card.multiple ? `${card.options.length} options, several allowed` : `${card.options.length} options`
+    const count = card.multiple ? `${card.options.length} options, several` : `${card.options.length} options`
     const choose = tile('is-wide is-lead', 'choose', 'Choose', () => (inline ? unfold(!node.classList.contains('is-open')) : onOpen?.(card.id)))
     choose.append(el('small', null, count))
     hint(choose, 'list.open')
@@ -513,11 +561,11 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     node.tabIndex = -1
     node.dataset.id = card.id
     const picked = card.choices?.length ? card.choices : [card.choice]
-    const labels = card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
+    const labels = card.kind === 'info' ? 'Read' : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(card.choice)
     // A yes or no shows its thumb; anything else the drawing of a choice.
     const duo = card.options.length === 2 && !card.multiple
     const mark = el('span', 'inbox-done-mark')
-    mark.append(sketch(!duo ? 'choose' : card.choice === card.options[0].key ? 'yes' : 'no'))
+    mark.append(sketch(card.kind === 'info' ? 'page' : !duo ? 'choose' : card.choice === card.options[0].key ? 'yes' : 'no'))
     const text = el('div', 'inbox-done-text')
     const sub = el('p', 'inbox-done-sub')
     sub.append(el('b', null, labels))
@@ -621,7 +669,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const off = state.later.map(id => open.find(c => c.id === id)).filter(Boolean)
     const fresh = open.filter(c => !off.includes(c))
     // What was answered: the latest first. A card the agent has closed since is still listed; the server lets it be reopened.
-    const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && c.kind === 'decision' && c.choice != null)
+    const answered = agent ? [] : all.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && c.choice != null) || (c.kind === 'info' && c.read)))
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0)).slice(0, ANSWERED_MAX)
     const next = JSON.stringify([answeredOpen, answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), off.map(c => c.id), state.handed, open.map(c => [c.id, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
@@ -630,8 +678,13 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     // The number counts what is still to be worked down; what was put off is counted at its own group.
     const title = el('div', 'inbox-title')
     const line = el('p')
-    const circled = el('span', 'inbox-circled', String(fresh.length))
-    const needs = fresh.length === 1 ? ' question needs you.' : ' questions need you.'
+    // Questions need an answer; info cards are only to be read. The line tells them apart:
+    // "4 questions need you · 2 to read".
+    const toRead = fresh.filter(c => c.kind === 'info').length, asking = fresh.length - toRead
+    const circled = el('span', 'inbox-circled', String(asking))
+    const needs = asking === 1 ? ' question needs you.' : ' questions need you.'
+    const reading = el('span', 'inbox-toread-count')
+    if (toRead) reading.append(sketch('page'), `${toRead} to read`)
     // The knocks among them (urgent and blocking) are counted first: "3 knocks · 9 questions need you."
     const knocking = fresh.filter(isKnock).length
     const knocks = el('span', 'inbox-knocks')
@@ -642,14 +695,16 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       const walk = el('button', 'inbox-walk')
       walk.type = 'button'
       walk.title = 'Go through them, one after the other'
-      walk.setAttribute('aria-label', `${fresh.length}${needs} Go through them, one after the other.`)
+      walk.setAttribute('aria-label', `${asking}${needs}${toRead ? ` ${toRead} to read.` : ''} Go through them, one after the other.`)
       const arrow = el('span', 'inbox-walk-go')
       arrow.append(sketch('go'))
       if (knocking) walk.append(knocks, el('span', 'inbox-dot', '·'))
-      walk.append(circled, el('span', null, needs.trim()), arrow)
+      if (asking || !toRead) walk.append(circled, el('span', null, needs.trim()))
+      if (toRead) walk.append(...(asking ? [el('span', 'inbox-dot', '·')] : []), reading)
+      walk.append(arrow)
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
       line.append(walk)
-    } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), circled, needs)
+    } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append(off.length ? 'Nothing new. What you snoozed is below.' : 'Nothing needs you.')
     // A session's pane already carries its name as the title; the inbox has its own.
     if (agent) title.append(line)
@@ -715,7 +770,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       // The same pile as "Later" (pile(), above): a line with the count, the answers pushed together
       // below it, each sheet naming the question and what was said; the rows are built when it unfolds.
       const today = answered.filter(c => sameDay(c.decided ?? 0, Date.now())).length
-      const answerOf = c => { const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
+      const answerOf = c => { if (c.kind === 'info') return 'Read'; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
       parts.push(pile({
         kind: 'answered', label: 'Answered', icon: 'yes', headClass: 'inbox-answered-toggle', open: answeredOpen && !parts.some(p => p.matches?.('.inbox-pile.is-open')),
         count: today === answered.length ? `${today} today` : today ? `${today} today · ${answered.length} in all` : `${answered.length}`,
@@ -862,6 +917,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       // The choices in the row, or the whole question as a window where there is too much for a row.
       'list.open': onRow(node => {
         if (kindOfRow(node) === 'done') return true   // nothing to open; its key is "take back"
+        if (node.dataset.kind === 'info') return press(node.querySelector('.inbox-answer.is-ack'))   // on an info: Acknowledge
         const choose = node.querySelector('.inbox-answer.is-wide')
         if (!choose) { onOpen?.(node.dataset.id); return true }
         if (!press(choose)) return false
@@ -883,6 +939,7 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
       'list.explain': onRow(node => {
         const card = cards.get(node.dataset.id)
         if (!card || card.kind === 'permission') return false
+        if (card.kind === 'info') return press(node.querySelector('.inbox-answer.is-what'))   // on an info: What??
         if (!node.querySelector('.inbox-more')) { onOpen?.(card.id); return true }
         if (!isOpen(node)) { node.querySelector('.inbox-answer.is-wide').click(); toOption(node); return true }
         sendMessage(EXPLAIN_TEXT, card.agent, card.id).then(() => {

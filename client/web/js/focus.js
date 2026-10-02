@@ -26,14 +26,14 @@
 // push that does not change a card never touches its node: a typed note, the
 // scroll position, and a running video survive both pushes and navigation.
 
-import { subscribe, decide, reopen, putOff, sendMessage, isLoaded, getState } from './store.js'
+import { subscribe, decide, reopen, putOff, sendMessage, isLoaded, getState, closeInfo } from './store.js'
 import { readCard, stopReading, dictationMic, startDictation, stopDictation, isDictating } from './speech.js'
 import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { loopPath, penSeed, LATER_WORD, LATER_SKETCH, arrowStrokes } from './ui.js'
-import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote } from './ui.js'
+import { LATER_WORD, LATER_SKETCH, arrowStrokes } from './ui.js'
+import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
 const LOCAL_DECIDED_TTL = 20000  // hide a card answered here until the server confirms, at most this long
@@ -49,6 +49,7 @@ const ICON = {
   right: 'M5 12h14M13 6l6 6-6 6',
   chevLeft: 'M15 5l-7 7 7 7',
   chevRight: 'M9 5l7 7-7 7',
+  chevDown: 'M5 9l7 7 7-7',
   check: 'M5 12.5l4.5 4.5L19 7.5',
   up: 'M12 19V5M5.5 11.5L12 5l6.5 6.5',
   close: 'M6 6l12 12M18 6L6 18',
@@ -100,28 +101,19 @@ const TAGS_FROM = 7
 const TAG_CHARS = 18
 const TAGS_WIDE_FROM = 16
 const touchOnly = matchMedia('(pointer: coarse)')
-// How the walk shows what lies ahead (the one setting for it; "?rail=<key>" in the address tries another).
-// All of them show the count and the marks of the sessions whose questions come next:
-//   'pill'     a pill under the window: the count, then one session mark per question
-//   'senders'  a pill under the window: one chip per session with how many it asks
-//   'next3'    a pill under the window: "4 of 11" and the marks of the next three
-//   'unroll'   a small pill under the window that unrolls into the list of questions
-//   'dock'     a dock of small tiles under the window, one per question
-//   'tab'      the pill sits on the window's top edge
-//   'topbar'   the marks stand in the window's top bar
-//   'title'    the pill stands over the question's title
-//   'bar'      a thin line of segments along the window's bottom edge
-//   'arrows'   no rail: the arrow to the next question carries the count and the next session's mark
-// A narrow window (a phone) always has a thin row of dots under the top bar.
 // The word on the button that hands a card to its session.
 const HAND_BACK_LABEL = 'Back to agent'
+// An info card (something to read, nothing to decide) has two tiles in the place of options: this one closes it,
+// the other is What??.
+const ACK_WORD = 'Acknowledge'
+const ACK_KEY = '\u0000ack', WHAT_KEY = '\u0000what'
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again.'
 // The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
 const EXPLAIN_LABEL = 'What??'
-const RAIL_PLACES = ['outside', 'pill', 'senders', 'next3', 'unroll', 'dock', 'tab', 'topbar', 'title', 'bar', 'arrows']
-const RAIL_PLACE = 'outside'   // beside the window, at its left: the scrollbar of the list, with a mark per question
-const RAIL_BELOW = ['pill', 'senders', 'next3', 'unroll', 'dock']
-const railNarrow = matchMedia('(max-width: 760px)')
+// Where a card's answers stand. false: a column of their own at the right, over the whole height of the card.
+// true: at the top right beside the title, as tall as they need; what is asked flows at their left and takes the
+// whole width under them. ("?head=1" or "?head=0" in the address tries the other.)
+const ANSWERS_BESIDE_TITLE = false
 
 /** Which picture belongs to which option: a Map of option key -> index in images, or null when that is
  *  not plain to see. It is plain when every picture names exactly one option in its file name (the key or
@@ -366,28 +358,33 @@ export function mountFocus({ onDecided } = {}) {
   }
 
   function fill(rec) {
-    const { card, node } = rec
+    const { node } = rec
+    // An info card is drawn like a question with two answers of the window's own: Acknowledge and What??.
+    const info = rec.card.kind === 'info'
+    const card = info ? { ...rec.card, multiple: false, recommended: null, options: [{ key: ACK_KEY, label: ACK_WORD, detail: '' }, { key: WHAT_KEY, label: EXPLAIN_LABEL, detail: '' }] } : rec.card
     const active = document.activeElement
     const hadFocus = node.contains(active)
     const typed = hadFocus && (active === rec.noteNode || active === rec.askField) ? { ask: active === rec.askField, sel: [active.selectionStart, active.selectionEnd] } : null
     const scrollTop = rec.scroll?.scrollTop ?? 0
     const permission = card.kind === 'permission'
     const attachments = card.attachments ?? []
-    node.dataset.kind = permission ? 'permission' : 'decision'
+    node.dataset.kind = permission ? 'permission' : info ? 'info' : 'decision'
     const titleId = `focus-title-${card.id}`
     node.setAttribute('aria-labelledby', titleId)
 
     const scroll = el('div', 'focus-scroll')
     rec.scroll = scroll
     rec.arrowAt = null
-    scroll.addEventListener('scroll', () => { if (rec.pictureOf) tiePicture(rec, false) }, { passive: true })
+    scroll.addEventListener('scroll', () => { if (rec.pictureOf) linkPicture(rec) }, { passive: true })
     const title = el('h2', 'focus-title', card.title)
     title.id = titleId
     rec.reasonNode = el('p', 'focus-reason')
     rec.reasonNode.textContent = card.urgency_reason || ''
     rec.reasonNode.hidden = !card.urgency_reason
     const lead = el('div', 'focus-lead')
-    lead.append(title, rec.reasonNode)
+    rec.assetsNode = el('div', 'focus-assets')
+    rec.assetsSig = null
+    lead.append(title, rec.reasonNode, rec.assetsNode)
 
     // what the question is about: pictures and players
     const sections = !permission && Array.isArray(card.sections) ? card.sections : null
@@ -640,7 +637,7 @@ export function mountFocus({ onDecided } = {}) {
         return b
       }
       rec.actionsNode.append(
-        way('focus-explain', whatWord(), null, `${EXPLAIN_LABEL} (E): ask the session to explain this question; it returns with the reply`, () => explain()),
+        ...(info ? [] : [way('focus-explain', whatWord(), null, `${EXPLAIN_LABEL} (E): ask the session to explain this question; it returns with the reply`, () => explain())]),
         way('focus-handback', el('span', null, HAND_BACK_LABEL), 'reverse', `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`, () => handBack()),
         way('', el('span', null, LATER_WORD), LATER_SKETCH, `${LATER_WORD} (L): it waits for you, at the end of the line`, () => later()),
       )
@@ -704,7 +701,7 @@ export function mountFocus({ onDecided } = {}) {
       if (duo) {
         const lead = isYes(o)
         if (lead) b.classList.add('is-lead')
-        mark.append(sketch(lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other'))
+        mark.append(sketch(o.key === WHAT_KEY ? 'explain' : lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other'))
       }
       if (multi) {
         const box = el('span', 'focus-opt-box')
@@ -717,7 +714,11 @@ export function mountFocus({ onDecided } = {}) {
       // A bare yes or no needs no word: the thumb says it.
       if (bare) b.setAttribute('aria-label', advised ? `${o.label}, recommended by the agent` : o.label)
       else {
-        const label = el('span', 'focus-opt-label', labelOf(o))
+        const label = o.key === WHAT_KEY ? whatWord() : el('span', 'focus-opt-label', labelOf(o))
+        if (o.key === WHAT_KEY) label.classList.add('focus-opt-label')
+        // A word under a thumb breaks only at spaces and hyphens; one long word is set smaller until it fits.
+        const longest = Math.max(...labelOf(o).split(/[\s-]+/).map(w => w.length))
+        if (duo && longest > 9) label.style.fontSize = `${Math.max(.62, 9 / longest).toFixed(2)}em`
         // In a stack of options the pen goes round the words of the advised one (ui.js draws the mark).
         if (advised && !duo) (tags ? b : label).append(adviceLoop())
         words.append(label)
@@ -729,7 +730,7 @@ export function mountFocus({ onDecided } = {}) {
       if (words.childNodes.length) b.append(words)
       b.addEventListener('click', () => (multi ? toggle(rec, o.key) : submit(rec, [o.key])))
       rec.optButtons.push(b)
-      if (!permission) b.append(optionPencil(rec, o.key, labelOf(o)))
+      if (!permission && !info) b.append(optionPencil(rec, o.key, labelOf(o)))
       opts.append(b)
     }
     if (multi) {
@@ -775,6 +776,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     for (const key of rec.optNotes.keys()) optNoteRow(rec, key, false)
     paintOptNotes(rec)
+    opts.addEventListener('scroll', () => { if (rec.pictureOf) linkPicture(rec) }, { passive: true })
     tiePicture(rec, false)
     if (rec.pictureOf && rec.showImage && !sections) {
       const look = e => {
@@ -817,10 +819,14 @@ export function mountFocus({ onDecided } = {}) {
     closeTwin.addEventListener('click', close)
     ends.append(sayTwin, closeTwin)
     // Two columns: what is asked at the left with its own scroll, the answers at the right; the composer under the left.
-    node.replaceChildren(...[talk, answer, rec.composer, ends].filter(Boolean))
+    // Or (besideTitle) the answers are the first thing in what scrolls and float at its top right.
+    node.toggleAttribute('data-head', besideTitle)
+    if (besideTitle) scroll.prepend(answer)
+    node.replaceChildren(...[talk, besideTitle ? null : answer, rec.composer, ends].filter(Boolean))
     if (multi) paintPicked(rec)
     rec.toEnd = false
     paintThread(rec)
+    paintAssets(rec)
     paintFiles(rec)
     // With a conversation under the question, the newest of it is in view, as in any chat.
     scroll.scrollTop = rec.toEnd ? scroll.scrollHeight : scrollTop
@@ -958,20 +964,43 @@ export function mountFocus({ onDecided } = {}) {
     }
     // The arrow points at it (drawn in the answers' box, which scrolls with its tags), but only while its picture is
     // in sight: an arrow that comes from nowhere says nothing.
+    linkPicture(rec)
+  }
+  /** One line of the pen from the picture shown (the grid tile, or the one large picture) to the option it belongs
+   *  to: it leaves the picture at its upper right, runs along the gap above its row to the gap between the two
+   *  columns, down or up that gap, and its head comes into the option's left edge. Drawn only while both ends are
+   *  wholly in sight; otherwise nothing is drawn. Drawn again when either column scrolls. */
+  function linkPicture(rec) {
+    const host = rec.node
+    const old = host.querySelector(':scope > .focus-arrow')
     const picture = rec.gridTiles?.[rec.imageAt] ?? rec.mediaNode?.querySelector('.focus-figure')
-    const seen = (() => {
-      if (!picture?.offsetWidth || !rec.scroll) return false
-      const p = picture.getBoundingClientRect(), s = rec.scroll.getBoundingClientRect()
-      return p.bottom > s.top + 24 && p.top < s.bottom - 24
-    })()
-    let tile = seen ? rec.optButtons?.find(b => b.hasAttribute('data-match')) ?? null : null
-    if (tile) {   // its end has to be in sight too
-      const t = tile.getBoundingClientRect(), o = tile.parentElement.getBoundingClientRect()
-      if (t.top < o.top - 4 || t.bottom > o.bottom + 4) tile = null
+    const tile = rec.optButtons?.find(b => b.hasAttribute('data-match'))
+    const inside = (n, frame) => { const a = n.getBoundingClientRect(), f = frame.getBoundingClientRect(); return a.width > 0 && a.top >= f.top - 2 && a.bottom <= f.bottom + 2 }
+    if (!picture || !tile || !rec.scroll || !inside(picture, rec.scroll) || !inside(tile, tile.parentElement) || rec.answer.parentElement !== host) { old?.remove(); rec.arrowSig = ''; return }
+    const base = host.getBoundingClientRect()
+    const box = n => { const r = n.getBoundingClientRect(); return { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height } }
+    const P = box(picture), T = box(tile), A = box(rec.answer)
+    if (A.x < P.x + P.w) { old?.remove(); rec.arrowSig = ''; return }   // a narrow window: the answers stand under the pictures
+    // the way to the answers has to be free: the gaps of the picture grid are, a text beside one picture is not
+    const M = box(rec.mediaNode)
+    if (A.x - (M.x + M.w) > 80) { old?.remove(); rec.arrowSig = ''; return }
+    const sig = [P.x, P.y, P.w, T.x, T.y, T.h].map(Math.round).join()
+    if (sig === rec.arrowSig && old) return
+    rec.arrowSig = sig
+    old?.remove()
+    const gx = A.x + (T.x - A.x) / 2 - 2          // the gap between the two columns
+    const lane = P.y - 5                          // the gap above the picture's row
+    const mid = T.y + T.h / 2
+    const points = [[P.x + P.w - 26, P.y + 12], [P.x + P.w - 8, lane + 1], [P.x + P.w + 14, lane], [gx - 22, lane], [gx - 6, lane + (mid > lane ? 5 : -5)], [gx, lane + (mid > lane ? 22 : -22)], [gx, mid - (mid > lane ? 16 : -16)], [gx + 3, mid - (mid > lane ? 3 : -3)], [T.x - 2, mid]]
+    const svg = document.createElementNS(SVG_NS, 'svg')
+    svg.setAttribute('class', 'focus-arrow')
+    svg.setAttribute('aria-hidden', 'true')
+    for (const d of arrowStrokes(points, `${tile.dataset.key}:${arrowTurn++}`)) {
+      const path = document.createElementNS(SVG_NS, 'path')
+      path.setAttribute('d', d)
+      svg.append(path)
     }
-    if (rec.answer && (tile || rec.answer.querySelector(':scope > .focus-arrow'))) {
-      if ((rec.arrowAt ?? null) !== (tile?.dataset.key ?? null) || !tile) { rec.arrowAt = tile?.dataset.key ?? null; pointAt(rec.answer, tile) }
-    }
+    host.append(svg)
   }
 
   // ── a note on a single option ───────────────────────────────────────────
@@ -1036,7 +1065,7 @@ export function mountFocus({ onDecided } = {}) {
   }
   /** Save the draft of a card a moment after it changed (POST /draft; an empty one clears it). */
   function queueDraft(rec) {
-    if (rec.card.kind === 'permission' || rec.draftSent === undefined) return
+    if (rec.card.kind !== 'decision' || rec.draftSent === undefined) return
     if (!rec.draftTimer && JSON.stringify(draftOf(rec)) === rec.draftSent) return
     clearTimeout(rec.draftTimer)
     rec.draftTimer = setTimeout(() => {
@@ -1051,7 +1080,7 @@ export function mountFocus({ onDecided } = {}) {
   /** Take what the hub holds for a card (card.draft) when it is news: on first sight, from another device, after
    *  "Later", after an answer was taken back. Not while the human is changing this card right now. */
   function adoptDraft(rec) {
-    if (rec.card.kind === 'permission') return
+    if (rec.card.kind !== 'decision') return
     const draft = rec.card.draft
     const ts = draft?.ts ?? 0
     if (ts === rec.draftTs) return
@@ -1183,6 +1212,51 @@ export function mountFocus({ onDecided } = {}) {
     if (isOpen && shown === now) now.askField?.focus({ preventScroll: true })
   }
 
+  /** Under the title: everything the card carries, as small chips. Pictures (a tap goes to them), things to play,
+   *  files, published pages and links (also those only named in the text or in the conversation about the card;
+   *  one that was withdrawn or has expired is left out), tables and layouts. */
+  function paintAssets(rec) {
+    const slot = rec.assetsNode
+    if (!slot) return
+    const card = rec.card
+    const list = card.attachments ?? []
+    const texts = [card.body ?? '', ...(pool()?.messages ?? []).filter(m => m.card_id === rec.id && m.from !== 'event').map(m => `${m.text ?? ''}\n${m.details ?? ''}`)]
+    const links = new Map()
+    for (const text of texts) for (const [url] of text.matchAll(/https?:\/\/[^\s<>)`\]]+/g)) {
+      const found = linkInfo(url)
+      if (found.asset) { if (!found.asset.gone) links.set(found.asset.id, { href: found.asset.href, label: found.asset.title || 'Published page', drawing: found.asset.type === 'image' ? 'picture' : found.asset.type === 'video' || found.asset.type === 'audio' ? 'play' : 'page' }) }
+      else links.set(url, { href: url, label: found.text, drawing: 'page' })
+    }
+    for (const m of pool()?.messages ?? []) if (m.card_id === rec.id && m.asset && !m.asset.gone && !links.has(m.asset.id)) links.set(m.asset.id, { href: null, label: m.asset.title || 'Published page', drawing: 'page' })
+    const pictures = list.filter(a => kindOf(a) === 'image').length
+    const plays = list.filter(a => kindOf(a) === 'video' || kindOf(a) === 'audio').length
+    const files = list.filter(a => kindOf(a) === 'file')
+    const whole = texts[0]
+    const layouts = (whole.match(/```html/g) ?? []).length
+    const tables = (whole.match(/^\s*\|?\s*:?-{2,}:?\s*\|/gm) ?? []).length
+    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables])
+    if (sig === rec.assetsSig) return
+    rec.assetsSig = sig
+    const chip = (drawing, label, to) => {
+      const node = el(typeof to === 'string' ? 'a' : to ? 'button' : 'span', 'focus-asset')
+      if (typeof to === 'string') { node.href = to; node.target = '_blank'; node.rel = 'noopener noreferrer' }
+      else if (to) { node.type = 'button'; node.addEventListener('click', to) }
+      node.append(sketch(drawing), el('span', null, label))
+      return node
+    }
+    const goTo = sel => () => rec.scroll?.querySelector(sel)?.scrollIntoView({ block: 'center', behavior: still() ? 'instant' : 'smooth' })
+    const chips = [
+      ...(pictures ? [chip('picture', pictures === 1 ? '1 picture' : `${pictures} pictures`, goTo('.focus-media, .focus-sec-pic'))] : []),
+      ...(plays ? [chip('play', plays === 1 ? '1 to play' : `${plays} to play`, goTo('.focus-media .media'))] : []),
+      ...[...links.values()].map(x => chip(x.drawing, x.label, x.href)),
+      ...files.map(a => chip('clip', a.name, a.url)),
+      ...(tables ? [chip('choose', tables === 1 ? 'a table' : `${tables} tables`, goTo('table'))] : []),
+      ...(layouts ? [chip('page', layouts === 1 ? 'a layout' : `${layouts} layouts`, goTo('iframe'))] : []),
+    ]
+    slot.hidden = !chips.length
+    slot.replaceChildren(...chips)
+  }
+
   /** Take files into the composer of a card (picked, dropped or pasted): read, and shown as chips until sent. */
   async function addFiles(rec, list) {
     const room = MAX_FILES - rec.files.length
@@ -1290,6 +1364,7 @@ export function mountFocus({ onDecided } = {}) {
       nodes.push(el('p', 'focus-thread-wait', 'Sent. The reply shows up here; the question stays open.'))
     }
     rec.threadNode.replaceChildren(...nodes)
+    paintAssets(rec)
     // the newest is in view, as in any chat
     if (grew) {
       rec.toEnd = true
@@ -1366,6 +1441,7 @@ export function mountFocus({ onDecided } = {}) {
 
   async function submit(rec, keys) {
     claim(rec)
+    if (rec.card.kind === 'info') return keys[0] === WHAT_KEY ? explain() : acknowledge(rec)
     if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return
     if (pad?.rec === rec) { await closePad(true); if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return }   // what is on the scratchpad goes along
     const card = rec.card
@@ -1436,6 +1512,27 @@ export function mountFocus({ onDecided } = {}) {
     decidedLocal.set(rec.id, Date.now())
     if (card.kind !== 'permission') onDecided?.(card, option, keys)
     close()
+  }
+
+  /** Acknowledge an info card: it is closed (POST /close). In the walk it becomes the strip "Read", with the way
+   *  back on it; the window of one card closes. */
+  async function acknowledge(rec) {
+    const card = rec.card
+    if (rec.busy || busyRec() || !recs.has(rec.id)) return
+    if (single) {
+      rec.busy = true
+      try { await closeInfo(card.id) } catch (err) { rec.busy = false; return refused(rec, err) }
+      rec.busy = false
+      decidedLocal.set(rec.id, Date.now())
+      return close()
+    }
+    decidedLocal.set(rec.id, Date.now())
+    decidedCount++
+    sentId = rec.id
+    const sending = closeInfo(card.id)
+    offerBack(card, { head: 'Read', take: async () => { await sending.catch(() => {}); await reopen(card.id); decidedLocal.delete(card.id) } })
+    sync('sent')
+    try { await sending } catch (err) { returned(card, '', err) }
   }
 
   /** Say on the card why its answer was not taken. */
@@ -1591,197 +1688,19 @@ export function mountFocus({ onDecided } = {}) {
   }
   handBtn.addEventListener('click', handBack)
 
-  // ── the rail: how far the walk is ───────────────────────────────────────
-  // A slim strip at the left edge of the window (a thin row under the top bar when the window is narrow):
-  // how many questions are left, and one small scribbled mark per question in the order of the walk.
-  // Answered in this walk: a tick. Open: a dot in the colour of its urgency. Put off: a hollow dot, at the
-  // end. The one in front: a ring round it. A gap, and the sender's mark while there is room, where the
-  // sender changes. A tap on a mark goes to that question. Not shown in the window of one card.
-  const rail = el('nav', 'focus-rail')
-  rail.setAttribute('aria-label', 'The questions of this walk')
-  rail.hidden = true
-  const railCount = el('p', 'focus-rail-count')
-  const railMarks = el('div', 'focus-rail-marks')
-  rail.append(railCount, railMarks)
-  const railWish = new URLSearchParams(location.search).get('rail')
-  const railPlace = () => (railNarrow.matches ? 'row' : RAIL_PLACES.includes(railWish) ? railWish : RAIL_PLACE)
-  /** Put the rail where its place says: beside or under the window, in it, or with the card in front. */
-  function seatRail() {
-    const place = railPlace()
-    rail.dataset.place = place
-    root.dataset.rail = place
-    root.dataset.railSeat = RAIL_BELOW.includes(place) ? 'below' : place
-    if (RAIL_BELOW.includes(place) || place === 'tab' || place === 'arrows' || place === 'outside') { if (rail.parentNode !== root) root.append(rail) }
-    else if (place === 'topbar') { if (rail.previousSibling !== meta) meta.after(rail) }
-    else if (place === 'title') { const talk = shown?.node.querySelector('.focus-talk'); if (talk && rail.parentNode !== talk) talk.prepend(rail) }
-    else if (rail.parentNode !== sheet || rail.previousSibling !== top) top.after(rail)
-  }
-  // 'arrows': what the arrow to the next question carries
-  const navCount = el('span', 'focus-nav-count')
-  const navWho = el('span', 'focus-nav-who')
-  nextBtn.append(navCount, navWho)
-  seatRail()
-  // Dragging along the rail scrolls the list, as on a scrollbar.
-  railMarks.addEventListener('pointermove', e => {
-    if (!(e.buttons & 1) || !inList()) return
-    const id = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.focus-rail-mark')?.dataset.id
-    if (id && id !== current && recs.has(id)) go(id, 'instant')
-  })
-  railNarrow.addEventListener('change', () => { seatRail(); railSig = ''; paintRail() })
-  const railSeen = new Map()   // id -> card: every question that stood in this walk
-  const railDone = new Map()   // id -> card: the ones answered since, in the order they were answered
-  let railSig = ''
-  function railReset() {
-    railSeen.clear()
-    railDone.clear()
-    railSig = ''
-    rail.hidden = true
-    sheet.removeAttribute('data-rail')
-  }
-  /** One mark, drawn with the pen: the same id always gives the same wobble. */
-  function railMark(state, front, seed, started = false) {
-    const r = penSeed(`rail:${seed}`)
-    const svg = document.createElementNS(SVG_NS, 'svg')
-    svg.setAttribute('viewBox', '0 0 32 32')
-    svg.setAttribute('aria-hidden', 'true')
-    const draw = (cls, d) => {
-      const path = document.createElementNS(SVG_NS, 'path')
-      path.setAttribute('class', cls)
-      path.setAttribute('d', d)
-      svg.append(path)
-    }
-    const j = () => (r() - .5) * 1.6
-    if (state === 'done') draw('focus-rail-tick', `M${(9 + j()).toFixed(1)} ${(16.5 + j()).toFixed(1)} L${(14 + j()).toFixed(1)} ${(22.5 + j()).toFixed(1)} L${(24 + j()).toFixed(1)} ${(9 + j()).toFixed(1)}`)
-    else draw(state === 'later' ? 'focus-rail-hollow' : 'focus-rail-dot', loopPath(r, { rad: state === 'later' ? 6.6 : 5.8, drift: .5, jitter: 1 }))
-    if (front) draw('focus-rail-ring', loopPath(r, { rad: 13.6, drift: 1.4, jitter: 1.1 }))
-    // started (something ticked or written, not sent): a short stroke of the pen beside the dot
-    if (started) draw('focus-rail-started', `M${(22.5 + j()).toFixed(1)} ${(10 + j()).toFixed(1)} L${(27 + j()).toFixed(1)} ${(5.5 + j()).toFixed(1)}`)
-    return svg
-  }
-  function paintRail() {
-    const walking = isOpen && !single && sheet.dataset.state === 'cards'
-    if (walking) {
-      const byId = new Map((pool()?.cards ?? []).map(c => [c.id, c]))
-      for (const [id, card] of railSeen) {
-        if (order.includes(id) || railDone.has(id)) continue
-        // gone from the walk: answered (here, or elsewhere meanwhile), or withdrawn by its agent
-        const now = byId.get(id)
-        if (decidedLocal.has(id) || (now && now.status !== 'open' && now.choice != null)) railDone.set(id, card)
-        else railSeen.delete(id)
-      }
-      for (const id of order) {
-        railSeen.set(id, recs.get(id)?.card ?? railSeen.get(id))
-        railDone.delete(id)   // taken back: open again
-      }
-    }
-    const show = walking && (inList() ? strips.filter(x => x.kind === 'answered').length : railDone.size) + order.length > 1
-    rail.hidden = !show
-    sheet.toggleAttribute('data-rail', show)
-    if (!show) return
-    seatRail()
-    const off = new Set(lastState?.later ?? [])
-    // In the list the rail is its scrollbar: one mark per card and per answered strip, in the order they stand there.
-    const list = (inList()
-      ? [...stage.children].map(n => {
-        const strip = strips.find(x => x.node === n)
-        if (strip) return strip.kind === 'answered' ? { id: strip.id, card: strip.card, state: 'done' } : null
-        const rec = recs.get(n.dataset?.id)
-        return rec?.node === n ? { id: rec.id, card: rec.card, state: off.has(rec.id) ? 'later' : 'open' } : null
-      })
-      : [
-        ...[...railDone].map(([id, card]) => ({ id, card, state: 'done' })),
-        ...order.map(id => ({ id, card: railSeen.get(id), state: off.has(id) ? 'later' : 'open' })),
-      ]).filter(x => x?.card)
-    const sig = JSON.stringify([current, list.map(x => [x.id, x.state, x.card.urgency, x.card.agent, x.card.title, Boolean(x.card.draft)])])
-    if (sig === railSig) return
-    railSig = sig
-    const left = order.length
-    const place = rail.dataset.place
-    const sessions = pool()?.agents ?? []
-    const sessionOf = card => sessions.find(a => a.id === card.agent)
-    const markOf = card => doodle(sessionOf(card)?.mark ?? card.agent)
-    const nameOf = card => card.agent_name || sessionOf(card)?.name || ''
-    const at = list.findIndex(x => x.id === current)
-    railCount.replaceChildren(el('b', null, String(left)), el('span', null, ' left'))
-    railCount.title = `${left === 1 ? 'One question' : `${left} questions`} left${railDone.size ? `, ${railDone.size} answered` : ''}`
-    railCount.hidden = false
-    /** One question as a mark: a tick when answered, else the dot of the old rail or its session's mark. */
-    const mark = (x, drawn) => {
-      const b = button('focus-rail-mark')
-      b.tabIndex = -1   // the walk has its keys; forty marks are no stops for Tab
-      b.dataset.state = x.state
-      b.dataset.id = x.id
-      b.dataset.urgency = RANK[x.card.urgency] != null ? x.card.urgency : 'normal'
-      const front = x.id === current
-      if (front) { b.dataset.front = ''; b.setAttribute('aria-current', 'step') }
-      const who = nameOf(x.card)
-      b.title = `${x.state === 'done' ? 'Answered: ' : x.state === 'later' ? `${LATER_WORD}: ` : ''}${x.card.title}${who ? ` · ${who}` : ''}`
-      const started = x.state !== 'done' && Boolean(recs.get(x.id)?.card.draft)
-      if (started) { b.dataset.started = ''; b.title += ' · started' }
-      b.setAttribute('aria-label', b.title)
-      b.append(x.state === 'done' ? railMark('done', false, x.id) : drawn ? markOf(x.card) : railMark(x.state, front, x.id, started))
-      if (x.state === 'done') b.disabled = true
-      else b.addEventListener('click', () => go(x.id))
-      return b
-    }
-    /** With many questions only those round the one in front are shown; "+12" says how many more there are. */
-    const windowed = (max, make) => {
-      if (list.length <= max) return list.map(make)
-      const from = clamp(at - 3, 0, list.length - max)
-      const more = n => el('span', 'focus-rail-more', `+${n}`)
-      return [...(from ? [more(from)] : []), ...list.slice(from, from + max).map(make), ...(list.length - from - max ? [more(list.length - from - max)] : [])]
-    }
-    let nodes = []
-    if (place === 'row' || place === 'outside') nodes = list.map(x => mark(x, false))
-    else if (place === 'pill' || place === 'tab' || place === 'title' || place === 'topbar' || place === 'dock') {
-      nodes = windowed(place === 'topbar' ? 10 : place === 'dock' ? 14 : 18, x => mark(x, true))
-    } else if (place === 'bar') {
-      nodes = list.map(x => mark(x, false))
-      for (const b of nodes) b.replaceChildren()
-    } else if (place === 'senders') {
-      // one chip per session, in the order its first open question comes up
-      const open = list.filter(x => x.state !== 'done')
-      const groups = new Map()
-      for (const x of open) groups.set(x.card.agent, [...(groups.get(x.card.agent) ?? []), x])
-      const mine = list[at]?.card.agent
-      nodes = [...groups].map(([agent, items]) => {
-        const b = button('focus-rail-chip')
-        b.tabIndex = -1
-        if (agent === mine) b.dataset.front = ''
-        b.title = `${nameOf(items[0].card)}: ${items.length === 1 ? 'one question' : `${items.length} questions`}`
-        b.setAttribute('aria-label', b.title)
-        b.append(markOf(items[0].card), el('span', null, nameOf(items[0].card)), el('b', null, String(items.length)))
-        // to this session's next question after the one in front, else its first
-        b.addEventListener('click', () => { const next = items.find(x => list.indexOf(x) > at) ?? items[0]; go(next.id) })
-        return b
-      })
-    } else if (place === 'next3' || place === 'unroll') {
-      railCount.replaceChildren(el('b', null, String(at + 1)), el('span', null, ` of ${list.length}`))
-      const next = list.slice(at + 1).filter(x => x.state !== 'done').slice(0, 3)
-      nodes = next.length ? [el('span', 'focus-rail-word', 'next'), ...next.map(x => mark(x, true))] : [el('span', 'focus-rail-word', 'the last one')]
-      if (place === 'unroll') {
-        const panel = el('div', 'focus-rail-list')
-        panel.append(...list.map(x => {
-          const row = button('focus-rail-row')
-          row.tabIndex = -1
-          row.dataset.state = x.state
-          if (x.id === current) row.dataset.front = ''
-          const lead = el('span', 'focus-rail-row-mark')
-          lead.append(x.state === 'done' ? icon('check') : markOf(x.card))
-          row.append(lead, el('span', 'focus-rail-row-title', x.card.title), el('span', 'focus-rail-row-who', x.state === 'later' ? LATER_WORD : nameOf(x.card)))
-          if (x.state === 'done') row.disabled = true
-          else row.addEventListener('click', () => go(x.id))
-          return row
-        }))
-        nodes.push(panel)
-      }
-    }
-    railMarks.replaceChildren(...nodes)
-    // 'arrows': the count and the next session's mark ride on the arrow
-    const after = list.slice(at + 1).filter(x => x.state !== 'done')
-    navCount.textContent = after.length ? String(after.length) : ''
-    navWho.replaceChildren(...(after.length ? [markOf(after[0].card)] : []))
-    nextBtn.title = after.length ? `Next question, without answering (J): ${after[0].card.title}` : 'Next question, without answering (J)'
+  // ── how many more ───────────────────────────────────────────────────────
+  // No rail: at the foot of the window, where the next card looks in, one quiet line says how many questions come
+  // after the one in front. A tap goes to the next.
+  const more = button('focus-more')
+  more.hidden = true
+  more.addEventListener('click', () => go(1))
+  sheet.append(more)
+  function paintMore() {
+    const after = inList() && sheet.dataset.state === 'cards' ? order.length - 1 - order.indexOf(current) : 0
+    more.hidden = !inList() || sheet.dataset.state !== 'cards' || !order.length
+    if (more.hidden) return
+    more.disabled = after <= 0
+    more.replaceChildren(...(after > 0 ? [el('span', null, `${after} more`), icon('chevDown')] : [el('span', null, order.length > 1 ? 'Last one' : 'The only one')]))
   }
 
   // ── the walk as one list ────────────────────────────────────────────────
@@ -1790,6 +1709,8 @@ export function mountFocus({ onDecided } = {}) {
   // that was answered, snoozed or handed to its session leaves a slim strip where it stood, with the way back on it.
   // (The window of one card, opened from a row or a link, stays what it was: that card alone, closed by its answer.)
   const inList = () => root.hasAttribute('data-list')
+  const headWish = new URLSearchParams(location.search).get('head')
+  const besideTitle = headWish === '1' ? true : headWish === '0' ? false : ANSWERS_BESIDE_TITLE
   const strips = []        // { id, card, kind, node, anchor, back }: anchor is the card it stands in front of
   let orderBefore = []     // the order before it last changed: where a card stood that has just left or moved
   let scrollHow = 'smooth'
@@ -1812,7 +1733,7 @@ export function mountFocus({ onDecided } = {}) {
   /** A card becomes a strip where it stood: what happened to it (head), its title, and with take() the way back. */
   function addStrip(card, head, take) {
     dropStrip(card.id)
-    const kind = /^Answered:/.test(head) ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === 'With the agent' ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
+    const kind = /^Answered:/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === 'With the agent' ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
     // where it stood: in front of the card that came after it (before it left or moved to the end)
     const moved = !order.includes(card.id) || (lastState?.later ?? []).includes(card.id)
     const from = moved && orderBefore.includes(card.id) ? orderBefore : order
@@ -1847,8 +1768,7 @@ export function mountFocus({ onDecided } = {}) {
     strips.push(entry)
     announce(`${head}: ${card.title}`)
     arrange()
-    railSig = ''
-    paintRail()
+    paintMore()
   }
   /** Put the list in its order: the open cards as the walk has them, each strip in front of its anchor, the end last. */
   function arrange() {
@@ -2094,10 +2014,11 @@ export function mountFocus({ onDecided } = {}) {
     explainBtn.hidden = laterBtn.hidden
     explainBtn.disabled = locked || explaining
     for (const b of stage.querySelectorAll('.focus-card-say')) { b.hidden = sayBtn.hidden; b.setAttribute('aria-pressed', sayBtn.getAttribute('aria-pressed') ?? 'false') }
+    if (shown?.pictureOf) { const rec = shown; requestAnimationFrame(() => { if (recs.get(rec.id) === rec) linkPicture(rec) }) }   // its arrow, once it is laid out
     if (pad && pad.rec !== shown) closePad(true)   // the card with the open scratchpad left the front: its drawing is kept as a picture
     handBtn.hidden = laterBtn.hidden
     handBtn.disabled = locked || handing
-    paintRail()
+    paintMore()
     if (!card) return
     sheet.dataset.urgency = shown.node.dataset.urgency
     const word = urgencyWord(card)
@@ -2552,7 +2473,6 @@ export function mountFocus({ onDecided } = {}) {
     stage.replaceChildren()
     strips.length = 0
     orderBefore = []
-    railReset()
   }
 
   function close() {
