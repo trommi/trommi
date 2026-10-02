@@ -46,7 +46,7 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
         switch response.statusCode {
         case 401, 403: throw ClientError.unauthorized
         case 200..<400: return SessionCookie.from(setCookie: response.value(forHTTPHeaderField: "Set-Cookie"), token: link.token)
-        default: throw ClientError.server("Der Server antwortet mit Fehler \(response.statusCode).")
+        default: throw ClientError.server("The server answers with error \(response.statusCode).")
         }
     }
 
@@ -89,10 +89,10 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
         if response.statusCode == 401 { throw ClientError.unauthorized }
         if response.statusCode == 404 { throw ClientError.notFound }
         let reason = (try? JSONSerialization.jsonObject(with: data) as? [String: Any])?["error"] as? String
-        throw ClientError.server(BoardError.translate(reason ?? "Fehler \(response.statusCode)"))
+        throw ClientError.server(BoardError.translate(reason ?? "error \(response.statusCode)"))
     }
 
-    private func post(_ path: String, _ body: [String: String]) async throws {
+    private func post(_ path: String, _ body: [String: Any]) async throws {
         var request = try request(path, method: "POST")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
@@ -109,6 +109,14 @@ final class LiveBoardClient: BoardClient, @unchecked Sendable {
 
     func reopen(cardID: String) async throws {
         try await post("/reopen", ["card_id": cardID])
+    }
+
+    func editSession(agent: String, changes: SessionChanges) async throws {
+        try await post("/session", changes.body(agent: agent))
+    }
+
+    func star(agent: String, starred: Bool) async throws {
+        try await post("/star", ["agent": agent, "starred": starred])
     }
 
     func transcribe(audio: Data, contentType: String) async throws -> String {
@@ -175,7 +183,7 @@ private final class EventStream: NSObject, URLSessionDataDelegate, @unchecked Se
         if status == 200 {
             completionHandler(.allow)
         } else {
-            continuation.finish(throwing: status == 401 ? ClientError.unauthorized : ClientError.server("Der Server antwortet mit Fehler \(status)."))
+            continuation.finish(throwing: status == 401 ? ClientError.unauthorized : ClientError.server("The server answers with error \(status)."))
             completionHandler(.cancel)
         }
     }

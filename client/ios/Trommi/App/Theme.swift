@@ -1,4 +1,4 @@
-// The colours of public/css/tokens.css, light and dark. Views never use
+// The colours of client/web/css/tokens.css, light and dark. Views never use
 // literal colours; everything comes from here. Unlike the web client, which
 // stays light until the user picks dark, the app follows the system setting.
 import SwiftUI
@@ -76,6 +76,13 @@ enum Theme {
         })
     }
 
+    /// The hand-drawn circle round the option the agent recommends (--advice in tokens.css).
+    static let advice = urgency(.high)
+
+    /// The side of an answer tile in a row, and the height every row has.
+    static let tile: CGFloat = 64
+    static let rowHeight: CGFloat = 96
+
     // shape, from --r-sm, --r-md, --r-lg
     static let radiusSmall: CGFloat = 8
     static let radius: CGFloat = 12
@@ -86,11 +93,4 @@ private extension UIColor {
     convenience init(hex: UInt32) {
         self.init(red: CGFloat((hex >> 16) & 0xFF) / 255, green: CGFloat((hex >> 8) & 0xFF) / 255, blue: CGFloat(hex & 0xFF) / 255, alpha: 1)
     }
-}
-
-/// A short buzz when something was decided, failed or taken back.
-enum Haptics {
-    static func decided() { UINotificationFeedbackGenerator().notificationOccurred(.success) }
-    static func failed() { UINotificationFeedbackGenerator().notificationOccurred(.error) }
-    static func tap() { UIImpactFeedbackGenerator(style: .light).impactOccurred() }
 }

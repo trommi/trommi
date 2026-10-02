@@ -4,13 +4,23 @@ struct RootView: View {
     @Environment(AppModel.self) private var model
 
     var body: some View {
-        Group {
-            switch model.phase {
-            case .onboarding: OnboardingView()
-            case .board: BoardView()
+        content
+            .sheet(item: browserBinding) { request in
+                SafariView(url: request.url).ignoresSafeArea()
             }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.phase {
+        case .onboarding: OnboardingView()
+        case .board: BoardView()
         }
-        .animation(.easeInOut(duration: 0.25), value: model.phase)
+    }
+
+    /// The link the human tapped; closing the browser clears it.
+    private var browserBinding: Binding<BrowserRequest?> {
+        Binding(get: { model.browser }, set: { model.browser = $0 })
     }
 }
 
@@ -21,10 +31,10 @@ private struct BoardView: View {
     var body: some View {
         TabView {
             InboxScreen()
-                .tabItem { Label("Posteingang", systemImage: "tray.full") }
-                .badge(model.state.queue.count)
+                .tabItem { Label("Inbox", systemImage: "tray.full") }
+                .badge(model.state.freshCount(later: model.later))
             SessionsScreen()
-                .tabItem { Label("Sitzungen", systemImage: "person.2") }
+                .tabItem { Label("Sessions", systemImage: "person.2") }
         }
         .noticeBanner()
     }

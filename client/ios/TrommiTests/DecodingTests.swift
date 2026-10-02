@@ -65,11 +65,84 @@ final class DecodingTests: XCTestCase {
 
     func testMultiAgentFixture() throws {
         let state = try Fixture.multi()
-        XCTAssertEqual(state.agents.map(\.name), ["Web-Frontend", "API", "Infrastruktur"])
-        XCTAssertEqual(state.agents.map(\.online), [true, true, false])
+        XCTAssertEqual(state.agents.map(\.id), ["web-frontend", "api", "infrastructure", "docs", "docs-review", "old-spike"])
+        XCTAssertEqual(state.agents.map(\.online), [true, true, false, true, true, false])
         XCTAssertEqual(state.card("c-nav")?.agent, "web-frontend")
         XCTAssertEqual(state.messages.first { $0.id == "w1" }?.details.isEmpty, false)
         XCTAssertEqual(state.tasks.first { $0.taskID == "deploy" }?.cardID, "c-migrate")
+        XCTAssertEqual(state.queue, ["c-perm", "c-migrate", "c-phone", "c-theme", "c-nav", "c-ship", "c-next", "c-backup"])
+    }
+
+    func testSessionFields() throws {
+        let state = try Fixture.multi()
+        let api = try XCTUnwrap(state.agent("api"))
+        XCTAssertEqual(api.name, "api")
+        XCTAssertEqual(api.label, "API")
+        XCTAssertEqual(api.displayName, "API", "the human's own name is shown instead of the session's")
+        XCTAssertEqual(api.model, "Claude Opus 5.5")
+        XCTAssertEqual(api.host, "build-box")
+        XCTAssertEqual(api.platform, "Linux x64")
+        XCTAssertEqual(api.client, "claude-code 2.1.0")
+        XCTAssertEqual(api.task, "Prepare migration and deploy")
+        XCTAssertTrue(api.starred)
+        XCTAssertFalse(api.archived)
+        XCTAssertNil(api.group)
+        XCTAssertEqual(api.mark, "api", "without an icon the mark comes from the id")
+        XCTAssertNotNil(api.connected)
+        let docs = try XCTUnwrap(state.agent("docs"))
+        XCTAssertEqual(docs.displayName, "docs", "no label: the session's own name")
+        XCTAssertEqual(docs.icon, "docs:3")
+        XCTAssertEqual(docs.mark, "docs:3")
+        XCTAssertEqual(docs.group, "g-docs")
+        XCTAssertEqual(state.agent("old-spike")?.archived, true)
+    }
+
+    func testSessionFieldsOfAnOlderServerGetDefaults() throws {
+        let state = try BoardState.decode(#"{"agents": [{"id": "a", "name": "A", "group": null, "label": "  ", "starred": 1, "archived": "nope"}]}"#)
+        let a = try XCTUnwrap(state.agent("a"))
+        XCTAssertEqual(a.displayName, "A", "a label of blanks is no label")
+        XCTAssertNil(a.group)
+        XCTAssertTrue(a.starred)
+        XCTAssertFalse(a.archived)
+        XCTAssertEqual(a.model, "")
+        XCTAssertNil(a.seen)
+    }
+
+    func testRecommendedOption() throws {
+        let state = try Fixture.multi()
+        XCTAssertEqual(state.card("c-migrate")?.recommended, "tonight")
+        XCTAssertNil(state.card("c-next")?.recommended, "null means no advice")
+        let json = #"{"cards": [{"id": "x", "status": "open", "recommended": "gone", "options": [{"key": "a", "label": "A"}, {"key": "b", "label": "B"}]},"#
+            + #"{"id": "y", "status": "open", "recommended": 2, "options": [{"key": "1", "label": "One"}, {"key": 2, "label": "Two"}]}]}"#
+        let odd = try BoardState.decode(json)
+        XCTAssertNil(odd.card("x")?.recommended, "advice that names no option is dropped")
+        XCTAssertEqual(odd.card("y")?.recommended, "2")
+    }
+
+    func testMessageDetailsAndAsset() throws {
+        let state = try Fixture.multi()
+        let w1 = try XCTUnwrap(state.messages.first { $0.id == "w1" })
+        XCTAssertTrue(w1.details.hasPrefix("What I tried:"))
+        XCTAssertNil(w1.asset)
+        let d1 = try XCTUnwrap(state.messages.first { $0.id == "d1" })
+        XCTAssertEqual(d1.asset?.id, "q3n0XWb1kq0lYb6m3v8K2A")
+        XCTAssertEqual(d1.asset?.type, "html")
+        XCTAssertEqual(d1.asset?.title, "Handbook, draft")
+        XCTAssertEqual(d1.asset?.gone, false)
+        XCTAssertTrue(d1.asset?.url.hasPrefix("/a/q3n0XWb1kq0lYb6m3v8K2A#") ?? false)
+        let gone = try BoardState.decode(#"{"messages": [{"id": "g", "from": "agent", "text": "**T** (withdrawn)", "asset": {"id": "abc", "type": "html", "title": "T", "gone": true}}, {"id": "h", "asset": "broken"}]}"#)
+        XCTAssertEqual(gone.messages[0].asset?.gone, true)
+        XCTAssertNil(gone.messages[1].asset)
+    }
+
+    func testArchivedSessionsQuestionsAreNotInTheStack() throws {
+        let state = try Fixture.multi()
+        XCTAssertEqual(state.card("c-spike")?.status, .open)
+        XCTAssertFalse(state.queue.contains("c-spike"))
+        // Even when an older server still lists it.
+        let json = #"{"agents": [{"id": "a", "name": "A"}, {"id": "b", "name": "B", "archived": true}], "queue": ["2", "1"],"#
+            + #" "cards": [{"id": "1", "agent": "a", "status": "open"}, {"id": "2", "agent": "b", "status": "open"}]}"#
+        XCTAssertEqual(try BoardState.decode(json).queue, ["1"])
     }
 
     func testEmptyObjectIsAnEmptyBoard() throws {
@@ -77,8 +150,8 @@ final class DecodingTests: XCTestCase {
         XCTAssertEqual(state.agents.count, 1)
         XCTAssertTrue(state.cards.isEmpty)
         XCTAssertTrue(state.queue.isEmpty)
-        XCTAssertTrue(state.inboxGroups.isEmpty)
-        XCTAssertEqual(state.inboxLine, "Nichts wartet auf dich.")
+        XCTAssertTrue(state.inbox(later: LaterList()).isEmpty)
+        XCTAssertEqual(state.inbox(later: LaterList()).sentence, "Nothing needs you.")
     }
 
     func testNotAnObjectFails() {
@@ -146,7 +219,7 @@ final class DecodingTests: XCTestCase {
 
     func testQueueOfMatchesTheServersOrderOnTheFixtures() throws {
         for state in [try Fixture.single(), try Fixture.multi()] {
-            XCTAssertEqual(BoardState.queueOf(state.cards), state.queue)
+            XCTAssertEqual(BoardState.queueOf(state.cards, agents: state.agents), state.queue)
         }
     }
 

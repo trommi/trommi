@@ -148,6 +148,7 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
 .pad-btn-primary:hover:not(:disabled) { background: var(--accent-hover) !important; }
 .pad-btn:disabled { opacity: .6; cursor: default; }
 
+.pad-keys:focus { outline: none; }
 .pad-keys { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-5) var(--s-8); padding: var(--s-5); }
 .pad-keys dl { margin: 0; display: grid; grid-template-columns: max-content 1fr; gap: 7px 14px; align-items: baseline; font-size: var(--t-sm); }
 .pad-keys dt { color: var(--muted); white-space: nowrap; }

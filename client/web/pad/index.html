@@ -118,7 +118,7 @@
   <p class="pad-dialog-note" id="send-result" role="alert" hidden></p>
   <footer>
     <button type="button" class="pad-btn" data-close>Close</button>
-    <button type="button" class="pad-btn pad-btn-primary" id="send-go">Send</button>
+    <button type="button" class="pad-btn pad-btn-primary" id="send-go" autofocus>Send</button>
   </footer>
 </dialog>
 
@@ -127,7 +127,7 @@
     <h2 id="help-title">Shortcuts</h2>
     <button type="button" class="pad-icon-btn" data-close data-icon="close" aria-label="Close"></button>
   </header>
-  <div class="pad-keys">
+  <div class="pad-keys" tabindex="-1" autofocus>
     <section>
       <h3>Put something down</h3>
       <dl>

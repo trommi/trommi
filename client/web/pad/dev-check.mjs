@@ -115,7 +115,7 @@ const summary = `return { n: pad.elements().length, types: pad.elements().map(e 
   await sleep(1300)
   st = await s.js(summary)
   const voice = await s.js(`return pad.elements().find(e => e.type === 'voice')`)
-  if (real) check('holding still starts a real recording (discarded, not sent to the speech service)', held.rec === 'recording' && held.shown && held.label === 'Recording' && !voice && !st.recording, held.label)
+  if (real) check('holding still starts a real recording (discarded, not sent to the speech service)', held.rec === 'recording' && held.shown && held.label.startsWith('Recording') && !voice && !st.recording, held.label)
   else check('holding still records (stub) and lands a marked voice element at that spot', held.rec === 'recording' && Boolean(voice) && voice.data.stub === true && Math.abs(voice.x - (330 - st.view.x)) < 2, voice ? voice.data.text.slice(0, 40) + '…' : 'none')
   let n = st.n
 

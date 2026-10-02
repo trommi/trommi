@@ -22,10 +22,10 @@ final class ImageStore {
     func file(_ attachment: Attachment) async throws -> URL {
         guard let client else { throw ClientError.notFound }
         let data = try await client.data(path: attachment.url)
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("anhang", isDirectory: true)
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent("attachments", isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         let name = attachment.name.replacingOccurrences(of: "/", with: "_")
-        let url = folder.appendingPathComponent(name.isEmpty ? "Anhang" : name)
+        let url = folder.appendingPathComponent(name.isEmpty ? "Attachment" : name)
         try data.write(to: url, options: .atomic)
         return url
     }
@@ -44,10 +44,10 @@ extension MediaAccess {
     }
 }
 
-/// Reads one card aloud at a time: GET /speech/card/<id> is an MP3.
+/// Reads one question aloud at a time: GET /speech/card/<id> is an MP3.
 @MainActor
 @Observable
-final class Speaker: NSObject, AVAudioPlayerDelegate {
+final class Speaker {
     enum Phase: Equatable { case idle, loading(String), playing(String) }
 
     private(set) var phase: Phase = .idle
@@ -55,10 +55,11 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
     @ObservationIgnored var client: (any BoardClient)?
     @ObservationIgnored private var player: AVAudioPlayer?
     @ObservationIgnored private var task: Task<Void, Never>?
+    @ObservationIgnored private let ending = PlaybackEnd()
 
     func isBusy(with cardID: String) -> Bool { phase == .loading(cardID) || phase == .playing(cardID) }
 
-    /// Reads the card, or stops if it is the one being read.
+    /// Reads the question, or stops if it is the one being read.
     func toggle(_ cardID: String) {
         let same = isBusy(with: cardID)
         stop()
@@ -71,14 +72,17 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
                 try AVAudioSession.sharedInstance().setCategory(.playback, mode: .spokenAudio)
                 try AVAudioSession.sharedInstance().setActive(true)
                 let player = try AVAudioPlayer(data: data)
-                player.delegate = self
+                self.ending.onEnd = { [weak self] in
+                    Task { @MainActor in self?.stop() }
+                }
+                player.delegate = self.ending
                 self.player = player
                 player.play()
                 self.phase = .playing(cardID)
             } catch {
                 guard let self, !Task.isCancelled else { return }
                 self.phase = .idle
-                self.failure = "Nicht vorgelesen: \(readable(error))"
+                self.failure = "Not read aloud: \(readable(error))"
             }
         }
     }
@@ -90,11 +94,14 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
         player = nil
         phase = .idle
     }
+}
 
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
-        Task { @MainActor in
-            if self.player === player { self.stop() }
-        }
+/// AVAudioPlayer reports its end to a delegate object; this one passes it on.
+private final class PlaybackEnd: NSObject, AVAudioPlayerDelegate {
+    var onEnd: (() -> Void)?
+
+    func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+        onEnd?()
     }
 }
 
@@ -108,10 +115,10 @@ final class Dictation {
     private(set) var phase: Phase = .idle
     var failure: String?
     @ObservationIgnored private var recorder: AVAudioRecorder?
-    @ObservationIgnored private let file = FileManager.default.temporaryDirectory.appendingPathComponent("diktat.m4a")
+    @ObservationIgnored private let file = FileManager.default.temporaryDirectory.appendingPathComponent("dictation.m4a")
 
     /// VoiceOver label, as in speech.js.
-    var label: String { phase == .recording ? "Aufnahme beenden" : "Nachricht diktieren" }
+    var label: String { phase == .recording ? "Stop recording" : "Dictate a message" }
 
     func toggle(transcribe: @escaping (Data) async throws -> String, onText: @escaping (String) -> Void) {
         switch phase {
@@ -124,7 +131,7 @@ final class Dictation {
     private func begin() async {
         failure = nil
         guard await AVAudioApplication.requestRecordPermission() else {
-            failure = "Kein Zugriff auf das Mikrofon. Erlaube ihn in den Einstellungen."
+            failure = "No access to the microphone. Allow it in Settings."
             return
         }
         do {
@@ -139,9 +146,9 @@ final class Dictation {
             guard recorder.record() else { throw ClientError.badAnswer }
             self.recorder = recorder
             phase = .recording
-            Haptics.tap()
+            Haptics.play(.tap)
         } catch {
-            failure = "Die Aufnahme ließ sich nicht starten."
+            failure = "The recording could not be started."
         }
     }
 
@@ -159,7 +166,7 @@ final class Dictation {
                 let text = try await transcribe(audio)
                 if !text.isEmpty { onText(text) }
             } catch {
-                failure = "Nicht erkannt: \(readable(error))"
+                failure = "Not recognised: \(readable(error))"
             }
             try? FileManager.default.removeItem(at: file)
             phase = .idle

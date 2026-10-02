@@ -24,7 +24,7 @@ final class StubBoardClient: BoardClient, @unchecked Sendable {
         self.init(state: try BoardState.decode(demoJSON).rebased(latest: now - 60_000))
     }
 
-    /// The next call of this kind ("decide", "reopen", "message") fails once, to exercise the rollback.
+    /// The next call of this kind ("decide", "reopen", "message", "session", "star") fails once, to exercise the rollback.
     func failNext(_ call: String) {
         lock.lock(); defer { lock.unlock() }
         failures.append(call)
@@ -84,8 +84,16 @@ final class StubBoardClient: BoardClient, @unchecked Sendable {
         try change("reopen") { try $0.reopen(cardID: cardID, now: $1) }
     }
 
+    func editSession(agent: String, changes: SessionChanges) async throws {
+        try change("session") { state, _ in try state.editSession(agent, changes) }
+    }
+
+    func star(agent: String, starred: Bool) async throws {
+        try change("star") { state, _ in try state.star(agent, starred) }
+    }
+
     func transcribe(audio: Data, contentType: String) async throws -> String {
-        "Das ist ein diktierter Satz."
+        "This is a dictated sentence."
     }
 
     func data(path: String) async throws -> Data { throw ClientError.notFound }
@@ -95,6 +103,7 @@ extension BoardState {
     /// The same board with every time shifted so that the newest one is `latest`.
     func rebased(latest: Double) -> BoardState {
         let times = cards.map(\.created) + cards.compactMap(\.decided) + messages.map(\.ts) + tasks.map(\.updated)
+            + agents.compactMap(\.connected) + agents.compactMap(\.seen)
         guard let newest = times.max() else { return self }
         let shift = latest - newest
         var copy = self
@@ -104,6 +113,11 @@ extension BoardState {
         }
         for i in copy.messages.indices { copy.messages[i].ts += shift }
         for i in copy.tasks.indices { copy.tasks[i].updated += shift }
+        for i in copy.agents.indices {
+            if let joined = copy.agents[i].joined { copy.agents[i].joined = joined + shift }
+            if let connected = copy.agents[i].connected { copy.agents[i].connected = connected + shift }
+            if let seen = copy.agents[i].seen { copy.agents[i].seen = seen + shift }
+        }
         return copy
     }
 }

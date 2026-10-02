@@ -4,7 +4,7 @@
 // one session, or a group of sessions the human laid together.
 
 const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
-const EMPTY = { agents: [], archived: [], groups: [], messages: [], cards: [], queue: [], tasks: [], speech: false }
+const EMPTY = { agents: [], archived: [], groups: [], messages: [], cards: [], queue: [], tasks: [], assets: [], speech: false }
 
 let source = null        // what the server sent last, untouched
 let raw = EMPTY          // the same, normalized
@@ -85,6 +85,8 @@ function normalize(data) {
     cards,
     queue,
     tasks: (data.tasks ?? []).map(t => ({ agent: fallback, ...t, agent_name: several ? nameOf[t.agent ?? fallback] ?? '' : '' })),
+    // What sessions published under a link of its own; the link itself is on the message that announced it.
+    assets: data.assets ?? [],
     speech: Boolean(data.speech),
   }
 }

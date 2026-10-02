@@ -465,6 +465,10 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   /* the foot is the row the arrows stand in, so they cover nothing; the window of one card has neither */
   .focus-sheet[data-state="cards"] .focus-foot { display: block; flex: none; height: calc(48px + env(safe-area-inset-bottom)); }
   .focus[data-single] .focus-foot { display: none !important; }
+  /* Undo, hint and info stand in that row too, between the arrows: nothing above moves when they come and go. */
+  .focus:not([data-single]) .focus-top { position: static; flex-wrap: nowrap; }
+  .focus:not([data-single]) .focus-top:has(.focus-notes > :not([hidden])) .focus-meta { flex: 0 1 auto; }
+  .focus:not([data-single]) .focus-top .focus-notes, .focus:not([data-single]) .focus-top:has(.focus-notes > :not([hidden])) .focus-notes { position: absolute; z-index: 2; left: calc(52px + env(safe-area-inset-left)); right: calc(52px + env(safe-area-inset-right)); bottom: env(safe-area-inset-bottom); width: auto; height: 48px; margin: 0; padding: 0; flex-wrap: nowrap; justify-content: center; }
   .focus-nav { position: absolute; bottom: env(safe-area-inset-bottom); background: none; box-shadow: none; }
   .focus-nav-prev { left: calc(var(--s-1) + env(safe-area-inset-left)); }
   .focus-nav-next { right: calc(var(--s-1) + env(safe-area-inset-right)); }

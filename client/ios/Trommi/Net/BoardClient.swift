@@ -9,6 +9,10 @@ protocol BoardClient: AnyObject, Sendable {
     func sendMessage(_ text: String, agent: String) async throws
     func decide(cardID: String, key: String, note: String) async throws
     func reopen(cardID: String) async throws
+    /// The human's own name and mark for a session, the archive, and laying sessions together (POST /session).
+    func editSession(agent: String, changes: SessionChanges) async throws
+    /// Mark a session as VIP, or take the mark away (POST /star).
+    func star(agent: String, starred: Bool) async throws
     /// Recorded audio to text.
     func transcribe(audio: Data, contentType: String) async throws -> String
     /// The bytes behind a path of this server: an attachment, or a card read aloud.
@@ -25,7 +29,7 @@ struct MediaAccess: Sendable {
 enum ClientError: Error, Equatable {
     /// 401: the token is not the server's.
     case unauthorized
-    /// The server answered with an error; the text is already German where known.
+    /// The server answered with an error; the text is already the app's wording where known.
     case server(String)
     /// No answer at all.
     case unreachable(String)
@@ -34,21 +38,21 @@ enum ClientError: Error, Equatable {
 
     var message: String {
         switch self {
-        case .unauthorized: return "Der Server kennt dieses Token nicht. Nimm den aktuellen Link aus data/url.txt."
+        case .unauthorized: return "The server does not know this token. Take the current link from data/url.txt."
         case .server(let text): return text
-        case .unreachable(let text): return text.isEmpty ? "Der Server hat nicht geantwortet." : "Keine Verbindung zum Server: \(text)"
-        case .notFound: return "Nicht gefunden."
-        case .badAnswer: return "Der Server hat etwas Unerwartetes geantwortet."
+        case .unreachable(let text): return text.isEmpty ? "The server did not answer." : "No connection to the server: \(text)"
+        case .notFound: return "Not found."
+        case .badAnswer: return "The server answered with something unexpected."
         }
     }
 }
 
-/// One readable German sentence for whatever went wrong.
+/// One readable sentence for whatever went wrong.
 func readable(_ error: Error) -> String {
     if let e = error as? ClientError { return e.message }
     if let e = error as? BoardError { return e.message }
     if let e = error as? LoginError { return e.message }
-    if error is CancellationError { return "Abgebrochen." }
+    if error is CancellationError { return "Cancelled." }
     let text = (error as NSError).localizedDescription
-    return text.isEmpty ? "Der Server hat nicht geantwortet." : text
+    return text.isEmpty ? "The server did not answer." : text
 }

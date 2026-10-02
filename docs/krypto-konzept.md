@@ -194,3 +194,7 @@ Aus `docs/gelernt.md` eingelöst: versionierte, einmalige, kurzlebige Einladunge
 | 9 | Wiederherstellungscode Pflicht, oder freiwillig | Pflicht beim Anlegen des Raums. |
 
 **Nicht nachgeprüft:** ob Safari einen nicht exportierbaren X25519-Schlüssel in IndexedDB zuverlässig speichert (ein Bericht sagt nein; vor Schritt 3 testen, Ausweg: den Schlüssel mit einem nicht exportierbaren AES-Schlüssel verpackt ablegen); ab welcher Version jeder Browser X25519 kann (die Versionen oben sind für Ed25519 belegt); `integrity` in der Import Map (berichtet: Chrome 127, Safari 18.4, Firefox 138); ob Tinfoil Aufrufe aus dem Browser erlaubt (CORS); Zeiten in Browser und iOS. Trommi · Entwurf, zur Entscheidung.
+
+## Entschieden
+
+- 2. Oktober 2026: Prüfcode beim Beitritt ist Pflicht für menschliche Geräte, voreingestellt für Agenten (Board-Karte Nr. 39).

@@ -1,15 +1,17 @@
-// Everything the views derive from the state, and the changes the app applies
-// to it locally. The rules mirror server.mjs (queueOf, decide, reopen) and the
-// web client (inbox.js, agents.js), so both clients order and label alike.
+// The stack of open questions and the changes the app applies to the state
+// locally. The rules mirror server.mjs (queueOf, decide, reopen, POST /session,
+// POST /star), so what the app shows while it waits is what the server sends.
 import Foundation
 
 // MARK: - Queue
 
 extension BoardState {
     /// The stack order of server.mjs queueOf: approvals first, then by urgency, then oldest first.
-    static func queueOf(_ cards: [Card]) -> [String] {
+    /// What an archived session asked stays open but is not in the stack.
+    static func queueOf(_ cards: [Card], agents: [Agent] = []) -> [String] {
         func rank(_ c: Card) -> Int { c.kind == .permission ? Urgency.allCases.count : c.urgency.rank }
-        return cards.filter { $0.status == .open }
+        let shelved = Set(agents.filter(\.archived).map(\.id))
+        return cards.filter { $0.status == .open && !shelved.contains($0.agent) }
             .sorted { a, b in
                 if rank(a) != rank(b) { return rank(a) > rank(b) }
                 if a.created != b.created { return a.created < b.created }
@@ -20,8 +22,8 @@ extension BoardState {
 
     /// The server's queue if it sent one, without ids that are not open cards and
     /// with open cards it forgot appended; computed here if it sent none.
-    static func repairedQueue(_ given: [String]?, cards: [Card]) -> [String] {
-        let computed = queueOf(cards)
+    static func repairedQueue(_ given: [String]?, cards: [Card], agents: [Agent] = []) -> [String] {
+        let computed = queueOf(cards, agents: agents)
         guard let given else { return computed }
         let open = Set(computed)
         var seen = Set<String>()
@@ -42,189 +44,51 @@ extension BoardState {
     func conversation(of agentID: String) -> [Message] { messages.filter { $0.agent == agentID } }
 }
 
-// MARK: - Inbox
-
-struct InboxGroup: Equatable, Identifiable {
-    var agent: Agent
-    var cards: [Card]
-    var id: String { agent.id }
-}
-
-extension BoardState {
-    /// One group per sender; the sender with the most urgent question comes first.
-    /// Senders of equal urgency keep the order of the agent list.
-    var inboxGroups: [InboxGroup] {
-        let open = openCards
-        return agents.enumerated()
-            .map { (offset: $0.offset, group: InboxGroup(agent: $0.element, cards: open.filter { [id = $0.element.id] in $0.agent == id })) }
-            .filter { !$0.group.cards.isEmpty }
-            .sorted { a, b in
-                let ra = a.group.cards.map(\.urgency.rank).max() ?? 1
-                let rb = b.group.cards.map(\.urgency.rank).max() ?? 1
-                return ra != rb ? ra > rb : a.offset < b.offset
-            }
-            .map(\.group)
-    }
-
-    /// "3 Fragen warten auf dich." under the inbox title.
-    var inboxLine: String {
-        switch queue.count {
-        case 0: return "Nichts wartet auf dich."
-        case 1: return "1 Frage wartet auf dich."
-        default: return "\(queue.count) Fragen warten auf dich."
-        }
-    }
-}
-
-extension Card {
-    /// Answerable in the list: a yes/no kind of question. Two options with labels
-    /// short enough for a button, at most about three lines of text, nothing
-    /// attached that the human should look at first. Same rule as quick() in inbox.js,
-    /// which counts UTF-16 units like JavaScript's length.
-    var isQuick: Bool {
-        if kind == .permission { return true }
-        return options.count == 2
-            && options.allSatisfy { $0.label.utf16.count <= 18 }
-            && attachments.isEmpty
-            && body.utf16.count <= 240
-    }
-
-    /// The buttons of a row or a card. Approvals put "Ablehnen" first and "Erlauben" last.
-    var orderedOptions: [CardOption] {
-        guard kind == .permission else { return options }
-        return options.filter { $0.key != "allow" } + options.filter { $0.key == "allow" }
-    }
-
-    /// The option the agent leads with: the first one, or "Erlauben" on an approval.
-    var leadKey: String? { kind == .permission ? "allow" : options.first?.key }
-
-    /// The second half of the corner tab: "Nr. 5 | Blockiert".
-    var tabLabel: String { kind == .permission ? "Freigabe" : urgency.label }
-
-    /// The grey line under the title in the inbox: reason and body without markdown.
-    var excerpt: String {
-        [urgencyReason, Card.plain(body)].filter { !$0.isEmpty }.joined(separator: " · ")
-    }
-
-    /// The label of the chosen option, if any.
-    var choiceLabel: String? {
-        guard let choice else { return nil }
-        return options.first { $0.key == choice }?.label ?? choice
-    }
-
-    /// Body text with code blocks dropped and markdown signs removed, on one line.
-    static func plain(_ text: String) -> String {
-        var out = ""
-        var rest = Substring(text)
-        // Fenced blocks: everything between a pair of ``` goes, an unclosed fence stays.
-        while let open = rest.range(of: "```"), let close = rest[open.upperBound...].range(of: "```") {
-            out += rest[..<open.lowerBound]
-            out += " "
-            rest = rest[close.upperBound...]
-        }
-        out += rest
-        out.removeAll { $0 == "*" || $0 == "`" || $0 == "#" }
-        return out.split(whereSeparator: \.isWhitespace).joined(separator: " ")
-    }
-}
-
-// MARK: - Sessions
-
-struct AgentSummary: Equatable {
-    var open: Int
-    var tasks: [TaskLine]
-    /// The light of the whole agent: red while a question is open, else the most pressing status line.
-    var light: TaskState?
-    var lastMessage: Message?
-    /// "wartet auf dich", "arbeitet", "fertig", "verbunden" or "getrennt".
-    var subtitle: String
-}
-
-extension TaskState {
-    var order: Int {
-        switch self {
-        case .decision: return 0
-        case .working: return 1
-        case .done: return 2
-        }
-    }
-
-    /// STATE_WORD in agents.js.
-    var word: String {
-        switch self {
-        case .decision: return "wartet auf dich"
-        case .working: return "arbeitet"
-        case .done: return "fertig"
-        }
-    }
-}
-
-extension BoardState {
-    func summary(of agent: Agent) -> AgentSummary {
-        let open = openCards.filter { $0.agent == agent.id }.count
-        let tasks = self.tasks.filter { $0.agent == agent.id }
-        let light: TaskState? = open > 0 ? .decision : tasks.map(\.state).min { $0.order < $1.order }
-        let last = messages.last { $0.agent == agent.id && $0.from == .agent }
-        let subtitle = agent.online ? (light?.word ?? "verbunden") : "getrennt"
-        return AgentSummary(open: open, tasks: tasks, light: light, lastMessage: last, subtitle: subtitle)
-    }
-}
-
-extension Agent {
-    /// The letter in the avatar.
-    var initial: String {
-        let first = name.unicodeScalars.first { s in
-            (s.value >= 48 && s.value <= 57) || (s.value >= 65 && s.value <= 90) || (s.value >= 97 && s.value <= 122)
-        }
-        return first.map { String($0).uppercased() } ?? "?"
-    }
-
-    /// A stable colour per agent: the same hue the web client picks (hueOf in agents.js).
-    var hue: Int {
-        let hues = [162, 28, 262, 205, 338, 96, 48, 232]
-        var h: UInt32 = 0
-        for unit in id.utf16 { h = h &* 31 &+ UInt32(unit) }
-        return hues[Int(h % UInt32(hues.count))]
-    }
-}
-
-// MARK: - Labels
+// MARK: - Wording
 
 enum Wording {
     /// EVENT_LABEL in chat.js.
     static func eventLabel(_ kind: String) -> String {
         switch kind {
-        case "asked": return "Neue Frage"
-        case "decided": return "Entschieden"
-        case "done": return "Erledigt"
-        case "urgency": return "Dringlichkeit"
-        case "reopened": return "Zurückgenommen"
+        case "asked": return "New question"
+        case "decided": return "Answered"
+        case "done": return "Done"
+        case "urgency": return "Urgency"
+        case "reopened": return "Taken back"
         default: return "Board"
         }
     }
 
     /// ago() in ui.js. Timestamps are milliseconds.
-    static func ago(_ ts: Double, now: Double) -> String {
+    static func ago(_ ts: Double, now: Double, timeZone: TimeZone = .current) -> String {
         let minutes = Int(((now - ts) / 60000).rounded())
-        if minutes < 1 { return "gerade eben" }
-        if minutes < 60 { return "vor \(minutes) Min." }
-        if minutes < 1440 { return "vor \(Int((Double(minutes) / 60).rounded())) Std." }
+        if minutes < 1 { return "just now" }
+        if minutes < 60 { return "\(minutes) min ago" }
+        if minutes < 1440 { return "\(Int((Double(minutes) / 60).rounded())) h ago" }
         let f = DateFormatter()
-        f.locale = Locale(identifier: "de_DE")
-        f.dateFormat = "d. MMM"
+        f.locale = Locale(identifier: "en_GB")
+        f.timeZone = timeZone
+        f.dateFormat = "d MMM"
         return f.string(from: Date(timeIntervalSince1970: ts / 1000))
     }
 
-    static func questions(_ n: Int) -> String { n == 1 ? "1 Frage" : "\(n) Fragen" }
-    static func attachments(_ n: Int) -> String { n == 1 ? "1 Anhang" : "\(n) Anhänge" }
-    static func openDecisions(_ n: Int) -> String {
-        n == 0 ? "alles entschieden" : n == 1 ? "1 Entscheidung offen" : "\(n) Entscheidungen offen"
+    /// clock() in ui.js: "14:05".
+    static func clock(_ ts: Double, timeZone: TimeZone = .current) -> String {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_GB")
+        f.timeZone = timeZone
+        f.dateFormat = "HH:mm"
+        return f.string(from: Date(timeIntervalSince1970: ts / 1000))
     }
+
+    static func questions(_ n: Int) -> String { n == 1 ? "1 question" : "\(n) questions" }
+    static func items(_ n: Int) -> String { n == 1 ? "1 item" : "\(n) items" }
+    static func sessions(_ n: Int) -> String { n == 1 ? "1 session" : "\(n) sessions" }
 }
 
-// MARK: - Local changes
+// MARK: - Errors
 
-/// What the server answers when a change is not possible, in the app's words.
+/// What the server answers when a change is not possible.
 enum BoardError: Error, Equatable {
     case unknownCard
     case alreadyDecided
@@ -234,40 +98,74 @@ enum BoardError: Error, Equatable {
     case withdrawn
     case emptyMessage
     case unknownAgent
+    case onlineNotArchived
 
     var message: String {
         switch self {
-        case .unknownCard: return "Diese Karte gibt es nicht mehr."
-        case .alreadyDecided: return "Die Karte wurde schon entschieden."
-        case .unknownOption: return "Diese Option gibt es nicht."
-        case .notADecision: return "Nur Entscheidungen lassen sich zurücknehmen."
-        case .alreadyOpen: return "Die Karte ist schon offen."
-        case .withdrawn: return "Der Agent hat die Karte zurückgezogen."
-        case .emptyMessage: return "Die Nachricht ist leer."
-        case .unknownAgent: return "Diesen Agenten gibt es nicht."
+        case .unknownCard: return "This question no longer exists."
+        case .alreadyDecided: return "This question was already answered."
+        case .unknownOption: return "This option does not exist."
+        case .notADecision: return "Only questions can be taken back, not permissions."
+        case .alreadyOpen: return "This question is already open."
+        case .withdrawn: return "The agent withdrew this question."
+        case .emptyMessage: return "The message is empty."
+        case .unknownAgent: return "This session no longer exists."
+        case .onlineNotArchived: return "A session that is connected cannot be archived."
         }
     }
 
-    /// The server reports errors in English ({"error": "card already decided"}); say them in German.
+    /// The server's own error texts ({"error": "card already decided"}), said the app's way where known.
     static func translate(_ serverText: String) -> String {
         let known: [(String, BoardError)] = [
             ("unknown card", .unknownCard), ("card already decided", .alreadyDecided),
             ("unknown option", .unknownOption), ("only decisions can be reopened", .notADecision),
             ("card is already open", .alreadyOpen), ("the agent withdrew this card", .withdrawn),
             ("empty message", .emptyMessage), ("no agent ", .unknownAgent),
+            ("a session that is online cannot be archived", .onlineNotArchived),
         ]
         for (text, error) in known where serverText.hasPrefix(text) { return error.message }
-        if serverText == "forbidden" { return "Der Server hat die Anfrage abgelehnt." }
-        if serverText.hasPrefix("agent is required") { return "Wähle zuerst einen Agenten aus." }
+        if serverText == "forbidden" { return "The server refused the request." }
+        if serverText.hasPrefix("agent is required") { return "Pick a session first." }
         return serverText
     }
 }
+
+// MARK: - Local changes
 
 /// An answer the human gave that the server has not confirmed yet.
 struct PendingDecision: Equatable, Sendable {
     var cardID: String
     var key: String
     var note: String
+}
+
+/// What POST /session can change. nil leaves a field alone.
+struct SessionChanges: Equatable, Sendable {
+    enum Group: Equatable, Sendable {
+        case keep
+        /// Take the session out of its group (JSON null).
+        case remove
+        case set(String)
+    }
+
+    var label: String?
+    var icon: String?
+    var archived: Bool?
+    var group: Group = .keep
+
+    /// The JSON body of POST /session, as server.mjs reads it.
+    func body(agent: String) -> [String: Any] {
+        var out: [String: Any] = ["agent": agent]
+        if let label { out["label"] = label }
+        if let icon { out["icon"] = icon }
+        if let archived { out["archived"] = archived }
+        switch group {
+        case .keep: break
+        case .remove: out["group"] = NSNull()
+        case .set(let id): out["group"] = id
+        }
+        return out
+    }
 }
 
 extension BoardState {
@@ -291,7 +189,7 @@ extension BoardState {
             tasks[t].cardID = nil
             tasks[t].updated = now
         }
-        queue = BoardState.queueOf(cards)
+        queue = BoardState.queueOf(cards, agents: agents)
     }
 
     /// What reopen() in server.mjs does to the state.
@@ -308,7 +206,7 @@ extension BoardState {
         let card = cards[i]
         messages.append(Message(id: "local-\(messages.count)-reopened-\(card.id)", agent: card.agent, from: .event, kind: "reopened",
                                 cardID: card.id, text: card.title, details: "", attachments: [], ts: now))
-        queue = BoardState.queueOf(cards)
+        queue = BoardState.queueOf(cards, agents: agents)
     }
 
     /// What POST /message does to the state.
@@ -320,6 +218,29 @@ extension BoardState {
                                 cardID: nil, text: clean, details: "", attachments: [], ts: now))
     }
 
+    /// What POST /session does to the state.
+    mutating func editSession(_ agentID: String, _ changes: SessionChanges) throws {
+        guard let i = agents.firstIndex(where: { $0.id == agentID }) else { throw BoardError.unknownAgent }
+        if changes.archived == true, agents[i].online { throw BoardError.onlineNotArchived }
+        if let archived = changes.archived { agents[i].archived = archived }
+        switch changes.group {
+        case .keep: break
+        case .remove: agents[i].group = nil
+        case .set(let id):
+            let clean = String(id.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40))
+            agents[i].group = clean.isEmpty ? nil : clean
+        }
+        if let label = changes.label { agents[i].label = String(label.trimmingCharacters(in: .whitespacesAndNewlines).prefix(60)) }
+        if let icon = changes.icon { agents[i].icon = String(icon.prefix(80)) }
+        queue = BoardState.queueOf(cards, agents: agents)
+    }
+
+    /// What POST /star does to the state.
+    mutating func star(_ agentID: String, _ starred: Bool) throws {
+        guard let i = agents.firstIndex(where: { $0.id == agentID }) else { throw BoardError.unknownAgent }
+        agents[i].starred = starred
+    }
+
     /// The state as the human should see it while answers are on their way:
     /// every pending answer whose card is still open is shown as given. Answers
     /// the server already knows about, or can no longer take, change nothing.
@@ -328,20 +249,5 @@ extension BoardState {
         var copy = self
         for p in pending { try? copy.decide(cardID: p.cardID, key: p.key, note: p.note, now: now) }
         return copy
-    }
-}
-
-// MARK: - Focus flow
-
-enum FocusOrder {
-    /// Which card to show after `current` left the stack. `before` is the order
-    /// the human was looking at, `after` the order now: the next card that is
-    /// still open, else the previous one, else nothing.
-    static func next(after current: String, before: [String], after now: [String]) -> String? {
-        guard let at = before.firstIndex(of: current) else { return now.first }
-        let open = Set(now)
-        if let later = before[(at + 1)...].first(where: { open.contains($0) }) { return later }
-        if let earlier = before[..<at].last(where: { open.contains($0) }) { return earlier }
-        return now.first { $0 != current }
     }
 }

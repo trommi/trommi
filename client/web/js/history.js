@@ -5,7 +5,7 @@
 
 import { el, agoNode, URGENCY_LABEL, kindOf } from './ui.js'
 import { reopen } from './store.js'
-import { icon, attachmentNodes, richPlus, openLightbox } from './chat.js'
+import { icon, attachmentNodes, richPlus, openLightbox, ASSET_LABEL } from './chat.js'
 
 const SHORT = 6   // so many lines stand open to view; the rest wait behind one button
 
@@ -196,14 +196,19 @@ function gather(all, agent) {
   for (const m of all.messages) {
     if (m.agent !== agent) continue
     add(m.attachments, m.ts, null)
-    // Published pages and assets arrive as links in what the agent writes.
+    // What the session published under a link of its own; revoked ones stay in the list, without a link.
+    if (m.asset) {
+      items.push({ ts: m.ts, where: m.asset.gone ? 'no longer available' : m.asset.note || null, kind: 'asset', label: ASSET_LABEL[m.asset.type] ?? 'File', name: m.asset.title || 'Untitled', url: m.asset.gone ? null : m.asset.url, key: m.asset.id })
+      continue
+    }
+    // Other pages arrive as links in what the agent writes.
     if (m.from !== 'user' && m.from !== 'event') {
       for (const [url] of String(m.text ?? '').matchAll(LINK)) items.push({ ts: m.ts, where: null, kind: 'link', name: url.replace(/^https?:\/\//, '').replace(/[.,;:!?]+$/, ''), url: url.replace(/[.,;:!?]+$/, '') })
     }
   }
   for (const c of all.cards) if (c.agent === agent) add(c.attachments, c.created, c.title)
   const seen = new Set()
-  return items.sort((a, b) => b.ts - a.ts).filter(i => !seen.has(i.url) && seen.add(i.url))
+  return items.sort((a, b) => b.ts - a.ts).filter(i => !seen.has(i.key ?? i.url) && seen.add(i.key ?? i.url))
 }
 
 /** Render one session's files into root: one list, each line opens its item. Returns { render(state, loaded) }. */
@@ -225,8 +230,10 @@ export function mountFiles(root, { agent }) {
     const pictures = items.filter(i => i.kind === 'image' || i.kind === 'scribble')
     list.replaceChildren(...items.map(item => {
       const visual = pictures.includes(item)
-      const row = el(visual ? 'button' : 'a', 'file-row')
-      if (visual) {
+      const row = el(visual ? 'button' : item.url ? 'a' : 'div', item.url || visual ? 'file-row' : 'file-row is-gone')
+      if (!item.url) {
+        // revoked: nothing to open
+      } else if (visual) {
         row.type = 'button'
         row.addEventListener('click', () => openLightbox(pictures, pictures.indexOf(item)))
       } else {
@@ -242,9 +249,9 @@ export function mountFiles(root, { agent }) {
         img.loading = 'lazy'
         img.addEventListener('error', () => img.replaceWith(icon('file')))
         thumb.append(img)
-      } else thumb.append(icon(item.kind === 'link' ? 'external' : 'file'))
+      } else thumb.append(icon(item.kind === 'link' || item.kind === 'asset' ? 'external' : 'file'))
       const meta = el('span', 'file-meta')
-      meta.append(KIND_LABEL[item.kind] ?? 'File', ' · ', agoNode(item.ts))
+      meta.append(item.kind === 'asset' ? `Published ${item.label.toLowerCase()}` : KIND_LABEL[item.kind] ?? 'File', ' · ', agoNode(item.ts))
       if (item.where) meta.append(' · ', item.where)
       const text = el('span', 'file-text')
       text.append(el('strong', null, item.name), meta)

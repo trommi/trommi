@@ -259,6 +259,43 @@ function scribbleCard(a, onOpen) {
   return card
 }
 
+export const ASSET_LABEL = { html: 'Page', image: 'Picture', video: 'Video', audio: 'Audio', file: 'File' }
+const sizeText = n => (n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} kB`)
+
+// A page or file the session published under a link that opens without a login: what it is,
+// and the two things to do with it. Once revoked or expired only its name is left, dashed.
+function assetCard(asset) {
+  const card = el('div', 'asset-card')
+  const kind = el('span', 'caps', [ASSET_LABEL[asset.type] ?? 'File', !asset.gone && asset.size ? sizeText(asset.size) : ''].filter(Boolean).join(' · '))
+  const text = el('div', 'asset-text')
+  text.append(kind, el('strong', null, asset.title || 'Untitled'))
+  card.append(text)
+  if (asset.gone) {
+    card.classList.add('is-gone')
+    text.append(el('span', null, 'No longer available.'))
+    return card
+  }
+  if (asset.note) text.append(el('span', null, asset.note))
+  const open = el('a', 'asset-open', 'Open')
+  open.href = asset.url
+  open.target = '_blank'
+  open.rel = 'noopener'
+  const copy = button('asset-copy')
+  copy.textContent = 'Copy link'
+  let timer
+  copy.addEventListener('click', async () => {
+    // The link carries its key after the #; anyone who has it can open the page.
+    const ok = await copyText(new URL(asset.url, location.href).href)
+    copy.textContent = ok ? 'Copied' : 'Not copied'
+    clearTimeout(timer)
+    timer = setTimeout(() => { copy.textContent = 'Copy link' }, 1800)
+  })
+  const actions = el('div', 'asset-actions')
+  actions.append(open, copy)
+  card.append(actions)
+  return card
+}
+
 function eventLine(m, cont, onCard) {
   const node = button(`event event-${m.kind}${cont ? ' cont' : ''}`)
   const ico = el('span', 'event-ico')
@@ -432,9 +469,13 @@ function createPane(agent, ctx) {
     } else {
       node.title = fullTime(m.ts)
     }
-    const text = richPlus(m.text ?? '')
-    text.append(...attachmentNodes(m.attachments))
-    node.append(text)
+    // Something published under a link of its own stands as a card; the text only repeats it.
+    if (m.asset) node.append(assetCard(m.asset))
+    else {
+      const text = richPlus(m.text ?? '')
+      text.append(...attachmentNodes(m.attachments))
+      node.append(text)
+    }
     // What the agent chose to show of its reasoning or evidence, closed until asked for.
     if (m.details) {
       const more = el('details', 'msg-details')

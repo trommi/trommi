@@ -1,6 +1,6 @@
 // The state the server sends over /events, decoded defensively: unknown fields
 // are ignored, missing ones get the same defaults the web client uses
-// (public/js/store.js, normalize) and the server uses when loading old files.
+// (client/web/js/store.js, normalize) and the server uses when loading old files.
 import Foundation
 
 enum Urgency: String, CaseIterable, Sendable, Codable {
@@ -16,13 +16,13 @@ enum Urgency: String, CaseIterable, Sendable, Codable {
         }
     }
 
-    /// Same wording as URGENCY_LABEL in public/js/ui.js.
+    /// Same wording as URGENCY_LABEL in client/web/js/ui.js.
     var label: String {
         switch self {
-        case .low: return "Hat Zeit"
+        case .low: return "Whenever"
         case .normal: return "Normal"
-        case .high: return "Dringend"
-        case .critical: return "Blockiert"
+        case .high: return "Urgent"
+        case .critical: return "Blocking"
         }
     }
 }
@@ -48,11 +48,43 @@ struct Attachment: Equatable, Sendable, Identifiable {
     var id: String { url }
 }
 
+/// One session on the board. `name` is what the session calls itself; the human
+/// may give it a `label` and another `icon` (the seed of its scribbled mark).
 struct Agent: Equatable, Sendable, Identifiable {
     var id: String
     var name: String
-    var cwd: String
-    var online: Bool
+    var cwd: String = ""
+    var online: Bool = false
+    /// The human's own name for the session; empty when none was given.
+    var label: String = ""
+    /// The seed of the mark the human picked; empty means the id.
+    var icon: String = ""
+    var model: String = ""
+    var host: String = ""
+    var platform: String = ""
+    /// The program on the other end of the channel, e.g. "claude-code 2.1.0".
+    var client: String = ""
+    var task: String = ""
+    /// VIP: its questions lead the inbox.
+    var starred: Bool = false
+    /// Put away by the human; hidden, and its questions wait with it.
+    var archived: Bool = false
+    /// Sessions that share a group id are shown together.
+    var group: String?
+    var joined: Double?
+    var connected: Double?
+    var seen: Double?
+}
+
+/// A page or file the agent published under a link (publish_asset).
+struct AssetRef: Equatable, Sendable {
+    var id: String
+    var type: String
+    var title: String
+    var note: String
+    /// "/a/<id>#<key>" on the board's own address; empty once the asset is gone.
+    var url: String
+    var gone: Bool
 }
 
 struct Card: Equatable, Sendable, Identifiable {
@@ -73,6 +105,8 @@ struct Card: Equatable, Sendable, Identifiable {
     /// Milliseconds since 1970, as the server writes them.
     var created: Double
     var decided: Double?
+    /// The key of the option the agent would pick itself; nil when it has no preference.
+    var recommended: String? = nil
 }
 
 struct Message: Equatable, Sendable, Identifiable {
@@ -83,9 +117,11 @@ struct Message: Equatable, Sendable, Identifiable {
     var kind: String
     var cardID: String?
     var text: String
+    /// Longer material the agent chose to show, collapsed under the message.
     var details: String
     var attachments: [Attachment]
     var ts: Double
+    var asset: AssetRef? = nil
 }
 
 struct TaskLine: Equatable, Sendable, Identifiable {
@@ -100,6 +136,7 @@ struct TaskLine: Equatable, Sendable, Identifiable {
 }
 
 struct BoardState: Equatable, Sendable {
+    /// Every session the server knows, archived ones included; views use `sessions`.
     var agents: [Agent] = []
     var messages: [Message] = []
     var cards: [Card] = []
@@ -176,6 +213,12 @@ private struct Fields {
         return false
     }
 
+    /// A nested object, nil when missing, null or unreadable.
+    func object<T: Decodable>(_ key: String, of type: T.Type = T.self) -> T? {
+        guard let box else { return nil }
+        return (try? box.decode(Lossy<T>.self, forKey: AnyKey(key)))?.value
+    }
+
     func array<T: Decodable>(_ key: String, of type: T.Type = T.self) -> [T] {
         guard let box, let raw = try? box.decode([Lossy<T>].self, forKey: AnyKey(key)) else { return [] }
         return raw.compactMap(\.value)
@@ -218,6 +261,35 @@ extension Agent: Decodable {
         name = f.string("name", id)
         cwd = f.string("cwd")
         online = f.bool("online")
+        label = f.string("label").trimmingCharacters(in: .whitespacesAndNewlines)
+        icon = f.string("icon")
+        model = f.string("model")
+        host = f.string("host")
+        platform = f.string("platform")
+        client = f.string("client")
+        task = f.string("task")
+        starred = f.bool("starred")
+        archived = f.bool("archived")
+        let g = f.string("group").trimmingCharacters(in: .whitespacesAndNewlines)
+        group = g.isEmpty ? nil : g
+        joined = f.double("joined")
+        connected = f.double("connected")
+        seen = f.double("seen")
+    }
+}
+
+extension AssetRef: Decodable {
+    init(from decoder: Decoder) throws {
+        let f = Fields(decoder)
+        guard let id = f.optionalString("id"), !id.isEmpty else {
+            throw DecodingError.dataCorrupted(.init(codingPath: decoder.codingPath, debugDescription: "asset without id"))
+        }
+        self.id = id
+        type = f.string("type", "file")
+        title = f.string("title")
+        note = f.string("note")
+        url = f.string("url")
+        gone = f.bool("gone") || url.isEmpty
     }
 }
 
@@ -244,6 +316,9 @@ extension Card: Decodable {
         summary = f.string("summary")
         created = f.double("created") ?? 0
         decided = f.double("decided")
+        // Advice only counts when it names one of the options.
+        let advised = f.optionalString("recommended")
+        recommended = options.contains { $0.key == advised } ? advised : nil
     }
 }
 
@@ -262,6 +337,7 @@ extension Message: Decodable {
         cardID = f.optionalString("card_id")
         details = f.string("details")
         attachments = f.array("attachments")
+        asset = f.object("asset")
     }
 }
 
@@ -289,7 +365,9 @@ extension BoardState: Decodable {
         }
         var agents: [Agent] = f.array("agents")
         // A state without agents comes from a server older than multi-agent boards.
-        if agents.isEmpty { agents = [Agent(id: "main", name: "Agent", cwd: "", online: true)] }
+        if agents.isEmpty { agents = [Agent(id: "main", name: "Agent", online: true)] }
+        var seenAgents = Set<String>()
+        agents = agents.filter { seenAgents.insert($0.id).inserted }
         let fallback = agents[0].id
 
         var cards: [Card] = f.array("cards")
@@ -319,7 +397,7 @@ extension BoardState: Decodable {
         self.cards = cards
         self.tasks = tasks
         self.speech = f.bool("speech")
-        self.queue = BoardState.repairedQueue(f.has("queue") ? f.array("queue", of: QueueID.self).map(\.value) : nil, cards: cards)
+        self.queue = BoardState.repairedQueue(f.has("queue") ? f.array("queue", of: QueueID.self).map(\.value) : nil, cards: cards, agents: agents)
     }
 }
 
