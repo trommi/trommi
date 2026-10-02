@@ -15,3 +15,7 @@ Punkte, die besprochen, aber noch nicht gebaut sind. Reihenfolge ist keine Prior
 - [ ] **Datei-Upload vom Menschen:** Bilder und Dateien direkt im Gespräch anhängen (bisher nur über Scribble).
 - [ ] **Benachrichtigungen:** Push aufs Handy, wenn eine dringende Karte auf dem Stapel landet.
 - [ ] **Archiv:** Erledigte Karten nach einer Frist ausblenden, Suche über alte Entscheidungen.
+
+## Erst wenn wir live gehen
+- [ ] **Hub als eigener Dienst:** `deploy/install-user-service.sh --enable` statt von Claude gestartetem Hub. In der Entwicklung startet Claude den Hub; das ist so gewollt (Christopher, 2.10.2026).
+- [ ] **Hub nur auf Loopback binden:** erreichbar über localhost und den Tailnet-Namen, nicht mehr als HTTP im LAN.
