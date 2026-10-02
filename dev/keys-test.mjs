@@ -126,6 +126,7 @@ const keys = async (...names) => { for (const n of names) await key(n) }
 /** A real click at the middle of the element an expression names. */
 let lastClick = null
 async function click(expression) {
+  if (!(await ev(`return Boolean(${expression})`))) { check(false, `nothing to click: ${expression.slice(0, 80)}`); return null }
   await ev(`const n = ${expression}; if (!__k.inSight(n)) n.scrollIntoView({ block: 'center' })`)
   await sleep(80)
   const at = await ev(`return __k.point(${expression})`)
@@ -209,6 +210,8 @@ async function main() {
   c.g2 = await gamma.ask({ title: 'Renew the certificate?', options: YES_NO })
   c.g3 = await gamma.ask({ title: 'Archive the old logs?', options: YES_NO })
   c.g4 = await gamma.ask({ title: 'Move the backups to cold storage?', options: YES_NO })
+  // Six more, for the four ways out of a question that are no answer.
+  for (const [k, title] of [['x1', 'Snooze me?'], ['x2', 'Revise me?'], ['x3', 'Whatever me?'], ['x4', 'Shred me?'], ['x5', 'Whatever me in the list?'], ['x6', 'Shred me in the list?']]) c[k] = await alpha.ask({ title, options: YES_NO, recommended: 'yes' })
   await sleep(300)
 
   browser = await launchChromium({ width: 1440, height: 900 })
@@ -222,7 +225,7 @@ async function main() {
   section('Inbox: moving between questions')
   await open('/')
   const ids = await ev('return __k.rows().map(n => n.dataset.id)')
-  check(ids.length === 13, `the inbox lists 13 rows, found ${ids.length}`)
+  check(ids.length === 19, `the inbox lists 19 rows, found ${ids.length}`)
   check(!(await cur()), 'no row is marked before a key is pressed')
   await key('y')
   check((await cur())?.id === ids[0], 'with no mark, Y marks the first row')
@@ -240,7 +243,7 @@ async function main() {
   const groupOf = 'return __k.list().querySelector(".is-current").closest(".inbox-group") === __k.first'
   const firstGroup = true
   let crossed = false
-  for (let i = 0; i < 12; i++) {
+  for (let i = 0; i < 18; i++) {
     await key('j', { pause: 260 })
     check(await ev('return __k.inView(__k.list().querySelector(".is-current"))'), `row ${i + 2} is wholly in view when J reaches it`)
     if (await ev(groupOf) !== firstGroup) crossed = true
@@ -634,6 +637,49 @@ async function main() {
   await key('Escape', { pause: 400 })
   check(await ev('return !document.querySelector(".focus:not([hidden]) .focus-card[data-shown]") || document.querySelector(".focus").hasAttribute("data-closing") || document.querySelector(".focus").hidden'), 'Escape then closes the walk')
   await sleep(300)
+
+  // ---------------------------------------------------------------------------
+  section('The ways out that are no answer: Snooze, Revise, Whatever, Shred; and H')
+  await open('/')
+  await keys('g', 'f')
+  await until('the walk opens', () => ev('return Boolean(__k.front())'))
+  const titleNow = () => ev('return __k.frontTitle()')
+  const strips = () => ev('return [...document.querySelectorAll(".focus .focus-strip")].filter(s => s.getClientRects().length).map(n => n.innerText.replace(/\\s+/g, " "))')
+  const bring = async id => { for (let i = 0; i < 40 && await titleNow() !== card(id).title; i++) await key('j', { pause: 260 }); return check(await titleNow() === card(id).title, `J reaches "${card(id).title}" in the walk`) }
+  if (await bring(c.x1)) {
+    await key('h', { pause: 300 })
+    check(await titleNow() === card(c.x1).title && card(c.x1).status === 'open', 'H (hear it) changes nothing on a board without speech')
+    await key('s', { pause: 800 })
+    check(card(c.x1).status === 'open' && (await strips()).some(t => t.includes(card(c.x1).title)), `S snoozes the question in front (strips: ${(await strips()).join(' | ')})`)
+  }
+  if (await bring(c.x2)) {
+    await key('b', { pause: 900 })
+    check(card(c.x2).status === 'open' && (await strips()).some(t => t.includes(card(c.x2).title)), `B hands the question back to the agent (strips: ${(await strips()).join(' | ')})`)
+  }
+  if (await bring(c.x3)) {
+    await key('r', { pause: 300 })
+    await until('R (whatever) leaves the decision to the agent', () => card(c.x3).status !== 'open')
+  }
+  if (await bring(c.x4)) {
+    await key('x', { pause: 300 })
+    await until('X shreds the question in front', () => card(c.x4).status !== 'open')
+    console.log(`     (x3 after R: ${JSON.stringify({ status: card(c.x3).status, choice: card(c.x3).choice, trust: card(c.x3).trust })}; x4 after X: ${JSON.stringify({ status: card(c.x4).status, choice: card(c.x4).choice, shredded: Boolean(card(c.x4).shredded) })})`)
+  }
+  await shot('16-ways-in-walk')
+  await key('Escape', { pause: 500 })
+  await open('/')
+  if (await markRow(c.x5)) {
+    await key('r')
+    await until('in the list R (whatever) on the marked row leaves the decision to the agent', () => card(c.x5).status !== 'open')
+  }
+  if (await markRow(c.x6)) {
+    await key('x')
+    await until('in the list X shreds the marked row', () => card(c.x6).status !== 'open')
+  }
+  await key('?', { shift: true, pause: 300 })
+  const words = await ev('return document.querySelector("dialog.keys-sheet").innerText')
+  check(/Desk/.test(words) && /Next, please/.test(words) && /whatever/i.test(words) && /shred/i.test(words) && !/What\?\?/.test(words) && !/inbox/i.test(words), 'the sheet says Desk, Next please, whatever, shred; not inbox, not What??')
+  await key('Escape')
 
   // ---------------------------------------------------------------------------
   section('Tab: a visible focus on everything that can be pressed')
