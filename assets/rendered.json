@@ -1,27 +1,27 @@
 {
   "logo/trommi-mark-512.png": {
     "from": "logo/trommi-mark.svg",
-    "sha": "9274dfeb3d42d405"
+    "sha": "05e3e7eb5a2101f9"
   },
   "logo/trommi-mark-1024.png": {
     "from": "logo/trommi-mark.svg",
-    "sha": "9274dfeb3d42d405"
+    "sha": "05e3e7eb5a2101f9"
   },
   "logo/trommi-logo-512.png": {
     "from": "logo/trommi-logo.svg",
-    "sha": "0675e9f1a83a1211"
+    "sha": "e542175ff7872c5b"
   },
   "logo/trommi-logo-dark-512.png": {
     "from": "logo/trommi-logo-dark.svg",
-    "sha": "207acb55f7a78dcb"
+    "sha": "bee9f28a5217c6dc"
   },
   "logo/favicon-32.png": {
     "from": "logo/favicon.svg",
-    "sha": "81009eab4240d778"
+    "sha": "56cdb5b3c4fc16a7"
   },
   "logo/favicon-180.png": {
-    "from": "logo/favicon.svg",
-    "sha": "81009eab4240d778"
+    "from": "logo/app-icon.svg",
+    "sha": "0461413bd377f40f"
   },
   "palette/swatches.png": {
     "from": "palette/swatches.svg",
@@ -33,5 +33,29 @@
   },
   "screens": {
     "taken": "2026-10-02"
+  },
+  "logo/favicon-16.png": {
+    "from": "logo/favicon.svg",
+    "sha": "56cdb5b3c4fc16a7"
+  },
+  "logo/app-icon-192.png": {
+    "from": "logo/app-icon.svg",
+    "sha": "0461413bd377f40f"
+  },
+  "logo/app-icon-512.png": {
+    "from": "logo/app-icon.svg",
+    "sha": "0461413bd377f40f"
+  },
+  "logo/app-icon-1024.png": {
+    "from": "logo/app-icon.svg",
+    "sha": "0461413bd377f40f"
+  },
+  "logo/app-icon-maskable-512.png": {
+    "from": "logo/app-icon-maskable.svg",
+    "sha": "8d78d31cfe6b4e56"
+  },
+  "logo/favicon.ico": {
+    "from": "logo/favicon.svg",
+    "sha": "56cdb5b3c4fc16a7"
   }
 }
