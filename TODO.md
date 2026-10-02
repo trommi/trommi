@@ -19,3 +19,5 @@ Punkte, die besprochen, aber noch nicht gebaut sind. Reihenfolge ist keine Prior
 ## Erst wenn wir live gehen
 - [ ] **Hub als eigener Dienst:** `deploy/install-user-service.sh --enable` statt von Claude gestartetem Hub. In der Entwicklung startet Claude den Hub; das ist so gewollt (Christopher, 2.10.2026).
 - [ ] **Hub nur auf Loopback binden:** erreichbar über localhost und den Tailnet-Namen, nicht mehr als HTTP im LAN.
+
+- [ ] **iOS: eigener Tinfoil-Schlüssel.** In der App einen eigenen Tinfoil-Schlüssel eintragen können (Schlüsselbund); dann geht Diktat direkt vom Gerät zu Tinfoil. Im Browser nie: der Schlüssel läge offen (Christopher, 2.10.2026).

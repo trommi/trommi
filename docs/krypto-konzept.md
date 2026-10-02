@@ -198,3 +198,14 @@ Aus `docs/gelernt.md` eingelöst: versionierte, einmalige, kurzlebige Einladunge
 ## Entschieden
 
 - 2. Oktober 2026: Prüfcode beim Beitritt ist Pflicht für menschliche Geräte, voreingestellt für Agenten (Board-Karte Nr. 39).
+
+## Entscheidungen vom 2.10.2026 (Christopher, auf dem Board)
+
+- **Curve25519 auf allen Geräten.** Ein Verfahren für Browser, iOS, Linux und Agent; kein P-256 für die Secure Enclave.
+- **Jedes eigene Gerät darf Mitglieder ändern.** Kein einzelnes Hauptgerät. Der Wiederherstellungscode steht darüber.
+- **Web-Oberfläche von einer eigenen festen Adresse**, nicht vom Hub.
+- **Raumschlüssel nur beim Entfernen eines Mitglieds erneuern**, nicht zusätzlich alle 30 Tage.
+- **Wiederherstellung behält die Agenten als Mitglieder**; entfernt werden nur die menschlichen Geräte.
+- **Wiederherstellungscode ist Pflicht**, ebenso der Prüfcode beim Beitritt für Menschen.
+- **Dringlichkeit bleibt für den Hub lesbar**, weil er danach über Push-Mitteilungen entscheidet.
+- **Sprache läuft über den Hub.** Direkt vom Browser zu Tinfoil ist verworfen: der API-Schlüssel läge im Browser. Die iOS-App darf später einen eigenen Tinfoil-Schlüssel aus dem Schlüsselbund nutzen.
