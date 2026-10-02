@@ -757,6 +757,13 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-text.has-sender { position: relative; padding-left: 36px; }
 .inbox-who.inbox-from-mark { position: absolute; left: 0; top: 3px; width: 26px; height: 26px; color: hsl(var(--hue) 62% 30%); }
 :root[data-theme="dark"] .inbox-who.inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+/* ---- a row unfolded in place: it holds the whole card (js/focus.js, inline) and nothing of its own ----
+   Its compact content is hidden while the card shows it; where the page has room the row is wider
+   than the column. */
+.inbox-row.is-unfolded { display: block; min-height: 0; margin-block: 10px; background: none; box-shadow: none; }
+.inbox-row.is-unfolded > :not(.inbox-inline) { display: none; }
+@container inboxpage (min-width: 1000px) { .inbox-row.is-unfolded { margin-inline: -70px; } }
+@container inboxpage (min-width: 1140px) { .inbox-row.is-unfolded { margin-inline: -140px; } }
 /* ---- a run: the cards of one session, behind a divider tab ----
    The tab stands in the list's own flow above the run's first card (so it never lies on the card
    before it): the session's drawing, crown and name on the session's colour. The run's cards stand

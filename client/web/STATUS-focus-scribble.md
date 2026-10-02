@@ -87,3 +87,12 @@ Not built: writing and scribbling anywhere on the card (anchored notes), the scr
 - Words go only into the foot field; a note on a paragraph starts from the pencil beside it; the pen draws only in
   its mode (Drawing · Clear drawing · Done, Esc). Strokes from before that mode are dropped from drafts.
 - Not built yet: mounting the card inline in a Desk row (planned name: `openInline(host, cardId, { onClose })`).
+
+## Hosts of the card, toolbar, walk page
+- `openInline(host, cardId, { onClose })`, `closeInline()`, `isInline()` on the mountFocus object: the same card
+  unfolded inside a host element; height follows content, buttons column sticky, page not locked.
+- The walk (`.focus[data-list]`) is a page of its own: opaque ground, "Desk" back button top left, the note under it;
+  `body[data-focus-page="walk"]` while it is open. End state names who is at work (`avatar` from agents.js).
+- Snooze and Shred stand in the quiet row at the stage's top right; beside the answers only Revise and Whatever.
+- Revise hands back at once (no "What should change?" stop). `revise(cardId?)` hands back without opening.
+- Pass order: `oneTapFirst` (exported with `oneTap`): one-tap cards first, then the rest, server order within.

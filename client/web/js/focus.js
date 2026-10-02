@@ -33,6 +33,7 @@ import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT, cardNr } from './inbox.js'
 import { cardMarks } from './focus-marks.js'
 import { copyButton } from './cardclip.js'
+import { avatar } from './agents.js'
 import { richPlus, attachmentNodes } from './chat.js'
 import { LATER_WORD, LATER_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
@@ -179,6 +180,12 @@ const readDataUrl = file => new Promise((resolve, reject) => {
   reader.readAsDataURL(file)
 })
 
+/** Can this card be answered in one tap (two plain options, an info to acknowledge, a permission)? */
+export const oneTap = card => Boolean(card) && (card.kind === 'info' || card.kind === 'permission' || (!card.multiple && !Array.isArray(card.sections) && card.options?.length === 2 && !(card.attachments ?? []).some(a => kindOf(a) === 'image')))
+/** The order of a walk: first what one tap answers, then what needs study; within each part the order given (the
+ *  server's: most pressing first, then oldest). ids, and byId a Map id -> card. */
+export const oneTapFirst = (ids, byId) => [...ids.filter(id => oneTap(byId.get(id))), ...ids.filter(id => !oneTap(byId.get(id)))]
+
 export function mountFocus({ onDecided } = {}) {
   // This module is loaded when the window is first opened, its stylesheet with the page: in a page that has been
   // open for a while the two may be of different days. So the stylesheet is fetched again, to match this code.
@@ -223,9 +230,9 @@ export function mountFocus({ onDecided } = {}) {
   infoNode.hidden = true
   notes.append(hintBtn, infoNode)
   // Later: always in the same place, on every card. The question goes to the end of the line.
-  const laterBtn = button('focus-later', 'Later: put this question off')
-  laterBtn.title = 'Later (L)'
-  laterBtn.append(sketch('later'), el('span', null, 'Later'))
+  const laterBtn = button('focus-later', `${LATER_WORD}: put this question off`)
+  laterBtn.title = `${LATER_WORD} (L)`
+  laterBtn.append(sketch('later'), el('span', null, LATER_WORD))
   // Explain: one tap asks the session to say more about the question; beside Later, as quiet as it.
   const explainBtn = button('focus-later focus-explain', 'Explain: ask the session to explain this question')
   explainBtn.title = 'Explain (E)'
@@ -291,7 +298,11 @@ export function mountFocus({ onDecided } = {}) {
   const doneText = el('p', 'focus-done-text')
   const doneBtn = button('focus-done-btn')
   doneBtn.textContent = 'Close'
-  done.append(doneArt, doneText, doneBtn)
+  const doneWork = el('p', 'focus-done-work')
+  doneWork.hidden = true
+  done.append(doneArt, doneText, doneWork, doneBtn)
+  const backDesk = button('focus-back-desk', 'Back to the Desk (Esc)')
+  backDesk.append(icon('left'), el('span', null, 'Desk'))
 
   const loading = el('div', 'focus-loading')
   loading.append(el('span', 'focus-spinner'), el('span', null, 'Loading questions'))
@@ -311,7 +322,7 @@ export function mountFocus({ onDecided } = {}) {
   live.setAttribute('role', 'status')
 
   sheet.append(top, stage, done, loading, foot, live, says)
-  root.append(backdrop, sheet, prevBtn, nextBtn)
+  root.append(backdrop, sheet, prevBtn, nextBtn, backDesk)
   document.body.append(root)
 
   // ── model ───────────────────────────────────────────────────────────────
@@ -606,6 +617,7 @@ export function mountFocus({ onDecided } = {}) {
     rec.askNode = null
     rec.askField = null
     rec.composer = null
+    rec.topWays = null
     if (!permission) {
       rec.threadNode = el('div', 'focus-thread')
       rec.threadNode.hidden = true
@@ -697,8 +709,10 @@ export function mountFocus({ onDecided } = {}) {
       rec.askSend = send
       // The ways out, one row: Revise (hand the card back to its session), Snooze and, apart and quiet, the wastebasket.
       rec.actionsNode = el('div', 'focus-actions')
+      // (beside the answers only the two that are answers of a kind: Revise, and Whatever; fill adds the latter)
       // their order, here as on a row of the desk: Snooze, Revise, Whatever, Shred
-      rec.actionsNode.append(wayButton('snooze', () => { claim(rec); later() }), wayButton('hand', () => { claim(rec); handBack() }), wayButton('shred', () => shredIt(rec)))
+      rec.actionsNode.append(wayButton('hand', () => { claim(rec); handBack() }))
+      rec.topWays = [wayButton('snooze', () => { claim(rec); later() }), wayButton('shred', () => shredIt(rec))]
       // The question is thrown back and forth, so what was said about it is part of the card: it follows under the
       // decision in the one column that scrolls, in the order of time, and the field stands at the foot of that
       // column, always in reach.
@@ -832,7 +846,7 @@ export function mountFocus({ onDecided } = {}) {
       for (const type of ['pointerenter', 'focus']) trustBtn.addEventListener(type, lightUp(true))
       for (const type of ['pointerleave', 'blur']) trustBtn.addEventListener(type, lightUp(false))
       rec.trustBtn = trustBtn
-      rec.actionsNode.querySelector('.focus-shred')?.before(trustBtn)
+      rec.actionsNode.append(trustBtn)
     }
     if (rec.actionsNode && !earlier && WAYS_PLACE === 'options') answer.append(rec.actionsNode)
     rec.noteTag = null
@@ -915,7 +929,7 @@ export function mountFocus({ onDecided } = {}) {
     closeTwin.append(icon('close'))
     closeTwin.addEventListener('click', close)
     rec.countNode = el('span', 'focus-card-count')
-    ends.append(rec.countNode, copyButton(card), sayTwin, closeTwin)
+    ends.append(rec.countNode, ...(earlier || rec.card.status !== 'open' ? [] : rec.topWays ?? []), copyButton(card), sayTwin, closeTwin)
     // Writing anywhere: the card is the surface, its tools stand in its corner.
     rec.marksUi = null
     node.toggleAttribute('data-marks', writeAnywhere && !permission && !earlier && rec.card.status === 'open')
@@ -1826,7 +1840,7 @@ export function mountFocus({ onDecided } = {}) {
     decidedLocal.set(rec.id, Date.now())
     decidedCount++
     sentId = rec.id
-    offerBack(card, { head: `Trusted: ${advice || 'your call'}`, take: () => reopenAnswer(card) })
+    offerBack(card, { head: `${TRUST_WORD}: ${advice || 'your call'}`, take: () => reopenAnswer(card) })
     const sending = send()
     inflight.set(card.id, sending)
     sync('sent')
@@ -2019,14 +2033,8 @@ export function mountFocus({ onDecided } = {}) {
   async function handBack(sure = false) {
     const rec = shown
     if (!isOpen || !rec || rec.busy || !rec.askNode || handing) return false
-    // With nothing written, noted or attached the session would have nothing to go on: the caret goes into Discuss
-    // and asks what should change. Enter there hands the card back, also when the field stays empty.
-    if (!sure && !rec.askText.trim() && !rec.files.length && !rec.marksUi?.count() && pad?.rec !== rec && rec.askField) {
-      rec.revising = true
-      setDiscuss(rec, true)
-      rec.askField.placeholder = 'What should change? Enter sends'
-      return void rec.askField.focus({ preventScroll: true })
-    }
+    // At once: what stands in the field, the notes and a drawing go along; with nothing written it goes back with the
+    // plain hand-back words. The note that says so carries the way back.
     rec.revising = false
     handing = true
     handBtn.disabled = true
@@ -2105,7 +2113,7 @@ export function mountFocus({ onDecided } = {}) {
   const cameBack = new Map()      // id -> why a card is in the pass a second time
   function passOrder(open, off, handed, byId) {
     const away = id => off.has(id) && !passPiles.has(id)
-    if (!pass) pass = open.filter(id => !away(id))
+    if (!pass) pass = oneTapFirst(open.filter(id => !away(id)), byId)
     for (const id of open) if (away(id) && !passAway.has(id)) passAway.set(id, Date.now())
     pass = pass.filter(id => open.includes(id) && !away(id))
     for (const id of open) {
@@ -2163,7 +2171,7 @@ export function mountFocus({ onDecided } = {}) {
   /** A card becomes a strip where it stood: what happened to it (head), its title, and with take() the way back. */
   function addStrip(card, head, take) {
     dropStrip(card.id)
-    const kind = head === 'Shredded' ? 'shredded' : /^(Answered|Trusted):/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === HANDBACK_STATE ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
+    const kind = head === 'Shredded' ? 'shredded' : /^(Answered|Trusted|Whatever):/.test(head) || head === 'Read' ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === HANDBACK_STATE ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
     // where it stood: in front of the card that came after it (before it left or moved to the end)
     const moved = !order.includes(card.id) || (lastState?.later ?? []).includes(card.id)
     const from = moved && orderBefore.includes(card.id) ? orderBefore : order
@@ -2454,6 +2462,18 @@ export function mountFocus({ onDecided } = {}) {
     prevBtn.disabled = single || idx <= 0 || locked
     nextBtn.disabled = single || idx < 0 || idx >= n - 1 || locked
     doneText.textContent = 'All answered. The next question shows up here.'
+    // who is at work right now: something new will come from them
+    const all = pool()
+    const busy = (all?.agents ?? []).filter(a => a.online && (all.tasks ?? []).some(t => t.agent === a.id && t.state === 'working'))
+    const workSig = busy.map(a => a.id).join()
+    if (doneWork.dataset.sig !== workSig) {
+      doneWork.dataset.sig = workSig
+      doneWork.hidden = !busy.length
+      doneWork.replaceChildren(...busy.map(a => { const n = avatar(a, { vip: false, working: true }); n.title = a.name; return n }), el('span', null, `${busy.length} working: something new will come in`))
+    }
+    // (the walk is a page of its own: the page behind it is not shown; app.js may hide more by this attribute)
+    if (isOpen && inList() && !inlineHost) document.body.dataset.focusPage = 'walk'
+    else delete document.body.dataset.focusPage
 
     // the head of the card and the sheet's colour follow the card in front
     const card = shown?.card
@@ -2878,7 +2898,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     // Explain and Later, as under the composer: both leave the card.
     const ways = el('div', 'focus-zoom-ways')
-    ways.append(wayButton('snooze', () => { shut(); later() }), wayButton('hand', () => { shut(); handBack() }), ...(card.kind === 'info' ? [] : [wayButton('trust', () => { shut(); trustIt(rec) })]), wayButton('shred', () => { shut(); shredIt(rec) }))
+    ways.append(wayButton('hand', () => { shut(); handBack() }), ...(card.kind === 'info' ? [] : [wayButton('trust', () => { shut(); trustIt(rec) })]))
     node.append(take, list, line, ways)
 
     let now = -1
@@ -3012,12 +3032,14 @@ export function mountFocus({ onDecided } = {}) {
     opener = null
     if (back?.isConnected) back.focus({ preventScroll: true })
     else document.activeElement?.blur?.()
+    delete document.body.dataset.focusPage
     document.dispatchEvent(new CustomEvent('focus:close'))
     folded?.()
   }
 
   // ── wiring ──────────────────────────────────────────────────────────────
   closeBtn.addEventListener('click', close)
+  backDesk.addEventListener('click', close)
   doneBtn.addEventListener('click', close)
   backdrop.addEventListener('click', close)
   laterBtn.addEventListener('click', later)
@@ -3027,9 +3049,19 @@ export function mountFocus({ onDecided } = {}) {
   hintBtn.addEventListener('click', () => { const id = hintId; hintId = null; if (!go(id)) paintHint() })
   subscribe(state => { lastState = state; sync() })
 
-  /** Revise from outside (a row of the desk): on the card that is open, Discuss opens and the caret asks what should
-   *  change; Enter there hands the card back. Call it after open(cardId). */
-  const revise = () => { if (!shown?.askNode) return false; handBack(); return true }
+  /** Revise from outside (a row of the desk): the card goes back to its session at once. Without an id, or with the
+   *  id of the card in front, it is that card (with what is written on it); any other open card is handed back
+   *  without being opened, with the plain hand-back words. A note with Back says so. */
+  const revise = cardId => {
+    if (!cardId || (isOpen && shown?.id === cardId)) { if (!shown?.askNode) return false; handBack(); return true }
+    const card = pool()?.cards.find(c => c.id === cardId)
+    if (!card || card.status !== 'open' || card.kind === 'permission') return false
+    sendMessage(HAND_BACK_TEXT, card.agent, card.id, undefined, { handback: true }).then(() => {
+      putOff(card.id, true, true)
+      say(pageHost(), { head: HANDBACK_STATE, title: card.title, back: async () => { await unhand(card.id); putOff(card.id, false) } })
+    }).catch(err => say(pageHost(), { head: 'Not handed over', title: err?.message || 'The server did not answer.' }))
+    return true
+  }
   /** The card that was just opened, at its first picture (the Desk's picture stack). False, and the window closed
    *  again, when it has no pictures. */
   function gallery() {

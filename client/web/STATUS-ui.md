@@ -282,4 +282,7 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   last waiting card is answered. A returned card says "Back from snooze" in its note line.
 - Audit: "Trusted" reads "Whatever"; the count circle is drawn with the pen (`penCircle()`); one soft tinted card
   shadow; the empty state is the desk drawing and a sentence, no dashed box; phone Desk has room at its foot.
-
+- Card Nr. 142, unfold in place: a click on a Desk row's text puts the whole card into the row (`.inbox-row.is-unfolded
+  > .inbox-inline`, filled by focus.js `openInline`; app.js `unfoldCard`). One at a time, wider than the column where
+  there is room, address `/q/<n>` while unfolded. A phone (≤ 860px), the keyboard's open, the walk and direct loads
+  keep the window.
