@@ -124,8 +124,9 @@ export function importState(store, state, { dataDir = null, now = Date.now() } =
 
     // -- files: recorded by reference; nothing is copied or opened
     const blob = (id, kind, session, at, meta, { size: given, ...extra } = {}) => {
-      const size = given ?? sizeOf(extra.path ?? id)
-      if (size === null) missing.push(extra.path ?? id)
+      const onDisk = sizeOf(extra.path ?? id)
+      if (onDisk === null) missing.push(extra.path ?? id)
+      const size = given ?? onDisk
       const out = store.registerBlob({ id, kind, path: id, size: size ?? null, session, meta, at, ...extra })
       if (out.duplicate) present.blobs++; else made.blobs++
       return id
@@ -203,7 +204,7 @@ export function importState(store, state, { dataDir = null, now = Date.now() } =
       if (m.from === 'event') {
         const card = m.card_id != null ? cardsById.get(String(m.card_id)) : null
         // History the card itself no longer shows: earlier answers, reopenings, changes of urgency.
-        if (card && String(card.agent) === session) {
+        if (card) {
           at(Math.max(num(m.ts), num(card.created)), () => tally('notes', store.noteCard({ id: card.id, body: { kind: m.kind ?? '', text: m.text ?? '' }, sender: 'import', clientId: `import:n:${id}`, at: Math.max(num(m.ts), num(card.created)) })))
         } else {
           at(m.ts, () => tally('notes', store.append({ type: 'note', session, sender: 'import', clientId: `import:n:${id}`, body: rest, at: num(m.ts) })))
@@ -232,7 +233,10 @@ export function importState(store, state, { dataDir = null, now = Date.now() } =
     for (const [id, queue] of Object.entries(state.pending)) {
       queue.forEach((e, i) => {
         const dedupe = `import:${id}:${i}:${crypto.createHash('sha256').update(JSON.stringify(e)).digest('hex').slice(0, 16)}`
+        // Remembered beside the queue: an entry that was imported, handed over and acknowledged must not come back with a second run.
+        if (store.meta(dedupe)) return void present.deliveries++
         tally('deliveries', store.enqueue(id, e.method, e.params ?? null, { at: num(e.ts, now), dedupe }))
+        store.setMeta(dedupe, now)
       })
     }
 
@@ -292,10 +296,16 @@ export function verify(store, state) {
 }
 
 function main(argv) {
-  const flags = new Set(argv.filter(a => a.startsWith('--')))
-  const value = name => (argv.includes(name) ? argv[argv.indexOf(name) + 1] : undefined)
-  const taken = new Set([value('--owner'), value('--data')].filter(Boolean))
-  const [source, target] = argv.filter(a => !a.startsWith('--') && !taken.has(a))
+  const flags = new Set()
+  const values = {}
+  const positional = []
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i] === '--owner' || argv[i] === '--data') values[argv[i]] = argv[++i]
+    else if (argv[i].startsWith('--')) flags.add(argv[i])
+    else positional.push(argv[i])
+  }
+  const value = name => values[name]
+  const [source, target] = positional
   const dry = flags.has('--dry-run')
   if (!source || (!target && !dry)) {
     console.error('usage: migrate.mjs <state.json | data dir> <target.db> [--dry-run] [--owner <id>] [--data <dir>]')
