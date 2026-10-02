@@ -6,11 +6,12 @@
 //   send({ doc, png, view })         async; png is the whole canvas, view exactly
 //                                    the section on screen (both PNG data URLs).
 //                                    What the human means by it, they write in
-//                                    the chat afterwards.
+//                                    the chat afterwards. There is no caption.
 //   onChange(doc)                    a moment after the human changed the canvas
 //                                    (drawn, erased, undone, redone, cleared, an
-//                                    image added, moved, resized or deleted);
-//                                    never for load() or clear() by the host
+//                                    image added, moved, resized, reordered or
+//                                    deleted); never for load() or clear() by the
+//                                    host, never for a restored local draft
 //   draftKey                         IndexedDB key for a local draft; null when
 //                                    the host keeps the canvas (via onChange)
 //   board.load(doc) / clear()        replace the content; a change still waiting
@@ -25,6 +26,9 @@
 //     strokes: [{ id, tool: 'pen' | 'hl', color, size,     oldest first, always above the images
 //                 pts: [x0, y0, x1, y1, …],
 //                 pr?: [p0, p1, …] }] }                    pressure 0..1 per point, stylus only
+// Every element has an id that is unique within the doc. Top-level keys this
+// version does not know (say `texts` from a later one) are kept through
+// load() and handed back in every doc, so an older page does not erase them.
 import { el } from './ui.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -62,8 +66,8 @@ function icon(name) {
 
 // Ink is content, not chrome: these colours are stored in the doc and have to
 // read on white paper and on photos alike, so they do not follow the theme.
-const PEN_COLORS = [['#1b1f23', 'Schwarz'], ['#e03131', 'Rot'], ['#f08c00', 'Orange'], ['#2f9e44', 'Grün'], ['#1971c2', 'Blau'], ['#9c36b5', 'Violett']]
-const HL_COLORS = [['#ffd43b', 'Gelb'], ['#69db7c', 'Grün'], ['#ff8cc6', 'Rosa'], ['#66c2ff', 'Blau'], ['#ffa94d', 'Orange']]
+const PEN_COLORS = [['#1b1f23', 'Black'], ['#e03131', 'Red'], ['#f08c00', 'Orange'], ['#2f9e44', 'Green'], ['#1971c2', 'Blue'], ['#9c36b5', 'Violet']]
+const HL_COLORS = [['#ffd43b', 'Yellow'], ['#69db7c', 'Green'], ['#ff8cc6', 'Pink'], ['#66c2ff', 'Blue'], ['#ffa94d', 'Orange']]
 const SIZES = { pen: [2, 4, 7, 12], hl: [10, 18, 28, 42] }
 const HL_ALPHA = 0.5
 // The drawing surface stays paper in both themes: ink colours, photos and the
@@ -78,8 +82,9 @@ const MAX_IMG = 2000        // longest side of an imported image
 const KEEP_BYTES = 350_000  // smaller files are embedded untouched
 const PNG_MAX = 2400         // longest side of the whole-canvas picture
 const VIEW_MAX = 2000        // longest side of the picture of the visible section
+const VIEW_MIN = 48          // a pane smaller than this (CSS px, either way) has no section worth a picture
 const CHANGE_MS = 900        // onChange fires this long after the hand stops
-const DOCK_BELOW = 520       // narrower than this, Senden gets a bar of its own under the canvas
+const DOCK_BELOW = 520       // narrower than this, the send button gets a bar of its own under the canvas
 const UNDO_MAX = 200
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
@@ -269,12 +274,14 @@ async function draftOp(mode, fn) {
 
 export function mountScribble(root, { send, draftKey = 'draft', onChange } = {}) {
   const mac = /Mac|iPhone|iPad/.test(navigator.platform || navigator.userAgent || '')
-  const mod = k => (mac ? `⌘${k}` : `Strg+${k}`)
+  const mod = k => (mac ? `⌘${k}` : `Ctrl+${k}`)
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
   const desktop = matchMedia('(hover: hover) and (pointer: fine)').matches
 
   // ── state ────────────────────────────────────────────────────────────────
   let images = [], strokes = []
+  let extra = {}                         // top-level doc keys this version does not know: kept, never touched
+  let epoch = 0                          // bumps when the host replaces the canvas; work begun for the old one is dropped
   const undo = [], redo = []
   const view = { x: 0, y: 0, z: 1 }     // screen = world * z + (x, y)
   let W = 0, H = 0, dpr = 1
@@ -306,16 +313,16 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   const stage = el('div', 'scr-stage')
   const canvas = el('canvas', 'scr-canvas')
   canvas.setAttribute('role', 'img')
-  canvas.setAttribute('aria-label', 'Zeichenfläche')
+  canvas.setAttribute('aria-label', 'Canvas')
   const ctx = canvas.getContext('2d', { alpha: false })
   const layer = document.createElement('canvas')   // everything that is not being drawn right now
   const lctx = layer.getContext('2d', { alpha: false })
 
   const hint = el('div', 'scr-hint')
-  hint.append(icon('pen'), el('span', null, desktop ? 'Zeichne los, oder zieh ein Bild hierher.' : 'Zeichne mit einem Finger. Zwei Finger verschieben und zoomen.'))
+  hint.append(icon('pen'), el('span', null, desktop ? 'Just draw, or drop a picture here.' : 'Draw with one finger. Two fingers move and zoom.'))
 
   const drop = el('div', 'scr-drop')
-  drop.append(el('span', null, 'Bild hier ablegen'))
+  drop.append(el('span', null, 'Drop the picture here'))
   drop.hidden = true
 
   const toastEl = el('div', 'scr-toast')
@@ -325,17 +332,17 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   // top bar
   const top = el('div', 'scr-top')
   const gHist = el('div', 'scr-group')
-  const bUndo = btn('scr-btn', 'Rückgängig', 'undo', `Rückgängig · ${mod('Z')}`, 'below-start')
-  const bRedo = btn('scr-btn', 'Wiederholen', 'redo', `Wiederholen · ${mac ? '⇧⌘Z' : 'Strg+Umschalt+Z'}`, 'below-start')
+  const bUndo = btn('scr-btn', 'Undo', 'undo', `Undo · ${mod('Z')}`, 'below-start')
+  const bRedo = btn('scr-btn', 'Redo', 'redo', `Redo · ${mac ? '⇧⌘Z' : 'Ctrl+Shift+Z'}`, 'below-start')
   gHist.append(bUndo, bRedo)
   const gView = el('div', 'scr-group')
-  const bOut = btn('scr-btn scr-wide', 'Verkleinern', 'minus', 'Verkleinern', 'below')
-  const bZoom = btn('scr-zoom', 'Zoom auf 100 % zurücksetzen', null, 'Auf 100 % · 0', 'below')
-  const bIn = btn('scr-btn scr-wide', 'Vergrößern', 'plus', 'Vergrößern', 'below')
-  const bFit = btn('scr-btn', 'Alles einpassen', 'fit', 'Alles einpassen · F', 'below-end')
+  const bOut = btn('scr-btn scr-wide', 'Zoom out', 'minus', 'Zoom out · −', 'below')
+  const bZoom = btn('scr-zoom', 'Reset zoom to 100 %', null, 'Back to 100 % · 0', 'below')
+  const bIn = btn('scr-btn scr-wide', 'Zoom in', 'plus', 'Zoom in · +', 'below')
+  const bFit = btn('scr-btn', 'Fit everything', 'fit', 'Fit everything · F', 'below-end')
   gView.append(bOut, bZoom, bIn, bFit)
   const gClear = el('div', 'scr-group')
-  const bClear = btn('scr-btn', 'Alles löschen', 'trash', 'Alles löschen', 'below-end')
+  const bClear = btn('scr-btn', 'Clear everything', 'trash', 'Clear everything', 'below-end')
   bClear.setAttribute('aria-haspopup', 'dialog')
   gClear.append(bClear)
   top.append(gHist, el('span', 'scr-gap'), gView, gClear)
@@ -343,13 +350,13 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   // clear-all confirmation
   const confirmEl = el('div', 'scr-confirm')
   confirmEl.setAttribute('role', 'alertdialog')
-  confirmEl.setAttribute('aria-label', 'Alles löschen?')
+  confirmEl.setAttribute('aria-label', 'Clear everything?')
   confirmEl.hidden = true
   const confirmText = el('div', 'scr-confirm-text')
-  confirmText.append(el('strong', null, 'Alles löschen?'), el('span', null, 'Die Fläche wird geleert. Rückgängig holt sie zurück.'))
+  confirmText.append(el('strong', null, 'Clear everything?'), el('span', null, 'The canvas is emptied. Undo brings it back.'))
   const confirmRow = el('div', 'scr-confirm-row')
-  const bKeep = el('button', 'scr-pill', 'Abbrechen')
-  const bWipe = el('button', 'scr-pill scr-pill-danger', 'Löschen')
+  const bKeep = el('button', 'scr-pill', 'Cancel')
+  const bWipe = el('button', 'scr-pill scr-pill-danger', 'Clear')
   bKeep.type = bWipe.type = 'button'
   confirmRow.append(bKeep, bWipe)
   confirmEl.append(confirmText, confirmRow)
@@ -358,8 +365,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   const bar = el('div', 'scr-bar')
   const tools = el('div', 'scr-tools')
   tools.setAttribute('role', 'toolbar')
-  tools.setAttribute('aria-label', 'Werkzeuge')
-  const TOOLS = [['select', 'Auswählen', 'V'], ['pen', 'Stift', 'P'], ['hl', 'Marker', 'H'], ['eraser', 'Radierer', 'E']]
+  tools.setAttribute('aria-label', 'Tools')
+  const TOOLS = [['select', 'Select', 'V'], ['pen', 'Pen', 'P'], ['hl', 'Marker', 'H'], ['eraser', 'Eraser', 'E']]
   const toolBtns = {}
   for (const [id, label, key] of TOOLS) {
     const b = btn('scr-btn scr-tool', label, id, `${label} · ${key}`)
@@ -368,7 +375,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     toolBtns[id] = b
     tools.append(b)
   }
-  const bStyle = btn('scr-btn scr-stylebtn', 'Farbe und Stärke', null, 'Farbe und Stärke')
+  const bStyle = btn('scr-btn scr-stylebtn', 'Colour and width', null, 'Colour and width')
   bStyle.setAttribute('aria-haspopup', 'true')
   const styleDot = el('span', 'scr-dot')
   bStyle.append(styleDot)
@@ -376,23 +383,23 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   const rowColor = el('div', 'scr-style-row')
   const swatches = el('div', 'scr-swatches')
   swatches.setAttribute('role', 'group')
-  swatches.setAttribute('aria-label', 'Farbe')
-  rowColor.append(el('span', 'scr-label', 'Farbe'), swatches)
+  swatches.setAttribute('aria-label', 'Colour')
+  rowColor.append(el('span', 'scr-label', 'Colour'), swatches)
   const rowWidth = el('div', 'scr-style-row')
   const widths = el('div', 'scr-widths')
   widths.setAttribute('role', 'group')
-  widths.setAttribute('aria-label', 'Stärke')
-  rowWidth.append(el('span', 'scr-label', 'Stärke'), widths)
+  widths.setAttribute('aria-label', 'Width')
+  rowWidth.append(el('span', 'scr-label', 'Width'), widths)
   panel.append(rowColor, rowWidth)
   const widthBtns = [0, 1, 2, 3].map(i => {
-    const b = btn('scr-width', `Stärke ${i + 1}`, null, `Stärke ${i + 1} · ${i + 1}`)
+    const b = btn('scr-width', `Width ${i + 1}`, null, `Width ${i + 1} · ${i + 1}`)
     b.style.setProperty('--d', `${[5, 9, 13, 18][i]}px`)
     b.append(el('span', 'scr-dot'))
     b.addEventListener('click', () => setWidth(i))
     widths.append(b)
     return b
   })
-  const bImage = btn('scr-btn', 'Bild einfügen', 'image', 'Bild einfügen · I')
+  const bImage = btn('scr-btn', 'Add a picture', 'image', 'Add a picture · I')
   const file = el('input', 'scr-file')
   file.type = 'file'
   file.accept = 'image/*'
@@ -405,16 +412,16 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   // actions for the selected image
   const ctxBar = el('div', 'scr-ctx')
   ctxBar.setAttribute('role', 'toolbar')
-  ctxBar.setAttribute('aria-label', 'Ausgewähltes Bild')
+  ctxBar.setAttribute('aria-label', 'Selected picture')
   ctxBar.hidden = true
-  const bFront = btn('scr-btn', 'Nach vorn', 'front', 'Nach vorn')
-  const bBack = btn('scr-btn', 'Nach hinten', 'back', 'Nach hinten')
-  const bDel = btn('scr-btn scr-danger', 'Bild löschen', 'trash', 'Löschen · Entf')
+  const bFront = btn('scr-btn', 'Bring to front', 'front', 'Bring to front')
+  const bBack = btn('scr-btn', 'Send to back', 'back', 'Send to back')
+  const bDel = btn('scr-btn scr-danger', 'Delete picture', 'trash', 'Delete · Del')
   ctxBar.append(bFront, bBack, el('span', 'scr-sep'), bDel)
 
   // send: one button. With room it stands at the end of the toolbar, on a
   // narrow screen in a bar of its own under the canvas (see placeSend).
-  const SEND_TIP = 'Schickt dem Agenten, was du gerade siehst, und dazu die ganze Fläche'
+  const SEND_TIP = 'Sends the agent what you see right now, and the whole canvas with it'
   const bSend = el('button', 'scr-send')
   bSend.type = 'button'
   bSend.dataset.tip = SEND_TIP
@@ -429,7 +436,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   errorEl.setAttribute('role', 'alert')
   errorEl.hidden = true
   const errorText = el('span', 'scr-error-text')
-  const bErrClose = btn('scr-error-close', 'Meldung schließen', 'close', 'Schließen')
+  const bErrClose = btn('scr-error-close', 'Dismiss', 'close', 'Dismiss')
   errorEl.append(icon('alert'), errorText, bErrClose)
   const live = el('div', 'scr-sr')
   live.setAttribute('aria-live', 'polite')
@@ -468,10 +475,11 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     const [wx, wy] = toWorld(px, py)
     animateTo(px - wx * z, py - wy * z, z, animate)
   }
-  function bounds() {
+  /** The box around these elements (by default: around everything), or null if there are none. */
+  function bounds(imgs = images, strs = strokes) {
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity
-    for (const i of images) { x0 = Math.min(x0, i.x); y0 = Math.min(y0, i.y); x1 = Math.max(x1, i.x + i.w); y1 = Math.max(y1, i.y + i.h) }
-    for (const s of strokes) { const b = geom(s).bbox; x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1) }
+    for (const i of imgs) { x0 = Math.min(x0, i.x); y0 = Math.min(y0, i.y); x1 = Math.max(x1, i.x + i.w); y1 = Math.max(y1, i.y + i.h) }
+    for (const s of strs) { const b = geom(s).bbox; x0 = Math.min(x0, b.x0); y0 = Math.min(y0, b.y0); x1 = Math.max(x1, b.x1); y1 = Math.max(y1, b.y1) }
     return x0 === Infinity ? null : { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
   }
   function fit(animate = true) {
@@ -619,7 +627,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   // ── document changes ─────────────────────────────────────────────────────
   const selected = () => (sel ? images.find(i => i.id === sel) : null)
   const isEmpty = () => !images.length && !strokes.length
-  const serialise = () => ({ v: 1, images: clone(images), strokes: clone(strokes) })
+  const serialise = () => ({ ...clone(extra), v: 1, images: clone(images), strokes: clone(strokes) })
 
   function record(prev) {
     undo.push(prev)
@@ -722,10 +730,11 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   // ── images ───────────────────────────────────────────────────────────────
   async function addImages(files, at) {
     const list = [...files].filter(f => f.type.startsWith('image/'))
-    if (!list.length) return toast('Das ist kein Bild.', 'error')
-    toast(list.length > 1 ? `${list.length} Bilder werden eingefügt …` : 'Bild wird eingefügt …', 'busy', 0)
+    if (!list.length) return toast('That is not a picture.', 'error')
+    toast(list.length > 1 ? `Adding ${list.length} pictures …` : 'Adding the picture …', 'busy', 0)
     const added = []
     let failed = 0
+    const began = epoch
     for (const f of list) {
       try {
         const { src, nw, nh } = await importImage(f)
@@ -738,7 +747,9 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       } catch { failed++ }
     }
     toastEl.hidden = true
-    if (failed) toast(failed > 1 ? `${failed} Bilder konnten nicht gelesen werden.` : 'Das Bild konnte nicht gelesen werden.', 'error', 4000)
+    // the host put another canvas on the board meanwhile: these pictures were meant for the old one
+    if (began !== epoch) return
+    if (failed) toast(failed > 1 ? `${failed} pictures could not be read.` : 'The picture could not be read.', 'error', 4000)
     if (!added.length) return
     commit({ images: [...images, ...added] })
     sel = added[added.length - 1].id
@@ -1000,7 +1011,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     if (isEmpty()) return
     sel = null
     commit({ images: [], strokes: [] })
-    toast('Fläche geleert')
+    toast('Canvas cleared')
   })
 
   // ── drop and paste ───────────────────────────────────────────────────────
@@ -1072,8 +1083,17 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   window.addEventListener('blur', spaceUp)
 
   // ── send ─────────────────────────────────────────────────────────────────
-  function renderPNG() {
-    const b = bounds()
+  /** Export pictures are used once: give their memory back at once (Safari keeps it for a long time otherwise). */
+  function toPNG(cv) {
+    const url = cv.toDataURL('image/png')
+    cv.width = cv.height = 0
+    return url
+  }
+
+  /** The whole canvas, or only these elements, cropped to what is drawn, on white paper. */
+  function renderPNG(imgs = images, strs = strokes) {
+    const b = bounds(imgs, strs)
+    if (!b) return null
     const longest = Math.max(b.w, b.h)
     const margin = Math.max(24, longest * 0.04)
     const w = b.w + 2 * margin, h = b.h + 2 * margin
@@ -1085,22 +1105,25 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     c.fillStyle = PAPER.light
     c.fillRect(0, 0, cv.width, cv.height)
     c.setTransform(scale, 0, 0, scale, (margin - b.x) * scale, (margin - b.y) * scale)
-    paintContent(c, -Infinity, -Infinity, Infinity, Infinity, images, [])
-    for (const s of strokes) {
+    paintContent(c, -Infinity, -Infinity, Infinity, Infinity, imgs, [])
+    for (const s of strs) {
       // on a huge canvas the picture is scaled down: keep every line at least ~2 px wide
       const min = s.tool === 'hl' ? 6 : 2
       const mult = Math.max(1, min / (s.size * scale))
       paintStroke(c, s, mult === 1 ? geom(s) : buildGeom(s, mult))
     }
-    return cv.toDataURL('image/png')
+    return toPNG(cv)
   }
 
   /** The section on screen right now, as the human sees it: same pan and zoom,
    *  images under strokes, on white paper without the dot grid, the selection
    *  frame or the toolbars. Twice the CSS size (whatever the screen's own pixel
-   *  ratio is), less on a pane so large that the picture would pass VIEW_MAX. */
+   *  ratio is), less on a pane so large that the picture would pass VIEW_MAX.
+   *  A pane with no size to speak of (hidden, or squeezed to a sliver while the
+   *  page lays itself out) has no section to show: then it is the whole canvas,
+   *  so the picture that stands in the conversation is never an empty strip. */
   function renderView() {
-    if (!W || !H) return renderPNG()
+    if (W < VIEW_MIN || H < VIEW_MIN) return renderPNG()
     const scale = Math.min(2, VIEW_MAX / Math.max(W, H))
     const cv = document.createElement('canvas')
     cv.width = Math.max(1, Math.round(W * scale))
@@ -1111,7 +1134,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     c.setTransform(view.z * scale, 0, 0, view.z * scale, view.x * scale, view.y * scale)
     const [x0, y0] = toWorld(0, 0), [x1, y1] = toWorld(W, H)
     paintContent(c, x0, y0, x1, y1, images, strokes)
-    return cv.toDataURL('image/png')
+    return toPNG(cv)
   }
 
   let sentTimer = 0
@@ -1119,8 +1142,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     sending = state === 'sending'
     bSend.dataset.state = state
     sendIcon.replaceChildren(state === 'sending' ? el('span', 'scr-spinner') : icon(state === 'sent' ? 'check' : 'send'))
-    sendLabel.textContent = state === 'sending' ? 'Sendet …' : state === 'sent' ? 'Gesendet' : 'Ausschnitt senden'
-    bSend.setAttribute('aria-label', state === 'idle' ? `Ausschnitt senden. ${SEND_TIP}.` : sendLabel.textContent)
+    sendLabel.textContent = state === 'sending' ? 'Sending …' : state === 'sent' ? 'Sent' : 'Send this view'
+    bSend.setAttribute('aria-label', state === 'idle' ? `Send this view. ${SEND_TIP}.` : sendLabel.textContent)
     bSend.setAttribute('aria-busy', String(sending))
     sync()
   }
@@ -1143,11 +1166,11 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
       if (anim) { const to = anim.to; anim = null; setView(to.x, to.y, to.z) }
       await send({ doc: serialise(), png: renderPNG(), view: renderView() })
       setSendState('sent')
-      live.textContent = 'Scribble gesendet.'
+      live.textContent = 'Scribble sent.'
       sentTimer = setTimeout(() => { setSendState('idle'); live.textContent = '' }, 2400)
     } catch (err) {
       setSendState('idle')
-      showError(err?.message ? String(err.message) : 'Das Senden hat nicht geklappt.')
+      showError(err?.message ? String(err.message) : 'Sending did not work.')
     }
   }
   bSend.addEventListener('click', doSend)
@@ -1161,7 +1184,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     saveTimer = 0
     if (!draftKey) return
     if (isEmpty()) return void draftOp('readwrite', s => s.delete(draftKey))
-    const rec = { doc: { v: 1, images, strokes }, view: { ...view }, style: clone(style), tool: drawTool }
+    const rec = { doc: { ...extra, v: 1, images, strokes }, view: { ...view }, style: clone(style), tool: drawTool }
     draftOp('readwrite', s => s.put(rec, draftKey))
   }
   function saveDraftSoon() {
@@ -1197,8 +1220,10 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   function replace(doc) {
     // what the human drew before belongs to the old canvas: report it before it goes
     flush()
+    epoch++
     images = doc.images
     strokes = doc.strokes
+    extra = doc.extra ?? {}
     undo.length = redo.length = 0
     imgCache.clear()
     sel = null
@@ -1210,10 +1235,10 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
   }
   function load(doc) {
     if (!doc || doc.v !== 1 || !Array.isArray(doc.images) || !Array.isArray(doc.strokes)) {
-      throw new Error('Dieses Scribble hat ein unbekanntes Format.')
+      throw new Error('This scribble has an unknown format.')
     }
-    const copy = clone(doc)
-    replace({ images: copy.images, strokes: copy.strokes })
+    const { v, images: imgs, strokes: strs, ...rest } = clone(doc)
+    replace({ images: imgs, strokes: strs, extra: rest })
     fit(false)
   }
   function clear() {
@@ -1245,13 +1270,16 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange } = {})
     draftOp('readonly', s => s.get(draftKey)).then(rec => {
       if (!rec || gen || rec.doc?.v !== 1) return
       try {
-        images = rec.doc.images ?? []
-        strokes = rec.doc.strokes ?? []
+        const { v, images: imgs, strokes: strs, ...rest } = rec.doc
+        images = imgs ?? []
+        strokes = strs ?? []
+        extra = rest
         if (rec.style?.pen && rec.style?.hl) Object.assign(style, rec.style)
         if (rec.tool === 'hl') { drawTool = tool = 'hl'; buildSwatches() }
-        changed()
+        // the human did not change anything just now: the host is not told
+        changed(true)
         if (rec.view && W) { pendingFit = false; setView(rec.view.x, rec.view.y, clamp(rec.view.z, MIN_Z, MAX_Z)) } else fit(false)
-      } catch { images = []; strokes = []; changed() }
+      } catch { images = []; strokes = []; extra = {}; changed(true) }
     })
   }
 

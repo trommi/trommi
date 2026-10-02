@@ -1,6 +1,7 @@
-/* Fokus-Modus: a full-page overlay for working through the open decision cards
-   one by one. Everything is prefixed focus-; colours, shadows, radii, and
-   easings come from tokens.css. */
+/* Focus: a full-page window with one question, its row in the list grown large.
+   What is asked stands on the left, the answer tiles at the right edge (at the
+   bottom when the window is narrow). Everything is prefixed focus-; colours,
+   shadows, radii, and easings come from tokens.css. */
 
 html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-behavior: none; }
 
@@ -36,6 +37,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus [data-urgency="high"] { --u: var(--urg-high); --u-soft: var(--urg-high-soft); }
 .focus [data-urgency="critical"] { --u: var(--urg-critical); --u-soft: var(--urg-critical-soft); }
 
+.focus .sketch, .focus .doodle { display: block; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
 .focus-icon { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .focus-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .focus-spinner { display: inline-block; width: 18px; height: 18px; flex: none; border-radius: 50%; border: 2px solid color-mix(in srgb, currentColor 24%, transparent); border-top-color: currentColor; animation: focus-spin .7s linear infinite; }
@@ -83,29 +85,47 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 /* nothing in that direction, or a picture is open: the arrow steps aside */
 .focus-nav:disabled, .focus[data-zoom] > .focus-nav { opacity: 0; visibility: hidden; }
 
-/* ── top bar: corner tab, age, notes, read aloud, close ─────────────────── */
-.focus-top { flex: none; display: flex; align-items: flex-start; gap: var(--s-2) var(--s-3); min-height: 60px; padding-right: var(--s-3); }
-/* One tab, flush with the corner, in the card's colour: who is asking and how urgent it is. */
-.focus-tab { flex: 0 1 auto; min-width: 0; display: flex; align-items: stretch; padding-left: calc(var(--pad) - 12px); border-radius: 0 0 var(--r-sm) 0; background: var(--u); color: var(--surface); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; transition: background var(--d-med); }
-.focus-tab span { padding: 11px 12px 10px; }
+/* ── top bar: the head of the row, then notes, later, read aloud, close ─── */
+.focus-top { flex: none; display: flex; align-items: flex-start; gap: var(--s-2); min-height: 60px; padding-right: var(--s-3); }
+/* Tab, sender and age share one line that cannot wrap into view: when the bar is too
+   tight for all of them, the age drops to a second line that is cut off. */
+.focus-meta { flex: 0 1 auto; min-width: 0; height: 32px; margin-right: var(--s-1); display: flex; flex-wrap: wrap; align-items: flex-start; column-gap: var(--s-3); overflow: hidden; }
+/* The tab, flush with the corner, in the card's colour: only on a blocking or urgent question. */
+.focus-tab { flex: 0 1 auto; min-width: 0; max-width: 100%; height: 32px; display: flex; align-items: center; padding: 0 14px 0 var(--pad); border-radius: 0 0 var(--r-sm) 0; background: var(--u); color: var(--surface); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
 .focus-tab-who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.focus-tab-urg { flex: none; }
-.focus-tab-who:not([hidden]) + .focus-tab-urg { border-left: 1px solid color-mix(in srgb, var(--surface) 40%, transparent); }
-/* the age gives way before the name does */
-.focus-ago { flex: 0 1000 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; padding-top: 11px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; color: color-mix(in srgb, var(--u) 60%, var(--muted)); }
-.focus-notes { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); margin-top: 10px; }
+.focus-tab-word { flex: none; }
+.focus-tab-who + .focus-tab-word::before { content: "·"; margin: 0 .5em; }
+/* otherwise who asks stands there plainly, with the session's mark; a scribbled hourglass on what can wait */
+.focus-from { flex: 0 1 auto; min-width: 0; max-width: 100%; height: 32px; display: flex; align-items: center; gap: 7px; padding: 6px 0 0 var(--pad); color: color-mix(in srgb, var(--u) 60%, var(--muted)); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+.focus-from > span:not(.focus-whenever) { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.focus-from .doodle { flex: none; width: 20px; height: 20px; stroke-width: 2.1; }
+.focus-whenever { flex: none; display: block; }
+.focus-whenever .sketch { width: 20px; height: 20px; stroke-width: 1.8; }
+.focus-ago { flex: none; padding-top: 12px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; color: color-mix(in srgb, var(--u) 60%, var(--muted)); opacity: .8; }
+.focus-meta > :first-child:not(.focus-tab), .focus-tab[hidden] + .focus-from[hidden] + .focus-ago { padding-left: var(--pad); }
+.focus-notes { flex: 1 1 0; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: var(--s-2); margin-top: 10px; }
 .focus-round { flex: none; width: 44px; height: 44px; margin-top: var(--s-2); display: inline-flex; align-items: center; justify-content: center; border-radius: 50%; color: var(--muted); background: color-mix(in srgb, var(--surface) 70%, transparent); box-shadow: 0 0 0 1px var(--line); transition: background var(--d-fast), color var(--d-fast), box-shadow var(--d-fast), transform var(--d-fast) var(--ease-out); }
 .focus-round:hover { background: var(--sunken); color: var(--fg); }
 .focus-round:active { transform: scale(.92); }
-/* read-aloud toggle: three bars, filled while on, moving while it speaks */
-.focus-say { gap: 3px; }
-.focus-say i { width: 3px; height: 9px; border-radius: 2px; background: currentColor; }
-.focus-say i:nth-child(2) { height: 16px; animation-delay: .12s; }
-.focus-say i:nth-child(3) { animation-delay: .24s; }
+/* Later: quiet, and in the same place on every card */
+.focus-later { flex: none; height: 44px; margin-top: var(--s-2); display: inline-flex; align-items: center; gap: 6px; padding: 0 16px 0 12px; border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-sm); font-weight: 600; transition: background var(--d-fast), color var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.focus-later .sketch { width: 22px; height: 22px; }
+.focus-later:hover { background: var(--sunken); color: var(--fg); }
+.focus-later:active { transform: scale(.95); }
+.focus-later:disabled { opacity: .4; }
+/* Read aloud. Off: a plain speaker. On: filled, with its sound waves. The waves
+   pulse while the audio loads and run outwards while it plays. */
+.focus-say .focus-icon { width: 22px; height: 22px; overflow: visible; }
+.focus-say path:first-child { fill: currentColor; fill-opacity: .14; }
+.focus-say path + path { opacity: 0; transition: opacity var(--d-fast); }
 .focus-say[aria-pressed="true"], .focus-say[aria-pressed="true"]:hover { background: var(--accent); color: var(--accent-fg); box-shadow: none; }
-.focus-say[data-speaking] i { animation: focus-say .7s var(--ease-in-out) infinite; }
-.focus-say[data-speaking="loading"] i { animation-duration: 1.1s; opacity: .6; }
-@keyframes focus-say { 50% { transform: scaleY(.4); } }
+.focus-say[aria-pressed="true"] path:first-child { fill-opacity: 1; }
+.focus-say[aria-pressed="true"] path + path { opacity: 1; }
+.focus-say[data-speaking] path + path { animation: focus-say 1s var(--ease-in-out) infinite; }
+.focus-say[data-speaking] path:last-child { animation-delay: .18s; }
+.focus-say[data-speaking="loading"] path + path { animation-duration: 1.6s; animation-name: focus-say-wait; }
+@keyframes focus-say { 0%, 100% { opacity: 1; } 50% { opacity: .15; } }
+@keyframes focus-say-wait { 0%, 100% { opacity: .35; } 50% { opacity: .1; } }
 
 .focus-hint, .focus-undo, .focus-info { min-width: 0; max-width: 100%; min-height: 40px; display: inline-flex; align-items: center; gap: var(--s-2); border-radius: var(--r-pill); font-size: var(--t-sm); line-height: 1.25; animation: focus-note-in var(--d-slow) var(--ease-out); }
 @keyframes focus-note-in { from { opacity: 0; transform: translateY(-6px) scale(.97); } }
@@ -128,7 +148,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-undo-time { position: absolute; left: 0; right: 0; bottom: 0; height: 2px; background: var(--accent); transform-origin: 0 50%; animation: focus-undo-time 10s linear forwards; }
 @keyframes focus-undo-time { to { transform: scaleX(0); } }
 
-.focus-info { margin: 0; padding: 4px 14px; background: var(--sunken); color: var(--muted); font-weight: 500; }
+.focus-info { display: block; margin: 0; padding: 10px 14px; background: var(--sunken); color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-info[data-bad] { background: var(--urg-critical-soft); color: var(--urg-critical); }
 
 /* ── stage and cards ────────────────────────────────────────────────────── */
@@ -141,29 +161,33 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-card[data-drag] { transform: translate3d(var(--focus-dx, 0px), 0, 0); user-select: none; }
 .focus-card[data-settle] { transform: translate3d(var(--focus-dx, 0px), 0, 0); transition: transform var(--d-med) var(--ease-out); }
 
-.focus-card[data-in] { animation: var(--d-slow) var(--ease-out) backwards; }
+/* The walk is quick: the next card stands where the last one stood, at once. Only a
+   short fade tells that it is another one; nothing waits for an animation. */
+.focus-card[data-in] { animation: 200ms var(--ease-out) backwards; }
 .focus-card[data-in="next"] { animation-name: focus-in-next; }
 .focus-card[data-in="prev"] { animation-name: focus-in-prev; }
-.focus-card[data-in="sent"] { animation-name: focus-in-sent; animation-delay: 90ms; }
+.focus-card[data-in="sent"], .focus-card[data-in="later"] { animation-name: focus-in-sent; }
 .focus-card[data-in="gone"] { animation-name: focus-in-gone; }
-.focus-card[data-out] { animation: var(--d-med) var(--ease-in-out) forwards; }
+.focus-card[data-out] { animation: 180ms var(--ease-in-out) forwards; }
 .focus-card[data-out="next"] { animation-name: focus-out-next; }
 .focus-card[data-out="prev"] { animation-name: focus-out-prev; }
 .focus-card[data-out="sent"] { animation-name: focus-out-sent; }
+.focus-card[data-out="later"] { animation-name: focus-out-later; }
 .focus-card[data-out="gone"] { animation-name: focus-out-gone; }
-@keyframes focus-in-next { from { opacity: 0; transform: translate3d(56px, 0, 0); } }
-@keyframes focus-in-prev { from { opacity: 0; transform: translate3d(-56px, 0, 0); } }
-@keyframes focus-in-sent { from { opacity: 0; transform: translate3d(0, 26px, 0) scale(.985); } }
+@keyframes focus-in-next { from { opacity: 0; transform: translate3d(28px, 0, 0); } }
+@keyframes focus-in-prev { from { opacity: 0; transform: translate3d(-28px, 0, 0); } }
+@keyframes focus-in-sent { from { opacity: 0; } }
 @keyframes focus-in-gone { from { opacity: 0; } }
-@keyframes focus-out-next { from { transform: translate3d(var(--focus-dx, 0px), 0, 0); } to { opacity: 0; transform: translate3d(calc(var(--focus-dx, 0px) - 64px), 0, 0); } }
-@keyframes focus-out-prev { from { transform: translate3d(var(--focus-dx, 0px), 0, 0); } to { opacity: 0; transform: translate3d(calc(var(--focus-dx, 0px) + 64px), 0, 0); } }
-@keyframes focus-out-sent { to { opacity: 0; transform: translate3d(0, -40px, 0) scale(.97); } }
+@keyframes focus-out-next { from { transform: translate3d(var(--focus-dx, 0px), 0, 0); } to { opacity: 0; transform: translate3d(calc(var(--focus-dx, 0px) - 40px), 0, 0); } }
+@keyframes focus-out-prev { from { transform: translate3d(var(--focus-dx, 0px), 0, 0); } to { opacity: 0; transform: translate3d(calc(var(--focus-dx, 0px) + 40px), 0, 0); } }
+@keyframes focus-out-sent { to { opacity: 0; transform: translate3d(0, -18px, 0); } }
+@keyframes focus-out-later { to { opacity: 0; transform: translate3d(0, 28px, 0); } }
 @keyframes focus-out-gone { to { opacity: 0; transform: scale(.98); } }
 
 /* scrolling content */
 .focus-scroll { flex: 1 1 auto; min-height: 0; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-2) var(--pad) var(--s-6); scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 .focus-lead { display: grid; gap: var(--s-3); max-width: 62rem; }
-.focus-title { margin: 0; font: 650 clamp(1.5rem, 1.05rem + 1.7cqi, 2.2rem)/1.12 var(--display); letter-spacing: -.018em; text-wrap: balance; overflow-wrap: anywhere; }
+.focus-title { margin: 0; font: 800 clamp(1.5rem, 1.05rem + 1.7cqi, 2.25rem)/1.1 var(--display); letter-spacing: -.02em; text-wrap: balance; overflow-wrap: anywhere; }
 .focus-reason { position: relative; margin: 0; padding: 1px 0 1px var(--s-3); font-size: var(--t-md); font-weight: 500; line-height: 1.4; color: var(--u); overflow-wrap: anywhere; }
 .focus-reason::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; border-radius: var(--r-pill); background: var(--u); }
 
@@ -223,31 +247,51 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-perm-rows dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--fg); }
 .focus-perm-raw { white-space: pre-wrap; overflow-wrap: anywhere; }
 
+/* ── asking back: a short thread under the card, and the field that feeds it ── */
+.focus-thread { max-width: 48rem; margin-top: var(--s-6); padding-top: var(--s-4); border-top: 1px dashed var(--line-strong); display: grid; gap: var(--s-3); }
+.focus-msg { display: grid; gap: 2px; justify-items: start; }
+.focus-msg-head { display: flex; align-items: baseline; gap: var(--s-2); font: 600 var(--t-xs)/1.2 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.focus-msg-ago { font-weight: 500; color: var(--faint); }
+.focus-msg-text { margin: 0; white-space: pre-line; overflow-wrap: anywhere; }
+.focus-msg[data-from="user"] .focus-msg-text { padding: 8px 14px; border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 10%, var(--surface)); color: var(--fg); }
+.focus .focus-msg .rich { font-size: 1rem; }
+.focus-msg-state, .focus-thread-wait { margin: 0; font-size: var(--t-sm); color: var(--muted); }
+.focus-msg[data-failed] .focus-msg-state { color: var(--urg-critical); font-weight: 500; }
+.focus-ask { max-width: 48rem; margin-top: var(--s-5); display: flex; align-items: center; gap: var(--s-2); }
+.focus-thread:not([hidden]) + .focus-ask { margin-top: var(--s-3); }
+.focus-ask-open { height: 44px; display: inline-flex; align-items: center; gap: var(--s-2); margin-left: -12px; padding: 0 16px 0 12px; border-radius: var(--r-pill); color: var(--muted); font-size: var(--t-sm); font-weight: 600; transition: background var(--d-fast), color var(--d-fast); }
+.focus-ask-open .sketch { width: 22px; height: 22px; }
+.focus-ask-open:hover { background: var(--sunken); color: var(--fg); }
+.focus-ask[data-open] .focus-ask-open, .focus-ask:not([data-open]) .focus-ask-field, .focus-ask:not([data-open]) .focus-ask-send { display: none; }
+.focus-ask-send { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 50%; background: var(--accent); color: var(--accent-fg); transition: background var(--d-fast), opacity var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.focus-ask-send:hover:not(:disabled) { background: var(--accent-hover); }
+.focus-ask-send:active:not(:disabled) { transform: scale(.92); }
+.focus-ask-send:disabled { background: var(--sunken); color: var(--faint); }
+
 /* ── answer ─────────────────────────────────────────────────────────────── */
-.focus-answer { flex: none; display: grid; gap: var(--s-3); padding: var(--s-4) var(--pad) var(--pad); border-top: 1px solid var(--line); background: var(--surface); }
+/* Narrow window: a bar at the foot of the card, the note above the tiles.
+   Wide window (see the container query below): a column at the right edge,
+   the tiles on top so they stand in the same place on every card. */
+.focus-answer { flex: none; display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-3); padding: var(--s-4) var(--pad) var(--pad); border-top: 1px solid var(--line); }
 .focus-answer[data-shake] { animation: focus-shake 360ms var(--ease-out); }
 @keyframes focus-shake { 20% { transform: translateX(-7px); } 45% { transform: translateX(6px); } 70% { transform: translateX(-3px); } }
-.focus-error { margin: 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
-.focus-note { width: 100%; height: 44px; padding: 0 14px; border: 0; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: var(--t-md); color: var(--fg); transition: box-shadow var(--d-fast), background var(--d-fast); }
-.focus-note::placeholder { color: var(--faint); }
-.focus-note:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
-.focus-note:focus { outline: none; background: var(--surface); box-shadow: inset 0 0 0 2px var(--accent); }
+.focus-error { order: -2; margin: 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); font-weight: 500; line-height: 1.4; overflow-wrap: anywhere; }
+.focus-note, .focus-ask-field { width: 100%; height: 44px; padding: 0 14px; border: 0; border-radius: var(--r-md); background: var(--surface-2); box-shadow: inset 0 0 0 1px var(--line); font: inherit; font-size: var(--t-md); color: var(--fg); transition: box-shadow var(--d-fast), background var(--d-fast); }
+.focus-note { order: -1; }
+.focus-ask-field { flex: 1; min-width: 0; }
+.focus-note::placeholder, .focus-ask-field::placeholder { color: var(--faint); }
+.focus-note:hover, .focus-ask-field:hover { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.focus-note:focus, .focus-ask-field:focus { outline: none; background: var(--surface); box-shadow: inset 0 0 0 2px var(--accent); }
 .focus-note:disabled { opacity: .6; }
 
-/* The tiles are the buttons, in the look of the inbox's answer tiles: a tint of the
-   card's colour, one strong label, the consequence small and grey beneath it. They
-   stand at the foot of the sheet, all the same height, so they are in the same
-   place from card to card. */
-.focus-opts { display: grid; gap: var(--s-2); grid-template-columns: repeat(var(--cols, 3), minmax(0, 1fr)); }
-.focus-opts[data-count="1"] { --cols: 1; }
-.focus-opts[data-count="2"], .focus-opts[data-count="duo"] { --cols: 2; }
-.focus-opts[data-count="4"] { --cols: 4; }
-
-.focus-opt { --ink: color-mix(in srgb, var(--u) 70%, var(--fg)); position: relative; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 112px; padding: var(--s-4) var(--s-5); border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 9%, var(--surface)); color: var(--ink); transition: box-shadow var(--d-fast), background var(--d-fast), color var(--d-fast), filter var(--d-fast), transform var(--d-fast) var(--ease-out), opacity var(--d-fast); }
-.focus-opt-words { flex: 1; min-width: 0; display: grid; gap: 6px; }
-.focus-opt-label { font: 700 1.3rem/1.18 var(--display); letter-spacing: -.008em; overflow-wrap: anywhere; }
-.focus-opt-detail { font-size: var(--t-sm); line-height: 1.36; color: color-mix(in srgb, var(--ink) 45%, var(--muted)); overflow-wrap: anywhere; }
-/* the mark: spinner while the answer travels, a check once it is through */
+/* The tiles are the buttons, in the look of the row's answer tiles: a tint of
+   the card's colour, one strong label, the consequence small beneath it. */
+.focus-opts { display: grid; gap: var(--s-2); grid-template-columns: minmax(0, 1fr); }
+.focus-opt { --ink: color-mix(in srgb, var(--u) 70%, var(--fg)); position: relative; display: flex; align-items: center; gap: var(--s-3); min-width: 0; min-height: 64px; padding: 10px var(--s-4); border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); color: var(--ink); transition: box-shadow var(--d-fast), background var(--d-fast), color var(--d-fast), filter var(--d-fast), transform var(--d-fast) var(--ease-out), opacity var(--d-fast); }
+.focus-opt-words { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.focus-opt-label { font: 700 1.14rem/1.18 var(--display); letter-spacing: -.008em; overflow-wrap: anywhere; }
+.focus-opt-detail { font-size: var(--t-sm); line-height: 1.34; color: color-mix(in srgb, var(--ink) 45%, var(--muted)); overflow-wrap: anywhere; }
+/* the mark: the thumb of a yes/no; a spinner while the answer travels, a check once it is through */
 .focus-opt-mark { order: 2; flex: none; width: 24px; height: 24px; display: none; place-items: center; }
 .focus-opt-mark > * { grid-area: 1 / 1; }
 .focus-opt-mark .focus-spinner, .focus-opt-mark .focus-icon { display: none; }
@@ -261,23 +305,53 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-opt[data-state="pending"] .focus-spinner { display: block; }
 .focus-opt[data-state="done"] { background: var(--u); color: var(--surface); }
 .focus-opt[data-state="done"] .focus-opt-detail { color: inherit; opacity: .86; }
-.focus-opt[data-state="done"] .focus-icon:last-child { display: block; stroke-width: 2.6; animation: focus-pop var(--d-med) var(--ease-spring); }
+.focus-opt[data-state="done"] .focus-icon { display: block; stroke-width: 2.6; animation: focus-pop var(--d-med) var(--ease-spring); }
 @keyframes focus-pop { from { transform: scale(.3); opacity: 0; } }
 
-/* Two options are a yes/no: the other one left, the agent's first choice
-   right and filled, each under its drawn icon. */
-.focus-opts[data-count="duo"] .focus-opt { flex-direction: column; justify-content: center; gap: var(--s-2); text-align: center; }
-.focus-opts[data-count="duo"] .focus-opt-mark { order: 0; display: grid; width: 34px; height: 34px; }
+/* Two options are a yes/no, side by side: the "no" on the left, the agent's
+   first choice on the right and filled, each under its thumb. */
+.focus-opts[data-count="duo"] { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.focus-opts[data-count="duo"] .focus-opt { flex-direction: column; justify-content: center; gap: var(--s-2); min-height: 96px; padding: var(--s-3) var(--s-2); text-align: center; }
+.focus-opts[data-count="duo"] .focus-opt-mark { order: 0; display: grid; width: 32px; height: 32px; }
 .focus-opts[data-count="duo"] .focus-opt-words { flex: none; justify-items: center; }
-.focus-opt-mark .focus-opt-icon { display: block; width: 34px; height: 34px; stroke-width: 1.7; }
-.focus-opt[data-state] .focus-opt-icon { display: none; }
-.focus-opt.is-lead { background: var(--u); color: var(--surface); }
+.focus-opt-mark .sketch { width: 32px; height: 32px; }
+.focus-opt[data-state] .sketch { display: none; }
+.focus-opt.is-lead { background: var(--u); box-shadow: none; color: var(--surface); }
 .focus-opt.is-lead .focus-opt-detail { color: inherit; opacity: .86; }
 .focus-opt.is-lead[data-state] { box-shadow: none; }
 @media (hover: hover) and (pointer: fine) {
   .focus-opt.is-lead:hover:not(:disabled):not([data-state]) { box-shadow: none; filter: brightness(.92); }
 }
 .focus-opt.is-lead:active:not(:disabled):not([data-state]) { box-shadow: none; filter: brightness(.88); }
+
+/* A card that takes several answers: the options are switches with a box to tick,
+   and the filled tile at the end sends what is ticked. */
+.focus-opts[data-multi] .focus-opt:not(.focus-opt-send) .focus-opt-mark { order: 0; display: grid; }
+.focus-opt-box { width: 24px; height: 24px; display: grid; place-items: center; border-radius: 7px; box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--ink) 55%, transparent); transition: background var(--d-fast), box-shadow var(--d-fast); }
+.focus-opt-box .focus-icon { width: 17px; height: 17px; stroke-width: 2.8; color: var(--surface); }
+.focus-opt[aria-pressed="true"] { box-shadow: inset 0 0 0 2px var(--u); }
+.focus-opt[aria-pressed="true"] .focus-opt-box { background: var(--u); box-shadow: none; }
+.focus-opt[aria-pressed="true"] .focus-opt-box .focus-icon { display: block; animation: focus-pop var(--d-med) var(--ease-spring); }
+.focus-opt-send { justify-content: center; text-align: center; }
+.focus-opt-send .focus-opt-words { flex: none; justify-items: center; }
+.focus-opt-send:disabled { opacity: 1; background: color-mix(in srgb, var(--u) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); color: color-mix(in srgb, var(--ink) 55%, transparent); }
+
+/* The option the agent would pick is circled by hand (.is-advised; the two strokes
+   are drawn in tokens.css). Round the pair's squares the circle goes round the whole
+   tile, as on the row. In a stack the pen circles the words, not the wide tile: an
+   ellipse round a tile that wide would run through its own label. */
+.focus-opt.is-advised { --advice: var(--urg-high); }
+/* on an orange card the pen needs a darker ink to show on the filled tile */
+.focus [data-urgency="high"] .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 50%, var(--fg)); }
+.focus-opts[data-count="duo"] .focus-opt.is-advised::before, .focus-opts[data-count="duo"] .focus-opt.is-advised::after { top: -5px; bottom: -6px; rotate: -2deg; }
+.focus-opts[data-count="duo"] .focus-opt.is-advised::before { left: -6px; }
+.focus-opts[data-count="duo"] .focus-opt.is-advised::after { right: -6px; }
+.focus-opts[data-count="stack"] .focus-opt.is-advised::before, .focus-opts[data-count="stack"] .focus-opt.is-advised::after { content: none; }
+.focus-opts[data-count="stack"] .is-advised .focus-opt-label { position: relative; justify-self: start; }
+.focus-opts[data-count="stack"] .is-advised .focus-opt-label::before, .focus-opts[data-count="stack"] .is-advised .focus-opt-label::after { content: ""; position: absolute; top: -.36em; bottom: -.36em; border: 2.5px solid var(--advice); pointer-events: none; rotate: -2deg; }
+.focus-opts[data-count="stack"] .is-advised .focus-opt-label::before { left: -.62em; right: 46%; border-right: 0; border-radius: 100% 0 0 75% / 50% 0 0 50%; }
+.focus-opts[data-count="stack"] .is-advised .focus-opt-label::after { left: 34%; right: -.7em; border-left: 0; border-radius: 0 100% 75% 0 / 0 50% 50% 0; }
+.focus-opt[data-state="done"].is-advised { --advice: color-mix(in srgb, var(--surface) 80%, transparent); }
 
 /* ── foot: on a phone, the row the two arrows stand in ──────────────────── */
 .focus-foot { display: none; }
@@ -315,26 +389,28 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-zoom-prev { left: var(--s-3); }
 .focus-zoom-next { right: var(--s-3); }
 
-/* ── wide sheet: media left, text right ─────────────────────────────────── */
-@container focus (min-width: 780px) {
-  .focus-body[data-layout="split"] { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: var(--s-8); }
+/* ── wide window: the row grown large, answers in a column at the right ─── */
+@container focus (min-width: 700px) {
+  .focus-card { flex-direction: row; }
+  .focus-scroll { flex: 1 1 0; min-width: 0; padding-top: var(--s-3); }
+  .focus-answer { width: clamp(280px, 31cqi, 392px); min-height: 0; align-content: start; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--s-3) var(--pad) var(--pad) var(--s-3); border-top: 0; }
+  .focus-note { order: 0; }
+  .focus-opt { min-height: 76px; padding: var(--s-3) var(--s-4); }
+  .focus-opt-label { font-size: 1.2rem; }
+  /* the pair: two squares, as on the row; a long consequence may make them taller, never narrower */
+  .focus-opts[data-count="duo"] .focus-opt { aspect-ratio: 1; min-height: auto; padding: var(--s-3); gap: var(--s-3); }
+  .focus-opts[data-count="duo"] .focus-opt-mark, .focus-opts[data-count="duo"] .sketch { width: 40px; height: 40px; }
+}
+/* room for pictures beside the text as well */
+@container focus (min-width: 1120px) {
+  .focus-body[data-layout="split"] { grid-template-columns: minmax(0, 1.08fr) minmax(0, 1fr); gap: var(--s-6); }
   .focus-body[data-layout="split"] .focus-media { position: sticky; top: 0; }
 }
-@container focus (max-width: 1040px) {
-  .focus-opts[data-count="4"] { --cols: 2; }
-}
 @container focus (max-width: 680px) {
-  .focus-opts:not([data-count="duo"]) { --cols: 1; }
-  .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 60px; padding: 10px var(--s-4); }
-  .focus-opt-words { gap: 2px; }
-  .focus-opt-label { font-size: 1.1rem; }
-  .focus-opt-detail { font-size: .8rem; line-height: 1.32; }
-  .focus-opts[data-count="duo"] .focus-opt { min-height: 96px; padding: 10px var(--s-2); gap: 6px; }
-  .focus-opts[data-count="duo"] .focus-opt-mark, .focus-opt-mark .focus-opt-icon { width: 28px; height: 28px; }
   /* undo, hint and info get a line of their own under the tab */
   .focus-top:has(.focus-notes > :not([hidden])) { flex-wrap: wrap; }
-  .focus-top:has(.focus-notes > :not([hidden])) .focus-ago { margin-right: auto; }
-  .focus-top:has(.focus-notes > :not([hidden])) .focus-notes { order: 5; flex: none; width: 100%; justify-content: flex-start; margin: 0; padding: 0 0 var(--s-1) var(--pad); }
+  .focus-top:has(.focus-notes > :not([hidden])) .focus-meta { flex: 1 1 0; justify-content: flex-start; }
+  .focus-top:has(.focus-notes > :not([hidden])) .focus-notes { order: 5; flex: none; width: 100%; justify-content: flex-start; margin: 0; padding: 0 var(--pad) var(--s-1); }
 }
 
 /* a short window: give the body the room */
@@ -342,8 +418,8 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-top { min-height: 56px; }
   .focus-scroll { padding-bottom: var(--s-4); }
   .focus-body { margin-top: var(--s-4); }
-  .focus-answer { padding-top: var(--s-3); padding-bottom: var(--s-5); gap: var(--s-2); }
-  .focus-opt { min-height: 88px; padding-top: 10px; padding-bottom: 10px; }
+  .focus-answer { padding-bottom: var(--s-5); gap: var(--s-2); }
+  .focus-opts:not([data-count="duo"]) .focus-opt { min-height: 64px; padding-top: 10px; padding-bottom: 10px; }
   .focus-figure img, .focus-media .media video { max-height: 30vh; }
 }
 
@@ -359,12 +435,14 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
     padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   }
   .focus-sheet::before { height: 160px; }
-  .focus-top { min-height: 52px; padding-right: var(--s-1); column-gap: var(--s-2); }
-  .focus-tab { padding-left: calc(var(--pad) - 10px); }
-  .focus-tab span { padding-inline: 10px; }
+  .focus-top { min-height: 52px; padding-right: var(--s-1); gap: 0; }
+  .focus-meta { column-gap: var(--s-2); }
+  .focus-tab { padding-right: 12px; }
   .focus-round { width: 48px; height: 48px; margin-top: 2px; box-shadow: none; background: none; }
-  .focus-say[aria-pressed="true"] { box-shadow: inset 0 0 0 5px var(--surface); }
-  .focus-hint, .focus-undo, .focus-info { min-height: 44px; }
+  .focus-later { width: 48px; height: 48px; margin-top: 2px; padding: 0; justify-content: center; }
+  .focus-later span { display: none; }
+  .focus-say[aria-pressed="true"], .focus-say[aria-pressed="true"]:hover { background: none; color: var(--accent); }
+  .focus-hint, .focus-undo { min-height: 44px; }
   .focus-undo-cta { height: 36px; }
   .focus-scroll { padding: var(--s-1) var(--pad) var(--s-5); }
   .focus-title { font-size: clamp(1.32rem, 1rem + 1.9cqi, 1.6rem); line-height: 1.16; }
@@ -376,13 +454,18 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-thumb { width: 56px; height: 44px; }
   .focus .rich, .focus-body[data-layout="text"] .rich { font-size: 1rem; line-height: 1.58; }
   .focus-perm-desc { font-size: .95rem; }
-  .focus-answer { max-height: 58dvh; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-3) var(--pad) 0; gap: var(--s-2); }
+  .focus-answer { max-height: 58dvh; overflow-y: auto; overscroll-behavior: contain; padding: var(--s-3) var(--pad) 10px; gap: var(--s-2); }
   .focus[data-single] .focus-answer { padding-bottom: max(var(--s-4), env(safe-area-inset-bottom)); }
-  .focus-note { height: 48px; font-size: 16px; }
+  .focus-note, .focus-ask-field { height: 48px; font-size: 16px; }
+  .focus-thread { margin-top: var(--s-5); }
+  .focus-opt { min-height: 58px; }
+  .focus-opt-label { font-size: 1.08rem; }
+  .focus-opt-detail { font-size: .8rem; line-height: 1.32; }
+  .focus-opts[data-count="duo"] .focus-opt { gap: 6px; }
   /* the foot is the row the arrows stand in, so they cover nothing; the window of one card has neither */
-  .focus-sheet[data-state="cards"] .focus-foot { display: block; flex: none; height: calc(52px + env(safe-area-inset-bottom)); }
+  .focus-sheet[data-state="cards"] .focus-foot { display: block; flex: none; height: calc(48px + env(safe-area-inset-bottom)); }
   .focus[data-single] .focus-foot { display: none !important; }
-  .focus-nav { position: absolute; bottom: calc(2px + env(safe-area-inset-bottom)); background: none; box-shadow: none; }
+  .focus-nav { position: absolute; bottom: env(safe-area-inset-bottom); background: none; box-shadow: none; }
   .focus-nav-prev { left: calc(var(--s-1) + env(safe-area-inset-left)); }
   .focus-nav-next { right: calc(var(--s-1) + env(safe-area-inset-right)); }
   .focus-zoom-view { padding: 64px var(--s-2) calc(var(--s-2) + env(safe-area-inset-bottom)); }
@@ -408,5 +491,5 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus *, .focus *::before, .focus *::after { animation-duration: 1ms !important; animation-delay: 0s !important; transition-duration: 1ms !important; }
   .focus .focus-spinner { animation-duration: 1.4s !important; }
   .focus .focus-undo-time { animation-duration: 10s !important; }
-  .focus .focus-say i { animation: none !important; }
+  .focus .focus-say path { animation: none !important; }
 }
