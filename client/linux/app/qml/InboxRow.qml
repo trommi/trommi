@@ -204,7 +204,7 @@ Item {
             Text { // the word slides out of the tag when the pointer or the keyboard is on it
                 visible: tagHover.hovered || row.selected || row.off
                 anchors.verticalCenter: parent.verticalCenter
-                text: row.off ? "Fetch back" : "Later"
+                text: row.off ? "Fetch back" : nav.word.later
                 color: ui.cardInk(row.card.urgency)
                 font { family: ui.sans; pixelSize: ui.px(12.5); weight: Font.DemiBold }
             }
@@ -291,7 +291,7 @@ Item {
                     visible: !row.card.permission
                     height: askField.height
                     icon: "explain"
-                    label: "Explain"
+                    label: nav.word.explain
                     cap: row.selected ? "E" : ""
                     tint: row.tint
                     onPressed: board.explain(row.card.id)

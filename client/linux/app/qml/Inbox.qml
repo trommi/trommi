@@ -9,6 +9,7 @@ Item {
     id: inbox
 
     function itemOf(id) {
+        if (id.startsWith("pile:")) return id === "pile:" + nav.pile ? openHead : piles
         for (const rep of [rows, pileRows])
             for (let i = 0; i < rep.count; i++) {
                 const it = rep.itemAt(i)
@@ -33,7 +34,13 @@ Item {
         flick.contentY = Math.max(0, Math.min(max, flick.contentY + pages * flick.height * 0.85))
     }
     function askBack(id) { Qt.callLater(() => { const it = itemOf(id); if (it && it.askBack) it.askBack() }) }
-    Connections { target: nav; function onSelChanged() { Qt.callLater(inbox.reveal) } function onUnfoldedChanged() { Qt.callLater(inbox.reveal) } function onPileChanged() { Qt.callLater(inbox.reveal) } }
+    // Rows are laid out a moment after they were made, and the page grows with them: look for the
+    // marked row then, and once more when the page has its new height.
+    property bool seeking: false
+    function seek() { seeking = true; settle.restart(); calm.restart() }
+    Timer { id: settle; interval: 40; onTriggered: inbox.reveal() }
+    Timer { id: calm; interval: 400; onTriggered: inbox.seeking = false }
+    Connections { target: nav; function onSelChanged() { inbox.seek() } function onUnfoldedChanged() { inbox.seek() } function onPileChanged() { inbox.seek() } }
 
     Rectangle { anchors.fill: parent; color: ui.surface }
 
@@ -42,6 +49,7 @@ Item {
         anchors.fill: parent
         contentWidth: width
         contentHeight: page.height + ui.px(72)
+        onContentHeightChanged: if (inbox.seeking) settle.restart()
         clip: true
         boundsBehavior: Flickable.StopAtBounds
 
@@ -220,7 +228,7 @@ Item {
                             Sketch { anchors.verticalCenter: parent.verticalCenter; name: heap.modelData.icon; size: ui.px(20); color: ui.muted }
                             Text {
                                 anchors.verticalCenter: parent.verticalCenter
-                                text: heap.modelData.label
+                                text: heap.modelData.kind === "later" ? nav.word.later : heap.modelData.label
                                 color: heapHover.hovered ? ui.fg : ui.muted
                                 font { family: ui.sans; pixelSize: ui.px(15.5); weight: Font.ExtraBold }
                             }
@@ -253,7 +261,8 @@ Item {
                             height: ui.px(58)
                             radius: ui.radius
                             color: ui.surface
-                            border { width: 1; color: heapHover.hovered ? ui.muted : ui.lineStrong }
+                            readonly property bool marked: nav.sel === "pile:" + heap.modelData.kind
+                            border { width: marked ? 2 : 1; color: marked ? ui.fg : heapHover.hovered ? ui.muted : ui.lineStrong }
                             Mark {
                                 id: heapMark
                                 visible: !!heap.topCard.from
@@ -303,8 +312,8 @@ Item {
                 Text {
                     id: openLabel
                     anchors { left: openIcon.right; leftMargin: ui.px(16); verticalCenter: parent.verticalCenter }
-                    text: openHead.heap ? openHead.heap.label : ""
-                    color: ui.muted
+                    text: !openHead.heap ? "" : openHead.heap.kind === "later" ? nav.word.later : openHead.heap.label
+                    color: nav.sel === "pile:" + nav.pile ? ui.fg : ui.muted
                     font { family: ui.sans; pixelSize: ui.px(19); weight: Font.ExtraBold }
                 }
                 Shape { // dashed: where these cards stand is provisional

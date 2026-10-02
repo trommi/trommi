@@ -17,7 +17,8 @@ const node = tag => ({
   append(...kids) { this.children.push(...kids) },
   get childNodes() { return this.children },
 })
-globalThis.document = { createElementNS: (_, tag) => node(tag), createElement: tag => node(tag), querySelectorAll: () => [] }
+// (querySelector answers with something, so a module that adds its stylesheet once thinks it is there.)
+globalThis.document = { createElementNS: (_, tag) => node(tag), createElement: tag => node(tag), querySelectorAll: () => [], querySelector: () => node('link'), head: node('head'), body: node('body') }
 globalThis.setInterval = () => 0
 
 const src = path.join(here, '..', '..', 'web', 'js', 'ui.js')

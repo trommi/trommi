@@ -131,12 +131,16 @@ Window {
 
     Timer { // tests: keys to press once the window is up; "type:Text" writes into the field in focus
         running: testKeys !== ""
-        interval: 600
+        interval: testKeysMs
         onTriggered: {
             for (const k of testKeys.split(" ")) {
                 const it = win.activeFocusItem
                 if (k.startsWith("type:")) nav.type(k.slice(5).replace(/_/g, " "))
                 else if (k === "open") nav.openCard(nav.sel) // as a click on a row's text does
+                else if (/^(pair|move):\d:\d$/.test(k)) { // as dropping the n-th session on, or in front of, the m-th
+                    const part = k.split(":"), a = nav.units[Number(part[1]) - 1], b = nav.units[Number(part[2]) - 1]
+                    if (a && b) part[0] === "pair" ? sidebar.pairUnits(a.id, b.id) : sidebar.moveUnit(a.id, b.id)
+                }
                 else if (it && it.testKey) it.testKey(k) // a field has the keys
                 else nav.key(k)
             }

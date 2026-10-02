@@ -14,6 +14,46 @@ Rectangle {
     readonly property var here: nav.units.filter(u => u.online)
     readonly property var away: nav.units.filter(u => !u.online)
 
+    // ── carrying a session: dropped on another they are laid together, dropped
+    // between two it stands there from now on ──────────────────────────────
+    property string carried: ""     // the unit in the hand
+    property string dropOn: ""      // the unit it would be laid together with
+    property string dropBefore: ""  // the unit it would stand in front of; "end" for the very end
+    function slots() {
+        const out = []
+        for (const rep of [hereRows, awayRows])
+            for (let i = 0; i < rep.count; i++) {
+                const it = rep.itemAt(i)
+                if (it) out.push({ id: it.unit.id, y: it.mapToItem(places, 0, 0).y, h: it.height })
+            }
+        return out
+    }
+    function over(y) {
+        dropOn = ""
+        dropBefore = ""
+        const all = slots().filter(s => s.id !== carried)
+        for (const s of all) {
+            if (y < s.y + s.h * 0.25) { dropBefore = s.id; return }
+            if (y < s.y + s.h * 0.75) { dropOn = s.id; return }
+        }
+        dropBefore = "end"
+    }
+    function release() {
+        if (carried && dropOn) pairUnits(carried, dropOn)
+        else if (carried && dropBefore) moveUnit(carried, dropBefore)
+        carried = ""
+        dropOn = ""
+        dropBefore = ""
+    }
+    function pairUnits(a, b) {
+        const ua = nav.unit(a), ub = nav.unit(b)
+        if (ua && ub) board.pair(ua.members[0].id, ub.members[0].id)
+    }
+    function moveUnit(a, before) {
+        const ua = nav.unit(a), ub = before === "end" ? null : nav.unit(before)
+        if (ua && (ub || before === "end")) board.move(ua.members[0].id, ub ? ub.members[0].id : "")
+    }
+
     component Caps: Text {
         color: ui.faint
         font { family: ui.sans; pixelSize: ui.px(11); weight: Font.DemiBold; letterSpacing: 1.0; capitalization: Font.AllUppercase }
@@ -29,10 +69,26 @@ Rectangle {
         width: parent ? parent.width : 0
         height: Math.max(ui.px(48), names.height + ui.px(16))
         radius: ui.px(10)
-        color: current ? ui.surface : hover.hovered ? ui.sunken : "transparent"
-        border { width: current ? 1 : 0; color: ui.line }
-        opacity: unit.online ? 1 : 0.7
+        readonly property bool target: side.dropOn === unit.id
+        color: target ? ui.accentSoft : current ? ui.surface : hover.hovered ? ui.sunken : "transparent"
+        border { width: target ? 2 : current ? 1 : 0; color: target ? ui.accent : ui.line }
+        opacity: side.carried === unit.id ? 0.45 : unit.online ? 1 : 0.7
 
+        Rectangle { // dropped here, it stands in front of this one
+            visible: side.dropBefore === entry.unit.id
+            anchors { left: parent.left; right: parent.right; top: parent.top; topMargin: -2 }
+            height: 2
+            color: ui.accent
+        }
+        DragHandler {
+            target: null
+            dragThreshold: 8
+            onActiveChanged: {
+                if (active) side.carried = entry.unit.id
+                else side.release()
+            }
+            onCentroidChanged: if (active) side.over(entry.mapToItem(places, 0, centroid.position.y).y)
+        }
         HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
         TapHandler { onTapped: nav.openSession(entry.unit.id) }
         // The crown is its own switch: a click with the other button.
@@ -63,6 +119,22 @@ Rectangle {
                     drawing: ({ paths: modelData.paths, rotate: modelData.turn })
                     color: ui.ink(modelData.hue)
                     pen: 2.1
+                }
+            }
+            Repeater { // a session that matters most wears its crown here too
+                model: entry.single ? [] : entry.unit.pair.marks
+                Scribble {
+                    required property var modelData
+                    visible: !!modelData.vip
+                    x: (modelData.x - 3) * pairMark.k
+                    y: (modelData.y - 5) * pairMark.k
+                    width: 15 * pairMark.k
+                    box: 26; boxHeight: 19
+                    rotation: -17
+                    path: board.crown()
+                    color: ui.goldPen
+                    fill: ui.mix(ui.gold, ui.bg, 0.34)
+                    pen: 2.2
                 }
             }
             Scribble {
@@ -167,6 +239,7 @@ Rectangle {
 
             Caps { text: "Sessions"; leftPadding: ui.px(12); topPadding: ui.px(18); bottomPadding: ui.px(6) }
             Repeater {
+                id: hereRows
                 model: side.here
                 UnitRow { required property var modelData; unit: modelData }
             }
@@ -187,8 +260,15 @@ Rectangle {
                 }
             }
             Repeater {
+                id: awayRows
                 model: side.away
                 UnitRow { required property var modelData; unit: modelData }
+            }
+            Rectangle { // dropped below everything: the very end
+                visible: side.dropBefore === "end"
+                width: parent.width
+                height: 2
+                color: ui.accent
             }
         }
     }

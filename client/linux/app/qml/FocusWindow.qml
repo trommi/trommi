@@ -26,6 +26,7 @@ Item {
         flick.contentY = Math.max(0, Math.min(max, flick.contentY + by * ui.px(60)))
     }
     function explain() { if (!card.permission) board.explain(nav.cardId) }
+    function handBack() { if (!card.permission) board.handBack(nav.cardId, composer.text) }
     // Another card: from the top, with an empty field.
     Connections {
         target: nav
@@ -35,6 +36,7 @@ Item {
         target: board
         function onAsked(id) { if (id === nav.cardId && nav.focusOpen) { composer.clear(); Qt.callLater(() => view.scroll(9999)) } }
         function onDecided(id) { composer.clear() }
+        function onHanded(id) { composer.clear() }
     }
 
     Rectangle { anchors.fill: parent; color: ui.overlay; TapHandler { onTapped: nav.closeFocus() } }
@@ -509,7 +511,7 @@ Item {
                         height: ui.px(44)
                         visible: !view.card.permission
                         icon: "explain"
-                        label: "Explain"
+                        label: nav.word.explain
                         cap: view.wide ? "E" : ""
                         tint: view.tint
                         onPressed: view.explain()
@@ -518,14 +520,15 @@ Item {
                         height: ui.px(44)
                         visible: !view.card.permission
                         icon: "reverse"
-                        label: "Back to agent"
+                        label: nav.word.handBack
+                        cap: view.wide ? "B" : ""
                         tint: view.tint
-                        onPressed: board.handBack(nav.cardId, composer.text)
+                        onPressed: view.handBack()
                     }
                     Btn {
                         height: ui.px(44)
                         icon: "later"
-                        label: "Later"
+                        label: nav.word.later
                         cap: view.wide ? "L" : ""
                         tint: view.tint
                         onPressed: nav.focusLater()

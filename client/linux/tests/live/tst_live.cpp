@@ -9,6 +9,10 @@
 #include <QSignalSpy>
 #include <QTcpServer>
 #include <QTcpSocket>
+#include <QProcess>
+#include <QJsonArray>
+#include <QJsonDocument>
+#include <QJsonObject>
 #include <QtTest>
 
 using namespace trommi;
@@ -413,6 +417,108 @@ private slots:
         QVERIFY(e.wait());
         QVERIFY(!e.ok);
         QCOMPARE(e.error, "The message is empty.");
+        client.stop();
+    }
+
+    // The contracts the product got since: several answers at once, an agent
+    // that rewords a card while the human answers (409), handing a card back.
+    // Needs a session of its own on that board to play the agent
+    // (bin/test-live links one and names dev/session.mjs in TROMMI_TEST_SESSION).
+    void real_multiSelectRevisedAndHandedBack()
+    {
+        const QString script = qEnvironmentVariable("TROMMI_TEST_SESSION");
+        if (!haveReal || script.isEmpty()) QSKIP("TROMMI_TEST_URL and TROMMI_TEST_SESSION are not set");
+        auto agent = [&](const QString &tool, const QJsonObject &args) {
+            QProcess p;
+            p.start("node", {script, "call", "fixture", tool, QJsonDocument(args).toJson(QJsonDocument::Compact)});
+            if (!p.waitForFinished(10000) || p.exitCode() != 0) return QString("failed: " + p.readAllStandardError() + p.readAllStandardOutput());
+            return QString::fromUtf8(p.readAllStandardOutput()).trimmed();
+        };
+        BoardClient client;
+        State latest;
+        connect(&client, &BoardClient::state, this, [&](const State &s) { latest = s; });
+        client.start(real);
+        QVERIFY(QTest::qWaitFor([&] { return latest.agent("fixture") != nullptr; }, 8000));
+        auto byTitle = [&](const QString &title) -> const Card * {
+            for (const Card &c : latest.cards)
+                if (c.title == title) return &c;
+            return nullptr;
+        };
+        const QJsonArray options{QJsonObject{{"key", "lint"}, {"label", "Lint"}}, QJsonObject{{"key", "unit"}, {"label", "Unit tests"}}, QJsonObject{{"key", "e2e"}, {"label", "End to end"}}};
+
+        // Several answers allowed, two of them advised.
+        QVERIFY2(!agent("create_decision", {{"title", "Which checks?"}, {"body", "Tick them."}, {"options", options}, {"multiple", true}, {"recommended", QJsonArray{"lint", "e2e"}}}).startsWith("failed"), "the fixture session could not file a card");
+        QVERIFY(QTest::qWaitFor([&] { return byTitle("Which checks?") != nullptr; }, 5000));
+        const Card multi = *byTitle("Which checks?");
+        QVERIFY(multi.multiple);
+        QCOMPARE(multi.recommended, QStringList({"lint", "e2e"}));
+        // A draft is kept on the hub, so another device shows the same ticks.
+        Answer d;
+        client.draft(multi.id, {"unit"}, "half a ", d.take());
+        QVERIFY(d.wait() && d.ok);
+        QVERIFY(QTest::qWaitFor([&] { return byTitle("Which checks?")->draft.keys == QStringList{"unit"}; }, 5000));
+        QCOMPARE(byTitle("Which checks?")->draft.note, "half a ");
+        Answer a;
+        client.decide(multi.id, {"lint", "e2e"}, true, "", multi.revised, a.take());
+        QVERIFY(a.wait());
+        QVERIFY2(a.ok, qPrintable(a.error));
+        QVERIFY(QTest::qWaitFor([&] { return !byTitle("Which checks?")->open(); }, 5000));
+        QCOMPARE(byTitle("Which checks?")->choices, QStringList({"lint", "e2e"}));
+        QVERIFY(byTitle("Which checks?")->draft.empty());
+        QCOMPARE(inboxOf(latest, {}).answered.first().id, multi.id);
+
+        // The agent rewords a card the human is looking at: the answer to the old wording is refused.
+        QVERIFY(!agent("create_decision", {{"title", "Old wording?"}, {"options", options}}).startsWith("failed"));
+        QVERIFY(QTest::qWaitFor([&] { return byTitle("Old wording?") != nullptr; }, 5000));
+        const Card old = *byTitle("Old wording?");
+        QCOMPARE(old.revised, 0.0);
+        QCOMPARE(old.version, 1);
+        QVERIFY2(!agent("revise_card", {{"card_id", old.id}, {"title", "New wording?"}, {"note", "clearer"}}).startsWith("failed"), "revise_card failed");
+        QVERIFY(QTest::qWaitFor([&] { return byTitle("New wording?") != nullptr; }, 5000));
+        const Card fresh = *byTitle("New wording?");
+        QCOMPARE(fresh.id, old.id); // one card through its whole life
+        QVERIFY(fresh.revised > 0);
+        QCOMPARE(fresh.version, 2);
+        QCOMPARE(fresh.earlier, 1);
+        QCOMPARE(cardNote(fresh), "revised");
+        Answer stale;
+        client.decide(old.id, {"lint"}, false, "", old.revised, stale.take());
+        QVERIFY(stale.wait());
+        QVERIFY(!stale.ok);
+        QCOMPARE(stale.status, 409);
+        QVERIFY(stale.stale);
+        QVERIFY(byTitle("New wording?")->open()); // nothing was sent
+
+        // Handed back: the card is with the agent, on every device, until the session rewords it.
+        Answer h;
+        client.sendMessage("Shorter, please.", "fixture", fresh.id, h.take(), "handback");
+        QVERIFY(h.wait() && h.ok);
+        QVERIFY(QTest::qWaitFor([&] { return byTitle("New wording?")->withAgent > 0; }, 5000));
+        QCOMPARE(inboxOf(latest, {}).asked.size(), 1);
+        QVERIFY(!inboxOrder(latest, {}).contains(fresh.id));
+        QCOMPARE(threadOf(latest, fresh.id).size(), 1);
+        QVERIFY(!agent("revise_card", {{"card_id", fresh.id}, {"title", "Short?"}}).startsWith("failed"));
+        QVERIFY(QTest::qWaitFor([&] { return byTitle("Short?") && byTitle("Short?")->withAgent == 0; }, 5000));
+        QVERIFY(inboxOrder(latest, {}).contains(fresh.id));
+        // Read again and answered once more, past the moment the server gives the eye: taken.
+        QTest::qWait(1700);
+        Answer again;
+        client.decide(fresh.id, {"unit"}, false, "", byTitle("Short?")->revised, again.take());
+        QVERIFY(again.wait());
+        QVERIFY2(again.ok, qPrintable(again.error));
+
+        // Laid together, crowned, moved: the next state says so.
+        Answer g1, g2, st, mv;
+        const QString other = latest.agents.first().id == "fixture" ? latest.agents.last().id : latest.agents.first().id;
+        client.session("fixture", {{"group", "g-test"}}, g1.take());
+        client.session(other, {{"group", "g-test"}}, g2.take());
+        client.star("fixture", true, st.take());
+        QVERIFY(g1.wait() && g1.ok && g2.wait() && g2.ok && st.wait() && st.ok);
+        QVERIFY(QTest::qWaitFor([&] { return latest.groups.size() == 1 && latest.agent("fixture")->starred; }, 5000));
+        QCOMPARE(units(latest).size(), latest.agents.size() - 1);
+        client.session("fixture", {{"before", other}}, mv.take());
+        QVERIFY(mv.wait() && mv.ok);
+        QVERIFY(QTest::qWaitFor([&] { return latest.agents.first().id == "fixture"; }, 5000));
         client.stop();
     }
 };

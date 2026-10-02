@@ -85,7 +85,10 @@ int main(int argc, char *argv[])
     app.setApplicationName("trommi");
     app.setOrganizationName("trommi");
     app.setApplicationVersion(version);
-    app.setDesktopFileName("trommi"); // the Wayland app id, for Hyprland's rules
+    // The Wayland app id, for Hyprland's rules; inside a Flatpak it is the
+    // Flatpak's own (com.trommi.Trommi), or the desktop cannot tell whose
+    // windows and notifications these are.
+    app.setDesktopFileName(qEnvironmentVariable("FLATPAK_ID", "trommi"));
 
     QCommandLineParser args;
     args.setApplicationDescription("Trommi: the questions and conversations of your agents.");
@@ -131,7 +134,7 @@ int main(int argc, char *argv[])
 
     // Text in the desktop's sans-serif, code in its monospace (as brumm).
     QString sans = QFontInfo(QFont("sans-serif")).family();
-    for (const char *f : {"Adwaita Sans", "Inter", "Cantarell"})
+    for (const char *f : {"IBM Plex Sans", "Adwaita Sans", "Inter", "Cantarell"}) // the web's own face first
         if (QFontDatabase::hasFamily(f)) {
             sans = f;
             break;
@@ -150,6 +153,7 @@ int main(int argc, char *argv[])
     ctx->setContextProperty("appVersion", QString(version));
     // For tests: keys to press once the window is up, separated by spaces.
     ctx->setContextProperty("testKeys", qEnvironmentVariable("TROMMI_KEYS"));
+    ctx->setContextProperty("testKeysMs", qEnvironmentVariableIntValue("TROMMI_KEYS_MS") ?: 600);
     const QStringList size = qEnvironmentVariable("TROMMI_SIZE").split('x');
     ctx->setContextProperty("testSize", size.size() == 2 ? QSize(size[0].toInt(), size[1].toInt()) : QSize(0, 0));
     QObject::connect(&engine, &QQmlApplicationEngine::warnings, [](const QList<QQmlError> &ws) {
