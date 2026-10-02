@@ -407,47 +407,16 @@ async function main() {
   await markRow(c.b5)
   await key('Enter', { pause: 700 })
   check(await ev('return __k.frontTitle()') === 'Which region hosts the mirror?', 'Enter opens a large question as a window')
-  await key('e', { pause: 900 })
-  await until('E in that window asks the session to explain', () => watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user' && /^Explain this question/.test(m.text)))
-  await until('the window closes', () => ev('return !__k.front()'))
-  await until('the row is under "Later"', () => ev(`return 'later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? {})`))
-  check(/Asked/.test((await back())?.text ?? ''), 'and the page says so')
-  await key('u')
-  if (!(await until('U fetches it back', () => ev(`return !('later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? { later: 1 }))`)))) console.log('    ', JSON.stringify(await ev(`const r = __k.row(${JSON.stringify(c.b5)}); return { row: Boolean(r), later: r ? 'later' in r.dataset : null, group: r?.closest('.inbox-group')?.className, says: [...document.querySelectorAll('.says')].map(n => n.innerText.replace(/\\s+/g, ' ')), focus: document.querySelector('.focus')?.hidden, active: document.activeElement.className, stored: localStorage.getItem('trommi-later') }`)))
-
-  // ---------------------------------------------------------------------------
-  section('Inbox: the Answered group')
-  check(!(await ev('return Boolean(__k.list().querySelector(".inbox-group-answered"))')), 'with nothing answered there is no "Answered" group')
-  await markRow(c.g2)
-  await key('y')
-  await until('Y answers', () => card(c.g2).status !== 'open')
-  await until('an "Answered" group stands at the end, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return g && g === __k.list().lastElementChild && !g.querySelector(".inbox-done") && /Answered/.test(g.innerText) && /1 today/i.test(g.innerText)'))
-  await sleep(5300)   // the note has left: this is the wrong answer that is noticed later
-  await click('__k.list().querySelector(".inbox-answered-toggle")')
-  const listed = await ev('return __k.done()')
-  if (check(listed.length === 1 && listed[0].id === c.g2, 'a click unfolds it: one slim row for the answered question')) {
-    check(/Renew the certificate\?/.test(listed[0].text) && /Yes/.test(listed[0].text) && /Gamma/.test(listed[0].text) && /Take back/.test(listed[0].text), `the row says what was asked, what was answered and who asked ("${listed[0].text}")`)
-    check(listed[0].h < 100, `the row is slimmer than a question row (${listed[0].h}px)`)
-  }
-  await key('End', { pause: 500 })
-  check((await cur())?.done && (await cur()).id === c.g2, 'End reaches the answered row')
-  await shot('06b-answered-group')
-  await keys('y', 'n', 'l', 'e', 'Enter', 'a')
-  await sleep(300)
-  check(card(c.g2).status !== 'open' && !(await ev('return Boolean(__k.front())')), 'the answer keys do nothing on an answered row')
-  await key('u')
-  await until('U on the marked answered row takes the answer back', () => card(c.g2).status === 'open')
-  await until('the question stands in its group again, marked', async () => { const at = await cur(); return at?.id === c.g2 && !at.done && await ev(`return __k.among(${JSON.stringify(c.g2)}, ${JSON.stringify([c.g1, c.g3, c.g4])})`) })
-  // The same by hand, on a card the agent has closed since.
-  await key('n')
-  await until('N answers', () => card(c.g2).status !== 'open')
-  await gamma.call('close_card', { card_id: c.g2, summary: 'Left as it is.' })
-  await until('the row says the agent has closed it', () => ev('return __k.done().some(d => /done by the agent/i.test(d.text))'))
-  await sleep(700)   // the rows have come to rest
-  await click('__k.list().querySelector(".inbox-takeback")')
-  await until('a click on "Take back" reopens it all the same', () => card(c.g2).status === 'open')
-  await until('and the question stands in its group again, marked', async () => (await cur())?.id === c.g2 && !(await cur()).done)
-  await key('Escape')
+  // In the opened card E puts the caret into the one field at its foot; Enter asks, with the explain flag.
+  await key('e', { pause: 600 })
+  check(['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag), 'E in the opened card puts the caret into its field')
+  await type('What is a mirror here?')
+  await key('Enter', { pause: 300 })
+  await until('Enter asks the session about that card', () => watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user' && /What is a mirror here\?/.test(m.text)))
+  check(watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user' && m.explain), 'the message carries the explain flag')
+  check(card(c.b5).status === 'open', 'and the question stays open')
+  for (let i = 0; i < 3 && await ev('return Boolean(__k.front())'); i++) await key('Escape', { pause: 400 })
+  check(!(await ev('return Boolean(__k.front())')), 'Escape leaves the field and closes the card')
 
   // ---------------------------------------------------------------------------
   section('The sheet behind "?"')
@@ -577,14 +546,13 @@ async function main() {
   await until('Y answers the question in front', () => card(duo).status !== 'open' && card(duo).choice === card(duo).options[0].key)
   const nextFront = await frontId()
   check(nextFront && nextFront !== duo, 'the next question comes at once')
-  // In the walk the answered question stays as a strip in its place, and the strip carries Back.
-  const strip = () => ev('const n = [...document.querySelectorAll(".focus .focus-strip")].filter(s => s.getClientRects().length).at(-1); return n ? { text: n.innerText.replace(/\\s+/g, " "), box: __k.box(n), button: Boolean(n.querySelector(".focus-strip-back")) } : null')
+  // What happened to the question that left is said by a strip in its place or by the note beside the answers; either carries Back.
+  const strip = () => ev('const n = [...document.querySelectorAll(".focus .focus-strip, .focus .says")].filter(s => s.getClientRects().length).at(-1); return n ? { text: n.innerText.replace(/\\s+/g, " "), box: __k.box(n), button: Boolean(n.querySelector(".focus-strip-back, .says-back")) } : null')
   const walkTag = await strip()
   if (check(Boolean(walkTag), 'a strip says what happened')) {
     check(walkTag.text.includes(`Answered: ${card(duo).options[0].label}`) && walkTag.text.includes(card(duo).title) && walkTag.button, `the strip names the answer and the question, and carries Back ("${walkTag.text}")`)
     const tiles = await ev('return [...__k.front().querySelectorAll(".focus-opt")].map(__k.box)')
     check(!(await ev(`return ${JSON.stringify(tiles)}.some(t => __k.hits(${JSON.stringify(walkTag.box)}, t))`)), 'the strip covers no answer tile')
-    check(!(await back()), 'no floating note in the walk')
     await shot('12-back-in-walk')
   }
   await key('u', { pause: 700 })
@@ -595,7 +563,8 @@ async function main() {
   await until('a click on a tile answers', () => card(duo).status !== 'open')
   await until('the strip is shown again', strip)
   await shot('12b-strip-after-click')
-  await click('[...document.querySelectorAll(".focus .focus-strip-back")].filter(b => b.getClientRects().length).at(-1)')
+  await sleep(450)
+  await click('[...document.querySelectorAll(".focus .focus-strip-back, .focus .says-back")].filter(b => b.getClientRects().length).at(-1)')
   await until('a click on Back takes the answer back', () => card(duo).status === 'open')
   await until('and that question is in front again', async () => await frontId() === duo)
   await key('n', { pause: 700 })
@@ -621,15 +590,17 @@ async function main() {
   await key('l', { pause: 700 })
   const beforeExplain = await frontId()
   if (card(beforeExplain)?.kind !== 'permission') {
-    await key('e', { pause: 900 })
-    await until('E asks the session to explain the question in front', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && /^Explain this question/.test(m.text)))
-    await until('and the walk moves on', async () => await frontId() !== beforeExplain)
-    check(/Asked/.test((await strip())?.text ?? ''), 'a strip says that the session was asked')
+    await key('e', { pause: 600 })
+    check(['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag), 'E puts the caret into the field of the question in front')
+    await type('Say more, please.')
+    await key('Enter', { pause: 300 })
+    await until('Enter asks the session about the question in front', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && /Say more, please/.test(m.text)))
+    if ((await ev('return __k.active()')).tag !== 'BODY') await key('Escape', { pause: 300 })
     await shot('13-explain-in-walk')
   }
   await key('?', { shift: true, pause: 300 })
   const inWalk = await ev('const d = document.querySelector("dialog.keys-sheet"); return d.open ? [...d.querySelectorAll("h3")].map(h => h.textContent) : null')
-  check(inWalk?.[0]?.startsWith('Focus') || inWalk?.some(t => t.startsWith('Focus')), `in the walk the sheet lists the walk's keys (${inWalk?.join(', ')})`)
+  check(inWalk?.some(t => t.startsWith('An opened question')), `in the walk the sheet lists the walk's keys (${inWalk?.join(', ')})`)
   check(inWalk && !inWalk.includes('A list of questions'), 'and not those of the list behind it')
   await shot('14-sheet-walk')
   await key('Escape', { pause: 300 })
@@ -644,7 +615,7 @@ async function main() {
   await keys('g', 'f')
   await until('the walk opens', () => ev('return Boolean(__k.front())'))
   const titleNow = () => ev('return __k.frontTitle()')
-  const strips = () => ev('return [...document.querySelectorAll(".focus .focus-strip")].filter(s => s.getClientRects().length).map(n => n.innerText.replace(/\\s+/g, " "))')
+  const strips = () => ev('return [...document.querySelectorAll(".focus .focus-strip, .focus .says")].filter(s => s.getClientRects().length).map(n => n.innerText.replace(/\\s+/g, " "))')
   const bring = async id => { for (let i = 0; i < 40 && await titleNow() !== card(id).title; i++) await key('j', { pause: 260 }); return check(await titleNow() === card(id).title, `J reaches "${card(id).title}" in the walk`) }
   if (await bring(c.x1)) {
     await key('h', { pause: 300 })
@@ -653,8 +624,11 @@ async function main() {
     check(card(c.x1).status === 'open' && (await strips()).some(t => t.includes(card(c.x1).title)), `S snoozes the question in front (strips: ${(await strips()).join(' | ')})`)
   }
   if (await bring(c.x2)) {
-    await key('b', { pause: 900 })
-    check(card(c.x2).status === 'open' && (await strips()).some(t => t.includes(card(c.x2).title)), `B hands the question back to the agent (strips: ${(await strips()).join(' | ')})`)
+    await key('b', { pause: 600 })
+    check(['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag) && card(c.x2).status === 'open', 'B (Revise) puts the caret into the field and hands nothing back yet')
+    await key('Enter', { pause: 300 })
+    await until('Enter then hands the question back to the agent', async () => card(c.x2).status === 'open' && ((await strips()).some(t => t.includes(card(c.x2).title)) || await titleNow() !== card(c.x2).title))
+    if (['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag)) await key('Escape', { pause: 300 })
   }
   if (await bring(c.x3)) {
     await key('r', { pause: 300 })

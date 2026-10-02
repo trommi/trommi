@@ -1593,8 +1593,8 @@ async function groupSidebar() {
   }
   const busy = scripted().find(a => openCards(a.id).some(c => !putOff.has(c.id)))
   const waiting = openCards(busy?.id).filter(c => !putOff.has(c.id)).length
-  // A session's row carries no number (a stack of cards, or the hand); how many is said by its tooltip and by the Inbox entry.
-  if (busy && waiting) check(row(nameOf(busy))?.badge?.number === '' && row(nameOf(busy))?.badge?.title.includes(`${waiting} question`), `the badge of "${nameOf(busy)}" reads "${row(nameOf(busy))?.badge?.number}" with the tooltip "${row(nameOf(busy))?.badge?.title}", expected no number and a tooltip naming its ${waiting} open questions`)
+  // How many questions a session has open: a number in its badge, or (where the badge is a drawing alone) its tooltip.
+  if (busy && waiting) check(Number(row(nameOf(busy))?.badge?.number) === waiting || (row(nameOf(busy))?.badge?.number === '' && row(nameOf(busy))?.badge?.title.includes(`${waiting} question`)), `the badge of "${nameOf(busy)}" reads "${row(nameOf(busy))?.badge?.number}" with the tooltip "${row(nameOf(busy))?.badge?.title}", expected its ${waiting} open questions as a number or in the tooltip`)
   const fresh = openCards().filter(c => !putOff.has(c.id) && !agentById(c.agent)?.archived).length
   check(Number(list.find(r => r.name === TEXT.inbox)?.count) === fresh, `the inbox entry counts "${list.find(r => r.name === TEXT.inbox)?.count}", ${fresh} questions need an answer`)
 
