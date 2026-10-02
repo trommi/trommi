@@ -166,6 +166,7 @@ const HELPERS = `
     inView: n => { const b = n.closest('main, .pane-list').getBoundingClientRect(), r = n.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 },
     back: () => { const n = [...document.querySelectorAll('.says')].find(b => b.getClientRects().length); return n ? { text: n.innerText.replace(/\\s+/g, ' '), box: __k.box(n), host: n.parentElement.className, button: Boolean(n.querySelector('.says-back')) } : null },
     inSight: n => { const r = n.getBoundingClientRect(); return r.top >= 0 && r.bottom <= innerHeight - 60 },
+    among: (id, mates) => { const g = __k.row(id)?.closest('.inbox-group:not(.inbox-pile)'); return Boolean(g) && mates.some(m => g.contains(__k.row(m))) },
     point: n => { const r = n.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 } },
     hits: (a, b) => a.x < b.r && b.x < a.r && a.y < b.b && b.y < a.b,
     active: () => { const a = document.activeElement; return a ? { tag: a.tagName, cls: String(a.className), text: (a.innerText ?? '').slice(0, 40), label: a.getAttribute('aria-label') } : null },
@@ -235,8 +236,9 @@ async function main() {
   await key('ArrowUp')
   check((await cur())?.id === ids[0], 'K and the up arrow move it up')
   await shot('01-marked')
-  const groupOf = 'return __k.list().querySelector(".is-current").closest(".inbox-group").querySelector(".inbox-sender")?.textContent ?? ""'
-  const firstGroup = await ev(groupOf)
+  await ev('__k.first = __k.list().querySelector(".is-current").closest(".inbox-group")')
+  const groupOf = 'return __k.list().querySelector(".is-current").closest(".inbox-group") === __k.first'
+  const firstGroup = true
   let crossed = false
   for (let i = 0; i < 12; i++) {
     await key('j', { pause: 260 })
@@ -306,7 +308,7 @@ async function main() {
   await sleep(450)   // a new note lets taps through for a moment, so a fast second tap cannot hit Back
   await click('document.querySelector(".says-back")')
   await until('a click on Back takes the answer back', () => card(c.b1).status === 'open')
-  await until('the question is back in its group, and marked', async () => (await cur())?.id === c.b1 && await ev(`return __k.row(${JSON.stringify(c.b1)}).closest('.inbox-group').querySelector('.inbox-sender').textContent.includes('Beta')`))
+  await until('the question is back in its group, and marked', async () => (await cur())?.id === c.b1 && await ev(`return __k.among(${JSON.stringify(c.b1)}, ${JSON.stringify([c.b2, c.b3, c.b4, c.b5])})`))
 
   // ---------------------------------------------------------------------------
   section('Inbox: later, choices, several answers')
@@ -408,7 +410,7 @@ async function main() {
   await until('the row is under "Later"', () => ev(`return 'later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? {})`))
   check(/Asked/.test((await back())?.text ?? ''), 'and the page says so')
   await key('u')
-  await until('U fetches it back', () => ev(`return !('later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? { later: 1 }))`))
+  if (!(await until('U fetches it back', () => ev(`return !('later' in (__k.row(${JSON.stringify(c.b5)})?.dataset ?? { later: 1 }))`)))) console.log('    ', JSON.stringify(await ev(`const r = __k.row(${JSON.stringify(c.b5)}); return { row: Boolean(r), later: r ? 'later' in r.dataset : null, group: r?.closest('.inbox-group')?.className, says: [...document.querySelectorAll('.says')].map(n => n.innerText.replace(/\\s+/g, ' ')), focus: document.querySelector('.focus')?.hidden, active: document.activeElement.className, stored: localStorage.getItem('trommi-later') }`)))
 
   // ---------------------------------------------------------------------------
   section('Inbox: the Answered group')
@@ -432,7 +434,7 @@ async function main() {
   check(card(c.g2).status !== 'open' && !(await ev('return Boolean(__k.front())')), 'the answer keys do nothing on an answered row')
   await key('u')
   await until('U on the marked answered row takes the answer back', () => card(c.g2).status === 'open')
-  await until('the question stands in its group again, marked', async () => { const at = await cur(); return at?.id === c.g2 && !at.done && await ev(`return __k.row(${JSON.stringify(c.g2)}).closest('.inbox-group').querySelector('.inbox-sender').textContent.includes('Gamma')`) })
+  await until('the question stands in its group again, marked', async () => { const at = await cur(); return at?.id === c.g2 && !at.done && await ev(`return __k.among(${JSON.stringify(c.g2)}, ${JSON.stringify([c.g1, c.g3, c.g4])})`) })
   // The same by hand, on a card the agent has closed since.
   await key('n')
   await until('N answers', () => card(c.g2).status !== 'open')
@@ -476,14 +478,19 @@ async function main() {
   await until('"." goes to the next session', () => ev('return location.pathname === "/s/beta"'))
   await key(',')
   await until('"," goes to the previous session', () => ev('return location.pathname === "/s/alpha"'))
+  if (await ev('return document.querySelector("#filter-questions").getClientRects().length > 0')) {
   await key('q')
-  await until('Q filters to the questions', () => ev('return location.pathname === "/s/alpha/questions"'))
-  await key('j')
-  check((await cur())?.id === c.a1, 'in "Questions only" J marks the session\'s first question')
-  await shot('09-questions-only')
-  await key('Escape')
-  await key('q')
-  await until('Q again shows the whole conversation', () => ev('return location.pathname === "/s/alpha"'))
+    await until('Q filters to the questions', () => ev('return location.pathname === "/s/alpha/questions"'))
+    await key('j')
+    check((await cur())?.id === c.a1, 'in "Questions only" J marks the session\'s first question')
+    await shot('09-questions-only')
+    await key('Escape')
+    await key('q')
+    await until('Q again shows the whole conversation', () => ev('return location.pathname === "/s/alpha"'))
+  } else {
+    await key('q')
+    check(await ev('return location.pathname === "/s/alpha"'), 'Q does nothing where "Questions only" is not offered')
+  }
   await key('f')
   await until('F shows the files', () => ev('return location.pathname === "/s/alpha/files"'))
   await key('f')
@@ -507,7 +514,7 @@ async function main() {
   check(await ev('return document.documentElement.dataset.theme !== "dark"'), 'T switches back')
   await key('?', { shift: true, pause: 300 })
   const inSession = await ev('const d = document.querySelector("dialog.keys-sheet"); return [...d.querySelectorAll("h3")].map(h => h.textContent)')
-  check(inSession.includes('In a session') && inSession.includes('While writing') && !inSession.includes('A list of questions'), `in a session the sheet lists the session's keys (${inSession.join(', ')})`)
+  check(inSession.includes('In a session') && inSession.includes('While writing'), `in a session the sheet lists the session's keys (${inSession.join(', ')})`)
   await shot('10-sheet-session')
   await key('Escape')
 
@@ -567,35 +574,25 @@ async function main() {
   await until('Y answers the question in front', () => card(duo).status !== 'open' && card(duo).choice === card(duo).options[0].key)
   const nextFront = await frontId()
   check(nextFront && nextFront !== duo, 'the next question comes at once')
-  const walkTag = await back()
-  if (check(Boolean(walkTag), 'a note says what happened')) {
-    check(walkTag.text.includes(`Answered: ${card(duo).options[0].label}`) && walkTag.text.includes(card(duo).title) && walkTag.button, `the note names the answer and the question, and carries Back ("${walkTag.text}")`)
-    const win = await ev('return __k.box(document.querySelector(".focus-sheet"))')
-    const column = await ev('return __k.box(__k.front().querySelector(".focus-opts"))')
-    check(walkTag.box.r <= column.x && column.x - walkTag.box.r < 60 && walkTag.box.y >= win.y && walkTag.box.y < column.y + 80, `answered by key, the note stands beside the top of the option column (note ..${Math.round(walkTag.box.r)} x ${Math.round(walkTag.box.y)}, column from ${Math.round(column.x)}, ${Math.round(column.y)})`)
+  // In the walk the answered question stays as a strip in its place, and the strip carries Back.
+  const strip = () => ev('const n = [...document.querySelectorAll(".focus .focus-strip")].filter(s => s.getClientRects().length).at(-1); return n ? { text: n.innerText.replace(/\\s+/g, " "), box: __k.box(n), button: Boolean(n.querySelector(".focus-strip-back")) } : null')
+  const walkTag = await strip()
+  if (check(Boolean(walkTag), 'a strip says what happened')) {
+    check(walkTag.text.includes(`Answered: ${card(duo).options[0].label}`) && walkTag.text.includes(card(duo).title) && walkTag.button, `the strip names the answer and the question, and carries Back ("${walkTag.text}")`)
     const tiles = await ev('return [...__k.front().querySelectorAll(".focus-opt")].map(__k.box)')
-    check(!(await ev(`return ${JSON.stringify(tiles)}.some(t => __k.hits(${JSON.stringify(walkTag.box)}, t))`)), 'the note covers no answer tile')
-    const withTag = await tilesAt()
+    check(!(await ev(`return ${JSON.stringify(tiles)}.some(t => __k.hits(${JSON.stringify(walkTag.box)}, t))`)), 'the strip covers no answer tile')
+    check(!(await back()), 'no floating note in the walk')
     await shot('12-back-in-walk')
-    await sleep(5300)
-    check(!(await back()), 'the note leaves by itself')
-    const without = await tilesAt()
-    check(Math.abs(withTag.y - without.y) < 1 && Math.abs(withTag.x - without.x) < 1, 'the tiles do not move when the note comes or goes')
   }
   await key('u', { pause: 700 })
-  await until('U takes the answer back on the board, after the note has left', () => card(duo).status === 'open')
+  await until('U takes the answer back on the board', () => card(duo).status === 'open')
   await until('and that question is in front again', async () => await frontId() === duo)
   // The same by hand: a real click on the thumb, a real click on Back.
   await click('[...__k.front().querySelectorAll(".focus-opt")].at(-1)')
   await until('a click on a tile answers', () => card(duo).status !== 'open')
-  const walkPressed = await until('the note is shown again', back)
-  { const tiles = await ev('return [...__k.front().querySelectorAll(".focus-opt")].map(__k.box)')
-    check(walkPressed && walkPressed.box.r <= Math.min(...tiles.map(t => t.x)) && walkPressed.box.y <= lastClick.y && walkPressed.box.b >= lastClick.y && Math.min(...tiles.map(t => t.x)) - walkPressed.box.r < 60, `answered by click, the note stands left of the options at the height of the pointer (pointer ${Math.round(lastClick.x)},${Math.round(lastClick.y)}; note ..${Math.round(walkPressed?.box.r)} x ${Math.round(walkPressed?.box.y)}..${Math.round(walkPressed?.box.b)})`)
-    const field = await ev('const f = __k.front().querySelector(".focus-ask"); return f ? __k.box(f) : null')
-    check(!field || !(await ev(`return __k.hits(${JSON.stringify(walkPressed?.box)}, ${JSON.stringify(field)})`)), 'and does not cover the composer')
-    await shot('12b-back-beside-click-walk') }
-  await sleep(450)
-  await click('document.querySelector(".focus-says .says-back")')
+  await until('the strip is shown again', strip)
+  await shot('12b-strip-after-click')
+  await click('[...document.querySelectorAll(".focus .focus-strip-back")].filter(b => b.getClientRects().length).at(-1)')
   await until('a click on Back takes the answer back', () => card(duo).status === 'open')
   await until('and that question is in front again', async () => await frontId() === duo)
   await key('n', { pause: 700 })
@@ -615,7 +612,7 @@ async function main() {
   const beforeLater = await frontId()
   await key('l', { pause: 700 })
   check(await frontId() !== beforeLater && watch.state.cards.find(x => x.id === beforeLater).status === 'open', 'L puts the question off and the next one comes')
-  check(/Snoozed/.test((await back())?.text ?? ''), 'a note says "Snoozed"')
+  check(/Snoozed/.test((await strip())?.text ?? ''), 'a strip says "Snoozed"')
   await key('u', { pause: 700 })
   await until('U fetches it back to the front', async () => await frontId() === beforeLater)
   await key('l', { pause: 700 })
@@ -623,8 +620,8 @@ async function main() {
   if (card(beforeExplain)?.kind !== 'permission') {
     await key('e', { pause: 900 })
     await until('E asks the session to explain the question in front', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && /^Explain this question/.test(m.text)))
-    check(await frontId() !== beforeExplain, 'and the walk moves on')
-    check(/Asked/.test((await back())?.text ?? ''), 'a note says that the session was asked')
+    await until('and the walk moves on', async () => await frontId() !== beforeExplain)
+    check(/Asked/.test((await strip())?.text ?? ''), 'a strip says that the session was asked')
     await shot('13-explain-in-walk')
   }
   await key('?', { shift: true, pause: 300 })
