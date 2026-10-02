@@ -118,6 +118,34 @@ Object.assign(PERSONAS, {
   },
 })
 
+// Rich content, one of each: a markdown table and an HTML layout, in a message and in a question.
+const HOSTS_HTML = `<table>
+<thead><tr><th>Hoster</th><th>Preis / Monat</th><th>RAM</th><th>Standort</th><th>Urteil</th></tr></thead>
+<tbody>
+<tr><td><strong>Hetzner CX22</strong></td><td>4,51 €</td><td>4 GB</td><td>Falkenstein</td><td><span class="tag good">günstig</span></td></tr>
+<tr><td>Scaleway DEV1-S</td><td>7,99 €</td><td>2 GB</td><td>Paris</td><td><span class="tag warn">wenig RAM</span></td></tr>
+<tr><td>AWS t3.small</td><td>17,20 €</td><td>2 GB</td><td>Frankfurt</td><td><span class="tag bad">teuer</span></td></tr>
+</tbody>
+</table>
+<details><summary>Wie ich gemessen habe</summary><p>Listenpreise vom 2. Oktober, ohne Traffic. Der Lasttest lief je 10 Minuten mit <kbd>k6</kbd> und 50 gleichzeitigen Nutzern.</p></details>`
+const PLAN_HTML = `<div class="grid cols-3">
+<div class="card"><h4>1. Spalte anlegen</h4><p class="muted">Ohne Sperre, sofort.</p><p><span class="tag good">fertig</span></p></div>
+<div class="card"><h4>2. Zeilen nachfüllen</h4><p class="muted">48.210 Zeilen in Schritten zu 1.000.</p><p><span class="tag warn">läuft</span></p></div>
+<div class="card"><h4>3. NOT NULL setzen</h4><p class="muted">Kurze Sperre, <mark>etwa 2 s</mark>.</p><p><span class="tag">offen</span></p></div>
+</div>`
+PERSONAS.api.rich = [
+  { text: 'Die drei Wege für die Migration im Vergleich:\n| Weg | Sperre | Umbau | Deploy |\n|---|---|---|---|\n| Jetzt ausführen | 40 s | 0 h | heute |\n| Heute Nacht um 02:00 | 40 s | 0 h | morgen |\n| In Schritten | 0 s | 2 h | heute |\n\nIch würde **in Schritten** gehen.' },
+  { text: 'So sähe der Weg **in Schritten** aus: Spalte anlegen, Zeilen nachfüllen, dann NOT NULL setzen. Nur der letzte Schritt sperrt, etwa zwei Sekunden.', html: PLAN_HTML },
+]
+PERSONAS.api.richCards = [
+  { title: 'Welcher Hoster für Staging?', urgency: 'normal', recommended: 'hetzner',
+    body: 'Drei Angebote, Hetzner ist am günstigsten und hat am meisten RAM.', html: HOSTS_HTML,
+    options: [{ key: 'hetzner', label: 'Hetzner' }, { key: 'scaleway', label: 'Scaleway' }, { key: 'aws', label: 'AWS' }] },
+  { title: 'Wie oft sollen die Lasttests laufen?', urgency: 'low',
+    body: 'Kosten pro Monat bei 10 Minuten je Lauf:\n| Takt | Läufe | Kosten |\n|---|---|---|\n| Bei jedem Merge | 120 | 14,40 € |\n| Nächtlich | 30 | 3,60 € |\n| Wöchentlich | 4 | 0,48 € |',
+    options: [{ key: 'merge', label: 'Bei jedem Merge' }, { key: 'nacht', label: 'Nächtlich' }, { key: 'woche', label: 'Wöchentlich' }] },
+]
+
 const persona = PERSONAS[process.argv[2]]
 if (!persona) {
   console.error('usage: node dev/fake-agent.mjs web|api|infra|ios|docs')
@@ -172,6 +200,9 @@ for (const card of persona.cards) {
   }
   await sleep(500)
 }
+// Boards started before rich content existed show the table as text and refuse the html field.
+for (const message of persona.rich ?? []) await call('reply', message).catch(() => {})
+for (const card of persona.richCards ?? []) await call('create_decision', card).catch(() => {})
 // Boards started before sections existed refuse this one; then the demo simply has no such card.
 if (persona.sectioned) await call('create_decision', persona.sectioned).catch(() => {})
 if (persona.merge && filed.length > 1) {

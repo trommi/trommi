@@ -104,13 +104,18 @@ const SEL = {
   focusRail: '.focus-rail',
   focusThread: '.focus-thread',
   focusNote: '.focus-says .says',
+  // In the walk (one scrolling column of cards) a card that left is a slim strip where it stood, with the way back on it.
+  focusAnyCard: '.focus-card',
+  focusStrip: '.focus-strip',
+  focusStripSaid: '.focus-strip-text b',
+  focusList: '.focus[data-list]',
   focusNext: '.focus-nav-next',
   focusPrev: '.focus-nav-prev',
   focusFigure: '.focus-figure',
   focusZoom: '.focus-zoom',
   focusZoomOption: '.focus-zoom-answer .focus-opt:not(.focus-opt-send)',
   focusWait: '.focus-thread-wait',
-  noteBack: '.says-back',
+  noteBack: '.says-back, .focus-strip-back',
   lightbox: 'dialog.lightbox',
   lightboxImage: 'dialog.lightbox .lightbox-img',
 
@@ -146,6 +151,7 @@ const SEL = {
   rosterName: '.roster-name strong',
   rosterFact: '.roster-facts > div',
   rosterStar: '.roster-star',
+  crownToggle: '.crown-toggle',
   rosterEdit: '.roster-edit',
   rosterRename: '.roster-rename',
   markPicker: 'dialog.mark-picker',
@@ -185,7 +191,7 @@ const SEL = {
 // Words of the interface the test relies on.
 const TEXT = {
   inbox: 'Inbox', later: 'Snooze', back: 'Fetch back', choose: 'Choose', split: 'Split',
-  send: 'Send', explain: /^(Explain|What\?\?)$/, hand: 'Back to agent', answered: 'Answered', movedLater: 'Snoozed', noteBack: 'Back',
+  send: 'Send', explain: /^(Explain|What)/, hand: 'Back to agent', answered: 'Answered', movedLater: 'Snoozed', noteBack: 'Back',
   model: 'Model', machine: 'Machine', unknown: 'unknown',
   // What dev/fake-agent.mjs answers (its script is German).
   heard: 'Verstanden', scribbleSeen: 'Scribble erhalten',
@@ -294,8 +300,10 @@ const PAGE_LIB = `(() => {
     later: (id, root = SEL.inbox) => { const r = __t.row(id, root); return r ? one(SEL.rowLater, r) : null },
     rows: (root = SEL.inbox) => all(SEL.row, root).map(rowInfo),
     rowInfo: (id, root = SEL.inbox) => { const r = __t.row(id, root); return r ? rowInfo(r) : null },
+    // The questions of one sender stand together: under a heading with its name and count, or (one list without
+    // headings) in a section that names them for a screen reader, each row saying who asked.
     // A pile (Later, With the agent, Answered) keeps its rows also while it is pushed together; they are listed either way.
-    groups: (root = SEL.inbox) => all(SEL.group, root).map(g => { const pile = g.matches(SEL.pile); return { name: text((pile ? g.querySelector(SEL.pileName) : null) ?? g.querySelector(SEL.groupName)), count: text(g.querySelector(pile ? SEL.pileCount : SEL.groupCount)), pile: g.dataset.pile ?? '', open: !pile || g.matches(SEL.pileOpen), later: g.matches(SEL.laterGroup), vip: !!one(SEL.groupVip, g), ids: (pile ? [...g.querySelectorAll(SEL.row + ', ' + SEL.doneRow)] : all(SEL.row, g)).map(n => n.dataset.id).filter(Boolean), peeks: pile ? [...g.querySelectorAll(SEL.pilePeek)].map(text) : [] } }),
+    groups: (root = SEL.inbox) => all(SEL.group, root).map(g => { const pile = g.matches(SEL.pile); const said = /^(.*): (\d+) questions?$/.exec(g.getAttribute('aria-label') ?? '') ?? []; return { name: text((pile ? g.querySelector(SEL.pileName) : null) ?? g.querySelector(SEL.groupName)) || (said[1] ?? ''), count: text(g.querySelector(pile ? SEL.pileCount : SEL.groupCount)) || (said[2] ?? ''), pile: g.dataset.pile ?? '', open: !pile || g.matches(SEL.pileOpen), later: g.matches(SEL.laterGroup), vip: !!one(SEL.groupVip, g), ids: (pile ? [...g.querySelectorAll(SEL.row + ', ' + SEL.doneRow)] : all(SEL.row, g)).map(n => n.dataset.id).filter(Boolean), peeks: pile ? [...g.querySelectorAll(SEL.pilePeek)].map(text) : [] } }),
     pileOf: kind => all(SEL.pile).find(g => g.dataset.pile === kind) ?? null,
     /** Which answer tile lies under a point of the screen. */
     tileAt(x, y) {
@@ -323,7 +331,8 @@ const PAGE_LIB = `(() => {
       return out
     },
     /** The note that says what just happened, in the window or on the page: its words and whether it offers the way back. */
-    note: (inWindow = false) => { const n = one(inWindow ? SEL.focusNote : SEL.undoBar); return n && { text: text(n.querySelector(SEL.undoSaid) ?? n), all: text(n), back: !!one(SEL.noteBack, n), box: box(n) } },
+    noteNode: (inWindow = false, title = '') => (inWindow ? (all(SEL.focusStrip).findLast(n => text(n).includes(title)) ?? one(SEL.focusNote)) : one(SEL.undoBar)),
+    note: (inWindow = false, title = '') => { const n = __t.noteNode(inWindow, title); return n && { text: text(n.querySelector(SEL.focusStripSaid) ?? n.querySelector(SEL.undoSaid) ?? n), all: text(n), back: !!one(SEL.noteBack, n), strip: n.matches(SEL.focusStrip), box: box(n) } },
     inPile: (kind, id) => !!__t.pileOf(kind) && [...__t.pileOf(kind).querySelectorAll(SEL.row + ', ' + SEL.doneRow)].some(n => n.dataset.id === id),
     openCount: () => Number(/^\\((\\d+)\\)/.exec(document.title)?.[1] ?? 0),
     pane: id => all(SEL.pane).find(p => p.dataset.agent === id) ?? null,
@@ -1715,6 +1724,17 @@ async function groupAgents() {
   await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
   await waitState(`"${nameOf(vip)}" is starred`, s => s.agents.find(a => a.id === vip.id).starred)
   await expect('the star shows as set', js`__t.roster().find(c => c.name === ${nameOf(vip)}).starred`)
+  // The crown on a session's mark in the sidebar is the same switch: one click takes VIP away, one puts it back.
+  const crownOf = js`__t.one(${SEL.crownToggle}, __t.unit(${nameOf(vip)}))`
+  if (await ev(`!!${crownOf}`)) {
+    check(await ev(`${crownOf}.getAttribute('aria-pressed')`) === 'true', 'the crown in the sidebar does not show the session as VIP')
+    await press(`the crown of "${nameOf(vip)}" in the sidebar`, crownOf)
+    await waitState('a click on the crown takes VIP away', s => !s.agents.find(a => a.id === vip.id).starred, 4000).then(() => passed(), e => check(false, e.message))
+    await settle()
+    // (Without VIP the crown shows only while the pointer is near; the switch on the agents page is always there.)
+    await press(`the star of "${nameOf(vip)}"`, js`__t.rosterCard(${nameOf(vip)}).querySelector(${SEL.rosterStar})`)
+    await waitState(`"${nameOf(vip)}" is starred again`, s => s.agents.find(a => a.id === vip.id).starred)
+  }
 
   await reload()
   await goRoster()
@@ -1729,7 +1749,8 @@ async function groupAgents() {
   check(top.name.replace(/^★ /, '') === nameOf(vip), `the VIP session "${nameOf(vip)}" is not the first group of the inbox, "${top.name}" is`)
   // The mark stands once on the heading of the group, or on each of its rows.
   check(top.vip || (await ev('__t.rows()')).filter(r => top.ids.includes(r.id)).every(r => r.vip), 'the questions of the VIP session are not marked VIP')
-  check((await ev('__t.groups()')).slice(1).every(g => !g.vip), 'a session that is not VIP carries the VIP mark')
+  const marked = (await ev('__t.rows()')).filter(r => r.vip && !top.ids.includes(r.id) && !putOff.has(r.id))
+  check((await ev('__t.groups()')).slice(1).every(g => !g.vip) && !marked.length, `a session that is not VIP carries the VIP mark${marked.length ? `: the row "${marked[0].title}"` : ''}`)
   await shot('inbox-vip')
 
   // Put things back, so the next group finds the board as it was: an emptied name is the session's own again.
@@ -1914,12 +1935,26 @@ async function groupGallery() {
 
 // ---- the big window: the walk, its composer and its ways out --------------------
 
-/** In the walk, page until a card is in front: forward as far as it goes (or once round), then backward. */
+/** In the walk, bring a card to the front. Where the walk is one scrolling column, the card is scrolled to and
+ *  touched (its title), as a hand would; where it shows one card at a time, the arrows beside the sheet page to it. */
 async function walkTo(card) {
+  const isFront = () => ev(js`__t.focusState()?.id === ${card.id}`)
+  if (await isFront()) { await settle(); return true }
+  if (await ev(js`!!document.querySelector(${SEL.focusList})`)) {
+    const node = js`[...document.querySelectorAll(${SEL.focusAnyCard})].find(n => n.dataset.id === ${card.id})`
+    if (!(await ev(`!!${node}`))) return false
+    await ev(`${node}.scrollIntoView({ block: 'center', behavior: 'instant' })`)
+    await sleep(250)
+    await settle()
+    if (!(await isFront())) await press(`the card "${card.title}" in the walk`, `${node}.querySelector(${JSON.stringify(SEL.focusTitle)})`)
+    await waitFor(`"${card.title}" is the card in front`, js`__t.focusState()?.id === ${card.id}`, 3000).catch(() => {})
+    await settle()
+    return isFront()
+  }
   const n = state().queue.length + 2
   for (const [word, sel] of [['next', SEL.focusNext], ['previous', SEL.focusPrev]]) {
     for (let i = 0; i < n; i++) {
-      if (await ev(js`__t.focusState()?.id === ${card.id}`)) { await settle(); return true }
+      if (await isFront()) { await settle(); return true }
       await settle()
       if (!(await ev(js`(b => !!b && !b.disabled)(__t.one(${sel}))`))) break
       const before = await ev('__t.focusState()?.id ?? null')
@@ -1927,7 +1962,7 @@ async function walkTo(card) {
       if (!(await waitFor('the walk shows another question', js`(s => s && s.id && s.id !== ${before})(__t.focusState())`, 2500).catch(() => false))) break
     }
   }
-  return ev(js`__t.focusState()?.id === ${card.id}`)
+  return isFront()
 }
 const front = () => ev('__t.focusState()')
 const fieldOf = () => js`__t.one(${SEL.focusField}, __t.one(${SEL.focusCard}))`
@@ -1965,15 +2000,23 @@ async function groupWalk() {
   need(await walkTo(talk), `the walk never came to "${talk.title}"`)
   const fields = await ev(js`__t.all(${SEL.focusField}, __t.one(${SEL.focusCard})).length`)
   check(fields === 1, `the card in front has ${fields} fields to write in, expected one composer`)
-  const ways = await ev(js`[${SEL.focusSend}, ${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}].map(sel => (n => __t.text(n) || __t.label(n).split(/[ :]/)[0])(__t.one(sel, ${SEL.focus})))`)
+  const ways = await ev(js`[${SEL.focusSend}, ${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}].map(sel => (n => __t.text(n) || __t.label(n).split(/[ :]/)[0])(__t.one(sel, __t.one(${SEL.focusCard}))))`)
   check(ways[0] === TEXT.send && TEXT.explain.test(ways[1]) && ways[2] === TEXT.hand && isLater(ways[3]), `with the composer stand "${ways.join('", "')}", expected "${TEXT.send}", "Explain" (or "What??"), "${TEXT.hand}", "${TEXT.later}"`)
   await checkEnglish('the walk')
   await shot('walk-composer')
   if (touch) {
     // On a phone every one of them has to be on screen and big enough for a finger.
-    const small = await ev(js`[${SEL.focusSend}, ${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}, ${SEL.focusNext}, ${SEL.focusPrev}].flatMap(sel => __t.all(sel, ${SEL.focus})).concat(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard}))).map(n => ({ name: __t.label(n).slice(0, 24), box: __t.box(n) })).filter(x => x.box.height < 40 || x.box.width < 40 || x.box.right > innerWidth + 1 || x.box.bottom > innerHeight + 1 || x.box.left < -1)`)
+    const small = await ev(js`[${SEL.focusSend}, ${SEL.focusExplain}, ${SEL.focusHand}, ${SEL.focusLater}, ${SEL.focusNext}, ${SEL.focusPrev}].flatMap(sel => __t.all(sel, ${SEL.focus}).filter(n => !n.closest(${SEL.focusAnyCard}) || n.closest(${SEL.focusCard}))).concat(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard}))).map(n => ({ name: __t.label(n).slice(0, 24), box: __t.box(n) })).filter(x => x.box.height < 40 || x.box.width < 40 || x.box.right > innerWidth + 1 || x.box.bottom > innerHeight + 1 || x.box.left < -1)`)
     check(!small.length, `on a phone these controls of the window are off the screen or smaller than a finger (40px): ${small.map(x => `"${x.name}" ${x.box.width}x${x.box.height} at ${x.box.left},${x.box.top}`).join('; ')}`)
   }
+
+  // What is about to be pressed stays where it is: the board's state changes all the time (other sessions
+  // post), and the window must not move by itself when it does.
+  const tileTop = () => ev(js`Math.round(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).at(-1).getBoundingClientRect().top)`)
+  const restAt = await tileTop()
+  await courier.tool('reply', { text: `Something else entirely (${stamp})` })
+  await sleep(900)
+  check(same(await tileTop(), restAt, 1) && (await front())?.id === talk.id, `a message from a session moved the window by itself: the answer in front went from y=${restAt} to y=${await tileTop()}`)
 
   // A typed message is plain chat about the card: the card stays open, in front, and where it was.
   const words = `only a remark ynlceub 123 ${stamp}`
@@ -1985,7 +2028,7 @@ async function groupWalk() {
     check((await front()).id === talk.id, 'an arrow key pressed in the composer turned the page')
   }
   check(cardOf(talk.id).status === 'open', 'letters typed into the composer answered the question')
-  if (touch) await press(`"${TEXT.send}"`, js`__t.one(${SEL.focusSend}, ${SEL.focus})`)
+  if (touch) await press(`"${TEXT.send}"`, js`__t.one(${SEL.focusSend}, __t.one(${SEL.focusCard}))`)
   else await key('Enter', 13, { text: '\r' })
   await waitState('the message reaches the session, tied to its card', () => said(talk).some(m => m.text === words), 5000)
   await sleep(700)
@@ -2013,11 +2056,20 @@ async function groupWalk() {
     for (let i = 0; i < 5; i++) { await key('ArrowRight', 39); await sleep(200) }
     for (let i = 0; i < 5; i++) { await key('ArrowLeft', 37); await sleep(200) }
     await settle()
-  } else {
+  } else if (await ev(js`!!__t.one(${SEL.focusNext})`)) {
     await press('next', js`__t.one(${SEL.focusNext})`)
     await expect('the next arrow shows the next question', js`(s => s && s.id !== ${talk.id})(__t.focusState())`, 3000)
     await press('previous', js`__t.one(${SEL.focusPrev})`)
     await expect('the previous arrow goes back', js`__t.focusState()?.id === ${talk.id}`, 3000)
+  } else {
+    // One scrolling column: a finger pushes it up and down, over the answers too.
+    const tile = await ev(js`__t.box(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).at(-1))`)
+    const from = { x: Math.round(tile.left + tile.width / 2), y: Math.round(tile.top + tile.height / 2) }
+    await drag(line(from, { x: from.x, y: Math.max(40, from.y - 420) }, 14), { pause: 24 })
+    await sleep(700)
+    await drag(line({ x: from.x, y: 300 }, { x: from.x, y: 720 }, 14), { pause: 24 })
+    await sleep(700)
+    await settle()
   }
   check(answered() === before, `paging through the questions answered ${answered() - before} of them`)
   check(cardOf(talk.id).status === 'open', 'paging answered the yes/no question in front')
@@ -2029,12 +2081,12 @@ async function groupWalk() {
   await expect('after an answer the walk moves on at once', js`(s => s && s.id !== ${take.id})(__t.focusState())`, 1500)
   await waitState(`"${take.title}" is decided`, () => cardOf(take.id).status !== 'open')
   check(cardOf(take.id).choice === 'yes', `the answer in the walk chose "${cardOf(take.id).choice}", expected "yes"`)
-  const note = await ev('__t.note(true)')
+  const note = await ev(js`__t.note(true, ${take.title})`)
   if (check(note, 'in the walk nothing says what was answered, and nothing takes it back')) {
     check(/Yes$/.test(note.text) && note.back, `the note in the walk reads "${note.all}", expected the answer "Yes" and "${TEXT.noteBack}"`)
-    if (!touch) check(note.box.left < screen().width / 2 && note.box.top < 200, `the note with "${TEXT.noteBack}" is not at the top left of the window: ${JSON.stringify(note.box)}`)
+    if (!touch && !note.strip) check(note.box.left < screen().width / 2 && note.box.top < 200, `the note with "${TEXT.noteBack}" is not at the top left of the window: ${JSON.stringify(note.box)}`)
     await shot('walk-answered')
-    await press(`"${TEXT.noteBack}" in the walk`, js`__t.one(${SEL.noteBack}, __t.one(${SEL.focusNote}))`)
+    await press(`"${TEXT.noteBack}" in the walk`, js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${take.title}))`)
     await waitState(`"${take.title}" is open again`, () => cardOf(take.id).status === 'open')
     check(cardOf(take.id).choice == null, 'the card taken back still carries its old answer')
     await expect('the card taken back is in front again in the walk', js`__t.focusState()?.id === ${take.id}`, 4000)
@@ -2043,22 +2095,22 @@ async function groupWalk() {
 
   // Later: a plain put-off. The card leaves, the walk moves on.
   need(await walkTo(off), `the walk never came to "${off.title}"`)
-  await press(`"${TEXT.later}" in the walk`, js`__t.one(${SEL.focusLater}, ${SEL.focus})`)
+  await press(`"${TEXT.later}" in the walk`, js`__t.one(${SEL.focusLater}, __t.one(${SEL.focusCard}))`)
   putOff.add(off.id)
   await expect(`after "${TEXT.later}" the walk moves on`, js`(s => s && s.id !== ${off.id})(__t.focusState())`, 3000)
   await expect(`"${TEXT.later}" lays the card on the "${TEXT.later}" pile`, js`__t.inPile('later', ${off.id})`, 3000)
   check(cardOf(off.id).status === 'open' && !said(off).length, `"${TEXT.later}" answered the card or wrote to the session`)
-  const laterNote = await ev('__t.note(true)')
+  const laterNote = await ev(js`__t.note(true, ${off.title})`)
   check(saysLater(laterNote?.text) && laterNote.back, `after "${TEXT.later}" the note reads "${laterNote?.all}", expected "${TEXT.movedLater}" and the way back`)
 
   // Explain: one tap asks the session; the card leaves and returns when the session has replied.
   need(await walkTo(explain), `the walk never came to "${explain.title}"`)
-  await press(`"Explain" in the walk`, js`__t.one(${SEL.focusExplain}, ${SEL.focus})`)
+  await press(`"Explain" in the walk`, js`__t.one(${SEL.focusExplain}, __t.one(${SEL.focusCard}))`)
   await waitState('the session is asked to explain, tied to the card', () => said(explain).some(m => /^Explain/.test(m.text)), 5000)
   await expect(`after "Explain" the walk moves on`, js`(s => s && s.id !== ${explain.id})(__t.focusState())`, 3000)
   await expect(`"Explain" lays the card on the pile of what is with the agent`, js`__t.inPile('asked', ${explain.id})`, 3000)
   check(cardOf(explain.id).status === 'open', `"Explain" answered the card`)
-  const explainNote = await ev('__t.note(true)')
+  const explainNote = await ev(js`__t.note(true, ${explain.title})`)
   check(explainNote && !/undefined|null/.test(explainNote.all) && explainNote.back, `after "Explain" the note reads "${explainNote?.all ?? 'nothing'}", expected what happened and the way back`)
   await sleep(50)
   await courier.tool('reply', { text: `Explained: it is about the size (${stamp})`, card_id: explain.id })
@@ -2073,12 +2125,12 @@ async function groupWalk() {
   const wish = `please look at it again ${stamp}`
   await press('the composer', fieldOf())
   await type(wish)
-  await press(`"${TEXT.hand}" in the walk`, js`__t.one(${SEL.focusHand}, ${SEL.focus})`)
+  await press(`"${TEXT.hand}" in the walk`, js`__t.one(${SEL.focusHand}, __t.one(${SEL.focusCard}))`)
   await waitState('the words reach the session, tied to the card', () => said(hand).some(m => m.text === wish), 5000)
   await expect(`after "${TEXT.hand}" the walk moves on`, js`(s => s && s.id !== ${hand.id})(__t.focusState())`, 3000)
   await expect(`"${TEXT.hand}" lays the card on the pile of what is with the agent`, js`__t.inPile('asked', ${hand.id})`, 3000)
   check(cardOf(hand.id).status === 'open', `"${TEXT.hand}" answered the card`)
-  const handNote = await ev('__t.note(true)')
+  const handNote = await ev(js`__t.note(true, ${hand.title})`)
   check(handNote && !/undefined|null/.test(handNote.all) && handNote.back, `after "${TEXT.hand}" the note reads "${handNote?.all ?? 'nothing'}", expected what happened and the way back`)
   await shot('walk-handed')
   await sleep(50)
