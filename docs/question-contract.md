@@ -1,7 +1,7 @@
 # Question contract: sections, option notes, drafts, session order, versions and hand-back
 
 What the hub puts into a card and takes from a page, for whoever renders the
-Focus window or another client. Five things, all additive: a client that
+Focus window or another client. Seven things, all additive: a client that
 knows none of them keeps working with `body`, `options`, `recommended`,
 `note`.
 
@@ -334,3 +334,140 @@ POST /message { "text": "…", "agent": "<id>", "card_id": "<open card>", "expla
 - "Back to agent" sends `handback: true`, "What??" sends `explain: true`; show
   the card as waiting while `with_agent` is set, and as presented again when
   the `revised` event with `again: true` arrives.
+
+## 6. Rich content: tables and HTML beside the words
+
+Two ways, the first with no new syntax.
+
+**A markdown table** in any text the board draws (`reply.text`, `details`,
+`body`, a section's `text`): rows between pipes, a rule of dashes under the
+first. It is drawn as a table; a column of numbers stands right-aligned, and
+`:--`, `:-:`, `--:` in the rule set a column outright. It may stand right under
+a sentence, without a blank line.
+
+**HTML**, for what a table in pipes cannot say (merged cells, a small grid,
+details, marks):
+
+| Where | How |
+|---|---|
+| a message | `reply { text, html }` |
+| a question | `create_decision` / `revise_card` / `merge_cards { body, html, options }` |
+| one block of a question | `sections: [{ text, html, key?, label? }]` |
+| inside any text | a block fenced as ```` ```html ```` |
+
+Rules, checked by the server (`server/richhtml.mjs`):
+
+- `html` never stands alone: a message needs `text`, a card `body`, a section
+  its `text`. Those words are shown above the layout, are what read-aloud
+  speaks, and are all that a client without HTML shows (iOS and Linux ignore
+  `html` for now).
+- At most 200 KB per block (`BOARD_MAX_HTML_KB`).
+- It is stored already cleaned: `script`, `iframe`, `object`, `embed`, `meta`,
+  `link`, `base`, `audio`, `video`, `template`, `noscript` are removed, `form`
+  tags too (their fields stay); `on…` handlers, `srcdoc`, `srcset`; any `href`
+  that is not `http(s):`, `mailto:`, `#…` or relative; any `src` that is not a
+  `data:image/…`; `@import` and `url(…)` to an address in CSS. The answer to
+  the tool call names what was removed.
+- `html` cannot be combined with `sections` or `text` on a card (give it to a
+  block). On `revise_card`: left out, it stands; `""` takes it away. It is part
+  of `questionSig`, so a new layout is a new version, and each entry of
+  `card.versions` keeps the `html` it had.
+
+### Stored and delivered
+
+`message.html`, `card.html`, `card.sections[i].html`, `card.versions[i].html`:
+strings, only present when there is one. `list_cards` returns `html` with an
+open card. Fenced blocks stay in their text, cleaned in place.
+
+### What the web client does
+
+`store.js` folds every `html` field into its text as a ```` ```html ```` block
+(`foldHtml`), and `rich()` draws such a block with `htmlBlock()`
+(`js/richhtml.js`): a frame with `sandbox="allow-scripts"` (no origin, so no
+cookies, no storage, no way to the board's DOM; no forms, popups or top
+navigation), filled by `srcdoc`, under its own policy
+`default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:; script-src 'nonce-…'`.
+The only script that carries the nonce is the board's own: it reports the
+content's height, takes theme and fonts, and hands a clicked link to the page.
+The board's tokens and a stylesheet for plain semantic HTML are put in, with
+the classes `grid`, `cols-2`, `cols-3`, `card`, `tag`, `muted`, `num`, `good`,
+`warn`, `bad`. The frame is as tall as its content up to 70% of the screen,
+then it scrolls inside and offers "Open large". A row in a list only names it
+("a table", "a layout").
+
+## 6. Info cards: something to read, nothing to decide
+
+A third card kind beside `decision` and `permission`. The agent files it with
+`create_info`; the human reads it and closes it.
+
+### The card
+
+```js
+{
+  id, agent, number,          // numbered like every card
+  kind: "info",
+  status: "open" | "done",    // never "decided"
+  title: "How the nightly migration works",
+  body: "…markdown…",         // always there; with sections it is the blocks joined by a blank line
+  sections: [{ text, html? }, …], // optional; plain blocks only, no block has a key
+  html: "…",                  // optional, as on a question (only without sections)
+  attachments: [{ name, url, kind, image, size }],
+  options: [],                // always empty
+  multiple: false, recommended: null, choice: null, choices: [],
+  urgency, urgency_reason,
+  version, versions, revised, revision_note, with_agent,  // exactly as on a question (section 5)
+  read: 1790930354077,        // set when the human closed it; null after a take-back; absent before
+  decided: <same as read>,    // so retention treats it like an answered card
+  summary: ""                 // the agent's reason if it withdrew the card itself
+}
+```
+
+- It is in `state.cards` and, while open, in `state.queue`. Within one
+  urgency level the queue lists questions first, then infos (then by age).
+- Counting: "questions" = queue entries with `kind !== 'info'`, "to read" =
+  queue entries with `kind === 'info'`. There is no separate list.
+- A row for an info shows number, title, sender and age like a question, but no
+  option tiles and no Choose: one action, "Close" (and opening it to read).
+  The card view shows title, body or sections, html, attachments, and the same
+  conversation, "What??" and "Back to agent" as a question.
+- No draft (`POST /draft` answers 400) and no `/decide` (400).
+
+### Closing
+
+```
+POST /close { "card_id": "…" }      (same login and Origin rules as /decide)
+→ 200 {"ok":true}
+  400 unknown card, or the card is not an info
+  409 already closed
+```
+
+The card becomes `status: "done"` at once with `read` set, leaves the queue,
+and the conversation gets an event `{ kind: "read", card_id, text: <title> }`.
+The agent gets `<channel source="board" kind="info_read" card_id="…">`; nothing
+is expected of it.
+
+### Other things that happen to it
+
+- `POST /reopen {card_id}` on a closed info puts it back unread (`status:
+  "open"`, `read: null`), with a `reopened` event; the agent is not told. An
+  info the agent withdrew cannot be taken back (400), as with questions.
+- `POST /message {text, agent, card_id}` with or without `handback` /
+  `explain` works as on a question, including `with_agent`.
+- The agent reworks it with `revise_card` (versions, "Presented again" after a
+  hand-back), takes it away with `withdraw_card`; `merge_cards` refuses it.
+- In the conversation, filing it is the event `{ kind: "info", card_id, text:
+  <title> }` (a question's is `asked`).
+
+## 7. A session's symbol, chosen by the agent
+
+- `agent.icon` is `"draw:<name>"` as before; new beside it is `agent.icon_by`:
+  `"agent"` when the agent chose it through `introduce(icon)`, `"human"` when
+  the human picked it (`POST /session {agent, icon}`), absent when there is no
+  icon or on sessions from before this existed (treat absent as the human's).
+- The agent never overwrites a symbol with `icon_by !== "agent"`. Clearing it
+  (`POST /session {agent, icon: ""}`) hands the choice back to the agent.
+- The names come from `client/web/drawings.json`: `[{ name, meaning, hue }]`,
+  read at start and whenever the file changes (`BOARD_DRAWINGS` names another
+  file). `GET /api/tools` returns the same list as `drawings` (`[]` when the
+  file is missing), and the `introduce` tool lists the names with meanings.
+  Without the file any lower-case name is accepted.
