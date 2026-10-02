@@ -159,7 +159,7 @@ function smallMark(session) {
 // a lost connection is "Failed to fetch".
 const why = err => (err instanceof TypeError ? 'no connection to the board' : err?.message || 'the board did not answer')
 
-const plain = text => tidyLinks(String(text ?? '').replace(/```[\s\S]*?```/g, ' ')).replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
+const plain = text => tidyLinks(String(text ?? '').replace(/```[\s\S]*?```/g, ' ')).replace(/(?<![\w.])__(?=\S)([^_\n]+?)__/g, '$1').replace(/[*`#]/g, '').replace(/\s+/g, ' ').trim()
 
 /** A row in a list has a fixed height. A title that needs two lines leaves room for one
  *  line of text below it, a one-line title for two. Measured, because it depends on the
@@ -295,8 +295,6 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     who.append(smallMark(from), el('span', null, from.name))
     head.append(who)
   }
-  // The number is for looking a card up, not for reading along: small, at the far end, before the age.
-  head.append(el('span', 'inbox-nr', cardNr(card)), agoNode(card.created, 'inbox-ago'))
 
   const text = el('button', 'inbox-text')
   text.type = 'button'
@@ -311,9 +309,13 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   if (about) body.append(el('span', 'inbox-body-about', about))
   if (words) body.append(el('span', 'inbox-body-text', about ? ` · ${words}` : words))
   if (about || words) text.append(body)
+  // The byline under the text: the card's number (for looking it up) and its age. One quiet line that
+  // always stands; under a title of two lines it is the text above it that gives way.
+  const byline = el('p', 'inbox-byline')
+  byline.append(el('span', 'inbox-nr', cardNr(card)), ' · ', agoNode(card.created, 'inbox-ago'))
   text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
-  content.append(head, text)
+  content.append(head, text, byline)
   fit?.observe(title)
   node.append(content)
 
@@ -334,19 +336,25 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     node.append(thumb)
   }
 
-  // Later is always possible: a small tag with a scribbled arrow that hangs over the row's bottom
-  // edge and pushes the question down to the end of the list. From there the same tag fetches it back.
+  // Snooze is always possible: the row's top right corner is turned down, with the small drawing on
+  // it; a click puts the question off, down to the pile at the end of the list. On a row in that pile
+  // the same corner fetches it back. The corner is a triangle that the answer tile beside it clears,
+  // and only the triangle takes the click. Its word is an element of its own beside it (the corner is
+  // cut to its shape, so nothing inside it can stand out of it): it shows along the row's top edge,
+  // to the left, while the pointer or the keyboard is on the corner, and on the row the keys are on.
   const later = el('button', 'inbox-later')
   later.type = 'button'
-  // No tooltip (it would lie over the next row): the word slides out of the tag on hover and focus.
   later.setAttribute('aria-label', off ? 'Fetch back' : `${LATER_WORD}: put this question off; it waits for you below`)
-  later.append(sketch(off ? 'back' : LATER_SKETCH), el('span', null, off ? 'Fetch back' : LATER_WORD))
+  later.append(sketch(off ? 'back' : LATER_SKETCH))
+  const laterWord = el('span', 'inbox-later-word', off ? 'Fetch back' : LATER_WORD)
+  laterWord.setAttribute('aria-hidden', 'true')
   later.addEventListener('click', () => {
     putOff(card.id, !off)
     // Say where it went, with the way back.
     if (!off) say(pageHost(), { head: 'Snoozed', title: card.title, back: async () => putOff(card.id, false) })
   })
   hint(later, 'list.later')
+  laterWord.dataset.cap = later.dataset.cap
 
   const actions = el('div', 'inbox-actions')
   const tile = (cls, kind, label, act) => {
@@ -359,7 +367,7 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     b.addEventListener('click', act)
     return b
   }
-  node.append(later, actions, error)
+  node.append(later, laterWord, actions, error)
   if (quick(card)) {
     // Thumbs are the rule: down on the left, up on the right, on every card. The option the agent
     // leads with (its first, or "allow") is the up. The option's own word stands under its thumb

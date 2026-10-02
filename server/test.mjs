@@ -717,7 +717,7 @@ for (const event of kinds) {
 const verdict = reference.events.find(e => e.method === 'notifications/claude/channel/permission')
 assert.deepEqual(Object.keys(heard.find(n => n.method === verdict.method).params).sort(), Object.keys(verdict.params).sort())
 assert.deepEqual(Object.keys(reference.events.find(e => e.method.endsWith('/permission_request')).params), ['request_id', 'tool_name', 'description', 'input_preview'])
-assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'files', 'image_path'], ['choices', 'option_notes', 'files', 'image_path'], ['previous_choices'], [], []])
+assert.deepEqual(kinds.map(e => Object.keys(e.optional ?? {})), [['card_id', 'handback', 'explain', 'files', 'image_path'], ['choices', 'option_notes', 'files', 'image_path'], ['previous_choices'], [], []])
 assert.ok(reference.tools[0].inputSchema.properties.card_id)
 assert.deepEqual(reference.events.map(e => e.direction), ['to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'to_agent', 'from_client', 'from_client'])
 
@@ -1068,6 +1068,65 @@ assert.doesNotMatch(textOf(await call('revise_card', { card_id: looks, attachmen
 assert.doesNotMatch(textOf(await call('revise_card', { card_id: looks, title: 'Outlook-Konto anbinden?', attachments: [] })), /about how something looks/)
 assert.match(textOf(await call('revise_card', { card_id: looks, text: 'Zwei Wege.\n\n[a] Icon links: so.\n\n[b] Rechts: so.' })), /about how something looks/)
 await call('withdraw_card', { card_id: looks })
+
+// one card through its whole life: every rewording keeps the version it replaces, and a hand-back is answered by presenting the card again
+{
+  received.length = 0
+  const life = await ask('Erste Fassung?')
+  let k = await onBoard(life)
+  assert.deepEqual([k.version, 'versions' in k, 'with_agent' in k], [1, false, false])
+  await call('revise_card', { card_id: life, urgency: 'high', urgency_reason: 'eilt' })
+  assert.deepEqual([(await onBoard(life)).version, 'versions' in await onBoard(life)], [1, false], 'a change of urgency is no version')
+  await call('revise_card', { card_id: life, title: 'Zweite Fassung?', body: 'mit Bild', attachments: [shot], note: 'Bild dazu' })
+  k = await onBoard(life)
+  assert.deepEqual([k.version, k.revisions, k.revision_note], [2, 1, 'Bild dazu'])
+  assert.deepEqual(k.versions, [{ n: 1, at: k.created, title: 'Erste Fassung?', body: '', options: [option('a'), option('b')], recommended: null, multiple: false, attachments: [], urgency: 'high', note: '' }])
+  let mark = (await state()).messages.at(-1)
+  assert.deepEqual([mark.kind, mark.text, mark.version, 'again' in mark], ['revised', 'Bild dazu', 2, false])
+  // a question back is chat about the card; only a hand-back or "Explain" puts the card with the agent
+  assert.equal((await post('/message', { text: 'wieso?', card_id: life })).status, 200)
+  await until(() => received.length === 1)
+  assert.deepEqual([received[0].params.meta, 'with_agent' in await onBoard(life)], [{ kind: 'chat', card_id: life }, false])
+  assert.equal((await post('/message', { text: 'bitte neu', card_id: life, handback: true })).status, 200)
+  await until(() => received.length === 2)
+  assert.deepEqual(received[1].params, { content: 'bitte neu', meta: { kind: 'chat', card_id: life, handback: '1' } })
+  s = await state()
+  assert.deepEqual([s.messages.at(-1).handback, 'explain' in s.messages.at(-1)], [true, false])
+  const since = s.cards.find(x => x.id === life).with_agent
+  assert.ok(since > 0 && (await mine(life)).with_agent === since)
+  assert.equal((await post('/message', { text: 'ohne Karte', handback: true })).status, 200)
+  await until(() => received.length === 3)
+  assert.deepEqual(received[2].params.meta, { kind: 'chat' }, 'a hand-back names a card or is plain chat')
+  // the rewording after a hand-back presents the card again; the version it replaced keeps its picture
+  const pictured = k.attachments[0].url
+  await call('revise_card', { card_id: life, title: 'Dritte Fassung?', attachments: [], recommended: 'b' })
+  k = await onBoard(life)
+  mark = (await state()).messages.at(-1)
+  assert.deepEqual([mark.kind, mark.text, mark.version, mark.again], ['revised', 'Presented again: Dritte Fassung?', 3, true])
+  assert.deepEqual(['with_agent' in k, k.version, k.versions.map(v => [v.n, v.title, v.note, v.attachments.length, v.recommended])], [false, 3, [[1, 'Erste Fassung?', '', 0, null], [2, 'Zweite Fassung?', 'Bild dazu', 1, null]]])
+  assert.ok(k.versions[1].at > k.versions[0].at)
+  assert.equal((await fetch(base + pictured, { headers: { Cookie: cookie } })).status, 200, 'an earlier version still shows its picture')
+  // "Explain" waits for the reply about the card
+  assert.equal((await post('/message', { text: 'What??', card_id: life, explain: true })).status, 200)
+  await until(() => received.length === 4)
+  assert.deepEqual(received[3].params.meta, { kind: 'chat', card_id: life, explain: '1' })
+  assert.ok((await onBoard(life)).with_agent > 0)
+  await call('reply', { text: 'so ist es gemeint', card_id: life })
+  assert.deepEqual(['with_agent' in await onBoard(life), (await onBoard(life)).version], [false, 3])
+  // an answer holds for the version it was given to
+  await sleep(300)
+  assert.equal((await post('/decide', { card_id: life, key: 'a' })).status, 200)
+  assert.deepEqual([(await onBoard(life)).answered_version, (await mine(life)).answered_version, (await mine(life)).version], [3, 3, 3])
+  assert.equal((await post('/reopen', { card_id: life })).status, 200)
+  assert.deepEqual([(await onBoard(life)).answered_version, 'answered_version' in await mine(life)], [null, false])
+  // the last twenty versions are kept; with the oldest goes the picture only they showed
+  for (let i = 4; i <= 24; i++) await call('revise_card', { card_id: life, title: `Fassung ${i}?` })
+  k = await onBoard(life)
+  assert.deepEqual([k.version, k.versions.length, k.versions[0].n, k.versions.at(-1).n, k.title], [24, 20, 4, 23, 'Fassung 24?'])
+  assert.equal((await fetch(base + pictured, { headers: { Cookie: cookie } })).status, 404)
+  await call('withdraw_card', { card_id: life })
+  received.length = 0
+}
 
 // a card filed the old way is what it always was: no sections anywhere
 const oldStyle = await ask('wie früher', { body: 'kurz', recommended: 'a' })
@@ -1608,7 +1667,7 @@ fs.writeFileSync(in4('state.json'), JSON.stringify({
   pending: { weg: [waits('wartet eins'), waits('wartet zwei')] },
 }))
 // The speech service, played by a local server: the realtime socket and the file model. No real key is involved.
-const tinfoil = { auth: [], updates: [], audio: 0, sockets: 0, uploads: [], polish: 'Bitte nimm die zweite.' }
+const tinfoil = { auth: [], updates: [], audio: 0, sockets: 0, uploads: [], polish: 'Bitte nimm die zweite.', spoken: [], sound: 'ID3 klang' }
 const wsFrame = text => {
   const body = Buffer.from(text)
   const head = body.length < 126 ? Buffer.from([0x81, body.length]) : Buffer.from([0x81, 126, body.length >> 8, body.length & 255])
@@ -1618,6 +1677,12 @@ const fakeSpeech = http.createServer(async (req, res) => {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
   tinfoil.auth.push(req.headers.authorization)
+  // text to speech: the request is kept, the answer is a few bytes that stand for the sound
+  if (req.url === '/v1/audio/speech') {
+    tinfoil.spoken.push(JSON.parse(Buffer.concat(chunks).toString()))
+    if (tinfoil.sound == null) return res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":{"message":"no voice"}}')
+    return res.writeHead(200, { 'Content-Type': 'application/octet-stream' }).end(tinfoil.sound)
+  }
   tinfoil.uploads.push(Buffer.concat(chunks))
   if (tinfoil.polish == null) return res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":{"message":"busy"}}')
   res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text: ` ${tinfoil.polish}` }))
@@ -1853,6 +1918,38 @@ const fifth = await fetch(`${base}/speech/live`, { method: 'POST', headers: live
 assert.deepEqual([fifth.status, (await fifth.json()).error], [429, 'Too many dictations at once; stop one first'])
 for (const one of many) one.abort()
 await eventually(() => tinfoil.sockets === 0, 'all live sockets to close')
+
+// read aloud: any text, in pieces from the page; a known language is named to the voice, the same piece is only made once
+const sayIt = (body, head = liveHead) => fetch(`${base}/speech/say`, { method: 'POST', headers: { ...head, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+assert.equal((await sayIt({ text: 'Hallo' }, {})).status, 401)
+assert.equal((await sayIt({ text: 'Hallo' }, { ...liveHead, Origin: 'http://evil.example' })).status, 403)
+let heard = await sayIt({ text: ' Der Deploy ist fertig. ', lang: 'de' })
+assert.deepEqual([heard.status, heard.headers.get('content-type'), Buffer.from(await heard.arrayBuffer()).toString()], [200, 'audio/mpeg', 'ID3 klang'])
+assert.deepEqual(tinfoil.spoken, [{ model: 'qwen3-tts', input: 'Der Deploy ist fertig.', response_format: 'mp3', language: 'German' }])
+assert.equal(tinfoil.auth.at(-1), 'Bearer tinfoil-geheim')
+heard = await sayIt({ text: 'Der Deploy ist fertig.', lang: 'de' })
+assert.deepEqual([heard.status, tinfoil.spoken.length], [200, 1], 'the same piece is spoken from the cache')
+// another language is another recording; an unknown one leaves the choice to the voice; WAV is passed on as WAV
+tinfoil.sound = 'RIFF....WAVE'
+heard = await sayIt({ text: 'Der Deploy ist fertig.', lang: 'en' })
+assert.deepEqual([heard.headers.get('content-type'), tinfoil.spoken.at(-1).language], ['audio/wav', 'English'])
+await sayIt({ text: 'Bonjour.', lang: '__proto__' })
+assert.deepEqual(tinfoil.spoken.at(-1), { model: 'qwen3-tts', input: 'Bonjour.', response_format: 'mp3' })
+assert.equal(tinfoil.spoken.length, 3)
+// nothing to say, and a service that fails: said as text, nothing is kept
+for (const bad of [{}, { text: '  ' }, { text: 7 }]) {
+  const res = await sayIt(bad)
+  assert.deepEqual([res.status, (await res.json()).error], [400, 'text is missing'])
+}
+tinfoil.sound = null
+heard = await sayIt({ text: 'Das geht schief.', lang: 'de' })
+assert.deepEqual([heard.status, (await heard.json()).error], [400, 'Speech service: no voice'])
+tinfoil.sound = 'ID3 klang'
+assert.equal((await sayIt({ text: 'Das geht schief.', lang: 'de' })).status, 200)
+// what was spoken lies in the speech folder under a name that says nothing about the text (and is cleared here, for the counts below)
+const recordings = fs.readdirSync(in4('speech')).filter(f => /^[0-9a-f]{24}\.mp3$/.test(f))
+assert.equal(recordings.length, 4)
+for (const f of recordings) fs.rmSync(in4('speech', f))
 fakeSpeech.closeAllConnections()
 fakeSpeech.close()
 }
@@ -1968,5 +2065,5 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 await Promise.all([speiche.close(), neu.close()])
 
 for (const dir of [data, data2, data3, data4, data5]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, app paths, hub of its own, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)

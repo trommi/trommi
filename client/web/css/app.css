@@ -671,19 +671,18 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 /* One that can wait: no tab, a small hourglass scribbled in a soft colour. */
 .inbox-whenever { flex: none; margin: 5px 0 0 var(--s-4); color: color-mix(in srgb, var(--card-color) 55%, var(--surface)); }
 .inbox-whenever .sketch { width: 21px; height: 21px; stroke-width: 1.9; }
-.inbox-ago, .inbox-from { padding-top: 7px; font: 500 var(--t-xs)/1 var(--font); text-transform: uppercase; letter-spacing: .06em; color: var(--card-ink); white-space: nowrap; }
-.inbox-ago { flex: none; opacity: .75; }
-/* The card's number: there for looking it up, never in the way of the title. */
-.inbox-nr { flex: none; margin-left: auto; padding-top: 7px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; font-variant-numeric: tabular-nums; color: var(--card-ink); opacity: .5; white-space: nowrap; }
-.inbox-nr + .inbox-ago { margin-left: calc(-1 * var(--s-1)); }
-.inbox-nr + .inbox-ago::before { content: "· "; }
+.inbox-from { padding-top: 7px; font: 500 var(--t-xs)/1 var(--font); text-transform: uppercase; letter-spacing: .06em; color: var(--card-ink); white-space: nowrap; }
+/* The byline under the text: the card's number and its age, one quiet line at the foot of the row. */
+.inbox-content { position: relative; }
+.inbox-byline { position: absolute; left: var(--s-5); bottom: 10px; margin: 0; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .01em; font-variant-numeric: tabular-nums; color: var(--card-ink); opacity: .6; white-space: nowrap; }
 /* Who asked, on a row that no longer stands under its sender. */
 .inbox-from { min-width: 0; display: flex; align-items: center; gap: 6px; padding-top: 4px; font-weight: 600; }
 .inbox-row-head > .inbox-from:first-child { padding-left: var(--s-5); }
 .inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
 .inbox-from-mark .crown-mark { left: -36%; top: -20%; width: 78%; stroke-width: 2.4; }
 .inbox-from span { overflow: hidden; text-overflow: ellipsis; }
-.inbox-text { display: grid; gap: 6px; padding: var(--s-2) 0 0; border: 0; background: none; text-align: left; min-width: 0; }
+/* (Tightened by a few pixels, so that the byline has its line below two lines of title and one of text.) */
+.inbox-text { display: grid; gap: 2px; padding: 2px 0 0; border: 0; background: none; text-align: left; min-width: 0; }
 .inbox-question, .inbox-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
 .inbox-question { font: 800 1.45rem/28px var(--display); letter-spacing: -.012em; text-wrap: balance; color: var(--fg); }
 .inbox-body { color: var(--card-ink); font-size: var(--t-lg); line-height: 25px; }
@@ -695,27 +694,29 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 @media (any-hover: hover) { .inbox-thumb:hover { scale: 1.05; } }
 .inbox-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .inbox-thumb b { position: absolute; right: 3px; bottom: 3px; min-width: 18px; padding: 2px 5px; border-radius: var(--r-pill); background: var(--fg); color: var(--bg); font: 700 .66rem/1.2 var(--font); text-align: center; }
-/* Later: a small paper tag stuck over the row's bottom edge, at the same place on every row, with a
-   scribbled arrow: push this down. It hangs out below the frame by less than the gap between rows,
-   takes no room in the row, and is easier to hit than it looks (::before). On hover and focus the
-   word slides out of it, along the edge, where it covers nothing. */
+/* Snooze: the row's top right corner is turned down (class .inbox-later, key L). A triangle, 36 px
+   along each edge, in a tint of the card's colour with a line along the fold and the small drawing on
+   it; the answer tile beside it is set in by a few pixels so that it clears the fold, and only the
+   triangle takes a click (clip-path), never the tile's own rectangle. Its word stands beside it as
+   an element of its own: along the row's top edge, to the left, over nothing that can be pressed. */
 .inbox-later {
-  position: absolute; z-index: 1; left: var(--s-5); bottom: -11px; height: 26px; min-width: 38px; padding: 0 9px;
-  display: inline-flex; align-items: center; gap: 0; rotate: -2.5deg; transform-origin: 20% 0;
-  border: 0; border-radius: 3px 3px 9px 8px; background: var(--surface); color: var(--card-ink);
-  box-shadow: 0 0 0 1px var(--card-line), 0 2px 3px rgb(20 30 25 / .08);
-  font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap;
-  transition: rotate 120ms ease-out, background 100ms ease-out, color 100ms ease-out;
+  position: absolute; z-index: 2; top: 0; right: 0; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 0 6px 0 0;
+  /* the triangle, less the small corner of it that lies in the answer tile's own rectangle */
+  color: var(--card-ink); clip-path: polygon(0 0, 36px 0, 36px 36px, 19px 19px, 19px 12px, 12px 12px);
+  background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 16%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 42%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 42%, var(--surface)) 50%, transparent 50%);
+  transition: filter 100ms ease-out;
 }
-.inbox-later::before { content: ""; position: absolute; inset: -11px -5px -4px; }
-.inbox-later .sketch { width: 20px; height: 20px; stroke-width: 1.9; opacity: .75; transition: translate 120ms ease-out, opacity 100ms; }
-.inbox-later span { max-width: 0; overflow: hidden; opacity: 0; transition: max-width 160ms ease-out, opacity 120ms ease-out, margin 160ms ease-out; }
-.inbox-later:hover, .inbox-later:focus-visible { rotate: 0deg; background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
-.inbox-later:hover .sketch, .inbox-later:focus-visible .sketch { opacity: 1; translate: 0 1.5px; }
-.inbox-row[data-later] .inbox-later:hover .sketch, .inbox-row[data-later] .inbox-later:focus-visible .sketch { translate: 0 -1.5px; }
-.inbox-later:hover span, .inbox-later:focus-visible span { max-width: 8em; margin-left: 5px; opacity: 1; }
-.inbox-later:active { scale: .96; }
-.inbox-actions { display: grid; grid-template-columns: repeat(2, 124px); gap: 8px; padding: 12px 12px 12px 0; align-content: stretch; }
+.inbox-later .sketch { position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; stroke-width: 2.2; opacity: .8; }
+.inbox-later:hover, .inbox-later:focus-visible { filter: brightness(.93) saturate(1.3); outline: 0; }
+.inbox-later:hover .sketch, .inbox-later:focus-visible .sketch { opacity: 1; }
+.inbox-later:active { filter: brightness(.86) saturate(1.4); }
+.inbox-row[data-later] .inbox-later { background: linear-gradient(225deg, var(--surface-2) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 45%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 45%, var(--surface)) 50%, transparent 50%); }
+.inbox-later-word { position: absolute; z-index: 3; right: 38px; top: -11px; height: 22px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 5px; background: var(--fg); color: var(--bg); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .04em; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms ease-out; }
+.inbox-later:hover + .inbox-later-word, .inbox-later:focus-visible + .inbox-later-word, .inbox-row.is-current > .inbox-later-word { opacity: 1; }
+.inbox-row.is-current .inbox-later-word[data-cap]::after { position: static; margin-left: 6px; rotate: 0deg; min-width: 18px; padding: 2px 4px; box-shadow: none; }
+@media (pointer: coarse) { .inbox-later-word { display: none; } }
+/* (17 px from the right edge: the tile's rounded corner clears the turned corner of the row.) */
+.inbox-actions { display: grid; grid-template-columns: repeat(2, 124px); gap: 8px; padding: 12px 17px 12px 0; align-content: stretch; }
 .inbox-answer { aspect-ratio: 1; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: anywhere; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
@@ -844,7 +845,8 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
   .inbox-question { font-size: 1.25rem; line-height: 1.18; }
   .inbox-body, .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; font-size: var(--t-md); line-height: 1.45; }
   .inbox-thumb { display: block; grid-column: 1 / -1; justify-self: start; width: 72px; height: 54px; margin: 0 var(--s-4) var(--s-3); }
-  .inbox-later { left: var(--s-4); }
+  .inbox-row-head { padding-right: 30px; }
+  .inbox-byline { position: static; margin-top: 2px; }
   .inbox-actions { grid-column: 1 / -1; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 var(--s-3) var(--s-4); }
   .inbox-answer { aspect-ratio: auto; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, auto); justify-content: center; align-items: center; gap: 10px; min-height: 56px; border-radius: 10px; }
   .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: left; }

@@ -1,7 +1,7 @@
-# Question contract: sections, option notes, drafts, session order
+# Question contract: sections, option notes, drafts, session order, versions and hand-back
 
 What the hub puts into a card and takes from a page, for whoever renders the
-Focus window or another client. Four things, all additive: a client that
+Focus window or another client. Five things, all additive: a client that
 knows none of them keeps working with `body`, `options`, `recommended`,
 `note`.
 
@@ -255,3 +255,82 @@ POST /session   (the route that also takes label, icon, archived, group)
 
 On drop, send one `POST /session {agent, before}` and render from the state
 that comes back over `/events`; do not keep an order of its own.
+
+## 5. Versions of a card, and handing a card back
+
+A question stays one card through its whole life. Every rewording by the
+agent (`revise_card`) keeps the version it replaced; the human can look back
+at how the question developed.
+
+### Stored on the card
+
+```js
+card.version        // 1 when filed, +1 with every rewording. The live fields ARE this version.
+card.revisions      // as before: version - 1
+card.revised        // as before: when the live version was presented (absent for version 1: use card.created)
+card.revision_note  // the agent's note for the live version ("" or absent when none)
+card.versions = [   // absent until the first rewording; oldest first; at most the last 20
+  {
+    n: 1,                 // the version number
+    at: 1790930354077,    // when that version was presented
+    title, body, options, // as the card had them
+    sections,             // only if that version had sections
+    recommended,          // key, list or null
+    multiple,
+    attachments,          // [{name, url, kind, image, size}]; the files stay served while the card lives
+    urgency,
+    note                  // the agent's note that version came with ("" for version 1)
+  }, …
+]
+card.answered_version // set when decided: the version the answer was given to; null after a reopen
+card.with_agent       // a timestamp while the card is with the agent (see below); absent otherwise
+```
+
+- A rewording is a change to title, body, options, sections, advice,
+  `multiple` or attachments. A mere change of urgency is not a version.
+- `card.versions[i]` has the same field names as a card, so the component that
+  renders a card can render a version read-only (`picture` indexes in its
+  `sections` refer to **its** `attachments`).
+- More than 20 earlier versions: the oldest drop out, and files only they
+  showed are deleted. `n` keeps counting, so the list may start at `n > 1`.
+- Versions are purged with the card.
+
+### In the conversation
+
+The `revised` event (`message.kind === 'revised'`, `card_id`) now carries:
+
+```js
+{ kind: 'revised', card_id, version: 3, text: "<note or title>", again: true /* only after a hand-back */ }
+```
+
+After a hand-back, `text` starts with `Presented again: `. Use `version` to
+place "version 3 presented" in the thread, and `again` to word it.
+
+### Handing back and "What??"
+
+```
+POST /message { "text": "…", "agent": "<id>", "card_id": "<open card>", "handback": true }
+POST /message { "text": "…", "agent": "<id>", "card_id": "<open card>", "explain": true }
+```
+
+- Both flags only count with the `card_id` of an open decision card of that
+  session; otherwise they are ignored and the message is plain chat.
+- The stored message carries `handback: true` / `explain: true` (besides
+  `card_id`); the agent's channel event carries `handback="1"` / `explain="1"`.
+- The card gets `with_agent = <now>`. It is cleared when the agent revises the
+  card (any `revise_card`) or replies with that `card_id`, and when the card is
+  answered, withdrawn, merged or closed. A plain question back (no flag) does
+  not set it.
+- Clients should read "with the agent" from `card.with_agent`, not from
+  localStorage: every device then agrees.
+
+### What the client does
+
+- A small time-machine mark on a card with `card.versions?.length` steps back
+  through the versions, read-only; the live card is the last step.
+- On a decided card, `answered_version` says which version the answer belongs
+  to (it is always the live one at that moment; a decided card cannot be
+  revised).
+- "Back to agent" sends `handback: true`, "What??" sends `explain: true`; show
+  the card as waiting while `with_agent` is set, and as presented again when
+  the `revised` event with `again: true` arrives.

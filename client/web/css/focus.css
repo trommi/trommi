@@ -554,7 +554,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-composer .focus-ask-send:disabled { background: color-mix(in srgb, var(--u) 10%, var(--surface)); color: color-mix(in srgb, var(--u) 45%, var(--muted)); }
 /* the paperclip, and what is attached: small chips over the field until it is sent */
 .focus-composer .focus-ask { flex-wrap: wrap; padding-left: 5px; }
-.focus-composer .focus-ask-field { flex: 1 1 8rem; min-width: 0; }
+.focus-composer .focus-ask-field { flex: 1 1 4rem; min-width: 0; }
 .focus-clip { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); transition: background var(--d-fast), color var(--d-fast); }
 .focus-clip .sketch { width: 22px; height: 22px; }
 .focus-clip:hover { background: var(--sunken); color: var(--fg); }

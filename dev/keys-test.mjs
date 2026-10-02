@@ -124,6 +124,7 @@ async function key(name, { shift = false, ctrl = false, pause = 110 } = {}) {
 }
 const keys = async (...names) => { for (const n of names) await key(n) }
 /** A real click at the middle of the element an expression names. */
+let lastClick = null
 async function click(expression) {
   await ev(`const n = ${expression}; if (!__k.inSight(n)) n.scrollIntoView({ block: 'center' })`)
   await sleep(80)
@@ -132,6 +133,7 @@ async function click(expression) {
   await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: at.x, y: at.y, button: 'left', buttons: 1, clickCount: 1 })
   await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: at.x, y: at.y, button: 'left', clickCount: 1 })
   await sleep(120)
+  lastClick = at
   return at
 }
 const type = text => page.send('Input.insertText', { text })
@@ -268,7 +270,8 @@ async function main() {
   if (check(Boolean(tag), 'a note says what happened')) {
     check(/Answered: Yes/.test(tag.text) && /Rotate the API keys now\?/.test(tag.text) && tag.button, `the note names the answer and the question, and carries Back ("${tag.text}")`)
     const main = await ev('return __k.box(document.querySelector("#inbox"))')
-    check(tag.box.x - main.x < 40 && tag.box.y - main.y < 40, 'the note stands at the top left of the page')
+    const place = await ev(`return __k.box(__k.row(${JSON.stringify(next)}).querySelector('.inbox-actions'))`)
+    check(tag.box.r <= place.x && place.x - tag.box.r < 40 && tag.box.y >= place.y - 8 && tag.box.b <= place.b + 8, `answered by key, the note stands directly left of the marked row's tiles (note ${Math.round(tag.box.x)}..${Math.round(tag.box.r)} x ${Math.round(tag.box.y)}..${Math.round(tag.box.b)}, tiles from ${Math.round(place.x)}, ${Math.round(place.y)}..${Math.round(place.b)})`)
     const tilesNow = await ev(`return __k.box(__k.row(${JSON.stringify(next)}).querySelector('.inbox-actions'))`)
     check(!(await ev(`return __k.rows().some(r => __k.hits(${JSON.stringify(tag.box)}, __k.box(r.querySelector('.inbox-actions'))))`)), 'the note covers no answer tiles')
     check(Math.abs(tilesNow.x - tilesBefore.x) < 1 && Math.abs(tilesNow.y - tilesBefore.y) < 1, 'the next row\'s tiles are where the answered row\'s tiles were')
@@ -282,8 +285,8 @@ async function main() {
   await key('n')
   await until('N answers no', () => card(c.b1).choice === 'no' && card(c.b1).status !== 'open')
   await until('the note is shown', back)
-  await sleep(4300)
-  check(!(await back()), 'the note leaves by itself after about four seconds')
+  await sleep(5300)
+  check(!(await back()), 'the note leaves by itself after about five seconds')
   await key('Backspace')
   await until('Backspace still takes the answer back after the note has left', () => card(c.b1).status === 'open')
   await until('and the question is marked again', async () => (await cur())?.id === c.b1)
@@ -295,7 +298,11 @@ async function main() {
   // The same by hand: a real click on the thumb, a real click on Back.
   await click(`__k.row(${JSON.stringify(c.b1)}).querySelectorAll('.inbox-answer.is-thumb')[1]`)
   await until('a click on the thumb up answers yes', () => card(c.b1).status !== 'open' && card(c.b1).choice === 'yes')
-  await until('the note is shown', back)
+  const pressed = await until('the note is shown', back)
+    const tilesNow = await ev('return __k.rows().map(r => __k.box(r.querySelector(".inbox-actions")))')
+    const hand = lastClick
+    check(pressed && pressed.box.r <= Math.min(...tilesNow.map(t => t.x)) && Math.min(...tilesNow.map(t => t.x)) - pressed.box.r < 40 && pressed.box.y <= hand.y && pressed.box.b >= hand.y, `answered by click, the note stands left of the tiles at the height of the pointer (pointer ${Math.round(hand.x)},${Math.round(hand.y)}; note ..${Math.round(pressed?.box.r)} x ${Math.round(pressed?.box.y)}..${Math.round(pressed?.box.b)})`)
+    await shot('02b-back-beside-click')
   await sleep(450)   // a new note lets taps through for a moment, so a fast second tap cannot hit Back
   await click('document.querySelector(".says-back")')
   await until('a click on Back takes the answer back', () => card(c.b1).status === 'open')
@@ -410,7 +417,7 @@ async function main() {
   await key('y')
   await until('Y answers', () => card(c.g2).status !== 'open')
   await until('an "Answered" group stands at the end, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return g && g === __k.list().lastElementChild && !g.querySelector(".inbox-done") && /Answered/.test(g.innerText) && /1 today/i.test(g.innerText)'))
-  await sleep(4300)   // the note has left: this is the wrong answer that is noticed later
+  await sleep(5300)   // the note has left: this is the wrong answer that is noticed later
   await click('__k.list().querySelector(".inbox-answered-toggle")')
   const listed = await ev('return __k.done()')
   if (check(listed.length === 1 && listed[0].id === c.g2, 'a click unfolds it: one slim row for the answered question')) {
@@ -564,12 +571,13 @@ async function main() {
   if (check(Boolean(walkTag), 'a note says what happened')) {
     check(walkTag.text.includes(`Answered: ${card(duo).options[0].label}`) && walkTag.text.includes(card(duo).title) && walkTag.button, `the note names the answer and the question, and carries Back ("${walkTag.text}")`)
     const win = await ev('return __k.box(document.querySelector(".focus-sheet"))')
-    check(walkTag.box.x - win.x < 40 && walkTag.box.y - win.y < 40, 'the note stands at the top left of the window')
+    const column = await ev('return __k.box(__k.front().querySelector(".focus-opts"))')
+    check(walkTag.box.r <= column.x && column.x - walkTag.box.r < 60 && walkTag.box.y >= win.y && walkTag.box.y < column.y + 80, `answered by key, the note stands beside the top of the option column (note ..${Math.round(walkTag.box.r)} x ${Math.round(walkTag.box.y)}, column from ${Math.round(column.x)}, ${Math.round(column.y)})`)
     const tiles = await ev('return [...__k.front().querySelectorAll(".focus-opt")].map(__k.box)')
     check(!(await ev(`return ${JSON.stringify(tiles)}.some(t => __k.hits(${JSON.stringify(walkTag.box)}, t))`)), 'the note covers no answer tile')
     const withTag = await tilesAt()
     await shot('12-back-in-walk')
-    await sleep(4300)
+    await sleep(5300)
     check(!(await back()), 'the note leaves by itself')
     const without = await tilesAt()
     check(Math.abs(withTag.y - without.y) < 1 && Math.abs(withTag.x - without.x) < 1, 'the tiles do not move when the note comes or goes')
@@ -580,7 +588,12 @@ async function main() {
   // The same by hand: a real click on the thumb, a real click on Back.
   await click('[...__k.front().querySelectorAll(".focus-opt")].at(-1)')
   await until('a click on a tile answers', () => card(duo).status !== 'open')
-  await until('the note is shown again', back)
+  const walkPressed = await until('the note is shown again', back)
+  { const tiles = await ev('return [...__k.front().querySelectorAll(".focus-opt")].map(__k.box)')
+    check(walkPressed && walkPressed.box.r <= Math.min(...tiles.map(t => t.x)) && walkPressed.box.y <= lastClick.y && walkPressed.box.b >= lastClick.y && Math.min(...tiles.map(t => t.x)) - walkPressed.box.r < 60, `answered by click, the note stands left of the options at the height of the pointer (pointer ${Math.round(lastClick.x)},${Math.round(lastClick.y)}; note ..${Math.round(walkPressed?.box.r)} x ${Math.round(walkPressed?.box.y)}..${Math.round(walkPressed?.box.b)})`)
+    const field = await ev('const f = __k.front().querySelector(".focus-ask"); return f ? __k.box(f) : null')
+    check(!field || !(await ev(`return __k.hits(${JSON.stringify(walkPressed?.box)}, ${JSON.stringify(field)})`)), 'and does not cover the composer')
+    await shot('12b-back-beside-click-walk') }
   await sleep(450)
   await click('document.querySelector(".focus-says .says-back")')
   await until('a click on Back takes the answer back', () => card(duo).status === 'open')
