@@ -15,10 +15,8 @@
   if (flags.indexOf('dark') >= 0) theme = 'dark'
   if (flags.indexOf('light') >= 0) theme = 'light'
   if (theme === 'dark') document.documentElement.dataset.theme = 'dark'
-  // Two tests, each one switch on <html> (styles in app.css):
-  //   data-marks="bare"     session marks without their coloured tile, the drawing alone. On; the flag #tiles brings the tiles back.
-  //   data-grouploop="all"  the loop round a group in the sidebar goes round marks and names. The flag #loop-all turns it on; else round the marks.
-  document.documentElement.dataset.marks = flags.indexOf('tiles') >= 0 ? 'tile' : 'bare'
+  // A test, one switch on <html> (styles in app.css): data-grouploop="all" draws the loop round a group
+  // in the sidebar round marks and names; anything else round the marks alone. The flag #loop-all turns it on.
   document.documentElement.dataset.grouploop = flags.indexOf('loop-all') >= 0 ? 'all' : 'marks'
 })()
 </script>

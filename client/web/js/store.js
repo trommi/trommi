@@ -31,9 +31,27 @@ let later = readLater()
 // same pairs and the same shelf. What an older version of this page kept for itself is cleared away.
 try { localStorage.removeItem('trommi-groups'); localStorage.removeItem('trommi-archived') } catch {}
 
+// ---- the order of the sessions in the sidebar ----
+// It belongs to the server: POST /session { agent, before } puts a session (with its whole group)
+// directly before another one, or at the end (before: null); the server then sends the agents in
+// that order, each with its `position`, to every browser.
+// FALLBACK, PER BROWSER, for a hub that does not know this yet (it sends no `position`): the order
+// is kept in localStorage and laid over the server's list. As soon as the server sends positions its
+// order wins and what was kept here is dropped. Delete this block once every hub has been restarted.
+const ORDER_KEY = 'trommi-order'
+let localOrder = (() => { const list = read(ORDER_KEY, []); return Array.isArray(list) ? list.filter(id => typeof id === 'string') : [] })()
+let serverOrders = false
+function inOrder(agents) {
+  serverOrders = agents.some(a => Number.isFinite(a.position))
+  if (serverOrders) { if (localOrder.length) { localOrder = []; try { localStorage.removeItem(ORDER_KEY) } catch {} } return agents }
+  if (!localOrder.length) return agents
+  const place = new Map(localOrder.map((id, at) => [id, at]))
+  return agents.map((a, at) => [a, place.get(a.id) ?? localOrder.length + at]).sort((a, b) => a[1] - b[1]).map(([a]) => a)
+}
+
 // Older servers send no agents, urgency or queue; fill those in so views can rely on them.
 function normalize(data) {
-  const sent = data.agents?.length ? data.agents : [{ id: 'main', name: 'Agent', online: true }]
+  const sent = inOrder(data.agents?.length ? data.agents : [{ id: 'main', name: 'Agent', online: true }])
   // The human may have renamed a session or picked another mark for it; views only ever see the result.
   const everyone = sent.map(a => ({
     ...a, given: a.name, name: a.label || a.name, mark: a.icon || a.id,
@@ -119,7 +137,8 @@ function derive() {
 }
 
 const emit = () => { derive(); for (const fn of listeners) fn(view, online) }
-const take = data => { raw = normalize(data); answerHere(raw); loaded = true }
+let lastData = null   // what the server sent last, to lay a changed local order over it again
+const take = data => { lastData = data; raw = normalize(data); answerHere(raw); loaded = true }
 
 export function connect() {
   const events = new EventSource('/events')
@@ -191,6 +210,30 @@ export const editSession = (agent, changes) => post('/session', { agent, ...chan
 
 /** Mark a session as one whose questions matter most; they lead the inbox. */
 export const star = (agent, starred) => post('/star', { agent, starred })
+
+/** Move a session to another place in the sidebar: directly before the session beforeId, or to the
+ *  end (null). A session in a group takes its group along, and it lands before a group, never inside
+ *  one; only a move before a member of its own group reorders within the group. */
+export function moveSession(agentId, beforeId = null) {
+  if (!serverOrders && lastData) {
+    // The fallback (see ORDER_KEY above): the same rule as the server's moveSession, kept in this browser.
+    const list = [...raw.agents, ...raw.archived]
+    const agent = list.find(a => a.id === agentId), target = beforeId == null ? null : list.find(a => a.id === beforeId)
+    if (agent && target !== agent && (beforeId == null || target)) {
+      const within = Boolean(target && agent.group && target.group === agent.group)
+      const moved = within || !agent.group ? [agent] : list.filter(a => a.group === agent.group)
+      const rest = list.filter(a => !moved.includes(a))
+      const anchor = !target ? null : within || !target.group ? target : rest.find(a => a.group === target.group)
+      const at = anchor ? rest.indexOf(anchor) : rest.length
+      localOrder = [...rest.slice(0, at), ...moved, ...rest.slice(at)].map(a => a.id)
+      write(ORDER_KEY, localOrder)
+      raw = normalize(lastData)
+      answerHere(raw)
+      emit()
+    }
+  }
+  return post('/session', { agent: agentId, before: beforeId })
+}
 
 // Give sessions a group, or none. The server's next state shows it, here and in every other browser.
 const assign = changes => Promise.all([...changes].map(([agent, group]) => post('/session', { agent, group })))

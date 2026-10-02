@@ -32,7 +32,7 @@ import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT } from './inbox.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { loopPath, penSeed } from './ui.js'
+import { loopPath, penSeed, LATER_WORD, LATER_SKETCH } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -150,8 +150,8 @@ async function decideMany(cardId, keys, note, revised = null) {
 }
 
 /** An answer whose note carries files (pictures, a drawing): the same request as decide(), with attachments. */
-async function decideWith(card, keys, note, attachments) {
-  const body = { card_id: card.id, note, attachments, revised: card.revised ?? null, ...(card.multiple ? { keys } : { key: keys[0] }) }
+async function decideWith(card, keys, note, attachments, notes = {}) {
+  const body = { card_id: card.id, note, notes, ...(attachments.length ? { attachments } : {}), revised: card.revised ?? null, ...(card.multiple ? { keys } : { key: keys[0] }) }
   const res = await fetch('/decide', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
   let out = {}
   try { out = await res.json() } catch {}
@@ -336,7 +336,7 @@ export function mountFocus({ onDecided } = {}) {
     node.dataset.id = card.id
     node.tabIndex = -1
     node.inert = true
-    const rec = { id: card.id, card, node, sigC: '', files: [], askText: '', askOpen: false, picked: new Set(), busy: false, outTimer: 0, optButtons: [], imageAt: 0, threadSig: null }
+    const rec = { id: card.id, card, node, sigC: '', files: [], optNotes: new Map(), optRows: new Map(), wasKeys: [], draftTs: undefined, draftTimer: 0, askText: '', askOpen: false, picked: new Set(), busy: false, outTimer: 0, optButtons: [], imageAt: 0, threadSig: null }
     // One field per card: the note to an answer is what stands in the composer. rec.note stays as a name for it.
     Object.defineProperty(rec, 'note', {
       get: () => rec.askText,
@@ -372,7 +372,12 @@ export function mountFocus({ onDecided } = {}) {
     lead.append(title, rec.reasonNode)
 
     // what the question is about: pictures and players
-    const images = attachments.filter(a => kindOf(a) === 'image')
+    const sections = !permission && Array.isArray(card.sections) ? card.sections : null
+    const allImages = attachments.filter(a => kindOf(a) === 'image')
+    // A picture that belongs to a paragraph stands with that paragraph; the gallery holds the rest.
+    const pointed = new Set((sections ?? []).map(b => attachments[b.picture]).filter(Boolean))
+    const images = allImages.filter(a => !pointed.has(a))
+    rec.allImages = allImages
     const files = attachments.filter(a => kindOf(a) === 'file')
     const players = mediaNodes(attachments)
     const media = el('div', 'focus-media')
@@ -396,7 +401,7 @@ export function mountFocus({ onDecided } = {}) {
         thumbs.forEach((t, k) => t.setAttribute('aria-pressed', String(k === i)))
       }
       rec.showImage = pick
-      figure.addEventListener('click', () => openZoom(images, rec.imageAt, figure, pick, rec))
+      figure.addEventListener('click', () => openZoom(allImages, allImages.indexOf(images[rec.imageAt]), figure, i => { const at = images.indexOf(allImages[i]); if (at >= 0) pick(at) }, rec))
       media.append(figure)
       if (images.length > 1) {
         const strip = el('div', 'focus-thumbs')
@@ -442,6 +447,8 @@ export function mountFocus({ onDecided } = {}) {
         }
       }
       if (desc || raw) text.append(box)
+    } else if (sections) {
+      text.append(sectionsNode(rec, sections))
     } else if (card.body) {
       text.append(rich(card.body))
     }
@@ -509,7 +516,16 @@ export function mountFocus({ onDecided } = {}) {
       clip.addEventListener('click', () => picker.click())
       picker.addEventListener('change', () => { addFiles(rec, picker.files); picker.value = '' })
       rec.chipsNode = el('div', 'focus-chips')
-      ask.append(rec.chipsNode, askOpen, clip, picker, field, send)
+      // The pen: the same composer as a small scratchpad. What is drawn there goes along as a picture, with what is typed.
+      const pen = button('focus-clip focus-pen', 'Draw instead of typing')
+      pen.title = 'Draw: scribble here instead of typing, or as well'
+      pen.append(sketch('pen'))
+      pen.setAttribute('aria-pressed', String(pad?.rec === rec))
+      pen.addEventListener('click', () => openPad(rec))
+      rec.penBtn = pen
+      rec.annotate = file => openPad(rec, file)
+      ask.append(rec.chipsNode, askOpen, clip, pen, picker, field, send)
+      if (pad?.rec === rec) { rec.chipsNode.after(padHost); ask.dataset.pad = '' }   // the card was rebuilt while its scratchpad is open
       field.addEventListener('paste', e => {
         const files = [...(e.clipboardData?.files ?? [])]
         if (!files.length) return
@@ -527,7 +543,7 @@ export function mountFocus({ onDecided } = {}) {
       })
       field.after(dictationMic(field, { key: `${rec.id}:ask`, primary: true, onError: text => info(text, true) }))   // speak instead of typing (speech.js)
       askOpen.addEventListener('click', () => field.focus({ preventScroll: true }))
-      field.addEventListener('input', () => { rec.askText = field.value; paintDraft(rec) })
+      field.addEventListener('input', () => { rec.askText = field.value; paintDraft(rec) })   // (paintDraft also sees to the draft on the hub)
       // Enter sends with a real keyboard, Shift+Enter breaks the line; on a touch screen Enter stays a line break
       // and the button sends, as in the session's conversation. Never while an IME is composing.
       field.addEventListener('keydown', e => {
@@ -586,7 +602,12 @@ export function mountFocus({ onDecided } = {}) {
     answer.toggleAttribute('data-tags', tags)
     node.dataset.opts = tags ? (card.options.length > TAGS_WIDE_FROM ? 'tags-wide' : 'tags') : duo ? 'duo' : 'stack'
     // Which picture belongs to which option, where that is plain to see (see pairPictures).
-    rec.pictureOf = permission ? null : pairPictures(card.options, images)
+    rec.pictureOf = permission ? null
+      : sections ? new Map(sections.filter(b => b.key != null && pointed.has(attachments[b.picture])).map(b => [b.key, allImages.indexOf(attachments[b.picture])]))
+      : pairPictures(card.options, images)
+    if (rec.pictureOf && !rec.pictureOf.size) rec.pictureOf = null
+    rec.optRows = new Map()
+    rec.draftSent ??= JSON.stringify(draftOf(rec))
     opts.toggleAttribute('data-multi', multi)
     for (const o of options) {
       const b = button('focus-opt')
@@ -623,6 +644,7 @@ export function mountFocus({ onDecided } = {}) {
       if (words.childNodes.length) b.append(words)
       b.addEventListener('click', () => (multi ? toggle(rec, o.key) : submit(rec, [o.key])))
       rec.optButtons.push(b)
+      if (!permission) b.append(optionPencil(rec, o.key, labelOf(o)))
       opts.append(b)
     }
     if (multi) {
@@ -657,7 +679,17 @@ export function mountFocus({ onDecided } = {}) {
       answer.append(line)
     }
     // An option whose picture is known shows it while the pointer or the keyboard is on the option.
-    if (rec.pictureOf && rec.showImage) {
+    // a paragraph and its tile light up together
+    if (sections) {
+      const over = on => e => { const key = e.target.closest?.('.focus-opt')?.dataset.key; if (key) light(rec, key, on) }
+      opts.addEventListener('pointerover', over(true))
+      opts.addEventListener('pointerout', over(false))
+      opts.addEventListener('focusin', over(true))
+      opts.addEventListener('focusout', over(false))
+    }
+    for (const key of rec.optNotes.keys()) optNoteRow(rec, key, false)
+    paintOptNotes(rec)
+    if (rec.pictureOf && rec.showImage && !sections) {
       const look = e => {
         const at = rec.pictureOf.get(e.target.closest?.('.focus-opt')?.dataset.key)
         if (at != null && at !== rec.imageAt) rec.showImage(at)
@@ -704,6 +736,7 @@ export function mountFocus({ onDecided } = {}) {
   // ── several answers at once ─────────────────────────────────────────────
   function paintPicked(rec) {
     for (const b of rec.optButtons) b.setAttribute('aria-pressed', String(rec.picked.has(b.dataset.key)))
+    for (const [key, sec] of rec.secNodes ?? []) sec.querySelector('.focus-sec-pick')?.setAttribute('aria-pressed', String(rec.picked.has(key)))
     const n = rec.picked.size
     rec.sendTile.disabled = !n
     rec.sendCount.textContent = n ? `${n} chosen` : 'Choose one or more'
@@ -713,6 +746,161 @@ export function mountFocus({ onDecided } = {}) {
     if (rec.picked.has(key)) rec.picked.delete(key)
     else rec.picked.add(key)
     paintPicked(rec)
+    queueDraft(rec)
+  }
+
+  // ── a question written as one text: paragraphs that are options ─────────
+  /** card.sections on the left: plain blocks are text; a block with a key is the paragraph of that option. Its
+   *  heading is a tap target (it ticks the option, or answers where one answer is taken), the agent's advice is
+   *  circled on it as on the tile, its picture stands with it, and it has the pencil for a note on that option. */
+  function sectionsNode(rec, sections) {
+    const card = rec.card
+    const multi = Boolean(card.multiple)
+    const box = el('div', 'focus-secs')
+    rec.secNodes = new Map()
+    for (const block of sections) {
+      if (block.key == null) { if (block.text) box.append(rich(block.text)); continue }
+      const sec = el('section', 'focus-sec')
+      sec.dataset.key = block.key
+      const pick = button('focus-sec-pick')
+      pick.toggleAttribute('data-multi', multi)
+      if (multi) pick.setAttribute('aria-pressed', 'false')
+      pick.title = multi ? 'Tick this option' : 'Answer with this option'
+      const mark = el('span', 'focus-sec-mark')
+      mark.append(icon('check'))
+      const label = el('span', 'focus-sec-label', block.label)
+      if (block.recommended) { sec.classList.add('is-advised'); label.append(adviceLoop()); pick.append(el('span', 'focus-sr', 'Recommended by the agent: ')) }
+      pick.append(mark, label)
+      pick.addEventListener('click', () => (multi ? toggle(rec, block.key) : submit(rec, [block.key])))
+      const head = el('div', 'focus-sec-head')
+      head.append(pick, optionPencil(rec, block.key, block.label))
+      sec.append(head)
+      if (block.text) sec.append(rich(block.text))
+      const picture = card.attachments?.[block.picture]
+      if (picture && kindOf(picture) === 'image') {
+        const fig = button('focus-sec-pic', `Enlarge ${picture.name}`)
+        const img = el('img')
+        img.src = picture.url
+        img.alt = picture.name
+        img.loading = 'lazy'
+        img.draggable = false
+        fig.append(img)
+        fig.addEventListener('click', () => openZoom(rec.allImages, Math.max(0, rec.allImages.indexOf(picture)), fig, null, rec))
+        sec.append(fig)
+      }
+      for (const [type, on] of [['pointerenter', true], ['pointerleave', false], ['focusin', true], ['focusout', false]]) sec.addEventListener(type, () => light(rec, block.key, on))
+      rec.secNodes.set(block.key, sec)
+      box.append(sec)
+    }
+    return box
+  }
+  /** A paragraph and the tile of its option, lit together. */
+  function light(rec, key, on) {
+    rec.secNodes?.get(key)?.toggleAttribute('data-lit', on)
+    rec.optButtons.find(b => b.dataset.key === key)?.toggleAttribute('data-lit', on)
+  }
+
+  // ── a note on a single option ───────────────────────────────────────────
+  /** The small pencil on an option (tile, tag or paragraph): it opens a line for a note on that option alone,
+   *  chosen or not. (A span that acts as a button: it stands inside the tile, which is one itself.) */
+  function optionPencil(rec, key, label) {
+    const pen = el('span', 'focus-opt-pen')
+    pen.setAttribute('role', 'button')
+    pen.tabIndex = 0
+    pen.dataset.key = key
+    pen.setAttribute('aria-label', `Write a note on ${label}`)
+    pen.title = 'A note on this option'
+    pen.append(sketch('pen'))
+    const open = e => { e.preventDefault(); e.stopPropagation(); optNoteRow(rec, key, true) }
+    pen.addEventListener('click', open)
+    pen.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') open(e) })
+    return pen
+  }
+  /** The line for the note on one option, right at its tile; made when asked for, gone again when left empty. */
+  function optNoteRow(rec, key, focus) {
+    let row = rec.optRows.get(key)
+    if (!row) {
+      const o = rec.card.options.find(x => x.key === key)
+      const tile = rec.optButtons.find(b => b.dataset.key === key)
+      if (!o || !tile) return
+      const node = el('label', 'focus-opt-note')
+      node.dataset.key = key
+      const input = el('input')
+      input.type = 'text'
+      input.maxLength = 2000
+      input.autocomplete = 'off'
+      input.placeholder = `Note on ${rec.labelOf(o)}`
+      input.setAttribute('aria-label', `Note on ${rec.labelOf(o)}. It goes along with your answer, whatever you choose.`)
+      input.value = rec.optNotes.get(key) ?? ''
+      node.append(sketch('pen'), input)
+      input.addEventListener('input', () => {
+        if (input.value.trim()) rec.optNotes.set(key, input.value)
+        else rec.optNotes.delete(key)
+        paintOptNotes(rec)
+        queueDraft(rec)
+      })
+      input.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); input.blur(); rec.node.focus({ preventScroll: true }) } })
+      input.addEventListener('blur', () => { if (!input.value.trim() && rec.optRows.get(key)?.node === node) { node.remove(); rec.optRows.delete(key) } })
+      // under its tile; under the pair where two tiles stand side by side
+      if (tile.parentNode.dataset.count === 'duo') tile.parentNode.append(node)
+      else tile.after(node)
+      row = { node, input }
+      rec.optRows.set(key, row)
+    }
+    if (focus) row.input.focus({ preventScroll: true })
+    return row
+  }
+  /** Which options carry a note: their pencils say so. */
+  function paintOptNotes(rec) {
+    for (const pen of rec.node.querySelectorAll('.focus-opt-pen')) pen.toggleAttribute('data-noted', Boolean(rec.optNotes.get(pen.dataset.key)?.trim()))
+  }
+
+  // ── drafts: what is ticked and written but not sent is kept on the hub ──
+  function draftOf(rec) {
+    const keys = rec.multi ? rec.card.options.map(o => o.key).filter(k => rec.picked.has(k)) : rec.wasKeys
+    return { card_id: rec.id, keys, note: rec.askText, notes: Object.fromEntries([...rec.optNotes].filter(([, text]) => text.trim())) }
+  }
+  /** Save the draft of a card a moment after it changed (POST /draft; an empty one clears it). */
+  function queueDraft(rec) {
+    if (rec.card.kind === 'permission' || rec.draftSent === undefined) return
+    if (!rec.draftTimer && JSON.stringify(draftOf(rec)) === rec.draftSent) return
+    clearTimeout(rec.draftTimer)
+    rec.draftTimer = setTimeout(() => {
+      rec.draftTimer = 0
+      if (recs.get(rec.id) !== rec || decidedLocal.has(rec.id) || rec.busy) return
+      const body = JSON.stringify(draftOf(rec))
+      if (body === rec.draftSent) return
+      rec.draftSent = body
+      fetch('/draft', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body }).catch(() => {})
+    }, 400)
+  }
+  /** Take what the hub holds for a card (card.draft) when it is news: on first sight, from another device, after
+   *  "Later", after an answer was taken back. Not while the human is changing this card right now. */
+  function adoptDraft(rec) {
+    if (rec.card.kind === 'permission') return
+    const draft = rec.card.draft
+    const ts = draft?.ts ?? 0
+    if (ts === rec.draftTs) return
+    rec.draftTs = ts
+    const at = document.activeElement
+    if (rec.draftTimer || (rec.node.contains(at) && at.matches('input, textarea'))) return
+    const known = new Set(rec.card.options.map(o => o.key))
+    const keys = (draft?.keys ?? []).filter(k => known.has(k))
+    rec.picked = new Set(rec.multi ? keys : [])
+    rec.wasKeys = rec.multi ? [] : keys
+    rec.optNotes = new Map(Object.entries(draft?.notes ?? {}).filter(([k]) => known.has(k)))
+    rec.askText = draft?.note ?? ''
+    rec.draftSent = JSON.stringify(draftOf(rec))
+    if (rec.askField) rec.askField.value = rec.askText
+    for (const [key, row] of rec.optRows) {
+      if (rec.optNotes.has(key)) row.input.value = rec.optNotes.get(key)
+      else { row.node.remove(); rec.optRows.delete(key) }
+    }
+    for (const key of rec.optNotes.keys()) optNoteRow(rec, key, false)
+    for (const b of rec.optButtons) b.toggleAttribute('data-was', rec.wasKeys.includes(b.dataset.key))
+    if (rec.multi) paintPicked(rec)
+    paintOptNotes(rec)
+    paintDraft(rec)
   }
 
   // ── the conversation about a card ───────────────────────────────────────
@@ -730,6 +918,95 @@ export function mountFocus({ onDecided } = {}) {
     const full = field.scrollHeight
     if (full) field.style.height = `${Math.min(full, 168)}px`
     field.style.overflowY = full > 168 ? 'auto' : 'hidden'
+    queueDraft(rec)
+  }
+
+  // ── the scratchpad: the composer as a small drawing surface ─────────────
+  // The session canvas's own drawing code (scribble.js), mounted small: pen, eraser and undo only. There is one
+  // of it for the window; it stands in the composer of the card it was opened on. What is drawn becomes a picture
+  // among the composer's files (kept with its strokes, so a tap on its chip opens it again); a picture already
+  // attached can be opened in it and drawn on.
+  const padHost = el('div', 'focus-pad')
+  padHost.dataset.ownsKeys = ''   // while one draws, the window's single keys rest (keys.js)
+  const padStage = el('div', 'focus-pad-stage')
+  const padFoot = el('div', 'focus-pad-foot')
+  const padDrop = button('focus-pad-btn', 'Discard the drawing')
+  padDrop.textContent = 'Discard'
+  const padDone = button('focus-pad-btn focus-pad-done', 'Keep the drawing and go back to typing')
+  padDone.append(icon('check'), el('span', null, 'Back to typing'))
+  padFoot.append(el('span', 'focus-pad-say', 'It goes along as a picture.'), padDrop, padDone)
+  padHost.append(padStage, padFoot)
+  let pad = null        // { rec, file } while it is open
+  let padBoard = null   // the mounted canvas
+  let padTake = null    // waits for the picture of the canvas
+  padDone.addEventListener('click', () => closePad(true))
+  padDrop.addEventListener('click', () => closePad(false))
+  padHost.addEventListener('keydown', e => { if (e.key === 'Escape' && !e.defaultPrevented) { e.stopPropagation(); closePad(true) } })
+  /** The picture of what is on the canvas (and its strokes), or null when it is empty. */
+  const padShot = () => new Promise(resolve => {
+    if (!padBoard || padBoard.isEmpty()) return resolve(null)
+    const give = shot => { clearTimeout(timer); padTake = null; resolve(shot) }
+    const timer = setTimeout(() => give(null), 5000)
+    padTake = give
+    padStage.querySelector('.scr-send')?.click()   // the canvas renders itself for its own "send"; that is this hand-over
+  })
+  /** An attached picture as a canvas with that picture on it. */
+  const pictureDoc = file => new Promise((resolve, reject) => {
+    const img = new Image()
+    img.onload = () => {
+      const w = Math.min(img.naturalWidth, 640), h = Math.round((w * img.naturalHeight) / img.naturalWidth)
+      resolve({ v: 1, images: [{ id: 'picture', x: 0, y: 0, w, h, nw: img.naturalWidth, nh: img.naturalHeight, src: file.data }], strokes: [] })
+    }
+    img.onerror = () => reject(new Error('not a picture'))
+    img.src = file.data
+  })
+  /** Open the scratchpad in a card's composer: empty, or on one of its attached pictures. A second tap on the pen closes it. */
+  async function openPad(rec, file = null) {
+    if (pad && pad.rec === rec && !file) return closePad(true)
+    if (pad) await closePad(true)
+    if (!rec.askNode || !recs.has(rec.id)) return
+    try {
+      if (!padBoard) {
+        const { mountScribble } = await import('./scribble.js')
+        padBoard = mountScribble(padStage, {
+          draftKey: null,
+          send: async shot => { padTake?.({ png: shot.png, doc: shot.doc }) },
+          onChange: () => { padHost.dataset.used = '' },   // drawing has begun: the surface grows
+        })
+      }
+      pad = { rec, file }
+      delete padHost.dataset.used
+      rec.chipsNode.after(padHost)
+      rec.askNode.dataset.pad = ''
+      rec.penBtn?.setAttribute('aria-pressed', 'true')
+      if (file) { padHost.dataset.used = ''; padBoard.load(file.doc ?? await pictureDoc(file)) }
+      else padBoard.clear()
+    } catch (err) {
+      pad = null
+      padHost.remove()
+      delete rec.askNode.dataset.pad
+      info(`The scratchpad did not open: ${err?.message || 'unknown reason'}`, true)
+    }
+  }
+  /** Close it. With keep, what was drawn becomes a picture among the composer's files (or replaces the one it was drawn on). */
+  async function closePad(keep = true) {
+    if (!pad || pad.closing) return
+    const { rec, file } = pad
+    pad.closing = true
+    const shot = keep ? await padShot() : null
+    if (!pad || pad.rec !== rec) return
+    pad = null
+    padHost.remove()
+    padBoard?.clear()
+    const now = recs.get(rec.id) ?? rec
+    delete now.askNode?.dataset.pad
+    now.penBtn?.setAttribute('aria-pressed', 'false')
+    if (shot) {
+      if (file && now.files.includes(file)) Object.assign(file, { data: shot.png, doc: shot.doc, image: true, drawn: true })
+      else now.files.push({ name: `Scribble ${new Date().toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).replace(/:/g, '.')}.png`, data: shot.png, doc: shot.doc, image: true, drawn: true, size: 0 })
+    }
+    paintFiles(now)
+    if (isOpen && shown === now) now.askField?.focus({ preventScroll: true })
   }
 
   /** Take files into the composer of a card (picked, dropped or pasted): read, and shown as chips until sent. */
@@ -849,6 +1126,7 @@ export function mountFocus({ onDecided } = {}) {
   /** Send what stands in the card's ask-back line; with fixed, that text instead (Explain), and the line keeps what it holds.
    *  Resolves true when the session has it. */
   async function askBack(rec, fixed = null) {
+    if (!fixed && pad?.rec === rec) await closePad(true)   // what is on the scratchpad goes along
     const text = (fixed ?? rec.askText).trim()
     // what is attached in the composer goes with what is typed there (never with the fixed request of What??)
     const files = fixed ? [] : rec.files
@@ -909,10 +1187,11 @@ export function mountFocus({ onDecided } = {}) {
   }
 
   // ── answering ───────────────────────────────────────────────────────────
-  const request = (card, keys, note, files = []) => (files.length ? decideWith(card, keys, note, files) : card.multiple ? decideMany(card.id, keys, note, card.revised ?? null) : decide(card.id, keys[0], note))
+  const request = (card, keys, note, files = [], notes = {}) => (files.length || Object.keys(notes).length ? decideWith(card, keys, note, files, notes) : card.multiple ? decideMany(card.id, keys, note, card.revised ?? null) : decide(card.id, keys[0], note))
 
   async function submit(rec, keys) {
     if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return
+    if (pad?.rec === rec) { await closePad(true); if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return }   // what is on the scratchpad goes along
     const card = rec.card
     const chosen = keys.map(k => card.options.find(o => o.key === k)).filter(Boolean)
     if (!chosen.length) return
@@ -921,6 +1200,9 @@ export function mountFocus({ onDecided } = {}) {
     const btn = rec.multi ? rec.sendTile : rec.optButtons.find(b => b.dataset.key === keys[0])
     const note = rec.noteNode ? rec.note.trim() : ''
     const files = rec.files.map(({ name, data }) => ({ name, data }))   // what is attached in the composer goes with the answer
+    const optNotes = Object.fromEntries([...rec.optNotes].map(([k, text]) => [k, text.trim()]).filter(([, text]) => text))   // and the notes on single options
+    clearTimeout(rec.draftTimer)
+    rec.draftTimer = 0
     setError(rec, '')
 
     if (!single) {
@@ -934,7 +1216,7 @@ export function mountFocus({ onDecided } = {}) {
       sentId = rec.id
       if (card.kind !== 'permission') offerBack(card, { head: `Answered: ${option.label}`, take: () => reopenAnswer(card) })
       else hideUndo()
-      const sending = request(card, keys, note, files)
+      const sending = request(card, keys, note, files, optNotes)
       inflight.set(card.id, sending)
       sync('sent')
       try {
@@ -958,7 +1240,7 @@ export function mountFocus({ onDecided } = {}) {
     if (rec.noteNode) rec.noteNode.disabled = true
     paintChrome()
     try {
-      await request(card, keys, note, files)
+      await request(card, keys, note, files, optNotes)
     } catch (err) {
       rec.busy = false
       delete rec.node.dataset.busy
@@ -1013,14 +1295,14 @@ export function mountFocus({ onDecided } = {}) {
     const rec = shown
     if (!isOpen || !rec || rec.busy || rec.card.kind === 'permission') return
     const fetch = async () => { putOff(rec.id, false) }
-    if (single) { putOff(rec.id); close(); return void say(pageHost(), { head: 'Moved to Later', title: rec.card.title, back: fetch }) }
+    if (single) { putOff(rec.id); close(); return void say(pageHost(), { head: 'Snoozed', title: rec.card.title, back: fetch }) }
     const at = order.indexOf(rec.id)
     const next = order[at + 1] ?? order.find(id => id !== rec.id)
     if (!next) return info('This is the only open question.')
     pendingJump = next
     jumpMotion = 'later'
     putOff(rec.id)   // the store tells every subscriber, this window included: sync() runs in here
-    offerBack(rec.card, { head: 'Moved to Later', take: fetch })
+    offerBack(rec.card, { head: 'Snoozed', take: fetch })
     announce(`Put off: ${rec.card.title}`)
   }
 
@@ -1097,7 +1379,9 @@ export function mountFocus({ onDecided } = {}) {
   explainBtn.title = `${EXPLAIN_LABEL} (E): ask the session to explain this question; it returns with the reply`
   explainBtn.classList.add('focus-way')
   laterBtn.classList.add('focus-way')
-  laterBtn.title = 'Later (L): it waits for you, at the end of the line'
+  laterBtn.replaceChildren(sketch(LATER_SKETCH), el('span', null, LATER_WORD))
+  laterBtn.setAttribute('aria-label', `${LATER_WORD}: put this question off; it waits for you`)
+  laterBtn.title = `${LATER_WORD} (L): it waits for you, at the end of the line`
   // The fourth of the row: hand the card to its session. It leaves, and returns only with the session's reply
   // (Later, beside it, waits for the human instead). Its mark is a playing card that turns the direction round.
   const handBtn = button('focus-later focus-handback focus-way', `${HAND_BACK_LABEL}: the session works on it, the question returns with its reply`)
@@ -1164,7 +1448,7 @@ export function mountFocus({ onDecided } = {}) {
     sheet.removeAttribute('data-rail')
   }
   /** One mark, drawn with the pen: the same id always gives the same wobble. */
-  function railMark(state, front, seed) {
+  function railMark(state, front, seed, started = false) {
     const r = penSeed(`rail:${seed}`)
     const svg = document.createElementNS(SVG_NS, 'svg')
     svg.setAttribute('viewBox', '0 0 32 32')
@@ -1179,6 +1463,8 @@ export function mountFocus({ onDecided } = {}) {
     if (state === 'done') draw('focus-rail-tick', `M${(9 + j()).toFixed(1)} ${(16.5 + j()).toFixed(1)} L${(14 + j()).toFixed(1)} ${(22.5 + j()).toFixed(1)} L${(24 + j()).toFixed(1)} ${(9 + j()).toFixed(1)}`)
     else draw(state === 'later' ? 'focus-rail-hollow' : 'focus-rail-dot', loopPath(r, { rad: state === 'later' ? 6.6 : 5.8, drift: .5, jitter: 1 }))
     if (front) draw('focus-rail-ring', loopPath(r, { rad: 13.6, drift: 1.4, jitter: 1.1 }))
+    // started (something ticked or written, not sent): a short stroke of the pen beside the dot
+    if (started) draw('focus-rail-started', `M${(22.5 + j()).toFixed(1)} ${(10 + j()).toFixed(1)} L${(27 + j()).toFixed(1)} ${(5.5 + j()).toFixed(1)}`)
     return svg
   }
   function paintRail() {
@@ -1207,7 +1493,7 @@ export function mountFocus({ onDecided } = {}) {
       ...[...railDone].map(([id, card]) => ({ id, card, state: 'done' })),
       ...order.map(id => ({ id, card: railSeen.get(id), state: off.has(id) ? 'later' : 'open' })),
     ].filter(x => x.card)
-    const sig = JSON.stringify([current, list.map(x => [x.id, x.state, x.card.urgency, x.card.agent, x.card.title])])
+    const sig = JSON.stringify([current, list.map(x => [x.id, x.state, x.card.urgency, x.card.agent, x.card.title, Boolean(x.card.draft)])])
     if (sig === railSig) return
     railSig = sig
     const left = order.length
@@ -1231,7 +1517,9 @@ export function mountFocus({ onDecided } = {}) {
       const who = x.card.agent_name ? ` · ${x.card.agent_name}` : ''
       b.title = `${x.state === 'done' ? 'Answered: ' : x.state === 'later' ? 'Later: ' : ''}${x.card.title}${who}`
       b.setAttribute('aria-label', b.title)
-      b.append(railMark(x.state, front, x.id))
+      const started = x.state !== 'done' && Boolean(recs.get(x.id)?.card.draft)
+      if (started) { b.dataset.started = ''; b.title += ' · started' }
+      b.append(railMark(x.state, front, x.id, started))
       if (x.state === 'done') b.disabled = true
       else b.addEventListener('click', () => go(x.id))
       // A wider gap where the kind of mark changes. Where the sender changes, a small gap and (while there is room)
@@ -1314,6 +1602,7 @@ export function mountFocus({ onDecided } = {}) {
         rec.reasonNode.hidden = !card.urgency_reason
         paintThread(rec)
       }
+      adoptDraft(rec)
     }
 
     const before = current
@@ -1395,7 +1684,7 @@ export function mountFocus({ onDecided } = {}) {
     const locked = !!busyRec()
     prevBtn.disabled = single || idx <= 0 || locked
     nextBtn.disabled = single || idx < 0 || idx >= n - 1 || locked
-    doneText.textContent = `${decidedCount ? `${decidedCount === 1 ? 'One question' : `${decidedCount} questions`} answered in this round.` : 'No open questions.'} New ones show up here as soon as an agent wants to know something.`
+    doneText.textContent = `${decidedCount ? `${decidedCount === 1 ? 'One question' : `${decidedCount} questions`} answered in this round.` : 'No open questions.'} The next question shows up here by itself: you can leave this window open.`
 
     // the head of the card and the sheet's colour follow the card in front
     const card = shown?.card
@@ -1404,6 +1693,7 @@ export function mountFocus({ onDecided } = {}) {
     laterBtn.disabled = locked
     explainBtn.hidden = laterBtn.hidden
     explainBtn.disabled = locked || explaining
+    if (pad && pad.rec !== shown) closePad(true)   // the card with the open scratchpad left the front: its drawing is kept as a picture
     const slot = shown?.actionsNode
     handBtn.hidden = laterBtn.hidden
     handBtn.disabled = locked || handing
@@ -1729,8 +2019,8 @@ export function mountFocus({ onDecided } = {}) {
     const explainTwin = button('focus-later focus-explain focus-way', 'Explain: ask the session to explain this question')
     explainTwin.append(sketch('explain'), el('span', null, EXPLAIN_LABEL))
     explainTwin.addEventListener('click', () => { shut(); explain() })
-    const laterTwin = button('focus-later focus-way', 'Later: put this question off')
-    laterTwin.append(sketch('later'), el('span', null, 'Later'))
+    const laterTwin = button('focus-later focus-way', `${LATER_WORD}: put this question off`)
+    laterTwin.append(sketch(LATER_SKETCH), el('span', null, LATER_WORD))
     laterTwin.addEventListener('click', () => { shut(); later() })
     const handTwin = button('focus-later focus-handback focus-way', `${HAND_BACK_LABEL}: the session works on it, the question returns with its reply`)
     handTwin.append(sketch('reverse'), el('span', null, HAND_BACK_LABEL))

@@ -426,7 +426,9 @@ subscribe((state, online) => {
   if (loaded) {
     paintCount(state)
     // The address named a question to open; now its card is known.
-    if (!arrived) {
+    // (Known for certain only once the board's state is here: the stream opening tells the listeners too,
+    // before any card has arrived, and a number in the address could not be looked up then.)
+    if (!arrived && isLoaded()) {
       arrived = true
       if (arrival.q) openFocus(arrival.q === 'next' ? null : cardOf(arrival.q), false)
     }

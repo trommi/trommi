@@ -503,6 +503,10 @@ const SKETCH = {
     [[8.5, 11.6], [9.1, 8.4], [12.2, 7], [15, 8.2]], [[13, 6.1], [15.4, 8.3], [13.1, 10.2]],
     [[15.5, 12.5], [14.9, 15.7], [11.8, 17.1], [9, 15.9]], [[11, 18], [8.6, 15.8], [10.9, 13.9]],
   ],
+  // a pencil, held slanted, with the line it has just drawn: scribble instead of typing
+  pen: [[[5.2, 18.8], [6.2, 15], [15.6, 5.2], [17.4, 4.6], [19.4, 6.6], [18.8, 8.4], [9, 17.8], [5.4, 18.9]], [[14.2, 6.8], [17.2, 9.8]], [[11.6, 20.4], [14.4, 19.2], [16.4, 20.6], [19.4, 19.6]]],
+  // three z rising, each a little larger: asleep for now
+  snooze: [[[4.4, 15.6], [9, 15.3], [9.2, 15.5], [4.8, 20.2], [4.6, 20.4], [9.6, 20.1]], [[10.4, 9.6], [15.4, 9.3], [15.6, 9.5], [10.8, 14.4], [10.6, 14.6], [16, 14.2]], [[15.4, 3.4], [20.8, 3.1], [21, 3.3], [15.8, 8.6], [15.6, 8.8], [21.4, 8.4]]],
   // a paperclip, bent in one go: attach something
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
@@ -575,6 +579,10 @@ const SKETCH = {
   ],
 }
 
+// Putting a question off: the one word for it everywhere (button, tag, pile), and the name of its drawing for sketch().
+export const LATER_WORD = 'Snooze'
+export const LATER_SKETCH = 'snooze'
+
 /** An icon drawn like the session marks: a few uneven pen strokes with a little tilt. Sized and coloured by CSS. */
 export function sketch(name) {
   const r = seeded(`sketch:${name}`)
@@ -637,6 +645,45 @@ export function loopPath(r, { rad = 14.9, drift = 1.1, jitter = .9, start = 3.6 
   }))
 }
 export const penSeed = text => seeded(text)
+
+/** The hand alone, with no loop and no ground: a waiting session's mark in the sidebar. The same hand
+ *  as raisedHand() draws, to the stroke. Returns an SVG sized by CSS, drawn in currentColor. */
+export function bareHand() {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded('raised hand')
+  loopPath(r)   // the loop is drawn first there; the pen's wobble on the hand follows from it
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '6 5 16.5 22')
+  svg.setAttribute('class', 'bare-hand')
+  svg.setAttribute('aria-hidden', 'true')
+  const path = document.createElementNS(NS, 'path')
+  path.setAttribute('d', penPath(HAND.map(([x, y]) => [x + 2.9 + (r() - .5) * .8, y + 1.9 + (r() - .5) * .8])))
+  svg.append(path)
+  return svg
+}
+
+/** A session at work: a stroke swept round by hand, heavy where the pen leads, thin where it trails,
+ *  and it does not close. It goes round what stands in its middle (the count); the turning is CSS
+ *  (.sweep-mark). Returns an SVG in a 32 box, drawn in currentColor. */
+export function sweepMark() {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded('sweep')
+  const arc = (from, to, n) => penPath(Array.from({ length: n }, (_, i) => {
+    const a = from + (i / (n - 1)) * (to - from), rad = 13.2 + (r() - .5) * 1.1
+    return [16 + Math.cos(a) * rad, 16 + Math.sin(a) * rad * .96]
+  }))
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', '0 0 32 32')
+  svg.setAttribute('class', 'sweep-mark')
+  svg.setAttribute('aria-hidden', 'true')
+  for (const [cls, d] of [['sweep-tail', arc(-4.1, -1.2, 9)], ['sweep-lead', arc(-1.5, -.2, 5)]]) {
+    const path = document.createElementNS(NS, 'path')
+    path.setAttribute('class', cls)
+    path.setAttribute('d', d)
+    svg.append(path)
+  }
+  return svg
+}
 
 /** The mark of a waiting session. Returns an SVG sized by CSS: the loop is filled with the element's
  *  --hand-soft and drawn, like the hand, in currentColor. */
