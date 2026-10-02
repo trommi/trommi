@@ -246,7 +246,17 @@ chat = mountChat($('chat'), {
   onScribble: agent => { pickMember(agent); setView('scribble') },
   onUnread: paintView, onError: text => showToast('error', text, 6000), flags,
 })
-const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 } })
+/** Go through the open questions of one session (of sessions laid together: of all of them), the most
+ *  urgent first, in the question window. The walk follows the scope, so the session is picked first;
+ *  the address then names both (/s/<id>?q=next). For the sidebar's state badges, and for whoever else
+ *  shows a session's count (import { walkSession } from './app.js'). */
+export function walkSession(id) {
+  setScope(id)
+  showPage(null)
+  showView('chat')
+  return openFocus()
+}
+const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
 const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onDecided: offerUndo })
 const roster = mountRoster($('roster'))
 

@@ -39,3 +39,14 @@
 .msg-user .shots { margin-left: auto; margin-bottom: var(--s-2); }
 .msg-user .shot { background: #fff; }
 .msg-user .shot img { object-fit: contain; object-position: center; }
+
+/* The swoosh: above the pad, a strip of the sessions' marks at the left edge (where the sidebar is)
+   for the moment a cut-out area flies into its session. */
+.padlink-fly { position: fixed; inset: 0; z-index: 3001; pointer-events: none; overflow: hidden; }
+.padlink-strip {
+  position: absolute; left: 0; top: 50%; translate: 0 0; transform: translateY(-50%);
+  display: grid; gap: var(--s-3); padding: var(--s-4) var(--s-3); max-height: 80vh; overflow: hidden;
+  border-radius: 0 var(--r-lg) var(--r-lg) 0; background: var(--bg); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg);
+}
+.padlink-strip .agent-avatar { width: 38px; height: 38px; opacity: .45; }
+.padlink-strip .agent-avatar.is-target { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--fg); }

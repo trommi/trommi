@@ -11,8 +11,9 @@ import { openStore } from './db.js'
 import {
   INK, PEN_COLORS, HL_COLORS, SIZES, TEXT_SIZE, TEXT_WRAP, r2, newId, resolveInk, textFont,
   buildGeom, paintStroke, strokeFromWorld, layoutText, isText, paintElement, hitElement, strokeNear, inRect,
-  unionBox, scaled, textOf, renderPNG,
+  unionBox, scaled, textOf, renderPNG, renderRect,
 } from './elements.js'
+import { flySheet } from './fly.js'
 import { connectBoard, onBoard, boardState, setBoard, transcribe, sendSelection, SAMPLE_TRANSCRIPT } from './board.js'
 import { startSync } from './sync.js'
 import { PAD_WORD } from './name.js'
@@ -42,6 +43,8 @@ const lctx = layer.getContext('2d', { alpha: false })
 
 // ── icons ───────────────────────────────────────────────────────────────────
 const ICONS = {
+  // a frame cut along a dashed line, and where it goes
+  area: ['M4 8.5V6.200A2.200 2.200 0 016.200 4H8.500', 'M12 4h3', 'M18.500 4.300A2.200 2.200 0 0120 6.200V8.500', 'M4 12v3', 'M4 18.200A2.200 2.200 0 006.200 20H8.500', 'M12.500 20.500l7-7', 'M14.500 13.500h5v5'],
   more: ['M6 9l6 6 6-6'],
   select: ['M5 3.5l13.5 6.6-5.7 1.9-2 5.7z', 'M13.5 13.5l5 5'],
   pen: ['M4 20l1.2-4.4L16.6 4.2a2 2 0 012.9 0l.3.3a2 2 0 010 2.9L8.4 18.8z', 'M14.5 6.5l3 3'],
@@ -99,6 +102,8 @@ let staticDirty = true, raf = 0, anim = null
 let edit = null                // the open note: { id, type, x, y, size, color, wrap }
 let rec = null                 // the running recording
 let lastClick = { id: null, t: 0 }
+let area = null                // the framed area waiting for a session: { x, y, w, h } in world units, list
+let toolBefore = 'pen'         // what was in hand before the area tool
 let theme = {}                 // colours read from the tokens
 const pictures = new Map()     // blob id → { img, ok, ready }
 
@@ -320,6 +325,11 @@ function paint(now) {
     ctx.lineWidth = 1
     ctx.strokeRect(x + 0.5, y + 0.5, w, h)
   }
+  if (gesture?.type === 'area' && gesture.moved) {
+    sketchFrame(ctx, Math.min(gesture.px, gesture.qx), Math.min(gesture.py, gesture.qy), Math.abs(gesture.qx - gesture.px), Math.abs(gesture.qy - gesture.py))
+  } else if (area && !area.gone) {
+    sketchFrame(ctx, area.x * view.z + view.x, area.y * view.z + view.y, area.w * view.z, area.h * view.z, area.cut)
+  }
   if (tool === 'eraser' && hover) {
     ctx.beginPath()
     ctx.arc(hover[0], hover[1], ERASER_R, 0, Math.PI * 2)
@@ -330,8 +340,35 @@ function paint(now) {
   placeOverlays(S)
 }
 
+/** A frame as a hand draws it with a dashed pen: the sides wander a little and overshoot the corners.
+ *  cut: the moment of the snip, drawn through. */
+function sketchFrame(c, x, y, w, h, cut = false) {
+  const J = [1.6, -1.2, 0.9, -1.7, 1.3, -0.8, 1.1, -1.4]
+  const side = (ax, ay, bx, by, i) => {
+    const nx = -(by - ay), ny = bx - ax, len = Math.hypot(nx, ny) || 1
+    const ox = (nx / len) * J[i], oy = (ny / len) * J[i]
+    const ex = ((bx - ax) / len) * 5, ey = ((by - ay) / len) * 5   // past the corner, like a quick stroke
+    c.moveTo(ax - ex + ox * 0.4, ay - ey + oy * 0.4)
+    c.quadraticCurveTo((ax + bx) / 2 + ox * 1.6, (ay + by) / 2 + oy * 1.6, bx + ex - ox * 0.5, by + ey - oy * 0.5)
+  }
+  c.save()
+  c.globalAlpha = 0.07
+  c.fillStyle = theme.accent
+  c.fillRect(x, y, w, h)
+  c.globalAlpha = 1
+  c.beginPath()
+  side(x, y, x + w, y, 0); side(x + w, y, x + w, y + h, 1); side(x + w, y + h, x, y + h, 2); side(x, y + h, x, y, 3)
+  c.strokeStyle = theme.accent
+  c.lineWidth = cut ? 2.4 : 1.8
+  c.lineCap = 'round'
+  c.setLineDash(cut ? [] : [8, 6])
+  c.stroke()
+  c.restore()
+}
+
 // DOM that sits on the paper follows pan and zoom here, once per frame.
 function placeOverlays(S) {
+  placeAreaMenu()
   if (edit) {
     editor.style.transform = `translate(${view.x + edit.x * view.z}px, ${view.y + edit.y * view.z}px) scale(${view.z})`
     const tip = $('caret-tip')
@@ -339,7 +376,7 @@ function placeOverlays(S) {
   }
   if (rec) {
     const node = $('rec')
-    node.style.transform = `translate(${Math.round(clamp(view.x + rec.x * view.z, 8, Math.max(8, W - node.offsetWidth - 8)))}px, ${Math.round(clamp(view.y + rec.y * view.z - 22, 60, Math.max(60, H - 120)))}px)`
+    node.style.transform = `translate(${Math.round(clamp(view.x + rec.x * view.z, 8, Math.max(8, W - node.offsetWidth - 8)))}px, ${Math.round(clamp(view.y + rec.y * view.z - 22, 60, Math.max(60, H - 150)))}px)`
   }
   const bar = $('selbar')
   const show = Boolean(S) && !gesture && !edit
@@ -433,7 +470,7 @@ function renderStatus() {
   pad.dataset.sync = s.mode
 }
 function updateCursor(mode) {
-  pad.dataset.cursor = mode ?? (spaceDown ? 'grab' : tool === 'select' ? 'select' : tool === 'eraser' ? 'eraser' : 'draw')
+  pad.dataset.cursor = mode ?? (spaceDown ? 'grab' : tool === 'select' ? 'select' : tool === 'eraser' ? 'eraser' : tool === 'area' ? 'area' : 'draw')
 }
 let toastTimer = 0
 function toast(text, kind = 'info', ms = 2800) {
@@ -477,6 +514,8 @@ $('widths').replaceChildren(...[0, 1, 2, 3].map(i => {
 }))
 function setTool(next) {
   commitEditor()
+  if (next === 'area' && tool !== 'area') { toolBefore = tool; sel.clear() }
+  if (next !== 'area') clearArea()
   tool = next
   if (next === 'pen' || next === 'hl') {
     if (drawTool !== next) { drawTool = next; buildSwatches() }
@@ -497,7 +536,7 @@ function toggleStyle() {
   $('style').hidden = false
   $('style-btn').setAttribute('aria-expanded', 'true')
 }
-const closePopovers = () => { closeStyle(); closeSendMenu() }
+const closePopovers = () => { closeStyle(); closeSendMenu(); if (!area?.sending) clearArea() }
 
 // ── selection ───────────────────────────────────────────────────────────────
 /** The ids that go together with this element: its group, or itself. */
@@ -915,6 +954,8 @@ canvas.addEventListener('pointerdown', e => {
     gesture = { ...base, type: 'pan', vx: view.x, vy: view.y }
   } else if (rec) {
     gesture = { ...base, type: 'idle' }   // a recording is running: the paper waits
+  } else if (tool === 'area') {
+    gesture = { ...base, type: 'area' }
   } else if (tool === 'eraser') {
     gesture = { ...base, type: 'erase', erased: new Set() }
     hover = [px, py]
@@ -978,6 +1019,7 @@ canvas.addEventListener('pointermove', e => {
     return invalidate()
   }
   if (g.type === 'erase') { hover = [px, py]; return erase(g, px, py) }
+  if (g.type === 'area') return invalidate()
   const [wx, wy] = toWorld(px, py)
   if (g.type === 'marquee') {
     if (!g.moved) return
@@ -1021,6 +1063,8 @@ function pointerEnd(e) {
     else if (click) placeCaret(g.wx, g.wy)
   } else if (g.type === 'marquee') {
     if (click && !g.shift) placeCaret(g.wx, g.wy)
+  } else if (g.type === 'area') {
+    if (g.moved && !cancelled) frameArea(g)
   } else if (g.type === 'erase') {
     if (e.pointerType === 'touch') hover = null
     if (g.erased.size) remove([...g.erased].map(id => els.get(id)).filter(Boolean))
@@ -1134,7 +1178,9 @@ document.addEventListener('keydown', e => {
   const key = e.key.toLowerCase()
   if (e.key === 'Escape') {
     if (rec) stopRecording(true)
+    else if (area) { if (!area.sending) clearArea() }
     else if (!$('style').hidden || !$('send-menu').hidden) closePopovers()
+    else if (tool === 'area') setTool(toolBefore)
     else if (sel.size) { sel.clear(); refresh() }
     else tell('close')   // nothing left to let go of: back to where the human came from
     return
@@ -1171,7 +1217,7 @@ document.addEventListener('keydown', e => {
     return
   }
   if (e.repeat) return
-  const tools = { v: 'select', p: 'pen', h: 'hl', e: 'eraser' }
+  const tools = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', a: 'area' }
   if (tools[key]) setTool(tools[key])
   else if (key >= '1' && key <= '4') setWidth(Number(key) - 1)
   else if (key === 'm') toggleRecording()
@@ -1296,6 +1342,149 @@ $('send-go').addEventListener('click', async () => {
   }
 })
 
+// ── send an area: frame it, pick a session, and it is cut out and flies there ──
+// The fast path beside "select, then Send to…". What goes: every element that lies in the frame,
+// whole or in part (ids and words), and a picture of exactly the frame, as the human saw it.
+function clearArea() {
+  if (!area && $('area-menu').hidden) return
+  area = null
+  $('area-menu').hidden = true
+  invalidate()
+}
+function frameArea(g) {
+  const [x0, y0] = toWorld(Math.min(g.px, g.qx), Math.min(g.py, g.qy)), [x1, y1] = toWorld(Math.max(g.px, g.qx), Math.max(g.py, g.qy))
+  if ((x1 - x0) * view.z < 12 || (y1 - y0) * view.z < 12) return
+  const list = ordered().filter(el => inRect(el, x0, y0, x1, y1))
+  if (!list.length) return toast('Nothing in that area. Frame something that is on the paper.')
+  area = { x: r2(x0), y: r2(y0), w: r2(x1 - x0), h: r2(y1 - y0), list }
+  openAreaMenu()
+}
+/** When a session was last sent something from this pad, to list the usual ones first. */
+function lastSentTo() {
+  const when = new Map()
+  for (const el of els.values()) for (const l of el.sent ?? []) when.set(l.session, Math.max(when.get(l.session) ?? 0, l.at ?? 0))
+  return when
+}
+function markOf(s) {
+  const mark = Object.assign(document.createElement('span'), { className: 'pad-mark' })
+  if (s.hue != null) mark.style.setProperty('--hue', s.hue)
+  // The scribble comes from the board's own page (js/padlink.js), not from anyone's input.
+  if (s.mark) mark.innerHTML = s.mark
+  else mark.textContent = (s.name || '?').trim().charAt(0).toUpperCase()
+  return mark
+}
+function openAreaMenu() {
+  const menu = $('area-menu')
+  const b = boardState()
+  const here = new Set(host.prefer), recent = lastSentTo()
+  // where the human came from first, then who was sent to most recently, then who is there
+  const sessions = [...b.sessions].sort((p, q) => here.has(q.id) - here.has(p.id) || (recent.get(q.id) ?? 0) - (recent.get(p.id) ?? 0) || q.online - p.online)
+  const n = area.list.length
+  const head = Object.assign(document.createElement('p'), { className: 'pad-menu-head', textContent: `Send ${n} element${n === 1 ? '' : 's'} to` })
+  const items = sessions.map(s => {
+    const item = document.createElement('button')
+    item.type = 'button'
+    item.className = 'pad-menu-item'
+    item.setAttribute('role', 'menuitem')
+    item.dataset.online = String(s.online)
+    item.dataset.session = s.id
+    item.dataset.name = s.name.toLowerCase()
+    item.append(markOf(s), s.name, Object.assign(document.createElement('small'), { textContent: [here.has(s.id) ? 'where you were' : '', s.online ? '' : 'away'].filter(Boolean).join(' · ') }))
+    item.addEventListener('click', () => sendArea(s, item))
+    return item
+  })
+  const shownItems = () => items.filter(i => !i.hidden)
+  const firstKey = () => { for (const i of items) i.querySelector('kbd')?.remove(); shownItems()[0]?.append(Object.assign(document.createElement('kbd'), { textContent: 'Enter' })) }
+  const nodes = [head]
+  let find = null
+  if (items.length > 6) {
+    find = Object.assign(document.createElement('input'), { className: 'pad-menu-find', type: 'search', placeholder: 'Find a session', autocomplete: 'off' })
+    find.setAttribute('aria-label', 'Find a session')
+    find.addEventListener('input', () => { const q = find.value.trim().toLowerCase(); for (const i of items) i.hidden = Boolean(q) && !i.dataset.name.includes(q); firstKey() })
+    nodes.push(find)
+  }
+  if (!items.length) nodes.push(Object.assign(document.createElement('p'), { className: 'pad-menu-head', textContent: 'No session is connected.' }))
+  menu.replaceChildren(...nodes, ...items)
+  firstKey()
+  menu.onkeydown = e => {
+    const list = shownItems(), at = list.indexOf(document.activeElement)
+    if (e.key === 'Enter' && (e.target === find || at < 0)) { e.preventDefault(); e.stopPropagation(); list[0]?.click() }
+    else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); e.stopPropagation()
+      list[(at + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length]?.focus({ preventScroll: true })
+    } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); clearArea() }
+    else if (e.target === find) e.stopPropagation()   // typing a name is not a tool key
+  }
+  menu.hidden = false
+  placeAreaMenu()
+  // The keyboard goes to the chooser: Enter takes the first, a name narrows the list.
+  ;(find ?? menu).focus?.({ preventScroll: true })
+  if (!find) { menu.tabIndex = -1; menu.focus({ preventScroll: true }) }
+  invalidate()
+}
+function placeAreaMenu() {
+  const menu = $('area-menu')
+  if (menu.hidden || !area) return
+  const x = area.x * view.z + view.x, y = area.y * view.z + view.y, w = area.w * view.z, h = area.h * view.z
+  const mw = menu.offsetWidth, mh = menu.offsetHeight
+  // under the frame; over it if there is no room; else inside its lower edge
+  let ty = y + h + 10
+  if (ty + mh > H - 84) ty = y - mh - 10
+  if (ty < 60) ty = clamp(y + h - mh - 10, 60, Math.max(60, H - 84 - mh))
+  const tx = clamp(x + w / 2 - mw / 2, 8, Math.max(8, W - mw - 8))
+  menu.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`
+}
+async function sendArea(session, item) {
+  if (!area || area.sending) return
+  const a = area
+  a.sending = true
+  for (const b of $('area-menu').querySelectorAll('button, input')) b.disabled = true
+  try {
+    await Promise.all(a.list.filter(e => e.type === 'image' && e.blob).map(e => picture(e.blob).ready))
+    const shot = renderRect(ordered(), a, env())
+    const payload = {
+      pad: PAD, session: session.id, client_id: sync.clientId,
+      elements: a.list.map(e => ({ id: e.id, type: e.type, rev: e.rev, ...(isText(e) ? { text: e.data.text } : {}) })),
+      text: textOf(a.list), bbox: shot.bbox, png: shot.png,
+    }
+    const rect = { x: a.x * view.z + view.x, y: a.y * view.z + view.y, w: a.w * view.z, h: a.h * view.z }
+    // The snip, then the flight; the sending runs meanwhile. On a wide screen inside the board, the
+    // board draws the flight: it ends at the session's mark at the left edge, where the sidebar is.
+    // Anywhere else (a phone, the pad on its own) the piece flies into the chooser's row.
+    a.cut = true
+    invalidate()
+    const outside = EMBED && W > 860
+    const flight = (async () => {
+      await new Promise(r => setTimeout(r, 90))
+      a.gone = true
+      invalidate()
+      if (outside) {
+        $('area-menu').hidden = true
+        tell('fly', { png: shot.png, rect, session: session.id })
+        await new Promise(r => setTimeout(r, reduced() ? 400 : 780))
+      } else await flySheet($('fly'), { png: shot.png, rect, target: item.querySelector('.pad-mark') ?? item })
+    })()
+    const post = (async () => {
+      if (sync.state().mode !== 'local' && !(await sync.settled())) throw new Error('It has not reached the board yet (no connection). Try again in a moment.')
+      return sendSelection(payload)
+    })()
+    const [, answer] = await Promise.all([flight, post.then(v => v, err => ({ failed: err }))])
+    if (answer.failed) throw answer.failed
+    if (answer.elements) sync.take(answer.elements, answer.seq ?? 0)
+    // What was sent cannot be taken back (the agent has it), so the note only says where it went.
+    toast(`Sent to ${session.name}`, 'info', 4000)
+    tell('sent', { session: session.id, message_id: answer.message_id })
+    area = null
+    $('area-menu').hidden = true
+    if (tool === 'area') setTool(toolBefore)
+  } catch (err) {
+    area = null
+    $('area-menu').hidden = true
+    toast(`Not sent. ${err.message}`, 'error', 6000)
+  }
+  refresh()
+}
+
 // ── start ───────────────────────────────────────────────────────────────────
 new ResizeObserver(() => {
   const w = pad.clientWidth, h = pad.clientHeight
@@ -1382,6 +1571,7 @@ window.pad = {
   view: () => ({ ...view }),
   state: () => ({ tool, editing: Boolean(edit), recording: rec?.state ?? null, undo: undo.length, redo: redo.length, store: db?.kind, board: boardState(), sync: sync?.state(), embed: EMBED, host }),
   settled: ms => sync.settled(ms),
+  area: () => (area ? { x: area.x, y: area.y, w: area.w, h: area.h, ids: area.list.map(e => e.id), sending: Boolean(area.sending) } : null),
   records: () => db.list(PAD),
   payload: async session => (await buildPayload(session ?? boardState().sessions[0], selected())).payload,
   wipe: async () => { await db.wipe(); location.reload() },

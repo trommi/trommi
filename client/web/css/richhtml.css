@@ -2,12 +2,14 @@
    HTML stands in. Loaded by the module itself. The table's own rules are in tokens.css (.rich-table). */
 
 /* A column of numbers: right-aligned, figures of one width. */
-.rich-table .num { text-align: right; font-variant-numeric: tabular-nums; }
+.rich-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
 .rich-table .mid { text-align: center; }
 .rich-table-wrap { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
 
 /* An HTML block: a frame without an edge of its own, as tall as its content, at most most of the screen. */
-.rh { position: relative; display: block; width: 100%; max-width: 100%; min-width: 0; }
+/* A block of its own formatting, so that beside something floated (the answers of a question) it takes the
+   room that is left instead of dropping below it. */
+.rh { position: relative; display: flow-root; max-width: 100%; min-width: 0; }
 .rh-frame { display: block; width: 100%; height: 96px; max-height: 70vh; border: 0; background: transparent; }
 /* Beyond the cap it scrolls inside, and says so with a rule at its foot. */
 .rh.is-capped .rh-frame { border-bottom: 1px solid var(--line-strong); }

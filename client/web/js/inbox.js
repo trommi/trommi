@@ -6,8 +6,8 @@
 // sender's group for one group at the very end, so that working down the list comes to an end.
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
-import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
-import { hueOf } from './agents.js'
+import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, KNOCK_SKETCH, isKnock, knockWord, knocksText } from './ui.js'
+import { hueFor } from './agents.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen } from './store.js'
 import { openLightbox } from './chat.js'
@@ -149,7 +149,7 @@ export function pile({ kind, label, icon, count, open = false, onToggle, items, 
 /** A session's mark, small, for a line that names who asked; a starred one wears its crown. */
 function smallMark(session) {
   const mark = el('span', 'inbox-from-mark')
-  mark.style.setProperty('--hue', hueOf(session.id))
+  mark.style.setProperty('--hue', hueFor(session))
   mark.append(doodle(session.mark ?? session.id))
   if (session.starred) mark.append(crown())
   return mark
@@ -366,18 +366,31 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     node.append(thumb)
   }
 
-  // Snooze is always possible: the row's top right corner is turned down, with the small drawing on
-  // it; a click puts the question off, down to the pile at the end of the list. On a row in that pile
-  // the same corner fetches it back. The corner is a triangle that the answer tile beside it clears,
-  // and only the triangle takes the click. Its word is an element of its own beside it (the corner is
-  // cut to its shape, so nothing inside it can stand out of it): it shows along the row's top edge,
-  // to the left, while the pointer or the keyboard is on the corner, and on the row the keys are on.
+  // Snooze is always possible: the row's top right corner is a dog-ear, folded down, with the small
+  // drawing (z z z) on it. Under the pointer or the keyboard it unfolds like paper: the flap turns back
+  // to where it came from, and a small tab with the word turns up from behind the row's top edge
+  // beside it. A click then puts the question off, down to the pile at the foot of the list. A finger
+  // has no hover: the first tap unfolds it, the second one snoozes. On a row in that pile the same ear
+  // wakes the question up (a sun coming up). The ear stands in a strip of its own to the right of the
+  // answer tiles, so no click meant for a tile can land on it.
   const later = el('button', 'inbox-later')
   later.type = 'button'
-  later.setAttribute('aria-label', off ? 'Fetch back' : `${LATER_WORD}: put this question off; it waits for you below`)
-  later.append(el('i', 'inbox-later-fold'), sketch(off ? 'back' : LATER_SKETCH))
-  const laterWord = el('span', 'inbox-later-word', off ? 'Fetch back' : LATER_WORD)
+  later.setAttribute('aria-label', off ? `${WAKE_WORD}: fetch this question back` : `${LATER_WORD}: put this question off; it waits for you below`)
+  const ear = el('i', 'inbox-later-ear')
+  ear.append(el('i', 'inbox-later-flap'))
+  later.append(ear, sketch(off ? WAKE_SKETCH : LATER_SKETCH))
+  const laterWord = el('span', 'inbox-later-word', off ? WAKE_WORD : LATER_WORD)
   laterWord.setAttribute('aria-hidden', 'true')
+  let byTouch = false, folding = 0
+  later.addEventListener('pointerdown', e => { byTouch = e.pointerType === 'touch' })
+  later.addEventListener('click', e => {
+    if (!byTouch || later.classList.contains('is-unfolded')) return
+    // The first tap of a finger only unfolds it; it folds again by itself.
+    e.stopImmediatePropagation()
+    later.classList.add('is-unfolded')
+    clearTimeout(folding)
+    folding = setTimeout(() => later.classList.remove('is-unfolded'), 4000)
+  })
   later.addEventListener('click', () => {
     putOff(card.id, !off)
     // Say where it went, with the way back.

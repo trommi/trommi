@@ -48,7 +48,8 @@ export async function connectBoard(embedded = false) {
 export function setBoard({ sessions, speech }) {
   state.board = true
   state.speech = Boolean(speech)
-  state.sessions = sessions.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online) }))
+  // mark: the session's scribble as the board draws it (an SVG), hue: its colour.
+  state.sessions = sessions.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), mark: a.mark ?? null, hue: a.hue ?? null }))
   for (const fn of listeners) fn(state)
 }
 

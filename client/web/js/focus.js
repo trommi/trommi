@@ -177,6 +177,14 @@ const readDataUrl = file => new Promise((resolve, reject) => {
 })
 
 export function mountFocus({ onDecided } = {}) {
+  // This module is loaded when the window is first opened, its stylesheet with the page: in a page that has been
+  // open for a while the two may be of different days. So the stylesheet is fetched again, to match this code.
+  for (const link of document.querySelectorAll('link[rel="stylesheet"][href^="/css/focus.css"]')) {
+    const fresh = link.cloneNode()
+    fresh.href = `/css/focus.css?t=${Date.now()}`
+    fresh.addEventListener('load', () => link.remove())
+    link.after(fresh)
+  }
   const reduced = matchMedia('(prefers-reduced-motion: reduce)')
   const still = () => reduced.matches
 
@@ -371,6 +379,8 @@ export function mountFocus({ onDecided } = {}) {
 
     const scroll = el('div', 'focus-scroll')
     rec.scroll = scroll
+    rec.arrowAt = null
+    scroll.addEventListener('scroll', () => { if (rec.pictureOf) tiePicture(rec, false) }, { passive: true })
     const title = el('h2', 'focus-title', card.title)
     title.id = titleId
     rec.reasonNode = el('p', 'focus-reason')
@@ -734,9 +744,10 @@ export function mountFocus({ onDecided } = {}) {
       b.append(mark, words)
       b.addEventListener('click', () => submit(rec, card.options.map(o => o.key).filter(k => rec.picked.has(k))))
       rec.sendTile = b
-      opts.append(b)
     }
     answer.append(rec.errorNode, opts)
+    // (Send is not one of the list: it stands under it, so the list ends above it and it never covers an option)
+    if (rec.sendTile) answer.append(rec.sendTile)
     rec.noteTag = null
     if (tags) {
       const line = el('p', 'focus-tag-line')
@@ -788,9 +799,25 @@ export function mountFocus({ onDecided } = {}) {
 
     // The conversation at the left, the answers at the right, and the composer with its buttons in a row of
     // its own under both: the field as wide as the conversation, the buttons at its right.
+    // The answers float at the top right of what scrolls, beside the title, as tall as they need; text flows round
+    // them, pictures and the conversation take the whole width under them. (In a narrow window they stand at
+    // the foot of the text: the stylesheet reorders them.) The composer is pinned at the foot of the card.
     const talk = el('div', 'focus-talk')
     talk.append(scroll)
-    node.replaceChildren(...[talk, answer, rec.composer].filter(Boolean))
+    // In the list every card carries read-aloud and close in its own corner (the window's top bar is not shown there).
+    const ends = el('div', 'focus-card-ends')
+    const sayTwin = button('focus-card-say', 'Read questions aloud')
+    sayTwin.append(sayBtn.firstElementChild.cloneNode(true))
+    sayTwin.hidden = sayBtn.hidden
+    sayTwin.setAttribute('aria-pressed', sayBtn.getAttribute('aria-pressed') ?? 'false')
+    sayTwin.addEventListener('click', () => { claim(rec); sayBtn.click() })
+    const closeTwin = button('focus-card-close', 'Close')
+    closeTwin.title = 'Close (Esc)'
+    closeTwin.append(icon('close'))
+    closeTwin.addEventListener('click', close)
+    ends.append(sayTwin, closeTwin)
+    // Two columns: what is asked at the left with its own scroll, the answers at the right; the composer under the left.
+    node.replaceChildren(...[talk, answer, rec.composer, ends].filter(Boolean))
     if (multi) paintPicked(rec)
     rec.toEnd = false
     paintThread(rec)
@@ -929,8 +956,22 @@ export function mountFocus({ onDecided } = {}) {
       b.toggleAttribute('data-match', mine)
       if (mine && !was && reveal && b.isConnected) b.scrollIntoView({ block: 'nearest' })
     }
-    // the arrow points at it (drawn in the answer column, which scrolls with its tags)
-    if (rec.answer) pointAt(rec.answer, rec.optButtons?.find(b => b.hasAttribute('data-match')) ?? null)
+    // The arrow points at it (drawn in the answers' box, which scrolls with its tags), but only while its picture is
+    // in sight: an arrow that comes from nowhere says nothing.
+    const picture = rec.gridTiles?.[rec.imageAt] ?? rec.mediaNode?.querySelector('.focus-figure')
+    const seen = (() => {
+      if (!picture?.offsetWidth || !rec.scroll) return false
+      const p = picture.getBoundingClientRect(), s = rec.scroll.getBoundingClientRect()
+      return p.bottom > s.top + 24 && p.top < s.bottom - 24
+    })()
+    let tile = seen ? rec.optButtons?.find(b => b.hasAttribute('data-match')) ?? null : null
+    if (tile) {   // its end has to be in sight too
+      const t = tile.getBoundingClientRect(), o = tile.parentElement.getBoundingClientRect()
+      if (t.top < o.top - 4 || t.bottom > o.bottom + 4) tile = null
+    }
+    if (rec.answer && (tile || rec.answer.querySelector(':scope > .focus-arrow'))) {
+      if ((rec.arrowAt ?? null) !== (tile?.dataset.key ?? null) || !tile) { rec.arrowAt = tile?.dataset.key ?? null; pointAt(rec.answer, tile) }
+    }
   }
 
   // ── a note on a single option ───────────────────────────────────────────
@@ -2052,6 +2093,7 @@ export function mountFocus({ onDecided } = {}) {
     laterBtn.disabled = locked
     explainBtn.hidden = laterBtn.hidden
     explainBtn.disabled = locked || explaining
+    for (const b of stage.querySelectorAll('.focus-card-say')) { b.hidden = sayBtn.hidden; b.setAttribute('aria-pressed', sayBtn.getAttribute('aria-pressed') ?? 'false') }
     if (pad && pad.rec !== shown) closePad(true)   // the card with the open scratchpad left the front: its drawing is kept as a picture
     handBtn.hidden = laterBtn.hidden
     handBtn.disabled = locked || handing
