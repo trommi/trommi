@@ -117,8 +117,8 @@ const touchOnly = matchMedia('(pointer: coarse)')
 const HAND_BACK_LABEL = 'Back to agent'
 // The word on the button that asks the session to explain a question (the request sent to it is EXPLAIN_TEXT, as before).
 const EXPLAIN_LABEL = 'What??'
-const RAIL_PLACES = ['pill', 'senders', 'next3', 'unroll', 'dock', 'tab', 'topbar', 'title', 'bar', 'arrows']
-const RAIL_PLACE = 'pill'
+const RAIL_PLACES = ['outside', 'pill', 'senders', 'next3', 'unroll', 'dock', 'tab', 'topbar', 'title', 'bar', 'arrows']
+const RAIL_PLACE = 'outside'   // beside the window, at its left: the scrollbar of the list, with a mark per question
 const RAIL_BELOW = ['pill', 'senders', 'next3', 'unroll', 'dock']
 const railNarrow = matchMedia('(max-width: 760px)')
 
@@ -479,7 +479,11 @@ export function mountFocus({ onDecided } = {}) {
     body.dataset.layout = hasMedia && hasText ? 'split' : hasMedia ? 'media' : 'text'
     if (hasMedia) body.append(media)
     if (hasText) body.append(text)
-    scroll.append(lead)
+    const who = el('div', 'focus-card-head')
+    const session = (pool()?.agents ?? []).find(a => a.id === card.agent)
+    who.append(doodle(session?.mark ?? card.agent), el('span', null, card.agent_name || session?.name || 'Agent'))
+    if (urgencyWord(card)) who.append(el('b', null, urgencyWord(card)))
+    scroll.append(who, lead)
     if (hasMedia || hasText) scroll.append(body)
 
     // The conversation about this card. The question above is the agent's opening message; what the
@@ -568,6 +572,19 @@ export function mountFocus({ onDecided } = {}) {
       // card without answering (What??, Back to agent, Later: one set of buttons that moves along with the card
       // in front, see paintChrome).
       rec.actionsNode = el('div', 'focus-actions')
+      // Each card has its own three; a tap makes the card the one in front first, then does what the button says.
+      const way = (cls, word, drawing, label, act) => {
+        const b = button(`focus-later ${cls} focus-way`, label)
+        b.title = label
+        b.append(...(drawing ? [sketch(drawing)] : []), word)
+        b.addEventListener('click', () => { claim(rec); act() })
+        return b
+      }
+      rec.actionsNode.append(
+        way('focus-explain', whatWord(), null, `${EXPLAIN_LABEL} (E): ask the session to explain this question; it returns with the reply`, () => explain()),
+        way('focus-handback', el('span', null, HAND_BACK_LABEL), 'reverse', `${HAND_BACK_LABEL} (B): it leaves, and returns when the session has replied`, () => handBack()),
+        way('', el('span', null, LATER_WORD), LATER_SKETCH, `${LATER_WORD} (L): it waits for you, at the end of the line`, () => later()),
+      )
       rec.composer = el('div', 'focus-composer')
       rec.composer.append(ask, rec.actionsNode)
       scroll.append(rec.threadNode)
@@ -752,6 +769,7 @@ export function mountFocus({ onDecided } = {}) {
     rec.sendCount.textContent = n ? `${n} chosen` : 'Choose one or more'
   }
   function toggle(rec, key) {
+    claim(rec)
     if (rec.busy || rec !== shown) return
     if (rec.picked.has(key)) rec.picked.delete(key)
     else rec.picked.add(key)
@@ -1214,6 +1232,7 @@ export function mountFocus({ onDecided } = {}) {
   const request = (card, keys, note, files = [], notes = {}) => (files.length || Object.keys(notes).length ? decideWith(card, keys, note, files, notes) : card.multiple ? decideMany(card.id, keys, note, card.revised ?? null) : decide(card.id, keys[0], note))
 
   async function submit(rec, keys) {
+    claim(rec)
     if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return
     if (pad?.rec === rec) { await closePad(true); if (rec.busy || busyRec() || rec !== shown || !recs.has(rec.id)) return }   // what is on the scratchpad goes along
     const card = rec.card
@@ -1303,6 +1322,7 @@ export function mountFocus({ onDecided } = {}) {
     decidedLocal.delete(card.id)
     decidedCount = Math.max(0, decidedCount - 1)
     if (saidNote?.card === card.id) hideUndo(true)
+    dropStrip(card.id)
     if (!isOpen) return
     pendingJump = card.id
     jumpMotion = 'prev'
@@ -1352,6 +1372,8 @@ export function mountFocus({ onDecided } = {}) {
   /** Say what happened to the card that left (head, and the question under it unless title says otherwise),
    *  with the way back: take() undoes it, and the card is in front again. */
   function offerBack(card, { head, title = card.title, take }) {
+    // In the list the answered card itself becomes a strip that carries the way back.
+    if (inList()) return void addStrip(card, head, take)
     hideUndo()
     const back = async () => {
       await take()
@@ -1456,7 +1478,7 @@ export function mountFocus({ onDecided } = {}) {
     rail.dataset.place = place
     root.dataset.rail = place
     root.dataset.railSeat = RAIL_BELOW.includes(place) ? 'below' : place
-    if (RAIL_BELOW.includes(place) || place === 'tab' || place === 'arrows') { if (rail.parentNode !== root) root.append(rail) }
+    if (RAIL_BELOW.includes(place) || place === 'tab' || place === 'arrows' || place === 'outside') { if (rail.parentNode !== root) root.append(rail) }
     else if (place === 'topbar') { if (rail.previousSibling !== meta) meta.after(rail) }
     else if (place === 'title') { const talk = shown?.node.querySelector('.focus-talk'); if (talk && rail.parentNode !== talk) talk.prepend(rail) }
     else if (rail.parentNode !== sheet || rail.previousSibling !== top) top.after(rail)
@@ -1466,6 +1488,12 @@ export function mountFocus({ onDecided } = {}) {
   const navWho = el('span', 'focus-nav-who')
   nextBtn.append(navCount, navWho)
   seatRail()
+  // Dragging along the rail scrolls the list, as on a scrollbar.
+  railMarks.addEventListener('pointermove', e => {
+    if (!(e.buttons & 1) || !inList()) return
+    const id = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('.focus-rail-mark')?.dataset.id
+    if (id && id !== current && recs.has(id)) go(id, 'instant')
+  })
   railNarrow.addEventListener('change', () => { seatRail(); railSig = ''; paintRail() })
   const railSeen = new Map()   // id -> card: every question that stood in this walk
   const railDone = new Map()   // id -> card: the ones answered since, in the order they were answered
@@ -1513,16 +1541,24 @@ export function mountFocus({ onDecided } = {}) {
         railDone.delete(id)   // taken back: open again
       }
     }
-    const show = walking && railDone.size + order.length > 1
+    const show = walking && (inList() ? strips.filter(x => x.kind === 'answered').length : railDone.size) + order.length > 1
     rail.hidden = !show
     sheet.toggleAttribute('data-rail', show)
     if (!show) return
     seatRail()
     const off = new Set(lastState?.later ?? [])
-    const list = [
-      ...[...railDone].map(([id, card]) => ({ id, card, state: 'done' })),
-      ...order.map(id => ({ id, card: railSeen.get(id), state: off.has(id) ? 'later' : 'open' })),
-    ].filter(x => x.card)
+    // In the list the rail is its scrollbar: one mark per card and per answered strip, in the order they stand there.
+    const list = (inList()
+      ? [...stage.children].map(n => {
+        const strip = strips.find(x => x.node === n)
+        if (strip) return strip.kind === 'answered' ? { id: strip.id, card: strip.card, state: 'done' } : null
+        const rec = recs.get(n.dataset?.id)
+        return rec?.node === n ? { id: rec.id, card: rec.card, state: off.has(rec.id) ? 'later' : 'open' } : null
+      })
+      : [
+        ...[...railDone].map(([id, card]) => ({ id, card, state: 'done' })),
+        ...order.map(id => ({ id, card: railSeen.get(id), state: off.has(id) ? 'later' : 'open' })),
+      ]).filter(x => x?.card)
     const sig = JSON.stringify([current, list.map(x => [x.id, x.state, x.card.urgency, x.card.agent, x.card.title, Boolean(x.card.draft)])])
     if (sig === railSig) return
     railSig = sig
@@ -1541,6 +1577,7 @@ export function mountFocus({ onDecided } = {}) {
       const b = button('focus-rail-mark')
       b.tabIndex = -1   // the walk has its keys; forty marks are no stops for Tab
       b.dataset.state = x.state
+      b.dataset.id = x.id
       b.dataset.urgency = RANK[x.card.urgency] != null ? x.card.urgency : 'normal'
       const front = x.id === current
       if (front) { b.dataset.front = ''; b.setAttribute('aria-current', 'step') }
@@ -1562,7 +1599,7 @@ export function mountFocus({ onDecided } = {}) {
       return [...(from ? [more(from)] : []), ...list.slice(from, from + max).map(make), ...(list.length - from - max ? [more(list.length - from - max)] : [])]
     }
     let nodes = []
-    if (place === 'row') nodes = list.map(x => mark(x, false))
+    if (place === 'row' || place === 'outside') nodes = list.map(x => mark(x, false))
     else if (place === 'pill' || place === 'tab' || place === 'title' || place === 'topbar' || place === 'dock') {
       nodes = windowed(place === 'topbar' ? 10 : place === 'dock' ? 14 : 18, x => mark(x, true))
     } else if (place === 'bar') {
@@ -1614,6 +1651,148 @@ export function mountFocus({ onDecided } = {}) {
     nextBtn.title = after.length ? `Next question, without answering (J): ${after[0].card.title}` : 'Next question, without answering (J)'
   }
 
+  // ── the walk as one list ────────────────────────────────────────────────
+  // "Go through them" is one scrolling column of every open question, each the whole card it is, one under the
+  // other in the order of the walk. The card at the reading line is the one in front (keys, the top bar). A card
+  // that was answered, snoozed or handed to its session leaves a slim strip where it stood, with the way back on it.
+  // (The window of one card, opened from a row or a link, stays what it was: that card alone, closed by its answer.)
+  const inList = () => root.hasAttribute('data-list')
+  const strips = []        // { id, card, kind, node, anchor, back }: anchor is the card it stands in front of
+  let orderBefore = []     // the order before it last changed: where a card stood that has just left or moved
+  let scrollHow = 'smooth'
+  let quietUntil = 0       // while the list scrolls by itself, the reading line does not pick another card
+  const listEnd = el('div', 'focus-list-end')
+  listEnd.append(sketch('choose'), el('p', null, 'That is all for now. The next question shows up here.'))
+
+  /** "What??" as it is shown: the word in type, its two question marks written by hand. */
+  function whatWord() {
+    const word = el('span', 'focus-what', 'What')
+    word.append(sketch('q1'), sketch('q2'))
+    return word
+  }
+  function dropStrip(id) {
+    const at = strips.findIndex(x => x.id === id)
+    if (at < 0) return
+    strips[at].node.remove()
+    strips.splice(at, 1)
+  }
+  /** A card becomes a strip where it stood: what happened to it (head), its title, and with take() the way back. */
+  function addStrip(card, head, take) {
+    dropStrip(card.id)
+    const kind = /^Answered:/.test(head) ? 'answered' : head === 'Snoozed' ? 'snoozed' : head === 'With the agent' ? 'handed' : /^Asked/.test(head) ? 'asked' : 'gone'
+    // where it stood: in front of the card that came after it (before it left or moved to the end)
+    const moved = !order.includes(card.id) || (lastState?.later ?? []).includes(card.id)
+    const from = moved && orderBefore.includes(card.id) ? orderBefore : order
+    const anchor = from[from.indexOf(card.id) + 1] ?? null
+    for (const x of strips) if (x.anchor === card.id) x.anchor = anchor
+    const node = el('div', 'focus-strip')
+    node.dataset.kind = kind
+    const mark = el('span', 'focus-strip-mark')
+    mark.append(kind === 'answered' ? icon('check') : sketch(kind === 'snoozed' ? LATER_SKETCH : kind === 'handed' ? 'reverse' : kind === 'asked' ? 'explain' : 'other'))
+    const text = el('span', 'focus-strip-text')
+    text.append(el('b', null, head), ` · ${card.title}`)
+    node.append(mark, text)
+    const entry = { id: card.id, card, kind, node, anchor, back: null }
+    if (take) {
+      const b = button('focus-strip-back', `Back: take this back, ${card.title}`)
+      b.title = 'Back (U)'
+      b.append(icon('undo'), el('span', null, 'Back'))
+      entry.back = async () => {
+        if (b.disabled) return
+        b.disabled = true
+        try { await take() } catch (err) { b.disabled = false; return info(`Not taken back: ${err?.message || 'The server did not answer.'}`, true) }
+        dropStrip(card.id)
+        pendingJump = card.id
+        jumpMotion = 'prev'
+        setTimeout(() => { if (pendingJump === card.id) pendingJump = null }, 5000)
+        sync()
+        announce(`Taken back: ${card.title}`)
+      }
+      b.addEventListener('click', entry.back)
+      node.append(b)
+    }
+    strips.push(entry)
+    announce(`${head}: ${card.title}`)
+    arrange()
+    railSig = ''
+    paintRail()
+  }
+  /** Put the list in its order: the open cards as the walk has them, each strip in front of its anchor, the end last. */
+  function arrange() {
+    if (!inList()) return
+    const off = new Set(lastState?.later ?? [])
+    // a strip is over once its card is back among the open ones by itself (the session replied, or it was fetched back elsewhere)
+    for (const x of [...strips]) {
+      if (x.kind === 'answered' || x.kind === 'gone' ? order.includes(x.id) && !decidedLocal.has(x.id) : !off.has(x.id)) dropStrip(x.id)
+    }
+    const want = []
+    const placed = new Set()
+    for (const id of order) {
+      for (const x of strips) if (x.anchor === id) { want.push(x.node); placed.add(x) }
+      want.push(recs.get(id).node)
+    }
+    for (const x of strips) if (!placed.has(x)) want.push(x.node)
+    want.push(listEnd)
+    const mine = n => n.classList.contains('focus-card') || n.classList.contains('focus-strip') || n === listEnd
+    const have = [...stage.children].filter(mine)
+    if (have.length === want.length && have.every((n, i) => n === want[i])) return
+    // what is being read stays where it is on the screen
+    const keep = shown?.node.isConnected ? shown.node : null
+    const top = keep?.getBoundingClientRect().top
+    for (const n of have) if (!want.includes(n)) n.remove()
+    want.forEach((n, i) => { const at = [...stage.children].filter(mine)[i]; if (at !== n) stage.insertBefore(n, at ?? null) })
+    if (keep?.isConnected) stage.scrollTop += keep.getBoundingClientRect().top - top
+  }
+  /** Bring the card in front to the reading line (or just mark it, when the scrolling itself chose it). */
+  function presentList(motion) {
+    const next = current ? recs.get(current) : null
+    for (const rec of recs.values()) { rec.node.inert = false; rec.node.removeAttribute('data-out'); rec.node.removeAttribute('data-in') }
+    const changed = shown !== next
+    if (shown && changed) delete shown.node.dataset.shown
+    shown = next
+    if (!next) return
+    next.node.dataset.shown = ''
+    if (motion === 'scroll') return
+    // a little air above it, so the strip of the card before stays in sight; a far way is not travelled, it is jumped
+    const to = Math.max(0, next.node.offsetTop - 56)
+    const how = motion === 'none' || still() || Math.abs(to - stage.scrollTop) > stage.clientHeight * 2.5 ? 'instant' : scrollHow
+    scrollHow = 'smooth'
+    quietUntil = performance.now() + (how === 'smooth' ? 1600 : 120)
+    stage.scrollTo({ top: to, behavior: how })
+  }
+  /** Make a card the one in front without moving anything: it was tapped, typed in, or answered. */
+  function claim(rec) {
+    if (!inList() || rec === shown || recs.get(rec.id) !== rec) return
+    current = rec.id
+    present('scroll')
+    paintChrome()
+    paintHint()
+  }
+  /** The card at the reading line (a third down the window) is the one in front. */
+  function readLine() {
+    if (!isOpen || !inList() || performance.now() < quietUntil || busyRec()) return
+    const box = stage.getBoundingClientRect()
+    const line = box.top + box.height * .32
+    let best = null
+    for (const id of order) {
+      const r = recs.get(id).node.getBoundingClientRect()
+      if (r.top > line) { best ??= id; break }
+      best = id
+      if (r.bottom > line) break
+    }
+    if (!best || best === current) return
+    current = best
+    present('scroll')
+    paintChrome()
+    paintHint()
+  }
+  stage.addEventListener('scrollend', () => { quietUntil = 0 })
+  let lineRaf = 0
+  stage.addEventListener('scroll', () => { if (!lineRaf) lineRaf = requestAnimationFrame(() => { lineRaf = 0; readLine() }) }, { passive: true })
+  for (const type of ['pointerdown', 'focusin']) {
+    stage.addEventListener(type, e => { const rec = recs.get(e.target.closest?.('.focus-card')?.dataset.id); if (rec) claim(rec) }, true)
+  }
+
   // ── state → cards ───────────────────────────────────────────────────────
   function sync(motion) {
     const state = lastState
@@ -1641,13 +1820,21 @@ export function mountFocus({ onDecided } = {}) {
     // a card whose answer is still travelling stays put until the request settles
     const busy = busyRec()
     if (busy && !next.includes(busy.id)) next.splice(clamp(prevOrder.indexOf(busy.id), 0, next.length), 0, busy.id)
+    if (next.join() !== order.join()) orderBefore = order
     order = next
+    root.toggleAttribute('data-list', !single)
 
     let lost = null
     for (const [id, rec] of recs) {
       if (order.includes(id)) continue
       recs.delete(id)
-      if (rec === shown) { if (id !== sentId && !decidedLocal.has(id)) lost = { rec, card: byId.get(id) } }
+      if (inList()) {
+        // In the list a card that leaves is a strip from then on: its answer, or why it is gone.
+        clearTimeout(rec.outTimer)
+        if (!strips.some(x => x.id === id)) addStrip(rec.card, byId.get(id)?.status !== 'open' && byId.get(id)?.choice != null ? 'Answered elsewhere' : 'Withdrawn by the agent', null)
+        rec.node.remove()
+        if (rec === shown) shown = null
+      } else if (rec === shown) { if (id !== sentId && !decidedLocal.has(id)) lost = { rec, card: byId.get(id) } }
       else { clearTimeout(rec.outTimer); rec.node.remove() }
     }
 
@@ -1696,7 +1883,8 @@ export function mountFocus({ onDecided } = {}) {
     if (ahead) hintId = ahead.id
     if (isLoaded()) started = true
 
-    sheet.dataset.state = !isLoaded() ? 'loading' : order.length ? 'cards' : 'done'
+    arrange()
+    sheet.dataset.state = !isLoaded() ? 'loading' : order.length || (inList() && strips.length) ? 'cards' : 'done'
     present(motion ?? 'none')
     paintChrome()
     paintHint()
@@ -1712,6 +1900,7 @@ export function mountFocus({ onDecided } = {}) {
 
   /** Bring the current card's node to the front; the previous one animates out. */
   function present(motion) {
+    if (inList()) return presentList(motion)
     const next = current ? recs.get(current) : null
     const prev = shown
     if (prev === next) return
@@ -1767,10 +1956,8 @@ export function mountFocus({ onDecided } = {}) {
     explainBtn.hidden = laterBtn.hidden
     explainBtn.disabled = locked || explaining
     if (pad && pad.rec !== shown) closePad(true)   // the card with the open scratchpad left the front: its drawing is kept as a picture
-    const slot = shown?.actionsNode
     handBtn.hidden = laterBtn.hidden
     handBtn.disabled = locked || handing
-    if (slot && laterBtn.parentNode !== slot) slot.append(explainBtn, handBtn, laterBtn)
     paintRail()
     if (!card) return
     sheet.dataset.urgency = shown.node.dataset.urgency
@@ -1807,11 +1994,13 @@ export function mountFocus({ onDecided } = {}) {
     }
   }
 
-  function go(target) {
+  function go(target, how = 'smooth') {
+    scrollHow = how
     if (!isOpen || busyRec()) return false
     const at = order.indexOf(current)
     const id = typeof target === 'number' ? order[at + target] : target
     if (!id || id === current || !recs.has(id)) return false
+    root.toggleAttribute('data-list', true)
     single = false   // leaving the one card (a more urgent one was offered and taken): from here on it is the walk
     delete root.dataset.single
     current = id
@@ -1890,7 +2079,7 @@ export function mountFocus({ onDecided } = {}) {
       'focus.no': thumb('noKey'),
       'focus.later': key(() => later()),
       // The note while it is up; a little longer, the key alone.
-      'focus.back': key(() => { backNow() }),
+      'focus.back': key(() => { const last = strips.findLast(x => x.back); if (inList() && last) last.back(); else backNow() }),
       'focus.explain': key(() => explain()),
       'focus.handback': key(() => handBack()),
       'focus.send': key(() => { if (!shown?.multi) return false; shown.sendTile.click() }),
@@ -1925,7 +2114,7 @@ export function mountFocus({ onDecided } = {}) {
   // (in the window of one card there is nowhere to go: it only gives a little)
   let swallowClickUntil = 0
   stage.addEventListener('pointerdown', e => {
-    if (e.pointerType === 'mouse' || e.button || drag || zoom || !shown || busyRec()) return
+    if (inList() || e.pointerType === 'mouse' || e.button || drag || zoom || !shown || busyRec()) return   // in the list a finger scrolls
     if (e.target.closest?.('input, textarea, video, audio, pre, a, .focus-thumbs')) return
     drag = { pointer: e.pointerId, x0: e.clientX, y0: e.clientY, dx: 0, t0: e.timeStamp, active: false, rec: shown }
   })
@@ -2090,7 +2279,7 @@ export function mountFocus({ onDecided } = {}) {
     // Explain and Later, as under the composer: both leave the card.
     const ways = el('div', 'focus-zoom-ways')
     const explainTwin = button('focus-later focus-explain focus-way', 'Explain: ask the session to explain this question')
-    explainTwin.append(sketch('explain'), el('span', null, EXPLAIN_LABEL))
+    explainTwin.append(whatWord())
     explainTwin.addEventListener('click', () => { shut(); explain() })
     const laterTwin = button('focus-later focus-way', `${LATER_WORD}: put this question off`)
     laterTwin.append(sketch(LATER_SKETCH), el('span', null, LATER_WORD))
@@ -2155,6 +2344,7 @@ export function mountFocus({ onDecided } = {}) {
     single = Boolean(card) && card.status === 'open' && !decidedLocal.has(cardId)
     wanted = cardId && !isLoaded() ? cardId : null
     root.toggleAttribute('data-single', single)
+    root.toggleAttribute('data-list', !single)
     current = single ? cardId : null
     root.hidden = false
     root.removeAttribute('data-closing')
@@ -2188,6 +2378,8 @@ export function mountFocus({ onDecided } = {}) {
     current = null
     delete meta.dataset.sig
     stage.replaceChildren()
+    strips.length = 0
+    orderBefore = []
     railReset()
   }
 

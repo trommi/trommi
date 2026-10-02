@@ -537,7 +537,12 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-composer .focus-ask > .dictate-mic { width: 40px; height: 40px; }
 /* Send, Explain, Later: three buttons of one rank at the right of the field. Plain small tiles in the look of the
    answer tiles; what is drawn by hand is only the mark in each. Send is filled once there is something to send. */
-.focus-actions { flex: 0 1 auto; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-height: 50px; }
+.focus-actions { flex: 0 1 auto; display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-height: 50px; }
+/* "What??": the word in type, the two question marks written with the pen */
+.focus .focus-way .focus-what { display: inline-flex; align-items: center; white-space: nowrap; }
+.focus .focus-way .focus-what .sketch { flex: none; width: 1.5em; height: 1.5em; margin: -.1em -.5em 0 -.22em; stroke-width: 2.5; overflow: visible; }
+.focus .focus-way .focus-what .sketch:last-child { margin-right: -.3em; }
+.focus .focus-way.focus-explain { padding-left: 13px; }
 .focus .focus-way { --ink: color-mix(in srgb, var(--u) 70%, var(--fg)); flex: none; width: auto; height: 44px; margin-top: 0; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px 0 9px; white-space: nowrap; border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); color: var(--ink); font: 700 var(--t-sm)/1 var(--display); letter-spacing: .005em; transition: background var(--d-fast), box-shadow var(--d-fast), color var(--d-fast), opacity var(--d-fast), transform var(--d-fast) var(--ease-out); }
 .focus .focus-way span { display: inline; }
 .focus .focus-way .sketch { width: 22px; height: 22px; stroke-width: 1.8; transition: translate var(--d-fast) var(--ease-out), rotate var(--d-fast) var(--ease-out); }
@@ -752,6 +757,57 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus[data-rail="arrows"]:not([data-single]) .focus-nav-who:not(:empty) { position: absolute; left: 50%; top: calc(100% + 8px); translate: -50% 0; width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-sm); }
 .focus-nav-who .doodle { width: 18px; height: 18px; stroke-width: 2.2; }
 @media (max-width: 640px) { .focus-nav-count, .focus-nav-who { display: none !important; } }
+
+/* beside the window, at its left: the scrollbar of the list. Marks one under the other, the count at the foot. */
+.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) { grid-template-columns: 48px 46px minmax(0, 1240px) 48px; column-gap: 10px; }
+.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) > .focus-sheet { grid-column: 3; }
+.focus[data-rail="outside"]:has(> .focus-rail:not([hidden])) > .focus-nav-next { grid-column: 4; }
+.focus-rail[data-place="outside"] { position: relative; grid-area: 1 / 2; align-self: center; max-height: min(100%, 900px); width: 46px; flex-direction: column; gap: var(--s-2); padding: 12px 0 14px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); animation: focus-fade var(--d-slow) var(--ease-out); touch-action: none; }
+.focus-rail[data-place="outside"] .focus-rail-count { order: 2; display: grid; justify-items: center; gap: 3px; font-size: .62rem; }
+.focus-rail[data-place="outside"] .focus-rail-marks { width: 100%; flex-direction: column; gap: 0; overflow-y: auto; scrollbar-width: none; padding: 3px 0; }
+.focus-rail[data-place="outside"] .focus-rail-mark { flex: 0 1 24px; width: 100%; min-width: 0; min-height: 11px; height: auto; border-radius: 0; }
+.focus-rail[data-place="outside"] .focus-rail-mark svg { width: 18px; max-width: none; height: 100%; max-height: 18px; }
+.focus-rail[data-place="outside"] .focus-rail-mark[data-front] { flex: 0 0 30px; }
+.focus-rail[data-place="outside"] .focus-rail-mark[data-front] svg { width: 28px; height: 28px; max-height: none; }
+.focus-rail[data-place="outside"] .focus-rail-mark[data-state="later"] { opacity: 1; color: var(--muted); }
+
+/* ── the walk as one list: every open question a card, one under the other ── */
+.focus[data-list] .focus-stage { display: block; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; }
+.focus[data-list] .focus-card { visibility: visible; width: 100%; padding: var(--s-4) 0 var(--s-3); border-bottom: 1px dashed var(--line-strong); animation: none !important; content-visibility: auto; contain-intrinsic-size: auto 460px; opacity: .55; transition: opacity var(--d-med); }
+.focus[data-list] .focus-card[data-shown] { opacity: 1; }
+.focus[data-list] .focus-card:hover { opacity: 1; }
+.focus[data-list] .focus-talk { min-height: 0; }
+.focus[data-list] .focus-scroll { flex: none; overflow: visible; padding-bottom: var(--s-3); }
+.focus[data-list] .focus-nav { display: none; }
+.focus-card-head { display: none; }
+.focus[data-list] .focus-card-head { display: flex; align-items: center; gap: 7px; margin-bottom: var(--s-2); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: color-mix(in srgb, var(--u) 60%, var(--muted)); }
+.focus-card-head .doodle { width: 20px; height: 20px; stroke-width: 2.1; }
+.focus-card-head b { padding: 4px 8px; border-radius: var(--r-sm); background: var(--u); color: var(--surface); font-weight: 600; }
+/* the top bar no longer names who asks: every card does */
+.focus[data-list] .focus-meta { visibility: hidden; }
+/* what a card became: answered, snoozed, with the agent */
+.focus-strip { display: flex; align-items: center; gap: 10px; min-height: 48px; margin: var(--s-2) var(--pad); padding: 4px 6px 4px 14px; border-radius: var(--r-md); background: var(--sunken); color: var(--muted); font-size: var(--t-sm); animation: focus-note-in var(--d-slow) var(--ease-out); }
+.focus-strip-mark { flex: none; width: 22px; height: 22px; display: grid; place-items: center; }
+.focus-strip-mark .sketch, .focus-strip-mark .focus-icon { width: 20px; height: 20px; }
+.focus-strip[data-kind="answered"] .focus-strip-mark { color: var(--accent); }
+.focus-strip-text { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus-strip-text b { font-weight: 600; color: var(--fg); }
+.focus-strip-back { flex: none; height: 38px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px 0 9px; border-radius: var(--r-sm); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-weight: 600; }
+.focus-strip-back .focus-icon { width: 16px; height: 16px; stroke-width: 2.2; }
+.focus-strip-back:hover { background: var(--surface-2); }
+.focus-list-end { min-height: 62vh; display: grid; align-content: start; justify-items: center; gap: var(--s-2); padding: var(--s-8) var(--pad); color: var(--muted); text-align: center; }
+.focus-list-end .sketch { width: 30px; height: 30px; }
+.focus-list-end p { margin: 0; max-width: 26rem; }
+@container focus (min-width: 700px) {
+  /* a card's answers stay beside its own content: they stick to the top while its text is longer than the window */
+  .focus[data-list] .focus-card { grid-template-rows: auto auto; align-content: start; }
+  .focus[data-list] .focus-card > .focus-composer { align-self: start; align-items: flex-end; }
+  .focus[data-list] .focus-card > .focus-answer { position: sticky; top: var(--s-2); align-self: start; max-height: 76vh; }
+}
+@media (max-width: 640px) {
+  .focus[data-list] .focus-answer { max-height: none; overflow: visible; border-top: 0; padding-top: 0; }
+  .focus[data-list] .focus-foot { display: none !important; }
+}
 
 /* ── the answers beside an enlarged picture ───────────────────────────────── */
 .focus-zoom-answer { flex: none; display: flex; flex-direction: column; gap: var(--s-3); max-height: 46%; overflow-y: auto; overscroll-behavior: contain; scrollbar-width: thin; padding: var(--s-3) var(--pad) var(--s-3); background: var(--surface); box-shadow: 0 -1px 0 var(--line); }

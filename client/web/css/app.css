@@ -628,7 +628,10 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 .inbox-walk:hover .inbox-circled::before, .inbox-walk:hover .inbox-circled::after, .inbox-walk:focus-visible .inbox-circled::before, .inbox-walk:focus-visible .inbox-circled::after { border-width: 3px; opacity: 1; rotate: -4deg; }
 .inbox-walk:hover .inbox-walk-go, .inbox-walk:focus-visible .inbox-walk-go { translate: 4px 0; opacity: 1; }
 .inbox-walk:active { scale: .98; }
-.inbox-groups { display: grid; gap: var(--s-10); container: rows / inline-size; }
+/* One list at one pitch: the senders' sections follow each other at the gap between two rows. The
+   piles at the foot stand a little apart. */
+.inbox-groups { display: grid; gap: var(--s-4); container: rows / inline-size; }
+.inbox-groups > .inbox-pile { margin-top: var(--s-6); }
 .inbox-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
 /* The sender's name is the divider: a rule beside it. */
 .inbox-sender { display: flex; align-items: center; gap: var(--s-3); font: 800 1.2rem/1 var(--display); color: var(--fg); }
@@ -671,13 +674,6 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
 /* One that can wait: no tab, a small hourglass scribbled in a soft colour. */
 .inbox-whenever { flex: none; margin: 5px 0 0 var(--s-4); color: color-mix(in srgb, var(--card-color) 55%, var(--surface)); }
 .inbox-whenever .sketch { width: 21px; height: 21px; stroke-width: 1.9; }
-.inbox-from { padding-top: 7px; font: 500 var(--t-xs)/1 var(--font); text-transform: uppercase; letter-spacing: .06em; color: var(--card-ink); white-space: nowrap; }
-/* The byline under the text: the card's number and its age, one quiet line at the foot of the row. */
-.inbox-content { position: relative; }
-.inbox-byline { position: absolute; left: var(--s-5); bottom: 10px; margin: 0; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .01em; font-variant-numeric: tabular-nums; color: var(--card-ink); opacity: .6; white-space: nowrap; }
-/* Who asked, on a row that no longer stands under its sender. */
-.inbox-from { min-width: 0; display: flex; align-items: center; gap: 6px; padding-top: 4px; font-weight: 600; }
-.inbox-row-head > .inbox-from:first-child { padding-left: var(--s-5); }
 .inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
 .inbox-from-mark .crown-mark { left: -36%; top: -20%; width: 78%; stroke-width: 2.4; }
 .inbox-from span { overflow: hidden; text-overflow: ellipsis; }
@@ -699,18 +695,24 @@ body[data-scope="all"] #inbox { display: block; grid-column: 2; min-width: 0; mi
    it; the answer tile beside it is set in by a few pixels so that it clears the fold, and only the
    triangle takes a click (clip-path), never the tile's own rectangle. Its word stands beside it as
    an element of its own: along the row's top edge, to the left, over nothing that can be pressed. */
-.inbox-later {
-  position: absolute; z-index: 2; top: 0; right: 0; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 0 6px 0 0;
-  /* the triangle, less the small corner of it that lies in the answer tile's own rectangle */
-  color: var(--card-ink); clip-path: polygon(0 0, 36px 0, 36px 36px, 19px 19px, 19px 12px, 12px 12px);
+.inbox-later { position: absolute; z-index: 2; top: 0; right: 0; width: 17px; height: 17px; padding: 0; border: 0; background: none; color: var(--card-ink); }
+/* The button's own box is the very corner (its middle lies well inside the triangle); the triangle
+   itself is drawn, and takes the click, as this: less the small corner of it that lies in the answer
+   tile's own rectangle. */
+.inbox-later::before {
+  content: ""; position: absolute; top: 0; right: 0; width: 36px; height: 36px; border-radius: 0 6px 0 0;
+  clip-path: polygon(0 0, 36px 0, 36px 36px, 19px 19px, 19px 12px, 12px 12px);
   background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 16%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 42%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 42%, var(--surface)) 50%, transparent 50%);
   transition: filter 100ms ease-out;
 }
-.inbox-later .sketch { position: absolute; right: 3px; top: 3px; width: 16px; height: 16px; stroke-width: 2.2; opacity: .8; }
-.inbox-later:hover, .inbox-later:focus-visible { filter: brightness(.93) saturate(1.3); outline: 0; }
+.inbox-row.is-current > .inbox-later.inbox-later[data-cap]::after { content: none; }
+.inbox-later .sketch { position: absolute; z-index: 1; right: 3px; top: 3px; width: 16px; height: 16px; stroke-width: 2.2; opacity: .8; pointer-events: none; }
+.inbox-later:hover::before, .inbox-later:focus-visible::before { filter: brightness(.93) saturate(1.3); }
+.inbox-later:focus-visible { outline: 0; }
+.inbox-later:focus-visible::before { background: linear-gradient(225deg, color-mix(in srgb, var(--card-color) 30%, var(--surface)) calc(50% - 2.5px), var(--fg) calc(50% - 2.5px), var(--fg) 50%, transparent 50%); }
 .inbox-later:hover .sketch, .inbox-later:focus-visible .sketch { opacity: 1; }
-.inbox-later:active { filter: brightness(.86) saturate(1.4); }
-.inbox-row[data-later] .inbox-later { background: linear-gradient(225deg, var(--surface-2) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 45%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 45%, var(--surface)) 50%, transparent 50%); }
+.inbox-later:active::before { filter: brightness(.86) saturate(1.4); }
+.inbox-row[data-later] .inbox-later::before { background: linear-gradient(225deg, var(--surface-2) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 45%, var(--surface)) calc(50% - 1.5px), color-mix(in srgb, var(--card-color) 45%, var(--surface)) 50%, transparent 50%); }
 .inbox-later-word { position: absolute; z-index: 3; right: 38px; top: -11px; height: 22px; padding: 0 8px; display: inline-flex; align-items: center; border-radius: 5px; background: var(--fg); color: var(--bg); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .04em; white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms ease-out; }
 .inbox-later:hover + .inbox-later-word, .inbox-later:focus-visible + .inbox-later-word, .inbox-row.is-current > .inbox-later-word { opacity: 1; }
 .inbox-row.is-current .inbox-later-word[data-cap]::after { position: static; margin-left: 6px; rotate: 0deg; min-width: 18px; padding: 2px 4px; box-shadow: none; }

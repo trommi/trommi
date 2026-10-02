@@ -95,38 +95,28 @@
 .media audio { display: block; width: 100%; }
 .media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
-/* The agent's advice: a small hand drawn with the pen points at the option it would pick (ui.js
-   adviceLoop, the one place that draws the mark; it is appended to the option or to its label).
-   By default it stands at the option's left edge, its finger just inside, and points right. On a
-   square tile it comes from below and points up, so it never lies on the tile's own drawing; in the
-   Focus window's pair of squares, which appends nothing, the same hand is laid on as a mask. Where
-   many options are advised at once the hands are smaller and paler, so they do not become a queue.
-   Ink: --advice. Under the ink a wider stroke in --advice-paper, where the hand crosses a filled edge. */
-.is-advised { position: relative; }
+/* The agent's advice: a swipe of a highlighter behind the words of the option it would pick (ui.js
+   adviceLoop, the one place that draws the mark; it is appended to the option or to its label and
+   finds the lines of the words by itself). One pass per line, behind the words, never on them.
+   Ink: --advice; how strong: --marker. On a tile that is filled with colour a pale band would lie
+   behind white words and say nothing, so there the band is a darker shade of the tile itself. It
+   has slanted, uneven ends and is taller than a selection, so it reads as marked by hand, not as
+   selected or ticked. */
+.is-advised { position: relative; isolation: isolate; --advice: var(--urg-high); --marker: .26; }
+:root[data-theme="dark"] .is-advised { --marker: .34; }
+.advice-loop { position: absolute; z-index: -1; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; fill: none; }
+.advice-loop path { stroke: var(--advice); stroke-linecap: butt; stroke-linejoin: round; opacity: var(--marker); }
+.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised { --advice: color-mix(in srgb, var(--card-color, var(--urg-normal)) 40%, #000); --marker: .5; }
+:root[data-theme="dark"] :is(.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised) { --advice: color-mix(in srgb, var(--card-color, var(--urg-normal)) 55%, #fff); --marker: .55; }
+/* The Focus window's pair of squares appends no mark of its own: there the band is laid behind the
+   label as a background (the same marker, one line). The two strokes of the old circle are gone. */
+.focus-opt.is-advised::before, .focus-opt.is-advised::after { content: none; }
+.focus-opts[data-count="duo"] .focus-opt.is-advised .focus-opt-label { margin-inline: -6px; padding-inline: 6px; background: linear-gradient(176deg, transparent 20%, color-mix(in srgb, var(--advice) 30%, transparent) 20%, color-mix(in srgb, var(--advice) 30%, transparent) 86%, transparent 86%); }
+
+/* Not in use: the pointing hand (ui.js pointingHand), which was the advice mark for an afternoon. */
 .advice-hand { position: absolute; z-index: 1; left: -19px; top: 50%; width: 27px; height: auto; translate: 0 -50%; rotate: -3deg; overflow: visible; pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .advice-hand-ink { stroke: var(--advice, var(--urg-high)); stroke-width: 1.8; }
 .advice-hand-paper { stroke: var(--advice-paper, transparent); stroke-width: 5; }
-/* a square thumb tile: from below, the finger at the foot of the tile */
-.inbox-answer.is-thumb > .advice-hand { --advice-paper: var(--surface); left: 50%; top: calc(100% - 4px); translate: -50% -50%; rotate: -90deg; }
-/* an option tile: the hand has its own place in the tile's left margin */
-.inbox-option.is-advised { padding-left: 38px; }
-.inbox-option > .advice-hand { left: 7px; width: 25px; }
-.inbox-option[aria-pressed="true"] > .advice-hand { --advice: color-mix(in srgb, var(--urg-high) 45%, white); }
-/* many advised at once (a multi-select): smaller, paler */
-.inbox-options:has(.is-advised ~ .is-advised ~ .is-advised) .inbox-option.is-advised { padding-left: 32px; }
-.inbox-options:has(.is-advised ~ .is-advised ~ .is-advised) .advice-hand { left: 8px; width: 19px; opacity: .8; }
-.focus-opts:has(.is-advised ~ .is-advised ~ .is-advised) .advice-hand { width: 19px; left: -14px; opacity: .8; }
-/* a small tag: the hand stays on the tag's own left edge and does not lean into its neighbour */
-.focus-opts[data-count="tags"] .focus-opt > .advice-hand { left: -7px; width: 18px; --advice-paper: var(--surface); }
-/* the Focus window's pair of squares: from below, as on a thumb tile */
-.focus-opt.is-advised { --advice: var(--urg-high); }
-.focus-opt.is-advised::before { content: none; }
-.focus .focus-opts[data-count="duo"] .focus-opt.is-advised::after {
-  content: ""; position: absolute; z-index: 1; left: 50%; right: auto; top: auto; bottom: -15px; width: 30px; height: 21px; translate: -50% 0; rotate: -90deg; pointer-events: none;
-  border: 0; border-radius: 0; background: var(--advice, var(--urg-high));
-  -webkit-mask: var(--advice-hand) center / contain no-repeat; mask: var(--advice-hand) center / contain no-repeat;
-}
-:root { --advice-hand: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 2 32 22' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.6 7.6 Q8.9 7.2 10.2 5.8 Q11.4 4.4 12.8 4.2 Q14.2 4.0 14.6 4.9 Q15.1 5.8 14.2 7.1 Q13.3 8.3 16.1 8.4 Q18.8 8.4 23.0 8.7 Q27.2 8.9 28.5 9.8 Q29.7 10.6 28.6 11.5 Q27.5 12.4 24.0 12.4 Q20.5 12.3 19.0 12.4 L17.6 12.6'/%3E%3Cpath d='M17.3 12.4 Q19.8 13.2 20.1 14.1 Q20.3 15.0 19.0 15.5 Q17.6 16.1 18.4 16.4 Q19.2 16.6 19.3 17.5 Q19.3 18.4 18.1 18.7 Q16.9 19.1 17.3 19.4 Q17.8 19.8 17.1 20.7 Q16.4 21.6 14.9 21.5 Q13.4 21.4 11.0 21.1 Q8.5 20.8 5.4 20.6 L2.3 20.5'/%3E%3Cpath d='M5.3 5.9 Q5.7 13.7 5.7 18.0 L5.7 22.4'/%3E%3C/svg%3E"); }
 
 /* Words the agent underlined (`__so__` in its text; ui.js rich()): a line drawn under them by hand, in
    the accent colour. The line is a drawn stroke repeated along the words, so it follows them over

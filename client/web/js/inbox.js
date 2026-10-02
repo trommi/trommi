@@ -289,12 +289,6 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
     mark.append(sketch('whenever'))
     head.append(mark)
   }
-  if (from) {
-    // Who asked, where nothing around the row says so; a starred session wears its crown on the mark.
-    const who = el('span', 'inbox-from')
-    who.append(smallMark(from), el('span', null, from.name))
-    head.append(who)
-  }
 
   const text = el('button', 'inbox-text')
   text.type = 'button'
@@ -312,6 +306,12 @@ export function questionRow(card, { onOpen, onDecided, off = false, from = null,
   // The byline under the text: the card's number (for looking it up) and its age. One quiet line that
   // always stands; under a title of two lines it is the text above it that gives way.
   const byline = el('p', 'inbox-byline')
+  if (from) {
+    // Who asks, where the list holds more than one session: its mark (with the crown, if it wears one) and name.
+    const who = el('span', 'inbox-from')
+    who.append(smallMark(from), el('span', null, from.name))
+    byline.append(who, ' · ')
+  }
   byline.append(el('span', 'inbox-nr', cardNr(card)), ' · ', agoNode(card.created, 'inbox-ago'))
   text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
@@ -625,20 +625,17 @@ export function mountInbox(root, { onOpen, onDecided, agent = null }) {
     const held = list.contains(document.activeElement) ? document.activeElement : null
     held?.blur()
     const parts = []
+    // One list, row under row at one pitch: no heading, no rule and no count between the senders. A
+    // sender's rows still stand together (the section holds them and names the sender for a screen
+    // reader), and every row says who asks, in its byline: the session's mark and name.
     for (const { agent: sender, cards } of groups) {
       const section = el('section', 'inbox-group')
       if (!agent) {
-        const label = el('h3', 'inbox-sender')
-        const avatar = el('span', 'inbox-avatar')
-        avatar.style.setProperty('--hue', hueOf(sender.id))
-        avatar.append(doodle(sender.mark ?? sender.id))
-        // A starred session is marked once, here: the crown on its mark. Its rows below stay plain.
-        if (sender.starred) { label.dataset.vip = ''; avatar.append(crown()) }
-        label.append(avatar, el('span', null, sender.name))
-        label.append(el('b', null, cards.length === 1 ? '1 question' : `${cards.length} questions`))
-        section.append(label)
+        section.dataset.sender = sender.id
+        section.setAttribute('aria-label', `${sender.name}: ${cards.length === 1 ? '1 question' : `${cards.length} questions`}`)
+        if (sender.starred) section.dataset.vip = ''
       }
-      section.append(...cards.map(c => row(c)))
+      section.append(...cards.map(c => row(c, { from: agent ? null : sender })))
       parts.push(section)
     }
     // Put off: below all senders and behind a dividing line, a pile in the order the cards were put off,

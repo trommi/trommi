@@ -519,6 +519,9 @@ const SKETCH = {
   pen: [[[5.2, 18.8], [6.2, 15], [15.6, 5.2], [17.4, 4.6], [19.4, 6.6], [18.8, 8.4], [9, 17.8], [5.4, 18.9]], [[14.2, 6.8], [17.2, 9.8]], [[11.6, 20.4], [14.4, 19.2], [16.4, 20.6], [19.4, 19.6]]],
   // three z rising, each a little larger: asleep for now
   snooze: [[[4.4, 15.6], [9, 15.3], [9.2, 15.5], [4.8, 20.2], [4.6, 20.4], [9.6, 20.1]], [[10.4, 9.6], [15.4, 9.3], [15.6, 9.5], [10.8, 14.4], [10.6, 14.6], [16, 14.2]], [[15.4, 3.4], [20.8, 3.1], [21, 3.3], [15.8, 8.6], [15.6, 8.8], [21.4, 8.4]]],
+  // two question marks written by hand, no two alike: the "??" of "What??"
+  q1: [[[7.4, 8.6], [8, 5.2], [11.6, 3.4], [15.4, 4.8], [16.2, 8.2], [13.4, 11.4], [11.8, 13.6], [11.9, 16.2]], [[11.8, 20.2], [12.1, 20.8]]],
+  q2: [[[8.2, 7.4], [10, 4.4], [13.8, 3.8], [16.6, 6.2], [15.8, 9.8], [12.6, 12], [12, 14.4], [12.4, 16.6]], [[12.3, 20.4], [12.7, 20.9]]],
   // a paperclip, bent in one go: attach something
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
@@ -624,26 +627,81 @@ const HAND = [
   [13.5, 7.4], [14.7, 6], [15.6, 7.8], [15.5, 13],
   [16.3, 10], [17.6, 9.2], [18.3, 10.9], [17.7, 15.6], [16.6, 19.8], [16.9, 23.2],
 ]
-/** The mark of the agent's advice: a small pointing hand, the old printer's sign (cuff, a thumb on top,
- *  one finger out, three curled under), drawn with the pen. It stands at the edge of the option the
- *  agent would pick and points at it. This is the one place that draws it; whoever shows advice
- *  appends what this returns to the option (or to its label). Where it stands is CSS (.advice-hand in
- *  tokens.css): at the left edge pointing right by default, from below pointing up on a square tile.
- *  Under the ink lies a wider stroke in the paper's colour (--advice-paper), so the hand reads where
- *  it crosses the edge of a filled tile. (It was a loop round the option once: hence the name.) */
-const ADVICE_HAND = [
+/** The mark of the agent's advice: a swipe of a highlighter behind the words of the option it would
+ *  pick. One pass of the marker per line of the label, a little uneven, its ends slanted; it lies
+ *  behind the words and never on them. This is the one place that draws it; whoever shows advice
+ *  appends what this returns to the option (or to its label), and the mark finds the words by itself:
+ *  the option's label (.focus-opt-label, or the option's own strong / span), else all the text of
+ *  what it was put into. It measures the lines once it stands in the page and again whenever its
+ *  host changes size. An option without words (a bare thumb) gets a short swipe where its word would
+ *  be. Ink and strength are CSS: --advice and --marker (tokens.css); the host needs position: relative
+ *  (.is-advised has it). (It was a loop round the option once: hence the name.) */
+export function adviceLoop() {
+  const NS = 'http://www.w3.org/2000/svg'
+  const r = seeded('advice marker')
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('class', 'advice-loop advice-marker')
+  svg.setAttribute('aria-hidden', 'true')
+  const wobble = Array.from({ length: 24 }, () => (r() - .5) * 2.4)   // the same hand on every redraw
+  const draw = () => {
+    const host = svg.parentElement
+    if (!host) return
+    const label = host.querySelector('.focus-opt-label') ?? host.querySelector(':scope > strong, :scope > span:not(.inbox-disc)') ?? host
+    // The words only: every piece of text in the label, line box by line box (a drawing in it has no line).
+    const rects = []
+    const walker = document.createTreeWalker(label, NodeFilter.SHOW_TEXT)
+    for (let text = walker.nextNode(); text; text = walker.nextNode()) {
+      if (!text.nodeValue.trim() || text.parentElement.closest('svg, kbd, .focus-sr')) continue
+      const range = document.createRange()
+      range.selectNodeContents(text)
+      rects.push(...range.getClientRects())
+    }
+    const frame = svg.getBoundingClientRect()
+    // in the svg's own pixels, whatever its host is scaled or turned by
+    const k = (svg.clientWidth || frame.width) / (frame.width || 1) || 1
+    const lines = []
+    for (const b of rects) {
+      if (!b.width || !b.height) continue
+      const box = { x: (b.left - frame.left) * k, y: (b.top - frame.top) * k, w: b.width * k, h: b.height * k }
+      const last = lines.at(-1)
+      if (last && Math.abs(last.y - box.y) < 4) last.w = Math.max(last.w, box.x + box.w - last.x)
+      else lines.push(box)
+    }
+    // No words to lie behind: a short swipe in the lower part of the tile, where its word would be.
+    if (!lines.length) lines.push({ x: frame.width * k * .26, y: frame.height * k * .7, w: frame.width * k * .48, h: 16 })
+    svg.replaceChildren(...lines.map((l, n) => {
+      const y = l.y + l.h * .54, x0 = l.x - 4, x1 = l.x + l.w + 5, w = i => wobble[(n * 4 + i) % wobble.length]
+      const path = document.createElementNS(NS, 'path')
+      path.setAttribute('d', penPath([[x0, y + 1.2 + w(0) * .5], [x0 + (x1 - x0) * .35, y - .6 + w(1) * .5], [x0 + (x1 - x0) * .7, y + .8 + w(2) * .5], [x1, y - 1.2 + w(3) * .5]]))
+      path.style.strokeWidth = `${(l.h * .78).toFixed(1)}px`
+      return path
+    }))
+  }
+  if (typeof ResizeObserver === 'function') {
+    const watch = new ResizeObserver(draw)
+    queueMicrotask(() => { if (svg.parentElement) watch.observe(svg.parentElement); draw() })
+  }
+  return svg
+}
+/** The same, by the name of what it is. */
+export const adviceMark = adviceLoop
+
+/** Not in use: a small pointing hand, the old printer's sign (cuff, a thumb on top, one finger out,
+ *  three curled under), drawn with the pen. It was the advice mark for an afternoon and was liked;
+ *  kept for whatever it may point at next. Styles: .advice-hand in tokens.css. */
+const POINTING_HAND = [
   [[2.6, 7.6], [8.8, 7.4], [11.6, 4.6], [14.4, 4], [15, 6], [13.4, 8.4], [19, 8.6], [27.4, 8.8], [29.6, 10.4], [27.6, 12.2], [20.4, 12.3], [17.6, 12.5]],
   [[17.4, 12.6], [20, 13.2], [20.4, 15.2], [17.6, 15.9], [19.4, 16.6], [19.2, 18.6], [16.8, 19], [17.6, 20], [16.6, 21.6], [13.6, 21.6], [8.6, 21], [2.4, 20.6]],
   [[5.4, 6], [5.9, 13.6], [5.5, 22.4]],
 ]
-export function adviceLoop() {
+export function pointingHand() {
   const NS = 'http://www.w3.org/2000/svg'
   const r = seeded('advice hand')
   const svg = document.createElementNS(NS, 'svg')
   svg.setAttribute('viewBox', '0 2 32 22')
   svg.setAttribute('class', 'advice-hand')
   svg.setAttribute('aria-hidden', 'true')
-  const strokes = ADVICE_HAND.map(stroke => penPath(stroke.map(([x, y]) => [x + (r() - .5) * .5, y + (r() - .5) * .5])))
+  const strokes = POINTING_HAND.map(stroke => penPath(stroke.map(([x, y]) => [x + (r() - .5) * .5, y + (r() - .5) * .5])))
   for (const cls of ['advice-hand-paper', 'advice-hand-ink']) {
     for (const d of strokes) {
       const path = document.createElementNS(NS, 'path')
@@ -654,8 +712,6 @@ export function adviceLoop() {
   }
   return svg
 }
-/** The same, by the name of what it is. */
-export const adviceMark = adviceLoop
 
 /** A circle drawn by hand: one and a bit turns that drift inward and do not close. r is a seeded generator.
  *  Returns the path's d, in a 32 box. The waiting hand and the working ring stand in such a loop. */
