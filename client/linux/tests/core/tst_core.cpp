@@ -900,7 +900,16 @@ private slots:
         QCOMPARE(crown(), c.isObject() ? c.toObject().value("path").toString() : c.toString());
         if (!all.contains("hand")) return; // the rest is in this client's fixture only
         QCOMPARE(raisedHand(), list(all.value("hand")));
-        QCOMPARE(adviceLoop(), all.value("advice").toString());
+        // The highlighter behind the words the agent would pick: one swipe per line.
+        const QJsonObject marker = all.value("marker").toObject();
+        QList<QRectF> lines;
+        for (const QJsonValue &v : marker.value("lines").toArray()) lines.append(QRectF(v.toObject().value("x").toDouble(), v.toObject().value("y").toDouble(), v.toObject().value("w").toDouble(), v.toObject().value("h").toDouble()));
+        const QList<MarkerStroke> swipes = adviceMarker(lines);
+        QCOMPARE(swipes.size(), 3);
+        for (int i = 0; i < swipes.size(); i++) {
+            QCOMPARE(swipes[i].path, marker.value("paths").toArray()[i].toString());
+            QCOMPARE(swipes[i].width, marker.value("widths").toArray()[i].toDouble());
+        }
         for (const QJsonValue &v : all.value("groupLoops").toArray()) QCOMPARE(groupLoop(v.toObject().value("seed").toString()), v.toObject().value("path").toString());
         for (const QJsonValue &v : all.value("loops").toArray()) {
             const QJsonObject o = v.toObject();

@@ -51,18 +51,9 @@ Rectangle {
                 color: ui.mix(opt.tint, ui.fg, 0.55)
                 wrapMode: opt.tag ? Text.NoWrap : Text.Wrap
                 font { family: ui.sans; pixelSize: ui.px(opt.tag ? 13.5 : 16.5); weight: Font.Bold }
+                Advice { visible: !!opt.option.advised; filled: opt.ticked; tint: opt.tint }
             }
-            // The agent's advice: a loop drawn with the pen round the words.
-            Scribble {
-                visible: !!opt.option.advised
-                x: -ui.px(9); y: -ui.px(5)
-                width: label.width + ui.px(18); height: label.height + ui.px(10)
-                stretch: true
-                box: 100
-                path: visible ? board.adviceLoop() : ""
-                color: ui.urgHigh
-                pen: 2.2
-            }
+
         }
         Text {
             visible: !opt.tag && text !== ""

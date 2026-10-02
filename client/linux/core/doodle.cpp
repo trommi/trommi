@@ -336,6 +336,24 @@ QString ringDrop()
     return 'M' + edge(1).join(QStringLiteral(" L")) + QStringLiteral(" L") + inner.join(QStringLiteral(" L")) + QStringLiteral(" Z");
 }
 
+QList<MarkerStroke> adviceMarker(const QList<QRectF> &lines)
+{
+    Pen r(QStringLiteral("advice marker"));
+    double wobble[24]; // the same hand on every redraw
+    for (double &w : wobble) w = (r() - .5) * 2.4;
+    QList<MarkerStroke> out;
+    for (int n = 0; n < lines.size(); n++) {
+        const QRectF &l = lines[n];
+        auto w = [&](int i) { return wobble[(n * 4 + i) % 24]; };
+        const double y = l.y() + l.height() * .54, x0 = l.x() - 4, x1 = l.x() + l.width() + 5;
+        MarkerStroke s;
+        s.path = penPath({{x0, y + 1.2 + w(0) * .5}, {x0 + (x1 - x0) * .35, y - .6 + w(1) * .5}, {x0 + (x1 - x0) * .7, y + .8 + w(2) * .5}, {x1, y - 1.2 + w(3) * .5}});
+        s.width = fx(l.height() * .78).toDouble();
+        out.append(s);
+    }
+    return out;
+}
+
 QString adviceLoop()
 {
     Pen r(QStringLiteral("advice"));

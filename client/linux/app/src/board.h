@@ -94,6 +94,9 @@ public:
     Q_INVOKABLE QString ringLoop() const { return trommi::ringLoop(); }
     Q_INVOKABLE QString ringDrop() const { return trommi::ringDrop(); }
     Q_INVOKABLE QString adviceLoop() const { return trommi::adviceLoop(); }
+    // The highlighter behind the words the agent would pick: words of this
+    // width and height, standing in so many lines. { path, pen }
+    Q_INVOKABLE QVariantMap adviceMark(double width, double height, int lines) const;
     Q_INVOKABLE QString groupLoop(const QString &seed) const { return trommi::groupLoop(seed); }
 
     // Answering. The card leaves at once and the request travels behind it;

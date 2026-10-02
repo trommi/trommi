@@ -413,6 +413,7 @@ Item {
                                 spacing: ui.px(8)
                                 Sketch { anchors.horizontalCenter: parent.horizontalCenter; name: thumb.modelData.icon; size: ui.px(40); color: thumb.ink }
                                 Text {
+                                    id: thumbWord
                                     visible: !view.card.bare
                                     width: parent.width
                                     text: thumb.modelData.label
@@ -420,15 +421,16 @@ Item {
                                     horizontalAlignment: Text.AlignHCenter
                                     wrapMode: Text.Wrap
                                     font { family: ui.sans; pixelSize: ui.px(16); weight: Font.Bold }
+                                    Advice { visible: !!thumb.modelData.advised; filled: thumb.modelData.lead; tint: view.tint }
                                 }
                             }
-                            Scribble {
-                                visible: !!thumb.modelData.advised
-                                anchors { fill: parent; margins: -ui.px(5) }
-                                stretch: true; box: 100
-                                path: visible ? board.adviceLoop() : ""
-                                color: thumb.modelData.lead ? ui.mix(ui.urgHigh, Qt.color("white"), 0.7) : ui.urgHigh
-                                pen: 2.6
+                            Rectangle { // a thumb without a word: the swipe stands where its word would be
+                                visible: !!thumb.modelData.advised && !thumbWord.visible
+                                x: parent.width * 0.26; y: parent.height * 0.72
+                                width: parent.width * 0.48; height: ui.px(14)
+                                rotation: -1.5
+                                color: thumb.modelData.lead ? ui.mix(view.tint, theme.dark ? Qt.color("white") : Qt.color("black"), theme.dark ? 0.55 : 0.40) : ui.urgHigh
+                                opacity: thumb.modelData.lead ? 0.5 : 0.3
                             }
                             KeyCap { anchors { right: parent.right; top: parent.top; margins: ui.px(8) } text: thumb.modelData.lead ? "Y" : "N"; ink: thumb.ink }
                         }

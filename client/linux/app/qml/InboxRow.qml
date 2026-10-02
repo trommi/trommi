@@ -145,6 +145,7 @@ Item {
                     spacing: ui.px(6)
                     Sketch { anchors.horizontalCenter: parent.horizontalCenter; name: tile.modelData.icon; size: ui.px(tile.wide ? 30 : 36); color: tile.ink }
                     Text {
+                        id: tileWord
                         visible: tile.wide || !row.card.bare
                         width: parent.width
                         text: tile.modelData.label
@@ -153,6 +154,7 @@ Item {
                         wrapMode: Text.Wrap
                         maximumLineCount: 2
                         font { family: ui.sans; pixelSize: ui.px(tile.wide ? 16 : 13.5); weight: Font.Bold }
+                        Advice { visible: !!tile.modelData.advised; filled: tile.modelData.lead; tint: row.tint }
                     }
                     Text {
                         visible: tile.wide && !ui.narrow
@@ -164,15 +166,14 @@ Item {
                         font { family: ui.sans; pixelSize: ui.px(11.5) }
                     }
                 }
-                // The agent's advice: a loop drawn with the pen round the tile.
-                Scribble {
-                    visible: !!tile.modelData.advised
-                    anchors { fill: parent; margins: -ui.px(5) }
-                    stretch: true
-                    box: 100
-                    path: visible ? board.adviceLoop() : ""
-                    color: tile.modelData.lead ? ui.mix(ui.urgHigh, Qt.color("white"), 0.7) : ui.urgHigh
-                    pen: 2.4
+                // A thumb without a word: the swipe stands where its word would be.
+                Rectangle {
+                    visible: !!tile.modelData.advised && !tileWord.visible
+                    x: parent.width * 0.26; y: parent.height * 0.72
+                    width: parent.width * 0.48; height: ui.px(12)
+                    rotation: -1.5
+                    color: tile.modelData.lead ? ui.mix(row.tint, theme.dark ? Qt.color("white") : Qt.color("black"), theme.dark ? 0.55 : 0.40) : ui.urgHigh
+                    opacity: tile.modelData.lead ? 0.5 : 0.3
                 }
                 KeyCap { // the key that presses it, on the row the keys are on
                     visible: row.selected

@@ -261,6 +261,21 @@ QVariantMap Board::icon(const QString &name) const
     return m_marks.value(key);
 }
 
+QVariantMap Board::adviceMark(double width, double height, int lines) const
+{
+    if (width <= 0 || height <= 0) return {};
+    const int n = qMax(1, lines);
+    QList<QRectF> boxes;
+    for (int i = 0; i < n; i++) boxes.append(QRectF(0, i * height / n, width, height / n));
+    QStringList paths;
+    double pen = 0;
+    for (const MarkerStroke &s : adviceMarker(boxes)) {
+        paths.append(s.path);
+        pen = s.width;
+    }
+    return {{"path", paths.join(' ')}, {"pen", pen}};
+}
+
 QStringList Board::railMark(const QString &state, bool front, const QString &seed) const { return trommi::railMark(state, front, seed); }
 
 // Who asked: the name, the scribble and its hue, and whether it wears the crown.
