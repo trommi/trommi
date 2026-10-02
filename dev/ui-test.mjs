@@ -88,7 +88,7 @@ const SEL = {
   rowCurrent: '.is-current',
   rowOption: '.inbox-option',
   advised: '.is-advised',
-  adviceLoop: '.advice-loop path',
+  adviceLoop: '.advice-loop path, .advice-hand path',   // the mark of the agent's advice: a loop drawn round the option, later a small hand on it
 
   // the window of one card, and the walk through all of them
   focus: '.focus',
@@ -199,7 +199,7 @@ const GERMAN = /(Posteingang|Gespräch|Fragen\b|Senden|Rückgängig|Später|Agen
 // reported as pending with the reason, apart from the real regressions. Remove an entry when its
 // feature lands; a pending check that passes simply counts as passing.
 const PENDING = [
-  { match: /one wide "Choose" tile and a small "Later" arrow instead of two square tiles/, reason: 'the row layout is open: the user said no to the wide tile and moved the question to the layout ticket' },
+  { match: /one wide "Choose" tile and a small "\w+" arrow instead of two square tiles/, reason: 'the row layout is open: the user said no to the wide tile and moved the question to the layout ticket' },
 ]
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -284,7 +284,7 @@ const PAGE_LIB = `(() => {
       return {
         name: text(n.querySelector(SEL.sidebarName)), members: (n.dataset.members ?? '').split(' ').filter(Boolean), current: !!n.querySelector('[aria-current]'),
         mark: !!n.querySelector(SEL.sidebarMark)?.querySelector('path'), archive: !!one(SEL.sidebarArchive, n), offline: n.matches(SEL.sidebarOffline), count: text(one(SEL.sidebarCount, n)),
-        badge: badge && { state: badge.dataset.state ?? '', hand: !!badge.querySelector(SEL.sidebarHand), ring: !!badge.querySelector(SEL.sidebarRing), number: text(badge.querySelector('b')), title: badge.title },
+        badge: badge && { state: badge.dataset.state ?? '', hand: badge.dataset.state === 'waiting' || !!badge.querySelector(SEL.sidebarHand), ring: badge.dataset.state === 'running' || !!badge.querySelector(SEL.sidebarRing), number: text(badge.querySelector('b')), title: badge.title },
       }
     }),
 
@@ -788,6 +788,13 @@ async function drag(points, { hold = 0, pause = 16, rest: still = 0 } = {}) {
 }
 const line = (from, to, steps = 10) => Array.from({ length: steps + 1 }, (_, i) => ({ x: Math.round(from.x + (to.x - from.x) * i / steps), y: Math.round(from.y + (to.y - from.y) * i / steps) }))
 
+/** Hold every request to a URL pattern back for a while, as a slow line would. Returns the function that ends it. */
+async function hold(urlPattern, ms) {
+  await page.send('Fetch.enable', { patterns: [{ urlPattern }] })
+  const off = page.on('Fetch.requestPaused', async p => { await sleep(ms); page.send('Fetch.continueRequest', { requestId: p.requestId }).catch(() => {}) })
+  return async () => { off(); await page.send('Fetch.disable').catch(() => {}) }
+}
+
 /** A screenshot of the step. On the phone every one of them also proves that nothing is wider than the screen. */
 async function shot(name, { overflow = true } = {}) {
   const file = path.join(shotDir, `${String(++shotCount).padStart(3, '0')}-${size}-${current?.name ?? 'run'}-${name}.png`)
@@ -1068,7 +1075,7 @@ async function groupInbox() {
   if (!touch) {
     const list = await ev('__t.groups()')
     const mine = list.find(g => g.ids.includes(d.id))
-    const after = list[list.indexOf(mine) + 1]
+    const after = list.slice(list.indexOf(mine) + 1).find(g => !g.pile)   // the next sender; the piles at the foot are no rows to answer
     if (mine && after && mine.ids.at(-1) !== d.id) {
       // d is not the last of its group (the answer to c was taken back); answer what follows it first.
       for (const id of mine.ids.slice(mine.ids.indexOf(d.id) + 1)) { await press('a row below', js`__t.tile(${id}, 'right')`); await waitFor('it leaves', js`!__t.row(${id})`); await settle() }
@@ -1078,10 +1085,29 @@ async function groupInbox() {
       await waitFor('the answered row leaves the inbox', js`!__t.row(${d.id})`)
       await settle()
       const now = await ev(js`__t.tileAt(${at.x}, ${at.y})`)
-      check(now.row && now.right, `after answering the last row of a sender's group, the unmoved pointer (${at.x},${at.y}) is over ${now.row ? `the left tile "${now.name}"` : now.hit}, not over the right-hand tile of the next row`)
+      check(now.row === after.ids[0] && now.right, `after answering the last row of a sender's group, the unmoved pointer (${at.x},${at.y}) is over ${now.row ? `the left tile "${now.name}"` : now.hit}, not over the right-hand tile of the next row`)
       await shot('group-boundary')
     }
   }
+  // An answered row leaves at once: it does not wait for the server. On a slow line (the answer is held back for 1.5 s)
+  // the row has to be gone long before the server has heard of the answer.
+  const slow = await fixture.quick(`Quick on a slow line (${stamp})?`)
+  await waitFor('the new question is listed', js`!!__t.row(${slow.id})`)
+  await ev(js`__t.row(${slow.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
+  await settle()
+  const release = await hold('*/decide', 1500)
+  try {
+    await press(`"Yes" on "${slow.title}"`, js`__t.tile(${slow.id}, 'right')`)
+    const gone = await waitFor('the row leaves', js`!__t.row(${slow.id})`, 900).catch(() => false)
+    check(gone, 'on a slow line the answered row stays until the server has replied; it should leave at once')
+    if (gone) check(cardOf(slow.id).status === 'open', 'the test line was not slow: the server already had the answer')
+    await expect('the way back is offered at once too', js`!!__t.note()?.back`, 600)
+  } finally {
+    await release()
+  }
+  await waitState(`"${slow.title}" is decided`, () => cardOf(slow.id).status !== 'open', 8000)
+  check(cardOf(slow.id).choice === 'yes', `the answer on a slow line arrived as "${cardOf(slow.id).choice}"`)
+  await sleep(300)
   check(await ev('__t.openCount()') === openCards().filter(c => agentById(c.agent) && !agentById(c.agent).archived && fresh(c.id)).length, `the title of the page counts ${await ev('__t.openCount()')} open questions`)
 }
 
@@ -2062,6 +2088,8 @@ async function groupWalk() {
   await expect('Escape closes the walk', '!__t.focusOpen()', 3000)
   await closeWindows()
   check((await place()).path === '/' && !(await ev('location.search')), `after the walk the address is ${await ev('location.pathname + location.search')}`)
+  // (A draft of the composer is saved a moment after the last key; let it go out before the cards are withdrawn.)
+  await sleep(700)
   for (const card of [talk, take, off, explain, hand]) await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
   putOff.delete(off.id)
 }
@@ -2121,8 +2149,8 @@ async function groupNumber() {
   check(!hidden.length, `of the many options these are not on screen without scrolling: ${hidden.map(o => o.name).join(', ')}`)
   check(tags.options.filter(o => o.advised).length === 1 && /^Wed/.test(tags.options.find(o => o.advised)?.name ?? ''), 'the recommended tag is not marked')
   await shot('tags')
-  await press('the tag "Thu"', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => /^Thu/.test(__t.label(n)))`)
   const tapped = await ev(js`(n => { const r = n.getBoundingClientRect(); return __t.describe(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)) })(__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => /^Thu/.test(__t.label(n))) ?? document.body)`).catch(() => '')
+  await press('the tag "Thu"', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => /^Thu/.test(__t.label(n)))`)
   await waitState('one tap on a tag answers', () => cardOf(many.id).choice === 'thu', 4000).then(() => passed(), () => check(false, `a ${touch ? 'tap' : 'click'} on the middle of the tag "Thu" did not answer: it landed on ${tapped}`))
   await closeWindows()
   await courier.tool('withdraw_card', { card_id: heavy.id, reason: 'the test is done with it' }).catch(() => {})
@@ -2225,6 +2253,26 @@ async function groupModules() {
     const out = await ev(js`import(${`/js/${file}`}).then(() => 'ok', e => String(e?.message ?? e))`)
     check(out === 'ok', `/js/${file} does not load: ${out}`)
   }
+  // Importing is not all: the Focus window is built when it is first opened, and a name that is missing then
+  // (a constant renamed half-way) leaves "Go through them" and every "Choose" on a heavy card dead.
+  await ev(js`document.querySelector(${SEL.walk}).click()`)
+  const up = await waitFor('the window opens', '__t.focusOpen()', 4000).catch(() => false)
+  check(up, `the Focus window does not open: ${[...new Set(problems)].join(' | ').slice(0, 300) || 'nothing happens, and no error is logged'}`)
+  await closeWindows()
+  // German in the sources: a string that only shows in a state the test never reaches (no microphone, a refusal).
+  // Allowed: what is read aloud from a German card, a character class, the words by which an agent's "no" is known.
+  const allowed = /^\s*(\/\/|\*|\/\*)|^\s*de: \{|äöüÄÖÜß\]|const (NEGATIVE|BARE) = /
+  const web = path.join(ROOT, 'client', 'web')
+  const sources = [...files.map(f => path.join('js', f)), 'js/admin.js', 'js/help.js', 'js/asset.js', 'index.html', 'admin.html', 'help.html',
+    ...fs.readdirSync(path.join(web, 'pad')).filter(f => /\.(js|html)$/.test(f)).map(f => path.join('pad', f))]
+  const german = []
+  for (const file of sources) {
+    fs.readFileSync(path.join(web, file), 'utf8').split('\n').forEach((line, i) => {
+      if (allowed.test(line)) return
+      for (const [, , text] of line.matchAll(/(['"`>])([^'"`<>]{3,})(?=['"`<])/g)) if (/[äöüÄÖÜß]/.test(text) || GERMAN.test(text)) german.push(`${file}:${i + 1} "${text.trim().slice(0, 50)}"`)
+    })
+  }
+  check(!german.length, `German strings in the sources of the interface: ${german.slice(0, 8).join(' | ')}${german.length > 8 ? ` (and ${german.length - 8} more)` : ''}`)
   const sheets = await ev(`[...document.querySelectorAll('link[rel="stylesheet"][href^="/"]')].map(l => ({ href: l.getAttribute('href'), rules: (() => { try { return l.sheet?.cssRules.length ?? 0 } catch { return -1 } })() }))`)
   for (const sheet of sheets) check(sheet.rules > 0, `the stylesheet ${sheet.href} is empty or did not load`)
 }

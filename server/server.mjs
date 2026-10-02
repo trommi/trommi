@@ -159,6 +159,7 @@ function load(owner) {
     agent: owner, urgency_reason: '', multiple: false, ...c,
     options: Array.isArray(c.options) ? c.options : [], attachments: Array.isArray(c.attachments) ? c.attachments : [],
     choices: Array.isArray(c.choices) ? c.choices : c.choice != null ? [c.choice] : [],
+    version: Number.isInteger(c.version) ? c.version : (c.revisions ?? 0) + 1,
     urgency: c.kind === 'permission' || !URGENCIES.includes(c.urgency) ? defaultUrgency(c.kind) : c.urgency,
   }))
   // An approval request belongs to the session that asked; after a restart
@@ -266,7 +267,7 @@ function addCard(agent, kind, fields) {
   const card = {
     id: newId(), agent, number: state.next_number++, kind, status: 'open',
     urgency: defaultUrgency(kind), urgency_reason: '', title: '', body: '', options: [], attachments: [],
-    multiple: false, choice: null, choices: [], note: '', summary: '', created: Date.now(), decided: null, ...fields,
+    version: 1, multiple: false, choice: null, choices: [], note: '', summary: '', created: Date.now(), decided: null, ...fields,
   }
   state.cards.push(card)
   return card
@@ -361,7 +362,7 @@ function purge() {
   if (!old.length) return
   const ids = new Set(old.map(c => c.id))
   for (const card of old) {
-    for (const a of card.attachments ?? []) fs.rmSync(path.join(FILES, path.basename(a.url)), { force: true })
+    for (const a of [card, ...(card.versions ?? [])].flatMap(v => v.attachments ?? [])) fs.rmSync(path.join(FILES, path.basename(a.url)), { force: true })
   }
   state.cards = state.cards.filter(c => !ids.has(c.id))
   state.messages = state.messages.filter(m => !(m.from === 'event' && ids.has(m.card_id)))
@@ -536,6 +537,7 @@ const mcp = new Server(
       'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
       'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
       'Keep every question short to read: an option label is at most about four words; detail is optional and at most one short line of about six words, never a paragraph and never an explanation of what leaving it unticked means; the body is one or two short sentences. A longer explanation goes behind a link (publish_asset) or an attachment, or comes when the human presses "Explain", which reaches you as a question back.',
+      'A question stays ONE card through its whole life. When the human hands a card back to you (a chat message with card_id and handback="1") or asks back about it, do not file a new question and do not only reply: rework the card with revise_card (new wording, options, pictures). It is then presented again, and the earlier versions stay visible to the human. Use withdraw_card and a new card only when the subject itself changed.',
       'Before filing a question, call list_cards. If you already have an open question on the same subject, do not add another: rewrite the open one with revise_card, which keeps its number and place, or replace several by one with merge_cards. Do this on your own initiative, without being asked; the human should never get many small questions that are really one.',
       'Prefer one question with multiple: true ("tick what you agree to", your advice as a recommended list) over several yes/no questions on one theme. More than about three open questions of yours on one theme is a sign to merge them.',
       'When a question needs explaining per option, do not write a body with one paragraph per option next to a separate options list: hand in ONE structured text, as sections (a list of blocks) or as text (one string), and flag the paragraphs that are options. The board then shows each paragraph tied to its option: the human ticks the paragraph itself. In text, paragraphs are separated by a blank line, and a paragraph starting with [key] Label: becomes the option "key" with that paragraph as its explanation ([key*] marks the one you would pick); every other paragraph is plain context. Keep labels to about four words and each paragraph short. Plain options stay right for simple questions.',
@@ -659,7 +661,7 @@ const TOOLS = [
   },
   {
     name: 'revise_card',
-    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision, and the same rule for questions about looks: they carry a picture per option or a link to a page to try. Decided cards cannot be revised.',
+    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision, and the same rule for questions about looks: they carry a picture per option or a link to a page to try. Every rewording is a new version of the same card; the earlier versions stay visible to the human, and after a hand-back the revision is what presents the card again. Decided cards cannot be revised.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -767,7 +769,7 @@ const TOOLS = [
   },
   {
     name: 'list_cards',
-    description: 'List all your cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open); open cards come with body, options and, when they were filed as one structured text, sections (pass them back changed to revise_card). Call it before filing a question, to see what you already have open on the subject.',
+    description: 'List all your cards with number, status, urgency, chosen option, and queue_position (1 = the card the human sees now, null = not open); every card with its version (1 when first filed, one more with each rewording), a decided one with answered_version, the version the answer was given to, and one the human handed back with with_agent; open cards come with body, options and, when they were filed as one structured text, sections (pass them back changed to revise_card). Call it before filing a question, to see what you already have open on the subject.',
     inputSchema: { type: 'object', properties: {} },
   },
   {
@@ -833,7 +835,7 @@ const TOOL_EXAMPLES = {
 const CHANNEL_EVENTS = [
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
-    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
+    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
   },
   {
@@ -1035,6 +1037,8 @@ function runTool(agent, name, args) {
   switch (name) {
     case 'reply': {
       const about = args.card_id == null ? {} : { card_id: findCard(agent, args.card_id).id }
+      // The agent answered the question back, so the card is with the human again.
+      if (about.card_id) delete findCard(agent, about.card_id).with_agent
       addMessage(agent, 'agent', String(args.text ?? ''), listArg(args.attachments, 'attachments').map(storeAttachment), { ...(args.details ? { details: String(args.details) } : {}), ...about })
       return 'sent'
     }
@@ -1077,6 +1081,14 @@ function runTool(agent, name, args) {
       const attachments = args.attachments == null ? card.attachments : listArg(args.attachments, 'attachments').map(storeAttachment)
       const stood = questionSig(card)
       const level = card.urgency
+      // The version this call may replace, as the human saw it.
+      const was = {
+        n: card.version ?? (card.revisions ?? 0) + 1, at: card.revised ?? card.created, title: card.title, body: card.body, options: card.options,
+        ...(card.sections ? { sections: card.sections } : {}), recommended: card.recommended ?? null, multiple: card.multiple,
+        attachments: card.attachments, urgency: level, note: card.revision_note ?? '',
+      }
+      const again = card.with_agent != null
+      delete card.with_agent
       const unsectioned = Boolean(card.sections && !fields.sections)
       if (unsectioned) delete card.sections
       Object.assign(card, fields, { attachments })
@@ -1086,7 +1098,17 @@ function runTool(agent, name, args) {
       if (reworded) {
         card.revised = Date.now()
         card.revisions = (card.revisions ?? 0) + 1
-        addEvent('revised', card, String(args.note ?? '').trim() || card.title)
+        card.version = was.n + 1
+        card.revision_note = String(args.note ?? '').trim()
+        card.versions = [...(card.versions ?? []), was]
+        // The oldest go first; a file only they showed goes with them.
+        for (const gone of card.versions.splice(0, Math.max(0, card.versions.length - VERSIONS_MAX))) {
+          const kept = new Set([card, ...card.versions].flatMap(v => v.attachments).map(a => a.url))
+          for (const a of gone.attachments) if (!kept.has(a.url)) fs.rmSync(path.join(FILES, path.basename(a.url)), { force: true })
+        }
+        // After a hand-back the rewording is what puts the card in front of the human again.
+        addEvent('revised', card, `${again ? 'Presented again: ' : ''}${card.revision_note || card.title}`)
+        Object.assign(state.messages.at(-1), { version: card.version, ...(again ? { again: true } : {}) })
       }
       if (card.urgency !== level) addEvent('urgency', card, card.urgency_reason ? `${URGENCY_LABEL[card.urgency]}: ${card.urgency_reason}` : URGENCY_LABEL[card.urgency])
       commit()
@@ -1115,6 +1137,7 @@ function runTool(agent, name, args) {
       for (const c of old) {
         c.status = 'done'
         delete c.draft
+        delete c.with_agent
         c.merged_into = card.id
         c.summary = `Merged into Nr. ${card.number}: ${card.title}`
         addEvent('done', c, c.summary)
@@ -1148,6 +1171,7 @@ function runTool(agent, name, args) {
       if (card.status !== 'open') throw new Error(`card ${card.id} is already done`)
       card.status = 'done'
       delete card.draft
+      delete card.with_agent
       card.summary = String(args.reason ?? '').trim()
       addEvent('done', card, card.summary ? `Withdrawn: ${card.summary}` : 'Withdrawn')
       commit()
@@ -1159,6 +1183,7 @@ function runTool(agent, name, args) {
       if (card.kind === 'permission' && card.status === 'open') throw new Error('an open permission card cannot be closed; only the human answers it')
       card.status = 'done'
       delete card.draft
+      delete card.with_agent
       card.summary = String(args.summary ?? '')
       addEvent('done', card, card.summary || card.title)
       commit()
@@ -1198,7 +1223,8 @@ function runTool(agent, name, args) {
         id: c.id, number: c.number, kind: c.kind, status: c.status,
         urgency: c.urgency, urgency_reason: c.urgency_reason,
         queue_position: state.queue.indexOf(c.id) + 1 || null,
-        title: c.title, multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
+        title: c.title, version: c.version ?? (c.revisions ?? 0) + 1, ...(c.answered_version ? { answered_version: c.answered_version } : {}), ...(c.with_agent ? { with_agent: c.with_agent } : {}),
+        multiple: c.multiple, choice: c.choice, choices: c.choices, note: c.note,
         ...(c.status === 'open' && c.kind === 'decision' ? { body: c.body, options: c.options, recommended: c.recommended ?? null, ...(c.sections ? { sections: c.sections } : {}) } : {}),
         ...(c.revised ? { revised: c.revised } : {}),
         ...(c.merged_from ? { merged_from: c.merged_from.map(m => m.number) } : {}),
@@ -1280,6 +1306,8 @@ const REVISE_GRACE = Number(process.env.BOARD_REVISE_GRACE_MS) || 1500
 // What the human wrote on single options, chosen or not: { key: text } in the order of the options.
 // strict: a key the card does not have is refused (an answer); otherwise it is dropped (a draft, which may be older than a revision).
 const NOTE_MAX = 2000
+// How many earlier versions of a card are kept; the live card is one more.
+const VERSIONS_MAX = 20
 function optionNotes(card, notes, strict) {
   if (notes == null) return {}
   if (typeof notes !== 'object' || Array.isArray(notes)) throw new Error('notes must be an object: { "<option key>": "text" }')
@@ -1352,6 +1380,9 @@ async function decide(cardId, answer, note, seen, notes, files = []) {
   if (files.length) card.note_attachments = files
   else delete card.note_attachments
   if (card.kind === 'decision') card.option_notes = remarks
+  // An answer holds for the version it was given to.
+  card.answered_version = card.version ?? (card.revisions ?? 0) + 1
+  delete card.with_agent
   delete card.draft
   card.decided = Date.now()
   // A permission verdict needs no follow-up from Claude, so it is done at once.
@@ -1433,7 +1464,7 @@ async function reopen(cardId) {
   const label = all.map(key => card.options.find(o => o.key === key)?.label ?? key).join(', ')
   // Nothing the human ticked or wrote is lost: the answer they took back is what they have not sent yet.
   const draft = { keys: card.options.filter(o => all.includes(o.key)).map(o => o.key), note: card.note ?? '', notes: card.option_notes ?? {}, ts: Date.now() }
-  Object.assign(card, { status: 'open', choice: null, choices: [], note: '', option_notes: {}, summary: '', decided: null, draft })
+  Object.assign(card, { status: 'open', choice: null, choices: [], note: '', option_notes: {}, summary: '', decided: null, answered_version: null, draft })
   addEvent('reopened', card, card.title)
   commit()
   await deliver(card.agent, 'notifications/claude/channel', {
@@ -1816,7 +1847,8 @@ const tally = files => ({ count: files.length, bytes: files.reduce((sum, f) => s
 
 // The stored files of a list of messages and cards, as [folder, name] pairs.
 function filesOf(items) {
-  return items.flatMap(item => [...(item.attachments ?? []), ...(item.note_attachments ?? [])]).flatMap(a => {
+  // A card's earlier versions keep their pictures for as long as the card lives.
+  return items.flatMap(item => [item, ...(item.versions ?? [])]).flatMap(item => [...(item.attachments ?? []), ...(item.note_attachments ?? [])]).flatMap(a => {
     if (a?.kind === 'scribble' && a.id) return [[SCRIBBLES, `${a.id}.png`], [SCRIBBLES, `${a.id}.json`]]
     return typeof a?.url === 'string' && a.url.startsWith('/files/') ? [[FILES, path.basename(a.url)]] : []
   })
@@ -2230,9 +2262,13 @@ const httpServer = http.createServer(async (req, res) => {
       // Files and pictures the human attached; a message may be nothing but them.
       const files = storeUploads(body.attachments)
       // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
-      const about = state.cards.some(c => c.id === body.card_id && c.agent === agent && c.status === 'open') ? { card_id: body.card_id } : {}
-      addMessage(agent, 'user', msg, files, about)
-      await deliver(agent, 'notifications/claude/channel', { content: msg || uploadLine(files), meta: { kind: 'chat', ...about, ...uploadMeta(files) } })
+      const asked = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
+      const about = asked ? { card_id: body.card_id } : {}
+      // The human gave the card back to be reworked, or asked for it to be explained: until the agent answers, it is with the agent.
+      const turn = asked?.kind === 'decision' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
+      if (Object.keys(turn).length) asked.with_agent = Date.now()
+      addMessage(agent, 'user', msg, files, { ...about, ...turn })
+      await deliver(agent, 'notifications/claude/channel', { content: msg || uploadLine(files), meta: { kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...uploadMeta(files) } })
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'GET' && /^\/scribbles\/[0-9a-f]+\.(json|png)$/.test(url.pathname)) {

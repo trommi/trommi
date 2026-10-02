@@ -26,7 +26,7 @@ import { el, rich, sketch, loopPath, penSeed } from './ui.js'
 //   isReading()                      true while something is read or being fetched
 //   readCard(cardId, button)         a question by its id, for the switch of the question window
 
-const FIRST = 150, SECOND = 260, PIECE = 420   // letters per piece
+const FIRST = 100, SECOND = 220, PIECE = 400   // letters per piece
 const SAY_KEEP = 80                            // spoken pieces kept in the page
 const SPEAKABLE = '.msg, .ask-open, .focus-card'
 

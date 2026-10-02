@@ -24,7 +24,7 @@ const svg = (cls, box, ...paths) => {
 }
 
 /** How long the note is shown, and how long the key still works after the answer. */
-export const BACK_MS = 4000
+export const BACK_MS = 5000
 export const BACK_KEY_MS = 10000
 
 const notes = new WeakMap()   // host -> the note standing in it
@@ -49,6 +49,69 @@ export function pageHost() {
   pageNode.style.left = `${Math.round((box?.left ?? 0) + (phone.matches ? 8 : 14))}px`
   pageNode.style.top = phone.matches ? `${Math.round((box?.bottom ?? window.innerHeight - 64) + 6)}px` : `${Math.round((box?.top ?? 0) + 14)}px`
   return pageNode
+}
+
+// ---- where the note stands: next to where the decision was made ----
+// The eye and the pointer are at the answer that was just given, so the note comes up beside it: left of
+// the answer tiles at the height of the click (never on the tiles: the next answer is there), or just
+// above a single button that was pressed (Snooze, What??). Answered by key, it stands beside the tiles of
+// the marked row, or beside the top of the option column of the Focus window.
+const ZONES = '.inbox-actions, .focus-opts, .focus-answer'
+let press = null   // the last press of the pointer: { x, y, target, at }
+document.addEventListener('pointerdown', e => { press = { x: e.clientX, y: e.clientY, target: e.target, at: performance.now() } }, true)
+function anchor(host, node) {
+  const live = n => n && n.isConnected && n.getClientRects().length
+  const recent = press && performance.now() - press.at < 1500 && press.target instanceof Element ? press : null
+  const inFocus = host.closest('.focus')
+  // Where an element lies once it has come to rest: a row that is still sliding up into its place is measured there.
+  const rest = n => {
+    const box = n.getBoundingClientRect()
+    const row = n.closest('.inbox-row')
+    if (!row) return box
+    const list = row.closest('.inbox-groups'), at = row.getBoundingClientRect()
+    let top = 0
+    for (let p = row; p && p !== list; p = p.offsetParent) top += p.offsetTop
+    const shift = list ? list.getBoundingClientRect().top + top - at.top : 0
+    return { left: box.left, top: box.top + shift, width: box.width, height: box.height }
+  }
+  const pressedZone = recent?.target.closest(ZONES) ?? null
+  let button = pressedZone ? null : recent?.target.closest('button') ?? null
+  if (button && (!live(button) || button.closest('.says'))) button = null
+  // The height of the click, if tiles were clicked (the row they were on may have left; the place is what counts).
+  let y = pressedZone || button ? recent.y : null
+  // The column of tiles: the one pressed if it is still there, else the marked row's, or the option column in front.
+  let zone = null
+  if (!button) {
+    zone = [pressedZone, inFocus ? inFocus.querySelector('.focus-card[data-shown] .focus-opts') : null,
+      document.querySelector('.inbox-row.is-current .inbox-actions'), pressedZone ? document.querySelector('.inbox-row:not(.is-leaving) .inbox-actions') : null].find(z => live(z) && !z.closest('.is-leaving')) ?? null
+    if (!zone) return false
+    if (y == null) { const box = rest(zone); y = inFocus ? box.top + 34 : box.top + box.height / 2 }
+  }
+  const size = node.getBoundingClientRect()
+  let left, top
+  if (zone) {
+    const box = rest(zone)
+    left = box.left - size.width - 12
+    top = y - size.height / 2
+  } else {
+    const box = button.getBoundingClientRect()
+    left = box.left
+    top = box.top - size.height - 10
+  }
+  left = Math.max(8, Math.min(left, window.innerWidth - size.width - 8))
+  top = Math.max(8, Math.min(top, window.innerHeight - size.height - 8))
+  // Never over a field someone may be writing in: above it instead.
+  for (const field of document.querySelectorAll('.focus-card[data-shown] .focus-ask, #chat .composer')) {
+    if (!live(field)) continue
+    const f = field.getBoundingClientRect()
+    if (left < f.right && f.left < left + size.width && top < f.bottom && f.top < top + size.height) top = Math.max(8, f.top - size.height - 10)
+  }
+  // The host is placed against the page, or against whatever holds it (the Focus window).
+  const fixed = getComputedStyle(host).position === 'fixed'
+  const base = fixed ? { left: 0, top: 0 } : (host.offsetParent ?? document.body).getBoundingClientRect()
+  host.style.left = `${Math.round(left - base.left)}px`
+  host.style.top = `${Math.round(top - base.top)}px`
+  return true
 }
 
 /** Put a note into host (an element that css places at the top left of its view).
@@ -112,6 +175,11 @@ export function say(host, { head, title = '', back = null, onFail, ms = BACK_MS 
   node.append(line)
 
   host.replaceChildren(node)
+  // On a wide screen beside the decision; a phone keeps the strip below the view (pageHost) or the window's corner.
+  host.style.removeProperty('left')
+  host.style.removeProperty('top')
+  if (host === pageNode) pageHost()
+  if (!phone.matches) anchor(host, node)
   if (host === pageNode) document.body.dataset.says = ''
   // A second tap meant for the next answer must not land on "Back": for a moment the note lets taps through.
   node.dataset.fresh = ''

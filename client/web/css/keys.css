@@ -87,3 +87,6 @@ body[data-keys="g"] .agent-row[data-unit]:nth-of-type(-n+10)::before {
 body[data-pair] .chat-pane.is-member .chat-pane-head { box-shadow: inset 0 -2px 0 var(--fg); }
 
 @media (prefers-reduced-motion: reduce) { .inbox-row.is-current::before, .keys-pending { animation: none; } }
+
+/* Every stop of the Tab key shows a ring, the Snooze tab of a row included. */
+.inbox-later:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
