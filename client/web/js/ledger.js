@@ -473,7 +473,8 @@ function mountLedger(root) {
   const node = el('main')
   node.id = 'ledger'
   node.setAttribute('aria-label', 'Agents')
-  ($('roster') ?? $('inbox'))?.after(node)   // #roster: the old list of cards, while it still exists
+  const before = $('roster') ?? $('inbox')   // #roster: the old list of cards, while it still exists
+  before?.after(node)
   const ledger = mountLedger(node)
   subscribe(state => ledger.render(state))
   // "Last seen" moves on by itself.

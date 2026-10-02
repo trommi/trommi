@@ -1111,3 +1111,44 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 .focus-composer .focus-ask:has(.focus-mark-tools[data-pen]) .focus-ask-field { min-width: 0; flex-basis: 0; }
 .focus-asset-quiet { background: none; padding: 0 4px; opacity: .8; }
 .focus-mark-done { margin-right: 8px; }
+
+/* ══ One design for the card and its enlarged picture: at the left the stage on the soft ground (title, one quiet
+   line, pictures, text, what was said, the field at its foot), at the right a white column the whole height with the
+   buttons only: answers on top, the four ways out at its bottom. The quiet round controls stand at the stage's top
+   right: copy, read aloud, close. ══ */
+.focus .focus-card { background: var(--sunken); overflow: clip; }
+.focus .focus-card > .focus-answer { background: var(--surface); border-top: 1px solid var(--line); }
+.focus-card .focus-answer > .focus-actions { margin-top: auto; padding-top: var(--s-4); }
+.focus .focus-top .focus-meta, .focus[data-single] .focus-top .focus-round { display: none; }
+.focus[data-single] .focus-card[data-marks] .focus-card-ends > button:not([hidden]), .focus[data-single] .focus-card-ends > .focus-card-say:not([hidden]), .focus[data-single] .focus-card-ends > .focus-card-close { display: grid; }
+.focus-card .focus-lead { padding-right: 0; }
+@container focus (min-width: 700px) {
+  .focus .focus-card > .focus-answer { border-top: 0; border-left: 1px solid var(--line); padding-top: var(--pad); }
+  .focus .focus-card > .focus-card-ends, .focus[data-single] .focus-card[data-marks] > .focus-card-ends { position: relative; inset: auto; grid-area: 1 / 1; justify-self: end; align-self: start; margin: 8px 10px 0 0; display: flex; gap: 2px; }
+  .focus-card .focus-title { padding-right: 104px; }
+}
+/* the head: the title, then one quiet sentence */
+.focus-card .focus-title > button { display: none; }
+.focus-by { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 0; margin: 8px 0 0; font: 500 var(--t-sm)/1.45 var(--font); color: var(--muted); }
+.focus-by-part { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; padding: 0; background: none; color: inherit; font: inherit; text-decoration: none; white-space: nowrap; }
+.focus-by-part + .focus-by-part::before { content: '·'; margin: 0 .2em 0 .55em; opacity: .6; }
+button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decoration: underline; text-underline-offset: 3px; }
+.focus-by .doodle { flex: none; width: 18px; height: 18px; stroke-width: 2.1; }
+.focus-by-urgent { color: var(--u); font-weight: 600; }
+.focus-by .focus-nr, .focus-by .focus-came-back { margin: 0; font: inherit; letter-spacing: 0; text-transform: none; font-style: normal; }
+.focus-by .focus-nr { opacity: .45; }
+/* the gallery's switch between one large picture and all of them: a small round control on the picture's corner */
+.focus-media { position: relative; }
+.focus-media > .focus-grid-flip { position: absolute; z-index: 2; top: 10px; right: 10px; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); color: var(--muted); }
+.focus-media > .focus-grid-flip .sketch { width: 18px; height: 18px; }
+.focus-media > .focus-grid-flip:hover { color: var(--fg); }
+.focus-card .focus-title { padding-right: 104px; }
+/* the window of one card: no bar above the title unless it has something to say */
+.focus[data-single] .focus-top:not(:has(.focus-notes > :not([hidden]))) { display: none; }
+@container focus (max-width: 899.9px) { .focus[data-single] .focus-card[data-marks] > .focus-talk { padding-top: var(--s-3); } }
+/* beside the enlarged picture the four ways out look as on the card */
+.focus .focus-zoom-ways { flex-wrap: nowrap; }
+.focus .focus-zoom-ways .focus-way, .focus .focus-zoom-ways .focus-way.focus-shred { flex: 1 1 0; width: auto; min-width: 0; height: 46px; min-height: 46px; margin: 0; padding: 0; justify-content: center; background: color-mix(in srgb, var(--u) 10%, var(--surface)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--u) 16%, transparent); color: var(--ink); }
+.focus .focus-zoom-ways .focus-way .focus-way-word { display: none !important; }
+.focus .focus-zoom-ways .focus-way .focus-way-art .sketch { width: 27px; height: 27px; }
+.focus .focus-zoom-ways .focus-way.focus-shred:hover:not(:disabled) { color: var(--urg-critical); box-shadow: inset 0 0 0 2px var(--urg-critical); }

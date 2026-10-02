@@ -34,7 +34,7 @@ import { EXPLAIN_TEXT, cardNr } from './inbox.js'
 import { cardMarks } from './focus-marks.js'
 import { copyButton } from './cardclip.js'
 import { richPlus, attachmentNodes } from './chat.js'
-import { LATER_WORD, LATER_SKETCH, ACK_WORD, WHAT_WORD, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
+import { LATER_WORD, LATER_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, HANDBACK_STATE, SHRED_WORD, SHRED_SKETCH, arrowStrokes } from './ui.js'
 import { el, rich, ago, agoNode, kindOf, mediaNodes, sketch, doodle, adviceLoop, cardNote, linkInfo } from './ui.js'
 
 const RANK = { low: 0, normal: 1, high: 2, critical: 3 }
@@ -397,7 +397,8 @@ export function mountFocus({ onDecided } = {}) {
     const lead = el('div', 'focus-lead')
     rec.assetsNode = el('div', 'focus-assets')
     rec.assetsSig = null
-    lead.append(title, rec.reasonNode, rec.assetsNode)
+    // (the quiet line under the title: who asks, which version, how long ago, what else is on the card; paintAssets)
+    lead.append(title, rec.assetsNode, rec.reasonNode)
 
     // what the question is about: pictures and players
     const sections = !permission && Array.isArray(card.sections) ? card.sections : null
@@ -510,7 +511,10 @@ export function mountFocus({ onDecided } = {}) {
         const flip = button('focus-grid-flip')
         const paintView = () => {
           media.dataset.view = rec.galleryView ?? 'one'
-          flip.textContent = media.dataset.view === 'grid' ? 'One large picture' : 'All in a grid'
+          const says = media.dataset.view === 'grid' ? 'One large picture' : 'All in a grid'
+          flip.replaceChildren(sketch(media.dataset.view === 'grid' ? 'picture' : 'grid'))
+          flip.title = says
+          flip.setAttribute('aria-label', says)
         }
         flip.addEventListener('click', () => { rec.galleryView = media.dataset.view === 'grid' ? 'one' : 'grid'; paintView() })
         media.append(grid, flip)
@@ -576,14 +580,7 @@ export function mountFocus({ onDecided } = {}) {
       bar.append(says, step('The version before', 'Older', all[at - 1]), step('The version after', 'Newer', all[at + 1]), step('Back to the question as it stands now', 'Back to now', all.at(-1)))
       scroll.append(bar)
     }
-    const who = el('div', 'focus-card-head')
-    const session = (pool()?.agents ?? []).find(a => a.id === card.agent)
-    who.append(doodle(session?.mark ?? card.agent), el('span', null, card.agent_name || session?.name || 'Agent'))
-    if (urgencyWord(card)) who.append(el('b', null, urgencyWord(card)))
-    who.append(el('span', 'focus-nr', cardNr(rec.card)))
-    // why it is in the pass a second time
-    if (cameBack.has(rec.id)) who.append(el('em', 'focus-came-back', cameBack.get(rec.id)))
-    scroll.append(who, lead)
+    scroll.append(lead)
     if (hasMedia || hasText) scroll.append(body)
 
     // The conversation about this card. The question above is the agent's opening message; what the
@@ -752,7 +749,7 @@ export function mountFocus({ onDecided } = {}) {
       if (duo) {
         const lead = isYes(o)
         if (lead) b.classList.add('is-lead')
-        mark.append(sketch(o.key === WHAT_KEY ? 'explain' : lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other'))
+        mark.append(sketch(o.key === WHAT_KEY ? WHAT_SKETCH : o.key === ACK_KEY ? ACK_SKETCH : lead ? 'yes' : NEGATIVE.test(o.label) || o.key === 'deny' ? 'no' : 'other'))
       }
       if (multi) {
         const box = el('span', 'focus-opt-box')
@@ -765,11 +762,13 @@ export function mountFocus({ onDecided } = {}) {
       // A bare yes or no needs no word: the thumb says it.
       if (bare) b.setAttribute('aria-label', advised ? `${o.label}, recommended by the agent` : o.label)
       else {
-        const label = o.key === WHAT_KEY ? whatWord() : el('span', 'focus-opt-label', labelOf(o))
-        if (o.key === WHAT_KEY) label.classList.add('focus-opt-label')
+        // (On an info card "What??" is set in plain type like its neighbour: the drawn question mark above it is the
+        // tile's one drawing.)
+        const label = el('span', 'focus-opt-label', labelOf(o))
         // A word under a thumb breaks only at spaces and hyphens; one long word is set smaller until it fits.
-        const longest = Math.max(...labelOf(o).split(/[\s-]+/).map(w => w.length))
-        if (duo && longest > 9) label.style.fontSize = `${Math.max(.62, 9 / longest).toFixed(2)}em`
+        // (Both words of a pair take the size of the longer one, so the two tiles read as one pair.)
+        const longest = Math.max(...(duo ? options : [o]).flatMap(x => labelOf(x).split(/[\s-]+/)).map(w => w.length))
+        if (duo && longest > 10) label.style.fontSize = `${Math.max(.62, 10 / longest).toFixed(2)}em`
         // In a stack of options the pen goes round the words of the advised one (ui.js draws the mark).
         if (advised) (tags ? b : label).append(adviceLoop())
         words.append(label)
@@ -1212,6 +1211,7 @@ export function mountFocus({ onDecided } = {}) {
     // (a general note written on the card in the earlier way moves into the field at its foot)
     const general = rec.marks.filter(m => m.anchor?.kind === 'card' && m.text?.trim()).map(m => m.text.trim())
     if (general.length) { rec.marks = rec.marks.filter(m => !(m.anchor?.kind === 'card' && m.text != null)); rec.askText = [rec.askText.trim(), ...general].filter(Boolean).join('\n') }
+    rec.marks = rec.marks.filter(m => !m.strokes || String(m.id).startsWith('pen-') || m.text != null)
     rec.marksUi?.set(rec.marks)
     rec.draftSent = JSON.stringify(draftOf(rec))
     if (rec.askField) rec.askField.value = rec.askText
@@ -1368,35 +1368,48 @@ export function mountFocus({ onDecided } = {}) {
     const whole = texts[0]
     const layouts = (whole.match(/```html/g) ?? []).length
     const tables = (whole.match(/^\s*\|?\s*:?-{2,}:?\s*\|/gm) ?? []).length
-    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables, card.version, card.versions?.length, rec.threadNode?.querySelectorAll('.msg').length ?? 0])
+    const session = (pool()?.agents ?? []).find(a => a.id === card.agent)
+    const name = card.agent_name || session?.name || 'Agent'
+    const when = card.revised ?? card.created
+    const sig = JSON.stringify([pictures, plays, files.map(a => a.url), [...links], layouts, tables, card.version, card.versions?.length, rec.threadNode?.querySelectorAll('.msg').length ?? 0, name, session?.mark, urgencyWord(card), when, cameBack.get(rec.id), card.number])
     if (sig === rec.assetsSig) return
     rec.assetsSig = sig
-    const chip = (drawing, label, to) => {
-      const node = el(typeof to === 'string' ? 'a' : to ? 'button' : 'span', 'focus-asset')
+    // One quiet sentence, its parts set apart by a dot: "From Trommi · third version · 39 min ago · 2 messages below".
+    // A part that leads somewhere is a plain link in the same type.
+    const part = (label, to, cls) => {
+      const node = el(typeof to === 'string' ? 'a' : to ? 'button' : 'span', `focus-by-part${cls ? ` ${cls}` : ''}`, label)
       if (typeof to === 'string') { node.href = to; node.target = '_blank'; node.rel = 'noopener noreferrer' }
       else if (to) { node.type = 'button'; node.addEventListener('click', to) }
-      node.append(sketch(drawing), el('span', null, label))
       return node
     }
     const goTo = sel => () => rec.scroll?.querySelector(sel)?.scrollIntoView({ block: 'center', behavior: still() ? 'instant' : 'smooth' })
     const versions = card.versions?.length ? card.versions : null
     const said = rec.threadNode?.querySelectorAll('.msg').length ?? 0
-    const chips = [
-      ...(said ? [chip('other', said === 1 ? '1 message below' : `${said} messages below`, goTo('.focus-thread'))] : []),
-      ...(plays ? [chip('play', plays === 1 ? '1 to play' : `${plays} to play`, goTo('.focus-media .media'))] : []),
-      ...[...links.values()].map(x => chip(x.drawing, x.label, x.href)),
-      ...files.map(a => chip('clip', a.name, a.url)),
-      ...(tables ? [chip('choose', tables === 1 ? 'a table' : `${tables} tables`, goTo('table'))] : []),
-      ...(layouts ? [chip('page', layouts === 1 ? 'a layout' : `${layouts} layouts`, goTo('iframe'))] : []),
-    ]
-    // the version is small text at the end of the line; the time machine opens from it
+    const from = part(`From ${name}`, null, 'focus-by-from')
+    from.prepend(doodle(session?.mark ?? card.agent))
+    const parts = [from]
+    if (urgencyWord(card)) parts.push(part(urgencyWord(card), null, 'focus-by-urgent'))
     if (versions) {
-      const v = chip('timemachine', `version ${card.version ?? versions.at(-1).n + 1}`, () => viewVersion(rec, rec.version == null ? versions.at(-1).n : null))
-      v.classList.add('focus-asset-quiet')
-      chips.push(v)
+      const n = card.version ?? versions.at(-1).n + 1
+      const word = ['', 'first', 'second', 'third', 'fourth', 'fifth', 'sixth', 'seventh', 'eighth', 'ninth', 'tenth', 'eleventh', 'twelfth'][n]
+      const v = part(word ? `${word} version` : `version ${n}`, () => viewVersion(rec, rec.version == null ? versions.at(-1).n : null))
+      v.title = 'See the versions before'
+      parts.push(v)
     }
-    slot.hidden = !chips.length
-    slot.replaceChildren(...chips)
+    parts.push(agoNode(when, 'focus-by-part'))
+    if (said) parts.push(part(said === 1 ? '1 message below' : `${said} messages below`, goTo('.focus-thread')))
+    if (plays) parts.push(part(plays === 1 ? '1 to play' : `${plays} to play`, goTo('.focus-media .media')))
+    for (const x of links.values()) parts.push(part(x.label, x.href))
+    for (const a of files) parts.push(part(a.name, a.url))
+    if (tables) parts.push(part(tables === 1 ? 'a table' : `${tables} tables`, goTo('table')))
+    if (layouts) parts.push(part(layouts === 1 ? 'a layout' : `${layouts} layouts`, goTo('iframe')))
+    // why it is in the pass a second time
+    if (cameBack.has(rec.id)) parts.push(part(cameBack.get(rec.id), null, 'focus-came-back'))
+    const nr = part(cardNr(card), null, 'focus-nr')
+    parts.push(nr)
+    slot.classList.add('focus-by')
+    slot.hidden = false
+    slot.replaceChildren(...parts)
   }
 
   /** Bring the field at the foot of the card into reach (Revise, What??, the key for a note). */
@@ -2779,7 +2792,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     // Explain and Later, as under the composer: both leave the card.
     const ways = el('div', 'focus-zoom-ways')
-    ways.append(wayButton('what', () => { shut(); explain() }), wayButton('hand', () => { shut(); handBack() }), wayButton('snooze', () => { shut(); later() }))
+    ways.append(wayButton('snooze', () => { shut(); later() }), wayButton('hand', () => { shut(); handBack() }), ...(card.kind === 'info' ? [] : [wayButton('trust', () => { shut(); trustIt(rec) })]), wayButton('shred', () => { shut(); shredIt(rec) }))
     node.append(take, list, line, ways)
 
     let now = -1

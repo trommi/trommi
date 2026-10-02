@@ -49,7 +49,7 @@
    while it reads. Where nothing hovers (touch) it is always there, small and pale. */
 .say { position: relative; display: none; flex: none; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--faint); cursor: pointer; opacity: 0; vertical-align: middle; font-size: 0; line-height: 0; letter-spacing: 0; transition: opacity var(--d-fast), color var(--d-fast), background var(--d-fast); -webkit-tap-highlight-color: transparent; touch-action: manipulation; -webkit-touch-callout: none; user-select: none; }
 .can-speak .say { display: inline-grid; }
-.msg:hover .say, .ask-open:hover .say, .focus-title:hover .say, .say:focus-visible, .say[data-say] { opacity: 1; }
+.msg:hover .say, .ask-open:hover .say, .ask-card:hover .say, .focus-title:hover .say, .say:focus-visible, .say[data-say] { opacity: 1; }
 .focus-card:hover .focus-title .say { opacity: .7; }
 .say:hover { background: var(--sunken); color: var(--fg); }
 .say:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }

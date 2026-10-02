@@ -10,10 +10,11 @@
 // For the composers (chat.js, quicksend.js), the whole hook:
 //   const clipped = pasteChip(field, { host, onChange })    // host: where the chips stand (prepended)
 //   … clipped.ids() goes to sendMessage as `cards`; clipped.clear(true) after it was sent.
-// For a message:  if (m.cards?.length) node.append(cardChips(m.cards, openInWindow))
+// For a message:  if (m.cards?.length) node.append(cardChips(m.cards, (id, isOpen) => …))
 // For a card:     copyButton(card)
 
 import { el } from './ui.js'
+import { getState } from './store.js'
 
 const KEY = 'trommi-cardclip'
 const MAX = 5   // the server takes no more per message
@@ -133,8 +134,9 @@ function chipBody(c) {
   return parts
 }
 
-/** The cards a message carries, as quiet chips that link to /q/<number>. onOpen(id), if given, opens the
- *  card in place on a plain click. */
+/** The cards a message carries, as quiet chips that link to /q/<number>. onOpen(id, isOpen), if given,
+ *  shows the card in place on a plain click; isOpen says whether the question still waits for an answer
+ *  (the Focus window shows open ones only). */
 export function cardChips(cards = [], onOpen) {
   const row = el('div', 'cardclip-row')
   for (const c of cards) {
@@ -145,7 +147,7 @@ export function cardChips(cards = [], onOpen) {
     a.addEventListener('click', e => {
       if (!onOpen || e.ctrlKey || e.metaKey || e.shiftKey || e.button) return
       e.preventDefault()
-      onOpen(c.id)
+      onOpen(c.id, getState().all?.cards?.find(x => x.id === c.id)?.status === 'open')
     })
     row.append(a)
   }

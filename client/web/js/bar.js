@@ -7,6 +7,7 @@
 
 import { sketch, KNOCK_SKETCH, INBOX_WORD, INBOX_SKETCH } from './ui.js'
 import { knockSound, setKnockSound } from './knock.js'
+import { provide } from './keys.js'
 
 const $ = id => document.getElementById(id)
 const opener = $('brand-menu')
@@ -139,3 +140,6 @@ const shift = e => document.body.toggleAttribute('data-shift', e.shiftKey && !e.
 window.addEventListener('keydown', shift, true)
 window.addEventListener('keyup', shift, true)
 window.addEventListener('blur', () => document.body.removeAttribute('data-shift'))
+
+// The keyboard's way to the jump field (Ctrl/Cmd+K, G then J).
+provide('app', { active: () => true, actions: { 'go.jump': () => { openJump(); return true } } })

@@ -63,7 +63,7 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
     if (erasing) return rub(e)
     layer.setPointerCapture(e.pointerId)
     let mark = list.findLast(m => m.strokes)
-    if (!mark) { mark = { id: newId(), anchor: { kind: 'card' }, strokes: [] }; list.push(mark) }
+    if (!mark) { mark = { id: `pen-${newId()}`, anchor: { kind: 'card' }, strokes: [] }; list.push(mark) }
     drawing = { mark, stroke: { color: INK[ink], pts: point(e) } }
     mark.strokes.push(drawing.stroke)
     paintInk()
@@ -118,7 +118,7 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
     inkBtn.style.color = INK[ink]
     inkBtn.hidden = rubBtn.hidden = undoBtn.hidden = state.hidden = doneBtn.hidden = !pen
     // a drawing that is there can be cleared without taking the pen up first
-    clearBtn.hidden = !list.some(m => m.strokes?.length)
+    clearBtn.hidden = !pen || !list.some(m => m.strokes?.length)
     controls.toggleAttribute('data-pen', pen)
     layer.toggleAttribute('data-pen', pen)
     layer.toggleAttribute('data-rub', pen && erasing)
@@ -302,7 +302,7 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
     penOn: () => pen,
     get: () => list.map(m => ({ ...m, strokes: m.strokes?.map(s => ({ color: s.color, pts: [...s.pts] })) })),
     set(next) {
-      list = (Array.isArray(next) ? next : []).filter(m => m && m.id && m.anchor && !(m.anchor.kind === 'card' && m.text != null)).map(m => ({ id: m.id, anchor: m.anchor, ...(m.text != null ? { text: String(m.text) } : {}), ...(m.strokes ? { strokes: m.strokes } : {}) }))
+      list = (Array.isArray(next) ? next : []).filter(m => m && m.id && m.anchor && !(m.anchor.kind === 'card' && m.text != null) && !(m.strokes && m.text == null && !String(m.id).startsWith('pen-'))).map(m => ({ id: m.id, anchor: m.anchor, ...(m.text != null ? { text: String(m.text) } : {}), ...(m.strokes ? { strokes: m.strokes } : {}) }))
       fit()
       paintNotes()
       paintTools()

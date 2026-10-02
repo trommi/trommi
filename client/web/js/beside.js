@@ -1,15 +1,12 @@
-// A session on a wide window: its open questions lie beside its conversation (css/beside.css).
-// The layout is CSS over what js/chat.js already builds. This file adds the little that CSS cannot:
+// The line under a session's name, and the view of sessions laid together (css/beside.css).
 //   - the line under a session's name: what it is at, its model and machine
-//   - "Questions only" has nothing to do while the questions stand beside the conversation: asked for
-//     by an old link, a key or a line in the conversation, it is taken back at once, in place
-//   - an open question inside the conversation is a small reference: a click brings its card into
-//     view in the column beside, it does not open anything
 //   - sessions laid together: ONE list of the questions of all of them (each row names its session
-//     with its mark), in a wide column; the conversations stand narrow beside it, one above the other.
-//     It is the inbox's own list (mountInbox) shown a state cut down to the group's sessions.
-// One session below 1200px: none of it applies. Sessions laid together below 1200px: the combined
-// list stands above the conversations.
+//     with its mark), in a wide column; the conversations stand narrow beside it, one above the other
+//     (below 1200px: the list above the conversations). It is the inbox's own list (mountInbox) shown
+//     a state cut down to the group's sessions.
+//   - there, "Questions only" has nothing to do and is taken back in place, and an open question
+//     inside a conversation is a small reference: a click brings its card into view in the list.
+// A single session is one stream (js/chat.js); nothing here changes it but the line under its name.
 
 import { subscribe, getState, reopen } from './store.js'
 import { el } from './ui.js'
@@ -19,7 +16,6 @@ import { walkSession } from './app.js'
 
 const body = document.body
 const $ = id => document.getElementById(id)
-const wide = matchMedia('(min-width: 1200px)')
 
 // ---- the line under the name ----
 const now = el('p', 'pane-now')
@@ -38,17 +34,13 @@ subscribe(state => {
 
 // ---- no "Questions only" while the questions are in sight anyway ----
 function noFilter() {
-  if (!(wide.matches || body.hasAttribute('data-pair')) || body.dataset.filter !== 'questions') return
+  if (!body.hasAttribute('data-pair') || body.dataset.filter !== 'questions') return
   delete body.dataset.filter
   $('filter-questions')?.setAttribute('aria-pressed', 'false')
   if (/\/questions$/.test(location.pathname)) history.replaceState(history.state, '', location.pathname.replace(/\/questions$/, '') + location.search + location.hash)
 }
 noFilter()
-// The questions stand beside (or above) the conversation: one session on a wide window, or sessions laid together.
-const paintBeside = () => body.toggleAttribute('data-beside', wide.matches || body.hasAttribute('data-pair'))
-paintBeside()
-new MutationObserver(() => { paintBeside(); noFilter() }).observe(body, { attributes: true, attributeFilter: ['data-filter', 'data-pair'] })
-wide.addEventListener('change', () => { paintBeside(); noFilter() })
+new MutationObserver(noFilter).observe(body, { attributes: true, attributeFilter: ['data-filter', 'data-pair'] })
 
 // ---- sessions laid together: one list of all their questions ----
 const group = el('section', 'group-questions')
@@ -79,13 +71,12 @@ subscribe(state => {
 
 // ---- a question named in the conversation: bring its card into view beside ----
 $('chat')?.addEventListener('click', e => {
-  if (!body.hasAttribute('data-beside')) return
+  if (!body.hasAttribute('data-pair')) return
   const ref = e.target.closest?.('.log .ask-open .inbox-row')
   if (!ref) return
   e.preventDefault()
   e.stopPropagation()
-  const where = body.hasAttribute('data-pair') ? group : ref.closest('.chat-pane')?.querySelector('.pane-questions')
-  const card = where?.querySelector(`.inbox-row[data-id="${CSS.escape(ref.dataset.id)}"]`)
+  const card = group.querySelector(`.inbox-row[data-id="${CSS.escape(ref.dataset.id)}"]`)
   if (!card) return
   // One that was snoozed lies in a pile that may be pushed together: open it first.
   const pile = card.closest('.inbox-pile:not(.is-open)')

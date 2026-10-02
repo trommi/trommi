@@ -28,7 +28,7 @@ import { el, rich, sketch, loopPath, penSeed } from './ui.js'
 
 const FIRST = 100, SECOND = 220, PIECE = 400   // letters per piece
 const SAY_KEEP = 80                            // spoken pieces kept in the page
-const SPEAKABLE = '.msg, .ask-open, .focus-card'
+const SPEAKABLE = '.msg, .ask-open, .ask-card, .focus-card'
 
 const SAY_WORDS = {
   en: { code: n => (n === 1 ? 'Code, one line.' : `Code block, ${n} lines.`), link: 'link', linkTo: 'link to', details: 'Details:', options: 'The options:', or: 'or', permission: 'Allow or deny?', gone: 'no longer available' },
@@ -278,7 +278,7 @@ function targetOf(node) {
 function following(home) {
   const all = home.matches('.focus-card')
     ? [home, ...home.querySelectorAll('.msg')]
-    : [...(home.closest('.log-inner, .focus-thread') ?? home.parentNode).querySelectorAll('.msg, .ask-open')]
+    : [...(home.closest('.log-inner, .focus-thread') ?? home.parentNode).querySelectorAll('.msg, .ask-open, .ask-card')]
   return all.slice(all.indexOf(home) + 1).find(n => n.querySelector('.say')) ?? null
 }
 
@@ -345,7 +345,7 @@ function place(home, button) {
     if (!title) return false
     return title.append(button), true
   }
-  if (home.matches('.ask-open')) {
+  if (home.matches('.ask-open, .ask-card')) {
     const head = home.querySelector('.inbox-row-head')
     if (!head) return false
     return head.append(button), true
@@ -382,7 +382,7 @@ let sweeping = false
 function sweep() {
   sweeping = false
   if (!getState().speech) return
-  for (const home of document.querySelectorAll('.msg:not([data-say]), .ask-open:not(:has(.say)), .focus-card:not(:has(.focus-title .say))')) dress(home)
+  for (const home of document.querySelectorAll('.msg:not([data-say]), .ask-open:not(:has(.say)), .ask-card:not(:has(.say)), .focus-card:not(:has(.focus-title .say))')) dress(home)
 }
 const sweepSoon = () => { if (!sweeping) { sweeping = true; queueMicrotask(sweep) } }
 
