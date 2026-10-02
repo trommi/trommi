@@ -877,3 +877,9 @@ body[data-page="roster"] #roster { display: block; grid-column: 2; min-width: 0;
 .inbox-row:not(.is-full) .inbox-thumb { width: 72px; height: 54px; }
 .inbox-row:not(.is-full) .inbox-thumb:nth-child(n+2) { display: none; }
 .inbox-tab span { white-space: nowrap; }
+
+/* Square answer tiles: as wide as the fixed row makes them tall. */
+@media (min-width: 861px) {
+  .inbox-row:not(.is-full) .inbox-actions { grid-template-columns: repeat(2, 124px); gap: 8px; padding: 12px 12px 12px 0; }
+  .inbox-row:not(.is-full) .inbox-answer { aspect-ratio: 1; border-radius: 12px; }
+}
