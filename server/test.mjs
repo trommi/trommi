@@ -49,6 +49,7 @@ fs.writeFileSync(path.join(data, 'state.json'), JSON.stringify({
 process.env.BOARD_RETENTION_DAYS = '100000'
 // An answer right after a rewrite is refused for a moment; keep that moment short here.
 process.env.BOARD_REVISE_GRACE_MS = '250'
+process.env.BOARD_SNOOZE_TICK_MS = '100'
 
 const received = []
 // Every notification any session got, to compare with what the help page says arrives.
@@ -1483,6 +1484,57 @@ await call('withdraw_card', { card_id: looks })
   received.length = 0
 }
 
+// more than six options draw a reminder to offer only what the agent stands behind; six do not
+{
+  const seven = 'abcdefg'.split('').map(option)
+  let out = textOf(await call('create_decision', { title: 'Zu viele?', options: seven }))
+  const crowd = out.match(/^card (\w+) /)[1]
+  assert.match(out, /\nMany options \(7\): keep only the ones you are sure of\. Two or three you stand behind beat ten/)
+  assert.equal((await onBoard(crowd)).options.length, 7, 'reminded, not refused')
+  assert.doesNotMatch(textOf(await call('revise_card', { card_id: crowd, options: seven.slice(0, 6) })), /Many options/)
+  assert.match(textOf(await call('revise_card', { card_id: crowd, options: seven, body: 'x'.repeat(301) })), /This is a lot to read: the body has 301 characters.*\nMany options \(7\)/s)
+  await call('withdraw_card', { card_id: crowd })
+}
+
+// "Later": a card the human puts off leaves the stack, on every device, and comes back when called or when its time has come; the agent is not told
+{
+  received.length = 0
+  const nap = await ask('Später?')
+  const morning = (() => { const at = new Date(); at.setHours(7, 0, 0, 0); if (at.getTime() <= Date.now()) at.setDate(at.getDate() + 1); return at.getTime() })()
+  for (const wrong of [{ until: 'irgendwann' }, { until: Date.now() - 1000 }, { until: {} }]) assert.equal((await post('/snooze', { card_id: nap, ...wrong })).status, 400, JSON.stringify(wrong))
+  assert.equal((await post('/snooze', { card_id: 'gibtsnicht' })).status, 400)
+  assert.equal((await post('/snooze', { card_id: nap }, 'https://evil.example')).status, 403)
+  for (const until of [undefined, null, 'next_morning', Date.now() + 7 * 86400000]) {
+    const t = Date.now()
+    assert.equal((await post('/snooze', { card_id: nap, until })).status, 200)
+    s = await state()
+    const k = s.cards.find(c => c.id === nap)
+    assert.deepEqual([k.snoozed_until, k.snoozed_at >= t, k.status, s.queue.includes(nap)], [morning, true, 'open', false], String(until))
+  }
+  // called back because the rest is done
+  assert.equal((await post('/snooze', { card_id: nap, clear: true })).status, 200)
+  s = await state()
+  let k = s.cards.find(c => c.id === nap)
+  assert.deepEqual(['snoozed_until' in k, 'snoozed_at' in k, k.unsnoozed > 0, s.queue.includes(nap)], [false, false, true, true])
+  assert.equal((await post('/snooze', { card_id: nap, clear: true })).status, 200, 'calling back what is not put off changes nothing')
+  // its time comes: back by itself, with a marker in the conversation
+  assert.equal((await post('/snooze', { card_id: nap, until: Date.now() + 300 })).status, 200)
+  assert.deepEqual([(await onBoard(nap)).snoozed_until < morning, 'unsnoozed' in await onBoard(nap), (await state()).queue.includes(nap)], [true, false, false])
+  await eventually(async () => (await state()).queue.includes(nap), 'the card to come back from snooze')
+  s = await state()
+  k = s.cards.find(c => c.id === nap)
+  assert.deepEqual(['snoozed_until' in k, k.unsnoozed > 0, s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], [false, true, 'unsnoozed', nap, 'Back from snooze'])
+  // answered while put off, the put-off is over; and nothing of all this reached the agent
+  assert.equal((await post('/snooze', { card_id: nap })).status, 200)
+  assert.equal('snoozed_until' in (await mine(nap)), false, 'list_cards does not show it')
+  assert.equal((await post('/decide', { card_id: nap, key: 'a' })).status, 200)
+  await until(() => received.length === 1)
+  assert.deepEqual([received[0].params.meta.kind, 'snoozed_until' in await onBoard(nap)], ['decision', false])
+  assert.equal((await post('/snooze', { card_id: nap })).status, 409, 'only an open card can be put off')
+  await call('close_card', { card_id: nap })
+  received.length = 0
+}
+
 // a card filed the old way is what it always was: no sections anywhere
 const oldStyle = await ask('wie früher', { body: 'kurz', recommended: 'a' })
 c = await onBoard(oldStyle)
@@ -1689,6 +1741,21 @@ assert.deepEqual(s.agents.map(a => [a.group, a.label ?? '']), [['x'.repeat(40), 
   assert.deepEqual(await order(), ['api', 'infra', 'main'], 'a refused move changes nothing')
   assert.equal((await post('/session', { agent: 'api', before: null, label: 'Schnittstelle' })).status, 200)
   assert.deepEqual(await order(), ['main', 'api', 'infra'])
+}
+// only one session wears the crown: crowning one takes it from the other, taking it off leaves none
+{
+  const crowns = async () => (await state()).agents.filter(a => a.starred).map(a => a.id)
+  const before = await crowns()
+  assert.equal((await post('/star', { agent: 'infra', starred: true })).status, 200)
+  assert.deepEqual(await crowns(), ['infra'])
+  assert.equal((await post('/star', { agent: 'main', starred: true })).status, 200)
+  assert.deepEqual([await crowns(), (await state()).agents.find(a => a.id === 'main').starred_at > 0], [['main'], true])
+  assert.equal((await post('/star', { agent: 'infra', starred: false })).status, 200)
+  assert.deepEqual(await crowns(), ['main'], 'taking off a crown nobody wears changes nothing')
+  assert.equal((await post('/star', { agent: 'main', starred: false })).status, 200)
+  assert.deepEqual(await crowns(), [])
+  for (const id of before) await post('/star', { agent: id, starred: true })
+  assert.deepEqual(await crowns(), before.slice(-1))
 }
 assert.equal((await post('/session', { agent: 'infra', group: null })).status, 200)
 assert.equal((await post('/session', { agent: 'api', label: 'Schnittstelle' })).status, 200, 'other fields leave the group alone')
@@ -2539,8 +2606,8 @@ const in6 = name => path.join(data6, name)
 const old6 = {
   hub: 'alt', next_number: 50, queue: ['veraltet'],
   agents: [
-    { id: 'alt', name: 'Alt', model: 'm', client: '', task: 'umziehen', joined: 5, online: true, instance: 'x', position: 1, label: 'Mein Alter', icon: 'draw:brush', icon_by: 'human', starred: true },
-    { id: 'fern', name: 'Fern', model: 'm', client: '', task: '', joined: 6, online: false, position: 0, archived: true, group: 'paar' },
+    { id: 'alt', name: 'Alt', model: 'm', client: '', task: 'umziehen', joined: 5, online: true, instance: 'x', position: 1, label: 'Mein Alter', icon: 'draw:brush', icon_by: 'human', starred: true, starred_at: 20 },
+    { id: 'fern', name: 'Fern', model: 'm', client: '', task: '', joined: 6, online: false, position: 0, archived: true, group: 'paar', starred: true, starred_at: 10 },
   ],
   cards: [
     {
@@ -2660,5 +2727,5 @@ assert.deepEqual([JSON.parse(fs.readFileSync(path.join(data8, 'state.json'), 'ut
 await plain.close()
 
 for (const dir of [data, data2, data3, data4, data5, data6, data7, data8]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, snooze, one crown, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)

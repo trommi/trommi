@@ -203,6 +203,10 @@ function load(owner) {
   const place = a => (Number.isFinite(a.position) ? a.position : Infinity)
   const agents = list('agents').filter(a => a.id).map(a => ({ ...a, online: false }))
     .sort((a, b) => place(a) - place(b)).map((a, position) => ({ ...a, position }))
+  // Only one session wears the crown. Of several from before that rule, the one crowned last keeps it.
+  const crowned = agents.filter(a => a.starred)
+  const keeps = crowned.reduce((best, a) => ((a.starred_at ?? 0) >= (best?.starred_at ?? 0) ? a : best), null)
+  for (const a of crowned) if (a !== keeps) a.starred = false
   // Spokes of the hub that just went away are probably still running and about to link again.
   reserved = new Map(list('agents').filter(a => a.online && a.instance && a.id !== raw.hub).map(a => [a.id, a.instance]))
   const pending = {}
@@ -226,7 +230,8 @@ function queueOf(cards, agents = []) {
   // The questions of an archived session stay open, but nobody is asked to answer them.
   const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
   return cards
-    .filter(c => c.status === 'open' && !shelved.has(c.agent))
+    // What the human put off is not waiting: it is out of the stack until it comes back.
+    .filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until)
     // Among equally urgent cards, what waits for an answer comes before what is only to be read.
     .sort((a, b) => rank(b) - rank(a) || (a.kind === 'info') - (b.kind === 'info') || a.created - b.created || a.number - b.number)
     .map(c => c.id)
@@ -272,6 +277,8 @@ const frameOf = () => `data: ${JSON.stringify({ ...state, pending: undefined })}
 
 // soon: the pages get the state at once, the file is written within a second, together with whatever else changed until then.
 function commit(soon = false) {
+  // A put-off belongs to an open card; answered, closed or thrown away, there is nothing left to put off.
+  for (const c of state.cards) if (c.snoozed_until && c.status !== 'open') { delete c.snoozed_until; delete c.snoozed_at }
   state.queue = queueOf(state.cards, state.agents)
   // The list is the order of the sidebar; position says the same as a number, so a new session is last and a forgotten one leaves no gap.
   state.agents.forEach((a, at) => { a.online = links.has(a.id); a.position = at })
@@ -652,6 +659,7 @@ const mcp = new Server(
       'When a question needs explaining per option, do not write a body with one paragraph per option next to a separate options list: hand in ONE structured text, as sections (a list of blocks) or as text (one string), and flag the paragraphs that are options. The board then shows each paragraph tied to its option: the human ticks the paragraph itself. In text, paragraphs are separated by a blank line, and a paragraph starting with [key] Label: becomes the option "key" with that paragraph as its explanation ([key*] marks the one you would pick); every other paragraph is plain context. Keep labels to about four words and each paragraph short. Plain options stay right for simple questions.',
       'The human may answer, ask back or shred with notes pinned to parts of the question and drawings on it: they come as lines under "Notes pinned to the card:" (marks="N" in the event), with a picture of the annotated card in image_path. Read them together with the picture; they are part of the answer.',
       'The human can write a note on any option, chosen or not ("not this, because ..."). Such notes come with the decision: its text lists them as lines "- Label [key], chosen or not chosen: note" after the general note, and option_notes names the keys that have one. Read them before acting.',
+      'Offer only the options you are about 80% confident are a great idea: two or three strong options beat ten. When the human explicitly asks for many proposals, show them all on the page (a linked page or an attachment), but put on the card only the ones you stand behind, and mark your recommendation.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
       'A picture of something you built is almost always a rendering of a page: send the page with it, as an attachment { path, page }, so the human can open and try it right under the picture (a file foo.html beside foo.png is linked by itself). page is a self-contained HTML file, a path on the board or a link. A plain photo or diagram needs none.',
@@ -1214,6 +1222,7 @@ const crowdHint = (others, card) => (others.length < CROWD ? '' : [
 const BODY_MAX = 300
 const DETAIL_MAX = 60
 const SECTION_MAX = 400
+const OPTIONS_MANY = 6
 // What there is to read in a text: a fenced layout or code block is looked at, not read.
 const prose = text => String(text ?? '').replace(/```[\s\S]*?```/g, '')
 function lengthHint(card) {
@@ -1225,7 +1234,9 @@ function lengthHint(card) {
     !card.sections && prose(card.body).length > BODY_MAX ? `the body has ${prose(card.body).length} characters (aim for one or two short sentences)` : '',
     long.length ? `the detail of ${long.map(o => `"${o.key}"`).join(', ')} is longer than one short line (aim for about six words)` : '',
   ].filter(Boolean)
-  return said.length ? `\nThis is a lot to read: ${said.join('; ')}. Shorten it with revise_card and put the longer explanation behind a link or in an attachment; the human can ask for it with "Explain".` : ''
+  // More options than anyone weighs at a glance usually means the agent has not chosen yet.
+  const many = card.options.length > OPTIONS_MANY ? `\nMany options (${card.options.length}): keep only the ones you are sure of. Two or three you stand behind beat ten; put the rest on a page or leave them out, and mark the one you would pick.` : ''
+  return (said.length ? `\nThis is a lot to read: ${said.join('; ')}. Shorten it with revise_card and put the longer explanation behind a link or in an attachment; the human can ask for it with "Explain".` : '') + many
 }
 
 // A question about looks is judged by looking. One that reads like it and shows nothing is answered with a reminder, not refused.
@@ -1811,6 +1822,52 @@ function cardText(card) {
     '', ...answer,
     ...(pictures.length ? [`Pictures and files: ${pictures.join(', ')}`] : []),
   ].join('\n')
+}
+
+// "Later": the human puts a card off. It leaves the stack and comes back when they call it back (the client does,
+// once the rest is done) or by itself the next morning at the latest. The agent is not told; it is the human's own put-off.
+const SNOOZE_HOUR = 7
+function nextMorning(now = Date.now()) {
+  const at = new Date(now)
+  at.setHours(SNOOZE_HOUR, 0, 0, 0)
+  if (at.getTime() <= now) at.setDate(at.getDate() + 1)
+  return at.getTime()
+}
+function snooze(cardId, body) {
+  const card = state.cards.find(c => c.id === cardId)
+  if (!card) throw new Error('unknown card')
+  if (card.kind === 'permission') throw new Error('an approval cannot be put off: the agent is waiting on it, so answer it with Allow or Deny')
+  if (card.status !== 'open') throw fail(409, 'only an open card can be put off')
+  if (body.clear === true) {
+    if (!card.snoozed_until) return
+    delete card.snoozed_until
+    delete card.snoozed_at
+    card.unsnoozed = Date.now()
+    return commit()
+  }
+  const now = Date.now()
+  const latest = nextMorning(now)
+  const wanted = body.until == null || body.until === 'next_morning' ? latest : body.until
+  if (typeof wanted !== 'number' || !Number.isFinite(wanted)) throw new Error('until must be a time in milliseconds, "next_morning" or null')
+  if (wanted <= now) throw new Error('until must lie in the future')
+  // Next morning at the latest, whatever was asked for.
+  Object.assign(card, { snoozed_until: Math.min(wanted, latest), snoozed_at: now })
+  delete card.unsnoozed
+  commit()
+}
+// Cards whose time has come are back in the stack, with a marker in the conversation.
+function wake() {
+  if (role !== 'hub' || !state) return
+  const now = Date.now()
+  const due = state.cards.filter(c => c.status === 'open' && c.snoozed_until && c.snoozed_until <= now)
+  if (!due.length) return
+  for (const card of due) {
+    delete card.snoozed_until
+    delete card.snoozed_at
+    card.unsnoozed = now
+    addEvent('unsnoozed', card, 'Back from snooze')
+  }
+  commit()
 }
 
 // The human read an info and closed it. Nothing was asked, so the card is done at once; the agent is told quietly.
@@ -2813,7 +2870,17 @@ const httpServer = http.createServer(async (req, res) => {
       const body = await readJson(req)
       const agent = state.agents.find(a => a.id === targetAgent(body.agent))
       agent.starred = Boolean(body.starred)
+      if (agent.starred) {
+        agent.starred_at = Date.now()
+        // Only one can wear the crown: crowning this session takes it from whoever had it.
+        for (const other of state.agents) if (other !== agent && other.starred) other.starred = false
+      }
       commit()
+      return send(res, 200, '{"ok":true}')
+    }
+    if (req.method === 'POST' && url.pathname === '/snooze') {
+      const body = await readJson(req)
+      snooze(String(body.card_id), body)
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'POST' && url.pathname === '/reopen') {
@@ -3020,6 +3087,8 @@ function becomeHub() {
   reportClient()
   purge()
   if (padSupport()) console.error(`[board] ${padSupport()}`)
+  wake()
+  if (!cleaning) setInterval(wake, Number(process.env.BOARD_SNOOZE_TICK_MS) || 30000).unref()
   if (!cleaning) setInterval(purge, 6 * 3600000).unref()
   cleaning = true
   writeLinks()
