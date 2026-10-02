@@ -1,7 +1,7 @@
 // The sidebar (the inbox on top, the sessions below, sessions dropped on each other
 // become one) and the overview page of all sessions.
 
-import { el, doodle, pairDoodle, groupLoop, crown, sketch, bareHand, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText, INBOX_WORD, INBOX_SKETCH } from './ui.js'
+import { el, doodle, pairDoodle, groupLoop, crown, sketch, raisedHand, loopPath, penSeed, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText, INBOX_WORD, INBOX_SKETCH } from './ui.js'
 import { getState, setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -98,32 +98,88 @@ export function summary(all, members, later = null) {
   return { open, tasks, online, running, stuck }
 }
 
-// What a session needs or does is told in two places, with no ground under either. At work: its own
-// mark at the left redraws itself (avatar(), above); nothing turns at the right. At the right end of
-// the row: the number of its open questions, always in one column; before it, when the session is
-// stopped and waits for the human, a hand drawn in red, all hands on one axis. A working session's
-// number is small and muted, a disconnected one's faint (its mark is grey). Idle: nothing.
+// At work: a ring circled by hand, and a drop that travels through it as through a soft tube, so one
+// SEES that the session works. The ring stands still; the drop goes round (CSS, app.css), every ring on
+// the same clock, so a list that is rebuilt does not send its drop back to the start. Under reduced
+// motion the ring stands alone.
+const RING = { c: 16, r: 14.3, turn: 4600, lag: 150 }
+const DROP = { swell: 3.1, lead: 34, trail: 104, power: 1.2, tail: 2.1 }
+const RING_LOOP = loopPath(penSeed('working ring'), { rad: 14.55, drift: .5, jitter: .6, start: 1.1 })
+const DROP_PATH = (() => {
+  const r = penSeed('working drop')
+  const phase = [r() * 6, r() * 6, r() * 6, r() * 6]
+  // A slow unevenness along the drop, different for its outer and its inner edge.
+  const uneven = (t, k) => 1 + .06 * (Math.sin(3.1 * t + phase[k]) * .6 + Math.sin(7.3 * t + phase[k + 1]) * .4)
+  const steps = 96
+  const edge = side => Array.from({ length: steps + 1 }, (_, i) => {
+    const deg = -DROP.trail + (DROP.trail + DROP.lead) * i / steps   // from the thickest place; ahead is clockwise
+    const t = deg * Math.PI / 180
+    // Ahead of its thickest place the drop is round like a bead; behind, it is drawn out into a tail.
+    const wave = ((1 + Math.cos(Math.PI * deg / (deg < 0 ? DROP.trail : DROP.lead))) / 2) ** (deg < 0 ? DROP.tail : DROP.power)
+    const rad = RING.r + side * DROP.swell * wave * (side > 0 ? 1 : .72) * uneven(t, side > 0 ? 0 : 2)
+    return `${(RING.c + Math.sin(t) * rad).toFixed(3)} ${(RING.c - Math.cos(t) * rad).toFixed(3)}`
+  })
+  return `M${edge(1).join(' L')} L${edge(-1).reverse().join(' L')} Z`
+})()
+function ring() {
+  const svg = document.createElementNS(NS, 'svg')
+  svg.setAttribute('viewBox', `0 0 ${RING.c * 2} ${RING.c * 2}`)
+  svg.setAttribute('class', 'agent-ring')
+  svg.setAttribute('aria-hidden', 'true')
+  svg.style.setProperty('--ring-turn', `${RING.turn}ms`)
+  const at = -RING.turn - (Date.now() % RING.turn)
+  const loop = document.createElementNS(NS, 'path')
+  loop.setAttribute('class', 'ring-loop')
+  loop.setAttribute('d', RING_LOOP)
+  svg.append(loop)
+  for (const lag of [0, RING.lag]) {
+    const drop = document.createElementNS(NS, 'path')
+    drop.setAttribute('class', 'ring-drop')
+    drop.setAttribute('d', DROP_PATH)
+    drop.style.animationDelay = `${at + lag}ms`
+    svg.append(drop)
+  }
+  return svg
+
+}
+
+/** The ring alone, small, turning: for a line that says how many sessions are at work. */
+export const workingRing = ring
+
+// The badge at the end of a session row: a ring drawn by hand. With open questions their number stands
+// in it; while the session works a drop runs round it (with or without a number); when one of its
+// questions knocks (urgent, blocking, a permission) it is the raised hand in a red loop. Idle with
+// nothing open: no ring. Disconnected with questions: the ring and number in grey, still.
 // With questions open the badge is a button of its own beside the row's entry: a click goes through
 // that session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
 export function badge({ open, online, running, stuck }, who = '', walk = null) {
-  // Idle shows nothing, and so does a disconnected session (its mark is grey).
-  if (!open || !online) return null
-  const node = el(walk ? 'button' : 'span', 'agent-badge')
-  if (walk) {
+  if (!open && !(online && running)) return null
+  const button = Boolean(open && walk)
+  const node = el(button ? 'button' : 'span', 'agent-badge')
+  if (button) {
     node.type = 'button'
     node.addEventListener('click', e => { e.stopPropagation(); walk() })
   }
   const questions = open === 1 ? '1 question' : `${open} questions`
-  // The hand only when a question of it knocks; else the stack of cards.
-  const hand = stuck
-  node.dataset.state = hand ? 'waiting' : online ? 'running' : 'open'
-  // How many is beside the point here: a hand when the session waits for you, else a small stack of
-  // cards, the same for one question or twelve. (The number is in the tooltip and in the inbox.)
-  node.append(hand ? bareHand() : sketch('stack'))
+  const hand = Boolean(open && stuck)
+  node.dataset.state = hand ? 'waiting' : online && running ? 'running' : 'open'
+  const busy = Boolean(online && running)
+  // A knock from a session that is still at work: the hand, and the drop keeps going round its loop.
+  if (hand) {
+    node.append(raisedHand())
+    if (busy) { const over = ring(); over.classList.add('is-over'); over.querySelector('.ring-loop').remove(); node.append(over); node.dataset.working = '' }
+  }
+  else {
+    const svg = ring()
+    if (!busy) for (const drop of svg.querySelectorAll('.ring-drop')) drop.remove()
+    node.append(svg)
+    if (open) node.append(el('b', null, String(open)))
+  }
   if (!online) node.dataset.offline = ''
-  const state = hand ? (online ? `Waiting for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`) : online ? `Working, ${questions} open` : `Disconnected, ${questions} open`
-  node.title = walk ? `Go through ${who ? `${who}'s ` : 'the '}${questions} · ${state}` : state
-  if (walk) node.setAttribute('aria-label', `Go through ${who ? `${who}'s ` : 'the '}${questions} (${state.toLowerCase()})`)
+  const state = hand ? (online ? `${busy ? 'Working, and waiting' : 'Waiting'} for you: ${questions}` : `Disconnected, was waiting for you: ${questions}`)
+    : online ? (running ? (open ? `Working, ${questions} open` : 'Working') : `${questions} open`) : `Disconnected, ${questions} open`
+  node.title = button ? `Go through ${who ? `${who}'s ` : 'the '}${questions} · ${state}` : state
+  if (button) node.setAttribute('aria-label', `Go through ${who ? `${who}'s ` : 'the '}${questions} (${state.toLowerCase()})`)
   return node
 }
 
@@ -168,7 +224,8 @@ export function mountAgents(root, { onSelect, onWalk }) {
       text.append(name)
     }
     if (Array.isArray(label)) text.dataset.lines = label.length
-    if (sub) text.append(el('small', null, sub))
+    if (sub instanceof Node) text.append(sub)
+    else if (sub) text.append(el('small', null, sub))
     btn.append(lead, text)
     if (mark) btn.append(mark)
     btn.addEventListener('click', () => {
@@ -191,6 +248,14 @@ export function mountAgents(root, { onSelect, onWalk }) {
     box.append(sketch(knocking ? KNOCK_SKETCH : 'stack'), String(fresh))   // the inbox says how many; the session rows do not
     return box
   }
+  // Under the Desk's name: how many sessions are at work right now, behind a small turning ring.
+  function workingLine(n) {
+    if (!n) return null
+    const line = el('small', 'agent-working')
+    line.title = n === 1 ? '1 session is working' : `${n} sessions are working`
+    line.append(ring(), el('span', null, `${n} working`))
+    return line
+  }
   function render(state) {
     lastState = state
     const { all, scope } = state
@@ -206,7 +271,8 @@ export function mountAgents(root, { onSelect, onWalk }) {
     const fresh = all.queue.filter(id => !state.later.includes(id)).length
     // Of those, the knocks (urgent and blocking): they are what the inbox's badge shows first.
     const knocking = all.cards.filter(c => c.status === 'open' && isKnock(c) && all.queue.includes(c.id) && !state.later.includes(c.id)).length
-    const next = JSON.stringify([scope, document.body.dataset.page, fresh, knocking, units.map(u => [u.id, u.members.map(a => [a.id, a.name, a.mark, a.task, a.online, a.starred, a.cwd, a.host]), u.open, u.running, u.stuck])])
+    const working = units.filter(u => u.online && u.running).length
+    const next = JSON.stringify([scope, document.body.dataset.page, fresh, knocking, working, units.map(u => [u.id, u.members.map(a => [a.id, a.name, a.mark, a.task, a.online, a.starred, a.cwd, a.host]), u.open, u.running, u.stuck])])
     if (next === signature) return
     signature = next
 
@@ -217,7 +283,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
         id: u.id,
         label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
-        lead: single ? avatar(single, { working: u.running }) : pairAvatar(u.members, u.members.filter(a => a.online && u.tasks.some(t => t.agent === a.id && t.state === 'working')).map(a => a.id)),
+        lead: single ? avatar(single) : pairAvatar(u.members),
         active: scope === u.id,
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
       })
@@ -259,7 +325,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
     tray.append(sketch(INBOX_SKETCH))
     const here = units.filter(u => u.online), away = units.filter(u => !u.online)
     root.replaceChildren(
-      entry({ id: null, label: INBOX_WORD, lead: tray, active: scope == null, mark: inboxCount(fresh, knocking) }),
+      entry({ id: null, label: INBOX_WORD, lead: tray, active: scope == null, mark: inboxCount(fresh, knocking), sub: workingLine(working) }),
       ...here.map(unitRow),
       ...(away.length ? [el('h2', 'caps agent-heading agent-heading-away', 'Disconnected'), ...away.map(unitRow)] : []),
     )
