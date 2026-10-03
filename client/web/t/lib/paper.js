@@ -14,15 +14,16 @@
 // The listeners at the foot of this file hang on the document and the window once and do nothing while no Desk
 // is shown (they outlive a page on purpose: the module is loaded once, the Desk comes and goes).
 
+// The two switches (pen, clear the table) and the wipe of the cards: t/lib/clear.js.
+import { switches, wipe } from './clear.js'
 const PAD_WORD = 'Scratchpad'
-const NS = 'http://www.w3.org/2000/svg'
 const HIDE_KEY = 'trommi-desk-cards-hidden'
 const ZOOM_KEY = 'trommi-deskpad-zoom'
 const root = document.documentElement
 const phone = matchMedia('(max-width: 860px)')
 
-let marker = null     // #paper-island: what the hub says (sessions, speech)
-let box = null, paper = null, frame = null, layer = null, over = null, room = null, penSwitch = null, eyeSwitch = null
+let marker = null     // #paper-island: what the hub says (sessions)
+let box = null, paper = null, frame = null, layer = null, over = null, room = null, penSwitch = null, clearSwitch = null
 let ready = false     // the pad's page has started and listens
 let extent = 0        // how far down the paper is used (the pad says)
 let front = false     // the paper has the pointer (the pad says)
@@ -30,7 +31,6 @@ let lastTop = 0, lastRoom = null, lastContext = ''
 let gliding = false
 let cardsHidden = false
 let zoom = 1, paperW = 0, panX = 0, pinch = null, pinchFrame = 0
-let moving = 0, pulled = false
 let watchers = []     // what has to be undone when the paper is taken down
 let waiting = null    // the paper is asked for, not laid yet: the way to stop waiting
 // Hidden cards are never carried over a reload: a page that comes up shows its cards. (The old client kept the flag
@@ -52,7 +52,7 @@ function tellPad(force = false) {
   if (!ready || !frame?.contentWindow) return
   let sessions = []
   try { sessions = JSON.parse(marker?.dataset.sessions ?? '[]') } catch {}
-  const msg = { trommi: 'pad', type: 'context', open: deskShown(), prefer: [], theme: root.dataset.theme === 'dark' ? 'dark' : 'light', sessions, speech: Boolean(marker?.hasAttribute('data-speech')) }
+  const msg = { trommi: 'pad', type: 'context', open: deskShown(), prefer: [], theme: root.dataset.theme === 'dark' ? 'dark' : 'light', sessions }
   const sig = JSON.stringify(msg)
   if (!force && sig === lastContext) return
   lastContext = sig
@@ -87,31 +87,10 @@ function follow() {
   // The list changed its height and the page was scrolled along with it. While the paper is in front, what is
   // under the pen stays instead: the scrolling is taken back.
   if (front && !gliding && lastRoom != null && Math.abs(at - lastRoom) >= 1 && Math.abs(box.scrollTop - lastTop) >= 1) box.scrollTop = lastTop
-  if (Math.abs(box.scrollTop - lastTop) >= 1) { lastTop = box.scrollTop; moved() }
+  if (Math.abs(box.scrollTop - lastTop) >= 1) lastTop = box.scrollTop
   if (lastRoom == null || Math.abs(at - lastRoom) >= 1) { lastRoom = at; grow() }
   padWindow()?.padDesk?.(Math.round(lastTop), Math.round(at), true)
 }
-// On a phone the switches never lie on a card: while the Desk scrolls, and at rest wherever something of the list
-// would be under them, they are tucked away to a small tab at the left edge. A tap on the tab brings them out.
-function moved() {
-  pulled = false
-  clearTimeout(moving)
-  moving = setTimeout(() => { moving = 0; tuck() }, 260)
-  tuck()
-}
-function covers() {
-  const r = over.firstElementChild.getBoundingClientRect()   // the pill's place (the pill itself slides)
-  if (!r.width) return false
-  for (const x of [r.left + 6, r.left + r.width / 2, r.right - 6]) for (const y of [r.top + 4, r.top + r.height / 2, r.bottom - 4]) {
-    if (document.elementsFromPoint(x, y).some(n => box.contains(n) && !over.contains(n) && n.closest('.inbox-head, .inbox-groups'))) return true
-  }
-  return false
-}
-function tuck() {
-  if (!over) return
-  over.toggleAttribute('data-tuck', phone.matches && deskShown() && !pulled && !front && !cardsHidden && (Boolean(moving) || covers()))
-}
-
 /** The pen in hand on the Desk (true), or back to the pointer (false). */
 export function setDraw(on) {
   if (!box) return
@@ -128,7 +107,7 @@ export function togglePen() { setDraw(!(front && padWindow()?.pad?.state().tool 
 export function toggleCards(hide = !cardsHidden) {
   cardsHidden = Boolean(hide)
   if (box && !frame) lay()
-  paintSwitch()
+  if (box && clearSwitch) wipe(box, cardsHidden, paintSwitch); else paintSwitch()
 }
 /** A point of the window in the paper's own pixels: x from the Desk's left edge, y from the top of the Desk's page.
  *  The same pixels place a child of paperLayer() with left and top. Null while the Desk has no paper. */
@@ -195,46 +174,22 @@ function watchPinch(target, inFrame) {
   target.addEventListener('touchcancel', end, { passive: true })
 }
 
-// ---- the two switches at the Desk's lower left: the pen (draw anywhere), the eye (hide the cards) ----
-const SWITCH_ICONS = {
-  pen: ['M4 20l1.200-4.400L16.600 4.200a2 2 0 012.900 0l.300.300a2 2 0 010 2.900L8.400 18.800z', 'M14.500 6.500l3 3'],
-  eye: ['M2.600 12.300c2.400-4 5.600-6.100 9.500-6.100 3.800 0 7 2 9.400 5.900-2.500 3.900-5.600 5.800-9.500 5.800-3.800 0-7-1.900-9.400-5.600', 'M12 9.300a2.800 2.800 0 1 0 .100 0'],
-  slash: ['M4.600 19.700C9.300 14.600 14.300 9.500 19.600 4.400'],
-}
-function switchButton(icons, label) {
-  const b = document.createElement('button')
-  b.type = 'button'
-  b.className = 'deskpad-switch-btn'
-  const svg = document.createElementNS(NS, 'svg')
-  svg.setAttribute('viewBox', '0 0 24 24')
-  svg.setAttribute('aria-hidden', 'true')
-  for (const name of icons) for (const d of SWITCH_ICONS[name]) {
-    const path = document.createElementNS(NS, 'path')
-    path.setAttribute('d', d)
-    if (name === 'slash') path.setAttribute('class', 'deskpad-slash')
-    svg.append(path)
-  }
-  b.append(svg, Object.assign(document.createElement('span'), { className: 'deskpad-switch-note' }))
-  b.setAttribute('aria-label', label)
-  b.title = label
-  return b
-}
+// ---- the two switches beside the memo button: the pen (draw anywhere), clear the table (only the paper) ----
 function paintSwitch() {
   if (!box) return
   box.toggleAttribute('data-cards-hidden', cardsHidden && Boolean(paper))
   box.toggleAttribute('data-paper-front', front)
   if (!penSwitch) return
   penSwitch.setAttribute('aria-pressed', String(front))
-  eyeSwitch.setAttribute('aria-pressed', String(cardsHidden))
+  clearSwitch.setAttribute('aria-pressed', String(cardsHidden))
   // Hidden never hides a knock: the switch says how many knock, and one press brings the cards back.
   const n = cardsHidden ? knocks() : 0
-  const note = eyeSwitch.querySelector('.deskpad-switch-note')
+  const note = clearSwitch.querySelector('.clear-note')
   const text = n ? knocksText(n) : ''
   if (note.textContent !== text) note.textContent = text
-  eyeSwitch.toggleAttribute('data-knocks', n > 0)
-  const label = cardsHidden ? (n ? `${knocksText(n)}: show the cards again` : 'Show the cards again') : 'Hide the cards: only the paper (W)'
-  if (eyeSwitch.title !== label) { eyeSwitch.setAttribute('aria-label', label); eyeSwitch.title = label }
-  tuck()
+  clearSwitch.toggleAttribute('data-knocks', n > 0)
+  const label = cardsHidden ? (n ? `${knocksText(n)}: show the cards again` : 'Show the cards again') : 'Clear the table: only the paper (W)'
+  if (clearSwitch.title !== label) { clearSwitch.setAttribute('aria-label', label); clearSwitch.title = label }
 }
 
 /** The Desk's own things come first after the paper's three boxes, and the free room is last. A morph may have put
@@ -260,33 +215,19 @@ function lay() {
   frame.title = PAD_WORD
   frame.tabIndex = -1   // not a stop for Tab: the paper is taken up with P or the pen switch, and left with Escape
   frame.setAttribute('aria-label', `${PAD_WORD}: the paper the Desk lies on`)
-  frame.allow = 'microphone; clipboard-read; clipboard-write'
+  frame.allow = 'clipboard-read; clipboard-write'
   frame.src = '/pad/?embed=1&desk=1'
   paper.append(frame)
   layer = permanent(document.createElement('div'), 'deskpad-layer')
   layer.className = 'deskpad-layer'
   over = permanent(document.createElement('div'), 'deskpad-over')
   over.className = 'deskpad-over'
-  const pill = document.createElement('div')
-  pill.className = 'deskpad-switch'
-  pill.setAttribute('role', 'toolbar')
-  pill.setAttribute('aria-label', PAD_WORD)
-  penSwitch = switchButton(['pen'], 'Draw on the Desk, anywhere (P); Escape ends it')
-  penSwitch.id = 'deskpad-pen'
-  penSwitch.setAttribute('aria-keyshortcuts', 'P')
-  eyeSwitch = switchButton(['eye', 'slash'], 'Hide the cards: only the paper (W)')
-  eyeSwitch.id = 'deskpad-eye'
-  eyeSwitch.setAttribute('aria-keyshortcuts', 'W')
+  const made = switches(PAD_WORD)
+  penSwitch = made.pen
+  clearSwitch = made.clear
   penSwitch.addEventListener('click', togglePen)
-  eyeSwitch.addEventListener('click', () => toggleCards())
-  pill.append(penSwitch, eyeSwitch)
-  // The pill's place stays put; the pill slides out of and into it (tuck()).
-  const place = document.createElement('div')
-  place.className = 'deskpad-switch-at'
-  place.append(pill)
-  over.append(place)
-  // Tucked away, the pill is a tab: the first tap only brings it out.
-  place.addEventListener('click', e => { if (over.hasAttribute('data-tuck')) { e.preventDefault(); e.stopPropagation(); pulled = true; tuck() } }, true)
+  clearSwitch.addEventListener('click', () => toggleCards())
+  over.append(made.place)
   room = permanent(document.createElement('div'), 'deskpad-room')
   room.className = 'deskpad-room'
   box.prepend(paper, layer, over)
@@ -298,7 +239,7 @@ function lay() {
   watchPinch(box, false)
   const sized = new ResizeObserver(measure)
   sized.observe(box)
-  const list = new ResizeObserver(() => { follow(); tuck() })
+  const list = new ResizeObserver(follow)
   const watchList = () => { for (const node of box.querySelectorAll(':scope > .inbox-head, :scope > .inbox-groups')) list.observe(node) }
   watchList()
   // A stream replaced a row, the heading or the list: the paper follows; it is not laid again.
@@ -308,7 +249,7 @@ function lay() {
     due ||= requestAnimationFrame(() => { due = 0; if (!box) return; order(); watchList(); paintSwitch(); follow() })
   })
   changed.observe(box, { childList: true, subtree: true })
-  const onPhone = () => { tuck(); grow() }
+  const onPhone = () => grow()
   phone.addEventListener('change', onPhone)
   watchers = [() => sized.disconnect(), () => list.disconnect(), () => changed.disconnect(), () => phone.removeEventListener('change', onPhone), () => cancelAnimationFrame(due)]
   paintSwitch()
@@ -322,12 +263,11 @@ function lift() {
   if (paper) document.dispatchEvent(new CustomEvent('paper:gone'))   // what lies on the layer goes home first (memo.js)
   for (const undo of watchers) undo()
   watchers = []
-  clearTimeout(moving)
   for (const node of [paper, layer, over, room]) node?.remove()
   if (box) { box.classList.remove('has-deskpad'); box.removeAttribute('data-paper-front'); box.removeAttribute('data-cards-hidden'); box.removeEventListener('scroll', follow) }
-  box = paper = frame = layer = over = room = penSwitch = eyeSwitch = null
+  box = paper = frame = layer = over = room = penSwitch = clearSwitch = null
   ready = front = gliding = penWanted = false
-  extent = panX = lastTop = moving = 0
+  extent = panX = lastTop = 0
   lastRoom = pinch = null
   lastContext = ''
 }
@@ -340,7 +280,7 @@ export function mount(node) {
   lift()
   box = desk
   if (!box) return
-  if (cardsHidden) return lay()   // hidden in this tab before (a Turbo visit away and back): the eye says so
+  if (cardsHidden) return lay()   // hidden in this tab before (a Turbo visit away and back): the switch says so
   // Nothing of the pad is fetched before the page has painted: when the browser is idle, or at the first touch.
   const go = () => lay()
   const first = ['pointerdown', 'keydown', 'touchstart', 'wheel']

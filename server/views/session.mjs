@@ -14,7 +14,7 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { html, raw } from './html.mjs'
-import { WORDS, rich, kindOf, linkInfo, ago, agoSpan, advisedLabels, micButton } from './text.mjs'
+import { WORDS, rich, kindOf, linkInfo, ago, agoSpan, advisedLabels } from './text.mjs'
 import { deskRow, runSection } from './desk.mjs'
 import { sessionHeadEdit } from './session-edit.mjs'
 import { srcOf } from './picture.mjs'
@@ -278,7 +278,7 @@ export function composer(s, base, { text = '', focus = false } = {}) {
 <div class="composer-files" data-composer-target="chips"></div>
 <label class="mic composer-clip" title="Attach a picture or a file">${sk('clip')}<input class="offscreen" type="file" name="files" multiple data-composer-target="picker" data-action="change->composer#paint" aria-label="Attach pictures or files (at most ${MAX_FILES})"></label>
 <textarea name="text" id="composer-field-${s.id}" rows="1" data-composer-target="field" data-action="input->composer#typed keydown->composer#keys paste->composer#paste" autocomplete="off" enterkeyhint="enter" placeholder="Message to the agent" aria-label="Message to ${s.agent.name}">${text}</textarea>
-${micButton(`composer-field-${s.id}`, s.model.state.speech)}<button class="send" type="submit" aria-label="Send" data-composer-target="send">${ico('send')}</button>
+<button class="send" type="submit" aria-label="Send" data-composer-target="send">${ico('send')}</button>
 </form>`
 }
 export const sendError = (s, text = '') => html`<p class="send-error" id="session-error-${s.id}" role="alert"${text ? '' : raw(' hidden')}>${text}</p>`

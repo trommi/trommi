@@ -83,7 +83,7 @@ function build() {
   frame = document.createElement('iframe')
   frame.title = PAD_WORD
   frame.src = '/pad/?embed=1'
-  frame.allow = 'microphone; clipboard-read; clipboard-write'
+  frame.allow = 'clipboard-read; clipboard-write'
   overlay.append(frame)
   body.append(overlay)
 }
@@ -143,7 +143,7 @@ function tellPad(force = false) {
   const msg = {
     trommi: 'pad', type: 'context', open, prefer: open ? prefer : [],
     theme: root.dataset.theme === 'dark' ? 'dark' : 'light',
-    ...(known ? { sessions: state.all.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), hue: hueOf(a.id), mark: markOf(a) })), speech: Boolean(state.speech) } : {}),
+    ...(known ? { sessions: state.all.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), hue: hueOf(a.id), mark: markOf(a) })) } : {}),
   }
   const sig = JSON.stringify(msg)
   if (!force && sig === lastContext) return
@@ -468,7 +468,7 @@ function mountDesk(arrived) {
   // first in view (follow(), below), not on a session's page or an Agents page that never shows the paper.
   frame.tabIndex = -1   // not a stop for Tab: the paper is taken up with P or the pen switch, and left with Escape
   frame.setAttribute('aria-label', `${PAD_WORD}: the paper the Desk lies on`)
-  frame.allow = 'microphone; clipboard-read; clipboard-write'
+  frame.allow = 'clipboard-read; clipboard-write'
   paper.append(frame)
   layer = document.createElement('div')
   layer.className = 'deskpad-layer'

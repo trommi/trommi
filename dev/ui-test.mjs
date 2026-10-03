@@ -3358,7 +3358,7 @@ async function groupLinks() {
 async function groupModules() {
   const dir = path.join(ROOT, 'client', 'web', 'js')
   // (The worklet runs in an audio thread; admin.js, help.js and asset.js are the scripts of their own pages.)
-  const files = fs.readdirSync(dir).filter(f => f.endsWith('.js') && !['pcm-worklet.js', 'admin.js', 'help.js', 'asset.js'].includes(f))
+  const files = fs.readdirSync(dir).filter(f => f.endsWith('.js') && !['admin.js', 'help.js', 'asset.js'].includes(f))
   await open('/')
   for (const file of files) {
     const out = await ev(js`import(${`/js/${file}`}).then(() => 'ok', e => String(e?.message ?? e))`)
@@ -3370,7 +3370,7 @@ async function groupModules() {
   const up = await waitFor('the window opens', '__t.focusOpen()', 4000).catch(() => false)
   check(up, `the Focus window does not open: ${[...new Set(problems)].join(' | ').slice(0, 300) || 'nothing happens, and no error is logged'}`)
   await closeWindows()
-  // German in the sources: a string that only shows in a state the test never reaches (no microphone, a refusal).
+  // German in the sources: a string that only shows in a state the test never reaches (a refusal).
   // Allowed: what is read aloud from a German card, a character class, the words by which an agent's "no" is known.
   const allowed = /^\s*(\/\/|\*|\/\*)|^\s*de: \{|äöüÄÖÜß\]|const (NEGATIVE|BARE) = /
   const web = path.join(ROOT, 'client', 'web')

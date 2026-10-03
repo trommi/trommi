@@ -19,8 +19,7 @@ const check = (name, ok, detail = '') => { results.push({ name, ok: Boolean(ok),
 const origin = new URL(url).origin
 const token = new URL(url).search   // "?t=demo" on a demo board
 async function session(width, height, { mobile = false, hash = '', at = url, wipe = true } = {}) {
-  // a fake microphone, so that a board with a speech key can start a real recording
-  const browser = await launchChromium({ width, height, args: ['--use-fake-device-for-media-stream', '--use-fake-ui-for-media-stream'] })
+  const browser = await launchChromium({ width, height })
   const page = await browser.page()
   const errors = []
   await page.send('Runtime.enable')
@@ -119,30 +118,7 @@ const summary = `await pad.settled?.(3000); return { n: pad.elements().length, t
   await s.drag([[290, 262], [520, 262]])
   await s.key('p')
 
-  // hold to speak. With a speech key on the board the microphone really records (a fake
-  // device here); that audio is discarded instead of being sent to the speech service.
-  const real = st.board.speech
-  await s.page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: 330, y: 430, button: 'left', buttons: 1, clickCount: 1 })
-  await sleep(1000)
-  const held = await s.js(`return { rec: pad.state().recording, shown: !document.getElementById('rec').hidden, label: document.getElementById('rec-label').textContent }`)
-  await s.shot('03-recording')
-  if (real) await s.key('Escape')
-  await s.page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: 330, y: 430, button: 'left', buttons: 0, clickCount: 1 })
-  await sleep(1300)
-  st = await s.js(summary)
-  const voice = await s.js(`return pad.elements().find(e => e.type === 'voice')`)
-  if (real) check('holding still starts a real recording (discarded, not sent to the speech service)', held.rec === 'recording' && held.shown && held.label.startsWith('Recording') && !voice && !st.recording, held.label)
-  else check('holding still records (stub) and lands a marked voice element at that spot', held.rec === 'recording' && Boolean(voice) && voice.data.stub === true && Math.abs(voice.x - (330 - st.view.x)) < 2, voice ? voice.data.text.slice(0, 40) + '…' : 'none')
   let n = st.n
-
-  // M key: record at the middle, Esc discards
-  await s.key('Escape')
-  await s.key('m')
-  await sleep(600)
-  const recShown = await s.js(`return !document.getElementById('rec').hidden && pad.state().recording`)
-  await s.key('Escape')
-  await sleep(200)
-  check('M starts a recording, Esc discards it', recShown === 'recording' && (await s.js(summary)).n === n && !(await s.js(summary)).recording, String(recShown))
 
   // paste a picture
   await s.js(`
@@ -258,7 +234,7 @@ const summary = `await pad.settled?.(3000); return { n: pad.elements().length, t
   await s.shot('08-send-menu')
   await s.js(`document.querySelector('#send-menu .pad-menu-item').click(); await new Promise(r => setTimeout(r, 500))`)
   const payload = await s.js(`const p = await pad.payload(); return { ...p, png: p.png.slice(0, 22) + '… ' + p.png.length + ' chars' }`)
-  check('the payload has a PNG, the plain text and the element ids', payload.png.startsWith('data:image/png') && payload.text.includes('Ship the pad prototype') && (real || payload.text.includes('Sample transcript')) && payload.elements.length === n + 2 && payload.bbox.w > 0, JSON.stringify({ text: payload.text.slice(0, 60), bbox: payload.bbox, n: payload.elements.length }))
+  check('the payload has a PNG, the plain text and the element ids', payload.png.startsWith('data:image/png') && payload.text.includes('Ship the pad prototype') && payload.elements.length === n + 2 && payload.bbox.w > 0, JSON.stringify({ text: payload.text.slice(0, 60), bbox: payload.bbox, n: payload.elements.length }))
   fs.writeFileSync(path.join(outDir, 'payload.json'), JSON.stringify(payload, null, 2))
   await s.shot('09-send-dialog')
   // (Wait for the answer rather than a fixed time: the send goes to the board and back.)
@@ -327,23 +303,6 @@ for (const [name, hash] of [['light', ''], ['dark', '#dark']]) {
   st = await s.js(summary)
   check(`phone ${name}: two fingers zoom and draw nothing`, st.view.z > z0 * 1.5 && st.types.filter(t => t === 'stroke').length === 1, `z ${z0}→${st.view.z.toFixed(2)}`)
   await s.js(`document.getElementById('fit').click(); await new Promise(r => setTimeout(r, 500))`)
-  // hold to speak
-  await s.touch('touchStart', [[200, 620]]); await sleep(1000)
-  const held = await s.js(`return pad.state().recording`)
-  if (st.board.speech) await s.js(`document.getElementById('rec-cancel').click()`)
-  await s.touch('touchEnd', [])
-  await sleep(1300)
-  st = await s.js(summary)
-  check(`phone ${name}: a held finger records`, held === 'recording' && !st.recording && (st.board.speech || st.types.includes('voice')), st.types.join(','))
-  if (!st.board.speech) {
-    // spoken at the very foot of the screen, beside the toolbar: the note must not end up under it
-    await s.key('Escape')
-    await s.touch('touchStart', [[18, 806]]); await sleep(900); await s.touch('touchEnd', [])
-    await sleep(1500)
-    const low = await s.js(`const e = pad.elements().filter(e => e.type === 'voice').at(-1), v = pad.view(); return e ? { bottom: (e.y + e.h) * v.z + v.y, top: e.y * v.z + v.y, n: pad.elements().filter(e => e.type === 'voice').length } : null`)
-    check(`phone ${name}: a note spoken at the foot of the screen is moved clear of the toolbar`, Boolean(low) && low.n === 2 && low.bottom <= 860 - 96 + 1 && low.top >= 60, low ? `bottom at ${Math.round(low.bottom)} of 860` : 'no voice element')
-    st = await s.js(summary)
-  }
   if (!st.sel) await s.key('a', { modifiers: CTRL })
   await s.shot(`20-phone-${name}`)
   await s.js(`document.getElementById('send-to').click(); await new Promise(r => setTimeout(r, 200)); document.querySelector('#send-menu .pad-menu-item').click(); await new Promise(r => setTimeout(r, 500))`)

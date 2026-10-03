@@ -6,7 +6,7 @@
 // A note floats over whatever page is shown and stays there while one goes elsewhere and after a reload. It is
 // carried by the strip at its top; dropped on the Desk's bare paper it lies on the paper and scrolls with it
 // (js/padlink.js gives the layer and the paper's pixels: paperLayer(), paperPoint()). It is only yellow paper:
-// ruled lines that grow with the words, and at its foot the paperclip, the microphone (speech.js), the bin, and
+// ruled lines that grow with the words, and at its foot the paperclip, the bin, and
 // at the end of the dashed tear line the crown. The crown sends: a memo goes to the crowned session of the desk
 // (Enter; Shift+Enter makes a new line). There is no choice of receiver. Sent, the note tears off and a quiet
 // line says to whom. Esc puts a note away: the yellow button then holds it (it shows how many it holds, and a click
@@ -18,7 +18,6 @@
 import { subscribe, getState, sendMessage } from './store.js'
 import { el, sketch, crown } from './ui.js'
 import { crowned } from './agents.js'
-import { dictationMic, isDictating } from './speech.js'
 import { pasteChip } from './cardclip.js'
 import { link, sessionPath } from './link.js'
 import { paperPoint, paperLayer } from './padlink.js'
@@ -135,7 +134,6 @@ function makeView(id) {
   const clip = button('memo-tool memo-clip', sketch('clip'))
   clip.title = 'Attach a picture or a file (or paste it, or drop it on the note)'
   clip.setAttribute('aria-label', 'Attach a picture or a file')
-  const mic = dictationMic(field, { key: `quick:${id}`, onError: text => say(text) })
   // Tear off and send: the crown at the end of the dashed line the note tears along (painted by paintTo()).
   const sends = el('span', 'memo-sends')
   const tear = el('i', 'memo-tear')
@@ -144,7 +142,7 @@ function makeView(id) {
   const local = el('small', 'memo-local', 'this browser only')
   local.title = 'The hub does not keep notes yet (it has to be restarted): this note is kept in this browser.'
   const foot = el('footer', 'memo-foot')
-  foot.append(clip, mic, bin, local, tear, sends)
+  foot.append(clip, bin, local, tear, sends)
   form.append(head, body, files, foot, picker)
   node.append(form)
 
@@ -522,9 +520,9 @@ document.addEventListener('pointerdown', e => {
   setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 600)
 })
 // Esc puts the note the keyboard is in away; what was written stays on it.
-// (Heard at the window, before the table of keys takes Esc to leave the field; a running dictation keeps its Esc.)
+// (Heard at the window, before the table of keys takes Esc to leave the field.)
 window.addEventListener('keydown', e => {
-  if (e.key !== 'Escape' || isDictating() || document.querySelector('dialog[open]')) return
+  if (e.key !== 'Escape' || document.querySelector('dialog[open]')) return
   const v = [...views.values()].find(o => o.node.contains(e.target))
   if (!v) return
   e.preventDefault()

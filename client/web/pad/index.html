@@ -24,21 +24,12 @@
 <div class="pad" id="pad" data-tool="pen">
   <canvas class="pad-canvas" id="canvas" role="img" aria-label="Pad: an endless surface for notes, drawings and pictures"></canvas>
 
-  <p class="pad-hint" id="hint"><b>Click anywhere</b> and type. <b>Drag</b> to draw. <b>Hold</b> to speak.</p>
+  <p class="pad-hint" id="hint"><b>Click anywhere</b> and type. <b>Drag</b> to draw.</p>
 
   <!-- the text being typed; it sits on the canvas and follows pan and zoom -->
   <div class="pad-editor" id="editor" role="textbox" aria-multiline="true" aria-label="Note" spellcheck="false" hidden></div>
   <div class="pad-caret-tip" id="caret-tip" hidden>
-    <button type="button" class="pad-chip" id="caret-mic" data-icon="mic">Speak</button>
-    <span>or just type · Esc closes</span>
-  </div>
-
-  <div class="pad-rec" id="rec" role="status" hidden>
-    <span class="pad-rec-dot"></span>
-    <span class="pad-rec-label" id="rec-label">Recording</span>
-    <span class="pad-rec-time" id="rec-time">0:00</span>
-    <button type="button" class="pad-chip" id="rec-stop">Done</button>
-    <button type="button" class="pad-icon-btn pad-rec-cancel" id="rec-cancel" data-icon="close" aria-label="Discard the recording"></button>
+    <span>Type · Esc closes</span>
   </div>
 
   <div class="pad-top">
@@ -92,7 +83,6 @@
         <div class="pad-style-row"><span class="pad-label">Width</span><div class="pad-widths" id="widths" role="group" aria-label="Width"></div></div>
       </div>
       <span class="pad-sep"></span>
-      <button type="button" class="pad-icon-btn" id="mic" data-icon="mic" aria-label="Speak a note" aria-pressed="false" data-tip="Speak · M"></button>
       <button type="button" class="pad-icon-btn" id="image" data-icon="clip" aria-label="Attach a picture" data-tip="Attach a picture · I"></button>
     </div>
   </div>

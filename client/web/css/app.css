@@ -751,8 +751,6 @@ button.agent-badge:active { scale: .95; }
 /* ---- microphone and focus button ---- */
 .mic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); }
 .mic:hover { background: var(--sunken); color: var(--fg); }
-.mic[data-rec="recording"] { background: var(--st-decision); color: var(--surface); animation: blink 1.2s var(--ease-in-out) infinite; }
-.mic[data-rec="working"] { color: var(--accent); animation: blink .8s var(--ease-in-out) infinite; }
 .focus-open .ico { width: 18px; height: 18px; }
 /* Wide screens reach the overview of all sessions from the bar's words; phones from one icon in the top bar. */
 .roster-open { display: none; }

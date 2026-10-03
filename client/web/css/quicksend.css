@@ -124,14 +124,12 @@ body:not([data-scope="all"]):not([data-page]) .memo-sticky { width: 23px; height
 .memo-tear { flex: 1; }
 .memo-local { flex: none; margin-left: 6px; font-size: .68rem; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
 .memo-local[hidden] { display: none; }
-.memo-tool, .memo .dictate-mic { flex: none; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 0; background: none; color: var(--muted); cursor: pointer; }
+.memo-tool { flex: none; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 0; background: none; color: var(--muted); cursor: pointer; }
 .memo-tool:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
 .memo-tool .sketch { width: 17px; height: 17px; }
 /* paperclip and bin lie together at the lower left, both large enough to hit (card Nr. 195) */
 .memo-foot .memo-tool { width: 38px; height: 38px; }
 .memo-foot .memo-tool .sketch { width: 23px; height: 23px; stroke-width: 1.8; }
-.memo .dictate-mic { border-radius: 50%; }
-.memo .dictate-mic[hidden] { display: none; }
 /* the crown sends: no button of its own, the crown is where the note goes, a drawn arrow points at it; the crowned
    session's name shows on hover (data-name, server/views/memo.mjs). Hollow while the desk has no crown. */
 .memo-sends { flex: none; display: inline-flex; align-items: center; gap: 4px; }
@@ -194,7 +192,7 @@ body:not([data-scope="all"]):not([data-page]) .quick-note { bottom: auto; top: 5
   .memo-head { cursor: default; height: 24px; margin: 0 calc(-1 * max(16px, env(safe-area-inset-right, 0px))) 6px calc(-1 * max(16px, env(safe-area-inset-left, 0px))); background: none; }
   .memo-field { font-size: 16px; }
   .memo-foot { margin-inline: 0; }
-  .memo-tool, .memo .dictate-mic { width: 40px; height: 40px; }
+  .memo-tool { width: 40px; height: 40px; }
   .memo-foot .memo-tool { width: 40px; height: 40px; }
   .memo-foot .memo-tool .sketch { width: 24px; height: 24px; }
   .memo-send { width: 60px; height: 48px; }

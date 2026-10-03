@@ -3,9 +3,21 @@
 *
 !package.json
 !package-lock.json
-!server/server.mjs
+!server
+!crypto
 !client/web
-# Drafts and previews in client/web that the board does not need.
+!demo/design-a.png
+!demo/design-b.png
+# Tests, notes and drafts the hub does not need at runtime.
+server/test.mjs
+server/*-test.mjs
+server/store/test.mjs
+server/**/*.md
+crypto/test.mjs
+crypto/hub-test.mjs
+crypto/*.md
+crypto/demo.html
 client/web/designs
+client/web/test-static-*
 client/web/*-preview.html
 client/web/*.md

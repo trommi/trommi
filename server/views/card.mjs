@@ -11,7 +11,7 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: client/web/css/cardpage.css.
 import { html, raw } from './html.mjs'
-import { WORDS, EXPLAIN_TEXT, micButton, rich, plain, cardNr, cardNote, kindOf, advisedKeys, advisedLabels, agoSpan, knockWord, isKnock } from './text.mjs'
+import { WORDS, EXPLAIN_TEXT, rich, plain, cardNr, cardNote, kindOf, advisedKeys, advisedLabels, agoSpan, knockWord, isKnock } from './text.mjs'
 import { cardPath, copyButton } from './desk.mjs'
 import { doodleSvg, sketchSvg, crownSvg } from '../../client/web/js/pen.js'
 import { srcOf, thumb } from './picture.mjs'   // a stored picture at the size it is shown (thumbs.mjs)
@@ -268,7 +268,7 @@ export function cardPage(card, model, base, { pic = 1, walk = false, error = '',
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${open && card.kind === 'decision' ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#link circles:drawn->card#link turbo:submit-start->card#sent dragover->card#over drop->card#drop">
 <nav class="tc-head" aria-label="Around this question">
-<a class="tc-back" data-nav href="${home}">${icon(ARROW_L)}<span>${session ? session.name : WORDS.desk}</span></a>
+<a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape"><span>Back to ${session ? session.name : WORDS.desk}</span><kbd>Esc</kbd></a>
 ${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-more-open" aria-label="More for this question">More ${sk('unfold')}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' ? html`${more('', 'snooze', WORDS.later, `${WORDS.later}: it waits for you on "Later"`, act(card, base, 'snooze'))}${more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred'))}` : ''}
@@ -289,7 +289,7 @@ ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? htm
 ${open && card.kind === 'decision' ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
 <div class="tc-chips" data-card-target="chips" hidden></div>
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="2" placeholder="Write to the agent about this question" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk below; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
-<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label>${micButton(`card-field-${card.id}`, model.state.speech)}<span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div>
+<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div>
 </form>
 </main>`
 }

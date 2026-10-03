@@ -1,48 +1,5 @@
-/* Live dictation: the microphone on a text field, and the field while words arrive.
-   The logic is in js/speech.js. Colours come from tokens.css. */
-
-/* The microphone, drawn by hand like the other marks. */
-.dictate-mic { position: relative; flex: none; width: 40px; height: 40px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--muted); cursor: pointer; transition: color var(--d-fast), background var(--d-fast), transform var(--d-fast) var(--ease-out); -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
-.dictate-mic[hidden] { display: none; }
-.dictate-mic:hover { background: var(--sunken); color: var(--fg); }
-.dictate-mic:active { transform: scale(.92); }
-.dictate-mic:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
-.dictate-mic .sketch { display: block; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
-
-/* The level: a loop round the microphone that breathes with the voice. --level runs from 0 to 1. */
-.dictate-ring { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: color-mix(in srgb, currentColor 10%, transparent); stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; opacity: 0; pointer-events: none; scale: calc(.86 + var(--level, 0) * .3); transition: opacity var(--d-med), scale 90ms linear; }
-.dictate-mic[data-rec] { color: var(--st-decision); background: none; }
-.dictate-mic[data-rec] .dictate-ring { opacity: calc(.45 + var(--level, 0) * .55); }
-.dictate-mic[data-rec="starting"] .dictate-ring { opacity: .3; }
-/* Spoken, and the final reading is on its way. */
-.dictate-mic[data-rec="finishing"] { color: var(--accent); }
-.dictate-mic[data-rec="finishing"] .dictate-ring { animation: dictate-settle 1.4s var(--ease-in-out) infinite; }
-@keyframes dictate-settle { 50% { opacity: .25; scale: .94; } }
-
-/* A field with its microphone inside, at the right end. */
-.dictate-in { position: relative; display: block; min-width: 0; }
-.dictate-in > input, .dictate-in > textarea { width: 100%; padding-right: 46px; }
-.dictate-in > .dictate-mic { position: absolute; right: 2px; top: 50%; margin-top: -20px; }
-.dictate-in > textarea ~ .dictate-mic { top: auto; bottom: 2px; margin: 0; }
-
-/* While words arrive the field's own text is not painted; the same text stands over it,
-   the provisional words lighter. The caret stays the field's. */
-.is-dictating { -webkit-text-fill-color: transparent; }
-.is-dictating::placeholder { -webkit-text-fill-color: var(--faint); }
-.dictate-ghost { position: absolute; z-index: 1; box-sizing: border-box; overflow: hidden; border: 0 solid transparent; color: var(--fg); pointer-events: none; }
-.dictate-ghost-text { display: block; min-width: 100%; }
-.dictate-live { color: var(--faint); }
-
-/* In a session's composer the microphone stands where the old one did, between the pen and send. */
-@media (max-width: 720px) { .composer > .dictate-mic { width: 44px; height: 44px; } }
-
-/* In the question window the microphone stands between the field and the send button, the same size. */
-.focus-ask > .dictate-mic { width: 44px; height: 44px; }
-
-@media (prefers-reduced-motion: reduce) {
-  .dictate-ring { transition: opacity var(--d-med); scale: 1; }
-  .dictate-mic[data-rec="finishing"] .dictate-ring { animation: none; }
-}
+/* Read aloud. The logic is in js/speech.js (old client) and t/controllers/say_controller.js.
+   Colours come from tokens.css. (Live dictation was removed: out of scope for launch.) */
 
 /* ---- Read aloud: the small speaker beside every message ----
    Quiet at rest: it shows when the message is under the pointer or it has the focus, and stays

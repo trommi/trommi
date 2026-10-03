@@ -1,11 +1,10 @@
-// The global pad: one endless surface for notes, drawings, pictures and spoken
-// text, where every element is a record of its own and any selection can be sent
+// The global pad: one endless surface for notes, drawings and pictures,
+// where every element is a record of its own and any selection can be sent
 // to a session. Prototype; the model and the server it needs are in docs/pad.md.
 //
 // How input is read:
 //   click on empty paper   a cursor there; typing makes a text element
 //   drag                   pen and highlighter draw; the select tool frames a selection
-//   hold still             speak; the transcript lands there as a voice element
 //   click on an element    selects it; what is selected moves when dragged, with any tool
 import { openStore } from './db.js'
 import {
@@ -14,7 +13,7 @@ import {
   unionBox, scaled, textOf, renderPNG, renderRect,
 } from './elements.js'
 import { flySheet } from './fly.js'
-import { connectBoard, onBoard, boardState, setBoard, transcribe, sendSelection, SAMPLE_TRANSCRIPT } from './board.js'
+import { connectBoard, onBoard, boardState, setBoard, sendSelection } from './board.js'
 import { startSync } from './sync.js'
 import { PAD_WORD } from './name.js'
 
@@ -31,7 +30,6 @@ let host = { open: !EMBED, prefer: [] }   // what the board last said: is the pa
 const AUTHOR = 'human'   // with device keys this becomes the device id (docs/krypto-konzept.md)
 const MIN_Z = 0.05, MAX_Z = 8
 const UNDO_MAX = 200
-const HOLD_MS = 550       // a press that stays put this long starts a recording
 const CLICK_PX = 5        // further than this and a press is a drag
 const ERASER_R = 11
 const MAX_IMG = 2000, KEEP_BYTES = 1_500_000
@@ -104,7 +102,6 @@ const pointers = new Map()
 let hover = null, spaceDown = false
 let staticDirty = true, raf = 0, anim = null
 let edit = null                // the open note: { id, type, x, y, size, color, wrap }
-let rec = null                 // the running recording
 let lastClick = { id: null, t: 0 }
 let area = null                // the framed area waiting for a session: { x, y, w, h } in world units, list
 let toolBefore = 'pen'         // what was in hand before the area tool
@@ -412,10 +409,6 @@ function placeOverlays(S) {
     const tip = $('caret-tip')
     if (!tip.hidden) tip.style.transform = `translate(${Math.round(clamp(view.x + edit.x * view.z, 8, Math.max(8, W - tip.offsetWidth - 8)))}px, ${Math.round(view.y + (edit.y + edit.size * 1.35) * view.z + 8)}px)`
   }
-  if (rec) {
-    const node = $('rec')
-    node.style.transform = `translate(${Math.round(clamp(view.x + rec.x * view.z, 8, Math.max(8, W - node.offsetWidth - 8)))}px, ${Math.round(clamp(view.y + rec.y * view.z - 22, 60, Math.max(60, H - 150)))}px)`
-  }
   const bar = $('selbar')
   const show = Boolean(S) && !gesture && !edit
   if (bar.hidden === show) { bar.hidden = !show; if (!show) closeSendMenu() }
@@ -473,16 +466,16 @@ function refresh() {
   $('undo').disabled = !undo.length
   $('redo').disabled = !redo.length
   $('fit').disabled = !els.size
-  $('hint').dataset.show = String(!els.size && !edit && !rec && !gesture)
+  $('hint').dataset.show = String(!els.size && !edit && !gesture)
   for (const b of document.querySelectorAll('.pad-tool')) b.setAttribute('aria-pressed', String(b.dataset.tool === tool))
   pad.dataset.tool = tool
   if (DESK) {
     // A finger scrolls the Desk unless it holds a tool that draws, or something is selected and can be moved.
-    pad.dataset.touch = (tool === 'select' || tool === 'text') && !sel.size && !rec ? 'scroll' : 'draw'
+    pad.dataset.touch = (tool === 'select' || tool === 'text') && !sel.size ? 'scroll' : 'draw'
     deskExtent()
     // In front: a tool is in hand, or something on the paper is held. The Desk's cards then let everything through
     // (and go faint); with the bare pointer they work as always. The tools show while the paper is in front.
-    const front = tool !== 'select' || sel.size > 0 || Boolean(edit) || Boolean(area) || Boolean(rec)
+    const front = tool !== 'select' || sel.size > 0 || Boolean(edit) || Boolean(area)
     pad.toggleAttribute('data-started', front)
     if (front !== desk.front) { desk.front = front; tell('front', { front, tool }) }
   }
@@ -497,7 +490,6 @@ function refresh() {
   $('group').setAttribute('aria-pressed', String(Boolean(grouped)))
   $('group').setAttribute('aria-label', grouped ? 'Ungroup' : 'Group')
   $('group').dataset.tip = grouped ? 'Ungroup · Ctrl+Shift+G' : 'Group · Ctrl+G'
-  $('mic').setAttribute('aria-pressed', String(Boolean(rec)))
   renderStatus()
   updateCursor()
   dirty()
@@ -513,7 +505,7 @@ function renderStatus() {
     : s.mode === 'offline' ? `no connection: kept on this device${waiting}`
     : s.mode === 'starting' ? 'loading'
     : db?.kind === 'memory' ? 'not kept (this browser refuses storage)' : 'saved on this device only'
-  const board = b.board ? `board: ${b.sessions.length} session${b.sessions.length === 1 ? '' : 's'}${b.speech ? '' : ', speech is a stub'}` : 'no board: sample sessions, speech is a stub'
+  const board = b.board ? `board: ${b.sessions.length} session${b.sessions.length === 1 ? '' : 's'}` : 'no board: sample sessions'
   $('status').textContent = `${n} element${n === 1 ? '' : 's'} · ${where} · ${board}`
   $('status').dataset.kind = saveError || s.error ? 'error' : s.mode === 'offline' ? 'warn' : ''
   pad.dataset.sync = s.mode
@@ -740,15 +732,11 @@ editor.addEventListener('keydown', e => {
     e.stopPropagation()
     const el = commitEditor()
     if (el && !DESK) { sel.clear(); sel.add(el.id); refresh() }   // on the Desk the note is simply done: the cards answer again
-  } else if ((e.key === 'm' || e.key === 'M') && e.ctrlKey) {
-    e.preventDefault()
-    e.stopPropagation()
-    toggleRecording()
   }
 })
 editor.addEventListener('blur', () => {
   // the window lost focus (another tab, a dialog): the note stays open
-  setTimeout(() => { if (edit && document.hasFocus() && document.activeElement !== editor && !rec) commitEditor() }, 0)
+  setTimeout(() => { if (edit && document.hasFocus() && document.activeElement !== editor) commitEditor() }, 0)
 })
 editor.addEventListener('paste', e => {
   const files = [...(e.clipboardData?.files ?? [])].filter(f => f.type.startsWith('image/'))
@@ -759,124 +747,13 @@ editor.addEventListener('paste', e => {
   addImages(files, at)
 })
 
-// ── speaking ────────────────────────────────────────────────────────────────
-// On a board with a speech key, the audio goes to the board and the transcript
-// comes back. Anywhere else the flow is the same, but nothing is recorded and a
-// sample sentence lands: the element says so in data.stub.
-const fmt = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`
-async function startRecording(wx, wy, held = false) {
-  if (rec) return
-  commitEditor()
-  sel.clear()
-  const stub = !boardState().speech
-  rec = { x: wx, y: wy, t0: performance.now(), stub, held, state: 'recording', chunks: [], recorder: null, stream: null, timer: 0, stopped: false }
-  const mine = rec
-  $('rec').hidden = false
-  $('rec').dataset.state = 'recording'
-  $('rec-label').textContent = (stub ? 'Demo recording (no speech service)' : 'Recording') + (held ? ' · let go to finish' : '')
-  $('rec-stop').hidden = held
-  $('rec-time').textContent = '0:00'
-  rec.timer = setInterval(() => { $('rec-time').textContent = fmt(performance.now() - mine.t0) }, 250)
-  refresh()
-  if (stub) return
-  const fail = msg => { if (rec === mine) endRecording(); toast(msg, 'error', 5000) }
-  if (!navigator.mediaDevices?.getUserMedia || !window.MediaRecorder) {
-    return fail(window.isSecureContext ? 'This browser cannot record.' : 'The microphone only works over HTTPS or on localhost.')
-  }
-  try {
-    mine.stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-  } catch {
-    return fail('No access to the microphone. Allow it in the browser settings.')
-  }
-  if (rec !== mine || mine.stopped) { mine.stream.getTracks().forEach(t => t.stop()); if (rec === mine) endRecording(); return }
-  mine.t0 = performance.now()
-  mine.recorder = new MediaRecorder(mine.stream)
-  mine.recorder.ondataavailable = e => { if (e.data.size) mine.chunks.push(e.data) }
-  mine.recorder.onstop = () => finishRecording(mine)
-  mine.recorder.start()
-}
-function endRecording() {
-  if (!rec) return
-  clearInterval(rec.timer)
-  rec.stream?.getTracks().forEach(t => t.stop())
-  rec = null
-  $('rec').hidden = true
-  refresh()
-}
-/** Stop and transcribe; with discard, stop and forget. */
-function stopRecording(discard = false) {
-  if (!rec || rec.state !== 'recording') return
-  rec.stopped = true
-  rec.discard = discard
-  if (rec.stub) return finishRecording(rec)
-  if (rec.recorder) rec.recorder.stop()
-  // no recorder yet: the microphone prompt is still open, startRecording cleans up
-}
-async function finishRecording(r) {
-  if (rec !== r) return
-  clearInterval(r.timer)
-  r.stream?.getTracks().forEach(t => t.stop())
-  const ms = Math.round(performance.now() - r.t0)
-  if (r.discard) return endRecording()
-  r.state = 'working'
-  $('rec').dataset.state = 'working'
-  $('rec-label').textContent = r.stub ? 'Demo transcript' : 'Transcribing'
-  $('rec-stop').hidden = true
-  let text = ''
-  try {
-    if (r.stub) {
-      await new Promise(done => setTimeout(done, 500))
-      text = SAMPLE_TRANSCRIPT
-    } else {
-      const blob = new Blob(r.chunks, { type: r.recorder.mimeType || 'audio/webm' })
-      if (!blob.size) throw new Error('nothing was recorded')
-      // Only the words are kept: the recording is gone once it has been transcribed.
-      text = (await transcribe(blob)).trim()
-      if (!text) throw new Error('no words were heard')
-    }
-  } catch (err) {
-    if (rec === r) endRecording()
-    return toast(`Not transcribed: ${err.message}`, 'error', 5000)
-  }
-  if (rec !== r) return
-  endRecording()
-  const size = TEXT_SIZE
-  const el = makeText('voice', r2(r.x), r2(r.y - (size * 1.35) / 2), { text, size, color: style.pen.color, wrap: wrapAt(r.x), ms, stub: r.stub })
-  add([el])
-  sel.clear()
-  sel.add(el.id)
-  refresh()
-  reveal(el)
-}
-/** Pan just enough that the element is clear of the bars: a note spoken at the foot of a
- *  phone screen would otherwise land under the toolbar. */
-function reveal(el) {
-  const top = 64, bottom = H - 96, left = 8, right = W - 8
-  const x0 = el.x * view.z + view.x, y0 = el.y * view.z + view.y, x1 = x0 + el.w * view.z, y1 = y0 + el.h * view.z
-  let dx = 0, dy = 0
-  if (y1 > bottom) dy = bottom - y1
-  if (y0 + dy < top) dy = top - y0
-  if (x1 > right) dx = right - x1
-  if (x0 + dx < left) dx = left - x0
-  if (DESK) { if (dy) tell('scroll', { by: -dy }); return }
-  if (dx || dy) animateTo(view.x + dx, view.y + dy, view.z)
-}
 /** Where a note lands when no spot was clicked: the open cursor, else the middle of the screen. */
 function spot() {
   if (edit) return [edit.x, edit.y + (edit.size * 1.35) / 2]
   return toWorld(W / 2, H * 0.42)
 }
-function toggleRecording() {
-  if (rec) return stopRecording()
-  const [wx, wy] = spot()
-  startRecording(wx, wy)
-}
-// these buttons must not take the focus from the open note: it marks the spot
-for (const id of ['mic', 'caret-mic', 'image']) $(id).addEventListener('mousedown', e => e.preventDefault())
-$('mic').addEventListener('click', toggleRecording)
-$('caret-mic').addEventListener('click', toggleRecording)
-$('rec-stop').addEventListener('click', () => stopRecording())
-$('rec-cancel').addEventListener('click', () => stopRecording(true))
+// this button must not take the focus from the open note: it marks the spot
+$('image').addEventListener('mousedown', e => e.preventDefault())
 
 // ── pictures ────────────────────────────────────────────────────────────────
 async function importImage(file) {
@@ -970,23 +847,13 @@ function abortGesture() {
   gesture = null
   preview = null
   if (!g) return
-  clearTimeout(g.hold)
   if (g.type === 'draw' && g.moved && performance.now() - g.t0 > 350 && g.pts.length > 24) endDraw(g)
   if (g.type === 'erase' && g.erased.size) remove([...g.erased].map(id => els.get(id)).filter(Boolean))
-  if (g.type === 'speak') stopRecording(true)
   dirty()
 }
 function startPinch() {
   const [a, b] = [...pointers.values()]
   gesture = { type: 'pinch', d: Math.hypot(a.x - b.x, a.y - b.y) || 1, cx: (a.x + b.x) / 2, cy: (a.y + b.y) / 2, view: { ...view } }
-}
-/** A press on empty paper that stays put turns into a recording. */
-function armHold(g, wx, wy) {
-  g.hold = setTimeout(() => {
-    if (gesture !== g || g.moved || rec) return
-    gesture = { type: 'speak', id: g.id }
-    startRecording(wx, wy, true)
-  }, HOLD_MS)
 }
 
 canvas.addEventListener('pointerdown', e => {
@@ -1009,8 +876,6 @@ canvas.addEventListener('pointerdown', e => {
   if ((e.button === 1 || spaceDown) && !DESK) {
     e.preventDefault()
     gesture = { ...base, type: 'pan', vx: view.x, vy: view.y }
-  } else if (rec) {
-    gesture = { ...base, type: 'idle' }   // a recording is running: the paper waits
   } else if (tool === 'area') {
     gesture = { ...base, type: 'area' }
   } else if (tool === 'text') {
@@ -1034,12 +899,10 @@ canvas.addEventListener('pointerdown', e => {
       gesture = { ...base, type: 'deskpan' }   // up and down the browser scrolls the Desk; sideways the paper pans
     } else if (tool === 'select' || (e.shiftKey && !hit)) {
       gesture = { ...base, type: 'marquee', keep: e.shiftKey ? new Set(sel) : new Set() }
-      if (!e.shiftKey && !(DESK && touch)) armHold(gesture, wx, wy)   // on the Desk a resting finger is about to scroll, not to speak
     } else {
       const st = style[tool]
       gesture = { ...base, type: 'draw', hit, tool, color: st.color, size: SIZES[tool][st.w], pen: tool === 'pen' && e.pointerType === 'pen', pts: [], pr: [] }
       addPoint(gesture, e, true)
-      if (!hit) armHold(gesture, wx, wy)
     }
   }
   refresh()
@@ -1082,7 +945,7 @@ canvas.addEventListener('pointermove', e => {
   }
   if (g.id !== e.pointerId) return
   g.qx = px; g.qy = py
-  if (!g.moved && Math.hypot(px - g.px, py - g.py) > CLICK_PX) { g.moved = true; clearTimeout(g.hold) }
+  if (!g.moved && Math.hypot(px - g.px, py - g.py) > CLICK_PX) { g.moved = true }
   if (g.type === 'pan') return setView(g.vx + px - g.px, g.vy + py - g.py, view.z)
   if (g.type === 'deskpan') { if (g.moved) { deskPan((g.lx ?? g.px) - px); g.lx = px } return }
   if (g.type === 'draw') {
@@ -1126,11 +989,9 @@ function pointerEnd(e) {
   }
   if (g.id !== e.pointerId) return
   gesture = null
-  clearTimeout(g.hold)
   const cancelled = e.type === 'pointercancel'
   const click = !g.moved && !cancelled
-  if (g.type === 'speak') stopRecording(cancelled)
-  else if (g.type === 'draw') {
+  if (g.type === 'draw') {
     if (g.moved && !cancelled) { addPoint(g, e, true); endDraw(g) }
     else if (click && g.hit) { select(g.hit, g.shift); lastClick = { id: g.hit.id, t: performance.now() } }
     else if (click) placeCaret(g.wx, g.wy)
@@ -1258,8 +1119,7 @@ document.addEventListener('keydown', e => {
   const cmd = e.ctrlKey || e.metaKey
   const key = e.key.toLowerCase()
   if (e.key === 'Escape') {
-    if (rec) stopRecording(true)
-    else if (area) { if (!area.sending) clearArea() }
+    if (area) { if (!area.sending) clearArea() }
     else if (!$('style').hidden || !$('send-menu').hidden) closePopovers()
     else if (tool === 'area') setTool(toolBefore)
     else if (sel.size) { sel.clear(); refresh() }
@@ -1273,7 +1133,6 @@ document.addEventListener('keydown', e => {
     else if (key === 'a') { e.preventDefault(); sel.clear(); for (const el of ordered()) sel.add(el.id); refresh() }
     else if (key === 'd') { e.preventDefault(); duplicate() }
     else if (key === 'g') { e.preventDefault(); toggleGroup(!e.shiftKey) }
-    else if (key === 'm' && e.ctrlKey) { e.preventDefault(); toggleRecording() }
     return
   }
   if (e.key === ' ' && !DESK) {
@@ -1302,7 +1161,6 @@ document.addEventListener('keydown', e => {
   const tools = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text', a: 'area' }
   if (tools[key]) setTool(tools[key])
   else if (key >= '1' && key <= '4') setWidth(Number(key) - 1)
-  else if (key === 'm') toggleRecording()
   else if (key === 'i') $('file').click()
   else if (key === 's') { if (sel.size) $('send-to').click() }
   else if (DESK && 'f0+=-'.includes(key)) return   // no zoom on the Desk's paper
@@ -1661,14 +1519,13 @@ function hostSays(msg) {
   if (msg.type !== 'context') return
   const was = host.open
   host = { open: Boolean(msg.open), prefer: Array.isArray(msg.prefer) ? msg.prefer : [] }
-  if (msg.sessions) setBoard({ sessions: msg.sessions, speech: Boolean(msg.speech) })
+  if (msg.sessions) setBoard({ sessions: msg.sessions })
   if (msg.theme) setTheme(msg.theme === 'dark')
   paintSendTo()
   if (host.open && !was) { sync?.resume(); if (!DESK) window.focus() }
   if (!host.open && was) {
-    // Out of sight: keep what was being typed, drop what was being recorded, stop listening.
+    // Out of sight: keep what was being typed, stop listening.
     commitEditor()
-    if (rec) stopRecording(true)
     closePopovers()
     for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close()
     delete pad.dataset.started
@@ -1753,7 +1610,7 @@ window.pad = {
   elements: () => ordered(),
   selection: () => [...sel],
   view: () => ({ ...view }),
-  state: () => ({ tool, editing: Boolean(edit), recording: rec?.state ?? null, undo: undo.length, redo: redo.length, store: db?.kind, board: boardState(), sync: sync?.state(), embed: EMBED, host }),
+  state: () => ({ tool, editing: Boolean(edit), undo: undo.length, redo: redo.length, store: db?.kind, board: boardState(), sync: sync?.state(), embed: EMBED, host }),
   settled: ms => sync.settled(ms),
   area: () => (area ? { x: area.x, y: area.y, w: area.w, h: area.h, ids: area.list.map(e => e.id), sending: Boolean(area.sending) } : null),
   records: () => db.list(PAD),

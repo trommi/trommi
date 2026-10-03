@@ -1,0 +1,32 @@
+# The hub's end-to-end suite: node server/test.mjs starts hubs and sessions on a free
+# port with throwaway data directories, and runs the Turbo tests it imports. About a
+# minute. Needs Node with node:sqlite and tar; no browser. The browser tests in dev/
+# (Chromium over CDP) stay local.
+name: Test
+
+on:
+  push:
+    paths: ['server/**', 'client/web/**', 'crypto/**', 'deploy/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: test-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  server:
+    name: Server suite
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: node server/test.mjs

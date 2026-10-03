@@ -137,6 +137,14 @@ function welcome(note) {
   }
   standAll()
   fieldOf(note).focus({ preventScroll: true })
+  // Turbo gives the keyboard back to what held it before a stream (a marked row of the Desk) one frame after it
+  // rendered; the note takes it again then, unless he went into another field meanwhile.
+  const take = () => {
+    const at = document.activeElement
+    if (!note.isConnected || note.dataset.state !== 'open' || note.contains(at) || at?.matches?.('input, textarea, select, [contenteditable]')) return
+    fieldOf(note).focus({ preventScroll: true })
+  }
+  requestAnimationFrame(() => requestAnimationFrame(take))
 }
 
 // ---- a stream brings a note that is already on this page: it is changed in place ----
@@ -199,8 +207,9 @@ export async function write() {
   const empty = notes().find(n => n.dataset.place === 'float' && !holds(n) && (!sheet.matches || n.dataset.id === sheetId))
   if (empty) { fieldOf(empty).focus({ preventScroll: true }); return }
   const at = sheet.matches ? { x: 0, y: 0 } : spot()
-  // (The button lets go of the keyboard first: a stream that replaces it would otherwise give it the keyboard back.)
-  opener()?.blur()
+  // (The button, or the row of the Desk the keyboard is on, lets go of the keyboard first: Turbo gives it back to
+  // what held it when a stream came, and a stream that replaces the button would otherwise give it the keyboard back.)
+  if (document.activeElement !== document.body) document.activeElement?.blur?.()
   // On a session's page the note belongs to that session (shown there only, sent to it): views/memo.mjs.
   const session = document.body.dataset.tView === 'session' ? document.body.dataset.scope ?? '' : ''
   const out = await act(`${base()}/memos`, { place: 'float', x: at.x, y: at.y, ...(session && session !== 'all' ? { session } : {}) }).catch(err => ({ ok: false, text: '', err }))

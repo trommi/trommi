@@ -837,11 +837,8 @@ received.length = 0
 // speech is optional: without a key the board says so instead of failing oddly
 assert.equal((await state()).speech, false)
 await refused('create_voiceover', { text: 'hallo' }, /not set up/)
-const mute = await fetch(`${base}/speech/transcribe`, { method: 'POST', headers: { Cookie: cookie, Origin: base, 'Content-Type': 'audio/webm' }, body: 'x' })
-assert.equal(mute.status, 400)
-assert.match((await mute.json()).error, /not set up/)
-const muteLive = await fetch(`${base}/speech/live`, { method: 'POST', headers: { Cookie: cookie, Origin: base } })
-assert.deepEqual([muteLive.status, (await muteLive.json()).error], [503, 'Speech is not set up (TINFOIL_API_KEY or data/tinfoil.key is missing)'])
+// dictation was removed (out of scope for launch): its routes are gone
+for (const route of ['/speech/transcribe', '/speech/live']) assert.equal((await fetch(`${base}${route}`, { method: 'POST', headers: { Cookie: cookie, Origin: base, 'Content-Type': 'audio/webm' }, body: 'x' })).status, 404, route)
 
 // media: a video is stored as such and served with Range support
 const clip = path.join(data, 'render.mp4')
@@ -2299,13 +2296,8 @@ fs.writeFileSync(in4('state.json'), JSON.stringify({
   ],
   pending: { weg: [waits('wartet eins'), waits('wartet zwei')] },
 }))
-// The speech service, played by a local server: the realtime socket and the file model. No real key is involved.
-const tinfoil = { auth: [], updates: [], audio: 0, sockets: 0, uploads: [], polish: 'Bitte nimm die zweite.', spoken: [], sound: 'ID3 klang' }
-const wsFrame = text => {
-  const body = Buffer.from(text)
-  const head = body.length < 126 ? Buffer.from([0x81, body.length]) : Buffer.from([0x81, 126, body.length >> 8, body.length & 255])
-  return Buffer.concat([head, body])
-}
+// The speech service (read aloud), played by a local server. No real key is involved.
+const tinfoil = { auth: [], spoken: [], sound: 'ID3 klang' }
 const fakeSpeech = http.createServer(async (req, res) => {
   const chunks = []
   for await (const chunk of req) chunks.push(chunk)
@@ -2316,54 +2308,10 @@ const fakeSpeech = http.createServer(async (req, res) => {
     if (tinfoil.sound == null) return res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":{"message":"no voice"}}')
     return res.writeHead(200, { 'Content-Type': 'application/octet-stream' }).end(tinfoil.sound)
   }
-  tinfoil.uploads.push(Buffer.concat(chunks))
-  if (tinfoil.polish == null) return res.writeHead(500, { 'Content-Type': 'application/json' }).end('{"error":{"message":"busy"}}')
-  res.writeHead(200, { 'Content-Type': 'application/json' }).end(JSON.stringify({ text: ` ${tinfoil.polish}` }))
-})
-fakeSpeech.on('upgrade', (req, socket) => {
-  tinfoil.auth.push(req.headers.authorization)
-  tinfoil.path = req.url
-  tinfoil.sockets++
-  socket.write(`HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Accept: ${crypto.createHash('sha1').update(req.headers['sec-websocket-key'] + '258EAFA5-E914-47DA-95CA-C5AB0DC85B11').digest('base64')}\r\n\r\n`)
-  const say = msg => socket.write(wsFrame(JSON.stringify(msg)))
-  const said = []
-  let buf = Buffer.alloc(0), gone = false
-  const leave = () => { if (!gone) { gone = true; tinfoil.sockets--; socket.destroy() } }
-  socket.on('close', leave)
-  socket.on('error', leave)
-  socket.on('data', chunk => {
-    buf = Buffer.concat([buf, chunk])
-    for (;;) {
-      if (buf.length < 2) return
-      let len = buf[1] & 127, at = 2
-      if (len === 126) { if (buf.length < 4) return; len = buf.readUInt16BE(2); at = 4 } else if (len === 127) { if (buf.length < 10) return; len = Number(buf.readBigUInt64BE(2)); at = 10 }
-      if (buf.length < at + 4 + len) return
-      const mask = buf.subarray(at, at + 4), body = Buffer.from(buf.subarray(at + 4, at + 4 + len)), op = buf[0] & 15
-      buf = buf.subarray(at + 4 + len)
-      for (let i = 0; i < body.length; i++) body[i] ^= mask[i & 3]
-      if (op === 8) return leave()
-      if (op !== 1) continue
-      const msg = JSON.parse(body.toString())
-      if (msg.type === 'session.update') tinfoil.updates.push(msg.session)
-      if (msg.type === 'input_audio_buffer.append') {
-        const pcm = Buffer.from(msg.audio, 'base64')
-        tinfoil.audio += pcm.length
-        // a recording that starts with these bytes makes the service fail
-        if (pcm.subarray(0, 4).toString() === 'FAIL') { say({ type: 'error', error: { message: 'model overloaded' } }); continue }
-        const word = ` Wort${said.length + 1}`
-        said.push(word)
-        say({ type: 'conversation.item.input_audio_transcription.delta', delta: word })
-      }
-      if (msg.type === 'input_audio_buffer.commit') {
-        say({ type: 'input_audio_buffer.committed' })
-        say({ type: 'conversation.item.input_audio_transcription.completed', transcript: said.join('').trim() })
-      }
-    }
-  })
-  say({ type: 'session.created' })
+  res.writeHead(404, { 'Content-Type': 'application/json' }).end('{"error":{"message":"not found"}}')
 })
 await new Promise(resolve => fakeSpeech.listen(0, '127.0.0.1', resolve))
-const on4 = { BOARD_DATA: data4, BOARD_TOKEN: '', BOARD_ADMIN_TOKEN: '', BOARD_PUBLIC_URL: 'https://rechner.example.ts.net/', BOARD_SPEECH_API: `http://127.0.0.1:${fakeSpeech.address().port}/v1`, BOARD_STT_LIVE_SECONDS: '1', BOARD_STT_LIVE_IDLE_MS: '500', BOARD_STT_LIVE_WAIT_MS: '3000' }
+const on4 = { BOARD_DATA: data4, BOARD_TOKEN: '', BOARD_ADMIN_TOKEN: '', BOARD_PUBLIC_URL: 'https://rechner.example.ts.net/', BOARD_SPEECH_API: `http://127.0.0.1:${fakeSpeech.address().port}/v1` }
 const file4 = () => readBoard(data4)
 const has4 = (...parts) => fs.existsSync(in4(...parts))
 const gotSpeiche = []
@@ -2451,115 +2399,17 @@ assert.ok(d.lines.some(l => new RegExp(String.raw`hub on 0\.0\.0\.0:${PORT} as "
 assert.ok(d.lines.length <= 200)
 assert.deepEqual(d.links.map(l => [l.id, l.state, l.queued]), [['weg', 'away', 2], ['alt', 'away', 0], ['chef', 'hub', 0], ['speiche', 'linked', 0]])
 
-// live dictation: the page posts PCM in pieces and hears the words as events while it still speaks;
-// the key goes to the service and nowhere else
+// read aloud: the key goes to the service and nowhere else
 {
-const liveHead = { Origin: base, Cookie: board4 }
-const dictate = async () => {
-  const ctl = new AbortController()
-  const res = await fetch(`${base}/speech/live`, { method: 'POST', headers: liveHead, signal: ctl.signal })
-  assert.deepEqual([res.status, res.headers.get('content-type')], [200, 'text/event-stream'])
-  const reader = res.body.getReader()
-  let buf = ''
-  const next = async () => {
-    for (;;) {
-      const cut = buf.indexOf('\n\n')
-      if (cut >= 0) {
-        const [event, line] = buf.slice(0, cut).split('\n')
-        buf = buf.slice(cut + 2)
-        return [event.slice(7), JSON.parse(line.slice(6))]
-      }
-      const { value, done } = await reader.read()
-      if (done) return null
-      buf += Buffer.from(value).toString()
-    }
-  }
-  const [event, ready] = await next()
-  assert.deepEqual([event, ready.rate, ready.max_seconds], ['ready', 16000, 1])
-  assert.match(ready.id, /^[0-9a-f]{18}$/)
-  const audio = (pcm, id = ready.id) => fetch(`${base}/speech/live/${id}`, { method: 'POST', headers: { ...liveHead, 'Content-Type': 'application/octet-stream' }, body: pcm })
-  const stop = () => fetch(`${base}/speech/live/${ready.id}/stop`, { method: 'POST', headers: liveHead })
-  return { id: ready.id, next, audio, stop, abort: () => ctl.abort() }
-}
-const pcmOf = (bytes, start = '') => Buffer.concat([Buffer.from(start), Buffer.alloc(bytes - start.length, 3)])
-assert.equal((await fetch(`${base}/speech/live`, { method: 'POST' })).status, 401)
-assert.equal((await fetch(`${base}/speech/live`, { method: 'POST', headers: { ...liveHead, Origin: 'http://evil.example' } })).status, 403)
-assert.equal((await fetch(`${base}/speech/live/nichtda`, { method: 'POST', headers: liveHead, body: pcmOf(4) })).status, 404)
-// the words arrive while the audio is still coming; the final text is the file model's reading of the whole recording
-let spoken = await dictate()
-assert.equal((await spoken.audio(pcmOf(3200))).status, 200)
-assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort1' }])
-assert.equal((await spoken.audio(pcmOf(3200))).status, 200)
-assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort2' }])
-const odd = await spoken.audio(pcmOf(3))
-assert.deepEqual([odd.status, (await odd.json()).error], [400, 'audio must be whole 16-bit samples'])
-assert.equal((await spoken.stop()).status, 200)
-assert.deepEqual(await spoken.next(), ['final', { text: 'Bitte nimm die zweite.', polished: true, reason: 'stop', seconds: 0.2 }])
-assert.equal(await spoken.next(), null, 'the stream ends with the final text')
-assert.deepEqual([tinfoil.path, tinfoil.updates.at(-1), tinfoil.audio], ['/v1/realtime?intent=transcription', { type: 'transcription', audio: { input: { format: { type: 'audio/pcm', rate: 16000 }, transcription: { model: 'voxtral-mini-4b-realtime' } } } }, 6400])
-assert.deepEqual([...new Set(tinfoil.auth)], ['Bearer tinfoil-geheim'])
-const wav = tinfoil.uploads.at(-1)
-assert.ok(wav.includes('whisper-large-v3-turbo') && wav.includes(Buffer.concat([Buffer.from('data'), Buffer.from([0, 25, 0, 0]), pcmOf(6400)])), 'the whole recording goes to the file model as WAV')
-const late = await spoken.audio(pcmOf(3200))
-assert.deepEqual([late.status, (await late.json()).error], [404, 'This dictation has ended'])
-await eventually(() => tinfoil.sockets === 0, 'the live socket to close after the final text')
-// the file model fails: the streamed words stand
-tinfoil.polish = null
-spoken = await dictate()
-await spoken.audio(pcmOf(3200)); await spoken.audio(pcmOf(3200)); await spoken.audio(pcmOf(3200))
-await spoken.stop()
-let heardLive = []
-for (let e; (e = await spoken.next());) heardLive.push(e)
-assert.deepEqual(heardLive.at(-1), ['final', { text: 'Wort1 Wort2 Wort3', polished: false, reason: 'stop', seconds: 0.3 }])
-assert.deepEqual(heardLive.slice(0, -1).map(e => e[1].text).join(''), ' Wort1 Wort2 Wort3')
-tinfoil.polish = 'Fertig.'
-// nothing was said: no final text is invented, and the file model is not asked
-const uploads = tinfoil.uploads.length
-spoken = await dictate()
-await spoken.stop()
-assert.deepEqual(await spoken.next(), ['final', { text: '', polished: false, reason: 'stop', seconds: 0 }])
-assert.equal(tinfoil.uploads.length, uploads)
-// longer than allowed: the recording is cut at the limit and ends by itself
-spoken = await dictate()
-tinfoil.audio = 0
-assert.equal((await spoken.audio(pcmOf(40000))).status, 200)
-assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort1' }])
-assert.deepEqual(await spoken.next(), ['final', { text: 'Fertig.', polished: true, reason: 'limit', seconds: 1 }])
-assert.equal(tinfoil.audio, 32000)
-// the page falls silent without stopping (lost network): the dictation ends by itself
-spoken = await dictate()
-await spoken.audio(pcmOf(3200))
-assert.deepEqual(await spoken.next(), ['delta', { text: ' Wort1' }])
-const silentSince = Date.now()
-assert.deepEqual(await spoken.next(), ['final', { text: 'Fertig.', polished: true, reason: 'idle', seconds: 0.1 }])
-assert.ok(Date.now() - silentSince >= 400)
-// the service reports an error: the page reads it as text and the stream ends
-spoken = await dictate()
-await spoken.audio(pcmOf(3200, 'FAIL'))
-assert.deepEqual(await spoken.next(), ['error', { message: 'Speech service: model overloaded' }])
-assert.equal(await spoken.next(), null)
-// the page goes away in the middle: the socket to the service closes with it
-spoken = await dictate()
-await spoken.audio(pcmOf(3200))
-await eventually(() => tinfoil.sockets === 1, 'the live socket to stand')
-spoken.abort()
-await eventually(() => tinfoil.sockets === 0, 'the live socket to close when the page leaves')
-assert.equal((await spoken.audio(pcmOf(3200))).status, 404)
-// only a few at once
-const many = [await dictate(), await dictate(), await dictate(), await dictate()]
-const fifth = await fetch(`${base}/speech/live`, { method: 'POST', headers: liveHead })
-assert.deepEqual([fifth.status, (await fifth.json()).error], [429, 'Too many dictations at once; stop one first'])
-for (const one of many) one.abort()
-await eventually(() => tinfoil.sockets === 0, 'all live sockets to close')
-
+const sayHead = { Origin: base, Cookie: board4 }
 // read aloud: any text, in pieces from the page; a known language is named to the voice, the same piece is only made once
-const sayIt = (body, head = liveHead) => fetch(`${base}/speech/say`, { method: 'POST', headers: { ...head, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+const sayIt = (body, head = sayHead) => fetch(`${base}/speech/say`, { method: 'POST', headers: { ...head, 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
 assert.equal((await sayIt({ text: 'Hallo' }, {})).status, 401)
-assert.equal((await sayIt({ text: 'Hallo' }, { ...liveHead, Origin: 'http://evil.example' })).status, 403)
+assert.equal((await sayIt({ text: 'Hallo' }, { ...sayHead, Origin: 'http://evil.example' })).status, 403)
 let heard = await sayIt({ text: ' Der Deploy ist fertig. ', lang: 'de' })
 assert.deepEqual([heard.status, heard.headers.get('content-type'), Buffer.from(await heard.arrayBuffer()).toString()], [200, 'audio/mpeg', 'ID3 klang'])
 assert.deepEqual(tinfoil.spoken, [{ model: 'qwen3-tts', input: 'Der Deploy ist fertig.', response_format: 'mp3', language: 'German' }])
-assert.equal(tinfoil.auth.at(-1), 'Bearer tinfoil-geheim')
+assert.deepEqual([...new Set(tinfoil.auth)], ['Bearer tinfoil-geheim'])
 heard = await sayIt({ text: 'Der Deploy ist fertig.', lang: 'de' })
 assert.deepEqual([heard.status, tinfoil.spoken.length], [200, 1], 'the same piece is spoken from the cache')
 // another language is another recording; an unknown one leaves the choice to the voice; WAV is passed on as WAV
