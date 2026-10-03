@@ -83,7 +83,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 }
 .focus-nav:active { transform: scale(.92); }
 /* nothing in that direction, or a picture is open: the arrow steps aside */
-.focus-nav:disabled, .focus[data-zoom] > .focus-nav { opacity: 0; visibility: hidden; }
+.focus-nav:disabled, .focus-nav[aria-disabled="true"], .focus[data-zoom] > .focus-nav { opacity: 0; visibility: hidden; }
 
 /* ── top bar: the head of the row, then notes, later, read aloud, close ─── */
 .focus-top { flex: none; display: flex; align-items: flex-start; gap: var(--s-2); min-height: 60px; padding-right: var(--s-3); }
@@ -689,8 +689,8 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-card-ends { display: none; }
 .focus[data-list] .focus-card-ends { position: absolute; z-index: 3; right: 10px; top: 6px; display: flex; gap: 2px; }
 .focus[data-list] .focus-card > .focus-answer { padding-top: 44px; }
-.focus-card-ends button { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); transition: background var(--d-fast), color var(--d-fast); }
-.focus-card-ends button:hover { background: var(--sunken); color: var(--fg); }
+.focus-card-ends :is(button, a[data-nav]) { width: 32px; height: 32px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); transition: background var(--d-fast), color var(--d-fast); }
+.focus-card-ends :is(button, a[data-nav]):hover { background: var(--sunken); color: var(--fg); }
 .focus-card-ends .focus-icon { width: 17px; height: 17px; }
 .focus-card-say path:first-child { fill: currentColor; fill-opacity: .14; }
 .focus-card-say path + path { opacity: 0; }
@@ -780,7 +780,7 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
   .focus-card > .focus-talk { grid-area: 1 / 1; }
   .focus-card > .focus-answer { grid-area: 1 / 2; }
   /* the composer line spans the whole card, under both columns: the field stretches, the three buttons end the line */
-  .focus-card > .focus-composer { grid-area: 2 / 1 / 3 / 3; }
+  .focus-card > .focus-feed > .focus-composer { grid-area: 2 / 1 / 3 / 3; }
   .focus-card[data-opts="tags-wide"] > .focus-answer { width: clamp(280px, 38cqi, 500px); }
 }
 /* The list of options scrolls by itself when it is long; Send stands under it, never on it. */
@@ -1030,8 +1030,12 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
    than the card, with a thin bar. Options written into the text are not repeated as tiles: only Send, Trust, Revise
    and the wastebasket stand in the column then. */
 .focus[data-list] .focus-scroll, .focus-card .focus-scroll { scrollbar-width: none; }
-.focus-card[data-sections] .focus-answer > .focus-opts, .focus-card[data-sections] .focus-answer > .focus-tag-line { display: none; }
-@container focus (min-width: 900px) { .focus-card[data-sections] > .focus-answer { width: clamp(200px, 20cqi, 260px); align-content: end; justify-content: flex-end; } }
+/* (five and more options are the exception: ticking ten of them in a long text means scrolling for each, so
+   they also stand beside the text as one compact set; see "Many options" at the end) */
+/* (As he decided on 3 October: the options always stand at the right, all in sight, also where the text carries
+   them as paragraphs; the left shows one option at a time on a stage. See "The stage of options" at the end.) */
+.focus-card[data-sections] .focus-answer > .focus-tag-line { display: none; }
+@container focus (min-width: 900px) { .focus-card[data-sections-old] > .focus-answer { width: clamp(200px, 20cqi, 260px); align-content: end; justify-content: flex-end; } }
 /* the pen and its tools in the row of the Discuss field */
 .focus-discuss .focus-mark-tools { order: 0; display: inline-flex; gap: 0; margin: 0; }
 .focus-discuss .focus-mark-tool { width: 32px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
@@ -1079,7 +1083,7 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 @container focus (min-width: 700px) {
   .focus-card, .focus-card[data-discuss] { grid-template: minmax(0, 1fr) auto / minmax(0, 1fr) auto; transition: none; }
   .focus-card > .focus-talk { grid-area: 1 / 1; }
-  .focus-card > .focus-composer { grid-area: 2 / 1; }
+  .focus-card > .focus-feed > .focus-composer { grid-area: 2 / 1; }
   .focus-card > .focus-answer { grid-area: 1 / 2 / 3 / 3; padding-top: 44px; }
 }
 .focus-composer { flex-wrap: nowrap; padding: var(--s-2) var(--pad) var(--s-3); }
@@ -1185,7 +1189,7 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus-card-count { align-self: center; padding-right: 6px; font-size: var(--t-xs); color: var(--muted); }
 .focus-card-count:empty { display: none; }
 /* a card that is not open any more: to read, with what became of it */
-.focus-card[data-past] > .focus-composer, .focus-card[data-past] .focus-actions, .focus-card[data-past] .focus-opt-send, .focus-card[data-past] .focus-tag-line { display: none; }
+.focus-card[data-past] .focus-composer, .focus-card[data-past] .focus-actions, .focus-card[data-past] .focus-opt-send, .focus-card[data-past] .focus-tag-line { display: none; }
 .focus-card[data-past] .focus-opt:not([data-chosen]) { opacity: .45; }
 .focus-card[data-past] .focus-opt[data-chosen] { box-shadow: inset 0 0 0 2px var(--accent); }
 .focus-past { display: flex; flex-wrap: wrap; align-items: center; gap: 6px var(--s-3); margin: var(--s-4) 0 0; padding: 10px 14px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
@@ -1231,7 +1235,7 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus-secs > .focus-sec-group:first-child { margin-top: 0; }
 @container focus (max-width: 699.9px) {
   .focus-card[data-pictures] .focus-stage-bar { padding: 40px 0 0; flex-wrap: nowrap; }
-  .focus-card[data-pictures] .focus-talk:has(> .focus-up:not([hidden])) .focus-stage-where { visibility: visible; }
+  .focus-card[data-pictures] .focus-talk:has(> .focus-up:not([hidden])) .focus-stage-where { visibility: inherit; }
   .focus-up { max-width: calc(100% - 130px); left: 12px; }
 }
 
@@ -1288,11 +1292,11 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 :root[data-theme="dark"] .focus-opt.is-advised { --advice: color-mix(in srgb, var(--urg-high) 45%, transparent); }
 /* a finger needs more than 32px */
 @container focus (max-width: 699.9px) {
-  .focus .focus-card-ends button { width: 36px; height: 36px; }
+  .focus .focus-card-ends :is(button, a[data-nav]), .focus .focus-card-ends > .focus-way { width: 40px; height: 40px; }
   .focus-card .focus-title { padding-right: 0; }
   .focus-card .focus-lead, .focus-card[data-pictures] .focus-stage-bar { padding-top: 44px; }
-  .focus-opt-pen { position: relative; }
-  .focus-opt-pen::after { content: ''; position: absolute; inset: -8px; }
+  /* the pencil stays small in the tile's corner (a tap in the middle answers); its tap area reaches past it */
+  .focus-opt-pen::after { content: ''; position: absolute; inset: -6px; }
 }
 .focus-done-work { margin-bottom: var(--s-5); }
 /* on a phone the walk's way back has a line of its own above the cards */
@@ -1302,3 +1306,332 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus[data-list] .focus-says { inset: 8px auto auto 112px !important; }
 @container focus (max-width: 699.9px) { .focus[data-list] .focus-says { inset: 8px auto auto 100px !important; } }
 .focus-opts[data-count="stack"]:has(> .focus-opt:nth-of-type(5)) .focus-opt { height: auto; flex: none; }
+
+/* Narrow (phone): the decision and what was said, then the answers and the ways out, then the field at the foot
+   of the card (open-work row 8). */
+@container focus (max-width: 699.98px) {
+  .focus-card > .focus-feed { order: 5; }
+  .focus-card .focus-composer { padding-bottom: max(var(--s-2), env(safe-area-inset-bottom)); }
+}
+/* In the walk a card can be taller than the phone: its field stays in sight at the lower edge, over the "N more". */
+@container focus (max-width: 699.98px) {
+  .focus[data-list] .focus-card[data-shown] > .focus-composer { position: sticky; bottom: 52px; z-index: 2; background: var(--surface); box-shadow: 0 -1px 0 var(--line); }
+}
+
+/* ══ Phone polish (docs/qa-phone-design.md): found by measuring every state at 360, 390 and 430px. ══ */
+@container focus (max-width: 699.98px) {
+  /* A long word or a long session name must not make the card wider than the phone: the column of the title is
+     as wide as the card and no wider (it was `auto`, so one unbreakable line pushed title and text off the screen). */
+  .focus-card .focus-lead, .focus-card .focus-body { grid-template-columns: minmax(0, 1fr); }
+  .focus-by { min-width: 0; }
+  .focus-by-part.focus-by-from { display: block; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .focus-by-from .doodle { display: inline-block; vertical-align: -4px; margin-right: 6px; }
+  /* two tiles side by side: a word longer than the tile breaks instead of running into its neighbour */
+  .focus-opts[data-count="duo"] .focus-opt-words { width: 100%; grid-template-columns: minmax(0, 1fr); }
+  .focus-opts[data-count="duo"] .focus-opt-label { max-width: 100%; overflow-wrap: break-word; word-break: normal; }
+  /* five and more options: a tile is as high as its words (min-height: 0 let the row shrink under them) */
+  .focus-opts[data-count="stack"]:has(> .focus-opt:nth-of-type(5)) .focus-opt { min-height: auto; padding-block: 12px; }
+  /* the pencil of a paragraph's option: its larger tap area belongs to the pencil, not to the whole paragraph */
+  .focus-sec-head .focus-opt-pen { position: relative; }
+  /* "back to the top" ends before the corner with Snooze, Shred, Copy, Close */
+  .focus-up { max-width: calc(100% - 236px); }
+  /* what scrolls under that corner is covered by it, not mixed with it */
+  .focus .focus-card > .focus-card-ends { background: var(--sunken); }
+  /* the walk: the strip of "N more" is already kept free under the cards, so the field stands on its edge */
+  .focus[data-list] .focus-card[data-shown] > .focus-composer { bottom: 0; }
+  .focus-composer .focus-mark-tool { width: 40px; }
+}
+@container focus (max-width: 699.98px) {
+  /* a finger needs 40px: these keep their look, an unseen area around them takes the tap */
+  .focus-opt-pen::after { inset: -8px; }
+  :is(.focus-more, .focus-up, .focus-mark-done)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
+  .focus-mark-done, button.focus-by-part { position: relative; }
+  button.focus-by-part::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 40px; translate: 0 -50%; }
+  .focus-opt-note input, .focus-mark input { min-height: 40px; }
+  .focus-chip-x::after { content: ""; position: absolute; right: -3px; top: 50%; width: 40px; height: 40px; translate: 0 -50%; }
+  /* drawing on the card: its tools, the field and Send stay on one line (the word "Drawing" gave way; the black pen says it) */
+  .focus-composer .focus-mark-tools[data-pen] .focus-mark-state { display: none; }
+  .focus-composer .focus-ask:has(.focus-mark-tools[data-pen]) .focus-saved { display: none; }
+  .focus-composer .focus-mark-tools[data-pen] .focus-mark-done { margin-inline: 2px; }
+}
+/* (the walk's way back is not inside the card's container) */
+@media (max-width: 700px) { .focus-back-desk::after { content: ""; position: absolute; left: 0; right: 0; top: 50%; height: 40px; translate: 0 -50%; } }
+
+/* ══ Many options (five and more: data-many on the card). One compact set that is taken in at a glance: short
+   labels are tags (above), longer ones one-line rows; the detail is the tile's tooltip and stands in the text.
+   Send and the ways out stay under the set. A ticked tag carries its tick. ══ */
+.focus-opts[data-count="tags"][data-multi] .focus-opt[aria-pressed="true"]:not(.focus-opt-send) .focus-opt-mark { display: grid; }
+.focus-card[data-many] .focus-opts[data-count="stack"] .focus-opt:not(.focus-opt-send) { flex: none; min-height: 44px; height: auto; padding-block: 8px; }
+.focus-card[data-many] .focus-opts[data-count="stack"] .focus-opt:not(.focus-opt-send) .focus-opt-label { font-size: 1rem; line-height: 1.2; }
+.focus-card[data-many] .focus-opts[data-count="stack"] .focus-opt:not(.focus-opt-send) .focus-opt-detail { display: none; }
+.focus-card[data-many] .focus-opts[data-count="stack"] .focus-opt-label { overflow-wrap: break-word; word-break: normal; hyphens: auto; }
+
+/* ══ The stage of options (cards with sections). At the right every option is a tile; at the left one option is
+   shown at a time: its picture, under it its paragraph. The pointer or the keyboard on a tile (or on the stepper,
+   for a finger) turns the stage to that option. ══ */
+.focus-secs[data-stage] > .focus-sec:not([data-on]) { display: none; }
+.focus-secs[data-stage] > .focus-sec { background: none; box-shadow: none; padding-top: 4px; }
+.focus-secs[data-stage] .focus-sec-pic { order: 1; margin-left: 0; max-width: 100%; }
+.focus-secs[data-stage] .focus-sec-pic img { max-height: min(40vh, 440px); }
+.focus-secs[data-stage] .focus-sec > .rich { order: 2; padding-left: 0; font-size: 1.05rem; }
+.focus-sec-step { display: flex; align-items: center; gap: 6px; margin-top: var(--s-2); color: var(--muted); font: 600 var(--t-sm)/1 var(--font); font-variant-numeric: tabular-nums; }
+.focus .focus-sec-step button { width: 40px; height: 40px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.focus .focus-sec-step button:hover { background: var(--sunken); color: var(--fg); }
+.focus-sec-step .focus-icon { width: 18px; height: 18px; }
+.focus-sec-count { min-width: 3.2em; text-align: center; }
+/* the tile whose option is on the stage */
+.focus-card[data-sections] .focus-opt[data-staged]:not([aria-pressed="true"]) { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--u) 55%, transparent); }
+/* Phone: every option in sight. The answers may take up to two thirds of the card; a set that still would not
+   fit (a Send tile under four tiles, five and more rows) is made of compact rows, 44px high. */
+@container focus (max-width: 699.98px) {
+  .focus[data-single] .focus-card > .focus-answer { max-height: 66dvh; }
+  .focus-card:is([data-many], [data-sections]) .focus-opts[data-count="stack"] .focus-opt:not(.focus-opt-send) { flex: none; min-height: 44px; height: auto; padding-block: 8px; }
+  .focus-card:is([data-many], [data-sections]) .focus-opts[data-count="stack"] .focus-opt:not(.focus-opt-send) .focus-opt-detail { display: none; }
+  .focus-card:is([data-many], [data-sections]) .focus-opts[data-count="stack"] { grid-auto-rows: auto; grid-template-rows: none; }
+  .focus-card:is([data-many], [data-sections]) .focus-answer > .focus-opts { max-height: none; overflow: visible; -webkit-mask-image: none; mask-image: none; padding-bottom: 8px; }
+}
+/* On a card with a stage the title and the stage come first; a picture that belongs to no option (the overview)
+   follows under the stage instead of pushing it out of sight. The tick is at the right, so the stage's heading is plain. */
+.focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) { display: flex; flex-direction: column; }
+.focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) > * { flex: none; }
+.focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) > .focus-media { order: 1; }
+.focus-secs[data-stage] .focus-sec-mark { display: none; }
+.focus-secs[data-stage] .focus-sec-pick { padding-left: 0; min-height: 32px; }
+.focus-secs[data-stage] .focus-sec-pick:hover { background: none; }
+.focus-secs[data-stage] .focus-sec-pick[aria-pressed="true"] .focus-sec-label::after { content: " ✓"; color: var(--u); }
+@container focus (min-width: 700px) { .focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) .focus-title { padding-right: 176px; } }
+
+/* ══ The card does not scroll away as a whole: its title (with the line "From … · Nr.") stays at the top of the
+   column, the answers at the right, the field at the foot; only the middle scrolls. The paper behind the title is
+   drawn only once something has scrolled under it. On a phone the slim title (.focus-up) does this job. ══ */
+@keyframes focus-lead-stuck { from { background-color: transparent; box-shadow: none; } to { background-color: var(--lead-paper); box-shadow: 0 1px 0 var(--line); } }
+@supports (animation-timeline: scroll()) {
+  @container focus (min-width: 700px) {
+    .focus:not([data-inline]) .focus-card .focus-scroll > .focus-lead { --lead-paper: var(--sunken); position: sticky; top: 0; z-index: 2; max-width: none; margin: 0 calc(var(--pad) * -1); padding: 6px var(--pad) 8px; animation: focus-lead-stuck linear both; animation-timeline: scroll(nearest block); animation-range: 0px 24px; }
+    .focus[data-list] .focus-card .focus-scroll > .focus-lead { --lead-paper: var(--surface); }
+    .focus:not([data-inline]) .focus-card .focus-up { display: none; }
+  }
+}
+
+/* ══ The card and its feed (decided 3 October). The card is one object that fits one screen: title, what is asked
+   (the stage, the text; long text scrolls inside), every answer at the right with Send and the ways out. Under
+   it, outside it, the feed: what was said and what happened, in the order of time, and the field at its foot.
+   The field stays at the lower edge of the screen while the feed has more above it. Only the card in front has
+   a feed. (The article holds both; the card's paper is drawn on its first row.) ══ */
+.focus:not([data-inline]) .focus-stage { container-type: size; }
+.focus:not([data-inline]):not([data-list]) .focus-sheet { background: none; box-shadow: none; overflow: visible; }
+.focus:not([data-inline]):not([data-list]) .focus-sheet::before { display: none; }
+.focus:not([data-inline]):not([data-list]) .focus-stage { overflow-y: auto; overscroll-behavior: contain; scrollbar-width: none; border-radius: var(--r-xl) var(--r-xl) 0 0; }
+.focus:not([data-inline]) .focus-card { --field-h: 74px; --face-h: calc(100cqh - var(--field-h) - 12px); position: relative; isolation: isolate; }
+.focus[data-list] .focus-card { --face-h: calc(100cqh - 70px - var(--field-h) - 64px); }
+.focus:not([data-inline]) .focus-card:not([data-shown]) > .focus-feed { display: none; }
+.focus:not([data-inline]):not([data-list]) .focus-stage { grid-template-rows: auto; align-content: start; }
+.focus:not([data-inline]):not([data-list]) .focus-card { height: auto; max-height: none; overflow: visible; }
+/* the feed's own sheet: plainer than the card, as wide as a column of talk, a breath under the card */
+.focus-feed { min-width: 0; display: flex; flex-direction: column; width: min(100%, 58rem); margin: 10px auto 0; border-radius: var(--r-xl) var(--r-xl) 0 0; background: var(--bg); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent); }
+.focus-feed > .focus-thread { max-width: none; width: 100%; margin: 0; padding: var(--s-4) var(--pad) var(--s-2); border-top: 0; }
+.focus-feed > .focus-composer { position: sticky; bottom: 0; z-index: 3; width: 100%; margin: 0; padding: 12px var(--pad) 12px; background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; }
+.focus-feed > .focus-thread:not([hidden]) + .focus-composer { border-radius: 0; box-shadow: 0 -1px 0 var(--line); }
+.focus-feed-older { align-self: center; min-height: 40px; padding: 0 16px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line); color: var(--muted); font: 600 var(--t-sm)/1 var(--font); }
+.focus .focus-feed-older:hover { color: var(--fg); background: var(--surface); }
+/* a line of its own for what happened (a version presented), a bubble for what was said: separate entries */
+.focus-feed .focus-turn { align-self: center; }
+@container focus (min-width: 700px) {
+  .focus:not([data-inline]) .focus-card, .focus:not([data-inline]) .focus-card[data-discuss] { display: grid; grid-template: auto auto / minmax(0, 1fr) auto; align-content: start; background: none; box-shadow: none; overflow: visible; max-height: none; }
+  .focus:not([data-inline]) .focus-card > .focus-talk { grid-area: 1 / 1; height: var(--face-h); border-radius: var(--r-xl) 0 0 var(--r-xl); background: var(--sunken); overflow: hidden; }
+  .focus:not([data-inline]) .focus-card > .focus-answer { grid-area: 1 / 2 / 2 / 3; height: var(--face-h); border-radius: 0 var(--r-xl) var(--r-xl) 0; }
+  .focus:not([data-inline]) .focus-card > .focus-feed { grid-area: 2 / 1 / 3 / 3; }
+  .focus:not([data-inline]) .focus-card::before { content: ""; grid-area: 1 / 1 / 2 / 3; z-index: -1; border-radius: var(--r-xl); box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-lg); pointer-events: none; }
+  /* in the walk a card is as high as what it holds, up to the screen */
+  .focus[data-list] .focus-card > .focus-talk, .focus[data-list] .focus-card > .focus-answer { height: auto; max-height: var(--face-h); }
+  .focus[data-list] .focus-card > .focus-talk { background: linear-gradient(180deg, color-mix(in srgb, var(--u-soft) 62%, var(--surface)), var(--surface) 200px); }
+  .focus[data-list] .focus-card::before { box-shadow: 0 0 0 1px color-mix(in srgb, var(--line) 70%, transparent), var(--shadow-md); }
+  .focus[data-list] .focus-card::after { grid-area: 1 / 1 / 2 / 3; position: static; }
+}
+/* Narrow (phone): the card fills the screen (what is asked, then the answers), the feed follows by scrolling. */
+@container focus (max-width: 699.98px) {
+  .focus:not([data-inline]):not([data-list]) .focus-card { display: flex; flex-direction: column; }
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-talk { flex: none; height: calc(var(--face-h) - var(--answer-h, 0px)); min-height: 120px; }
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-answer { flex: none; }
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-talk, .focus:not([data-inline]):not([data-list]) .focus-card > .focus-answer { background-color: var(--surface); }
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-talk { background-color: var(--sunken); }
+  .focus-feed > .focus-thread { padding-inline: var(--pad); }
+}
+
+/* The stage picture is shown whole (a tall phone screenshot too); the magnifier opens it large. */
+.focus-card[data-pictures] .focus-figure { grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.focus-card[data-pictures] .focus-figure img { max-width: 100%; max-height: 100%; width: auto; height: auto; object-fit: contain; }
+/* Narrow: no room for an arrow across; the row of the option the picture belongs to is marked clearly instead. */
+@container focus (max-width: 699.98px) {
+  .focus-card .focus-opt[data-match]:not([aria-pressed="true"]) { box-shadow: inset 0 0 0 2.5px var(--u); }
+}
+
+/* The feed's entries for what happened (not said): a revision is a small sheet of its own with the agent's note
+   and the way to the version before; what he did (Revise, What??, took it back) is one quiet line. */
+.focus-feed .focus-turn { align-self: stretch; display: grid; gap: 4px; height: auto; margin: var(--s-4) 0 0; padding: 10px 14px 12px; border-radius: var(--r-md); background: color-mix(in srgb, var(--u) 7%, var(--surface)); box-shadow: inset 3px 0 0 var(--u); color: var(--fg); font-size: var(--t-md); font-weight: 400; }
+.focus-turn-head { margin: 0; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: var(--t-sm); }
+.focus-turn-head b { color: var(--fg); font: 700 1rem/1.2 var(--display); }
+.focus-turn-head .msg-time { margin-left: auto; }
+.focus-turn-note { margin: 0; }
+.focus .focus-turn-before { justify-self: start; min-height: 32px; padding: 0 10px; margin-left: -10px; border-radius: var(--r-pill); color: color-mix(in srgb, var(--u) 70%, var(--fg)); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; }
+.focus-did { align-self: center; display: inline-flex; align-items: center; gap: 8px; margin: var(--s-3) 0 0; color: var(--muted); font-size: var(--t-sm); font-weight: 600; }
+.focus-by-part.focus-by-revised { color: color-mix(in srgb, var(--u) 75%, var(--fg)); font-weight: 600; max-width: 34rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@container focus (max-width: 699.98px) { .focus-did, .focus .focus-turn-before { min-height: 40px; } }
+
+/* ══ A card opened alone is a page too, like the walk (decided 3 October): opaque ground, no dimmed and blurred
+   page behind it, nothing outside to click on; the way back at the top left ("Desk", or the session it was opened
+   from), the card centred, its feed below. The full width, as the walk. ══ */
+.focus:not([data-inline]) > .focus-backdrop { background: var(--bg); -webkit-backdrop-filter: none; backdrop-filter: none; animation: none; }
+.focus:not([data-inline]) > .focus-back-desk { position: fixed; z-index: 6; left: 12px; top: 12px; height: 36px; max-width: calc(100vw - 24px); display: inline-flex; align-items: center; gap: 6px; padding: 0 14px 0 10px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
+.focus:not([data-inline]) > .focus-back-desk span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.focus:not([data-inline]):not([data-list]) { padding-top: 60px; }
+.focus:not([data-inline]):not([data-list]) .focus-says { inset: 58px auto auto 12px !important; }
+@media (max-width: 700px) { .focus:not([data-inline]):not([data-list]) { padding-top: 56px; } }
+
+/* Whatever as the alternative to deciding (card Nr. 163 "oder"): a divider with "or", then one line. */
+.focus-or { flex: none; display: grid; gap: var(--s-2); width: 100%; margin-top: var(--s-3); }
+.focus-or > i { display: flex; align-items: center; gap: 12px; color: var(--faint); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; }
+.focus-or > i::before, .focus-or > i::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
+.focus .focus-or .focus-or-line { all: unset; box-sizing: border-box; display: flex; align-items: center; justify-content: center; gap: 10px; width: 100%; min-height: 48px; padding: 6px 14px; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line-strong); color: var(--fg); cursor: pointer; font: 400 var(--t-sm)/1.25 var(--font); }
+.focus .focus-or .focus-or-line:hover:not(:disabled) { box-shadow: inset 0 0 0 2px var(--u); }
+.focus .focus-or .focus-or-line:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.focus .focus-or .focus-or-line:disabled { opacity: .5; cursor: default; }
+.focus-or-line .sketch { flex: none; width: 24px; height: 24px; color: color-mix(in srgb, var(--u) 70%, var(--fg)); }
+.focus-or-line b { flex: none; font: 700 1rem/1.2 var(--display); }
+.focus-or-line small { min-width: 0; color: var(--muted); font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.focus-card[data-past] .focus-or, .focus-card[data-earlier] .focus-or { display: none; }
+/* Phone: the stage picture fits what the answers leave of the card (whole, not cut at the fold). */
+@container focus (max-width: 699.98px) {
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures] .focus-figure { height: clamp(120px, calc(var(--face-h) - var(--answer-h, 0px) - 124px), 420px); min-height: 0; }
+}
+
+/* ONE view (decided 3 October): "Next, please" is the same card page, stepping from card to card. The old bar
+   over the sheet is gone (the card has its own corner); the note of what happened stands beside the way back. */
+.focus:not([data-inline]):not([data-list]) .focus-top { display: none; }
+.focus:not([data-inline]):not([data-list]) .focus-says { position: fixed; inset: 8px auto auto 112px !important; width: auto; max-width: calc(100vw - 124px); translate: none; z-index: 7; }
+.focus:not([data-inline]):not([data-list]) > .focus-back-desk { max-width: 96px; }
+.focus-card-count { font-weight: 600; font-variant-numeric: tabular-nums; white-space: nowrap; }
+@container focus (max-width: 699.98px) {
+  /* phone: every option in sight on the card page; what is asked takes what they leave (and scrolls inside) */
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-answer { max-height: none; overflow: visible; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-answer > .focus-opts { max-height: none; overflow: visible; -webkit-mask-image: none; mask-image: none; padding-bottom: 8px; }
+}
+
+/* The order on the card (his words, 3 October): the title, the short text, then the gallery. The gallery takes
+   the height that is left (its picture scales down, whole); long text gives way to "more", the page never grows. */
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll { display: flex; flex-direction: column; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > * { flex: none; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-lead { order: -2; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-body { order: -1; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media { order: 0; flex: 1 1 0; min-height: 230px; display: flex; flex-direction: column; margin-top: var(--s-3); }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media > * { flex: none; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media > .focus-stage-view { flex: 1 1 0; min-height: 0; display: flex; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media .focus-figure { height: auto; flex: 1 1 0; min-height: 0; }
+.focus:not([data-inline]) .focus-card[data-pictures] .focus-stage-bar { padding-top: 0; }
+@container focus (min-width: 700px) { .focus:not([data-inline]) .focus-card[data-pictures] .focus-lead { padding-top: 6px; } }
+@container focus (max-width: 699.98px) { .focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-lead { padding-top: 48px; } }
+.focus-text[data-long]:not([data-open]) > .rich { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+.focus .focus-text-more { min-height: 32px; padding: 0 2px; color: color-mix(in srgb, var(--u) 70%, var(--fg)); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; }
+@container focus (max-width: 699.98px) {
+  .focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media { min-height: 170px; }
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures] .focus-figure { height: auto; }
+  .focus .focus-text-more { min-height: 40px; }
+}
+/* the title keeps clear of the card's corner (count, Snooze, Shred, Copy, read aloud, Close) */
+@container focus (min-width: 700px) { .focus:not([data-inline]) .focus-card .focus-scroll > .focus-lead .focus-title { padding-right: 230px; } }
+
+/* Regions the agent marked on a picture: circled with the pen, scaled with the picture. */
+.focus-figure, .focus-zoom-view { position: relative; }
+.focus-circles { position: absolute; overflow: visible; pointer-events: none; fill: none; stroke: var(--urg-high); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; filter: drop-shadow(0 0 1.5px var(--surface)); }
+.focus-circles text { fill: var(--urg-high); stroke: var(--surface); stroke-width: 3; paint-order: stroke; font: 700 14px/1 var(--display); }
+/* A knock elsewhere in the pass: a quiet marker beside the count. */
+.focus .focus-card-ends > .focus-knock { width: auto; height: 32px; display: inline-flex; align-items: center; gap: 5px; padding: 0 9px; border-radius: var(--r-pill); color: var(--urg-high); font: 600 var(--t-xs)/1 var(--font); white-space: nowrap; }
+.focus .focus-card-ends > .focus-knock:hover { background: var(--urg-high-soft, var(--sunken)); }
+.focus-knock .sketch, .focus-knock .focus-icon { width: 15px; height: 15px; }
+@container focus (max-width: 699.98px) {
+  .focus .focus-card-ends > .focus-knock { height: 40px; }
+  .focus .focus-card-ends > .focus-knock span { display: none; }
+  /* phone: the short text is three lines with "more", so title, text, the gallery's top and the options fit the first screen */
+  .focus:not([data-inline]) .focus-card[data-pictures] .focus-text > .rich { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+  .focus:not([data-inline]) .focus-card[data-pictures] .focus-text[data-open] > .rich { display: block; }
+}
+.focus-text:not([data-long]) > .focus-text-more { display: none; }
+@container focus (max-width: 699.98px) { .focus:not([data-inline]) .focus-card[data-pictures] .focus-text > .focus-text-more { display: inline-block; } }
+.focus:not([data-inline]) .focus-card > .focus-card-ends { z-index: 5; }
+@container focus (min-width: 700px) { .focus:not([data-inline]) .focus-card:has(.focus-knock) .focus-scroll > .focus-lead .focus-title { padding-right: 372px; } }
+
+/* ══ The card page on the common grid of the wide views (3 October): what is fixed stands 8px from the top, the
+   band ends at 64px; the card begins there, and its two columns begin on one line 32px inside it (the title at
+   the left, the first option at the right). The feed under the card is as wide as the card. ══ */
+.focus:not([data-inline]) > .focus-back-desk { left: 8px; top: 8px; }
+@container focus (min-width: 700px) {
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-scroll { padding-top: 0; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-scroll > .focus-lead { padding-top: 32px; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-scroll > .focus-lead .focus-title { margin-top: 0; }
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-answer { padding-top: 32px; }
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-card-ends { top: 0; }
+  .focus-feed { width: 100%; }
+}
+@media (min-width: 701px) { .focus:not([data-inline]):not([data-list]) { padding-top: var(--band, 64px); } }
+
+/* On the card page the notes of the page itself (info lines, "More urgent: …") stand in the band above the card,
+   in the middle: quiet, in sight, on nothing one presses. (The old bar they came from is not shown there.) */
+.focus:not([data-inline]):not([data-list]) .focus-top { display: block; position: absolute; z-index: 6; left: 0; right: 0; top: -56px; min-height: 0; height: 40px; padding: 0; pointer-events: none; }
+.focus:not([data-inline]):not([data-list]) .focus-top > :not(.focus-notes) { display: none !important; }
+.focus:not([data-inline]):not([data-list]) .focus-top .focus-notes { position: static; display: flex; flex-wrap: nowrap; justify-content: center; margin: 0; padding: 0 200px; pointer-events: none; }
+.focus:not([data-inline]):not([data-list]) .focus-top .focus-notes > * { pointer-events: auto; }
+@media (max-width: 700px) {
+  .focus:not([data-inline]):not([data-list]) .focus-top { top: -48px; }
+  .focus:not([data-inline]):not([data-list]) .focus-top .focus-notes { padding: 0 60px 0 96px; }
+}
+
+/* Phone: the stage picture is readable (it was 34x72px, smaller than its own thumbnail: the part of the card above
+   the answers had a fixed height, and title, text, bar and thumbnails left the picture 72px of it). With pictures
+   that part is now as high as it needs, at least what the answers leave of the screen; the picture is at least
+   200px high and takes what is left beyond that. If all of it does not fit the first screen, the picture wins and
+   the page scrolls on to the lower options (docs/qa-phone-design.md, 3 October evening). */
+@container focus (max-width: 699.98px) {
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures] > .focus-talk { height: auto; min-height: calc(var(--face-h) - var(--answer-h, 0px)); }
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures] > .focus-talk > .focus-scroll { flex: 1 0 auto; overflow: visible; }
+  .focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media { flex: 1 0 auto; }
+  .focus:not([data-inline]) .focus-card[data-pictures] .focus-scroll > .focus-media > .focus-stage-view { flex: none; height: clamp(200px, 27dvh, 260px); }
+  /* such a card can be higher than the screen: the field stays at the screen's foot all the same (it did because the
+     card ended there). The feed's box steps aside, so the field sticks inside the card instead of inside the feed. */
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures][data-shown] > .focus-feed { display: contents; }
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures] > .focus-feed > .focus-thread:not([hidden]) { margin-top: 10px; background: var(--bg); border-radius: var(--r-xl) var(--r-xl) 0 0; }
+  .focus:not([data-inline]):not([data-list]) .focus-card[data-pictures] > .focus-feed > .focus-composer { z-index: 4; }
+}
+/* Phone, three small ones from the evening's measuring: "From <session>" is a link 19px high (it takes 40 now, look
+   unchanged); the tick-heading on the stage was 32px high; and in the walk the slim title that comes while the text
+   is scrolled lay 40px under the knock marker: count and marker give way for as long as it is there. */
+@container focus (max-width: 699.98px) {
+  .focus:not([data-inline]) .focus-by-part.focus-by-from { padding-top: 21px; margin-top: -21px; }
+  .focus-secs[data-stage] .focus-sec-pick { min-height: 40px; }
+  .focus-card > .focus-talk:has(> .focus-up:not([hidden])) ~ .focus-card-ends > :is(.focus-knock, .focus-card-count) { display: none; }
+}
+
+/* Every option whole, always (his decision): a tile is as high as its label, the list is never cut or faded; if the
+   set is higher than the card, the answers' column scrolls inside the card. */
+@container focus (min-width: 700px) {
+  .focus:not([data-inline]):not([data-list]) .focus-card > .focus-answer { overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-answer > .focus-opts { flex: none; max-height: none; overflow: visible; -webkit-mask-image: none; mask-image: none; padding-bottom: 8px; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="stack"] { grid-auto-rows: auto; grid-template-rows: none; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="stack"] .focus-opt:not(.focus-opt-send) { height: auto; min-height: 44px; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="stack"] .focus-opt-label { overflow: visible; display: block; -webkit-line-clamp: none; white-space: normal; overflow-wrap: break-word; }
+}
+/* the way back names the session it leads to: room for the name, cut late; the whole name is its tooltip */
+.focus:not([data-inline]):not([data-list]) > .focus-back-desk { max-width: min(280px, calc(100vw - 80px)); }
+.focus:not([data-inline]):not([data-list]) .focus-says { inset: 8px auto auto calc(var(--back-w, 78px) + 20px) !important; max-width: calc(100vw - var(--back-w, 78px) - 32px); }
+/* A row of the Desk unfolded in place has the same order as the card page: the title, the short text, then the gallery. */
+.focus[data-inline] .focus-card[data-pictures] .focus-scroll { display: flex; flex-direction: column; }
+.focus[data-inline] .focus-card[data-pictures] .focus-scroll > * { flex: none; }
+.focus[data-inline] .focus-card[data-pictures] .focus-scroll > .focus-lead { order: -2; }
+.focus[data-inline] .focus-card[data-pictures] .focus-scroll > .focus-body { order: -1; }
+.focus[data-inline] .focus-card[data-pictures] .focus-scroll > .focus-media { margin-top: var(--s-3); }
+
+/* The pair of square tiles (two options, one answer): a tile with a long detail grows past the square instead of
+   cutting its drawing and its last line; both tiles stay equally high. */
+@container focus (min-width: 700px) {
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="duo"] .focus-opt { aspect-ratio: auto; height: auto; min-height: 128px; overflow: visible; }
+  .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="duo"] .focus-opt-detail { overflow: visible; display: block; -webkit-line-clamp: none; white-space: normal; }
+}

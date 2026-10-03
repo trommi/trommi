@@ -1,0 +1,99 @@
+/* A session's page on a wide window (861px and up): heading, pill and conversation share one top grid.
+   The band at the top (app.css, --band: 64px, as high as the Desk box reaches) holds what floats: the heading
+   (drawing, name, the quiet line, the crown or memo switch; built by app.js paintTitle and beside.js) at its
+   left, the menu's pill in its middle. The conversation begins below the band, without a rule, and fades out
+   under it: no line is ever under a floating thing. The two filters ("Questions only" with its count, "Files") stand in a quiet row under the composer.
+   The markup is unchanged: .pane-title is laid over #session as a grid that takes no clicks itself; its
+   children are placed in its corners. Linked last, so it outweighs the head rules in app.css and beside.css.
+   A phone: see the foot of this file. */
+
+@media (min-width: 861px) {
+  body:not([data-scope="all"]):not([data-page]) #session { position: relative; }
+  /* One session, its conversation: it begins below the band (app.css, --band), so no line of it can lie under the
+     pill or the heading, wherever it is scrolled to; its first line stands 16px under the band, on the line of the
+     sidebar's first row, and what scrolls away fades out over the band's last 12px instead of being cut. */
+  body[data-view="chat"]:not([data-pair]) #session .log-inner,
+  body[data-view="chat"]:not([data-pair]) #session .pane-list { padding-top: var(--s-4); }
+  body[data-view="chat"]:not([data-pair]) #session :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
+
+  /* ---- the layer that carries heading and filters ---- */
+  #session .pane-title {
+    position: absolute; z-index: 4; inset: calc(-1 * var(--band, 64px)) 0 0; grid-area: auto;
+    display: grid; grid-template-columns: max-content minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; align-items: start; gap: 0;
+    min-height: 0; margin: 0; padding: 8px 0 0; border: 0; pointer-events: none;
+    --head-w: min(30rem, calc((100vw - var(--side, 256px)) / 2 - 116px)); /* the band's half left of the pill, less the pill's half and the margins */
+  }
+  /* (The layer begins at the window's top: the heading stands in the band, in every view of a session.) */
+  body[data-pair] #session .pane-title { --head-w: min(26rem, calc((100vw - var(--side, 256px)) / 2 - 170px)); }
+
+  /* ---- the heading: top left corner of the band, 8px from the top (the line of the Desk box and the pill) and
+     24px from the left (the page's gutter). Nothing scrolls under it, so it needs no ground of its own. ---- */
+  #session .pane-who:empty { display: none; }
+  #session .pane-who {
+    grid-column: 1; grid-row: 1; flex: none; display: flex; align-items: flex-start; gap: var(--s-3);
+    max-width: var(--head-w); min-height: 44px; margin: 0 0 0 var(--s-6); pointer-events: auto; z-index: 1;
+  }
+  #session .pane-who .agent-avatar { width: 44px; height: 44px; border-radius: 12px; }
+  #session .pane-who .agent-pair { flex: none; }
+  #session .pane-title h2 { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.02em; } /* the name of the place: a heading */
+  body[data-pair] #session .pane-title h2 { align-self: center; font-size: 1.08rem; }
+  /* (The heading begins at the 8px line: the crown stays inside the window, its tip on that line, not above it.) */
+  #session .pane-who .crown-toggle { left: -14px; top: -4px; }
+  /* The crown a main session's drawing wears (app.css .agent-avatar .crown-mark stands a quarter above the drawing):
+     here the drawing begins on the 8px line, so the crown sits on its corner instead, wholly inside the window. */
+  #session .pane-who .agent-avatar .crown-mark { top: 6%; left: -20%; width: 52%; }
+  #session .pane-who .crown-toggle .crown-mark { width: 20px; }
+  #session .pane-who .crown-toggle.is-memo { top: auto; bottom: -9px; }
+  /* Under the name: what the session is at, its model and machine, on one line. */
+  body:not([data-pair]) #session .pane-now {
+    grid-column: 1; grid-row: 2; display: flex; flex-wrap: nowrap; align-items: baseline; gap: var(--s-2);
+    position: relative; z-index: 1; max-width: var(--head-w); min-height: 0; margin: -15px 0 0 var(--s-6); padding-left: 56px;
+    color: var(--muted); font-size: var(--t-sm); line-height: 1.25; white-space: nowrap; overflow: hidden;
+  }
+  #session .pane-now span:first-child { flex: 0 1 auto; min-width: 2.5em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  #session .pane-now .caps { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: .68rem; }
+  /* A name alone (no line under it) stands at the drawing's middle. */
+  #session .pane-title:has(.pane-now:empty) .pane-who { align-items: center; }
+
+  /* ---- the filters: a quiet row under the composer, at the column's left edge ---- */
+  #session .filters {
+    position: static; grid-column: 1 / -1; grid-row: 4; justify-self: start; align-self: end; gap: 2px;
+    margin: 0 0 6px calc(max(var(--gutter), (100% - 47.5rem) / 2 + var(--gutter)) + 2px); pointer-events: auto;
+  }
+  #session .filters :is(a, button) { min-height: 26px; padding: 0 9px; border-radius: 7px; font-size: var(--t-xs); }
+  #session .filters b { margin-left: 6px; padding: 1px 6px; }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: 38px; }
+  /* Sessions laid together have a composer each: "Files" stands beside their names in the band. */
+  body[data-pair] #session .filters { grid-column: 2; grid-row: 1 / 3; align-self: center; margin: 0 0 0 18px; }
+
+}
+
+/* ---- the filters are real links (js/link.js; hrefs kept by app.js paintLinks): what app.css says for
+   `.filters button`, for the anchor. (#mode-*, #tab-* are links too; .modes and .tabbar are shown nowhere.) ---- */
+.filters a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.filters a:hover { color: var(--fg); background: var(--sunken); }
+.filters a[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+
+/* ---- a phone (860px and below): the same idea. One session: no strip and no rule above the conversation; it
+   flows from under the top bars to the composer. The session's name stands in the strip of sessions already,
+   so there is no heading. The two filters are a quiet row under the composer; while the keyboard is up
+   (app.js sets data-typing; or the viewport is short) the row is gone and its room goes to the conversation.
+   Sessions laid together keep their line of names (it picks the one column) with "Files", without the rule. ---- */
+@media (max-width: 860px) {
+  #session .pane-title { border-bottom: 0; }
+  body[data-view="chat"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #session { position: relative; }
+  body[data-view="chat"]:not([data-pair]) #session .pane-title {
+    position: absolute; z-index: 4; inset: 0; display: flex; align-items: flex-end; flex-wrap: nowrap;
+    min-height: 0; padding: 0 var(--gutter) max(3px, env(safe-area-inset-bottom, 0px)); pointer-events: none;
+  }
+  body[data-view="chat"]:not([data-pair]) #session .filters { margin: 0 0 0 4px; gap: 2px; pointer-events: auto; }
+  body[data-view="chat"]:not([data-pair]) #session .filters :is(a, button) { min-height: 32px; padding: 0 9px; font-size: var(--t-xs); }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: calc(38px + env(safe-area-inset-bottom, 0px)); }
+  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
+  body[data-pair] #session .filters :is(a, button) { min-height: 36px; }
+}
+@media (max-width: 860px) and (max-height: 520px) {
+  body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
+}

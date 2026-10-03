@@ -196,6 +196,9 @@ body[data-filter] .jump { display: none; }
 :is(#chat, #inbox) .rich strong{ font-weight: 600; }
 :is(#chat, #inbox) .rich a{ color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
 :is(#chat, #inbox) .rich a:hover{ color: var(--accent-hover); }
+/* "☞" before a paragraph (ui.js rich()): the drawn hand points at it from the margin, the text a shade stronger */
+.rich-point { position: relative; padding-left: 34px; font-weight: 600; }
+.rich-point > .advice-hand { left: 0; top: .72em; width: 26px; rotate: -2deg; }
 :is(#chat, #inbox) .rich :not(pre) > code{
   font: .86em/1.4 var(--mono); padding: .12em .4em; border-radius: 6px;
   background: var(--sunken); border: 1px solid var(--line);
@@ -253,6 +256,30 @@ body[data-filter] .jump { display: none; }
 .asset-open { background: var(--fg); color: var(--bg); }
 .asset-copy { background: none; color: var(--fg); border-color: var(--line-strong); }
 .asset-copy:hover { border-color: var(--fg); }
+/* Share with someone outside (ui.js assetShare): a third button, and a panel on a line of its own under the card's
+   text and buttons. On the compact link card inside a text (.asset-linked) the button stands beside the card. */
+.asset-share { min-height: 40px; display: inline-flex; align-items: center; padding: 0 var(--s-4); border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.asset-share:hover, .asset-share[aria-expanded="true"] { border-color: var(--fg); }
+.asset-share[data-shared] { border-color: var(--accent); color: var(--accent); }
+.asset-share[data-shared]::before { content: ""; width: 7px; height: 7px; margin-right: 7px; border-radius: 50%; background: var(--accent); }
+.asset-actions { flex-wrap: wrap; }
+.asset-linked { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px var(--s-2); max-width: 100%; vertical-align: middle; }
+.asset-linked > .asset-link { min-width: 0; max-width: min(100%, 26rem); flex: 0 1 auto; }
+.asset-linked > .asset-share { min-height: 36px; padding: 0 var(--s-3); }
+.asset-share-panel { flex: 1 1 100%; min-width: 0; max-width: 34rem; display: grid; gap: var(--s-2); padding: var(--s-3); border-radius: 6px; background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); font: 400 var(--t-sm)/1.4 var(--font); color: var(--fg); white-space: normal; text-align: left; }
+.asset-share-panel[hidden], .asset-share-panel [hidden] { display: none; }
+.asset-share-panel[data-busy] { opacity: .6; pointer-events: none; }
+.asset-share-say { color: var(--muted); text-wrap: pretty; }
+.asset-share-row { display: flex; gap: var(--s-2); min-width: 0; }
+.asset-share-link { flex: 1; min-width: 0; height: 40px; padding: 0 var(--s-3); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--mono); text-overflow: ellipsis; }
+.asset-share-foot { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--s-2); }
+.asset-share-ends { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--muted); }
+.asset-share-ends select { height: 40px; padding: 0 var(--s-2); border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
+.asset-share-copy, .asset-share-go, .asset-share-stop { flex: none; min-height: 40px; padding: 0 var(--s-4); border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.asset-share-copy:hover, .asset-share-stop:hover { border-color: var(--fg); }
+.asset-share-go { justify-self: start; background: var(--fg); color: var(--bg); border-color: var(--fg); }
+.asset-share-stop { color: var(--urg-critical); }
+.asset-share-error { color: var(--urg-critical); }
 .asset-card.is-gone { background: none; box-shadow: none; border: 1px dashed var(--line-strong); }
 .asset-card.is-gone strong { color: var(--muted); }
 
@@ -416,15 +443,23 @@ body[data-filter] .jump { display: none; }
 
 /* ---- lightbox ------------------------------------------------------------ */
 
+/* A picture, large, is a page (chat.js): the board's ground, a way back at the top left, no veil and no blur. */
 .lightbox {
   width: 100vw; height: 100dvh; max-width: none; max-height: none; margin: 0; padding: 0; border: 0;
-  background: none; color: var(--fg); overflow: hidden;
+  background: var(--bg); color: var(--fg); overflow: hidden;
 }
-.lightbox[open] { display: grid; grid-template-rows: minmax(0, 1fr) auto; animation: fade var(--d-med) var(--ease-out); }
-.lightbox::backdrop { background: var(--overlay); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+.lightbox[open] { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+.lightbox::backdrop { background: var(--bg); }
+.lightbox-back {
+  justify-self: start; display: inline-flex; align-items: center; gap: 6px; min-height: 44px;
+  margin: calc(var(--s-2) + env(safe-area-inset-top, 0px)) var(--s-3) 0; padding: 0 var(--s-3) 0 var(--s-2);
+  border-radius: var(--r-pill); color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-decoration: none;
+}
+.lightbox-back:hover, .lightbox-back:focus-visible { background: var(--sunken); color: var(--fg); }
+.lightbox-back .ico { width: 18px; height: 18px; }
 .lightbox-stage {
   min-height: 0; position: relative; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); place-items: center;
-  padding: calc(var(--s-5) + env(safe-area-inset-top, 0px)) var(--s-4) var(--s-4); cursor: zoom-out; touch-action: pan-y;
+  padding: var(--s-2) var(--s-4) var(--s-4); cursor: zoom-out; touch-action: pan-y;
 }
 .lightbox-img {
   max-width: 100%; max-height: 100%; min-height: 0; object-fit: contain; cursor: default;
@@ -484,6 +519,10 @@ body[data-filter] .jump { display: none; }
 .doodle { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
 .sketch { display: block; width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
 
+/* (the menu pill's mark and word too: a phone's opener is the caret alone) */
+.brand-open > .pill-mark, .brand-open > .pill-word { display: none; }
+/* (the rail's button and note exist on wide screens only: see the min-width block below) */
+.rail-fold, .rail-tip { display: none; }
 /* ---- sidebar: the inbox, then the sessions ---- */
 #agents { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: var(--s-4) var(--s-2); background: var(--bg); border-right: 1px solid var(--line); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .agent-heading { margin-top: var(--s-4); padding: 0 var(--s-3) var(--s-2); color: var(--faint); }
@@ -680,6 +719,16 @@ button.agent-badge:active { scale: .95; }
 /* ---- inbox: with no session selected, the grouped list of open questions is the whole page ---- */
 #inbox { display: none; }
 body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
+/* The two round buttons stand fixed at the bottom right (quick send, the pad): the Desk keeps a lane free for
+   them on its right, so the rows' tiles and tabs never scroll under them (his rule: nothing lies over what
+   one presses). A phone has them in the top bar instead. */
+@media (min-width: 861px) {
+  body[data-scope="all"]:not([data-page]) #inbox { padding-right: calc(var(--gutter) + 60px); }
+}
+/* From 1224px (sidebar 256 + column 800 + twice 84) the column's own margin is that lane: it stands centred, under the pill. */
+@media (min-width: 1224px) {
+  body[data-scope="all"]:not([data-page]) #inbox { padding-right: var(--gutter); }
+}
 .inbox-head, .inbox-groups { max-width: 800px; margin-inline: auto; }
 .inbox-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-8); }
 /* The heading, and on its line the count with its sentence; in a narrow window that wraps below. */
@@ -719,28 +768,29 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 :root[data-theme="dark"] .inbox-avatar[style*="--hue"] { color: hsl(var(--hue) 70% 76%); }
 .inbox-avatar .crown-mark { left: -10%; top: -22%; width: 58%; }
 .inbox-avatar .sketch { width: 100%; height: 100%; }
-/* One colour drives the whole card: tint, text, border and tab all derive from it. */
+/* Our own card (card Nr. 87, "Farben so nicht"): a plain white row, grey text, one neutral line and one
+   soft shadow. The colour (--card-color: urgency, or the asking session's hue) stands only where one
+   answers: the tiles, the tabs, the knock. */
 .inbox-row {
   --urg-color: var(--urg-normal);
   --card-color: var(--urg-color);
-  --card-bg: color-mix(in srgb, var(--card-color) 5%, var(--surface));
-  --card-ink: color-mix(in srgb, var(--card-color) 70%, var(--fg));
-  --card-line: color-mix(in srgb, var(--card-color) 30%, var(--surface));
+  --card-bg: var(--surface);
+  --card-ink: color-mix(in srgb, var(--muted) 75%, var(--fg));
+  --card-line: var(--line-strong);
   /* Every row in the list is the same height and the answers are tiles at its right edge, always in
      the same place. Answer one, the next slides up, and its tiles are under the pointer.
      "Choose" unfolds a second grid row below; folded, that row has no height. */
   min-height: 172px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; grid-template-rows: 172px auto; align-items: stretch;
   position: relative; background: var(--card-bg); border-radius: 6px;
-  box-shadow: 0 0 0 1px var(--card-line), 0 8px 16px -12px color-mix(in srgb, var(--card-color) 55%, transparent);
+  box-shadow: 0 0 0 1px var(--card-line), 0 6px 14px -10px rgb(20 30 25 / .18);
 }
 .inbox-row[data-urgency="low"] { --urg-color: var(--urg-low); }
 .inbox-row[data-urgency="high"] { --urg-color: var(--urg-high); }
 .inbox-row[data-urgency="critical"] { --urg-color: var(--urg-critical); }
-/* A card that says who asks (the desk) takes that session's colour: a light wash of its hue as the
-   surface, a tone of it as border, text and tiles. What knocks keeps its warning colour on top: the
-   label and the leading tile, so urgency still wins the eye. */
-.inbox-row[data-from] { --card-color: hsl(var(--hue) 46% 31%); --card-bg: color-mix(in srgb, hsl(var(--hue) 70% 50%) 7%, var(--surface)); --card-line: color-mix(in srgb, hsl(var(--hue) 55% 42%) 36%, var(--surface)); }
-:root[data-theme="dark"] .inbox-row[data-from] { --card-color: hsl(var(--hue) 52% 74%); --card-bg: color-mix(in srgb, hsl(var(--hue) 60% 60%) 9%, var(--surface)); --card-line: color-mix(in srgb, hsl(var(--hue) 50% 62%) 34%, var(--surface)); }
+/* A card that says who asks (the desk) answers in that session's colour: its tiles and tabs. What
+   knocks keeps its warning colour on top: the label and the leading tile, so urgency still wins the eye. */
+.inbox-row[data-from] { --card-color: hsl(var(--hue) 46% 31%); }
+:root[data-theme="dark"] .inbox-row[data-from] { --card-color: hsl(var(--hue) 52% 74%); }
 .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--urg-color); }
 /* The sender's drawing, small, before the title; the text stands beside it. The byline then does not
    say who asks a second time. */
@@ -779,16 +829,8 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
    The tab stands in the list's own flow above the run's first card (so it never lies on the card
    before it): the session's drawing, crown and name on the session's colour. The run's cards stand
    close under it, 4px apart, square where they meet, and do not repeat the drawing. */
-.inbox-group[data-sender] { --run-color: hsl(var(--hue) 46% 31%); --run-on: var(--surface); gap: 4px; }
+.inbox-group[data-sender] { --run-color: hsl(var(--hue) 46% 31%); --run-on: var(--surface); gap: var(--s-4); }
 :root[data-theme="dark"] .inbox-group[data-sender] { --run-color: hsl(var(--hue) 52% 74%); }
-.inbox-run-tab { justify-self: start; margin: 0 0 -4px 16px; height: 25px; max-width: calc(100% - 32px); display: inline-flex; align-items: center; gap: 7px; padding: 0 14px 0 10px; border-radius: 9px 9px 0 0; background: var(--run-color); color: var(--run-on); font: 700 var(--t-sm)/1 var(--font); letter-spacing: .01em; }
-.inbox-run-tab b { font-weight: inherit; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox-run-tab .inbox-from-mark { width: 17px; height: 17px; color: inherit; }
-.inbox-run-tab .doodle { stroke-width: 2.3; }
-.inbox-run-tab .crown-mark { color: color-mix(in srgb, var(--gold-pen, #c9a227) 60%, var(--run-on)); }
-.inbox-group[data-sender] > .inbox-run-tab + .inbox-row { box-shadow: 0 0 0 1px var(--card-line), inset 0 2px 0 var(--run-color), 0 2px 2px rgb(20 30 25 / .04); }
-.inbox-group[data-sender] > .inbox-row:not(:last-child) { border-bottom-left-radius: 2px; border-bottom-right-radius: 2px; }
-.inbox-group[data-sender] > .inbox-row + .inbox-row { border-top-left-radius: 2px; border-top-right-radius: 2px; }
 .inbox-group[data-sender] .inbox-who { display: none; }
 .inbox-group[data-sender] .inbox-text.has-sender { padding-left: 0; }
 .inbox-row[data-from] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
@@ -882,7 +924,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* The row's ways out (.inbox-tabs): small paper tabs down its right edge, in the order of the opened
    card: Snooze (.inbox-later, key L), Revise (.inbox-revise), Whatever (.inbox-trust), Shred
    (.inbox-shred). Each is tucked behind the edge with only its drawing showing; under the pointer or
-   the keyboard (after a finger's first tap: .is-unfolded) it slides out and shows its word, eased,
+   the keyboard it slides out and shows its word, eased,
    with a soft shadow. Two places: in the desk on a wide page they lie wholly outside the row, in the
    right margin, so no click on a tile can land on them; everywhere else (narrow pages, a session's own
    list) they sit inside the right edge and slide inward, and the tiles are set in to clear them; on a
@@ -901,20 +943,27 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
 .inbox-tab-act:active .inbox-later-flap { filter: brightness(.95); }
 .inbox-shred:is(:hover, :focus-visible, .is-unfolded) { color: var(--urg-critical); }
+/* Shift held (bar.js sets body[data-shift]): the row's one tab is Shred instead of Snooze, slid out and red */
+/* On the card, beside the title (inbox.js puts .inbox-tabs into .inbox-when): one small square button with the
+   drawing alone, the word is its tooltip; nothing lies outside the row. Shift held: the same place is Shred. */
+.inbox-when .inbox-tabs { position: static; display: flex; gap: 4px; margin: -6px 0 -6px 2px; }
+.inbox-when .inbox-tab-act, .inbox-when .inbox-tab-act:first-child { --nub: 28px; width: 28px; max-width: 28px; height: 28px; border-radius: 8px; filter: none; transition: none; color: var(--card-ink); }
+.inbox-when .inbox-later-flap, .inbox-when .inbox-tab-act:is(:hover, :focus-visible) .inbox-later-flap { justify-content: center; padding: 0; background: none; box-shadow: inset 0 0 0 1px var(--line-strong); }
+.inbox-when .inbox-tab-act:is(:hover, :focus-visible) .inbox-later-flap { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--fg); }
+.inbox-when .inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
+.inbox-when .inbox-later-flap .sketch { width: 16px; height: 16px; opacity: 1; }
+.inbox-when .inbox-later-flap b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.inbox-when .inbox-tab-act.inbox-shred .inbox-later-flap { box-shadow: inset 0 0 0 1px var(--urg-critical); }
+body:not([data-shift]) .inbox-tab-act.inbox-shred { display: none; }
+body[data-shift] .inbox-tabs:has(.inbox-shred) > .inbox-later { display: none; }
+body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg-critical); }
 /* on the row the keys are on, each tab wears its key */
 .inbox-row.is-current .inbox-tab-act[data-cap]::after { content: none; }
 /* Whatever under the pointer: the tile the agent would take lights up */
 .inbox-answer.is-hinted { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--card-color); }
-/* in the margin: tucked behind the row's right edge, sliding out sideways; the drawing leads */
-@container inboxpage (min-width: 1001px) {
-  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-tabs { top: 12px; right: auto; left: 100%; justify-items: start; gap: 5px; }
-  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-tab-act { height: 30px; --nub: 24px; border-radius: 0 7px 7px 0; }
-  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-later-flap { flex-direction: row-reverse; float: right; height: 30px; padding: 0 5px 0 12px; }
-  :is(.inbox-group[data-sender], .inbox-group-later, .inbox-group-asked) .inbox-actions { padding-right: 12px; }
-}
 /* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
    (Set in from the right where the Snooze label sits inside the row's edge.) */
-.inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 31px 12px 0; }
+.inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 12px 12px 0; }
 .inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
@@ -1038,7 +1087,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 @container rows (max-width: 560px) {
   .inbox-row { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
   .inbox-answer { height: auto; }
-  .inbox-when, .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 8px; right: 34px; }
+  .inbox-when, .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 10px; right: 10px; }
   .inbox-byline:has(.inbox-thumb) { order: 3; margin-top: 4px; }
   .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; }
   .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-3)); }
@@ -1055,6 +1104,9 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   .inbox-tabs { display: flex; gap: 2px; }
   .inbox-tab-act, .inbox-tab-act:first-child { border-radius: 0 0 7px 7px; }
   .inbox-tabs .inbox-tab-act:last-child { border-radius: 0 6px 0 7px; }
+  /* big enough for a thumb: one tap snoozes */
+  .inbox-tab-act { height: 36px; --nub: 36px; }
+  .inbox-tab-act .inbox-later-flap { padding: 0 10px 0 10.5px; gap: 14px; }
   /* the note is a quiet line at the top of the card; later rows of a run drop the mark and the name */
   .inbox-byline { position: static; order: -1; flex-wrap: wrap; row-gap: 2px; margin: 10px 0 0; padding-right: 26px; }
   /* (the line keeps its height when it has nothing to say: the clock at the right stands in it) */
@@ -1076,6 +1128,52 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 @container rows (max-width: 330px) {
   .inbox-answer.is-thumb { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: 4px; padding-block: 8px; }
   .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: center; }
+}
+/* Two long answers (card Nr. 157): the tile shows the agent's short word (options[i].short), the thumb small
+   with it: above it in a square tile, beside it where tiles are flat. The word stands whole; inbox.js
+   (fitShorts) picks the step for the pair: one line, a size smaller, two lines, last the thumb above. */
+.inbox-answer.is-thumb.is-short { padding-inline: 4px; }
+.inbox-answer.is-thumb.is-short .sketch { width: 26px; height: 26px; stroke-width: 1.7; }
+.inbox-answer.is-thumb.is-short > span.inbox-short { min-width: 0; max-width: 100%; font: 700 var(--t-md)/1.15 var(--display); white-space: nowrap; text-wrap: balance; overflow-wrap: normal; text-align: center; }
+.inbox-answer.is-thumb.is-short.is-two > span.inbox-short { white-space: normal; }
+.inbox-answer.is-thumb.is-short.is-tight > span.inbox-short { font-size: var(--t-sm); }
+.inbox-answer.is-thumb.is-short.is-tiny > span.inbox-short { font-size: var(--t-xs); }
+/* Who asks, on a wide screen (card Nr. 164): no tab above the rows; the session's drawing stands alone in a
+   narrow column left of each card, in the session's colour, level with the title. Its name is a small note
+   under it, written out into the margin so it lies over nothing, under the pointer or the keyboard; a click
+   opens the session (inbox.js questionRow). A phone says who asks in the card's first line (phone-desk.css). */
+.inbox-gutter { display: none; }
+@media (min-width: 861px) {
+  .inbox-group[data-sender] { padding-left: 46px; }
+  .inbox-group[data-sender] > .inbox-row > .inbox-gutter { display: block; position: absolute; left: -46px; top: 14px; width: 32px; height: 32px; border-radius: 8px; color: hsl(var(--hue) 46% 31%); }
+  .inbox-group[data-sender] > .inbox-row:has(.inbox-row-head:not(:empty)) > .inbox-gutter { top: 36px; }
+  :root[data-theme="dark"] .inbox-gutter { color: hsl(var(--hue) 52% 74%); }
+  .inbox-gutter .inbox-from-mark { position: relative; display: block; width: 32px; height: 32px; color: inherit; }
+  .inbox-gutter .doodle { stroke-width: 2.2; }
+  .inbox-gutter::after { content: attr(data-name); position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); padding: 5px 9px; border-radius: 7px; background: currentColor; font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; -webkit-text-fill-color: var(--surface); }
+  .inbox-gutter:is(:hover, :focus-visible)::after { opacity: 1; }
+  .inbox-gutter:focus-visible { outline: 2px solid currentColor; outline-offset: 3px; }
+}
+/* Rows that came in above the fold while he is further down (inbox.js keepRow): said, not pushed. */
+.inbox-news-at { position: sticky; top: 8px; z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
+.inbox-news-at:has(~ .inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
+/* A knock out of sight (inbox.js tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
+   the list. It is the edge: rows pass under it, it floats over no tile. */
+.inbox-edge { position: fixed; z-index: 6; pointer-events: none; }
+.inbox-edge-knock { pointer-events: auto; width: 100%; height: 26px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0; border: 0; border-radius: 0 0 10px 10px; background: var(--urg-high); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.inbox-edge.is-down .inbox-edge-knock { border-radius: 10px 10px 0 0; }
+.inbox-edge-knock[hidden] { display: none; }
+.inbox-edge-knock .sketch { width: 18px; height: 18px; stroke-width: 2; }
+/* A tool of the paper in hand (css/deskpad.css, data-paper-front): the pad's toolbar stands at the window's foot, where
+   the lower strip would lie on it; the cards cannot be reached then anyway, so the strip waits until the pointer is back. */
+#inbox[data-paper-front] .inbox-edge.is-down { display: none; }
+.inbox-edge-knock[hidden] { display: none; }
+.inbox-news { pointer-events: auto; align-self: start; padding: 7px 13px; border: 0; border-radius: 999px; background: var(--fg); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); box-shadow: var(--shadow-lg); white-space: nowrap; }
+@container rows (max-width: 560px) {
+  .inbox-answer.is-thumb.is-short { grid-auto-flow: column; grid-template-columns: auto minmax(0, auto); gap: 8px; padding-inline: 8px; }
+  .inbox-answer.is-thumb.is-short .sketch { width: 22px; height: 22px; }
+  .inbox-answer.is-thumb.is-short:not(.is-stacked) > span.inbox-short { text-align: left; }
+  .inbox-answer.is-thumb.is-short.is-stacked { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: 3px; padding-block: 7px; }
 }
 
 /* ---- a question inside the conversation: the same row as in the inbox, where it was asked ---- */
@@ -1121,7 +1219,8 @@ html body:not([data-pair]) .pane-now { font-size: var(--t-sm); }
 html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
 @media (min-width: 861px) {
   html body:not([data-scope="all"]):not([data-page]) .quick-open { display: none; }
-  html body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: var(--s-3); top: 6px; box-shadow: none; background: none; color: var(--muted); }
+  /* (same place and size as on the Desk, 8px from the top and 16px from the right: only its looks are quieter) */
+  html body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: var(--s-4); top: 8px; width: 38px; height: 38px; box-shadow: none; background: none; color: var(--muted); }
   html body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open:hover { background: var(--sunken); color: var(--fg); translate: none; box-shadow: none; }
   html body:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: calc(var(--s-3) + 44px); }
 }
@@ -1195,9 +1294,11 @@ body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
 body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: none; }
 
 /* ---- rename a session, pick its scribble ---- */
-.session-editor { border: 0; padding: 0; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); width: min(420px, calc(100vw - 32px)); }
-.session-editor::backdrop { background: var(--overlay); }
-.session-editor form { display: grid; gap: var(--s-3); padding: var(--s-6); }
+/* Rename is a small form at the name that was pressed (agents.js openEditor): no veil over the page. */
+.session-editor { border: 0; padding: 0; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); width: min(340px, calc(100vw - 16px)); animation: pop var(--d-fast) var(--ease-out) both; }
+.session-editor[data-anchored] { position: fixed; margin: 0; }
+.session-editor::backdrop { background: transparent; }
+.session-editor form { display: grid; gap: var(--s-2); padding: var(--s-4); }
 .session-editor h2 { font: 800 1.5rem/1.15 var(--display); }
 .session-editor input { width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: transparent; font-size: max(16px, 1em); }
 .session-editor .caps { color: var(--muted); }
@@ -1288,6 +1389,11 @@ body:not([data-scope="all"]):not([data-page]) :is(.quick-open, .topbar .padlink-
 body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: calc(var(--s-4) + 44px); }
 @media (max-width: 860px) {
   body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: 100px; top: 6px; }
+  /* A phone's Desk too: the cards scroll under the whole screen, so nothing may float over their tiles
+     (his rule: nothing lies over what one presses). The two stand in the top bar, as in a session. */
+  body .topbar :is(.quick-open, .padlink-open) { bottom: auto; top: 6px; width: 36px; height: 36px; box-shadow: 0 0 0 1px var(--line); }
+  body .topbar .quick-open { right: 56px; }
+  body .topbar .padlink-open { right: 100px; }
 }
 /* ---- wide screens: no bar. The logo with its menu floats at the top centre of the page, a small
    pill; the menu drops down centred under it. In the sidebar the Inbox entry stays at the top while
@@ -1304,17 +1410,46 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
      their names; beside it the small turning ring while sessions work; the knocks and everything open
      as small marks before the caret, whose column stands over the rows' rings. Even margins all round;
      below it clear room, kept by a spacer that stays while the sessions scroll under it. */
+  /* The rail (card Nr. 150, bar.js toggleRail): the sidebar folded to the sessions' drawings with their state at
+     the corner (ring, count, the red hand of a knock); the Desk block is its drawing and the knocks. Names
+     come as a note beside the row under the pointer (.rail-tip). The small button at the foot folds and opens. */
+  .rail-tip { display: block; }
+  .rail-fold { position: fixed; z-index: 7; left: 8px; bottom: 14px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--faint); }
+  .rail-fold:hover, .rail-fold:focus-visible { color: var(--fg); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+  .rail-fold svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: rotate var(--d-fast); }
+  body:has(.focus:not([hidden]):not(.is-inline)) .rail-fold { display: none; }
+  #agents { padding-bottom: 60px; }
+  [data-rail="folded"] body { grid-template-columns: 76px minmax(0, 1fr); }
+  [data-rail="folded"] .rail-fold { left: 20px; }
+  [data-rail="folded"] .rail-fold svg { rotate: 180deg; }
+  [data-rail="folded"] .topbar { width: 60px; height: 64px; }
+  [data-rail="folded"] .topbar .desk-go { flex-direction: column; justify-content: center; gap: 5px; padding: 0; border-radius: 14px; }
+  [data-rail="folded"] .topbar .desk-go > .sketch { margin: 0; width: 26px; height: 26px; }
+  [data-rail="folded"] .topbar .desk-name, [data-rail="folded"] .topbar .desk-state .agent-working, [data-rail="folded"] .topbar .desk-state .agent-count.is-total { display: none; }
+  [data-rail="folded"] .topbar .desk-state { flex: none; margin: 0; justify-content: center; }
+  [data-rail="folded"] .topbar .desk-state:empty { display: none; }
+  [data-rail="folded"] #agents { padding-inline: 6px; }
+  [data-rail="folded"] #agents::before { height: 80px !important; margin-inline: -6px; }
+  [data-rail="folded"] .agent-row { justify-content: center; }
+  [data-rail="folded"] .agent-entry { flex: none; justify-content: center; width: 60px; padding: 8px 0 !important; }
+  [data-rail="folded"] .agent-text { display: none; }
+  [data-rail="folded"] .agent-row > .agent-badge { position: absolute; right: -2px; top: -4px; margin: 0; width: 24px; height: 24px; scale: .85; }
+  [data-rail="folded"] .agent-row.is-group .agent-entry { min-height: 0; }
+  [data-rail="folded"] .agent-row > :is(.agent-cut, .agent-archive) { display: none; }
+  [data-rail="folded"] #agents > :not(.agent-row) { display: none; }
+  .rail-tip { position: fixed; z-index: 9; padding: 6px 10px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); pointer-events: none; white-space: nowrap; }
   #agents { padding-top: 0; }
-  #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 92px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
-  .topbar { position: fixed; z-index: 7; top: 18px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+  /* the Desk box: 8px from the top and the sides (one inset all round), the first row 16px under it, on the line of the page's first content */
+  #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 72px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
+  .topbar { position: fixed; z-index: 7; top: 8px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
   .topbar:has(#desk-go[aria-current]) { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
   .topbar .brand { margin-right: 0; flex: 1; min-width: 0; height: 100%; }
-  .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.34rem/1 var(--display); letter-spacing: -.02em; }
+  .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.75rem/1 var(--display); letter-spacing: -.03em; }
   .topbar .deskpill { gap: 0; }
   .topbar .desk-go { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 0; padding: 0 7px 0 6px; border-radius: 14px 0 0 14px; text-align: left; }
   .topbar .desk-go:hover { background: none; }
   .topbar .desk-go .brand-mark { display: none; }
-  .topbar .desk-go > .sketch { flex: none; width: 28px; height: 28px; margin: 0 17px 0 5px; stroke-width: 1.6; }
+  .topbar .desk-go > .sketch { flex: none; width: 28px; height: 28px; margin: 0 15px 0 9px; stroke-width: 1.6; }
   .topbar .desk-state { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; margin-left: 7px; }
   .topbar .desk-state .agent-working b { display: none !important; }
   .topbar .desk-state .agent-count.is-total .sketch { display: none; }
@@ -1328,9 +1463,34 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .topbar .desk-state .agent-count .sketch { width: 15px; height: 15px; }
   .topbar .brand-open { align-self: stretch; width: 32px; min-width: 32px; margin-left: 0; padding: 0; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
   .topbar .brand-open .brand-fold { margin-left: 0; }
+  /* ---- the menu's pill (card Nr. 161 "pille"; then "Desk wieder links, oben das Menü heißt Trommi"): the menu's
+     opener floats at the top centre of the page: the bell mark, the word "Trommi", a caret; a click anywhere on it
+     (or Ctrl+K) opens the menu under it. It is the product's menu, not the Desk: the Desk box stands at the top of
+     the sidebar again, without a caret, and carries the ring, the knocks and the count. The pill stands in a band of
+     its own above every view (Desk, session, Scribble, Agents), so it is always there and lies over nothing; the
+     pad's button stands in the same band at the right. Only the opened card and the walk cover it. (The opener is a
+     fixed child of .topbar, which is placed without a transform.) */
+  :root { --side: 256px; --band: 64px; } /* the band ends where the Desk box ends (8 + 56) */
+  :root[data-rail="folded"] { --side: 76px; }
+  #session, #inbox, #ledger { margin-top: var(--band); }
+  /* Desk and Agents: the heading begins 16px under the band, the same line on both pages (ledger.css said 32px, the Desk 8px) */
+  html body[data-scope="all"] #inbox, html body[data-page="roster"] #ledger { padding-top: var(--s-4); }
+  .topbar .desk-go { border-radius: 14px; }
+  /* (logo.css, linked later, put the bell into the Desk button for the time the Desk was the pill: the Desk box
+     shows its desk drawing again, the bell stands in the menu's pill) */
+  html body .topbar .desk-go .brand-mark { display: none; }
+  html body .topbar .desk-go > .sketch { display: block; }
+  html .topbar .brand-open { position: fixed; z-index: 8; top: 8px; left: var(--side); right: 0; width: max-content; min-width: 0; height: 38px; min-height: 0; margin: 0 auto; padding: 0 10px 0 8px; gap: 8px; align-self: auto; border-radius: 999px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); white-space: nowrap; }
+  html .topbar .brand-open:hover, html .topbar .brand-open[aria-expanded="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--fg), var(--shadow-md); }
+  .brand-open > .pill-mark { display: block; flex: none; width: 22px; height: 22px; }
+  .brand-open > .pill-word { display: block; font: 700 1.02rem/1 var(--display); letter-spacing: 0; }
+  .topbar .brand-open[data-other-knock]::before { right: 2px; top: 0; }
+  html.focus-lock .topbar .brand-open { display: none; }
+  html .topbar #brand-doors { position: fixed; z-index: 40; top: 54px; bottom: auto; left: var(--side); right: 0; margin-inline: auto; translate: none; width: 320px; max-height: calc(100dvh - 66px); overflow-y: auto; padding: 10px; border-radius: 18px; }
+  /* the pad's button: top right of the band, in every view */
+  html body .topbar .padlink-open { bottom: auto; top: 8px; right: var(--s-4); width: 38px; height: 38px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
   .agent-entry { border-radius: 14px; }
   .agent-row > .agent-badge { margin-right: 8px; }
-  .topbar #brand-doors { left: 0; translate: none; bottom: auto; top: calc(100% + 6px); width: 240px; }
 }
 /* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
    with the connection and two small switches. One thin rule between the parts. */
@@ -1339,14 +1499,43 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 #jump-field:focus-visible { outline: 0; box-shadow: inset 0 0 0 1px var(--line-strong); }
 #jump-results { display: grid; gap: 1px; margin-top: 4px; }
 #jump-results:empty { display: none; }
-.topbar .sidedoors #jump-results button { min-height: 30px; font-size: var(--t-sm); }
-#jump-results button[aria-selected="true"] { background: var(--sunken); }
+.topbar .sidedoors #jump-results :is(a, button) { min-height: 30px; font-size: var(--t-sm); }
+#jump-results :is(a, button)[aria-selected="true"] { background: var(--sunken); }
 .menu-head { margin: 0; padding: 9px 10px 3px; font: 600 .66rem/1 var(--font); letter-spacing: .09em; text-transform: uppercase; color: var(--faint); }
 .menu-desks { display: grid; gap: 1px; padding-bottom: 4px; }
 .topbar .sidedoors .menu-desk { min-height: 32px; padding: 0 8px; font-size: var(--t-sm); }
 .menu-desk b { font-weight: 600; }
 .topbar .sidedoors .menu-desk i { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .menu-desk[aria-checked="true"]::after { content: "✓"; margin-left: 8px; color: var(--accent); font-weight: 700; }
+/* Several desks (bar.js paintDesks): a row per desk (name, what waits, its key), the desk in view with "Rename" and
+   "Remove" under it; "+ New desk…"; a name is typed in place. A dot on the caret when another desk knocks. */
+.menu-desk-row { display: flex; flex-wrap: wrap; align-items: center; }
+.menu-desk-row > .menu-desk { flex: 1 1 100%; min-width: 0; }
+.menu-desk b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .sidedoors .menu-desk kbd { margin-left: 10px; white-space: nowrap; }
+.topbar .sidedoors .menu-desk i.is-knock { color: var(--urg-high); }
+.topbar .sidedoors .menu-desk.new-desk { color: var(--muted); }
+.topbar .sidedoors .menu-desk.new-desk::after { content: none; }
+.topbar .sidedoors .menu-desk-act { flex: none; width: auto; max-width: max-content; min-height: 28px; margin: 0 0 4px 8px; padding: 0 9px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font: 600 var(--t-xs)/1 var(--font); }
+.topbar .sidedoors .menu-desk-act.is-remove[data-sure] { color: var(--urg-critical); box-shadow: inset 0 0 0 1px var(--urg-critical); }
+.menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
+.menu-desk-field { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
+.topbar .sidedoors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 12px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); }
+.menu-desk-error { margin: 0; padding: 2px 10px 4px; color: var(--urg-critical); font: 500 var(--t-xs)/1.3 var(--font); }
+.menu-desk-error:empty { display: none; }
+/* Dev (bar.js): two quiet entries at the menu's foot for test cards, and a note when the hub cannot do it yet */
+.menu-dev { margin-top: 6px; padding-top: 2px; border-top: 1px solid var(--line); }
+.menu-dev .menu-head { display: block; }
+.topbar #brand-doors .menu-dev button, .topbar #brand-doors .menu-dev a { color: var(--muted); }
+.menu-dev-note { margin: 0; padding: 2px 12px 4px; color: var(--urg-high); font: 500 var(--t-xs)/1.3 var(--font); }
+.menu-dev-note:empty { display: none; }
+.brand-open[data-other-knock] { position: relative; }
+.brand-open[data-other-knock]::before { content: ""; position: absolute; right: 5px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--surface); }
+[data-desks] .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 861px) { [data-desks] .topbar .brand h1 { font-size: 1.32rem; letter-spacing: -.01em; } }
+@media (max-width: 860px) { .topbar .sidedoors .menu-desk kbd { display: none; } [data-desks] .desk-name { max-width: 7.5rem; } .topbar .sidedoors .menu-desk-act { min-height: 36px; } .ledger-desk { display: none; } }
+.ledger-desk { height: 32px; max-width: 8.5rem; margin-right: 4px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }
+
 /* ---- the floating Desk: the way to the Desk and what waits there; the caret beside it opens the menu ---- */
 .deskpill { display: flex; align-items: center; gap: 2px; }
 .desk-go { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: var(--r-pill); background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
@@ -1479,7 +1668,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
 /* A finger needs 44px: the one-line pile heads and the menu's entries. */
 @media (pointer: coarse), (max-width: 860px) {
   .inbox-pile-head { min-height: 44px; }
-  .topbar .sidedoors .menu-grid :is(a, button, #keys-open), .topbar .sidedoors .menu-desk, .topbar .sidedoors #jump-results button { min-height: 44px; }
+  .topbar .sidedoors .menu-grid :is(a, button, #keys-open), .topbar .sidedoors .menu-desk, .topbar .sidedoors #jump-results :is(a, button) { min-height: 44px; }
   .topbar .sidedoors .menu-foot button { width: 44px; min-height: 44px; }
   #jump-field { height: 44px; }
   .inbox-revising-row, .inbox-revising-open { min-height: 44px; }
@@ -1490,6 +1679,8 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
    column, then the two switches as labelled rows, and the connection as the last quiet line. */
 .topbar #brand-doors { gap: 0; padding: 8px; border-radius: 14px; box-shadow: 0 0 0 1px var(--line-strong), 0 12px 28px -10px rgb(20 30 25 / .28); }
 .jump-box { position: relative; display: block; }
+/* The field's own "clear" cross would lie on the key cap at its right end (Esc empties and closes it anyway). */
+#jump-field::-webkit-search-cancel-button { display: none; }
 #jump-field { height: 36px; padding: 0 58px 0 12px; border-radius: 9px; font: 400 var(--t-sm)/1 var(--font); }
 .jump-box kbd { position: absolute; right: 8px; top: 50%; translate: 0 -50%; margin: 0; padding: 3px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); font: 500 .68rem/1 var(--mono); color: var(--muted); pointer-events: none; }
 .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { width: 100%; min-height: 36px; gap: 10px; padding: 0 12px; border-radius: 9px; font: 500 var(--t-sm)/1 var(--font); justify-content: flex-start; }
@@ -1520,4 +1711,63 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { min-height: 44px; width: 100%; }
   #jump-field { height: 44px; }
   .jump-box kbd { display: none; }
+}
+
+/* ══ Phone polish (docs/qa-phone-design.md): found by measuring every state at 360, 390 and 430px. ══ */
+@media (max-width: 860px) {
+  /* The bar: the pad and the memo are placed from the right edge, outside the flow, so the Desk box could
+     run under them (its menu arrow lay 12px under the pad). The box now ends before them. When the counts
+     get long the Agents button leaves first (see "Tight" below); only if that is not enough do the last counts
+     (who works, then the total) leave whole instead of being cut or covered. */
+  .topbar .brand { flex: 0 1 auto; min-width: 0; max-width: calc(100% - 134px); }
+  .topbar .deskpill { min-width: 0; gap: 0; }
+  .topbar .desk-go { flex: 0 1 auto; min-width: 0; gap: 5px; padding-right: 2px; }
+  .topbar .desk-go .brand-mark, .topbar .desk-name { flex: none; }
+  .topbar .desk-state { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; align-content: flex-start; gap: 0 4px; height: 24px; overflow: hidden; }
+  .topbar .desk-state .agent-count.is-total { padding-inline: 2px; }
+  .topbar .desk-state > *, .topbar .desk-state .agent-counts > * { height: 24px; }
+  .topbar .desk-state .agent-counts { display: contents; }
+  .topbar .brand-open { flex: none; }
+  /* Tight (a 360px phone, or a two-digit knock count at 390px; js/bar.js sets data-tight, card Nr. 158): the
+     Agents button leaves the bar first and the counts keep their room. Agents stays an entry of the Desk menu. */
+  .topbar[data-tight] .roster-open { display: none; }
+  .topbar[data-tight] .brand { max-width: calc(100% - 94px); }
+  html body:not([data-x]):not([data-y]) .topbar[data-tight] .quick-open { right: 12px; }
+  html body:not([data-x]):not([data-y]) .topbar[data-tight] .padlink-open { right: 54px; }
+  /* the two round buttons stand on one line in every view (the memo sat 2px lower inside a session) */
+  html body:not([data-x]):not([data-y]) .topbar :is(.quick-open, .padlink-open) { top: 6px; }
+  html body:not([data-x]):not([data-y]) .topbar .quick-open { right: 50px; }
+  html body:not([data-x]):not([data-y]) .topbar .padlink-open { right: 92px; }
+
+  /* The strip of sessions: a row with a badge reached 8px past its own box, so the rows lay 4px over each
+     other. It now reaches 4px, which is the gap; the badge and the rows stay where they were. And one long
+     name does not take the whole strip. */
+  .agent-row.has-badge .agent-entry { padding-right: 48px; }
+  .agent-row > .agent-badge { margin-left: -42px; }
+  .agent-entry .agent-text { max-width: min(56vw, 15rem); }
+
+  /* The Desk's menu: a long desk name is cut with an ellipsis inside the menu (it made the field and every
+     line 37px wider than the menu, past its right edge). */
+  .topbar #brand-doors, .menu-desks { grid-template-columns: minmax(0, 1fr); }
+  .topbar #brand-doors > *, .menu-desk-row, .topbar .sidedoors .menu-desk { min-width: 0; max-width: 100%; }
+  .topbar .sidedoors .menu-desk i { flex: none; white-space: nowrap; }
+
+  /* A finger needs 40px. These keep their look; an unseen area around them takes the tap. */
+  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .inbox-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback) { position: relative; }
+  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .inbox-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback, .topbar .padlink-open, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
+  /* the memo button's ::after is its draft dot (quicksend.css): the tap area is its ::before, or a kept draft
+     turned the whole button into a green disc */
+  .topbar .quick-open::before { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
+  .msg-details summary { min-height: 40px; }
+  .composer-file { height: 34px; }
+  .inbox-when > .cardclip-copy { z-index: 1; }
+  /* the drawings to choose from: as many columns as the phone has room for (the eighth was cut off) */
+  .mark-grid { width: min(332px, calc(100vw - 76px)); grid-template-columns: repeat(auto-fill, 38px); justify-content: space-between; gap: 4px; }
+  .mark-tile { position: relative; }
+  .mark-tile::after { content: ""; position: absolute; inset: -2px; }
+  /* the Snooze corner of a question inside a conversation */
+  /* It is the 28px square beside the title now (.inbox-when): made 40px high it was 28x40 and lay 10px over the
+     title below. It keeps its look; an unseen 40px area takes the tap. */
+  .log .inbox-when .inbox-tab-act { overflow: visible; }
+  .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; translate: -50% -50%; }
 }

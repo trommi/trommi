@@ -1,114 +1,150 @@
-/* Quick send, the memo slip (js/quicksend.js; decided on card Nr. 134). A note to the session that wears
-   the crown. The controls are plain; the slip itself is the one hand-made thing: cream paper, a ruled
-   field, a perforation, the pad under it. Where the round button stands (bottom right beside the
+/* The memo (js/quicksend.js, js/memos.js): a yellow sticky note to a session. It floats over the page where
+   it was put, or lies on the Desk's paper. The controls are plain; the note itself is the one hand-made
+   thing: yellow paper, a ruled field, a dashed tear line that ends in the paper plane. Where the round button stands (bottom right beside the
    Scratchpad's control; small at the top right in a session) is laid down in app.css together with
    the pad's control: `.quick-open, .topbar .padlink-open`. */
 
-/* ---- closed: the pad button shows who receives ---- */
+/* ---- closed: the button is a yellow sticky note (who receives is in its tooltip and on the slip) ---- */
 .topbar .quick-open { right: var(--s-4); width: 44px; height: 44px; border-radius: 50%; }
-.memo-open .agent-avatar { width: 28px; height: 28px; padding: 0; pointer-events: none; }
-.memo-open .agent-avatar .crown-mark { left: -28%; top: -34%; width: 62%; stroke-width: 2.2; fill: color-mix(in srgb, var(--gold) 34%, var(--surface)); }
-.memo-mark { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
-.memo-open[data-none] { color: var(--muted); }
-.memo-tick { position: absolute; right: -4px; bottom: -4px; width: 21px; height: 21px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong); }
-.memo-tick .memo-mark { width: 13px; height: 13px; stroke-width: 2.2; }
-/* open, it keeps its paper (the drawing must stay readable): a firm ring instead of a filled button */
+.memo-open { --sticky: #f7d64f; --sticky-ink: #4a3c08; }
+:root[data-theme="dark"] .memo-open { --sticky: #e9c63f; }
+.memo-sticky { width: 27px; height: 27px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; pointer-events: none; }
+.memo-sticky .sticky-paper { fill: var(--sticky); }
+.memo-sticky .sticky-fold { fill: color-mix(in srgb, var(--sticky) 62%, #fff); }
+.memo-sticky .sticky-line { stroke: var(--sticky-ink); stroke-width: 1.4; }
+:root[data-theme="dark"] .memo-sticky :is(.sticky-paper, .sticky-fold) { stroke: var(--sticky-ink); }
+.memo-open[data-none] .memo-sticky { opacity: .55; }
+/* while a note is out, it keeps its paper (the note must stay readable): a firm ring instead of a filled button */
 .quick-open.memo-open[aria-expanded="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 2px var(--fg), var(--shadow-md); }
-/* a memo written and not sent lies there */
+/* notes lie on the Memos stack */
 .memo-open[data-draft]::after { content: ""; position: absolute; right: -2px; top: -2px; width: 10px; height: 10px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--bg); }
-body:not([data-scope="all"]):not([data-page]) .memo-open .agent-avatar { width: 24px; height: 24px; }
-body:not([data-scope="all"]):not([data-page]) .memo-tick { width: 18px; height: 18px; }
-body:not([data-scope="all"]):not([data-page]) .memo-tick .memo-mark { width: 11px; height: 11px; }
+body:not([data-scope="all"]):not([data-page]) .memo-sticky { width: 23px; height: 23px; }
+@media (max-width: 860px) { .memo-sticky { width: 23px; height: 23px; } }
 
-/* ---- open: the slip on its pad ---- */
-.memo { --paper: color-mix(in srgb, #f4ecd0 55%, var(--surface)); position: fixed; z-index: 6; right: var(--s-4); bottom: calc(var(--s-4) + 56px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: min(400px, calc(100vw - 2 * var(--s-4))); font: 400 var(--t-md)/1.4 var(--font); color: var(--fg); text-align: left; }
-:root[data-theme="dark"] .memo { --paper: color-mix(in srgb, #f4ecd0 9%, var(--surface)); }
-.memo[data-state="closed"] { display: none; }
-/* the next sheet of the pad, a sliver under the slip; it stays for a moment when the slip is torn off */
-.memo-under { position: absolute; left: 0; right: 0; bottom: -6px; height: 30px; border-radius: 4px; background: var(--paper); box-shadow: 0 0 0 1px var(--line-strong); }
-.memo-slip { position: relative; display: grid; gap: 2px; margin: 0; padding: 14px 18px 12px; border-radius: 4px; border-bottom: 1.5px dashed var(--line-strong); background: var(--paper); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); transform-origin: 100% 100%; }
-.memo-slip.is-drop { box-shadow: 0 0 0 2px var(--accent), var(--shadow-lg); }
+/* ---- the note ---- */
+/* Yellow paper in both themes, written on with dark ink: the page's tokens are set anew inside it. */
+.memo {
+  --paper: #fbe886; --fg: #272008; --muted: #6a5d24; --faint: #94863f; --line-strong: #d9c35a; --line: #e6d373; --bg: #fbe886; --surface: #fff6bf; --sunken: #f3dc6c;
+  /* It sticks: flat on the page, a hairline of shadow along its lower edge. Only while carried is it lifted. */
+  --stuck: 0 1px 0 rgb(0 0 0 / .16), 0 3px 3px -3px rgb(0 0 0 / .3);
+  position: fixed; z-index: 2600; left: 0; top: 0; width: 340px; max-width: calc(100vw - 8px);
+  font: 400 var(--t-md)/1.4 var(--font); color: var(--fg); text-align: left;
+}
+:root[data-theme="dark"] .memo { --paper: #ecd462; --line-strong: #c4ad45; --line: #d6c052; --bg: #ecd462; --sunken: #dcc24e; }
+.memo[hidden] { display: none; }
+.memo-slip { position: relative; display: grid; gap: 2px; margin: 0; padding: 8px 14px 10px; border-radius: 3px 3px 3px 14px / 3px 3px 3px 10px; background: var(--paper); box-shadow: var(--stuck); rotate: -.8deg; transform-origin: 100% 100%; }
+.memo:nth-of-type(even) .memo-slip { rotate: .7deg; }
+.memo-slip.is-drop { box-shadow: 0 0 0 2px var(--accent); }
 .memo[data-state="open"] .memo-slip { animation: memo-in var(--d-med) var(--ease-out) both; }
 @keyframes memo-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+/* carried: lifted off the page; over the Desk's paper it says that it would lie there */
+.memo.is-carried { z-index: 2700; }
+.memo.is-carried .memo-slip { rotate: -2deg; box-shadow: 0 1px 0 rgb(0 0 0 / .12), 0 12px 16px -10px rgb(0 0 0 / .4); animation: none; }
+.memo.is-carried.over-paper .memo-slip { box-shadow: 0 0 0 2px var(--fg), 0 12px 16px -10px rgb(0 0 0 / .4); }
+/* on the Desk's paper: part of the page, it scrolls with the paper and lies under whatever floats */
+.memo.is-paper { position: absolute; z-index: 2; }
+.memo.is-paper.is-carried { z-index: 3; }
+.memo.is-paper .memo-head { cursor: grab; touch-action: none; }
+.memo.is-paper .memo-slip { animation: none; }
 
-.memo-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 14px; min-height: 30px; padding-bottom: 8px; border-bottom: 1.5px solid var(--fg); font-size: var(--t-sm); color: var(--muted); }
-.memo-title { flex-basis: 100%; font: 800 1.3rem/1 var(--display); letter-spacing: .02em; text-transform: uppercase; color: var(--fg); }
-.memo-line { display: inline-flex; align-items: center; gap: 8px; min-width: 0; font-size: var(--t-xs); letter-spacing: .07em; text-transform: uppercase; }
-.memo-line > * { text-transform: none; letter-spacing: 0; font-size: var(--t-sm); }
-.memo-line em { font-style: normal; }
-.memo-who { display: inline-flex; align-items: center; gap: 7px; min-width: 0; color: var(--fg); }
-.memo-who .agent-avatar { width: 24px; height: 24px; padding: 0; }
+/* the head, one line: MEMO  TO <drawing> <name>   …   stack, bin. The note is carried by it. */
+.memo-head { display: flex; align-items: center; gap: 10px; min-height: 36px; margin: 0 -6px 2px 0; border-bottom: 1.5px solid var(--fg); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.memo.is-carried .memo-head { cursor: grabbing; }
+.memo-head > i { flex: 1; }
+.memo-title { flex: none; font: 800 1.02rem/1 var(--display); letter-spacing: .03em; text-transform: uppercase; }
+.memo-to { position: relative; flex: 0 1 auto; min-width: 0; display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; cursor: pointer; }
+.memo-to:hover, .memo-to:focus-within { background: color-mix(in srgb, var(--fg) 9%, transparent); }
+.memo-to:focus-within { outline: 2px solid var(--fg); outline-offset: 1px; }
+.memo-to-word { flex: none; font-size: var(--t-xs); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.memo-who { display: inline-flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--t-sm); }
+.memo-who .agent-avatar { flex: none; width: 22px; height: 22px; padding: 0; }
 .memo-who .agent-avatar .crown-mark { left: -28%; top: -34%; width: 62%; stroke-width: 2.2; fill: color-mix(in srgb, var(--gold) 34%, var(--paper)); }
 .memo-who b { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-who em { font-style: normal; color: var(--muted); }
+.memo-who > .sketch { flex: none; width: 13px; height: 13px; color: var(--muted); }
+.memo-pick { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; font-size: 16px; }
+.memo-away, .memo-bin { opacity: .6; }
+.memo-slip:hover :is(.memo-away, .memo-bin), :is(.memo-away, .memo-bin):focus-visible { opacity: 1; }
 
 /* chips above the field (cardclip.js puts its bar first in .memo-body) */
 .memo-body { position: relative; min-width: 0; }
 .memo-body .cardclip-bar { padding: 8px 0 2px; }
-.memo-body .cardclip-chip { background: color-mix(in srgb, var(--fg) 7%, transparent); }
-/* the ruled lines: one every 28px, and they scroll with what is written */
-.memo-field { display: block; width: 100%; height: 84px; min-height: 84px; margin: 0; padding: 0; border: 0; border-radius: 0; resize: none; background: repeating-linear-gradient(#0000 0 27px, var(--line-strong) 27px 28px) local; font: 400 var(--t-md)/28px var(--font); color: var(--fg); overflow-y: auto; scrollbar-width: thin; }
+.memo-body .cardclip-chip { background: color-mix(in srgb, var(--fg) 9%, transparent); }
+/* the ruled lines: one every 28px, and they scroll with what is written. No scrollbar: the note grows with its
+   words; past its height the lines scroll under the pointer or the caret. */
+.memo-field { display: block; width: 100%; height: 84px; min-height: 84px; margin: 0; padding: 0; border: 0; border-radius: 0; resize: none; background: repeating-linear-gradient(#0000 0 27px, var(--line-strong) 27px 28px) local; font: 400 var(--t-md)/28px var(--font); color: var(--fg); overflow-y: auto; scrollbar-width: none; }
+.memo-field::-webkit-scrollbar { display: none; }
 .memo-field:focus-visible { outline: 0; }
 .memo-field::placeholder { color: var(--faint); opacity: 1; }
 
 .memo-files { display: flex; flex-wrap: wrap; gap: 6px; }
 .memo-files:not(:empty) { padding-top: 8px; }
-.memo-file { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 28px; padding: 0 6px 0 7px; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--fg) 7%, transparent); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); cursor: pointer; }
-.memo-file:hover { background: color-mix(in srgb, var(--fg) 12%, transparent); }
+.memo-file { display: inline-flex; align-items: center; gap: 6px; max-width: 100%; height: 28px; padding: 0 6px 0 7px; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); cursor: pointer; }
+.memo-file:hover { background: color-mix(in srgb, var(--fg) 15%, transparent); }
 .memo-file .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
 .memo-file span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .memo-file i { flex: none; font: 400 16px/1 var(--font); color: var(--muted); }
 
-.memo-foot { display: flex; align-items: center; gap: 4px; margin-top: 8px; }
-.memo-foot > i { flex: 1; }
-.memo-tool, .memo .dictate-mic { flex: none; width: 34px; height: 34px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 9px; background: none; color: var(--muted); cursor: pointer; }
-.memo-tool:hover { background: color-mix(in srgb, var(--fg) 8%, transparent); color: var(--fg); }
-.memo-tool .sketch { width: 20px; height: 20px; }
+/* the foot: paperclip, microphone, then the dashed line the note tears along, which ends in the paper plane */
+.memo-foot { display: flex; align-items: center; gap: 2px; margin: 6px -6px 0 -6px; }
+.memo-tear { flex: 1; align-self: center; height: 0; margin: 0 2px 0 6px; border-top: 2px dashed color-mix(in srgb, var(--fg) 45%, transparent); }
+.memo-local { flex: none; margin-left: 6px; font-size: .68rem; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
+.memo-local[hidden] { display: none; }
+.memo-tool, .memo .dictate-mic { flex: none; width: 32px; height: 32px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 9px; background: none; color: var(--muted); cursor: pointer; }
+.memo-tool:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.memo-tool .sketch { width: 19px; height: 19px; }
 .memo .dictate-mic { border-radius: 50%; }
 .memo .dictate-mic[hidden] { display: none; }
-.memo-send { flex: none; display: inline-flex; align-items: center; justify-content: center; gap: 8px; height: 36px; padding: 0 10px 0 13px; border: 0; border-radius: 10px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; cursor: pointer; }
-.memo-send .sketch { width: 18px; height: 18px; stroke-width: 2.1; }
+.memo-send { flex: none; width: 46px; height: 46px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--fg); color: var(--paper); cursor: pointer; transition: translate 140ms var(--ease-out), rotate 140ms var(--ease-out); }
+.memo-plane { width: 23px; height: 23px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; translate: -1px 1px; transition: translate 140ms var(--ease-out); }
+.memo-send:not(:disabled):hover { rotate: -6deg; }
+.memo-send:not(:disabled):hover .memo-plane { translate: 2px -2px; }
+.memo-send:not(:disabled):active { translate: 0 1px; }
+.memo-send:disabled { background: none; color: var(--muted); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--fg) 40%, transparent); cursor: default; }
+.memo-send:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .memo-slip[aria-busy] .memo-send { opacity: .5; }
 
-/* no session wears the crown: the slip says so and shows the way to the Ledger */
-.memo-none { display: none; gap: 6px; justify-items: start; padding: 14px 0 4px; }
-.memo-none p { margin: 0; font: 700 1.05rem/1.25 var(--display); }
-.memo-none small { font-size: var(--t-sm); color: var(--muted); }
-.memo-ledger { margin-top: 8px; height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
-.memo[data-none] .memo-none { display: grid; }
-.memo[data-none] :is(.memo-body, .memo-files, .memo-foot) { display: none; }
-
-/* ---- sent: the slip tears off along the perforation and is gone ---- */
+/* ---- sent: the note tears off and flies away ---- */
 .memo[data-state="sending"] .memo-slip { animation: memo-tear 460ms var(--ease-in-out) both; pointer-events: none; }
 @keyframes memo-tear { 22% { transform: translateY(-10px) rotate(-1.5deg); opacity: 1; } to { transform: translate(-30px, -46vh) rotate(-11deg); opacity: 0; } }
 
-/* the quiet line afterwards, where the slip stood */
-.quick-note { position: fixed; z-index: 6; right: var(--s-4); bottom: calc(var(--s-4) + 56px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 2 * var(--s-4)); margin: 0; padding: 8px 13px; border-radius: 9px; background: var(--fg); color: var(--bg); font: 500 var(--t-sm)/1.3 var(--font); box-shadow: var(--shadow-md); animation: drop var(--d-med) var(--ease-out) both; }
+/* the quiet line that says what happened to a note */
+.quick-note { position: fixed; z-index: 2600; right: var(--s-4); bottom: calc(var(--s-4) + 56px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 2 * var(--s-4)); margin: 0; padding: 8px 13px; border-radius: 9px; background: var(--fg); color: var(--bg); font: 500 var(--t-sm)/1.3 var(--font); box-shadow: var(--shadow-md); animation: drop var(--d-med) var(--ease-out) both; }
 .quick-note[hidden] { display: none; }
 .quick-go { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+body:not([data-scope="all"]):not([data-page]) .quick-note { bottom: auto; top: 54px; }
 
-/* In a session nothing floats over the conversation or its composer: the button stands small at the top
-   right beside the title (app.css), and the slip hangs under it. */
-body:not([data-scope="all"]):not([data-page]) :is(.memo, .quick-note) { bottom: auto; top: 54px; }
-body:not([data-scope="all"]):not([data-page]) .memo-slip { transform-origin: 100% 0; }
-body:not([data-scope="all"]):not([data-page]) .memo[data-state="open"] .memo-slip { animation-name: memo-in-down; }
-@keyframes memo-in-down { from { opacity: 0; transform: translateY(-8px) scale(.98); } }
-body:not([data-scope="all"]):not([data-page]) .memo[data-state="sending"] .memo-slip { animation-name: memo-tear-side; }
-@keyframes memo-tear-side { 22% { transform: translateY(6px) rotate(-1.5deg); opacity: 1; } to { transform: translate(-46vw, 10px) rotate(-11deg); opacity: 0; } }
+/* ---- the yellow Memos stack on the Desk (js/piles.js draws the paper, js/memos.js the lines) ---- */
+.inbox-groups > .inbox-stacks:has(> .inbox-stack:nth-child(3)) { grid-template-columns: repeat(3, var(--w)); }
+.inbox-group-memos .inbox-stack-sheets path { fill: #fbe886; stroke-width: 1.1; }
+.inbox-group-memos .inbox-stack-paper { filter: none; }
+:root[data-theme="dark"] .inbox-group-memos .inbox-stack-sheets path { fill: #ecd462; stroke: #272008; }
+:root[data-theme="dark"] .inbox-group-memos .inbox-stack-on { color: #272008; }
+.inbox-group-memos .inbox-stack-on, .inbox-group-memos .inbox-stack-on * { color: #272008; }
+/* a note on the fanned-out stack: a flat yellow strip */
+.inbox-stacks .inbox-stack .inbox-pile-item:has(> .memo-line) { --fg: #272008; --muted: #6a5d24; background: #fbe886; color: #272008; border-color: transparent; box-shadow: 0 1px 0 rgb(0 0 0 / .16); border-radius: 3px; }
+:root[data-theme="dark"] .inbox-stacks .inbox-stack .inbox-pile-item:has(> .memo-line) { background: #ecd462; }
+.memo-line .memo-line-open { color: #272008; }
+.memo-line .memo-line-open > .sketch { color: #6a5d24; }
+.memo-line .inbox-revising-sent { color: #6a5d24; }
+/* the drawings keep their light-theme strength on the yellow paper */
+:root[data-theme="dark"] .memo .agent-avatar { filter: brightness(.5) saturate(1.4); }
 
-/* ---- a phone: a sheet at the bottom of the page ---- */
+/* ---- a phone: a sheet at the bottom of the page, one note at a time ---- */
 @media (max-width: 860px) {
   body:not([data-scope="all"]):not([data-page]) .quick-open { right: 56px; top: 6px; }
-  .memo, body:not([data-scope="all"]):not([data-page]) .memo { z-index: 40; left: 0; right: 0; top: auto; bottom: 0; width: auto; }
-  .memo::before { content: ""; position: fixed; inset: 0; background: rgb(10 16 13 / .32); animation: memo-fade var(--d-med) var(--ease-out) both; }
-  .memo-under { display: none; }
-  .memo-slip, body:not([data-scope="all"]):not([data-page]) .memo-slip { padding: 16px max(18px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(18px, env(safe-area-inset-left, 0px)); border-radius: 14px 14px 0 0; border-bottom: 0; border-top: 1.5px dashed var(--line-strong); transform-origin: 50% 100%; }
-  .memo[data-state="open"] .memo-slip, body:not([data-scope="all"]):not([data-page]) .memo[data-state="open"] .memo-slip { animation-name: memo-up; }
-  body:not([data-scope="all"]):not([data-page]) .memo[data-state="sending"] .memo-slip { animation-name: memo-tear; }
+  .memo:not(.is-paper) { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-width: none; }
+  /* no veil over the page: a line and a shadow at the sheet's upper edge */
+  .memo:not(.is-paper) .memo-slip { rotate: none; padding: 10px max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); border-radius: 14px 14px 0 0; transform-origin: 50% 100%; box-shadow: 0 -1px 0 rgb(0 0 0 / .22), 0 -10px 24px -14px rgb(0 0 0 / .45); }
+  .memo[data-state="open"]:not(.is-paper) .memo-slip { animation-name: memo-up; }
+  .memo-head { cursor: default; min-height: 44px; margin-right: 0; }
+  .memo-to { height: 40px; }
   .memo-field { font-size: 16px; }
+  .memo-foot { margin-inline: 0; }
   .memo-tool, .memo .dictate-mic { width: 44px; height: 44px; }
-  .memo-send { height: 44px; padding: 0 14px 0 16px; }
-  .memo-ledger { height: 44px; }
-  .quick-note, body:not([data-scope="all"]):not([data-page]) .quick-note { z-index: 40; top: auto; bottom: calc(var(--s-4) + 120px + env(safe-area-inset-bottom, 0px)); }
+  .memo-send { width: 52px; height: 52px; }
+  .memo-away, .memo-bin { opacity: 1; }
+  .quick-note, body:not([data-scope="all"]):not([data-page]) .quick-note { top: auto; bottom: calc(var(--s-4) + 120px + env(safe-area-inset-bottom, 0px)); }
 }
 @keyframes memo-up { from { transform: translateY(100%); } }
 @keyframes memo-fade { from { opacity: 0; } }
@@ -116,3 +152,8 @@ body:not([data-scope="all"]):not([data-page]) .memo[data-state="sending"] .memo-
 @media (prefers-reduced-motion: reduce) {
   .memo[data-state] .memo-slip, .memo::before, .quick-note { animation: none !important; }
 }
+
+/* On a card page the round button stands by itself, over the page: bottom right beside the card on a wide screen,
+   top right on a phone (the foot there holds the field and the arrows). */
+.quick-open.memo-open-free { right: var(--s-4); bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)); top: auto; width: 44px; height: 44px; border-radius: 50%; z-index: 2601; display: grid !important; }
+@media (max-width: 700px) { .quick-open.memo-open-free { top: 8px; bottom: auto; right: 12px; width: 40px; height: 40px; } }

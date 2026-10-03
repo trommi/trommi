@@ -1,0 +1,76 @@
+/* The piles at the foot of a list of questions (js/piles.js): Later (in revision, snoozed) and Done (answered,
+   shredded) as two small stacks of paper drawn with the pen, standing together at the left. A click fans a stack out below,
+   as full-width sheets. The sections keep the names the keys and the tests know (.inbox-pile,
+   .inbox-pile-head, .inbox-pile-sheets, .inbox-pile-item, .inbox-done); what the older piles in app.css and
+   back.css say about those is undone here. */
+.inbox-groups > .inbox-stacks { --gap: 22px; --w: 124px; --shade: rgb(20 30 25 / .14); grid-column: 1 / -1; display: grid; grid-template-columns: repeat(2, var(--w)); grid-template-rows: auto auto; column-gap: var(--gap); justify-content: start; min-width: 0; margin-top: var(--s-8); }
+:root[data-theme="dark"] .inbox-groups > .inbox-stacks { --shade: rgb(0 0 0 / .55); }
+/* three stacks (the memo pile, quicksend.css) on a phone: 3 x 124px + 2 gaps is wider than the list, so the stacks share
+   what is there (358px at 390: 110px each) instead of pushing the Desk sideways */
+.inbox-groups > .inbox-stacks:has(> .inbox-stack:nth-child(3)) { --w: min(124px, calc((100cqi - var(--inset, 0px) - 2 * var(--gap)) / 3)); }
+@container rows (max-width: 430px) { .inbox-groups > .inbox-stacks:has(> .inbox-stack:nth-child(3)) { --gap: 14px; } }
+.inbox-stacks > .inbox-stack { grid-row: 1 / span 2; display: grid; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; margin: 0; padding: 0; cursor: auto; }
+.inbox-stack-title { align-self: end; display: grid; margin: 0; font: inherit; }
+
+/* a stack: the paper, on its top sheet the count (strokes, or a number) and the turning ring, below it the word */
+.inbox-stacks .inbox-stack .inbox-stack-head { position: relative; flex: none; display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 6px; row-gap: 5px; width: 100%; min-height: 0; padding: 0 0 4px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: inherit; text-align: center; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-head::after { content: none; }
+.inbox-stacks .inbox-stack .inbox-stack-head:disabled { cursor: default; }
+.inbox-stack-paper { grid-area: 1 / 1 / 2 / 3; justify-self: center; position: relative; display: block; width: 100%; transition: translate 140ms ease-out; }
+.inbox-stack-paper > span:first-child { display: block; }
+.inbox-stack-sheets { display: block; width: 100%; height: auto; overflow: visible; filter: drop-shadow(0 2px 2.5px var(--shade)); }
+.inbox-stack-sheets path { fill: var(--surface); stroke: var(--fg); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+.inbox-stack-on { position: absolute; inset: 0 0 auto; aspect-ratio: 136 / 90; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.inbox-stack-on .agent-ring { position: static; flex: none; width: 15px; height: 15px; color: var(--accent); }
+.inbox-stack-num { font: 700 1.5rem/1 var(--display); font-variant-numeric: tabular-nums; color: var(--fg); }
+.inbox-stacks .inbox-stack .tally { color: var(--fg); }
+.inbox-stacks .inbox-stack .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
+.inbox-stack-word { grid-area: 2 / 1 / 3 / 3; font: 600 var(--t-sm)/1.4 var(--font); color: var(--fg); white-space: nowrap; }
+/* the count as a number, for whoever reads the page aloud */
+.inbox-stacks .inbox-stack .inbox-stack-head > b { order: 0; display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; letter-spacing: 0; text-transform: none; }
+@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover .inbox-stack-paper { translate: 0 -2px; } }
+/* an empty pile: one faint sheet, the same size, quieter */
+.inbox-stack.is-empty .inbox-stack-sheets { filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--shade) 45%, transparent)); }
+.inbox-stack.is-empty .inbox-stack-sheets path { fill: var(--surface); stroke: color-mix(in srgb, var(--fg) 38%, var(--surface)); stroke-width: 1.5; }
+.inbox-stack.is-empty .inbox-stack-word { color: var(--muted); font-weight: 500; }
+/* the open stack: its last sheet in heavy ink, lifted, its word underlined with the pen */
+.inbox-stack.is-open .inbox-stack-sheets path { stroke-width: 2.6; }
+.inbox-stack.is-open .inbox-stack-paper { translate: 0 -4px; }
+.inbox-stack.is-open .inbox-stack-word { font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; }
+
+/* the fan: the sheets of the open stack, across the whole list */
+.inbox-stacks .inbox-stack > .inbox-pile-sheets { display: none; scroll-margin: 200px 0 24px; }
+.inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: calc(100cqi - var(--inset, 0px)); margin: 12px 0 0 calc(var(--at) * -1 * (var(--w) + var(--gap))); padding-right: 6px; }
+.inbox-stacks .inbox-stack .inbox-pile-item { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 0 14px; border: 1.3px solid color-mix(in srgb, var(--fg) 55%, var(--surface)); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); transform-origin: 0 0; }
+.inbox-stacks .inbox-pile-item:nth-child(odd) { rotate: -.22deg; }
+.inbox-stacks .inbox-pile-item:nth-child(even) { rotate: .18deg; translate: 6px 0; }
+.inbox-stacks .inbox-stack .inbox-stack-more { min-height: 38px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-align: left; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-more:hover { color: var(--fg); border-color: var(--fg); }
+
+/* a sheet's line: mark, title, the grey line, who, when, the way back */
+.inbox-stacks .inbox-pile-item > .inbox-done { display: flex; align-items: center; gap: var(--s-3); min-height: 36px; padding: 0; border: 0; border-radius: 4px; background: none; box-shadow: none; }
+.inbox-stacks .inbox-revising-open .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
+.inbox-stacks .inbox-done[data-later] .inbox-revising-open .sketch { color: var(--gold-pen); }
+.inbox-stacks .inbox-revising-open .agent-ring { margin-left: -3px; }
+.inbox-stack-who { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.inbox-stacks .inbox-done .inbox-takeback { grid-column: auto; min-height: 28px; padding: 0 4px; border: 0; border-radius: 0; background: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; opacity: 1; }
+.inbox-stacks .inbox-done .inbox-takeback:hover { color: var(--fg); }
+.inbox-stacks .inbox-done .inbox-takeback:disabled { opacity: .5; }
+
+/* a narrow list (the phone, a slim pane): the lines without the grey text */
+@container rows (max-width: 600px) {
+  .inbox-stacks .inbox-stack .inbox-pile-item { padding: 0 10px; }
+  .inbox-stacks .inbox-revising-sent { display: none; }
+  .inbox-stacks .inbox-revising-open strong { flex: 1 1 auto; }
+}
+.group-questions .inbox-done.is-pointed { outline: 3px solid var(--fg); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .inbox-stack-paper { transition: none; } }
+/* On the Desk of a wide screen the cards stand right of a narrow column with the session's drawing (app.css,
+   .inbox-gutter): the stacks stand under the cards, their paper's edge on the cards' left edge, and the fan
+   is as wide as the cards. */
+@media (min-width: 861px) {
+  #inbox .inbox-groups > .inbox-stacks { --inset: 46px; padding-left: var(--inset); }
+  #inbox .inbox-stacks .inbox-stack-title { margin-left: -5px; }
+  #inbox .inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
+  #inbox .inbox-stacks .inbox-pile-item:nth-child(even) { translate: 0 0; }
+}

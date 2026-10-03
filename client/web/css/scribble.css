@@ -112,6 +112,13 @@
 /* ── actions for the selected image ─────────────────────────────────────── */
 .scr-ctx { position: absolute; top: 0; left: 0; z-index: 2; padding: 3px; box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); will-change: transform; }
 
+/* ── the marked region: what to do with it ──────────────────────────────── */
+.scr-region { gap: 2px; }
+.scr-region-send { height: 38px; padding: 0 16px !important; border-radius: var(--r-pill); background: var(--accent) !important; color: var(--accent-fg) !important; font-weight: 600; font-size: var(--t-sm); white-space: nowrap; position: relative; }
+.scr-region-send:hover:not(:disabled) { background: var(--accent-hover) !important; }
+.scr-region-send:disabled { background: var(--accent-soft) !important; color: var(--accent) !important; cursor: default; }
+.scr-region .scr-btn { width: 38px; height: 38px; }
+
 /* ── hint, drop target, toast ───────────────────────────────────────────── */
 .scr-hint { position: absolute; left: 50%; top: 44%; width: max-content; max-width: min(300px, calc(100% - 48px)); display: flex; align-items: center; gap: 10px; padding: 10px 16px 10px 12px; border-radius: var(--r-lg); background: var(--surface); color: var(--muted); font-size: var(--t-sm); line-height: 1.35; box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); transform: translate(-50%, -50%); pointer-events: none; opacity: 0; transition: opacity var(--d-med); }
 .scr-hint[data-show="true"] { opacity: 1; }
@@ -191,3 +198,16 @@
   .scr *, .scr *::before, .scr *::after { animation-duration: .01ms !important; transition: none !important; }
   .scr-spinner { animation: scr-spin 1.4s linear infinite !important; }
 }
+
+/* ── the session's pictures, one row above the canvas (js/chat.js) ───────── */
+.scribble-strip { flex: none; display: flex; gap: 6px; padding: 6px var(--s-3); overflow-x: auto; overflow-y: hidden; border-bottom: 1px solid var(--line); background: var(--surface); scrollbar-width: thin; overscroll-behavior-x: contain; }
+.scribble-strip[hidden] { display: none; }
+.scribble-thumb { flex: none; width: 44px; height: 44px; border-radius: 8px; overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--line); cursor: grab; transition: box-shadow var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.scribble-thumb[hidden] { display: none; }
+.scribble-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.scribble-thumb:hover { box-shadow: 0 0 0 2px var(--accent); }
+.scribble-thumb:active { transform: scale(.94); }
+.scribble-thumb:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Phone polish (docs/qa-phone-design.md): a finger needs 40px */
+@media (max-width: 860px) { .scr-region-send { height: 40px; } .scr-region .scr-btn { width: 40px; height: 40px; } }

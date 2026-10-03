@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#ffffff">
+<title>All screens · Trommi</title>
+<script>
+// Theme before first paint, as the board does it.
+(function () {
+  try { if (localStorage.getItem('agent-board-theme') === 'dark') document.documentElement.dataset.theme = 'dark' } catch (e) {}
+})()
+</script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" media="print" onload="this.media='all'" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="/css/tokens.css">
+<style>
+/* The debug index of every screen the board can show (js/screens.js holds the list). Plain, in the board's tokens. */
+*, *::before, *::after { box-sizing: border-box; }
+html { color-scheme: light; }
+html[data-theme="dark"] { color-scheme: dark; }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 400 15px/1.5 var(--font); -webkit-font-smoothing: antialiased; }
+h1, h2, h3, p, ul, ol { margin: 0; padding: 0; }
+a { color: inherit; }
+.page { max-width: 1080px; margin: 0 auto; padding: var(--s-6) var(--s-4) 96px; }
+.top { display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-2) var(--s-4); }
+.top a.home { color: var(--muted); font-size: var(--t-sm); text-underline-offset: 3px; }
+h1 { font: 800 clamp(1.8rem, 4vw, 2.5rem)/1.05 var(--display); letter-spacing: -.03em; flex: 1 1 auto; }
+.lead { margin-top: var(--s-2); max-width: 62ch; color: var(--muted); }
+.live { margin-top: var(--s-3); font-size: var(--t-sm); color: var(--muted); }
+.live b { color: var(--fg); font-weight: 600; }
+.live[data-state="error"] { color: var(--urg-critical); }
+
+.tools { position: sticky; top: 0; z-index: 2; display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2); margin: var(--s-5) calc(-1 * var(--s-4)) 0; padding: var(--s-3) var(--s-4); background: var(--bg); border-bottom: 1px solid var(--line); }
+.tools input { flex: 1 1 200px; min-width: 0; min-height: 40px; padding: 0 var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-sm); background: var(--surface); color: var(--fg); font: inherit; font-size: max(16px, 1em); }
+.tools button { min-height: 40px; padding: 0 var(--s-3); border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.tools button[aria-pressed="true"] { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+.tools button b { margin-left: 6px; font-weight: 500; opacity: .7; }
+
+.jump { display: flex; flex-wrap: wrap; gap: 4px var(--s-3); margin-top: var(--s-4); font-size: var(--t-sm); }
+.jump a { color: var(--muted); text-underline-offset: 3px; }
+
+section { margin-top: var(--s-8); }
+section[hidden] { display: none; }
+h2 { display: flex; align-items: baseline; gap: var(--s-2); font: 800 1.35rem/1.15 var(--display); letter-spacing: -.02em; scroll-margin-top: 80px; }
+h2 small { font: 500 var(--t-sm)/1 var(--font); letter-spacing: 0; color: var(--faint); }
+section > p { margin-top: 4px; color: var(--muted); font-size: var(--t-sm); max-width: 70ch; }
+.rows { margin-top: var(--s-3); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); overflow: hidden; }
+.row { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 2px var(--s-3); align-items: start; padding: var(--s-3) var(--s-4); border-top: 1px solid var(--line); }
+.row:first-child { border-top: 0; }
+.row[hidden] { display: none; }
+.row h3 { font: 600 1rem/1.3 var(--font); overflow-wrap: anywhere; }
+.row h3 a { text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.row h3 a:hover { text-decoration-color: currentColor; }
+.row .desc { grid-column: 1; color: var(--muted); font-size: var(--t-sm); overflow-wrap: anywhere; }
+.row .how { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 2px var(--s-3); margin-top: 2px; font: 400 var(--t-xs)/1.5 var(--mono); color: var(--faint); overflow-wrap: anywhere; }
+.row .how a { color: var(--accent); text-underline-offset: 3px; }
+.row .how span { min-width: 0; overflow-wrap: anywhere; }
+.row .how .steps { font-family: var(--font); font-size: var(--t-sm); color: var(--muted); }
+.tag { grid-column: 2; grid-row: 1; align-self: start; padding: 4px 9px; border-radius: var(--r-pill); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .05em; text-transform: uppercase; white-space: nowrap; }
+.tag[data-status="current"] { background: var(--st-done-soft); color: var(--st-done); }
+.tag[data-status="hidden"] { background: var(--st-working-soft); color: var(--st-working); }
+.tag[data-status="dead"] { background: var(--st-decision-soft); color: var(--st-decision); }
+.tag[data-status="design"] { background: var(--sunken); color: var(--muted); }
+.pop { margin-left: 6px; padding: 2px 6px; border: 1px solid var(--line-strong); border-radius: 6px; font: 500 var(--t-xs)/1.2 var(--font); color: var(--muted); white-space: nowrap; vertical-align: 2px; }
+
+/* The design pages: many, so a tight grid of plain links. */
+.designs { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0 var(--s-4); margin-top: var(--s-3); padding: var(--s-3) var(--s-4); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); list-style: none; }
+.designs li { min-width: 0; padding: 3px 0; font-size: var(--t-sm); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.designs li[hidden] { display: none; }
+.designs a { text-decoration-color: var(--line-strong); text-underline-offset: 3px; }
+.designs small { color: var(--faint); font: 400 var(--t-xs)/1 var(--mono); margin-left: 6px; }
+.designs h4 { grid-column: 1 / -1; margin: var(--s-3) 0 2px; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.designs h4:first-child { margin-top: 0; }
+.none { margin-top: var(--s-6); color: var(--muted); }
+
+@media (max-width: 600px) {
+  .row { padding: var(--s-3); }
+  .tools { top: 0; }
+}
+</style>
+<script type="module" src="/js/screens-page.js"></script>
+</head>
+<body>
+<div class="page">
+  <header class="top">
+    <h1>All screens</h1>
+    <a class="home" href="/">Back to the Desk</a>
+  </header>
+  <p class="lead">Every view and state the board can show, with a link that opens it on this board. For debugging: what is in use, what is still alive behind a switch, and what is dead code.</p>
+  <p class="live" id="live" role="status">Reading the board…</p>
+  <div class="tools" id="tools">
+    <input id="find" type="search" placeholder="Filter: name, address, file…" aria-label="Filter the screens" autocomplete="off" spellcheck="false">
+  </div>
+  <nav class="jump" id="jump" aria-label="Areas"></nav>
+  <main id="list"></main>
+  <p class="none" id="none" hidden>Nothing matches.</p>
+</div>
+</body>
+</html>
