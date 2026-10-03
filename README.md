@@ -4,6 +4,183 @@ Früher „Trommi“. Der Name des Produkts ist seit dem 3. Oktober 2026 Trommi;
 
 Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehreren Claude-Code-Sessions über einen Channel. Die Agenten legen Fragen als Karten ab; sie liegen alle auf einem gemeinsamen „Desk“, die dringendste zuerst, und der Mensch beantwortet sie dort oder nacheinander mit „Next, please“. Wie man die Oberfläche bedient, steht kurz auf der Seite `/help.html`. Offene Ideen stehen in `TODO.md`.
 
+## Hub v1: the wire protocol (hub.trommi.com)
+
+> Two boards live in this repository during the rebuild. **Today's board** (`server/server.mjs`, Turbo UI, plaintext, token login) keeps running on the PC and is described further down. **The new hub** (`hub/`, deployed to `https://hub.trommi.com`) is a thin, hostile mailbox: it stores what members signed and sealed and serves no UI. The app is a separate static site (`trommi/trommi`, `https://app.trommi.com`); agents join through the channel process (`hub/channel.mjs`). This section is the contract between the three. Crypto design: `docs/krypto-konzept.md`; exact bytes: `crypto/FORMAT.md`; pairing: `docs/pairing.md`.
+
+### Principles
+
+1. **Everyone is a member.** A phone, a laptop, a Claude Code session: each has its own Ed25519 + X25519 keys and an entry in the room's signed member list. There are no client-specific routes; an agent uses exactly the routes a browser uses.
+2. **One envelope format** (`crypto/FORMAT.md` §9) for everything said in a room: messages, cards, answers, status lines, shared board state. Signed by the sender, chained per sender, encrypted with the sender's key of the key epoch.
+3. **One sync mechanism, two depths.** Every client keeps one number: the `envelope_number` (the hub's arrival number) of the last envelope it processed. `GET envelopes?after_envelope_number=` and `GET stream?after_envelope_number=` deliver the same records in the same order to every client, app and agent alike. Every record carries the **signed header in full** (small; every client verifies every sender's whole chain) and the **encrypted body only for heads**. Threads are fetched when opened, newest first, in pages. Clients build all state locally; the hub never sends "state".
+4. **Heads and threads.** One header bit, `is_head` (flag bit 2, `crypto/FORMAT.md` §9), says whether an envelope belongs to the overview: a card version, an answer, a status register, a permission request. Messages and drawings are thread items: they carry the `card_id` when they belong to a card and the `recipient_device_id`, so the hub can page a card's or a session's thread without reading anything else. A revision is a new card envelope that names the previous one; no envelope ever holds a whole conversation. Long text, HTML pages and pictures are attachments, fetched only when shown.
+5. **The hub reads the signed header only.** It never parses a body. The body carries its own `schema_version`; new app features need no hub change.
+6. **Plaintext is what the concept allows and nothing more** (concept §7): room, key epoch, sender, recipient, numbers, hashes, time, padded size; for cards id, state, urgency, answer time; attachment ids; `send_push`; `is_head`. Device names and roles in the member list.
+7. **Clear names, one scheme.** The same snake_case names in SQLite columns, JSON fields and this text, no abbreviations. Bytes travel as base64url without padding, ids as lowercase hex. Three families, told apart by their names:
+   - **Key material and key bookkeeping** start with `key_`: `key_epoch`, `key_sealed`, `key_back_link`, `key_signing_public`, `key_exchange_public`.
+   - **Proofs** end in `_signature` or `_hash`, or start with `signed_`: `envelope_signature`, `entry_hash`, `previous_envelope_hash`, `signed_entry`, `signed_offer`.
+   - **Routing metadata** is plain: `room_id`, `device_id`, `card_id`, `card_state`, `urgency`, `send_push`, `is_head`, `recipient_device_id`, `sender_sequence`.
+   - **Content** is only ever `encrypted_body` (and encrypted attachment bytes).
+
+### Transport
+
+- HTTPS, JSON bodies. Base path `/v1`. `GET /healthz` → `{ ok, commit, protocol_version: 1 }` without sign-in.
+- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>`, `http://127.0.0.1:<any port>` and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
+- **Sign-in:** `Authorization: Bearer <access_token>`. An access token comes from a signed challenge, is bound to one device and lasts 10 minutes. A client signs in again on `401 unauthorised` or a minute before `expires_at`. Writes need nothing more: member entries and envelopes are signed themselves.
+- Ids: `room_id` and `device_id` 64 hex characters (32 bytes), `invite_id`, `card_id`, `attachment_id` 32 hex characters (16 bytes). Times are milliseconds since 1970 (`…_at`).
+
+### Errors
+
+Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes are those of `crypto/` (`ZError.code`) plus transport codes:
+
+| Status | Codes |
+| --- | --- |
+| 400 | `bad-format`, `bad-argument`, `bad-version`, `bad-entry`, `bad-signature`, `bad-invite`, `wrong-room`, `wrong-epoch`, `incomplete`, `chain-break`, `log-behind`, `log-fork` |
+| 401 | `unauthorised`, `bad-challenge` |
+| 403 | `forbidden`, `not-member`, `removed-sender`, `wrong-sender` |
+| 404 | `not-found`, `no-room` |
+| 409 | `replay`, `gap`, `equivocation`, `room-exists`, `invite-used`, `instance-conflict` |
+| 410 | `invite-expired` |
+| 413 | `too-large` |
+| 429 | `too-many`, `rate-limited` (with `retry-after`) |
+| 500 | `internal` |
+
+`409 gap` on posting an envelope means the hub holds fewer of the sender's envelopes than the sender thinks (a lost write): the client posts the missing ones again, from its own outbox.
+
+### Routes
+
+"member": access token of an active member. "human": of a human device. "inviter": of the device that posted the invite.
+
+| Route | Who | Request | Answer |
+| --- | --- | --- | --- |
+| `POST /v1/rooms` | anyone, rate-limited (if `HUB_FOUND_TOKEN` is set, also header `x-found-token`) | `{ signed_entry, sealed_room_keys: [{ device_id, key_sealed }] }`: the founding entry, the room key sealed for the first device and for the recovery key | `201 { room_id, entry_number: 0, entry_hash, key_epoch: 1 }` |
+| `POST /v1/rooms/:room_id/challenge` | anyone | | `{ challenge }` (32 bytes, 2 minutes, one use) |
+| `POST /v1/rooms/:room_id/access_tokens` | a device or the recovery key | `{ signed_challenge }` (`signHubAuth` for this room and `HUB_URL`) | `{ access_token, device_id, signer: device \| recovery, device_role, expires_at }` |
+| `GET /v1/rooms/:room_id/members?after_entry_number=-1` | member, recovery, or `invite_id=` of an open invite | | `{ room_id, last_entry_number, signed_entries: [b64u] }` |
+| `POST /v1/rooms/:room_id/members` | signed itself (a recovering human has no device yet) | `{ signed_entry, sealed_room_keys, key_back_link? }` | `{ entry_number, entry_hash, key_epoch, entry_action }` |
+| `GET /v1/rooms/:room_id/devices` | member | | `{ last_entry_number, devices: [{ device_id, device_role, device_name, is_active, agent_session_id?, is_online }] }` |
+| `GET /v1/rooms/:room_id/sealed_room_keys?after_key_epoch=0` | member, recovery | | `{ sealed_room_keys: [{ key_epoch, key_sealed }] }` (the caller's own only) |
+| `GET /v1/rooms/:room_id/key_back_links` | human, recovery | | `{ key_back_links: [{ key_epoch, key_back_link }] }` |
+| `POST /v1/rooms/:room_id/invites` | human | `{ signed_offer }` | `{ invite_id, device_role, expires_at }` |
+| `GET /v1/rooms/:room_id/invites/:invite_id` | anyone with the id | | `{ signed_offer, device_role, expires_at, room_id, signed_entries }` |
+| `POST /v1/rooms/:room_id/invites/:invite_id/requests` | the newcomer | `{ signed_request }` | `{ request_hash }` |
+| `GET /v1/rooms/:room_id/invites/:invite_id/requests` | inviter | | `{ signed_requests: [b64u] }` |
+| `POST /v1/rooms/:room_id/invites/:invite_id/reveal` | inviter | `{ signed_reveal }` | `{ request_hash }` |
+| `GET /v1/rooms/:room_id/invites/:invite_id/status?request_hash=` | the newcomer | | `{ join_status: waiting \| revealed \| joined \| taken, signed_reveal?, signed_entries?, key_sealed? }` |
+| `POST /v1/rooms/:room_id/envelopes` | member | `{ envelope }` | `{ envelope_number }` |
+| `GET /v1/rooms/:room_id/envelopes?after_envelope_number=0&limit=1000` | member | | `{ last_envelope_number, envelopes: [{ envelope_number, envelope }] }` in hub order: the full envelope for heads, the pruned form (header, ciphertext hash, signature) for thread items and pruned cards |
+| `GET /v1/rooms/:room_id/threads?card_id=` or `?agent_device_id=`, `&before_envelope_number=&limit=50` | member | | `{ envelopes: [{ envelope_number, envelope }], has_more }`: full thread items, newest first. `card_id`: the items of that card. `agent_device_id`: messages to or from that agent without a card |
+| `GET /v1/rooms/:room_id/stream?after_envelope_number=` | member | `fetch` with the Bearer header (not `EventSource`) | `text/event-stream`, below |
+| `POST /v1/rooms/:room_id/agent_sessions` | agent | `{ agent_name, process_instance }` | `{ agent_session_id, device_id }`: the agent's stable board id (`crypto`, `crypto-2`); one running process per key |
+| `PUT /v1/rooms/:room_id/attachments/:attachment_id` | member | raw encrypted bytes, `application/octet-stream`, ≤ 64 MiB | `201 { attachment_id, total_size }`; written once, immutable |
+| `GET /v1/rooms/:room_id/attachments/:attachment_id` | member | `Range` supported | the encrypted bytes |
+| `POST /v1/rooms/:room_id/push_subscriptions` | human | `{ subscription }` (Web Push), or `{ subscription, remove: true }` | `{ ok }` |
+| `GET /v1/push_key` | anyone | | `{ vapid_public_key }` |
+
+### The stream
+
+One stream per signed-in device. SSE records; the SSE `id` is the `envelope_number` of the last envelope sent, so a reconnect resumes with `?after_envelope_number=<id>`.
+
+```text
+event: envelope       data: {"envelope_number":42,"envelope":"<b64u>"}
+event: member_entry   data: {"entry_number":3,"entry_hash":"<hex>","key_epoch":2}   (fetch members, then sealed_room_keys)
+event: join_request   data: {"invite_id":"<hex>"}                                    (to the inviter only)
+event: ping           data: {}                                                       (every 25 s)
+```
+
+On connect the hub first sends what `GET envelopes` would (same depth rule), then live envelopes in full: a new message is small and probably shown. A client may drop a thread item's body it does not show; the header stays. A removed device's streams are closed at once. `is_online` in `GET devices` means: the device has an open stream.
+
+### What the hub stores (SQLite `hub.db`, attachments as files)
+
+| Table | Columns |
+| --- | --- |
+| `rooms` | `room_id`, `founded_at`, `last_entry_number`, `last_envelope_number` |
+| `member_entries` | `room_id`, `entry_number`, `previous_entry_hash`, `entry_hash`, `entry_action` (`room_founded`, `device_added`, `devices_removed`, `recovery`), `signer_device_id`, `signed_entry` (the entry bytes with its `entry_signature`), `received_at` |
+| `devices` | `room_id`, `device_id`, `device_role` (`human`, `agent`), `device_name`, `key_signing_public`, `key_exchange_public`, `added_entry_number`, `removed_entry_number`, `agent_session_id` |
+| `sealed_room_keys` | `room_id`, `key_epoch`, `device_id`, `key_sealed` |
+| `key_back_links` | `room_id`, `key_epoch`, `key_back_link` |
+| `invites` | `room_id`, `invite_id`, `device_role`, `inviter_device_id`, `signed_offer`, `expires_at`, `signed_reveal`, `answered_request_hash`, `used_at`, `added_device_id` |
+| `join_requests` | `room_id`, `invite_id`, `request_hash`, `device_id`, `signed_request`, `received_at` |
+| `envelopes` | `room_id`, `envelope_number`, `sender_device_id`, `sender_sequence`, `previous_envelope_hash`, `envelope_hash`, `key_epoch`, `recipient_device_id`, `card_id`, `card_state`, `urgency`, `answered_at`, `is_head`, `send_push`, `attachment_ids`, `padded_size`, `sent_at`, `received_at`, `envelope_header`, `envelope_nonce`, `encrypted_body` (BLOB; NULL once pruned), `encrypted_body_hash`, `envelope_signature` |
+| `attachments` | `room_id`, `attachment_id`, `card_id`, `uploader_device_id`, `total_size`, `chunk_count`, `stored_at` |
+| `access_tokens` | `access_token_hash`, `room_id`, `device_id`, `expires_at` (kept in memory; listed for completeness) |
+| `push_subscriptions` | `room_id`, `device_id`, `endpoint`, `subscription`, `created_at` |
+
+Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB STREAM chunks, a random key per file), stored as files `/data/attachments/<room_id>/<attachment_id>`, served with `Range`. The store is a four-method interface (`put`, `get` with range, `size`, `delete`) so it can move to object storage later.
+
+**Retention.** 30 days after a card's newest head is answered or closed, every envelope of that card is pruned to header, ciphertext hash and signature (`pruneEnvelope`) and its attachments are deleted; chains still verify. Envelopes without a card stay for now (whether chat goes after 30 days is a pending decision).
+
+**Push.** For an envelope with `send_push`, the hub sends a Web Push to every human device of the room except the sender, with `{ room_id, envelope_number, urgency }` and nothing else. The app's service worker shows "Trommi: neue Frage" or, when it can open the room locally, the title.
+
+### Limits
+
+| What | Limit |
+| --- | --- |
+| JSON request | 1 MiB; an envelope's padded body ≤ 64 KiB (more goes into an attachment) |
+| Attachment | 64 MiB |
+| Founding rooms | 10 per IP address per hour; `HUB_MAX_ROOMS` (default 1000) |
+| Envelopes | 50 per second per device, bursts of 200 |
+| Streams | 8 per device |
+| Invites | 16 open per room, 4 requests each, 10 minutes |
+
+### Inside the envelope: the body
+
+The hub never reads this; app and channel agree on it. The body's payload is UTF-8 JSON: `{ "schema_version": 1, … }`. A client ignores fields it does not know and shows a body with a higher `schema_version` as "needs a newer app". An attachment reference:
+
+```json
+{ "attachment_id": "<hex>", "file_key": "<b64u>", "sha256": "<b64u>", "file_name": "plan.png", "media_type": "image/png",
+  "total_size": 48213, "width": 1440, "height": 900, "caption": "…", "page": "…",
+  "marks": [{ "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.1, "label": "…" }] }
+```
+
+A **session** on the board is an agent member. A human's envelope for a session has `recipient_device_id` = that agent; an agent's envelopes are for everyone. A card belongs to the agent that created it.
+
+| `envelope_kind` | From | Header | Body (besides `schema_version`) | Meaning |
+| --- | --- | --- | --- | --- |
+| 1 message, thread | human → agent, agent → everyone | `card_id` if on a card | `text`, `details?`, `html?`, `attachments?`, `hand_back?`, `explain?`, `present_card?`, `copied_cards?`, `marks?` | one message in a session's or a card's conversation |
+| 2 card, head | agent | `card_id`, `card_state`, `urgency` | the card as it now reads: `card_type` (`decision`, `info`), `card_version`, `previous_card_envelope_hash`, `title`, `body?`, `options?`, `sections?`, `html?`, `allows_multiple?`, `recommended?`, `urgency_reason?`, `attachments?`, `change_note?`, `close_summary?`, `withdraw_reason?`, `merged_into_card_id?`, `merged_from_card_ids?` | create, revise, change urgency, withdraw, merge, close. An answer binds to the hash of the newest card envelope |
+| 3 answer, head | human → owning agent | `card_id`, `card_state` answered (closed for read or shred), `answered_at` | `answer_action` (`answer`, `read`, `shred`), `choices?`, `note?`, `option_notes?`, `attachments?`, `marks?`, `trusted?`; the signed bind: card id, card envelope hash, first choice | answer, mark an info read, shred |
+| 4 permission request, head | agent | `send_push` | `tool_name`, `description`, `input_preview`; bind: request id, expiry | Claude Code asks to run a tool |
+| 5 verdict, head | human → agent | | bind: request id, request hash, expiry, allow or deny | allow or deny |
+| 6 status, head | anyone | | `values: { "<key>": value \| null }` | last-writer-wins registers, below |
+| 7 decide again, head | human → owning agent | `card_id`, `card_state` open | bind: card id, hash of the answer taken back | take an answer back |
+| 8 drawing, thread | human → agent | | `text?`, `attachments` (picture of the selection), `pad_element_ids?` | send a drawing or a pad selection |
+
+**Status registers.** One mechanism for everything that is "the current value of something": `{"schema_version":1,"values":{"status_line/tests":{"label":"Tests","state":"working","detail":"12/40"}}}`. A key's value is the one from the newest status envelope (hub order) that set it; `null` deletes it. Keys are scoped by the sender:
+
+- **An agent's keys** belong to its session and count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `card_id`), `published/<id>` (a published page or file: attachment reference, `title`, `note`, `released_until?`).
+- **Human keys** are shared by every human device and ignored by agents: `draft/<card_id>`, `snooze/<card_id>`, `duck/<card_id>`, `crown`, `desk/<desk_id>`, `session/<agent_device_id>` (name, desk, archived, group, icon), `memo/<memo_id>`, `pad/<element_id>`, `read_up_to/<agent_device_id>`. New board features add keys, not kinds.
+
+**Derived on the client, never sent:** a card's place in the stack (oldest first, by the `envelope_number` of its first card envelope), "in revision" (a human message with `hand_back` or `explain` newer than the card's newest card envelope, until the agent's next card envelope or a message with `present_card`), unread counts, what is shown where.
+
+### Cryptography in one page (bytes: `crypto/FORMAT.md`, library: `crypto/zcrypto.mjs`)
+
+| Piece | How |
+| --- | --- |
+| Device | Ed25519 (`key_signing_public`) + X25519 (`key_exchange_public`); `device_id` = H(both). Browser: WebCrypto, non-extractable, IndexedDB. Agent: key file, mode 0600 |
+| Member list | Append-only signed entries (`room_founded`, `device_added`, `devices_removed`, `recovery`), each with `entry_number`, `previous_entry_hash`, signed by an active human device or the recovery key. `room_id` = hash of the founding entry, so the invite link pins the whole list. Clients pin the newest entry and refuse rollback and forks |
+| Room key | 32 random bytes per `key_epoch`, a new epoch only when a member is removed or on recovery. Sealed per member (X25519 + HKDF + AES-256-GCM, HPKE pattern), bound to room, epoch, recipient. Humans also get a history key and the back links to older epochs; agents do not |
+| Envelope | Header (plaintext, signed, associated data) ‖ 96-bit random nonce ‖ AES-256-GCM `encrypted_body`, padded to 256 B … 64 KiB ‖ `envelope_signature` over H(header ‖ nonce ‖ H(encrypted_body)). Per-sender key = HKDF(room key, room, epoch, sender). Per-sender `sender_sequence` + `previous_envelope_hash` chain; `seen` vector of other senders' heads. New tonight: flag bit 2 `is_head` (signed like every header field) |
+| Thread items fetched later | The pruned form (header, nonce, ciphertext hash, signature) verifies the chain at sync time; when the full envelope is fetched, the client checks that H(encrypted_body) equals the hash it already verified, then decrypts (`openVerifiedEnvelope`). Nothing is decrypted that the chain did not vouch for |
+| Sign-in | Hub challenge (32 bytes) signed with room id and hub address → `access_token`, 10 minutes, one device |
+| Invite | Link `#v1.<hub>.<room>.<secret>`; `invite_id` and MAC key from HKDF(secret); request MAC'ed and self-signed; commit-then-reveal six-digit check code, mandatory for humans; one use, 10 minutes, enforced by the inviter |
+| Commands | An agent acts only on envelopes from an active human device addressed to it, current epoch (previous for 2 minutes), and for answers/verdicts bound to the current card or request hash |
+| Attachments | Random key per file, 64 KiB STREAM chunks (chunk index and last-chunk flag in the nonce); key, hash, name and type inside the referencing body; only the `attachment_id` in the header |
+| Removal and re-adding | Any human device, at any time: one `devices_removed` entry carries the new `key_epoch` sealed for everyone who stays (agents included) and the back link. The hub at once closes the removed device's streams, revokes its access tokens and refuses its sign-in and envelopes; the others switch to the new epoch on the `member_entry` event without interruption (the previous epoch is still accepted for 2 minutes). The removed device keeps what it already decrypted and can open nothing sent in the new epoch. A removed `device_id` can never come back: re-adding a phone means new device keys and a new invite. A re-added human device gets the history key and back links, so it reads the whole history again; a re-added agent reads from the current epoch on |
+| Recovery | 256-bit code (Crockford base32) derives a key pair; a `recovery` entry adds the new device, removes every human device, keeps the agents, starts a new epoch and a new code |
+
+### What an agent's channel process checks
+
+Before Claude Code sees anything (concept §6): the envelope verifies; the sender is an active human device; it is addressed to this agent; for answer, verdict and decide again the bind matches the current card or request (`authoriseCommand`). Anything else is dropped and reported on the board as the status register `alert/<envelope_number>`.
+
+### Founding and joining, in short
+
+1. **Found:** the app makes device keys, a recovery code (shown once) and key epoch 1; `POST /v1/rooms`; then `challenge` → `access_tokens`.
+2. **Invite** (human or agent): `createInvite` → `POST invites`; the link `https://app.trommi.com/join#v1.<hub>.<room>.<secret>` leaves the device by the human's hands. The secret never reaches a server.
+3. **Join:** the newcomer `GET invites/:invite_id` (checks the list against the room id in the link) → `POST requests` → polls `status`. The inviter gets `join_request` → `GET requests` → checks the MAC → `POST reveal`. Both show the six-digit check code (a human types it on the inviting device; an agent needs none) → the inviter `POST members` with the add entry and the sealed room key → the newcomer sees `joined`, verifies, opens its key, signs in.
+4. **Remove:** any human device: `removeMembers` → `POST members` with the new key epoch sealed for everyone who stays, and the back link. The hub cuts the removed device off.
+5. **Recover:** with the code: sign in as the recovery key → `GET members`, `GET sealed_room_keys` → `recoverRoom` → `POST members`.
+
 ## Starten
 
 ```bash
