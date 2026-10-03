@@ -19,15 +19,15 @@ export function hueOf(id) {
  *  scribble takes the colour that comes from the session's id. */
 export const hueFor = agent => drawingHue(drawingOf(agent.mark)) ?? hueOf(agent.id)
 
-/** Who wears the crown. A hub that knows main agents (card Nr. 160) sends `main` on every session: the
- *  crown then marks a main, and the starred session (where quick memos go) is marked quietly, by a small
- *  gold dot at the foot of its mark. A hub that does not send `main` yet: the crown is the starred one's, as before. */
+/** Who wears the crown (card Nr. 172): the one session of a desk that the human gave it to (`starred`; the hub
+ *  keeps it to one per desk). The desk's memos go there. A main (`main`: it has subs, or says so) keeps its stack
+ *  and bracket in the sidebar, but wears no crown for that alone. */
 export const knowsMains = agent => 'main' in agent
-export const crowned = agent => (knowsMains(agent) ? agent.main === true : Boolean(agent.starred))
+export const crowned = agent => Boolean(agent.starred)
 
 // Every session has its own scribble, so it is recognised before its name is read.
-/** vip: true draws the crown (and the memo dot of the starred one); false draws neither; 'main' draws only a
- *  main's crown, for places where the starred switch (crownToggle) stands beside the mark. */
+/** vip: true draws the crown on the crowned session's mark; false draws none, for places where the crown stands
+ *  beside the mark as a switch of its own (crownToggle, the sidebar's fold switch). */
 // working: the session is at work. Its own mark then redraws itself: the whole drawing stays as a
 // trace, and a darker stroke travels along it (CSS: .is-drawing). Under reduced motion the trace and
 // the mark stand still.
@@ -46,25 +46,23 @@ export function avatar(agent, { vip = true, working = false } = {}) {
   node.style.setProperty('--hue', hueFor(agent))
   if (!agent.online) node.classList.add('is-offline')
   // A session that matters most: a scribbled crown sits crooked on the corner of its mark.
-  if (vip === 'main' ? agent.main === true : vip && crowned(agent)) { node.dataset.vip = ''; node.append(crown()) }
-  if (vip === true && agent.starred && knowsMains(agent)) { node.dataset.memo = ''; node.title = 'Quick memos go here' }
+  if (vip === true && crowned(agent)) { node.dataset.vip = ''; node.append(crown()) }
   node.setAttribute('aria-hidden', 'true')
   return node
 }
 
-/** The crown as a switch: it sits on the corner of a session's mark, as a button of its own beside
- *  the mark, so the mark keeps its own click. On a starred session it is the gold crown, and a click
- *  takes it off; on any other it is a faint outline that shows when the pointer or the keyboard is
- *  near, and a click puts it on. Placed by CSS (.crown-toggle), per place it stands in. */
+/** Give the crown: the crown as a switch. It sits on the corner of a session's mark, as a button of its own
+ *  beside the mark, so the mark keeps its own click. On the crowned session it is the gold crown, and a click
+ *  takes it off; on any other it is the crown's outline (faint until the pointer or the keyboard is near), and
+ *  one click gives it the crown: the hub takes it from whoever wore it on that desk. Placed by CSS
+ *  (.crown-toggle), per place it stands in. */
 export function crownToggle(agent, cls = '') {
-  // Where the crown marks mains, this switch is the small gold dot at the foot of the mark (crowns.css).
-  const memo = knowsMains(agent)
-  const b = el('button', `crown-toggle ${memo ? 'is-memo' : ''} ${cls}`.replace(/\s+/g, ' ').trim())
+  const b = el('button', `crown-toggle ${cls}`.trim())
   b.type = 'button'
   b.setAttribute('aria-pressed', String(Boolean(agent.starred)))
-  b.title = memo ? (agent.starred ? 'Quick memos go here. Click to take that off' : 'Send quick memos here') : agent.starred ? 'Remove VIP' : 'Make VIP'
-  b.setAttribute('aria-label', memo ? `${agent.name}: ${agent.starred ? 'quick memos go here, take that off' : 'send quick memos here; its questions come first'}` : `${agent.name}: ${agent.starred ? 'remove VIP' : 'make VIP, its questions come first'}`)
-  b.append(memo ? el('i', 'memo-dot') : crown())
+  b.title = agent.starred ? 'Wears the crown: memos of this desk go here. Click to take it off' : 'Give the crown: memos of this desk go here'
+  b.setAttribute('aria-label', `${agent.name}: ${agent.starred ? 'wears the crown, memos of this desk go here; take it off' : 'give the crown, memos of this desk go here'}`)
+  b.append(crown())
   b.addEventListener('click', e => { e.stopPropagation(); star(agent.id, !agent.starred).catch(() => {}) })
   return b
 }
@@ -78,7 +76,7 @@ export function pairAvatar(members, working = []) {
   for (const g of [...mark.querySelectorAll('g[data-member]')]) {
     if (!working.includes(g.dataset.member)) continue
     node.classList.add('is-drawing')
-    for (const p of g.querySelectorAll('path:not(.pair-crown)')) p.setAttribute('pathLength', 100)
+    for (const p of g.querySelectorAll('path:not(.pair-crown *)')) p.setAttribute('pathLength', 100)
     const trace = g.cloneNode(true)
     trace.removeAttribute('data-member')
     trace.setAttribute('class', 'mark-trace')
@@ -235,6 +233,23 @@ function penLine(pts) {
   return `${d} L ${last[0].toFixed(1)} ${last[1].toFixed(1)}`
 }
 
+// A sub's card edge in the folded stack, drawn with the pen: down one side, along the foot (never quite straight), up the
+// other; the top stays open under the card above. Seeded by the session, so an edge always looks the same, and kept: it is
+// drawn once. Two strokes of the same edge, since the drawing is stretched to the row: .e-w for the wide sidebar, .e-n for
+// the rail and a phone's strip (crowns.css shows one). tilt and dx: how crooked it lies in the stack.
+const edgeQuirks = new Map()
+function edgeQuirk(id) {
+  let q = edgeQuirks.get(id)
+  if (q) return q
+  const r = penSeed(`edge:${id}`), j = s => (r() - .5) * 2 * s
+  const tilt = j(.75).toFixed(2), dx = j(2.2).toFixed(1), sag = j(.55), l = j(.5), rr = j(.5), ya = 12.9 + j(.6), yb = 12.9 + j(.6), xa = 30 + j(8), xb = 68 + j(8), sl = j(1), sr = j(1)
+  // c: the width of a corner, k: the pen's wobble sideways, both in hundredths of the edge's width
+  const line = (c, k) => penLine([[l * k, -2], [-l * k, 6 + sl], [c * .1, 11.3 + l * .6], [c, 12.9 + sag * .4], [xa, ya], [xb, yb], [100 - c, 12.9 - sag * .4], [100 - c * .1, 11.3 + rr * .6], [100 - rr * k, 6 + sr], [100 + rr * k, -2]])
+  q = { tilt, dx, svg: `<svg viewBox="0 0 100 15" preserveAspectRatio="none" aria-hidden="true"><path class="e-w" d="${line(4.5, .5)}"/><path class="e-n" d="${line(15, 1.6)}"/></svg>` }
+  edgeQuirks.set(id, q)
+  return q
+}
+
 export function mountAgents(root, { onSelect, onWalk }) {
   let signature = ''
   let lastState = null
@@ -372,7 +387,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
         id: u.id,
         label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
-        // With subs the crown is a switch of its own on the corner of the mark (it folds), so the mark draws none.
+        // With subs the corner of the mark is a switch of its own (it folds; on the crowned one it is the crown), so the mark draws none.
         lead: single ? avatar(single, { vip: !u.subs, working: false }) : pairAvatar(u.members),
         active: scope === u.id,
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
@@ -410,13 +425,16 @@ export function mountAgents(root, { onSelect, onWalk }) {
         row.style.setProperty('--ghue', hueFor(u.members[0]))
         const tip = shut ? `Unfold ${who}'s ${names.length === 1 ? 'sub' : `${names.length} subs`}: ${names.join(', ')}` : `Fold ${who}'s subs`
         const toggle = e => { e.stopPropagation(); fold(u.id, shut) }
-        // The crown is the switch: it sits on the corner of the main's mark, beside the entry (which opens the main's session).
-        const key = el('button', 'crown-fold')
+        // The switch on the corner of the main's mark, beside the entry (which opens the main's session). On the
+        // desk's crowned session it is the crown. A main without the crown has it for the keyboard only (is-plain:
+        // nothing drawn, shown as a ring when the keys are on it); the pointer folds by the stack or the bracket.
+        const worn = u.members.some(crowned)
+        const key = el('button', worn ? 'crown-fold' : 'crown-fold is-plain')
         key.type = 'button'
         key.setAttribute('aria-expanded', String(!shut))
-        key.title = tip
-        key.setAttribute('aria-label', tip)
-        key.append(crown())
+        key.title = worn ? `${tip} · wears the crown: memos of this desk go here` : tip
+        key.setAttribute('aria-label', key.title)
+        if (worn) key.append(crown())
         key.addEventListener('click', toggle)
         row.append(key)
         if (shut) {
@@ -430,6 +448,10 @@ export function mountAgents(root, { onSelect, onWalk }) {
             const edge = el('i', s.open && s.stuck ? 'is-knock' : '')
             edge.style.setProperty('--i', i)
             edge.style.setProperty('--hue', hueFor(s.members[0]))
+            const quirk = edgeQuirk(s.id)
+            edge.style.setProperty('--tilt', `${quirk.tilt}deg`)
+            edge.style.setProperty('--dx', `${quirk.dx}px`)
+            edge.innerHTML = quirk.svg
             edges.append(edge)
           }
           edges.addEventListener('click', toggle)

@@ -14,12 +14,13 @@ import { readBoard, writeBoard } from './board-store.mjs'
 // Run from anywhere: the server is the file next to this test.
 const SERVER = toPath(new URL('./server.mjs', import.meta.url))
 
-const PORT = 8791
+// A free port for every run (BOARD_TEST_PORT names one instead): several runs side by side, by several workers, do
+// not meet on one port, and a hub left over from a run that failed half-way cannot be taken for this run's.
+const freePort = () => new Promise((resolve, reject) => { const probe = http.createServer(); probe.once('error', reject); probe.listen(0, '127.0.0.1', () => { const { port } = probe.address(); probe.close(() => resolve(port)) }) })
+const PORT = Number(process.env.BOARD_TEST_PORT) || await freePort()
 const base = `http://localhost:${PORT}`
-// A hub left over from a run that failed half-way holds the port for ever; a session started now would link to it
-// and be served its board. Say so instead of failing on whatever that board lacks.
 if (await fetch(base).then(() => true, () => false)) {
-  console.error(`port ${PORT} is taken, probably by a hub left over from an earlier run of this test: find it with "ss -ltnp | grep ${PORT}" and stop it`)
+  console.error(`port ${PORT} is taken: find what holds it with "ss -ltnp | grep ${PORT}"`)
   process.exit(1)
 }
 // Hubs this test starts as processes of their own must not outlive it, however it ends.
@@ -56,7 +57,7 @@ const received = []
 const heard = []
 // What the servers write to stderr, to check what they did and how often.
 const logs = []
-const serverEnv = (name, env) => ({ ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data, BOARD_TOKEN: 'secret', BOARD_AGENT: name, BOARD_ADMIN_TOKEN: 'adminkey', BOARD_PUBLIC_URL: '', TINFOIL_API_KEY: '', BOARD_DRAWINGS: path.join(data, 'drawings.json'), ...env })
+const serverEnv = (name, env) => ({ ...process.env, BOARD_PORT: String(PORT), BOARD_DATA: data, BOARD_TOKEN: 'secret', BOARD_AGENT: name, BOARD_ADMIN_TOKEN: 'adminkey', BOARD_PUBLIC_URL: '', TINFOIL_API_KEY: '', BOARD_DRAWINGS: path.join(data, 'drawings.json'), BOARD_MEMO_HOLD_MS: '0', ...env })   // (a sent memo is held only in the memo section)
 async function start(name = 'main', sink = received, env = {}) {
   const client = new Client({ name: 'test', version: '0' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { sink.push(n); heard.push(n) }
@@ -87,7 +88,7 @@ const refused = async (name, args, pattern) => {
   assert.match(message, pattern)
 }
 
-const cookie = 'board_8791=secret'
+const cookie = `board_${PORT}=secret`
 const post = (url, body, origin = base) => fetch(base + url, {
   method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, Cookie: cookie }, body: JSON.stringify(body),
 })
@@ -337,16 +338,29 @@ assert.equal((await fetch(`${base}/events`, { headers: { Cookie: 'board=wrong!' 
 assert.equal((await fetch(`${base}/message`, { method: 'POST', headers: { Origin: base }, body: '{"text":"x"}' })).status, 401)
 const login = await fetch(`${base}/?t=secret`, { redirect: 'manual' })
 assert.equal(login.status, 302)
-assert.match(login.headers.get('set-cookie'), /^board_8791=secret; HttpOnly; SameSite=Lax/)
+assert.match(login.headers.get('set-cookie'), new RegExp(String.raw`^board_${PORT}=secret; HttpOnly; SameSite=Lax`))
 // a login from before the cookie was named after the port still works
 assert.equal((await fetch(`${base}/`, { headers: { Cookie: 'board=secret' } })).status, 200)
 assert.equal(fs.readFileSync(path.join(data, 'url.txt'), 'utf8').split('\n')[0], `${base}/?t=secret`)
 // the page keeps its place in the address: those paths are the page, behind the login, and the login keeps path and query
-const home = await (await fetch(`${base}/`, { headers: { Cookie: cookie } })).text()
-for (const place of ['/s/api', '/s/api/fragen', '/agents', '/inbox', '/pad', '/walk', '/q/12', '/q/abc12345', '/s/api/q/12', '/s/api/q/abc12345']) {
-  assert.equal((await fetch(base + place)).status, 401, place)
-  const there = await fetch(base + place, { headers: { Cookie: cookie } })
-  assert.deepEqual([there.status, there.headers.get('content-type'), await there.text()], [200, 'text/html; charset=utf-8', home], place)
+// Since the flip (docs/turbo.md) the main addresses are the server-rendered pages; the old page is at /old/ only, and a path
+// the new pages do not have yet leads there.
+const placeAt = place => fetch(base + place, { headers: { Cookie: cookie }, redirect: 'manual' })
+for (const place of ['/', '/s/api', '/s/api/fragen', '/agents', '/inbox', '/pad', '/walk', '/q/12', '/q/abc12345', '/s/api/q/12', '/old/', '/old/s/api', '/t/']) assert.equal((await fetch(base + place, { redirect: 'manual' })).status, 401, place)
+const home = await placeAt('/')
+assert.deepEqual([home.status, home.headers.get('content-type')], [200, 'text/html; charset=utf-8'])
+assert.match(await home.text(), /<html lang="en" data-loaded data-ui="turbo"[^>]*>[\s\S]*<script type="module" src="\/t\/application\.js"><\/script>[\s\S]*<main id="inbox"/)
+assert.equal((await placeAt('/agents')).status, 200)
+assert.equal((await placeAt('/q/99999')).status, 404)
+assert.deepEqual([(await placeAt('/t/')).status, (await placeAt('/t/')).headers.get('location')], [302, '/'])
+assert.equal((await placeAt('/t/q/12?pic=2')).headers.get('location'), '/q/12?pic=2')
+assert.equal((await placeAt('/t/application.js')).status, 200)   // the files under /t/ are files
+const old = await placeAt('/old/')
+assert.deepEqual([old.status, old.headers.get('content-type')], [200, 'text/html; charset=utf-8'])
+assert.match(await old.text(), /<script type="module" src="\/js\/app\.js"><\/script>/)
+for (const [place, to] of [['/old', '/old/#/'], ['/old/s/api', '/old/#/s/api'], ['/old/q/12?x=1', '/old/#/q/12?x=1'], ['/s/a+b', '/old/#/s/a+b'], ['/s/api/scribble', '/old/#/s/api/scribble'], ['/s/api/fragen', '/old/#/s/api/fragen'], ['/inbox', '/old/#/inbox'], ['/pad', '/old/#/pad']]) {
+  const there = await placeAt(place)
+  assert.deepEqual([there.status, there.headers.get('location')], [302, to], place)
 }
 for (const place of ['/sonstwo', '/agents/x', '/s', '/inbox.php']) assert.equal((await fetch(base + place, { headers: { Cookie: cookie } })).status, 404, place)
 // whatever else lies in the web client is served behind the login: nested files, a folder's index; no dotfiles, no way out, no other kinds
@@ -367,13 +381,48 @@ assert.deepEqual(await under('/src/modul.mjs'), [200, 'text/javascript; charset=
 assert.deepEqual(await under('/'), [200, 'text/html; charset=utf-8', '<p>Mappe</p>'])
 assert.deepEqual(await under('/index.html'), [200, 'text/html; charset=utf-8', '<p>Mappe</p>'])
 assert.deepEqual(await under('?x=1'), [302, null, `/${path.basename(nest)}/?x=1`])
-assert.equal((await under('/src/stil.css', 'board_8791=falsch'))[0], 401)
+assert.equal((await under('/src/stil.css', `board_${PORT}=falsch`))[0], 401)
 for (const no of ['/.geheim.html', '/src/.git/config.json', '/notiz.txt', '/skript.sh', '/zustand.json', '/src/', '/src', '/fehlt.html', '/src/..%2F..%2F..%2F..%2Fpackage.json', '/%2e%2e/%2e%2e/%2e%2e/package.json', '/..%5C..%5Cpackage.json', '/%00.html', '/%zz']) {
   assert.equal((await under(no))[0], 404, no)
 }
 assert.equal((await fetch(`${base}/css/tokens.css`, { headers: { Cookie: cookie } })).headers.get('content-type'), 'text/css; charset=utf-8')
 // routes keep precedence over files
 assert.equal((await fetch(`${base}/events/`, { headers: { Cookie: cookie } })).status, 404)
+// The page's files go out compressed (brotli or gzip, as the browser takes it), are kept by the browser and asked for
+// again with their ETag: unchanged, the answer is a 304 without a body. Never without the login. The stream of states
+// is compressed too.
+{
+  const source = fs.readFileSync(new URL('../client/web/js/app.js', import.meta.url), 'utf8')
+  const get = (url, headers = {}) => fetch(base + url, { headers: { Cookie: cookie, ...headers } })
+  const plain = await get('/js/app.js', { 'Accept-Encoding': 'identity' })
+  assert.deepEqual([plain.status, plain.headers.get('content-encoding'), plain.headers.get('cache-control'), plain.headers.get('vary')], [200, null, 'private, no-cache', 'Accept-Encoding'])
+  assert.equal(await plain.text(), source)
+  for (const coding of ['gzip', 'br']) {
+    const res = await get('/js/app.js', { 'Accept-Encoding': coding })
+    assert.deepEqual([res.status, res.headers.get('content-encoding')], [200, coding])
+    assert.ok(Number(res.headers.get('content-length')) < Buffer.byteLength(source) / 2, `${coding}: ${res.headers.get('content-length')} bytes`)
+    assert.equal(await res.text(), source, coding)
+    const tag = res.headers.get('etag')
+    assert.ok(tag && tag !== plain.headers.get('etag'), 'each coding has an ETag of its own')
+    const again = await get('/js/app.js', { 'Accept-Encoding': coding, 'If-None-Match': tag })
+    assert.deepEqual([again.status, await again.text(), again.headers.get('etag')], [304, '', tag])
+    assert.equal((await get('/js/app.js', { 'Accept-Encoding': coding, 'If-None-Match': '"other"' })).status, 200)
+    assert.equal((await fetch(`${base}/js/app.js`, { headers: { 'If-None-Match': tag } })).status, 401)
+  }
+  const home = await get('/old/', { 'Accept-Encoding': 'gzip' })
+  assert.deepEqual([home.status, home.headers.get('content-encoding'), home.headers.get('cache-control'), Boolean(home.headers.get('etag'))], [200, 'gzip', 'private, no-cache', true])
+  assert.equal((await get('/old/', { 'If-None-Match': home.headers.get('etag'), 'Accept-Encoding': 'gzip' })).status, 304)
+  for (const [accepts, coding] of [['gzip', 'gzip'], ['identity', null]]) {
+    const stream = await get('/events', { 'Accept-Encoding': accepts })
+    assert.deepEqual([stream.status, stream.headers.get('content-encoding'), stream.headers.get('cache-control')], [200, coding, 'no-store'])
+    const reader = stream.body.getReader()
+    // the first state arrives whole, without waiting in the compressor
+    let text = ''
+    while (!text.includes('\n\n')) { const { value, done } = await reader.read(); if (done) break; text += Buffer.from(value).toString() }
+    assert.ok(text.startsWith('data: {') && Array.isArray(JSON.parse(text.split('\n\n')[0].slice(6)).cards), accepts)
+    await reader.cancel()
+  }
+}
 const landing = async link => (await fetch(base + link, { redirect: 'manual' })).headers.get('location')
 assert.equal(await landing('/s/api?q=abc12345&t=secret&x=1'), '/s/api?q=abc12345&x=1')
 assert.equal(await landing('/inbox?t=secret'), '/inbox')
@@ -388,7 +437,7 @@ const adminPost = (route, body, as, origin = base) => fetch(`${base}/admin/api/$
 const adminLogin = async (key, as) => {
   const res = await adminPost('login', { key }, as)
   assert.equal(res.status, 200)
-  assert.match(res.headers.get('set-cookie'), /^board_admin_8791=[\w-]{32}; HttpOnly; SameSite=Strict; Path=\/admin; Max-Age=43200$/)
+  assert.match(res.headers.get('set-cookie'), new RegExp(String.raw`^board_admin_${PORT}=[\w-]{32}; HttpOnly; SameSite=Strict; Path=\/admin; Max-Age=43200$`))
   return `${as}; ${res.headers.get('set-cookie').split(';')[0]}`
 }
 assert.equal((await adminGet('overview', cookie)).status, 403)
@@ -819,9 +868,9 @@ const openAsset = async (blob, key, id) => {
   const header = JSON.parse(plain.subarray(4, 4 + n))
   return { header, content: plain.subarray(4 + n, 4 + n + header.size), padding: plain.subarray(4 + n + header.size) }
 }
-const linkOf = said => said.match(/http:\/\/localhost:8791\/a\/([\w-]{22})#([\w-]{43})(?=\s|$)/).slice(1)
+const linkOf = said => said.match(new RegExp(String.raw`http:\/\/localhost:${PORT}\/a\/([\w-]{22})#([\w-]{43})(?=\s|$)`)).slice(1)
 const publish = async (who, args) => (await who.callTool({ name: 'publish_asset', arguments: args })).content[0].text
-const blobOf = async id => Buffer.from(await (await fetch(`${base}/a/${id}/blob`)).arrayBuffer())
+const blobOf = async id => Buffer.from(await (await fetch(`${base}/a/${id}/blob`, { headers: { Cookie: cookie } })).arrayBuffer())
 const page = path.join(data, 'bericht.html')
 const html = '<!doctype html><title>Bericht</title><h1>Geheimer Bericht 4711</h1>'
 fs.writeFileSync(page, html)
@@ -840,8 +889,9 @@ assert.deepEqual(s.messages.at(-1).asset, { id: aid, type: 'html', title: 'Lastt
 assert.equal(fs.statSync(path.join(data, 'assets', aid)).mode & 0o077, 0)
 for (const clear of ['Geheimer Bericht', 'Lasttest', 'bericht.html', akey]) assert.ok(!stored.includes(clear), `the stored asset holds "${clear}"`)
 assert.ok(!stored.includes(Buffer.from(akey, 'base64url')))
-// the blob is served without a login, and it is the same ciphertext
-const served = await fetch(`${base}/a/${aid}/blob`)
+// the blob is served to who is signed in (card Nr. 175), and it is the same ciphertext
+const signedIn = { headers: { Cookie: cookie } }
+const served = await fetch(`${base}/a/${aid}/blob`, signedIn)
 assert.deepEqual([served.status, served.headers.get('content-type'), served.headers.get('cache-control'), served.headers.get('x-content-type-options')], [200, 'application/octet-stream', 'no-store', 'nosniff'])
 assert.deepEqual(Buffer.from(await served.arrayBuffer()), stored)
 // with the key from the link it opens: the bytes, and what the envelope says about them
@@ -856,14 +906,14 @@ await assert.rejects(openAsset(stored, akey, 'A'.repeat(22)))
 const bent = Buffer.from(stored)
 bent[40] ^= 1
 await assert.rejects(openAsset(bent, akey, aid))
-// the viewer is served without a login too, under a policy that lets it load only itself
-const viewer = await fetch(`${base}/a/${aid}`)
+// the viewer is served to who is signed in, under a policy that lets it load only itself
+const viewer = await fetch(`${base}/a/${aid}`, signedIn)
 const policy = viewer.headers.get('content-security-policy')
 assert.deepEqual([viewer.status, viewer.headers.get('content-type'), viewer.headers.get('referrer-policy')], [200, 'text/html; charset=utf-8', 'no-referrer'])
 for (const rule of ["default-src 'none'", "script-src 'self'", "frame-ancestors 'none'", "form-action 'none'", "base-uri 'none'"]) assert.ok(policy.includes(rule), rule)
 assert.ok(!/unsafe|https?:|\*/.test(policy), 'nothing inline and nothing foreign in the viewer')
 assert.ok(!(await viewer.text()).includes(akey))
-for (const file of ['asset.js', 'asset.css', 'tokens.css']) assert.equal((await fetch(`${base}/a/-/${file}`)).status, 200, file)
+for (const file of ['asset.js', 'asset.css', 'tokens.css']) assert.deepEqual([(await fetch(`${base}/a/-/${file}`, signedIn)).status, (await fetch(`${base}/a/-/${file}`)).status], [200, 401], file)
 // an HTML asset runs in a frame with a policy of its own: its own scripts, no network, no origin
 const frame = await fetch(`${base}/a/-/frame.html`)
 const framed = frame.headers.get('content-security-policy')
@@ -871,13 +921,29 @@ assert.equal(frame.status, 200)
 for (const rule of ["default-src 'none'", 'sandbox allow-scripts', "frame-ancestors 'self'", "form-action 'none'"]) assert.ok(framed.includes(rule), rule)
 assert.ok(!/allow-same-origin|allow-top|allow-popups|allow-forms|connect-src|https?:|\*/.test(framed))
 // the same page answers for any address, so it does not say which assets exist; the blob does
-assert.equal((await fetch(`${base}/a/${'A'.repeat(22)}`)).status, 200)
-assert.equal((await fetch(`${base}/a/${'A'.repeat(22)}/blob`)).status, 404)
+assert.equal((await fetch(`${base}/a/${'A'.repeat(22)}`, signedIn)).status, 200)
+assert.equal((await fetch(`${base}/a/${'A'.repeat(22)}/blob`, signedIn)).status, 404)
+// assets only with the login (card Nr. 175): without it the link opens nothing. The page is the sign-in page (the key
+// stays behind the #), the ciphertext a plain 401, and neither tells an asset that exists from one that does not
+for (const id of [aid, 'A'.repeat(22)]) {
+  const [shut, door] = [await fetch(`${base}/a/${id}/blob`), await fetch(`${base}/a/${id}`)]
+  const doorText = await door.text()
+  assert.deepEqual([shut.status, await shut.text(), door.status, /Sign in with a passkey/.test(doorText), doorText.includes('asset.js')], [401, '{"error":"unauthorised"}', 401, true, false], id)
+}
+// not with a wrong cookie; a process on this machine with the board token gets it (an agent's own access), a proxied caller with it does not
+assert.equal((await fetch(`${base}/a/${aid}/blob`, { headers: { Cookie: `board_${PORT}=wrong` } })).status, 401)
+assert.deepEqual(Buffer.from(await (await fetch(`http://127.0.0.1:${PORT}/a/${aid}/blob`, { headers: { 'x-board-token': 'secret' } })).arrayBuffer()), stored)
+assert.equal((await fetch(`http://127.0.0.1:${PORT}/a/${aid}/blob`, { headers: { 'x-board-token': 'secret', 'X-Forwarded-For': '100.64.0.9' } })).status, 401)
+assert.equal((await fetch(`http://127.0.0.1:${PORT}/a/${aid}/blob`, { headers: { 'x-board-token': 'wrong' } })).status, 401)
+// the login link leads to the asset's page (the browser keeps the #key across the redirect)
+const viaLink = await fetch(`${base}/a/${aid}?t=secret`, { redirect: 'manual' })
+assert.deepEqual([viaLink.status, viaLink.headers.get('location'), new RegExp(String.raw`^board_${PORT}=secret;`).test(viaLink.headers.get('set-cookie'))], [302, `/a/${aid}`, true])
 // everything else still wants the login
 for (const closed of ['/', '/a.html', '/js/asset.js', '/css/tokens.css', '/events', '/api/tools', '/help.html', '/files/x.png', '/a', '/assets']) assert.equal((await fetch(base + closed)).status, 401, closed)
 // no path out of the folder, nothing but GET, nothing but the three files
 for (const odd of ['/a/..%2Ftoken/blob', '/a/..%2F..%2Fstate.json', '/a/-/..%2F..%2Findex.html', '/a/-/app.js', '/a/-/constructor', `/a/${aid}/blob/x`, `/a/${aid}/`, '/a/token/blob', `/a/${aid}%00/blob`, '/a/-/']) {
-  assert.equal((await fetch(base + odd)).status, 404, odd)
+  assert.equal((await fetch(base + odd, signedIn)).status, 404, odd)
+  assert.notEqual((await fetch(base + odd)).status, 200, odd)
 }
 assert.notEqual(await rawGet(`/a/${aid}/../../token`), 200)
 assert.equal((await fetch(`${base}/a/${aid}/blob`, { method: 'POST', headers: { Origin: base }, body: 'x' })).status, 404)
@@ -922,7 +988,7 @@ assert.equal((await upload('id=main&instance=falsch', 'ZWA1' + 'x'.repeat(40))).
 assert.equal(fs.existsSync(path.join(data, 'assets', 'B'.repeat(22))), false)
 // revoking: the blob is gone from disk and from the web, and the message keeps the title but no longer the key
 assert.equal((await call('revoke_asset', { id: aid })).content[0].text.startsWith('revoked'), true)
-assert.equal((await fetch(`${base}/a/${aid}/blob`)).status, 404)
+assert.equal((await fetch(`${base}/a/${aid}/blob`, signedIn)).status, 404)
 assert.equal(fs.existsSync(path.join(data, 'assets', aid)), false)
 s = await state()
 assert.deepEqual([s.assets.map(a => a.id), s.messages[talk].text, s.messages[talk].asset], [[qid, pid], '**Lasttest** (withdrawn)', { id: aid, type: 'html', title: 'Lasttest', gone: true }])
@@ -1166,7 +1232,7 @@ await call('withdraw_card', { card_id: extra[1] })
 // and says, without refusing, when a card is a lot to read
 out = textOf(await call('create_decision', { title: 'lang', body: 'x'.repeat(301), options: [{ key: 'a', label: 'A', detail: 'y'.repeat(60) }, { key: 'b', label: 'B', detail: 'y'.repeat(61) }, { key: 'c', label: 'C', detail: 'z'.repeat(80) }] }))
 const wordy = out.match(/^card (\w+) /)[1]
-assert.match(out, /\nThis is a lot to read: the body has 301 characters \(aim for at most about 300, one or two short sentences\); the detail of "b", "c" is longer than one short line \(aim for about six words\)\. A question has to fit one card on one screen: a title of one line \(about 70 characters\), a body of at most about 300 characters or 5 short lines, per option a label of at most 4 words and a detail of one short line \(about six words\), at most 6 options\. Shorten it with revise_card: say it in a picture rather than in prose, and move the background to an attached page or a published asset linked from the body/)
+assert.match(out, /\nThis is a lot to read: the body has 301 characters \(aim for at most about 300, one or two short sentences\); the detail of "b", "c" is longer than one short line \(aim for about six words\)\. A question has to fit one card on one screen: a title of one line \(about 70 characters\), a body of at most about 300 characters or 5 short lines, per option a label of at most 4 words and a detail of one short line \(about six words\), at most 10 options\. Shorten it with revise_card: say it in a picture rather than in prose, and move the background to an attached page or a published asset linked from the body/)
 assert.equal((await state()).cards.at(-1).status, 'open')
 out = textOf(await call('revise_card', { card_id: wordy, body: 'x'.repeat(300) }))
 assert.match(out, /\nThis is a lot to read: the detail of "b", "c" is longer/)
@@ -1614,15 +1680,15 @@ await call('withdraw_card', { card_id: looks })
   received.length = 0
 }
 
-// more than six options draw a reminder to offer only what the agent stands behind; six do not
+// more than ten options draw a reminder to offer only what the agent stands behind; ten do not
 {
-  const seven = 'abcdefg'.split('').map(option)
-  let out = textOf(await call('create_decision', { title: 'Zu viele?', options: seven }))
+  const eleven = 'abcdefghijk'.split('').map(option)
+  let out = textOf(await call('create_decision', { title: 'Zu viele?', options: eleven }))
   const crowd = out.match(/^card (\w+) /)[1]
-  assert.match(out, /\nMany options \(7; a card holds about 6\): keep only the ones you are sure of\. Two or three you stand behind beat ten; put the rest on a page .* Shorten it with revise_card\.$/)
-  assert.equal((await onBoard(crowd)).options.length, 7, 'reminded, not refused')
-  assert.doesNotMatch(textOf(await call('revise_card', { card_id: crowd, options: seven.slice(0, 6) })), /Many options/)
-  assert.match(textOf(await call('revise_card', { card_id: crowd, options: seven, body: 'x'.repeat(301) })), /This is a lot to read: the body has 301 characters.*\nMany options \(7; a card holds about 6\)/s)
+  assert.match(out, /\nMany options \(11; a card holds about 10\): keep only the ones you are sure of\. Two or three you stand behind beat a dozen; put the rest on a page .* Shorten it with revise_card\.$/)
+  assert.equal((await onBoard(crowd)).options.length, 11, 'reminded, not refused')
+  assert.doesNotMatch(textOf(await call('revise_card', { card_id: crowd, options: eleven.slice(0, 10) })), /Many options/)
+  assert.match(textOf(await call('revise_card', { card_id: crowd, options: eleven, body: 'x'.repeat(301) })), /This is a lot to read: the body has 301 characters.*at most 10 options.*\nMany options \(11; a card holds about 10\)/s)
   await call('withdraw_card', { card_id: crowd })
 }
 
@@ -1804,7 +1870,7 @@ await refused('revoke_asset', { id: sid }, /no asset/)
 assert.deepEqual(JSON.parse((await infra.callTool({ name: 'list_assets', arguments: {} })).content[0].text), [])
 assert.deepEqual(JSON.parse((await api.callTool({ name: 'list_assets', arguments: {} })).content[0].text).map(a => [a.id, a.link]), [[sid, `${base}/a/${sid}#${skey}`], [tid, null]])
 await api.callTool({ name: 'revoke_asset', arguments: { id: tid } })
-assert.deepEqual([(await fetch(`${base}/a/${tid}/blob`)).status, fs.existsSync(path.join(data, 'assets', tid)), (await fetch(`${base}/a/${sid}/blob`)).status], [404, false, 200])
+assert.deepEqual([(await fetch(`${base}/a/${tid}/blob`, signedIn)).status, fs.existsSync(path.join(data, 'assets', tid)), (await fetch(`${base}/a/${sid}/blob`, signedIn)).status], [404, false, 200])
 
 // a spoke is known by more than its id: another process cannot act under it
 assert.equal((await agentPost('/agent/tool', { id: 'api', instance: 'falsch', name: 'reply', args: { text: 'untergeschoben' } })).status, 409)
@@ -1872,7 +1938,7 @@ assert.deepEqual(s.agents.map(a => [a.group, a.label ?? '']), [['x'.repeat(40), 
   assert.equal((await post('/session', { agent: 'api', before: null, label: 'Schnittstelle' })).status, 200)
   assert.deepEqual(await order(), ['main', 'api', 'infra'])
 }
-// only one session wears the crown: crowning one takes it from the other, taking it off leaves none
+// one crown per desk (card Nr. 172; these three stand on one desk): crowning one takes it from the other, taking it off leaves none
 {
   const crowns = async () => (await state()).agents.filter(a => a.starred).map(a => a.id)
   const before = await crowns()
@@ -1932,7 +1998,7 @@ assert.deepEqual(s.cards.map(c => c.id), ['recent', 'waiting'])
 assert.deepEqual(s.messages.map(m => m.id), ['e2', 'am'])
 assert.deepEqual([s.assets.map(a => a.id), s.messages[1].text, s.messages[1].asset], [[aKeep, aYoung], '**Alt** (removed after 30 days)', { id: aOld, type: 'html', title: 'Alt', gone: true }])
 assert.deepEqual([aOld, aKeep, aYoung].map(id => fs.existsSync(path.join(data, 'assets', id))), [false, true, true])
-assert.deepEqual([(await fetch(`${base}/a/${aOld}/blob`)).status, (await fetch(`${base}/a/${aKeep}/blob`)).status], [404, 200])
+assert.deepEqual([(await fetch(`${base}/a/${aOld}/blob`, signedIn)).status, (await fetch(`${base}/a/${aKeep}/blob`, signedIn)).status], [404, 200])
 assert.equal(fs.existsSync(path.join(data, 'files', 'old.png')), false)
 assert.equal(fs.existsSync(path.join(data, 'files', 'young.png')), true)
 await client.close()
@@ -2065,7 +2131,7 @@ const pair = await Promise.all([start('Eins', [], on3), start('Zwei', [], on3)])
 await Promise.all(pair.map(c => say(c, 'introduce', { model: 'm' })))
 // both agree on one token, so the one that lost the port could link
 const token3 = fs.readFileSync(path.join(data3, 'token'), 'utf8')
-const res3 = await fetch(`${base}/events`, { headers: { Cookie: `board_8791=${token3}` } })
+const res3 = await fetch(`${base}/events`, { headers: { Cookie: `board_${PORT}=${token3}` } })
 const reader3 = res3.body.getReader()
 const state3 = JSON.parse(new TextDecoder().decode((await reader3.read()).value).replace(/^data: /, ''))
 await reader3.cancel()
@@ -2088,7 +2154,7 @@ await eventually(async () => (await state()).agents.length === 0, 'the hub of it
 s = await state()
 assert.deepEqual([s.agents, s.hub, s.queue], [[], null, []])
 for (const dir of ['files', 'scribbles', 'speech', 'assets']) assert.equal(fs.statSync(path.join(data5, dir)).mode & 0o777, 0o700, dir)
-assert.ok(logs.some(l => l.includes('hub on 0.0.0.0:8791 without a session of its own')))
+assert.ok(logs.some(l => l.includes(`hub on 0.0.0.0:${PORT} without a session of its own`)))
 assert.equal((await post('/message', { text: 'ist da wer?' })).status, 400, 'nobody to talk to yet')
 const gotSolo = []
 const solo = await start('Solo', gotSolo, on5)
@@ -2167,7 +2233,7 @@ const helperTalk = (await state()).messages.length
 const shownOut = await helper('publish', 'helfer', sheet, '--title', 'Blatt', '--note', 'aus dem Helfer')
 assert.equal(shownOut.code, 0, shownOut.stderr)
 // the base is the first line of data/url.txt without its query
-const [hid, hkey] = shownOut.stdout.match(/^http:\/\/localhost:8791\/a\/([\w-]{22})#([\w-]{43})\n$/).slice(1)
+const [hid, hkey] = shownOut.stdout.match(new RegExp(String.raw`^http:\/\/localhost:${PORT}\/a\/([\w-]{22})#([\w-]{43})\n$`)).slice(1)
 // the blob is fetched without a cookie and opens with the key from the printed link: the same bytes
 const fetched = await blobOf(hid)
 assert.deepEqual(fetched, fs.readFileSync(path.join(data5, 'assets', hid)))
@@ -2181,7 +2247,7 @@ assert.deepEqual(s.messages.at(-1).asset, { id: hid, type: 'html', title: 'Blatt
 // silent: nothing on the board, and the hub's state holds neither key nor title nor type
 const quietOut = await helper('publish', 'helfer', sheet, '--silent', '--keep', '--type', 'file', '--title', 'Verschwiegen')
 assert.equal(quietOut.code, 0, quietOut.stderr)
-const [zid, zkey] = quietOut.stdout.match(/^http:\/\/localhost:8791\/a\/([\w-]{22})#([\w-]{43})\n$/).slice(1)
+const [zid, zkey] = quietOut.stdout.match(new RegExp(String.raw`^http:\/\/localhost:${PORT}\/a\/([\w-]{22})#([\w-]{43})\n$`)).slice(1)
 s = await state()
 assert.equal(s.messages.length, helperTalk + 1)
 assert.deepEqual({ ...s.assets.at(-1), created: 0, size: 0 }, { id: zid, agent: 'helfer', type: null, title: '', size: 0, created: 0, keep: true, silent: true, wrapped_key: null })
@@ -2307,7 +2373,7 @@ const token4 = fs.readFileSync(in4('token'), 'utf8')
 const adminKey4 = fs.readFileSync(in4('admin-token'), 'utf8')
 assert.equal(fs.statSync(in4('admin-token')).mode & 0o077, 0)
 assert.notEqual(adminKey4, token4)
-let board4 = `board_8791=${token4}`
+let board4 = `board_${PORT}=${token4}`
 const post4 = (url, body) => fetch(base + url, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base, Cookie: board4 }, body: JSON.stringify(body) })
 const reads = ['overview', 'cleanup', 'log', 'diagnose', 'export']
 const writes = { purge: { confirm: 'purge' }, orphans: { confirm: 'orphans' }, 'sessions/forget': { id: 'weg', confirm: 'weg', data: true }, 'sessions/clear-queue': { id: 'weg', confirm: 'weg' }, 'token/rotate': { confirm: 'rotate' }, links: {} }
@@ -2323,7 +2389,7 @@ for (const [route, body] of Object.entries(writes)) {
   assert.equal((await adminPost(route, body, board4)).status, 403, route)
 }
 assert.equal((await adminPost('login', { key: adminKey4 }, board4, 'https://evil.example')).status, 403)
-assert.equal((await adminPost('login', { key: adminKey4 }, 'board_8791=falsch')).status, 401)
+assert.equal((await adminPost('login', { key: adminKey4 }, `board_${PORT}=falsch`)).status, 401)
 // the login token is not the admin key, and a wrong key takes its time
 began = Date.now()
 assert.equal((await adminPost('login', { key: token4 }, board4)).status, 403)
@@ -2381,7 +2447,7 @@ const pageReader = page4.body.getReader()
 await pageReader.read()
 let d
 await eventually(async () => (d = await (await adminGet('diagnose', admin4)).json()).sse === 1, 'one page to be counted')
-assert.ok(d.lines.some(l => /hub on 0\.0\.0\.0:8791 as "chef"/.test(l.line) && l.ts > 0))
+assert.ok(d.lines.some(l => new RegExp(String.raw`hub on 0\.0\.0\.0:${PORT} as "chef"`).test(l.line) && l.ts > 0))
 assert.ok(d.lines.length <= 200)
 assert.deepEqual(d.links.map(l => [l.id, l.state, l.queued]), [['weg', 'away', 2], ['alt', 'away', 0], ['chef', 'hub', 0], ['speiche', 'linked', 0]])
 
@@ -2581,7 +2647,7 @@ const turned = await adminPost('token/rotate', { confirm: 'rotate' }, admin4)
 assert.equal(turned.status, 200)
 const fresh4 = fs.readFileSync(in4('token'), 'utf8')
 assert.ok(fresh4 !== token4 && fresh4.length >= 32)
-assert.equal(turned.headers.get('set-cookie'), `board_8791=${fresh4}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`)
+assert.equal(turned.headers.get('set-cookie'), `board_${PORT}=${fresh4}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`)
 assert.equal((await turned.json()).links[0].url, `${base}/?t=${fresh4}`)
 assert.equal(fs.readFileSync(in4('url.txt'), 'utf8').split('\n')[0], `${base}/?t=${fresh4}`)
 assert.deepEqual(fs.readdirSync(data4).filter(f => f.startsWith('token')), ['token'])
@@ -2592,7 +2658,7 @@ assert.equal((await fetch(`${base}/?t=${token4}`, { redirect: 'manual' })).statu
 assert.equal((await fetch(`${base}/?t=${fresh4}`, { redirect: 'manual' })).status, 302, 'the new link logs in')
 await eventually(async () => (await pageReader.read()).done, 'the page that was open to be cut off')
 admin4 = admin4.replace(token4, fresh4)
-board4 = `board_8791=${fresh4}`
+board4 = `board_${PORT}=${fresh4}`
 assert.equal((await adminGet('overview', admin4)).status, 200)
 // the spoke was linked with the old token: its next call is refused once, it reads the file and goes on
 assert.ok(!(await say(speiche, 'reply', { text: 'nach dem Wechsel' })).isError)
@@ -2620,7 +2686,7 @@ assert.equal(fs.statSync(in4('admin-log.jsonl')).mode & 0o077, 0)
 // the hub goes: whoever takes over uses the new token, knows the same key, kept the log, and asks for the key again
 await chef.close()
 await eventually(async () => (await state(board4)).agents.filter(a => a.online).length === 2, 'a spoke to take over after the rotation')
-assert.equal((await fetch(`${base}/`, { headers: { Cookie: `board_8791=${token4}` } })).status, 401)
+assert.equal((await fetch(`${base}/`, { headers: { Cookie: `board_${PORT}=${token4}` } })).status, 401)
 assert.equal((await adminGet('overview', admin4)).status, 403, 'admin sessions do not move to the next hub')
 admin4 = await adminLogin(adminKey4, board4)
 o = await (await adminGet('overview', admin4)).json()
@@ -3137,7 +3203,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   // signing in: the cookie the login link sets, and it opens the board
   const good = await pk('login/verify', phone.get(await challengeFor('login/options')))
   assert.equal(good.status, 200)
-  assert.equal(good.headers.get('set-cookie'), 'board_8791=secret; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000')
+  assert.equal(good.headers.get('set-cookie'), `board_${PORT}=secret; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`)
   assert.equal((await fetch(`${base}/`, { headers: { Cookie: good.headers.get('set-cookie').split(';')[0] } })).status, 200)
   const stranger = authenticator()
   // RS256 and EdDSA authenticators work as well
@@ -3205,7 +3271,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   assert.deepEqual(await errorOf(await pk('login/verify', phone.get(await challengeFor('login/options')))), [401, 'unknown-passkey'])
   // the login link works as it did
   const viaLink = await fetch(`${base}/?t=secret`, { redirect: 'manual' })
-  assert.deepEqual([viaLink.status, viaLink.headers.get('set-cookie')], [302, 'board_8791=secret; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000'])
+  assert.deepEqual([viaLink.status, viaLink.headers.get('set-cookie')], [302, `board_${PORT}=secret; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`])
   h11b.kill()
   await portFree()
   fs.rmSync(data11, { recursive: true })
@@ -3220,9 +3286,11 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   const [aid, akey] = linkOf(await publish(teiler, { content: '<h1>für Dritte</h1><script>document.title = 1</script>', title: 'Angebot Müller', note: 'zum Weitergeben' }))
   const [hid, hkey] = linkOf(await publish(teiler, { content: 'still', silent: true, type: 'file' }))
   const get = route => fetch(base + route)
+  // the board's own address is for who is signed in (card Nr. 175); `get` is the stranger
+  const inside = route => fetch(base + route, { headers: { Cookie: cookie } })
   const share = body => post('/asset/share', body)
   // the board's own viewer and blob answer as they did, with the stricter headers
-  const viaA = await get(`/a/${aid}/blob`)
+  const viaA = await inside(`/a/${aid}/blob`)
   assert.deepEqual([viaA.status, viaA.headers.get('cross-origin-resource-policy'), viaA.headers.get('x-content-type-options'), viaA.headers.get('cache-control'), viaA.headers.get('content-security-policy'), /camera=\(\)/.test(viaA.headers.get('permissions-policy'))], [200, 'same-origin', 'nosniff', 'no-store', "default-src 'none'; sandbox", true])
   // an upload that was cut off on its way is refused: a whole blob has one of few lengths
   const whole = Buffer.from(await viaA.arrayBuffer())
@@ -3232,7 +3300,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   const cut = await upload12('C'.repeat(22), whole.subarray(0, whole.length - 7))
   assert.deepEqual([cut.status, /cut off/.test((await cut.json()).error), fs.existsSync(path.join(data12, 'assets', 'C'.repeat(22)))], [400, true, false])
   assert.equal((await upload12('D'.repeat(22), whole)).status, 200, 'a whole blob under a fresh id is taken (it will not open: the id is part of what is authenticated)')
-  await assert.rejects(openAsset(Buffer.from(await (await get(`/a/${'D'.repeat(22)}/blob`)).arrayBuffer()), akey, 'D'.repeat(22)), 'a blob replayed under another id does not open')
+  await assert.rejects(openAsset(Buffer.from(await (await inside(`/a/${'D'.repeat(22)}/blob`)).arrayBuffer()), akey, 'D'.repeat(22)), 'a blob replayed under another id does not open')
   // not released: outsiders get the page (the same for every id) and no ciphertext, whether the asset exists or not
   const page12 = await get(`/r/${aid}`)
   const html12 = await page12.text()
@@ -3254,7 +3322,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   assert.deepEqual([none12.status, await none12.json()], [404, { error: 'no such asset', code: 'no-asset' }])
   assert.deepEqual(await (await post('/asset/gibtsnicht', {})).json().then(o => o.code, () => undefined), undefined, 'an unknown route says nothing of the kind')
   const said = txt(await teiler.callTool({ name: 'share_asset', arguments: { id: aid, expires_hours: 2 } }))
-  assert.match(said, new RegExp(`is released until .*\\nLink for the recipient: http://localhost:8791/r/${aid}#${akey}\\n`))
+  assert.match(said, new RegExp(`is released until .*\\nLink for the recipient: http://localhost:${PORT}/r/${aid}#${akey}\\n`))
   // the recipient fetches the ciphertext and opens it with the key from the link; each fetch is counted
   const got12 = await get(`/r/${aid}/blob`)
   assert.equal(got12.status, 200)
@@ -3265,20 +3333,20 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   let rec12 = (await state()).assets.find(a => a.id === aid)
   assert.deepEqual([rec12.share.opens, rec12.share.expires > Date.now() + 7000000, rec12.share.opened > 0, JSON.stringify(rec12).includes(akey)], [2, true, true, false])
   // the page gets the outside addresses with the state (so they survive a reload); they are not stored
-  assert.deepEqual([rec12.share.urls, 'urls' in readBoard(data12).assets.find(a => a.id === aid).share, (await state()).assets.find(a => a.id === hid).share], [[`http://localhost:8791/r/${aid}`], false, undefined])
+  assert.deepEqual([rec12.share.urls, 'urls' in readBoard(data12).assets.find(a => a.id === aid).share, (await state()).assets.find(a => a.id === hid).share], [[`http://localhost:${PORT}/r/${aid}`], false, undefined])
   assert.deepEqual(JSON.parse(txt(await teiler.callTool({ name: 'list_assets', arguments: {} }))).map(a => [a.id, a.released, a.opens ?? null]), [[aid, true, 2], [hid, false, null]])
   // a silent asset can be released too; the hub cannot complete its link
   assert.match(txt(await teiler.callTool({ name: 'share_asset', arguments: { id: hid } })), new RegExp(`/r/${hid}#<key>\\n[\\s\\S]*does not know the key`))
   assert.equal((await openAsset(Buffer.from(await (await get(`/r/${hid}/blob`)).arrayBuffer()), hkey, hid)).content.toString(), 'still')
   // the human changes the release (no end, kept), and takes it back: gone at once, the board's own link still opens
   let res12 = await share({ id: aid, expires_hours: 0, keep: true })
-  assert.deepEqual([res12.status, await res12.json().then(o => [o.released, o.path, o.urls, o.share.expires, o.share.opens])], [200, [true, `/r/${aid}`, [`http://localhost:8791/r/${aid}`], null, 2]])
+  assert.deepEqual([res12.status, await res12.json().then(o => [o.released, o.path, o.urls, o.share.expires, o.share.opens])], [200, [true, `/r/${aid}`, [`http://localhost:${PORT}/r/${aid}`], null, 2]])
   assert.equal((await state()).assets.find(a => a.id === aid).keep, true)
   assert.equal((await share({ id: aid, expires_hours: -1 })).status, 400)
   res12 = await share({ id: aid, release: false })
   const back12 = await res12.json()
   assert.deepEqual([back12.path, back12.urls], [null, []])
-  assert.deepEqual([res12.status, back12.released, (await get(`/r/${aid}/blob`)).status, (await get(`/a/${aid}/blob`)).status, 'share' in (await state()).assets.find(a => a.id === aid)], [200, false, 404, 200, false])
+  assert.deepEqual([res12.status, back12.released, (await get(`/r/${aid}/blob`)).status, (await inside(`/a/${aid}/blob`)).status, 'share' in (await state()).assets.find(a => a.id === aid)], [200, false, 404, 200, false])
   assert.match(txt(await teiler.callTool({ name: 'share_asset', arguments: { id: hid, release: false } })), /release taken back/)
   // a release that has run out is none
   await teiler.callTool({ name: 'share_asset', arguments: { id: aid, expires_hours: 0.00002 } })
@@ -3289,7 +3357,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   await teiler.callTool({ name: 'share_asset', arguments: { id: aid } })
   assert.equal((await get(`/r/${aid}/blob`)).status, 200)
   await teiler.callTool({ name: 'revoke_asset', arguments: { id: aid } })
-  assert.deepEqual([(await get(`/r/${aid}/blob`)).status, (await get(`/a/${aid}/blob`)).status], [404, 404])
+  assert.deepEqual([(await get(`/r/${aid}/blob`)).status, (await inside(`/a/${aid}/blob`)).status], [404, 404])
   // the admin log has every step, by id, without key or title
   const journal12 = fs.readFileSync(path.join(data12, 'admin-log.jsonl'), 'utf8')
   assert.deepEqual(journal12.trim().split('\n').map(l => JSON.parse(l).action), ['asset-released', 'asset-released', 'asset-release-changed', 'asset-unreleased', 'asset-unreleased', 'asset-released', 'asset-released'])
@@ -3298,16 +3366,47 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   let last12 = 200
   for (let i = 0; i < 45 && last12 !== 429; i++) last12 = (await get(`/r/${hid}/blob`)).status
   assert.equal(last12, 429)
-  assert.equal((await get(`/a/${hid}/blob`)).status, 429)
+  assert.deepEqual([(await inside(`/a/${hid}/blob`)).status, (await get(`/a/${hid}/blob`)).status], [429, 401])
   await Promise.all([teiler.close(), other12.close()])
   await portFree()
-  // BOARD_ASSET_LOGIN=1: the board's own address wants the login, a released asset stays open for outsiders
-  const gated = await start('Teiler', [], { BOARD_DATA: data12, BOARD_ASSET_LOGIN: '1' })
-  const [gid] = linkOf(await publish(gated, { content: 'x' }))
-  assert.deepEqual([(await get(`/a/${gid}/blob`)).status, (await fetch(`${base}/a/${gid}/blob`, { headers: { Cookie: cookie } })).status, (await get(`/a/${gid}`)).status, (await get(`/r/${gid}/blob`)).status], [401, 200, 200, 404])
+  // ---- assets only with the login, strangers need a release (card Nr. 175) ----
+  // without the login: the ciphertext a 401, the page the sign-in page, the viewer's files a 401; with it: all there
+  const gated = await start('Teiler', [], { BOARD_DATA: data12 })
+  const [gid, gkey] = linkOf(await publish(gated, { content: 'nur für mich' }))
+  assert.deepEqual([(await get(`/a/${gid}/blob`)).status, (await get(`/a/${gid}`)).status, (await get('/a/-/asset.js')).status, (await get(`/r/${gid}/blob`)).status], [401, 401, 401, 404])
+  assert.match(await (await get(`/a/${gid}`)).text(), /Sign in with a passkey/)
+  assert.deepEqual([(await inside(`/a/${gid}`)).status, (await inside('/a/-/asset.js')).status, (await inside(`/r/${gid}/blob`)).status], [200, 200, 404])
+  assert.equal((await openAsset(Buffer.from(await (await inside(`/a/${gid}/blob`)).arrayBuffer()), gkey, gid)).content.toString(), 'nur für mich')
+  // a release opens it for someone without a login, under /r/ only: the board's own address still wants the login
   await gated.callTool({ name: 'share_asset', arguments: { id: gid } })
-  assert.deepEqual([(await get(`/r/${gid}/blob`)).status, (await get(`/a/${gid}/blob`)).status], [200, 401])
+  const out12 = await get(`/r/${gid}/blob`)
+  assert.deepEqual([out12.status, (await get(`/r/${gid}`)).status, (await get(`/a/${gid}/blob`)).status, (await get(`/a/${gid}`)).status], [200, 200, 401, 401])
+  assert.equal((await openAsset(Buffer.from(await out12.arrayBuffer()), gkey, gid)).content.toString(), 'nur für mich')
+  // taken back: gone for the stranger at once, still there for who is signed in
+  await gated.callTool({ name: 'share_asset', arguments: { id: gid, release: false } })
+  assert.deepEqual([(await get(`/r/${gid}/blob`)).status, (await inside(`/a/${gid}/blob`)).status], [404, 200])
+  // run out: gone as well
+  await gated.callTool({ name: 'share_asset', arguments: { id: gid, expires_hours: 0.00002 } })
+  await sleep(120)
+  assert.deepEqual([(await get(`/r/${gid}/blob`)).status, (await inside(`/a/${gid}/blob`)).status], [404, 200])
+  // revoked while released: gone under both addresses, for everyone
+  await gated.callTool({ name: 'share_asset', arguments: { id: gid } })
+  assert.equal((await get(`/r/${gid}/blob`)).status, 200)
+  await gated.callTool({ name: 'revoke_asset', arguments: { id: gid } })
+  assert.deepEqual([(await get(`/r/${gid}/blob`)).status, (await inside(`/a/${gid}/blob`)).status, (await get(`/a/${gid}/blob`)).status], [404, 404, 401])
   await gated.close()
+  await portFree()
+  // BOARD_ASSET_LOGIN=0 is the way back to "the link is the permission"; nothing sets it
+  const open12 = await start('Teiler', [], { BOARD_DATA: data12, BOARD_ASSET_LOGIN: '0' })
+  const [oid] = linkOf(await publish(open12, { content: 'x' }))
+  assert.deepEqual([(await get(`/a/${oid}/blob`)).status, (await get(`/a/${oid}`)).status], [200, 200])
+  await open12.close()
+  await portFree()
+  // without passkeys the refusal of the page is the plain one
+  const plain12 = await start('Teiler', [], { BOARD_DATA: data12, BOARD_PASSKEYS: '0' })
+  const shut12 = await get(`/a/${oid}`)
+  assert.deepEqual([shut12.status, await shut12.text(), (await inside(`/a/${oid}`)).status], [401, 'Access only through the link in data/url.txt', 200])
+  await plain12.close()
   await portFree()
   fs.rmSync(data12, { recursive: true })
 }
@@ -3500,7 +3599,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
 // ---- memos: the human's notes that rest on the hub until they are sent ----
 {
   const data19 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
-  const on19 = { BOARD_DATA: data19 }
+  const on19 = { BOARD_DATA: data19, BOARD_MEMO_HOLD_MS: '300' }   // a sent memo is held this long (server.mjs memoAct)
   const got19 = [], gotB19 = []
   const eins19 = await start('Eins', got19, on19)
   const zwei19 = await start('Zwei', gotB19, on19)
@@ -3515,7 +3614,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   // made (an empty note is one), changed, moved
   let res19 = await memo({})
   let m19 = (await res19.json()).memo
-  assert.deepEqual([res19.status, { ...m19, id: 0, created: 0, updated: 0 }, /^[0-9a-f]{8}$/.test(m19.id), m19.created === m19.updated], [200, { id: 0, text: '', to: null, place: 'float', x: 0, y: 0, attachments: [], created: 0, updated: 0 }, true, true])
+  assert.deepEqual([res19.status, { ...m19, id: 0, created: 0, updated: 0 }, /^[0-9a-f]{8}$/.test(m19.id), m19.created === m19.updated], [200, { id: 0, text: '', to: null, session: null, place: 'float', x: 0, y: 0, attachments: [], created: 0, updated: 0 }, true, true])
   await sleep(5)
   m19 = (await (await memo({ id: m19.id, text: 'Milch kaufen', place: 'paper', x: 1200.5, y: -40, to: 'zwei' })).json()).memo
   assert.deepEqual([m19.text, m19.place, m19.x, m19.y, m19.to, m19.updated > m19.created], ['Milch kaufen', 'paper', 1200.5, -40, 'zwei', true])
@@ -3544,20 +3643,44 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   await eventually(async () => (await state()).agents.filter(a => a.online).length === 2, 'both sessions, again')
   assert.deepEqual((await state()).memos.map(m => [m.text, m.to, m.place, m.attachments.length]), [['zweite Notiz', null, 'float', 0], ['Milch kaufen', 'zwei', 'paper', 2]])
   // sent: it arrives as a message of the human like any other, with its files, and the note is gone
+  // (it is held first: stored as sent and on no page, but not delivered before the hold is over; Undo brings it back)
   res19 = await memo({ id: m19.id, send: true })
-  const sent19 = await res19.json()
+  let sent19 = await res19.json()
+  assert.deepEqual([res19.status, sent19.sent.agent, sent19.held.agent, sent19.held.ms > 0 && sent19.held.ms <= 300], [200, 'zwei', 'zwei', true])
+  assert.deepEqual([(await state()).memos.find(m => m.id === m19.id).held.to, gotB19.length], ['zwei', 0])
+  res19 = await memo({ id: m19.id, unsend: true })
+  assert.deepEqual([res19.status, (await res19.json()).memo.held], [200, undefined])
+  await new Promise(r => setTimeout(r, 450))
+  assert.deepEqual([gotB19.length, (await state()).memos.find(m => m.id === m19.id)?.attachments.length], [0, 2], 'undone within the hold: never delivered, the note as it was')
+  res19 = await memo({ id: m19.id, unsend: true })
+  assert.deepEqual([res19.status, (await res19.json()).code], [409, 'not-sent'])
+  res19 = await memo({ id: m19.id, send: true })
+  sent19 = await res19.json()
   assert.deepEqual([res19.status, sent19.sent.agent], [200, 'zwei'])
+  await new Promise(r => setTimeout(r, 100))
+  assert.equal(gotB19.length, 0, 'not delivered before the hold is over')
   await eventually(() => gotB19.length === 1, 'the memo to arrive')
+  res19 = await memo({ id: m19.id, unsend: true })
+  const late19 = await res19.json()
+  assert.deepEqual([res19.status, late19.code, /^too late: the memo already went to /.test(late19.error)], [409, 'delivered', true], 'Undo after the hold is refused')
   assert.deepEqual([gotB19[0].params.content, gotB19[0].params.meta.kind, gotB19[0].params.meta.files.split(',').length, fs.existsSync(gotB19[0].params.meta.image_path), got19.length], ['Milch kaufen', 'chat', 2, true, 0])
   s = await state()
-  assert.deepEqual([s.memos.map(m => m.text), s.messages.at(-1).id, s.messages.at(-1).from, s.messages.at(-1).agent, s.messages.at(-1).text, s.messages.at(-1).attachments.map(a => a.name)], [['zweite Notiz'], sent19.sent.message, 'user', 'zwei', 'Milch kaufen', ['zwei.png', 'drei.png']])
+  assert.deepEqual([s.memos.map(m => m.text), s.messages.at(-1).id, s.messages.at(-1).from, s.messages.at(-1).agent, s.messages.at(-1).text, s.messages.at(-1).attachments.map(a => a.name)], [['zweite Notiz'], s.messages.at(-1).id, 'user', 'zwei', 'Milch kaufen', ['zwei.png', 'drei.png']])
   // a note that names no session goes to the starred one; with several sessions and no star it stays, and says why
   res19 = await memo({ id: second.id, send: true })
   assert.deepEqual([res19.status, (await res19.json()).code, (await state()).memos.length], [409, 'no-session', 1])
   assert.equal((await post('/star', { agent: 'eins', starred: true })).status, 200)
   assert.equal((await memo({ id: second.id, send: true })).status, 200)
   await eventually(() => got19.length === 1, 'the memo for the starred session')
+  await eventually(async () => (await state()).memos.length === 0, 'the delivered memo gone')
   assert.deepEqual([got19[0].params, (await state()).memos], [{ content: 'zweite Notiz', meta: { kind: 'chat' } }, []])
+  // a note written on a session's page belongs to that session: it goes there, whoever wears the crown
+  const own19 = (await (await memo({ text: 'nur für Zwei', session: 'zwei' })).json()).memo
+  assert.equal(own19.session, 'zwei')
+  assert.equal((await memo({ text: 'x', session: 'niemand' })).status, 404)
+  assert.equal((await memo({ id: own19.id, send: true })).status, 200)
+  await eventually(() => gotB19.length === 2, 'the session note to its session')
+  assert.deepEqual([gotB19[1].params.content, got19.length], ['nur für Zwei', 1])
   // an empty note is not sent; thrown away, a note takes its files along
   const empty19 = (await (await memo({ attachments: [{ name: 'weg.png', data: png }] })).json()).memo
   const blank19 = (await (await memo({ text: '   ' })).json()).memo
@@ -3654,9 +3777,13 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   // a helper says who its main is, by id or by name; the main is a main because it has a sub, or because it says so
   assert.deepEqual(await tool(eins, 'introduce', { model: 'm', parent: 'chef' }), [false, 'noted; you stand under your main session chef'])
   assert.deepEqual((await family()).chef, [null, true, 'main'])
+  // the crown (card Nr. 172): a desk without one gives it to the first session that becomes a main there; a second main gets none
+  const crowns14 = async () => (await state()).agents.filter(a => a.starred).map(a => `${a.id}@${a.desk}`)
+  assert.deepEqual(await crowns14(), ['chef@main'], 'the first main of the desk is crowned by itself')
   assert.deepEqual((await tool(zwei, 'introduce', { model: 'm', parent: 'Niemand' }))[0], true)
   assert.deepEqual(await tool(zwei, 'introduce', { model: 'm', main: true }), [false, 'noted'])
   assert.deepEqual((await family()).zwei, [null, true, 'main'])
+  assert.deepEqual(await crowns14(), ['chef@main'], 'a second main keeps its stack and wears no crown')
   // one level only: a sub cannot be a main's main, a main with subs cannot become a sub, nobody is its own main
   assert.match((await tool(zwei, 'introduce', { model: 'm', parent: 'eins' }))[1], /eins is itself a sub of chef/)
   assert.match((await tool(chef, 'introduce', { model: 'm', parent: 'zwei' }))[1], /chef has subs of its own/)
@@ -3683,6 +3810,49 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   assert.equal((await post('/session', { agent: 'eins', desk: 'main' })).status, 409)
   assert.equal((await post('/session', { agent: 'waise', parent: 'chef' })).status, 200)
   assert.equal((await family()).waise[2], desk14, 'a new sub joins its main\'s desk')
+  // ---- one crown per desk (card Nr. 172) ----
+  {
+    const memo14 = async (text, desk) => {
+      const id = (await (await post('/memo', { text })).json()).memo.id
+      const res = await post('/memo', { id, send: true, ...(desk ? { desk } : {}) })
+      const out = [res.status, res.status === 200 ? (await res.json()).sent.agent : (await res.json()).code]
+      if (res.status !== 200) await post('/memo', { id, remove: true })
+      return out
+    }
+    assert.deepEqual(await crowns14(), [`chef@${desk14}`], 'the crown went along to a desk that had none')
+    // a second desk gets its own crown: zwei stands alone on the default desk and says it is a main
+    assert.equal((await post('/session', { agent: 'zwei', parent: null })).status, 200)
+    assert.equal((await post('/session', { agent: 'zwei', desk: 'main' })).status, 200)
+    assert.deepEqual(await crowns14(), [`chef@${desk14}`], 'a session that is no main is not crowned by itself')
+    assert.deepEqual(await tool(zwei, 'introduce', { model: 'm', main: true }), [false, 'noted'])
+    assert.deepEqual(await crowns14(), [`chef@${desk14}`, 'zwei@main'], 'one crown on each desk')
+    // the human gives it: on the same desk it moves, the other desk keeps its own; a sub can wear it
+    assert.equal((await post('/star', { agent: 'eins', starred: true })).status, 200)
+    assert.deepEqual(await crowns14(), [`eins@${desk14}`, 'zwei@main'])
+    // the memo goes to the crown of the desk it is sent from; without a desk named, to the default desk's crown
+    assert.deepEqual([await memo14('nach Privat', desk14), await memo14('nach Desk', 'main'), await memo14('ohne Desk')], [[200, 'eins'], [200, 'zwei'], [200, 'zwei']])
+    // a crowned session that comes to a desk with a crown leaves its own behind; back on a desk without one, a main is crowned again
+    assert.equal((await post('/session', { agent: 'zwei', desk: desk14 })).status, 200)
+    assert.deepEqual(await crowns14(), [`eins@${desk14}`], 'the one that arrives loses its crown')
+    assert.deepEqual(await memo14('kein Kronenträger', 'main'), [409, 'no-session'])
+    assert.equal((await post('/session', { agent: 'zwei', desk: 'main' })).status, 200)
+    assert.deepEqual(await crowns14(), [`eins@${desk14}`, 'zwei@main'])
+    // taken off by hand, the desk stays without a crown, whoever becomes a main there, until he gives one
+    assert.equal((await post('/star', { agent: 'zwei', starred: false })).status, 200)
+    assert.deepEqual(await tool(zwei, 'introduce', { model: 'm', main: true }), [false, 'noted'])
+    assert.deepEqual([await crowns14(), readBoard(data14).desks.find(d => d.id === 'main').crown_off], [[`eins@${desk14}`], true])
+    assert.equal((await post('/star', { agent: 'zwei', starred: true })).status, 200)
+    assert.deepEqual([await crowns14(), readBoard(data14).desks.find(d => d.id === 'main').crown_off], [[`eins@${desk14}`, 'zwei@main'], undefined])
+    // put away, a session lays its crown down, and the desk's first main takes it
+    assert.equal((await post('/session', { agent: 'waise', parent: null })).status, 200)
+    assert.equal((await post('/star', { agent: 'waise', starred: true })).status, 200)
+    assert.equal((await post('/session', { agent: 'waise', archived: true })).status, 200)
+    assert.deepEqual(await crowns14(), [`chef@${desk14}`, 'zwei@main'])
+    assert.equal((await post('/session', { agent: 'waise', archived: false, parent: 'chef' })).status, 200)
+    // back as it was: zwei under chef again, so it comes to chef's desk and leaves its crown
+    assert.equal((await post('/session', { agent: 'zwei', parent: 'chef' })).status, 200)
+    assert.deepEqual([await crowns14(), (await family()).zwei], [[`chef@${desk14}`], ['chef', false, desk14]])
+  }
   // a helper started by hand names its main when it links
   const helper = spawn('node', [toPath(new URL('../dev/session.mjs', import.meta.url)), 'link', 'Helfer', '--parent', 'chef'], { env: serverEnv('x', on14), stdio: 'ignore' })
   spawned.push(helper)
@@ -3694,6 +3864,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   const eins2 = await start('Eins', [], on14)
   await eventually(async () => (await state()).agents.find(a => a.id === 'eins')?.online, 'eins to be back')
   assert.deepEqual([(await family()).eins, (await family()).chef], [['chef', false, desk14], [null, true, desk14]])
+  assert.deepEqual(await crowns14(), [`chef@${desk14}`], 'the crown survives a restart')
   assert.deepEqual(readBoard(data14).agents.map(a => [a.id, a.parent ?? null, 'main' in a]), [['waise', 'chef', false], ['chef', null, false], ['eins', 'chef', false], ['zwei', 'chef', false], ['helfer', 'chef', false]])
   const admin14 = await adminLogin('adminkey', cookie)
   assert.equal((await adminPost('sessions/forget', { id: 'chef', confirm: 'chef' }, admin14)).status, 200)
@@ -3703,6 +3874,344 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   fs.rmSync(data14, { recursive: true })
 }
 
+// ---- backup and restore (card Nr. 175): deploy/backup.sh snapshots the SQLite database of a running hub, deploy/restore.sh puts it back ----
+{
+  const { execFileSync } = await import('node:child_process')
+  const root = path.dirname(path.dirname(SERVER))
+  const dataB = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const work = fs.mkdtempSync(path.join(os.tmpdir(), 'board-backup-'))
+  const [archives, restored] = [path.join(work, 'archives'), path.join(work, 'restored')]
+  const run = (script, args) => execFileSync(path.join(root, 'deploy', script), args, { encoding: 'utf8', env: { ...process.env, BOARD_DATA: '', TMPDIR: work, XDG_CONFIG_HOME: work }, stdio: ['ignore', 'pipe', 'pipe'] })
+  const kinds = dir => JSON.parse(execFileSync('node', [path.join(root, 'deploy', 'sqlite-snapshot.mjs'), '--counts', path.join(dir, 'pad.db')], { encoding: 'utf8' })).board
+  // the secrets as files, as on a real board (the other hubs of this test get them from the environment)
+  const own = { BOARD_DATA: dataB, BOARD_TOKEN: '', BOARD_ADMIN_TOKEN: '' }
+  for (const [name, secret] of [['token', 'secret'], ['admin-token', 'adminkey']]) fs.writeFileSync(path.join(dataB, name), secret + '\n', { mode: 0o644 })
+  const hubB = await start('Sicherung', [], own)
+  const sayB = (name, args) => hubB.callTool({ name, arguments: args })
+  for (let i = 0; i < 3; i++) await sayB('create_decision', { title: `Frage ${i}`, options: [option('a'), option('b')] })
+  for (let i = 0; i < 5; i++) await sayB('reply', { text: `Nachricht ${i} Kennwort-im-Text-4711`, ...(i ? {} : { attachments: [shot] }) })
+  const [bid, bkey] = linkOf(await publish(hubB, { content: 'gesichert', title: 'Sicherung' }))
+  const before = await state()
+  const attached = before.messages.flatMap(m => m.attachments ?? []).map(a => path.basename(a.url))
+  assert.deepEqual([before.cards.length, before.messages.length >= 5, attached.length], [3, true, 1])
+  // the hub is running and has the database open in WAL mode while the backup is taken
+  assert.ok(fs.existsSync(path.join(dataB, 'pad.db-wal')))
+  const told = run('backup.sh', ['--data', dataB, '--to', archives])
+  const [archive] = fs.readdirSync(archives)
+  assert.match(archive, /^trommi-data-\d{8}-\d{6}\.tar\.gz$/)
+  assert.equal(fs.statSync(path.join(archives, archive)).mode & 0o777, 0o600)
+  // what it says: counts and sizes, never a secret or a message
+  assert.match(told, /1 SQLite snapshot\(s\), integrity checked; pad\.db holds \{"board":\{[^}]*"cards":3/)
+  assert.ok(!/\bsecret\b|adminkey|Kennwort|Frage 0/.test(told.replace(/secrets:/g, '')), 'the backup prints no secret and no content')
+  // in the archive: one database file, never the raw -wal or -shm, no login link, no log; the secrets with mode 0600
+  const listing = execFileSync('tar', ['-tvzf', path.join(archives, archive)], { encoding: 'utf8' }).trim().split('\n')
+  const entry = name => listing.find(line => line.endsWith(` trommi-data/${name}`))
+  assert.ok(entry('pad.db') && entry(`files/${attached[0]}`) && entry(`assets/${bid}`))
+  assert.ok(!listing.some(line => /pad\.db-(wal|shm)$|url\.txt$|\.log$/.test(line)))
+  for (const name of ['token', 'admin-token', 'pad.db']) assert.match(entry(name), /^-rw------- /, name)
+  // the board goes on after the snapshot: what comes later is not in it
+  await sayB('reply', { text: 'nach der Sicherung' })
+  await sayB('create_decision', { title: 'später', options: [option('a'), option('b')] })
+  const live = kinds(dataB)
+  // restore into another directory and compare records per kind
+  const back = run('restore.sh', [path.join(archives, archive), '--data', restored])
+  assert.match(back, /database: integrity checked; pad\.db holds \{"board"/)
+  assert.deepEqual(kinds(restored), { ...live, cards: 3, messages: before.messages.length })
+  assert.deepEqual([live.cards, live.messages > before.messages.length, kinds(restored).assets], [4, true, 1])
+  assert.deepEqual([fs.existsSync(path.join(restored, 'pad.db-wal')), fs.readFileSync(path.join(restored, 'token'), 'utf8').trim(), fs.statSync(path.join(restored, 'token')).mode & 0o777, fs.statSync(path.join(restored, 'pad.db')).mode & 0o777], [false, 'secret', 0o600, 0o600])
+  assert.deepEqual(fs.readFileSync(path.join(restored, 'files', attached[0])), fs.readFileSync(path.join(dataB, 'files', attached[0])))
+  assert.deepEqual(fs.readFileSync(path.join(restored, 'assets', bid)), fs.readFileSync(path.join(dataB, 'assets', bid)))
+  // a directory with data is not written over, unless asked: then it is moved aside, never deleted
+  assert.throws(() => run('restore.sh', [path.join(archives, archive), '--data', restored]), /not empty/)
+  // a second backup without the secrets, and --keep
+  const more = path.join(work, 'more')
+  fs.mkdirSync(more)
+  fs.copyFileSync(path.join(archives, archive), path.join(more, 'trommi-data-20200101-000000.tar.gz'))
+  run('backup.sh', ['--data', dataB, '--to', more, '--no-secrets'])
+  await sleep(1100)
+  run('backup.sh', ['--data', dataB, '--to', more, '--no-secrets', '--keep', '2'])
+  const newest = fs.readdirSync(more).sort()
+  assert.deepEqual([newest.length, newest.includes('trommi-data-20200101-000000.tar.gz')], [2, false])
+  assert.ok(!execFileSync('tar', ['-tzf', path.join(more, newest[1])], { encoding: 'utf8' }).split('\n').some(name => /\/(token|admin-token|tinfoil\.key)$/.test(name)))
+  // an archive that is not ours is refused, and so is a directory that is no data directory
+  execFileSync('tar', ['-czf', path.join(work, 'fremd.tar.gz'), '-C', dataB, 'token'])
+  assert.throws(() => run('restore.sh', [path.join(work, 'fremd.tar.gz'), '--data', path.join(work, 'x')]), /not made by deploy\/backup\.sh/)
+  assert.throws(() => run('backup.sh', ['--data', work, '--to', archives]), /neither pad\.db nor state\.json/)
+  await hubB.close()
+  await portFree()
+  // a hub started on the restored directory serves the board as it was at the snapshot: the cards, the messages, the
+  // attachment, and the asset opens with its key; --replace moved nothing away here, so the original is untouched
+  const hubR = await start('Sicherung', [], { ...own, BOARD_DATA: restored })
+  const after = await state()
+  assert.deepEqual([after.cards.map(c => c.title), after.messages.length, after.messages.some(m => m.text === 'nach der Sicherung')], [['Frage 0', 'Frage 1', 'Frage 2'], before.messages.length, false])
+  assert.equal((await fetch(`${base}/files/${attached[0]}`, { headers: { Cookie: cookie } })).status, 200)
+  assert.equal((await openAsset(await blobOf(bid), bkey, bid)).content.toString(), 'gesichert')
+  await hubR.close()
+  await portFree()
+  // a directory in which a hub has its database open is refused, with or without --replace
+  const hubO = await start('Sicherung', [], { ...own, BOARD_DATA: restored })
+  assert.throws(() => run('restore.sh', [path.join(archives, archive), '--data', restored, '--replace']), /stop the hub first/)
+  await hubO.close()
+  await portFree()
+  // --replace: the directory that was there is moved aside whole
+  run('restore.sh', [path.join(archives, archive), '--data', restored, '--replace'])
+  const aside = fs.readdirSync(work).filter(name => name.startsWith('restored.before-restore-'))
+  assert.deepEqual([aside.length, fs.existsSync(path.join(work, aside[0], 'pad.db')), kinds(restored).cards], [1, true, 3])
+  for (const dir of [dataB, work]) fs.rmSync(dir, { recursive: true })
+}
+
+// ---- push (server/push.mjs, docs/push.md): a knock goes to the subscribed browser, encrypted for it and signed by the hub ----
+{
+  const data15 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  // the push service of a browser maker, played here: it keeps what it is sent and answers as told
+  const pushed = []
+  let answer = 201
+  const service = http.createServer((req, res) => {
+    const chunks = []
+    req.on('data', chunk => chunks.push(chunk))
+    req.on('end', () => { pushed.push({ path: req.url, headers: req.headers, body: Buffer.concat(chunks) }); res.writeHead(answer); res.end() })
+  })
+  await new Promise(done => service.listen(0, '127.0.0.1', done))
+  const host15 = `127.0.0.1:${service.address().port}`
+  const agent15 = await start('Klopfer', [], { BOARD_DATA: data15, BOARD_PUSH_HOSTS: host15, BOARD_PUSH_AWAY_MS: '300' })
+  const tool15 = (name, args) => agent15.callTool({ name, arguments: args })
+  const card15 = async (title, extra = {}) => (await tool15('create_decision', { title, options: [option('a'), option('b')], ...extra })).content[0].text.match(/^card (\w+) /)[1]
+  const numberOf = async id => (await state()).cards.find(c => c.id === id).number
+  // the browser: its key pair and its secret, as PushManager.subscribe() makes them
+  const browser = crypto.createECDH('prime256v1')
+  const p256dh = browser.generateKeys().toString('base64url')
+  const auth = crypto.randomBytes(16)
+  const endpoint = `http://${host15}/send/abc`
+  const mine = { endpoint, keys: { p256dh, auth: auth.toString('base64url') } }
+  // RFC 8291, read from the receiving side
+  const hkdf15 = (salt, ikm, info, n) => Buffer.from(crypto.hkdfSync('sha256', ikm, salt, info, n))
+  const opened = body => {
+    const salt = body.subarray(0, 16), sender = body.subarray(21, 21 + body[20]), sealed = body.subarray(21 + body[20])
+    assert.deepEqual([body.readUInt32BE(16), body[20], sender[0]], [4096, 65, 4])
+    const ikm = hkdf15(auth, browser.computeSecret(sender), Buffer.concat([Buffer.from('WebPush: info\0'), browser.getPublicKey(), sender]), 32)
+    const plain = crypto.createDecipheriv('aes-128-gcm', hkdf15(salt, ikm, 'Content-Encoding: aes128gcm\0', 16), hkdf15(salt, ikm, 'Content-Encoding: nonce\0', 12))
+    plain.setAuthTag(sealed.subarray(-16))
+    const record = Buffer.concat([plain.update(sealed.subarray(0, -16)), plain.final()])
+    const end = record.lastIndexOf(2)
+    assert.ok(record.subarray(end + 1).every(b => b === 0), 'after the delimiter only padding')
+    return { length: record.length, message: JSON.parse(record.subarray(0, end)) }
+  }
+
+  // what a phone fetches without the cookie is there, and the worker does nothing but push
+  const manifest = await fetch(`${base}/manifest.webmanifest`)
+  assert.deepEqual([manifest.status, manifest.headers.get('content-type'), (await manifest.json()).name], [200, 'application/manifest+json', 'Trommi'])
+  assert.equal((await fetch(`${base}/icons/trommi-180.png`)).headers.get('content-type'), 'image/png')
+  const worker = await (await fetch(`${base}/sw.js`)).text()
+  assert.ok(/addEventListener\('push'/.test(worker) && /addEventListener\('notificationclick'/.test(worker) && !/addEventListener\('fetch'|caches\./.test(worker))
+  // the routes are behind the login and the origin check
+  assert.equal((await fetch(`${base}/push/key`)).status, 401)
+  assert.equal((await fetch(`${base}/push/subscribe`, { method: 'POST', headers: { Origin: base }, body: JSON.stringify(mine) })).status, 401)
+  assert.equal((await post('/push/subscribe', mine, 'https://evil.example')).status, 403)
+  const { key: key15 } = await (await fetch(`${base}/push/key`, { headers: { Cookie: cookie } })).json()
+  assert.deepEqual([Buffer.from(key15, 'base64url').length, Buffer.from(key15, 'base64url')[0]], [65, 4])
+  // only the browsers' push services, and only real keys
+  assert.equal((await post('/push/subscribe', { ...mine, endpoint: 'https://evil.example/x' })).status, 400)
+  assert.equal((await post('/push/subscribe', { ...mine, endpoint: 'http://web.push.apple.com/x' })).status, 400)
+  assert.equal((await post('/push/subscribe', { ...mine, keys: { p256dh: 'AAAA', auth: 'AAAA' } })).status, 400)
+  assert.deepEqual(await (await post('/push/state', { endpoint })).json(), { ok: true, subscribed: false, title: false, away: false })
+  // JSON that is no object is refused, and the hub stays up (it once threw outside the error boundary)
+  for (const route of ['/push/state', '/push/subscribe', '/push/unsubscribe', '/push/test']) for (const odd of [null, 7, 'x', [1]]) assert.equal((await post(route, odd)).status, 400, `${route} ${JSON.stringify(odd)}`)
+  assert.equal((await fetch(`${base}/healthz`)).status, 200)
+  // subscribed: kept on the hub, the owner's alone, as is the key; the card's title is shown unless the device says otherwise (card Nr. 185)
+  assert.deepEqual(await (await post('/push/subscribe', mine)).json(), { ok: true, subscribed: true, title: true, away: true })
+  const kept15 = () => JSON.parse(fs.readFileSync(path.join(data15, 'push.json'), 'utf8')).subs
+  assert.deepEqual(kept15().map(s => [s.endpoint, s.p256dh, s.title, s.away]), [[endpoint, p256dh, true, true]])
+  assert.deepEqual(['push.json', 'push-vapid.pem'].map(f => fs.statSync(path.join(data15, f)).mode & 0o777), [0o600, 0o600])
+  assert.ok(!logs.some(line => line.includes(key15) || line.includes('PRIVATE KEY') || line.includes('/send/abc')), 'neither key nor subscription in the log')
+
+  // a page of the board is open: he is there. A card that does not knock sends nothing; raised, it sends one message
+  const open15 = new AbortController()
+  const page15 = await fetch(`${base}/events`, { headers: { Cookie: cookie }, signal: open15.signal })
+  const quiet = await card15('Geheimer Titel der Karte')
+  await sleep(200)
+  assert.equal(pushed.length, 0)
+  await tool15('set_urgency', { card_id: quiet, urgency: 'high', reason: 'es eilt' })
+  await eventually(() => pushed.length === 1, 'the push for the knock')
+  const first = pushed[0]
+  assert.deepEqual([first.path, first.headers['content-encoding'], first.headers.ttl, first.headers.urgency, /^[\w-]{1,32}$/.test(first.headers.topic)], ['/send/abc', 'aes128gcm', '86400', 'high', true])
+  // signed by the hub (RFC 8292): the key it hands the browser verifies the token, which names this push service
+  const [, jwt, k] = /^vapid t=([\w-]+\.[\w-]+\.[\w-]+), k=([\w-]+)$/.exec(first.headers.authorization)
+  assert.equal(k, key15)
+  const point = Buffer.from(k, 'base64url')
+  const hubKey = crypto.createPublicKey({ format: 'jwk', key: { kty: 'EC', crv: 'P-256', x: point.subarray(1, 33).toString('base64url'), y: point.subarray(33).toString('base64url') } })
+  const [head, claims, signature] = jwt.split('.')
+  assert.ok(crypto.verify('sha256', Buffer.from(`${head}.${claims}`), { key: hubKey, dsaEncoding: 'ieee-p1363' }, Buffer.from(signature, 'base64url')))
+  const said = JSON.parse(Buffer.from(claims, 'base64url'))
+  assert.deepEqual([JSON.parse(Buffer.from(head, 'base64url')), said.aud, said.sub], [{ typ: 'JWT', alg: 'ES256' }, `http://${host15}`, 'https://trommi.com'])
+  assert.ok(said.exp > Date.now() / 1000 && said.exp <= Date.now() / 1000 + 24 * 3600)
+  // encrypted for this browser (RFC 8291): its keys open it and nobody else reads the title; every message is as long as any other
+  assert.ok(!first.body.includes('Geheimer') && !first.body.includes('Knock'))
+  const nr = await numberOf(quiet)
+  assert.deepEqual(opened(first.body), { length: 512, message: { title: 'Trommi', body: 'Knock: Geheimer Titel der Karte', tag: `card-${quiet}`, url: `/q/${nr}` } })
+  // down and up again within the minute: the card does not ring twice
+  await tool15('set_urgency', { card_id: quiet, urgency: 'normal' })
+  await tool15('set_urgency', { card_id: quiet, urgency: 'critical', reason: 'jetzt aber' })
+  await sleep(200)
+  assert.equal(pushed.length, 1)
+
+  // a card that knocks from the start rings as well, board open or not
+  const loud = await card15('Deploy freigeben?', { urgency: 'critical', urgency_reason: 'alles wartet' })
+  await eventually(() => pushed.length === 2, 'the push for a card that knocks from the start')
+  assert.deepEqual([pushed[1].headers.topic !== first.headers.topic, opened(pushed[1].body).message], [true, { title: 'Trommi', body: 'Knock: Deploy freigeben?', tag: `card-${loud}`, url: `/q/${await numberOf(loud)}` }])
+  // this device wants the discreet text (what else it wants stays as it was)
+  assert.deepEqual(await (await post('/push/subscribe', { ...mine, title: false })).json(), { ok: true, subscribed: true, title: false, away: true })
+  assert.equal(kept15().length, 1)
+  // a new card rings only when he is away (card Nr. 186): not with a page open, but some time after the last one closed
+  await sleep(400)
+  await card15('Während er da ist')
+  await sleep(200)
+  assert.equal(pushed.length, 2)
+  open15.abort()
+  await page15.body.cancel().catch(() => {})
+  await sleep(600)
+  await card15('Während er weg ist')
+  await eventually(() => pushed.length === 3, 'the push for a new card while away')
+  assert.deepEqual([pushed[2].headers.urgency, opened(pushed[2].body).message.body], ['normal', 'A new card'])
+  const hasty = await card15('Eilt, und diskret', { urgency: 'high', urgency_reason: 'eilt' })
+  await eventually(() => pushed.length === 4, 'the discreet push')
+  assert.deepEqual(opened(pushed[3].body).message, { title: 'Trommi', body: 'Something knocks', tag: `card-${hasty}`, url: `/q/${await numberOf(hasty)}` })
+  // a test message on request
+  assert.deepEqual(await (await post('/push/test', { endpoint })).json(), { ok: true, status: 201 })
+  assert.equal(opened(pushed[4].body).message.body, 'Push works on this device')
+  assert.equal((await post('/push/test', { endpoint: `http://${host15}/other` })).status, 404)
+
+  // the push service says the subscription is gone: the hub forgets it
+  answer = 410
+  await card15('Noch eine', { urgency: 'high', urgency_reason: 'eilt' })
+  await eventually(() => kept15().length === 0, 'the dead subscription to be removed')
+  assert.equal(pushed.length, 6)
+  assert.equal((await (await post('/push/state', { endpoint })).json()).subscribed, false)
+  // switched off by the browser itself
+  answer = 201
+  await post('/push/subscribe', mine)
+  assert.deepEqual(await (await post('/push/unsubscribe', { endpoint })).json(), { ok: true, subscribed: false, title: false, away: false })
+  assert.equal(kept15().length, 0)
+  await card15('Und noch eine', { urgency: 'high', urgency_reason: 'eilt' })
+  await sleep(200)
+  assert.equal(pushed.length, 6)
+  await agent15.close()
+
+  // the five minutes and the burst, with a clock of the test's own (the module alone, no hub)
+  {
+    const { pusher } = await import('./push.mjs')
+    fs.writeFileSync(path.join(data15, 'push.json'), JSON.stringify({ subs: [
+      { endpoint: 'https://web.push.apple.com/titel', p256dh, auth: auth.toString('base64url'), title: true },
+      { endpoint: 'https://web.push.apple.com/diskret', p256dh, auth: auth.toString('base64url'), title: false },
+      { endpoint: 'https://web.push.apple.com/nur-klopfen', p256dh, auth: auth.toString('base64url'), title: true, away: false },
+    ] }))
+    const MIN = 60000
+    let clock = 1e12, pages = 1
+    const sentTo = [], timers = [], looks = []
+    const p = pusher({ dir: data15, web: data15, boards: () => pages, now: () => clock, later: (fn, ms) => timers.push({ fn, at: clock + ms }), every: fn => looks.push(fn),
+      fetch: async (to, req) => { sentTo.push([to.split('/').pop(), opened(req.body).message.body, opened(req.body).message.url]); return { status: 201 } } })
+    const board = { cards: [], queue: [] }
+    let n15 = 0
+    const file = (title, urgency = 'normal') => { const c = { id: `c${++n15}`, number: n15, kind: 'decision', status: 'open', urgency, title }; board.cards.push(c); board.queue.push(c.id); p.watch(board); return c }
+    // time passes: the hub looks for open pages as it goes, and the timers that are due run
+    const pass = ms => {
+      for (const end = clock + ms; clock < end;) {
+        clock += 5000
+        for (const fn of looks) fn()
+        for (const t of timers.splice(0)) if (t.at <= clock) t.fn(); else timers.push(t)
+      }
+    }
+    const got = () => sentTo.splice(0)
+    p.watch(board)
+    // at the board: a new card is silent, a knock rings on every device
+    file('Eins')
+    assert.deepEqual(got(), [])
+    file('Zwei', 'high')
+    assert.deepEqual(got(), [['titel', 'Knock: Zwei', '/q/2'], ['diskret', 'Something knocks', '/q/2'], ['nur-klopfen', 'Knock: Zwei', '/q/2']])
+    // the last page closes: for five minutes he still counts as there
+    pass(MIN)
+    pages = 0
+    pass(4 * MIN + 55000)
+    file('Drei')
+    assert.deepEqual(got(), [])
+    // five minutes without a page: the first new card rings at once, on the devices that want new cards
+    pass(5000)
+    file('Vier')
+    assert.deepEqual(got(), [['titel', 'Nr. 4: Vier', '/q/4'], ['diskret', 'A new card', '/q/4']])
+    // a burst within the minute comes as one; what was answered in the meantime is not counted
+    file('Fünf'); const six = file('Sechs'); file('Sieben')
+    assert.deepEqual(got(), [])
+    six.status = 'done'; board.queue = board.queue.filter(id => id !== six.id); p.watch(board)
+    pass(MIN)
+    assert.deepEqual(got(), [['titel', '2 new cards', '/'], ['diskret', '2 new cards', '/']])
+    // the next minute holds one card: it comes by itself, with its title; then the minutes are over and a new card rings at once again
+    file('Acht')
+    assert.deepEqual(got(), [])
+    pass(MIN)
+    assert.deepEqual(got(), [['titel', 'Nr. 8: Acht', '/q/8'], ['diskret', 'A new card', '/q/8']])
+    pass(2 * MIN)
+    file('Neun')
+    assert.equal(got().length, 2)
+    // he is back before the minute is over: what waited in it stays silent, and so does what comes while he is there
+    file('Zehn')
+    pages = 1
+    pass(2 * MIN)
+    file('Elf')
+    assert.deepEqual(got(), [])
+  }
+
+  // ---- a stopped session rings once per stop (server/blocked.mjs, cards Nr. 202/203) ----
+  {
+    const { pusher } = await import('./push.mjs')
+    const { SILENT_MS, OFFLINE_GRACE_MS } = await import('./blocked.mjs')
+    let clock = 2e12
+    const sentTo = []
+    const p = pusher({ dir: data15, web: data15, boards: () => 1, now: () => clock, later: () => {}, every: () => {},
+      fetch: async (to, req) => { sentTo.push([to.split('/').pop(), opened(req.body).message.body, opened(req.body).message.url]); return { status: 201 } } })
+    const got = () => sentTo.splice(0)
+    const builder = { id: 'bau', name: 'bau', label: 'Builder', online: true, connected: clock, active: clock }
+    const board = { agents: [builder], tasks: [{ agent: 'bau', id: 'x', state: 'working', updated: clock }], cards: [], queue: [] }
+    p.watch(board)
+    assert.deepEqual(got(), [])
+    // the link drops: a blip is nothing; gone for longer while working, it rings once on every device
+    builder.online = false; builder.seen = clock
+    p.watch(board)
+    assert.deepEqual(got(), [])
+    clock += OFFLINE_GRACE_MS
+    p.watch(board)
+    assert.deepEqual(got(), [['titel', 'Stopped: Builder. Disconnected while working', '/s/bau'], ['diskret', 'An agent is stopped', '/s/bau'], ['nur-klopfen', 'Stopped: Builder. Disconnected while working', '/s/bau']])
+    // the same stop with another cause rings no more
+    builder.online = true; builder.error = 'API overloaded'
+    p.watch(board)
+    assert.deepEqual(got(), [])
+    // it runs again, then falls silent: a new stop, a new ring
+    delete builder.error; builder.active = clock
+    p.watch(board)
+    assert.deepEqual(got(), [])
+    clock += SILENT_MS
+    p.watch(board)
+    assert.deepEqual(got().map(x => x[1]), [`Stopped: Builder. Silent for ${Math.round(SILENT_MS / 60000)} min`, 'An agent is stopped', `Stopped: Builder. Silent for ${Math.round(SILENT_MS / 60000)} min`])
+    // a stop that is a card (an approval, a card marked blocking) rings as that card's knock, not a second time
+    board.tasks = []; builder.active = clock
+    p.watch(board)
+    board.cards.push({ id: 'blk', number: 99, agent: 'bau', kind: 'decision', status: 'open', urgency: 'critical', title: 'Blockiert' }); board.queue.push('blk')
+    p.watch(board)
+    assert.deepEqual(got(), [['titel', 'Knock: Blockiert', '/q/99'], ['diskret', 'Something knocks', '/q/99'], ['nur-klopfen', 'Knock: Blockiert', '/q/99']])
+    board.cards = []; board.queue = []
+    // a session without working lines is never "silent"; nor "disconnected while working"
+    board.tasks = []; builder.active = clock
+    p.watch(board); clock += 2 * SILENT_MS; builder.online = false; builder.seen = 0
+    p.watch(board)
+    assert.deepEqual(got(), [])
+  }
+
+  await new Promise(done => service.close(done))
+  await portFree()
+  fs.rmSync(data15, { recursive: true })
+}
+
+// The server-rendered board (turbo.mjs): its own file, its own hub.
+await (await import('./turbo-test.mjs')).run()
+
 for (const dir of [data, data2, data3, data4, data5, data6, data7, data8, data9]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, the stack in its fixed order, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, snooze, one crown, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, message log with since, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids made by the hub and kept by key, pairing and keys behind a flag, passkey login, assets released for third parties, desks, main agents and their subs, short words on options, marks on pictures, test cards from the hub, memos kept until sent, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+console.log('ok: chat, decision, attachment, the stack in its fixed order, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, snooze, one crown, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, message log with since, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids made by the hub and kept by key, pairing and keys behind a flag, passkey login, assets released for third parties, assets only with the login, backup and restore of the database, desks, main agents and their subs, push to a subscribed browser, short words on options, marks on pictures, test cards from the hub, memos kept until sent, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)

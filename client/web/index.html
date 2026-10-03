@@ -9,6 +9,8 @@
 <script>
 // Theme before first paint: hash flag, then the remembered choice, else light.
 (function () {
+  // The old board lives under /old/ and routes from the hash there, so that its links stay inside it.
+  if (location.pathname.indexOf('/old') === 0 && location.hash.indexOf('#/') !== 0) location.replace('/old/#/')
   var flags = location.hash.slice(1).split(',')
   var theme = 'light'
   try { if (localStorage.getItem('agent-board-theme') === 'dark') theme = 'dark' } catch (e) {}
@@ -39,6 +41,29 @@
 <link rel="stylesheet" href="/css/logo.css">
 <link rel="stylesheet" href="/css/links.css">
 <link rel="stylesheet" href="/css/session.css">
+<link rel="stylesheet" href="/css/clipboard.css">
+<!-- On the Home Screen the board is an app of its own, which is what a phone needs for push (docs/push.md). -->
+<link rel="manifest" href="/manifest.webmanifest">
+<link rel="apple-touch-icon" href="/icons/trommi-180.png">
+<!-- The modules the page is made of, named up front: the browser fetches them all at once instead of finding
+     them import by import (one round trip per level on a slow line). -->
+<link rel="modulepreload" href="/js/store.js">
+<link rel="modulepreload" href="/js/ui.js">
+<link rel="modulepreload" href="/js/inbox.js">
+<link rel="modulepreload" href="/js/back.js">
+<link rel="modulepreload" href="/js/agents.js">
+<link rel="modulepreload" href="/js/link.js">
+<link rel="modulepreload" href="/js/knock.js">
+<link rel="modulepreload" href="/js/keys.js">
+<link rel="modulepreload" href="/js/speech.js">
+<link rel="modulepreload" href="/js/cardclip.js">
+<link rel="modulepreload" href="/js/memos.js">
+<link rel="modulepreload" href="/js/chat.js">
+<link rel="modulepreload" href="/js/richhtml.js">
+<link rel="modulepreload" href="/js/piles.js">
+<link rel="modulepreload" href="/js/history.js">
+<link rel="modulepreload" href="/pad/name.js">
+<link rel="modulepreload" href="/pad/fly.js">
 <script type="module" src="/js/app.js"></script>
 <script type="module" src="/js/padlink.js"></script>
 <script type="module" src="/js/bar.js"></script>
@@ -107,6 +132,8 @@
         <p class="conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text">Connecting</span></p>
         <button role="menuitemcheckbox" type="button" id="knock-sound" aria-checked="false" aria-label="Knock sound" title="Knock sound: a soft double knock when an urgent question arrives"></button>
         <button role="menuitemcheckbox" type="button" id="theme-toggle" aria-label="Switch to the dark theme" aria-pressed="false"></button>
+        <!-- Push on this device (js/push.js, docs/push.md): a notification when a card knocks, also with the board closed. -->
+        <button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device"></button>
       </div>
     </nav>
   </div>

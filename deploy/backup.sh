@@ -13,11 +13,23 @@
 # to whoever reads it: treat it like the data directory itself. Until the board
 # encrypts end to end, the archive also holds every conversation in clear text.
 #
-# Consistency: the hub replaces state.json by rename, so a copy of it is always
-# a whole file. It is copied first and the attachments after it, so every file
-# the copied state refers to is in the archive, unless the hub's 30-day cleanup
-# deleted it in between. Files that arrived after the state was copied come along
-# unreferenced; the admin page lists such files as orphans.
+# What is in it: the board's database (pad.db: cards, messages, sessions, assets'
+# records, the pad, passkeys), files/ (attachments), assets/ (ciphertext of
+# published assets), pad/, scribbles/, sessions/, agents/, speech/, the admin
+# log, the old state.json where it still lies there, and the secrets (token,
+# admin-token, tinfoil.key). Not in it: url.txt (spells out the token, written
+# again at every start), logs, half-written files, pad.db-wal and pad.db-shm.
+#
+# Consistency: every SQLite database (*.db) is copied by SQLite itself, from a
+# read-only connection (deploy/sqlite-snapshot.mjs, VACUUM INTO): the database as
+# it was at one moment, with what still sat in the write-ahead log, and checked
+# with integrity_check. The three files are never copied raw. The database is
+# copied first and the attachments after it, so every file the copied state
+# refers to is in the archive, unless the hub's 30-day cleanup deleted it in
+# between. Files that arrived after the snapshot come along unreferenced; the
+# admin page lists such files as orphans. Needs node 22.5 or newer (node:sqlite).
+#
+# Restore: deploy/restore.sh <archive> --data DIR, with the hub stopped.
 #
 # The output names paths, counts and sizes, never the contents of a file.
 set -euo pipefail
@@ -36,7 +48,7 @@ while [ $# -gt 0 ]; do
     --to) to=${2:?--to needs a directory}; shift 2 ;;
     --keep) keep=${2:?--keep needs a number}; shift 2 ;;
     --no-secrets) secrets=0; shift ;;
-    -h|--help) sed -n '2,22p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    -h|--help) sed -n '2,36p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -46,7 +58,17 @@ if [ -z "$data" ] && [ -f "$config/systemd/user/trommi-hub.service" ]; then
 fi
 data=${data:-$repo/data}
 [ -d "$data" ] || { echo "error: no data directory at $data" >&2; exit 1; }
-[ -f "$data/state.json" ] || { echo "error: no state.json in $data; is this the hub's data directory?" >&2; exit 1; }
+[ -f "$data/pad.db" ] || [ -f "$data/state.json" ] || { echo "error: neither pad.db nor state.json in $data; is this the hub's data directory?" >&2; exit 1; }
+
+# A node that knows SQLite, for the snapshot of the database.
+node=
+for candidate in "${BOARD_NODE:-}" node /usr/bin/node; do
+  [ -n "$candidate" ] && command -v "$candidate" >/dev/null && "$candidate" -e 'require("node:sqlite")' 2>/dev/null && { node=$candidate; break; }
+done
+shopt -s nullglob
+databases=("$data"/*.db)
+shopt -u nullglob
+[ ${#databases[@]} -eq 0 ] || [ -n "$node" ] || { echo "error: $data holds a SQLite database and no node with node:sqlite (22.5 or newer) was found; set BOARD_NODE. Nothing was written" >&2; exit 1; }
 
 stamp=$(date +%Y%m%d-%H%M%S)
 mkdir -p "$to"
@@ -56,25 +78,38 @@ copy=$stage/trommi-data
 
 # Never in a backup: the login links (they spell out the token and are written
 # again at every start), logs, and files the hub was in the middle of writing.
+# The databases neither: they come from the snapshot below, never as raw files.
 skip=(--anchored --no-wildcards-match-slash --exclude=./state.json --exclude=./url.txt --exclude='./*.log'
-  --exclude='./state.json.*.tmp' --exclude='./token.[0-9]*' --exclude='./admin-token.[0-9]*')
+  --exclude='./state.json.*.tmp' --exclude='./token.[0-9]*' --exclude='./admin-token.[0-9]*'
+  --exclude='./*.db' --exclude='./*.db-wal' --exclude='./*.db-shm' --exclude='./*.db-journal')
+# The small copies of pictures (thumbs/) are a cache: the hub makes them again on request.
+skip+=(--exclude=./thumbs)
 [ "$secrets" = 1 ] || skip+=(--exclude=./token --exclude=./admin-token --exclude=./tinfoil.key)
 
 mkdir "$copy"
 # The state first, then everything else without touching the copy of the state.
-cp -p "$data/state.json" "$copy/state.json"
+counts=
+for db in "${databases[@]}"; do
+  found=$("$node" "$here/sqlite-snapshot.mjs" "$db" "$copy/$(basename "$db")") || { echo "error: the snapshot of $db failed; nothing was written" >&2; exit 1; }
+  [ "$(basename "$db")" != pad.db ] || counts=$found
+done
+# The file from before SQLite, where it is still there: whole by itself (it was replaced by rename).
+have_json=0
+[ ! -f "$data/state.json" ] || { cp -p "$data/state.json" "$copy/state.json"; have_json=1; }
 # tar to tar keeps modes and times and takes the exclude list; rsync may not be installed.
 # Status 1 means a file changed or vanished while it was read, which a running hub may cause.
 status=0
 tar -C "$data" "${skip[@]}" --warning=no-file-changed --warning=no-file-removed -cf - . | tar -C "$copy" -xf - || status=$?
 [ "$status" -le 1 ] || { echo "error: copying $data failed" >&2; exit "$status"; }
 
-# The copy must be a state the hub can load. Checked only if a node is at hand that runs.
+# An old state.json must be one the hub can load. Checked only if a node is at hand that runs.
 check=
-for candidate in /usr/bin/node node; do
-  command -v "$candidate" >/dev/null && "$candidate" -e 0 2>/dev/null && { check=$candidate; break; }
+for candidate in "$node" /usr/bin/node node; do
+  [ -n "$candidate" ] && command -v "$candidate" >/dev/null && "$candidate" -e 0 2>/dev/null && { check=$candidate; break; }
 done
-if [ -n "$check" ]; then
+# The secrets and the databases are private whatever mode they had.
+for f in token admin-token tinfoil.key; do [ ! -f "$copy/$f" ] || chmod 600 "$copy/$f"; done
+if [ -n "$check" ] && [ "$have_json" = 1 ]; then
   "$check" -e 'const s = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8")); if (!s || typeof s !== "object" || Array.isArray(s)) process.exit(1)' "$copy/state.json" 2>/dev/null \
     || { echo "error: the copied state.json is not valid JSON; nothing was written" >&2; exit 1; }
 fi
@@ -86,7 +121,11 @@ mv "$archive.part" "$archive"
 files=$(find "$copy" -type f | wc -l)
 echo "Backed up: $data"
 echo "  archive:  $archive ($(du -h "$archive" | cut -f1), mode $(stat -c %a "$archive"))"
-echo "  contents: $files files, $(du -sh "$copy" | cut -f1) unpacked, state.json $([ -n "$check" ] && echo "checked as valid JSON" || echo "not checked (no node)")"
+echo "  contents: $files files, $(du -sh "$copy" | cut -f1) unpacked"
+if [ ${#databases[@]} -gt 0 ]; then
+  echo "  database: ${#databases[@]} SQLite snapshot(s), integrity checked$([ -z "$counts" ] || echo "; pad.db holds $counts")"
+fi
+[ "$have_json" = 0 ] || echo "  old file: state.json $([ -n "$check" ] && echo "checked as valid JSON" || echo "not checked (no node)")"
 if [ "$secrets" = 1 ]; then
   echo "  secrets:  included (token, admin key, speech key where present); keep the archive private"
 else

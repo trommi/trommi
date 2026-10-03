@@ -282,6 +282,40 @@ body[data-filter] .jump { display: none; }
 .asset-share-error { color: var(--urg-critical); }
 .asset-card.is-gone { background: none; box-shadow: none; border: 1px dashed var(--line-strong); }
 .asset-card.is-gone strong { color: var(--muted); }
+/* The server-rendered card (server/views/session.mjs assetCard): an artifact, sober, always with a picture of it on
+   the left (controller assetthumb: the decrypted picture, or a page's first screen; else the drawn kind), what it is,
+   Open, and one Copy link that copies the link anyone can open (controller share). Card Nr. 197. */
+.asset-card.has-preview { display: grid; grid-template-columns: 176px minmax(0, 1fr); grid-template-areas: "preview text" "preview actions"; align-items: start; gap: var(--s-2) var(--s-4); max-width: 36rem; padding: var(--s-3); border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.asset-card.has-preview[data-busy] .asset-copy { opacity: .6; pointer-events: none; }
+.asset-preview { grid-area: preview; position: relative; display: grid; place-items: center; width: 176px; height: 112px; overflow: hidden; border-radius: 6px; background: var(--sunken); color: var(--faint); text-decoration: none; }
+.asset-preview::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
+a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.asset-preview .asset-glyph { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.asset-preview > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; background: var(--sunken); opacity: 0; transition: opacity 160ms; }
+.asset-preview > iframe { position: absolute; left: 0; top: 0; width: 1280px; height: 900px; border: 0; transform-origin: 0 0; pointer-events: none; background: #fff; opacity: 0; transition: opacity 160ms; }
+.asset-preview.is-shown > :is(img, iframe) { opacity: 1; }
+.asset-page-label { position: absolute; z-index: 1; left: 6px; bottom: 6px; padding: 3px 6px; border-radius: 4px; background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px var(--line); font: 600 10px/1 var(--font); letter-spacing: .04em; text-transform: uppercase; }
+.has-preview .asset-text { grid-area: text; padding-top: 2px; display: flex; flex-direction: column; gap: 3px; }
+.has-preview .asset-text .caps { order: 3; font-size: var(--t-xs); }
+.has-preview .asset-text strong { font: 800 1.05rem/1.25 var(--display); }
+.has-preview .asset-note { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: var(--t-sm); }
+.has-preview .asset-actions { grid-area: actions; align-self: end; flex-wrap: wrap; align-items: center; gap: 2px; margin-left: -2px; }
+.has-preview .asset-open { gap: 7px; min-height: 36px; padding: 0 14px; }
+.has-preview .asset-open::after { content: ""; width: 14px; height: 14px; background: currentColor; -webkit-mask: var(--asset-open-icon) center / contain no-repeat; mask: var(--asset-open-icon) center / contain no-repeat; }
+.has-preview .asset-copy { gap: 6px; min-height: 36px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.has-preview .asset-copy::before { content: ""; width: 15px; height: 15px; background: currentColor; -webkit-mask: var(--asset-link-icon) center / contain no-repeat; mask: var(--asset-link-icon) center / contain no-repeat; }
+.has-preview .asset-copy:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+.has-preview .asset-shared { display: inline-flex; align-items: center; gap: 4px; padding-left: 6px; color: var(--accent); font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; }
+.has-preview .asset-stop { min-height: 32px; padding: 0 4px; border: 0; background: none; color: var(--muted); font: inherit; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
+.has-preview .asset-stop:hover { color: var(--fg); }
+.asset-card.has-preview.is-gone { grid-template-areas: "preview text"; border: 0; background: none; box-shadow: 0 0 0 1px var(--line-strong); }
+.asset-card.has-preview.is-gone .asset-preview { opacity: .6; }
+.asset-card { --asset-open-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14 4h6v6 M20 4l-9 9 M18 14v5.5H4.5V6H10' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); --asset-link-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2 M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+@media (max-width: 600px) {
+  .asset-card.has-preview { grid-template-columns: 104px minmax(0, 1fr); grid-template-areas: "preview text" "actions actions"; gap: 10px 12px; }
+  .asset-preview { width: 104px; height: 72px; }
+  .has-preview .asset-text { align-self: center; }
+}
 
 /* board events: a quiet timeline between the messages */
 .event {
@@ -545,8 +579,7 @@ body[data-filter] .jump { display: none; }
 .agent-text small { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .agent-row.is-offline .agent-text strong { font-weight: 500; color: var(--muted); }
 /* A session's mark stands without a ground: the drawing alone, in the session's colour. */
-.agent-avatar { --hue: 162; flex: none; position: relative; width: 34px; height: 34px; padding: 1px; display: grid; place-items: center; border-radius: 11px; color: hsl(var(--hue) 62% 30%); }
-:root[data-theme="dark"] .agent-avatar { color: hsl(var(--hue) 70% 76%); }
+.agent-avatar { --hue: 162; flex: none; position: relative; width: 34px; height: 34px; padding: 1px; display: grid; place-items: center; border-radius: 11px; color: var(--tone-pen); }
 .agent-avatar .doodle { stroke-width: 2; }
 .agent-avatar.is-offline, .agent-pair.is-offline { filter: grayscale(1); opacity: .6; }
 .agent-all { background: var(--sunken); padding: 0; }
@@ -565,24 +598,29 @@ body[data-filter] .jump { display: none; }
 /* Sessions laid together: no tile of its own, the scribbles overlap inside one loop drawn round them. */
 .agent-pair { flex: none; display: block; width: 60px; height: 44px; margin-inline: -9px -5px; }
 .pair-mark { display: block; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; }
-.pair-mark g { stroke: hsl(var(--hue) 62% 30%); stroke-width: 2.1; }
-:root[data-theme="dark"] .pair-mark g { stroke: hsl(var(--hue) 70% 76%); }
+.pair-mark g { stroke: var(--tone-pen); stroke-width: 2.1; }
 .pair-mark rect { stroke: none; pointer-events: all; }
 .pair-loop { stroke: var(--muted); stroke-width: 1.1; }
-/* A session that matters most (VIP): a scribbled crown, crooked on the corner of its mark. In the
-   joint mark of a group it sits on that session's scribble. */
-.crown-mark { position: absolute; left: -24%; top: -34%; width: 68%; height: auto; rotate: -17deg; overflow: visible; fill: color-mix(in srgb, var(--gold) 34%, var(--surface)); stroke: var(--gold-pen); stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
-.pair-mark g .pair-crown { fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); stroke: var(--gold-pen); stroke-width: 2.2; }
-/* The crown as a switch (agents.js crownToggle): a button of its own on the corner of the mark, 28 px
-   to hit, beside the mark and not in it. Gold while the session is VIP. Otherwise a faint outline
+/* The crowned session of a desk (card Nr. 172): a sketched crown, crooked on the corner of its mark: a gold wash,
+   one wobbly pen line, a red stone on each point (ui.js crown()). In the joint mark of a group it sits on that
+   session's scribble. */
+.crown-mark { position: absolute; left: -24%; top: -34%; width: 68%; height: auto; rotate: -15deg; overflow: visible; fill: none; stroke: none; pointer-events: none; }
+.crown-wash, .pair-mark g .pair-crown .crown-wash { fill: var(--crown-wash); stroke: none; }
+.crown-pen, .pair-mark g .pair-crown .crown-pen { fill: none; stroke: var(--gold-pen); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.crown-jewel, .pair-mark g .pair-crown .crown-jewel { fill: var(--crown-jewel); stroke: var(--gold-pen); stroke-width: 1; }
+/* the crown not given: its outline only */
+.crown-toggle[aria-pressed="false"] .crown-wash { display: none; }
+.crown-toggle[aria-pressed="false"] .crown-pen { stroke: var(--muted); stroke-width: 1.6; }
+.crown-toggle[aria-pressed="false"] .crown-jewel { fill: var(--bg); stroke: var(--muted); }
+.crown-toggle[aria-pressed="false"]:hover :is(.crown-pen, .crown-jewel) { stroke: var(--gold-pen); }
+/* Give the crown (agents.js crownToggle): a button of its own on the corner of the mark, 28 px
+   to hit, beside the mark and not in it. The gold crown on the crowned session. Otherwise a faint outline
    that shows when the pointer or the keyboard is on the row or the mark (always, faintly, where
-   nothing hovers and on the Agents page), and a click puts it on. */
+   nothing hovers), and one click gives the crown. */
 .crown-toggle { position: absolute; z-index: 2; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; transition: opacity var(--d-fast), scale var(--d-fast); }
-.crown-toggle .crown-mark { position: static; width: 20px; rotate: -17deg; pointer-events: none; }
-.crown-toggle[aria-pressed="false"] .crown-mark { fill: none; stroke: var(--muted); stroke-width: 1.6; }
+.crown-toggle .crown-mark { position: static; width: 24px; rotate: -15deg; pointer-events: none; }
 .crown-toggle[aria-pressed="false"] { opacity: .45; }
 .crown-toggle:hover, .crown-toggle:focus-visible { opacity: 1; scale: 1.12; }
-.crown-toggle[aria-pressed="false"]:hover .crown-mark { stroke: var(--gold-pen); }
 @media (hover: hover) {
   .agent-row .crown-toggle[aria-pressed="false"], .pane-who .crown-toggle[aria-pressed="false"] { opacity: 0; }
   .agent-row:hover .crown-toggle[aria-pressed="false"], .pane-who:hover .crown-toggle[aria-pressed="false"] { opacity: .5; }
@@ -590,11 +628,15 @@ body[data-filter] .jump { display: none; }
   body.is-pairing .crown-toggle { visibility: hidden; }
 }
 .agent-row { position: relative; }
-.agent-row .crown-toggle { left: 0; top: -5px; }
+.agent-row .crown-toggle { left: 11px; top: -13px; }
 .pane-who { position: relative; }
-.pane-who .crown-toggle { left: -13px; top: calc(50% - 26px); }
-/* On a mark without a ground the crown sits a little closer. */
-.agent-avatar .crown-mark { left: -12%; top: -24%; width: 60%; fill: color-mix(in srgb, var(--gold) 34%, var(--bg)); }
+.pane-who .crown-toggle { left: 4px; top: calc(50% - 32px); }
+/* The crown sits ON the drawing, like on a head: over its middle (a touch to the left, as it leans), its base
+   resting on the drawing's top edge. Not beside the corner. */
+.agent-avatar .crown-mark { left: 12%; top: -38%; width: 66%; }
+/* In the sidebar the crown is 23px wide; its base rests on the top of the drawing's strokes (a few px over them: the
+   drawings start 6-8px into their box), its stones at the card's top edge (the same on a main's fold switch, crowns.css). */
+#agents .agent-avatar .crown-mark { left: 5px; top: -8px; width: 23px; }
 
 /* Carrying a session: its mark follows the pointer, the row it would join shows a dashed edge. */
 .agent-ghost { position: fixed; left: 0; top: 0; z-index: 50; pointer-events: none; rotate: -7deg; padding: 5px; background: var(--surface); box-shadow: var(--shadow-lg); }
@@ -661,9 +703,9 @@ body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
    axis. A working session's number is small and muted, a disconnected one's faint. Idle: nothing. */
 .agent-avatar.is-drawing .doodle { position: absolute; left: 1px; top: 1px; width: calc(100% - 2px); height: calc(100% - 2px); }
 .is-drawing .mark-trace { opacity: .5; }
-.is-drawing .mark-live path:not(.pair-crown) { stroke-dasharray: 34 66; stroke-width: 2.5; animation: mark-travel 2800ms linear infinite; }
+.is-drawing .mark-live path:not(.pair-crown *) { stroke-dasharray: 34 66; stroke-width: 2.5; animation: mark-travel 2800ms linear infinite; }
 @keyframes mark-travel { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
-@media (prefers-reduced-motion: reduce) { .is-drawing .mark-live path:not(.pair-crown) { animation: none; stroke-dasharray: none; stroke-width: inherit; } }
+@media (prefers-reduced-motion: reduce) { .is-drawing .mark-live path:not(.pair-crown *) { animation: none; stroke-dasharray: none; stroke-width: inherit; } }
 /* The ring at the end of a session row, circled by hand. Its number is the open questions; while the
    session works a drop travels round it; a knock turns it into the raised hand in a red loop. */
 .agent-badge { flex: none; position: relative; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
@@ -764,16 +806,16 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-sender b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
 .inbox-avatar { position: relative; display: block; width: 38px; height: 38px; padding: 6px; border-radius: var(--r-md); background: var(--sunken); color: var(--fg); }
 /* A sender's mark has no ground either (the piles' own drawings keep their outline). */
-.inbox-avatar[style*="--hue"] { padding: 2px; background: none; color: hsl(var(--hue) 62% 30%); }
-:root[data-theme="dark"] .inbox-avatar[style*="--hue"] { color: hsl(var(--hue) 70% 76%); }
-.inbox-avatar .crown-mark { left: -10%; top: -22%; width: 58%; }
+.inbox-avatar[style*="--hue"] { padding: 2px; background: none; color: var(--tone-pen); }
+.inbox-avatar .crown-mark { left: 14%; top: -36%; width: 62%; }
 .inbox-avatar .sketch { width: 100%; height: 100%; }
 /* Our own card (card Nr. 87, "Farben so nicht"): a plain white row, grey text, one neutral line and one
-   soft shadow. The colour (--card-color: urgency, or the asking session's hue) stands only where one
-   answers: the tiles, the tabs, the knock. */
+   soft shadow. The colour stands only where one answers: the tiles, the tabs, the knock. It is a tone
+   (tokens.css: --tone-wash, --tone-edge, --tone-mid, --tone-pen): the asking session's on the Desk, where
+   the row carries its hue; the urgency's where no session is named. */
 .inbox-row {
   --urg-color: var(--urg-normal);
-  --card-color: var(--urg-color);
+  --urg-soft: var(--urg-normal-soft);
   --card-bg: var(--surface);
   --card-ink: color-mix(in srgb, var(--muted) 75%, var(--fg));
   --card-line: var(--line-strong);
@@ -784,19 +826,18 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
   position: relative; background: var(--card-bg); border-radius: 6px;
   box-shadow: 0 0 0 1px var(--card-line), 0 6px 14px -10px rgb(20 30 25 / .18);
 }
-.inbox-row[data-urgency="low"] { --urg-color: var(--urg-low); }
-.inbox-row[data-urgency="high"] { --urg-color: var(--urg-high); }
-.inbox-row[data-urgency="critical"] { --urg-color: var(--urg-critical); }
-/* A card that says who asks (the desk) answers in that session's colour: its tiles and tabs. What
-   knocks keeps its warning colour on top: the label and the leading tile, so urgency still wins the eye. */
-.inbox-row[data-from] { --card-color: hsl(var(--hue) 46% 31%); }
-:root[data-theme="dark"] .inbox-row[data-from] { --card-color: hsl(var(--hue) 52% 74%); }
+.inbox-row[data-urgency="low"] { --urg-color: var(--urg-low); --urg-soft: var(--urg-low-soft); }
+.inbox-row[data-urgency="high"] { --urg-color: var(--urg-high); --urg-soft: var(--urg-high-soft); }
+.inbox-row[data-urgency="critical"] { --urg-color: var(--urg-critical); --urg-soft: var(--urg-critical-soft); }
+.inbox-row:not([data-from]) { --tone-pen: var(--urg-color); --tone-mid: var(--urg-color); --tone-edge: var(--line-strong); --tone-wash: var(--urg-soft); }
+/* A card that says who asks (the desk) answers in that session's tones: its tiles and tabs (the row carries
+   --hue, tokens.css works out the tones). What knocks keeps its warning colour on top: the label and the
+   leading tile, so urgency still wins the eye. */
 .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--urg-color); }
 /* The sender's drawing, small, before the title; the text stands beside it. The byline then does not
    say who asks a second time. */
 .inbox-text.has-sender { position: relative; padding-left: 36px; }
-.inbox-who.inbox-from-mark { position: absolute; left: 0; top: 3px; width: 26px; height: 26px; color: hsl(var(--hue) 62% 30%); }
-:root[data-theme="dark"] .inbox-who.inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+.inbox-who.inbox-from-mark { position: absolute; left: 0; top: 3px; width: 26px; height: 26px; color: var(--tone-pen); }
 /* ---- "In revision": the cards that are with their session right now, one slim line each ---- */
 .inbox-revising { gap: 0; margin-top: var(--s-6); }
 .inbox-revising-head { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; font: 600 var(--t-sm)/1.4 var(--font); color: var(--muted); }
@@ -810,8 +851,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-revising-open:hover strong, .inbox-revising-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
 .inbox-revising-sent { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); color: var(--faint); }
 .inbox-revising-tail { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
-.inbox-revising-tail .inbox-from-mark { width: 16px; height: 16px; color: hsl(var(--hue) 62% 30%); }
-:root[data-theme="dark"] .inbox-revising-tail .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+.inbox-revising-tail .inbox-from-mark { width: 16px; height: 16px; color: var(--tone-pen); }
 .inbox-revising-take { flex: none; min-height: 28px; padding: 0 4px; border: 0; background: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; opacity: 0; }
 .inbox-revising-row:hover .inbox-revising-take, .inbox-revising-take:focus-visible { opacity: 1; color: var(--fg); }
 @media (hover: none) { .inbox-revising-take { opacity: 1; } }
@@ -821,16 +861,13 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* ---- a row unfolded in place: it holds the whole card (js/focus.js, inline) and nothing of its own ----
    Its compact content is hidden while the card shows it; where the page has room the row is wider
    than the column. */
-.inbox-row.is-unfolded { display: block; min-height: 0; margin-block: 10px; background: none; box-shadow: none; }
-.inbox-row.is-unfolded > :not(.inbox-inline) { display: none; }
 @container inboxpage (min-width: 1000px) { .inbox-row.is-unfolded { margin-inline: -70px; } }
 @container inboxpage (min-width: 1140px) { .inbox-row.is-unfolded { margin-inline: -140px; } }
 /* ---- a run: the cards of one session, behind a divider tab ----
    The tab stands in the list's own flow above the run's first card (so it never lies on the card
    before it): the session's drawing, crown and name on the session's colour. The run's cards stand
    close under it, 4px apart, square where they meet, and do not repeat the drawing. */
-.inbox-group[data-sender] { --run-color: hsl(var(--hue) 46% 31%); --run-on: var(--surface); gap: var(--s-4); }
-:root[data-theme="dark"] .inbox-group[data-sender] { --run-color: hsl(var(--hue) 52% 74%); }
+.inbox-group[data-sender] { --run-color: var(--tone-pen); --run-on: var(--surface); gap: var(--s-4); }
 .inbox-group[data-sender] .inbox-who { display: none; }
 .inbox-group[data-sender] .inbox-text.has-sender { padding-left: 0; }
 .inbox-row[data-from] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
@@ -863,7 +900,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-dot { color: var(--faint); }
 /* One that can wait: no tab, a small hourglass scribbled in a soft colour. */
 /* (It stands in the byline, before who asks.) */
-.inbox-whenever { flex: none; display: inline-flex; color: color-mix(in srgb, var(--card-color) 62%, var(--surface)); }
+.inbox-whenever { flex: none; display: inline-flex; color: var(--tone-mid); }
 .inbox-whenever .sketch { width: 16px; height: 16px; stroke-width: 2; }
 /* The byline under the text: who asks (the session's mark and name, where the list holds more than one
    session), the card's number, its age, and what it carries. One quiet line at the foot of the row. */
@@ -871,10 +908,10 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-byline { position: absolute; left: var(--s-5); right: var(--s-4); bottom: 9px; margin: 0; display: flex; align-items: center; gap: .35em; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .01em; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--card-ink) 62%, var(--card-bg)); white-space: nowrap; overflow-x: clip; overflow-y: visible; }
 .inbox-byline .inbox-from { display: inline-flex; align-items: center; gap: 5px; min-width: 0; font-weight: 600; color: var(--card-ink); }
 .inbox-byline .inbox-from span:last-child { overflow: hidden; text-overflow: ellipsis; }
-.inbox-byline .inbox-from-mark { width: 17px; height: 17px; color: hsl(var(--hue) 62% 30%); }
-:root[data-theme="dark"] .inbox-byline .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+.inbox-byline .inbox-from-mark { width: 17px; height: 17px; color: var(--tone-pen); }
 .inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
-.inbox-from-mark .crown-mark { left: -36%; top: -20%; width: 78%; stroke-width: 2.4; }
+.inbox-from-mark .crown-mark { left: 0; top: -52%; width: 92%; }
+.inbox-from-mark .crown-pen { stroke-width: 2.1; }
 /* (Tightened by a few pixels, so that the byline has its line below two lines of title and one of text.) */
 .inbox-text { display: grid; gap: 2px; padding: 2px 0 0; border: 0; background: none; text-align: left; min-width: 0; }
 .inbox-question, .inbox-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
@@ -882,7 +919,6 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-body { color: var(--card-ink); font-size: var(--t-lg); line-height: 25px; }
 .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 1; }
 /* Unfolded with its text in full below: the row itself does not say it a second time. */
-.inbox-row.is-open[data-fulltext] .inbox-body-text { display: none; }
 /* At most one small picture, beside the text; the rest are behind it. */
 /* Beside the title, at the top right of the text: a small clock for the card's age; the number shows
    only under the pointer or the keyboard. */
@@ -914,7 +950,7 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 /* "Trust": a quiet word at the end of the byline of a thumb row; it leaves the decision to the agent. */
 .inbox-shred-open { flex: none; display: inline-flex; align-items: center; gap: 5px; height: 40px; padding: 0 12px; border: 0; border-radius: var(--r-pill); background: none; color: var(--card-ink); font-size: var(--t-sm); font-weight: 600; opacity: .75; }
 .inbox-shred-open .sketch { width: 18px; height: 18px; }
-.inbox-shred-open:hover { opacity: 1; background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
+.inbox-shred-open:hover { opacity: 1; background: var(--tone-wash); }
 /* A card that is shredded leaves in strips. */
 .inbox-row.is-leaving[data-leave="shredded"] { animation-name: row-shred; animation-duration: 340ms; -webkit-mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); }
 @keyframes row-shred { from { opacity: 1; translate: 0 0; } 40% { opacity: .9; } to { opacity: 0; translate: 0 38px; scale: 1 .86; } }
@@ -934,11 +970,11 @@ body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: blo
 .inbox-tab-act:first-child { border-radius: 8px 6px 0 8px; }
 .inbox-tab-act[hidden] { display: none; }
 .inbox-tab-act:focus-visible { outline: 0; }
-.inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 100%; padding: 0 9px 0 6px; background: color-mix(in srgb, var(--card-color) 14%, var(--surface)); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
+.inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 100%; padding: 0 9px 0 6px; background: var(--tone-wash); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
 .inbox-later-flap .sketch { flex: none; width: 15px; height: 15px; stroke-width: 2.2; opacity: .8; }
 .inbox-later-flap b { font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
 :is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) { max-width: 150px; z-index: 1; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
-:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .inbox-later-flap { background: color-mix(in srgb, var(--card-color) 8%, var(--surface)); }
+:is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .inbox-later-flap { background: var(--tone-wash); }
 :is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .sketch { opacity: 1; }
 .inbox-tab-act:focus-visible .inbox-later-flap { box-shadow: inset 0 0 0 2px var(--fg); }
 .inbox-tab-act:active .inbox-later-flap { filter: brightness(.95); }
@@ -960,11 +996,11 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* on the row the keys are on, each tab wears its key */
 .inbox-row.is-current .inbox-tab-act[data-cap]::after { content: none; }
 /* Whatever under the pointer: the tile the agent would take lights up */
-.inbox-answer.is-hinted { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--card-color); }
+.inbox-answer.is-hinted { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--tone-pen); }
 /* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
    (Set in from the right where the Snooze label sits inside the row's edge.) */
 .inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 12px 12px 0; }
-.inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
+.inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: var(--tone-wash); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 .inbox-answer .sketch { width: 32px; height: 32px; }
 /* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
    or two lines at a size that reads: inbox.js lets only labels onto a tile that fit that way. */
@@ -978,52 +1014,31 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-answer.is-wide { font: 700 1.05rem/1.2 var(--display); }
 .inbox-answer small { font: 500 var(--t-xs)/1.2 var(--font); opacity: .8; }
 .inbox-answer.is-wide[aria-expanded="true"] .sketch { opacity: .5; }
-.inbox-answer.is-lead { background: var(--card-color); color: var(--surface); }
+.inbox-answer.is-lead { background: var(--tone-pen); color: var(--surface); }
 /* An info card: "What??" and "Acknowledge" stand where the answers do; in the byline a small page says it is to read. */
-.inbox-toread { color: color-mix(in srgb, var(--card-color) 60%, var(--surface)); }
+.inbox-toread { color: var(--tone-mid); }
 .inbox-toread-count { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
 .inbox-toread-count .sketch { width: 20px; height: 20px; stroke-width: 1.9; }
 @media (any-hover: hover) {
-  .inbox-answer:hover, .inbox-option:hover { box-shadow: inset 0 0 0 2px var(--card-color); }
+  .inbox-answer:hover, .inbox-option:hover { box-shadow: inset 0 0 0 2px var(--tone-pen); }
   .inbox-answer.is-lead:hover { filter: brightness(.92); }
 }
 .inbox-answer:active, .inbox-option:active { scale: .97; }
 .inbox-answer:disabled, .inbox-option:disabled { opacity: .35; }
-.inbox-answer.is-picked, .inbox-option.is-picked { opacity: 1; box-shadow: inset 0 0 0 3px var(--card-color); }
+.inbox-answer.is-picked, .inbox-option.is-picked { opacity: 1; box-shadow: inset 0 0 0 3px var(--tone-pen); }
 .inbox-error { color: var(--deny); font-size: var(--t-sm); }
 /* Unfolded: the text, every option as a tile, and a line to ask back. */
-.inbox-more { grid-column: 1 / -1; display: grid; grid-template-rows: 0fr; transition: grid-template-rows var(--d-med) var(--ease-out); }
-.inbox-row.is-open .inbox-more { grid-template-rows: 1fr; }
-.inbox-more-clip { min-height: 0; overflow: hidden; visibility: hidden; transition: visibility 0s var(--d-med); }
-.inbox-row.is-open .inbox-more-clip { visibility: visible; transition-delay: 0s; }
-.inbox-more-in { display: grid; gap: var(--s-4); padding: var(--s-4) var(--s-5) var(--s-5); border-top: 1px solid var(--card-line); }
-.inbox-more-in .rich { color: var(--card-ink); max-width: 44rem; }
 .inbox-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
-.inbox-option { position: relative; display: grid; grid-template-columns: minmax(0, 1fr); align-content: center; gap: 2px; min-height: 60px; padding: 9px 28px 9px 14px; border: 0; border-radius: 12px; background: color-mix(in srgb, var(--card-color) 9%, var(--surface)); color: var(--card-ink); text-align: left; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
 /* The label in up to two lines, what it leads to in one. */
-.inbox-option strong { font: 700 1.02rem/1.2 var(--display); color: var(--fg); display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
-.inbox-option > span { font-size: var(--t-sm); line-height: 1.35; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.inbox-option kbd { position: absolute; top: 9px; right: 11px; font: 500 .68rem/1 var(--mono); opacity: .55; }
 @media (pointer: coarse) { .inbox-option kbd { display: none; } }
 /* The last entry of the options: not one of them, but "Trust" (the agent decides). Dashed, as asking back is. */
-.inbox-trust-option { background: none; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--card-color) 30%, var(--surface)); }
-.inbox-trust-option kbd { display: none; }
 /* Several answers allowed: an option that is in stays filled. */
-.inbox-option[aria-pressed="true"] { background: var(--card-color); color: var(--surface); }
-.inbox-option[aria-pressed="true"] strong { color: var(--surface); }
-.inbox-send { background: var(--fg); color: var(--bg); }
-.inbox-send strong { color: var(--bg); }
 /* Asking back is not an answer: dashed. */
-.inbox-askback { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.inbox-askback input { flex: 1 1 14rem; min-width: 0; height: 40px; padding: 0 16px; border: 1px dashed color-mix(in srgb, var(--card-color) 45%, var(--surface)); border-radius: var(--r-pill); background: transparent; font-size: max(16px, 1em); }
-.inbox-askback input::placeholder { color: var(--card-ink); opacity: .6; }
-.inbox-askback button { flex: none; height: 40px; padding: 0 16px; border: 0; border-radius: var(--r-pill); background: none; color: var(--card-ink); font-size: var(--t-sm); font-weight: 600; }
-.inbox-askback button:hover { background: color-mix(in srgb, var(--card-color) 10%, var(--surface)); }
 .inbox-asked { flex-basis: 100%; font-size: var(--t-sm); color: var(--card-ink); }
 .inbox-asked:empty { display: none; }
 /* Put off: dashed, because where these cards stand is provisional. */
 /* The dashed edge is an outline, so the row and its tiles are exactly as large as an open one. */
-.inbox-row[data-later] { background: none; box-shadow: none; outline: 1px dashed color-mix(in srgb, var(--card-color) 45%, var(--surface)); outline-offset: -1px; }
+.inbox-row[data-later] { background: none; box-shadow: none; outline: 1px dashed var(--tone-mid); outline-offset: -1px; }
 /* ---- piles (inbox.js pile()): "Snoozed", "With the agent", "Answered" ----
    At the foot of the list they stand side by side behind a dashed rule (one compact line each in a
    narrow column). Folded, a pile is: its count as a tally of pen strokes, five to a gate; its name and
@@ -1061,8 +1076,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-pile-words strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-sm)/1.3 var(--font); color: var(--fg); }
 .inbox-pile-words span { flex: none; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 var(--t-xs)/1 var(--font); color: var(--faint); }
 .inbox-group-answered .inbox-pile-words span { font-weight: 600; color: var(--accent); }
-.inbox-pile-peek .inbox-from-mark { width: 17px; height: 17px; color: hsl(var(--hue) 62% 30%); }
-:root[data-theme="dark"] .inbox-pile-peek .inbox-from-mark { color: hsl(var(--hue) 70% 76%); }
+.inbox-pile-peek .inbox-from-mark { width: 17px; height: 17px; color: var(--tone-pen); }
 /* folded: one quiet line, a word and its strokes; nothing else */
 .inbox-groups > .inbox-pile:not(.is-open) { padding: 2px 0; cursor: pointer; }
 .inbox-pile:not(.is-open) .inbox-pile-title { font: 600 var(--t-sm)/1 var(--font); color: var(--muted); }
@@ -1122,7 +1136,6 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: left; }
   .inbox-answer .sketch, .inbox-answer.is-thumb .sketch { width: 30px; height: 30px; stroke-width: 1.7; }
   .inbox-answer.is-wide small { display: none; }
-  .inbox-more-in { padding: var(--s-3) var(--s-4) var(--s-4); }
 }
 /* Narrower still (three sessions side by side): the word goes under its thumb again, so it keeps its width. */
 @container rows (max-width: 330px) {
@@ -1145,9 +1158,8 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-gutter { display: none; }
 @media (min-width: 861px) {
   .inbox-group[data-sender] { padding-left: 46px; }
-  .inbox-group[data-sender] > .inbox-row > .inbox-gutter { display: block; position: absolute; left: -46px; top: 14px; width: 32px; height: 32px; border-radius: 8px; color: hsl(var(--hue) 46% 31%); }
+  .inbox-group[data-sender] > .inbox-row > .inbox-gutter { display: block; position: absolute; left: -46px; top: 14px; width: 32px; height: 32px; border-radius: 8px; color: var(--tone-pen); }
   .inbox-group[data-sender] > .inbox-row:has(.inbox-row-head:not(:empty)) > .inbox-gutter { top: 36px; }
-  :root[data-theme="dark"] .inbox-gutter { color: hsl(var(--hue) 52% 74%); }
   .inbox-gutter .inbox-from-mark { position: relative; display: block; width: 32px; height: 32px; color: inherit; }
   .inbox-gutter .doodle { stroke-width: 2.2; }
   .inbox-gutter::after { content: attr(data-name); position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); padding: 5px 9px; border-radius: 7px; background: currentColor; font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; -webkit-text-fill-color: var(--surface); }
@@ -1306,8 +1318,7 @@ body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: no
 .mark-picker { position: fixed; margin: 0; padding: var(--s-3); border: 0; border-radius: 14px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
 .mark-picker::backdrop { background: transparent; }
 .mark-grid { display: grid; grid-template-columns: repeat(8, 38px); gap: 6px; }
-.mark-tile { --ink: hsl(var(--hue) 60% 26%); width: 38px; height: 38px; padding: 6px; border: 0; border-radius: 11px; background: hsl(var(--hue) 55% 90%); color: var(--ink); transition: scale 100ms ease-out; }
-:root[data-theme="dark"] .mark-tile { --ink: hsl(var(--hue) 70% 78%); background: hsl(var(--hue) 35% 22%); }
+.mark-tile { --ink: var(--tone-pen); width: 38px; height: 38px; padding: 6px; border: 0; border-radius: 11px; background: var(--tone-wash); color: var(--ink); transition: scale 100ms ease-out; }
 @media (any-hover: hover) { .mark-tile:hover { scale: 1.12; } }
 .mark-tile[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink); }
 .mark-picker .session-error { margin-top: var(--s-2); max-width: 346px; }
@@ -1586,7 +1597,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   body[data-scope="all"] .tabbar { display: none; }
   body[data-page="roster"] .tabbar { display: none; }
   .agent-heading, .agent-archive, .agent-cut, .agent-row .crown-toggle[aria-pressed="false"] { display: none; }
-  .agent-row .crown-toggle { left: -4px; top: -6px; pointer-events: none; }
+  .agent-row .crown-toggle { left: 4px; top: -9px; pointer-events: none; }
   .agent-row.is-group .agent-entry { min-height: 44px; }
   .agent-row { flex: none; }
   .agent-row.is-insert-before::after, .agent-row.is-insert-after::after { left: auto; right: auto; top: 4px; bottom: 4px; width: 3px; height: auto; }
@@ -1770,4 +1781,25 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
      title below. It keeps its look; an unseen 40px area takes the tap. */
   .log .inbox-when .inbox-tab-act { overflow: visible; }
   .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; translate: -50% -50%; }
+}
+
+/* "Next, please" as index cards (card Nr. 166, "index"): the heading is the divider tab in front, standing on the
+   first card; the cards behind it peek out as small tabs with their titles, then "+N". Fixed heights: nothing
+   shifts when a card arrives. */
+.inbox-title:has(> .inbox-index) { flex: 1 1 100%; }
+.inbox-head:has(.inbox-index) { margin-bottom: 0; align-items: flex-end; }
+.inbox-title h2.inbox-index { display: flex; flex-wrap: nowrap; align-items: flex-end; gap: 0; min-width: 0; margin: 0; padding: 0 10px 0 var(--index-in, 46px); font: 700 1.1rem/1 var(--display); letter-spacing: -.01em; }
+.inbox-index > .inbox-walk { flex: none; position: relative; z-index: 9; padding: 10px 14px 9px 16px; border-radius: 9px 9px 0 0; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); clip-path: inset(-2px -2px 0 -2px); }
+.inbox-index > .inbox-walk .inbox-circled { font: 700 .86em/1.5 var(--font); }
+.inbox-index > .inbox-walk .sketch { width: 17px; height: 17px; }
+.inbox-index-tab { flex: 0 1 200px; min-width: 44px; display: flex; align-items: center; gap: 6px; height: 28px; margin: 0 0 0 -1px; padding: 0 10px 0 9px; border: 0; border-radius: 7px 7px 0 0; background: var(--sunken); box-shadow: 0 0 0 1px var(--line-strong); clip-path: inset(-2px -2px 0 -2px); color: var(--muted); font: 600 var(--t-xs)/1 var(--font); letter-spacing: 0; cursor: pointer; }
+.inbox-index-tab.inbox-index-more { flex: none; min-width: 0; cursor: default; }
+button.inbox-index-tab:hover { color: var(--fg); background: var(--surface); }
+.inbox-index-tab svg { flex: none; width: 15px; height: 15px; }
+.inbox-index-tab span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 860px) {
+  .inbox-title h2.inbox-index { padding-left: 0; }
+  .inbox-index-tab { height: 32px; }
+  .inbox-index > .inbox-index-tab:nth-of-type(n + 2) { display: none; }
+  .inbox-index > .inbox-index-tab.inbox-index-more { display: flex; }
 }

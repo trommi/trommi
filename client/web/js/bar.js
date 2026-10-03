@@ -49,6 +49,8 @@ if (sound) {
 const word = (button, text) => { if (button && !button.querySelector('.menu-word')) { const w = document.createElement('span'); w.className = 'menu-word'; w.textContent = text; button.append(w) } }
 word(sound, 'Knock sound')
 word($('theme-toggle'), 'Theme')
+// Push on this device (js/push.js stands alone and wires #push-toggle itself): here only the bell before the word.
+if ($('push-toggle')) { lead($('push-toggle'), 'bell'); import('./push.js') }
 // The jump field's key, as this machine writes it.
 if (/Mac|iPhone|iPad/.test(navigator.platform)) { const k = $('jump-key'); if (k) k.textContent = '⌘K' }
 // The sheet of keys (keys.js owns the sheet, app.js binds the click).
@@ -266,11 +268,10 @@ if (menu) {
 }
 
 // ---- desks (card Nr. 149, "menu") ----
-// The name of the desk in view stands in the Desk box; the menu lists the desks to switch (Ctrl+1, 2, …), with
+// The name of the desk in view stands in the Desk box; the menu lists the desks to switch (D then 1, 2, …), with
 // what waits on each, "New desk…", and for the one in view another name or its removal. A dot on the caret says
 // that another desk knocks. A hub without desks sends none: the menu keeps its one entry, as before.
 const deskList = $('desk-list'), deskName = document.querySelector('.desk-name')
-const MOD = /Mac|iPhone|iPad/.test(navigator.platform) ? '⌘' : 'Ctrl'
 const goDesk = id => { if (id !== getState().all.desk) setDesk(id); $('nav-inbox')?.click() }
 let deskSig = '', deskEdit = null   // deskEdit: { id | null (a new one), error }
 const deskError = document.createElement('p')
@@ -334,7 +335,7 @@ function paintDesks(state) {
     open.textContent = `${d.open} open`
     if (d.knocks && d.id !== desk) { open.classList.add('is-knock'); open.title = `${d.name} knocks` }
     b.append(name, open)
-    if (i < 9) { const k = document.createElement('kbd'); k.textContent = `${MOD} ${i + 1}`; b.append(k) }
+    if (i < 9) { const k = document.createElement('kbd'); k.textContent = `D ${i + 1}`; b.append(k) }
     b.addEventListener('click', () => { close(false); goDesk(d.id) })
     row.append(b)
     if (d.id === desk) {
@@ -376,13 +377,14 @@ subscribe(state => {
   paintDesks(state)
 })
 
-// The keyboard's way to the jump field (Ctrl/Cmd+K, G then J), the rail's key, and the desks' (Ctrl+1, 2, …).
+// The keyboard's way to the jump field (Ctrl/Cmd+K, G then J), the rail's key, and the desks' (D then 1, 2, …).
 provide('app', {
   active: () => true,
   has: id => id !== 'desk.switch' || (getState().all.desks?.length ?? 0) > 1,
   actions: {
     'go.jump': () => { openJump(); return true }, 'rail': toggleRail,
-    'desk.switch': n => { const d = getState().all.desks?.[n - 1]; if (!d) return false; goDesk(d.id) },
+    // D then 1…9 (card Nr. 184). A number past the last desk does nothing.
+    'desk.switch': n => { const d = getState().all.desks?.[n - 1]; if (d) goDesk(d.id) },
   },
 })
 

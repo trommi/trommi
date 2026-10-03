@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Trommi: a Claude Code channel that serves a local chat and a stack of decision cards.
+// Trommi (formerly Trommi): a Claude Code channel that serves a local chat and a stack of decision cards.
 // Claude Code spawns this file over stdio, once per session. The first process
 // to get the port is the hub: it holds the state and serves the web UI. Every
 // later process is a spoke that forwards its agent's tool calls to the hub and
@@ -10,6 +10,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import http from 'node:http'
+import zlib from 'node:zlib'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -20,6 +21,9 @@ import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_I
 import { SHARE_PAGE, SHARE_JS, SHARE_CSS, SHARE_CSP } from './share-viewer.mjs'
 import { padRoutes, padSupport } from './pad.mjs'
 import { openBoard, MOVED_NAME } from './board-store.mjs'
+import { turboRoutes } from './turbo.mjs'   // the server-rendered board (docs/turbo.md)
+import { blockedKey } from './blocked.mjs'   // when a session is really stopped: the red hand (cards Nr. 202/203)
+import { createThumbs, imageSizeOfFile } from './thumbs.mjs'   // sized variants of stored pictures: /files/<name>?w=…
 
 const ROOT = path.dirname(fileURLToPath(import.meta.url))
 const PORT = Number(process.env.BOARD_PORT || 8790)
@@ -44,6 +48,9 @@ let pairRoute = null
 // Passkey login (server/passkey.mjs): on wherever this Node has SQLite, unless BOARD_PASSKEYS=0.
 const passkeyModule = /^(0|off|no|false)$/i.test(process.env.BOARD_PASSKEYS ?? '') ? null : await import('./passkey.mjs').catch(() => null)
 let passkey = null
+// Web Push (server/push.mjs, docs/push.md): a notification on the human's device when a card knocks. Off with BOARD_PUSH=0.
+const pushModule = /^(0|off|no|false)$/i.test(process.env.BOARD_PUSH ?? '') ? null : await import('./push.mjs').catch(() => null)
+let push = null
 // Answered cards and their attachments are deleted after this many days.
 const RETENTION_DAYS = Number(process.env.BOARD_RETENTION_DAYS || 30)
 // A spoke never waits longer than this for the hub. Generous, because a tool
@@ -103,6 +110,10 @@ const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|
 
 // Everything in here is the owner's alone, like the state file.
 for (const dir of [FILES, SCRIBBLES, SPEECH, ASSETS]) fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+// Small copies of the stored pictures, made on request (thumbs.mjs). A cache: it may be deleted at any time.
+const thumbs = createThumbs({ files: FILES, cache: path.join(DATA, 'thumbs') })
+// A stored picture's own size goes into its record, so a page can say it before the picture has loaded.
+const pictureSize = file => { const s = imageSizeOfFile(file); return s ? { width: s.width, height: s.height } : {} }
 
 // The token is the only thing between the network and this session, so it is
 // kept across restarts and never logged to the chat.
@@ -217,10 +228,9 @@ function load(owner) {
   if (!desks.some(d => d.id === DEFAULT_DESK)) desks.unshift({ id: DEFAULT_DESK, name: 'Desk', created: Date.now() })
   const agents = list('agents').filter(a => a.id).map(a => ({ ...a, online: false, desk: desks.some(d => d.id === a.desk) ? a.desk : DEFAULT_DESK }))
     .sort((a, b) => place(a) - place(b)).map((a, position) => ({ ...a, position }))
-  // Only one session wears the crown. Of several from before that rule, the one crowned last keeps it.
-  const crowned = agents.filter(a => a.starred)
-  const keeps = crowned.reduce((best, a) => ((a.starred_at ?? 0) >= (best?.starred_at ?? 0) ? a : best), null)
-  for (const a of crowned) if (a !== keeps) a.starred = false
+  // One crown per desk (card Nr. 172). Of several from before that rule, the one crowned last keeps it; a desk
+  // that has mains and no crown gets its first one (tidyCrowns).
+  tidyCrowns(agents, desks)
   // Spokes of the hub that just went away are probably still running and about to link again.
   reserved = new Map(list('agents').filter(a => a.online && a.instance && a.id !== raw.hub).map(a => [a.id, a.instance]))
   const pending = {}
@@ -304,6 +314,7 @@ function save() {
 
 // The page gets everything except what is still waiting to be delivered to agents.
 // main: the session leads others (it has subs, or said so itself); worked out here so that no client has to.
+// The crown is not `main`: it is `starred`, one per desk (tidyCrowns).
 const pageAgents = () => state.agents.map(({ key_hash, ...a }) => ({ ...a, main: isMain(a) }))
 // A released asset comes with its outside addresses (without the key), the public one first: they follow from how
 // the hub is reached, so they are worked out for the page and not stored.
@@ -334,6 +345,14 @@ function messagesChanged() {
   messageResets++
 }
 
+// A session can become stopped by time alone (silent too long, gone for longer than a blip): when that changes, the
+// pages and the push hear of it as of any change (server/blocked.mjs).
+let blockedWas = ''
+function blockedTick() {
+  const now = blockedKey(state)
+  if (now !== blockedWas) { blockedWas = now; commit(true) }
+}
+
 // soon: the pages get the state at once, the file is written within a second, together with whatever else changed until then.
 function commit(soon = false) {
   // A put-off belongs to an open card; answered, closed or thrown away, there is nothing left to put off.
@@ -343,15 +362,19 @@ function commit(soon = false) {
   // The list is the order of the sidebar; position says the same as a number, so a new session is last and a forgotten one leaves no gap.
   state.agents.forEach((a, at) => { a.online = links.has(a.id); a.position = at })
   state.speech = Boolean(speechKey())
+  // What newly knocks goes to the devices that asked for a push (server/push.mjs); it never holds up the board.
+  try { push?.watch(state) } catch (err) { console.error(`[board] push: ${err.message}`) }
   if (!soon) save()
   else saveTimer ??= setTimeout(() => { if (role === 'hub') save() }, 1000).unref()
   let frame = null
   // A page on a slow connection gets the latest state once it has caught up,
   // not a growing backlog of every state in between.
   for (const res of clients) {
-    if (res.writableNeedDrain) res.behind = true
-    else res.write(res.since == null ? (frame ??= frameOf()) : frameFor(res))
+    const out = res.out ?? res   // (the compressed stream of a page that takes gzip, see /events)
+    if (out.writableNeedDrain || res.writableNeedDrain) res.behind = true
+    else out.write(res.since == null ? (frame ??= frameOf()) : frameFor(res))
   }
+  turbo.changed()   // the server-rendered pages get the elements that changed (turbo.mjs)
 }
 
 // seq: the message's running number, never reused. A message is changed only before the commit that sends it;
@@ -390,9 +413,32 @@ function tidyFamilies() {
     else {
       // A sub is no main, whatever it once said of itself.
       delete a.main_declared
-      if (main.desk) a.desk = main.desk
+      if (main.desk) toDesk(a, main.desk)
     }
   }
+  tidyCrowns()
+}
+// ---- the crown: one per desk (card Nr. 172) ---------------------------------
+// The crown is `starred`: the human gives it (/star), and the memo of a desk goes to the session that wears it.
+// A session with subs is a main and keeps its stack, but wears no crown for that alone. Only a desk that has no
+// crown gets one by itself: its first main (the one with the most subs, then the first in the list). After that the
+// crown moves by the human's hand only; a desk he took the crown off (`crown_off`) stays without one until he gives it.
+function tidyCrowns(agents = state.agents, desks = state.desks) {
+  const leads = a => agents.filter(x => x.parent === a.id).length
+  for (const desk of desks) {
+    const here = agents.filter(a => a.desk === desk.id)
+    const crowned = here.filter(a => a.starred)
+    const keeps = crowned.reduce((best, a) => ((a.starred_at ?? 0) >= (best?.starred_at ?? 0) ? a : best), null)
+    for (const a of crowned) if (a !== keeps) a.starred = false
+    if (keeps || desk.crown_off) continue
+    const first = here.filter(a => !a.archived && a.parent == null && (a.main_declared === true || leads(a) > 0)).reduce((best, a) => (!best || leads(a) > leads(best) ? a : best), null)
+    if (first) { first.starred = true; first.starred_at = Date.now() }
+  }
+}
+// A session comes to a desk: where a crowned session already stands, the one that arrives leaves its crown behind.
+function toDesk(agent, desk) {
+  if (agent.desk !== desk && agent.starred && state.agents.some(a => a !== agent && a.desk === desk && a.starred)) agent.starred = false
+  agent.desk = desk
 }
 // The session a name or id stands for; a name must be the only one of its kind.
 function sessionNamed(text) {
@@ -410,7 +456,7 @@ function setParent(agent, parent) {
   if (main.parent != null) throw new Error(`${main.id} is itself a sub of ${main.parent}; a sub belongs to a main directly (one level)`)
   if (state.agents.some(a => a.parent === agent.id)) throw new Error(`${agent.id} has subs of its own, so it cannot become a sub (one level)`)
   agent.parent = main.id
-  if (main.desk) agent.desk = main.desk
+  if (main.desk) toDesk(agent, main.desk)
   return main
 }
 
@@ -514,6 +560,8 @@ function register({ name, cwd, host = '', platform = '', id: wanted, claims, kee
   const now = Date.now()
   // A session that is back is no longer archived.
   const fields = { name, cwd, host, platform, instance: link.instance, connected: now, seen: now, archived: false }
+  // (Linked again: a fault it reported before is over.)
+  if (known) delete known.error
   // A key is made for a session that has none it could show; a bound session's key stays what it was.
   if (!proven && !known?.bound) {
     link.key = crypto.randomBytes(16).toString('hex')
@@ -595,6 +643,8 @@ function setProfile(id, fields) {
   const agent = state.agents.find(a => a.id === id)
   if (!agent) return
   for (const key of ['model', 'client', 'task']) if (fields[key] != null) agent[key] = String(fields[key]).slice(0, 200)
+  // A fault the session's side reports (server/blocked.mjs: the red hand); '' clears it, as does its next tool call.
+  if (fields.error != null) { if (String(fields.error).trim()) agent.error = String(fields.error).slice(0, 200); else delete agent.error }
   commit()
 }
 
@@ -724,7 +774,7 @@ function storeAttachment(entry) {
   if (twin) paired.push(`${path.basename(src)} → ${path.basename(twin)}`)
   const page = given.page != null && given.page !== '' ? pageOf(given.page) : twin ? pageOf(twin) : null
   const title = String(given.title ?? '').trim().slice(0, 200)
-  return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size, ...(title ? { title } : {}), ...(page ? { page } : {}), ...(marks.length ? { marks } : {}) }
+  return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size, ...(kind === 'image' ? pictureSize(src) : {}), ...(title ? { title } : {}), ...(page ? { page } : {}), ...(marks.length ? { marks } : {}) }
 }
 
 // What the human attaches in the browser (a file, a pasted screenshot, a drawing): a list of
@@ -752,7 +802,7 @@ function storeUploads(list) {
     const stored = `${newId()}${ext}`
     fs.writeFileSync(path.join(FILES, stored), bytes, { mode: 0o600 })
     const kind = kindOf(ext)
-    return { name, url: `/files/${stored}`, kind, image: kind === 'image', size: bytes.length }
+    return { name, url: `/files/${stored}`, kind, image: kind === 'image', size: bytes.length, ...(kind === 'image' ? pictureSize(path.join(FILES, stored)) : {}) }
   })
 }
 const uploadPath = a => path.join(FILES, path.basename(a.url))
@@ -934,7 +984,7 @@ const mcp = new Server(
       'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
       'The human also keeps one pad for everything: notes, drawings, pictures and spoken text, each an element of its own. <channel source="board" kind="pad" elements="ID,ID" image_path="/abs/selection.png"> means they selected some of it and sent it to you: the body is the words of the selected notes in reading order, image_path is a picture of exactly the selection, so read it; elements are the ids of what was selected.',
       'The human answers with one tap and can take an answer back: <channel source="board" kind="decision_reopened" card_id="..." previous_choice="KEY"> means the card is open again. Stop acting on the old choice, undo what you safely can, tell them briefly via reply what you rolled back, and wait for the new choice.',
-      'To hand the human, or anyone they choose, a page or a file as a link, call publish_asset: a self-contained HTML page (inline CSS and scripts, images as data: URLs; nothing is loaded from the network), an image, a video, an audio file or any other file. It is encrypted before it leaves this process and the key is part of the link, so whoever has the link can open it without a login. revoke_asset ends a link.',
+      'To hand the human, or anyone they choose, a page or a file as a link, call publish_asset: a self-contained HTML page (inline CSS and scripts, images as data: URLs; nothing is loaded from the network), an image, a video, an audio file or any other file. It is encrypted before it leaves this process and the key is part of the link. The link opens for the human, signed in to the board; it opens for nobody else. For someone outside the board, release the asset with share_asset and pass on the second link it returns (/r/<id>#<key>), only when the human asked for that. revoke_asset ends a link.',
       'Keep the status strip current with set_status: one line per work stream or subagent, a traffic light the human reads at a glance. decision (red) = waiting on the human, pass the card_id of the question; working (yellow) = in progress; done (green) = finished. Update a line the moment its state changes and clear the strip with clear_status when a new piece of work starts.',
     ].join(' '),
   },
@@ -1039,7 +1089,7 @@ const TOOLS = [
   },
   {
     name: 'create_decision',
-    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. It must fit one card on one screen, which is how the human sees it: a title of one line, a body of at most about 300 characters or 5 short lines, per option a label of at most four words and a detail of one short line, at most six options. Show it in a picture rather than explain it in prose; background, reasoning, measurements and links never go into the body: send them right after filing as a reply with the card_id of this card (the human finds it by scrolling down under the card; it does not present or move the card), or put them on an attached page. When every option needs a sentence or two of explanation, pass sections or text instead of body and options, so each paragraph sits with its option. A question about how something looks or is laid out must carry a picture: one attachment per option where possible, named <anything>-<key>.png, or a link to a page to try.',
+    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. The card has a fixed height on the board; what does not fit is shown only in the comments under it, so it must fit one card on one screen, which is how the human sees it: a title of one line, a body of at most about 300 characters or 5 short lines, per option a label of at most four words and a detail of one short line, at most ten options. Show it in a picture rather than explain it in prose; background, reasoning, measurements and links never go into the body: send them right after filing as a reply with the card_id of this card (the human finds it by scrolling down under the card; it does not present or move the card), or put them on an attached page. When every option needs a sentence or two of explanation, pass sections or text instead of body and options, so each paragraph sits with its option. A question about how something looks or is laid out must carry a picture: one attachment per option where possible, named <anything>-<key>.png, or a link to a page to try.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1162,7 +1212,7 @@ const TOOLS = [
         task: { type: 'string', description: 'What you are working on in this session, one line' },
         icon: { type: 'string', description: 'The name of the drawing that fits your task; it becomes the symbol of your session. A symbol the human picked by hand is kept.' },
         parent: { type: 'string', description: 'If you are a helper of another session: the id or the name of your main session. The board then shows you under it. Pass an empty string to stand alone again.' },
-        main: { type: 'boolean', description: 'true: you are a main agent that leads helper sessions; the board shows you with a crown. A session that has helpers under it is a main without saying so.' },
+        main: { type: 'boolean', description: 'true: you are a main agent that leads helper sessions; the board shows your helpers under you. A session that has helpers under it is a main without saying so.' },
       },
       required: ['model'],
     },
@@ -1186,7 +1236,7 @@ const TOOLS = [
   },
   {
     name: 'publish_asset',
-    description: 'Publish a page or a file under a link that opens without a board login, e.g. a report or mockup as an HTML page for the human to pass on. The asset is encrypted here with a key of its own; the key is the part of the link after the #, and the board stores only ciphertext. Anyone who has the link can open it. Returns the link.',
+    description: 'Publish a page or a file under a link, e.g. a report or mockup as an HTML page for the human. The asset is encrypted here with a key of its own; the key is the part of the link after the #, and the board stores only ciphertext. The link opens for whoever is signed in to the board and has the whole link; someone outside needs a release (share_asset). Returns the link.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -1523,7 +1573,8 @@ const BODY_LINES = 5
 const LABEL_WORDS = 4
 const DETAIL_MAX = 60
 const SECTION_MAX = 400
-const OPTIONS_MANY = 6
+const OPTIONS_MANY = 10
+// (The board shows a card at a fixed height; text beyond the budget stands only in the comments under it: views/card.mjs fitText.)
 const CARD_BUDGET = `a title of one line (about ${TITLE_MAX} characters), a body of at most about ${BODY_MAX} characters or ${BODY_LINES} short lines, per option a label of at most ${LABEL_WORDS} words and a detail of one short line (about six words), at most ${OPTIONS_MANY} options`
 // What there is to read in a text: a fenced layout or code block is looked at, not read.
 const prose = text => String(text ?? '').replace(/```[\s\S]*?```/g, '')
@@ -1542,7 +1593,7 @@ function lengthHint(card) {
     long.length ? `the detail of ${long.map(o => `"${o.key}"`).join(', ')} is longer than one short line (aim for about six words)` : '',
   ].filter(Boolean)
   // More options than anyone weighs at a glance usually means the agent has not chosen yet.
-  const many = card.options.length > OPTIONS_MANY ? `\nMany options (${card.options.length}; a card holds about ${OPTIONS_MANY}): keep only the ones you are sure of. Two or three you stand behind beat ten; put the rest on a page (an attachment with page, or publish_asset, linked from the body) or leave them out, and mark the one you would pick. Shorten it with revise_card.` : ''
+  const many = card.options.length > OPTIONS_MANY ? `\nMany options (${card.options.length}; a card holds about ${OPTIONS_MANY}): keep only the ones you are sure of. Two or three you stand behind beat a dozen; put the rest on a page (an attachment with page, or publish_asset, linked from the body) or leave them out, and mark the one you would pick. Shorten it with revise_card.` : ''
   return (said.length ? `\nThis is a lot to read: ${said.join('; ')}. A question has to fit one card on one screen: ${CARD_BUDGET}. Shorten it with revise_card: say it in a picture rather than in prose, and move the background to an attached page or a published asset linked from the body; the human can also ask for it with "Explain".` : '') + many
 }
 
@@ -1556,6 +1607,9 @@ const visualHint = card => (card.attachments.length || card.html || card.section
 // Runs on the hub, for the hub's own agent and on behalf of spokes.
 function runTool(agent, name, args) {
   if (!args || typeof args !== 'object') args = {}
+  // A sign of life (server/blocked.mjs: a working session silent too long is stopped); it also ends a reported error.
+  const caller = state.agents.find(a => a.id === agent)
+  if (caller) { caller.active = Date.now(); delete caller.error }
   strippedHint()   // what an earlier, refused call lost is not this call's news
   paired = []
   switch (name) {
@@ -2565,6 +2619,39 @@ const send = (res, code, body, type = 'application/json') => {
   res.end(body)
 }
 
+// A file of the web client (the page, its styles and modules). It is kept by the browser but asked for again every
+// time (no-cache with an ETag of size and time): an edited file is there on the next reload, an unchanged one costs
+// a 304 without a body. Text goes out compressed (brotli or gzip, whichever the browser takes); the compressed bytes
+// are kept in memory per file until the file changes.
+const PACKED_EXT = new Set(['.html', '.css', '.js', '.mjs', '.json', '.svg'])
+const packed = new Map()   // file + coding -> { tag, bytes }
+function sendFile(req, res, file, type) {
+  let stat
+  try { stat = fs.statSync(file) } catch { return send(res, 404, '{"error":"not found"}') }
+  const accepts = String(req.headers['accept-encoding'] ?? '')
+  const coding = !PACKED_EXT.has(path.extname(file).toLowerCase()) || stat.size < 256 ? '' : /\bbr\b/.test(accepts) ? 'br' : /\bgzip\b/.test(accepts) ? 'gzip' : ''
+  const tag = `"${stat.size.toString(36)}-${Math.round(stat.mtimeMs).toString(36)}${coding ? `-${coding}` : ''}"`
+  const headers = { 'Content-Type': type ?? 'application/octet-stream', 'Cache-Control': 'private, no-cache', ETag: tag, Vary: 'Accept-Encoding' }
+  if (String(req.headers['if-none-match'] ?? '').split(',').some(t => t.trim() === tag)) {
+    res.writeHead(304, headers)
+    return res.end()
+  }
+  let bytes = fs.readFileSync(file)
+  if (coding) {
+    const key = `${file}|${coding}`
+    let kept = packed.get(key)
+    if (kept?.tag !== tag) {
+      kept = { tag, bytes: coding === 'br' ? zlib.brotliCompressSync(bytes, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 5, [zlib.constants.BROTLI_PARAM_SIZE_HINT]: bytes.length } }) : zlib.gzipSync(bytes, { level: 6 }) }
+      packed.set(key, kept)
+    }
+    bytes = kept.bytes
+    headers['Content-Encoding'] = coding
+  }
+  headers['Content-Length'] = bytes.length
+  res.writeHead(200, headers)
+  res.end(bytes)
+}
+
 // Which agent a message from the page is for. With a single agent the page
 // need not say; with several it must.
 function targetAgent(id) {
@@ -2790,6 +2877,8 @@ function forgetSession(id, withData) {
   state.agents = state.agents.filter(a => a.id !== id)
   // A note that was meant for it is the human's still; it goes to whoever takes the quick memo.
   for (const m of state.memos) if (m.to === id) m.to = null
+  // A note written on its page goes back to the Desk.
+  for (const m of state.memos) if (m.session === id) m.session = null
   if (!state.retired_ids.includes(id)) state.retired_ids.push(id)
   commit()
   return gone
@@ -2814,7 +2903,7 @@ function rotateToken() {
   fs.renameSync(tmp, TOKEN_FILE)
   TOKEN = readToken()
   writeLinks()
-  for (const res of clients) res.end()
+  for (const res of clients) (res.out ?? res).end()
 }
 
 function overview() {
@@ -2981,11 +3070,10 @@ async function adminRoute(req, res, url) {
   }
 }
 
-// The viewer and the blobs are the only things served without a login: the link
-// is the permission, and all the server hands out is ciphertext and the static
-// viewer. The viewer runs under the board's address, where the human's login
-// cookie lives, so it may load nothing but its own files, and it never puts
-// decrypted content into its own page.
+// The viewer and the blobs under /a/ are for whoever is signed in to the board (card Nr. 175): the link alone opens
+// nothing, someone outside gets an asset only through a release, under /r/ (shareRoute). The viewer runs under the
+// board's address, where the human's login cookie lives, so it may load nothing but its own files, and it never
+// puts decrypted content into its own page.
 const VIEWER_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src blob:; media-src blob:; frame-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'"
 // An HTML asset is written into this empty page, which the viewer loads in a
 // sandboxed frame. The page brings its own policy rather than inheriting the
@@ -3005,7 +3093,7 @@ parent.postMessage('ready', '*')
 </script>`
 const VIEWER_FILES = { 'asset.js': 'js/asset.js', 'asset.css': 'css/asset.css', 'tokens.css': 'css/tokens.css' }
 
-// Fetches of ciphertext need no login, so they are counted per caller: behind a proxy on this machine the caller is
+// Fetches of ciphertext are counted per caller (a released one needs no login): behind a proxy on this machine the caller is
 // who the proxy names. BOARD_ASSET_RATE per minute (default 300); beyond it 429 until the minute is over.
 const ASSET_RATE = Number(process.env.BOARD_ASSET_RATE) || 300
 const blobCalls = new Map()   // caller -> { n, until }
@@ -3018,9 +3106,11 @@ function overRate(req) {
   if (!seen || now > seen.until) blobCalls.set(who, seen = { n: 0, until: now + 60000 })
   return ++seen.n > ASSET_RATE
 }
-// BOARD_ASSET_LOGIN=1: the ciphertext under /a/ is for the board only and wants the login; outsiders get released
-// assets under /r/. Off by default, because today's viewer (client/web/js/asset.js) fetches without the cookie.
-const ASSET_LOGIN = /^(1|true|yes)$/i.test(process.env.BOARD_ASSET_LOGIN ?? '')
+// Everything under /a/ but the empty frame wants the login: the cookie of a signed-in browser, or the board token
+// from a process on this machine (an agent's own access, as for /agent/*). Outsiders get released assets under /r/.
+// BOARD_ASSET_LOGIN=0 brings back the old behaviour (the link is the permission); nothing sets it.
+const ASSET_LOGIN = !/^(0|false|no|off)$/i.test(process.env.BOARD_ASSET_LOGIN ?? '')
+const assetAllowed = req => !ASSET_LOGIN || authed(req) || (LOOPBACK.has(req.socket.remoteAddress) && !proxied(req) && tokenMatches(req.headers['x-board-token']))
 const ASSET_HEADERS = {
   'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex',
   // Nothing here is for another site to embed or read, and neither viewer nor a published page gets at a device.
@@ -3043,14 +3133,25 @@ function assetRoute(req, res, url) {
   const out = assetOut(res)
   const missing = () => out(404, '{"error":"not found"}')
   if (req.method !== 'GET' || more.length) return missing()
+  // The empty frame carries nothing and is loaded from a sandboxed frame, which sends no cookie: it stays open.
   if (id === '-' && rest === 'frame.html') return out(200, ASSET_FRAME, MIME['.html'], FRAME_CSP)
-  if (id === '-') return Object.hasOwn(VIEWER_FILES, rest) ? out(200, fs.readFileSync(path.join(PUBLIC, VIEWER_FILES[rest])), MIME[path.extname(rest)]) : missing()
+  const allowed = assetAllowed(req)
+  if (id === '-') {
+    if (!Object.hasOwn(VIEWER_FILES, rest)) return missing()
+    return allowed ? out(200, fs.readFileSync(path.join(PUBLIC, VIEWER_FILES[rest])), MIME[path.extname(rest)]) : out(401, '{"error":"unauthorised"}')
+  }
   if (!ASSET_ID.test(id)) return missing()
-  // The page is the same for every id, so asking for it does not tell whether an asset exists.
-  if (rest == null) return out(200, fs.readFileSync(path.join(PUBLIC, 'a.html')), MIME['.html'], VIEWER_CSP)
+  // The page is the same for every id, so asking for it does not tell whether an asset exists. Without the login it
+  // is the sign-in page (a 401, as for the board): the key stays behind the # and is there again after signing in.
+  if (rest == null) {
+    if (allowed) return out(200, fs.readFileSync(path.join(PUBLIC, 'a.html')), MIME['.html'], VIEWER_CSP)
+    if (passkey) return passkeyModule.sendPage(res, 401, passkey.signInPage())
+    return send(res, 401, 'Access only through the link in data/url.txt', 'text/plain; charset=utf-8')
+  }
   if (rest !== 'blob') return missing()
+  // Before the count, so that a stranger's requests neither tell whether an asset exists nor use up the board's own.
+  if (!allowed) return out(401, '{"error":"unauthorised"}')
   if (overRate(req)) return out(429, '{"error":"too many requests"}')
-  if (ASSET_LOGIN && !authed(req)) return out(401, '{"error":"unauthorised"}')
   if (!state.assets.some(a => a.id === id)) return missing()
   sendBlob(id, out)
 }
@@ -3108,13 +3209,236 @@ const padRoute = padRoutes({
   sessionOf: id => (state.agents.some(a => a.id === id) ? id : null),
   say: (agent, words, attachments) => { addMessage(agent, 'user', words, attachments); return state.messages.at(-1).id },
 })
+// ---- what the human changes on a session: POST /session and POST /star, and the forms of the server-rendered board ----
+// { agent, label?, icon?, archived?, group?, parent?, desk?, before? }. Refusals throw with their status.
+function editSession(body) {
+  const agent = state.agents.find(a => a.id === targetAgent(body.agent))
+  // Archiving is for sessions that are gone; one that is online would keep asking into the void.
+  if (body.archived === true && links.has(agent.id)) throw fail(409, 'a session that is online cannot be archived')
+  if (body.archived != null) agent.archived = body.archived === true
+  // Put away, a session lays its crown down: the desk's memo must not go to one that is gone.
+  if (body.archived === true) agent.starred = false
+  // Sessions that share a group are shown as a pair; null takes a session out of its group.
+  if ('group' in body) agent.group = body.group == null ? null : String(body.group).trim().slice(0, 40) || null
+  if (body.label != null) agent.label = String(body.label).trim().slice(0, 60)
+  if (body.icon != null) {
+    agent.icon = String(body.icon).slice(0, 80)
+    // Picked by hand it is the human's and the agent leaves it alone; cleared, the agent may choose again.
+    if (agent.icon) agent.icon_by = 'human'
+    else delete agent.icon_by
+  }
+  // The human says whose sub a session is; null lets it stand alone.
+  if ('parent' in body) {
+    try { setParent(agent, body.parent) } catch (err) { throw fail(409, err.message) }
+  }
+  // To another desk: the session goes with the sessions it is paired with, and its cards with it.
+  if (body.desk != null) {
+    if (!state.desks.some(d => d.id === body.desk)) throw fail(404, 'no such desk')
+    // A sub stands where its main stands: move the main (its subs come along), or let the sub stand alone first.
+    if (agent.parent != null && body.desk !== agent.desk) throw fail(409, `this session is a sub of ${agent.parent} and moves with it`)
+    for (const a of agent.group ? state.agents.filter(x => x.group === agent.group) : [agent]) toDesk(a, body.desk)
+  }
+  if ('before' in body) moveSession(agent, body.before)
+  commit()
+}
+// { agent, starred }
+function starSession(body) {
+  const agent = state.agents.find(a => a.id === targetAgent(body.agent))
+  const had = Boolean(agent.starred)
+  agent.starred = Boolean(body.starred)
+  const desk = state.desks.find(d => d.id === agent.desk)
+  if (agent.starred) {
+    agent.starred_at = Date.now()
+    // One crown per desk: crowning this session takes it from whoever wore it on the same desk.
+    for (const other of state.agents) if (other !== agent && other.starred && other.desk === agent.desk) other.starred = false
+    if (desk) delete desk.crown_off
+  // Taken off by hand, the desk stays without a crown until he gives one (tidyCrowns gives none by itself).
+  } else if (had && desk) desk.crown_off = true
+  commit()
+}
+// What the human says to a session: the words, files, pinned notes and passed cards of one message. The old page posts it as
+// JSON to /message; the server-rendered board posts a form (turbo-session.mjs). body: { agent, text, attachments?, card_id?, … }.
+async function humanMessage(body) {
+  const msg = String(body.text ?? '').trim()
+  if (!msg && !(Array.isArray(body.attachments) && body.attachments.length) && !(Array.isArray(body.marks) && body.marks.length) && !(Array.isArray(body.cards) && body.cards.length)) throw new Error('empty message')
+  // The body may be large for the files' sake only; the words keep their old limit.
+  if (msg.length > 1e6) throw new Error('body too large')
+  const agent = targetAgent(body.agent)
+  // Notes and drawings pinned to the card the message is about; without such a card they have nothing to hold on to.
+  const noted = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
+  const pinned = noted ? marksOf(noted, body.marks, true) : []
+  // Cards the human copies into this conversation, from this session or any other.
+  const passed = passedCards(body.cards)
+  if (!msg && !pinned.length && !passed.length && !(Array.isArray(body.attachments) && body.attachments.length)) throw new Error('empty message')
+  // Files and pictures the human attached; a message may be nothing but them.
+  const files = storeUploads(body.attachments)
+  // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
+  const asked = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
+  const about = asked ? { card_id: body.card_id } : {}
+  // The human gave the card back to be reworked, or asked for it to be explained: until the agent answers, it is with the agent.
+  const turn = asked && asked.kind !== 'permission' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
+  if (Object.keys(turn).length) asked.with_agent = Date.now()
+  addMessage(agent, 'user', msg, files, { ...about, ...turn, ...(pinned.length ? { marks: pinned } : {}), ...(passed.length ? { cards: passed.map(cardChip) } : {}) })
+  await deliver(agent, 'notifications/claude/channel', {
+    content: [
+      msg || (files.length ? uploadLine(files) : passed.length ? `The human passes ${passed.length === 1 ? 'a card' : `${passed.length} cards`} on to you.` : 'The human pinned notes to the card.'),
+      ...(pinned.length ? marksBlock(noted, pinned) : []),
+      ...passed.flatMap(card => ['', cardText(card)]),
+    ].join('\n'),
+    meta: {
+      kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...(pinned.length ? { marks: String(pinned.length) } : {}),
+      // meta values are strings: the ids, and the same cards as JSON for whoever wants fields instead of prose.
+      ...(passed.length ? { cards: passed.map(c => c.id).join(','), cards_json: JSON.stringify(passed.map(c => ({ ...cardChip(c), kind: c.kind, status: c.status, choices: c.choices ?? [] }))) } : {}),
+      ...uploadMeta(files),
+    },
+  })
+}
+// ---- a sent memo is held for a moment (the toast's Undo) ----
+// Sending stores the memo as sent at once (memo.held = { to, until }: no page shows it any more), but the session gets
+// it only after MEMO_HOLD_MS; until then { id, unsend: true } brings the note back as it was. The timers live in this
+// process only: a hub that starts with held memos delivers them at once (becomeHub), so nothing sent is lost.
+const MEMO_HOLD_MS = Math.max(0, Number(process.env.BOARD_MEMO_HOLD_MS ?? 3000) || 0)
+const memoHolds = new Map()   // memo id -> its timer
+const memoWent = new Map()    // memo id -> session id, of the memos delivered lately (for a clear "too late")
+async function memoDeliver(memo) {
+  clearTimeout(memoHolds.get(memo.id))
+  memoHolds.delete(memo.id)
+  if (!memo.held || !state.memos.includes(memo)) return null
+  const to = memo.held.to
+  delete memo.held
+  // Its session left the board in the meantime: the note comes back instead.
+  if (!state.agents.some(a => a.id === to)) { commit(); return null }
+  const text = memo.text.trim()
+  state.memos = state.memos.filter(m => m !== memo)
+  memoWent.set(memo.id, to)
+  if (memoWent.size > 200) memoWent.delete(memoWent.keys().next().value)
+  addMessage(to, 'user', text, memo.attachments)
+  const message = state.messages.at(-1).id
+  await deliver(to, 'notifications/claude/channel', { content: text || uploadLine(memo.attachments), meta: { kind: 'chat', ...uploadMeta(memo.attachments) } })
+  return message
+}
+const memoHeld = memo => ({ agent: memo.held.to, ms: Math.max(0, memo.held.until - Date.now()) })
+// What POST /memo does (the route's comment stands there), as { code, text }: the old page's route and the forms of
+// the server-rendered board (views/memo.mjs) both go through it.
+async function memoAct(body) {
+      const res = null, send = (_, code, text) => ({ code, text })
+      let memo = body.id == null ? null : state.memos.find(m => m.id === body.id)
+      if (body.unsend === true) {
+        // Undo of a send: only while the memo is held.
+        if (!memo && memoWent.has(body.id)) {
+          const to = state.agents.find(a => a.id === memoWent.get(body.id))
+          return send(res, 409, JSON.stringify({ error: `too late: the memo already went to ${to?.label || to?.name || 'its session'}`, code: 'delivered' }))
+        }
+        if (!memo) return send(res, 404, '{"error":"no such memo","code":"no-memo"}')
+        if (!memo.held) return send(res, 409, '{"error":"this memo was not sent","code":"not-sent"}')
+        clearTimeout(memoHolds.get(memo.id))
+        memoHolds.delete(memo.id)
+        delete memo.held
+        memo.updated = Date.now()
+        commit()
+        return send(res, 200, JSON.stringify({ ok: true, memo }))
+      }
+      if (body.id != null && !memo) return send(res, 404, '{"error":"no such memo","code":"no-memo"}')
+      const dropFiles = list => { for (const name of list.flatMap(filesOfAttachment)) fs.rmSync(path.join(FILES, name), { force: true }) }
+      if (body.remove === true) {
+        if (!memo) return send(res, 400, '{"error":"remove needs the id of a memo"}')
+        clearTimeout(memoHolds.get(memo.id))   // (a held memo thrown away is not delivered either)
+        memoHolds.delete(memo.id)
+        dropFiles(memo.attachments)
+        state.memos = state.memos.filter(m => m !== memo)
+        commit()
+        return send(res, 200, '{"ok":true}')
+      }
+      if (body.send === true) {
+        if (!memo) return send(res, 400, '{"error":"send needs the id of a memo"}')
+        if (memo.held) return send(res, 200, JSON.stringify({ ok: true, held: memoHeld(memo), sent: { agent: memo.held.to } }))   // sent twice: once
+        // To the session it names, else to the crowned session of the desk it is sent from ({ desk }; without one:
+        // the default desk's crown, else the only crown there is), else to the only session.
+        const crowns = state.agents.filter(a => a.starred)
+        const crown = body.desk != null ? crowns.find(a => a.desk === body.desk) : crowns.find(a => a.desk === DEFAULT_DESK) ?? (crowns.length === 1 ? crowns[0] : null)
+        // A note written on a session's page goes to that session.
+        const to = memo.session ?? memo.to ?? crown?.id ?? (state.agents.length === 1 ? state.agents[0].id : null)
+        if (!to || !state.agents.some(a => a.id === to)) return send(res, 409, '{"error":"this memo has no session to go to","code":"no-session"}')
+        const text = memo.text.trim()
+        if (!text && !memo.attachments.length) return send(res, 400, '{"error":"empty message"}')
+        memo.held = { to, until: Date.now() + MEMO_HOLD_MS }
+        if (!MEMO_HOLD_MS) return send(res, 200, JSON.stringify({ ok: true, sent: { agent: to, message: await memoDeliver(memo) } }))
+        memoHolds.set(memo.id, setTimeout(() => memoDeliver(memo).catch(err => console.error(`[board] memo ${memo.id}: ${err.stack ?? err}`)), MEMO_HOLD_MS))
+        commit()
+        return send(res, 200, JSON.stringify({ ok: true, held: memoHeld(memo), sent: { agent: to } }))
+      }
+      // Checked before anything is written or stored.
+      const fields = {}
+      if (body.text != null) {
+        fields.text = String(body.text)
+        if (fields.text.length > 1e6) throw new Error('body too large')
+      }
+      if ('to' in body) {
+        if (body.to != null && !state.agents.some(a => a.id === body.to)) return send(res, 404, JSON.stringify({ error: `no agent ${body.to}` }))
+        fields.to = body.to ?? null
+      }
+      // Where the note belongs: a session's id (written on its page: shown only there, sent to it) or null (the Desk).
+      if ('session' in body) {
+        if (body.session != null && !state.agents.some(a => a.id === body.session)) return send(res, 404, JSON.stringify({ error: `no agent ${body.session}` }))
+        fields.session = body.session ?? null
+      }
+      if (body.place != null) {
+        if (!MEMO_PLACES.includes(body.place)) return send(res, 400, JSON.stringify({ error: `place must be one of ${MEMO_PLACES.join(', ')}` }))
+        fields.place = body.place
+      }
+      for (const k of ['x', 'y']) {
+        if (body[k] == null) continue
+        if (!Number.isFinite(body[k])) return send(res, 400, JSON.stringify({ error: `${k} must be a number` }))
+        fields[k] = body[k]
+      }
+      if (!memo && state.memos.length >= MEMOS_MAX) return send(res, 409, JSON.stringify({ error: `at most ${MEMOS_MAX} memos`, code: 'too-many' }))
+      // attachments, when given, is the whole list: what the note already has is named by its url, what is new comes
+      // as { name, data } (a base64 data URL), as on a message. What is no longer named is deleted.
+      let attachments = memo?.attachments ?? []
+      if (body.attachments != null) {
+        if (!Array.isArray(body.attachments)) throw new Error('attachments must be a list')
+        if (body.attachments.length > MAX_UPLOADS) throw new Error(`at most ${MAX_UPLOADS} attachments at once`)
+        const kept = body.attachments.filter(a => a?.data == null).map(a => attachments.find(x => x.url === a?.url))
+        if (kept.includes(undefined)) return send(res, 400, '{"error":"an attachment is either one the memo has (by its url) or a new one ({ name, data })"}')
+        const fresh = storeUploads(body.attachments.filter(a => a?.data != null))
+        dropFiles(attachments.filter(a => !kept.includes(a)))
+        let next = 0
+        attachments = body.attachments.map(a => (a?.data == null ? attachments.find(x => x.url === a.url) : fresh[next++]))
+      }
+      const now = Date.now()
+      if (memo) Object.assign(memo, fields, { attachments, updated: now })
+      else {
+        memo = { id: newId(), text: '', to: null, session: null, place: 'float', x: 0, y: 0, ...fields, attachments, created: now, updated: now }
+        // Newest first.
+        state.memos = [memo, ...state.memos]
+      }
+      // Typing saves within a second, together with whatever else changed; everything else at once.
+      commit(body.id != null && Object.keys(fields).every(k => k === 'text' || k === 'x' || k === 'y') && body.attachments == null)
+      return send(res, 200, JSON.stringify({ ok: true, memo }))
+}
+// The server-rendered board (turbo.mjs, docs/turbo.md): its pages, its forms and its live stream, on the same state.
+const turbo = turboRoutes({
+  editSession, starSession,
+  state: () => state, agents: () => pageAgents(), ping: PING, readRaw,
+  clogMs: Number(process.env.BOARD_TURBO_CLOG_MS) || 60000,   // a page that reads nothing for this long is let go (turbo.mjs)
+  addMessage, addEvent, commit, deliver, decide, trust, shred, snooze, closeInfo, reopen, memo: memoAct,
+  storeUploads, uploadPath, setDraft,   // a card's page: files with an answer, the draft kept while typing (turbo.mjs)
+  message: humanMessage, uploadLimit: UPLOAD_BODY, assetBases,   // the session page (turbo-session.mjs)
+})
 const withoutToken = url => {
   const rest = new URLSearchParams(url.search)
   rest.delete('t')
   return rest.size ? `?${rest}` : ''
 }
 
-const httpServer = http.createServer(async (req, res) => {
+// Every route's failure ends here: an async route that throws outside its own try (passkeys, push, pairing, the
+// agent API) would otherwise be an unhandled rejection, and that ends the process.
+const httpServer = http.createServer((req, res) => handleRequest(req, res).catch(err => {
+  console.error(`[board] ${req.method} ${String(req.url).slice(0, 200)}: ${err.stack ?? err}`)
+  if (res.headersSent) res.destroy()
+  else send(res, err.status ?? 500, JSON.stringify({ error: err.status ? err.message : 'the board could not answer this' }))
+}))
+async function handleRequest(req, res) {
   let url
   // Runs before any check, so a request line that is no URL ("//") must not throw.
   try {
@@ -3150,23 +3474,46 @@ const httpServer = http.createServer(async (req, res) => {
     const login = to => to.setHeader('Set-Cookie', `${COOKIE}=${TOKEN}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`)
     if (await passkey.route(req, res, url, { authed, sameOrigin, readJson, send, login, audit })) return
   }
+  // Push: the manifest, the icons and the worker are open (a phone fetches them without the cookie); /push/ is checked in there.
+  if (push && await push.route(req, res, url, { authed, sameOrigin, readJson, send })) return
   if (!authed(req)) {
     // A page gets the sign-in page (still a 401); everything else the plain refusal, as before.
-    if (passkey && req.method === 'GET' && (APP_PATH.test(url.pathname) || url.pathname === '/passkeys' || /\.html$/.test(url.pathname))) return passkeyModule.sendPage(res, 401, passkey.signInPage())
+    if (passkey && req.method === 'GET' && (APP_PATH.test(url.pathname) || turbo.isPage(url.pathname) || /^\/old(\/|$)/.test(url.pathname) || url.pathname === '/passkeys' || /\.html$/.test(url.pathname))) return passkeyModule.sendPage(res, 401, passkey.signInPage())
     return send(res, 401, 'Access only through the link in data/url.txt', 'text/plain; charset=utf-8')
   }
   if (req.method !== 'GET' && !sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}')
   if (url.pathname.startsWith('/admin/api/')) return adminRoute(req, res, url)
   try {
+    if (await turbo.route(req, res, url)) return   // the server-rendered board, before the old page's paths
+    // The old client is the emergency exit, under /old/ only. It routes from the hash there (/old/#/s/<id>), so its
+    // own links stay inside it. A path of the board that the server-rendered pages do not have yet (sessions laid
+    // together, the scribble view, the pad's own address) leads there too. (docs/turbo.md, "The flip")
+    if (req.method === 'GET' && (url.pathname === '/old' || url.pathname.startsWith('/old/'))) {
+      if (url.pathname === '/old/') return sendFile(req, res, path.join(PUBLIC, 'index.html'), 'text/html; charset=utf-8')
+      res.writeHead(302, { Location: `/old/#${url.pathname.slice(4) || '/'}${url.search}`, 'Cache-Control': 'no-store' })
+      return res.end()
+    }
     if (req.method === 'GET' && APP_PATH.test(url.pathname)) {
-      return send(res, 200, fs.readFileSync(path.join(PUBLIC, 'index.html')), 'text/html; charset=utf-8')
+      // (A hub that still serves the new pages under a prefix keeps the old page at the main addresses.)
+      if (turbo.base) return sendFile(req, res, path.join(PUBLIC, 'index.html'), 'text/html; charset=utf-8')
+      res.writeHead(302, { Location: `/old/#${url.pathname}${url.search}`, 'Cache-Control': 'no-store' })
+      return res.end()
     }
     if (req.method === 'GET' && url.pathname === '/api/tools') {
       // The help page renders its reference from the same tables the agent is given.
       return send(res, 200, JSON.stringify({ version: VERSION, retention_days: RETENTION_DAYS, max_asset_mb: MAX_ASSET / 1024 / 1024, tools: toolsNow().map(t => ({ ...t, example: TOOL_EXAMPLES[t.name] })), drawings: drawings() ?? [], events: CHANNEL_EVENTS }))
     }
     if (req.method === 'GET' && url.pathname === '/events') {
-      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
+      // The whole state is some hundred KB of JSON on every change: it goes out compressed where the page takes it
+      // (about a sixth of the bytes), flushed after every frame so that none waits in the compressor.
+      const gzip = /\bgzip\b/.test(String(req.headers['accept-encoding'] ?? ''))
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no', ...(gzip ? { 'Content-Encoding': 'gzip', Vary: 'Accept-Encoding' } : {}) })
+      if (gzip) {
+        res.out = zlib.createGzip({ level: 5, flush: zlib.constants.Z_SYNC_FLUSH })
+        res.out.on('error', () => res.destroy())
+        res.out.pipe(res)
+      }
+      const out = res.out ?? res
       // ?since=<message seq> asks for the messages after it only (see frameFor); without it, the whole state as before.
       // On a reconnect the browser sends Last-Event-ID, which is newer than the since in the address.
       if (url.searchParams.has('since')) {
@@ -3174,18 +3521,23 @@ const httpServer = http.createServer(async (req, res) => {
         res.since = Number.isInteger(n) && n > 0 && n <= state.message_seq ? n : 0
         res.resets = messageResets
       }
-      res.write(frameFor(res))
+      out.write(frameFor(res))
       clients.add(res)
-      res.on('drain', () => {
-        if (!res.behind) return
+      // Behind (commit): the page gets the latest state once both the compressor and the socket have room again.
+      const caughtUp = () => {
+        if (!res.behind || out.writableNeedDrain || res.writableNeedDrain) return
         res.behind = false
-        res.write(frameFor(res))
-      })
-      req.on('close', () => clients.delete(res))
+        out.write(frameFor(res))
+      }
+      res.on('drain', caughtUp)
+      if (out !== res) out.on('drain', caughtUp)
+      req.on('close', () => { clients.delete(res); if (out !== res) out.destroy() })
       return
     }
     if (req.method === 'GET' && url.pathname.startsWith('/files/')) {
       const name = path.basename(url.pathname)
+      // A sized variant (?w=320): made once, then served from the cache. Not answered there: the original, below.
+      if (url.searchParams.has('w') && await thumbs.serve(req, res, name, url.searchParams.get('w'))) return
       const file = path.join(FILES, name)
       if (!fs.existsSync(file)) return send(res, 404, '{"error":"not found"}')
       // The page a picture was rendered from is shown as a page, but as a stranger: the sandbox gives it an origin of its own,
@@ -3214,45 +3566,13 @@ const httpServer = http.createServer(async (req, res) => {
         res.writeHead(206, { ...headers, 'Content-Range': `bytes ${start}-${end}/${size}`, 'Content-Length': end - start + 1 })
         return fs.createReadStream(file, { start, end }).on('error', () => res.destroy()).pipe(res)
       }
-      res.writeHead(200, { ...headers, 'Content-Length': size })
+      // A stored file never changes (every upload gets a name of its own): the browser may keep it.
+      res.writeHead(200, { ...headers, 'Content-Length': size, 'Cache-Control': 'private, max-age=604800, immutable' })
       // The cleanup may delete the file between the check above and the read.
       return fs.createReadStream(file).on('error', () => res.destroy()).pipe(res)
     }
     if (req.method === 'POST' && url.pathname === '/message') {
-      const body = await readJson(req, UPLOAD_BODY)
-      const msg = String(body.text ?? '').trim()
-      if (!msg && !(Array.isArray(body.attachments) && body.attachments.length) && !(Array.isArray(body.marks) && body.marks.length) && !(Array.isArray(body.cards) && body.cards.length)) return send(res, 400, '{"error":"empty message"}')
-      // The body may be large for the files' sake only; the words keep their old limit.
-      if (msg.length > 1e6) throw new Error('body too large')
-      const agent = targetAgent(body.agent)
-      // Notes and drawings pinned to the card the message is about; without such a card they have nothing to hold on to.
-      const noted = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
-      const pinned = noted ? marksOf(noted, body.marks, true) : []
-      // Cards the human copies into this conversation, from this session or any other.
-      const passed = passedCards(body.cards)
-      if (!msg && !pinned.length && !passed.length && !(Array.isArray(body.attachments) && body.attachments.length)) return send(res, 400, '{"error":"empty message"}')
-      // Files and pictures the human attached; a message may be nothing but them.
-      const files = storeUploads(body.attachments)
-      // A question back about a card instead of an answer to it. Only an open card of this agent counts; the card stays open.
-      const asked = state.cards.find(c => c.id === body.card_id && c.agent === agent && c.status === 'open')
-      const about = asked ? { card_id: body.card_id } : {}
-      // The human gave the card back to be reworked, or asked for it to be explained: until the agent answers, it is with the agent.
-      const turn = asked && asked.kind !== 'permission' ? { ...(body.handback === true ? { handback: true } : {}), ...(body.explain === true ? { explain: true } : {}) } : {}
-      if (Object.keys(turn).length) asked.with_agent = Date.now()
-      addMessage(agent, 'user', msg, files, { ...about, ...turn, ...(pinned.length ? { marks: pinned } : {}), ...(passed.length ? { cards: passed.map(cardChip) } : {}) })
-      await deliver(agent, 'notifications/claude/channel', {
-        content: [
-          msg || (files.length ? uploadLine(files) : passed.length ? `The human passes ${passed.length === 1 ? 'a card' : `${passed.length} cards`} on to you.` : 'The human pinned notes to the card.'),
-          ...(pinned.length ? marksBlock(noted, pinned) : []),
-          ...passed.flatMap(card => ['', cardText(card)]),
-        ].join('\n'),
-        meta: {
-          kind: 'chat', ...about, ...Object.fromEntries(Object.keys(turn).map(k => [k, '1'])), ...(pinned.length ? { marks: String(pinned.length) } : {}),
-          // meta values are strings: the ids, and the same cards as JSON for whoever wants fields instead of prose.
-          ...(passed.length ? { cards: passed.map(c => c.id).join(','), cards_json: JSON.stringify(passed.map(c => ({ ...cardChip(c), kind: c.kind, status: c.status, choices: c.choices ?? [] }))) } : {}),
-          ...uploadMeta(files),
-        },
-      })
+      await humanMessage(await readJson(req, UPLOAD_BODY))
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'GET' && /^\/scribbles\/[0-9a-f]+\.(json|png)$/.test(url.pathname)) {
@@ -3314,105 +3634,15 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (req.method === 'POST' && url.pathname === '/session') {
       // The human's own name and mark for a session; they outlive reconnects.
-      const body = await readJson(req)
-      const agent = state.agents.find(a => a.id === targetAgent(body.agent))
-      // Archiving is for sessions that are gone; one that is online would keep asking into the void.
-      if (body.archived === true && links.has(agent.id)) return send(res, 409, '{"error":"a session that is online cannot be archived"}')
-      if (body.archived != null) agent.archived = body.archived === true
-      // Sessions that share a group are shown as a pair; null takes a session out of its group.
-      if ('group' in body) agent.group = body.group == null ? null : String(body.group).trim().slice(0, 40) || null
-      if (body.label != null) agent.label = String(body.label).trim().slice(0, 60)
-      if (body.icon != null) {
-        agent.icon = String(body.icon).slice(0, 80)
-        // Picked by hand it is the human's and the agent leaves it alone; cleared, the agent may choose again.
-        if (agent.icon) agent.icon_by = 'human'
-        else delete agent.icon_by
-      }
-      // To another desk: the session goes with the sessions it is paired with, and its cards with it.
-      // The human says whose sub a session is; null lets it stand alone.
-      if ('parent' in body) {
-        try { setParent(agent, body.parent) } catch (err) { return send(res, 409, JSON.stringify({ error: err.message })) }
-      }
-      if (body.desk != null) {
-        if (!state.desks.some(d => d.id === body.desk)) return send(res, 404, '{"error":"no such desk"}')
-        // A sub stands where its main stands: move the main (its subs come along), or let the sub stand alone first.
-        if (agent.parent != null && body.desk !== agent.desk) return send(res, 409, JSON.stringify({ error: `this session is a sub of ${agent.parent} and moves with it` }))
-        for (const a of agent.group ? state.agents.filter(x => x.group === agent.group) : [agent]) a.desk = body.desk
-      }
-      if ('before' in body) moveSession(agent, body.before)
-      commit()
+      editSession(await readJson(req))
       return send(res, 200, '{"ok":true}')
     }
     // Memos: the human's notes that live on the hub until they are sent. { id?, text?, to?, place?, x?, y?,
     // attachments? } makes or changes one; { id, remove: true } throws it away; { id, send: true } sends it to its
     // session as a message of the human, like any other, and the note is gone. No agent sees a note before that.
     if (req.method === 'POST' && url.pathname === '/memo') {
-      const body = await readJson(req, UPLOAD_BODY)
-      let memo = body.id == null ? null : state.memos.find(m => m.id === body.id)
-      if (body.id != null && !memo) return send(res, 404, '{"error":"no such memo","code":"no-memo"}')
-      const dropFiles = list => { for (const name of list.flatMap(filesOfAttachment)) fs.rmSync(path.join(FILES, name), { force: true }) }
-      if (body.remove === true) {
-        if (!memo) return send(res, 400, '{"error":"remove needs the id of a memo"}')
-        dropFiles(memo.attachments)
-        state.memos = state.memos.filter(m => m !== memo)
-        commit()
-        return send(res, 200, '{"ok":true}')
-      }
-      if (body.send === true) {
-        if (!memo) return send(res, 400, '{"error":"send needs the id of a memo"}')
-        // To the session it names, else to the one that takes the quick memo (the starred one), else to the only one.
-        const to = memo.to ?? state.agents.find(a => a.starred)?.id ?? (state.agents.length === 1 ? state.agents[0].id : null)
-        if (!to || !state.agents.some(a => a.id === to)) return send(res, 409, '{"error":"this memo has no session to go to","code":"no-session"}')
-        const text = memo.text.trim()
-        if (!text && !memo.attachments.length) return send(res, 400, '{"error":"empty message"}')
-        state.memos = state.memos.filter(m => m !== memo)
-        addMessage(to, 'user', text, memo.attachments)
-        await deliver(to, 'notifications/claude/channel', { content: text || uploadLine(memo.attachments), meta: { kind: 'chat', ...uploadMeta(memo.attachments) } })
-        return send(res, 200, JSON.stringify({ ok: true, sent: { agent: to, message: state.messages.at(-1).id } }))
-      }
-      // Checked before anything is written or stored.
-      const fields = {}
-      if (body.text != null) {
-        fields.text = String(body.text)
-        if (fields.text.length > 1e6) throw new Error('body too large')
-      }
-      if ('to' in body) {
-        if (body.to != null && !state.agents.some(a => a.id === body.to)) return send(res, 404, JSON.stringify({ error: `no agent ${body.to}` }))
-        fields.to = body.to ?? null
-      }
-      if (body.place != null) {
-        if (!MEMO_PLACES.includes(body.place)) return send(res, 400, JSON.stringify({ error: `place must be one of ${MEMO_PLACES.join(', ')}` }))
-        fields.place = body.place
-      }
-      for (const k of ['x', 'y']) {
-        if (body[k] == null) continue
-        if (!Number.isFinite(body[k])) return send(res, 400, JSON.stringify({ error: `${k} must be a number` }))
-        fields[k] = body[k]
-      }
-      if (!memo && state.memos.length >= MEMOS_MAX) return send(res, 409, JSON.stringify({ error: `at most ${MEMOS_MAX} memos`, code: 'too-many' }))
-      // attachments, when given, is the whole list: what the note already has is named by its url, what is new comes
-      // as { name, data } (a base64 data URL), as on a message. What is no longer named is deleted.
-      let attachments = memo?.attachments ?? []
-      if (body.attachments != null) {
-        if (!Array.isArray(body.attachments)) throw new Error('attachments must be a list')
-        if (body.attachments.length > MAX_UPLOADS) throw new Error(`at most ${MAX_UPLOADS} attachments at once`)
-        const kept = body.attachments.filter(a => a?.data == null).map(a => attachments.find(x => x.url === a?.url))
-        if (kept.includes(undefined)) return send(res, 400, '{"error":"an attachment is either one the memo has (by its url) or a new one ({ name, data })"}')
-        const fresh = storeUploads(body.attachments.filter(a => a?.data != null))
-        dropFiles(attachments.filter(a => !kept.includes(a)))
-        let next = 0
-        attachments = body.attachments.map(a => (a?.data == null ? attachments.find(x => x.url === a.url) : fresh[next++]))
-      }
-      const now = Date.now()
-      if (memo) Object.assign(memo, fields, { attachments, updated: now })
-      else {
-        memo = { id: newId(), text: '', to: null, place: 'float', x: 0, y: 0, ...fields, attachments, created: now, updated: now }
-        // Newest first.
-        state.memos = [memo, ...state.memos]
-      }
-      // Typing saves within a second, together with whatever else changed; everything else at once.
-      commit(body.id != null && Object.keys(fields).every(k => k === 'text' || k === 'x' || k === 'y') && body.attachments == null)
-      return send(res, 200, JSON.stringify({ ok: true, memo }))
+      const out = await memoAct(await readJson(req, UPLOAD_BODY))   // (memoAct: above turboRoutes, shared with the server-rendered board)
+      return send(res, out.code, out.text)
     }
     // Test cards for trying the board: { n } files n of them (default 5, at most 20) as the session "Demo";
     // { clear: true } takes them all away again, with the session.
@@ -3440,7 +3670,7 @@ const httpServer = http.createServer(async (req, res) => {
       if (!desk) return send(res, 404, '{"error":"no such desk"}')
       if (body.remove === true) {
         if (desk.id === DEFAULT_DESK) return send(res, 409, '{"error":"the default desk stays"}')
-        for (const a of state.agents) if (a.desk === desk.id) a.desk = DEFAULT_DESK
+        for (const a of state.agents) if (a.desk === desk.id) toDesk(a, DEFAULT_DESK)
         state.desks = state.desks.filter(d => d !== desk)
         commit()
         return send(res, 200, '{"ok":true}')
@@ -3462,15 +3692,7 @@ const httpServer = http.createServer(async (req, res) => {
       return send(res, 200, JSON.stringify({ ok: true, desk }))
     }
     if (req.method === 'POST' && url.pathname === '/star') {
-      const body = await readJson(req)
-      const agent = state.agents.find(a => a.id === targetAgent(body.agent))
-      agent.starred = Boolean(body.starred)
-      if (agent.starred) {
-        agent.starred_at = Date.now()
-        // Only one can wear the crown: crowning this session takes it from whoever had it.
-        for (const other of state.agents) if (other !== agent && other.starred) other.starred = false
-      }
-      commit()
+      starSession(await readJson(req))
       return send(res, 200, '{"ok":true}')
     }
     if (req.method === 'POST' && url.pathname === '/snooze') {
@@ -3549,13 +3771,13 @@ const httpServer = http.createServer(async (req, res) => {
         res.writeHead(302, { Location: found.redirect + url.search })
         return res.end()
       }
-      if (found) return send(res, 200, fs.readFileSync(found.file), MIME[path.extname(found.file)])
+      if (found) return sendFile(req, res, found.file, MIME[path.extname(found.file)])
     }
     return send(res, 404, '{"error":"not found"}')
   } catch (err) {
     return send(res, err.status ?? 400, JSON.stringify({ error: err.message }))
   }
-})
+}
 
 // ---- hub or spoke ----------------------------------------------------------
 
@@ -3710,12 +3932,18 @@ function becomeHub() {
   purge()
   if (padSupport()) console.error(`[board] ${padSupport()}`)
   wake()
+  for (const memo of state.memos.filter(m => m.held)) memoDeliver(memo).catch(err => console.error(`[board] memo ${memo.id}: ${err.stack ?? err}`))   // held when the hub stopped: delivered now
   if (!cleaning) setInterval(wake, Number(process.env.BOARD_SNOOZE_TICK_MS) || 30000).unref()
   if (!cleaning) setInterval(purge, 6 * 3600000).unref()
+  if (!cleaning) setInterval(blockedTick, Number(process.env.BOARD_BLOCKED_TICK_MS) || 30000).unref()
   cleaning = true
   if (passkeyModule && !passkey) {
     // The addresses a passkey may be made and used under: the public ones, and this machine itself.
     try { passkey = passkeyModule.passkeys({ file: path.join(DATA, 'pad.db'), origins: [...PUBLIC_URLS, `http://localhost:${PORT}`], publicUrls: PUBLIC_URLS }) } catch (err) { console.error(`[board] passkeys stay off: ${err.message}`) }
+  }
+  if (pushModule && !push) {
+    // The cards that wait now are known from the start: only what knocks from here on rings.
+    try { push = pushModule.pusher({ dir: DATA, web: PUBLIC, boards: () => clients.size + turbo.clients(), log: line => console.error(`[board] ${line}`) }); push.watch(state) } catch (err) { console.error(`[board] push stays off: ${err.message}`) }
   }
   if (pairing && !pairRoute) {
     try {

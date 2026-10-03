@@ -32,11 +32,9 @@
 .inbox-row.is-current [data-cap]::after { content: attr(data-cap); position: absolute; top: 7px; right: 7px; rotate: 3deg; }
 .inbox-done.is-current [data-cap]::after { content: attr(data-cap); margin-left: 8px; min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
 .inbox-row.is-current .inbox-later[data-cap]::after { position: static; margin-left: 7px; rotate: 0deg; min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
-.inbox-row.is-current .inbox-option kbd { opacity: 1; }
 /* A finger has no keys. */
 @media (pointer: coarse) { .inbox-row.is-current [data-cap]::after, .inbox-done.is-current [data-cap]::after { content: none; } }
 /* The option the arrows are on, among the choices of the marked row. */
-.inbox-row .inbox-option:focus-visible { outline: 3px solid var(--fg); outline-offset: 2px; }
 
 /* ---- a sequence under way: "g", then where to ---- */
 .keys-pending {

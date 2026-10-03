@@ -170,28 +170,34 @@ deploy/backup.sh --to /mnt/nas/trommi --keep 14
 deploy/backup.sh --no-secrets          # without token, admin key and speech key
 ```
 
-**The state is in SQLite now, and `deploy/backup.sh` does not know that yet.** The hub keeps the board in `data/pad.db` in WAL mode, with `pad.db-wal` and `pad.db-shm` beside it. `state.json` is the old file: read once when the board moved, never written since, left in place as a backup of that day (the marker `state.in-sqlite` says so). A copy of `pad.db` taken while the hub writes can be torn, or lack what still sits in the WAL. So, until the script is brought up to date, do one of the two before copying:
+**The script knows SQLite (card Nr. 175) and runs while the hub runs.** The hub keeps the board in `data/pad.db` in WAL mode, with `pad.db-wal` and `pad.db-shm` beside it. A raw copy of those three files taken while the hub writes can be torn, or lack what still sits in the WAL, so the script never copies them: `deploy/sqlite-snapshot.mjs` opens the database read-only and lets SQLite write the copy (`VACUUM INTO`), which is the database as it was at one moment, WAL content included, as one file. The copy is checked with `PRAGMA integrity_check`; if the snapshot or the check fails, no archive is written. The live database is only read. It needs a node with `node:sqlite` (22.5 or newer; `BOARD_NODE` names another binary).
+
+The order is: database first, then the files. Every attachment the snapshot refers to is in the archive; a file that arrived a moment later comes along unreferenced (the admin page lists such files as orphans).
+
+In the archive: `pad.db` (the snapshot), `files/`, `assets/`, `pad/`, `scribbles/`, `sessions/`, `agents/`, `speech/`, `admin-log.jsonl`, the old `state.json` where it still lies there, and the secrets `token`, `admin-token`, `tinfoil.key` (mode 0600 inside the archive; the archive itself is 0600). Never in it: `url.txt` (it spells out the token and is written again at every start), logs, half-written files, `pad.db-wal`, `pad.db-shm`. **The secrets are needed for a restore that keeps every browser signed in, and they open the board to whoever reads the archive**: keep it where the data directory may be, or use `--no-secrets`. Passkeys (public keys only) are in the database.
+
+No timer and no service are installed: it is a script to run by hand (or from a cron line of your own) until 1.0.
+
+`state.json` is the old file: read once when the board moved, never written since, left in place as a backup of that day (the marker `state.in-sqlite` says so). A second way to a copy is the export as JSON:
 
 ```bash
-systemctl --user stop trommi-hub && deploy/backup.sh && systemctl --user start trommi-hub   # a still database
-
-node server/board-store.mjs export data data/state-export.json   # or: a whole copy of the state as JSON, hub running
-deploy/backup.sh
-node server/board-store.mjs counts data                           # records per kind, to compare after a restore
+node server/board-store.mjs export data data/state-export.json   # the state as JSON, hub running
+node deploy/sqlite-snapshot.mjs --counts data/pad.db             # records per kind and rows per table, read-only
 ```
 
 The export holds the board (cards, messages, sessions, status lines, assets, waiting events), not the Scratchpad's elements; those are only in `pad.db`. To start a hub from an export, put it in place as `state.json` in a data directory without `pad.db` and without the marker; `node server/board-store.mjs back data` does the same in place, with the hub stopped.
 
-The script still copies `state.json` first, then the rest (the database files included), checks that the copied `state.json` is valid JSON and packs the copy; that check says nothing about the database. `url.txt` and logs are never included. It prints paths, counts and sizes, never file contents. An archive with secrets opens the board to whoever reads it.
+The script prints paths, counts (records per kind, rows per table) and sizes, never file contents and never a secret.
 
 **Restore:**
 
 ```bash
-systemctl --user stop trommi-hub
-mv data data.old && mkdir -m 700 data
-tar -C data -xzf ~/.local/state/trommi/backups/trommi-data-<date>.tar.gz --strip-components=1
-systemctl --user start trommi-hub
+# stop the hub (systemctl --user stop trommi-hub, or end the process that holds port 8790)
+deploy/restore.sh ~/.local/state/trommi/backups/trommi-data-<date>.tar.gz --data data --replace
+# start the hub again
 ```
+
+`restore.sh` fills an empty or new directory; with `--replace` it first moves what is there aside as `data.before-restore-<date>` (nothing is deleted). It refuses an archive that `backup.sh` did not make, and, on Linux, a directory whose `pad.db` a process still has open. Afterwards it checks the database and prints the same counts as the backup did, to compare. The restored `pad.db` is one file; the hub makes `-wal` and `-shm` again. By hand it is the same three steps: move `data` aside, `mkdir -m 700 data`, `tar -C data -xzf <archive> --strip-components=1`.
 
 Stop the hub first and make sure no session takes the port in between (`ss -ltnp 'sport = :8790'`), or that session writes its state over the restored one. After a restore without secrets the hub mints a new token and admin key: open the new link from `data/url.txt` in every browser. Running sessions pick the new token up from the file.
 
@@ -244,7 +250,7 @@ On the author's machine, without touching the live hub on port 8790 or the repos
 - **The unit's command line:** `/usr/bin/node server/server.mjs` in a bare environment with `BOARD_HUB_ONLY=1`, stdin from `/dev/null`, a temporary data directory, port 8842: stays up, answers 401 without login, 302 for the login link, 200 with the cookie, streams `/events`, ends on SIGTERM leaving a valid `state.json`. The same without the flag exits with status 0 within a second.
 - **Port race** on port 8843 with a hub and one spoke, as described in "For the server".
 - **Container:** image built with rootless Docker, run on port 8844 with the options from `compose.yaml`: answers, health check turns healthy, an agent call from the host gets 403, stops cleanly. Both compose files parse (`docker compose config`).
-- **Backup:** against a copy of a test data directory: archive contents, exclusions, `--no-secrets`, `--keep`, refusal on a broken `state.json`, restore by `tar -x`.
+- **Backup:** in `server/test.mjs` ("backup and restore"): a hub running on a throwaway data directory is backed up, the archive holds one `pad.db` and no `-wal`/`-shm`/`url.txt`, secrets are 0600, the output names no secret and no content; restored into another directory, records per kind are those of the moment of the snapshot (what was written afterwards is not in it), attachment and asset ciphertext are byte-equal, a hub started on the restored directory serves the cards and messages and accepts the old cookie; `--no-secrets`, `--keep`, `--replace`, refusal of a foreign archive, of a non-data directory and of a directory with an open database. One real run against the live `data/` on 3 Oct 2026 (read only, archive written elsewhere): 174 MB, 1274 files, 154 cards, 1180 messages, 111 assets; restored copy had the same counts.
 - **Tailscale helper:** printing only.
 
 Not tested: the unit actually started by systemd (so the sandbox directives are checked for syntax, not for effect on a running hub); `--enable` and `--uninstall` of the install script; `compose.host.yaml`; `Caddyfile.client` (caddy is not installed); `tailscale-serve.sh --apply`; a restore into a live hub; behaviour after a reboot.

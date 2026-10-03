@@ -1,7 +1,9 @@
-// The piles at the foot of a list of questions, as stacks of paper drawn with the pen: "Later" (what
-// comes back: in revision, snoozed) and "Done" (what is finished: answered, shredded). A stack carries
-// its count (a tally, or the number where the strokes would be too many); its height grows with the
-// count. A click fans a stack out: its sheets leave it and lie below as full-width lines. A second click
+// The piles at the foot of a list of questions, one per state a card can be in once it left the open rows:
+// three stacks of paper drawn with the pen, "Later" (snoozed), "In the works" (with the session: in revision, or
+// answered and being acted on) and "Done" (closed), and at the end of the row a small waste-paper basket
+// (shredded, withdrawn). A stack carries
+// its count (a tally, or the number where the strokes would be too many) and its name as a rubber stamp; its
+// height grows with the count. A click fans a stack out: its sheets leave it and lie below as full-width lines. A second click
 // or Escape gathers them back. One stack is fanned out at a time.
 // The lines themselves are built by the list (inbox.js); the look is css/piles.css.
 import { el, tally } from './ui.js'
@@ -30,7 +32,14 @@ function paper(n, key = '') {
   return `<svg class="inbox-stack-sheets" width="${W + 2 * pad}" height="${h.toFixed(0)}" viewBox="0 0 ${W + 2 * pad} ${h.toFixed(0)}" aria-hidden="true">${out}</svg>`
 }
 
-/** The stacks. piles: [{ kind, word, also, ring, lines }]: lines are functions that each build one line,
+/** The waste-paper basket: small, woven, drawn by hand; with something in it a crumpled sheet looks over its rim. */
+function basket(n) {
+  const ball = n ? '<path class="inbox-bin-ball" d="M13.5 15.5 Q11 9.5 16.5 7.5 Q18.5 3.5 23.5 5.5 Q28.5 3 31 8 Q35.5 9.5 33.5 15.5"/><path class="inbox-bin-crease" d="M17.5 9.5 Q20.5 11.5 20 15 M24 6.5 Q25.5 10 29 10.5 M27 15 Q28.5 12.5 31.5 12"/>' : ''
+  return `<svg class="inbox-bin-drawing" width="46" height="54" viewBox="0 0 46 54" aria-hidden="true">${ball}<path class="inbox-bin-body" d="M6.5 16.5 Q22.5 15 39.5 16.2 Q38.2 33 35.2 50.2 Q23 51.6 11 50.4 Q8 33 6.5 16.5 Z"/><path class="inbox-bin-weave" d="M14.2 17 Q15.2 34 16.6 50.6 M23 16.4 Q23.2 34 23 51 M31.6 16.6 Q30.8 34 29.4 50.8 M8.4 27.5 Q23 26.4 37.8 27.6 M9.8 39 Q23 38 36.6 39.2"/><path class="inbox-bin-rim" d="M4.6 16.8 Q23 14.2 41.4 16.4"/></svg>`
+}
+
+/** The stacks. piles: [{ kind, word, also, ring, bin, lines }]: bin: this one is the small basket at the end of the
+ *  row, not a stack of paper; lines are functions that each build one line,
  *  in the order they lie; ring is a node shown on the top sheet (the turning ring while a session works on
  *  something there); also: one more name for the classes (inbox-group-<also>, inbox-<also>-toggle).
  *  open: the kind that stands fanned out; wide: it shows the whole pile, not only the first sheets.
@@ -58,9 +67,9 @@ export function stacks(piles, { open = null, wide = false, onToggle, onShut } = 
     const { pile, section, head, sheets } = parts.get(kind)
     section.classList.toggle('is-open', to)
     head.setAttribute('aria-expanded', String(to))
-    head.title = to ? 'Gather them back into the stack' : 'Fan the stack out'
+    head.title = pile.bin ? (to ? 'Put them back into the basket' : `${pile.word}: show what is in it`) : to ? 'Gather them back into the stack' : 'Fan the stack out'
     // An open stack has given its sheets away: one sheet is left where it stood.
-    sheets.innerHTML = paper(to ? 1 : pile.lines.length, kind)
+    sheets.innerHTML = pile.bin ? basket(to ? 0 : pile.lines.length) : paper(to ? 1 : pile.lines.length, kind)
   }
 
   // ---- the fan: the sheets leave the stack, and go back into it ----
@@ -99,7 +108,9 @@ export function stacks(piles, { open = null, wide = false, onToggle, onShut } = 
   piles.forEach((pile, at) => {
     const n = pile.lines.length, names = [pile.kind, ...(pile.also ? [pile.also] : [])]
     const section = el('section', n ? `inbox-stack inbox-group inbox-pile ${names.map(k => `inbox-group-${k}`).join(' ')}` : 'inbox-stack is-empty')
+    if (pile.bin) section.classList.add('inbox-bin')
     section.style.setProperty('--at', at)
+    section.dataset.stack = pile.kind   // which stack it is, also when it is empty (the ink of its stamp, css)
     if (n) section.dataset.pile = pile.kind
     const title = el('h3', 'inbox-stack-title')
     const head = el('button', n ? `inbox-stack-head inbox-pile-head ${names.map(k => `inbox-${k}-toggle`).join(' ')}` : 'inbox-stack-head')
@@ -110,15 +121,19 @@ export function stacks(piles, { open = null, wide = false, onToggle, onShut } = 
     const sheets = el('span')
     // On the top sheet: the count, as strokes or as a number, and the ring while a session works on something.
     const on = el('span', 'inbox-stack-on')
-    if (n) on.append(n > TALLY_MAX ? el('span', 'inbox-stack-num', String(n)) : tally(n, TALLY_MAX), ...(pile.ring ? [pile.ring] : []))
+    // (The basket is too small for strokes: it carries its count as a small number.)
+    if (n) on.append(pile.bin || n > TALLY_MAX ? el('span', 'inbox-stack-num', String(n)) : tally(n, TALLY_MAX), ...(pile.ring ? [pile.ring] : []))
     drawn.append(sheets, on)
-    // The word stands first for whoever reads the page aloud; the paper is drawn above it (css).
-    head.append(el('span', 'inbox-stack-word', pile.word), drawn, el('b', null, String(n)))
+    // The one place for a stack's name: .inbox-stack-word holds it, as .inbox-stamp. The word stands first for whoever
+    // reads the page aloud; to the eye it is a rubber stamp on the top sheet (css). The basket's name is not shown.
+    const word = el('span', 'inbox-stack-word')
+    word.append(el('span', 'inbox-stamp', pile.word))
+    head.append(word, drawn, el('b', null, String(n)))
     title.append(head)
     const fan = el('div', 'inbox-pile-sheets')
     section.append(title, fan)
     parts.set(pile.kind, { pile, section, head, sheets, fan })
-    sheets.innerHTML = paper(n, pile.kind)
+    sheets.innerHTML = pile.bin ? basket(n) : paper(n, pile.kind)
     if (n) {
       head.addEventListener('click', () => toggle(pile.kind))
       const stands = open === pile.kind

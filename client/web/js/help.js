@@ -42,7 +42,7 @@ const BANDS = [
     [hop(0, 1, 'tools/call', '~every tool: reply, create_decision,', '~set_status, list_cards …'), hop(1, 2, 'POST /agent/tool'),
       hop(2, 3, 'SSE /events', '~the whole state, on every change')],
     [hop(0, 1, 'tools/call publish_asset', '~encrypted here, in the channel'), hop(1, 2, 'POST /agent/asset', '~ciphertext only'),
-      hop(2, 3, 'GET /a/<id>#<key>', '~no login; the key stays in the browser')],
+      hop(2, 3, 'GET /a/<id>#<key>', '~signed in; the key stays in the browser')],
   ] },
 ]
 const NEVER = ['the model’s thinking', 'its tool calls', 'the terminal’s output', 'text while it streams']
@@ -180,8 +180,11 @@ async function loadGuide() {
     }
   } catch {}
   try {
-    const { LAYOUT, cap } = await import('./keys.js')
-    drawKeys(LAYOUT)
+    const { cap } = await import('./keys.js')
+    // The short list of the board's keys (card Nr. 200); the rest still works and comes onto this page later.
+    const { SHORT } = await import('/t/lib/keys.js')
+    drawKeys([{ title: 'Keys', keys: SHORT }])
+    $('key-list').append(el('p', 'hp-wait', 'More keys later.'))
     // The key of each of the four ways, beside its word.
     for (const node of document.querySelectorAll('[data-key]')) { try { node.append(el('kbd', null, cap(node.dataset.key))) } catch {} }
   } catch {

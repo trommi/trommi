@@ -217,10 +217,15 @@ window.addEventListener('message', e => {
   if (msg.type === 'ready') {
     ready = true
     tellPad(true)
-    if (DESK) { follow(); if (arrivedForPen) { arrivedForPen = false; setDraw(true) } }
+    if (DESK) {
+      watchPinch(frame.contentDocument, true)
+      if (zoom !== 1) { frame.contentWindow.padZoom?.(zoom, 0); placeLayer(); grow() }
+      follow()
+      if (arrivedForPen) { arrivedForPen = false; setDraw(true) }
+    }
   }
   else if (DESK) {
-    if (msg.type === 'extent') { extent = Math.max(0, Number(msg.bottom) || 0); grow() }
+    if (msg.type === 'extent') { extent = Math.max(0, Number(msg.bottom) || 0); paperW = Math.max(0, Number(msg.width) || 0); grow() }
     else if (msg.type === 'scroll') box.scrollBy({ top: Number(msg.by) || 0, behavior: 'instant' })
     else if (msg.type === 'close') { frame.blur(); window.focus() }   // Escape with nothing to let go of: the keys are the board's again
     else if (msg.type === 'front') {
@@ -228,7 +233,7 @@ window.addEventListener('message', e => {
       paintSwitch()
       if (!front && document.activeElement === frame) { frame.blur(); window.focus() }   // back to the pointer: the board's keys work again
     }
-    else if (msg.type === 'pan') { panX = Number(msg.x) || 0; layer.style.translate = `${-panX}px 0` }
+    else if (msg.type === 'pan') { panX = Number(msg.x) || 0; placeLayer() }
   }
   else if (msg.type === 'close') closePad()
   else if (msg.type === 'fly' && open && typeof msg.png === 'string' && msg.png.startsWith('data:image/png') && msg.rect) fly(msg)
@@ -275,7 +280,8 @@ function grow() {
   const vh = box.clientHeight
   if (!vh || !deskShown()) return
   const pb = parseFloat(getComputedStyle(box).paddingBottom) || 0
-  room.style.height = `${Math.max(0, Math.round(Math.max(0, extent - roomTop()) + 1.5 * vh - pb))}px`
+  // On a phone half a window of free paper is enough (his decision); on a wide screen one and a half.
+  room.style.height = `${Math.max(0, Math.round(Math.max(0, extent * zoom - roomTop()) + (phone.matches ? 0.5 : 1.5) * vh - pb))}px`
 }
 function measure() {
   const cs = getComputedStyle(box)
@@ -290,6 +296,7 @@ function measure() {
 /** The Desk scrolled, or the list changed its height. */
 function follow() {
   const shown = deskShown()
+  if (shown && frame && !frame.getAttribute('src')) frame.src = '/pad/?embed=1&desk=1'
   if (shown !== open) { open = shown; tellPad() }
   if (!shown) { lastRoom = null; return }
   const at = roomTop()
@@ -351,7 +358,56 @@ export function toggleCards(hide = !cardsHidden) {
 export function paperPoint(clientX, clientY) {
   if (!deskShown()) return null
   const r = box.getBoundingClientRect()
-  return { x: Math.round(clientX - r.left - box.clientLeft + panX), y: Math.round(clientY - r.top - box.clientTop + box.scrollTop) }
+  return { x: Math.round((clientX - r.left - box.clientLeft) / zoom + panX), y: Math.round((clientY - r.top - box.clientTop + box.scrollTop) / zoom) }
+}
+
+// ---- zoom: a pinch on a touch screen ----
+// The paper is as wide as it was written (on the desktop, usually); on a phone it is panned sideways, and a pinch
+// with two fingers zooms it between "the whole written width fits" and 200 %. Only the paper scales (the pad's
+// canvas, and the layer of things lying on it: one CSS scale); the Desk's cards stay at their size and in their
+// column, so under zoom a drawing does not sit beside the card it was drawn beside. Kept in this browser.
+const ZOOM_KEY = 'trommi-deskpad-zoom'
+let zoom = 1, paperW = 0, pinch = null, pinchFrame = 0
+const minZoom = () => (paperW && box.clientWidth ? Math.min(1, Math.max(0.15, box.clientWidth / paperW)) : 1)
+function placeLayer() {
+  layer.style.scale = String(zoom)
+  layer.style.translate = `${-panX * zoom}px 0`
+}
+/** Zoom the paper to z, keeping the paper under the point (x, y) of the Desk's window where it is. */
+function setZoom(z, x = 0, y = 0) {
+  z = Math.min(2, Math.max(minZoom(), z))
+  if (Math.abs(z - 1) < 0.03) z = 1
+  if (z === zoom || !deskShown()) return
+  const py = (box.scrollTop + y) / zoom
+  zoom = z
+  grow()   // room to scroll to, before the place is taken
+  box.scrollTop = py * z - y
+  padWindow()?.padZoom?.(z, x)
+  placeLayer()
+  lastTop = box.scrollTop; lastRoom = null   // this move was the zoom's, not the list's
+  follow()
+}
+/** Two fingers: both on the Desk's cards (this page) or both on the paper between them (the pad's page). */
+function watchPinch(target, inFrame) {
+  const spread = e => Math.hypot(e.touches[0].screenX - e.touches[1].screenX, e.touches[0].screenY - e.touches[1].screenY) || 1
+  target.addEventListener('touchstart', e => {
+    // With a tool in hand two fingers scroll (the pad does that); the pinch is for the bare pointer.
+    pinch = e.touches.length === 2 && padWindow()?.document.getElementById('pad')?.dataset.touch !== 'draw' ? { d: spread(e), z: zoom, r: inFrame ? { left: 0, top: 0 } : box.getBoundingClientRect() } : null
+  }, { passive: true })
+  target.addEventListener('touchmove', e => {
+    if (!pinch || e.touches.length !== 2) return
+    pinch.to = pinch.z * spread(e) / pinch.d
+    pinch.x = (e.touches[0].clientX + e.touches[1].clientX) / 2 - pinch.r.left
+    pinch.y = (e.touches[0].clientY + e.touches[1].clientY) / 2 - pinch.r.top
+    pinchFrame ||= requestAnimationFrame(() => { pinchFrame = 0; if (pinch?.to) setZoom(pinch.to, pinch.x, pinch.y) })
+  }, { passive: true })
+  const end = e => {
+    if (!pinch || e.touches.length > 1) return
+    pinch = null
+    try { localStorage.setItem(ZOOM_KEY, String(zoom)) } catch {}
+  }
+  target.addEventListener('touchend', end, { passive: true })
+  target.addEventListener('touchcancel', end, { passive: true })
 }
 /** A layer on the paper for things that lie on it and scroll with it (above the drawing, below the cards): position
  *  children absolutely, in paperPoint()'s pixels. Null before the Desk has its paper. */
@@ -408,7 +464,8 @@ function mountDesk(arrived) {
   paper.setAttribute('aria-label', `${PAD_WORD}: the Desk is paper`)
   frame = document.createElement('iframe')
   frame.title = PAD_WORD
-  frame.src = '/pad/?embed=1&desk=1'
+  // The pad's page is a second app (its script, its strokes, a stream of its own): it is fetched when the Desk is
+  // first in view (follow(), below), not on a session's page or an Agents page that never shows the paper.
   frame.tabIndex = -1   // not a stop for Tab: the paper is taken up with P or the pen switch, and left with Escape
   frame.setAttribute('aria-label', `${PAD_WORD}: the paper the Desk lies on`)
   frame.allow = 'microphone; clipboard-read; clipboard-write'
@@ -428,7 +485,8 @@ function mountDesk(arrived) {
   penSwitch.setAttribute('aria-keyshortcuts', 'P')
   eyeSwitch = switchButton(['eye', 'slash'], 'Hide the cards: only the paper')
   eyeSwitch.id = 'deskpad-eye'
-  penSwitch.addEventListener('click', () => setDraw(!front))
+  // In front without the pen (a note open, something selected): the switch still picks the pen up.
+  penSwitch.addEventListener('click', () => setDraw(!(front && padWindow()?.pad?.state().tool !== 'select')))
   eyeSwitch.addEventListener('click', () => toggleCards())
   pill.append(penSwitch, eyeSwitch)
   // The pill's place stays put; the pill slides out of and into it (tuck()).
@@ -438,13 +496,15 @@ function mountDesk(arrived) {
   over.append(place)
   // Tucked away, the pill is a tab: the first tap only brings it out.
   place.addEventListener('click', e => { if (over.hasAttribute('data-tuck')) { e.preventDefault(); e.stopPropagation(); pulled = true; tuck() } }, true)
-  phone.addEventListener('change', tuck)
+  phone.addEventListener('change', () => { tuck(); grow() })
   const above = [...box.children]
   room = document.createElement('div')
   room.className = 'deskpad-room'
   box.prepend(paper, layer, over)
   box.append(room)
   box.addEventListener('scroll', follow, { passive: true })
+  try { const z = Number(localStorage.getItem(ZOOM_KEY)); if (z >= 0.15 && z <= 2) zoom = z } catch {}
+  watchPinch(box, false)
   new ResizeObserver(measure).observe(box)
   const watch = new ResizeObserver(() => { follow(); tuck() })
   for (const node of above) watch.observe(node)

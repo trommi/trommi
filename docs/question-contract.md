@@ -710,10 +710,10 @@ Agents are told to offer only the options they are about 80% confident are a
 great idea: two or three strong ones, the recommendation marked. When the human
 asked for many proposals, all of them belong on a linked page or an attachment,
 and only the ones the agent stands behind on the card. The hub does not refuse
-a long list, but a card filed or revised with more than six options gets a
+a long list, but a card filed or revised with more than ten options gets a
 reminder in the tool result (`Many options (N): keep only the ones you are sure
 of. …`). Nothing changes in the card's shape; clients may still meet cards with
-more than six options and must lay them out.
+more than ten options and must lay them out.
 
 ## 15. Snooze ("Later"), kept on the hub
 

@@ -421,6 +421,10 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
 - Three lines, every view: **8px** is the top of everything fixed (Desk box, session heading, the "Trommi" pill, the
   pad button); **64px** is the band's end (`--band`, was 54: the Desk box's bottom, 8 + 56); **80px** is the first line
   of content (first sidebar row, "Next, please", "Agents", a conversation's first line).
+- Revised 3 Oct (evening): the band holds only the Desk box, the pill and the corner buttons. Every page's heading
+  stands on the 80px line under it, never beside the pill (Christopher: in the band it competed with the menu). The
+  session's heading (drawing, name, quiet line) now has its own line on the conversation's column, the conversation
+  begins 12px under it; the bullet below about the heading in the band is history.
 - Sidebar (app.css): `.topbar` top 8 (was 30), spacer `#agents::before` 72px (was 104; rail 80, was 112).
 - Session (session.css): the conversation begins below the band again (no `margin-top: 0`), so nothing can scroll
   under the pill or the heading; it fades out over the band's last 12px (mask on `.log` / `.pane-list`). The heading
@@ -451,3 +455,23 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   puts it on the stack. A paper note is moved on the paper by its head. Floating notes stand inside `body > .focus`
   while a card is open (quicksend.js `floor()`); new notes there are placed clear of options, ways and field (`spot()`).
   Chips are kept with the note in this browser (`note.chips`; cardclip.js `pasteChip({ initial })`, `.cards()`).
+- Memo simplified (card Nr. 172): no head line, no receiver picker, no stack button. `header.memo-head` is an empty strip
+  (the handle); the foot holds `.memo-clip`, mic, `.memo-bin`, `i.memo-tear`, `span.memo-sends` with one
+  `button.quick-send.memo-send` showing the crown (`.crown-mark`). It sends to the crowned session of the desk in view
+  (agents.js `crowned()`, i.e. `main`); `.memo-send.is-none` (hollow, dashed) when the desk has none: it leads to /agents.
+  Several mains on a desk: one crown button each, with the session's drawing. Gone: `.memo-to`, `.memo-pick`, `.memo-who`,
+  `.memo-away`, `.memo-title`, `.memo-plane`, `localStorage['trommi-king']`.
+
+## Own card colours: tones (card Nr. 175 "farben"; Nr. 178 "zeile", "rand"; 3 Oct, 20:30)
+
+- tokens.css: a session's colour is a **tone**: one hue (`--hue`, set inline by the page or by a class; 162 is the bell's
+  green) in four weights, each a lightness and a chroma in oklch, the same for every hue: `--tone-wash` (pastel ground),
+  `--tone-edge` (pastel edge, line), `--tone-mid` (quiet sign, dashed line), `--tone-pen` (dark outline, words, the filled
+  tile). Light and dark differ only in `--tone-*-l` / `--tone-*-c`. One rule works them out
+  (`:root, [style*="--hue"], .agent-avatar, .crown-bracket`); a new class that sets `--hue` in a stylesheet joins it.
+- Gone: `--card-color` and every `color-mix(in srgb, var(--card-color) N%, …)` (the construction docs/37signals-audit.md
+  finding 2 names), every `hsl(var(--hue) …)` pair with its dark twin. `--card-bg`, `--card-ink`, `--card-line` stay
+  (neutral: surface, grey, line). A row that names no session (`.inbox-row:not([data-from])`) takes the urgency's
+  colours as its tone (`--urg-color`, `--urg-soft`). No JS changed: the hues still come from agents.js / ui.js.
+- session.css: below 1100px `.pane-now .caps` (model, machine) is hidden; the status span no longer shrinks before the
+  caps do. The 12px fade under the band also on the conversation beside the canvas and on `.group-questions` (pair).

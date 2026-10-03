@@ -309,6 +309,7 @@ p { margin: 0 0 16px; color: var(--soft) }
 button { font: inherit; cursor: pointer; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--ink); padding: 8px 12px }
 button.main { width: 100%; min-height: 52px; padding: 12px 16px; font-size: 17px; background: var(--accent); color: var(--on); border-color: var(--accent); font-weight: 600 }
 button:disabled { opacity: 0.55; cursor: default }
+button[data-sure] { border-color: var(--bad); color: var(--bad); font-weight: 600 }
 button:focus-visible, a:focus-visible, input:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px }
 input { font: inherit; width: 100%; padding: 10px 12px; margin: 0 0 12px; border-radius: 10px; border: 1px solid var(--line); background: transparent; color: var(--ink) }
 label { display: block; font-size: 14px; color: var(--soft); margin: 0 0 4px }
@@ -412,9 +413,17 @@ async function show() {
     drop.type = 'button'
     drop.textContent = 'Remove'
     drop.setAttribute('aria-label', 'Remove ' + p.name)
+    // Two presses instead of a pop-up: the first turns the button into the question for four seconds, the second removes.
     drop.onclick = async () => {
-      if (!confirm('Remove the passkey "' + p.name + '"? It can no longer sign in.')) return
-      try { await post('remove', { handle: p.handle }); await show() } catch (err) { say(err) }
+      if (drop.dataset.sure == null) {
+        drop.dataset.sure = ''
+        drop.textContent = 'Really remove?'
+        drop.setAttribute('aria-label', 'Really remove ' + p.name + '? It can no longer sign in.')
+        setTimeout(() => { if (drop.dataset.sure == null) return; delete drop.dataset.sure; drop.textContent = 'Remove'; drop.setAttribute('aria-label', 'Remove ' + p.name) }, 4000)
+        return
+      }
+      drop.disabled = true
+      try { await post('remove', { handle: p.handle }); await show() } catch (err) { drop.disabled = false; say(err) }
     }
     li.append(text, drop)
     list.append(li)

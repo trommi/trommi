@@ -1,5 +1,7 @@
 # Trommi
 
+Früher „Trommi“. Der Name des Produkts ist seit dem 3. Oktober 2026 Trommi; das Repository, der Branch `trommi-board`, Dateinamen und Speicherschlüssel heißen weiter `trommi`.
+
 Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehreren Claude-Code-Sessions über einen Channel. Die Agenten legen Fragen als Karten ab; sie liegen alle auf einem gemeinsamen „Desk“, die dringendste zuerst, und der Mensch beantwortet sie dort oder nacheinander mit „Next, please“. Wie man die Oberfläche bedient, steht kurz auf der Seite `/help.html`. Offene Ideen stehen in `TODO.md`.
 
 ## Starten
@@ -290,7 +292,7 @@ Der Agent hängt Dateien per absolutem Pfad an `reply` oder `create_decision` an
 
 ## Assets und Links
 
-Mit `publish_asset` legt ein Agent eine HTML-Seite, ein Bild, ein Video, eine Audiodatei oder eine beliebige Datei ab und bekommt einen Link: `<board>/a/<id>#<schlüssel>`. Der Link funktioniert ohne Anmeldung am Board. Wer den ganzen Link hat, kann das Asset öffnen, sonst niemand; so lässt es sich weitergeben.
+Mit `publish_asset` legt ein Agent eine HTML-Seite, ein Bild, ein Video, eine Audiodatei oder eine beliebige Datei ab und bekommt einen Link: `<board>/a/<id>#<schlüssel>`. Der Link öffnet sich nur für jemanden, der am Board angemeldet ist und den ganzen Link hat. Für Fremde gibt es die Freigabe (`share_asset` oder „Teilen“ an der Karte): Sie liefert einen zweiten Link `<board>/r/<id>#<schlüssel>`, der ohne Anmeldung geht, bis die Freigabe abläuft oder zurückgenommen wird.
 
 - **Verschlüsselung:** Der Channel-Prozess neben dem Agenten (Hub oder Speiche) würfelt je Asset einen eigenen 256-Bit-Schlüssel und verschlüsselt mit AES-256-GCM, bevor etwas zum Hub geht. Der Schlüssel steht hinter dem `#`; diesen Teil schickt ein Browser nie an einen Server.
 - **Umschlag, Version 1:** `"ZWA1"`, 12 Byte Nonce, Chiffretext, 16 Byte Tag. Zusätzliche Daten: `"ZWA1/" + id`, der Blob öffnet sich also nur unter seiner eigenen Adresse. Im Klartext: Länge des Kopfs (uint32, big endian), Kopf als JSON (`v, type, title, name, mime, size, created`), Inhalt, dann Nullen bis zur nächsten Stufe (Padmé, höchstens rund 12 %), damit die Länge wenig verrät. Anders als in `docs/krypto-konzept.md` für Anhänge geplant, ist es ein Stück und nicht 64-KiB-Teile: Der Betrachter entschlüsselt im Speicher, darum die eigene Größengrenze.

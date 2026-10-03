@@ -25,7 +25,7 @@ What is planned and not built is in the last section and is marked as such.
 | Agents | Remote address is loopback, the request did not come through a proxy (`x-forwarded-for`, `tailscale-user-login`), header `x-board-token` equals the token | `/agent/link`, `/agent/tool`, `/agent/asset`, `/agent/profile`, `/agent/permission` |
 | Browser | `GET /?t=<token>` once sets the cookie `board_<port>` (HttpOnly, SameSite=Lax, one year). Every other request needs the cookie; every request that is not a GET must come from the page's own origin. | Everything else |
 | Admin | The cookie, plus the admin key (`data/admin-token`) exchanged for a session cookie | `/admin/api/*` |
-| No login | Nothing | `/a/<id>`, `/a/<id>/blob`, `/a/-/…` (the asset viewer and ciphertext), `/healthz` |
+| No login | Nothing | `/r/<id>`, `/r/-/…` (the recipient's page) and `/r/<id>/blob` (ciphertext, only of an asset released right now), `/a/-/frame.html` (an empty frame), `/healthz`. The asset viewer `/a/<id>` and `/a/<id>/blob` want the login since card Nr. 175 |
 
 **The state.** One object: `agents`, `messages`, `cards`, `tasks` (status lines), `assets`, `queue` (ids of open cards in the order the human sees them), `pending` (events waiting for sessions that are away), `next_number`, `hub`. `commit()` recomputes the queue, writes what changed to SQLite (`server/board-store.mjs`: the table `board_docs` in `data/pad.db`, one row per card, message, session, status line and asset, the rest in one root row; only rows that differ are written, in one transaction) and writes one frame to every open `GET /events` stream: the whole state as JSON, without `pending`. A page that is behind gets the latest state once it has caught up.
 
@@ -122,7 +122,7 @@ Weak spots:
 2. `POST /agent/asset?id=<session>&instance=…`: the body is the ciphertext; the header `x-asset` is `{id, keep, silent, type, title, note, key}`, base64url. With `silent: true` type, title, note and key are left out.
 3. The hub writes `data/assets/<id>` and a record in `state.assets`. Unless silent, it adds a message to the conversation whose text and `asset.url` contain the link with the key.
 4. The link is `<address>/a/<id>#<key>`; addresses are `BOARD_PUBLIC_URL` and `http://localhost:<port>`.
-5. `GET /a/<id>` needs no login and returns the same viewer (`a.html`) for every id. `GET /a/<id>/blob` returns the ciphertext. `js/asset.js` decrypts with WebCrypto using the key from the fragment, which a browser never sends. An HTML asset is written into `/a/-/frame.html`, a sandboxed frame whose policy allows no network.
+5. `GET /a/<id>` wants the login (without it: the sign-in page, and the key stays behind the `#`) and returns the same viewer (`a.html`) for every id. `GET /a/<id>/blob` returns the ciphertext. `js/asset.js` decrypts with WebCrypto using the key from the fragment, which a browser never sends. An HTML asset is written into `/a/-/frame.html`, a sandboxed frame whose policy allows no network.
 6. `revoke_asset`, or 30 days without `keep`: blob and record are deleted, and the message keeps only the title.
 
 Weak spots:

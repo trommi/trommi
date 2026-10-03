@@ -57,6 +57,45 @@ async function connect(wsUrl) {
   }
 }
 
+// ---- nothing started here outlives the tool that started it -------------------------------------
+// A browser or a demo hub left behind by a test costs the machine a core for hours. Every child a dev tool starts is
+// handed to guard(): it is stopped when the tool ends (also on an error that was not caught), when the tool is
+// interrupted (SIGINT, SIGTERM, SIGHUP), and, by a small watcher process of its own, when the tool is killed outright
+// (SIGKILL, a timeout of whoever ran it), which no handler in the tool can see. The folders named go with it.
+const guarded = new Set()
+function reap() {
+  for (const { proc, group, dirs } of guarded) {
+    try { process.kill(group ? -proc.pid : proc.pid, 'SIGKILL') } catch {}
+    for (const dir of dirs) { try { fs.rmSync(dir, { recursive: true, force: true }) } catch {} }
+  }
+  guarded.clear()
+}
+let hooked = false
+/** Guard a child process: group = it leads a process group of its own (spawned detached), dirs = folders that go with it. */
+export function guard(proc, { group = false, dirs = [] } = {}) {
+  if (!proc?.pid) return proc
+  const entry = { proc, group, dirs }
+  guarded.add(entry)
+  proc.once('exit', () => guarded.delete(entry))
+  if (!hooked) {
+    hooked = true
+    process.on('exit', reap)
+    for (const [sig, code] of [['SIGINT', 130], ['SIGTERM', 143], ['SIGHUP', 129]]) {
+      // A tool with a handler of its own for the signal ends itself; alone, this one does.
+      process.on(sig, () => { const alone = process.listenerCount(sig) === 1; reap(); if (alone) process.exit(code) })
+    }
+  }
+  // The watcher: waits until the tool or the child is gone; if it was the tool, the child and its folders go too.
+  const target = group ? `-${proc.pid}` : `${proc.pid}`
+  const script = `while kill -0 ${process.pid} 2>/dev/null && kill -0 ${proc.pid} 2>/dev/null; do sleep 1; done
+kill -0 ${process.pid} 2>/dev/null && exit 0
+kill -s TERM -- ${target} 2>/dev/null; sleep 2; kill -s KILL -- ${target} 2>/dev/null
+[ $# -gt 0 ] && rm -rf -- "$@"
+exit 0`
+  try { spawn('sh', ['-c', script, 'guard', ...dirs], { detached: true, stdio: 'ignore' }).unref() } catch {}
+  return proc
+}
+
 /** Start one headless Chromium with its own throwaway profile. */
 export async function launchChromium({ width = 1440, height = 900, args = [] } = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-'))
@@ -67,6 +106,7 @@ export async function launchChromium({ width = 1440, height = 900, args = [] } =
     '--headless=new', '--disable-gpu', '--no-proxy-server', '--disable-extensions', '--disable-component-extensions-with-background-pages', '--hide-scrollbars', '--no-first-run',
     `--user-data-dir=${profile}`, '--remote-debugging-port=0', `--window-size=${width},${height}`, ...args, 'about:blank',
   ], { stdio: 'ignore', detached: true })
+  guard(proc, { group: true, dirs: [profile] })
   let gone = false
   let failure = null
   proc.on('error', err => { failure = err; gone = true })

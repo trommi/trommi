@@ -4,6 +4,8 @@
 
 > **In short.** Every asset already has a key of its own (AES-256-GCM, a fresh key and nonce per asset, the id as associated data); that part needed nothing. The key is behind the `#` of the link and never reaches a server through the link. The weak spots were around it: the hub is told the key of every asset it shows on the board, anyone who can reach the hub can fetch any ciphertext, an upload that was cut off was stored, and fetches were not limited. Sharing with someone outside is now a per-asset release with an address of its own, `/r/<id>#<key>`, off by default. Nothing is exposed to the internet; how a stranger reaches the link at all is the one open decision.
 
+> **Decided since (card Nr. 175, "Assets nur mit Login — Fremde brauchen eine Freigabe"), built 3 October.** Section 4 is done and on by default: `/a/<id>` (the viewer), `/a/<id>/blob` (the ciphertext) and the viewer's three files want the login, which is the board's cookie (token link or passkey) or, for a process on this machine, the board token in `x-board-token` (not through a proxy). Without it the page is the sign-in page (401; the `#key` survives signing in), everything else a plain 401, the same for an asset that exists and one that does not. Open without a login are only: `/r/<id>` with `/r/-/…` (the recipient's page, no content), `/r/<id>/blob` for an asset released right now, and the empty `/a/-/frame.html`. `BOARD_ASSET_LOGIN=0` is the way back and is set nowhere. Encryption, link format and the fragment key are unchanged. The tables below describe the state before that decision.
+
 ## 1. Audit
 
 "holds" = does what it should; "weak" = works, with a gap; "missing" = not there. "fixed" says what step 2 did.

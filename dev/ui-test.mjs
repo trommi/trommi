@@ -24,7 +24,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { launchChromium } from './cdp.mjs'
+import { launchChromium, guard } from './cdp.mjs'
 
 // ---- every selector the test knows about ----------------------------------------
 // Behaviour is checked through these; nothing else in the file names a class or an id.
@@ -65,7 +65,7 @@ const SEL = {
   groupName: '.inbox-sender > span:not(.inbox-avatar)',
   groupCount: '.inbox-sender > b',
   groupVip: '.inbox-sender[data-vip], .inbox-sender .crown-mark, .inbox-sender .inbox-vip',
-  memoDot: '.inbox-from-mark[data-memo]',
+  fromCrown: '.inbox-from-mark .crown-mark',   // the crown on the drawing of the one who asks: the desk's crowned session
   crownFold: '.crown-fold',
   crownEdges: '.crown-edges i',
   crownBracket: '.crown-bracket',
@@ -75,6 +75,8 @@ const SEL = {
   pileOpen: '.is-open',
   pileHead: '.inbox-pile-head',
   pileName: '.inbox-stack-word',
+  stack: '.inbox-stacks > .inbox-stack',   // every place at the foot, also an empty one: [data-stack] says which
+  bin: '.inbox-bin',                       // the small waste-paper basket at the end of the row
   pileMore: '.inbox-stack-more',
   pileLineWho: '.inbox-stack-who',
   pileCount: '.inbox-pile-head > b',
@@ -145,10 +147,13 @@ const SEL = {
   lightboxBack: 'dialog.lightbox .lightbox-back',
   memo: '.memo',
   memoField: '.memo-field',
-  memoAway: '.memo-away',
+  memoPlain: '.memo-to, .memo-pick, .memo-away, .memo-title',   // what a note no longer has: a receiver line, a stack button
+  crownMark: '.crown-mark',
   memoBin: '.memo-bin',
-  memoLine: '.memo-line',
-  memoLineOpen: '.memo-line-open',
+  memoList: '.memo-list',            // the notes that were put away, listed by the memo button
+  memoListNote: '.memo-list-note',
+  memoListNew: '.memo-list-new',
+  memoLine: '.memo-line',            // what is gone: a line on a "Memos" stack of the Desk
   lightboxImage: 'dialog.lightbox .lightbox-img',
 
   // a session
@@ -398,16 +403,24 @@ const PAGE_LIB = `(() => {
     /** The note that says what just happened, in the window or on the page: its words and whether it offers the way back. */
     noteNode: (inWindow = false, title = '') => (inWindow ? (all(SEL.focusStrip).findLast(n => text(n).includes(title)) ?? one(SEL.focusNote)) : one(SEL.undoBar)),
     note: (inWindow = false, title = '') => { const n = __t.noteNode(inWindow, title); return n && { text: text(n.querySelector(SEL.focusStripSaid) ?? n.querySelector(SEL.undoSaid) ?? n), all: text(n), back: !!one(SEL.noteBack, n), strip: n.matches(SEL.focusStrip), box: box(n) } },
-    /** Does the card lie on a pile at the foot? kind: 'asked' | 'later' (the stack "Later"), 'answered' | 'shredded'
-     *  (the stack "Done"). A stack holds only its first sheets in the page until all of it is shown: a card that
-     *  is no open row and whose stack has more sheets than lines counts as lying there. */
+    /** Does the card lie on a pile at the foot? kind: 'later' (snoozed: the stack "Later"), 'asked' (in revision: the
+     *  stack "In the works"), 'answered' (decided: "In the works"; closed by its session: "Done"), 'shredded' |
+     *  'withdrawn' (the basket). A stack holds only its first sheets in the page until all of it is shown: a card
+     *  that is no open row and whose stack has more sheets than lines counts as lying there. */
     inPile: (kind, id) => {
-      const pile = __t.pileOf(kind === 'asked' || kind === 'later' ? 'later' : 'done')
-      if (!pile) return false
-      const lines = [...pile.querySelectorAll(SEL.doneRow)], line = lines.find(n => n.dataset.id === id)
-      if (line) return line.dataset.kind === kind
-      return parseInt(text(pile.querySelector(SEL.pileCount)), 10) > lines.length && !__t.row(id)
+      const places = { later: ['later'], asked: ['works'], answered: ['works', 'done'], shredded: ['trash'], withdrawn: ['trash'] }[kind] ?? []
+      return places.some(place => {
+        const pile = __t.pileOf(place)
+        if (!pile) return false
+        const lines = [...pile.querySelectorAll(SEL.doneRow)], line = lines.find(n => n.dataset.id === id)
+        if (line) return line.dataset.kind === kind
+        return !all(SEL.doneRow).some(n => n.dataset.id === id) && parseInt(text(pile.querySelector(SEL.pileCount)), 10) > lines.length && !__t.row(id)
+      })
     },
+    /** The stack a card's line lies on ('later' | 'works' | 'done' | 'trash'), or null. */
+    stackOf: id => all(SEL.doneRow).find(n => n.dataset.id === id)?.closest(SEL.pile)?.dataset.pile ?? null,
+    /** The places at the foot, in the order they stand: which, its box, whether it holds something. */
+    stacks: () => all(SEL.stack).map(n => ({ kind: n.dataset.stack, bin: n.matches(SEL.bin), empty: !n.matches(SEL.pile), box: box(n.querySelector(SEL.pileName)?.nextElementSibling ?? n) })),
     /** A line on a fanned-out stack: what it says, who asked, and the word on its way back. */
     line: id => { const n = all(SEL.doneRow).find(n => n.dataset.id === id); return n ? { kind: n.dataset.kind, shown: vis(n), row: n.matches(SEL.row), text: text(n), who: n.querySelector(SEL.pileLineWho)?.textContent ?? '', take: text(n.querySelector(SEL.takeBack)), tiles: n.querySelectorAll(SEL.rowTile).length } : null },
     lineNode: id => all(SEL.doneRow).find(n => n.dataset.id === id) ?? null,
@@ -526,6 +539,7 @@ process.on('exit', () => {
 
 function start(name, args, env) {
   const proc = spawn(process.execPath, args, { cwd: ROOT, env, stdio: ['pipe', 'pipe', 'pipe'], detached: true })
+  guard(proc, { group: true })   // (stopped with the suite, however the suite ends: dev/cdp.mjs)
   const child = { proc, name, log: '' }
   proc.stderr.on('data', chunk => { child.log += chunk })
   proc.on('error', err => { child.log += `\n${err.message}` })
@@ -1432,22 +1446,37 @@ async function groupLater() {
   check(laters[0]?.ids.includes(one.id) && laters[0]?.ids.includes(two.id), 'the two rows put off do not lie on the same pile')
   check(!groups.filter(g => !g.pile).some(g => g.ids.includes(one.id) || g.ids.includes(two.id)), `a row put off still stands among the questions of its sender`)
   check(cardOf(one.id).status === 'open', `"${TEXT.later}" answered the card`)
-  // (What is put off and what is in revision lie on the one stack "Later"; folded, it holds its first eight sheets.)
-  const lying = state().cards.filter(c => c.status === 'open' && (c.snoozed_until || c.with_agent) && !agentById(c.agent)?.archived).length
-  check(parseInt(laters[0]?.count, 10) === lying, `the stack "Later" counts "${laters[0]?.count}", ${lying} cards are snoozed or in revision`)
+  // (Only what he put off lies on "Later"; what is in revision lies on "In the works". Folded, a stack holds its first eight sheets.)
+  const lying = state().cards.filter(c => c.status === 'open' && c.snoozed_until && !c.with_agent && !agentById(c.agent)?.archived).length
+  check(parseInt(laters[0]?.count, 10) === lying, `the stack "Later" counts "${laters[0]?.count}", ${lying} cards are snoozed`)
   check(parseInt(await ev(js`__t.text(__t.one(${SEL.inboxCount}))`), 10) === counted - 2, `the heading still counts ${await ev(js`__t.text(__t.one(${SEL.inboxCount}))`)} after two of ${counted} were put off`)
 
-  // An answered question leaves for the "Answered" pile, which lies beside "Later" at the foot.
+  // An answered question leaves for the stack "In the works" (its session acts on the answer), beside "Later" at the foot.
   await ev(js`__t.row(${done.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await press(`"Yes" on "${done.title}"`, js`__t.tile(${done.id}, 'right')`)
   await waitState(`"${done.title}" is decided`, () => cardOf(done.id).status !== 'open')
-  await expect('the answered question lies on the "Answered" pile', js`__t.inPile('answered', ${done.id})`, 3000)
+  await expect('the answered question lies on a pile at the foot', js`__t.inPile('answered', ${done.id})`, 3000)
+  // The four states stand apart, in one row that fits the list: Later, In the works, Done, and the small basket.
+  const places = await ev('__t.stacks()')
+  check(places.map(p => p.kind).join() === 'later,works,done,trash', `the places at the foot stand as ${places.map(p => p.kind).join(', ')}; expected later, works, done, trash`)
+  if (places.length === 4) {
+    const frame = await ev(js`__t.box(document.querySelector('.inbox-stacks').parentElement)`)
+    check(places[3].bin && !places.slice(0, 3).some(p => p.bin) && places[3].box.width <= places[0].box.width * .55, `the basket is not the small one at the end of the row: ${JSON.stringify(places.map(p => [p.kind, Math.round(p.box.width)]))}`)
+    check(places.every((p, i) => !i || p.box.left >= places[i - 1].box.right - 1) && places[3].box.right <= frame.right + 1 && places[0].box.left >= frame.left - 1, `the four places do not stand side by side within the list (${Math.round(frame.left)} to ${Math.round(frame.right)}): ${JSON.stringify(places.map(p => [p.kind, Math.round(p.box.left), Math.round(p.box.right)]))}`)
+    check(same(places[0].box.width, places[1].box.width, 1) && same(places[1].box.width, places[2].box.width, 1), `the three stacks do not share the width evenly: ${places.slice(0, 3).map(p => Math.round(p.box.width)).join(', ')}`)
+  }
+  check(!(await ev(js`document.querySelector('[data-stack="memos"]') || document.querySelector(${SEL.memoLine})`)), 'a "Memos" stack still stands at the foot')
+  // The name of a stack is a stamp on its top sheet, not a word under it: its frame lies inside the drawn paper and off the count.
+  // (The basket carries no name to the eye.)
+  const stamps = await ev(js`[...document.querySelectorAll('.inbox-stacks .inbox-stack:not(.inbox-bin)')].map(s => { const b = n => n?.getBoundingClientRect(), st = b(s.querySelector('.inbox-stamp')), pa = b(s.querySelector('.inbox-stack-paper')), on = [...s.querySelectorAll('.inbox-stack-on > *')].map(b); return { word: __t.text(s.querySelector('.inbox-stack-word')), on: !!st && !!pa && st.width > 0 && st.left >= pa.left && st.right <= pa.right && st.top >= pa.top && st.bottom <= pa.bottom, clear: !!st && on.every(c => c.bottom <= st.top + 1) } })`)
+  check(stamps.length === 3 && stamps.every(s => s.on && s.clear), `the name of a stack is not a stamp on its top sheet, clear of the count: ${JSON.stringify(stamps)}`)
+  check(await ev(js`__t.stackOf(${done.id})`) === 'works' || !(await ev(js`__t.stackOf(${done.id})`)), `an answered card its session has not closed lies on "${await ev(js`__t.stackOf(${done.id})`)}", expected "In the works"`)
   await ev(js`__t.pileOf('later')?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await settle()
-  const feet = await ev(js`['later', 'done'].map(k => (n => n && __t.box(n))(__t.pileOf(k)))`)
-  if (check(feet[0] && feet[1], `the piles "${TEXT.later}" and "${TEXT.answered}" are not both at the foot of the inbox`)) {
+  const feet = await ev(js`['later', 'works'].map(k => (n => n && __t.box(n))(__t.pileOf(k)))`)
+  if (check(feet[0] && feet[1], `the piles "${TEXT.later}" and "In the works" are not both at the foot of the inbox`)) {
     if (touch) check(feet[0].bottom <= feet[1].top + 1 || feet[0].right <= feet[1].left + 1, `on a phone the two piles lie over each other: ${JSON.stringify(feet)}`)
-    else check(same(feet[0].top, feet[1].top, 2) && feet[0].right <= feet[1].left + 1, `the piles "${TEXT.later}" and "${TEXT.answered}" do not lie side by side: ${JSON.stringify(feet)}`)
+    else check(same(feet[0].top, feet[1].top, 2) && feet[0].right <= feet[1].left + 1, `the piles "${TEXT.later}" and "In the works" do not lie side by side: ${JSON.stringify(feet)}`)
   }
   await shot('piles')
 
@@ -1475,8 +1504,8 @@ async function groupLater() {
   await waitFor('Escape gathers the sheets', js`!__t.pileOf('later')?.matches(${SEL.pileOpen})`, 3000).then(() => passed(), e => check(false, e.message))
   await settle()
   await unfoldPile('later')
-  await unfoldPile('done')
-  check(await fanned('done') && !(await fanned('later')), 'two stacks stand fanned out at once')
+  await unfoldPile('works')
+  check(await fanned('works') && !(await fanned('later')), 'two stacks stand fanned out at once')
   await unfoldPile('later')
   await ev(js`__t.lineNode(${two.id})?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await checkEnglish('the piles')
@@ -1495,7 +1524,26 @@ async function groupLater() {
   await settle()
   await shot('fetched-back')
 
-  // The wrong answer that is noticed only later: the "Answered" pile takes it back, and the question
+  // Its session closes the card: it moves from "In the works" to the stack "Done".
+  await courier.tool('close_card', { card_id: done.id, summary: 'acted on it' })
+  await expect('a card its session closed lies on the stack "Done"', js`__t.stackOf(${done.id}) === 'done' || (!__t.stackOf(${done.id}) && !!__t.pileOf('done'))`, 4000)
+  // A shredded card lies in the basket; a click on the basket shows it, with the way back.
+  const waste = await fixture.quick(`For the basket (${tag()})?`)
+  await post('/shred', { card_id: waste.id }).catch(() => {})
+  if (cardOf(waste.id)?.status === 'shredded') {
+    await expect('a shredded card lies in the basket', js`__t.inPile('shredded', ${waste.id})`, 4000)
+    await unfoldPile('trash')
+    const lineOfWaste = await ev(js`__t.line(${waste.id})`)
+    check(lineOfWaste?.shown && lineOfWaste.kind === 'shredded' && /Take back/.test(lineOfWaste.take), `the basket, opened, does not show the shredded card with its way back: ${JSON.stringify(lineOfWaste)}`)
+    await shot('basket')
+    await press('"Take back" on the shredded card', js`__t.one(${SEL.takeBack}, __t.lineNode(${waste.id}))`)
+    await waitState('the shredded card is open again', () => cardOf(waste.id).status === 'open')
+    await settle()
+  } else check(false, 'the board did not shred the card (POST /shred)')
+  await courier.tool('withdraw_card', { card_id: waste.id, reason: 'the test is done with it' }).catch(() => {})
+  await expect('a card its session withdrew lies in the basket, without a way back', js`__t.inPile('withdrawn', ${waste.id}) && (!__t.lineNode(${waste.id}) || !__t.one(${SEL.takeBack}, __t.lineNode(${waste.id})))`, 4000)
+
+  // The wrong answer that is noticed only later: the stack "Done" takes it back, and the question
   // stands among those of its sender again, and is one of the walk again.
   await unfoldPile('done')
   await ev(js`__t.all(${SEL.doneRow}).find(n => n.dataset.id === ${done.id})?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
@@ -1534,28 +1582,29 @@ async function groupChoose() {
   await press(`"${TEXT.choose}" on "${light.title}"`, js`__t.tile(${light.id}, 'right')`)
   await sleep(400)
   await settle()
-  check(!(await ev('__t.focusOpen()')), `"${TEXT.choose}" on a question with little text opened the big window instead of unfolding the row`)
-  await closeWindows()
-  const unfolded = await expect(`"${TEXT.choose}" unfolds the row and shows its options`, js`(r => r && r.options.length > 0 && r)(__t.rowInfo(${light.id}))`, 3000)
-  if (unfolded) {
-    check(unfolded.options.map(o => o.name).join() === light.options.map(o => o.label).join(), `the unfolded row offers "${unfolded.options.map(o => o.name).join('", "')}", the card has "${light.options.map(o => o.label).join('", "')}"`)
-    check(same(unfolded.box.top, before.box.top, 2), `the row jumped by ${Math.round(unfolded.box.top - before.box.top)}px when it unfolded`)
-    check(unfolded.box.height > before.box.height, 'the row did not grow when it unfolded')
-    const advised = unfolded.options.filter(o => o.advised)
-    check(advised.length === 1 && advised[0].name === 'Medium' && advised[0].ringed, `the recommended option "Medium" is not the one circled among the unfolded options (circled: ${advised.map(o => o.name).join(', ') || 'none'})`)
-    await shot('unfolded')
-    // A second press folds it again.
-    await press(`"${TEXT.choose}" again`, js`__t.tile(${light.id}, 'right')`)
-    await expect('a second press folds the row again', js`__t.rowInfo(${light.id}).options.length === 0`, 3000)
-    await press(`"${TEXT.choose}" once more`, js`__t.tile(${light.id}, 'right')`)
-    await waitFor('the row unfolds again', js`__t.rowInfo(${light.id}).options.length > 0`, 3000)
-    await settle()
-    await press('the option "Small"', js`__t.byText(${SEL.rowOption}, 'Small', __t.row(${light.id}))`)
-    await waitState(`"${light.title}" is decided`, () => cardOf(light.id).status !== 'open')
-    check(cardOf(light.id).choice === 'small', `one click on "Small" chose "${cardOf(light.id).choice}"`)
-    await expect('the answered row leaves the inbox', js`!__t.row(${light.id})`)
-    await expect('the answer can be taken back', js`!!__t.one(${SEL.undoBar})`, 2000)
-  }
+  // (No row unfolds in place any more: "Choose" opens the card's own page, where every option stands.)
+  await waitFor(`"${TEXT.choose}" opens the page of the card`, js`__t.focusOpen() && __t.focusState().id === ${light.id}`)
+  await settle()
+  check(/^\/q\/\d+$/.test(await ev('location.pathname')), `the page of the card has no address of its own: ${await ev('location.pathname + location.search')}`)
+  check(!(await ev(js`!!document.querySelector('.inbox-row.is-open, .inbox-row.is-unfolded, .inbox-more, .inbox-inline')`)), 'a row of the Desk still unfolds in place')
+  const onPage = await ev('__t.focusState()')
+  check(onPage.options.length === light.options.length && onPage.options.every((o, i) => o.name.startsWith(light.options[i].label)), `the page offers "${onPage.options.map(o => o.name).join('", "')}", the card has "${light.options.map(o => o.label).join('", "')}"`)
+  const advised = onPage.options.filter(o => o.advised)
+  check(advised.length === 1 && advised[0].name.startsWith('Medium'), `the recommended option "Medium" is not the one marked on the page (marked: ${advised.map(o => o.name).join(', ') || 'none'})`)
+  await shot('unfolded')
+  // Escape goes back to the Desk, the row is where it was; a click on the row's text opens the page again.
+  await escape()
+  await expect('Escape leaves the page of the card', '!__t.focusOpen()', 3000)
+  await settle()
+  await press(`the text of "${light.title}"`, js`__t.row(${light.id}).querySelector('.inbox-text')`)
+  await waitFor('a click on the text of a row opens the page of its card', js`__t.focusOpen() && __t.focusState().id === ${light.id}`)
+  await settle()
+  await press('the option "Small"', js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).find(n => __t.label(n).startsWith('Small'))`)
+  await waitState(`"${light.title}" is decided`, () => cardOf(light.id).status !== 'open')
+  check(cardOf(light.id).choice === 'small', `one click on "Small" chose "${cardOf(light.id).choice}"`)
+  await expect('the page of one card closes on its answer', '!__t.focusOpen()', 4000)
+  await expect('the answered row leaves the inbox', js`!__t.row(${light.id})`)
+  await expect('the answer can be taken back', js`!!__t.one(${SEL.undoBar})`, 2000)
 
   // A content-heavy one opens the big window, on that card, with its pictures and its recommendation.
   await settle()
@@ -1625,13 +1674,17 @@ async function groupKeys() {
   for (let i = 0; i < 40 && await marked() !== light.id; i++) await key('ArrowDown', 40)
   need(await marked() === light.id, 'the arrow keys do not reach the row of the new question')
   await key('c', 67, { text: 'c' })
-  await expect('C unfolds the choices of the marked row', js`__t.rowInfo(${light.id}).options.length === 3`, 2000)
+  await expect('C opens the page of the marked row\'s card', js`__t.focusOpen() && __t.focusState().id === ${light.id}`, 3000)
+  await settle()
   await shot('unfolded-by-key')
   await key('2', 50, { text: '2' })
   await waitState('the digit 2 picks the second option', () => cardOf(light.id).choice === 'mid', 4000).then(() => passed(), e => check(false, e.message))
+  await expect('the page closes on the answer', '!__t.focusOpen()', 4000)
   await expect('the answered row leaves', js`!__t.row(${light.id})`)
   await settle()
-  check(await marked() === a.id, `after an answer the mark is on "${cardOf(await marked())?.title}", expected the row that moved up, "${a.title}"`)
+  // (back from the card's page the mark is set again with the arrows)
+  for (let i = 0; i < 40 && await marked() !== a.id; i++) await key(i < 30 ? 'ArrowDown' : 'ArrowUp', i < 30 ? 40 : 38)
+  check(await marked() === a.id, `the arrow keys do not reach "${a.title}" after the answer (the mark is on "${cardOf(await marked())?.title}")`)
   await key('y', 89, { text: 'y' })
   await waitState('Y answers yes', () => cardOf(a.id).choice === 'yes', 4000).then(() => passed(), e => check(false, e.message))
   await expect('the answered row leaves', js`!__t.row(${a.id})`)
@@ -1905,9 +1958,19 @@ async function groupMains() {
   } else await post('/session', { agent: sub.id, parent: main.id })
   try {
     await waitState(`"${nameOf(sub)}" is a sub of "${nameOf(main)}"`, s => s.agents.find(a => a.id === sub.id).parent === main.id && s.agents.find(a => a.id === main.id).main === true, 4000)
+    // One crown per desk (card Nr. 172): a main without the crown keeps its stack and wears none; the crown folds on the crowned one.
+    await post('/star', { agent: main.id, starred: false })
+    await waitState('the main wears no crown', s => !s.agents.find(a => a.id === main.id).starred, 3000)
     await goInbox()
     await settle()
     const fold = js`__t.one(${SEL.crownFold}, __t.unit(${nameOf(main)}))`
+    if (await ev(`!!${fold}`)) {
+      check(!(await ev(js`!!__t.one(${SEL.crownMark}, __t.unit(${nameOf(main)}))`)), 'a main that was not given the crown wears one in the sidebar')
+      check(await ev(js`!!(__t.one(${SEL.crownEdges}, __t.unit(${nameOf(main)})) ?? __t.one(${SEL.crownBracket}, __t.unit(${nameOf(main)})))`), 'a main without the crown lost its stack and its bracket')
+    }
+    await post('/star', { agent: main.id, starred: true })
+    await waitState('the main is given the crown', s => s.agents.find(a => a.id === main.id).starred, 3000)
+    await expect('the crowned main shows the crown with three stones on its fold switch', js`__t.one(${SEL.crownMark}, __t.one(${SEL.crownFold}, __t.unit(${nameOf(main)})))?.querySelectorAll('circle').length === 3`, 3000)
     if (!(await waitFor('the main carries the crown that folds its subs', `!!${fold}`, 3000).catch(() => false))) {
       if (touch) return note('on a phone the strip of sessions shows no crown to fold subs; not checked')
       return check(false, `"${nameOf(main)}" has a sub, but its row in the sidebar has no crown to fold it (${SEL.crownFold})`)
@@ -1933,6 +1996,7 @@ async function groupMains() {
     await press(`the crown of "${nameOf(main)}"`, fold)
     await expect('the next click unfolds them again', `${fold}?.getAttribute('aria-expanded') === 'true'`, 3000)
   } finally {
+    await post('/star', { agent: main.id, starred: false })
     await post('/session', { agent: sub.id, parent: null })
     await waitState('the sub stands alone again', s => !s.agents.find(a => a.id === sub.id).parent, 4000).catch(() => {})
   }
@@ -2247,22 +2311,16 @@ async function groupAgents() {
   await shot('renamed-starred')
 
   await goInbox()
-  if ('main' in agentById(vip.id)) {
-    // On a hub that knows main agents the crown says "main"; the starred session is where quick memos go, and its
-    // questions carry a small gold dot on their sender's drawing. It does not lead the Desk (whose order is fixed).
+  {
+    // One crown per desk (card Nr. 172): the crowned session's questions carry the crown on their sender's drawing,
+    // nobody else's do. It does not lead the Desk (whose order is fixed).
     // (The drawing stands on the row, or once on the tab of a run of rows: then it speaks for the rows of that run.)
-    const dots = await ev(js`__t.all(${SEL.memoDot}, ${SEL.inbox}).filter(n => __t.vis(n)).map(n => n.closest(${SEL.row})?.dataset.id ?? n.closest(${SEL.group})?.querySelector(${SEL.row})?.dataset.id).filter(Boolean)`)
+    const worn = await ev(js`__t.all(${SEL.fromCrown}, ${SEL.inbox}).filter(n => __t.vis(n)).map(n => n.closest(${SEL.row})?.dataset.id ?? n.closest(${SEL.group})?.querySelector(${SEL.row})?.dataset.id).filter(Boolean)`)
     const mine = openCards(vip.id).filter(c => !putOff.has(c.id)).map(c => c.id)
-    check(dots.some(id => mine.includes(id)), `the questions of "${nameOf(vip)}", where quick memos go, carry no gold dot on the Desk`)
-    const wrong = dots.filter(id => cardOf(id) && cardOf(id).agent !== vip.id)
-    check(!wrong.length, `a session that does not take the quick memos carries the gold dot: the row "${cardOf(wrong[0])?.title}"`)
-  } else {
-    const top = (await ev('__t.groups()'))[0]
-    check(top.name.replace(/^★ /, '') === nameOf(vip), `the VIP session "${nameOf(vip)}" is not the first group of the inbox, "${top.name}" is`)
-    // The crown stands where the session is named: on the group, on each row, or (a run of rows names its sender once) on the first.
-    check(top.vip || (await ev('__t.rows()')).filter(r => top.ids.includes(r.id)).some(r => r.vip) || await ev(js`!!document.querySelector(${SEL.inbox + ' .inbox-gutter .crown-mark, ' + SEL.inbox + ' [data-vip] .crown-mark'})`), 'the questions of the VIP session are not marked VIP')
-    const marked = (await ev('__t.rows()')).filter(r => r.vip && !top.ids.includes(r.id) && !putOff.has(r.id))
-    check((await ev('__t.groups()')).slice(1).every(g => !g.vip) && !marked.length, `a session that is not VIP carries the VIP mark${marked.length ? `: the row "${marked[0].title}"` : ''}`)
+    check(worn.some(id => mine.includes(id)), `the questions of "${nameOf(vip)}", which wears the crown, carry no crown on the Desk`)
+    const wrong = worn.filter(id => cardOf(id) && cardOf(id).agent !== vip.id)
+    check(!wrong.length, `a session that does not wear the crown carries one on the Desk: the row "${cardOf(wrong[0])?.title}"`)
+    check(await ev(js`__t.all(${SEL.crownMark}, ${SEL.inbox}).filter(n => __t.vis(n)).every(n => n.querySelectorAll('circle').length === 3)`), 'the crown is not the one with three stones')
   }
   await shot('inbox-vip')
 
@@ -2437,62 +2495,81 @@ async function groupArrow() {
   }
 }
 
-/** The memo as a note that is kept: put away it lies on the "Memos" stack of the Desk, between Later and Done; a
- *  click there floats it again. On a phone no note opens by itself. On a card page a note is written and sent
+/** The memo as a note that is kept: put away, the memo button holds it (no stack on the Desk): the button counts
+ *  the notes and lists them, and a click on one floats it again. On a phone no note opens by itself. On a card page a note is written and sent
  *  without touching the card. */
 async function groupMemos() {
   const stamp = tag()
   const target = agentNamed(COURIER)
-  const wasStarred = Boolean(agentById(target.id).starred)
   const card = await fixture.quick(`Memo beside me (${stamp})?`)
   await open('/')
+  // A memo goes to the crown of the desk: the one session the human gave it to (one per desk, card Nr. 172).
   await post('/star', { agent: target.id, starred: true })
-  await waitState('the session takes the quick memos', s => s.agents.find(a => a.id === target.id).starred)
+  await waitState('the session wears the crown of the desk', s => s.agents.find(a => a.id === target.id).starred === true)
   await goInbox()
   await settle()
   const noteUp = js`__t.all(${SEL.memo}).some(n => __t.vis(n))`
-  const stack = js`__t.pileOf('memos')`
-  const lineOf = text => js`__t.all(${SEL.memoLine}, __t.pileOf('memos')).find(n => __t.text(n).includes(${text})) ?? null`
+  // The notes that were put away are held by the memo button: it counts them, and a click on it lists them.
+  const held = js`Number(__t.one(${SEL.quickOpen})?.dataset.count ?? 0)`
+  const listUp = js`__t.vis(__t.one(${SEL.memoList}))`
+  const noteOf = text => js`__t.all(${SEL.memoListNote}).find(n => __t.vis(n) && __t.text(n).includes(${text})) ?? null`
+  const openList = async () => { if (!(await ev(listUp))) { await press('the memo button, which holds notes', js`__t.one(${SEL.quickOpen})`); await waitFor('the list of notes that were put away opens', listUp, 3000) } }
   try {
     need(await ev(js`!!__t.one(${SEL.quickOpen})`), 'there is no memo button on the page')
-    const had = await ev(js`__t.all(${SEL.memoLine}).length + (__t.pileOf('memos') ? parseInt(__t.text(__t.one(${SEL.pileCount}, __t.pileOf('memos'))), 10) || 0 : 0)`)
     await press('the memo button', js`__t.one(${SEL.quickOpen})`)
     await waitFor('a note opens with the caret in it', js`document.activeElement === document.querySelector(${SEL.quickField})`, 3000)
     const kept = `kept for later ${stamp}`
     await type(kept)
     await sleep(300)
-    // Put away: the note lies on the yellow stack of the Desk, between Later and Done.
-    await press('the stack button of the note', js`__t.all(${SEL.memoAway}).find(n => __t.vis(n))`)
+    // The note is only paper: no line that says to whom, no choice of receiver, no button for the stack.
+    check(!(await ev(js`__t.all(${SEL.memoPlain}).some(n => __t.vis(n))`)), 'the note still shows a head with a receiver or a stack button')
+    check(await ev(js`__t.all(${SEL.quickSend}).filter(n => __t.vis(n)).length === 1 && !!__t.all(${SEL.quickSend}).find(n => __t.vis(n)).querySelector(${SEL.crownMark})`), 'the note does not send by one crown')
+    check((await ev(js`__t.all(${SEL.quickSend}).find(n => __t.vis(n))?.title ?? ''`)).includes(`Send to ${nameOf(target)}`), 'the crown of the note does not say whom it sends to')
+    // Put away (Escape; a phone: a tap beside the sheet): no stack on the Desk takes it; the memo button holds it.
+    const before = await ev(held)
+    if (touch) await pressAt(200, 150)
+    else await escape()
     await expect('put away, the note no longer floats', `!${noteUp}`, 3000)
-    if (await expect('the note lies on the "Memos" stack of the Desk', `!!${stack}`, 3000)) {
-      const order = await ev(js`[...document.querySelectorAll('.inbox-stacks > section')].map(n => n.dataset.pile ?? (n.className.match(/inbox-group-(\w+)/)?.[1] ?? '')).filter(Boolean)`)
-      const words = await ev(js`[...document.querySelectorAll('.inbox-stacks .inbox-stack-word')].map(n => __t.text(n))`)
-      check(words.indexOf('Memos') > words.indexOf('Later') && words.indexOf('Memos') < words.indexOf('Done') && words.indexOf('Later') >= 0, `the stacks at the foot stand as ${words.join(', ')}; expected Later, Memos, Done (${order.join(', ')})`)
-      await unfoldPile('memos')
-      if (check(await ev(`!!${lineOf(kept)}`), 'fanned out, the stack does not show the note that was put away')) {
-        await shot('memos-stack')
-        await ev(`${lineOf(kept)}.scrollIntoView({ block: 'center', behavior: 'instant' })`)
-        await press('the note on the stack', `${lineOf(kept)}.querySelector(${JSON.stringify(SEL.memoLineOpen)})`)
-        await expect('a click on the note of the stack floats it again', noteUp, 3000)
-        check(await ev(js`__t.all(${SEL.memoField}).some(f => __t.vis(f) && f.value === ${kept})`), 'the note that came back does not carry its words')
-        check(!(await ev(`!!${lineOf(kept)}`)), 'the note floats and still lies on the stack')
-      }
+    await expect('the memo button counts the note that was put away', `${held} === ${before + 1}`, 3000)
+    check(!(await ev(js`document.querySelector('[data-stack="memos"]') || document.querySelector(${SEL.memoLine})`)), 'a "Memos" stack stands on the Desk')
+    await openList()
+    if (check(await ev(`!!${noteOf(kept)}`), 'the list of the memo button does not show the note that was put away')) {
+      const fits = await ev(js`(b => b.left >= 0 && b.right <= innerWidth + 1 && b.top >= 0 && b.bottom <= innerHeight + 1)(__t.box(__t.one(${SEL.memoList})))`)
+      check(fits, 'the list of notes does not lie wholly on the screen')
+      check(await ev(js`!!__t.one(${SEL.memoListNew}) && __t.vis(__t.one(${SEL.memoListNew}))`), 'the list offers no "New note"')
+      await shot('memos-held')
+      await press('the note in the list', noteOf(kept))
+      await expect('a click on the note takes it out again: it floats', noteUp, 3000)
+      check(await ev(js`__t.all(${SEL.memoField}).some(f => __t.vis(f) && f.value === ${kept})`), 'the note that came back does not carry its words')
+      check(await ev(`${held} === ${before} && !${listUp}`), 'the note floats and the memo button still holds it')
     }
-    // On a phone a note never opens by itself: after a reload it lies on the stack.
+    // From another page too: put away on the Agents page, it is still one click away there.
+    if (!touch) {
+      await escape()
+      await expect('put away again', `!${noteUp} && ${held} === ${before + 1}`, 3000)
+      await press('the Agents page', js`__t.one(${SEL.navRoster})`)
+      await settle()
+      await openList()
+      check(await ev(`!!${noteOf(kept)}`), 'away from the Desk the memo button does not list the note that was put away')
+      await press('the note in the list', noteOf(kept))
+      await expect('the note floats again on that page', noteUp, 3000)
+      await goInbox()
+      await settle()
+    }
+    // On a phone a note never opens by itself: after a reload the memo button holds it.
     if (touch) {
       await reload()
       await goInbox()
       await sleep(800)
       check(!(await ev(noteUp)), 'on a phone a note opened by itself after the page loaded')
-      check(await ev(`!!${stack}`), 'on a phone the note that was open is not on the "Memos" stack after a reload')
-      await unfoldPile('memos')
-      await ev(`${lineOf(kept)}?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
-      await press('the note on the stack', `${lineOf(kept)}.querySelector(${JSON.stringify(SEL.memoLineOpen)})`)
+      check(await ev(`${held} >= 1`), 'on a phone the note that was open is not held by the memo button after a reload')
+      await openList()
+      await press('the note in the list', noteOf(kept))
       await waitFor('the note opens as a sheet', noteUp, 3000)
     }
     // The bin throws it away.
     await press('the bin of the note', js`__t.all(${SEL.memoBin}).find(n => __t.vis(n))`)
-    await expect('the bin throws the note away', `!${noteUp} && !(${lineOf(kept)})`, 3000)
+    await expect('the bin throws the note away', `!${noteUp} && ${held} === ${before}`, 3000)
     await settle()
 
     // On a card page: the memo button stands there too; a note is written and sent, the card stays as it is.
@@ -2513,7 +2590,7 @@ async function groupMemos() {
     }
   } finally {
     await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
-    if (!wasStarred) await post('/star', { agent: target.id, starred: false }).catch(() => {})
+    await post('/star', { agent: target.id, starred: false }).catch(() => {})
     await open('/')
   }
 }
@@ -3317,12 +3394,13 @@ async function groupQuick() {
   const target = agentNamed(COURIER), other = scripted()[1]
   const card = await fixture.quick(`Jump to me (${stamp})?`)
   await open('/')
+  // A memo goes to the crown of the desk: the one session the human gave it to (one per desk, card Nr. 172).
   await post('/star', { agent: target.id, starred: true })
-  await waitState('the session wears the crown', s => s.agents.find(a => a.id === target.id).starred)
+  await waitState('the session wears the crown', s => s.agents.find(a => a.id === target.id).starred === true)
   await settle()
   const arrived = text => waitState(`"${text}" reaches the crowned session`, () => state().messages.some(m => m.agent === target.id && m.from === 'user' && m.text === text && !m.card_id), 5000).then(() => passed(), e => check(false, e.message))
 
-  // The speech bubble with the crown: a small sheet to write in; Enter (or its button) sends to the crowned session.
+  // The yellow note: paper to write on; Enter (or its crown) sends to the crowned session of the desk.
   need(await ev(js`!!__t.one(${SEL.quickOpen})`), 'there is no quick-send bubble on the page')
   await press('the quick-send bubble', js`__t.one(${SEL.quickOpen})`)
   await waitFor('the bubble opens a field to write in', js`document.activeElement === document.querySelector(${SEL.quickField})`, 3000)
@@ -3365,13 +3443,27 @@ async function groupQuick() {
     await key('ArrowDown', 40, { modifiers: 1 })
     await waitState('Alt and the arrow down move it back', () => order() === was, 3000).then(() => passed(), e => check(false, e.message))
   }
-  // One crown per board: crowning another session takes it from the first.
+  // One crown per desk: given to another session, it leaves the first, and the memo goes with the crown.
   await post('/star', { agent: other.id, starred: true })
-  await waitState('the other session wears the crown', s => s.agents.find(a => a.id === other.id).starred, 3000)
-  check(!agentById(target.id).starred, 'two sessions wear the crown at once; the hub should keep one')
-  await expect('the bubble writes to the newly crowned session', js`(b => !b.dataset.to || b.dataset.to === ${other.id})(document.querySelector(${SEL.quickOpen}))`, 3000)
+  await waitState('the crown moved to the other session', s => s.agents.find(a => a.id === other.id).starred && !s.agents.find(a => a.id === target.id).starred, 3000).then(() => passed(), e => check(false, e.message))
+  await expect('the memo goes to the session that wears the crown now', js`document.querySelector(${SEL.quickOpen}).dataset.to === ${other.id}`, 3000)
+  // No crown on the desk: the crown of a note is hollow and sends nothing; it leads to the Agents page, where the crown is given.
   await post('/star', { agent: other.id, starred: false })
-  await post('/star', { agent: target.id, starred: false })
+  await waitState('the crown is off', s => !s.agents.some(a => a.starred))
+  await open('/')
+  await press('the memo button', js`__t.one(${SEL.quickOpen})`)
+  await waitFor('a note opens', js`document.activeElement === document.querySelector(${SEL.quickField})`, 3000)
+  const stays = `no crown yet ${stamp}`
+  await type(stays)
+  await sleep(300)
+  check(await ev(js`__t.all(${SEL.quickSend}).find(n => __t.vis(n))?.classList.contains('is-none')`), 'with no crown on the desk the crown of the note is not hollow')
+  await press('the hollow crown', js`__t.all(${SEL.quickSend}).find(n => __t.vis(n))`)
+  await expect('the hollow crown leads to the Agents page', js`location.pathname === '/agents'`, 3000)
+  if (!touch) await expect('there every line offers the crown to give', js`__t.all(${SEL.rosterStar}).some(n => __t.vis(n) && n.getAttribute('aria-pressed') === 'false' && n.querySelector(${SEL.crownMark}))`, 3000)
+  check(!state().messages.some(m => m.text === stays), 'a memo was sent although the desk has no crown')
+  check(await ev(js`__t.all(${SEL.memoField}).some(f => f.value === ${stays})`), 'the note was lost when the hollow crown was pressed')
+  await press('the bin of the note', js`__t.all(${SEL.memoBin}).find(n => __t.vis(n))`)
+  await settle()
 
   // The jump field in the menu at the logo: a session by its name, a question by its number.
   await open('/')
@@ -3513,7 +3605,7 @@ const GROUPS = [
   ['scribble', 'draw, send, back in the conversation with a picture that loads', groupScribble],
   ['sidebar', 'marks, hand and ring, disconnected sessions at the bottom, archive and back', groupSidebar],
   ['pair', 'two sessions dropped on each other show as one, and split again', groupPair],
-  ['memos', 'a memo put away lies on the Memos stack and floats again; none opens by itself on a phone; a note from a card page', groupMemos],
+  ['memos', 'a memo put away is held by the memo button (count, list) and floats again; no Memos stack; none opens by itself on a phone; a note from a card page', groupMemos],
   ['picture', 'a picture of a conversation large, as a page of its own: next, reload, Back, Escape', groupPicturePage],
   ['arrow', 'the picture on a card points at its option; an unpaired picture at none', groupArrow],
   ['order', 'the Desk in the order of the board: a late knock is appended and announced at the edge, arrivals move nothing', groupOrder],

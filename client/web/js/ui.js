@@ -647,11 +647,11 @@ export function pairDoodle(members) {
     hit.setAttribute('width', '32')
     hit.setAttribute('height', '32')
     g.append(hit, ...own.childNodes)
-    // A session that matters most wears its crown here too (see crown()).
+    // The crowned session wears its crown here too (see crown()).
     if (m.vip) {
-      const top = document.createElementNS(NS, 'path')
+      const top = document.createElementNS(NS, 'g')
       top.setAttribute('class', 'pair-crown')
-      top.setAttribute('d', CROWN)
+      top.append(...crownParts())
       top.setAttribute('transform', `rotate(${-turn} 16 16) translate(-9 -9) rotate(-17 13 9.5) scale(.86)`)
       g.append(top)
     }
@@ -755,21 +755,33 @@ export function groupLoop(seed) {
   return svg
 }
 
-// ---- the crown: a session that matters most (VIP) ---------------------------------
+// ---- the crown: the one session of a desk that the memo goes to (card Nr. 172) -----
 
-// Scribbled in one go, three points, the base not quite closed. It sits crooked on the corner of the
-// session's mark (CSS: .crown-mark); nothing stands next to the name.
-const CROWN = 'M3.6 16 L2.6 5.4 L8.7 10.6 L13 2.6 L17.5 10.4 L23.6 5 L22.3 16.2 L4.4 15.7'
-/** The mark of a starred session. Returns an SVG, 26 by 19, placed and coloured by CSS. */
-export function crown() {
+// Sketched: a gold wash that sits a little off the line and one wobbly pen line round it (the red stones on its
+// points were too much). It sits crooked on the session's mark (CSS: .crown-mark, and .crown-wash,
+// .crown-pen for its parts); nothing stands next to the name. In a 26 by 19 box.
+// (dev/pen-sync.mjs copies these three lines into pen.js, for the server's templates.)
+const CROWN_WASH = 'M5 16.9 L3.9 6.6 L9.8 11.6 L14 3.8 L18.5 11.4 L24.5 6.2 L23.3 17.1 Z'
+const CROWN = 'M3.7 16.1 Q3.5 10.4 2.5 5.5 Q6.2 7.4 8.8 10.7 Q10.3 6.2 13.1 2.7 Q15.9 6.1 17.4 10.5 Q20 7 23.7 5.1 Q23.6 10.9 22.2 16.3 Q13.2 15.2 4.5 15.9'
+const CROWN_JEWELS = []   // the three stones are off again ("zu viel"); a stone would be [cx, cy, r]
+/** The parts of the crown as SVG nodes: the wash and the pen line (and stones, while CROWN_JEWELS names any). */
+function crownParts() {
   const NS = 'http://www.w3.org/2000/svg'
-  const svg = document.createElementNS(NS, 'svg')
+  const part = (tag, cls, attrs) => {
+    const node = document.createElementNS(NS, tag)
+    node.setAttribute('class', cls)
+    for (const [k, v] of Object.entries(attrs)) node.setAttribute(k, v)
+    return node
+  }
+  return [part('path', 'crown-wash', { d: CROWN_WASH }), part('path', 'crown-pen', { d: CROWN }), ...CROWN_JEWELS.map(([cx, cy, r]) => part('circle', 'crown-jewel', { cx, cy, r }))]
+}
+/** The crown of a desk's crowned session. Returns an SVG, 26 by 19, placed and coloured by CSS. */
+export function crown() {
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
   svg.setAttribute('viewBox', '0 0 26 19')
   svg.setAttribute('class', 'crown-mark')
   svg.setAttribute('aria-hidden', 'true')
-  const path = document.createElementNS(NS, 'path')
-  path.setAttribute('d', CROWN)
-  svg.append(path)
+  svg.append(...crownParts())
   return svg
 }
 
@@ -827,6 +839,16 @@ const SKETCH = {
   shred: [[[3.6, 10.8], [12, 10.3], [20.4, 10.9]], [[7.4, 10], [7.6, 3.6], [16.4, 3.4], [16.6, 10]], [[8, 12.6], [7.5, 16.2], [8.3, 20.2]], [[12, 12.8], [12.4, 17], [11.8, 21]], [[16, 12.6], [16.5, 15.8], [15.8, 19.6]]],
   // a wastebasket: thrown away
   bin: [[[4.8, 7.8], [12, 7.4], [19.2, 7.9]], [[6.6, 8.4], [7.7, 20], [16.3, 20.2], [17.4, 8.2]], [[10.1, 11], [10.4, 17.2]], [[13.9, 11], [13.6, 17.2]], [[9.4, 7.2], [9.9, 4.5], [14.1, 4.3], [14.6, 7.2]]],
+  // the waste-paper basket at the end of the Desk's stacks (server/views/stacks.mjs): rim, body, a loose weave; full: a crumpled sheet over the rim
+  basket: [[[3.6, 8.3], [8, 7.7], [12.2, 7.6], [16.4, 7.9], [20.4, 8.4]], [[4.9, 8.8], [5.9, 14.6], [7.1, 21.1], [12.1, 21.6], [16.9, 21], [18, 14.8], [19.2, 8.9]], [[8.7, 10.6], [9.3, 15.4], [9.9, 19.6]], [[12.2, 10.8], [12.1, 15.2], [12.3, 19.9]], [[15.6, 10.5], [15, 15.3], [14.4, 19.5]], [[6.4, 14.9], [9.6, 14.4], [13.2, 14.7], [17.6, 14.3]]],
+  'basket-full': [[[3.6, 8.3], [8, 7.7], [12.2, 7.6], [16.4, 7.9], [20.4, 8.4]], [[4.9, 8.8], [5.9, 14.6], [7.1, 21.1], [12.1, 21.6], [16.9, 21], [18, 14.8], [19.2, 8.9]], [[8.7, 10.6], [9.3, 15.4], [9.9, 19.6]], [[12.2, 10.8], [12.1, 15.2], [12.3, 19.9]], [[15.6, 10.5], [15, 15.3], [14.4, 19.5]], [[6.4, 14.9], [9.6, 14.4], [13.2, 14.7], [17.6, 14.3]], [[8.6, 7.4], [7.8, 5.6], [8.9, 3.9], [10.9, 4.1], [12.4, 2.7], [14.8, 3.2], [15.9, 4.9], [15.2, 7.2]], [[10.1, 5.8], [11.6, 6.6], [12.7, 5.1], [13.9, 6.2]]],
+  // other waste-paper baskets, proposed for the Desk's stacks (a decision card): a bucket with its lid ajar, a heap of
+  // crumpled paper balls, a small shredder with its strips
+  'bin-lid': [[[5.6, 10.8], [6.2, 16], [6.8, 21.1], [12, 21.4], [17.2, 21], [17.8, 16], [18.4, 10.8]], [[4.6, 10.6], [12, 10.2], [19.4, 10.6]], [[4.2, 8.4], [11.4, 5.6], [18.8, 3.4]], [[10.6, 6], [11.2, 4.4], [12.8, 4]], [[9.8, 13.4], [10, 16.4], [10.2, 19.2]], [[14.2, 13.4], [14, 16.4], [13.8, 19.2]], [[7.6, 10.2], [8.6, 8], [10.4, 8.6], [11.6, 7.4]]],
+  'bin-balls': [[[7.4, 14.0], [9.7, 14.5], [11.6, 16.0], [11.1, 18.3], [9.9, 20.1], [7.8, 21.0], [5.7, 20.1], [3.9, 18.9], [3.4, 16.8], [4.3, 14.7], [6.8, 14.5], [8.9, 14.4]], [[16.4, 14.5], [19.0, 14.2], [20.5, 16.2], [19.7, 18.4], [19.5, 20.9], [16.8, 21.9], [14.3, 21.0], [12.5, 19.2], [12.9, 17.1], [14.0, 15.5], [15.6, 13.9], [17.8, 14.8]], [[11.9, 7.4], [14.0, 7.9], [15.0, 9.6], [15.7, 11.5], [14.4, 13.3], [12.3, 14.6], [9.9, 13.7], [8.1, 12.2], [8.0, 10.0], [8.9, 7.9], [11.2, 7.1], [13.4, 7.6]], [[5.6, 16], [7, 17.4], [6.6, 19], [8.6, 18.6]], [[14.6, 15.8], [16.4, 17], [15.6, 19.4], [18, 18.8]], [[10.4, 9], [11.4, 11.4], [12.6, 9.6], [13.4, 12]]],
+  'bin-shredder': [[[4.2, 9.2], [12, 8.9], [19.8, 9.2], [19.9, 11.6], [19.8, 14.1], [12, 14.3], [4.2, 14.1], [4.1, 11.6], [4.2, 9.2]], [[6.4, 11.7], [12, 11.5], [17.6, 11.7]], [[8.2, 8.9], [8.1, 6], [8.2, 3.7], [8.3, 3.5], [12, 3.4], [15.7, 3.5], [15.8, 3.7], [15.9, 6], [16, 8.9]], [[9.8, 5.6], [14, 5.5]], [[9.8, 7.2], [12.6, 7.1]], [[7, 14.4], [7.4, 17.6], [6.8, 21]], [[10, 14.4], [10.3, 17.8], [10, 20.2]], [[13.2, 14.4], [12.8, 17.4], [13.3, 20.8]], [[16.6, 14.4], [16.9, 17], [16.5, 19.6]]],
+  // a magnifier: search a stack's sheets (server/views/stacks.mjs)
+  search: [[[10.5, 4.2], [6.1, 5.7], [4.3, 10.3], [6.3, 14.7], [10.7, 16.3], [15, 14.5], [16.7, 10.1], [14.7, 5.6], [10.1, 4]], [[15.1, 15.2], [19.9, 19.9]]],
   // a paperclip, bent in one go: attach something
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
   explain: [
@@ -861,10 +883,14 @@ const SKETCH = {
   ],
   // a pile that unfolds: one stroke pointing down
   unfold: [[[6.2, 9.2], [12, 15.4], [17.8, 8.8]]],
+  // belongs under: a line down from above that turns right into an arrowhead (the main agent a session works for)
+  under: [[[6.4, 4.4], [6.2, 11.4], [8.4, 15.4], [18.8, 15.8]], [[14.4, 11], [19.4, 15.8], [14.6, 20.4]]],
   // onward: an arrow to the right
   go: [[[4.4, 12.2], [11, 11.7], [19.2, 12.1]], [[14.2, 7], [19.6, 12], [14.4, 17.2]]],
   // the theme: a moon for the dark one, a sun for the light one
   moon: [[[15.6, 3.8], [9, 5.6], [5.4, 11.6], [7.2, 18], [13.4, 20.6], [19.6, 17.6], [14.4, 15.6], [11.6, 10.6], [13, 5.8], [15.9, 4.2]]],
+  // Push on this device (js/push.js): a bell, its rim and its clapper.
+  bell: [[[4.6, 17.4], [6.8, 14.6], [7.2, 8.8], [9.8, 5.1], [12, 4.2], [14.2, 5.1], [16.8, 8.8], [17.2, 14.6], [19.4, 17.4]], [[4.2, 17.6], [12, 17.4], [19.8, 17.7]], [[10.2, 19.6], [12, 21.1], [13.8, 19.6]]],
   sun: [
     [[12, 7.6], [15.6, 9], [16.4, 12.4], [14.6, 15.8], [11.4, 16.4], [8.2, 14.6], [7.6, 11.2], [9.6, 8.2], [12.4, 7.5]],
     [[12, 2.4], [12.1, 4.6]], [[12, 19.4], [11.9, 21.6]], [[2.4, 12], [4.6, 12.1]], [[19.4, 12], [21.6, 11.9]],
@@ -919,6 +945,55 @@ const SKETCH = {
   ],
 }
 
+// Snooze: three z on one line, small, medium, large (the user's choice, card Nr. 177). Unlike the pen strokes above
+// each z is one heavy line with round ends and sharp corners, of a width of its own: [path, line width]. No wobble,
+// no tilt. sketch('snooze') draws these; SKETCH.snooze above is the earlier pen drawing, kept for the iOS port.
+const SNOOZE_Z = [
+  ['M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3', 2],
+  ['M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2', 2.3],
+  ['M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2', 2.6],
+]
+
+// Whatever: a duck in sunglasses, afloat (the user's choice, card Nr. 176 "bust"); the button shows it alone, the
+// words come as its tooltip. Box 48 x 40 (not 24 x 24): size it 1.2 : 1. Parts are [kind, path]: line a pen line around
+// a shape filled with the surface, open a pen line, thin a finer line, bill a light wash, ink filled with the pen
+// (the lenses), glint a stroke in the surface colour on a lens. The head is drawn at its own scale (DUCK_HEAD_AT).
+// pen.js sketchSvg('duck') draws it.
+const DUCK_BODY = [
+  ['line', 'M11 25 C4.6 27 2.4 32.6 5.4 37.2 C9 40.6 34 40.6 37.6 37.2 C40.6 32.6 38.6 27.4 32.6 25.6'],
+  ['open', 'M10 31.4 C13.6 35.6 20 35.6 23.6 32'],
+  ['thin', 'M0.4 38.8 C1.8 38 3 39.2 4.4 38.6'],
+  ['thin', 'M39 38.6 C40.8 37.6 42.6 39.4 44.4 38.6 C45.6 38 46.6 38.6 47.6 38.4'],
+]
+const DUCK_HEAD_AT = 'translate(6.4 -1.2) scale(.78)'
+const DUCK_HEAD = [
+  ['line', 'M19.6 3.4 C28 3.4 33.6 9.4 33.6 18 C33.6 27 27.6 33.4 19.6 33.4 C11.6 33.4 5.6 27 5.6 18 C5.6 9.4 11.2 3.4 19.6 3.4 Z'],
+  ['open', 'M18.6 3.4 C17.2 1.2 18.8 -0.2 20.8 0.6'],
+  ['open', 'M21.4 3.5 C21.2 1.8 22.6 1 24 1.8'],
+  ['bill', 'M29.6 20.6 C36 19.4 44.6 21.2 46.6 24.4 C45.4 28.2 36.6 29.8 29.4 28.6 Z'],
+  ['thin', 'M30.6 24.8 C35.6 25.8 41.6 25.6 46.2 24.6'],
+  ['ink', 'M7.6 10.4 h14 v4.03 c0 3.84 -3.08 5.57 -7 5.57 c-4.2 0 -7 -1.92 -7 -5.57 z'],
+  ['glint', 'M10.68 12.7 l2.24 3.07'],
+  ['ink', 'M24.4 10.4 h14 v4.03 c0 3.84 -3.08 5.57 -7 5.57 c-4.2 0 -7 -1.92 -7 -5.57 z'],
+  ['glint', 'M27.48 12.7 l2.24 3.07'],
+  ['ink', 'M21 10.4 h4 v2.4 h-4 z'],
+  ['open', 'M7.6 11.4 L3.6 10.2'],
+]
+
+// What??: the word written by hand (card Nr. 206), plain strokes in a 68 x 24 box; pen.js sketchSvg('what') draws it.
+const WHAT = [
+  ['open', 'M2.2 5.4 C3.2 10.4 4.2 15.6 5.6 20.6 C7 17 8.2 13.4 9.4 10.2 C10.6 13.6 11.6 17.2 12.8 20.6 C14.4 15.4 15.6 10.4 16.6 5.2'],
+  ['open', 'M19.8 3.8 C19.6 9.6 19.6 15.4 19.6 20.8'],
+  ['open', 'M19.8 15 C20.8 12 25 10.8 26 14 C26.4 16.2 26.2 18.6 26.4 20.8'],
+  ['open', 'M35.4 13.4 C34.2 11 29.8 11 28.8 15 C28 19.2 31 21.8 34 19.8 C35.4 18.6 35.6 15.6 35.6 12.2 C35.6 15.6 35.6 18.8 36.8 21'],
+  ['open', 'M40.4 6 C40.2 10.6 40.2 15.6 40.8 18.8 C41.2 20.8 43 21.2 44.4 20.2'],
+  ['open', 'M37.8 11.6 C39.8 11.6 41.8 11.4 43.8 11.2'],
+  ['open', 'M47.6 8.2 C47.6 4.6 50.8 3 53.2 4.2 C55.6 5.6 55.2 8.8 52.8 10.4 C51.2 11.4 50.6 13 50.7 15.4'],
+  ['open', 'M50.7 19.8 L50.9 20.4'],
+  ['open', 'M57.4 7.4 C57.8 3.8 61 2.4 63.4 3.8 C65.6 5.2 65 8.6 62.6 10.2 C61 11.4 60.4 13 60.5 15.6'],
+  ['open', 'M60.5 20 L60.7 20.6'],
+]
+
 // Putting a question off: the one word for it everywhere (button, tag, pile), and the name of its drawing for sketch().
 export const LATER_WORD = 'Snooze'
 export const LATER_SKETCH = 'snooze'
@@ -970,6 +1045,15 @@ export function sketch(name) {
   svg.setAttribute('viewBox', '0 0 24 24')
   svg.setAttribute('class', 'sketch')
   svg.setAttribute('aria-hidden', 'true')
+  if (name === 'snooze') {   // the three heavy z: each path carries its own width, which wins over the width CSS gives the icon
+    for (const [d, width] of SNOOZE_Z) {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      path.setAttribute('d', d)
+      path.setAttribute('stroke-width', width)
+      svg.append(path)
+    }
+    return svg
+  }
   svg.style.rotate = `${((r() - .5) * 9).toFixed(1)}deg`
   for (const stroke of SKETCH[name] ?? []) {
     const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')

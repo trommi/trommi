@@ -1,7 +1,7 @@
 /* The Desk is the scratchpad (js/padlink.js): the whole Desk is paper, and heading, rows and stacks lie on it.
    The pad itself (the page /pad/?desk, in a frame as high as the window) sticks to the top of the Desk's scroller,
    under everything else in it, and paints the part of the paper that the scrolling has brought there. */
-#inbox.has-deskpad { position: relative; isolation: isolate; }
+#inbox.has-deskpad { position: relative; isolation: isolate; touch-action: pan-x pan-y; }   /* a pinch zooms the paper (js/padlink.js), not the page */
 /* A sticky box of no height stays where the page begins for the whole page, and takes no room among the Desk's own
    things. It is held inside the scroller's padding, so what it carries is moved up by that padding. */
 .deskpad, .deskpad-over { position: sticky; top: 0; height: 0; overflow-anchor: none; }
@@ -10,7 +10,7 @@
 /* Free paper below the list: as high as js/padlink.js says (the lowest drawing, plus one and a half windows). */
 .deskpad-room { margin-top: var(--s-8); pointer-events: none; overflow-anchor: none; }
 /* Things that lie on the paper and scroll with it (the memo): above the drawing, below the cards. */
-.deskpad-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: -1; overflow-anchor: none; }
+.deskpad-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: -1; overflow-anchor: none; transform-origin: 0 0; }
 
 /* Who gets the pointer. With the bare pointer the Desk's things work as always, and what falls between them goes
    to the paper: the boxes that only hold them let it through. */
@@ -36,6 +36,8 @@
 .deskpad-switch-btn .deskpad-slash { display: none; }
 .deskpad-switch-btn[aria-pressed="true"] .deskpad-slash { display: inline; }
 .deskpad-switch-note:empty { display: none; }
+/* Cards hidden is never quiet: the eye stands out in the signal colour, with or without knocks. */
+#deskpad-eye[aria-pressed="true"] { background: var(--urg-high); color: var(--surface); }
 .deskpad-switch-btn[data-knocks] { background: var(--urg-high); color: var(--surface); padding-right: 12px; }
 
 /* No control for the pad in the bar any more; js/padlink.js keeps the element, hidden. The bar's own rules give it

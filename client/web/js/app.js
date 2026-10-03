@@ -337,25 +337,6 @@ async function openFocus(cardId, step = true, { ask = false, revise = false, gal
     showToast('error', 'The focus window could not be loaded.', 4000)
   }
 }
-// A Desk row unfolds its card in place (focus.js openInline) where there is room for it; a phone keeps
-// the window. The address reads /q/<n> while it is unfolded; folding goes back ('focus:close', below).
-async function unfoldCard(host, cardId, onClose) {
-  if (matchMedia('(max-width: 860px)').matches) return false
-  stepping++   // (the row makes room before its entry is written: that scroll is not the Desk's position)
-  try {
-    focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
-    if (!focusMode.openInline) return false
-    // Another row is unfolded: it folds as this one opens. The address entry it made is kept and
-    // rewritten for this card, instead of going back and forth.
-    const swap = Boolean(focusMode.isInline?.())
-    routing = swap
-    let ok = false
-    try { ok = focusMode.openInline(host, cardId, { onClose }) } finally { routing = false }
-    focusCard = ok ? cardId : null
-    writeAddress(ok && !swap)
-    return ok
-  } catch (err) { console.error(err); return false } finally { stepping-- }
-}
 // Closed by hand: leave the entry the window made, so "back" does not open it again.
 document.addEventListener('focus:close', () => {
   if (!focusCard) return
@@ -407,7 +388,7 @@ function leaveCard() {
   focusCard = null
 }
 const agents = mountAgents($('agents'), { onSelect: id => { leaveCard(); showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
-const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onUnfold: unfoldCard, onDecided: offerUndo })
+const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onDecided: offerUndo })
 
 // The title of the pane: which session this is, by its mark and name. For sessions laid
 // together, their joint mark and each name; a name picks that one for the canvas, and on a
@@ -436,7 +417,7 @@ function paintTitle(state) {
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${agent.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(agent, { vip: 'main', working: working.includes(agent.id) }))
+    mark.append(avatar(agent, { vip: false, working: working.includes(agent.id) }))
     mark.addEventListener('click', () => openMarkPicker(agent, mark))
     const name = el('button', null, agent.name)
     name.type = 'button'
@@ -495,7 +476,7 @@ function followAddress(first = false) {
     // Back or forward onto a card of the Desk on a wide screen: it unfolds in its row again, as it was.
     const id = to.q === 'next' ? null : cardOf(to.q)
     const text = !first && id && !to.ids.length && !to.page && !matchMedia('(max-width: 860px)').matches
-      ? document.querySelector(`#inbox .inbox-group[data-sender] .inbox-row[data-id="${CSS.escape(id)}"]:not(.is-unfolded) .inbox-text`) : null
+      ? document.querySelector(`#inbox .inbox-group[data-sender] .inbox-row[data-id="${CSS.escape(id)}"] .inbox-text`) : null
     if (text) text.click()
     else openFocus(id, false)
   } else if (!to.q && focusMode?.isOpen()) focusMode.close()

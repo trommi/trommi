@@ -638,7 +638,7 @@ Every request needs the login cookie (`board_<port>`, set once by `GET /?t=<toke
 | `POST /speech/say` | `{text, lang?}` | Text to audio, for read-aloud. | used |
 | `GET /speech/card/<id>` |  | A whole card as audio. `store.js` exports the address; nothing calls it. | not shown |
 | `GET /files/<name>` |  | An attachment, with Range requests; an HTML file is served sandboxed. | used |
-| `GET /a/<id>, /a/<id>/blob, /a/-/…` |  | The asset viewer and the ciphertext. No login: the link is the permission. | used |
+| `GET /a/<id>, /a/<id>/blob, /a/-/…` |  | The asset viewer and the ciphertext, for who is signed in (cookie, or the board token from this machine). Only the empty frame /a/-/frame.html needs no login. Outsiders: /r/<id> of a released asset. | used |
 | `GET /pad/elements?pad=&since=` |  | All elements of the pad, or what changed after a running number. | used |
 | `POST /pad/elements` | `{pad, client_id, elements: [...]}` | Create and change; per element the higher `rev` wins. | used |
 | `DELETE /pad/elements/<id>` | `?rev=&client_id=` | A tombstone. | used |
