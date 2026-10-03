@@ -1088,8 +1088,18 @@ export async function verifyHubAuth(bytes, { state, hub }) {
 
 // ---- message envelope ----------------------------------------------------------
 
-export const KIND = Object.freeze({ CHAT: 1, CARD: 2, ANSWER: 3, PERMISSION_REQUEST: 4, VERDICT: 5, STATUS: 6, REDECIDE: 7, SCRIBBLE: 8 })
-const FLAG_PUSH = 1, FLAG_CARD = 2
+export const KIND = Object.freeze({
+  TIMELINE_ITEM: 1, OBJECT_VERSION: 2, ANSWER: 3, PERMISSION_REQUEST: 4, VERDICT: 5, STATUS: 6, DECIDE_AGAIN: 7,
+  // Older names of the same numbers. 8 (scribble) is a thread kind kept decodable; drawings are timeline items now.
+  CHAT: 1, CARD: 2, REDECIDE: 7, SCRIBBLE: 8,
+})
+/** Thread items (not heads): they carry a timeline and never an object block. Every other kind is a head. */
+const THREAD_KINDS = new Set([KIND.TIMELINE_ITEM, KIND.SCRIBBLE])
+export const isThreadKind = kind => THREAD_KINDS.has(kind)
+/** timeline_kind values known today; others are accepted (a new timeline kind needs no hub change), 0 is refused. */
+export const TIMELINE = Object.freeze({ CHAT: 1, CANVAS: 2 })
+export const TIMELINE_ID_MAX = 100
+const FLAG_PUSH = 1, FLAG_CARD = 2, FLAG_HEAD = 4
 /** Card fields the hub can read (and nobody can change: they are signed). Urgency is the order of the stack and decides about pushes. */
 export const CARD_STATE = Object.freeze({ OPEN: 1, ANSWERED: 2, CLOSED: 3 })
 export const URGENCY = Object.freeze({ LOW: 0, NORMAL: 1, HIGH: 2, CRITICAL: 3 })
@@ -1116,9 +1126,14 @@ async function senderKey(roomId, secret, senderId) {
 }
 
 function encodeHeader(h) {
-  const flags = (h.push ? FLAG_PUSH : 0) | (h.card ? FLAG_CARD : 0)
+  if (!Number.isInteger(h.kind) || h.kind < 1 || h.kind > 8) fail('bad-argument', 'envelope kind')
+  const thread = isThreadKind(h.kind)
+  if (h.isHead === thread) fail('bad-argument', thread ? 'a timeline item is not a head' : 'this kind is a head')
+  if (thread && h.card) fail('bad-argument', 'a thread item carries no object block')
+  if (thread !== (h.timelineKind != null || h.timelineId != null)) fail('bad-argument', thread ? 'a thread item needs timelineKind and timelineId' : 'a head has no timeline')
+  const flags = (h.push ? FLAG_PUSH : 0) | (h.card ? FLAG_CARD : 0) | (h.isHead ? FLAG_HEAD : 0)
   const w = new W().u8(VERSION).u8(flags).raw(h.roomId, 32, 'roomId').u32(h.epoch).u32(h.keyId).raw(h.sender, 32, 'sender')
-    .u64(h.seq).raw(h.prev, 32, 'prev').u32(h.logSeq).raw(h.logHash, 32, 'logHash').raw(h.recipient, 32, 'recipient').u64(h.time)
+    .u64(h.seq).raw(h.prev, 32, 'prev').u32(h.logSeq).raw(h.logHash, 32, 'logHash').raw(h.recipient, 32, 'recipient').u64(h.time).u8(h.kind)
   const seen = [...h.seen].sort((a, b) => compareBytes(a.sender, b.sender))
   w.u16(seen.length)
   for (let i = 0; i < seen.length; i++) {
@@ -1129,6 +1144,14 @@ function encodeHeader(h) {
     const c = cardFields({ ...h.card, urgency: h.card.urgency ?? URGENCY.NORMAL }, what => fail('bad-argument', what))
     w.raw(c.id, 16, 'card id').u8(c.state).u8(c.urgency).u64(c.answeredAt ?? 0)
   }
+  if (thread) {
+    const kind = h.timelineKind, id = h.timelineId
+    if (!Number.isInteger(kind) || kind < 1 || kind > 255) fail('bad-argument', 'timeline kind')
+    if (typeof id !== 'string' || !id) fail('bad-argument', 'timeline id')
+    const raw = te.encode(id)
+    if (raw.length > TIMELINE_ID_MAX || tdStrict.decode(raw) !== id) fail('bad-argument', 'timeline id too long or not well-formed')
+    w.u8(kind).u8(raw.length).raw(raw, raw.length, 'timeline id')
+  }
   w.u8(h.blobs.length)
   for (const b of h.blobs) w.raw(b, 16, 'blob id')
   return w.done()
@@ -1138,18 +1161,32 @@ function decodeHeader(bytes) {
   const v = r.u8()
   if (v !== VERSION) fail('bad-version', `envelope header version ${v}`)
   const flags = r.u8()
-  if (flags & ~(FLAG_PUSH | FLAG_CARD)) fail('bad-format', 'unknown header flags')
+  if (flags & ~(FLAG_PUSH | FLAG_CARD | FLAG_HEAD)) fail('bad-format', 'unknown header flags')
   const h = {
-    push: !!(flags & FLAG_PUSH), roomId: r.take(32), epoch: r.u32(), keyId: r.u32(), sender: r.take(32), seq: r.u64(), prev: r.take(32),
-    logSeq: r.u32(), logHash: r.take(32), recipient: r.take(32), time: r.u64(), seen: [], card: null, blobs: [],
+    push: !!(flags & FLAG_PUSH), isHead: !!(flags & FLAG_HEAD), roomId: r.take(32), epoch: r.u32(), keyId: r.u32(), sender: r.take(32), seq: r.u64(), prev: r.take(32),
+    logSeq: r.u32(), logHash: r.take(32), recipient: r.take(32), time: r.u64(), kind: r.u8(), seen: [], card: null, timelineKind: null, timelineId: null, blobs: [],
   }
+  if (h.kind < 1 || h.kind > 8) fail('bad-format', `unknown envelope kind ${h.kind}`)
+  const thread = isThreadKind(h.kind)
+  if (h.isHead === thread) fail('bad-format', 'is_head does not match the envelope kind')
   const n = r.u16()
   for (let i = 0; i < n; i++) {
     const s = { sender: r.take(32), seq: r.u64(), hash: r.take(32) }
     if (i && compareBytes(h.seen[i - 1].sender, s.sender) >= 0) fail('bad-format', 'seen not strictly ascending')
     h.seen.push(s)
   }
-  if (flags & FLAG_CARD) h.card = cardFields({ id: r.take(16), state: r.u8(), urgency: r.u8(), answeredAt: r.u64() }, what => fail('bad-format', `unknown ${what}`))
+  if (flags & FLAG_CARD) {
+    if (thread) fail('bad-format', 'a thread item carries no object block')
+    h.card = cardFields({ id: r.take(16), state: r.u8(), urgency: r.u8(), answeredAt: r.u64() }, what => fail('bad-format', `unknown ${what}`))
+  }
+  if (thread) {
+    const kind = r.u8()
+    const n = r.u8()
+    if (kind === 0 || n === 0 || n > TIMELINE_ID_MAX) fail('bad-format', 'timeline')
+    let id
+    try { id = tdStrict.decode(r.take(n)) } catch { fail('bad-format', 'timeline id is not UTF-8') }
+    h.timelineKind = kind; h.timelineId = id
+  }
   const blobs = r.u8()
   for (let i = 0; i < blobs; i++) h.blobs.push(r.take(16))
   r.end()
@@ -1229,13 +1266,13 @@ function advance(chains, sender, seq, hashBytes) {
  * `recipient`: a device id, or null for everyone. `seen` defaults to the latest envelope of every other sender in `chains`.
  * Returns { bytes, hash, seq, header }.
  */
-export async function sealEnvelope({ device, state, secret, chains, kind, bind = EMPTY, payload = EMPTY, recipient = null, time = Date.now(), card = null, blobs = [], push = false, seen, _rng }) {
+export async function sealEnvelope({ device, state, secret, chains, kind, bind = EMPTY, payload = EMPTY, recipient = null, time = Date.now(), card = null, timelineKind = null, timelineId = null, blobs = [], push = false, isHead = !isThreadKind(kind), seen, _rng }) {
   if (!memberAt(state, device.id)) fail('not-member', 'this device is not a member')
   if (secret.epoch !== state.epoch) fail('wrong-epoch', 'send with the current epoch')
   await checkCommits(state, { ...secret, hist: null })
   const own = chains.get(idKey(device.id))
   const h = {
-    push, roomId: state.roomId, epoch: secret.epoch, keyId: 0, sender: device.id, seq: (own?.seq ?? 0) + 1, prev: own?.hash ?? ZERO32,
+    push, isHead, kind, timelineKind, timelineId, roomId: state.roomId, epoch: secret.epoch, keyId: 0, sender: device.id, seq: (own?.seq ?? 0) + 1, prev: own?.hash ?? ZERO32,
     logSeq: state.head.seq, logHash: state.head.hash, recipient: recipient ?? ZERO32, time, seen: seen ?? seenFrom(chains, device.id), card, blobs,
   }
   const headerBytes = encodeHeader(h)
@@ -1303,7 +1340,7 @@ export async function verifyEnvelope(bytes, { state, chains, allowChainStart = f
   }
 
   if (commit) advance(chains, h.sender, h.seq, envHash)
-  return { header: h, hash: envHash, member, pruned: e.pruned, withheld, chainStart, removedNow, epochCurrent: h.epoch === state.epoch, _split: e }
+  return { header: h, hash: envHash, ciphertextHash: ctHash, member, pruned: e.pruned, withheld, chainStart, removedNow, epochCurrent: h.epoch === state.epoch, _split: e }
 }
 
 /**
@@ -1318,9 +1355,45 @@ export async function openEnvelope(bytes, { state, chains, secrets, self = null,
   if (!secret) fail('no-key', `no key for epoch ${v.header.epoch}`, { epoch: v.header.epoch })
   const e = v._split
   const body = decodeBody(await gcmOpen(await senderKey(state.roomId, secret, v.header.sender), e.nonce, e.headerBytes, e.ct))
+  if (body.kind !== v.header.kind) fail('kind-mismatch', 'the kind inside differs from the signed header')
   if (opts.commit !== false) advance(chains, v.header.sender, v.header.seq, v.hash)
   const { _split, ...rest } = v
   return { ...rest, ...body, forMe: isZero(v.header.recipient) || (self !== null && bytesEqual(v.header.recipient, self)) }
+}
+
+/**
+ * Open a full envelope whose pruned form (or full form) was already verified in the chain by verifyEnvelope:
+ * a thread item fetched later. `envelopeHash` is the hash the chain accepted for it. Checks that this
+ * envelope hashes to exactly that (header, nonce and the hash of the ciphertext) and that the sender's
+ * signature holds, then decrypts. Chains are not touched: nothing is decrypted that the chain did not vouch for.
+ * Throws: bad-format, wrong-room, hash-mismatch, not-member, bad-signature, no-key, decrypt-failed.
+ * Returns { header, hash, kind, bind, payload, member, forMe }.
+ */
+export async function openVerifiedEnvelope(bytes, { state, secrets, envelopeHash, self = null }) {
+  need(envelopeHash, 32, 'envelope hash')
+  const e = splitEnvelope(bytes)
+  if (e.pruned) fail('pruned', 'the ciphertext of this envelope was deleted')
+  const h = decodeHeader(e.headerBytes)
+  if (!bytesEqual(h.roomId, state.roomId)) fail('wrong-room', 'envelope of another room')
+  if (h.keyId !== 0) fail('bad-format', 'unknown key id')
+  const envHash = await hash(LABEL.envelope, e.headerBytes, e.nonce, await sha256(e.ct))
+  if (!bytesEqual(envHash, envelopeHash)) fail('hash-mismatch', 'this envelope is not the one the chain verified')
+  // The chain check already placed the sender in the log; a sender removed since still signed this one.
+  const member = state.members.get(idKey(h.sender))
+  if (!member) fail('not-member', 'the sender is not in the member list')
+  if (!await verify(member.signPub, LABEL.envelopeSig, envHash, e.signature)) fail('bad-signature', 'envelope')
+  const secret = typeof secrets === 'function' ? secrets(h.epoch) : secrets?.get(h.epoch)
+  if (!secret) fail('no-key', `no key for epoch ${h.epoch}`, { epoch: h.epoch })
+  const body = decodeBody(await gcmOpen(await senderKey(state.roomId, secret, h.sender), e.nonce, e.headerBytes, e.ct))
+  if (body.kind !== h.kind) fail('kind-mismatch', 'the kind inside differs from the signed header')
+  return { header: h, hash: envHash, member, ...body, forMe: isZero(h.recipient) || (self !== null && bytesEqual(h.recipient, self)) }
+}
+
+/** The wire form from its parts (what a hub stores in columns): full with `ciphertext`, pruned with only `ciphertextHash`. */
+export function joinEnvelope({ headerBytes, nonce, ciphertext = null, ciphertextHash = null, signature }) {
+  need(nonce, NONCE_LEN, 'nonce'); need(signature, 64, 'signature')
+  if (ciphertext) return concat(Uint8Array.of(VERSION, OBJ.ENVELOPE), new W().var16(headerBytes).done(), nonce, new W().var32(ciphertext).done(), signature)
+  return concat(Uint8Array.of(VERSION, OBJ.ENVELOPE_PRUNED), new W().var16(headerBytes).done(), nonce, need(ciphertextHash, 32, 'ciphertext hash'), signature)
 }
 
 // ---- commands: what an agent may act on ----------------------------------------

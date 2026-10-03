@@ -2955,7 +2955,7 @@ assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).
   await assert.rejects(http10.claim(phoneToken, 'Phone', 'p1'), e => e.code === 'forbidden')
   // a sealed envelope from the phone to the agent; the agent opens it
   phoneState = await z.verifyLog((await http10.log({ token: phoneToken })).entries, roomId)
-  const env = await z.sealEnvelope({ device: phone, state: phoneState, secret: room.secret, chains: z.newChains(), kind: z.KIND.CHAT, payload: z.utf8('run the tests'), recipient: agent.id })
+  const env = await z.sealEnvelope({ device: phone, state: phoneState, secret: room.secret, chains: z.newChains(), kind: z.KIND.CHAT, timelineKind: z.TIMELINE.CHAT, timelineId: 'session/' + z.hex(agent.id), payload: z.utf8('run the tests'), recipient: agent.id })
   assert.equal((await http10.postEnvelope(phoneToken, env.bytes)).n, 1)
   await assert.rejects(http10.postEnvelope(phoneToken, env.bytes), e => e.code === 'replay')
   await assert.rejects(http10.envelopes('falsch'), e => e.code === 'unauthorised')
