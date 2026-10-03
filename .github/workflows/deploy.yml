@@ -1,0 +1,68 @@
+# Deploys the hub to trommi-hub on every push to main.
+# For now it ships the hello-world stand-in (deploy/hello) to prove the chain:
+# build on GitHub -> Tailscale (tag:trommi-ci) -> docker load on the server ->
+# compose restart -> https://hub.trommi.com/healthz reports this commit.
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://hub.trommi.com
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      HOST: root@trommi-hub.tail276436.ts.net
+      IMAGE: trommi-hub:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build --build-arg COMMIT=${{ github.sha }} -t "$IMAGE" deploy/hello
+
+      - name: Connect to Tailscale
+        uses: tailscale/github-action@v4
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          audience: ${{ secrets.TS_AUDIENCE }}
+          tags: tag:trommi-ci
+          ping: trommi-hub.tail276436.ts.net
+
+      - name: Ship image
+        run: docker save "$IMAGE" | gzip | ssh -o StrictHostKeyChecking=no "$HOST" 'gunzip | docker load'
+
+      - name: Back up data and restart hub
+        run: |
+          ssh -o StrictHostKeyChecking=no "$HOST" "set -e
+            cd /srv/trommi
+            if [ -f data/pad.db ]; then tar -czf backups/data-\$(date +%Y%m%d-%H%M%S).tgz data; fi
+            ls -1t backups/*.tgz 2>/dev/null | tail -n +15 | xargs -r rm -f
+            docker tag $IMAGE trommi-hub:current
+            docker compose up -d hub
+            docker image prune -f >/dev/null"
+
+      - name: Verify
+        run: |
+          for i in $(seq 1 30); do
+            got=$(curl -fsS --max-time 5 https://hub.trommi.com/healthz | sed -n 's/.*"commit":"\([^"]*\)".*/\1/p' || true)
+            echo "attempt $i: $got"
+            [ "$got" = "${{ github.sha }}" ] && exit 0
+            sleep 3
+          done
+          echo "hub.trommi.com never reported ${{ github.sha }}"
+          exit 1
