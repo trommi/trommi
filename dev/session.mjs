@@ -1,6 +1,7 @@
 // Put a worker on the board as its own session, without it being a Claude Code
 // session with the channel loaded: a subagent, a script, a person at a shell.
-//   node dev/session.mjs link "Web UI"                     hold the session online; answers are appended to data/sessions/<id>.log
+//   node dev/session.mjs link "Web UI" [--parent <id>]     hold the session online; answers are appended to data/sessions/<id>.log;
+//                                                          --parent: it is a helper of that main session
 //   node dev/session.mjs call web-ui reply '{"text":"…"}'   call a board tool as that session
 //   node dev/session.mjs answers web-ui                    print what the human answered so far
 //   node dev/session.mjs publish web-ui out/report.html [--title "…"] [--type html|image|video|audio|file] [--note "…"] [--silent] [--keep]
@@ -47,7 +48,9 @@ const id = slug(who)
 if (cmd === 'link') {
   fs.mkdirSync(path.join(data, 'sessions'), { recursive: true })
   const connect = () => {
-    const query = new URLSearchParams({ name: who, id, instance: instanceOf(id), cwd: root, host: os.hostname(), platform: `${os.type()} ${os.arch()}` })
+    // --parent <id>: this session is a helper of that main session; the board shows it under it.
+    const { values: linkOpt } = parseArgs({ args: rest, options: { parent: { type: 'string' } } })
+    const query = new URLSearchParams({ name: who, id, instance: instanceOf(id), cwd: root, host: os.hostname(), platform: `${os.type()} ${os.arch()}`, ...(linkOpt.parent ? { parent: linkOpt.parent } : {}) })
     const req = http.get({ host: '127.0.0.1', port, path: `/agent/link?${query}`, headers: { 'x-board-token': token } }, res => {
       res.setEncoding('utf8')
       res.on('data', chunk => fs.appendFileSync(logOf(id), chunk))

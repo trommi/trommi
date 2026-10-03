@@ -60,9 +60,11 @@ async function connect(wsUrl) {
 /** Start one headless Chromium with its own throwaway profile. */
 export async function launchChromium({ width = 1440, height = 900, args = [] } = {}) {
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'cdp-'))
-  // Its own process group, so that close() takes the renderer and helper processes along.
+  // Its own process group, so that close() takes the renderer and helper processes along. No extensions: a
+  // chromium-flags.conf (--load-extension) or an external extension of the system (1Password) would otherwise come
+  // along, and one of them opens a page of its own in front of ours, after which ours gets about one frame a second.
   const proc = spawn(process.env.CHROMIUM || 'chromium', [
-    '--headless=new', '--disable-gpu', '--no-proxy-server', '--hide-scrollbars', '--no-first-run',
+    '--headless=new', '--disable-gpu', '--no-proxy-server', '--disable-extensions', '--disable-component-extensions-with-background-pages', '--hide-scrollbars', '--no-first-run',
     `--user-data-dir=${profile}`, '--remote-debugging-port=0', `--window-size=${width},${height}`, ...args, 'about:blank',
   ], { stdio: 'ignore', detached: true })
   let gone = false
@@ -106,6 +108,10 @@ export async function launchChromium({ width = 1440, height = 900, args = [] } =
     if (!target) throw new Error('Chromium shows no page to attach to')
     const session = await connect(target.webSocketDebuggerUrl)
     sessions.push(session)
+    // On a desktop whose compositor reports the headless window as covered, the page turns "hidden" after a
+    // moment and its animation frames stop. Focus emulation keeps it visible and painting.
+    await session.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+    await session.send('Page.bringToFront').catch(() => {})
     return session
   }
 

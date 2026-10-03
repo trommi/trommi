@@ -137,6 +137,21 @@ try {
   equal(await run('return [window.__heard, document.title.includes("ran"), location.pathname]'), [[], false, '/s/api'], 'and the board heard nothing of it')
   await run('document.getElementById("hostile").remove()')
 
+  // ---- bare paths to a page of the board are links (ui.js inline) --------------------------------
+  const paths = await run(`
+    const { rich } = await import('/js/ui.js')
+    const links = text => [...rich(text).querySelectorAll('a')].map(a => a.getAttribute('href'))
+    return [
+      links('zum Anklicken unter /designs/whatever10.html (Leiste oben wechselt).'),
+      links('Siehe /designs/live-field.html.'),
+      links('Unter /designs/float5.html?k=pille, dann /designs/a-b.html?k=a&th=dark#top und \`/designs/x1.html#s\`'),
+      links('Am Ende: /designs/names-com.html'),
+      links('(/designs/rail-fold.html)'),
+      links('Am 3/10 kommt und/oder geht es; 1/2.html? nein. https://example.org/a/b.html bleibt aussen.'),
+    ]`)
+  equal(paths, [['/designs/whatever10.html'], ['/designs/live-field.html'], ['/designs/float5.html?k=pille', '/designs/a-b.html?k=a&th=dark#top', '/designs/x1.html#s'], ['/designs/names-com.html'], ['/designs/rail-fold.html'], ['https://example.org/a/b.html']],
+    'a bare board path links: digits, dashes, a query, a fragment; before a space, a bracket, a full stop, a comma, the end; a date and "und/oder" do not')
+
   // ---- a tall block is capped and opens large -----------------------------------------------------
   await run(`
     const { rich } = await import('/js/ui.js')
@@ -150,12 +165,18 @@ try {
   equal(tall, { h: tall.cap, cap: 630, capped: true, kind: 'table', open: '1' }, 'a long table stops at 70% of the screen, scrolls inside, and offers "Open large"')
   const numeric = (await inFrames(`const t = document.querySelector('table'); return t && t.rows.length === 81 ? [...t.rows[5].cells].map(c => getComputedStyle(c).textAlign) : null`)).find(Boolean)
   equal(numeric, ['left', 'right'], 'numbers in an HTML table stand right-aligned too')
-  await run(`document.querySelector('#tall .rh-open').click()`)
-  await sleep(900)
-  const big = await run(`const d = document.querySelector('dialog.rh-large'); const f = d.querySelector('.rh-frame'); return { open: d.open, sandbox: f.getAttribute('sandbox'), h: Math.round(f.getBoundingClientRect().height) > 700, w: Math.round(d.getBoundingClientRect().width) }`)
-  equal(big, { open: true, sandbox: 'allow-scripts', h: true, w: 1100 }, 'the big view shows the same block in the same kind of frame')
+  // "Open large" is a link to a page of its own in a new tab (/large.html#<key>); the block is handed over through
+  // the browser's storage when the link is pressed. Followed here in this tab.
+  const link = await run(`const a = document.querySelector('#tall .rh-open'); a.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); const key = a.getAttribute('href').split('#')[1]; return { tag: a.tagName, href: a.getAttribute('href'), target: a.target, handed: localStorage.getItem('trommi-large:' + key) != null }`)
+  equal([link.tag, /^\/large\.html#.+/.test(link.href), link.target, link.handed], ['A', true, '_blank', true], '"Open large" is a link to /large.html#<key> in a new tab, and hands the block over')
+  const back = await run('return location.pathname')
+  await go(link.href)
+  const big = await run(`const f = document.querySelector('#stage .rh-frame'); return f ? { sandbox: f.getAttribute('sandbox'), h: Math.round(f.getBoundingClientRect().height) > 700, wide: Math.round(f.getBoundingClientRect().width) >= 1100, dialog: Boolean(document.querySelector('dialog')) } : null`)
+  equal(big, { sandbox: 'allow-scripts', h: true, wide: true, dialog: false }, 'the large page shows the same block in the same kind of frame, filling the page')
   await shot('large')
-  await run(`document.querySelector('dialog.rh-large .rh-large-close').click(); document.getElementById('tall').remove()`)
+  await page.send('Page.reload'); await sleep(1500)
+  ok(await run(`return Boolean(document.querySelector('#stage .rh-frame'))`), 'a reload of the large page shows the block again')
+  await go(back)
 
   // ---- dark: the frame follows without being loaded again -----------------------------------------
   await run(`window.__frame = document.querySelector('.rh-frame').contentWindow; document.documentElement.dataset.theme = 'dark'`)
@@ -204,14 +225,9 @@ try {
   m = (await inFrames(`return { content: Math.ceil(document.documentElement.getBoundingClientRect().height), view: innerHeight, rows: document.querySelectorAll('tr').length }`)).find(x => x.rows === 4)
   ok(m.view === m.content && m.view > before, `the frame grew with what was unfolded in it (${before} -> ${m.view})`)
   const questionShot = await shot('question-html-open')
-  // The big view over the question window: Escape closes it, and only it.
-  await run(`[...document.querySelectorAll('.focus .rh-open')].find(b => b.getClientRects().length).click()`)
-  await sleep(700)
-  ok(await run(`return document.querySelector('dialog.rh-large').open`), '"Open large" works from the question window')
-  await shot('question-large')
-  for (const type of ['keyDown', 'keyUp']) await page.send('Input.dispatchKeyEvent', { type, key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 })
-  await sleep(500)
-  equal(await run(`return [document.querySelector('dialog.rh-large').open, Boolean(document.querySelector('.focus')?.getClientRects().length), new URLSearchParams(location.search).has('q')]`), [false, true, true], 'Escape closes the big view and leaves the question open')
+  // "Open large" in the question window is the same link; pressing it leaves the question as it is.
+  const qLink = await run(`const a = [...document.querySelectorAll('.focus .rh-open')].find(b => b.getClientRects().length); if (!a) return null; a.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true })); return { href: a.getAttribute('href'), target: a.target, handed: localStorage.getItem('trommi-large:' + a.getAttribute('href').split('#')[1]) != null, focus: Boolean(document.querySelector('.focus')?.getClientRects().length), path: location.pathname.startsWith('/q/'), dialog: Boolean(document.querySelector('dialog.rh-large')) }`)
+  equal(qLink && [/^\/large\.html#.+/.test(qLink.href), qLink.target, qLink.handed, qLink.focus, qLink.path, qLink.dialog], [true, '_blank', true, true, true, false], '"Open large" in the question window is the link to the large page, and the question stays open')
   const q2 = await question(ids[1], 'question-table')
   ok(q2.found.focus && q2.found.table, 'the question window shows a markdown table in a body')
   equal(q2.found.table.align, ['left', 'right', 'right'], 'with its numbers right-aligned')
@@ -267,6 +283,9 @@ try {
       const r = f.getBoundingClientRect()
       return { frame: [Math.round(r.top), Math.round(r.bottom)], top: Math.round(top), controls: [...document.querySelectorAll('button, a')].filter(b => b.getClientRects().length && !box.contains(b)).map(b => { const q = b.getBoundingClientRect(); return { name: b.textContent.trim(), x: q.left + q.width / 2, y: q.top + q.height / 2, over: q.right > r.left && q.left < r.right && q.bottom > r.top && q.top < r.bottom } }).filter(c => c.over && c.name) }`)
     ok(under.frame[0] < under.top && under.frame[1] > under.top && under.controls.length, `the frame lies under the head of the conversation (${under.frame.join('..')}, the log starts at ${under.top}), behind ${under.controls.map(c => c.name).join(', ')}`)
+    // The click is noted and goes no further: some of these controls leave the conversation (the Desk pill, a session),
+    // and the next one would no longer be where it was measured.
+    await eval2(`addEventListener('click', e => { e.stopPropagation(); e.preventDefault() }, true)`)
     for (const c of under.controls) {
       for (const type of ['mousePressed', 'mouseReleased']) await tab.send('Input.dispatchMouseEvent', { type, x: c.x, y: c.y, button: 'left', clickCount: 1 })
       await sleep(350)

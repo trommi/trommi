@@ -65,16 +65,28 @@ const SEL = {
   groupName: '.inbox-sender > span:not(.inbox-avatar)',
   groupCount: '.inbox-sender > b',
   groupVip: '.inbox-sender[data-vip], .inbox-sender .crown-mark, .inbox-sender .inbox-vip',
+  memoDot: '.inbox-from-mark[data-memo]',
+  crownFold: '.crown-fold',
+  crownEdges: '.crown-edges i',
+  crownBracket: '.crown-bracket',
+  ledgerMain: 'select.ledger-main',
   // what lies below the open questions, pushed together until it is unfolded: put off, with the agent, answered
   pile: '.inbox-pile',
   pileOpen: '.is-open',
   pileHead: '.inbox-pile-head',
-  pileName: '.inbox-pile-head > span:not(.inbox-avatar):not(.inbox-pile-fold)',
+  pileName: '.inbox-stack-word',
+  pileMore: '.inbox-stack-more',
+  pileLineWho: '.inbox-stack-who',
   pileCount: '.inbox-pile-head > b',
   pilePeek: '.inbox-pile-peek strong',
   doneRow: '.inbox-done',
   takeBack: '.inbox-takeback',
   rowNr: '.inbox-nr',
+  edgeKnockDown: '.inbox-edge.is-down .inbox-edge-knock',
+  focusNr: '.focus-nr',
+  focusArrow: '.focus-arrow',
+  focusThumb: '.focus-thumb',
+  rowMenu: 'dialog.rowmenu[open]',
   row: '.inbox-row',
   rowTitle: '.inbox-question',
   rowTile: '.inbox-actions > button',
@@ -113,7 +125,7 @@ const SEL = {
   focusPen: '.focus-mark-pen',
   focusInk: '.focus-ink path',
   focusScroll: '.focus-scroll',
-  focusRail: '.focus-rail, .focus-more',   // how far the walk is: a rail of marks, later one line "3 more" at the foot
+  focusRail: '.focus-card[data-shown] .focus-card-count',   // how far the walk is: a rail of marks, later one line "3 more" at the foot
   focusThread: '.focus-thread',
   focusNote: '.focus-says .says',
   // In the walk (one scrolling column of cards) a card that left is a slim strip where it stood, with the way back on it.
@@ -129,6 +141,14 @@ const SEL = {
   focusWait: '.focus-thread-wait',
   noteBack: '.says-back, .focus-strip-back',
   lightbox: 'dialog.lightbox',
+  lightboxNext: 'dialog.lightbox .lightbox-next',
+  lightboxBack: 'dialog.lightbox .lightbox-back',
+  memo: '.memo',
+  memoField: '.memo-field',
+  memoAway: '.memo-away',
+  memoBin: '.memo-bin',
+  memoLine: '.memo-line',
+  memoLineOpen: '.memo-line-open',
   lightboxImage: 'dialog.lightbox .lightbox-img',
 
   // a session
@@ -176,7 +196,7 @@ const SEL = {
   deskTotal: '#desk-state .agent-count.is-total',
   deskKnocks: '#desk-state .agent-count.is-knock',
   jumpField: '#jump-field',
-  composerPen: '.composer-pen',
+  composerPen: '.composer-scribble',
   scribbleBack: '.scribble-back',
   quickOpen: '.quick-open',
   quickField: '#quick-field',
@@ -319,7 +339,8 @@ const PAGE_LIB = `(() => {
       return { x, y, box: box(n) }
     },
     /** True when nothing on the page is still sliding or fading (endless spinners do not count, nor does the clock of the way back). */
-    still: () => document.getAnimations().every(a => a.playState !== 'running' || a.effect?.getComputedTiming().endTime === Infinity || a.effect?.target?.closest?.(SEL.undoBar)),
+    // (An animation driven by scrolling, not by time, never ends: it does not count as motion.)
+    still: () => document.getAnimations().every(a => a.playState !== 'running' || a.timeline !== document.timeline || a.effect?.getComputedTiming().endTime === Infinity || a.effect?.target?.closest?.(SEL.undoBar)),
     place: () => ({ path: location.pathname, view: document.body.dataset.view ?? '', filter: document.body.dataset.filter ?? '', page: document.body.dataset.page ?? '', scope: document.body.dataset.scope ?? '' }),
 
     entry: name => all(SEL.sidebarEntry).find(n => text(n.querySelector(SEL.sidebarName)).replace(/^★ /, '') === name) ?? null,
@@ -337,6 +358,9 @@ const PAGE_LIB = `(() => {
 
     row: (id, root = SEL.inbox) => all(SEL.row, root).find(n => n.dataset.id === id) ?? null,
     tile: (id, which, root = SEL.inbox) => { const r = __t.row(id, root); const tiles = r ? all(SEL.rowTile, r) : []; return (which === 'right' ? tiles.at(-1) : tiles[0]) ?? null },
+    /** The sheet a long press on a row brings up (phone): the words of its items, or null when it is not up. */
+    menu: () => { const d = document.querySelector(SEL.rowMenu); return d ? [...d.querySelectorAll('button')].map(b => text(b)) : null },
+    menuItem: re => [...(document.querySelector(SEL.rowMenu)?.querySelectorAll('button') ?? [])].find(b => re.test(text(b))) ?? null,
     later: (id, root = SEL.inbox) => { const r = __t.row(id, root); return r ? one(SEL.rowLater, r) : null },
     rows: (root = SEL.inbox) => all(SEL.row, root).map(rowInfo),
     rowInfo: (id, root = SEL.inbox) => { const r = __t.row(id, root); return r ? rowInfo(r) : null },
@@ -362,7 +386,8 @@ const PAGE_LIB = `(() => {
     /** What of the page behind a window can still be reached. Empty when the page is inert. */
     reachableBehind() {
       const f = document.querySelector(SEL.focus)
-      const out = [...document.body.children].filter(n => n !== f && vis(n) && !n.inert && !n.matches(SEL.toast)).map(describe)
+      const out = [...document.body.children].filter(n => n !== f && vis(n) && !n.inert && !n.matches(SEL.toast) && !n.matches('.memo-open'))   // (the memo's round button stands on the card page too)
+      .map(describe)
       const toggle = document.querySelector(SEL.themeToggle)
       const before = document.activeElement
       toggle.focus()
@@ -373,7 +398,19 @@ const PAGE_LIB = `(() => {
     /** The note that says what just happened, in the window or on the page: its words and whether it offers the way back. */
     noteNode: (inWindow = false, title = '') => (inWindow ? (all(SEL.focusStrip).findLast(n => text(n).includes(title)) ?? one(SEL.focusNote)) : one(SEL.undoBar)),
     note: (inWindow = false, title = '') => { const n = __t.noteNode(inWindow, title); return n && { text: text(n.querySelector(SEL.focusStripSaid) ?? n.querySelector(SEL.undoSaid) ?? n), all: text(n), back: !!one(SEL.noteBack, n), strip: n.matches(SEL.focusStrip), box: box(n) } },
-    inPile: (kind, id) => !!__t.pileOf(kind) && [...__t.pileOf(kind).querySelectorAll(SEL.row + ', ' + SEL.doneRow)].some(n => n.dataset.id === id),
+    /** Does the card lie on a pile at the foot? kind: 'asked' | 'later' (the stack "Later"), 'answered' | 'shredded'
+     *  (the stack "Done"). A stack holds only its first sheets in the page until all of it is shown: a card that
+     *  is no open row and whose stack has more sheets than lines counts as lying there. */
+    inPile: (kind, id) => {
+      const pile = __t.pileOf(kind === 'asked' || kind === 'later' ? 'later' : 'done')
+      if (!pile) return false
+      const lines = [...pile.querySelectorAll(SEL.doneRow)], line = lines.find(n => n.dataset.id === id)
+      if (line) return line.dataset.kind === kind
+      return parseInt(text(pile.querySelector(SEL.pileCount)), 10) > lines.length && !__t.row(id)
+    },
+    /** A line on a fanned-out stack: what it says, who asked, and the word on its way back. */
+    line: id => { const n = all(SEL.doneRow).find(n => n.dataset.id === id); return n ? { kind: n.dataset.kind, shown: vis(n), row: n.matches(SEL.row), text: text(n), who: n.querySelector(SEL.pileLineWho)?.textContent ?? '', take: text(n.querySelector(SEL.takeBack)), tiles: n.querySelectorAll(SEL.rowTile).length } : null },
+    lineNode: id => all(SEL.doneRow).find(n => n.dataset.id === id) ?? null,
     openCount: () => Number(/^\\((\\d+)/.exec(document.title)?.[1] ?? 0),
     pane: id => all(SEL.pane).find(p => p.dataset.agent === id) ?? null,
     roster: () => all(SEL.rosterCard).map(c => ({
@@ -392,7 +429,7 @@ const PAGE_LIB = `(() => {
       for (const img of all(sel, root)) {
         img.scrollIntoView({ block: 'center', behavior: 'instant' })
         for (let i = 0; i < 80 && !img.complete; i++) await new Promise(r => setTimeout(r, 50))
-        out.push({ src: img.getAttribute('src'), width: img.naturalWidth, shown: Math.round(img.getBoundingClientRect().width), complete: img.complete, in: describe(img.closest(SEL.row + ', ' + SEL.message + ', ' + SEL.focusCard) ?? img.parentElement) })
+        out.push({ src: img.getAttribute('src'), width: img.naturalWidth, shown: Math.round(img.getBoundingClientRect().width), tall: Math.round(img.getBoundingClientRect().height), complete: img.complete, in: describe(img.closest(SEL.row + ', ' + SEL.message + ', ' + SEL.focusCard) ?? img.parentElement) })
       }
       return out
     },
@@ -804,6 +841,14 @@ async function pressAt(x, y, { move = true } = {}) {
   await page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x, y, button: 'left', buttons: 1, clickCount: 1 })
   await page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
 }
+/** A finger held down on one point: a long press. */
+async function longPress(x, y, ms = 650) {
+  await sleep(Math.max(0, lastTouch + 350 - Date.now()))
+  await page.send('Input.dispatchTouchEvent', { type: 'touchStart', touchPoints: [{ x, y }] })
+  await sleep(ms)
+  await page.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] })
+  lastTouch = Date.now()
+}
 /** Click (or tap, at phone size) the element an expression names, the way a hand would: at a point of the screen. */
 async function press(what, expression) {
   await settle()
@@ -917,8 +962,14 @@ async function goInbox() {
 }
 async function goSession(agent) {
   await closeWindows()
+  // On a phone the sessions are a sideways strip: bring the entry into view and let the strip rest first, or the
+  // tap only stops its glide (see settle()).
+  if (touch) { await ev(js`__t.entry(${nameOf(agent)})?.scrollIntoView({ block: 'nearest', inline: 'center', behavior: 'instant' })`); await settle() }
   await press(`the session "${nameOf(agent)}" in the sidebar`, js`__t.entry(${nameOf(agent)})`)
-  await waitFor(`the conversation of "${nameOf(agent)}" opens`, js`!!__t.pane(${agent.id}) && __t.all(${SEL.message}, __t.pane(${agent.id})).length > 0`)
+  await waitFor(`the conversation of "${nameOf(agent)}" opens`, js`!!__t.pane(${agent.id}) && __t.all(${SEL.message}, __t.pane(${agent.id})).length > 0`).catch(async e => {
+    if (!(e instanceof Failed)) throw e
+    throw new Failed(`${e.message} (address ${await ev('location.pathname')}, view "${await ev('document.body.dataset.view ?? ""')}", filter "${await ev('document.body.dataset.filter ?? ""')}", pane ${await ev(js`(p => p ? __t.describe(p) + ' with ' + __t.all(${SEL.message}, p).length + ' messages' : 'none')(__t.pane(${agent.id}))`)})`)
+  })
   await settle()
 }
 async function goRoster() {
@@ -926,7 +977,11 @@ async function goRoster() {
   // The Agents page is the Ledger. A phone has an icon for it in its bar; a wide screen reaches it through the menu at the top centre.
   if (!(await ev('__t.vis(document.querySelector("#ledger"))'))) {
     if (await ev(js`!!__t.one(${SEL.navRoster})`)) await press('the agents page', js`__t.one(${SEL.navRoster})`)
-    else { await press('the menu', '__t.one("#brand-menu")'); await press('"Agents" in the menu', '__t.one("#menu-agents")') }
+    else {
+      // The menu's pill is not shown inside a session, an opened card or the walk: from there, by way of the Desk.
+      if (!(await ev('__t.vis(__t.one("#brand-menu"))'))) await goInbox()
+      await press('the menu', '__t.one("#brand-menu")'); await press('"Agents" in the menu', '__t.one("#menu-agents")')
+    }
   }
   await waitFor('the agents page lists the sessions', '__t.vis(document.querySelector("#ledger")) && document.querySelectorAll("#ledger .ledger-line").length > 0')
   await settle()
@@ -940,10 +995,12 @@ async function keyboardAway(agent) {
 async function mode(which, agent) {
   await keyboardAway(agent)
   const sel = which === 'scribble' ? SEL.modeScribble : SEL.modeChat
-  // The canvas is reached by the pen of the composer, and left by its own way back, where the page has no tabs for the two.
-  if (await ev(js`!!__t.one(${sel})`)) await press(`the "${which}" mode of the session`, js`__t.one(${sel})`)
-  else if (which === 'scribble') await press('the pen of the composer', js`__t.one(${SEL.composerPen}, ${agent ? js`__t.pane(${agent.id})` : null} ?? document)`)
-  else await press('the way back from the canvas', js`__t.one(${SEL.scribbleBack}) ?? __t.one(${SEL.composerPen})`)
+  // The canvas is opened by the Scribble button of the composer. It is left by its own way back where it fills
+  // the pane, and by the same button where it stands beside the conversation. A page with tabs for the two uses those.
+  const button = `__t.one(${JSON.stringify(SEL.composerPen)}, ${agent ? js`__t.pane(${agent.id})` : 'null'} ?? document)`
+  if (await ev(js`__t.vis(__t.one(${sel}))`)) await press(`the "${which}" mode of the session`, js`__t.one(${sel})`)
+  else if (which === 'scribble') await press('the Scribble button of the composer', button)
+  else await press('the way back from the canvas', js`(b => b && __t.vis(b) ? b : null)(__t.one(${SEL.scribbleBack}))` + ` ?? ${button}`)
   await waitFor(`the session shows its "${which}" mode`, js`document.body.dataset.view === ${which}`)
   await settle()
 }
@@ -977,7 +1034,8 @@ async function checkRows(root, where) {
   check(!bad.count.length, `${where}: not every row has its answer tiles: ${bad.count.join(', ')}`)
   // The brief: two square tiles in every row ("Later" and "Choose" where there are more than two options).
   const wide = rows.filter(r => r.tiles.length === 1)
-  check(!wide.length, `${where}: ${wide.length} of ${rows.length} rows have one wide "${TEXT.choose}" tile and a small "${TEXT.later}" arrow instead of two square tiles`)
+  // (Not on a phone: the calm card there has its own grid of tiles.)
+  if (!touch) check(!wide.length, `${where}: ${wide.length} of ${rows.length} rows have one wide "${TEXT.choose}" tile and a small "${TEXT.later}" arrow instead of two square tiles`)
   check(!bad.side.length, `${where}: the two tiles do not stand side by side in ${bad.side.join(', ')}`)
   check(!bad.edge.length, `${where}: the answer tiles are not at the right edge of their row: ${bad.edge.join(', ')}`)
   check(!bad.line.length, `${where}: the answer tiles are not in the same place in every row: ${bad.line.slice(0, 3).join(', ')}`)
@@ -1044,18 +1102,25 @@ async function groupInbox() {
   await waitFor('the new questions are listed', js`!!__t.row(${worded.id})`)
   await settle()
 
-  // Groups per sender, each with exactly the open questions of that session; what was put off stands apart.
+  // The Desk in the order of the board (state.queue, oldest first): consecutive questions of one session form a run
+  // under that session's name, a session may have several runs; what was put off stands apart.
   const groups = await ev('__t.groups()')
   const fresh = id => !putOff.has(id)
   const expected = state().agents.filter(a => !a.archived).map(a => ({ name: nameOf(a), ids: openCards(a.id).map(c => c.id).filter(fresh) })).filter(g => g.ids.length)
   const senders = groups.filter(g => !g.pile)
-  check(senders.length === expected.length, `the inbox has ${senders.length} groups (${senders.map(g => g.name).join(', ')}), but ${expected.length} sessions have open questions (${expected.map(g => g.name).join(', ')})`)
+  const desk = senders.flatMap(g => g.ids)
   for (const want of expected) {
-    const got = senders.find(g => g.name.replace(/^★ /, '') === want.name)
-    if (!check(got, `no group for the sender "${want.name}"`)) continue
-    check([...got.ids].sort().join() === [...want.ids].sort().join(), `the group "${want.name}" shows ${got.ids.length} rows, the session has ${want.ids.length} open questions`)
-    check(parseInt(got.count, 10) === want.ids.length, `the group "${want.name}" counts "${got.count}", expected ${want.ids.length}`)
+    const missing = want.ids.filter(id => !desk.includes(id))
+    check(!missing.length, `${missing.length} of the ${want.ids.length} open questions of "${want.name}" are not on the Desk: "${cardOf(missing[0])?.title}"`)
   }
+  const extra = desk.filter(id => !expected.some(g => g.ids.includes(id)))
+  check(!extra.length, `the Desk lists ${extra.length} rows that are no open question: "${cardOf(extra[0])?.title ?? extra[0]}"`)
+  check(await deskOrder(), `the rows of the Desk are not in the order of the board: ${await deskOrder.said()}`)
+  const stray = senders.filter(g => g.name && g.ids.some(id => nameOf(agentById(cardOf(id)?.agent)) !== g.name.replace(/^★ /, '')))
+  check(!stray.length, `the run "${stray[0]?.name}" holds a question of another session`)
+  const joined = senders.findIndex((g, i) => i && g.name && g.name === senders[i - 1].name)
+  check(joined < 0, `two runs of "${senders[joined]?.name}" follow each other; consecutive questions of one session are one run`)
+  for (const g of senders) if (g.count) check(parseInt(g.count, 10) === g.ids.length, `a run of "${g.name}" counts "${g.count}", it has ${g.ids.length} rows`)
   const total = expected.reduce((n, g) => n + g.ids.length, 0)
   check(parseInt(await ev(js`__t.text(__t.one(${SEL.inboxCount}))`), 10) === total, `the heading counts "${await ev(js`__t.text(__t.one(${SEL.inboxCount}))`)}" questions, ${total} need an answer`)
   const rows = await checkRows(SEL.inbox, 'inbox')
@@ -1123,12 +1188,17 @@ async function groupInbox() {
   await settle()
 
   // The undo bar names the answer, covers no row, and takes the answer back.
+  // (settle() does not wait for the note: its running line never rests. Its entry takes 260 ms.)
+  await sleep(350)
   const bar = await ev(js`(n => n && { text: __t.text(n.querySelector(${SEL.undoSaid}) ?? n), box: __t.box(n) })(__t.one(${SEL.undoBar}))`)
   if (check(bar, 'nothing offers to take the answer back')) {
     check(/(^|\s)No$/.test(bar.text), `the way back reads "${bar.text}", expected it to name the answer "No"`)
     // Wherever it stands, it must not lie over an answer: a press meant for a tile would take the last answer back.
-    const over = b => b.top < bar.box.bottom && b.bottom > bar.box.top && b.left < bar.box.right && b.right > bar.box.left
-    const covered = (await ev('__t.rows()')).filter(r => r.tiles.some(t => over(t.box)))
+    // Only the part of a tile that shows counts: the list scrolls, and a row cut off at its edge is not under the note.
+    const list = await ev(js`__t.box(__t.one(${SEL.inbox}))`)
+    const shown = b => ({ top: Math.max(b.top, list.top), bottom: Math.min(b.bottom, list.bottom), left: Math.max(b.left, list.left), right: Math.min(b.right, list.right) })
+    const over = b => b.top < b.bottom && b.top < bar.box.bottom && b.bottom > bar.box.top && b.left < bar.box.right && b.right > bar.box.left
+    const covered = (await ev('__t.rows()')).filter(r => r.tiles.some(t => over(shown(t.box))))
     check(!covered.length, `the way back lies over the answer tiles of "${covered[0]?.title}"`)
     const { height: tall, width: wide } = touch ? PHONE : DESKTOP
     check(bar.box.top >= 0 && bar.box.left >= 0 && bar.box.bottom <= tall + 1 && bar.box.right <= wide + 1, `the note with the way back is cut off by the edge of the screen: it reaches from ${bar.box.top} to ${bar.box.bottom} on a screen ${tall}px high`)
@@ -1183,14 +1253,41 @@ async function groupInbox() {
   check(await ev('__t.openCount()') === (knocks || waiting.length), `the title of the page reads "${await ev('document.title')}", expected ${knocks ? `${knocks} knocks` : `${waiting.length} open questions`}`)
 }
 
-/** Press the control that puts a row off, or fetches it back. A finger has no hover: where the control is a folded
- *  corner, the first tap only unfolds it and the second one acts. */
+/** On a phone a row of the Desk shows who asks, the title and the answers; its ways out (Snooze or Wake up, Revise,
+ *  Whatever, What??, Shred, Copy) come up as a sheet after a long press on the row. Holds the title of the row and
+ *  returns the words on the sheet. */
+async function rowMenu(id, what) {
+  const title = js`__t.one(${SEL.rowTitle}, __t.row(${id}))`
+  await ev(js`__t.row(${id})?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
+  await settle()
+  await ev(`__t.point(${title})`)   // (may scroll once more)
+  await sleep(400)                  // a finger on a list that was just moving only stops it: let it rest
+  const at = await ev(`__t.point(${title})`)
+  if (at.error) throw new Failed(`cannot hold ${what}: ${at.error}`)
+  await longPress(at.x, at.y)
+  await waitFor(`a long press on ${what} brings up the sheet`, '!!__t.menu()', 2000)
+  await sleep(400)                  // nothing on the sheet acts before the holding finger is gone
+  return ev('__t.menu()')
+}
+const closeRowMenu = async () => { await escape(); await waitFor('the sheet closes', '!__t.menu()', 2000); await settle() }
+
+/** Press the control that puts a row off, or fetches it back: the tab at the row's edge, or, where the row shows
+ *  none (the Desk on a phone), the first item of the sheet a long press brings up. */
 async function pressLater(id, what) {
-  const was = await ev(js`__t.inPile('later', ${id})`)
+  if (touch && !(await ev(js`__t.vis(__t.later(${id}))`))) {
+    await rowMenu(id, what)
+    await press(what, '__t.menuItem(/^(Snooze|Later|Fetch back|Wake)/)')
+    await waitFor('the sheet closes', '!__t.menu()', 2000)
+    return
+  }
   await press(what, js`__t.later(${id})`)
-  if (!touch) return
-  const moved = await waitFor('it moves', js`__t.inPile('later', ${id}) !== ${was}`, 700).catch(() => false)
-  if (!moved && await ev(js`!!__t.later(${id})`)) await press(`${what} (the second tap: the first one unfolded the corner)`, js`__t.later(${id})`)
+}
+
+/** Wake a snoozed card: fan the stack "Later" out and press the way back on its line. */
+async function pressWake(id, what) {
+  await unfoldPile('later')
+  await ev(js`__t.lineNode(${id})?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
+  await press(what, js`__t.one(${SEL.takeBack}, __t.lineNode(${id}))`)
 }
 
 /** Unfold a pile at the foot of the inbox (Later, With the agent, Answered), unless it stands open. */
@@ -1200,6 +1297,82 @@ async function unfoldPile(kind) {
   await press(`the pile "${kind}"`, js`__t.one(${SEL.pileHead}, __t.pileOf(${kind}))`)
   await waitFor(`the pile "${kind}" unfolds`, js`__t.groups().find(g => g.pile === ${kind})?.open === true`, 3000)
   await settle()
+}
+
+/** Are the rows of the Desk in the order the board sends (state.queue)? */
+async function deskOrder() {
+  const desk = (await ev('__t.groups()')).filter(g => !g.pile).flatMap(g => g.ids)
+  const want = state().queue.filter(id => desk.includes(id))
+  deskOrder.last = { desk, want }
+  return desk.join() === want.join()
+}
+deskOrder.said = async () => { const { desk, want } = deskOrder.last ?? {}; const i = desk?.findIndex((id, n) => id !== want[n]) ?? -1; return i < 0 ? 'same order' : `row ${i + 1} is "${cardOf(desk[i])?.title}", the board has "${cardOf(want[i])?.title}" there` }
+const onDeskOf = (name, id) => js`__t.groups().some(g => !g.pile && g.name.replace(/^★ /, '') === ${name} && g.ids.includes(${id}))`
+
+/** The Desk keeps its order (oldest first): a knock that comes late is appended and announced at the edge of the
+ *  list, and a card that arrives does not move the list under a resting pointer. */
+async function groupOrder() {
+  const stamp = tag()
+  await open('/')
+  await goInbox()
+  await settle()
+  const made = []
+  try {
+    const late = await courier.ask({ title: `Order: a late knock (${stamp})?`, urgency: 'critical', urgency_reason: 'to see where a knock goes', options: YES_NO })
+    made.push(late)
+    await waitFor('the late question is listed', js`!!__t.row(${late.id})`)
+    await settle()
+    check(state().queue.at(-1) === late.id, 'the board does not put a late blocking question at the end of its order')
+    const desk = (await ev('__t.groups()')).filter(g => !g.pile).flatMap(g => g.ids)
+    check(desk.at(-1) === late.id, `a late blocking question is not the last row of the Desk: it is row ${desk.indexOf(late.id) + 1} of ${desk.length}`)
+    check(await deskOrder(), `with a late knock the rows are not in the order of the board: ${await deskOrder.said()}`)
+    // It lies below the fold: a strip at the lower edge says so, and a click goes there.
+    const inSight = js`(r => r.top < innerHeight && r.bottom > 0)(__t.row(${late.id}).getBoundingClientRect())`
+    if (!(await ev(inSight))) {
+      if (await expect('a knock below the fold is announced at the lower edge of the list', js`__t.vis(__t.one(${SEL.edgeKnockDown})) && /knock/.test(__t.text(__t.one(${SEL.edgeKnockDown})))`, 3000)) {
+        await shot('knock-strip')
+        if (!touch) {
+          // On a narrower window the strip begins beside the Desk's two switches, not under them.
+          await page.send('Emulation.setDeviceMetricsOverride', { width: 1024, height: 768, deviceScaleFactor: 1, mobile: false })
+          await settle()
+          await sleep(500)
+          const lie = await ev(js`(() => { const b = n => { const r = n?.getBoundingClientRect(); return r && r.width ? { left: r.left, right: r.right, top: r.top, bottom: r.bottom } : null }; return { strip: b(__t.one(${SEL.edgeKnockDown})), sw: ['#deskpad-pen', '#deskpad-eye'].map(s => b(document.querySelector(s))).filter(Boolean) } })()`)
+          if (lie.strip && lie.sw.length) {
+            const under = lie.sw.filter(r => r.left < lie.strip.right && r.right > lie.strip.left && r.top < lie.strip.bottom && r.bottom > lie.strip.top)
+            check(!under.length, `at 1024 the lower knock strip lies under the Desk's switches: strip ${Math.round(lie.strip.left)}..${Math.round(lie.strip.right)}, a switch ${Math.round(under[0]?.left)}..${Math.round(under[0]?.right)}`)
+          } else note('at 1024 the knock strip or the switches are not shown; their places are not compared')
+          await page.send('Emulation.setDeviceMetricsOverride', { ...DESKTOP, deviceScaleFactor: 1, mobile: false })
+          await settle()
+          await sleep(400)
+        }
+        // A click goes to the nearest knock below (there may be more than this one): one knock fewer lies beyond.
+        const beyond = () => ev(js`(b => !b || b.hidden ? 0 : Number(b.dataset.n))(__t.one(${SEL.edgeKnockDown}))`)
+        const before = await beyond()
+        await press('the strip "knock" at the lower edge', js`__t.one(${SEL.edgeKnockDown})`)
+        await waitFor('a click on the strip goes to the nearest knock below', js`(b => !b || b.hidden ? 0 : Number(b.dataset.n))(__t.one(${SEL.edgeKnockDown})) < ${before}`, 3000).then(() => passed(), e => check(false, e.message))
+        await ev(js`__t.row(${late.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
+        await settle()
+        await expect('the strip goes when the last knock is in sight', js`!__t.vis(__t.one(${SEL.edgeKnockDown}))`, 3000)
+      }
+    } else note('the late knock is in sight at once; the strip at the edge is not checked')
+    // A resting pointer (a mouse): the row under it stays where it is when another card arrives.
+    if (!touch) {
+      const rows = await ev('__t.rows()')
+      const under = rows.find(r => r.box.top > 120 && r.box.bottom < DESKTOP.height - 120 && !putOff.has(r.id)) ?? rows[0]
+      await page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: Math.round(under.box.left + 60), y: Math.round(under.box.top + under.box.height / 2) })
+      await sleep(200)
+      const top = () => ev(js`__t.box(__t.row(${under.id})).top`)
+      const before = await top()
+      const next = await fixture.quick(`Order: arrives under a resting pointer (${stamp})?`)
+      made.push(next)
+      await waitFor('the arriving question is listed', js`!!__t.row(${next.id})`)
+      await settle()
+      check(Math.abs(await top() - before) <= 1, `a card that arrived moved the row under the resting pointer by ${Math.round(await top() - before)}px`)
+      check(await deskOrder(), `after an arrival the rows are not in the order of the board: ${await deskOrder.said()}`)
+    }
+  } finally {
+    for (const c of made) await courier.tool('withdraw_card', { card_id: c.id, reason: 'the test is done with it' }).catch(() => {})
+  }
 }
 
 async function groupLater() {
@@ -1212,7 +1385,35 @@ async function groupLater() {
   await goInbox()
   await waitFor('the new questions are listed', js`!!__t.row(${done.id})`)
   const before = await ev(js`__t.rowInfo(${one.id})`)
-  check(isLater(before.later) && before.tiles.at(-1)?.name.startsWith(TEXT.choose), `a question with three options offers "${before.later}" and "${tileNames(before)}", expected "${TEXT.later}" and "${TEXT.choose}"`)
+  if (!touch) check(isLater(before.later) && before.tiles.at(-1)?.name.startsWith(TEXT.choose), `a question with three options offers "${before.later}" and "${tileNames(before)}", expected "${TEXT.later}" and "${TEXT.choose}"`)
+  else {
+    // The calm card of a phone: who, the title and the tiles; Snooze and the rest are behind a long press.
+    check(!(await ev(js`__t.vis(__t.later(${one.id}))`)) && before.tiles.at(-1)?.name.startsWith(TEXT.choose), `on a phone the row shows "${before.later}" and "${tileNames(before)}", expected no "${TEXT.later}" on the row and "${TEXT.choose}"`)
+    const title = js`__t.one(${SEL.rowTitle}, __t.row(${one.id}))`
+    await ev(js`__t.row(${one.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
+    await settle()
+    // A swipe over the row scrolls: neither the sheet nor the card.
+    const from = await ev(`__t.point(${title})`)
+    await sleep(400)
+    await drag(line({ x: from.x, y: from.y }, { x: from.x, y: from.y - 90 }), { pause: 24 })
+    await sleep(700)
+    check(!(await ev('!!__t.menu()')) && !(await ev('__t.focusOpen()')), `a swipe over a row opened ${await ev('!!__t.menu()') ? 'the sheet' : 'the card'}`)
+    // A long press: the sheet, not the card.
+    const items = await rowMenu(one.id, `"${one.title}"`)
+    check(isLater(items[0]), `the sheet of a row begins with "${items[0]}", expected "${TEXT.later}"`)
+    check(['Revise', 'Shred', 'Copy'].every(w => items.some(i => i.startsWith(w))), `the sheet offers ${items.join(', ')}; expected Revise, Shred and Copy among them`)
+    check(!(await ev('__t.focusOpen()')), 'a long press on a row opened the card as well')
+    check(cardOf(one.id).status === 'open' && !cardOf(one.id).snoozed_until, 'the lift of the holding finger already acted on the sheet')
+    await shot('row-sheet')
+    await closeRowMenu()
+    // A tap on the title: the card, not the sheet.
+    await press(`the title of "${one.title}"`, title)
+    await expect('a tap on the title opens the card', js`__t.focusState()?.id === ${one.id}`, 3000)
+    check(!(await ev('!!__t.menu()')), 'a tap on the title brought up the sheet')
+    await escape()
+    await waitFor('the card closes', '!__t.focusOpen()', 3000)
+    await settle()
+  }
   const counted = parseInt(await ev(js`__t.text(__t.one(${SEL.inboxCount}))`), 10)
 
   for (const card of [one, two]) {
@@ -1231,44 +1432,64 @@ async function groupLater() {
   check(laters[0]?.ids.includes(one.id) && laters[0]?.ids.includes(two.id), 'the two rows put off do not lie on the same pile')
   check(!groups.filter(g => !g.pile).some(g => g.ids.includes(one.id) || g.ids.includes(two.id)), `a row put off still stands among the questions of its sender`)
   check(cardOf(one.id).status === 'open', `"${TEXT.later}" answered the card`)
-  check(parseInt(laters[0]?.count, 10) === laters[0]?.ids.length, `the "${TEXT.later}" pile counts "${laters[0]?.count}", it holds ${laters[0]?.ids.length}`)
+  // (What is put off and what is in revision lie on the one stack "Later"; folded, it holds its first eight sheets.)
+  const lying = state().cards.filter(c => c.status === 'open' && (c.snoozed_until || c.with_agent) && !agentById(c.agent)?.archived).length
+  check(parseInt(laters[0]?.count, 10) === lying, `the stack "Later" counts "${laters[0]?.count}", ${lying} cards are snoozed or in revision`)
   check(parseInt(await ev(js`__t.text(__t.one(${SEL.inboxCount}))`), 10) === counted - 2, `the heading still counts ${await ev(js`__t.text(__t.one(${SEL.inboxCount}))`)} after two of ${counted} were put off`)
 
   // An answered question leaves for the "Answered" pile, which lies beside "Later" at the foot.
   await ev(js`__t.row(${done.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await press(`"Yes" on "${done.title}"`, js`__t.tile(${done.id}, 'right')`)
   await waitState(`"${done.title}" is decided`, () => cardOf(done.id).status !== 'open')
-  await expect('the answered question lies on the "Answered" pile', js`__t.inPile('answered', ${done.id}) || __t.groups().find(g => g.pile === 'answered')?.peeks.includes(${done.title})`, 3000)
+  await expect('the answered question lies on the "Answered" pile', js`__t.inPile('answered', ${done.id})`, 3000)
   await ev(js`__t.pileOf('later')?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await settle()
-  const feet = await ev(js`['later', 'answered'].map(k => (n => n && __t.box(n))(__t.pileOf(k)))`)
+  const feet = await ev(js`['later', 'done'].map(k => (n => n && __t.box(n))(__t.pileOf(k)))`)
   if (check(feet[0] && feet[1], `the piles "${TEXT.later}" and "${TEXT.answered}" are not both at the foot of the inbox`)) {
-    if (touch) check(feet[0].bottom <= feet[1].top + 1 || feet[0].right <= feet[1].left + 1, 'on a phone the two piles lie over each other')
+    if (touch) check(feet[0].bottom <= feet[1].top + 1 || feet[0].right <= feet[1].left + 1, `on a phone the two piles lie over each other: ${JSON.stringify(feet)}`)
     else check(same(feet[0].top, feet[1].top, 2) && feet[0].right <= feet[1].left + 1, `the piles "${TEXT.later}" and "${TEXT.answered}" do not lie side by side: ${JSON.stringify(feet)}`)
   }
   await shot('piles')
 
-  // Unfolded, the pile shows its rows: each says who asked and offers the way back.
+  // Fanned out, the stack shows its sheets as slim lines: each says who asked and offers the way back. A snoozed
+  // card is no row any more (it is not answered in place).
   await unfoldPile('later')
-  const off = await ev(js`__t.rowInfo(${one.id})`)
-  if (check(off, 'the unfolded pile does not show the row put off')) {
-    check(isFetch(off.later), `a row put off offers "${off.later}" as the way back, expected "${TEXT.back}" or "Wake up"`)
-    check(off.from.includes(COURIER), `a row put off does not say who asked: "${off.from}"`)
+  const off = await ev(js`__t.line(${one.id})`)
+  if (check(off?.shown, 'the stack fanned out does not show the card put off')) {
+    check(off.kind === 'later' && !off.row && !off.tiles, `a snoozed card is still a row with ${off.tiles} answer tiles (kind "${off.kind}")`)
+    check(isFetch(off.take), `a card put off offers "${off.take}" as the way back, expected "${TEXT.back}" or "Wake up"`)
+    check(off.who.includes(COURIER), `a card put off does not say who asked: "${off.who}"`)
   }
   await checkRows(SEL.inbox, `inbox after "${TEXT.later}"`)
-  await ev(js`__t.row(${two.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
+  // The fan: a second click gathers the sheets, Escape does too, and one stack is fanned out at a time.
+  const fanned = kind => ev(js`!!__t.pileOf(${kind})?.matches(${SEL.pileOpen}) && __t.one(${SEL.pileHead}, __t.pileOf(${kind})).getAttribute('aria-expanded') === 'true'`)
+  const headOf = kind => js`__t.one(${SEL.pileHead}, __t.pileOf(${kind}))`
+  check(await fanned('later'), 'a click on the stack does not fan it out (aria-expanded)')
+  await press('the stack "Later" once more', headOf('later'))
+  await waitFor('a second click gathers the sheets', js`!__t.pileOf('later')?.matches(${SEL.pileOpen})`, 3000).then(() => passed(), e => check(false, e.message))
+  await settle()
+  check(!(await ev(js`__t.line(${one.id})?.shown`)), 'gathered, the stack still shows its lines')
+  await unfoldPile('later')
+  await ev(`${headOf('later')}.focus()`)
+  await escape()
+  await waitFor('Escape gathers the sheets', js`!__t.pileOf('later')?.matches(${SEL.pileOpen})`, 3000).then(() => passed(), e => check(false, e.message))
+  await settle()
+  await unfoldPile('later')
+  await unfoldPile('done')
+  check(await fanned('done') && !(await fanned('later')), 'two stacks stand fanned out at once')
+  await unfoldPile('later')
+  await ev(js`__t.lineNode(${two.id})?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await checkEnglish('the piles')
   await shot('put-off')
 
   await reload()
   check(await ev(js`__t.inPile('later', ${one.id})`), `after a reload the row put off is no longer on the "${TEXT.later}" pile`)
-  await unfoldPile('later')
-  await pressLater(one.id, `"${TEXT.back}" on "${one.title}"`)
+  await pressWake(one.id, `"Wake up" on "${one.title}"`)
   putOff.delete(one.id)
-  await expect(`"${TEXT.back}" returns the row to the questions of its sender`, js`!!__t.groups().find(g => !g.pile && g.name.replace(/^★ /, '') === ${COURIER})?.ids.includes(${one.id})`, 3000)
+  await expect(`"${TEXT.back}" returns the row to the questions of its sender`, onDeskOf(COURIER, one.id), 3000)
+  check(await deskOrder(), `the row fetched back is not at its place in the order of the board: ${await deskOrder.said()}`)
   await settle()
-  await unfoldPile('later')
-  await pressLater(two.id, `"${TEXT.back}" on "${two.title}"`)
+  await pressWake(two.id, `"Wake up" on "${two.title}"`)
   putOff.delete(two.id)
   await expect(`the "${TEXT.later}" pile goes when it is empty`, js`!__t.groups().some(g => g.later)`, 3000)
   await settle()
@@ -1276,12 +1497,13 @@ async function groupLater() {
 
   // The wrong answer that is noticed only later: the "Answered" pile takes it back, and the question
   // stands among those of its sender again, and is one of the walk again.
-  await unfoldPile('answered')
+  await unfoldPile('done')
   await ev(js`__t.all(${SEL.doneRow}).find(n => n.dataset.id === ${done.id})?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await press(`"Take back" on "${done.title}"`, js`__t.one(${SEL.takeBack}, __t.all(${SEL.doneRow}).find(n => n.dataset.id === ${done.id}))`)
   await waitState(`"${done.title}" is open again`, () => cardOf(done.id).status === 'open')
   check(cardOf(done.id).choice == null, 'the card taken back still carries its old answer')
-  await expect('the question taken back stands in the group of its sender again', js`!!__t.groups().find(g => !g.pile && g.name.replace(/^★ /, '') === ${COURIER})?.ids.includes(${done.id})`, 3000)
+  await expect('the question taken back stands in the group of its sender again', onDeskOf(COURIER, done.id), 3000)
+  check(await deskOrder(), `the question taken back is not at its place in the order of the board: ${await deskOrder.said()}`)
   check(!(await ev(js`__t.inPile('answered', ${done.id})`)), 'the question taken back still lies on the "Answered" pile')
   check(state().queue.includes(done.id), 'the question taken back is not in the line of open questions')
   await settle()
@@ -1299,9 +1521,16 @@ async function groupChoose() {
   await settle()
 
   // A light question unfolds where it stands.
-  await ev(js`__t.row(${light.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
-  await settle()
-  const before = await ev(js`__t.rowInfo(${light.id})`)
+  // (The list keeps the row under a resting pointer in its place when a card arrives, which may undo a scroll made
+  // just before: the row's place is taken once it rests in the window.)
+  let before = null
+  for (let i = 0; i < 4; i++) {
+    await ev(js`__t.row(${light.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
+    await settle()
+    await sleep(300)
+    before = await ev(js`__t.rowInfo(${light.id})`)
+    if (before.box.top >= 0 && before.box.bottom <= screen().height) break
+  }
   await press(`"${TEXT.choose}" on "${light.title}"`, js`__t.tile(${light.id}, 'right')`)
   await sleep(400)
   await settle()
@@ -1508,7 +1737,8 @@ async function groupSession() {
     check(await ev(js`document.querySelector(${SEL.filterQuestions}).getAttribute('aria-pressed')`) === 'true', 'the filter does not say that it is on')
     check(parseInt(await ev(js`__t.text(document.querySelector(${SEL.filterCount}))`) || '0', 10) === left.length, `the filter counts "${await ev(js`__t.text(document.querySelector(${SEL.filterCount}))`)}", ${left.length} are open`)
     if (left.length) await checkRows(SEL.questionsPane, '"Questions only"')
-    await checkPictures('"Questions only"', `${SEL.questionsPane} ${SEL.rowThumbImage}`, null, left.some(c => pictures(c).length) ? 1 : 0)
+    // (On a phone the session's own list has the calm rows of the Desk: no pictures on the row.)
+    await checkPictures('"Questions only"', `${SEL.questionsPane} ${SEL.rowThumbImage}`, null, !touch && left.some(c => pictures(c).length) ? 1 : 0)
     await checkEnglish('"Questions only"')
     await shot('questions-only')
     await press('"Questions only" again', js`__t.one(${SEL.filterQuestions})`)
@@ -1659,6 +1889,55 @@ async function groupSidebar() {
   }
 }
 
+/** Main agents and their subs (card Nr. 160): a sub is named on the Agents page; in the sidebar the main carries the
+ *  crown, folds its subs to a stack of edges and unfolds them under a bracket. */
+async function groupMains() {
+  const [main, sub] = scripted().slice(1)
+  need(main && sub, 'two scripted sessions are needed; the fixture changed')
+  if (!('main' in agentById(main.id))) return note('this hub does not send "main"; main agents are not checked')
+  await open('/')
+  await goRoster()
+  // The "Main agent" select in the line of the sub (a phone's line has none: there the hub is asked directly).
+  const pick = js`__t.one(${SEL.ledgerMain}, __t.rosterCard(${nameOf(sub)}))`
+  if (!touch && check(await ev(`__t.vis(${pick})`), `the line of "${nameOf(sub)}" on the agents page has no "Main agent" select`)) {
+    check(await ev(`[...${pick}.options].some(o => o.value === ${JSON.stringify(main.id)})`), `the "Main agent" select does not offer "${nameOf(main)}"`)
+    await ev(`(n => { n.value = ${JSON.stringify(main.id)}; n.dispatchEvent(new Event('change', { bubbles: true })) })(${pick})`)
+  } else await post('/session', { agent: sub.id, parent: main.id })
+  try {
+    await waitState(`"${nameOf(sub)}" is a sub of "${nameOf(main)}"`, s => s.agents.find(a => a.id === sub.id).parent === main.id && s.agents.find(a => a.id === main.id).main === true, 4000)
+    await goInbox()
+    await settle()
+    const fold = js`__t.one(${SEL.crownFold}, __t.unit(${nameOf(main)}))`
+    if (!(await waitFor('the main carries the crown that folds its subs', `!!${fold}`, 3000).catch(() => false))) {
+      if (touch) return note('on a phone the strip of sessions shows no crown to fold subs; not checked')
+      return check(false, `"${nameOf(main)}" has a sub, but its row in the sidebar has no crown to fold it (${SEL.crownFold})`)
+    }
+    const subShown = () => ev(js`__t.vis(__t.unit(${nameOf(sub)}))`)
+    const expanded = () => ev(`${fold}?.getAttribute('aria-expanded')`)
+    if (await expanded() !== 'true') { await press(`the crown of "${nameOf(main)}"`, fold); await waitFor('the subs unfold', `${fold}?.getAttribute('aria-expanded') === 'true'`, 3000) }
+    await settle()
+    check(await subShown(), 'unfolded, the sub is not shown under its main')
+    check(await ev(js`(n => !!n && n.matches('.is-sub') && n.dataset.parent === ${main.id})(__t.unit(${nameOf(sub)}))`), 'the row of the sub does not say whose sub it is')
+    check(await ev(js`!!__t.one(${SEL.crownBracket}, __t.unit(${nameOf(main)}))`), 'unfolded, no bracket holds the main and its subs together')
+    if (!touch) {
+      const left = n => ev(js`__t.box(__t.entry(${n})).left`)
+      check(await left(nameOf(sub)) > await left(nameOf(main)), 'the sub is not indented under its main')
+    }
+    await shot('main-unfolded')
+    await press(`the crown of "${nameOf(main)}"`, fold)
+    await expect('a click on the crown folds the subs away', `${fold}?.getAttribute('aria-expanded') === 'false'`, 3000)
+    await settle()
+    check(!(await subShown()), 'folded, the sub still has a row of its own')
+    check(await ev(js`__t.all(${SEL.crownEdges}, __t.unit(${nameOf(main)})).length >= 1`), 'folded, no edge behind the main stands for its sub')
+    await shot('main-folded')
+    await press(`the crown of "${nameOf(main)}"`, fold)
+    await expect('the next click unfolds them again', `${fold}?.getAttribute('aria-expanded') === 'true'`, 3000)
+  } finally {
+    await post('/session', { agent: sub.id, parent: null })
+    await waitState('the sub stands alone again', s => !s.agents.find(a => a.id === sub.id).parent, 4000).catch(() => {})
+  }
+}
+
 async function groupPair() {
   const [first, second] = scripted().slice(1)
   await open('/')
@@ -1782,7 +2061,7 @@ async function groupUrls() {
 async function sessionControl(name, what) {
   await goRoster()
   if (touch) {
-    const item = { rename: /^Rename/, mark: /drawing/i, crown: /crown/i, archive: /^Archive/, split: /^(Take|Split)/ }[what]
+    const item = { rename: /^Rename/, mark: /drawing/i, crown: /crown|quick memos/i, archive: /^Archive/, split: /^(Take|Split)/ }[what]
     if (!(await ev(js`!!__t.one(${SEL.ledgerMenu}, __t.rosterCard(${name}))`))) return false
     await press(`the menu of "${name}" on the agents page`, js`__t.one(${SEL.ledgerMenu}, __t.rosterCard(${name}))`)
     await waitFor('the sheet of the session opens', js`__t.all(${SEL.ledgerSheetItem}).length > 0`, 3000)
@@ -1889,10 +2168,24 @@ async function groupAgents() {
   check(reach, 'on a phone nothing renames a session: the sheet behind the menu of its line on the agents page has no "Rename"')
   if (reach) {
   await waitFor('the editor opens', js`!!__t.one(${SEL.editor})`)
+  // The form stands at the name it changes, with no veil over the page.
+  const veil = await ev(js`(d => ({ anchored: d.hasAttribute('data-anchored'), ground: getComputedStyle(d, '::backdrop').backgroundColor }))(__t.one(${SEL.editor}))`)
+  check(veil.anchored && /rgba\(0, 0, 0, 0\)|transparent/.test(veil.ground), `the rename form is not anchored at the name, or lays a veil over the page (anchored: ${veil.anchored}, ground behind it: ${veil.ground})`)
+  // Escape closes it and keeps the old name.
+  await press('the name field', js`__t.one(${SEL.editorName})`)
+  await retype('Not kept')
+  await escape()
+  await waitFor('Escape closes the rename form', js`!__t.one(${SEL.editor})`, 3000).then(() => passed(), e => check(false, e.message))
+  await sleep(400)
+  check(nameOf(agentById(target.id)) === oldName, `Escape in the rename form saved the name "${nameOf(agentById(target.id))}"`)
+  await sessionControl(oldName, 'rename')
+  await waitFor('the editor opens again', js`!!__t.one(${SEL.editor})`)
   await press('the name field', js`__t.one(${SEL.editorName})`)
   await retype(newName)
   await shot('editor')
-  await press('save', js`__t.one(${SEL.editorSave})`)
+  // Enter saves (a finger presses Save).
+  if (touch) await press('save', js`__t.one(${SEL.editorSave})`)
+  else await key('Enter', 13, { text: '\r' })
   await waitFor('the editor closes', js`!__t.one(${SEL.editor})`)
   await waitState(`the session is called "${newName}"`, s => s.agents.some(a => nameOf(a) === newName))
   await goRoster()
@@ -1954,13 +2247,23 @@ async function groupAgents() {
   await shot('renamed-starred')
 
   await goInbox()
-  const top = (await ev('__t.groups()'))[0]
-  check(top.name.replace(/^★ /, '') === nameOf(vip), `the VIP session "${nameOf(vip)}" is not the first group of the inbox, "${top.name}" is`)
-  // The mark stands once on the heading of the group, or on each of its rows.
-  // The crown stands where the session is named: on the group, on each row, or (a run of rows names its sender once) on the first.
-  check(top.vip || (await ev('__t.rows()')).filter(r => top.ids.includes(r.id)).some(r => r.vip) || await ev(js`!!document.querySelector(${SEL.inbox + ' .inbox-gutter .crown-mark, ' + SEL.inbox + ' [data-vip] .crown-mark'})`), 'the questions of the VIP session are not marked VIP')
-  const marked = (await ev('__t.rows()')).filter(r => r.vip && !top.ids.includes(r.id) && !putOff.has(r.id))
-  check((await ev('__t.groups()')).slice(1).every(g => !g.vip) && !marked.length, `a session that is not VIP carries the VIP mark${marked.length ? `: the row "${marked[0].title}"` : ''}`)
+  if ('main' in agentById(vip.id)) {
+    // On a hub that knows main agents the crown says "main"; the starred session is where quick memos go, and its
+    // questions carry a small gold dot on their sender's drawing. It does not lead the Desk (whose order is fixed).
+    // (The drawing stands on the row, or once on the tab of a run of rows: then it speaks for the rows of that run.)
+    const dots = await ev(js`__t.all(${SEL.memoDot}, ${SEL.inbox}).filter(n => __t.vis(n)).map(n => n.closest(${SEL.row})?.dataset.id ?? n.closest(${SEL.group})?.querySelector(${SEL.row})?.dataset.id).filter(Boolean)`)
+    const mine = openCards(vip.id).filter(c => !putOff.has(c.id)).map(c => c.id)
+    check(dots.some(id => mine.includes(id)), `the questions of "${nameOf(vip)}", where quick memos go, carry no gold dot on the Desk`)
+    const wrong = dots.filter(id => cardOf(id) && cardOf(id).agent !== vip.id)
+    check(!wrong.length, `a session that does not take the quick memos carries the gold dot: the row "${cardOf(wrong[0])?.title}"`)
+  } else {
+    const top = (await ev('__t.groups()'))[0]
+    check(top.name.replace(/^★ /, '') === nameOf(vip), `the VIP session "${nameOf(vip)}" is not the first group of the inbox, "${top.name}" is`)
+    // The crown stands where the session is named: on the group, on each row, or (a run of rows names its sender once) on the first.
+    check(top.vip || (await ev('__t.rows()')).filter(r => top.ids.includes(r.id)).some(r => r.vip) || await ev(js`!!document.querySelector(${SEL.inbox + ' .inbox-gutter .crown-mark, ' + SEL.inbox + ' [data-vip] .crown-mark'})`), 'the questions of the VIP session are not marked VIP')
+    const marked = (await ev('__t.rows()')).filter(r => r.vip && !top.ids.includes(r.id) && !putOff.has(r.id))
+    check((await ev('__t.groups()')).slice(1).every(g => !g.vip) && !marked.length, `a session that is not VIP carries the VIP mark${marked.length ? `: the row "${marked[0].title}"` : ''}`)
+  }
   await shot('inbox-vip')
 
   // Put things back, so the next group finds the board as it was: an emptied name is the session's own again.
@@ -2094,6 +2397,172 @@ async function groupAdmin() {
   await page.send('Network.deleteCookies', { name: `board_admin_${port}`, url: base })
 }
 
+/** The picture shown on a card points at the option it belongs to: the option is marked (data-match), and on a wide
+ *  screen a line of the pen runs from the picture to it. A picture that names no option points at none. */
+async function groupArrow() {
+  const stamp = tag()
+  const card = await courier.ask({
+    title: `Arrow: which design (${stamp})?`, body: 'Three pictures: one for each option, and an overview that belongs to none.',
+    attachments: ['design-a.png', 'design-b.png', 'board-desktop.png'].map(f => path.join(ROOT, 'demo', f)),
+    options: [{ key: 'a', label: 'Design A' }, { key: 'b', label: 'Design B' }],
+  })
+  try {
+    await open(`/q/${card.number}`)
+    await waitFor('the card opens', js`__t.focusState()?.id === ${card.id}`, 6000)
+    await settle()
+    const matched = () => ev(js`__t.all(${SEL.focusOption}, __t.one(${SEL.focusCard})).filter(b => b.hasAttribute('data-match')).map(b => b.dataset.key)`)
+    const arrow = () => ev(js`!!__t.one(${SEL.focusArrow}, __t.one(${SEL.focusCard}))`)
+    const thumb = i => js`__t.all(${SEL.focusThumb}, __t.one(${SEL.focusCard}))[${i}]`
+    need(await ev(`!!${thumb(2)}`), 'the card with three pictures shows no strip of small pictures to choose from')
+    const show = async i => {
+      await ev(`${thumb(i)}.scrollIntoView({ block: 'center', behavior: 'instant' })`)
+      await press(`picture ${i + 1} of the card`, thumb(i))
+      await sleep(400)
+      await settle()
+    }
+    for (const [i, key] of [[1, 'b'], [0, 'a']]) {
+      await show(i)
+      const now = await matched()
+      check(now.join() === key, `with picture ${i + 1} on the stage the option marked is "${now.join(', ') || 'none'}", expected "${key}"`)
+      // (The line is drawn only while picture and option are both wholly in sight; on a phone the options lie below.)
+      if (!touch) check(await arrow(), `with picture ${i + 1} on the stage no arrow runs to its option`)
+    }
+    await shot('arrow')
+    await show(2)
+    check(!(await matched()).length, `the overview picture marks the option "${(await matched()).join(', ')}"; it belongs to none`)
+    check(!(await arrow()), 'an arrow runs from the picture that belongs to no option')
+  } finally {
+    await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
+    await open('/')
+  }
+}
+
+/** The memo as a note that is kept: put away it lies on the "Memos" stack of the Desk, between Later and Done; a
+ *  click there floats it again. On a phone no note opens by itself. On a card page a note is written and sent
+ *  without touching the card. */
+async function groupMemos() {
+  const stamp = tag()
+  const target = agentNamed(COURIER)
+  const wasStarred = Boolean(agentById(target.id).starred)
+  const card = await fixture.quick(`Memo beside me (${stamp})?`)
+  await open('/')
+  await post('/star', { agent: target.id, starred: true })
+  await waitState('the session takes the quick memos', s => s.agents.find(a => a.id === target.id).starred)
+  await goInbox()
+  await settle()
+  const noteUp = js`__t.all(${SEL.memo}).some(n => __t.vis(n))`
+  const stack = js`__t.pileOf('memos')`
+  const lineOf = text => js`__t.all(${SEL.memoLine}, __t.pileOf('memos')).find(n => __t.text(n).includes(${text})) ?? null`
+  try {
+    need(await ev(js`!!__t.one(${SEL.quickOpen})`), 'there is no memo button on the page')
+    const had = await ev(js`__t.all(${SEL.memoLine}).length + (__t.pileOf('memos') ? parseInt(__t.text(__t.one(${SEL.pileCount}, __t.pileOf('memos'))), 10) || 0 : 0)`)
+    await press('the memo button', js`__t.one(${SEL.quickOpen})`)
+    await waitFor('a note opens with the caret in it', js`document.activeElement === document.querySelector(${SEL.quickField})`, 3000)
+    const kept = `kept for later ${stamp}`
+    await type(kept)
+    await sleep(300)
+    // Put away: the note lies on the yellow stack of the Desk, between Later and Done.
+    await press('the stack button of the note', js`__t.all(${SEL.memoAway}).find(n => __t.vis(n))`)
+    await expect('put away, the note no longer floats', `!${noteUp}`, 3000)
+    if (await expect('the note lies on the "Memos" stack of the Desk', `!!${stack}`, 3000)) {
+      const order = await ev(js`[...document.querySelectorAll('.inbox-stacks > section')].map(n => n.dataset.pile ?? (n.className.match(/inbox-group-(\w+)/)?.[1] ?? '')).filter(Boolean)`)
+      const words = await ev(js`[...document.querySelectorAll('.inbox-stacks .inbox-stack-word')].map(n => __t.text(n))`)
+      check(words.indexOf('Memos') > words.indexOf('Later') && words.indexOf('Memos') < words.indexOf('Done') && words.indexOf('Later') >= 0, `the stacks at the foot stand as ${words.join(', ')}; expected Later, Memos, Done (${order.join(', ')})`)
+      await unfoldPile('memos')
+      if (check(await ev(`!!${lineOf(kept)}`), 'fanned out, the stack does not show the note that was put away')) {
+        await shot('memos-stack')
+        await ev(`${lineOf(kept)}.scrollIntoView({ block: 'center', behavior: 'instant' })`)
+        await press('the note on the stack', `${lineOf(kept)}.querySelector(${JSON.stringify(SEL.memoLineOpen)})`)
+        await expect('a click on the note of the stack floats it again', noteUp, 3000)
+        check(await ev(js`__t.all(${SEL.memoField}).some(f => __t.vis(f) && f.value === ${kept})`), 'the note that came back does not carry its words')
+        check(!(await ev(`!!${lineOf(kept)}`)), 'the note floats and still lies on the stack')
+      }
+    }
+    // On a phone a note never opens by itself: after a reload it lies on the stack.
+    if (touch) {
+      await reload()
+      await goInbox()
+      await sleep(800)
+      check(!(await ev(noteUp)), 'on a phone a note opened by itself after the page loaded')
+      check(await ev(`!!${stack}`), 'on a phone the note that was open is not on the "Memos" stack after a reload')
+      await unfoldPile('memos')
+      await ev(`${lineOf(kept)}?.scrollIntoView({ block: 'center', behavior: 'instant' })`)
+      await press('the note on the stack', `${lineOf(kept)}.querySelector(${JSON.stringify(SEL.memoLineOpen)})`)
+      await waitFor('the note opens as a sheet', noteUp, 3000)
+    }
+    // The bin throws it away.
+    await press('the bin of the note', js`__t.all(${SEL.memoBin}).find(n => __t.vis(n))`)
+    await expect('the bin throws the note away', `!${noteUp} && !(${lineOf(kept)})`, 3000)
+    await settle()
+
+    // On a card page: the memo button stands there too; a note is written and sent, the card stays as it is.
+    await open(`/q/${card.number}`)
+    await waitFor('the card page opens', js`__t.focusState()?.id === ${card.id}`, 6000)
+    await settle()
+    if (check(await ev(js`__t.vis(__t.one(${SEL.quickOpen}))`), 'the card page shows no memo button')) {
+      await press('the memo button on the card page', js`__t.one(${SEL.quickOpen})`)
+      await waitFor('a note opens on the card page with the caret in it', js`document.activeElement === document.querySelector(${SEL.quickField})`, 3000)
+      const sent = `from a card page ${stamp}`
+      await type(sent)
+      check(await ev(js`document.querySelector(${SEL.quickField}).value === ${sent}`), 'what is typed on a card page does not land in the note')
+      await shot('memo-on-card')
+      if (touch) await press('send', js`__t.all(${SEL.quickSend}).find(n => __t.vis(n))`)
+      else await key('Enter', 13, { text: '\r' })
+      await waitState('the note written on a card page reaches the session', () => state().messages.some(m => m.agent === target.id && m.from === 'user' && m.text === sent && !m.card_id), 5000).then(() => passed(), e => check(false, e.message))
+      check(cardOf(card.id).status === 'open' && await ev(js`__t.focusState()?.id === ${card.id}`), 'sending a note from a card page answered the card or closed its page')
+    }
+  } finally {
+    await courier.tool('withdraw_card', { card_id: card.id, reason: 'the test is done with it' }).catch(() => {})
+    if (!wasStarred) await post('/star', { agent: target.id, starred: false }).catch(() => {})
+    await open('/')
+  }
+}
+
+/** A picture of a conversation, large: a page of its own under /s/<id>/files/<n>. */
+async function groupPicturePage() {
+  const agent = agentNamed(COURIER)
+  await open(`/s/${agent.id}`)
+  await waitFor('the conversation shows its pictures', js`__t.all(${SEL.messageImage}).length >= 2`, 6000)
+  await ev(js`__t.all(${SEL.messageImage})[0].scrollIntoView({ block: 'center', behavior: 'instant' })`)
+  await settle()
+  await press('a picture of the conversation', js`__t.all(${SEL.messageImage})[0]`)
+  const up = js`!!__t.one(${SEL.lightbox})?.open`
+  await waitFor('the picture opens large', up, 4000)
+  await settle()
+  const here = (await place()).path
+  const re = new RegExp(`^/s/${agent.id}/files/\\d+$`)
+  check(re.test(here), `the large picture has the address ${here}, expected /s/${agent.id}/files/<n>`)
+  const src = () => ev(js`__t.one(${SEL.lightboxImage})?.getAttribute('src')`)
+  const first = await src()
+  // Previous and next are links to the neighbour pictures.
+  const next = await ev(js`(a => a && !a.hidden ? a.getAttribute('href') : null)(__t.one(${SEL.lightboxNext}))`)
+  if (check(next && re.test(next) && next !== here, `"next" of the large picture is no link to another picture: ${next}`)) {
+    await press('next picture', js`__t.one(${SEL.lightboxNext})`)
+    await expect('next shows the next picture under its own address', js`location.pathname === ${next} && __t.one(${SEL.lightboxImage})?.getAttribute('src') !== ${first}`, 3000)
+    await shot('picture-page')
+    // A reload lands on the same picture.
+    const second = await src()
+    await reload()
+    await expect('a reload lands on the same picture', js`!!__t.one(${SEL.lightbox})?.open && location.pathname === ${next} && __t.one(${SEL.lightboxImage})?.getAttribute('src') === ${second}`, 6000)
+  }
+  // The way back closes it: the conversation is there again.
+  await press('"Back" on the large picture', js`__t.one(${SEL.lightboxBack})`)
+  await expect('"Back" closes the large picture', js`!__t.one(${SEL.lightbox})?.open && location.pathname === ${`/s/${agent.id}`}`, 4000)
+  // And Escape, and the Back of the browser.
+  await ev(js`__t.all(${SEL.messageImage})[0].scrollIntoView({ block: 'center', behavior: 'instant' })`)
+  await settle()
+  await press('a picture of the conversation', js`__t.all(${SEL.messageImage})[0]`)
+  await waitFor('the picture opens large again', up, 4000)
+  await escape()
+  await expect('Escape closes the large picture', js`!__t.one(${SEL.lightbox})?.open && location.pathname === ${`/s/${agent.id}`}`, 4000)
+  await settle()
+  await press('a picture of the conversation', js`__t.all(${SEL.messageImage})[0]`)
+  await waitFor('the picture opens large a third time', up, 4000)
+  await ev('history.back()')
+  await expect('the Back of the browser closes the large picture', js`!__t.one(${SEL.lightbox})?.open && location.pathname === ${`/s/${agent.id}`}`, 4000)
+  await open('/')
+}
+
 async function groupImages() {
   const stamp = tag()
   const heavy = await fixture.heavy(`Pictures (${stamp})`)
@@ -2102,17 +2571,22 @@ async function groupImages() {
   await waitFor('the new question is listed', js`!!__t.row(${heavy.id})`)
   // In the rows of the inbox: every card with pictures shows one, and it loads.
   const withPictures = openCards().filter(c => pictures(c).length && !agentById(c.agent)?.archived)
-  for (const card of withPictures) check(await ev(js`__t.all(${SEL.rowThumbImage}, __t.row(${card.id})).length > 0`), `the row "${card.title}" shows none of its ${pictures(card).length} pictures`)
-  await checkPictures('the rows of the inbox', SEL.rowThumbImage, SEL.inbox, withPictures.length)
+  // (Not on a phone: there the row is calm, and a tap on its title opens the card with its pictures.)
+  if (!touch) {
+    for (const card of withPictures) check(await ev(js`__t.all(${SEL.rowThumbImage}, __t.row(${card.id})).length > 0`), `the row "${card.title}" shows none of its ${pictures(card).length} pictures`)
+    await checkPictures('the rows of the inbox', SEL.rowThumbImage, SEL.inbox, withPictures.length)
+  } else check(!(await ev(js`__t.all(${SEL.rowThumbImage}, ${SEL.inbox}).some(n => __t.vis(n))`)), 'on a phone a row of the Desk shows pictures; the calm card has none')
   await ev(js`__t.row(${heavy.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await shot('rows')
   // The small picture opens large without leaving the list.
-  await press(`the picture on "${heavy.title}"`, js`__t.one(${SEL.rowThumb}, __t.row(${heavy.id}))`)
+  if (touch) await press(`the title of "${heavy.title}"`, js`__t.one(${SEL.rowTitle}, __t.row(${heavy.id}))`)
+  else await press(`the picture on "${heavy.title}"`, js`__t.one(${SEL.rowThumb}, __t.row(${heavy.id}))`)
   // (It is the card's own picture view in the big window, with the answers beside the picture; it was a lightbox before.)
   if (await expect('the picture of a row opens large', js`!!__t.one(${SEL.lightbox}) || (__t.focusState()?.id === ${heavy.id} && !!__t.one(${SEL.focusPicture}))`, 3000)) {
     await settle()
     const large = await checkPictures('the large picture', `${SEL.lightboxImage}, ${SEL.focusPicture}`)
-    check(large.some(p => p.shown >= 200), `the picture is shown ${Math.max(0, ...large.map(p => p.shown))}px wide, that is not large`)
+    // (An upright picture is large by its height: the stage of the card is wider than high.)
+    check(large.some(p => Math.max(p.shown, p.tall) >= 200), `the picture is shown ${(p => `${p?.shown}x${p?.tall}`)(large.toSorted((a, b) => b.shown * b.tall - a.shown * a.tall)[0])}px, that is not large`)
     if (await ev('__t.focusOpen()')) check((await ev('__t.focusState()')).options.length === heavy.options.length, 'the picture view does not keep the options of the card beside the picture')
     await shot('large')
     await escape()
@@ -2188,7 +2662,8 @@ async function walkTo(card) {
     for (let i = 0; i < n; i++) {
       if (await isFront()) { await settle(); return true }
       await settle()
-      if (!(await ev(js`(b => !!b && !b.disabled)(__t.one(${sel}))`))) break
+      // (Previous and next are links to the neighbour card; at the ends they say aria-disabled.)
+      if (!(await ev(js`(b => !!b && !b.disabled && b.getAttribute('aria-disabled') !== 'true')(__t.one(${sel}))`))) break
       const before = await ev('__t.focusState()?.id ?? null')
       await press(`${word} in the walk`, js`__t.one(${sel})`)
       if (!(await waitFor('the walk shows another question', js`(s => s && s.id && s.id !== ${before})(__t.focusState())`, 2500).catch(() => false))) break
@@ -2201,6 +2676,18 @@ const said = card => state().messages.filter(m => m.card_id === card.id && m.fro
 const screen = () => (touch ? PHONE : DESKTOP)
 const walkCard = card => js`[...document.querySelectorAll(${SEL.focusAnyCard})].find(n => n.dataset.id === ${card.id})`
 const stripOf = card => ev(js`__t.note(true, ${card.title})`)
+/** Take back what the note in the walk says. The note is up for five seconds and lets taps through in its first
+ *  moment (a second tap meant for the next answer must not land on "Back"), so: wait out that moment, and where
+ *  the note has run out meanwhile use the key U, which still takes it back for a while (not on a phone). */
+async function backOnNote(what, card) {
+  await sleep(450)
+  const button = js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${card.title}))`
+  // (No settle() first: the note's running line never rests, and waiting for it lets the note run out.)
+  const at = await ev(`__t.point(${button})`)
+  if (!at.error) return pressAt(at.x, at.y)
+  if (touch) throw new Failed(`cannot press ${what}: ${at.error}`)
+  await key('u', 85, { text: 'u' })
+}
 /** Begin to write about the card in front. Where one writes on the card itself, a click on its title (or key A) puts a
  *  note there; where the card has a "Discuss" column, that is opened and its field takes the words. Returns the
  *  kind of place ('note' | 'field'), or null when there is nowhere to write. */
@@ -2251,7 +2738,8 @@ async function groupWalk() {
   await settle()
   check(!(await front()).single, 'the button opened the window of one card, not the walk')
   check((await ev('location.pathname')) === '/walk', `the walk has no address of its own: ${await ev('location.pathname + location.search')}`)
-  check(await ev(js`!!__t.one(${SEL.focusRail})`), 'the walk does not say how far it is (no rail, no "… more" line)')
+  const far = await ev(js`__t.text(__t.one(${SEL.focusRail}))`)
+  check(/^\d+ of \d+$/.test(far), `the walk does not say how far it is: the corner of the card reads "${far}", expected "2 of 19"`)
   // The pass keeps its order: what stands in the column is the line of open questions as it was when the walk began.
   const order = await ev(js`[...document.querySelectorAll(${SEL.focusAnyCard})].map(n => n.dataset.id)`)
   const queueLine = state().queue.filter(id => !putOff.has(id) && cardOf(id)?.status === 'open' && !cardOf(id).with_agent && !agentById(cardOf(id).agent)?.archived)
@@ -2338,7 +2826,7 @@ async function groupWalk() {
     if (check(note, 'in the walk nothing says what was answered, and nothing takes it back')) {
       check(/Yes$/.test(note.text) && note.back, `the strip in the walk reads "${note.all}", expected the answer "Yes" and "${TEXT.noteBack}"`)
       await shot('walk-answered')
-      await press(`"${TEXT.noteBack}" in the walk`, js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${take.title}))`)
+      await backOnNote(`"${TEXT.noteBack}" in the walk`, take)
       await waitState(`"${take.title}" is open again`, () => cardOf(take.id).status === 'open')
       check(cardOf(take.id).choice == null, 'the card taken back still carries its old answer')
       await expect('the card taken back is in front again in the walk', js`__t.focusState()?.id === ${take.id}`, 4000)
@@ -2380,7 +2868,8 @@ async function groupWalk() {
     } else await press('"What??" in the walk', js`__t.one(${SEL.focusExplain}, __t.one(${SEL.focusCard}))`)
     if (check(await asked(), '"What??" does not reach the session')) {
       await expect('after "What??" the walk moves on', js`(s => s && s.id !== ${explain.id})(__t.focusState())`, 3000)
-      await expect('"What??" lays the card on the pile of what waits for the agent', js`__t.inPile('asked', ${explain.id})`, 3000)
+      // (The Desk no longer shows what waits for the agent as a pile: off the open questions is what counts.)
+      await expect('"What??" takes the card off the open questions of the desk', js`__t.inPile('asked', ${explain.id}) || !__t.rows().some(r => r.id === ${explain.id})`, 3000)
       check(cardOf(explain.id).status === 'open', '"What??" answered the card')
       const explainNote = await stripOf(explain)
       check(explainNote && !/undefined|null/.test(explainNote.all) && explainNote.back, `after "What??" the strip reads "${explainNote?.all ?? 'nothing'}", expected what happened and the way back`)
@@ -2388,7 +2877,7 @@ async function groupWalk() {
       await courier.tool('reply', { text: `Explained: it is about the size (${stamp})`, card_id: explain.id })
       await expect('with the reply of the session the card returns to the questions of its sender', js`!__t.inPile('asked', ${explain.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${explain.id}))`, 5000)
       if (check(await walkTo(explain), 'the card that returned is not part of the walk again')) {
-        check(await ev(js`__t.text(${SEL.focusCard}).includes('Explained: it is about the size')`), 'the card that returned does not show what the session explained')
+        check(await ev(js`__t.text(__t.one(${SEL.focusCard})).includes('Explained: it is about the size')`), 'the card that returned does not show what the session explained')
         await shot('walk-explained')
       }
     }
@@ -2413,8 +2902,13 @@ async function groupWalk() {
     check(handNote && !/undefined|null/.test(handNote.all) && handNote.back, `after "${TEXT.hand}" the strip reads "${handNote?.all ?? 'nothing'}", expected what happened and the way back`)
     await shot('walk-revise')
     await sleep(50)
-    await courier.tool('reply', { text: `Looked again (${stamp})`, card_id: hand.id })
-    await expect('with the reply of the session the card returns', js`!__t.inPile('asked', ${hand.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${hand.id}))`, 5000)
+    // A plain reply about the card does not present it again: the session says so itself (present), or revises it.
+    await courier.tool('reply', { text: `Still looking (${stamp})`, card_id: hand.id })
+    await waitState('the plain reply arrives', () => state().messages.some(m => m.card_id === hand.id && m.text === `Still looking (${stamp})`), 4000)
+    await sleep(800)
+    check(Boolean(cardOf(hand.id).with_agent) && !(await ev(js`__t.rows().some(r => r.id === ${hand.id})`)), 'a plain reply of the session presented the card again')
+    await courier.tool('reply', { text: `Looked again (${stamp})`, card_id: hand.id, present: true })
+    await expect('with the reply that presents it the card returns', js`!__t.inPile('asked', ${hand.id}) && !!__t.groups().find(g => !g.pile && g.ids.includes(${hand.id}))`, 5000)
     check(!cardOf(hand.id).with_agent, 'after the reply of the session the board still holds the card as "with the agent"')
   })
 
@@ -2427,8 +2921,10 @@ async function groupWalk() {
     await expect('after "Trust" the walk moves on', js`(s => s && s.id !== ${trusted.id})(__t.focusState())`, 3000)
     const trustNote = await stripOf(trusted)
     if (check(trustNote?.back && /Trust|Whatever/.test(trustNote.text), `after "Trust" the strip reads "${trustNote?.all ?? 'nothing'}", expected "Trusted" or "Whatever" and the way back`)) {
-      await press('"Back" on the strip of the trusted card', js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${trusted.title}))`)
+      await backOnNote('"Back" on the strip of the trusted card', trusted)
       await waitState('Back takes the trust back: the card is open again', () => cardOf(trusted.id).status === 'open' && !cardOf(trusted.id).trusted, 4000).then(() => passed(), e => check(false, e.message))
+      // (The card taken back comes to the front once the state has arrived: the next part must not start before.)
+      await waitFor(`"${trusted.title}" is in front again`, js`__t.focusState()?.id === ${trusted.id}`, 3000).catch(() => {})
     }
   })
 
@@ -2441,8 +2937,11 @@ async function groupWalk() {
     check(cardOf(shredded.id).choice == null, 'a shredded card carries an answer')
     const shredNote = await stripOf(shredded)
     if (check(shredNote?.back && /Shred/.test(shredNote.text), `after "Shred" the strip reads "${shredNote?.all ?? 'nothing'}", expected "Shredded" and the way back`)) {
-      await press('"Back" on the strip of the shredded card', js`__t.one(${SEL.noteBack}, __t.noteNode(true, ${shredded.title}))`)
+      await backOnNote('"Back" on the strip of the shredded card', shredded)
       await waitState('Back fetches the shredded card out again', () => cardOf(shredded.id).status === 'open', 4000).then(() => passed(), e => check(false, e.message))
+      // The card fetched back comes to the front once the state has arrived; wait for it, or the next part starts
+      // on a card the walk is about to leave.
+      await waitFor(`"${shredded.title}" is in front again`, js`__t.focusState()?.id === ${shredded.id}`, 3000).catch(() => {})
     }
   })
 
@@ -2466,6 +2965,11 @@ async function groupWalk() {
       await waitState('the session gets the dropped file and the pasted picture', () => said(files).some(m => { const names = (m.attachments ?? []).map(a => a.name); return names.includes('dropped.txt') && names.includes('pasted.png') }), 6000).then(() => passed(), e => check(false, `${e.message}; it got: ${said(files).flatMap(m => (m.attachments ?? []).map(a => a.name)).join(', ') || 'nothing'}`))
       return
     }
+    // Where the walk shows its cards as a list, the card may stand above or below the screen, and the key D works
+    // on the card in front: bring it in first.
+    await ev(`${walkCard(files)}.querySelector(${JSON.stringify(SEL.focusScroll)}).scrollIntoView({ block: 'nearest', behavior: 'instant' })`)
+    await settle()
+    await waitFor(`"${files.title}" is the card in front`, js`__t.focusState()?.id === ${files.id}`, 2000).catch(() => {})
     if (touch) await press('the pen of the card', `__t.one(${JSON.stringify(SEL.focusPen)}, ${walkCard(files)})`)
     else await key('d', 68, { text: 'd' })
     if (!(await waitFor('the pen is in the hand', `__t.one(${JSON.stringify(SEL.focusPen)}, ${walkCard(files)})?.getAttribute('aria-pressed') === 'true'`, 2000).catch(() => false))) {
@@ -2508,11 +3012,13 @@ async function groupNumber() {
   await goInbox()
   await waitFor('the new question is listed', js`!!__t.row(${many.id})`)
   const shownNr = await ev(js`__t.text(__t.one(${SEL.rowNr}, __t.row(${heavy.id})))`)
-  check(shownNr.includes(String(heavy.number)), `the row does not show the number ${heavy.number} of its card: "${shownNr}"`)
+  if (!touch) check(shownNr.includes(String(heavy.number)), `the row does not show the number ${heavy.number} of its card: "${shownNr}"`)
   // Opened from the list, the address names the number.
   await ev(js`__t.row(${heavy.id}).scrollIntoView({ block: 'center', behavior: 'instant' })`)
   await press(`"${TEXT.choose}" on "${heavy.title}"`, js`__t.tile(${heavy.id}, 'right')`)
   await waitFor('the window opens', js`__t.focusState()?.id === ${heavy.id}`)
+  // (On a phone the row is calm and carries no number: the opened card names it.)
+  if (touch) check((await ev(js`__t.text(__t.one(${SEL.focusNr}, __t.one(${SEL.focusCard})))`)).includes(String(heavy.number)), `the opened card does not show the number ${heavy.number}`)
   check(await ev('location.pathname + location.search') === `/q/${heavy.number}`, `the address of the window is ${await ev('location.pathname + location.search')}, expected /q/${heavy.number}`)
   // The pictures large: the options stay beside them, so the answer needs no way back.
   await settle()
@@ -2585,6 +3091,118 @@ async function groupPad() {
     const now = await place()
     check(now.path === home, `after ${how} the address is ${now.path}, expected ${home} (where the pad was opened)`)
     check(await ev(js`!!__t.pane(${agent.id}) && __t.all(${SEL.message}).length > 0 && !document.querySelector(${SEL.session}).inert`), `after ${how} the conversation is not back, or cannot be reached`)
+  }
+  // Where the whole Desk is paper (#deskpad lies under the list; ?deskpad=0 brings the layer back) there is no layer
+  // to open: P or the pen switch puts the paper in front, and then a stroke across a card is a stroke.
+  if (await waitFor('the paper of the Desk', '!!document.querySelector("#deskpad")', 1500).catch(() => false)) {
+    await open('/')
+    await goInbox()
+    await waitFor('the paper of the Desk', '!!document.querySelector("#deskpad")', 4000)
+    const front = js`document.querySelector(${SEL.inbox}).hasAttribute('data-paper-front')`
+    const frame = `document.querySelector('#deskpad iframe')`
+    const padReady = `(f => !!f && f.contentDocument?.readyState === 'complete' && !!f.contentWindow.pad)(${frame})`
+    const pad = what => ev(`(async pad => { await pad.settled?.(3000); ${what} })(${frame}.contentWindow.pad)`)
+    const strokes = async () => (await pad('return pad.elements().map(e => ({ id: e.id, type: e.type }))')).filter(e => e.type === 'stroke').map(e => e.id)
+    const made = []
+    try {
+      check(await ev(js`document.querySelector(${SEL.inbox}).firstElementChild === document.querySelector('#deskpad')`), 'the paper (#deskpad) is not the first thing in the Desk (#inbox)')
+      await expect('the paper shows the pad\'s own page', padReady, 8000)
+      check(!(await ev(js`__t.vis(__t.one(${SEL.padOpen}))`)), 'the bar still shows the control of the old pad (#pad-open)')
+      check(!(await ev(front)), 'on arrival the paper is in front of the cards')
+      // On a phone the two switches tuck away to a small tab at the left edge while the Desk scrolls or something
+      // would lie under them: a tap on the tab brings them out, and picks up nothing.
+      const tucked = `!!document.querySelector('.deskpad-over[data-tuck]')`
+      const pullOut = async () => {
+        if (!(await ev(tucked))) return false
+        // (Tucked, the pill shows 16px of itself at the left edge: that is where a finger taps.)
+        const tab = await ev(`(r => ({ x: Math.max(4, Math.round(r.right - 8)), y: Math.round(r.top + r.height / 2) }))(document.querySelector('.deskpad-switch').getBoundingClientRect())`)
+        await sleep(Math.max(0, 400))
+        await pressAt(tab.x, tab.y)
+        await waitFor('the tab brings the switches out', `!${tucked}`, 3000)
+        await settle()
+        return true
+      }
+      if (touch) {
+        await ev(js`document.querySelector(${SEL.inbox}).scrollTo(0, 240)`)
+        await sleep(700)
+        await settle()
+        if (await pullOut()) {
+          passed()
+          check(!(await ev(front)) && !(await ev(js`document.querySelector(${SEL.inbox}).hasAttribute('data-cards-hidden')`)), 'the tap on the tab picked up the pen or hid the cards')
+        } else note('the switches of the Desk were not tucked away here; the tab is not checked')
+        const small = await ev(`['#deskpad-pen', '#deskpad-eye'].map(sel => ({ sel, box: __t.box(document.querySelector(sel)) })).filter(x => x.box.width < 44 || x.box.height < 44)`)
+        check(!small.length, `on a phone the switches of the Desk are smaller than a finger (44px): ${small.map(x => `${x.sel} ${x.box.width}x${x.box.height}`).join(', ')}`)
+      }
+      // The pen switch, and the key P: the paper comes in front; Escape gives the cards back.
+      await press('the pen switch of the Desk', '__t.one("#deskpad-pen")')
+      await expect('the pen switch puts the paper in front', front, 3000)
+      check(await ev('document.querySelector("#deskpad-pen").getAttribute("aria-pressed")') === 'true', 'with the paper in front the pen switch does not say so')
+      await press('the pen switch again', '__t.one("#deskpad-pen")')
+      await expect('the pen switch again gives the cards back', `!${front}`, 3000)
+      if (!touch) {
+        await ev('document.activeElement?.blur?.()')
+        await key('p', 80, { text: 'p' })
+        await expect('the key P picks up the pen', front, 3000)
+        // A drag across a row: one stroke on the paper, and the row neither unfolds nor opens.
+        await settle()
+        const row = (await ev('__t.rows()')).find(r => r.box.top > 140 && r.box.bottom < DESKTOP.height - 60)
+        if (check(row, 'no row of the Desk is wholly in sight to draw across')) {
+          const before = await strokes()
+          const y = Math.round(row.box.top + row.box.height / 2)
+          await drag(Array.from({ length: 12 }, (_, i) => ({ x: Math.round(row.box.left + 30 + i * 22), y: y + (i % 2) * 12 })))
+          await sleep(500)
+          const drawn = (await strokes()).filter(id => !before.includes(id))
+          made.push(...drawn)
+          check(drawn.length === 1, `a drag across a row with the pen in hand left ${drawn.length} strokes, expected one`)
+          check(!(await ev('__t.focusOpen()')) && !(await ev(js`__t.rowInfo(${row.id})?.open`)), 'the drag across the row opened or unfolded it')
+          await shot('desk-paper')
+        }
+        // (The keyboard is the paper's now: Escape, and a click on nothing, hand it back.)
+        await escape()
+        await ev('document.activeElement?.blur?.()')
+        if (await ev(front)) { await press('the pen switch', '__t.one("#deskpad-pen")'); await waitFor('the cards are back in front', `!${front}`, 3000).catch(() => {}) }
+      }
+      // The eye hides the cards: only the paper.
+      const hidden = js`document.querySelector(${SEL.inbox}).hasAttribute('data-cards-hidden')`
+      await pullOut()
+      await press('the eye switch of the Desk', '__t.one("#deskpad-eye")')
+      await expect('the eye switch hides the cards', hidden, 3000)
+      await press('the eye switch again', '__t.one("#deskpad-eye")')
+      await expect('the eye switch again shows the cards', `!${hidden}`, 3000)
+      if (!touch) {
+        // W hides the cards from the Desk; with a card page open it leaves that page alone.
+        await ev('document.activeElement?.blur?.()')
+        await key('w', 87, { text: 'w' })
+        await expect('the key W hides the cards', hidden, 3000)
+        await key('w', 87, { text: 'w' })
+        await expect('W again shows them', `!${hidden}`, 3000)
+        const first = state().queue.map(cardOf).find(c => c?.status === 'open' && Number.isInteger(c.number))
+        await open(`/q/${first.number}`)
+        await waitFor('a card page opens', js`__t.focusState()?.id === ${first.id}`, 6000)
+        await settle()
+        await ev('document.activeElement?.blur?.()')
+        await key('w', 87, { text: 'w' })
+        await sleep(600)
+        check(await ev(js`__t.focusState()?.id === ${first.id}`) && (await place()).path === `/q/${first.number}`, 'W with a card page open closed the card or left its address')
+        check(cardOf(first.id).status === 'open', 'W with a card page open answered the card')
+        await escape()
+        await waitFor('the card page closes', '!__t.focusOpen()', 3000).catch(() => {})
+        await settle()
+        check(await ev(`!!document.querySelector('#deskpad')`) && (await ev('__t.rows()')).length > 0 || await ev(hidden), 'back on the Desk after W on a card page neither cards nor the way to them are there')
+        if (await ev(hidden)) { await key('w', 87, { text: 'w' }); await waitFor('the cards are shown again', `!${hidden}`, 3000).catch(() => {}) }
+      }
+      // Its address: /pad is the Desk with the pen in hand.
+      check(await open('/pad') === 200, '/pad is not served')
+      await expect('/pad lands on the Desk', `location.pathname === '/' && !!document.querySelector('#deskpad')`, 5000)
+      await expect('/pad arrives with the pen in hand', front, 6000)
+    } finally {
+      for (const id of made) await ev(js`fetch('/pad/elements/' + ${id}, { method: 'DELETE' }).then(r => r.status)`).catch(() => {})
+      await ev(`try { localStorage.setItem('trommi-desk-cards-hidden', '0') } catch {}`).catch(() => {})
+      await escape()
+      await ev('document.activeElement?.blur?.()')
+      await open('/')
+    }
+    return
   }
   need(await ev(js`!!__t.one(${SEL.padOpen})`), 'the bar has no control for the pad')
   await press('the pad in the bar', js`__t.one(${SEL.padOpen})`)
@@ -2711,11 +3329,13 @@ async function groupQuick() {
   const first = `quick hello ${stamp}`
   await type(first)
   await shot('quick-send')
+  // (Enter tears the memo off and sends it, Shift+Enter makes a new line; Ctrl+Enter sends too.)
   if (touch) await press('send', js`__t.one(${SEL.quickSend})`)
   else await key('Enter', 13, { text: '\r' })
   await arrived(first)
   await expect('a line says that it went, and to whom', js`__t.text(document.querySelector(${SEL.quickNote})).includes(${`Sent to ${nameOf(target)}`})`, 3000)
-  check(await ev(js`document.querySelector(${SEL.quickField}).value`) === '', 'the quick-send field was not emptied after sending')
+  // (The note that was sent tears off: the field is gone with it, or a fresh, empty one stands there.)
+  check(!(await ev(js`document.querySelector(${SEL.quickField})?.value ?? ''`)), 'the quick-send field was not emptied after sending')
   check((await place()).path === '/', `quick send left the page: ${(await place()).path}`)
   await checkEnglish('quick send')
   await escape()
@@ -2832,6 +3452,20 @@ async function groupSnooze() {
   await sleep(1200)
   check(others.every(c => snoozed(c.id)) && snoozed(last.id), 'emptying the desk by snoozing its last card called the snoozed ones back')
   await shot('all-snoozed')
+  // A large stack fans out its first eight sheets and one last sheet "N more", which shows the whole pile.
+  const onLater = parseInt(await ev(js`__t.text(__t.one(${SEL.pileCount}, __t.pileOf('later')))`), 10)
+  if (onLater > 8) {
+    await unfoldPile('later')
+    const linesOf = () => ev(js`__t.all(${SEL.doneRow}, __t.pileOf('later')).length`)
+    check(await linesOf() === 8, `a stack of ${onLater} fans out ${await linesOf()} lines at first, expected 8`)
+    const more = await ev(js`__t.text(__t.one(${SEL.pileMore}, __t.pileOf('later')))`)
+    if (check(more === `${onLater - 8} more`, `the last sheet of the fan reads "${more}", expected "${onLater - 8} more"`)) {
+      await ev(js`__t.one(${SEL.pileMore}, __t.pileOf('later')).scrollIntoView({ block: 'center', behavior: 'instant' })`)
+      await press(`"${more}"`, js`__t.one(${SEL.pileMore}, __t.pileOf('later'))`)
+      await waitFor('"N more" shows the whole pile', js`__t.all(${SEL.doneRow}, __t.pileOf('later')).length === ${onLater}`, 3000).then(() => passed(), e => check(false, e.message))
+    }
+    await shot('fan-whole')
+  } else note(`only ${onLater} cards on the stack "Later"; "N more" is not checked`)
   // Wake that one and answer it: now the rest is done, and the snoozed ones are called back.
   await post('/snooze', { card_id: last.id, clear: true })
   await waitFor('the woken card is on the desk again', js`!!__t.row(${last.id}) && !__t.inPile('later', ${last.id})`, 4000)
@@ -2879,6 +3513,11 @@ const GROUPS = [
   ['scribble', 'draw, send, back in the conversation with a picture that loads', groupScribble],
   ['sidebar', 'marks, hand and ring, disconnected sessions at the bottom, archive and back', groupSidebar],
   ['pair', 'two sessions dropped on each other show as one, and split again', groupPair],
+  ['memos', 'a memo put away lies on the Memos stack and floats again; none opens by itself on a phone; a note from a card page', groupMemos],
+  ['picture', 'a picture of a conversation large, as a page of its own: next, reload, Back, Escape', groupPicturePage],
+  ['arrow', 'the picture on a card points at its option; an unpaired picture at none', groupArrow],
+  ['order', 'the Desk in the order of the board: a late knock is appended and announced at the edge, arrivals move nothing', groupOrder],
+  ['mains', 'a main agent and its sub: the select on the agents page, the crown folds and unfolds the subs', groupMains],
   ['urls', 'every view has an address; reload, back and forward keep it', groupUrls],
   ['agents', 'model and machine, rename and mark persist, VIP leads the inbox', groupAgents],
   ['theme', 'the toggle switches and persists', groupTheme],
