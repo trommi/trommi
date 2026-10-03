@@ -72,3 +72,13 @@ by `ledger.css`.
   pointer over the session's title (the tabs cannot be clicked then). Not from this work; for whoever owns `richhtml.js`.
 - Static hosting later: paths need a fallback to `index.html` (Caddy: `try_files {path} /index.html`; nginx:
   `try_files $uri /index.html;`), or the hash form `#/s/<id>/q/102` once `app.js` reads it.
+
+## 3 Oct 2026: conversations column, drag and fold (open-work row 7)
+- `js/beside.js` (end) and `css/beside.css` (end): in the joined view at 1200px and wider, an edge on the left of the
+  conversations drags their width (300px up to "list keeps 440px"); a double click gives the own width back; dragged
+  past 220px, or the round "→" button on the edge, folds them to a 44px strip at the right with the names; the strip
+  opens them again. Kept in `localStorage['trommi-talk']` ({ w, folded }). Below 1200px nothing of it shows.
+- Verified with real mouse events on a trio board (1440x900 light and dark; 1024 and 400: hidden): drag wider,
+  reload keeps it, drag to fold, reload keeps it, strip opens, button folds, double click resets.
+- Open: while folded, keys `r`/`o` of the conversation scope reach a hidden composer (app.js); no unread mark on the strip.
+- Row 21 (Back under the Ledger head): no longer reproduces; the note lies on top (elementFromPoint), `ui-test agents` passes.

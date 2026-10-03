@@ -504,3 +504,211 @@ at the top of the file with their reasons.
   a session, replace the token).
 - **The UI moves under the suite.** Selectors and words are in two tables at the top of
   `dev/ui-test.mjs`; four of them had to follow the UI during this session.
+
+## 3 October 2026: first run on the new machine
+
+State: working tree on `trommi-board` with the uncommitted scribble gallery, region send, Desk block and `app.js` fixes.
+
+- **The suite hung here.** On this desktop the headless page turns `hidden` a moment after start and `requestAnimationFrame` stops, so `settle()` never returned. `dev/cdp.mjs` now switches on focus emulation for the page it attaches to. `server/test.mjs` passes unchanged.
+- **Desktop, all groups:** green except three checks in `walk`, one cause: with the pen of the card in the hand (key D), the dragged stroke does not stay on the card ("a stroke of the pen stays on the card", then the draft and the picture of the scribbled card). Not decided whether the check is stale or the pen is broken.
+- **Checks changed:**
+  - `mode()` / `SEL.composerPen`: the canvas is opened by the one Scribble button of the composer (`.composer-scribble`) and left by the same button where it stands beside the conversation. The old expression also passed a quoted string as the scope.
+  - `backOnNote()`: "Back" on the note in the walk. The note is up for five seconds and its running line never rests, so `press()` (which waits for stillness) arrived after it was gone. The helper presses at once and, on a desktop, falls back to the key U.
+- **Phone, all groups: 406 passing, 17 failing.** Not worked through. Groups: `inbox` (the way back lies over the answer tiles), `later` and `snooze` (Snooze does not move the card / the last card), `walk` (count 35 against 34, Snooze and Shred 32x32 px, an answer does not move on), `session`, `scribble`, `urls`, `images` (the conversation does not open after a tap on the session), `pair`, `sidebar` and `agents` (counts off by one). A single tap on a session in a fresh page does open it (`/s/web-frontend`), so the session failures depend on what ran before.
+- **Pasted file arriving twice:** the foot field's paste handler stops the event (`focus.js`, "handled here, once") and the card's `onpaste` skips a prevented event. Read in the code, not replayed in a browser.
+
+## 3 October 2026, afternoon: the phone failures worked through
+
+Result: **desktop 618 passing, 0 failing, 3 pending (140 s); phone 575 passing, 4 failing, 3 pending (171 s);
+`dev/keys-test.mjs` 200 passing (about 2 min).** The 4 phone failures are two product bugs (below).
+
+- **Root cause of most phone failures, and of the 25-minute runs: harness.** The `chromium` of this machine
+  reads `~/.config/chromium-flags.conf` (`--load-extension=…`) and loads an external extension (1Password,
+  `aeblfdkhhhdcdjpifhhbdiojplfjncoa`), which opens a page of its own in front of ours a few seconds after
+  start. From then on our page stays "visible" (focus emulation) but gets about one animation frame a second:
+  CSS transitions sit at time 0, `settle()` runs into its limit before every press, and taps arrive seconds
+  late. That is why the Snooze tab folded back before its second tap (snooze, later), why taps on the session
+  strip did nothing (session, scribble, urls, images, pair, sidebar, agents), and why one phone run took
+  25 minutes. Found by counting `requestAnimationFrame` calls: 30 per 500 ms after load, 0 to 1 two seconds
+  later, back to 30 after `Page.bringToFront`; the target list showed the extension pages. Fix in `dev/cdp.mjs`:
+  `--disable-extensions --disable-component-extensions-with-background-pages`, and `Page.bringToFront` on attach.
+  A full phone run now takes about 3 minutes.
+- **`session` (Courier does not open), `snooze`, `later`:** green after the fix above. No product bug.
+- **`pressLater()`:** stale. A row's tab now acts on one tap on a phone as well; the second-tap step is gone.
+- **`inbox`, "the way back lies over the answer tiles":** stale check. It compared raw tile boxes; a row cut
+  off by the scrolling `#inbox` counted as covered. The tiles are now clipped to the box of `#inbox`, and the
+  box of the note is read after its 260 ms entry (`settle()` does not wait for the note).
+- **`walk` on the desktop, the card's pen (three checks):** harness. The walk shows its cards as a list; after
+  "Back" on the shredded card the walk jumps to that card a moment later, the files card ends up ~9800 px off
+  screen, key D works on the card in front (another one, or nothing) and the drag landed outside the card. Now
+  the test waits until the shredded card is in front again, scrolls the files card in and waits until it is the
+  card in front before D. The pen works: 56 of 56, three runs in a row.
+- **`dev/keys-test.mjs` (never finished, "19 rows, found 38"):** a run on its fixed port 8884 while an earlier
+  run's hub still held it talks to that hub too; with the frame stall above it took over 25 minutes. It now
+  refuses to start when the port answers. One check was stale: a card asked to explain no longer goes to the
+  Snooze pile but to the list "With the agent" (`.inbox-revising-row`), and comes back to the desk on the reply.
+
+**Product bugs (phone):**
+
+1. **A tap on the middle of a thumb tile in the walk writes a note instead of answering.**
+   `client/web/css/focus.css:1294-1295`: at narrow width `.focus-opt-pen` becomes `position: relative`, so the
+   option's pencil stands in the flow of the tile right under the thumb drawing (277..301 x 486..510 on a tile
+   204..384 x 426..522), and its `::after { inset: -8px }` widens it to 40 px. Chromium's touch adjustment
+   moves the tap at the tile's centre (294,474) onto the pencil (click at 294,481), whose handler
+   (`focus.js:1205`) stops the event. Repro: phone width, open the walk, tap the middle of "Yes": nothing is
+   answered, the note line for that option opens. (Checks: "after an answer the walk moves on at once", "an
+   answer in the walk", "the note with the answer".)
+2. **Snooze and Shred in the card's corner are 32x32 px on a phone.** `client/web/css/focus.css:1255`
+   (`.focus .focus-card-ends > .focus-way`, 32 px) outweighs the narrow rule `.focus .focus-card-ends button`
+   (36 px) at `focus.css:1291`; either is under the 40 px a finger needs. Repro: phone width, walk, measure
+   the two round buttons in the card's top right corner.
+
+## 3 October 2026, evening: the calm phone Desk (card Nr. 153), What?? back, E asks at once
+
+Result: **desktop 628 passing, 0 failing, 3 pending; phone 598 passing, 1 failing, 0 pending (about 3 min each);
+`dev/keys-test.mjs` 200 passing.** (Phone: the full run had 597 and 2; the second was a stale check, fixed and
+rerun in its group.)
+
+- **Phone Desk rows** (`dev/ui-test.mjs`): `rowMenu()` holds a row's title for 650 ms and returns the words of
+  the sheet (`dialog.rowmenu`); `pressLater()` uses its first item where the row shows no tab. New in `later`:
+  a swipe over a row opens neither sheet nor card; a long press opens the sheet (Snooze first; Revise, Shred,
+  Copy among the items), not the card, and the lifting finger acts on nothing; a tap on the title opens the card,
+  not the sheet. "Wake up" on a pile row is read from the sheet. The card number is checked on the opened card,
+  pictures after a tap on the title; rows of the Desk and of "Questions only" must show no pictures. The pending
+  check about the wide "Choose" tile no longer runs at phone size. Desktop checks are unchanged.
+- **Walk, What??**: two stale checks (the pile `asked`; a selector string passed to `__t.text`). Walk: 65 of 65
+  desktop, 67 of 67 phone. The two phone bugs of the afternoon (thumb tap landing on the pencil; Snooze and Shred
+  32 px) no longer fail.
+- **`keys-test`**: E (opened card and walk) asks the session to explain at once, with the explain flag; `[`
+  folds the sidebar to a rail and opens it again.
+
+**Product bug (phone, small):** the piles "Snoozed" and "Answered" at the foot of the Desk overlap by 2 px
+(boxes 597.8..645.8 and 643.8..691.8). `client/web/css/app.css:1086` pulls a pile up by `--s-3` against the
+gap of the list; `client/web/css/phone-desk.css` (`.inbox-groups { gap: 10px }`) made that gap smaller. Repro:
+phone width, snooze one card, answer one, look at the two folded piles. (Check: `later`, "the two piles lie
+over each other"; that part of the group was never reached before today.)
+
+## 3 October 2026, night: checks follow the decided changes (pill, crowns, fixed order, stacks, card page, Desk as paper)
+
+Result of the last full runs: **desktop 683 passing, 2 failing, 3 pending (198 s); phone 651 passing, 3 failing
+(233 s); `dev/keys-test.mjs` 200 passing; `dev/richhtml-test.mjs` 47 checks, ok.** The client was being edited
+by several workers during these runs; counts are of the tree as it stood at the last run.
+
+**Still failing**
+
+- `modules`, both sizes (2 checks), in flight with the "screens" worker: `/js/screens-page.js` throws when it is
+  imported on a page without its own markup ("Cannot read properties of null (reading 'append')"), and
+  `client/web/js/screens.js:305, 380, 395, 396, 423` carry German titles ("Schwebendes Menü", "Ohne Senden-Knopf", …).
+- `images`, phone (1 check), product bug: the picture on the stage of an opened card is 34x72 px, smaller than its
+  own thumbnail (56x44). The rules ask for at least 200 px (`client/web/css/focus.css:1171`, `:1205`); which later
+  rule shrinks the stage on a phone was not traced (suspect `focus.css:1528`, `.focus-stage-view { flex: 1 1 0;
+  min-height: 0 }`). Repro: phone width, tap the title of a question with pictures.
+
+**Harness**
+
+- `__t.still()` ignores animations that run on a scroll timeline (`focus-lead-stuck` on the card page never ends):
+  every `settle()` in the walk ran into its limit, the desktop walk took 310 s; now 50 s.
+- `choose`, "the row jumped by -3234px": not a jump. The row's place was read after a scroll that the list undid
+  (it keeps the row under the resting pointer in place when a card arrives). The place is now read once the row
+  rests in the window; five runs green.
+
+**Checks rewritten**
+
+- Menu pill: `goRoster()` goes by way of the Desk when `#brand-menu` is not shown (an opened card, the walk).
+- Crowns (Nr. 160): on a hub that sends `main`, the starred session is where quick memos go: its rows carry the gold
+  dot (`.inbox-from-mark[data-memo]`), no other session's do; it no longer has to lead the Desk. New group `mains`:
+  the "Main agent" select on the Agents page, the crown on the main folds its subs to edges and unfolds them
+  (indented, bracket, `data-parent`). Not covered: the summed ring, a knocking sub's red edge, Alt+arrows in a group.
+- Fixed order: rows equal `state.queue`; every open card is on the Desk, a run holds one session's cards, two runs
+  of one session never follow each other; a card fetched back or taken back returns to its place. New group `order`:
+  a late blocking card is the last row, the strip at the lower edge announces it, a click goes to the nearest
+  knock, the strip goes when the last knock is in sight; an arriving card does not move the row under a resting pointer.
+- Two stacks: `__t.inPile()` reads `data-kind` on the lines of "Later" and "Done" (a folded stack holds only its
+  first eight lines; a card that is no open row counts as lying there when the stack has more). A snoozed card
+  is a slim line without tiles; "Wake up" is its `.inbox-takeback`. The fan: a click fans, a second click and
+  Escape gather, one stack open at a time, "N more" shows the whole pile (in `snooze`, with 20 on the stack).
+- Card page: "3 of 9" in `.focus-card-count`; a plain reply does not present a card again, `reply` with
+  `present: true` does; previous and next are links (`aria-disabled` at the ends); the memo's round button may
+  stand on the card page; an upright picture is large by its height. New group `arrow`: the picture on the stage
+  marks its option (`data-match`), a line runs to it on a wide screen, the overview picture points at none.
+- Memo: Ctrl+Enter sends (Enter is a new line); the note tears off.
+- Pad: the group follows the page. Where `#deskpad` exists: it is the first child of `#inbox`, `#pad-open` is
+  not shown, the pen switch and P put the paper in front (`data-paper-front`), a drag across a row leaves one
+  stroke and opens nothing, the eye hides the cards, `/pad` lands on `/` with the pen in hand. With `?deskpad=0`
+  the old checks of the layer run.
+- `keys-test`: L on a snoozed line does nothing and U wakes it; the "Done" stack; a scoped "Take back"; P picks
+  up the pen. `richhtml-test`: the opened question's address is `/q/<n>`; the clicks on controls over a scrolled
+  frame are noted and stopped (the Desk pill and the sessions would leave the page).
+
+**Not done**
+
+- `client/web/pad/dev-check.mjs` still expects the layer, `#style-btn` and sent elements staying on the paper. It
+  lies in `client/web/`, which QA does not edit.
+- Not checked: a failed area send removes nothing; "Hide" together with an open card page; the phone session
+  page's row under the composer; hard pixel values of the 64 px band (none failed).
+
+## 3 October 2026, late night: pad check and richhtml rewritten; all suites green
+
+Result: **`ui-test` desktop 685 passing, 0 failing, 3 pending (197 s); phone 654 passing, 0 failing (233 s);
+`keys-test` 205 passing; `richhtml-test` 48 checks, ok; `client/web/pad/dev-check.mjs` 63 of 63 (twice in a
+row); `server/test.mjs` ok.** No check fails at this moment; the three pending are the old wide "Choose" tile.
+
+- **`richhtml-test` failing at line 68 ("the markdown table … is a table"): not a product regression.** The demo
+  board it ran against had two "API" sessions (`api-2`, `api-3`), so `/s/api` showed no conversation: demo agents
+  of earlier runs on the same port were still alive and joined the new hub. (Mine did the same once: three
+  overlapping demo boards on port 8893; stopped by pid. A demo board for a test is now started and stopped around
+  the command.) On a clean board the table check passes.
+- **`richhtml-test`, "Open large"** (stale, rewritten): it is a link (`a.rh-open`, `/large.html#<key>`,
+  `target=_blank`) that hands the block over through the browser's storage; the large page shows it in the same
+  sandboxed frame, filling the page, also after a reload; in the question window the link leaves the question
+  open. No `dialog.rh-large`.
+- **`client/web/pad/dev-check.mjs`** (edited this round):
+  - *Dragging, resizing, undo, "]" (five checks, one cause): no pad bug found.* They failed in one run of eight
+    here and passed in the others without a change to the checks, each time together, beginning with "a click on
+    a note under a highlighter stroke selects the note". The runs in which they failed were on a board that
+    several stray demo agents had joined; on a clean board they passed every time (four runs).
+  - *"Sent" marks (three checks): stale.* What is sent leaves the paper. Now: the panel closes, nothing is left
+    on the paper or on the server, and one undo puts all of it back (paper and server). The wait for the answer
+    polls instead of sleeping 900 ms.
+  - *The crash at line 283* came from reading a stroke record after everything had been sent away; with the undo
+    before it the records are there again.
+  - *The board part* expected the layer over the page (`#padlink`, `#pad-open`, Esc and Back closing it, the
+    flight to the sidebar's strip). Rewritten for the Desk as paper: `#deskpad` first in `#inbox`, no control in
+    the bar; P puts the paper in front; typing and drawing reach the server; A frames an area and the chooser
+    lists the sessions; **a send that fails removes nothing** and says "Not sent."; a send that succeeds takes the
+    framed things off paper and server, the conversation shows it with its picture, the demo agent got the PNG;
+    **one undo restores**; a stroke crossing the frame is cut at its edge and the part outside stays; two devices
+    see each other's strokes; the pen is put down; the eye hides the cards; `/pad` lands on `/` with the pen in
+    hand. Dropped with the layer: the pad from a session, a pair, the agents page and over the Focus window, the
+    theme through the pad's own switch, and the whole phone part of the board (the phone basics are in `ui-test`
+    `pad`). The stand-alone phone checks remain.
+- **Disputed bug, "last card with several answers stays after Send" (docs/bugs-wide.md row 16): not reproduced.**
+  Eight tries on `/s/courier/walk` with a real pointer click on Send: 1440 and 1024 wide, the multi-answer card
+  alone and after two others, with `options` and with `sections`, two options ticked. Every time: the hub has it
+  decided with both choices, the page shows its end state (`.focus-sheet[data-state="done"]`, no card in front),
+  and U takes it back (open again, both ticks restored). Probe: scratchpad `multi.mjs`.
+- **Port 8884:** nothing listens on it now and no `keys-test` process is running; whoever held it has gone. I
+  stopped nothing there.
+
+## 4 October 2026, end of the night: last round, everything green
+
+Result: **`ui-test` desktop 715 passing, 0 failing, 3 pending (210 s); phone 686 passing, 0 failing (264 s);
+`keys-test` 205 passing; `richhtml-test` 48 checks, ok; `client/web/pad/dev-check.mjs` 63 of 63;
+`server/test.mjs` ok.** The three pending are the old wide "Choose" tile. No product bug open from this round.
+
+- **Stale, fixed:** phone `pad`. The pen and eye switches tuck to a 16 px tab at the left edge; the test taps the
+  tab where the pill is tucked (`.deskpad-over[data-tuck]`), then the switch.
+- **New checks**
+  - `pad`, phone: the tab brings the switches out and picks up nothing; both switches are at least 44x44 px.
+  - `pad`, desktop: W hides the cards and shows them again; with a card page open W neither closes nor answers it.
+  - `order`, desktop: at 1024 wide the lower knock strip does not lie under the Desk's switches.
+  - `agents`: the rename form is anchored and lays no veil (transparent backdrop); Escape closes it and keeps the
+    old name; Enter saves (a finger presses Save).
+  - New group `memos`: a note put away lies on the "Memos" stack, which stands between Later and Done; a click
+    on its line floats it again with its words; the bin throws it away; on a phone no note opens by itself after
+    a reload; on a card page the memo button is there, the words land in the note, sending reaches the session
+    and leaves the card open on its page.
+  - New group `picture`: a picture of a conversation large is a page at `/s/<id>/files/<n>`; "next" is a link to
+    the neighbour and shows it; a reload lands on the same picture; "Back", Escape and the browser's Back close it.
+- **Not checked:** the picture zoom on the card page (click beside closes, not the browser's Back); the phone
+  session page's row under the composer; the keys sheet, the phone long-press menu and the Agents sheet without veil.

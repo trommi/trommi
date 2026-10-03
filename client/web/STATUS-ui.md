@@ -305,3 +305,149 @@ Screenshots: `/tmp/claude-1000/ui3/` (`before-*`, `zz-*` final, `fin-*` sheets t
   onto a Desk card unfolds it inline on wide screens; `mountScribblePane()` caches its promise (one canvas).
 - Empty Desk: "Desk is clear." plus what lies below by name ("1 in revision · 2 snoozed"), nothing otherwise.
 
+
+## Web UI round from open-from-chat.md (3 Oct)
+
+- Shift held: the row's one tab is Shred instead of Snooze (app.css `body[data-shift]`; inbox.js no longer hides the
+  Shred tab with `hidden`, which `asset.css`'s `[hidden] !important` would keep hidden).
+- A tap on a row tab acts at once (no "first tap slides out"): Snooze on the phone moves the card. Phone tabs 36px.
+- "☞ " before a paragraph: the drawn hand points at it (ui.js `rich()`, `.rich-point`). The channel instructions
+  (server.mjs) do not tell agents yet.
+- Card Nr. 87 colours: rows are plain surface, grey text, neutral line, one soft shadow; the colour stays on the tiles,
+  tabs and knock (`.inbox-row` tokens in app.css).
+- Floats: phone Desk has quick send and pad in the top bar; wide Desk keeps a 60px lane on the right and stacks
+  the two, so no tile or tab scrolls under them (checked 900/1000/1200/1440).
+
+## Share an asset with someone outside (3 Oct)
+
+- ui.js `assetShare({ id, key })` returns `{ button, panel }`: `.asset-share` ("Share" / "Shared", `data-shared`) folds out
+  `.asset-share-panel` with `.asset-share-say` (state, "anyone who has this link can open it"), `.asset-share-go`
+  (POST /asset/share), `.asset-share-link` + `.asset-share-copy`, the end (`.asset-share-ends select`: 0, 24, 168 h) and
+  `.asset-share-stop`. State from `state.assets[i].share`; `refreshAssetShares()` runs with `refreshAssetLinks()`.
+- It stands on the conversation's asset card (chat.js `assetCard`, two lines) and beside the compact link card inside
+  a text (`assetLink()` returns `.asset-linked` for a known asset; `{ share: false }` gives the bare card).
+- Viewer (asset.js): fetch with the cookie, 429 has its own message, SVG is a download.
+
+## Rail: the folded sidebar (card Nr. 150, 3 Oct)
+
+- bar.js `toggleRail()`: `html[data-rail="folded"]`, kept in `localStorage['trommi-rail']`; key `[` (keys.js, id `rail`)
+  and `button.rail-fold` at the sidebar's foot. Wide screens only (≥ 861px); a phone has neither button nor key effect.
+- Folded: 76px column, rows show the drawing with `.agent-badge` at the corner, the Desk block its drawing and the
+  knocks; `.rail-tip` names the row under the pointer or the keyboard. The Desk menu's caret is hidden while folded
+  (Ctrl+K still opens the menu).
+- Share: the link uses `urls[0]` from `/asset/share` when the hub sends it; 404 with `code: "no-asset"` and a 404
+  without code have their own messages.
+
+## Several desks (card Nr. 149 "menu", 3 Oct)
+
+- store.js: `state.all.desks` (`[{ id, name, created, open, knocks, sessions }]`, null on a hub without desks) and
+  `state.all.desk` (the one in view, `localStorage['trommi-desk']`). `deskCut()` gives every view the board of that desk:
+  its sessions, cards, work; of the other desks only the open knocks, their session marked `other_desk` and named
+  "Name · Desk" (the sidebar leaves those out). `setDesk`, `createDesk`, `renameDesk`, `placeDesk`, `removeDesk`,
+  `moveToDesk`. An address that names a session of another desk brings that desk into view.
+- bar.js `paintDesks()`: the name in `.desk-name`; `#desk-list` holds `.menu-desk-row > button.menu-desk` per desk
+  (name, "N open", key), `.menu-desk-act.is-rename` / `.is-remove` (second click confirms) on the one in view,
+  `.menu-desk.new-desk`, the name typed in `.menu-desk-form`. `#brand-menu[data-other-knock]`: another desk knocks.
+  `html[data-desks]` while there is more than one.
+- Keys: Ctrl/Cmd+1…9 (`desk.switch`, keys.js; the range match takes "Mod+1…9").
+- Agents page: `select.ledger-desk` per line on wide screens, "Move to desk …" in the phone's sheet (ledger.js).
+- Rail: the caret stays as a low strip under the Desk drawing, so the menu opens there too.
+- Share: the link comes from `assets[i].share.urls[0]` when the hub sends it.
+
+## Snooze on the card, no clock on the row (3 Oct, evening)
+
+- `.inbox-tabs` now lives inside `.inbox-when` (beside the title, after `.inbox-nr`): `.inbox-later` is a 28px square
+  button with the drawn z z z ("Wake up" in the Snoozed pile), its word a tooltip. Nothing lies outside the row; the
+  margin placement (`@container inboxpage (min-width: 1001px)` block) is gone. Shift shows `.inbox-shred` in the same place.
+- The age clock left the row (`ageClock` no longer in `.inbox-when`); the age is the corner's tooltip and `.inbox-ago`
+  for screen readers. Revise and Whatever stay built and hidden on the row (keys and the phone's long-press sheet use them).
+
+## Floating pill menu, pad button top right, bare paths link (card Nr. 161 "pille", 3 Oct, late)
+
+- Wide screens: `#brand-menu` (still `.brand-open`, same id) is the pill at the top centre: `.pill-name` (desk in view),
+  `.pill-count` ("N open"), the caret. `#brand-doors` unfolds under it (fixed, 320px). The Desk box has no caret; the
+  rail's caret strip is gone. The pill stands in a 56px band: `#inbox` and `#ledger` begin below it. It is not shown
+  inside a session, on the Scribble canvas, or while a card or the walk is open (Ctrl+K opens the menu anywhere).
+  `--side` (256px / 76px with the rail) and `--pill-x` place it. `[data-other-knock]` (another desk knocks) is on the pill.
+- Phone: unchanged (Desk and the caret in the top bar; the pill's words are hidden).
+- `#pad-open` stands at the top right of the Desk and the Agents page (in the band); the memo button is alone at the
+  bottom right. In a session the pad stays the small icon in the header.
+- ui.js `inline()`: a bare path to a page of the board (`/designs/x10.html?k=a#top`) is a link (`pathLink()`); cases in
+  dev/richhtml-test.mjs.
+
+## One Desk control: the pill (3 Oct, night)
+
+- Wide screens: the Desk box left the sidebar. `.topbar` itself is the pill at the top centre, in a band (`--band: 54px`)
+  above every view (`#session, #inbox, #ledger { margin-top }`): `#desk-go` (drawing, `.desk-name`, `#desk-state` with
+  ring, knocks, "N open"; `aria-current` on the Desk) goes to the Desk, `#brand-menu` (the caret) opens `#brand-doors`
+  under it. Same ids as before. Shown on the Desk, in a session, with Scribble and on the Agents page; covered only by
+  an opened card or the walk. `#pad-open` stands at the right end of the band in every view.
+- The sidebar starts with the sessions (no spacer); the rail's Desk rules are gone. bar.js no longer adds
+  `.pill-name` / `.pill-count`. A phone is unchanged.
+
+## Desk box back in the sidebar, the menu's pill is "Trommi" (3 Oct, 17:00)
+
+- Wide screens: `.topbar` is the Desk box at the top of the sidebar again (`#desk-go`: desk drawing, "Desk", ring, knocks,
+  count; no caret; small in the rail; the spacer `#agents::before` is back). `#brand-menu` alone is the pill at the top
+  centre: `.pill-mark` (the bell, cloned from `#desk-go .brand-mark` by bar.js), `.pill-word` "Trommi", the caret; it
+  opens `#brand-doors` under it. `[data-other-knock]` stays on it. Band (`--band`), pad button and menu placement as before.
+- app.css overrides logo.css's wide rule that put the bell into the Desk button (the bell is in the pill now).
+- Only this label says "Trommi"; nothing else is renamed. A phone is unchanged.
+- Trommi menu: a quiet "Dev" group at its foot (bar.js): `#dev-fake` (POST /dev/fake-decisions { n: 5 }) and `#dev-fake-clear` ({ clear: true }); on success the menu closes and the page goes to the Desk, on 404 `.menu-dev-note` says "Needs the hub restart."
+
+## Real links and pages (3 Oct, navigation)
+
+- js/link.js: `link(cls, href)` / `linkTo(a, href)` make `a[data-nav]` with the real address; one listener at the window
+  stops a modified or non-main click before the page's handlers (the browser opens its tab) and takes the default from
+  a plain one (the element's own click listeners do the step). Space presses them like buttons. `go(href)`,
+  `sessionPath`, `cardPath`, `walkPath`. css/links.css resets the link looks with zero specificity (`:where`).
+- Links now (same classes as before, tag `a`): `.agent-entry` (/s/<id>, /s/<a>+<b>), `a.agent-badge` (/s/<id>/walk; a
+  `button` where it unfolds a group, a `span` where it only shows), `#desk-go` (/), `#menu-agents` and `#roster-open`
+  (/agents), `.inbox-text` (/q/<n> on the Desk, /s/<id>/q/<n> in a session), `.inbox-revising-open` (pile rows),
+  `.inbox-walk` (/walk), `a.event` (a question of the conversation that still waits), on the Agents page `.ledger-q`,
+  `.ledger-more`, `a.ledger-ans.is-choose`, the ring, the "open" and "questions" icons; the memo's `.memo-ledger` and
+  `.quick-go`. Already links: `.inbox-gutter`, card chips, asset cards, Help, Admin.
+- History (app.js): every entry carries `history.state.k` (pushState/replaceState are wrapped once); scroll positions of
+  `#inbox`, `#ledger`, the logs and pane lists are kept per entry in `sessionStorage['trommi-scroll']` and put back on
+  Back, Forward and reload. A badge's walk is one entry. Going elsewhere folds an unfolded Desk card (`leaveCard()`).
+  A card over the Agents page keeps `?q=<n>` (the server serves no /agents/q/…). An unknown /q/<n> lands on the place.
+- Title: "(5 knocks) Desk · Trommi", "(3) <session> · Trommi", "… · Scribble", "Nr. 164 · <title> · Trommi",
+  "Next, please · <session>", "Agents".
+- Memo slip: stays open on a wide screen while one clicks about and goes elsewhere (Esc, its button or sending close it;
+  a phone's veil closes it); words and attachments are kept in `localStorage['trommi-memo-draft']`.
+
+## Top grid on wide screens: 8 / 64 / 80 (3 Oct, spacing pass)
+
+- Three lines, every view: **8px** is the top of everything fixed (Desk box, session heading, the "Trommi" pill, the
+  pad button); **64px** is the band's end (`--band`, was 54: the Desk box's bottom, 8 + 56); **80px** is the first line
+  of content (first sidebar row, "Next, please", "Agents", a conversation's first line).
+- Sidebar (app.css): `.topbar` top 8 (was 30), spacer `#agents::before` 72px (was 104; rail 80, was 112).
+- Session (session.css): the conversation begins below the band again (no `margin-top: 0`), so nothing can scroll
+  under the pill or the heading; it fades out over the band's last 12px (mask on `.log` / `.pane-list`). The heading
+  always stands in the band, left of the pill: drawing 44px, name 1.5rem, quiet line `--t-sm` (caps .68rem), 24px
+  from the left; `--head-w` is the room up to the pill (max 30rem). The corner mode from 1416px and the soft blurred
+  ground are gone (nothing lies under them).
+- Desk and Agents: both headings 16px under the band (were 8 and 32). From 1224px the Desk's column is centred under
+  the pill (the 60px lane for the memo button is only kept below that width). The pad button has one place (8 / 16
+  from the top right, 38px) in every view.
+
+## Memo: a living yellow sticky note (3 Oct, late)
+
+- js/memos.js is the notes (`{ id, hid, text, to, files, place: 'float'|'stack'|'paper', x, y }`): kept on the hub
+  (`state.all.memos`, passed through by store.js `normalize`; `POST /memo`) and mirrored in `localStorage['trommi-memos']`;
+  a hub without `memos` in its state keeps nothing, the notes then live in the browser alone (`small.memo-local` says so).
+  `memos()`, `onMemos(fn)`, `newMemo`, `saveMemo`, `removeMemo`, `restoreMemo`, `openMemo`, `sendMemo`, `memoPile()`.
+- js/quicksend.js is the note on the page: `div.memo[data-id] > form.memo-slip` with `.memo-head` (`b.memo-title`,
+  `label.memo-to` holding `select.memo-pick`, `.memo-away` = to the stack, `.memo-bin`), `textarea.memo-field`
+  (`#quick-field` on the one written in last), `.memo-files`, `.memo-foot` (`.memo-clip`, mic, `i.memo-tear`,
+  `button.quick-send.memo-send` with the paper plane). Several at once; carried by the head; Esc puts one on the stack;
+  Enter sends, Shift+Enter is a new line (Ctrl/Cmd+Enter sends too). `.memo.is-paper` lies in padlink.js `paperLayer()` at `paperPoint()` pixels.
+  A phone: one sheet at the bottom (`body[data-memo-open]`), not carried; a tap on the veil puts it away.
+- Desk: a third stack `section.inbox-group-memos` (`.inbox-memos-toggle`), its lines `article.memo-line[data-memo]` with
+  `.memo-line-open` (opens the note floating again). The opener `.quick-open.memo-open` makes a note (or goes to the empty one).
+- Looks (css/quicksend.css): flat yellow in both themes, a hairline of shadow, lifted only while carried.
+- Phone (later the same day): a floating note never opens by itself on load; it counts as lying on the Memos stack
+  (memos.js `onStack`, `sheetMemo`) until tapped. The sheet has no veil (a line and a shadow); a tap beside it or Esc
+  puts it on the stack. A paper note is moved on the paper by its head. Floating notes stand inside `body > .focus`
+  while a card is open (quicksend.js `floor()`); new notes there are placed clear of options, ways and field (`spot()`).
+  Chips are kept with the note in this browser (`note.chips`; cardclip.js `pasteChip({ initial })`, `.cards()`).

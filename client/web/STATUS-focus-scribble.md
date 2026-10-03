@@ -96,3 +96,39 @@ Not built: writing and scribbling anywhere on the card (anchored notes), the scr
 - Snooze and Shred stand in the quiet row at the stage's top right; beside the answers only Revise and Whatever.
 - Revise hands back at once (no "What should change?" stop). `revise(cardId?)` hands back without opening.
 - Pass order: `oneTapFirst` (exported with `oneTap`): one-tap cards first, then the rest, server order within.
+
+## 3 October 2026 (afternoon)
+
+- Phone card (open-work row 8): below 700 px of container the composer comes last, under answers and ways out (`css/focus.css`, end); in the walk it is sticky at the lower edge above "N more". The gallery caption of hidden cards no longer shows through over the title (`visibility: inherit`, `css/focus.css` ~1234).
+- Old word: Explain's announcement says `${LATER_WORD}` (Snooze), comments updated (`js/focus.js`).
+- Region send on the session canvas flies into the session's sidebar entry like the pad's swoosh (`js/chat.js` `swoosh()`, `js/scribble.js` adds `rect` to the `scribble:region` detail).
+- Desk rows: the question keeps 82 px clear of copy icon, number and clock (`css/cardclip.css`, end); narrow rows with a head need none.
+- Pen in the walk works. The red check "a stroke of the pen stays on the card" is a race in `dev/ui-test.mjs`: after Back on the shredded card the page jumps to it once its state arrives, after `walkTo(files)` already returned; the files card is then off-screen and the drag misses. Waiting for `__t.focusState()?.id === shredded.id` after Back makes walk 56/56.
+- Phone walk: 4 failures (Snooze/Shred 32 px, answer does not move on) exist without these changes; QA is on them.
+- The "Copied" note (cardclip.js `say()`) is put inside the open Focus window (`.focus:not([hidden])`), so it stands over the card; seen at 1440 and 400x860, for the copy button and for Ctrl+C.
+- Phone: the option pencil stays small in the tile's top right corner (a tap in the middle answers); Snooze, Shred and the other corner buttons of the card are 40 px. Walk phone 58/58, desktop 56/56.
+- What?? is a visible button again: first in the row of ways out (`wayButton('what')`, `.focus-explain`, focus.js ~716); one press (or key E) asks at once with `explain`, the field's text goes along. The caret detour in `explain()` is gone.
+
+## 3 October 2026 (evening): the opened card rebuilt (his words on Nr. 151/156)
+
+- Cause of "wie ein Affe scrollen": `css/focus.css` (old line 1033, since commit 4b016c8 of 2 Oct) hid the options column on cards with sections; the options were tick-headings in one long text with a picture each.
+- Now, for every decision card: all options at the right, always in sight (`data-many` from five options: tags or one-line rows; ticked tags carry a tick, Send counts), Send and What??/Revise/Whatever under them.
+- Left: the stage (`sectionsNode`/`stageTo` in `js/focus.js`): one option at a time, picture then paragraph; pointer or keyboard on a tile, a tap on it, or the stepper "‹ 1 / 10 ›" turns it. A picture that belongs to no option follows under the stage.
+- The title stays (`.focus-lead` sticky, where the browser has scroll timelines; phone keeps `.focus-up`); only the middle scrolls.
+- Card and feed (`rec.feed` = thread + composer, a child of the article; CSS block "The card and its feed"): the card fits one screen (`--face-h` from the stage's height, `container-type: size`), the feed lies under it on its own plain sheet, the field is sticky at the screen's foot, a feed longer than 1.5 screens folds its oldest part behind "Show N older" (`foldFeed`). In the walk only the card in front has its feed.
+- Verified with copies of Nr. 151, Nr. 156 and a card with 24 messages at 1440x900, 1280x720, 390x844; `ui-test --only walk,choose,gallery` green on both sizes.
+
+## 3 October 2026 (late): the card page
+
+- A card is a page, not a pop-up (`body[data-focus-page]` = `card`): opaque ground, no click outside, way back top left ("Desk" or the session), full width as the walk.
+- ONE view: `LIST_WALK = false`. "Next, please" is the same card page, stepping (prev/next, J/K, "3 of 9" in `.focus-card-count`). The pass is `state.queue` as given (`passOrder`: no sort, no one-tap-first).
+- Order on the card: title, short text ("more" over 520 characters), gallery taking the height left. Every card opens at scroll 0 (`present`).
+- Picture and option tied again: `pairPictures` lets several pictures belong to one option and leaves unnamed pictures unpaired (`keyAtOf`); stage picture shown whole.
+- Feed: revisions are entries ("Revised · version N", note, "See version N-1"), his Revise/What?? are quiet lines; the chip on the card says "Revised: …". Arrivals never scroll the page (only his own message does).
+- Whatever: "or" divider and one line with the word alone (`.focus-or`, still `.focus-whatever`).
+- Memo slip: z-index 2600 while open, pad button hidden (`body[data-memo-open]`).
+- Not done: circles from `attachments[i].marks`; the knock marker ("knock: 3 cards on"); memo opener above the card page.
+- Later the same evening: memo opener moves to `body` on a card page (`.memo-open-free`, quicksend.js); knock marker `.focus-knock` beside the count; `circleMarks()` draws `attachment.marks` on stage and lightbox, the arrow starts at the first circle; phone clamps the short text to three lines with "more"; the field's send is the reverse card and hands back (`handBack(true)`, 900 ms in the feed first); way back, close and the session name are real links (link.js); `focus:card` event (`{ id, number, title, agent, walk, at, of }`) on `document` for the tab title.
+- Grid round: back pill 8/8, card from 64px (`--band`), title and first option on one line 32px inside, feed as wide as the card; previous/next are `a[data-nav]` with `aria-disabled` and no href at the ends.
+- Page round: no dialog role, no Tab trap, no focusin rescue; only what the page covers is inert (memo things stay alive); info/hint notes in the band above the card; `--field-h` and `--answer-h` follow the real nodes (the field's place is on screen, so focusing it never scrolls); options never cut or faded (answers column scrolls inside the card); way back up to 280px with title; inline row order title, text, gallery.
+- Duo tiles (two options, one answer) grow with a long detail on the wide card page: no forced square (`aspect-ratio: auto; min-height: 128px`).

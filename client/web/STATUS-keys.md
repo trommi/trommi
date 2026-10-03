@@ -39,3 +39,10 @@ checks the board's state). Last run: 173 passed, 0 failed. `node dev/ui-test.mjs
 - The session's own view keeps its older "Answered" list (history.js, "Answer again"); the new rows with
   "Take back" are in the inbox.
 - Touch: nothing here was tried on a real phone.
+
+## 3 Oct 2026: copy a decision (open-work row 19)
+- `Ctrl+C` / `⌘C` on the marked row of a list (`list.copy`) and on the open card in the Focus window (`focus.copy`)
+  calls `copyCard()` of `cardclip.js`. Left to the browser while typing in a field or with text selected. Listed in "?".
+  Providers at the end of `js/keys.js`. Verified with real key events: clipboard text, the remembered card, the sheet.
+- Open (cardclip/focus): in the Focus window the "Copied" note lies under `.focus-scroll`, so it is not seen there.
+- 3 Oct: `list.trust` (R) is taken only while a row is marked (new LAYOUT flag `marked`, checked in `run()`); else R falls through to `chat.write` (which unfolds the conversations). Verified in the joined view with real keys.
