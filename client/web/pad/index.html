@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
 <title>Pad · Trommi</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cstyle%3Epath%7Bfill:none;stroke:%23fff;stroke-width:3;stroke-linecap:round;stroke-linejoin:round%7D.f%7Bdisplay:none%7D@media (min-width:24px)%7Bpath%7Bstroke-width:2.1%7D.f%7Bdisplay:inline%7D%7D%3C/style%3E%3Crect width='24' height='24' rx='6.75' fill='%231b6a57'/%3E%3Cg transform='translate(12 12.4) scale(.8) translate(-13 -12.2)'%3E%3Cpath d='M3.1 19Q12.3 18.6 16.7 19L21 19.3'/%3E%3Cpath d='M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8'/%3E%3Cpath class='f' d='M11.8 8.6L12.2 6.9'/%3E%3Cpath d='M10 6.6Q11.8 6 12.8 6.4L13.8 6.8'/%3E%3Cpath d='M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5'/%3E%3Cpath d='M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5'/%3E%3C/g%3E%3C/svg%3E">
 <!-- No fonts or scripts from other hosts: the pad uses the token font stack with whatever the device has. -->
 <link rel="stylesheet" href="/css/tokens.css">
 <link rel="stylesheet" href="pad.css">
@@ -80,19 +81,19 @@
   <div class="pad-bar">
     <div class="pad-pill pad-tools" role="toolbar" aria-label="Tools">
       <button type="button" class="pad-icon-btn pad-tool" data-tool="select" data-icon="select" aria-label="Select" data-tip="Select · V"></button>
-      <button type="button" class="pad-icon-btn pad-tool" data-tool="pen" data-icon="pen" aria-label="Pen" data-tip="Pen · P"></button>
-      <button type="button" class="pad-icon-btn pad-tool" data-tool="hl" data-icon="hl" aria-label="Highlighter" data-tip="Highlighter · H"></button>
+      <!-- the pen carries its colour; a click on it while it is in hand opens colour and width (the same for the highlighter) -->
+      <button type="button" class="pad-icon-btn pad-tool" data-tool="pen" data-icon="pen" aria-label="Pen; again: colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Pen · P · again: colour"></button>
+      <button type="button" class="pad-icon-btn pad-tool" data-tool="hl" data-icon="hl" aria-label="Highlighter; again: colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Highlighter · H · again: colour"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="eraser" data-icon="eraser" aria-label="Eraser" data-tip="Eraser · E"></button>
+      <button type="button" class="pad-icon-btn pad-tool" data-tool="text" data-icon="text" aria-label="Text: click on the paper and type" data-tip="Text · T"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="area" data-icon="area" aria-label="Send an area to a session" data-tip="Send area · A"></button>
-      <span class="pad-sep"></span>
-      <button type="button" class="pad-icon-btn pad-stylebtn" id="style-btn" aria-label="Colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Colour and width"><span class="pad-dot" id="style-dot"></span></button>
       <div class="pad-style" id="style" hidden>
         <div class="pad-style-row"><span class="pad-label">Colour</span><div class="pad-swatches" id="swatches" role="group" aria-label="Colour"></div></div>
         <div class="pad-style-row"><span class="pad-label">Width</span><div class="pad-widths" id="widths" role="group" aria-label="Width"></div></div>
       </div>
       <span class="pad-sep"></span>
       <button type="button" class="pad-icon-btn" id="mic" data-icon="mic" aria-label="Speak a note" aria-pressed="false" data-tip="Speak · M"></button>
-      <button type="button" class="pad-icon-btn" id="image" data-icon="image" aria-label="Add a picture" data-tip="Picture · I"></button>
+      <button type="button" class="pad-icon-btn" id="image" data-icon="clip" aria-label="Attach a picture" data-tip="Attach a picture · I"></button>
     </div>
   </div>
   <input class="pad-file" id="file" type="file" accept="image/*" multiple tabindex="-1" aria-hidden="true">
@@ -149,7 +150,8 @@
       <h3>Tools</h3>
       <dl>
         <dt><kbd>V</kbd></dt><dd>Select: drag a frame, drag to move</dd>
-        <dt><kbd>P</kbd> <kbd>H</kbd> <kbd>E</kbd></dt><dd>Pen, highlighter, eraser</dd>
+        <dt><kbd>P</kbd> <kbd>H</kbd> <kbd>E</kbd></dt><dd>Pen, highlighter, eraser; the pen again: colour</dd>
+        <dt><kbd>T</kbd></dt><dd>Text: click and type</dd>
         <dt><kbd>1</kbd> to <kbd>4</kbd></dt><dd>Line width</dd>
         <dt><kbd>Shift</kbd> drag</dt><dd>Frame a selection with any tool</dd>
         <dt><kbd>Shift</kbd> click</dt><dd>Add to or take from the selection</dd>

@@ -128,7 +128,16 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
 
 /* ── dialogs: what would be sent, and the shortcuts ─────────────────────── */
 .pad-dialog { width: min(760px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); padding: 0; border: 0; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); font: 400 var(--t-md)/1.45 var(--font); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); overflow: auto; }
-.pad-dialog::backdrop { background: var(--overlay); }
+/* No veil over the paper: a line and a shadow set them off; Escape, Close or a click beside them closes. */
+.pad-dialog { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.pad-dialog::backdrop { background: transparent; }
+/* "Send to…" is a panel at the selection (pad.js openSendDialog places it): narrow, one column. */
+#send-dialog { width: min(400px, calc(100vw - 16px)); }
+#send-dialog[data-anchored] { position: fixed; margin: 0; }
+#send-dialog .pad-payload { grid-template-columns: minmax(0, 1fr); gap: var(--s-3); padding: var(--s-3) var(--s-5); }
+#send-dialog .pad-payload img { max-height: 28vh; }
+#send-dialog .pad-payload pre { max-height: 12vh; margin-bottom: var(--s-3); }
+#send-dialog .pad-dialog-lead { margin-top: var(--s-3); }
 .pad-dialog header { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-3) var(--s-3) var(--s-3) var(--s-5); background: var(--surface); border-bottom: 1px solid var(--line); }
 .pad-dialog h2 { margin: 0; font: 600 var(--t-xl)/1.2 var(--display); letter-spacing: -.01em; }
 .pad-dialog h3 { margin: 0 0 6px; font: 600 var(--t-xs)/1.2 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
@@ -164,6 +173,8 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
   .pad-title span { display: none; }
   .pad-top .pad-icon-btn { width: 40px; height: 40px; }
   .pad-zoom { min-width: 48px; height: 40px; padding: 0 4px !important; }
+  /* the narrowest phones: the bar must end inside the screen, so the "100 %" button goes (a pinch zooms, Fit stays) */
+  @media (max-width: 400px) { .pad-zoom { display: none; } }
   .pad-tools .pad-icon-btn { width: 42px; }
   .pad-tools .pad-sep { margin: 0 1px; }
   .pad-payload, .pad-keys { grid-template-columns: minmax(0, 1fr); }
@@ -184,3 +195,25 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
 .pad-menu-item[data-online="false"] .pad-mark { filter: grayscale(1); opacity: .6; }
 .pad-fly { position: absolute; inset: 0; z-index: 7; pointer-events: none; overflow: hidden; }
 .pad[data-cursor="area"] .pad-canvas { cursor: crosshair; }
+
+/* ── on the Desk (?desk): the paper the Desk lies on ──────────────────────────
+   No bar of its own, no zoom: the Desk scrolls it. The tools show while the paper is in front (data-started:
+   a tool in hand, or something on the paper held); with the bare pointer the Desk's cards lie over this frame. */
+:root[data-desk] .pad-top, :root[data-desk] .pad-hint { display: none; }
+:root[data-desk] .pad[data-touch="scroll"] .pad-canvas { touch-action: pan-y; }
+:root[data-desk] .pad-bar { bottom: max(14px, env(safe-area-inset-bottom)); opacity: 0; visibility: hidden; translate: 0 6px; transition: opacity var(--d-med) var(--ease-out), translate var(--d-med) var(--ease-out), visibility 0s linear var(--d-med); }
+:root[data-desk] .pad[data-started] .pad-bar { opacity: 1; visibility: visible; translate: 0 0; transition: opacity var(--d-med) var(--ease-out), translate var(--d-med) var(--ease-out); }
+:root[data-desk] .pad-tools { padding: 3px; box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
+:root[data-desk] .pad-tools .pad-icon-btn { width: 38px; height: 38px; }
+:root[data-desk] .pad-tools :is([data-tool="hl"], #mic), :root[data-desk] .pad-tools .pad-sep:not(:has(+ [data-tool="area"])) { display: none; }
+:root[data-desk] .pad-tools [data-tool="area"]:not([aria-pressed="true"]) { color: var(--faint); }
+:root[data-desk] .pad-status { display: none; bottom: 62px; }
+:root[data-desk] .pad[data-started] .pad-status:is([data-kind="error"], [data-kind="warn"]) { display: block; }
+:root[data-desk] .pad-toast { top: 16px; }
+@media (prefers-reduced-motion: reduce) { :root[data-desk] .pad-bar { transition: none !important; translate: none; } }
+
+/* The pen and the highlighter carry their colour: a dot at the foot of the icon. A second click on the tool in hand opens colour and width there. */
+.pad-tool:is([data-tool="pen"], [data-tool="hl"])::before { content: ""; position: absolute; right: 6px; bottom: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--fg)); box-shadow: 0 0 0 1.5px var(--surface); }
+.pad-tool[data-tool="hl"]::before { border-radius: 3px; }
+.pad-tool:is([data-tool="pen"], [data-tool="hl"])[aria-pressed="true"]::before { box-shadow: 0 0 0 1.5px var(--accent); outline: 1.5px solid var(--accent-fg); outline-offset: 1.5px; }
+.pad[data-cursor="text"] .pad-canvas { cursor: text; }

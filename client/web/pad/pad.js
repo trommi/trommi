@@ -23,6 +23,9 @@ const PAD = QUERY.get('pad') || 'global'
 // Inside the board (js/padlink.js lays this page over whatever is shown): the board says who
 // the sessions are and where the human came from, and "close" goes back there.
 const EMBED = QUERY.has('embed') && window.parent !== window
+// On the Desk (?desk): the pad is the paper the whole Desk lies on (js/padlink.js). It has no pan and no zoom of
+// its own: the Desk's scrolling moves it (padDesk below), and the paper is as wide as the Desk.
+const DESK = EMBED && QUERY.has('desk')
 const tell = (type, extra = {}) => { if (EMBED) window.parent.postMessage({ trommi: 'pad', type, ...extra }, location.origin) }
 let host = { open: !EMBED, prefer: [] }   // what the board last said: is the pad in sight, which session is behind it
 const AUTHOR = 'human'   // with device keys this becomes the device id (docs/krypto-konzept.md)
@@ -50,7 +53,8 @@ const ICONS = {
   pen: ['M4 20l1.2-4.4L16.6 4.2a2 2 0 012.9 0l.3.3a2 2 0 010 2.9L8.4 18.8z', 'M14.5 6.5l3 3'],
   hl: ['M14.5 4l5.5 5.5-8 8H7.5v-4.5z', 'M11.5 7l5.5 5.5', 'M4 21h10'],
   eraser: ['M20 20H9.5l-5-5a2 2 0 010-2.8l8-8a2 2 0 012.8 0l4.9 4.9a2 2 0 010 2.8L12 20', 'M8.7 8.3l7 7'],
-  image: ['M5 4h14a2 2 0 012 2v12a2 2 0 01-2 2H5a2 2 0 01-2-2V6a2 2 0 012-2z', 'M3.5 17l5-5 4 4 2.5-2.5 5.5 5.5', 'M15.5 8.5h.01'],
+  text: ['M5.5 7V5h13v2', 'M12 5v14', 'M9.5 19h5'],
+  clip: ['M20 11.5l-8.2 8.2a5 5 0 01-7.1-7.1l8.6-8.6a3.3 3.3 0 014.7 4.7l-8.6 8.6a1.7 1.7 0 01-2.4-2.4l7.9-7.9'],   // attach
   mic: ['M12 3a3 3 0 013 3v5a3 3 0 01-6 0V6a3 3 0 013-3z', 'M5.5 11a6.5 6.5 0 0013 0', 'M12 17.5V21', 'M8.5 21h7'],
   undo: ['M9 14L4 9l5-5', 'M4 9h10.5a5.5 5.5 0 010 11H11'],
   redo: ['M15 14l5-5-5-5', 'M20 9H9.5a5.5 5.5 0 000 11H13'],
@@ -107,6 +111,35 @@ let toolBefore = 'pen'         // what was in hand before the area tool
 let theme = {}                 // colours read from the tokens
 const pictures = new Map()     // blob id → { img, ok, ready }
 
+// The Desk's paper: its top left corner in world units (x0: left of everything on it; y0: the top of the Desk's
+// page), how far the Desk is scrolled (s), a sideways pan (panX). y0 is fixed once per browser (TOP_KEY): the
+// first time, so that what was drawn under the Desk's list, when the paper began there, stays where it was.
+const TOP_KEY = `trommi-deskpad-top:${PAD}`
+const desk = { x0: -24, y0: null, s: 0, panX: 0, bottom: -1, front: null, loaded: false }
+try { const v = Number(localStorage.getItem(TOP_KEY) ?? NaN); if (Number.isFinite(v)) desk.y0 = v } catch {}
+const deskTop = () => desk.y0 ?? -32
+function deskView() {
+  view.x = -desk.x0 - desk.panX; view.y = -deskTop() - desk.s; view.z = 1
+  dirty()
+}
+/** Content may lie above or left of the corner (it was put there on the pad's own page): the corner moves out to it. */
+function deskOrigin() {
+  for (const el of els.values()) desk.x0 = Math.min(desk.x0, el.x - 24)
+}
+/** Tell the Desk how far down the paper is used, so that it keeps free paper below. */
+function deskExtent() {
+  let bottom = edit ? edit.y + edit.size * 3 : deskTop()
+  for (const el of els.values()) bottom = Math.max(bottom, el.y + el.h)
+  bottom = Math.ceil(bottom - deskTop())
+  if (bottom !== desk.bottom) { desk.bottom = bottom; tell('extent', { bottom }) }
+}
+function deskPan(dx) {
+  let right = 0
+  for (const el of els.values()) right = Math.max(right, el.x + el.w)
+  desk.panX = clamp(desk.panX + dx, 0, Math.max(0, right + 24 - desk.x0 - W))
+  tell('pan', { x: desk.panX })
+  deskView()
+}
 const dark = () => root.dataset.theme === 'dark'
 const toWorld = (px, py) => [(px - view.x) / view.z, (py - view.y) / view.z]
 const local = e => { const r = canvas.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top] }
@@ -146,6 +179,7 @@ function applyRemote(records) {
     else els.set(r.id, r)
   }
   order = null
+  if (DESK) { deskOrigin(); deskView() }
   refresh()
   // A device that has never looked at this pad starts with all of it in view.
   if (firstLook && els.size && !gesture && !edit) fit(false)
@@ -160,6 +194,7 @@ function apply(changes, record = true) {
     else { els.delete(c.id); sel.delete(c.id) }
   }
   order = null
+  if (DESK) { deskOrigin(); deskView() }
   persist(changes.map(c => c.after ?? tombstone(c.before)))
   if (record) {
     undo.push(changes)
@@ -397,18 +432,21 @@ function placeOverlays(S) {
 }
 
 // ── view ────────────────────────────────────────────────────────────────────
+const VIEW_KEY = `${DESK ? 'deskview' : 'view'}:${PAD}`   // the Desk's paper keeps the pen, not a view
 let viewTimer = 0
 function saveViewSoon() {
   clearTimeout(viewTimer)
-  viewTimer = setTimeout(() => db?.meta(`view:${PAD}`, { ...view, style, tool: drawTool }).catch(() => {}), 500)
+  viewTimer = setTimeout(() => db?.meta(VIEW_KEY, { ...view, style, tool: drawTool }).catch(() => {}), 500)
 }
 function setView(x, y, z) {
+  if (DESK) return deskView()
   view.x = x; view.y = y; view.z = z
   $('zoom').textContent = `${Math.round(z * 100)} %`
   saveViewSoon()
   dirty()
 }
 function animateTo(x, y, z, animate = true) {
+  if (DESK) return deskView()
   if (!animate || reduced() || !W) { anim = null; return setView(x, y, z) }
   anim = { from: { ...view }, to: { x, y, z }, t0: performance.now(), ms: 260 }
   invalidate()
@@ -435,11 +473,19 @@ function refresh() {
   $('hint').dataset.show = String(!els.size && !edit && !rec && !gesture)
   for (const b of document.querySelectorAll('.pad-tool')) b.setAttribute('aria-pressed', String(b.dataset.tool === tool))
   pad.dataset.tool = tool
+  if (DESK) {
+    // A finger scrolls the Desk unless it holds a tool that draws, or something is selected and can be moved.
+    pad.dataset.touch = (tool === 'select' || tool === 'text') && !sel.size && !rec ? 'scroll' : 'draw'
+    deskExtent()
+    // In front: a tool is in hand, or something on the paper is held. The Desk's cards then let everything through
+    // (and go faint); with the bare pointer they work as always. The tools show while the paper is in front.
+    const front = tool !== 'select' || sel.size > 0 || Boolean(edit) || Boolean(area) || Boolean(rec)
+    pad.toggleAttribute('data-started', front)
+    if (front !== desk.front) { desk.front = front; tell('front', { front, tool }) }
+  }
   const st = style[drawTool]
-  const dot = $('style-dot')
-  dot.style.setProperty('--c', resolveInk(st.color, dark()))
-  dot.style.setProperty('--d', `${[6, 10, 14, 18][st.w]}px`)
-  $('style-btn').dataset.kind = drawTool
+  // each drawing tool shows the colour it draws in
+  for (const k of ['pen', 'hl']) toolButton(k).style.setProperty('--c', resolveInk(style[k].color, dark()))
   for (const b of $('swatches').children) b.setAttribute('aria-pressed', String(b.dataset.color === st.color))
   ;[...$('widths').children].forEach((b, i) => b.setAttribute('aria-pressed', String(i === st.w)))
   const list = selected()
@@ -470,7 +516,7 @@ function renderStatus() {
   pad.dataset.sync = s.mode
 }
 function updateCursor(mode) {
-  pad.dataset.cursor = mode ?? (spaceDown ? 'grab' : tool === 'select' ? 'select' : tool === 'eraser' ? 'eraser' : tool === 'area' ? 'area' : 'draw')
+  pad.dataset.cursor = mode ?? (spaceDown ? 'grab' : tool === 'select' ? 'select' : tool === 'eraser' ? 'eraser' : tool === 'area' ? 'area' : tool === 'text' ? 'text' : 'draw')
 }
 let toastTimer = 0
 function toast(text, kind = 'info', ms = 2800) {
@@ -529,12 +575,17 @@ function setWidth(i) {
   if (tool !== drawTool) setTool(drawTool); else refresh()
   saveViewSoon()
 }
-const closeStyle = () => { $('style').hidden = true; $('style-btn').setAttribute('aria-expanded', 'false') }
+const toolButton = name => document.querySelector(`.pad-tool[data-tool="${name}"]`)
+const closeStyle = () => { $('style').hidden = true; for (const k of ['pen', 'hl']) toolButton(k).setAttribute('aria-expanded', 'false') }
+/** Colour and width come up at the tool they belong to: a click on the pen that is already in hand. */
 function toggleStyle() {
   if (!$('style').hidden) return closeStyle()
   if (tool !== drawTool) setTool(drawTool)
-  $('style').hidden = false
-  $('style-btn').setAttribute('aria-expanded', 'true')
+  const box = $('style'), b = toolButton(drawTool)
+  box.hidden = false
+  b.setAttribute('aria-expanded', 'true')
+  const left = box.parentElement.getBoundingClientRect().left, half = box.offsetWidth / 2
+  box.style.left = `${clamp(b.offsetLeft + b.offsetWidth / 2, 8 - left + half, Math.max(8 - left + half, W - 8 - left - half))}px`
 }
 const closePopovers = () => { closeStyle(); closeSendMenu(); if (!area?.sending) clearArea() }
 
@@ -685,7 +736,7 @@ editor.addEventListener('keydown', e => {
     e.preventDefault()
     e.stopPropagation()
     const el = commitEditor()
-    if (el) { sel.clear(); sel.add(el.id); refresh() }
+    if (el && !DESK) { sel.clear(); sel.add(el.id); refresh() }   // on the Desk the note is simply done: the cards answer again
   } else if ((e.key === 'm' || e.key === 'M') && e.ctrlKey) {
     e.preventDefault()
     e.stopPropagation()
@@ -804,6 +855,7 @@ function reveal(el) {
   if (y0 + dy < top) dy = top - y0
   if (x1 > right) dx = right - x1
   if (x0 + dx < left) dx = left - x0
+  if (DESK) { if (dy) tell('scroll', { by: -dy }); return }
   if (dx || dy) animateTo(view.x + dx, view.y + dy, view.z)
 }
 /** Where a note lands when no spot was clicked: the open cursor, else the middle of the screen. */
@@ -935,7 +987,9 @@ function armHold(g, wx, wy) {
 }
 
 canvas.addEventListener('pointerdown', e => {
-  if (e.pointerType === 'mouse' && e.button === 2) return
+  if (e.pointerType === 'mouse' && (e.button === 2 || (DESK && e.button === 1))) return
+  // The tools come when he starts. A finger that only scrolls the Desk has not started: its tap counts, when it lifts.
+  if (DESK && (e.pointerType !== 'touch' || pad.dataset.touch === 'draw')) pad.dataset.started = ''
   closePopovers()
   anim = null
   commitEditor()
@@ -943,19 +997,21 @@ canvas.addEventListener('pointerdown', e => {
   const [px, py] = local(e)
   const touch = e.pointerType === 'touch'
   if (e.pointerType === 'mouse') pointers.clear()
-  pointers.set(e.pointerId, { x: px, y: py })
+  pointers.set(e.pointerId, { x: px, y: py, sx: e.screenX, sy: e.screenY })
   if (touch && pointers.size === 2) { abortGesture(); startPinch(); refresh(); return }
   if (gesture || pointers.size > 1) return
   const [wx, wy] = toWorld(px, py)
   const base = { id: e.pointerId, px, py, qx: px, qy: py, wx, wy, moved: false, shift: e.shiftKey, touch, t0: performance.now() }
 
-  if (e.button === 1 || spaceDown) {
+  if ((e.button === 1 || spaceDown) && !DESK) {
     e.preventDefault()
     gesture = { ...base, type: 'pan', vx: view.x, vy: view.y }
   } else if (rec) {
     gesture = { ...base, type: 'idle' }   // a recording is running: the paper waits
   } else if (tool === 'area') {
     gesture = { ...base, type: 'area' }
+  } else if (tool === 'text') {
+    gesture = { ...base, type: 'type', hit: topAt(wx, wy, touch) }   // a click puts the cursor there, or into the note under it
   } else if (tool === 'eraser') {
     gesture = { ...base, type: 'erase', erased: new Set() }
     hover = [px, py]
@@ -971,9 +1027,11 @@ canvas.addEventListener('pointerdown', e => {
     } else if (tool === 'select' && hit) {
       select(hit, e.shiftKey)
       gesture = { ...base, type: 'move', hit, list: selected(), fresh: true }
+    } else if (DESK && touch && pad.dataset.touch === 'scroll' && !hit) {
+      gesture = { ...base, type: 'deskpan' }   // up and down the browser scrolls the Desk; sideways the paper pans
     } else if (tool === 'select' || (e.shiftKey && !hit)) {
       gesture = { ...base, type: 'marquee', keep: e.shiftKey ? new Set(sel) : new Set() }
-      if (!e.shiftKey) armHold(gesture, wx, wy)
+      if (!e.shiftKey && !(DESK && touch)) armHold(gesture, wx, wy)   // on the Desk a resting finger is about to scroll, not to speak
     } else {
       const st = style[tool]
       gesture = { ...base, type: 'draw', hit, tool, color: st.color, size: SIZES[tool][st.w], pen: tool === 'pen' && e.pointerType === 'pen', pts: [], pr: [] }
@@ -988,7 +1046,7 @@ canvas.addEventListener('pointerdown', e => {
 canvas.addEventListener('pointermove', e => {
   const [px, py] = local(e)
   const ptr = pointers.get(e.pointerId)
-  if (ptr) { ptr.x = px; ptr.y = py }
+  if (ptr) { ptr.x = px; ptr.y = py; ptr.sx = e.screenX; ptr.sy = e.screenY }
   const g = gesture
   if (!g) {
     if (e.pointerType !== 'touch') {
@@ -1005,6 +1063,14 @@ canvas.addEventListener('pointermove', e => {
   if (g.type === 'pinch') {
     if (pointers.size < 2) return
     const [a, b] = [...pointers.values()]
+    if (DESK) {
+      // Two fingers move the paper: up and down scrolls the Desk, sideways pans. Measured on the screen,
+      // because this frame itself moves while the Desk scrolls.
+      const sx = (a.sx + b.sx) / 2, sy = (a.sy + b.sy) / 2
+      if (g.sy != null) { tell('scroll', { by: g.sy - sy }); deskPan(g.sx - sx) }
+      g.sx = sx; g.sy = sy
+      return
+    }
     const z = clamp(g.view.z * (Math.hypot(a.x - b.x, a.y - b.y) || 1) / g.d, MIN_Z, MAX_Z)
     const wx = (g.cx - g.view.x) / g.view.z, wy = (g.cy - g.view.y) / g.view.z
     return setView((a.x + b.x) / 2 - wx * z, (a.y + b.y) / 2 - wy * z, z)
@@ -1013,6 +1079,7 @@ canvas.addEventListener('pointermove', e => {
   g.qx = px; g.qy = py
   if (!g.moved && Math.hypot(px - g.px, py - g.py) > CLICK_PX) { g.moved = true; clearTimeout(g.hold) }
   if (g.type === 'pan') return setView(g.vx + px - g.px, g.vy + py - g.py, view.z)
+  if (g.type === 'deskpan') { if (g.moved) { deskPan((g.lx ?? g.px) - px); g.lx = px } return }
   if (g.type === 'draw') {
     const list = e.getCoalescedEvents?.() ?? []
     for (const c of list.length ? list : [e]) addPoint(g, c, false)
@@ -1045,6 +1112,7 @@ canvas.addEventListener('pointermove', e => {
 
 function pointerEnd(e) {
   const had = pointers.delete(e.pointerId)
+  if (DESK && had && e.type === 'pointerup') pad.dataset.started = ''
   const g = gesture
   if (!g || !had) return
   if (g.type === 'pinch') {
@@ -1061,8 +1129,11 @@ function pointerEnd(e) {
     if (g.moved && !cancelled) { addPoint(g, e, true); endDraw(g) }
     else if (click && g.hit) { select(g.hit, g.shift); lastClick = { id: g.hit.id, t: performance.now() } }
     else if (click) placeCaret(g.wx, g.wy)
-  } else if (g.type === 'marquee') {
+  } else if (g.type === 'marquee' || g.type === 'deskpan') {
     if (click && !g.shift) placeCaret(g.wx, g.wy)
+  } else if (g.type === 'type') {
+    if (click && g.hit && isText(g.hit) && els.has(g.hit.id)) editElement(els.get(g.hit.id))
+    else if (click) placeCaret(g.wx, g.wy)
   } else if (g.type === 'area') {
     if (g.moved && !cancelled) frameArea(g)
   } else if (g.type === 'erase') {
@@ -1090,6 +1161,12 @@ canvas.addEventListener('contextmenu', e => e.preventDefault())
 canvas.addEventListener('mousedown', e => { if (e.button === 1) e.preventDefault() })   // no autoscroll puck
 
 canvas.addEventListener('wheel', e => {
+  if (DESK) {
+    // The wheel is the Desk's: it scrolls the page, the paper with it. Only a sideways wheel pans the paper.
+    const dx = e.shiftKey && !e.deltaX ? e.deltaY : e.deltaX
+    if (!e.ctrlKey && !e.metaKey && Math.abs(dx) > Math.abs(e.shiftKey ? 0 : e.deltaY)) { e.preventDefault(); deskPan(dx) }
+    return
+  }
   e.preventDefault()
   anim = null
   const [px, py] = local(e)
@@ -1117,7 +1194,6 @@ $('zoom').addEventListener('click', () => zoomAt(W / 2, H / 2, 1 / view.z, true)
 $('zoom-out').addEventListener('click', () => zoomAt(W / 2, H / 2, 1 / 1.3, true))
 $('zoom-in').addEventListener('click', () => zoomAt(W / 2, H / 2, 1.3, true))
 $('fit').addEventListener('click', () => fit(true))
-$('style-btn').addEventListener('click', toggleStyle)
 $('image').addEventListener('click', () => { closePopovers(); $('file').click() })
 $('file').addEventListener('change', () => { if ($('file').files.length) addImages($('file').files); $('file').value = '' })
 $('to-front').addEventListener('click', () => reorder(true))
@@ -1182,6 +1258,7 @@ document.addEventListener('keydown', e => {
     else if (!$('style').hidden || !$('send-menu').hidden) closePopovers()
     else if (tool === 'area') setTool(toolBefore)
     else if (sel.size) { sel.clear(); refresh() }
+    else if (DESK && tool !== 'select') setTool('select')   // the pen is put down: the Desk's cards answer again
     else tell('close')   // nothing left to let go of: back to where the human came from
     return
   }
@@ -1194,7 +1271,7 @@ document.addEventListener('keydown', e => {
     else if (key === 'm' && e.ctrlKey) { e.preventDefault(); toggleRecording() }
     return
   }
-  if (e.key === ' ') {
+  if (e.key === ' ' && !DESK) {
     if (document.activeElement?.matches?.('button:focus-visible, a:focus-visible')) return
     e.preventDefault()
     if (!spaceDown) { spaceDown = true; updateCursor() }
@@ -1217,12 +1294,13 @@ document.addEventListener('keydown', e => {
     return
   }
   if (e.repeat) return
-  const tools = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', a: 'area' }
+  const tools = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', t: 'text', a: 'area' }
   if (tools[key]) setTool(tools[key])
   else if (key >= '1' && key <= '4') setWidth(Number(key) - 1)
   else if (key === 'm') toggleRecording()
   else if (key === 'i') $('file').click()
   else if (key === 's') { if (sel.size) $('send-to').click() }
+  else if (DESK && 'f0+=-'.includes(key)) return   // no zoom on the Desk's paper
   else if (key === 'f') fit(true)
   else if (key === '0') zoomAt(W / 2, H / 2, 1 / view.z, true)
   else if (key === '+' || key === '=') zoomAt(W / 2, H / 2, 1.3, true)
@@ -1316,7 +1394,21 @@ async function openSendDialog(session) {
   $('send-result').hidden = true
   $('send-go').disabled = false
   $('send-go').textContent = 'Send'
-  $('send-dialog').showModal()
+  const dialog = $('send-dialog')
+  dialog.showModal()
+  // A panel at the selection, not a window over the paper: beside it where there is room (right, then left),
+  // else under or above it; never outside the screen.
+  const S = selectionBox()
+  if (S) {
+    const x = S.box.x * view.z + view.x, y = S.box.y * view.z + view.y, w = S.box.w * view.z, h = S.box.h * view.z
+    const dw = dialog.offsetWidth, dh = dialog.offsetHeight, gap = 14, vw = window.innerWidth, vh = window.innerHeight
+    const beside = x + w + gap + dw <= vw - 8 ? x + w + gap : x - gap - dw >= 8 ? x - gap - dw : null
+    const left = beside ?? clamp(x, 8, Math.max(8, vw - dw - 8))
+    const top = beside != null ? clamp(y, 8, Math.max(8, vh - dh - 8)) : y + h + gap + dh <= vh - 8 ? y + h + gap : Math.max(8, Math.min(y - gap - dh, vh - dh - 8))
+    dialog.style.left = `${Math.round(left)}px`
+    dialog.style.top = `${Math.round(top)}px`
+    dialog.dataset.anchored = ''
+  }
 }
 $('send-go').addEventListener('click', async () => {
   if (!sending) return
@@ -1331,6 +1423,7 @@ $('send-go').addEventListener('click', async () => {
     // Where an element went is the server's to note (no new revision, no undo step);
     // it hands the records back with "sent" filled in.
     if (answer.elements) sync.take(answer.elements, answer.seq ?? 0)
+    takeAway(payload.elements.map(e => e.id))
     $('send-dialog').close()
     toast(`Sent to ${session.name}`)
     tell('sent', { session: session.id, message_id: answer.message_id })
@@ -1341,6 +1434,58 @@ $('send-go').addEventListener('click', async () => {
     $('send-go').disabled = false
   }
 })
+
+// What was sent leaves the paper: it is the agent's now. One step, so one undo brings all of it back.
+// Without a frame (a selection was sent) exactly those elements go. With a frame, notes and pictures that
+// lie in it go whole, and a stroke that crosses its edge is cut there: the part outside stays, as a stroke
+// of its own (the same cut as the session's canvas makes, js/scribble.js).
+function takeAway(ids, r = null) {
+  const changes = []
+  let z = topZ()
+  for (const id of ids) {
+    const el = els.get(id)
+    if (!el) continue
+    if (!r || el.type !== 'stroke') { changes.push({ id, before: el, after: null }); continue }
+    const d = el.data, sx = el.w / d.box[0], sy = el.h / d.box[1], n = d.pts.length >> 1
+    const X = i => el.x + d.pts[2 * i] * sx, Y = i => el.y + d.pts[2 * i + 1] * sy
+    const x1 = r.x + r.w, y1 = r.y + r.h
+    const within = (x, y) => x >= r.x && x <= x1 && y >= r.y && y <= y1
+    // a inside, b outside: where the line between them leaves the frame
+    const edge = (ax, ay, bx, by) => {
+      let t = 1
+      if (bx < r.x) t = Math.min(t, (r.x - ax) / (bx - ax))
+      if (bx > x1) t = Math.min(t, (x1 - ax) / (bx - ax))
+      if (by < r.y) t = Math.min(t, (r.y - ay) / (by - ay))
+      if (by > y1) t = Math.min(t, (y1 - ay) / (by - ay))
+      return [ax + (bx - ax) * t, ay + (by - ay) * t]
+    }
+    const runs = []
+    let run = null
+    for (let i = 0; i < n; i++) {
+      const x = X(i), y = Y(i), inside = within(x, y)
+      if (!run || run.inside !== inside) {
+        const prev = run
+        run = { inside, pts: [], pr: [] }
+        runs.push(run)
+        if (prev) {
+          const cut = inside ? edge(x, y, X(i - 1), Y(i - 1)) : edge(X(i - 1), Y(i - 1), x, y)
+          prev.pts.push(...cut); prev.pr.push(d.pr?.[i - 1])
+          run.pts.push(...cut); run.pr.push(d.pr?.[i])
+        }
+      }
+      run.pts.push(x, y); run.pr.push(d.pr?.[i])
+    }
+    if (!runs.some(run => run.inside)) continue   // only its box reached into the frame: it stays
+    changes.push({ id, before: el, after: null })
+    for (const run of runs) {
+      if (run.inside) continue
+      const part = strokeFromWorld(run.pts, d.pr ? run.pr : null, { tool: d.tool, color: d.color, size: r2(d.size * sx) })
+      const piece = make('stroke', part, part.data, ++z)
+      changes.push({ id: piece.id, before: null, after: piece })
+    }
+  }
+  apply(changes)
+}
 
 // ── send an area: frame it, pick a session, and it is cut out and flies there ──
 // The fast path beside "select, then Send to…". What goes: every element that lies in the frame,
@@ -1453,7 +1598,7 @@ async function sendArea(session, item) {
     // Anywhere else (a phone, the pad on its own) the piece flies into the chooser's row.
     a.cut = true
     invalidate()
-    const outside = EMBED && W > 860
+    const outside = EMBED && !DESK && W > 860
     const flight = (async () => {
       await new Promise(r => setTimeout(r, 90))
       a.gone = true
@@ -1471,7 +1616,8 @@ async function sendArea(session, item) {
     const [, answer] = await Promise.all([flight, post.then(v => v, err => ({ failed: err }))])
     if (answer.failed) throw answer.failed
     if (answer.elements) sync.take(answer.elements, answer.seq ?? 0)
-    // What was sent cannot be taken back (the agent has it), so the note only says where it went.
+    takeAway(a.list.map(e => e.id), a)
+    // What was sent cannot be taken back (the agent has it), so the note only says where it went. Undo puts it back on the paper.
     toast(`Sent to ${session.name}`, 'info', 4000)
     tell('sent', { session: session.id, message_id: answer.message_id })
     area = null
@@ -1489,7 +1635,7 @@ async function sendArea(session, item) {
 new ResizeObserver(() => {
   const w = pad.clientWidth, h = pad.clientHeight
   if (w === W && h === H) return
-  if (W && H && w && h) { view.x += (w - W) / 2; view.y += (h - H) / 2 }
+  if (W && H && w && h && !DESK) { view.x += (w - W) / 2; view.y += (h - H) / 2 }
   W = w; H = h
   if (!W || !H) return
   sizeCanvas()
@@ -1513,14 +1659,38 @@ function hostSays(msg) {
   if (msg.sessions) setBoard({ sessions: msg.sessions, speech: Boolean(msg.speech) })
   if (msg.theme) setTheme(msg.theme === 'dark')
   paintSendTo()
-  if (host.open && !was) { sync?.resume(); window.focus() }
+  if (host.open && !was) { sync?.resume(); if (!DESK) window.focus() }
   if (!host.open && was) {
     // Out of sight: keep what was being typed, drop what was being recorded, stop listening.
     commitEditor()
     if (rec) stopRecording(true)
     closePopovers()
     for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close()
+    delete pad.dataset.started
     sync?.pause()
+  }
+}
+if (DESK) {
+  root.dataset.desk = ''
+  tool = 'select'   // the bare pointer: the Desk's cards work, a finger scrolls; the pen is picked up (P, the switch, the bar)
+  // The Desk's bar: pointer, pen, eraser, attach, undo, and, apart, send an area.
+  document.querySelector('.pad-tools').append($('image'), $('undo'), Object.assign(document.createElement('span'), { className: 'pad-sep' }), toolButton('area'))
+  /** The Desk says how far it is scrolled (s), where its list ends on the paper (listEnd), and whether that list is
+   *  the real one (settled: the board's state has arrived). */
+  window.padDesk = (s, listEnd, settled) => {
+    if (desk.y0 == null && settled && desk.loaded) {
+      // The first time in this browser. Until now the paper began under the list (32 px above the topmost thing on
+      // it, or above world 0): it is laid so that this is where it still lies.
+      let top = -32
+      for (const el of els.values()) top = Math.min(top, el.y - 32)
+      desk.y0 = Math.round(top - listEnd)
+      try { localStorage.setItem(TOP_KEY, String(desk.y0)) } catch {}
+      desk.s = null
+      refresh()
+    }
+    if (s === desk.s) return
+    desk.s = s
+    deskView()
   }
 }
 if (EMBED) {
@@ -1542,7 +1712,7 @@ async function start() {
   db = await openStore()
   sync = startSync({ pad: PAD, db, onRemote: applyRemote, onState: renderStatus })
   if (!host.open) sync.pause()
-  const [records, saved] = await Promise.all([db.list(PAD), db.meta(`view:${PAD}`)])
+  const [records, saved] = await Promise.all([db.list(PAD), db.meta(VIEW_KEY)])
   for (const r of records) {
     revs.set(r.id, r.rev ?? 1)
     if (!r.deleted) els.set(r.id, r)
@@ -1555,6 +1725,7 @@ async function start() {
     if (saved.style?.pen && saved.style?.hl) Object.assign(style, saved.style)
     if (saved.tool === 'hl') drawTool = 'hl'
   } else { setView(W / 2, H / 2, 1); firstLook = !els.size }
+  if (DESK) { desk.loaded = true; deskOrigin(); deskView() }
   $('zoom').textContent = `${Math.round(view.z * 100)} %`
   buildSwatches()
   refresh()
@@ -1575,4 +1746,8 @@ window.pad = {
   records: () => db.list(PAD),
   payload: async session => (await buildPayload(session ?? boardState().sessions[0], selected())).payload,
   wipe: async () => { await db.wipe(); location.reload() },
+  // for the page around an embedded pad (js/padlink.js)
+  tool: name => setTool(name),
+  rest: () => { commitEditor(); closePopovers(); sel.clear(); setTool('select') },
+  world: (px, py) => toWorld(px, py),
 }
