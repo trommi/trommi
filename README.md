@@ -102,9 +102,13 @@ On connect the hub first sends what `GET envelopes` would (same depth rule), the
 | `invites` | `room_id`, `invite_id`, `device_role`, `inviter_device_id`, `signed_offer`, `expires_at`, `signed_reveal`, `answered_request_hash`, `used_at`, `added_device_id` |
 | `join_requests` | `room_id`, `invite_id`, `request_hash`, `device_id`, `signed_request`, `received_at` |
 | `envelopes` | `room_id`, `envelope_number`, `sender_device_id`, `sender_sequence`, `previous_envelope_hash`, `envelope_hash`, `key_epoch`, `recipient_device_id`, `object_id`, `object_state`, `urgency`, `answered_at`, `envelope_kind`, `timeline_kind`, `timeline_id`, `is_head`, `send_push`, `attachment_ids`, `padded_size`, `sent_at`, `received_at`, `envelope_header`, `envelope_nonce`, `encrypted_body` (BLOB; NULL once pruned), `encrypted_body_hash`, `envelope_signature` |
+| `objects` (derived) | `room_id`, `object_id`, `object_state`, `urgency`, `answered_at`, `owner_device_id`, `first_envelope_number`, `latest_head_envelope_number` (cards, memos, permission requests: everything with an `object_id`) |
+| `timelines` (derived) | `room_id`, `timeline_kind`, `timeline_id`, `last_envelope_number`, `item_count` |
 | `attachments` | `room_id`, `attachment_id`, `object_id`, `uploader_device_id`, `total_size`, `chunk_count`, `stored_at` |
 | `access_tokens` | `access_token_hash`, `room_id`, `device_id`, `expires_at` (kept in memory; listed for completeness) |
 | `push_subscriptions` | `room_id`, `device_id`, `endpoint`, `subscription`, `created_at` |
+
+**Truth: `envelopes` and `member_entries`. Derived: `objects`, `timelines`.** The two derived tables are written from signed header fields in the same transaction as the envelope and can be dropped and rebuilt from `envelopes` at any time (the hub's tests do exactly that). The hub uses them for fast answers (open cards by urgency, counts, later the admin page). They are never a source of truth for a client: clients verify everything against signatures. Card options and all content stay inside `encrypted_body`.
 
 Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB STREAM chunks, a random key per file), stored as files `/data/attachments/<room_id>/<attachment_id>`, served with `Range`. The store is a four-method interface (`put`, `get` with range, `size`, `delete`) so it can move to object storage later.
 
