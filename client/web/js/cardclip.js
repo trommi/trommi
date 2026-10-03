@@ -65,8 +65,8 @@ function say(text) {
     note = el('p', 'cardclip-note')
     note.setAttribute('role', 'status')
   }
-  // Inside an open dialog, or it would lie under it.
-  ;(document.querySelector('dialog[open]') ?? document.body).append(note)
+  // Inside an open dialog or the open Focus window, or it would lie under it.
+  ;(document.querySelector('dialog[open]') ?? document.querySelector('.focus:not([hidden])') ?? document.body).append(note)
   note.textContent = text
   note.hidden = false
   clearTimeout(noteTimer)
@@ -158,9 +158,10 @@ export function cardChips(cards = [], onOpen) {
  *  onChange: called when what is attached changes (to enable Send, to measure).
  *  Returns { node, ids(), clear(sent) }: ids() are the attached card ids (undefined when none),
  *  clear(true) after a send takes the chips off and forgets the copied card. */
-export function pasteChip(field, { host = field.form, onChange } = {}) {
+export function pasteChip(field, { host = field.form, onChange, initial = [] } = {}) {
   const node = el('div', 'cardclip-bar')
-  let attached = []   // [{ id, number, title, choice_label }]
+  // (initial: chips a kept draft already carries, as cards() gave them.)
+  let attached = initial.filter(c => c?.id).slice(0, MAX)   // [{ id, number, title, choice_label }]
   const offered = () => held && attached.length < MAX && !attached.some(c => c.id === held.id)
   function attach() {
     if (!offered()) return false
@@ -213,6 +214,8 @@ export function pasteChip(field, { host = field.form, onChange } = {}) {
   return {
     node,
     ids: () => (attached.length ? attached.map(c => c.id) : undefined),
+    /** The attached cards themselves, to keep them with a draft. */
+    cards: () => attached.map(c => ({ ...c })),
     clear(sent = false) {
       const had = attached
       attached = []

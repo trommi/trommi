@@ -18,10 +18,11 @@
 //   +  or =    lay together with… (then pick the other line, Enter), or take it out of its group
 //   A          archive (disconnected only)         Shift+↑↓  move the line     Esc   let go
 
-import { subscribe, getState, pair, unpair, archive, moveSession, decide, reopen, star } from './store.js'
-import { avatar, crownToggle, tellApart, openMarkPicker, openEditor, summary, badge } from './agents.js'
+import { subscribe, getState, pair, unpair, archive, moveSession, decide, reopen, star, moveToDesk, editSession } from './store.js'
+import { avatar, crownToggle, tellApart, openMarkPicker, openEditor, summary, badge, knowsMains, revealSession } from './agents.js'
 import { el, sketch, ago } from './ui.js'
 import { walkSession } from './app.js'
+import { link, sessionPath, cardPath, walkPath } from './link.js'
 import { say, pageHost } from './back.js'
 
 const $ = id => document.getElementById(id)
@@ -45,7 +46,8 @@ const need = s => (!s.online ? 9 : s.open ? (s.hand ? 0 : 1) + (3 - s.top) / 10 
 
 // ---- going somewhere: through the page's own controls ----
 const sideRow = id => [...document.querySelectorAll('#agents .agent-row[data-unit]')].find(r => r.dataset.unit === id || (r.dataset.members ?? '').split(' ').includes(id))
-const go = id => sideRow(id)?.querySelector('.agent-entry')?.click()
+// (A sub of a folded main has no row until its group is unfolded.)
+const go = id => { if (!sideRow(id)) revealSession(id); sideRow(id)?.querySelector('.agent-entry')?.click() }
 /** One question as a window of its own: by its address, which the page follows. */
 function openQuestion(cardId) {
   const params = new URLSearchParams(location.search)
@@ -131,8 +133,9 @@ function mountLedger(root) {
   const act = promise => Promise.resolve(promise).catch(err => tell(`Not done: ${err.message}`))
 
   // ---- one line ----
-  const icon = (name, title, run) => {
-    const b = button('ledger-ib')
+  // With an address (`href`) the control is a real link (js/link.js): a new tab can take it; a plain click runs here.
+  const icon = (name, title, run, href = null) => {
+    const b = href ? link('ledger-ib', href) : button('ledger-ib')
     b.title = title
     b.setAttribute('aria-label', title)
     b.append(sketch(name))
@@ -159,7 +162,7 @@ function mountLedger(root) {
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${a.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(a, { vip: false }))
+    mark.append(avatar(a, { vip: 'main' }))
     mark.addEventListener('click', e => { if (phone.matches) return; e.stopPropagation(); openMarkPicker(a, mark) })   // a phone's line only opens
     face.append(mark, crownToggle(a, 'ledger-crown'))
 
@@ -173,7 +176,10 @@ function mountLedger(root) {
     const group = all.groups.find(g => g.id === a.group)
     if (group) {
       const others = group.members.filter(m => m.id !== a.id).map(m => m.name).join(' + ')
-      const chip = el('span', 'ledger-with', `with ${others}`)
+      // (The names in an element of their own, so a long one is cut with an ellipsis inside the name column.)
+      const chip = el('span', 'ledger-with')
+      chip.append(el('span', 'ledger-with-names', `with ${others}`))
+      chip.title = `with ${others}`
       const split = button(null)
       split.title = `Take ${a.name} out`
       split.setAttribute('aria-label', `Take ${a.name} out of its group with ${others}`)
@@ -187,7 +193,7 @@ function mountLedger(root) {
     // trace running round while it works; a click on it goes through its questions. Beside it, a word.
     const state = el('span', 'ledger-state')
     const word = stateWord(s)
-    const ring = badge(s, a.name, () => walk(a.id))
+    const ring = badge(s, a.name, () => walk(a.id), walkPath(sessionPath(a.id)))
     // The ring's number and the word are parts of their own, with a point between: "1 · away".
     const sep = () => el('i', 'ledger-sep', ' · ')
     if (ring) state.append(ring)
@@ -199,11 +205,13 @@ function mountLedger(root) {
     const does = el('span', 'ledger-does')
     const card = s.cards[0]
     if (card) {
-      const title = button('ledger-q', card.title)
+      // (Its address is the card in its session; the plain click opens it over this page.)
+      const title = link('ledger-q', cardPath(card, sessionPath(a.id)))
+      title.textContent = card.title
       title.title = `${card.title}: open it as a window`
       title.addEventListener('click', e => { e.stopPropagation(); openQuestion(card.id) })
       does.append(title)
-      if (s.open > 1) { const more = button('ledger-more', `+${s.open - 1}`); more.title = 'Go through its questions'; more.addEventListener('click', e => { e.stopPropagation(); walk(a.id) }); does.append(more) }
+      if (s.open > 1) { const more = link('ledger-more', walkPath(sessionPath(a.id))); more.textContent = `+${s.open - 1}`; more.title = 'Go through its questions'; more.addEventListener('click', e => { e.stopPropagation(); walk(a.id) }); does.append(more) }
       if (quick(card)) {
         const yes = yesOf(card), no = card.options.find(o => o !== yes)
         const advised = o => [card.recommended].flat().includes(o.key)
@@ -219,7 +227,8 @@ function mountLedger(root) {
         }
         does.append(tile(no, 'no', ''), tile(yes, 'yes', 'is-lead'))
       } else {
-        const choose = button('ledger-ans is-lead is-choose', 'Choose')
+        const choose = link('ledger-ans is-lead is-choose', cardPath(card, sessionPath(a.id)))
+        choose.textContent = 'Choose'
         choose.addEventListener('click', e => { e.stopPropagation(); openQuestion(card.id) })
         does.append(choose)
       }
@@ -227,10 +236,36 @@ function mountLedger(root) {
 
     const cell = text => el('span', 'ledger-cell', text || '')
     const acts = el('span', 'ledger-acts')
-    acts.append(icon('go', 'Open the conversation', () => go(a.id)))
-    if (s.open) acts.append(icon('tray', 'Its questions, one after the other', () => walk(a.id)))
+    acts.append(icon('go', 'Open the conversation', () => go(a.id), sessionPath(a.id)))
+    if (s.open) acts.append(icon('tray', 'Its questions, one after the other', () => walk(a.id), walkPath(sessionPath(a.id))))
     if (!group && all.agents.length > 1) acts.append(icon('heads', 'Lay together with…', () => togglePair(a.id)))
     if (!a.online) acts.append(icon('archive', 'Archive: put this session away', () => act(archive(a.id))))
+    // Several desks (card Nr. 149): which desk the session is on, and the way to another (a group moves together).
+    if (all.desks?.length > 1) {
+      const pick = el('select', 'ledger-desk')
+      pick.title = 'Move to desk…'
+      pick.setAttribute('aria-label', `Desk of ${a.name}: move to another desk`)
+      for (const d of all.desks) { const o = el('option', null, d.name); o.value = d.id; pick.append(o) }
+      pick.value = a.desk
+      pick.addEventListener('click', e => e.stopPropagation())
+      pick.addEventListener('change', () => act(moveToDesk(a.id, pick.value)))
+      acts.prepend(pick)
+    }
+    // Main agents (card Nr. 160): whose sub the session is. One level: a sub cannot be a main, a main with subs cannot be a sub.
+    const mains = knowsMains(a) ? all.agents.filter(m => m.id !== a.id && !m.parent && !m.other_desk && (!all.desks || m.desk === a.desk)) : []
+    const leads = all.agents.some(x => x.parent === a.id)
+    if (mains.length && !leads) {
+      const pick = el('select', 'ledger-desk ledger-main')
+      pick.title = 'Main agent: the session this one works for'
+      pick.setAttribute('aria-label', `Main agent of ${a.name}`)
+      // Short words, so the closed select can be read in its narrow place ("Main agent" is its title and label).
+      const none = el('option', null, 'No main'); none.value = ''; pick.append(none)
+      for (const m of mains) { const o = el('option', null, `↳ ${m.name}`); o.value = m.id; pick.append(o) }
+      pick.value = a.parent ?? ''
+      pick.addEventListener('click', e => e.stopPropagation())
+      pick.addEventListener('change', () => act(editSession(a.id, { parent: pick.value || null })))
+      acts.prepend(pick)
+    }
     // A phone's line only opens the session; what else can be done with it is behind "…" there.
     const more = button('ledger-ib ledger-menu', '…')
     more.title = `More: ${a.name}`
@@ -255,10 +290,12 @@ function mountLedger(root) {
       return b
     }
     dialog.append(el('h3', null, a.name), item('Open the conversation', () => go(a.id)), item('Rename', () => openEditor(a)), item('Choose a drawing', () => openMarkPicker(a, mark)),
-      item(a.starred ? 'Take the crown off' : 'Crown it (VIP)', () => act(star(a.id, !a.starred))))
+      item(knowsMains(a) ? (a.starred ? 'Stop sending quick memos here' : 'Send quick memos here') : a.starred ? 'Take the crown off' : 'Crown it (VIP)', () => act(star(a.id, !a.starred))))
+    if (a.parent) dialog.append(item(`Stand alone (leave main agent ${last.all.agents.find(m => m.id === a.parent)?.name ?? a.parent})`, () => act(editSession(a.id, { parent: null }))))
     if (group) dialog.append(item(`Take out of the group with ${group.members.filter(m => m.id !== a.id).map(m => m.name).join(' + ')}`, () => act(unpair(a.id))))
     else if (last.all.agents.length > 1) dialog.append(item('Lay together with…', () => togglePair(a.id)))
     if (!a.online) dialog.append(item('Archive', () => act(archive(a.id))))
+    for (const d of last.all.desks ?? []) if (d.id !== a.desk) dialog.append(item(`Move to desk ${d.name}`, () => act(moveToDesk(a.id, d.id))))
     const close = button('ledger-sheet-item is-close', 'Close')
     close.addEventListener('click', () => dialog.close())
     dialog.append(close)
@@ -276,7 +313,7 @@ function mountLedger(root) {
     if (view.cur && !agentOf(view.cur)) view.cur = ''
     if (view.pairFrom && !agentOf(view.pairFrom)) view.pairFrom = ''
     const apart = tellApart(all.agents)
-    const sig = JSON.stringify([view, phone.matches, all.agents.map(a => { const s = sums.get(a.id); return [a.id, a.name, a.mark, a.online, a.starred, a.task, a.model, a.host, a.group, a.online ? 0 : Math.floor((Date.now() - (a.seen ?? 0)) / 60000), apart.get(a.id), s.open, s.running, s.hand, s.top, s.cards[0] && [s.cards[0].id, s.cards[0].title, s.cards[0].options, s.cards[0].recommended]] }), all.archived.map(a => [a.id, a.name, a.mark, a.seen])])
+    const sig = JSON.stringify([view, phone.matches, all.desk, all.desks?.map(d => [d.id, d.name]), all.agents.map(a => a.desk), all.agents.map(a => { const s = sums.get(a.id); return [a.id, a.name, a.mark, a.online, a.starred, a.parent, a.main, a.task, a.model, a.host, a.group, a.online ? 0 : Math.floor((Date.now() - (a.seen ?? 0)) / 60000), apart.get(a.id), s.open, s.running, s.hand, s.top, s.cards[0] && [s.cards[0].id, s.cards[0].title, s.cards[0].options, s.cards[0].recommended]] }), all.archived.map(a => [a.id, a.name, a.mark, a.seen])])
     if (sig === signature) return
     signature = sig
     const online = all.agents.filter(a => a.online).length

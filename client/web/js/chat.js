@@ -4,13 +4,17 @@
 // log instead: the questions only, or the files. Plus the pieces other modules share
 // (icons, attachments, lightbox, code blocks).
 
-import { sendMessage, reopen } from './store.js'
-import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, sketch, TRUST_WORD } from './ui.js'
+import { sendMessage, reopen, getState, subscribe, isLoaded } from './store.js'
+import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, assetLink, assetShare, sketch, TRUST_WORD } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
-import { mountFiles } from './history.js'
+import { mountFiles, gather } from './history.js'
 import { dictationMic } from './speech.js'
 import { pasteChip, cardChips } from './cardclip.js'
 import { tellApart } from './agents.js'
+import { link, cardPath, sessionPath } from './link.js'
+
+// The drag type of a session picture on its way to the canvas: the same word as in scribble.js, which is loaded only when the canvas opens.
+const PICTURE_TYPE = 'application/x-scribble-picture'
 
 // ---- icons -----------------------------------------------------------------
 
@@ -56,19 +60,48 @@ function button(cls, label) {
   return node
 }
 
-// ---- lightbox --------------------------------------------------------------
+// ---- a picture, large: a page of its own -------------------------------------
+// A picture of a session opens as a page with a real address, /s/<id>/files/<n> (n counts the session's
+// pictures, the oldest is 1): no veil, no window over the board. Back closes it, so does Escape and the link
+// at the top left; the arrows are links to the picture before and after. A reload lands on it again.
+// (A <dialog> still, so it lies above everything and the page under it rests; it is drawn as a page.)
 
 let box = null
+const PICTURE_PATH = /^\/s\/([^/+]+)\/files\/(\d+)$/
+const picturePath = (agent, n) => `${sessionPath(agent)}/files/${n}`
+
+/** The pictures of one session, oldest first: what it sent and was sent, then what its questions carry. */
+function sessionPictures(agent) {
+  const all = getState().all, seen = new Set(), list = []
+  const add = (attachments, who) => { for (const a of attachments ?? []) if (who === agent && kindOf(a) === 'image' && a.url && !seen.has(a.url)) { seen.add(a.url); list.push(a) } }
+  for (const m of all.messages) add(m.attachments, m.agent)
+  for (const c of all.cards) add(c.attachments, c.agent)
+  return list
+}
+/** The session a picture belongs to, and its place among that session's pictures. */
+function placeOf(item) {
+  const all = getState().all
+  const hit = a => a?.url === item.url
+  const agent = all.messages.find(m => m.attachments?.some(hit))?.agent ?? all.cards.find(c => c.attachments?.some(hit))?.agent
+  if (agent == null) return null
+  const items = sessionPictures(agent)
+  const index = items.findIndex(hit)
+  return index < 0 ? null : { agent, items, index }
+}
 
 function lightbox() {
   if (box) return box
   const dialog = el('dialog', 'lightbox')
   dialog.setAttribute('aria-label', 'Picture')
   dialog.tabIndex = -1
+  const back = link('lightbox-back', '/', { go: false })
+  back.append(icon('prev'), el('span', null, 'Back'))
   const stage = el('div', 'lightbox-stage')
   const img = el('img', 'lightbox-img')
-  const prev = button('lightbox-nav lightbox-prev', 'Previous picture')
-  const next = button('lightbox-nav lightbox-next', 'Next picture')
+  const prev = link('lightbox-nav lightbox-prev', '/')
+  const next = link('lightbox-nav lightbox-next', '/')
+  prev.setAttribute('aria-label', 'Previous picture')
+  next.setAttribute('aria-label', 'Next picture')
   prev.append(icon('prev'))
   next.append(icon('next'))
   stage.append(prev, img, next)
@@ -84,13 +117,14 @@ function lightbox() {
   const close = button('lightbox-close', 'Close')
   close.append(icon('close'))
   bar.append(name, count, open, close)
-  dialog.append(stage, bar)
+  dialog.append(back, stage, bar)
   document.body.append(dialog)
 
-  box = { dialog, items: [], index: 0 }
-  const show = i => {
+  box = { dialog, items: [], index: 0, agent: null, pushed: false }
+  const wrap = i => (i + box.items.length) % box.items.length
+  const show = (i, write = true) => {
     const n = box.items.length
-    box.index = (i + n) % n
+    box.index = wrap(i)
     const item = box.items[box.index]
     img.src = item.url
     img.alt = item.name
@@ -99,16 +133,32 @@ function lightbox() {
     count.hidden = n < 2
     prev.hidden = next.hidden = n < 2
     open.href = item.url
+    if (box.agent == null) return
+    // The neighbours and the way back are links with their real addresses; the address names this picture.
+    prev.setAttribute('href', picturePath(box.agent, wrap(box.index - 1) + 1))
+    next.setAttribute('href', picturePath(box.agent, wrap(box.index + 1) + 1))
+    back.setAttribute('href', `${sessionPath(box.agent)}/files`)
+    const url = picturePath(box.agent, box.index + 1) + location.search + location.hash
+    if (write && location.pathname !== picturePath(box.agent, box.index + 1)) history.replaceState(history.state, '', url)
   }
   box.show = show
   prev.addEventListener('click', () => show(box.index - 1))
   next.addEventListener('click', () => show(box.index + 1))
   close.addEventListener('click', () => dialog.close())
-  // A click on the dimmed area closes; clicks on the image or controls do not.
+  back.addEventListener('click', () => dialog.close())
+  // A click beside the picture closes; clicks on the picture or the controls do not.
   dialog.addEventListener('click', e => { if (e.target === dialog || e.target === stage) dialog.close() })
   dialog.addEventListener('keydown', e => {
     if (e.key === 'ArrowLeft') show(box.index - 1)
     if (e.key === 'ArrowRight') show(box.index + 1)
+  })
+  // Closed by hand (Escape, the link back, a click beside it): the entry the picture made is left again, so
+  // Back does not open it once more. Arrived on its address directly, the address becomes the session's files.
+  dialog.addEventListener('close', () => {
+    if (box.agent == null || !PICTURE_PATH.test(location.pathname)) return
+    if (box.pushed) return history.back()
+    history.replaceState(history.state, '', `${sessionPath(box.agent)}/files${location.search}${location.hash}`)
+    dispatchEvent(new PopStateEvent('popstate', { state: history.state }))
   })
   let downX = null
   stage.addEventListener('pointerdown', e => { downX = e.clientX })
@@ -121,15 +171,44 @@ function lightbox() {
   return box
 }
 
-/** Open the image viewer on items[index]; items are Attachments. */
+/** Open the picture page on items[index]; items are Attachments. A picture the board knows gets its address
+ *  and its session's other pictures to step through; any other (a preview page) opens without one. */
 export function openLightbox(items, index = 0) {
   const b = lightbox()
-  b.items = items
-  b.show(index)
+  const place = location.hash.startsWith('#/') || location.protocol === 'file:' ? null : placeOf(items[index])
+  b.agent = place?.agent ?? null
+  b.items = place?.items ?? items
+  if (place && !b.dialog.open && !PICTURE_PATH.test(location.pathname)) {
+    history.pushState({ picture: true }, '', picturePath(place.agent, place.index + 1) + location.search + location.hash)
+    b.pushed = true
+  } else if (!b.dialog.open) b.pushed = false
+  b.show(place?.index ?? index)
   if (!b.dialog.open) {
     b.dialog.showModal()
     b.dialog.focus()   // keyboard starts at the dialog, not on a random control
   }
+}
+
+// The address is followed: Back and Forward close and open the picture, a reload or a shared link lands on it.
+function followPicture() {
+  const at = PICTURE_PATH.exec(location.pathname)
+  if (!at) { if (box?.dialog.open && box.agent != null) { box.agent = null; box.dialog.close() } return }
+  if (!isLoaded()) return
+  const agent = decodeURIComponent(at[1]), items = sessionPictures(agent), index = Number(at[2]) - 1
+  // A number the session has no picture for: its files, without one.
+  if (!items[index]) { if (!box?.dialog.open) history.replaceState(history.state, '', `${sessionPath(agent)}/files${location.search}${location.hash}`); return }
+  const b = lightbox()
+  if (!b.dialog.open) b.pushed = Boolean(history.state?.picture)
+  b.agent = agent
+  b.items = items
+  b.show(index, false)
+  if (!b.dialog.open) { b.dialog.showModal(); b.dialog.focus() }
+}
+window.addEventListener('popstate', followPicture)
+{
+  // On arrival: as soon as the board's state is here.
+  let arrived = false
+  subscribe(() => { if (arrived || !isLoaded()) return; arrived = true; followPicture() })
 }
 
 // ---- attachments -----------------------------------------------------------
@@ -307,13 +386,18 @@ function assetCard(asset, said = '') {
   const actions = el('div', 'asset-actions')
   actions.append(open, copy)
   card.append(actions)
+  // Share with someone outside the board (ui.js assetShare): the button with the other two, its panel on a line of its own.
+  const key = href.split('#')[1]
+  if (asset.id && key) { const share = assetShare({ id: asset.id, key }); actions.append(share.button); card.append(share.panel) }
   return card
 }
 
 // One line for something that happened to a question. Unless the line's text is the question itself,
 // the question is named first, briefly, and what happened to it follows: "Answered  <question> → Yes".
-function eventLine(m, cont, onCard, card) {
-  const node = button(`event event-${m.kind}${cont ? ' cont' : ''}`)
+function eventLine(m, cont, onCard, card, href = null) {
+  // With an address (a question that still waits: it opens as its window) the line is a real link (js/link.js).
+  const cls = `event event-${m.kind}${cont ? ' cont' : ''}`
+  const node = href ? link(cls, href) : button(cls)
   const ico = el('span', 'event-ico')
   ico.append(icon(ICONS[m.kind] ? m.kind : 'asked'))
   const body = el('span', 'event-body')
@@ -341,7 +425,7 @@ function askLine(m, card, state, { onOpen, onError }) {
     : over ? ['done', card.summary ?? '']
     : state.handed.includes(card.id) ? ['handed', ''] : ['snoozed', '']
   // (The line is named after the question: a text that only repeats the title is left out.)
-  const line = eventLine({ kind, text: text === card.title ? '' : text, ts: m.ts, card_id: card.id }, false, over ? () => unfold() : onOpen, { ...card, title: card.title || m.text })
+  const line = eventLine({ kind, text: text === card.title ? '' : text, ts: m.ts, card_id: card.id }, false, over ? () => unfold() : onOpen, { ...card, title: card.title || m.text }, over ? null : cardPath(card, sessionPath(card.agent)))
   if (!over) return [line]
   let past = null
   line.setAttribute('aria-expanded', 'false')
@@ -979,17 +1063,84 @@ export function mountChat(root, ctx = {}) {
   backButton.append(icon('prev'), el('span', null, 'Conversation'))
   backButton.addEventListener('click', () => document.getElementById('mode-chat')?.click())
   back.append(backButton)
+  // Above the canvas: every picture of the session in one row, newest first (the Files list's collection,
+  // history.js). A click puts one in the middle of the paper, a drag where it is dropped (scribble.js).
+  const strip = el('div', 'scribble-strip')
+  strip.setAttribute('role', 'group')
+  strip.setAttribute('aria-label', 'Pictures of this session')
+  strip.hidden = true
+  let stripSig = null
+  let lastState = null
+  // A published picture is encrypted: it is opened the way the conversation opens it for its link card (ui.js assetLink).
+  const published = asset => new Promise(resolve => {
+    const thumb = assetLink(asset, { share: false }).querySelector('.asset-thumb')
+    const seen = () => thumb.querySelector('img')?.src
+    if (seen()) return resolve(seen())
+    new MutationObserver((_, watch) => { if (seen()) { watch.disconnect(); resolve(seen()) } }).observe(thumb, { childList: true })
+  })
+  function paintStrip() {
+    const agent = front()
+    if (!lastState || !agent || document.body.dataset.view !== 'scribble') return
+    const items = gather(lastState.all, agent).flatMap(item => {
+      if (!item.url) return []
+      if (item.kind === 'image' || item.kind === 'scribble') return [item]
+      const asset = item.kind === 'asset' && linkInfo(item.url).asset
+      return asset && asset.type === 'image' && !asset.gone ? [{ ...item, asset }] : []
+    })
+    const sig = JSON.stringify(items.map(i => [i.url, i.name, i.card, i.ts]))
+    if (sig === stripSig) return
+    stripSig = sig
+    strip.hidden = !items.length
+    strip.replaceChildren(...items.map(item => {
+      const node = el('div', 'scribble-thumb')
+      node.setAttribute('role', 'button')
+      node.tabIndex = 0
+      node.draggable = true
+      node.title = item.card ? `Nr. ${item.card} · ${item.name}` : `chat · ${clock(item.ts)}`
+      node.setAttribute('aria-label', `Put on the canvas: ${node.title}`)
+      const img = el('img')
+      img.alt = ''
+      img.draggable = false
+      img.addEventListener('error', () => { node.hidden = true })
+      if (item.asset) { node.hidden = true; published(item.asset).then(src => { img.src = src; node.hidden = false }) }
+      else { img.loading = 'lazy'; img.src = item.url }
+      node.append(img)
+      const picture = () => ({ url: img.src, name: item.name })
+      node.addEventListener('dragstart', e => { e.dataTransfer.effectAllowed = 'copy'; e.dataTransfer.setData(PICTURE_TYPE, JSON.stringify(picture())) })
+      node.addEventListener('click', () => document.querySelector('#scribble > .scr')?.dispatchEvent(new CustomEvent('scribble:place', { detail: picture() })))
+      node.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); node.click() } })
+      return node
+    }))
+  }
   const paintCanvas = () => {
     const open = document.body.dataset.view === 'scribble'
     for (const b of document.querySelectorAll('.composer-scribble')) b.setAttribute('aria-pressed', String(open))
     const host = document.getElementById('scribble')
-    if (open && host && back.parentNode !== host) host.prepend(back)
+    if (open && host && back.parentNode !== host) { host.prepend(back); back.after(strip) }
+    paintStrip()
   }
   new MutationObserver(paintCanvas).observe(document.body, { attributes: true, attributeFilter: ['data-view'] })
-  paintCanvas()
   const panes = new Map()   // session id -> pane; kept, so a session's log is built once
   let shown = []
   let member = null
+  /** The session the canvas belongs to: the member in front (as app.js sees it). */
+  const front = () => (shown.includes(member) ? member : shown[0])
+  paintCanvas()
+  // A region marked on the canvas (scribble.js) goes into the conversation as two files: the picture, and its strokes as data.
+  document.getElementById('scribble')?.addEventListener('scribble:region', e => {
+    const { png, data } = e.detail
+    e.detail.sent = sendMessage('', front(), null, [{ name: 'canvas-region.png', data: png }, { name: 'canvas-region.json', data: `data:application/json;base64,${btoa(JSON.stringify(data))}` }])
+    swoosh(png, e.detail.rect)
+  })
+  /** The cut-out flies into its session's entry in the sidebar, as on the global pad (padlink.js). */
+  async function swoosh(png, rect) {
+    const target = document.querySelector('.agent-entry[aria-current="true"]')
+    const box = target?.getBoundingClientRect()
+    if (!rect || !box?.width || !box.height) return
+    const layer = el('div', 'padlink-fly')
+    document.body.append(layer)
+    try { await (await import('/pad/fly.js')).flySheet(layer, { png, rect, target }) } catch {} finally { layer.remove() }
+  }
   setInterval(() => { for (const id of shown) panes.get(id)?.tick() }, 30000)
   window.addEventListener('resize', () => { for (const id of shown) panes.get(id)?.settle() })
 
@@ -1028,6 +1179,8 @@ export function mountChat(root, ctx = {}) {
       // A session that is gone takes its pane along.
       for (const id of panes.keys()) if (!shown.includes(id) && !state.all.agents.some(a => a.id === id)) panes.delete(id)
       for (const id of shown) panes.get(id).render(state, shown.length > 1)
+      lastState = state
+      paintStrip()
       for (const fn of demo) fn()
     },
     unread: () => shown.reduce((sum, id) => sum + panes.get(id).unread(), 0),
@@ -1035,7 +1188,7 @@ export function mountChat(root, ctx = {}) {
     focus(hint, agentId) { panes.get(agentId ?? (shown.includes(member) ? member : shown[0]))?.focus(hint) },
     reveal(cardId, agentId) { return panes.get(agentId)?.reveal(cardId) ?? false },
     /** Which member of a group a phone shows, and the canvas belongs to. */
-    setMember(agentId) { member = agentId; paintMember() },
+    setMember(agentId) { member = agentId; paintMember(); paintStrip() },
     settle() { for (const id of shown) panes.get(id).settle() },
   }
 }

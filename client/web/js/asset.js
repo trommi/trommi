@@ -20,7 +20,8 @@ try {
 const LABEL = { html: 'HTML page', image: 'Image', video: 'Video', audio: 'Audio', file: 'File' }
 // Only these are handed to the browser under their own type; anything else is a download.
 const SHOWN = {
-  image: new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif', 'image/svg+xml']),
+  // (SVG is a download, as on the recipient's page: it is a document that can carry script.)
+  image: new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp', 'image/avif']),
   video: new Set(['video/mp4', 'video/webm', 'video/quicktime']),
   audio: new Set(['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'audio/flac']),
 }
@@ -31,6 +32,7 @@ const PROBLEMS = {
   wrongkey: ['The key does not fit', 'The part after the # was cut off or changed on its way, or the stored asset was altered. Ask for the link again.'],
   gone: ['This asset is gone', 'It was withdrawn, or deleted after its time. The link no longer opens anything.'],
   format: ['This asset cannot be read here', 'It was made in a format this viewer does not know. The board may need an update.'],
+  busy: ['Too many requests', 'Too many requests, try again in a minute. Then load the page again.'],
   offline: ['The board did not answer', 'The asset could not be fetched. Check the connection and load the page again.'],
 }
 
@@ -58,12 +60,13 @@ const bytesOf = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/
 async function fetchBlob(id) {
   let res
   try {
-    // The asset is public to whoever has the link; the login cookie has no business in this request.
-    res = await fetch(`/a/${id}/blob`, { cache: 'no-store', credentials: 'omit' })
+    // Under the board's own address the login goes along: the board may ask for it (BOARD_ASSET_LOGIN).
+    res = await fetch(`/a/${id}/blob`, { cache: 'no-store', credentials: 'same-origin' })
   } catch {
     throw new Problem('offline')
   }
   if (res.status === 404) throw new Problem('gone')
+  if (res.status === 429) throw new Problem('busy')
   if (!res.ok) throw new Problem('offline')
   return new Uint8Array(await res.arrayBuffer())
 }

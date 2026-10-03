@@ -366,28 +366,23 @@ function frameOf(body, source, large = false) {
   return frame
 }
 
-// The big view: the same block, in a window over the page, as tall and wide as the screen gives.
-let large = null
-function openLarge(body, source) {
-  if (!large) {
-    const dialog = el('dialog', 'rh-large')
-    dialog.setAttribute('aria-label', 'Layout, large')
-    const bar = el('div', 'rh-large-bar')
-    const close = el('button', 'rh-large-close', 'Close')
-    close.type = 'button'
-    close.addEventListener('click', () => dialog.close())
-    bar.append(el('span', 'rh-large-name', 'From the agent'), close)
-    const stage = el('div', 'rh-large-stage')
-    dialog.append(bar, stage)
-    // A click beside the sheet closes it; Escape closes this window and not the one under it.
-    dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
-    dialog.addEventListener('keydown', e => { if (e.key === 'Escape') { e.stopPropagation(); e.preventDefault(); dialog.close() } })
-    dialog.addEventListener('close', () => stage.replaceChildren())
-    document.body.append(dialog)
-    large = { dialog, stage }
-  }
-  large.stage.replaceChildren(frameOf(body, source, true))
-  if (!large.dialog.open) large.dialog.showModal()
+// The big view: the same block as a page of its own in a new tab (large.html), not a window over the board.
+// The source goes there through the browser's storage, under the key the link carries; the page shows it in
+// the same sandboxed frame.
+const LARGE = 'trommi-large:'
+const largeKey = source => keyOf(source).split(':').slice(0, 2).join('-')
+function handOver(source) { try { localStorage.setItem(LARGE + largeKey(source), source) } catch {} }
+/** For large.html: the block the address names (#<key>), as a frame that fills the page; null when it is gone. */
+export function largeBlock(key) {
+  let text = null
+  try {
+    text = localStorage.getItem(LARGE + key)
+    // Kept for this tab (a reload shows it again), and taken out of the shared storage.
+    if (text != null) { sessionStorage.setItem(LARGE + key, text); localStorage.removeItem(LARGE + key) }
+    else text = sessionStorage.getItem(LARGE + key)
+  } catch {}
+  if (text == null) return null
+  return frameOf(parse(text).body, text, true)
 }
 
 /** A block of HTML from an agent, shown at its place: a sandboxed frame as tall as its content, up to
@@ -398,9 +393,13 @@ export function htmlBlock(source) {
   const box = el('div', `rh rh-${kind}`)
   box.dataset.rich = kind
   const frame = frameOf(body, text)
-  const open = el('button', 'rh-open', 'Open large')
-  open.type = 'button'
-  open.addEventListener('click', e => { e.stopPropagation(); openLarge(body, text) })
+  // A real link: it opens the block as a page in a new tab. The source is handed over just before the
+  // browser follows it (also on a middle click or from the link's menu).
+  const open = el('a', 'rh-open', 'Open large')
+  open.href = `/large.html#${largeKey(text)}`
+  open.target = '_blank'
+  open.rel = 'noopener'
+  for (const name of ['pointerdown', 'keydown', 'click', 'auxclick', 'contextmenu']) open.addEventListener(name, e => { e.stopPropagation(); handOver(text) })
   if ((heights.get(frame.dataset.key) ?? 0) > cap()) box.classList.add('is-capped')
   box.append(frame, open)
   return box

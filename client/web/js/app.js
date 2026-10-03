@@ -4,12 +4,13 @@
 import { connect, subscribe, getState, setState, isLoaded, setScope, reopen, sendScribble, loadCanvas, saveCanvas } from './store.js'
 import { mountAgents, avatar, pairAvatar, crownToggle, tellApart, openMarkPicker, openEditor, summary } from './agents.js'
 import { mountInbox } from './inbox.js'
-import { el, sketch, setAssetSource, isKnock, knocksText } from './ui.js'
+import { el, sketch, setAssetSource, isKnock, knocksText, WALK_WORD } from './ui.js'
 import { mountChat } from './chat.js'
 import { provide, openSheet } from './keys.js'
 import { say, pageHost, backNow } from './back.js'
-import { togglePad } from './padlink.js'
+import { togglePad, toggleCards } from './padlink.js'
 import { startDictation, stopDictation, isDictating, readAloud } from './speech.js'
+import { linkTo, sessionPath } from './link.js'
 
 // Links to published assets are named from what the board knows of them.
 setAssetSource(() => getState().all)
@@ -46,10 +47,6 @@ themeToggle.addEventListener('click', () => {
   requestAnimationFrame(() => requestAnimationFrame(() => root.classList.remove('theme-switch')))
 })
 paintTheme()
-
-// ---- addresses: every place has a real one" up to (not including)
-//   "// ---- modes: a session fills the page with its conversation or its canvas ----"
-// NOT applied: the permission system refused this worker the edit of app.js. Not run, not tested.
 
 // ---- addresses: every place has a real one, so a reload and a shared link land on it ----
 //   /                      the inbox
@@ -101,18 +98,75 @@ function addressNow() {
   // The address names a question by its number, as the board does everywhere else (/q/102).
   const nr = focusCard && focusCard !== 'next' ? String(state.all.cards.find(c => c.id === focusCard)?.number ?? focusCard) : null
   params.delete('q')
-  if (focusCard && pathsOk) path = `${path === '/' ? '' : path}${nr ? `/q/${encodeURIComponent(nr)}` : '/walk'}`
+  // (Not over the Agents page: the server serves no /agents/q/…, so there the question stays in the query.)
+  if (focusCard && pathsOk && path !== '/agents') path = `${path === '/' ? '' : path}${nr ? `/q/${encodeURIComponent(nr)}` : '/walk'}`
   else if (focusCard) params.set('q', nr ?? 'next')
   const query = params.toString()
   if (hashRoutes) return `${location.pathname}${query ? `?${query}` : ''}#${path}`
   return path + (query ? `?${query}` : '') + location.hash
 }
+// ---- history: every entry is a page, and remembers how far it was scrolled ----
+// Each entry carries a key (history.state.k), whoever writes it (this file, chat.js, ledger.js, bar.js,
+// padlink.js: pushState and replaceState are wrapped here, once). Under that key the scroll positions of the
+// lists in view are kept (per tab, sessionStorage): Back and Forward put them back, as with real pages.
+const SCROLLERS = ['#inbox', '#ledger', '#chat .chat-pane .log', '#chat .pane-list']
+const SCROLL_KEY = 'trommi-scroll'
+let scrolls = {}
+try { scrolls = JSON.parse(sessionStorage.getItem(SCROLL_KEY) ?? '{}') ?? {} } catch {}
+let keySeq = 0
+const newKey = () => `${Date.now().toString(36)}-${++keySeq}`
+let entryKey = history.state?.k ?? newKey()
+{
+  const push = history.pushState.bind(history), replace = history.replaceState.bind(history)
+  history.pushState = (state, title, url) => { entryKey = newKey(); push({ ...state, k: entryKey }, title, url) }
+  history.replaceState = (state, title, url) => replace({ ...state, k: entryKey }, title, url)
+  if (!history.state?.k) history.replaceState(history.state, '')
+}
+function saveScroll() {
+  const at = {}
+  for (const sel of SCROLLERS) {
+    document.querySelectorAll(sel).forEach((node, i) => {
+      if (!node.getClientRects().length) return
+      // A list read at its end (a conversation) is kept at its end, whatever arrives in between.
+      at[`${sel}|${i}`] = node.scrollHeight - node.scrollTop - node.clientHeight < 4 && node.scrollTop > 0 ? 'end' : Math.round(node.scrollTop)
+    })
+  }
+  scrolls[entryKey] = at
+  const keys = Object.keys(scrolls)
+  for (const old of keys.slice(0, Math.max(0, keys.length - 60))) delete scrolls[old]
+  try { sessionStorage.setItem(SCROLL_KEY, JSON.stringify(scrolls)) } catch {}
+}
+function restoreScroll() {
+  const at = scrolls[entryKey]
+  if (!at) return
+  const put = () => {
+    for (const [name, top] of Object.entries(at)) {
+      const [sel, i] = name.split('|')
+      const node = document.querySelectorAll(sel)[Number(i)]
+      if (node?.getClientRects().length) node.scrollTop = top === 'end' ? node.scrollHeight : top
+    }
+  }
+  // Now, and again once the view has laid itself out (a conversation settles a frame later).
+  put()
+  requestAnimationFrame(() => requestAnimationFrame(put))
+  setTimeout(put, 180)
+}
+window.addEventListener('pagehide', saveScroll)
+// Kept as one scrolls (a step in the page has changed the view before its entry is written, so that moment
+// is too late): what a scroll changes belongs to the entry that stands when the frame is drawn.
+let scrollSaving = 0
+window.addEventListener('scroll', () => { scrollSaving ||= requestAnimationFrame(() => { scrollSaving = 0; if (!stepping) saveScroll() }) }, { capture: true, passive: true })
+
 /** Write the place the page shows into the address bar: a new entry for a step the human took, else in place. */
 function writeAddress(step = true) {
+  paintDocTitle()
   if (location.pathname === '/pad') return   // the pad lies over the page and holds the address (padlink.js)
+  if (/^\/s\/[^/+]+\/files\/\d+$/.test(location.pathname)) return   // a picture is open as a page and holds the address (chat.js)
   const url = addressNow()
   if (url === location.pathname + location.search + location.hash) return
-  history[step ? 'pushState' : 'replaceState']({ q: focusCard }, '', url)
+  // state.q says "this entry was made by opening a card, so closing it goes back". An address rewritten in
+  // place keeps what its entry was: one arrived on directly (/s/<id>/q/<n>) has nothing to go back to.
+  history[step ? 'pushState' : 'replaceState']({ q: step || history.state?.q ? focusCard : null }, '', url)
 }
 // Does the server serve the page under /q/…? Then questions are written as paths from now on, and the
 // address that stands is put right in place.
@@ -147,6 +201,16 @@ function paintView() {
   const unread = (view !== 'chat' || Boolean(filter)) && Boolean(chat?.unread())
   chatDot.hidden = !unread
   $('mode-chat').toggleAttribute('data-unread', unread)
+  paintLinks()
+}
+// The switches and the filters are real links (js/link.js): each carries the address it leads to, for the
+// session in view. A filter that is on leads back to the whole conversation, as its click does.
+function paintLinks() {
+  const ids = getState().members
+  const base = ids.length ? sessionPath(ids) : '/'
+  const on = body.dataset.view === 'chat' ? body.dataset.filter : null
+  for (const [name, links] of switches) for (const a of links) linkTo(a, ids.length && name === 'scribble' ? `${base}/scribble` : base)
+  for (const name of FILTERS) linkTo($(`filter-${name}`), ids.length && on !== name ? `${base}/${name}` : base)
 }
 function showView(view, filter = null) {
   body.dataset.view = view
@@ -252,6 +316,7 @@ async function syncCanvas() {
 // of that one card: it closes on the answer, and the list offers to take the answer back.
 let focusMode = null
 let routing = false   // the address is being followed, not written
+let stepping = 0      // a step under way that writes its own entry when it is through (walkSession)
 async function openFocus(cardId, step = true, { ask = false, revise = false, gallery = false } = {}) {
   try {
     focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
@@ -276,6 +341,7 @@ async function openFocus(cardId, step = true, { ask = false, revise = false, gal
 // the window. The address reads /q/<n> while it is unfolded; folding goes back ('focus:close', below).
 async function unfoldCard(host, cardId, onClose) {
   if (matchMedia('(max-width: 860px)').matches) return false
+  stepping++   // (the row makes room before its entry is written: that scroll is not the Desk's position)
   try {
     focusMode ??= (await import('./focus.js')).mountFocus({ onDecided: offerUndo })
     if (!focusMode.openInline) return false
@@ -288,12 +354,13 @@ async function unfoldCard(host, cardId, onClose) {
     focusCard = ok ? cardId : null
     writeAddress(ok && !swap)
     return ok
-  } catch (err) { console.error(err); return false }
+  } catch (err) { console.error(err); return false } finally { stepping-- }
 }
 // Closed by hand: leave the entry the window made, so "back" does not open it again.
 document.addEventListener('focus:close', () => {
   if (!focusCard) return
   focusCard = null
+  paintDocTitle()
   if (routing) return
   if (history.state?.q) history.back()
   else {
@@ -317,13 +384,29 @@ chat = mountChat($('chat'), {
  *  urgent first, in the question window. The walk follows the scope, so the session is picked first;
  *  the address then names both (/s/<id>?q=next). For the sidebar's state badges, and for whoever else
  *  shows a session's count (import { walkSession } from './app.js'). */
-export function walkSession(id) {
-  setScope(id)
-  showPage(null)
-  showView('chat')
-  return openFocus()
+export async function walkSession(id) {
+  // One step, one entry: the window writes it once it is open (/s/<id>/walk). Until then the address is not
+  // rewritten in place for the session alone, which would write over the entry the human is leaving.
+  stepping++
+  let opened
+  try {
+    setScope(id)
+    showPage(null)
+    showView('chat')
+    opened = await openFocus()
+  } finally { stepping-- }
+  if (!opened) writeAddress()   // nothing to walk through: the step is the session
+  return opened
 }
-const agents = mountAgents($('agents'), { onSelect: id => { showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
+/** Going to another place leaves the card that is open (a Desk row unfolded, the window): it is not taken along
+ *  into the new address, and Back finds it again under its own. */
+function leaveCard() {
+  if (!focusCard && !focusMode?.isOpen()) return
+  routing = true
+  try { focusMode?.close() } finally { routing = false }
+  focusCard = null
+}
+const agents = mountAgents($('agents'), { onSelect: id => { leaveCard(); showPage(null); showView('chat'); writeAddress(); if (id == null) $('inbox').scrollTop = 0 }, onWalk: walkSession })
 const inbox = mountInbox($('inbox'), { onOpen: (id, how) => openFocus(id, true, how), onGallery: id => openFocus(id, true, { gallery: true }), onUnfold: unfoldCard, onDecided: offerUndo })
 
 // The title of the pane: which session this is, by its mark and name. For sessions laid
@@ -341,6 +424,7 @@ function paintTitle(state) {
   const sig = JSON.stringify([members.map(a => [a.id, a.name, a.mark, a.online, a.task, a.starred, apart.get(a.id)]), members.length > 1 && picked, working])
   if (sig === titleSig) return
   titleSig = sig
+  paintLinks()
   body.toggleAttribute('data-pair', members.length > 1)
   if (!members.length) return paneTitle.replaceChildren()
   if (members.length === 1) {
@@ -352,7 +436,7 @@ function paintTitle(state) {
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${agent.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(agent, { vip: false, working: working.includes(agent.id) }))
+    mark.append(avatar(agent, { vip: 'main', working: working.includes(agent.id) }))
     mark.addEventListener('click', () => openMarkPicker(agent, mark))
     const name = el('button', null, agent.name)
     name.type = 'button'
@@ -391,10 +475,11 @@ function paintNav(state) {
   $('nav-inbox').toggleAttribute('aria-current', !page && !state.scope)
   for (const id of ['nav-roster', 'roster-open']) $(id).toggleAttribute('aria-current', page === 'roster')
 }
-$('nav-inbox').addEventListener('click', () => { setScope(null); showPage(null); writeAddress() })
-$('nav-roster').addEventListener('click', () => { showPage('roster'); writeAddress() })
+// (A place gone to anew starts at its top, like a page; Back and Forward bring the position back.)
+$('nav-inbox').addEventListener('click', () => { const was = location.pathname; leaveCard(); setScope(null); showPage(null); writeAddress(); if (location.pathname !== was) $('inbox').scrollTop = 0 })
+$('nav-roster').addEventListener('click', () => { leaveCard(); showPage('roster'); writeAddress() })
 // Phones have no bar with words; there one icon opens the overview and closes it again.
-$('roster-open').addEventListener('click', () => { showPage(body.dataset.page === 'roster' ? null : 'roster'); writeAddress() })
+$('roster-open').addEventListener('click', () => { leaveCard(); showPage(body.dataset.page === 'roster' ? null : 'roster'); writeAddress() })
 
 // Follow the address: on arrival, and when the human goes back or forward.
 function followAddress(first = false) {
@@ -415,21 +500,45 @@ function followAddress(first = false) {
     else openFocus(id, false)
   } else if (!to.q && focusMode?.isOpen()) focusMode.close()
   routing = false
+  paintDocTitle()
   return to
 }
-window.addEventListener('popstate', () => followAddress())
+window.addEventListener('popstate', () => {
+  // Back or Forward (the entry in view changed): the entry left keeps its scroll positions, the one arrived
+  // on gets its own back. A step taken in the page (pushState, then this event by hand) is no such move.
+  const moved = (history.state?.k ?? null) !== entryKey
+  if (moved) { saveScroll(); entryKey = history.state?.k ?? newKey(); if (!history.state?.k) history.replaceState(history.state, '') }
+  followAddress()
+  if (moved) restoreScroll()
+})
 
 // ---- open count: what still needs the human, in the title and on the filter ----
 
 function paintCount(state) {
-  const fresh = ids => ids.filter(id => !state.later.includes(id)).length
-  const everywhere = fresh(state.all.queue)
-  const here = state.scope ? fresh(state.queue) : 0
+  const here = state.scope ? state.queue.filter(id => !state.later.includes(id)).length : 0
   $('filter-count').textContent = here ? (here > 99 ? '99+' : String(here)) : ''
   $('filter-questions').setAttribute('aria-label', here ? `Questions only, ${here} open` : 'Questions only')
+  paintDocTitle(state)
+}
+// The tab's title: what waits, then the place, so tabs can be told apart:
+// "(5 knocks) Desk · Trommi", "(3) web-frontend · Trommi", "Nr. 164 · <the question> · Trommi".
+function paintDocTitle(state = getState()) {
+  if (!isLoaded()) return
+  const fresh = state.all.queue.filter(id => !state.later.includes(id)).length
   // Knocks (urgent and blocking questions) come first in the title, as everywhere.
   const knocking = state.all.cards.filter(c => c.status === 'open' && isKnock(c) && state.all.queue.includes(c.id) && !state.later.includes(c.id)).length
-  document.title = knocking ? `(${knocksText(knocking)}) Trommi` : everywhere ? `(${everywhere}) Trommi` : 'Trommi'
+  const waits = knocking ? `(${knocksText(knocking)}) ` : fresh ? `(${fresh}) ` : ''
+  const card = focusCard && focusCard !== 'next' ? state.all.cards.find(c => c.id === focusCard) : null
+  const names = state.members.map(id => state.all.agents.find(a => a.id === id)?.name ?? id).join(' + ')
+  const desk = state.all.desks?.length > 1 ? state.all.desks.find(d => d.id === state.all.desk)?.name : null
+  const place = card ? `Nr. ${card.number} · ${card.title}`
+    : focusCard === 'next' ? [WALK_WORD, names].filter(Boolean).join(' · ')
+    : location.pathname === '/pad' ? 'Scratchpad'
+    : body.dataset.page === 'roster' ? 'Agents'
+    : names ? [names, body.dataset.view === 'scribble' ? 'Scribble' : body.dataset.filter === 'questions' ? 'Questions' : body.dataset.filter === 'files' ? 'Files' : ''].filter(Boolean).join(' · ')
+    : desk && desk.trim().toLowerCase() !== 'desk' ? `Desk · ${desk}` : 'Desk'   // (the first desk is named "Desk": not said twice)
+  const title = `${waits}${place} · Trommi`
+  if (document.title !== title) document.title = title
 }
 
 // ---- connection feedback ---------------------------------------------------
@@ -515,13 +624,17 @@ subscribe((state, online) => {
     // before any card has arrived, and a number in the address could not be looked up then.)
     if (!arrived && isLoaded()) {
       arrived = true
-      if (arrival.q) openFocus(arrival.q === 'next' ? null : cardOf(arrival.q), false)
+      // A question the board does not hold (a wrong number, one long gone): the place without it.
+      const known = arrival.q === 'next' || state.all.cards.some(c => c.id === cardOf(arrival.q))
+      if (arrival.q && known) openFocus(arrival.q === 'next' ? null : cardOf(arrival.q), false)
+      // (Not opened, it is not in the address either: the line below writes the place as it stands.)
+      restoreScroll()   // a reload stands where it stood
     }
     // The scope may have changed by itself: a session that is gone, a group that formed or dissolved.
     // Not at once: the store tells its listeners in the middle of a step (a click in the sidebar, Back or
     // Forward being followed). Written now, the address would name a half-taken step, and the step's own
     // entry would find nothing left to add. Once the step is through, this finds the address already right.
-    queueMicrotask(() => writeAddress(false))
+    queueMicrotask(() => { if (!stepping) writeAddress(false) })
   }
   paintView()
   if (!toast.hidden) placeToast()
@@ -586,7 +699,10 @@ const stepPlace = by => () => {
 }
 provide('app', {
   active: () => true,
+  // (Hiding the cards is a thing of the Desk: elsewhere the key is not listed and does nothing.)
+  has: id => id !== 'pad.cards' || (body.dataset.scope === 'all' && !body.dataset.page),
   actions: {
+    'pad.cards': () => { if (body.dataset.scope !== 'all' || body.dataset.page) return false; toggleCards() },
     'go.inbox': () => { $('nav-inbox').click() },
     'go.agents': () => { $('nav-roster').click() },
     'go.focus': () => { openFocus() },
@@ -617,11 +733,13 @@ provide('session', {
   active: inSession,
   actions: { 'session.scribble': () => setView(body.dataset.view === 'scribble' ? 'chat' : 'scribble') },
 })
+// The joined view's conversations folded to a strip (beside.js): a key that goes to them opens them first.
+const unfoldTalk = () => { if (body.hasAttribute('data-talk-folded')) document.querySelector('.talk-strip')?.click() }
 provide('conversation', {
   active: () => inSession() && body.dataset.view === 'chat',
   has: id => (id === 'chat.pane' ? getState().members.length > 1 : id === 'chat.voice' ? Boolean(getState().speech) : id === 'chat.questions' ? $('filter-questions').getClientRects().length > 0 : id === 'chat.files' ? $('filter-files').getClientRects().length > 0 : true),
   actions: {
-    'chat.write': () => chat.focus(),
+    'chat.write': () => { unfoldTalk(); chat.focus() },
     'chat.voice': () => voiceKey($('chat').querySelector('.chat-pane.is-member .composer textarea') ?? $('chat').querySelector('.composer textarea')),
     // (Only where the filter is offered: a hidden button is not pressed by key either.)
     'chat.questions': () => pressShown($('filter-questions')),
@@ -629,6 +747,7 @@ provide('conversation', {
     'chat.pane': () => {
       const { members } = getState()
       if (members.length < 2) return false
+      unfoldTalk()
       pickMember(members[(members.indexOf(memberNow()) + 1) % members.length])
       // The keyboard goes along: its log scrolls, and "write" means this one.
       $('chat').querySelector('.chat-pane.is-member .log')?.focus({ preventScroll: true })

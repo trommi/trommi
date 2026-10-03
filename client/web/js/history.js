@@ -9,10 +9,11 @@ import { icon, openLightbox } from './chat.js'
 const LINK = /https?:\/\/[^\s<>)\]]+/g
 const KIND_LABEL = { image: 'Picture', video: 'Video', audio: 'Audio', file: 'File', scribble: 'Your scribble', link: 'Link' }
 
-function gather(all, agent) {
+/** Everything one session ever sent or was sent, newest first: the Files list, and the row of pictures above the canvas (chat.js). */
+export function gather(all, agent) {
   const items = []
-  const add = (list, ts, where) => {
-    for (const a of list ?? []) items.push({ ts, where, kind: a.kind === 'scribble' ? 'scribble' : kindOf(a), name: a.name || 'Scribble', url: a.url })
+  const add = (list, ts, where, card) => {
+    for (const a of list ?? []) items.push({ ts, where, kind: a.kind === 'scribble' ? 'scribble' : kindOf(a), name: a.name || 'Scribble', url: a.url, ...(card ? { card } : {}) })
   }
   for (const m of all.messages) {
     if (m.agent !== agent) continue
@@ -33,7 +34,12 @@ function gather(all, agent) {
       }
     }
   }
-  for (const c of all.cards) if (c.agent === agent) add(c.attachments, c.created, c.title)
+  for (const c of all.cards) {
+    if (c.agent !== agent) continue
+    add(c.attachments, c.created, c.title, c.number)
+    // what the human attached to the note of the answer
+    add(c.note_attachments, c.decided ?? c.created, c.title, c.number)
+  }
   const seen = new Set()
   return items.sort((a, b) => b.ts - a.ts).filter(i => !seen.has(i.key ?? i.url) && seen.add(i.key ?? i.url))
 }
