@@ -23,6 +23,13 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 
 // ---- the board ---------------------------------------------------------------
 
+// A hub left over from an earlier run on the same port would answer instead of ours, with its questions on top
+// of these (the inbox then lists every row twice): refuse to start beside it.
+await new Promise((resolve, reject) => {
+  const probe = http.get(`${base}/`, res => { res.resume(); reject(new Error(`port ${port} is already in use (an earlier run still going?); pass another port`)) })
+  probe.on('error', resolve)
+  probe.setTimeout(1500, () => { probe.destroy(); resolve() })
+})
 const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'keys-test-data-'))
 const hub = spawn('node', [path.join(ROOT, 'server', 'server.mjs')], {
   env: { ...process.env, BOARD_PORT: String(port), BOARD_HOST: '127.0.0.1', BOARD_TOKEN: token, BOARD_DATA: dataDir, BOARD_HUB_ONLY: '1', BOARD_AGENT: '' },
@@ -162,7 +169,7 @@ const HELPERS = `
     list: () => [...document.querySelectorAll('.inbox-groups')].find(n => n.getClientRects().length),
     rows: () => [...(__k.list()?.querySelectorAll('.inbox-row:not(.is-leaving)') ?? [])],
     reach: () => __k.rows().filter(n => !n.closest('.inbox-pile:not(.is-open)')),
-    done: () => [...(__k.list()?.querySelectorAll('.inbox-done') ?? [])].map(n => ({ id: n.dataset.id, text: n.innerText.replace(/\\s+/g, ' '), h: Math.round(n.getBoundingClientRect().height), current: n.classList.contains('is-current') })),
+    done: () => [...(__k.list()?.querySelectorAll('[data-pile="done"] .inbox-done') ?? [])].map(n => ({ id: n.dataset.id, text: n.innerText.replace(/\\s+/g, ' '), h: Math.round(n.getBoundingClientRect().height), current: n.classList.contains('is-current') })),
     row: id => __k.rows().find(n => n.dataset.id === id),
     cur: () => { const n = __k.list()?.querySelector('.inbox-row.is-current, .inbox-done.is-current'); return n ? { id: n.dataset.id, y: Math.round(n.getBoundingClientRect().top), later: 'later' in n.dataset, done: n.classList.contains('inbox-done'), open: n.classList.contains('is-open'), focus: document.activeElement === n } : null },
     inView: n => { const b = n.closest('main, .pane-list').getBoundingClientRect(), r = n.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 },
@@ -319,7 +326,8 @@ async function main() {
   await markRow(c.b2)
   const y0 = (await cur()).y
   await key('l')
-  await until('L puts the row off', () => ev(`return 'later' in (__k.row(${JSON.stringify(c.b2)})?.dataset ?? {})`))
+  // (A snoozed card is no row any more: it is a slim line on the stack "Later" at the foot.)
+  await until('L puts the row off', () => ev(`return !__k.row(${JSON.stringify(c.b2)}) && Boolean(__k.list().querySelector('[data-pile="later"]'))`))
   await sleep(450)
   const afterLater = await cur()
   check(Math.abs(afterLater.y - y0) <= 1 && afterLater.id !== c.b2, `after L the mark stays in place, on the row that moved up (${y0} -> ${afterLater.y}, ${afterLater.id === c.b2 ? 'same row' : 'next row'})`)
@@ -338,8 +346,11 @@ async function main() {
   await key('j')
   check((await cur())?.id === c.b2, 'K and J move between the rows above and the unfolded pile')
   await shot('03b-later-group')
-  await key('l')
-  await until('L on a row that was put off fetches it back', () => ev(`return !('later' in __k.row(${JSON.stringify(c.b2)}).dataset)`))
+  // On a snoozed line L does nothing; U wakes it, and it is a row among the open ones again.
+  await key('l', { pause: 500 })
+  check(Boolean(card(c.b2).snoozed_until) && !(await ev(`return Boolean(__k.row(${JSON.stringify(c.b2)}))`)), 'L does nothing on a snoozed line')
+  await key('u')
+  await until('U on a snoozed line wakes it', () => ev(`return Boolean(__k.row(${JSON.stringify(c.b2)}))`) .then(there => there && !card(c.b2).snoozed_until))
 
   await markRow(c.a3)
   await key('Enter', { pause: 450 })
@@ -399,25 +410,24 @@ async function main() {
   check((await cur())?.open && !watch.state.messages.some(m => m.card_id === c.a3 && m.from === 'user'), 'E first unfolds the row and asks nothing')
   await key('e')
   await until('E again asks the session to explain', () => watch.state.messages.some(m => m.card_id === c.a3 && m.from === 'user' && /^Explain this question/.test(m.text)))
-  await until('and the row goes to "Later"', () => ev(`return 'later' in (__k.row(${JSON.stringify(c.a3)})?.dataset ?? {})`))
+  // A card asked to explain waits for the session, not for the human: it leaves the desk for the slim list
+  // "With the agent" (inbox.js, .inbox-revising), not for the Snooze pile.
+  await until('and the row goes to the list "With the agent"', () => ev(`return !__k.row(${JSON.stringify(c.a3)}) && Boolean(__k.list()?.querySelector('.inbox-revising-row[data-id=${JSON.stringify(c.a3)}]'))`))
   check(/Asked to explain/.test((await back())?.text ?? ''), 'a note says "Asked to explain", with Back')
   await shot('06-asked-to-explain')
   await alpha.call('reply', { text: 'Green is the brand colour; ink reads best; gold is for VIP only. I would take green.', card_id: c.a3 })
-  await until('the session\'s reply brings the row back from "Later"', () => ev(`return !('later' in (__k.row(${JSON.stringify(c.a3)})?.dataset ?? { later: 1 }))`), 6000)
+  await until('the session\'s reply brings the row back to the desk', () => ev(`return Boolean(__k.row(${JSON.stringify(c.a3)})) && !('later' in __k.row(${JSON.stringify(c.a3)}).dataset)`), 6000)
   // A card too large for a row opens as a window; there Explain closes the window.
   await markRow(c.b5)
   await key('Enter', { pause: 700 })
   check(await ev('return __k.frontTitle()') === 'Which region hosts the mirror?', 'Enter opens a large question as a window')
-  // In the opened card E puts the caret into the one field at its foot; Enter asks, with the explain flag.
+  // In the opened card E asks the session to explain at once (what stands in the field would go along as the question).
   await key('e', { pause: 600 })
-  check(['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag), 'E in the opened card puts the caret into its field')
-  await type('What is a mirror here?')
-  await key('Enter', { pause: 300 })
-  await until('Enter asks the session about that card', () => watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user' && /What is a mirror here\?/.test(m.text)))
+  await until('E in the opened card asks the session to explain, at once', () => watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user'))
   check(watch.state.messages.some(m => m.card_id === c.b5 && m.from === 'user' && m.explain), 'the message carries the explain flag')
   check(card(c.b5).status === 'open', 'and the question stays open')
   for (let i = 0; i < 3 && await ev('return Boolean(__k.front())'); i++) await key('Escape', { pause: 400 })
-  check(!(await ev('return Boolean(__k.front())')), 'Escape leaves the field and closes the card')
+  check(!(await ev('return Boolean(__k.front())')), 'Escape closes the card')
 
   // ---------------------------------------------------------------------------
   section('Inbox: the Answered group')
@@ -435,7 +445,7 @@ async function main() {
     await markRow(c.g2)
     await key('y')
     await until('Y answers', () => card(c.g2).status !== 'open')
-    await until('an "Answered" pile stands below the open rows, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return Boolean(g) && !g.classList.contains("is-open") && Boolean(g.compareDocumentPosition(__k.reach().at(-1)) & Node.DOCUMENT_POSITION_PRECEDING) && /Answered/.test(g.textContent)'))
+    await until('an "Answered" pile stands below the open rows, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return Boolean(g) && !g.classList.contains("is-open") && Boolean(g.compareDocumentPosition(__k.reach().at(-1)) & Node.DOCUMENT_POSITION_PRECEDING) && /Done/.test(g.textContent)'))
     await sleep(5300)   // the note has left: this is the wrong answer that is noticed later
     await click('__k.list().querySelector(".inbox-answered-toggle")')
     const listed = await ev('return __k.done()')
@@ -458,7 +468,7 @@ async function main() {
     await gamma.call('close_card', { card_id: c.g2, summary: 'Left as it is.' })
     await until('the row says the agent has closed it', () => ev('return __k.done().some(d => /done by the agent/i.test(d.text))'))
     await sleep(700)   // the rows have come to rest
-    await click('__k.list().querySelector(".inbox-takeback")')
+    await click('__k.list().querySelector(\'[data-pile="done"] .inbox-takeback\')')
     await until('a click on "Take back" reopens it all the same', () => card(c.g2).status === 'open')
     await until('and the question stands in its group again, marked', async () => (await cur())?.id === c.g2 && !(await cur()).done)
     await key('Escape')
@@ -488,6 +498,11 @@ async function main() {
   await shot('08-g-pending')
   await key('i')
   await until('G then I opens the inbox', () => ev('return location.pathname === "/"'))
+  // [ folds the sidebar to a rail on a wide screen, and opens it again.
+  await key('[', { pause: 300 })
+  check(await ev('return document.documentElement.dataset.rail === "folded"'), '[ folds the sidebar to a rail')
+  await key('[', { pause: 300 })
+  check(await ev('return document.documentElement.dataset.rail !== "folded"'), '[ again opens the sidebar')
   await keys('g', '1')
   if (!(await until('G then 1 opens the first session', () => ev('return location.pathname === "/s/alpha"')))) console.log('     ', JSON.stringify(await ev('return { path: location.pathname, places: [...document.querySelectorAll("#agents .agent-entry")].map(n => n.innerText.replace(/\\s+/g, " ").slice(0, 20)), pending: document.body.dataset.keys ?? null, active: document.activeElement.tagName + "." + document.activeElement.className, dialogs: document.querySelectorAll("dialog[open]").length }')))
   await sleep(400)
@@ -552,17 +567,32 @@ async function main() {
   check(await member() === first, 'O again moves back')
   await ev(`return Promise.all(['alpha', 'beta'].map(agent => fetch('/session', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ agent, group: null }) })))`)
 
-  // The pad lies over the board; while it is up the board's keys rest.
+  // The whole Desk is paper: P picks up the pen (the paper comes in front of the cards), Escape puts it down.
   await keys('g', 'i')
-  await sleep(300)
-  await key('p', { pause: 900 })
-  if (check(await ev('return document.body.hasAttribute("data-pad") && location.pathname === "/pad"'), 'P opens the pad')) {
+  await sleep(1000)
+  const penUp = () => ev('return document.querySelector("#inbox").hasAttribute("data-paper-front")')
+  await key('p')
+  if (await until('P picks up the pen: the paper is in front of the cards', penUp)) {
+    await key('Escape', { pause: 400 })
     await ev('window.focus(); document.activeElement?.blur?.()')
-    await keys('g', 'a', 't')
-    check(await ev('return location.pathname === "/pad" && document.documentElement.dataset.theme !== "dark"'), 'under the pad the board\'s keys rest')
-    await ev('history.back()')
-    await until('leaving the pad returns to the place before', () => ev('return !document.body.hasAttribute("data-pad") && location.pathname === "/"'))
+    if (await penUp()) await ev('document.querySelector("#deskpad-pen").click()')
+    await until('the pen is put down again, the cards are back', async () => !(await penUp()))
   }
+  // (While the paper has the keyboard the board's keys are off: it must not keep it.)
+  await ev('window.focus(); document.activeElement?.blur?.()')
+
+  // W hides the Desk's cards so that only the paper is left, W again brings them back; G then X does the same.
+  const cardsHidden = () => ev('return document.querySelector("#inbox").hasAttribute("data-cards-hidden")')
+  await key('w')
+  await until('W hides the cards of the Desk', cardsHidden)
+  await key('w')
+  await until('W again brings the cards back', async () => !(await cardsHidden()))
+  await keys('g', 'x')
+  await until('G then X hides them too', cardsHidden)
+  // A knock strip never leads to something invisible: a click on one brings the cards back first.
+  if (await ev('const b = [...document.querySelectorAll(".inbox-edge-knock")].find(n => !n.hidden); b?.click(); return Boolean(b)')) await until('a knock strip brings the hidden cards back', async () => !(await cardsHidden()))
+  if (await cardsHidden()) await keys('g', 'x')
+  await until('the cards are back before the walk', async () => !(await cardsHidden()))
 
   // ---------------------------------------------------------------------------
   section('Focus: the walk through all questions')
@@ -638,10 +668,7 @@ async function main() {
   const beforeExplain = await frontId()
   if (card(beforeExplain)?.kind !== 'permission') {
     await key('e', { pause: 600 })
-    check(['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag), 'E puts the caret into the field of the question in front')
-    await type('Say more, please.')
-    await key('Enter', { pause: 300 })
-    await until('Enter asks the session about the question in front', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && /Say more, please/.test(m.text)))
+    await until('E asks the session to explain the question in front, at once', () => watch.state.messages.some(m => m.card_id === beforeExplain && m.from === 'user' && m.explain))
     if (['TEXTAREA', 'INPUT'].includes((await ev('return __k.active()')).tag)) await key('Escape', { pause: 300 })
     await shot('13-explain-in-walk')
   }
