@@ -196,6 +196,19 @@ Crypto `KIND` 8 (scribble) is not used: drawings are timeline items.
 
 Before Claude Code sees anything (concept §6): the envelope verifies; the sender is an active human device; it is addressed to this agent; for answer, verdict and decide again the bind matches the current card or request (`authoriseCommand`). Anything else is dropped and reported on the board as the status register `alert/<envelope_number>`.
 
+### The agent channel (`hub/channel.mjs`)
+
+An MCP stdio server with today's tools and today's `<channel source="board" kind=…>` events (copied in `hub/channel-tools.mjs`; tool → envelope and command → event in `hub/channel-bridge.mjs`; all protocol work in `client/core`). It runs beside the old `board` server, as server `trommi`, in the project's `.mcp.json`:
+
+```json
+{ "mcpServers": {
+  "board":  { "command": "node", "args": ["/home/christopher/git/trommi/server/server.mjs"] },
+  "trommi": { "command": "node", "args": ["/home/christopher/git/trommi/hub/channel.mjs"] }
+} }
+```
+
+Start: `claude --dangerously-load-development-channels server:board server:trommi`. First time per room, machine and folder: in the Trommi app "invite an agent", then either paste the link into the session ("join this: <link>", the agent calls the `join` tool), or start with `TROMMI_INVITE='<link>'`, or run `node hub/channel.mjs join '<link>'` in the folder. The app adds the agent without a check code. Afterwards every session in that folder reconnects by itself: key file `~/.local/share/trommi/keys/<room_id>/<host>-<folder>.key` (0600), with `<host>-<folder>.state.json` (cursor, chains) and `<host>-<folder>.files/` (the human's attachments, decrypted) beside it. A second session in the same folder gets `instance-conflict`. Environment: `TROMMI_HUB` (default `https://hub.trommi.com`; an invite names its hub), `TROMMI_ROOM` (when a folder has keys for several rooms), `TROMMI_KEYS_DIR`, `TROMMI_FOLDER`. `node hub/channel.mjs whoami` shows room and key file. Not ported yet: `create_voiceover`, `share_asset` (no outsider links), `adopt_session` (a helper names its main with `introduce` `parent`), silent `publish_asset`. Tests: `node hub/channel-test.mjs`.
+
 ### Founding and joining, in short
 
 1. **Found:** the app makes device keys, a recovery code (shown once) and key epoch 1; `POST /v1/rooms`; then `challenge` → `access_tokens`.
