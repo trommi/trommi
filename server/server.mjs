@@ -16,7 +16,8 @@ import crypto from 'node:crypto'
 import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { cleanFences, htmlBeside, strippedHint, fences, HTML_MAX } from './richhtml.mjs'
-import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_ID, ASSET_KEY, ASSET_BLOB_MAX, prepareAsset, assetUpload, assetLink } from './asset-envelope.mjs'
+import { kindOf, MIME, MAX_ASSET, ASSET_TYPES, ASSET_LABEL, ASSET_MAGIC, ASSET_ID, ASSET_KEY, ASSET_BLOB_MAX, padded, prepareAsset, assetUpload, assetLink } from './asset-envelope.mjs'
+import { SHARE_PAGE, SHARE_JS, SHARE_CSS, SHARE_CSP } from './share-viewer.mjs'
 import { padRoutes, padSupport } from './pad.mjs'
 import { openBoard, MOVED_NAME } from './board-store.mjs'
 
@@ -35,6 +36,14 @@ const MAX_ATTACHMENT = Number(process.env.BOARD_MAX_ATTACHMENT_MB || 1024) * 102
 // A hub that is nobody's session: it holds the state and serves the pages, but is
 // no agent itself. For a hub that runs as a service, with nothing on stdin.
 const HUB_ONLY = /^(1|true|yes)$/i.test(process.env.BOARD_HUB_ONLY ?? '')
+// Pairing and keys (docs/pairing.md, server/pairing.mjs): the /pair/ routes. Off unless BOARD_PAIRING=1; the
+// module and crypto/ are not even loaded without it.
+const PAIRING = /^(1|true|yes)$/i.test(process.env.BOARD_PAIRING ?? '')
+const pairing = PAIRING ? await import('./pairing.mjs') : null
+let pairRoute = null
+// Passkey login (server/passkey.mjs): on wherever this Node has SQLite, unless BOARD_PASSKEYS=0.
+const passkeyModule = /^(0|off|no|false)$/i.test(process.env.BOARD_PASSKEYS ?? '') ? null : await import('./passkey.mjs').catch(() => null)
+let passkey = null
 // Answered cards and their attachments are deleted after this many days.
 const RETENTION_DAYS = Number(process.env.BOARD_RETENTION_DAYS || 30)
 // A spoke never waits longer than this for the hub. Generous, because a tool
@@ -201,7 +210,12 @@ function load(owner) {
     .filter(t => t.id && STATUSES.includes(t.state)).map(t => ({ agent: owner, ...t }))
   // The sessions stand in the order the human gave them; one without a place yet comes after those that have one.
   const place = a => (Number.isFinite(a.position) ? a.position : Infinity)
-  const agents = list('agents').filter(a => a.id).map(a => ({ ...a, online: false }))
+  // Desks (card Nr. 149): each a world of its own sessions and their stack. The default desk is always there and
+  // holds every session that names no desk, or one that is gone: a board from before desks is one desk.
+  const desks = []
+  for (const d of list('desks')) if (typeof d.id === 'string' && d.id && !desks.some(x => x.id === d.id)) desks.push({ ...d, name: String(d.name ?? '').slice(0, DESK_NAME_MAX) || 'Desk' })
+  if (!desks.some(d => d.id === DEFAULT_DESK)) desks.unshift({ id: DEFAULT_DESK, name: 'Desk', created: Date.now() })
+  const agents = list('agents').filter(a => a.id).map(a => ({ ...a, online: false, desk: desks.some(d => d.id === a.desk) ? a.desk : DEFAULT_DESK }))
     .sort((a, b) => place(a) - place(b)).map((a, position) => ({ ...a, position }))
   // Only one session wears the crown. Of several from before that rule, the one crowned last keeps it.
   const crowned = agents.filter(a => a.starred)
@@ -214,8 +228,22 @@ function load(owner) {
     if (Array.isArray(queue)) pending[id] = queue.filter(e => e && typeof e.method === 'string').slice(-PENDING_MAX)
   }
   const assets = list('assets').filter(a => ASSET_ID.test(a.id))
-  return { agents, messages, cards, tasks, assets, queue: queueOf(cards, agents), next_number: next, pending }
+  // Every message has its running number (card Nr. 33). Messages from before it are numbered in the order they are stored.
+  let seq = Math.max(0, numbered(raw.message_seq) ? raw.message_seq : 0, ...messages.filter(m => numbered(m.seq)).map(m => m.seq))
+  for (const m of messages) if (!numbered(m.seq)) m.seq = ++seq
+  const floor = numbered(raw.message_floor) ? Math.min(raw.message_floor, seq + 1) : 0
+  // Ids of forgotten sessions: never handed out again (card Nr. 80, stable ids).
+  const retired = [...new Set((Array.isArray(raw.retired_ids) ? raw.retired_ids : []).filter(id => typeof id === 'string' && id))]
+  // The human's notes that are not sent yet (memos): kept until sent or thrown away.
+  const memos = list('memos').filter(m => typeof m.id === 'string' && m.id).slice(0, MEMOS_MAX)
+  return { agents, desks, memos, messages, cards, tasks, assets, queue: queueOf(cards, agents), next_number: next, message_seq: seq, message_floor: floor, retired_ids: retired, pending }
 }
+
+const MEMOS_MAX = 50
+const MEMO_PLACES = ['float', 'stack', 'paper']
+const DEFAULT_DESK = 'main'
+const DESK_NAME_MAX = 40
+const DESKS_MAX = 12
 
 // The traffic light the human reads at a glance: red waits on them, yellow is
 // being worked on, green is finished.
@@ -223,17 +251,19 @@ const STATUSES = ['decision', 'working', 'done']
 
 const defaultUrgency = kind => (kind === 'permission' ? 'critical' : 'normal')
 
-// The stack the human works through: approvals first because Claude Code is
-// waiting on them, then by urgency, then oldest first.
+// The stack the human works through, in a fixed order: oldest first. Nothing moves a card.
+// waiting on them. Since his rule of 3 October 2026 the order is fixed, oldest first (see below).
 function queueOf(cards, agents = []) {
-  const rank = c => (c.kind === 'permission' ? URGENCIES.length : URGENCIES.indexOf(c.urgency))
   // The questions of an archived session stay open, but nobody is asked to answer them.
   const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
   return cards
     // What the human put off is not waiting: it is out of the stack until it comes back.
     .filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until)
-    // Among equally urgent cards, what waits for an answer comes before what is only to be read.
-    .sort((a, b) => rank(b) - rank(a) || (a.kind === 'info') - (b.kind === 'info') || a.created - b.created || a.number - b.number)
+    // The order is fixed: by when a card was first filed, oldest first. Nothing moves a card: not its urgency, not
+    // a rewording, not coming back from a hand-back or from being put off. A merged card stands where the oldest
+    // of the cards it replaced stood (it takes that card's time). Urgency is for the mark, the sound and the counts.
+    // place: the number a merged card stands under, that of the oldest card it replaced (two cards can share a millisecond).
+    .sort((a, b) => a.created - b.created || (a.place ?? a.number) - (b.place ?? b.number))
     .map(c => c.id)
 }
 
@@ -273,35 +303,67 @@ function save() {
 }
 
 // The page gets everything except what is still waiting to be delivered to agents.
-const frameOf = () => `data: ${JSON.stringify({ ...state, pending: undefined })}\n\n`
+// main: the session leads others (it has subs, or said so itself); worked out here so that no client has to.
+const pageAgents = () => state.agents.map(({ key_hash, ...a }) => ({ ...a, main: isMain(a) }))
+// A released asset comes with its outside addresses (without the key), the public one first: they follow from how
+// the hub is reached, so they are worked out for the page and not stored.
+const pageAssets = () => state.assets.map(a => (a.share ? { ...a, share: { ...a.share, urls: assetBases().map(base => `${base}/r/${a.id}`) } } : a))
+const frameOf = () => `data: ${JSON.stringify({ ...state, agents: pageAgents(), assets: pageAssets(), pending: undefined })}\n\n`
+
+// A page that asked with ?since=<n> (or comes back with Last-Event-ID) gets, in place of all messages, those
+// with a seq above n, and `messages_since: n` to say that the list is to be merged by id, not to replace its
+// own. Everything else in the frame is whole, as before. When a message the page may already hold was changed
+// or removed (state.message_floor, messagesChanged), it gets the whole list once more, with messages_since: 0.
+// The SSE id is message_seq, so a browser's EventSource resumes by itself.
+let messageResets = 0
+function frameFor(res) {
+  if (res.since == null) return frameOf()
+  let since = res.since
+  if (since < (state.message_floor ?? 0) || res.resets !== messageResets) {
+    since = 0
+    res.since = state.message_seq
+    res.resets = messageResets
+  }
+  const messages = since ? state.messages.filter(m => m.seq > since) : state.messages
+  return `id: ${state.message_seq}\ndata: ${JSON.stringify({ ...state, agents: pageAgents(), assets: pageAssets(), pending: undefined, messages, messages_since: since })}\n\n`
+}
+
+// Call after changing or removing a message that is already out: pages that hold it fetch the whole list again.
+function messagesChanged() {
+  state.message_floor = state.message_seq + 1
+  messageResets++
+}
 
 // soon: the pages get the state at once, the file is written within a second, together with whatever else changed until then.
 function commit(soon = false) {
   // A put-off belongs to an open card; answered, closed or thrown away, there is nothing left to put off.
   for (const c of state.cards) if (c.snoozed_until && c.status !== 'open') { delete c.snoozed_until; delete c.snoozed_at }
+  tidyFamilies()
   state.queue = queueOf(state.cards, state.agents)
   // The list is the order of the sidebar; position says the same as a number, so a new session is last and a forgotten one leaves no gap.
   state.agents.forEach((a, at) => { a.online = links.has(a.id); a.position = at })
   state.speech = Boolean(speechKey())
   if (!soon) save()
   else saveTimer ??= setTimeout(() => { if (role === 'hub') save() }, 1000).unref()
-  const frame = frameOf()
+  let frame = null
   // A page on a slow connection gets the latest state once it has caught up,
   // not a growing backlog of every state in between.
   for (const res of clients) {
     if (res.writableNeedDrain) res.behind = true
-    else res.write(frame)
+    else res.write(res.since == null ? (frame ??= frameOf()) : frameFor(res))
   }
 }
 
+// seq: the message's running number, never reused. A message is changed only before the commit that sends it;
+// whatever changes or removes one later calls messagesChanged().
 function addMessage(agent, from, text, attachments = [], extra = {}) {
-  state.messages.push({ id: newId(), agent, from, text, attachments, ...extra, ts: Date.now() })
+  state.messages.push({ id: newId(), seq: ++state.message_seq, agent, from, text, attachments, ...extra, ts: Date.now() })
   commit()
 }
 
 // Board activity shows up in the conversation as a one-line marker that links to the card.
 function addEvent(kind, card, text) {
-  state.messages.push({ id: newId(), agent: card.agent, from: 'event', kind, card_id: card.id, text, ts: Date.now() })
+  state.messages.push({ id: newId(), seq: ++state.message_seq, agent: card.agent, from: 'event', kind, card_id: card.id, text, ts: Date.now() })
 }
 
 function addCard(agent, kind, fields) {
@@ -314,6 +376,92 @@ function addCard(agent, kind, fields) {
   return card
 }
 
+// ---- main agents and their subs (card Nr. 160) -----------------------------
+// A session may name one other session as its main (`parent`). One level only: a main has no parent, a sub has
+// no subs. A sub stands on its main's desk. The relation is between sessions that exist; nothing is started here.
+const isMain = a => a.main_declared === true || state.agents.some(x => x.parent === a.id)
+// Before every commit: a parent that is gone, or that became a sub itself, is none; subs follow their main's desk.
+function tidyFamilies() {
+  const byId = new Map(state.agents.map(a => [a.id, a]))
+  for (const a of state.agents) {
+    if (a.parent == null) { delete a.parent; continue }
+    const main = byId.get(a.parent)
+    if (!main || main === a || main.parent != null) delete a.parent
+    else {
+      // A sub is no main, whatever it once said of itself.
+      delete a.main_declared
+      if (main.desk) a.desk = main.desk
+    }
+  }
+}
+// The session a name or id stands for; a name must be the only one of its kind.
+function sessionNamed(text) {
+  const wanted = String(text ?? '').trim()
+  const byId = state.agents.find(a => a.id === wanted)
+  if (byId) return byId
+  const same = state.agents.filter(a => [a.label, a.name].some(n => n && n.toLowerCase() === wanted.toLowerCase()))
+  if (same.length === 1) return same[0]
+  throw new Error(same.length ? `several sessions are called ${JSON.stringify(wanted)}: name the id (${same.map(a => a.id).join(', ')})` : `no session ${JSON.stringify(wanted)}`)
+}
+function setParent(agent, parent) {
+  if (parent == null || parent === '') { delete agent.parent; return null }
+  const main = sessionNamed(parent)
+  if (main === agent) throw new Error('a session cannot be its own main')
+  if (main.parent != null) throw new Error(`${main.id} is itself a sub of ${main.parent}; a sub belongs to a main directly (one level)`)
+  if (state.agents.some(a => a.parent === agent.id)) throw new Error(`${agent.id} has subs of its own, so it cannot become a sub (one level)`)
+  agent.parent = main.id
+  if (main.desk) agent.desk = main.desk
+  return main
+}
+
+// ---- test cards (the "Create five fake decisions" item of the menu) --------
+// A session of the hub's own, "Demo", that is never linked: it files cards through the same path as an agent, so
+// they are cards like any other, one of each kind in turn. Titles say "Test:". Clearing forgets the session with
+// everything it filed.
+const DEMO_ID = 'demo'
+const DEMO_DIR = path.join(ROOT, '..', 'demo')
+const DEMO_CARDS = [
+  ['create_decision', { title: 'Test: Backup heute Nacht laufen lassen?', body: 'Eine einfache Ja/Nein-Frage.', options: [{ key: 'yes', label: 'Ja' }, { key: 'no', label: 'Nein' }], recommended: 'yes' }],
+  ['create_decision', { title: 'Test: Was passiert mit den alten Entwürfen?', body: 'Zwei lange Antworten, mit Kurzwort für die Kacheln.', options: [{ key: 'del', label: 'Alle alten Entwürfe endgültig löschen', short: 'Löschen', detail: 'nicht umkehrbar' }, { key: 'keep', label: 'Im Archiv behalten und später sichten', short: 'Behalten' }] }],
+  ['create_decision', { title: 'Test: Welche Datenbank für den Prototyp?', body: 'Drei Möglichkeiten, eine empfohlen.', options: [{ key: 'sqlite', label: 'SQLite', detail: 'eine Datei, kein Server' }, { key: 'pg', label: 'Postgres', detail: 'braucht einen Server' }, { key: 'later', label: 'Später entscheiden' }], recommended: 'sqlite' }],
+  ['create_decision', { title: 'Test: Was soll in den Wochenbericht?', body: 'Mehrere dürfen angekreuzt werden.', multiple: true, recommended: ['done', 'open'], options: [{ key: 'done', label: 'Erledigtes' }, { key: 'open', label: 'Offene Fragen' }, { key: 'numbers', label: 'Zahlen' }, { key: 'risks', label: 'Risiken' }, { key: 'next', label: 'Nächste Schritte' }] }],
+  ['create_decision', { title: 'Test: Deploy steht, jetzt freigeben?', body: 'Eine dringende Karte, die anklopft.', urgency: 'critical', urgency_reason: 'Test: nichts geht weiter', options: [{ key: 'go', label: 'Freigeben' }, { key: 'stop', label: 'Anhalten' }] }],
+  ['create_decision', { title: 'Test: Welcher Entwurf gefällt dir?', body: 'Zwei Bilder, jedes gehört zu seiner Antwort.', options: [{ key: 'a', label: 'Entwurf A' }, { key: 'b', label: 'Entwurf B' }], attachments: ['design-a.png', 'design-b.png'] }],
+  ['create_info', { title: 'Test: So läuft die Migration', body: 'Nur zum Lesen: erst das Backup, dann die Migration, danach ein Probelauf. Zum Schließen antippen.' }],
+]
+function demoSession() {
+  let demo = state.agents.find(a => a.id === DEMO_ID)
+  if (demo && !demo.demo) throw fail(409, 'a real session is called "demo"; the test cards need that id')
+  if (!demo) {
+    const now = Date.now()
+    demo = { id: DEMO_ID, name: 'Demo', label: 'Demo', demo: true, cwd: '', host: '', platform: '', model: 'none', client: '', task: 'Test cards, filed by the hub itself', joined: now, connected: now, seen: now, online: false, archived: false, desk: DEFAULT_DESK }
+    state.agents.push(demo)
+  }
+  return demo
+}
+function fakeDecisions(n) {
+  demoSession()
+  const numbers = []
+  for (let i = 0; i < n; i++) {
+    const [tool, args] = DEMO_CARDS[(state.demo_count ?? 0) % DEMO_CARDS.length]
+    state.demo_count = (state.demo_count ?? 0) + 1
+    const said = runTool(DEMO_ID, tool, { ...args, ...(args.attachments ? { attachments: args.attachments.map(name => path.join(DEMO_DIR, name)) } : {}) })
+    numbers.push(Number(/Nr\. (\d+)/.exec(said)[1]))
+  }
+  commit()
+  return numbers
+}
+function clearFakeDecisions() {
+  const demo = state.agents.find(a => a.id === DEMO_ID && a.demo)
+  if (!demo) return []
+  const numbers = state.cards.filter(c => c.agent === DEMO_ID).map(c => c.number)
+  forgetSession(DEMO_ID, true)
+  // The id was the hub's own, not a session's: it is free for the next test.
+  state.retired_ids = state.retired_ids.filter(id => id !== DEMO_ID)
+  commit()
+  return numbers
+}
+
 // An agent only ever touches its own cards.
 function findCard(agent, id) {
   const card = state.cards.find(c => c.id === id && c.agent === agent)
@@ -323,23 +471,42 @@ function findCard(agent, id) {
 
 // ---- agents --------------------------------------------------------------
 
-// An id is the slug of the agent's name, with -2, -3 for further sessions of
-// the same name. A process that comes back gets the id it had; a new process
-// gets the plain slug only if no running session holds it.
-function agentId(name, wanted, instance) {
+// Stable ids (card Nr. 80): the hub makes a session's id once, from its name at the time (the slug, with
+// -2, -3 for further sessions), and never hands it to anyone else, not even after the session was forgotten.
+// The name is a label from then on. With the id the hub gives a key, which it keeps only as a hash; the
+// session keeps the key (server.mjs: in memory and in data/agents/) and gets its id back by showing it.
+// In this order:
+//   1. a key the hub gave: the first claim whose key fits and whose id no other process holds;
+//   2. the same process again (instance), as before: a spoke of an older server.mjs, dev/session.mjs;
+//   3. a session from before stable ids, by the slug of its name, unless a process that keeps keys holds it (bound);
+//   4. a new id.
+const hashKey = key => crypto.createHash('sha256').update(String(key)).digest('hex')
+const CLAIMS_MAX = 20
+function agentId(name, wanted, instance, claims = []) {
   const taken = id => {
     const link = links.get(id)
     if (link) return link.instance !== instance
     return Date.now() < reservedUntil && reserved.has(id) && reserved.get(id) !== instance
   }
-  if (wanted && !taken(wanted) && state.agents.some(a => a.id === wanted && a.instance === instance)) return wanted
-  let id = slug(name)
-  for (let n = 2; taken(id); n++) id = `${slug(name)}-${n}`
-  return id
+  const known = id => state.agents.find(a => a.id === id)
+  for (const c of claims.slice(0, CLAIMS_MAX)) {
+    const a = typeof c?.id === 'string' && typeof c.key === 'string' ? known(c.id) : null
+    if (a?.key_hash && sameSecret(hashKey(c.key), a.key_hash) && !taken(a.id)) return { id: a.id, proven: true }
+  }
+  if (wanted && !taken(wanted) && known(wanted)?.instance === instance) return { id: wanted }
+  const base = slug(name)
+  // (The hub's own demo session is nobody's to take over.)
+  if (known(base) && !known(base).bound && !known(base).demo && !taken(base)) return { id: base }
+  const retired = new Set(state.retired_ids)
+  let id = base
+  for (let n = 2; taken(id) || known(id) || retired.has(id); n++) id = `${base}-${n}`
+  return { id }
 }
 
-function register({ name, cwd, host = '', platform = '', id: wanted }, link) {
-  const id = agentId(name, wanted, link.instance)
+// keeps: the process keeps the key it is given (server.mjs from now on); a record it holds is bound to its key.
+// link.key is the key to hand over in the greeting, if a new one was made.
+function register({ name, cwd, host = '', platform = '', id: wanted, claims, keeps = false, parent }, link) {
+  const { id, proven } = agentId(name, wanted, link.instance, Array.isArray(claims) ? claims : [])
   // The same process linking again before its old connection was seen to close.
   links.get(id)?.end?.()
   links.set(id, link)
@@ -347,8 +514,17 @@ function register({ name, cwd, host = '', platform = '', id: wanted }, link) {
   const now = Date.now()
   // A session that is back is no longer archived.
   const fields = { name, cwd, host, platform, instance: link.instance, connected: now, seen: now, archived: false }
+  // A key is made for a session that has none it could show; a bound session's key stays what it was.
+  if (!proven && !known?.bound) {
+    link.key = crypto.randomBytes(16).toString('hex')
+    fields.key_hash = hashKey(link.key)
+  }
+  if (keeps && (proven || link.key)) fields.bound = true
   if (known) Object.assign(known, fields)
-  else state.agents.push({ id, model: '', client: '', task: '', joined: now, online: true, ...fields })
+  // A new session starts on the default desk; the human moves it.
+  else state.agents.push({ id, model: '', client: '', task: '', joined: now, online: true, desk: DEFAULT_DESK, ...fields })
+  // A helper that names its main when it links (dev/session.mjs link --parent); a parent that does not fit is left out.
+  if (parent) try { setParent(state.agents.find(a => a.id === id), parent) } catch (err) { console.error(`[board] ${id}: ${err.message}`) }
   commit()
   return id
 }
@@ -406,7 +582,9 @@ function purge() {
     for (const name of [card, ...(card.versions ?? [])].flatMap(v => v.attachments ?? []).flatMap(filesOfAttachment)) fs.rmSync(path.join(FILES, name), { force: true })
   }
   state.cards = state.cards.filter(c => !ids.has(c.id))
+  const before = state.messages.length
   state.messages = state.messages.filter(m => !(m.from === 'event' && ids.has(m.card_id)))
+  if (state.messages.length !== before) messagesChanged()
   for (const t of state.tasks) if (ids.has(t.card_id)) t.card_id = null
   commit()
   console.error(`[board] removed ${old.length} cards answered more than ${RETENTION_DAYS} days ago`)
@@ -455,6 +633,12 @@ function setIcon(id, icon) {
 
 // The queue of an agent that is away lives in the state file, so it outlasts the hub.
 async function deliver(agent, method, params) {
+  // Nobody listens for the demo session: an answer to one of its test cards closes the card, and nothing waits.
+  if (agent === DEMO_ID && !links.has(agent)) {
+    const card = params?.meta?.kind === 'decision' ? state.cards.find(c => c.id === params.meta.card_id && c.agent === DEMO_ID) : null
+    if (card && card.status === 'decided') try { runTool(DEMO_ID, 'close_card', { card_id: card.id, summary: 'Test card: closed by itself' }) } catch {}
+    return
+  }
   if (links.get(agent)?.send(method, params)) return
   const queue = state.pending[agent] ?? []
   state.pending[agent] = [...queue, { method, params, ts: Date.now() }].slice(-PENDING_MAX)
@@ -498,7 +682,27 @@ function pageOf(page) {
   throw new Error(`page not found: ${ref} is neither an existing HTML file, nor a path on the board (/…), nor a URL`)
 }
 
-// entry: a path, or { path, page?, title? }.
+// Where on a picture the thing is (his note on card Nr. 162): regions in fractions of the picture, x and y the
+// top-left corner, each with an optional label. The board draws the circle; nothing is drawn into the file.
+// Out of range is clamped into the picture; what is no number is refused. At most MARKS_PER_PICTURE.
+const MARKS_PER_PICTURE = 4
+const MARK_LABEL_MAX = 24
+function pictureMarks(given, name) {
+  if (given.mark == null && given.marks == null) return []
+  const list = [...(given.mark == null ? [] : [given.mark]), ...(given.marks == null ? [] : Array.isArray(given.marks) ? given.marks : [given.marks])]
+  if (list.length > MARKS_PER_PICTURE) throw new Error(`at most ${MARKS_PER_PICTURE} marks on one picture (${name})`)
+  const part = n => Math.round(Math.min(1, Math.max(0, n)) * 10000) / 10000
+  return list.map(m => {
+    if (!m || typeof m !== 'object' || !['x', 'y', 'w', 'h'].every(k => Number.isFinite(m[k]))) throw new Error(`a mark on ${name} is { x, y, w, h } in fractions of the picture (0 to 1; x, y the top-left corner), with an optional label`)
+    const x = part(m.x), y = part(m.y)
+    const w = part(Math.min(m.w, 1 - x)), h = part(Math.min(m.h, 1 - y))
+    if (!(w > 0 && h > 0)) throw new Error(`a mark on ${name} has no size inside the picture: w and h are fractions above 0, and x + w, y + h stay within 1`)
+    const label = String(m.label ?? '').replace(/\s+/g, ' ').trim().slice(0, MARK_LABEL_MAX)
+    return { x, y, w, h, ...(label ? { label } : {}) }
+  })
+}
+
+// entry: a path, or { path, page?, title?, mark? | marks? }.
 function storeAttachment(entry) {
   const given = entry && typeof entry === 'object' && !Array.isArray(entry) ? entry : { path: entry }
   const file = given.path
@@ -508,16 +712,19 @@ function storeAttachment(entry) {
   if (!stat.isFile()) throw new Error(`not a file: ${file}`)
   if (stat.size > MAX_ATTACHMENT) throw new Error(`attachment larger than ${MAX_ATTACHMENT / 1024 / 1024} MB: ${file}`)
   const ext = path.extname(src).toLowerCase()
+  const kind = kindOf(ext)
+  // Checked before anything is copied; marks belong to pictures only.
+  const marks = pictureMarks(given, path.basename(src))
+  if (marks.length && kind !== 'image') throw new Error(`a mark needs a picture; ${path.basename(src)} is none`)
   const stored = `${newId()}${ext}`
   fs.copyFileSync(src, path.join(FILES, stored))
-  const kind = kindOf(ext)
   // A picture is almost always a rendering of a page; one that lies beside it under the same name is taken to be it.
   const beside = src.slice(0, src.length - ext.length) + '.html'
   const twin = given.page == null && kind === 'image' && fs.existsSync(beside) && fs.statSync(beside).isFile() ? beside : null
   if (twin) paired.push(`${path.basename(src)} → ${path.basename(twin)}`)
   const page = given.page != null && given.page !== '' ? pageOf(given.page) : twin ? pageOf(twin) : null
   const title = String(given.title ?? '').trim().slice(0, 200)
-  return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size, ...(title ? { title } : {}), ...(page ? { page } : {}) }
+  return { name: path.basename(src), url: `/files/${stored}`, kind, image: kind === 'image', size: stat.size, ...(title ? { title } : {}), ...(page ? { page } : {}), ...(marks.length ? { marks } : {}) }
 }
 
 // What the human attaches in the browser (a file, a pasted screenshot, a drawing): a list of
@@ -588,6 +795,9 @@ function storeAsset(agent, given, blob) {
   const silent = given.silent === true
   if (!ASSET_ID.test(id) || state.assets.some(a => a.id === id)) throw new Error('an asset needs a fresh id of 22 base64url characters')
   if (blob.length < 32 || blob.length > ASSET_BLOB_MAX || !blob.subarray(0, 4).equals(ASSET_MAGIC)) throw new Error('not an asset blob')
+  // The plaintext is padded to a step, so the length of a whole blob is one of few; an upload that was cut off is not.
+  const sealed = blob.length - 4 - 12 - 16
+  if (sealed < 1024 || padded(sealed) !== sealed) throw new Error('not an asset blob: its length is none a whole asset has (cut off on the way?)')
   if (!silent && !(ASSET_TYPES.includes(given.type) && ASSET_KEY.test(given.key))) throw new Error('an asset shown on the board needs its type and key')
   fs.writeFileSync(path.join(ASSETS, id), blob, { mode: 0o600, flag: 'wx' })
   const title = silent ? '' : String(given.title ?? '').slice(0, 200)
@@ -618,6 +828,7 @@ function dropAssets(gone, why) {
   state.assets = state.assets.filter(a => !ids.has(a.id))
   for (const m of state.messages) {
     if (!ids.has(m.asset?.id)) continue
+    messagesChanged()
     m.text = `**${m.asset.title}** (${why})`
     m.asset = { id: m.asset.id, type: m.asset.type, title: m.asset.title, gone: true }
   }
@@ -630,7 +841,44 @@ function listAssets(agent) {
     expires: a.keep ? null : new Date(a.created + RETENTION_DAYS * 86400000).toISOString(), silent: a.silent,
     // Of a silent asset the hub has no key, so it cannot repeat the link.
     link: a.silent ? null : assetBases()[0] + shown(a.id),
+    released: isReleased(a), ...(isReleased(a) ? { release_expires: a.share.expires ? new Date(a.share.expires).toISOString() : null, opens: a.share.opens } : {}),
   }))
+}
+
+// ---- release for third parties ---------------------------------------------
+// An asset is released one by one, by the human on the board or by the session that published it. A released
+// asset has a second address, /r/<id>#<key>, which hands a stranger the recipient's page (share-viewer.mjs)
+// and the ciphertext and nothing else of the board. Un-releasing takes effect with the next request. What is
+// recorded: when, until when, how often the ciphertext was fetched. The admin log names the asset by id only.
+const SHARE_HOURS_MAX = 24 * 365
+const isReleased = a => Boolean(a.share) && !(a.share.expires && Date.now() > a.share.expires)
+const shareLog = (who, action, detail) => audit({ socket: { remoteAddress: who } }, action, detail)
+function shareAsset(asset, { release = true, expires_hours, keep }, who) {
+  if (release === false) {
+    if (asset.share) shareLog(who, 'asset-unreleased', `${asset.id}, opened ${asset.share.opens} times`)
+    delete asset.share
+    commit()
+    return null
+  }
+  const fresh = !isReleased(asset)
+  // A release that ran out and is given again starts without an end, unless one is named.
+  let expires = fresh ? null : asset.share.expires
+  if (expires_hours !== undefined) {
+    if (expires_hours === null || expires_hours === 0) expires = null
+    else if (!(Number.isFinite(expires_hours) && expires_hours > 0 && expires_hours <= SHARE_HOURS_MAX)) throw new Error(`expires_hours must be a number of hours up to ${SHARE_HOURS_MAX}, or 0 for no end`)
+    else expires = Date.now() + Math.round(expires_hours * 3600000)
+  }
+  if (keep !== undefined) asset.keep = keep === true
+  asset.share = { at: fresh ? Date.now() : asset.share.at, expires, opens: fresh ? 0 : asset.share.opens, opened: fresh ? null : asset.share.opened }
+  shareLog(who, fresh ? 'asset-released' : 'asset-release-changed', `${asset.id}${expires ? `, until ${new Date(expires).toISOString()}` : ', no end'}${asset.keep ? ', kept' : ''}`)
+  commit()
+  return asset.share
+}
+// The link for the recipient. The hub can only complete it for an asset it was told the key of.
+function shareLinks(asset) {
+  const url = state.messages.find(m => m.asset?.id === asset.id)?.asset.url
+  const key = url?.includes('#') ? url.slice(url.indexOf('#')) : ''
+  return { key: Boolean(key), links: assetBases().map(base => `${base}/r/${asset.id}${key}`) }
 }
 
 // ---- MCP side ------------------------------------------------------------
@@ -646,14 +894,15 @@ const mcp = new Server(
       'You are connected to Trommi, a web page with a chat and a stack of decision cards. The human is on that page, often on a phone, and cannot see this terminal.',
       'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
       'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
-      'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. For the one thing the human must not miss, write __two underscores around a few words__: the board underlines them by hand. Use it rarely; a text that underlines much is shown plain. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
+      'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. For the one thing the human must not miss, write __two underscores around a few words__: the board underlines them by hand. Use it rarely; a text that underlines much is shown plain. Likewise you may start the one paragraph that matters most with "☞ ": the board draws a pointing hand beside it, once per text, so use it sparingly. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
       'To compare things, write a markdown table (| a | b | rows, a rule of dashes under the first): the board draws it as a real table, numbers right-aligned. For anything richer, pass html beside the words (reply, create_decision, revise_card, merge_cards, or a block in sections), or fence it as ```html inside a text: it is shown at its place in the house style, light and dark. Semantic HTML only: tables, headings, lists, details, mark, kbd, simple inline CSS, the classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad. No scripts and nothing from the network, both are removed; pictures as data: URLs or as attachments. To show HTML as source instead, fence it as ```xml. Always say the gist in plain words in text (body for a question): that is what is read aloud and what clients without HTML show. A whole page to try out stays with publish_asset.',
       'When you need the human to choose something, do not ask in chat: call create_decision with a one-line question as title, a short body, and 2-6 options. Each option has a stable machine key, a human label, and where it helps a detail of a few words naming its consequence. Attach screenshots, mockups, or diffs by absolute path when they help the choice.',
       'When several options can hold at once (which of these to include, which to delete), set multiple: true: the human ticks any number of options and sends them together. The decision then arrives with choices="a,b", every chosen key comma-separated in the order of the options, next to choice, which is the first of them; recommended may then be a list of keys.',
-      'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first.',
+      'Make simple decisions quick to answer: if a question is really yes or no, give exactly two options with short labels (under 18 characters), keep the body under about three lines, and attach nothing. Such cards are answered with one tap straight from the inbox; anything with more options, longer text, or attachments makes the human open the card first. Put the option you would pick first. For a two-option question whose labels are not a plain yes or no, give each option a short of two or three words (e.g. "Delete" and "Keep"; in a text block as a last line "short: Delete"): the row then shows those two as answer tiles, without them it shows one "Choose" tile.',
+      'A question must fit one card on one screen: the human opens it as a card of fixed height, picture and question at the left, options at the right, and what does not fit scrolls inside it, which should be the exception. So: a title of one line; a body of at most about 300 characters or 5 short lines; pictures instead of prose; the card itself shows only the title, the short description and the pictures. Everything else (background, reasoning, measurements, links, the long explanation) you send right after filing the card as a message on the card: reply with the card_id that create_decision returned. It appears under the card, where the human scrolls down to it; it does not present the card again, does not move it and does not knock. A whole page to try stays an attached page or a published asset. The board tells you when a card is over this budget; shorten it then with revise_card.',
       'Keep every question short to read: an option label is at most about four words; detail is optional and at most one short line of about six words, never a paragraph and never an explanation of what leaving it unticked means; the body is one or two short sentences. A longer explanation goes behind a link (publish_asset) or an attachment, or comes when the human presses "Explain", which reaches you as a question back.',
       'When the human asks for an explanation, or you have something they should read but need not decide (a report, how something works, what you found), file it with create_info: a card with a title and a text, with a picture or diagram where it helps and sections for structure. The human reads it and closes it; you then get <channel source="board" kind="info_read" card_id="...">, which needs no answer. Do not dress such a thing up as a question with made-up options. A plain progress note stays a reply. If the human hands an info back or asks back about it, rework it with revise_card.',
-      'A question stays ONE card through its whole life. When the human hands a card back to you (a chat message with card_id and handback="1") or asks back about it, do not file a new question and do not only reply: rework the card with revise_card (new wording, options, pictures). It is then presented again, and the earlier versions stay visible to the human. Use withdraw_card and a new card only when the subject itself changed.',
+      'A question stays ONE card through its whole life. When the human hands a card back to you (a chat message with card_id and handback="1") or asks back about it, do not file a new question and do not only reply: rework the card with revise_card (new wording, options, pictures). It is then presented again, and the earlier versions stay visible to the human. While you work on it the card is with you ("in revision") and out of their way: a reply with that card_id ("got it, on it", a progress note) is shown on the card and does NOT put it before them again. Present it only when the work is done: with revise_card, or, if nothing in the card needs rewording, with reply and present: true. Never present a card just to confirm that you received something. Use withdraw_card and a new card only when the subject itself changed.',
       'Before filing a question, call list_cards. If you already have an open question on the same subject, do not add another: rewrite the open one with revise_card, which keeps its number and place, or replace several by one with merge_cards. Do this on your own initiative, without being asked; the human should never get many small questions that are really one.',
       'Prefer one question with multiple: true ("tick what you agree to", your advice as a recommended list) over several yes/no questions on one theme. More than about three open questions of yours on one theme is a sign to merge them.',
       'When a question needs explaining per option, do not write a body with one paragraph per option next to a separate options list: hand in ONE structured text, as sections (a list of blocks) or as text (one string), and flag the paragraphs that are options. The board then shows each paragraph tied to its option: the human ticks the paragraph itself. In text, paragraphs are separated by a blank line, and a paragraph starting with [key] Label: becomes the option "key" with that paragraph as its explanation ([key*] marks the one you would pick); every other paragraph is plain context. Keep labels to about four words and each paragraph short. Plain options stay right for simple questions.',
@@ -662,23 +911,25 @@ const mcp = new Server(
       'Offer only the options you are about 80% confident are a great idea: two or three strong options beat ten. When the human explicitly asks for many proposals, show them all on the page (a linked page or an attachment), but put on the card only the ones you stand behind, and mark your recommendation.',
       'Say which option you would pick: set recommended to its key. The board circles it by hand, the human still decides.',
       'When a question is easier to grasp with a picture, attach a small drawing, diagram or screenshot to the card (attachments), and name the option you would pick in recommended.',
+      'When a picture shows a whole screen and what matters is a small part of it (a row, a button), say where it is instead of drawing on the picture: attach it as { path, mark: { x, y, w, h, label } }, the region in fractions of the picture (0 to 1, x and y the top-left corner; marks for up to four regions). The board draws the circle and, on a question, ties it to the option the picture belongs to. Attached again under the same name without a mark, a picture keeps its marks; mark: null takes them away.',
       'A picture of something you built is almost always a rendering of a page: send the page with it, as an attachment { path, page }, so the human can open and try it right under the picture (a file foo.html beside foo.png is linked by itself). page is a self-contained HTML file, a path on the board or a link. A plain photo or diagram needs none.',
       'A question about how something looks or is laid out (UI, design, layout, wording or naming seen on screen) MUST carry a picture; words alone are not enough for it. Attach a screenshot, mockup or drawing per option where possible, each file named after its option key (<anything>-<key>.png), so the board shows each picture with its option; in sections, picture ties one to its block. For something that must be tried, link a clickable page: publish_asset, or a path on the board in backticks. When the human asks you to explain such a question, answer with a picture too.',
-      'The human sees one card at a time, the top of the stack; urgency decides the order (most urgent first, then oldest first), so set it honestly on every card.',
+      'The stack has a fixed order: oldest first, by when a card was filed. Nothing moves a card up or down, so the human is never surprised by a jumping list. Urgency does not change the place: it is how the card is marked and how loudly it knocks, so set it honestly on every card.',
       'critical: you are blocked and nothing else can proceed. high: it blocks your current task, but you have other work. normal (default): needed soon, nothing waits on it yet. low: nice to know, no work depends on it.',
       'For high and critical, give an urgency_reason: one short phrase, in the human\'s language, saying what is waiting. If everything is urgent, nothing is; most cards are normal.',
-      'Keep the stack true as your work moves: when an open card starts blocking you, raise it with set_urgency; lower it if the pressure is gone; and call withdraw_card as soon as a question became moot, so the human never answers something you no longer need. list_cards shows the current stack.',
+      'Keep the stack true as your work moves: when an open card starts blocking you, raise it with set_urgency (it knocks and is marked, it does not move); lower it if the pressure is gone; and call withdraw_card as soon as a question became moot, so the human never answers something you no longer need. list_cards shows the current stack.',
       'When the human trusts you with a question (the decision event carries trust="1"), the decision is yours: take the option you recommended or, if you recommended none, choose yourself. Then say in one line what you chose, with reply and that card_id, and call close_card with a summary. Do not ask again.',
       'The human may copy a card into a message to you, often another session\'s decision (cards="..." in the event): the content then holds that card in full, with the question, the options, the answer and the notes. Treat an answered one as decided; do not ask it again.',
       'The human can throw a question away unanswered: <channel source="board" kind="shredded" card_id="...">. That is not a yes and not a no. Do not file it again, nor a rewording of it; carry on with your own judgement or drop the matter. If you truly cannot proceed without an answer, say so once in a reply, not as a new question.',
       'The choice arrives later as <channel source="board" kind="decision" card_id="..." choice="KEY">; the body is the human\'s note if they wrote one. Act on it, then call close_card with a one-line summary of what you did.',
       'Do not block waiting for a decision: keep working on whatever does not depend on it.',
       'A chat message with a card_id (<channel source="board" kind="chat" card_id="...">) is a question back about that card, not an answer to it; the card stays open. Answer it with reply, passing the same card_id, and when the question back shows the card was unclear, do not only reply: rewrite the card with revise_card, so the question itself is clear.',
-      'When that question back asks you to explain the card (the board has a one-tap "Explain"), answer with reply and the same card_id in plain words and briefly: what the question is about, what each option would mean for the human, and which one you would pick. The card waits out of the way until your reply arrives, so answer promptly.',
+      'When that question back asks you to explain the card (the board has a one-tap "Explain"), answer with reply and the same card_id in plain words and briefly: what the question is about, what each option would mean for the human, and which one you would pick. The card waits out of the way until your reply arrives, and that reply puts it before the human again by itself, so answer promptly and with the explanation, not with an acknowledgement.',
       'The human can attach files, pasted screenshots and small drawings to a chat message and to the note of an answer: the meta attribute files then holds their absolute paths, comma-separated, and image_path the first picture among them. Read them before you answer.',
       'When you introduce yourself, also pass icon: the drawing that fits your task, chosen from the names listed in the description of introduce. It becomes the symbol of your session; one the human picked by hand is kept.',
       'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
-      'Other agents may share this board; the human sees all stacks merged into one, ordered by urgency. You only see and change your own cards and status lines.',
+      'Sessions can belong together: a main agent and its helpers. If you lead helper sessions, say so with introduce (main: true) and have every helper you start introduce itself with parent set to your session id; a session that already runs you can take with adopt_session. If you were started as a helper, pass parent in your own introduce. The board then shows the helpers under their main.',
+      'Other agents may share this board; the human sees all stacks merged into one, oldest first. You only see and change your own cards and status lines.',
       'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply. The human may dictate messages, so expect transcription slips in chat and read them charitably.',
       'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
       'The human also keeps one pad for everything: notes, drawings, pictures and spoken text, each an element of its own. <channel source="board" kind="pad" elements="ID,ID" image_path="/abs/selection.png"> means they selected some of it and sent it to you: the body is the words of the selected notes in reading order, image_path is a picture of exactly the selection, so read it; elements are the ids of what was selected.',
@@ -698,6 +949,16 @@ const SECTION_TEXT_EXAMPLE = [
 ].join('\n\n')
 
 // What a question is made of besides its title, the same for create_decision, revise_card and merge_cards.
+// An option in two or three words, for the answer tile on a Desk row (card Nr. 157). Longer is cut at a word.
+const SHORT_MAX = 18
+function shortOf(value) {
+  const said = String(value ?? '').replace(/\s+/g, ' ').trim()
+  if (said.length <= SHORT_MAX) return said
+  const cut = said.slice(0, SHORT_MAX + 1)
+  return (cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : said.slice(0, SHORT_MAX)).trim()
+}
+const withShort = value => (shortOf(value) ? { short: shortOf(value) } : {})
+
 const QUESTION_PROPS = {
   body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context.' },
   html: { type: 'string', description: `Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most ${HTML_MAX / 1024} KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html.` },
@@ -711,6 +972,7 @@ const QUESTION_PROPS = {
         key: { type: 'string', description: 'Stable identifier returned to you, e.g. "sqlite"' },
         label: { type: 'string', description: 'What the human sees on the button, at most about four words' },
         detail: { type: 'string', description: 'Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means' },
+        short: { type: 'string', description: `Optional: the option in two or three words (at most ${SHORT_MAX} characters), for the answer tile on the Desk row of a two-option question whose labels are not a plain yes or no, e.g. "Delete" and "Keep". Without it such a row shows one "Choose" tile.` },
       },
       required: ['key', 'label'],
     },
@@ -724,6 +986,7 @@ const QUESTION_PROPS = {
         text: { type: 'string', description: 'The paragraph, markdown; for a flagged block what this option means, at most about 400 characters' },
         key: { type: 'string', description: 'Flags the block as an option: the stable identifier returned to you' },
         label: { type: 'string', description: 'Required with key: the short name of the option on its tile, at most about four words' },
+        short: { type: 'string', description: `With key, optional: the option in two or three words (at most ${SHORT_MAX} characters) for the answer tile on the Desk row; see options` },
         html: { type: 'string', description: 'A rich layout shown under this paragraph (see html); the text beside it says the same in plain words' },
         recommended: { type: 'boolean', description: 'true: you would pick this one; several only with multiple: true' },
         picture: { anyOf: [{ type: 'string' }, { type: 'integer' }], description: 'An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0' },
@@ -737,8 +1000,8 @@ const QUESTION_PROPS = {
   },
   attachments: {
     type: 'array',
-    description: 'Files to show on the card, each an absolute path or { path, page, title }; images render inline. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
-    items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' } }, required: ['path'] }] },
+    description: 'Files to show on the card, each an absolute path or { path, page, title, mark }; images render inline. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
+    items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' }, mark: { type: 'object', description: 'For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, label: { type: 'string', description: 'A word or two beside the circle, at most 24 characters' } }, required: ['x', 'y', 'w', 'h'] }, marks: { type: 'array', maxItems: 4, description: 'Several such regions on one picture, at most four', items: { type: 'object' } } }, required: ['path'] }] },
   },
   urgency: {
     type: 'string',
@@ -765,17 +1028,18 @@ const TOOLS = [
         details: { type: 'string', description: 'Optional longer material shown collapsed under the message: your reasoning, what you tried, command output, a diff. Markdown. The human opens it only if they want to.' },
         attachments: {
           type: 'array',
-          description: 'Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link. Each is an absolute path or { path, page, title }: a picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
-          items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' } }, required: ['path'] }] },
+          description: 'Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link. Each is an absolute path or { path, page, title, mark }: a picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
+          items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' }, mark: { type: 'object', description: 'For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, label: { type: 'string', description: 'A word or two beside the circle, at most 24 characters' } }, required: ['x', 'y', 'w', 'h'] }, marks: { type: 'array', maxItems: 4, description: 'Several such regions on one picture, at most four', items: { type: 'object' } } }, required: ['path'] }] },
         },
-        card_id: { type: 'string', description: 'When you answer a question the human asked back about a card (a chat message that carried card_id): that card. The board shows your answer with the card.' },
+        card_id: { type: 'string', description: 'One of your cards this message belongs to; the board shows it under that card. Use it to answer a question the human asked back about the card (a chat message that carried card_id), and to give the details of a card you just filed (background, reasoning, measurements, links), which do not belong in its body. On an open card it changes nothing about the card: not its place, not its state.' },
+        present: { type: 'boolean', description: 'Only with card_id, for a card the human handed back to you. true: your work on it is done without rewording it, put the card before the human again. Left out: the reply is only a message on the card (an acknowledgement, a progress note) and the card stays with you. The answer to "Explain" presents the card by itself.' },
       },
       required: ['text'],
     },
   },
   {
     name: 'create_decision',
-    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. Keep it short: body one or two short sentences, option labels about four words, detail at most one short line. When every option needs a sentence or two of explanation, pass sections or text instead of body and options, so each paragraph sits with its option. A question about how something looks or is laid out must carry a picture: one attachment per option where possible, named <anything>-<key>.png, or a link to a page to try.',
+    description: 'Put a decision card on the board for the human to answer. Returns the card id. Call list_cards first: if you already have an open question on the same subject, use revise_card or merge_cards instead of adding another. It must fit one card on one screen, which is how the human sees it: a title of one line, a body of at most about 300 characters or 5 short lines, per option a label of at most four words and a detail of one short line, at most six options. Show it in a picture rather than explain it in prose; background, reasoning, measurements and links never go into the body: send them right after filing as a reply with the card_id of this card (the human finds it by scrolling down under the card; it does not present or move the card), or put them on an attached page. When every option needs a sentence or two of explanation, pass sections or text instead of body and options, so each paragraph sits with its option. A question about how something looks or is laid out must carry a picture: one attachment per option where possible, named <anything>-<key>.png, or a link to a page to try.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -806,7 +1070,7 @@ const TOOLS = [
   },
   {
     name: 'revise_card',
-    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. Same brevity as create_decision, and the same rule for questions about looks: they carry a picture per option or a link to a page to try. Every rewording is a new version of the same card; the earlier versions stay visible to the human, and after a hand-back the revision is what presents the card again. Decided cards cannot be revised.',
+    description: 'Rewrite one of your open decision cards in place: pass only what changes. The card keeps its id, its number and its place with the human. Use it when a question back showed the card was unclear, when your work changed the options, or to fold a new point into a question you already have open instead of filing another. The same budget as create_decision (the question fits one card on one screen: title one line, body about 300 characters or 5 short lines, labels four words, details one short line; background as a reply with the card_id or behind a link), and the same rule for questions about looks: they carry a picture per option or a link to a page to try. Every rewording is a new version of the same card; the earlier versions stay visible to the human, and after a hand-back the revision is what presents the card again. Decided cards cannot be revised.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -833,7 +1097,7 @@ const TOOLS = [
   },
   {
     name: 'set_urgency',
-    description: 'Change the urgency of an open decision card, which moves it in the stack. Use it when a card starts or stops blocking you.',
+    description: 'Change the urgency of an open decision card: how it is marked and how loudly it knocks. It keeps its place in the stack, which is fixed, oldest first. Use it when a card starts or stops blocking you.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -897,6 +1161,8 @@ const TOOLS = [
         model: { type: 'string', description: 'The model you are running as, e.g. "Claude Opus 5.5"' },
         task: { type: 'string', description: 'What you are working on in this session, one line' },
         icon: { type: 'string', description: 'The name of the drawing that fits your task; it becomes the symbol of your session. A symbol the human picked by hand is kept.' },
+        parent: { type: 'string', description: 'If you are a helper of another session: the id or the name of your main session. The board then shows you under it. Pass an empty string to stand alone again.' },
+        main: { type: 'boolean', description: 'true: you are a main agent that leads helper sessions; the board shows you with a crown. A session that has helpers under it is a main without saying so.' },
       },
       required: ['model'],
     },
@@ -944,6 +1210,32 @@ const TOOLS = [
     description: 'End a published asset: the stored ciphertext is deleted and the link stops working for everyone.',
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'The asset id returned by publish_asset' } }, required: ['id'] },
   },
+  {
+    name: 'adopt_session',
+    description: 'As a main agent, take a session that already exists as your helper (sub): the board shows it under you. Only a session on your machine that has no other main and leads no helpers itself. This starts nothing; it only says which existing session belongs to you. release: true lets it go again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The id or the name of the session' },
+        release: { type: 'boolean', description: 'true: it is no longer your helper' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'share_asset',
+    description: 'Release one of your assets for someone outside the board, or take the release back. A released asset gets a second link, /r/<id>#<key>, with a plain page for the recipient that shows nothing of the board. Release only what the human asked to be passed on. Returns the link.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The asset id returned by publish_asset' },
+        release: { type: 'boolean', description: 'true (default): release it. false: take the release back; the link stops working at once, the asset itself stays.' },
+        expires_hours: { type: 'number', description: 'The release ends by itself after this many hours. 0 or left out: no end.' },
+        keep: { type: 'boolean', description: `true: also keep the asset beyond the ${RETENTION_DAYS} days after which it would be deleted.` },
+      },
+      required: ['id'],
+    },
+  },
 ]
 
 // One call per tool that does something sensible, for the help page. The test checks each against its schema.
@@ -986,6 +1278,8 @@ const TOOL_EXAMPLES = {
   publish_asset: { path: '/home/me/project/out/report.html', title: 'Load test, 2 October', note: 'Charts for the three variants' },
   list_assets: {},
   revoke_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A' },
+  share_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A', expires_hours: 72 },
+  adopt_session: { id: 'web-ui' },
 }
 
 // Everything that travels over the channel besides tool calls, for the help page.
@@ -1103,14 +1397,16 @@ function parseSections(text) {
     const flag = FLAGGED.exec(par)
     if (!flag) return { text: par }
     let picture = null
-    const rest = par.slice(flag[0].length).replace(/\n[ \t]*picture:[ \t]*(.+)$/i, (_, name) => { picture = name.trim(); return '' })
+    let short = null
+    const rest = par.slice(flag[0].length).replace(/\n[ \t]*picture:[ \t]*(.+)$/im, (_, name) => { picture = name.trim(); return '' })
+      .replace(/\n[ \t]*short:[ \t]*(.+)$/im, (_, words) => { short = words.trim(); return '' })
     const [first, ...lines] = rest.split('\n')
     const colon = first.search(/:(\s|$)/)
     let advised = Boolean(flag[2])
     const label = (colon < 0 ? first : first.slice(0, colon)).replace(/\s*(\*|\(recommended\))\s*$/i, () => { advised = true; return '' }).trim()
     return {
       key: flag[1], label, text: [colon < 0 ? '' : first.slice(colon + 1), ...lines].join('\n').trim(),
-      ...(advised ? { recommended: true } : {}), ...(picture == null ? {} : { picture }),
+      ...(advised ? { recommended: true } : {}), ...(picture == null ? {} : { picture }), ...(short == null ? {} : { short }),
     }
   })
 }
@@ -1143,7 +1439,7 @@ function sectionsOf(args, names) {
     const key = String(b.key)
     const label = String(b.label ?? '').trim()
     if (!label) throw new Error(`section "${key}" has a key, so it becomes an option and needs a label: the short name on its tile, at most about four words`)
-    return { key, label, text: said, ...layout, recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
+    return { key, label, text: said, ...layout, ...withShort(b.short), recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
   })
 }
 
@@ -1161,8 +1457,8 @@ function questionFields(args, names = []) {
   const body = sections ? bodyOf(sections) : cleanFences(String(args.body ?? ''), 'body')
   const html = sections ? '' : htmlBeside(args.html, body, { beside: 'body' })
   const flagged = sections?.filter(s => s.key != null)
-  const options = flagged ? flagged.map(s => ({ key: s.key, label: s.label, detail: '' })) : listArg(args.options, 'options').map(o => ({
-    key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '',
+  const options = flagged ? flagged.map(s => ({ key: s.key, label: s.label, detail: '', ...withShort(s.short) })) : listArg(args.options, 'options').map(o => ({
+    key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '', ...withShort(o?.short),
   }))
   const keys = new Set(options.map(o => o.key))
   if (options.length < 2 || keys.size !== options.length) {
@@ -1219,24 +1515,35 @@ const crowdHint = (others, card) => (others.length < CROWD ? '' : [
 ].join('\n'))
 
 // A card is read on a phone, between other things. Past these lengths the agent is told, not refused.
+// One card, one screen (the opened question is a card of fixed height; what does not fit scrolls inside it, which
+// should be the exception). The budget, named in every warning: nothing is refused.
+const TITLE_MAX = 70
 const BODY_MAX = 300
+const BODY_LINES = 5
+const LABEL_WORDS = 4
 const DETAIL_MAX = 60
 const SECTION_MAX = 400
 const OPTIONS_MANY = 6
+const CARD_BUDGET = `a title of one line (about ${TITLE_MAX} characters), a body of at most about ${BODY_MAX} characters or ${BODY_LINES} short lines, per option a label of at most ${LABEL_WORDS} words and a detail of one short line (about six words), at most ${OPTIONS_MANY} options`
 // What there is to read in a text: a fenced layout or code block is looked at, not read.
 const prose = text => String(text ?? '').replace(/```[\s\S]*?```/g, '')
 function lengthHint(card) {
   const long = card.options.filter(o => o.detail.length > DETAIL_MAX)
+  const wide = card.options.filter(o => o.label.trim().split(/\s+/).length > LABEL_WORDS + 2)
+  const lines = prose(card.body).split('\n').filter(l => l.trim()).length
   // A sectioned card is read block by block, so each block has its own measure and the body, which is all of them, has none.
   const wordy = (card.sections ?? []).map((s, i) => (prose(s.text).length > SECTION_MAX ? `${s.key == null ? `block ${i + 1}` : `"${s.key}"`} (${prose(s.text).length})` : '')).filter(Boolean)
   const said = [
+    card.title.length > TITLE_MAX + 20 ? `the title has ${card.title.length} characters (aim for one line, about ${TITLE_MAX})` : '',
     wordy.length ? `the section text of ${wordy.join(', ')} is longer than about ${SECTION_MAX} characters (aim for two or three sentences per block)` : '',
-    !card.sections && prose(card.body).length > BODY_MAX ? `the body has ${prose(card.body).length} characters (aim for one or two short sentences)` : '',
+    !card.sections && prose(card.body).length > BODY_MAX ? `the body has ${prose(card.body).length} characters (aim for at most about ${BODY_MAX}, one or two short sentences)`
+      : !card.sections && lines > BODY_LINES ? `the body has ${lines} lines (aim for at most ${BODY_LINES} short ones)` : '',
+    wide.length ? `the label of ${wide.map(o => `"${o.key}"`).join(', ')} is longer than about ${LABEL_WORDS} words` : '',
     long.length ? `the detail of ${long.map(o => `"${o.key}"`).join(', ')} is longer than one short line (aim for about six words)` : '',
   ].filter(Boolean)
   // More options than anyone weighs at a glance usually means the agent has not chosen yet.
-  const many = card.options.length > OPTIONS_MANY ? `\nMany options (${card.options.length}): keep only the ones you are sure of. Two or three you stand behind beat ten; put the rest on a page or leave them out, and mark the one you would pick.` : ''
-  return (said.length ? `\nThis is a lot to read: ${said.join('; ')}. Shorten it with revise_card and put the longer explanation behind a link or in an attachment; the human can ask for it with "Explain".` : '') + many
+  const many = card.options.length > OPTIONS_MANY ? `\nMany options (${card.options.length}; a card holds about ${OPTIONS_MANY}): keep only the ones you are sure of. Two or three you stand behind beat ten; put the rest on a page (an attachment with page, or publish_asset, linked from the body) or leave them out, and mark the one you would pick. Shorten it with revise_card.` : ''
+  return (said.length ? `\nThis is a lot to read: ${said.join('; ')}. A question has to fit one card on one screen: ${CARD_BUDGET}. Shorten it with revise_card: say it in a picture rather than in prose, and move the background to an attached page or a published asset linked from the body; the human can also ask for it with "Explain".` : '') + many
 }
 
 // A question about looks is judged by looking. One that reads like it and shows nothing is answered with a reminder, not refused.
@@ -1254,12 +1561,20 @@ function runTool(agent, name, args) {
   switch (name) {
     case 'reply': {
       const about = args.card_id == null ? {} : { card_id: findCard(agent, args.card_id).id }
-      // The agent answered the question back, so the card is with the human again.
-      if (about.card_id) delete findCard(agent, about.card_id).with_agent
+      // A reply on a card that is with the agent is a message on the card and no more: "got it, working on it" does
+      // not put the card in front of the human again. It goes back when the agent says so (present: true, or a
+      // revise_card), and with the answer to "Explain": there the answer is what the human is waiting for.
+      const card = about.card_id ? findCard(agent, about.card_id) : null
+      let presented = false
+      if (card?.with_agent != null) {
+        const turn = state.messages.findLast(m => m.from === 'user' && m.card_id === card.id && (m.handback || m.explain))
+        presented = args.present === true || Boolean(turn?.explain && !turn.handback && args.present !== false)
+        if (presented) delete card.with_agent
+      }
       const text = cleanFences(String(args.text ?? ''), 'text')
       const html = htmlBeside(args.html, text)
-      addMessage(agent, 'agent', text, listArg(args.attachments, 'attachments').map(storeAttachment), { ...(html ? { html } : {}), ...(args.details ? { details: cleanFences(String(args.details), 'details') } : {}), ...about })
-      return `sent${strippedHint()}${pairedHint()}`
+      addMessage(agent, 'agent', text, listArg(args.attachments, 'attachments').map(storeAttachment), { ...(html ? { html } : {}), ...(args.details ? { details: cleanFences(String(args.details), 'details') } : {}), ...about, ...(presented ? { presented: true } : {}) })
+      return `sent${card?.with_agent != null ? `; card ${card.id} stays with you (in revision): put it before the human again with revise_card, or with reply and present: true, when your work on it is done` : presented ? `; card ${card.id} is before the human again` : ''}${strippedHint()}${pairedHint()}`
     }
     case 'create_decision': {
       const fields = questionFields(args, namesOf(args))
@@ -1307,7 +1622,14 @@ function runTool(agent, name, args) {
         recommended: info ? args.recommended : args.recommended != null ? (args.recommended.length ? args.recommended : NO_ADVICE)
           : resection ? undefined : multiple && Array.isArray(card.recommended) ? kept : kept[0] ?? NO_ADVICE,
       }, args.attachments == null ? card.attachments.map(a => a.name) : namesOf(args))
-      const attachments = args.attachments == null ? card.attachments : listArg(args.attachments, 'attachments').map(storeAttachment)
+      // A picture attached again under its name, with no word about marks, keeps the marks it had; mark or marks
+      // given (also as null or []) replace them.
+      const attachments = args.attachments == null ? card.attachments : listArg(args.attachments, 'attachments').map(entry => {
+        const stored = storeAttachment(entry)
+        const silent = !(entry && typeof entry === 'object' && ('mark' in entry || 'marks' in entry))
+        const before = silent && stored.image ? card.attachments.find(a => a.name === stored.name)?.marks : null
+        return before ? { ...stored, marks: before } : stored
+      })
       const stood = questionSig(card)
       const level = card.urgency
       // The version this call may replace, as the human saw it.
@@ -1363,6 +1685,7 @@ function runTool(agent, name, args) {
         ...fields, attachments: listArg(args.attachments, 'attachments').map(storeAttachment),
         // The human has been waiting since the oldest of them, and the new card takes that place in the stack.
         created: Math.min(...old.map(c => c.created)),
+        place: [...old].sort((a, b) => a.created - b.created || (a.place ?? a.number) - (b.place ?? b.number))[0].place ?? [...old].sort((a, b) => a.created - b.created || a.number - b.number)[0].number,
         merged_from: old.map(c => ({ id: c.id, number: c.number, title: c.title })),
       })
       addEvent('asked', card, card.title)
@@ -1448,8 +1771,13 @@ function runTool(agent, name, args) {
     case 'introduce': {
       // Checked first, so a refused symbol leaves the rest as it was.
       const symbol = setIcon(agent, args.icon)
+      const me = state.agents.find(a => a.id === agent)
+      // Checked before anything is written, too.
+      const main = args.parent === undefined ? undefined : setParent(me, args.parent)
+      if (args.main === true && me.parent == null) me.main_declared = true
+      else if (args.main === false || (args.main === true && me.parent != null)) delete me.main_declared
       setProfile(agent, { model: args.model, task: args.task })
-      return `noted${symbol}`
+      return `noted${symbol}${main ? `; you stand under your main session ${main.id}` : main === null ? '; you stand alone' : ''}`
     }
     case 'create_voiceover':
       return speak(args.text, String(args.style ?? '')).then(file => `voiceover written to ${file}`)
@@ -1473,6 +1801,35 @@ function runTool(agent, name, args) {
       dropAssets([asset], 'withdrawn')
       commit()
       return 'revoked: the stored asset is deleted and its link no longer opens'
+    }
+    case 'adopt_session': {
+      const me = state.agents.find(a => a.id === agent)
+      const sub = sessionNamed(args.id)
+      if (args.release === true) {
+        if (sub.parent !== agent) throw new Error(`${sub.id} is not your helper`)
+        delete sub.parent
+        commit()
+        return `${sub.id} stands alone again`
+      }
+      if (sub.parent != null && sub.parent !== agent) throw new Error(`${sub.id} already belongs to ${sub.parent}`)
+      if ((sub.host ?? '') !== (me.host ?? '')) throw new Error(`${sub.id} runs on another machine`)
+      setParent(sub, agent)
+      commit()
+      return `${sub.id} is your helper now and stands under you on the board`
+    }
+    case 'share_asset': {
+      const asset = state.assets.find(a => a.id === args.id && a.agent === agent)
+      if (!asset) throw new Error(`no asset ${args.id}`)
+      const share = shareAsset(asset, { release: args.release, expires_hours: args.expires_hours, keep: args.keep }, `session ${agent}`)
+      if (!share) return 'release taken back: the link for outsiders no longer opens anything. The asset itself is still there.'
+      const { key, links } = shareLinks(asset)
+      return [
+        `asset ${asset.id} is released${share.expires ? ` until ${new Date(share.expires).toISOString()}` : ''}.`,
+        `Link for the recipient: ${links[0]}${key ? '' : '#<key>'}`,
+        ...links.slice(1).map(other => `Same under the board's other address: ${other}${key ? '' : '#<key>'}`),
+        ...(key ? [] : ['The hub does not know the key of a silent asset: put the part after the # of your link in place of <key>.']),
+        'It opens only where the recipient can reach this address at all.',
+      ].join('\n')
     }
     case 'publish_asset':
       throw new Error('publish_asset encrypts in the process beside the agent; this server.mjs is older than the hub, restart the session')
@@ -1739,7 +2096,7 @@ async function trust(cardId, note, seen) {
   delete card.note_attachments
   delete card.with_agent
   delete card.draft
-  addEvent('decided', card, `Trusted: your call${advised.length ? ` · ${advised.map(o => o.label).join(', ')}` : ''}`)
+  addEvent('decided', card, `Whatever: your call${advised.length ? ` · ${advised.map(o => o.label).join(', ')}` : ''}`)
   state.messages.at(-1).trusted = true
   for (const t of state.tasks) {
     if (t.agent === card.agent && t.card_id === card.id && t.state === 'decision') Object.assign(t, { state: 'working', card_id: null, updated: Date.now() })
@@ -2247,9 +2604,13 @@ async function agentRoute(req, res, url) {
         },
         end: () => res.end(),
       }
-      const id = register({ name: q.get('name') || 'agent', cwd: q.get('cwd') || '', host: q.get('host') || '', platform: q.get('platform') || '', id: q.get('id') }, link)
+      // The keys a process kept from earlier greetings come in a header (base64url JSON [{ id, key }]), not in the address.
+      let claims = []
+      try { claims = JSON.parse(Buffer.from(String(req.headers['x-board-claims'] ?? ''), 'base64url').toString() || '[]') } catch {}
+      const id = register({ name: q.get('name') || 'agent', cwd: q.get('cwd') || '', host: q.get('host') || '', platform: q.get('platform') || '', id: q.get('id'), claims, keeps: q.get('keeps') === '1', parent: q.get('parent') || undefined }, link)
       // dedicated: this hub is nobody's session and comes back by itself, so a spoke waits for it instead of taking the port.
-      write({ hello: id, ping: PING, dedicated: HUB_ONLY })
+      // key: the session's proof for its id from now on, given once; the hub keeps only its hash.
+      write({ hello: id, ping: PING, dedicated: HUB_ONLY, ...(link.key ? { key: link.key } : {}) })
       flush(id)
       const beat = setInterval(() => res.write(': ping\n\n'), PING)
       req.on('close', () => {
@@ -2271,6 +2632,13 @@ async function agentRoute(req, res, url) {
     }
     if (req.method === 'POST' && url.pathname === '/agent/tool') {
       return send(res, 200, JSON.stringify({ text: await runTool(body.id, String(body.name), body.args ?? {}) }))
+    }
+    // What the session missed: its own conversation after a message seq, oldest first, at most `limit` (200).
+    if (req.method === 'POST' && url.pathname === '/agent/messages') {
+      const since = Number.isInteger(body.since) && body.since > 0 ? body.since : 0
+      const limit = Math.min(Number.isInteger(body.limit) && body.limit > 0 ? body.limit : 200, 200)
+      const mine = state.messages.filter(m => m.agent === body.id && m.seq > since)
+      return send(res, 200, JSON.stringify({ messages: mine.slice(0, limit), more: mine.length > limit, message_seq: state.message_seq }))
     }
     if (req.method === 'POST' && url.pathname === '/agent/profile') {
       setProfile(body.id, body.fields ?? {})
@@ -2368,7 +2736,7 @@ const canvasFiles = agent => ['json', 'png'].map(ext => [SCRIBBLES, path.basenam
 const SPEECH_KEEP = 86400000
 function orphans() {
   const owners = new Set([...state.agents.map(a => a.id), ...state.messages.map(m => m.agent), ...state.cards.map(c => c.agent)].filter(Boolean))
-  const used = new Set([...filesOf([...state.messages, ...state.cards]), ...[...owners].flatMap(canvasFiles)].map(([dir, name]) => path.join(dir, name)))
+  const used = new Set([...filesOf([...state.messages, ...state.cards, ...state.memos]), ...[...owners].flatMap(canvasFiles)].map(([dir, name]) => path.join(dir, name)))
   const loose = dir => listFiles(dir).filter(f => !used.has(path.join(dir, f.name)))
   const known = new Set(state.assets.map(a => a.id))
   return {
@@ -2412,6 +2780,7 @@ function forgetSession(id, withData) {
     dropAssets(state.assets.filter(mine), 'withdrawn')
     gone.messages = state.messages.filter(mine).length
     gone.cards = state.cards.filter(mine).length
+    if (gone.messages) messagesChanged()
     state.messages = state.messages.filter(m => !mine(m))
     state.cards = state.cards.filter(c => !mine(c))
   }
@@ -2419,6 +2788,9 @@ function forgetSession(id, withData) {
   state.tasks = state.tasks.filter(t => !mine(t))
   delete state.pending[id]
   state.agents = state.agents.filter(a => a.id !== id)
+  // A note that was meant for it is the human's still; it goes to whoever takes the quick memo.
+  for (const m of state.memos) if (m.to === id) m.to = null
+  if (!state.retired_ids.includes(id)) state.retired_ids.push(id)
   commit()
   return gone
 }
@@ -2633,12 +3005,42 @@ parent.postMessage('ready', '*')
 </script>`
 const VIEWER_FILES = { 'asset.js': 'js/asset.js', 'asset.css': 'css/asset.css', 'tokens.css': 'css/tokens.css' }
 
+// Fetches of ciphertext need no login, so they are counted per caller: behind a proxy on this machine the caller is
+// who the proxy names. BOARD_ASSET_RATE per minute (default 300); beyond it 429 until the minute is over.
+const ASSET_RATE = Number(process.env.BOARD_ASSET_RATE) || 300
+const blobCalls = new Map()   // caller -> { n, until }
+function overRate(req) {
+  const now = Date.now()
+  const far = req.socket.remoteAddress ?? ''
+  const who = LOOPBACK.has(far) ? String(req.headers['x-forwarded-for'] ?? far).split(',')[0].trim() : far
+  if (blobCalls.size > 5000) for (const [k, v] of blobCalls) if (now > v.until) blobCalls.delete(k)
+  let seen = blobCalls.get(who)
+  if (!seen || now > seen.until) blobCalls.set(who, seen = { n: 0, until: now + 60000 })
+  return ++seen.n > ASSET_RATE
+}
+// BOARD_ASSET_LOGIN=1: the ciphertext under /a/ is for the board only and wants the login; outsiders get released
+// assets under /r/. Off by default, because today's viewer (client/web/js/asset.js) fetches without the cookie.
+const ASSET_LOGIN = /^(1|true|yes)$/i.test(process.env.BOARD_ASSET_LOGIN ?? '')
+const ASSET_HEADERS = {
+  'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex',
+  // Nothing here is for another site to embed or read, and neither viewer nor a published page gets at a device.
+  'Cross-Origin-Resource-Policy': 'same-origin',
+  'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), payment=(), usb=(), display-capture=(), clipboard-read=()',
+}
+const assetOut = res => (code, body, type = 'application/json', csp = "default-src 'none'; sandbox") => {
+  res.writeHead(code, { 'Content-Type': type, 'Content-Security-Policy': csp, ...ASSET_HEADERS })
+  res.end(body)
+}
+// The ciphertext of one asset. A revoke may delete the file between the caller's check and the read.
+const sendBlob = (id, out, done) => fs.readFile(path.join(ASSETS, id), (err, blob) => {
+  if (err) return out(404, '{"error":"not found"}')
+  out(200, blob, 'application/octet-stream')
+  done?.()
+})
+
 function assetRoute(req, res, url) {
   const [id, rest, ...more] = url.pathname.split('/').slice(2)
-  const out = (code, body, type = 'application/json', csp = "default-src 'none'; sandbox") => {
-    res.writeHead(code, { 'Content-Type': type, 'Cache-Control': 'no-store', 'Content-Security-Policy': csp, 'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer', 'X-Robots-Tag': 'noindex' })
-    res.end(body)
-  }
+  const out = assetOut(res)
   const missing = () => out(404, '{"error":"not found"}')
   if (req.method !== 'GET' || more.length) return missing()
   if (id === '-' && rest === 'frame.html') return out(200, ASSET_FRAME, MIME['.html'], FRAME_CSP)
@@ -2646,9 +3048,36 @@ function assetRoute(req, res, url) {
   if (!ASSET_ID.test(id)) return missing()
   // The page is the same for every id, so asking for it does not tell whether an asset exists.
   if (rest == null) return out(200, fs.readFileSync(path.join(PUBLIC, 'a.html')), MIME['.html'], VIEWER_CSP)
-  if (rest !== 'blob' || !state.assets.some(a => a.id === id)) return missing()
-  // A revoke may delete the file between the check above and the read.
-  fs.readFile(path.join(ASSETS, id), (err, blob) => (err ? missing() : out(200, blob, 'application/octet-stream')))
+  if (rest !== 'blob') return missing()
+  if (overRate(req)) return out(429, '{"error":"too many requests"}')
+  if (ASSET_LOGIN && !authed(req)) return out(401, '{"error":"unauthorised"}')
+  if (!state.assets.some(a => a.id === id)) return missing()
+  sendBlob(id, out)
+}
+
+// What a third party gets: the recipient's page and its three files for any id, the ciphertext only of an asset
+// that is released right now. Not released, run out, withdrawn and never there all look the same from outside.
+const SHARE_FILES = { 'view.js': [SHARE_JS, MIME['.js']], 'view.css': [SHARE_CSS, MIME['.css']] }
+function shareRoute(req, res, url) {
+  const [id, rest, ...more] = url.pathname.split('/').slice(2)
+  const out = assetOut(res)
+  const missing = () => out(404, '{"error":"not found"}')
+  if (req.method !== 'GET' || more.length) return missing()
+  if (id === '-' && rest === 'frame.html') return out(200, ASSET_FRAME, MIME['.html'], FRAME_CSP)
+  if (id === '-') return Object.hasOwn(SHARE_FILES, rest) ? out(200, ...SHARE_FILES[rest]) : missing()
+  if (!ASSET_ID.test(id)) return missing()
+  if (rest == null) return out(200, SHARE_PAGE, MIME['.html'], SHARE_CSP)
+  if (rest !== 'blob') return missing()
+  if (overRate(req)) return out(429, '{"error":"too many requests"}')
+  const asset = state.assets.find(a => a.id === id)
+  if (!asset || !isReleased(asset)) return missing()
+  sendBlob(id, out, () => {
+    // Counted where it was handed out; whether it was opened only the recipient's browser knows.
+    if (!asset.share) return
+    asset.share.opens++
+    asset.share.opened = Date.now()
+    commit(true)
+  })
 }
 
 // A file of the web client, or nothing: only the kinds a page is made of, no
@@ -2707,7 +3136,25 @@ const httpServer = http.createServer(async (req, res) => {
     return res.end()
   }
   if (url.pathname.startsWith('/a/')) return assetRoute(req, res, url)
-  if (!authed(req)) return send(res, 401, 'Access only through the link in data/url.txt', 'text/plain; charset=utf-8')
+  if (url.pathname.startsWith('/r/')) return shareRoute(req, res, url)
+  // Pairing (BOARD_PAIRING=1): behind today's login, the cookie for a page or the token header for a process on this machine.
+  if (url.pathname.startsWith('/pair/')) {
+    if (!pairRoute) return send(res, 404, '{"error":"not found"}')
+    const local = LOOPBACK.has(req.socket.remoteAddress) && !proxied(req) && tokenMatches(req.headers['x-board-token'])
+    if (!local && !authed(req)) return send(res, 401, '{"error":"unauthorised"}')
+    if (!local && req.method !== 'GET' && !sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}')
+    return pairRoute(req, res, url, readJson, send)
+  }
+  // Passkeys: signing in with one needs no cookie yet; adding, listing and removing one does (checked in there).
+  if (passkey && (url.pathname.startsWith('/auth/passkey') || url.pathname === '/passkeys')) {
+    const login = to => to.setHeader('Set-Cookie', `${COOKIE}=${TOKEN}; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000`)
+    if (await passkey.route(req, res, url, { authed, sameOrigin, readJson, send, login, audit })) return
+  }
+  if (!authed(req)) {
+    // A page gets the sign-in page (still a 401); everything else the plain refusal, as before.
+    if (passkey && req.method === 'GET' && (APP_PATH.test(url.pathname) || url.pathname === '/passkeys' || /\.html$/.test(url.pathname))) return passkeyModule.sendPage(res, 401, passkey.signInPage())
+    return send(res, 401, 'Access only through the link in data/url.txt', 'text/plain; charset=utf-8')
+  }
   if (req.method !== 'GET' && !sameOrigin(req)) return send(res, 403, '{"error":"forbidden"}')
   if (url.pathname.startsWith('/admin/api/')) return adminRoute(req, res, url)
   try {
@@ -2720,12 +3167,19 @@ const httpServer = http.createServer(async (req, res) => {
     }
     if (req.method === 'GET' && url.pathname === '/events') {
       res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive' })
-      res.write(frameOf())
+      // ?since=<message seq> asks for the messages after it only (see frameFor); without it, the whole state as before.
+      // On a reconnect the browser sends Last-Event-ID, which is newer than the since in the address.
+      if (url.searchParams.has('since')) {
+        const n = Number(req.headers['last-event-id'] ?? url.searchParams.get('since'))
+        res.since = Number.isInteger(n) && n > 0 && n <= state.message_seq ? n : 0
+        res.resets = messageResets
+      }
+      res.write(frameFor(res))
       clients.add(res)
       res.on('drain', () => {
         if (!res.behind) return
         res.behind = false
-        res.write(frameOf())
+        res.write(frameFor(res))
       })
       req.on('close', () => clients.delete(res))
       return
@@ -2846,6 +3300,18 @@ const httpServer = http.createServer(async (req, res) => {
       if (!card) return send(res, 404, '{"error":"not found"}')
       return send(res, 200, fs.readFileSync(await speak(cardScript(card))), 'audio/mpeg')
     }
+    // The human releases an asset for someone outside, changes the release or takes it back: { id, release, expires_hours, keep }.
+    if (req.method === 'POST' && url.pathname === '/asset/share') {
+      const body = await readJson(req)
+      const asset = state.assets.find(a => a.id === body.id)
+      // Told apart from a hub that does not know this route (its 404 says "not found").
+      if (!asset) return send(res, 404, '{"error":"no such asset","code":"no-asset"}')
+      const share = shareAsset(asset, { release: body.release, expires_hours: body.expires_hours, keep: body.keep }, req.socket.remoteAddress ?? 'human')
+      // The page completes the link with the key it already holds; the path is all the hub adds.
+      // urls: the same path under every address of the board, the public one first, so a link copied from a page
+      // that is open on localhost still carries the address an outsider can reach.
+      return send(res, 200, JSON.stringify({ ok: true, released: Boolean(share), share, path: share ? `/r/${asset.id}` : null, urls: share ? assetBases().map(base => `${base}/r/${asset.id}`) : [] }))
+    }
     if (req.method === 'POST' && url.pathname === '/session') {
       // The human's own name and mark for a session; they outlive reconnects.
       const body = await readJson(req)
@@ -2862,9 +3328,138 @@ const httpServer = http.createServer(async (req, res) => {
         if (agent.icon) agent.icon_by = 'human'
         else delete agent.icon_by
       }
+      // To another desk: the session goes with the sessions it is paired with, and its cards with it.
+      // The human says whose sub a session is; null lets it stand alone.
+      if ('parent' in body) {
+        try { setParent(agent, body.parent) } catch (err) { return send(res, 409, JSON.stringify({ error: err.message })) }
+      }
+      if (body.desk != null) {
+        if (!state.desks.some(d => d.id === body.desk)) return send(res, 404, '{"error":"no such desk"}')
+        // A sub stands where its main stands: move the main (its subs come along), or let the sub stand alone first.
+        if (agent.parent != null && body.desk !== agent.desk) return send(res, 409, JSON.stringify({ error: `this session is a sub of ${agent.parent} and moves with it` }))
+        for (const a of agent.group ? state.agents.filter(x => x.group === agent.group) : [agent]) a.desk = body.desk
+      }
       if ('before' in body) moveSession(agent, body.before)
       commit()
       return send(res, 200, '{"ok":true}')
+    }
+    // Memos: the human's notes that live on the hub until they are sent. { id?, text?, to?, place?, x?, y?,
+    // attachments? } makes or changes one; { id, remove: true } throws it away; { id, send: true } sends it to its
+    // session as a message of the human, like any other, and the note is gone. No agent sees a note before that.
+    if (req.method === 'POST' && url.pathname === '/memo') {
+      const body = await readJson(req, UPLOAD_BODY)
+      let memo = body.id == null ? null : state.memos.find(m => m.id === body.id)
+      if (body.id != null && !memo) return send(res, 404, '{"error":"no such memo","code":"no-memo"}')
+      const dropFiles = list => { for (const name of list.flatMap(filesOfAttachment)) fs.rmSync(path.join(FILES, name), { force: true }) }
+      if (body.remove === true) {
+        if (!memo) return send(res, 400, '{"error":"remove needs the id of a memo"}')
+        dropFiles(memo.attachments)
+        state.memos = state.memos.filter(m => m !== memo)
+        commit()
+        return send(res, 200, '{"ok":true}')
+      }
+      if (body.send === true) {
+        if (!memo) return send(res, 400, '{"error":"send needs the id of a memo"}')
+        // To the session it names, else to the one that takes the quick memo (the starred one), else to the only one.
+        const to = memo.to ?? state.agents.find(a => a.starred)?.id ?? (state.agents.length === 1 ? state.agents[0].id : null)
+        if (!to || !state.agents.some(a => a.id === to)) return send(res, 409, '{"error":"this memo has no session to go to","code":"no-session"}')
+        const text = memo.text.trim()
+        if (!text && !memo.attachments.length) return send(res, 400, '{"error":"empty message"}')
+        state.memos = state.memos.filter(m => m !== memo)
+        addMessage(to, 'user', text, memo.attachments)
+        await deliver(to, 'notifications/claude/channel', { content: text || uploadLine(memo.attachments), meta: { kind: 'chat', ...uploadMeta(memo.attachments) } })
+        return send(res, 200, JSON.stringify({ ok: true, sent: { agent: to, message: state.messages.at(-1).id } }))
+      }
+      // Checked before anything is written or stored.
+      const fields = {}
+      if (body.text != null) {
+        fields.text = String(body.text)
+        if (fields.text.length > 1e6) throw new Error('body too large')
+      }
+      if ('to' in body) {
+        if (body.to != null && !state.agents.some(a => a.id === body.to)) return send(res, 404, JSON.stringify({ error: `no agent ${body.to}` }))
+        fields.to = body.to ?? null
+      }
+      if (body.place != null) {
+        if (!MEMO_PLACES.includes(body.place)) return send(res, 400, JSON.stringify({ error: `place must be one of ${MEMO_PLACES.join(', ')}` }))
+        fields.place = body.place
+      }
+      for (const k of ['x', 'y']) {
+        if (body[k] == null) continue
+        if (!Number.isFinite(body[k])) return send(res, 400, JSON.stringify({ error: `${k} must be a number` }))
+        fields[k] = body[k]
+      }
+      if (!memo && state.memos.length >= MEMOS_MAX) return send(res, 409, JSON.stringify({ error: `at most ${MEMOS_MAX} memos`, code: 'too-many' }))
+      // attachments, when given, is the whole list: what the note already has is named by its url, what is new comes
+      // as { name, data } (a base64 data URL), as on a message. What is no longer named is deleted.
+      let attachments = memo?.attachments ?? []
+      if (body.attachments != null) {
+        if (!Array.isArray(body.attachments)) throw new Error('attachments must be a list')
+        if (body.attachments.length > MAX_UPLOADS) throw new Error(`at most ${MAX_UPLOADS} attachments at once`)
+        const kept = body.attachments.filter(a => a?.data == null).map(a => attachments.find(x => x.url === a?.url))
+        if (kept.includes(undefined)) return send(res, 400, '{"error":"an attachment is either one the memo has (by its url) or a new one ({ name, data })"}')
+        const fresh = storeUploads(body.attachments.filter(a => a?.data != null))
+        dropFiles(attachments.filter(a => !kept.includes(a)))
+        let next = 0
+        attachments = body.attachments.map(a => (a?.data == null ? attachments.find(x => x.url === a.url) : fresh[next++]))
+      }
+      const now = Date.now()
+      if (memo) Object.assign(memo, fields, { attachments, updated: now })
+      else {
+        memo = { id: newId(), text: '', to: null, place: 'float', x: 0, y: 0, ...fields, attachments, created: now, updated: now }
+        // Newest first.
+        state.memos = [memo, ...state.memos]
+      }
+      // Typing saves within a second, together with whatever else changed; everything else at once.
+      commit(body.id != null && Object.keys(fields).every(k => k === 'text' || k === 'x' || k === 'y') && body.attachments == null)
+      return send(res, 200, JSON.stringify({ ok: true, memo }))
+    }
+    // Test cards for trying the board: { n } files n of them (default 5, at most 20) as the session "Demo";
+    // { clear: true } takes them all away again, with the session.
+    if (req.method === 'POST' && url.pathname === '/dev/fake-decisions') {
+      const body = await readJson(req)
+      if (body.clear === true) return send(res, 200, JSON.stringify({ ok: true, cards: clearFakeDecisions() }))
+      const n = body.n == null ? 5 : body.n
+      if (!Number.isInteger(n) || n < 1 || n > 20) return send(res, 400, '{"error":"n must be a whole number from 1 to 20"}')
+      return send(res, 200, JSON.stringify({ ok: true, cards: fakeDecisions(n) }))
+    }
+    // Desks: { name } makes one; { id, name } renames; { id, before } puts it before another (null: last);
+    // { id, remove: true } takes it away, its sessions fall back to the default desk, which itself stays.
+    if (req.method === 'POST' && url.pathname === '/desk') {
+      const body = await readJson(req)
+      const named = body.name == null ? null : String(body.name).trim().slice(0, DESK_NAME_MAX)
+      if (body.id == null) {
+        if (!named) return send(res, 400, '{"error":"a desk needs a name"}')
+        if (state.desks.length >= DESKS_MAX) return send(res, 409, JSON.stringify({ error: `at most ${DESKS_MAX} desks` }))
+        const desk = { id: newId(), name: named, created: Date.now() }
+        state.desks = [...state.desks, desk]
+        commit()
+        return send(res, 200, JSON.stringify({ ok: true, desk }))
+      }
+      const desk = state.desks.find(d => d.id === body.id)
+      if (!desk) return send(res, 404, '{"error":"no such desk"}')
+      if (body.remove === true) {
+        if (desk.id === DEFAULT_DESK) return send(res, 409, '{"error":"the default desk stays"}')
+        for (const a of state.agents) if (a.desk === desk.id) a.desk = DEFAULT_DESK
+        state.desks = state.desks.filter(d => d !== desk)
+        commit()
+        return send(res, 200, '{"ok":true}')
+      }
+      if (body.name != null) {
+        if (!named) return send(res, 400, '{"error":"a desk needs a name"}')
+        desk.name = named
+      }
+      if ('before' in body) {
+        const target = body.before == null ? null : state.desks.find(d => d.id === body.before)
+        if (body.before != null && !target) return send(res, 404, '{"error":"no such desk"}')
+        if (target !== desk) {
+          const rest = state.desks.filter(d => d !== desk)
+          const at = target ? rest.indexOf(target) : rest.length
+          state.desks = [...rest.slice(0, at), desk, ...rest.slice(at)]
+        }
+      }
+      commit()
+      return send(res, 200, JSON.stringify({ ok: true, desk }))
     }
     if (req.method === 'POST' && url.pathname === '/star') {
       const body = await readJson(req)
@@ -3001,6 +3596,29 @@ let misses = 0
 // True once a hub of its own has greeted this spoke: from then on the port is the hub's to keep.
 let dedicated = false
 
+// The keys this session was given for its id (stable ids, see agentId). The one of this process is held in
+// memory and goes first; the file keeps those of earlier processes of the same name in the same folder on the
+// same machine, newest first, so that a restarted session gets its id back.
+const KEYS_FILE = path.join(DATA, 'agents', `${crypto.createHash('sha256').update(`${SELF.host}|${SELF.cwd}|${SELF.name}`).digest('hex').slice(0, 24)}.json`)
+let myKey = null
+function readKeys() {
+  try {
+    const list = JSON.parse(fs.readFileSync(KEYS_FILE, 'utf8'))
+    return Array.isArray(list) ? list.filter(c => typeof c?.id === 'string' && typeof c.key === 'string') : []
+  } catch { return [] }
+}
+const myClaims = () => [...(myKey ? [myKey] : []), ...readKeys().filter(c => c.id !== myKey?.id)].slice(0, CLAIMS_MAX)
+function keepKey(id, key) {
+  if (key) myKey = { id, key }
+  else if (myKey?.id !== id) return
+  try {
+    fs.mkdirSync(path.dirname(KEYS_FILE), { recursive: true, mode: 0o700 })
+    const tmp = `${KEYS_FILE}.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify([myKey, ...readKeys().filter(c => c.id !== id)].slice(0, CLAIMS_MAX)), { mode: 0o600 })
+    fs.renameSync(tmp, KEYS_FILE)
+  } catch (err) { console.error(`[board] could not keep the session key: ${err.message}`) }
+}
+
 const hubPost = (route, body, ms) => hubFetch(route, { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: selfId, instance: INSTANCE, ...body }) }, ms)
 
 async function hubFetch(route, init, ms = HUB_TIMEOUT, again = true) {
@@ -3079,7 +3697,11 @@ function becomeHub() {
   if (fromJson) moveIn()
   // A hub of its own usually starts while sessions are running that were linked to the hub before it.
   reservedUntil = takeover || HUB_ONLY ? Date.now() + 3000 : 0
-  if (!HUB_ONLY) selfId = register({ ...SELF, id: selfId }, { instance: INSTANCE, strict: true, send: notifySelf })
+  if (!HUB_ONLY) {
+    const self = { instance: INSTANCE, strict: true, send: notifySelf }
+    selfId = register({ ...SELF, id: selfId, claims: myClaims(), keeps: true }, self)
+    keepKey(selfId, self.key)
+  }
   state.hub = selfId
   commit()
   flush(selfId)
@@ -3091,6 +3713,19 @@ function becomeHub() {
   if (!cleaning) setInterval(wake, Number(process.env.BOARD_SNOOZE_TICK_MS) || 30000).unref()
   if (!cleaning) setInterval(purge, 6 * 3600000).unref()
   cleaning = true
+  if (passkeyModule && !passkey) {
+    // The addresses a passkey may be made and used under: the public ones, and this machine itself.
+    try { passkey = passkeyModule.passkeys({ file: path.join(DATA, 'pad.db'), origins: [...PUBLIC_URLS, `http://localhost:${PORT}`], publicUrls: PUBLIC_URLS }) } catch (err) { console.error(`[board] passkeys stay off: ${err.message}`) }
+  }
+  if (pairing && !pairRoute) {
+    try {
+      const db = pairing.openPairDb(path.join(DATA, 'pad.db'))
+      // The devices sign the hub's address when they sign in: the public one if there is one.
+      const hubUrl = process.env.BOARD_PAIR_HUB_URL || PUBLIC_URLS[0] || `http://localhost:${PORT}`
+      pairRoute = pairing.pairingRoutes({ db, hubUrl })
+      console.error(`[board] pairing on (BOARD_PAIRING): /pair/ routes for ${hubUrl}, kept in ${path.join(DATA, 'pad.db')}`)
+    } catch (err) { console.error(`[board] pairing stays off: ${err.message}`) }
+  }
   writeLinks()
   console.error(`[board] hub on ${HOST}:${PORT} ${HUB_ONLY ? 'without a session of its own' : `as "${selfId}"`}, links in ${path.join(DATA, 'url.txt')}${process.env.BOARD_ADMIN_TOKEN ? '' : `, admin key in ${ADMIN_FILE}`}`)
 }
@@ -3115,8 +3750,9 @@ function joinHub() {
     clearTimeout(watchdog)
     watchdog = setTimeout(retry, ms)
   }
-  const query = new URLSearchParams({ ...SELF, id: selfId ?? '', instance: INSTANCE })
-  const req = http.get({ host: '127.0.0.1', port: PORT, path: `/agent/link?${query}`, headers: { 'x-board-token': TOKEN } }, res => {
+  const query = new URLSearchParams({ ...SELF, id: selfId ?? '', instance: INSTANCE, keeps: '1' })
+  const claims = Buffer.from(JSON.stringify(myClaims())).toString('base64url')
+  const req = http.get({ host: '127.0.0.1', port: PORT, path: `/agent/link?${query}`, headers: { 'x-board-token': TOKEN, 'x-board-claims': claims } }, res => {
     if (res.statusCode !== 200) {
       res.resume()
       // Refused: the hub may hold a token that was written after this process read the file.
@@ -3137,6 +3773,7 @@ function joinHub() {
         try { msg = JSON.parse(frame.slice(6)) } catch { return retry() }
         if (msg.hello) {
           selfId = msg.hello
+          keepKey(selfId, msg.key)
           dedicated = msg.dedicated === true
           misses = 0
           // A hub running an older server.mjs sends no pings; then only a closed connection counts.

@@ -136,7 +136,7 @@ const agentPost = (route, body, token = 'secret') => fetch(`http://127.0.0.1:${P
 
 assert.deepEqual(
   (await client.listTools()).tools.map(t => t.name),
-  ['reply', 'create_decision', 'create_info', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'create_voiceover', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset'],
+  ['reply', 'create_decision', 'create_info', 'revise_card', 'merge_cards', 'set_urgency', 'withdraw_card', 'close_card', 'set_status', 'clear_status', 'introduce', 'create_voiceover', 'list_cards', 'publish_asset', 'list_assets', 'revoke_asset', 'adopt_session', 'share_asset'],
 )
 
 // migration: old cards get numbers in creation order, an urgency, and a queue
@@ -191,7 +191,66 @@ assert.equal(s.cards.at(-1).status, 'done')
 assert.deepEqual(s.messages.slice(before).map(m => m.from), ['user', 'agent', 'event', 'event', 'event'])
 assert.deepEqual(s.messages.slice(before + 2).map(m => m.kind), ['asked', 'decided', 'done'])
 
-// the stack: urgency first, then oldest first
+// the message log (card Nr. 33): a running number on every message, and ?since=<n> for what a page missed
+const sinceStream = async (since, headers = {}) => {
+  const res = await fetch(`${base}/events${since == null ? '' : `?since=${since}`}`, { headers: { Cookie: cookie, ...headers } })
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  return {
+    async next() {
+      while (!buffer.includes('\n\n')) {
+        const { value, done } = await reader.read()
+        if (done) throw new Error('stream ended')
+        buffer += decoder.decode(value, { stream: true })
+      }
+      const raw = buffer.slice(0, buffer.indexOf('\n\n'))
+      buffer = buffer.slice(raw.length + 2)
+      const id = raw.match(/^id: (\d+)$/m)?.[1]
+      return { id: id == null ? null : Number(id), ...JSON.parse(raw.slice(raw.indexOf('data: ') + 6)) }
+    },
+    close: () => reader.cancel(),
+  }
+}
+s = await state()
+assert.deepEqual(s.messages.map(m => m.seq), s.messages.map((m, at) => at + 1), 'numbered 1, 2, 3 … in order')
+assert.deepEqual([s.message_seq, 'messages_since' in s], [s.messages.length, false])
+const top = s.message_seq
+{
+  // without since: whole, no SSE id, as before
+  const plain = await sinceStream()
+  const f0 = await plain.next()
+  assert.deepEqual([f0.id, f0.messages.length, 'messages_since' in f0], [null, s.messages.length, false])
+  await plain.close()
+  // since=0: whole, but said so, with the id to resume from
+  const all = await sinceStream(0)
+  const a0 = await all.next()
+  assert.deepEqual([a0.id, a0.messages.length, a0.messages_since, a0.message_seq], [top, s.messages.length, 0, top])
+  await all.close()
+  // since=top-2: only the last two, and the rest of the state whole
+  const tail = await sinceStream(top - 2)
+  const t0 = await tail.next()
+  assert.deepEqual([t0.id, t0.messages.map(m => m.seq), t0.messages_since, t0.cards.length], [top, [top - 1, top], top - 2, s.cards.length])
+  // a new message arrives as a frame with the messages after the page's starting point
+  assert.equal((await post('/message', { text: 'nach dem Stand' })).status, 200)
+  const t1 = await tail.next()
+  assert.deepEqual([t1.id, t1.messages.map(m => m.seq), t1.messages.at(-1).text, t1.messages_since], [top + 1, [top - 1, top, top + 1], 'nach dem Stand', top - 2])
+  await tail.close()
+  // Last-Event-ID (a browser reconnecting) wins over the since in the address
+  const back = await sinceStream(3, { 'Last-Event-ID': String(top) })
+  const b0 = await back.next()
+  assert.deepEqual([b0.messages.map(m => m.text), b0.messages_since], [['nach dem Stand'], top])
+  await back.close()
+  // nothing missed: an empty list; a number this hub never gave, or junk: the whole list
+  for (const [given, n, since] of [[top + 1, 0, top + 1], [top + 999, top + 1, 0], ['x', top + 1, 0], [-4, top + 1, 0]]) {
+    const one = await sinceStream(given)
+    const f = await one.next()
+    assert.deepEqual([f.messages.length, f.messages_since], [n, since], String(given))
+    await one.close()
+  }
+}
+
+// the stack: a fixed order, oldest first; urgency marks a card and does not move it
 await refused('create_decision', { title: 'x', options: [option('a'), option('b')], urgency: 'urgent' }, /urgency must be one of low, normal, high, critical/)
 const normal1 = await ask('normal eins')
 const low = await ask('hat Zeit', { urgency: 'low' })
@@ -199,14 +258,15 @@ const high = await ask('dringend', { urgency: 'high', urgency_reason: 'blockiert
 const normal2 = await ask('normal zwei')
 const critical = await ask('blockiert', { urgency: 'critical', urgency_reason: 'nichts geht mehr' })
 s = await state()
-assert.deepEqual(s.queue, [critical, high, normal1, normal2, low])
-assert.deepEqual(s.queue.map(id => s.cards.find(c => c.id === id).number), [9, 7, 5, 8, 6], 'numbers follow creation, not the stack')
+assert.deepEqual(s.queue, [normal1, low, high, normal2, critical])
+assert.deepEqual(s.queue.map(id => s.cards.find(c => c.id === id).number), [5, 6, 7, 8, 9], 'the stack is the order of filing')
+assert.deepEqual(s.queue.map(id => s.cards.find(c => c.id === id).urgency), ['normal', 'low', 'high', 'normal', 'critical'], 'the urgency stays on the card, for the mark and the knock')
 assert.equal(s.cards.find(c => c.id === high).urgency_reason, 'blockiert die Aufgabe')
 
-// raising a card moves it up and leaves a marker in the conversation
+// raising a card marks it and leaves a marker in the conversation; its place stays
 await call('set_urgency', { card_id: low, urgency: 'critical', reason: 'Deploy wartet' })
 s = await state()
-assert.deepEqual(s.queue, [low, critical, high, normal1, normal2], 'within a level the older card stays on top')
+assert.deepEqual(s.queue, [normal1, low, high, normal2, critical], 'nothing moved')
 const raised = s.cards.find(c => c.id === low)
 assert.deepEqual([raised.urgency, raised.urgency_reason, raised.number], ['critical', 'Deploy wartet', 6])
 const marker = s.messages.at(-1)
@@ -229,7 +289,7 @@ await call('withdraw_card', { card_id: normal1, reason: 'hat sich erledigt' })
 s = await state()
 const withdrawn = s.cards.find(c => c.id === normal1)
 assert.deepEqual([withdrawn.status, withdrawn.summary, withdrawn.choice], ['done', 'hat sich erledigt', null])
-assert.deepEqual(s.queue, [low, critical, high, normal2])
+assert.deepEqual(s.queue, [low, high, normal2, critical])
 assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], ['done', normal1, 'Withdrawn: hat sich erledigt'])
 assert.equal((await post('/decide', { card_id: normal1, key: 'a' })).status, 400, 'a withdrawn card cannot be answered')
 await refused('withdraw_card', { card_id: normal1 }, /already done/)
@@ -260,7 +320,7 @@ assert.ok(perm, 'permission card created')
 assert.equal(perm.urgency, 'critical')
 assert.equal(perm.number, 10)
 s = await state()
-assert.deepEqual(s.queue, [perm.id, low, high, normal2], 'an approval goes on top of everything')
+assert.deepEqual(s.queue, [low, high, normal2, perm.id], 'an approval is a new card like any other: last in the fixed order, marked critical')
 await refused('set_urgency', { card_id: perm.id, urgency: 'low' }, /always critical/)
 await refused('withdraw_card', { card_id: perm.id }, /cannot be withdrawn/)
 await refused('close_card', { card_id: perm.id }, /cannot be closed/)
@@ -373,6 +433,26 @@ for (const header of ['X-Forwarded-For', 'Tailscale-User-Login']) {
   assert.equal((await fetch(`http://127.0.0.1:${PORT}/agent/link?name=x`, { headers: through })).status, 403, header)
 }
 assert.deepEqual((await state()).agents.map(a => a.id), ['main'])
+// the message log, for a session: what it missed of its own conversation, and only its own
+{
+  const top = (await state()).message_seq
+  const reader = new AbortController()
+  const linked = await fetch(`http://127.0.0.1:${PORT}/agent/link?name=Leser&instance=leser1`, { headers: { 'x-board-token': 'secret' }, signal: reader.signal })
+  const hello = JSON.parse(new TextDecoder().decode((await linked.body.getReader().read()).value).split('\n')[0].slice(6))
+  for (const text of ['eins', 'zwei', 'drei']) assert.equal((await post('/message', { text, agent: hello.hello })).status, 200)
+  const agentMessages = body => fetch(`http://127.0.0.1:${PORT}/agent/messages`, { method: 'POST', headers: { 'x-board-token': 'secret', 'Content-Type': 'application/json' }, body: JSON.stringify(body) })
+  const missed = await (await agentMessages({ id: hello.hello, instance: 'leser1', since: top + 1, limit: 1 })).json()
+  assert.deepEqual([missed.messages.map(m => [m.seq, m.text]), missed.more, missed.message_seq], [[[top + 2, 'zwei']], true, top + 3])
+  assert.deepEqual((await (await agentMessages({ id: hello.hello, instance: 'leser1' })).json()).messages.map(m => m.text), ['eins', 'zwei', 'drei'])
+  assert.equal((await agentMessages({ id: hello.hello, instance: 'other', since: 0 })).status, 409)
+  assert.equal((await agentMessages({ id: 'nobody', since: 0 })).status, 409)
+  reader.abort()
+  // away again, and forgotten with its words, so the rest of this test sees the board it expects
+  await eventually(async () => !(await state()).agents.find(a => a.id === hello.hello).online, 'the reader to go away')
+  const forgot = await adminLogin('adminkey', cookie)
+  assert.equal((await adminPost('sessions/forget', { id: hello.hello, confirm: hello.hello, data: true }, forgot)).status, 200)
+  await adminPost('logout', {}, forgot)
+}
 // the health check needs no login and says nothing but that the hub answers
 const health = await fetch(`${base}/healthz`)
 assert.deepEqual([health.status, await health.text()], [200, '{"ok":true}'])
@@ -423,7 +503,7 @@ received.length = 0
   const early = await call('create_info', { title: 'früher, aber nur zu lesen', body: 'x', urgency: 'low' }).then(r => textOf(r).match(/^info (\w+)/)[1])
   const later = await ask('noch später gestellt', { urgency: 'low' })
   s = await state()
-  assert.deepEqual(s.queue.filter(id => [question, info, early, later].includes(id)), [question, later, info, early], 'among equally urgent cards, questions come before what is only to be read')
+  assert.deepEqual(s.queue.filter(id => [question, info, early, later].includes(id)), [question, info, early, later], 'questions and what is only to be read stand in the order they were filed')
   await call('withdraw_card', { card_id: early })
   await call('withdraw_card', { card_id: later })
   await call('withdraw_card', { card_id: question })
@@ -803,14 +883,14 @@ assert.notEqual(await rawGet(`/a/${aid}/../../token`), 200)
 assert.equal((await fetch(`${base}/a/${aid}/blob`, { method: 'POST', headers: { Origin: base }, body: 'x' })).status, 404)
 
 // a silent asset: the hub is told neither key nor title nor type, and nothing appears on the board
-const hush = await publish(client, { content: '<p>nur für dich 0815</p>', title: 'Stiller Titel', silent: true, keep: true })
+const hush = await publish(client, { content: '<p>nur für dich Geheimwort</p>', title: 'Stiller Titel', silent: true, keep: true })
 const [qid, qkey] = linkOf(hush)
 assert.match(hush, /kept until revoked[\s\S]*The hub never saw the key/)
 s = await state()
 assert.equal(s.messages.length, talk + 1)
 assert.deepEqual({ ...s.assets.at(-1), created: 0, size: 0 }, { id: qid, agent: 'main', type: null, title: '', size: 0, created: 0, keep: true, silent: true, wrapped_key: null })
 const quiet = await openAsset(await blobOf(qid), qkey, qid)
-assert.deepEqual([quiet.header.type, quiet.header.title, quiet.header.name, quiet.content.toString()], ['html', 'Stiller Titel', 'page.html', '<p>nur für dich 0815</p>'])
+assert.deepEqual([quiet.header.type, quiet.header.title, quiet.header.name, quiet.content.toString()], ['html', 'Stiller Titel', 'page.html', '<p>nur für dich Geheimwort</p>'])
 // the type follows the file, and bytes come back as they went in
 const [pid, pkey] = linkOf(await publish(client, { path: shot }))
 const picture = await openAsset(await blobOf(pid), pkey, pid)
@@ -820,7 +900,7 @@ assert.deepEqual([picture.header.type, picture.header.mime, picture.header.title
 const exportA = await adminLogin('adminkey', cookie)
 const known = [JSON.stringify(await state()), JSON.stringify(readBoard(data)), await (await adminGet('export', exportA)).text()]
 for (const place of known) {
-  for (const hidden of [qkey, 'Stiller Titel', '0815']) assert.ok(!place.includes(hidden), `the hub knows "${hidden}"`)
+  for (const hidden of [qkey, 'Stiller Titel', 'Geheimwort']) assert.ok(!place.includes(hidden), `the hub knows "${hidden}"`)
   assert.ok(place.includes(qid) && place.includes(akey))
 }
 assert.equal((await adminPost('logout', {}, exportA)).status, 200)
@@ -846,6 +926,14 @@ assert.equal((await fetch(`${base}/a/${aid}/blob`)).status, 404)
 assert.equal(fs.existsSync(path.join(data, 'assets', aid)), false)
 s = await state()
 assert.deepEqual([s.assets.map(a => a.id), s.messages[talk].text, s.messages[talk].asset], [[qid, pid], '**Lasttest** (withdrawn)', { id: aid, type: 'html', title: 'Lasttest', gone: true }])
+// a message that was already out changed: a page that comes back with an older number gets the whole list again
+assert.equal(s.message_floor, s.message_seq + 1)
+{
+  const stale = await sinceStream(s.message_seq)
+  const f = await stale.next()
+  assert.deepEqual([f.messages_since, f.messages.length, f.messages[talk].asset.gone], [0, s.messages.length, true])
+  await stale.close()
+}
 assert.ok(!JSON.stringify(readBoard(data)).includes(akey), 'the hub forgot the key with the asset')
 await refused('revoke_asset', { id: aid }, /no asset/)
 await refused('revoke_asset', { id: '../token' }, /no asset/)
@@ -902,7 +990,7 @@ assert.deepEqual((await state()).queue, [low, high, normal2])
 const late = await ask('nach dem Neustart', { urgency: 'high' })
 s = await state()
 assert.equal(s.cards.at(-1).number, 21)
-assert.deepEqual(s.queue, [low, high, late, normal2])
+assert.deepEqual(s.queue, [low, high, normal2, late], 'a new card goes to the end, however urgent')
 
 // asking back about a card instead of answering it: the message names the card, the agent hears which, and the card stays open
 received.length = 0
@@ -980,12 +1068,12 @@ revised = s.cards.find(c => c.id === rev)
 assert.equal(s.messages.at(-1).text, 'Monolith oder Dienste?', 'without a note the marker shows the title')
 assert.equal((await post('/decide', { card_id: rev, key: 'a', revised: revised.revised })).status, 409)
 assert.equal((await state()).cards.find(c => c.id === rev).status, 'open')
-// urgency alone is no revision: the card moves, the wording and its stamp stay
+// urgency alone is no revision: the card is marked and stays where it is, the wording and its stamp stay
 out = textOf(await call('revise_card', { card_id: rev, urgency: 'critical', urgency_reason: 'alles steht' }))
 assert.match(out, /unchanged in wording/)
 s = await state()
 assert.deepEqual((({ urgency, urgency_reason, revised: at, revisions }) => [urgency, urgency_reason, at, revisions])(s.cards.find(c => c.id === rev)), ['critical', 'alles steht', revised.revised, 2])
-assert.deepEqual([s.queue.indexOf(rev) < stackBefore.length, s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], [true, 'urgency', rev, 'Blocking: alles steht'])
+assert.deepEqual([s.queue.indexOf(rev) === stackBefore.length, s.messages.at(-1).kind, s.messages.at(-1).card_id, s.messages.at(-1).text], [true, 'urgency', rev, 'Blocking: alles steht'])
 // advice that names an option which is gone is dropped; a list needs a card that takes several
 await call('revise_card', { card_id: rev, options: [{ key: 'x', label: 'Eins' }, { key: 'y', label: 'Zwei' }], urgency: 'normal' })
 revised = (await state()).cards.find(c => c.id === rev)
@@ -1078,13 +1166,18 @@ await call('withdraw_card', { card_id: extra[1] })
 // and says, without refusing, when a card is a lot to read
 out = textOf(await call('create_decision', { title: 'lang', body: 'x'.repeat(301), options: [{ key: 'a', label: 'A', detail: 'y'.repeat(60) }, { key: 'b', label: 'B', detail: 'y'.repeat(61) }, { key: 'c', label: 'C', detail: 'z'.repeat(80) }] }))
 const wordy = out.match(/^card (\w+) /)[1]
-assert.match(out, /\nThis is a lot to read: the body has 301 characters \(aim for one or two short sentences\); the detail of "b", "c" is longer than one short line \(aim for about six words\)\. Shorten it with revise_card/)
+assert.match(out, /\nThis is a lot to read: the body has 301 characters \(aim for at most about 300, one or two short sentences\); the detail of "b", "c" is longer than one short line \(aim for about six words\)\. A question has to fit one card on one screen: a title of one line \(about 70 characters\), a body of at most about 300 characters or 5 short lines, per option a label of at most 4 words and a detail of one short line \(about six words\), at most 6 options\. Shorten it with revise_card: say it in a picture rather than in prose, and move the background to an attached page or a published asset linked from the body/)
 assert.equal((await state()).cards.at(-1).status, 'open')
 out = textOf(await call('revise_card', { card_id: wordy, body: 'x'.repeat(300) }))
 assert.match(out, /\nThis is a lot to read: the detail of "b", "c" is longer/)
 assert.doesNotMatch(out, /the body has/)
 out = textOf(await call('revise_card', { card_id: wordy, options: [{ key: 'a', label: 'A', detail: 'kurz' }, { key: 'b', label: 'B' }] }))
 assert.doesNotMatch(out, /a lot to read/)
+// the other parts of the budget: a title of more than a line, more than five lines, a label that is a sentence
+out = textOf(await call('revise_card', { card_id: wordy, title: 't'.repeat(91), body: 'eins\nzwei\ndrei\nvier\nfünf\nsechs', options: [{ key: 'a', label: 'eins zwei drei vier fünf sechs sieben' }, { key: 'b', label: 'eins zwei drei vier fünf sechs' }] }))
+assert.match(out, /\nThis is a lot to read: the title has 91 characters \(aim for one line, about 70\); the body has 6 lines \(aim for at most 5 short ones\); the label of "a" is longer than about 4 words\. A question has to fit one card on one screen/)
+assert.equal((await state()).cards.find(c => c.id === wordy).status, 'open', 'said, not refused')
+assert.doesNotMatch(textOf(await call('revise_card', { card_id: wordy, title: 't'.repeat(90), body: 'eins\nzwei\ndrei\nvier\nfünf', options: [{ key: 'a', label: 'eins zwei drei vier' }, { key: 'b', label: 'B' }] })), /a lot to read/)
 await call('withdraw_card', { card_id: wordy })
 received.length = 0
 }
@@ -1267,6 +1360,43 @@ await call('withdraw_card', { card_id: looks })
   assert.ok((await onBoard(life)).with_agent > 0)
   await call('reply', { text: 'so ist es gemeint', card_id: life })
   assert.deepEqual(['with_agent' in await onBoard(life), (await onBoard(life)).version], [false, 3])
+  assert.equal((await state()).messages.at(-1).presented, true, 'the answer to "Explain" puts the card before the human by itself')
+  // handed back: an acknowledgement is a message on the card and no more; the card stays in revision
+  const n0 = received.length
+  const ack = await ask('Zurück und bestätigt?')
+  assert.equal((await post('/message', { text: 'bitte kürzer', card_id: ack, handback: true })).status, 200)
+  await until(() => received.length === n0 + 1)
+  const handed = (await onBoard(ack)).with_agent
+  let said = (await call('reply', { text: 'kommt, bin dran', card_id: ack })).content[0].text
+  assert.match(said, new RegExp(`^sent; card ${ack} stays with you \\(in revision\\): .*revise_card.*present: true`))
+  s = await state()
+  assert.deepEqual([s.cards.find(c => c.id === ack).with_agent, s.messages.at(-1).text, s.messages.at(-1).card_id, 'presented' in s.messages.at(-1), s.queue.includes(ack)], [handed, 'kommt, bin dran', ack, false, true])
+  await call('reply', { text: 'noch dabei', card_id: ack, present: false })
+  await call('reply', { text: 'ohne Karte', })
+  assert.equal((await onBoard(ack)).with_agent, handed, 'a reply without the card changes nothing either')
+  // present: true returns it, without a new version
+  said = (await call('reply', { text: 'kürzer geht es nicht, so stimmt es', card_id: ack, present: true })).content[0].text
+  assert.match(said, new RegExp(`^sent; card ${ack} is before the human again`))
+  s = await state()
+  assert.deepEqual(['with_agent' in s.cards.find(c => c.id === ack), s.cards.find(c => c.id === ack).version, s.messages.at(-1).presented], [false, 1, true])
+  // handed back again: revise_card returns it, as it always did
+  assert.equal((await post('/message', { text: 'doch kürzer', card_id: ack, handback: true })).status, 200)
+  await until(() => received.length === n0 + 2)
+  await call('reply', { text: 'verstanden', card_id: ack })
+  assert.ok((await onBoard(ack)).with_agent > 0)
+  await call('revise_card', { card_id: ack, title: 'Dritte Fassung, kürzer?' })
+  assert.deepEqual(['with_agent' in await onBoard(ack), (await onBoard(ack)).version], [false, 2])
+  // asked to explain after a hand-back that is still running: the reply explains, the rework is not done, so it stays
+  assert.equal((await post('/message', { text: 'nochmal', card_id: ack, handback: true, explain: true })).status, 200)
+  await until(() => received.length === n0 + 3)
+  await call('reply', { text: 'gemeint ist …', card_id: ack })
+  assert.ok((await onBoard(ack)).with_agent > 0)
+  await call('revise_card', { card_id: ack, title: 'Dritte Fassung?' })
+  await call('withdraw_card', { card_id: ack })
+  // on a card that is not with the agent the flag does nothing, and a plain question back never took the card away
+  await call('reply', { text: 'zur Karte', card_id: life, present: true })
+  assert.deepEqual(['with_agent' in await onBoard(life), 'presented' in (await state()).messages.at(-1)], [false, false])
+  received.length = n0
   // an answer holds for the version it was given to
   await sleep(300)
   assert.equal((await post('/decide', { card_id: life, key: 'a' })).status, 200)
@@ -1369,7 +1499,7 @@ await call('withdraw_card', { card_id: looks })
   s = await state()
   let k = s.cards.find(c => c.id === sure)
   assert.deepEqual([k.status, k.trusted, k.choice, k.choices, k.note, k.answered_version, 'draft' in k], ['decided', true, 'b', ['b'], 'mach du', 1, false])
-  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).text, s.messages.at(-1).trusted], ['decided', 'Trusted: your call · Berta', true])
+  assert.deepEqual([s.messages.at(-1).kind, s.messages.at(-1).text, s.messages.at(-1).trusted], ['decided', 'Whatever: your call · Berta', true])
   assert.equal((await mine(sure)).trusted, true)
   assert.equal((await post('/decide', { card_id: sure, trust: true })).status, 400, 'once is enough')
   // taking it back: open again, nothing ticked, the note still there, and the agent hears what no longer holds
@@ -1392,7 +1522,7 @@ await call('withdraw_card', { card_id: looks })
   assert.deepEqual(received.map(n => n.params.meta), [{ kind: 'decision', card_id: open1, choice: '', trust: '1' }, { kind: 'decision', card_id: many, choice: 'a', choices: 'a,c', trust: '1' }])
   assert.match(received[0].params.content, /decide yourself \(you gave no advice\)/)
   s = await state()
-  assert.deepEqual([s.cards.find(c => c.id === open1).choice, s.cards.find(c => c.id === open1).choices, s.cards.find(c => c.id === many).choices, s.messages.at(-2).text, s.messages.at(-1).text], [null, [], ['a', 'c'], 'Trusted: your call', 'Trusted: your call · a, c'])
+  assert.deepEqual([s.cards.find(c => c.id === open1).choice, s.cards.find(c => c.id === open1).choices, s.cards.find(c => c.id === many).choices, s.messages.at(-2).text, s.messages.at(-1).text], [null, [], ['a', 'c'], 'Whatever: your call', 'Whatever: your call · a, c'])
   assert.equal(textOf(await call('close_card', { card_id: open1, summary: 'a genommen' })), 'closed')
   assert.equal((await post('/reopen', { card_id: open1 })).status, 200, 'a trusted card without a choice can be taken back too')
   await call('withdraw_card', { card_id: open1 })
@@ -1489,10 +1619,10 @@ await call('withdraw_card', { card_id: looks })
   const seven = 'abcdefg'.split('').map(option)
   let out = textOf(await call('create_decision', { title: 'Zu viele?', options: seven }))
   const crowd = out.match(/^card (\w+) /)[1]
-  assert.match(out, /\nMany options \(7\): keep only the ones you are sure of\. Two or three you stand behind beat ten/)
+  assert.match(out, /\nMany options \(7; a card holds about 6\): keep only the ones you are sure of\. Two or three you stand behind beat ten; put the rest on a page .* Shorten it with revise_card\.$/)
   assert.equal((await onBoard(crowd)).options.length, 7, 'reminded, not refused')
   assert.doesNotMatch(textOf(await call('revise_card', { card_id: crowd, options: seven.slice(0, 6) })), /Many options/)
-  assert.match(textOf(await call('revise_card', { card_id: crowd, options: seven, body: 'x'.repeat(301) })), /This is a lot to read: the body has 301 characters.*\nMany options \(7\)/s)
+  assert.match(textOf(await call('revise_card', { card_id: crowd, options: seven, body: 'x'.repeat(301) })), /This is a lot to read: the body has 301 characters.*\nMany options \(7; a card holds about 6\)/s)
   await call('withdraw_card', { card_id: crowd })
 }
 
@@ -1625,7 +1755,7 @@ await api.callTool({ name: 'introduce', arguments: { model: 'Claude Test', task:
 const me = (await state()).agents[1]
 assert.deepEqual([me.host, me.model, me.task, me.client], [os.hostname(), 'Claude Test', 'prüfen', 'test 0'])
 assert.equal(s.cards.at(-1).agent, 'api')
-assert.ok(s.queue.indexOf(apiCard) < s.queue.indexOf(late), 'one shared stack: the critical card of one agent sits above the high card of another')
+assert.ok(s.queue.indexOf(apiCard) > s.queue.indexOf(late), 'one shared stack in the order of filing: the critical card of one agent stands after the older card of another')
 assert.deepEqual(s.tasks.filter(t => t.agent === 'infra').map(t => t.id), ['deploy'])
 assert.ok(s.messages.every(m => m.agent), 'every message names its agent')
 // a session can be starred from the page
@@ -2643,7 +2773,10 @@ let alt = await start('Alt', gotAlt, on6)
 // what the page gets is the old board, record for record
 s = await state()
 assert.deepEqual(s.cards, old6.cards)
-assert.deepEqual(s.messages, old6.messages)
+// the messages get their running number in the order they were stored (card Nr. 33)
+const seq6 = old6.messages.map((m, at) => ({ ...m, seq: at + 1 }))
+assert.deepEqual(s.messages, seq6)
+assert.deepEqual([s.message_seq, s.message_floor], [5, 0])
 assert.deepEqual(s.tasks, old6.tasks)
 assert.deepEqual(s.agents.map(a => [a.id, a.position, a.label ?? '', a.icon ?? '', a.archived ?? false, a.group ?? null, a.starred ?? false]), [['fern', 0, '', '', true, 'paar', false], ['alt', 1, 'Mein Alter', 'draw:brush', false, null, true]])
 assert.deepEqual([s.next_number, s.queue], [50, ['c-offen', 'c-info']])
@@ -2652,7 +2785,7 @@ await until(() => gotAlt.length === 1)
 assert.equal(gotAlt[0].params.content, 'wartete im alten Zustand')
 // the database holds the same, the log says so once, and state.json is byte for byte what it was
 let db6 = readBoard(data6)
-assert.deepEqual([db6.cards, db6.messages, db6.tasks, db6.next_number, db6.pending], [old6.cards, old6.messages, old6.tasks, 50, { fern: old6.pending.fern }])
+assert.deepEqual([db6.cards, db6.messages, db6.tasks, db6.next_number, db6.pending], [old6.cards, seq6, old6.tasks, 50, { fern: old6.pending.fern }])
 assert.equal(logs.slice(mark).filter(l => l.includes('the state moved from state.json into')).length, 1)
 assert.match(logs.slice(mark).find(l => l.includes('the state moved')), /4 cards, 5 messages, 2 sessions\. state\.json is kept as it was and no longer written/)
 assert.ok(fs.readFileSync(in6('state.json')).equals(bytes6) && fs.existsSync(in6('state.in-sqlite')))
@@ -2666,7 +2799,7 @@ assert.deepEqual([db6.cards[0].status, db6.cards[0].choices, db6.cards[0].versio
 assert.ok(fs.readFileSync(in6('state.json')).equals(bytes6))
 // the tool reads the same out again, as the JSON state.json would hold
 const tool6 = (...args) => spawnSync('node', [toPath(new URL('./board-store.mjs', import.meta.url)), ...args], { encoding: 'utf8' })
-assert.deepEqual(JSON.parse(tool6('counts', data6).stdout), { agents: 2, cards: 4, messages: 7, tasks: 2 })
+assert.deepEqual(JSON.parse(tool6('counts', data6).stdout), { agents: 2, cards: 4, desks: 1, messages: 7, tasks: 2 })
 assert.deepEqual(JSON.parse(tool6('export', data6).stdout).cards, db6.cards)
 // a card copied into a message to another session: that agent reads the whole decision, the message keeps a chip, the card is untouched
 {
@@ -2726,6 +2859,850 @@ await say(plain, 'reply', { text: 'bleibt in der Datei' })
 assert.deepEqual([JSON.parse(fs.readFileSync(path.join(data8, 'state.json'), 'utf8')).messages.map(m => m.text), fs.existsSync(path.join(data8, 'state.in-sqlite')), readBoard(data8)], [['bleibt in der Datei'], false, null])
 await plain.close()
 
-for (const dir of [data, data2, data3, data4, data5, data6, data7, data8]) fs.rmSync(dir, { recursive: true })
-console.log('ok: chat, decision, attachment, urgency stack, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, snooze, one crown, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
+// ---- stable agent ids (card Nr. 80): made once by the hub, kept by the session with a key, never handed on ----
+await portFree()
+const data9 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+const on9 = { BOARD_DATA: data9 }
+const hub9 = () => {
+  const child = spawn('node', [SERVER], { env: serverEnv('Dienst', { ...on9, BOARD_HUB_ONLY: '1' }), stdio: ['ignore', 'ignore', 'ignore'] })
+  spawned.push(child)
+  return child
+}
+let h9 = hub9()
+await eventually(async () => (await state()).agents.length === 0, 'the hub for stable ids')
+const online9 = async id => (await state()).agents.find(a => a.id === id)?.online
+const link9 = async (name, { instance = crypto.randomBytes(4).toString('hex'), claims, keeps = true, id } = {}) => {
+  const ctl = new AbortController()
+  const q = new URLSearchParams({ name, instance, ...(keeps ? { keeps: '1' } : {}), ...(id ? { id } : {}) })
+  const headers = { 'x-board-token': 'secret', ...(claims ? { 'x-board-claims': Buffer.from(JSON.stringify(claims)).toString('base64url') } : {}) }
+  const res = await fetch(`http://127.0.0.1:${PORT}/agent/link?${q}`, { headers, signal: ctl.signal })
+  const reader = res.body.getReader()
+  let buffer = ''
+  while (!buffer.includes('\n\n')) buffer += new TextDecoder().decode((await reader.read()).value)
+  const hello = JSON.parse(buffer.slice(6, buffer.indexOf('\n\n')))
+  return { id: hello.hello, key: hello.key, instance, close: async () => { ctl.abort(); await eventually(async () => !(await online9(hello.hello)), `${hello.hello} to go away`) } }
+}
+const sha = key => crypto.createHash('sha256').update(key).digest('hex')
+// a new session: the slug of its name, and a key that the hub keeps only as a hash, never on the page
+const bau = await link9('Bau')
+assert.deepEqual([bau.id, /^[0-9a-f]{32}$/.test(bau.key)], ['bau', true])
+let rec9 = readBoard(data9).agents.find(a => a.id === 'bau')
+assert.deepEqual([rec9.key_hash, rec9.bound], [sha(bau.key), true])
+assert.ok(!JSON.stringify(await state()).includes(rec9.key_hash) && !JSON.stringify(readBoard(data9)).includes(bau.key))
+await bau.close()
+// it comes back under another name: same id, no new key, the name is only a label
+const renamed = await link9('Umbenannt', { claims: [{ id: 'bau', key: bau.key }] })
+assert.deepEqual([renamed.id, renamed.key, (await state()).agents.find(a => a.id === 'bau').name], ['bau', undefined, 'Umbenannt'])
+// a second process with the same key while the first is linked, a wrong key, no key: each a session of its own
+const twin9 = await link9('Bau', { claims: [{ id: 'bau', key: bau.key }] })
+const forged = await link9('Bau', { claims: [{ id: 'bau', key: 'f'.repeat(32) }, { id: 'nobody', key: 'x' }, 'junk'] })
+await renamed.close()
+const fresh9 = await link9('Bau')
+assert.deepEqual([twin9.id, forged.id, fresh9.id], ['bau-2', 'bau-3', 'bau-4'], 'a session that keeps its key is never taken over by name')
+for (const l of [twin9, forged, fresh9]) await l.close()
+// the oldest claim that fits wins; one held by a running process is passed over
+const both = await link9('Bau', { claims: [{ id: 'bau-2', key: twin9.key }, { id: 'bau', key: bau.key }] })
+assert.equal(both.id, 'bau-2')
+await both.close()
+// sessions from before stable ids, and processes that keep no key (an older server.mjs, dev/session.mjs), as before:
+// the same instance gets its id back, and a new process gets the slug of its name while nobody holds it
+const old9 = await link9('Alt', { keeps: false, instance: 'alt1' })
+assert.equal(old9.id, 'alt')
+await old9.close()
+assert.equal((await link9('Alt', { keeps: false, instance: 'alt1', id: 'alt' }).then(async l => { await l.close(); return l.id })), 'alt')
+const oldNew = await link9('Alt', { keeps: false })
+assert.equal(oldNew.id, 'alt')
+await oldNew.close()
+assert.equal(readBoard(data9).agents.find(a => a.id === 'alt').bound, undefined)
+// …until a process that keeps keys takes it: then it is bound to that key
+const adopt = await link9('Alt')
+assert.deepEqual([adopt.id, typeof adopt.key], ['alt', 'string'])
+await adopt.close()
+const late9 = await link9('Alt', { keeps: false })
+assert.equal(late9.id, 'alt-2')
+await late9.close()
+// a forgotten session's id is never handed out again, also not after a restart of the hub
+const admin9 = await adminLogin('adminkey', cookie)
+assert.equal((await adminPost('sessions/forget', { id: 'bau-4', confirm: 'bau-4' }, admin9)).status, 200)
+assert.deepEqual(readBoard(data9).retired_ids, ['bau-4'])
+h9.kill()
+await portFree()
+h9 = hub9()
+await eventually(async () => (await state()).agents.length > 0, 'the hub for stable ids, again')
+const next9 = await link9('Bau')
+assert.equal(next9.id, 'bau-5')
+await next9.close()
+const again9 = await link9('Bau', { claims: [{ id: 'bau', key: bau.key }] })
+assert.equal(again9.id, 'bau', 'the key outlives a restart of the hub')
+await again9.close()
+// a Claude Code session (server.mjs as a spoke) keeps its key in data/agents/, so a restarted process is who it was
+const spoke9 = await start('Werk', [], on9)
+await say(spoke9, 'reply', { text: 'erstes Leben' })
+await spoke9.close()
+await eventually(async () => !(await online9('werk')), 'werk to go away')
+const keyFiles = fs.readdirSync(path.join(data9, 'agents'))
+assert.equal(keyFiles.length, 1)
+assert.equal(fs.statSync(path.join(data9, 'agents', keyFiles[0])).mode & 0o077, 0)
+assert.equal(readBoard(data9).agents.find(a => a.id === 'werk').bound, true)
+const spoke9b = await start('Werk', [], on9)
+const spoke9c = await start('Werk', [], on9)
+await say(spoke9b, 'reply', { text: 'zweites Leben' })
+await say(spoke9c, 'reply', { text: 'ein anderer' })
+s = await state()
+assert.deepEqual(s.messages.filter(m => m.from === 'agent').map(m => [m.agent, m.text]), [['werk', 'erstes Leben'], ['werk', 'zweites Leben'], ['werk-2', 'ein anderer']])
+assert.equal(JSON.parse(fs.readFileSync(path.join(data9, 'agents', keyFiles[0]), 'utf8')).length, 2)
+await Promise.all([spoke9b.close(), spoke9c.close()])
+h9.kill()
+
+// ---- pairing and keys behind BOARD_PAIRING (docs/pairing.md): off by default, then a room, an agent joins, it all survives a restart ----
+await portFree()
+assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } }).catch(() => null)), null, 'nothing listens between the hubs')
+{
+  const z = await import('../crypto/zcrypto.mjs')
+  const HUB = 'https://hub.example'
+  const data10 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const hub10 = pairing => {
+    const child = spawn('node', [SERVER], { env: serverEnv('Dienst', { BOARD_DATA: data10, BOARD_HUB_ONLY: '1', BOARD_PAIR_HUB_URL: HUB, ...(pairing ? { BOARD_PAIRING: '1' } : {}) }), stdio: ['ignore', 'ignore', 'ignore'] })
+    spawned.push(child)
+    return child
+  }
+  // off by default: the routes are not there
+  let h10 = hub10(false)
+  await eventually(async () => (await fetch(`${base}/healthz`)).ok, 'the hub without pairing')
+  assert.equal((await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } })).status, 404)
+  h10.kill()
+  await portFree()
+  h10 = hub10(true)
+  await eventually(async () => (await fetch(`${base}/healthz`)).ok, 'the hub with pairing')
+  // only behind today's login, and a page's write only from the page's own origin
+  assert.equal((await fetch(`${base}/pair/room`)).status, 401)
+  assert.equal((await fetch(`${base}/pair/challenge`, { method: 'POST', headers: { Cookie: cookie, Origin: 'https://evil.example' } })).status, 403)
+  assert.deepEqual(await (await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } })).json(), { roomId: null, members: [] })
+  // the hub module's interface over HTTP, so the clients below speak to it as crypto/hub-test.mjs does
+  const enc = v => JSON.stringify(v, (k, x) => (x instanceof Uint8Array ? z.b64u(x) : x))
+  const call = async (method, route, { token, body } = {}) => {
+    const res = await fetch(`http://127.0.0.1:${PORT}/pair/${route}`, { method, headers: { 'x-board-token': 'secret', 'Content-Type': 'application/json', ...(token ? { 'x-pair-token': token } : {}) }, body: body ? enc(body) : undefined })
+    const out = await res.json()
+    if (!res.ok) throw new z.ZError(out.error, out.message)
+    return out
+  }
+  const B = z.unb64u
+  const http10 = {
+    found: async a => call('POST', 'found', { body: a }),
+    postEntry: async a => call('POST', 'entry', { body: a }),
+    challenge: async () => B((await call('POST', 'challenge')).challenge),
+    signIn: async signed => call('POST', 'sign-in', { body: { signed } }),
+    log: async ({ token, inviteId }) => { const r = await call('GET', `log${inviteId ? `?invite=${inviteId}` : ''}`, { token }); return { ...r, entries: r.entries.map(B) } },
+    wraps: async (token, { afterEpoch = 0 } = {}) => (await call('GET', `wraps?after_epoch=${afterEpoch}`, { token })).map(w => ({ epoch: w.epoch, sealed: B(w.sealed) })),
+    postInvite: async (token, offer) => call('POST', 'invites', { token, body: { offer } }),
+    invite: async id => { const r = await call('GET', `invites/${id}`); return { ...r, offer: B(r.offer), entries: r.entries.map(B) } },
+    postRequest: async (id, request) => call('POST', `invites/${id}/requests`, { body: { request } }),
+    requests: async (token, id) => (await call('GET', `invites/${id}/requests`, { token })).map(B),
+    postReveal: async (token, id, reveal) => call('POST', `invites/${id}/reveal`, { token, body: { reveal } }),
+    joinStatus: async (id, hash) => { const r = await call('GET', `invites/${id}/status?request=${hash}`); return { ...r, ...(r.reveal ? { reveal: B(r.reveal) } : {}), ...(r.entries ? { entries: r.entries.map(B) } : {}), ...(r.wrap ? { wrap: B(r.wrap) } : {}) } },
+    postEnvelope: async (token, envelope) => call('POST', 'envelopes', { token, body: { envelope } }),
+    envelopes: async (token, after = 0) => (await call('GET', `envelopes?after=${after}`, { token })).map(e => ({ ...e, bytes: B(e.bytes) })),
+    claim: async (token, name, instance) => call('POST', 'claim', { token, body: { name, instance } }),
+  }
+  const signIn10 = async (device, roomId) => (await http10.signIn(await z.signHubAuth({ device, roomId, hub: HUB, challenge: await http10.challenge() }))).token
+  // the phone founds the room
+  const phone = await z.generateDevice()
+  const room = await z.createRoom({ device: phone, name: 'Phone', recovery: await z.recoveryDevice(z.generateRecoveryCode()) })
+  await http10.found({ entry: room.entry, wraps: room.wraps })
+  await assert.rejects(http10.found({ entry: room.entry, wraps: room.wraps }), e => ['room-exists', 'replay'].includes(e.code))
+  const roomId = room.roomId
+  let phoneToken = await signIn10(phone, roomId)
+  let phoneState = await z.verifyLog((await http10.log({ token: phoneToken })).entries, roomId)
+  // an agent joins by a link, without a check code
+  const agent = await z.generateDevice({ extractable: true })
+  const made = await z.createInvite({ state: phoneState, inviter: phone, hub: HUB, role: z.ROLE.AGENT })
+  await http10.postInvite(phoneToken, made.offer)
+  const link = z.parseInviteLink(made.link)
+  const inviteId = z.hex(await z.hkdf(link.secret, link.roomId, z.LABEL.inviteId, new Uint8Array(0), 16))
+  const served = await http10.invite(inviteId)
+  const { request, join } = await z.createJoinRequest({ link: made.link, offer: served.offer, log: served.entries, device: agent, name: 'Krypto' })
+  const { requestHash } = await http10.postRequest(inviteId, request)
+  assert.equal((await http10.joinStatus(inviteId, requestHash)).status, 'waiting')
+  const [first] = await http10.requests(phoneToken, inviteId)
+  const { reveal } = await z.acceptJoinRequest({ invite: made.invite, request: first, inviter: phone })
+  await http10.postReveal(phoneToken, inviteId, reveal)
+  assert.equal((await http10.joinStatus(inviteId, requestHash)).status, 'revealed')
+  const done = await z.finalizeInvite({ invite: made.invite, state: phoneState, inviter: phone, secret: room.secret, skipCheckCode: true })
+  await http10.postEntry({ entry: done.entry, wraps: [{ id: agent.id, sealed: done.wrap }] })
+  const fin = await http10.joinStatus(inviteId, requestHash)
+  assert.equal(fin.status, 'joined')
+  const joined = await z.completeJoin({ join, device: agent, log: fin.entries, wrap: fin.wrap })
+  // the agent signs in and claims its board session; a second process under the same key is refused
+  const agentToken = await signIn10(agent, roomId)
+  assert.deepEqual([(await http10.claim(agentToken, 'Krypto', 'p1')).sessionId], ['krypto'])
+  await assert.rejects(http10.claim(agentToken, 'Krypto', 'p2'), e => e.code === 'instance-conflict')
+  await assert.rejects(http10.claim(phoneToken, 'Phone', 'p1'), e => e.code === 'forbidden')
+  // a sealed envelope from the phone to the agent; the agent opens it
+  phoneState = await z.verifyLog((await http10.log({ token: phoneToken })).entries, roomId)
+  const env = await z.sealEnvelope({ device: phone, state: phoneState, secret: room.secret, chains: z.newChains(), kind: z.KIND.CHAT, payload: z.utf8('run the tests'), recipient: agent.id })
+  assert.equal((await http10.postEnvelope(phoneToken, env.bytes)).n, 1)
+  await assert.rejects(http10.postEnvelope(phoneToken, env.bytes), e => e.code === 'replay')
+  await assert.rejects(http10.envelopes('falsch'), e => e.code === 'unauthorised')
+  // after a restart the hub verifies what it stored, and everything is still there
+  h10.kill()
+  await portFree()
+  h10 = hub10(true)
+  await eventually(async () => (await fetch(`${base}/healthz`)).ok, 'the hub with pairing, again')
+  const room10 = await (await fetch(`${base}/pair/room`, { headers: { Cookie: cookie } })).json()
+  assert.deepEqual([room10.roomId, room10.members.map(m => [m.name, m.role, m.active])], [z.hex(roomId), [['Phone', 'human', true], ['Krypto', 'agent', true]]])
+  const agentToken2 = await signIn10(agent, roomId)
+  const [got] = await http10.envelopes(agentToken2)
+  const opened = await z.openEnvelope(got.bytes, { state: joined.state, chains: z.newChains(), secrets: new Map([[1, joined.secret]]), self: agent.id })
+  assert.equal(new TextDecoder().decode(opened.payload), 'run the tests')
+  assert.equal((await http10.claim(agentToken2, 'Anders', 'p3')).sessionId, 'krypto', 'the same key, the same session id')
+  assert.ok(!fs.readFileSync(path.join(data10, 'pad.db')).includes(Buffer.from('run the tests')), 'the hub stored ciphertext only')
+  h10.kill()
+  await portFree()
+  fs.rmSync(data10, { recursive: true })
+}
+
+// ---- passkey login (server/passkey.mjs): a software authenticator registers and signs in; everything forged is refused ----
+{
+  const data11 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const h11 = spawn('node', [SERVER], { env: serverEnv('Dienst', { BOARD_DATA: data11, BOARD_HUB_ONLY: '1' }), stdio: ['ignore', 'ignore', 'pipe'] })
+  spawned.push(h11)
+  let err11 = ''
+  h11.stderr.on('data', chunk => { err11 += chunk })
+  await eventually(async () => (await fetch(`${base}/healthz`)).ok, 'the hub for passkeys')
+  const u = b => Buffer.from(b).toString('base64url')
+  const sha = b => crypto.createHash('sha256').update(b).digest()
+  const pk = (route, body = {}, { as, origin = base } = {}) => fetch(`${base}/auth/passkey/${route}`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: origin, ...(as ? { Cookie: as } : {}) }, body: JSON.stringify(body) })
+  const errorOf = async res => [res.status, (await res.json()).error]
+  // an authenticator in software: a key pair, a credential id, a counter
+  const authenticator = (kind = 'ec') => {
+    const { publicKey, privateKey } = kind === 'ec' ? crypto.generateKeyPairSync('ec', { namedCurve: 'P-256' }) : kind === 'rsa' ? crypto.generateKeyPairSync('rsa', { modulusLength: 2048 }) : crypto.generateKeyPairSync('ed25519')
+    const jwk = publicKey.export({ format: 'jwk' })
+    const B = x => Buffer.from(x, 'base64url')
+    const bstr = b => Buffer.concat([b.length < 24 ? Buffer.from([0x40 + b.length]) : b.length < 256 ? Buffer.from([0x58, b.length]) : Buffer.from([0x59, b.length >> 8, b.length & 255]), b])
+    const cose = kind === 'ec' ? Buffer.concat([Buffer.from([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21]), bstr(B(jwk.x)), Buffer.from([0x22]), bstr(B(jwk.y))])
+      : kind === 'rsa' ? Buffer.concat([Buffer.from([0xa4, 0x01, 0x03, 0x03, 0x39, 0x01, 0x00, 0x20]), bstr(B(jwk.n)), Buffer.from([0x21]), bstr(B(jwk.e))])
+        : Buffer.concat([Buffer.from([0xa4, 0x01, 0x01, 0x03, 0x27, 0x20, 0x06, 0x21]), bstr(B(jwk.x))])
+    const id = crypto.randomBytes(32)
+    const a = { id, count: 0, privateKey }
+    const head = (rp, flags) => { const n = Buffer.alloc(4); n.writeUInt32BE(++a.count); return Buffer.concat([sha(rp), Buffer.from([flags]), n]) }
+    const clientData = (type, challenge, origin) => Buffer.from(JSON.stringify({ type, challenge, origin, crossOrigin: false }))
+    a.create = (challenge, { origin = base, rp = 'localhost', flags = 0x45 } = {}) => {
+      const len = Buffer.alloc(2); len.writeUInt16BE(id.length)
+      const authData = Buffer.concat([head(rp, flags), Buffer.alloc(16), len, id, cose])
+      const text = t => Buffer.concat([Buffer.from([0x60 + t.length]), Buffer.from(t)])
+      const att = Buffer.concat([Buffer.from([0xa3]), text('fmt'), text('none'), text('attStmt'), Buffer.from([0xa0]), text('authData'), bstr(authData)])
+      return { clientDataJSON: u(clientData('webauthn.create', challenge, origin)), attestationObject: u(att) }
+    }
+    a.get = (challenge, { origin = base, rp = 'localhost', flags = 0x05, type = 'webauthn.get', key = privateKey } = {}) => {
+      const authData = head(rp, flags), cd = clientData(type, challenge, origin)
+      const signed = Buffer.concat([authData, sha(cd)])
+      const signature = kind === 'ed' ? crypto.sign(null, signed, key) : crypto.sign('sha256', signed, key)
+      return { id: u(id), clientDataJSON: u(cd), authenticatorData: u(authData), signature: u(signature) }
+    }
+    return a
+  }
+  const challengeFor = async (route, opts) => (await (await pk(route, {}, opts)).json()).challenge
+  // without the cookie: a page gets the sign-in page, an API route the plain refusal, both 401
+  const page = await fetch(`${base}/s/api?q=abc`)
+  assert.deepEqual([page.status, page.headers.get('content-type'), /Sign in with a passkey/.test(await page.clone().text()), /data\/url\.txt/.test(await page.text())], [401, 'text/html; charset=utf-8', true, true])
+  assert.match(page.headers.get('content-security-policy'), /script-src 'self'/)
+  const refusedApi = await fetch(`${base}/events`)
+  assert.deepEqual([refusedApi.status, await refusedApi.text()], [401, 'Access only through the link in data/url.txt'])
+  assert.equal((await fetch(`${base}/auth/passkey.js`)).status, 200)
+  // registering, listing and removing: only signed in, and only from the hub's own pages
+  for (const route of ['register/options', 'register/verify', 'remove']) assert.deepEqual(await errorOf(await pk(route)), [401, 'unauthorised'], route)
+  assert.equal((await fetch(`${base}/auth/passkey/list`)).status, 401)
+  assert.equal((await fetch(`${base}/passkeys`)).status, 401)
+  assert.deepEqual(await errorOf(await pk('login/options', {}, { origin: 'https://evil.example' })), [403, 'forbidden'])
+  assert.deepEqual(await errorOf(await pk('register/options', {}, { as: cookie, origin: 'https://evil.example' })), [403, 'forbidden'])
+  assert.match(await (await fetch(`${base}/passkeys`, { headers: { Cookie: cookie } })).text(), /Add a passkey on this device/)
+  // a stolen registration challenge is no use to someone who is not signed in
+  const phone = authenticator()
+  const options = await (await pk('register/options', {}, { as: cookie })).json()
+  assert.deepEqual([options.rp, options.attestation, options.authenticatorSelection.residentKey, options.pubKeyCredParams.map(p => p.alg), options.excludeCredentials], [{ name: 'Trommi' }, 'none', 'required', [-7, -8, -257], []])
+  assert.deepEqual(await errorOf(await pk('register/verify', phone.create(options.challenge))), [401, 'unauthorised'])
+  // refused: another origin, another rp, no user present, a login challenge, a challenge used before
+  assert.deepEqual(await errorOf(await pk('register/verify', phone.create(await challengeFor('register/options', { as: cookie }), { origin: 'https://evil.example' }), { as: cookie })), [403, 'wrong-origin'])
+  assert.deepEqual(await errorOf(await pk('register/verify', phone.create(await challengeFor('register/options', { as: cookie }), { rp: 'evil.example' }), { as: cookie })), [403, 'wrong-rp'])
+  assert.deepEqual(await errorOf(await pk('register/verify', phone.create(await challengeFor('register/options', { as: cookie }), { flags: 0x44 }), { as: cookie })), [400, 'user-not-present'])
+  assert.deepEqual(await errorOf(await pk('register/verify', phone.create(await challengeFor('login/options')), { as: cookie })), [400, 'bad-challenge'])
+  // registered; the same attestation again is a replay
+  const made = phone.create(await challengeFor('register/options', { as: cookie }))
+  const added = await pk('register/verify', { ...made, name: 'Phone' }, { as: cookie })
+  assert.deepEqual([added.status, (await added.json()).name], [200, 'Phone'])
+  assert.deepEqual(await errorOf(await pk('register/verify', made, { as: cookie })), [400, 'bad-challenge'])
+  let listed = (await (await fetch(`${base}/auth/passkey/list`, { headers: { Cookie: cookie } })).json()).passkeys
+  assert.deepEqual(listed.map(p => [p.name, p.host, p.last_used, /^[0-9a-f]{12}$/.test(p.handle)]), [['Phone', 'localhost', null, true]])
+  assert.deepEqual((await (await pk('register/options', {}, { as: cookie })).json()).excludeCredentials, [{ type: 'public-key', id: u(phone.id) }])
+  // signing in: the cookie the login link sets, and it opens the board
+  const good = await pk('login/verify', phone.get(await challengeFor('login/options')))
+  assert.equal(good.status, 200)
+  assert.equal(good.headers.get('set-cookie'), 'board_8791=secret; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000')
+  assert.equal((await fetch(`${base}/`, { headers: { Cookie: good.headers.get('set-cookie').split(';')[0] } })).status, 200)
+  const stranger = authenticator()
+  // RS256 and EdDSA authenticators work as well
+  for (const kind of ['rsa', 'ed']) {
+    const other = authenticator(kind)
+    assert.equal((await pk('register/verify', { ...other.create(await challengeFor('register/options', { as: cookie })), name: kind }, { as: cookie })).status, 200, kind)
+    assert.equal((await pk('login/verify', other.get(await challengeFor('login/options')))).status, 200, kind)
+    if (kind === 'rsa') assert.deepEqual(await errorOf(await pk('login/verify', other.get(await challengeFor('login/options'), { key: stranger.privateKey }))), [401, 'bad-signature'], kind)
+  }
+  // refused, and none of it sets a cookie: a replayed challenge, a wrong origin, a wrong rp, a registration challenge,
+  // the wrong type, a signature by another key, a changed signature, an unknown credential, a counter that went back
+  const spent = await challengeFor('login/options')
+  assert.equal((await pk('login/verify', phone.get(spent))).status, 200)
+  const forged = phone.get(await challengeFor('login/options'))
+  forged.signature = u(Buffer.from(forged.signature, 'base64url').map((b, at) => (at === 12 ? b ^ 1 : b)))
+  const before11 = phone.count
+  const bad = [
+    [phone.get(spent), 400, 'bad-challenge'],
+    [phone.get(await challengeFor('login/options'), { origin: 'https://evil.example' }), 403, 'wrong-origin'],
+        [phone.get(await challengeFor('login/options'), { rp: 'board.example' }), 403, 'wrong-rp'],
+    [phone.get(await challengeFor('register/options', { as: cookie })), 400, 'bad-challenge'],
+    [phone.get(await challengeFor('login/options'), { type: 'webauthn.create' }), 400, 'wrong-type'],
+    [phone.get(await challengeFor('login/options'), { key: stranger.privateKey }), 401, 'bad-signature'],
+    [forged, 401, 'bad-signature'],
+    [stranger.get(await challengeFor('login/options')), 401, 'unknown-passkey'],
+  ]
+  for (const [body, status, code] of bad) {
+    const res = await pk('login/verify', body)
+    assert.deepEqual([res.headers.get('set-cookie'), ...(await errorOf(res))], [null, status, code], code)
+  }
+  // nine failures in a minute are borne, the tenth closes the door for everyone until the minute is over
+  phone.count = 1
+  assert.deepEqual(await errorOf(await pk('login/verify', phone.get(await challengeFor('login/options')))), [401, 'counter-went-back'])
+  phone.count = before11 + 20
+  assert.deepEqual(await errorOf(await pk('login/verify', phone.get(await challengeFor('login/options')))), [429, 'too-many-attempts'])
+  // nothing of it on the page, in the state or in the log; the database has the public key and no more
+  const frame11 = JSON.stringify(await state())
+  assert.ok(!frame11.includes(u(phone.id)) && !frame11.includes('passkey'))
+  assert.ok(!err11.includes(u(phone.id)))
+  const { DatabaseSync } = await import('node:sqlite')
+  const db11 = new DatabaseSync(path.join(data11, 'pad.db'), { readOnly: true })
+  const row11 = db11.prepare("SELECT * FROM passkeys WHERE name = 'Phone'").get()
+  db11.close()
+  assert.deepEqual([row11.id, row11.rp_id, row11.alg, Object.keys(JSON.parse(row11.jwk)).sort(), row11.name], [u(phone.id), 'localhost', -7, ['crv', 'kty', 'x', 'y'], 'Phone'])
+  // removed: it no longer signs in (checked after a restart, which also lifts the limit and keeps the passkeys)
+  h11.kill()
+  await portFree()
+  const h11b = spawn('node', [SERVER], { env: serverEnv('Dienst', { BOARD_DATA: data11, BOARD_HUB_ONLY: '1', BOARD_PUBLIC_URL: 'https://board.example' }), stdio: ['ignore', 'ignore', 'ignore'] })
+  spawned.push(h11b)
+  await eventually(async () => (await fetch(`${base}/healthz`)).ok, 'the hub for passkeys, again')
+  assert.equal((await pk('login/verify', phone.get(await challengeFor('login/options')))).status, 200, 'a passkey outlives a restart')
+  // this hub has a public address: a passkey is made there only (one made on localhost would not work on the phone),
+  // and the page says so with a link; a passkey that exists still signs in here
+  for (const route of ['register/options', 'register/verify']) {
+    const res = await pk(route, {}, { as: cookie })
+    assert.deepEqual([res.status, await res.json()], [409, { error: 'use-public-address', public: 'https://board.example/passkeys' }], route)
+  }
+  const manage = await (await fetch(`${base}/passkeys`, { headers: { Cookie: cookie } })).text()
+  assert.match(manage, /data-home="https:\/\/board\.example"[\s\S]*href="https:\/\/board\.example\/passkeys"[\s\S]*data\/url\.txt/)
+  assert.match(manage, /<meta name="viewport" content="width=device-width, initial-scale=1">/)
+  listed = (await (await fetch(`${base}/auth/passkey/list`, { headers: { Cookie: cookie } })).json()).passkeys
+  assert.deepEqual(listed.map(p => [p.name, p.last_used > 0]), [['Phone', true], ['rsa', true], ['ed', true]])
+  assert.deepEqual(await errorOf(await pk('remove', { handle: 'gibtsnicht' }, { as: cookie })), [404, 'not-found'])
+  assert.equal((await pk('remove', { handle: listed[0].handle }, { as: cookie })).status, 200)
+  assert.deepEqual(await errorOf(await pk('login/verify', phone.get(await challengeFor('login/options')))), [401, 'unknown-passkey'])
+  // the login link works as it did
+  const viaLink = await fetch(`${base}/?t=secret`, { redirect: 'manual' })
+  assert.deepEqual([viaLink.status, viaLink.headers.get('set-cookie')], [302, 'board_8791=secret; HttpOnly; SameSite=Lax; Path=/; Max-Age=31536000'])
+  h11b.kill()
+  await portFree()
+  fs.rmSync(data11, { recursive: true })
+}
+
+// ---- assets: uploads that were cut off, fetches counted per caller, release for third parties (docs/asset-sharing.md) ----
+{
+  const data12 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const on12 = { BOARD_DATA: data12, BOARD_ASSET_RATE: '40' }
+  const teiler = await start('Teiler', [], on12)
+  const txt = res => res.content[0].text
+  const [aid, akey] = linkOf(await publish(teiler, { content: '<h1>für Dritte</h1><script>document.title = 1</script>', title: 'Angebot Müller', note: 'zum Weitergeben' }))
+  const [hid, hkey] = linkOf(await publish(teiler, { content: 'still', silent: true, type: 'file' }))
+  const get = route => fetch(base + route)
+  const share = body => post('/asset/share', body)
+  // the board's own viewer and blob answer as they did, with the stricter headers
+  const viaA = await get(`/a/${aid}/blob`)
+  assert.deepEqual([viaA.status, viaA.headers.get('cross-origin-resource-policy'), viaA.headers.get('x-content-type-options'), viaA.headers.get('cache-control'), viaA.headers.get('content-security-policy'), /camera=\(\)/.test(viaA.headers.get('permissions-policy'))], [200, 'same-origin', 'nosniff', 'no-store', "default-src 'none'; sandbox", true])
+  // an upload that was cut off on its way is refused: a whole blob has one of few lengths
+  const whole = Buffer.from(await viaA.arrayBuffer())
+  const linked12 = await fetch(`http://127.0.0.1:${PORT}/agent/link?name=Lader&instance=lader1`, { headers: { 'x-board-token': 'secret' } })
+  const lader = JSON.parse(new TextDecoder().decode((await linked12.body.getReader().read()).value).split('\n')[0].slice(6)).hello
+  const upload12 = (id, blob) => fetch(`http://127.0.0.1:${PORT}/agent/asset?id=${lader}&instance=lader1`, { method: 'POST', headers: { 'x-board-token': 'secret', 'x-asset': Buffer.from(JSON.stringify({ id, silent: true })).toString('base64url') }, body: blob })
+  const cut = await upload12('C'.repeat(22), whole.subarray(0, whole.length - 7))
+  assert.deepEqual([cut.status, /cut off/.test((await cut.json()).error), fs.existsSync(path.join(data12, 'assets', 'C'.repeat(22)))], [400, true, false])
+  assert.equal((await upload12('D'.repeat(22), whole)).status, 200, 'a whole blob under a fresh id is taken (it will not open: the id is part of what is authenticated)')
+  await assert.rejects(openAsset(Buffer.from(await (await get(`/a/${'D'.repeat(22)}/blob`)).arrayBuffer()), akey, 'D'.repeat(22)), 'a blob replayed under another id does not open')
+  // not released: outsiders get the page (the same for every id) and no ciphertext, whether the asset exists or not
+  const page12 = await get(`/r/${aid}`)
+  const html12 = await page12.text()
+  assert.deepEqual([page12.status, page12.headers.get('content-security-policy').includes("script-src 'self'"), page12.headers.get('content-security-policy').includes("frame-ancestors 'none'"), html12 === await (await get(`/r/${'x'.repeat(22)}`)).text()], [200, true, true, true])
+  assert.match(html12, /Shared with you through Trommi[\s\S]*name="viewport"|name="viewport"[\s\S]*Shared with you through Trommi/)
+  assert.ok(!/\/js\/|\/css\/|\/a\/-\//.test(html12) && !html12.includes('Angebot'), 'nothing of the board on the recipient\'s page')
+  for (const [file, type] of [['view.js', 'text/javascript; charset=utf-8'], ['view.css', 'text/css; charset=utf-8'], ['frame.html', 'text/html; charset=utf-8']]) {
+    const res = await get(`/r/-/${file}`)
+    assert.deepEqual([res.status, res.headers.get('content-type')], [200, type], file)
+    if (file === 'frame.html') assert.match(res.headers.get('content-security-policy'), /default-src 'none'.*sandbox allow-scripts$/)
+  }
+  for (const id of [aid, hid, 'x'.repeat(22), '-']) assert.equal((await get(`/r/${id}/blob`)).status, 404, id)
+  assert.equal((await fetch(`${base}/r/${aid}/blob`, { method: 'POST', headers: { Origin: base, Cookie: cookie } })).status, 404)
+  // releasing is the session's own, or the human's; never another session's
+  const other12 = await start('Fremd', [], on12)
+  assert.match((await other12.callTool({ name: 'share_asset', arguments: { id: aid } }).then(r => txt(r), e => e.message)), /no asset/)
+  assert.equal((await fetch(`${base}/asset/share`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: JSON.stringify({ id: aid }) })).status, 401)
+  const none12 = await share({ id: 'gibtsnicht' })
+  assert.deepEqual([none12.status, await none12.json()], [404, { error: 'no such asset', code: 'no-asset' }])
+  assert.deepEqual(await (await post('/asset/gibtsnicht', {})).json().then(o => o.code, () => undefined), undefined, 'an unknown route says nothing of the kind')
+  const said = txt(await teiler.callTool({ name: 'share_asset', arguments: { id: aid, expires_hours: 2 } }))
+  assert.match(said, new RegExp(`is released until .*\\nLink for the recipient: http://localhost:8791/r/${aid}#${akey}\\n`))
+  // the recipient fetches the ciphertext and opens it with the key from the link; each fetch is counted
+  const got12 = await get(`/r/${aid}/blob`)
+  assert.equal(got12.status, 200)
+  const opened12 = await openAsset(Buffer.from(await got12.arrayBuffer()), akey, aid)
+  assert.deepEqual([opened12.header.title, opened12.content.toString().startsWith('<h1>für Dritte</h1>')], ['Angebot Müller', true])
+  await get(`/r/${aid}/blob`)
+  await eventually(async () => (await state()).assets.find(a => a.id === aid).share?.opens === 2, 'the opens to be counted')
+  let rec12 = (await state()).assets.find(a => a.id === aid)
+  assert.deepEqual([rec12.share.opens, rec12.share.expires > Date.now() + 7000000, rec12.share.opened > 0, JSON.stringify(rec12).includes(akey)], [2, true, true, false])
+  // the page gets the outside addresses with the state (so they survive a reload); they are not stored
+  assert.deepEqual([rec12.share.urls, 'urls' in readBoard(data12).assets.find(a => a.id === aid).share, (await state()).assets.find(a => a.id === hid).share], [[`http://localhost:8791/r/${aid}`], false, undefined])
+  assert.deepEqual(JSON.parse(txt(await teiler.callTool({ name: 'list_assets', arguments: {} }))).map(a => [a.id, a.released, a.opens ?? null]), [[aid, true, 2], [hid, false, null]])
+  // a silent asset can be released too; the hub cannot complete its link
+  assert.match(txt(await teiler.callTool({ name: 'share_asset', arguments: { id: hid } })), new RegExp(`/r/${hid}#<key>\\n[\\s\\S]*does not know the key`))
+  assert.equal((await openAsset(Buffer.from(await (await get(`/r/${hid}/blob`)).arrayBuffer()), hkey, hid)).content.toString(), 'still')
+  // the human changes the release (no end, kept), and takes it back: gone at once, the board's own link still opens
+  let res12 = await share({ id: aid, expires_hours: 0, keep: true })
+  assert.deepEqual([res12.status, await res12.json().then(o => [o.released, o.path, o.urls, o.share.expires, o.share.opens])], [200, [true, `/r/${aid}`, [`http://localhost:8791/r/${aid}`], null, 2]])
+  assert.equal((await state()).assets.find(a => a.id === aid).keep, true)
+  assert.equal((await share({ id: aid, expires_hours: -1 })).status, 400)
+  res12 = await share({ id: aid, release: false })
+  const back12 = await res12.json()
+  assert.deepEqual([back12.path, back12.urls], [null, []])
+  assert.deepEqual([res12.status, back12.released, (await get(`/r/${aid}/blob`)).status, (await get(`/a/${aid}/blob`)).status, 'share' in (await state()).assets.find(a => a.id === aid)], [200, false, 404, 200, false])
+  assert.match(txt(await teiler.callTool({ name: 'share_asset', arguments: { id: hid, release: false } })), /release taken back/)
+  // a release that has run out is none
+  await teiler.callTool({ name: 'share_asset', arguments: { id: aid, expires_hours: 0.00002 } })
+  await sleep(120)
+  assert.equal((await get(`/r/${aid}/blob`)).status, 404)
+  assert.equal(JSON.parse(txt(await teiler.callTool({ name: 'list_assets', arguments: {} })))[0].released, false)
+  // revoking ends both addresses
+  await teiler.callTool({ name: 'share_asset', arguments: { id: aid } })
+  assert.equal((await get(`/r/${aid}/blob`)).status, 200)
+  await teiler.callTool({ name: 'revoke_asset', arguments: { id: aid } })
+  assert.deepEqual([(await get(`/r/${aid}/blob`)).status, (await get(`/a/${aid}/blob`)).status], [404, 404])
+  // the admin log has every step, by id, without key or title
+  const journal12 = fs.readFileSync(path.join(data12, 'admin-log.jsonl'), 'utf8')
+  assert.deepEqual(journal12.trim().split('\n').map(l => JSON.parse(l).action), ['asset-released', 'asset-released', 'asset-release-changed', 'asset-unreleased', 'asset-unreleased', 'asset-released', 'asset-released'])
+  assert.ok(journal12.includes(aid) && !journal12.includes(akey) && !journal12.includes(hkey) && !journal12.includes('Angebot'))
+  // fetches without a login are counted per caller: beyond the limit 429 until the minute is over
+  let last12 = 200
+  for (let i = 0; i < 45 && last12 !== 429; i++) last12 = (await get(`/r/${hid}/blob`)).status
+  assert.equal(last12, 429)
+  assert.equal((await get(`/a/${hid}/blob`)).status, 429)
+  await Promise.all([teiler.close(), other12.close()])
+  await portFree()
+  // BOARD_ASSET_LOGIN=1: the board's own address wants the login, a released asset stays open for outsiders
+  const gated = await start('Teiler', [], { BOARD_DATA: data12, BOARD_ASSET_LOGIN: '1' })
+  const [gid] = linkOf(await publish(gated, { content: 'x' }))
+  assert.deepEqual([(await get(`/a/${gid}/blob`)).status, (await fetch(`${base}/a/${gid}/blob`, { headers: { Cookie: cookie } })).status, (await get(`/a/${gid}`)).status, (await get(`/r/${gid}/blob`)).status], [401, 200, 200, 404])
+  await gated.callTool({ name: 'share_asset', arguments: { id: gid } })
+  assert.deepEqual([(await get(`/r/${gid}/blob`)).status, (await get(`/a/${gid}/blob`)).status], [200, 401])
+  await gated.close()
+  await portFree()
+  fs.rmSync(data12, { recursive: true })
+}
+
+// ---- an option in two or three words (card Nr. 157): options[i].short, cut at a word, absent when not given ----
+{
+  const data15 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const kurz = await start('Kurz', [], { BOARD_DATA: data15 })
+  const made = async (name, args) => { const r = await kurz.callTool({ name, arguments: args }); assert.ok(!r.isError, r.content[0].text); return r.content[0].text.match(/card (\w+) /)[1] }
+  const cardOf = async id => (await state()).cards.find(c => c.id === id)
+  const a15 = await made('create_decision', { title: 'Alte Entwürfe?', options: [{ key: 'del', label: 'Alle alten Entwürfe endgültig löschen', short: '  Löschen ' }, { key: 'keep', label: 'Im Archiv behalten', short: 'Im Archiv behalten und nie wieder ansehen' }, { key: 'x', label: 'Später', short: '   ' }] })
+  assert.deepEqual((await cardOf(a15)).options, [{ key: 'del', label: 'Alle alten Entwürfe endgültig löschen', detail: '', short: 'Löschen' }, { key: 'keep', label: 'Im Archiv behalten', detail: '', short: 'Im Archiv behalten' }, { key: 'x', label: 'Später', detail: '' }])
+  assert.deepEqual(JSON.parse((await kurz.callTool({ name: 'list_cards', arguments: {} })).content[0].text).find(c => c.id === a15).options.map(o => o.short), ['Löschen', 'Im Archiv behalten', undefined])
+  // one long word is cut at the limit
+  const b15 = await made('create_decision', { title: 'Wort?', options: [{ key: 'a', label: 'A', short: 'Donaudampfschifffahrtsgesellschaft' }, { key: 'b', label: 'B' }] })
+  assert.deepEqual((await cardOf(b15)).options.map(o => o.short), ['Donaudampfschifffa', undefined])
+  // in sections and in the text form the flagged block carries it, and so does its option
+  const c15 = await made('create_decision', { title: 'Blöcke?', sections: [{ text: 'Vorweg.' }, { key: 'a', label: 'Ausführlich erklären', short: 'Lang', text: 'so' }, { key: 'b', label: 'Knapp halten', text: 'anders' }] })
+  let k15 = await cardOf(c15)
+  assert.deepEqual([k15.sections.map(x => x.short), k15.options], [[undefined, 'Lang', undefined], [{ key: 'a', label: 'Ausführlich erklären', detail: '', short: 'Lang' }, { key: 'b', label: 'Knapp halten', detail: '' }]])
+  const d15 = await made('create_decision', { title: 'Text?', text: 'Vorweg.\n\n[a] Alles neu bauen: dauert.\nshort: Neu bauen\n\n[b*] Flicken: geht schnell.\nshort: Flicken\npicture: 0', attachments: [shot] })
+  k15 = await cardOf(d15)
+  assert.deepEqual([k15.options.map(o => [o.key, o.short]), k15.sections.filter(x => x.key).map(x => [x.text, x.short, x.picture ?? null])], [[['a', 'Neu bauen'], ['b', 'Flicken']], [['dauert.', 'Neu bauen', null], ['geht schnell.', 'Flicken', 0]]])
+  // revised: what the new options say; merged: the new card's own
+  await made('revise_card', { card_id: a15, options: [{ key: 'del', label: 'Löschen' }, { key: 'keep', label: 'Behalten', short: 'Bleibt' }] })
+  assert.deepEqual((await cardOf(a15)).options.map(o => o.short), [undefined, 'Bleibt'])
+  await made('revise_card', { card_id: a15, title: 'Alte Entwürfe weg?' })
+  assert.deepEqual((await cardOf(a15)).options.map(o => o.short), [undefined, 'Bleibt'], 'a rewording of something else leaves it')
+  const m15 = await made('merge_cards', { card_ids: [b15, c15], title: 'Beides?', options: [{ key: 'j', label: 'Ja, beides zusammen', short: 'Beides' }, { key: 'n', label: 'Nein, getrennt lassen', short: 'Getrennt' }] })
+  assert.deepEqual((await cardOf(m15)).options.map(o => o.short), ['Beides', 'Getrennt'])
+  await kurz.close()
+  await portFree()
+  fs.rmSync(data15, { recursive: true })
+}
+
+// ---- where on a picture the thing is: attachments[i].marks, regions in fractions of the picture ----
+{
+  const data16 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const zeiger = await start('Zeiger', [], { BOARD_DATA: data16 })
+  const run = async (name, args) => zeiger.callTool({ name, arguments: args }).then(r => [r.isError === true, r.content[0].text], e => [true, e.message])
+  const opts = [option('a'), option('b')]
+  const note16 = path.join(data16, 'notiz.txt')
+  fs.writeFileSync(note16, 'kein Bild')
+  const files16 = () => fs.readdirSync(path.join(data16, 'files')).length
+  // one mark, or several; clamped into the picture, the label cut; the plain forms beside it as before
+  let [bad16, out16] = await run('create_decision', { title: 'Wo?', options: opts, attachments: [{ path: shot, mark: { x: 0.1, y: 0.82, w: 0.8, h: 0.5, label: '  Die Zeile   am Fuß des Bildschirms  ' } }, shot, { path: shot, title: 'ohne' }] })
+  assert.equal(bad16, false, out16)
+  const wo = out16.match(/^card (\w+) /)[1]
+  const att = async id => (await state()).cards.find(c => c.id === id).attachments
+  assert.deepEqual((await att(wo)).map(a => a.marks), [[{ x: 0.1, y: 0.82, w: 0.8, h: 0.18, label: 'Die Zeile am Fuß des Bil' }], undefined, undefined])
+  ;[bad16, out16] = await run('reply', { text: 'hier', attachments: [{ path: shot, marks: [{ x: -1, y: 0, w: 0.5, h: 0.25 }, { x: 0.5, y: 0.5, w: 9, h: 9 }], mark: { x: 0.2, y: 0.2, w: 0.1, h: 0.1 } }] })
+  assert.equal(bad16, false, out16)
+  assert.deepEqual((await state()).messages.at(-1).attachments[0].marks, [{ x: 0.2, y: 0.2, w: 0.1, h: 0.1 }, { x: 0, y: 0, w: 0.5, h: 0.25 }, { x: 0.5, y: 0.5, w: 0.5, h: 0.5 }])
+  // refused, and nothing is copied: no numbers, no size, more than four, a file that is no picture
+  const before16 = files16()
+  for (const [entry, why] of [
+    [{ path: shot, mark: { x: '0.1', y: 0, w: 0.5, h: 0.5 } }, /a mark on mock\.png is \{ x, y, w, h \} in fractions/],
+    [{ path: shot, mark: 'unten' }, /a mark on mock\.png is/],
+    [{ path: shot, mark: { x: 1, y: 0, w: 0.5, h: 0.5 } }, /has no size inside the picture/],
+    [{ path: shot, mark: { x: 0, y: 0, w: 0, h: 0.5 } }, /has no size inside the picture/],
+    [{ path: shot, marks: Array(5).fill({ x: 0, y: 0, w: 0.1, h: 0.1 }) }, /at most 4 marks on one picture/],
+    [{ path: note16, mark: { x: 0, y: 0, w: 0.5, h: 0.5 } }, /a mark needs a picture; notiz\.txt is none/],
+  ]) {
+    ;[bad16, out16] = await run('create_decision', { title: 'x', options: opts, attachments: [entry] })
+    assert.deepEqual([bad16, why.test(out16)], [true, true], out16)
+  }
+  assert.equal(files16(), before16)
+  // revised: the same picture again without a word about marks keeps them; a new mark replaces, null takes them away
+  await run('revise_card', { card_id: wo, attachments: [shot] })
+  assert.deepEqual((await att(wo)).map(a => a.marks), [[{ x: 0.1, y: 0.82, w: 0.8, h: 0.18, label: 'Die Zeile am Fuß des Bil' }]])
+  await run('revise_card', { card_id: wo, title: 'Wo genau?' })
+  assert.equal((await att(wo))[0].marks.length, 1, 'a rewording of something else leaves them')
+  await run('revise_card', { card_id: wo, attachments: [{ path: shot, mark: { x: 0, y: 0, w: 0.25, h: 0.25 } }] })
+  assert.deepEqual((await att(wo))[0].marks, [{ x: 0, y: 0, w: 0.25, h: 0.25 }])
+  await run('revise_card', { card_id: wo, attachments: [{ path: shot, mark: null }] })
+  assert.equal('marks' in (await att(wo))[0], false)
+  // the earlier versions keep what they showed; a merged card carries its own
+  assert.deepEqual((await state()).cards.find(c => c.id === wo).versions.map(v => v.attachments[0].marks?.length ?? 0), [1, 1, 1, 1])
+  const other16 = (await run('create_decision', { title: 'Und?', options: opts }))[1].match(/^card (\w+) /)[1]
+  ;[bad16, out16] = await run('merge_cards', { card_ids: [wo, other16], title: 'Beides?', options: opts, attachments: [{ path: shot, mark: { x: 0.5, y: 0.5, w: 0.5, h: 0.5, label: 'hier' } }] })
+  assert.deepEqual((await att(out16.match(/card (\w+) /)[1]))[0].marks, [{ x: 0.5, y: 0.5, w: 0.5, h: 0.5, label: 'hier' }])
+  await zeiger.close()
+  await portFree()
+  fs.rmSync(data16, { recursive: true })
+}
+
+// ---- the fixed order of the stack: oldest first, and whatever leaves and comes back stands where it stood ----
+{
+  const data17 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const fest = await start('Fest', [], { BOARD_DATA: data17 })
+  const file = async (title, extra = {}) => (await fest.callTool({ name: 'create_decision', arguments: { title, options: [option('a'), option('b')], ...extra } })).content[0].text.match(/^card (\w+) /)[1]
+  const tell = async (name, args) => (await fest.callTool({ name, arguments: args })).content[0].text
+  const [c1, c2, c3, c4] = [await file('eins'), await file('zwei', { urgency: 'critical', urgency_reason: 'eilt' }), await file('drei', { urgency: 'low' }), await file('vier', { urgency: 'high', urgency_reason: 'x' })]
+  const order = async () => (await state()).queue
+  assert.deepEqual(await order(), [c1, c2, c3, c4])
+  // the details of a card go under it as a message: on an open card that is with the human this changes nothing
+  // about the card, neither its place nor its state, and nothing is sent to anyone but the pages
+  const before17 = JSON.stringify([(await state()).cards.find(c => c.id === c2), await order()])
+  assert.equal(await tell('reply', { text: 'Hintergrund: gemessen an 3 Läufen, 412 ms im Mittel.', card_id: c2, details: 'lange Herleitung' }), 'sent')
+  let s17 = await state()
+  assert.equal(JSON.stringify([s17.cards.find(c => c.id === c2), s17.queue]), before17)
+  assert.deepEqual([s17.messages.at(-1).card_id, s17.messages.at(-1).from, s17.messages.at(-1).details, 'presented' in s17.messages.at(-1), s17.messages.at(-1).kind ?? null], [c2, 'agent', 'lange Herleitung', false, null])
+  assert.equal(await tell('reply', { text: 'und fertig', card_id: c2, present: true }), 'sent', 'present on a card that is not in revision does nothing')
+  assert.equal(JSON.stringify([(await state()).cards.find(c => c.id === c2), await order()]), before17)
+  // raised, lowered, reworded: nobody moves
+  await tell('set_urgency', { card_id: c3, urgency: 'critical', reason: 'jetzt' })
+  await tell('set_urgency', { card_id: c2, urgency: 'low' })
+  assert.match(await tell('revise_card', { card_id: c4, title: 'vier, neu gefasst' }), /position 4 of 4 in the stack/)
+  assert.deepEqual(await order(), [c1, c2, c3, c4])
+  // put off and back; handed back and presented again; answered and taken back: each returns to its own place
+  assert.equal((await post('/snooze', { card_id: c2 })).status, 200)
+  assert.deepEqual(await order(), [c1, c3, c4])
+  assert.equal((await post('/snooze', { card_id: c2, clear: true })).status, 200)
+  assert.deepEqual(await order(), [c1, c2, c3, c4])
+  assert.equal((await post('/message', { text: 'anders', card_id: c1, handback: true })).status, 200)
+  await sleep(300)
+  await tell('revise_card', { card_id: c1, title: 'eins, überarbeitet' })
+  assert.deepEqual(await order(), [c1, c2, c3, c4])
+  await sleep(300)
+  assert.equal((await post('/decide', { card_id: c3, key: 'a' })).status, 200)
+  assert.deepEqual(await order(), [c1, c2, c4])
+  assert.equal((await post('/reopen', { card_id: c3 })).status, 200)
+  assert.deepEqual(await order(), [c1, c2, c3, c4])
+  // a new card goes to the end; a merged one stands where the oldest of the cards it replaces stood
+  const c5 = await file('fünf', { urgency: 'critical', urgency_reason: 'x' })
+  assert.deepEqual(await order(), [c1, c2, c3, c4, c5])
+  const merged = (await tell('merge_cards', { card_ids: [c4, c2], title: 'zwei und vier', options: [option('a'), option('b')] })).match(/^card (\w+) /)[1]
+  assert.deepEqual(await order(), [c1, merged, c3, c5])
+  assert.deepEqual(JSON.parse(await tell('list_cards', {})).filter(c => c.queue_position).map(c => [c.id, c.queue_position]), [[c1, 1], [c3, 3], [c5, 4], [merged, 2]])
+  // and so it stands after a restart
+  await fest.close()
+  await portFree()
+  const fest2 = await start('Fest', [], { BOARD_DATA: data17 })
+  assert.deepEqual(await order(), [c1, merged, c3, c5])
+  await fest2.close()
+  await portFree()
+  fs.rmSync(data17, { recursive: true })
+}
+
+// ---- test cards: the hub files fake decisions as its own session "Demo", and takes them away again ----
+{
+  const data18 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const echt = await start('Echt', [], { BOARD_DATA: data18 })
+  const fake = body => post('/dev/fake-decisions', body)
+  // only the signed-in human, from the page itself; n within reason
+  assert.equal((await fetch(`${base}/dev/fake-decisions`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: '{}' })).status, 401)
+  assert.equal((await post('/dev/fake-decisions', {}, 'https://evil.example')).status, 403)
+  for (const n of [0, 21, 1.5, 'fünf']) assert.equal((await fake({ n })).status, 400, String(n))
+  assert.deepEqual(await (await fake({ clear: true })).json(), { ok: true, cards: [] })
+  // five by default: one of each kind in turn, cards like any other, from a session that is plainly no agent
+  let res18 = await fake({})
+  assert.deepEqual([res18.status, await res18.json()], [200, { ok: true, cards: [1, 2, 3, 4, 5] }])
+  s = await state()
+  const demo18 = s.agents.find(a => a.id === 'demo')
+  assert.deepEqual([demo18.name, demo18.demo, demo18.online, demo18.main, demo18.parent ?? null, demo18.desk], ['Demo', true, false, false, null, 'main'])
+  let fakes = s.cards.filter(c => c.agent === 'demo')
+  assert.ok(fakes.every(c => c.title.startsWith('Test: ') && c.status === 'open'))
+  assert.deepEqual(fakes.map(c => [c.kind, c.options.length, c.multiple, c.urgency, [c.recommended ?? []].flat().length]), [['decision', 2, false, 'normal', 1], ['decision', 2, false, 'normal', 0], ['decision', 3, false, 'normal', 1], ['decision', 5, true, 'normal', 2], ['decision', 2, false, 'critical', 0]])
+  assert.deepEqual(fakes[1].options.map(o => o.short), ['Löschen', 'Behalten'])
+  assert.deepEqual(s.queue, fakes.map(c => c.id))
+  // the next ones go on in the cycle: two pictures that belong to their options, then one that is only to be read
+  assert.deepEqual((await (await fake({ n: 3 })).json()).cards, [6, 7, 8])
+  s = await state()
+  fakes = s.cards.filter(c => c.agent === 'demo')
+  assert.deepEqual([fakes[5].attachments.map(a => [a.name, a.image]), fakes[6].kind, fakes[7].title], [[['design-a.png', true], ['design-b.png', true]], 'info', 'Test: Backup heute Nacht laufen lassen?'])
+  assert.equal((await fetch(base + fakes[5].attachments[0].url, { headers: { Cookie: cookie } })).status, 200)
+  // answering one closes it: nobody is waiting, nothing queues up for the session
+  assert.equal((await post('/decide', { card_id: fakes[0].id, key: 'yes' })).status, 200)
+  assert.equal((await post('/decide', { card_id: fakes[3].id, keys: ['done', 'next'] })).status, 200)
+  assert.equal((await post('/message', { text: 'hallo Demo', agent: 'demo' })).status, 200)
+  await eventually(async () => (await state()).cards.find(c => c.id === fakes[0].id).status === 'done', 'the answered test card to close')
+  s = await state()
+  assert.deepEqual([s.cards.find(c => c.id === fakes[0].id).choice, s.cards.find(c => c.id === fakes[3].id).status, s.cards.find(c => c.id === fakes[3].id).choices, readBoard(data18).pending], ['yes', 'done', ['done', 'next'], {}])
+  // a real session called Demo does not take the hub's own over, and real cards are left alone by the clearing
+  const real18 = (await echt.callTool({ name: 'create_decision', arguments: { title: 'echt', options: [option('a'), option('b')] } })).content[0].text.match(/^card (\w+) /)[1]
+  const named = await start('Demo', [], { BOARD_DATA: data18 })
+  await eventually(async () => (await state()).agents.some(a => a.id === 'demo-2'), 'the real Demo')
+  const files18 = fs.readdirSync(path.join(data18, 'files')).length
+  res18 = await fake({ clear: true })
+  assert.deepEqual((await res18.json()).cards, [1, 2, 3, 4, 5, 6, 7, 8])
+  s = await state()
+  assert.deepEqual([s.agents.map(a => a.id), s.cards.map(c => c.id), s.messages.some(m => m.agent === 'demo'), fs.readdirSync(path.join(data18, 'files')).length, readBoard(data18).retired_ids], [['echt', 'demo-2'], [real18], false, files18 - 2, []])
+  // and again, after the clearing
+  assert.deepEqual((await (await fake({ n: 1 })).json()).cards.length, 1)
+  await Promise.all([echt.close(), named.close()])
+  await portFree()
+  fs.rmSync(data18, { recursive: true })
+}
+
+// ---- memos: the human's notes that rest on the hub until they are sent ----
+{
+  const data19 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const on19 = { BOARD_DATA: data19 }
+  const got19 = [], gotB19 = []
+  const eins19 = await start('Eins', got19, on19)
+  const zwei19 = await start('Zwei', gotB19, on19)
+  await eventually(async () => (await state()).agents.length === 2, 'both sessions')
+  const memo = body => post('/memo', body)
+  const png = 'data:image/png;base64,' + fs.readFileSync(shot).toString('base64')
+  const files19 = () => fs.readdirSync(path.join(data19, 'files'))
+  assert.deepEqual((await state()).memos, [])
+  // only the signed-in human, from the page
+  assert.equal((await fetch(`${base}/memo`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: '{}' })).status, 401)
+  assert.equal((await post('/memo', {}, 'https://evil.example')).status, 403)
+  // made (an empty note is one), changed, moved
+  let res19 = await memo({})
+  let m19 = (await res19.json()).memo
+  assert.deepEqual([res19.status, { ...m19, id: 0, created: 0, updated: 0 }, /^[0-9a-f]{8}$/.test(m19.id), m19.created === m19.updated], [200, { id: 0, text: '', to: null, place: 'float', x: 0, y: 0, attachments: [], created: 0, updated: 0 }, true, true])
+  await sleep(5)
+  m19 = (await (await memo({ id: m19.id, text: 'Milch kaufen', place: 'paper', x: 1200.5, y: -40, to: 'zwei' })).json()).memo
+  assert.deepEqual([m19.text, m19.place, m19.x, m19.y, m19.to, m19.updated > m19.created], ['Milch kaufen', 'paper', 1200.5, -40, 'zwei', true])
+  const second = (await (await memo({ text: 'zweite Notiz', x: 0.25, y: 0.5 })).json()).memo
+  assert.deepEqual((await state()).memos.map(m => m.text), ['zweite Notiz', 'Milch kaufen'], 'newest first')
+  // refused, and nothing changes: an unknown note, place, session, a coordinate that is no number
+  for (const [body, status] of [[{ id: 'gibtsnicht', text: 'x' }, 404], [{ id: m19.id, place: 'wand' }, 400], [{ id: m19.id, to: 'niemand' }, 404], [{ id: m19.id, x: 'links' }, 400], [{ remove: true }, 400], [{ send: true }, 400], [{ id: m19.id, attachments: [{ url: '/files/fremd.png' }] }, 400]]) assert.equal((await memo(body)).status, status, JSON.stringify(body))
+  assert.equal((await state()).memos[1].text, 'Milch kaufen')
+  // files are stored like a message's; the list given is the whole list, what is left out is deleted
+  m19 = (await (await memo({ id: m19.id, attachments: [{ name: 'eins.png', data: png }, { name: 'zwei.png', data: png }] })).json()).memo
+  assert.deepEqual([m19.attachments.map(a => [a.name, a.image, a.kind]), files19().length], [[['eins.png', true, 'image'], ['zwei.png', true, 'image']], 2])
+  assert.equal((await fetch(base + m19.attachments[0].url, { headers: { Cookie: cookie } })).status, 200)
+  m19 = (await (await memo({ id: m19.id, attachments: [{ url: m19.attachments[1].url }, { name: 'drei.png', data: png }] })).json()).memo
+  assert.deepEqual([m19.attachments.map(a => a.name), files19().length], [['zwei.png', 'drei.png'], 2])
+  // nothing of it has reached an agent, and the cleanup of loose files leaves a note's files alone
+  assert.deepEqual([got19.length, gotB19.length, (await state()).messages.length], [0, 0, 0])
+  const admin19 = await adminLogin('adminkey', cookie)
+  assert.equal((await adminPost('orphans', { confirm: 'orphans' }, admin19)).status, 200)
+  assert.equal(files19().length, 2)
+  // it all survives a restart of the hub
+  await Promise.all([eins19.close(), zwei19.close()])
+  await portFree()
+  got19.length = gotB19.length = 0
+  const eins19b = await start('Eins', got19, on19)
+  const zwei19b = await start('Zwei', gotB19, on19)
+  await eventually(async () => (await state()).agents.filter(a => a.online).length === 2, 'both sessions, again')
+  assert.deepEqual((await state()).memos.map(m => [m.text, m.to, m.place, m.attachments.length]), [['zweite Notiz', null, 'float', 0], ['Milch kaufen', 'zwei', 'paper', 2]])
+  // sent: it arrives as a message of the human like any other, with its files, and the note is gone
+  res19 = await memo({ id: m19.id, send: true })
+  const sent19 = await res19.json()
+  assert.deepEqual([res19.status, sent19.sent.agent], [200, 'zwei'])
+  await eventually(() => gotB19.length === 1, 'the memo to arrive')
+  assert.deepEqual([gotB19[0].params.content, gotB19[0].params.meta.kind, gotB19[0].params.meta.files.split(',').length, fs.existsSync(gotB19[0].params.meta.image_path), got19.length], ['Milch kaufen', 'chat', 2, true, 0])
+  s = await state()
+  assert.deepEqual([s.memos.map(m => m.text), s.messages.at(-1).id, s.messages.at(-1).from, s.messages.at(-1).agent, s.messages.at(-1).text, s.messages.at(-1).attachments.map(a => a.name)], [['zweite Notiz'], sent19.sent.message, 'user', 'zwei', 'Milch kaufen', ['zwei.png', 'drei.png']])
+  // a note that names no session goes to the starred one; with several sessions and no star it stays, and says why
+  res19 = await memo({ id: second.id, send: true })
+  assert.deepEqual([res19.status, (await res19.json()).code, (await state()).memos.length], [409, 'no-session', 1])
+  assert.equal((await post('/star', { agent: 'eins', starred: true })).status, 200)
+  assert.equal((await memo({ id: second.id, send: true })).status, 200)
+  await eventually(() => got19.length === 1, 'the memo for the starred session')
+  assert.deepEqual([got19[0].params, (await state()).memos], [{ content: 'zweite Notiz', meta: { kind: 'chat' } }, []])
+  // an empty note is not sent; thrown away, a note takes its files along
+  const empty19 = (await (await memo({ attachments: [{ name: 'weg.png', data: png }] })).json()).memo
+  const blank19 = (await (await memo({ text: '   ' })).json()).memo
+  assert.equal((await memo({ id: blank19.id, send: true })).status, 400)
+  const count19 = files19().length
+  assert.equal((await memo({ id: empty19.id, remove: true })).status, 200)
+  assert.deepEqual([files19().length, (await state()).memos.map(m => m.id)], [count19 - 1, [blank19.id]])
+  // at most fifty
+  for (let i = 1; i < 50; i++) assert.equal((await memo({ text: `n${i}` })).status, 200)
+  res19 = await memo({ text: 'zu viel' })
+  assert.deepEqual([res19.status, (await res19.json()).code, (await state()).memos.length], [409, 'too-many', 50])
+  assert.equal((await memo({ id: blank19.id, text: 'ändern geht weiter' })).status, 200)
+  await Promise.all([eins19b.close(), zwei19b.close()])
+  await portFree()
+  fs.rmSync(data19, { recursive: true })
+}
+
+// ---- desks (card Nr. 149): each a world of its own sessions and their stack; a board from before is one desk ----
+{
+  const data13 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const on13 = { BOARD_DATA: data13 }
+  // a board from before desks: two sessions, one names a desk that does not exist
+  writeBoard(data13, {
+    agents: [{ id: 'alt', name: 'Alt', joined: 1, position: 0 }, { id: 'irr', name: 'Irr', joined: 2, position: 1, desk: 'gibtsnicht' }],
+    cards: [], messages: [], tasks: [], assets: [],
+  })
+  fs.writeFileSync(path.join(data13, 'state.in-sqlite'), '')
+  const werk = await start('Werk', [], on13)
+  const privat = await start('Privat', [], on13)
+  const desk = body => post('/desk', body)
+  s = await state()
+  assert.deepEqual([s.desks.map(d => [d.id, d.name]), s.agents.map(a => [a.id, a.desk])], [[['main', 'Desk']], [['alt', 'main'], ['irr', 'main'], ['werk', 'main'], ['privat', 'main']]])
+  // made, renamed, put in order
+  let res13 = await desk({ name: '  Privat  ' })
+  const home = (await res13.json()).desk
+  assert.deepEqual([res13.status, home.name, /^[0-9a-f]{8}$/.test(home.id)], [200, 'Privat', true])
+  const third = (await (await desk({ name: 'Verein' })).json()).desk
+  assert.equal((await desk({ id: 'main', name: 'Arbeit' })).status, 200)
+  assert.equal((await desk({ id: third.id, before: 'main' })).status, 200)
+  assert.deepEqual((await state()).desks.map(d => d.name), ['Verein', 'Arbeit', 'Privat'])
+  assert.equal((await desk({ id: third.id, before: null })).status, 200)
+  assert.deepEqual((await state()).desks.map(d => d.name), ['Arbeit', 'Privat', 'Verein'])
+  // refused: no name, an unknown desk, a write without the login or from elsewhere
+  for (const [body, status] of [[{}, 400], [{ name: '   ' }, 400], [{ id: 'main', name: '' }, 400], [{ id: 'gibtsnicht', name: 'x' }, 404], [{ id: 'main', before: 'gibtsnicht' }, 404], [{ id: 'main', remove: true }, 409]]) assert.equal((await desk(body)).status, status, JSON.stringify(body))
+  assert.equal((await fetch(`${base}/desk`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: '{"name":"x"}' })).status, 401)
+  assert.equal((await post('/desk', { name: 'x' }, 'https://evil.example')).status, 403)
+  // a session moves to another desk, with the session it is paired with; its cards go where it goes
+  assert.equal((await post('/session', { agent: 'privat', desk: 'gibtsnicht' })).status, 404)
+  assert.equal((await post('/session', { agent: 'alt', group: 'paar' })).status, 200)
+  assert.equal((await post('/session', { agent: 'privat', group: 'paar' })).status, 200)
+  assert.equal((await post('/session', { agent: 'privat', desk: home.id })).status, 200)
+  const cardP = (await privat.callTool({ name: 'create_decision', arguments: { title: 'privat?', options: [option('a'), option('b')] } })).content[0].text.match(/^card (\w+) /)[1]
+  const cardW = (await werk.callTool({ name: 'create_decision', arguments: { title: 'arbeit?', options: [option('a'), option('b')] } })).content[0].text.match(/^card (\w+) /)[1]
+  s = await state()
+  const deskOf = id => s.agents.find(a => a.id === s.cards.find(c => c.id === id).agent).desk
+  assert.deepEqual([Object.fromEntries(s.agents.map(a => [a.id, a.desk])), deskOf(cardP), deskOf(cardW)], [{ alt: home.id, irr: 'main', werk: 'main', privat: home.id }, home.id, 'main'])
+  // the stack itself stays whole, so a client that knows no desks sees everything, and a knock from the other desk is there
+  assert.deepEqual([s.queue.includes(cardP), s.queue.includes(cardW)], [true, true])
+  // more than twelve are refused
+  for (let i = 3; i < 12; i++) assert.equal((await desk({ name: `D${i}` })).status, 200)
+  assert.equal((await desk({ name: 'zu viel' })).status, 409)
+  // it all survives a restart; a session that comes back stays on its desk, a new one starts on the default
+  await Promise.all([werk.close(), privat.close()])
+  await portFree()
+  const privat2 = await start('Privat', [], on13)
+  const neu13 = await start('Neu', [], on13)
+  await eventually(async () => (await state()).agents.some(a => a.id === 'neu'), 'the new session')
+  s = await state()
+  assert.deepEqual([s.desks.length, s.desks.slice(0, 3).map(d => d.name), s.agents.find(a => a.id === 'privat').desk, s.agents.find(a => a.id === 'neu').desk, readBoard(data13).desks.length], [12, ['Arbeit', 'Privat', 'Verein'], home.id, 'main', 12])
+  // removed: its sessions fall back to the default desk, their cards with them
+  assert.equal((await desk({ id: home.id, remove: true })).status, 200)
+  s = await state()
+  assert.deepEqual([s.desks.some(d => d.id === home.id), s.agents.filter(a => a.desk !== 'main').length, s.cards.find(c => c.id === cardP).status], [false, 0, 'open'])
+  assert.equal((await desk({ id: home.id, name: 'wieder' })).status, 404)
+  await Promise.all([privat2.close(), neu13.close()])
+  await portFree()
+  fs.rmSync(data13, { recursive: true })
+}
+
+// ---- main agents and their subs (card Nr. 160): a session names its main; one level; subs stand on their main's desk ----
+{
+  const data14 = fs.mkdtempSync(path.join(os.tmpdir(), 'board-test-'))
+  const on14 = { BOARD_DATA: data14 }
+  // a board from before: no parents; one session names a parent that is gone
+  writeBoard(data14, { agents: [{ id: 'waise', name: 'Waise', joined: 1, position: 0, parent: 'gibtsnicht', host: 'woanders' }], cards: [], messages: [], tasks: [], assets: [] })
+  fs.writeFileSync(path.join(data14, 'state.in-sqlite'), '')
+  const chef = await start('Chef', [], on14)
+  const eins = await start('Eins', [], on14)
+  const zwei = await start('Zwei', [], on14)
+  const tool = async (who, name, args) => who.callTool({ name, arguments: args }).then(r => [r.isError === true, r.content[0].text], e => [true, e.message])
+  const family = async () => Object.fromEntries((await state()).agents.map(a => [a.id, [a.parent ?? null, a.main, a.desk]]))
+  assert.deepEqual(await family(), { waise: [null, false, 'main'], chef: [null, false, 'main'], eins: [null, false, 'main'], zwei: [null, false, 'main'] })
+  assert.ok(!('parent' in readBoard(data14).agents[0]), 'a parent that is gone is none')
+  // a helper says who its main is, by id or by name; the main is a main because it has a sub, or because it says so
+  assert.deepEqual(await tool(eins, 'introduce', { model: 'm', parent: 'chef' }), [false, 'noted; you stand under your main session chef'])
+  assert.deepEqual((await family()).chef, [null, true, 'main'])
+  assert.deepEqual((await tool(zwei, 'introduce', { model: 'm', parent: 'Niemand' }))[0], true)
+  assert.deepEqual(await tool(zwei, 'introduce', { model: 'm', main: true }), [false, 'noted'])
+  assert.deepEqual((await family()).zwei, [null, true, 'main'])
+  // one level only: a sub cannot be a main's main, a main with subs cannot become a sub, nobody is its own main
+  assert.match((await tool(zwei, 'introduce', { model: 'm', parent: 'eins' }))[1], /eins is itself a sub of chef/)
+  assert.match((await tool(chef, 'introduce', { model: 'm', parent: 'zwei' }))[1], /chef has subs of its own/)
+  assert.match((await tool(zwei, 'introduce', { model: 'm', parent: 'zwei' }))[1], /its own main/)
+  // a main takes an existing session, unless it has another main; and lets it go
+  assert.match((await tool(zwei, 'adopt_session', { id: 'eins' }))[1], /eins already belongs to chef/)
+  assert.match((await tool(chef, 'adopt_session', { id: 'Waise' }))[1], /waise runs on another machine/)
+  assert.deepEqual(await tool(chef, 'adopt_session', { id: 'zwei' }), [false, 'zwei is your helper now and stands under you on the board'])
+  assert.deepEqual((await family()).zwei, ['chef', false, 'main'], 'a sub is no main, whatever it said')
+  assert.match((await tool(eins, 'adopt_session', { id: 'zwei', release: true }))[1], /not your helper/)
+  assert.deepEqual(await tool(chef, 'adopt_session', { id: 'zwei', release: true }), [false, 'zwei stands alone again'])
+  // the human sets and clears it; what does not fit is refused and changes nothing
+  assert.equal((await post('/session', { agent: 'zwei', parent: 'chef' })).status, 200)
+  assert.deepEqual((await family()).zwei, ['chef', false, 'main'])
+  assert.equal((await post('/session', { agent: 'chef', parent: 'eins' })).status, 409)
+  assert.equal((await post('/session', { agent: 'waise', parent: 'gibtsnicht' })).status, 409)
+  assert.equal((await post('/session', { agent: 'zwei', parent: null })).status, 200)
+  assert.deepEqual((await family()).zwei, [null, false, 'main'])
+  assert.equal((await post('/session', { agent: 'zwei', parent: 'chef' })).status, 200)
+  // subs stand on their main's desk: moving the main moves them, a sub does not move alone
+  const desk14 = (await (await post('/desk', { name: 'Privat' })).json()).desk.id
+  assert.equal((await post('/session', { agent: 'chef', desk: desk14 })).status, 200)
+  assert.deepEqual(await family(), { waise: [null, false, 'main'], chef: [null, true, desk14], eins: ['chef', false, desk14], zwei: ['chef', false, desk14] })
+  assert.equal((await post('/session', { agent: 'eins', desk: 'main' })).status, 409)
+  assert.equal((await post('/session', { agent: 'waise', parent: 'chef' })).status, 200)
+  assert.equal((await family()).waise[2], desk14, 'a new sub joins its main\'s desk')
+  // a helper started by hand names its main when it links
+  const helper = spawn('node', [toPath(new URL('../dev/session.mjs', import.meta.url)), 'link', 'Helfer', '--parent', 'chef'], { env: serverEnv('x', on14), stdio: 'ignore' })
+  spawned.push(helper)
+  await eventually(async () => (await family()).helfer?.[0] === 'chef', 'the helper to stand under its main')
+  helper.kill()
+  // it all survives a restart; a main that is forgotten leaves its subs standing alone
+  await Promise.all([chef.close(), eins.close(), zwei.close()])
+  await portFree()
+  const eins2 = await start('Eins', [], on14)
+  await eventually(async () => (await state()).agents.find(a => a.id === 'eins')?.online, 'eins to be back')
+  assert.deepEqual([(await family()).eins, (await family()).chef], [['chef', false, desk14], [null, true, desk14]])
+  assert.deepEqual(readBoard(data14).agents.map(a => [a.id, a.parent ?? null, 'main' in a]), [['waise', 'chef', false], ['chef', null, false], ['eins', 'chef', false], ['zwei', 'chef', false], ['helfer', 'chef', false]])
+  const admin14 = await adminLogin('adminkey', cookie)
+  assert.equal((await adminPost('sessions/forget', { id: 'chef', confirm: 'chef' }, admin14)).status, 200)
+  assert.deepEqual(Object.values(await family()).map(f => [f[0], f[1]]), [[null, false], [null, false], [null, false], [null, false]])
+  await eins2.close()
+  await portFree()
+  fs.rmSync(data14, { recursive: true })
+}
+
+for (const dir of [data, data2, data3, data4, data5, data6, data7, data8, data9]) fs.rmSync(dir, { recursive: true })
+console.log('ok: chat, decision, attachment, the stack in its fixed order, status strip, undo, scribble, media, numbering, withdraw, revise and merge with stale answers and nudges, questions as sections and as one text block, notes on options, drafts, order of sessions, versions of a card and hand-back, infos to read and close, pictures with their pages, trust, shredding, notes and drawings pinned to a card, snooze, one crown, a card copied to another session, a symbol chosen by the agent, migration, restart, several agents, hub takeover, message log with since, cleanup after 30 days, permission relay, token and origin check, malformed input, stable agent ids made by the hub and kept by key, pairing and keys behind a flag, passkey login, assets released for third parties, desks, main agents and their subs, short words on options, marks on pictures, test cards from the hub, memos kept until sent, queue for away agents across hub changes, calls during a takeover, silent hub, simultaneous start, damaged state file, admin backend, static files, archive and groups, encrypted assets from hub and spoke and from the session helper, tool reference, rich html beside messages and questions, app paths, hub of its own, the move from state.json into SQLite, pad elements and blobs and live changes and sending a selection, live dictation, read aloud')
 process.exit(0)
