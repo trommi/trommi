@@ -1,0 +1,326 @@
+# client/core: the Trommi client library
+
+One plain-ES-module library that every Trommi client uses: the app (`trommi/trommi`, copied into `public/vendor/` by `dev/sync-app.sh`) and the agent channel (`hub/channel.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
+
+The wire contract is the README section "Hub v1: the wire protocol" of this repository. This file is the contract **between the core and its users**: the model the app renders from (stream C) and the API the channel drives (stream D). Names follow the README: snake_case, ids as lowercase hex, times in ms.
+
+> Status: this document was written first, as the contract. Where the code differs, the code is wrong. Changes to the shape are announced to the app and channel before they land.
+
+## Files
+
+| File | What |
+| --- | --- |
+| `index.mjs` | re-exports everything below; import this |
+| `zcrypto.mjs` | `export * from '../../crypto/zcrypto.mjs'` (in the app: the real file, copied) |
+| `transport.mjs` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
+| `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
+| `sync.mjs` | the sync engine: one cursor, verify every header, decrypt heads, lazy timelines, outbox |
+| `codec.mjs` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
+| `model.mjs` | the board model reducer and the projections |
+| `agent.mjs` | what an agent does: objects, messages, status, permission requests, `authoriseCommand` |
+| `storage-memory.mjs`, `storage-idb.mjs`, `storage-file.mjs` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
+| `test.mjs` | `node client/core/test.mjs` |
+
+## Opening a room
+
+```js
+import { foundRoom, openRoom, joinRoom, recoverRoom, idbStorage, fileStorage } from './vendor/index.mjs'
+
+const storage = idbStorage({ name: 'trommi', prefix: 'room-1/' })     // browser
+// const storage = await fileStorage({ dir: '~/.local/share/trommi/rooms/<name>' })   // Node: dir 0700, key file 0600
+
+// 1. Found (first device). recovery_code is returned ONCE; show it, never store it.
+const { client, recovery_code } = await foundRoom({ hub_url: 'https://hub.trommi.com', device_name: 'Laptop', storage, found_token })
+
+// 2. Later starts: everything from storage, then the delta from the hub.
+const client = await openRoom({ storage })           // null if this storage holds no room
+
+// 3. Join from an invite link (human or agent; the role is in the signed offer).
+const join = await joinRoom({ link, device_name: 'Phone', storage })
+join.check_code        // Promise<'123456'>: resolves when the inviter revealed; a human shows it, an agent may log it
+const client = await join.client                      // resolves when the inviter added this device
+
+// 4. Recover with the code: removes every human device, keeps the agents. A NEW code comes back once.
+const { client, recovery_code } = await recoverRoom({ hub_url, room_id, code, device_name, storage })
+
+await client.start()        // sign in, catch up (storage + delta), open the live stream
+client.stop()               // close the stream; state stays in storage
+```
+
+## The model
+
+`client.model` is one object, **mutated in place** by the reducer. Do not copy it; read what you need inside the change handler. All maps are `Map`s keyed by hex ids (or register keys). Every object below is plain data (JSON-able except `Map`s and the `Uint8Array`s explicitly marked).
+
+```js
+model = {
+  room: {
+    room_id, hub_url,
+    my_device_id, my_role,            // 'human' | 'agent'
+    key_epoch,                        // current epoch
+    last_entry_number,                // newest verified member entry
+    last_envelope_number,             // THE cursor: last envelope processed, in hub order
+    connection,                       // 'offline' | 'connecting' | 'catching_up' | 'live'
+    agent_session_id,                 // agents only, after claimSession
+  },
+
+  members: Map<device_id, {
+    device_id, device_role,           // 'human' | 'agent'
+    device_name,                      // name from the member list (readable by the hub)
+    is_active, added_entry_number, removed_entry_number,   // removed_entry_number null while active
+    is_me,
+    is_online, agent_session_id,      // from GET devices (refreshed on start and on member_entry); may be stale
+  }>,
+
+  sessions: Map<agent_device_id, Session>,       // one per agent member (active or removed, removed keep their history)
+  cards: Map<object_id, Card>,
+  permissions: Map<object_id, PermissionRequest>,
+  memos: Map<object_id, Memo>,
+  published: Map<object_id, Published>,
+  timelines: Map<timeline_key, Timeline>,          // timeline_key = `${timeline_kind}:${timeline_id}`, e.g. 'chat:card/<object_id>'
+  human: HumanRegisters,                           // shared by all human devices; empty on agents
+  invites: Map<invite_id, Invite>,                 // invites THIS device made (inviter side)
+  alerts: [Alert],                                 // newest last, capped at 200
+  outbox: [OutboxItem],                            // own envelopes not yet confirmed by the hub
+
+  // projections (recomputed after every batch, cheap):
+  stack: [object_id],               // open cards in board order (below)
+  open_permission_ids: [object_id], // pending permission requests, oldest first
+}
+```
+
+### Session (an agent member)
+
+```js
+Session = {
+  agent_device_id, agent_session_id,     // stable board id ('crypto', 'crypto-2'), from GET devices
+  device_name, is_active, is_online,
+  profile: { model, task, icon, agent_name, parent_session, is_main } | null,   // agent register 'profile'
+  status_lines: [{ id, label, state, detail, object_id, envelope_number }],    // 'status_line/<id>', in order of first appearance
+  agent_alerts: [{ key, value, envelope_number }],    // agent registers 'alert/<n>' (refused commands)
+  registers: Map<key, { value, envelope_number }>,   // all of this agent's registers, raw
+  settings: { name, desk, archived, group, icon } | null,   // human register 'session/<agent_device_id>'
+  read_up_to: envelope_number | 0,                    // human register 'read_up_to/<agent_device_id>'
+  card_ids: [object_id],          // all cards of this agent, by first_envelope_number
+  open_card_ids: [object_id],     // the ones with object_state 'open'
+  timeline_key,                   // 'chat:session/<agent_device_id>'
+  unread_count,                   // items from the agent in its session timeline and its cards' timelines with envelope_number > read_up_to
+  last_activity_at,               // sent_at of the newest envelope from or to this agent
+}
+```
+
+### Card (object_type `card`)
+
+```js
+Card = {
+  object_id, agent_device_id,               // the creator; only it writes versions
+  object_state,                             // 'open' | 'answered' | 'closed'  (from the newest head's header)
+  urgency,                                  // 'low' | 'normal' | 'high' | 'critical'
+  // content of the current version (body fields, README names):
+  card_type,                                // 'decision' | 'info'
+  title, body, options,                     // options: [{ key, label, detail, short? }]
+  sections, html, allows_multiple, recommended, urgency_reason, attachments,
+  change_note, close_summary, withdraw_reason, merged_into_object_id, merged_from_object_ids,
+  object_version,                           // 1, 2, ...
+  version_hash,                             // hex envelope hash of the current version (an answer binds to it)
+  envelope_number,                          // of the current version
+  first_envelope_number,                    // of version 1: the stack order (oldest first)
+  created_at, updated_at,                   // sent_at of version 1 / of the newest head
+  versions: [CardVersion],                  // every version, oldest first (current = last), linked by previous_version_hash
+  answer: Answer | null,                    // the answer in force
+  answers: [Answer],                        // every valid answer, also those taken back (taken_back_at set)
+  closed_how: null | 'answered' | 'read' | 'shredded' | 'withdrawn' | 'merged' | 'closed',
+  in_revision: null | { by: 'hand_back' | 'explain', envelope_number },   // projection, README rule
+  timeline_key,                             // 'chat:card/<object_id>'
+  content_state: 'ok' | 'pruned' | 'newer_schema' | 'undecryptable',
+}
+CardVersion = { object_version, version_hash, previous_version_hash, envelope_number, sent_at, object_state, urgency, content }   // content = the decoded body
+Answer = {
+  answer_action,                            // 'answer' | 'read' | 'shred'
+  choices, note, option_notes, attachments, marks, trusted,
+  bound_version_hash, bound_object_version, // the version it answered
+  envelope_number, envelope_hash, by_device_id, answered_at,
+  taken_back_at: null | envelope_number,    // the decide_again that took it back
+}
+```
+
+**Rules the reducer applies, identically on every client** (so humans and agents agree):
+
+- A card version counts only from the card's creator (the sender of version 1), with `object_version` = previous + 1 and `previous_version_hash` = the current `version_hash`. Anything else becomes an `Alert` and is ignored.
+- An answer counts only from an active human device, addressed to the owning agent, while the card is open, bound to the **current** `version_hash`, and (for `answer_action: 'answer'` without `trusted`) with every choice an option key. An answer to an older version is ignored (alert `answer-stale`): the agent refuses it too, the card stays open.
+- `decide_again` counts only if it names the answer in force; it reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
+- `object_state` and `urgency` come from the newest counted head of that object.
+- `closed_how`: `answered` (answer), `read`/`shredded` (answer actions), `withdrawn` (`withdraw_reason`), `merged` (`merged_into_object_id`), `closed` (`close_summary` or a closed state otherwise).
+
+### Permission request, memo, published
+
+```js
+PermissionRequest = { object_id, agent_device_id, tool_name, description, input_preview, expires_at,
+  version_hash, envelope_number, sent_at,
+  permission_state: 'pending' | 'allowed' | 'denied' | 'expired',   // expired is computed against the local clock when the model is read via isExpired()
+  verdict: null | { allow, by_device_id, envelope_number } }
+Memo = { object_id, by_device_id, text, x, y, color, desk_id, object_version, version_hash, envelope_number, object_state }   // any human device may write a new version
+Published = { object_id, agent_device_id, attachments, title, note, released_until, object_version, version_hash, envelope_number, object_state }
+```
+
+### Timeline (conversations and canvases, loaded lazily)
+
+The sync engine sees every timeline item's header (pruned form) and counts it; bodies are fetched when the timeline is opened.
+
+```js
+Timeline = {
+  timeline_key, timeline_kind,             // 'chat' | 'canvas'
+  timeline_id,                             // 'card/<object_id>' | 'session/<agent_device_id>' | 'desk/<desk_id>'
+  object_id,                               // for card/…; agent_device_id for session/…; desk_id for desk/…
+  item_count,                              // all items known from headers
+  newest_envelope_number,
+  items: Map<envelope_number | local_id, TimelineItem>,   // ONLY the window in memory (newest page(s) opened, live items, own pending echoes);
+                                           // iterate sorted via timelineItems(timeline). Older pages: client.timelineWindow()
+  loaded_down_to,                          // oldest envelope_number whose body is loaded (Infinity = none yet)
+  has_more,                                // older items exist that are not in memory (in storage or still on the hub)
+}
+TimelineItem = {
+  envelope_number,                         // null while pending (own optimistic echo; then local_id is set)
+  local_id, pending,                       // own sends: shown at once (< 50 ms), replaced in place when the hub confirms
+  envelope_hash, sender_device_id, recipient_device_id, sent_at,
+  item_state: 'header' | 'loading' | 'loaded' | 'pruned' | 'undecryptable' | 'newer_schema',
+  content_type,                            // when loaded: 'message' | 'strokes' | 'erase' | 'move' | 'send_away' | 'selection_sent'
+  content,                                 // the decoded body (README fields: text, details, html, attachments, hand_back, explain, present_card, copied_cards, marks, strokes, stroke_ids, offset)
+}
+```
+
+Live items that arrive over the stream come in full and are decrypted at once (`item_state: 'loaded'`). For a card's conversation the app merges `card.versions` and `card.answers` into the items by `envelope_number` ("question revised", "decided"); `timelineEvents(model, timeline_key)` returns that merged, sorted list.
+
+### Human registers
+
+```js
+HumanRegisters = {
+  drafts: Map<object_id, value>,            // 'draft/<object_id>'
+  snoozes: Map<object_id, value>,           // 'snooze/<object_id>'   value e.g. { until }
+  ducks: Map<object_id, value>,             // 'duck/<object_id>'
+  crown: value | null,                      // 'crown'
+  desks: Map<desk_id, value>,               // 'desk/<desk_id>'
+  session_settings: Map<agent_device_id, value>,   // 'session/<agent_device_id>'
+  read_up_to: Map<agent_device_id, envelope_number>,
+  canvas_snapshots: Map<timeline_id, value>,       // 'canvas_snapshot/<timeline_id>' { attachment, last_envelope_number }
+  raw: Map<key, { value, envelope_number, by_device_id }>,   // every human key, including unknown ones
+}
+```
+
+Agent keys sent by humans, and human keys sent by agents, are ignored (alert).
+
+### Invite (inviter side), alert, outbox
+
+```js
+Invite = { invite_id, device_role, link, expires_at,
+  invite_state: 'open' | 'confirm_code' | 'adding' | 'joined' | 'expired' | 'failed',
+  newcomer: null | { device_id, device_name },   // after the request arrived
+  error: null | code }
+Alert = { alert_id, code, message, envelope_number, sender_device_id, at, source: 'local' | 'agent' }
+OutboxItem = { local_id, envelope_kind, object_id, timeline_key, recipient_device_id, content, outbox_state: 'sending' | 'failed', error }
+```
+
+### The stack (projection)
+
+`model.stack`: cards with `object_state: 'open'`, not snoozed (`snoozes` value with `until` in the future), whose session is not archived (`session_settings.archived`), ordered by urgency (critical, high, normal, low), then `first_envelope_number` (oldest first). Permission requests are not in it; they are `open_permission_ids` and the app shows them first. `stackOf(model, { desk_id })` filters to the sessions on a desk.
+
+## Change notifications
+
+```js
+client.on('change', change => { ... })
+change = {
+  cards: Set<object_id>, sessions: Set<agent_device_id>, permissions: Set<object_id>,
+  memos: Set<object_id>, published: Set<object_id>,
+  timelines: Set<timeline_key>,            // items added, bodies loaded
+  registers: Set<key>,                     // human and agent register keys that changed
+  members: boolean, invites: Set<invite_id>, alerts: boolean, outbox: boolean,
+  stack: boolean,                          // model.stack or open_permission_ids changed order or content
+  room: boolean,                           // model.room fields (connection, epoch, cursor jumps)
+}
+```
+
+One `change` per applied batch (catch-up pages are batched; live envelopes come one by one). **Every field is always present** (empty `Set`, `false`), so `change.cards.has(id)` never throws. Other events: `client.on('alert', alert)`, `client.on('command', command)` (agents, below), `client.on('error', error)`.
+
+## Human actions
+
+All return a Promise that resolves once the envelope is sealed and in the (persisted) outbox. **Optimistic echo:** before sealing, the model already shows the change (`pending: true`, a `change` event fires synchronously-soon, budget < 50 ms): a message or stroke as a pending `TimelineItem`, an answer as `card.answer` with `pending: true` and `object_state: 'answered'`, a register value at once. When the hub's copy comes back through the stream, the echo is replaced in place (same `local_id`, now with `envelope_number`); if the hub refuses it, the echo is rolled back and the `OutboxItem` shows `outbox_state: 'failed'`. They throw a `ZError` for local refusals.
+
+```js
+await client.sendMessage({ agent_device_id, object_id?, text, details?, html?, attachments?, hand_back?, explain?, present_card?, copied_cards?, marks? })
+await client.answer({ object_id, choices, note?, option_notes?, attachments?, marks? })
+await client.trust({ object_id, note? })              // answer_action 'answer', trusted: true, choices = the recommendation
+await client.markRead({ object_id })                  // info cards: answer_action 'read'
+await client.shred({ object_id, note? })              // answer_action 'shred'
+await client.decideAgain({ object_id })
+await client.verdict({ object_id, allow })            // to a permission request
+await client.setRegisters({ 'draft/<object_id>': { keys, note, notes, marks } | null, ... })   // human keys only
+// shorthands: setDraft(object_id, draft|null), snooze(object_id, until|null), duck(object_id, value|null), setCrown(value),
+//             setDesk(desk_id, value|null), setSessionSettings(agent_device_id, value|null), markReadUpTo(agent_device_id, envelope_number)
+await client.saveMemo({ object_id?, text, x, y, color, desk_id })   // new memo or new version
+await client.sendStrokes({ timeline_id, content_type, strokes?, stroke_ids?, offset?, text?, attachments? })  // canvas items
+const ref = await client.uploadAttachment(bytes, { file_name, media_type, width?, height?, caption?, page?, object_id? })  // encryptAsset + PUT; returns the README reference
+const bytes = await client.fetchAttachment(ref)        // GET + decrypt + sha256 check; cached in memory
+const blob = await client.attachmentBlob(ref)          // browsers: a Blob with ref.media_type
+await client.loadTimeline(timeline_key, { limit: 50 }) // next older page into the window, newest first: from storage if cached, else GET threads; returns { loaded, has_more }
+await client.timelineWindow(timeline_key, { before_envelope_number, limit })   // windowed read for scrolling, does not grow the in-memory window; [TimelineItem] oldest first
+await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail after a snapshot
+```
+
+Membership (human devices only):
+
+```js
+const invite = await client.createInvite({ device_role: 'human' | 'agent', app_url: 'https://app.trommi.com/join' })  // -> Invite (model.invites)
+await client.confirmInvite(invite_id, typed_code)      // human role: the code the human typed; wrong code burns the invite
+                                                       // agent role: added automatically once its request arrives (no code)
+await client.removeDevices([device_id, ...])           // one entry, one new epoch, sealed for everyone who stays
+
+```
+
+## Agent API (the channel drives this)
+
+```js
+const client = await openRoom({ storage })   // or (await joinRoom({ link, device_name, storage })).client
+await client.start()
+const { agent_session_id } = await client.claimSession({ agent_name, process_instance })
+
+const object_id = await client.sendCard({ card_type: 'decision', title, body?, options?, sections?, html?, allows_multiple?, recommended?, urgency?, urgency_reason?, attachments? })
+await client.revise(object_id, { ...changed fields, change_note? })     // new version; present again after a hand back
+await client.setUrgency(object_id, urgency, urgency_reason?)
+await client.withdraw(object_id, withdraw_reason)
+const new_id = await client.merge([object_id, ...], { title, options, ... })   // closes the old ones with merged_into_object_id
+await client.close(object_id, close_summary)                          // after an answer
+await client.sendMessage({ text, details?, html?, attachments?, object_id?, present_card? })   // agent -> everyone
+await client.setStatus({ 'status_line/tests': { label, state, detail, object_id } | null, profile: { model, task, icon, agent_name } })
+const object_id = await client.requestPermission({ tool_name, description, input_preview, expires_in_ms })
+await client.publish({ attachments, title, note?, released_until? })   // a published object
+
+client.on('command', command => { ... })
+command = {
+  command: 'message' | 'answer' | 'read' | 'shred' | 'trust' | 'decide_again' | 'verdict' | 'selection_sent',
+  envelope_number, sender_device_id, object_id, timeline_key,
+  content,                 // the decoded body
+  choices, previous_choices, allow,   // as fitting
+  late,                    // the human had not seen the agent's newest envelope
+}
+```
+
+Every envelope addressed to the agent passes `authoriseCommand` (active human sender, addressed to this agent, current epoch or the previous one for two minutes, the bind matches the current version or request) before it becomes a `command`. A refused one is not delivered; the core writes the agent register `alert/<envelope_number>` (`{ code, message, sender_device_id }`) and emits `alert`. Commands are delivered once: the core persists the number of the last delivered command and, after a restart, delivers what arrived meanwhile (fetching thread bodies addressed to it).
+
+## Storage adapter
+
+```js
+storage = {
+  get(key) -> Promise<value | undefined>, set(key, value) -> Promise, delete(key) -> Promise, keys(prefix) -> Promise<[key]>,
+  saveDevice(device) -> Promise, loadDevice() -> Promise<device | null>,   // browsers: non-extractable CryptoKeys in IndexedDB; Node: key file 0600
+  extractable_keys: boolean,
+}
+```
+
+Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` deletes) and `range(prefix, { after?, before?, limit?, reverse? })` (ordered by key) for windowed reads.
+
+**Incremental persistence, no whole-model rewrite.** The reducer marks what it touched; after each batch (debounced ~200 ms, one `setMany` transaction) the core writes only those records: `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `memo/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number zero-padded>` (item header + decoded body when loaded), plus `sync` (cursor + chains of the senders touched, written in the same transaction, so cursor and records never disagree) and `room` (hub, room id, log entries, pin, epoch secrets; on membership changes only). `outbox` is written before an envelope is posted. A warm start reads the records (not the timelines' items; those are windowed reads) and catches up from the cursor. Epoch secrets are sensitive: in the browser they sit in IndexedDB next to the non-extractable device keys; in Node in a file of mode 0600.
+
+## Performance design
+
+- Verification of the delta runs in batches with a yield between batches (no task over ~50 ms); in browsers the verify+decrypt step can run in a Worker (`sync-worker.mjs`, the same module code; the main thread only reduces and renders). Throughput is measured in `test.mjs` (headers/s, decrypts/s).
+- Thread items are verified from their pruned header at sync time (one signature each, no decryption); bodies are fetched and decrypted only for opened timelines and items addressed to an agent.
+- Projections (`stack`, counts) are recomputed only for the sessions and cards a batch touched.
