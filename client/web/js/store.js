@@ -91,7 +91,7 @@ function normalize(data) {
   const agentOf = new Map(cards.map(c => [c.id, c.agent]))
   const queue = (data.queue ?? cards
     .filter(c => c.status === 'open')
-    .sort((a, b) => URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] || a.created - b.created)
+    .sort((a, b) => a.created - b.created)   // the desk's order is fixed: oldest first, urgency moves nothing
     .map(c => c.id))
     // What an archived session asked waits with it, out of the way.
     .filter(id => !gone.has(agentOf.get(id)))
@@ -106,15 +106,82 @@ function normalize(data) {
     // What sessions published under a link of its own; the link itself is on the message that announced it.
     assets: data.assets ?? [],
     speech: Boolean(data.speech),
+    // The human's notes that are not sent yet (js/memos.js). A hub from before them sends none: null.
+    memos: Array.isArray(data.memos) ? data.memos : null,
+    // Desks (card Nr. 149): [{ id, name, created }] in display order. A hub from before desks sends none: null,
+    // and the board is the one it always was.
+    desks: Array.isArray(data.desks) && data.desks.length ? data.desks : null,
   }
 }
 
+// ---- the desk in view ----
+// A desk is a world of its own sessions and their stack. Which one this browser looks at is kept here
+// (localStorage); the hub knows the desks and which session is on which (agent.desk). The views get the board cut
+// down to the desk in view: its sessions, their cards and work, and of the other desks only what knocks.
+const DESK_KEY = 'trommi-desk'
+let desk = read(DESK_KEY, null)
+const knocks = c => c.kind === 'permission' || c.urgency === 'high' || c.urgency === 'critical'   // ui.js isKnock
+function deskCut(raw) {
+  if (!raw.desks) return raw
+  if (!raw.desks.some(d => d.id === desk)) desk = raw.desks[0].id
+  const deskOf = new Map([...raw.agents, ...raw.archived].map(a => [a.id, a.desk ?? raw.desks[0].id]))
+  const here = id => (deskOf.get(id) ?? raw.desks[0].id) === desk
+  const nameOf = new Map(raw.desks.map(d => [d.id, d.name]))
+  const waits = c => c.status === 'open' && raw.queue.includes(c.id) && !c.with_agent && !isSnoozed(c)
+  // From the other desks: only what knocks, and the session that knocks (named with its desk), so the card can say who asks.
+  const foreign = raw.cards.filter(c => !here(c.agent) && waits(c) && knocks(c))
+  const callers = new Set(foreign.map(c => c.agent))
+  const cards = raw.cards.filter(c => here(c.agent) || foreign.includes(c)).map(c => (here(c.agent) ? c : { ...c, other_desk: deskOf.get(c.agent), agent_name: [c.agent_name, nameOf.get(deskOf.get(c.agent))].filter(Boolean).join(' · ') }))
+  const ids = new Set(cards.map(c => c.id))
+  return {
+    ...raw,
+    agents: raw.agents.filter(a => here(a.id) || callers.has(a.id)).map(a => (here(a.id) ? a : { ...a, other_desk: a.desk, name: `${a.name} · ${nameOf.get(a.desk) ?? ''}` })),
+    archived: raw.archived.filter(a => here(a.id)),
+    groups: raw.groups.filter(g => g.members.some(a => here(a.id))),
+    cards,
+    queue: raw.queue.filter(id => ids.has(id)),
+    tasks: raw.tasks.filter(t => here(t.agent)),
+    desk,
+    // Every desk with what waits on it and whether it knocks, for the menu and the dot on its caret.
+    desks: raw.desks.map(d => {
+      const open = raw.cards.filter(c => (deskOf.get(c.agent) ?? raw.desks[0].id) === d.id && waits(c))
+      return { ...d, open: open.length, knocks: open.filter(knocks).length, sessions: raw.agents.filter(a => a.desk === d.id).length }
+    }),
+  }
+}
+/** Look at another desk (its id). Kept in this browser; the scope goes back to the Desk itself. */
+export function setDesk(id) {
+  if (!raw.desks?.some(d => d.id === id) || id === desk) return false
+  desk = id
+  write(DESK_KEY, desk)
+  scope = null
+  scopeMembers = []
+  emit()
+  return true
+}
+/** Desks on the hub: a new one (resolves with { desk }), another name, another place (before: an id or null), away
+ *  (its sessions fall to the first desk). And a session, with the sessions it is paired with, to another desk. */
+export const createDesk = name => post('/desk', { name })
+export const renameDesk = (id, name) => post('/desk', { id, name })
+export const placeDesk = (id, before = null) => post('/desk', { id, before })
+export const removeDesk = id => post('/desk', { id, remove: true })
+export const moveToDesk = (agent, to) => post('/session', { agent, desk: to })
+
 function derive() {
+  const whole = raw
+  // An address that names a session of another desk brings that desk into view.
+  if (whole.desks && scope) {
+    const named = whole.agents.find(a => a.id === scope) ?? whole.groups.find(g => g.id === scope)?.members[0]
+    if (named?.desk && named.desk !== desk && whole.desks.some(d => d.id === named.desk)) { desk = named.desk; write(DESK_KEY, desk) }
+  }
+  // The views get the board cut down to the desk in view (the whole board on a hub without desks); what is kept
+  // about snoozed and handed-back cards below goes by the whole board.
+  const cut = deskCut(whole)
   // Resolve the scope: a group by its id, a session by its id (its group, if it is in one).
-  let group = raw.groups.find(g => g.id === scope) ?? null
+  let group = cut.groups.find(g => g.id === scope) ?? null
   if (!group && scope) {
-    const agent = raw.agents.find(a => a.id === scope) ?? (loaded ? raw.agents.find(a => scopeMembers.includes(a.id)) : null)
-    if (agent?.group) group = raw.groups.find(g => g.id === agent.group) ?? null
+    const agent = cut.agents.find(a => a.id === scope) ?? (loaded ? cut.agents.find(a => scopeMembers.includes(a.id)) : null)
+    if (agent?.group) group = cut.groups.find(g => g.id === agent.group) ?? null
     if (loaded || agent) scope = group?.id ?? agent?.id ?? null
   }
   const members = group ? group.members.map(a => a.id) : scope ? [scope] : []
@@ -146,21 +213,21 @@ function derive() {
   }
   // A snoozed card is out of the hub's queue; the views list it with the open ones, at the end, and
   // tell it apart by state.later. So it is put back into the line they are given.
-  const put = raw.cards.filter(isSnoozed).sort((a, b) => (a.snoozed_at ?? Infinity) - (b.snoozed_at ?? Infinity)).map(c => c.id)
-  const called = raw.cards.filter(c => c.status === 'open' && snoozing.get(c.id) === false).map(c => c.id)
-  const all = { ...raw, queue: [...raw.queue, ...[...put, ...called].filter(id => !raw.queue.includes(id))] }
-  const cards = raw.cards.filter(mine)
+  const put = cut.cards.filter(isSnoozed).sort((a, b) => (a.snoozed_at ?? Infinity) - (b.snoozed_at ?? Infinity)).map(c => c.id)
+  const called = cut.cards.filter(c => c.status === 'open' && snoozing.get(c.id) === false).map(c => c.id)
+  const all = { ...cut, queue: [...cut.queue, ...[...put, ...called].filter(id => !cut.queue.includes(id))] }
+  const cards = cut.cards.filter(mine)
   const ids = new Set(cards.map(c => c.id))
   // Which cards are with their session is the hub's knowledge (card.with_agent), the same on every device; what this
   // browser put off by itself comes on top. Both stand at the end of the line.
-  const withAgent = raw.cards.filter(c => c.status === 'open' && c.with_agent && !later.some(([id]) => id === c.id)).map(c => c.id)
+  const withAgent = cut.cards.filter(c => c.status === 'open' && c.with_agent && !later.some(([id]) => id === c.id)).map(c => c.id)
   view = {
-    agents: raw.agents,
-    messages: members.length ? raw.messages.filter(mine) : [],
+    agents: cut.agents,
+    messages: members.length ? cut.messages.filter(mine) : [],
     cards,
     queue: all.queue.filter(id => ids.has(id)),
-    tasks: raw.tasks.filter(mine),
-    speech: raw.speech,
+    tasks: cut.tasks.filter(mine),
+    speech: cut.speech,
     scope,
     members,
     group,

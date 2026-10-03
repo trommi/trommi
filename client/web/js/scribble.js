@@ -20,6 +20,15 @@
 //                                    before the host switches to another canvas
 //   board.isEmpty()
 //
+// Two things reach the board through the page, so a host that only mounts it need not know them:
+//   a picture from elsewhere on the page   drag it onto the paper with the data type PICTURE_TYPE
+//                                          (JSON { url, name }), or dispatch 'scribble:place' with
+//                                          that detail on the board's .scr element (lands in the middle)
+//   a marked region (tool R)               the board dispatches 'scribble:region' (bubbling) with
+//                                          detail { png, data, sent }: a picture of the frame and the
+//                                          strokes inside it; whoever sends it sets detail.sent to the
+//                                          promise of that. Once it resolves, the frame is cleared.
+//
 // Doc format (v1), plain JSON, world units are CSS pixels at 100 % zoom:
 //   { v: 1,
 //     images:  [{ id, x, y, w, h, nw, nh, src }],          back to front; src is a data URL
@@ -41,6 +50,7 @@ const ICONS = {
   undo: ['M9 14L4 9l5-5', 'M4 9h10.5a5.5 5.5 0 010 11H11'],
   redo: ['M15 14l5-5-5-5', 'M20 9H9.5a5.5 5.5 0 000 11H13'],
   trash: ['M4 7h16', 'M10 11v6', 'M14 11v6', 'M6 7l1 12a2 2 0 002 2h6a2 2 0 002-2l1-12', 'M9 7V4h6v3'],
+  region: ['M4 8V5h3', 'M10.500 5h3', 'M17 5h3v3', 'M20 10.500v3', 'M20 16v3h-3', 'M13.500 19h-3', 'M7 19H4v-3', 'M4 13.500v-3'],
   fit: ['M4 9V5h4', 'M20 9V5h-4', 'M4 15v4h4', 'M20 15v4h-4'],
   plus: ['M12 5v14', 'M5 12h14'],
   minus: ['M5 12h14'],
@@ -88,6 +98,9 @@ const VIEW_MIN = 48          // a pane smaller than this (CSS px, either way) ha
 const CHANGE_MS = 900        // onChange fires this long after the hand stops
 const DOCK_BELOW = 520       // narrower than this, the send button gets a bar of its own under the canvas
 const UNDO_MAX = 200
+export const PICTURE_TYPE = 'application/x-scribble-picture'
+const REGION_WORD = 'Send this region'
+const REGION_MIN = 12         // a frame smaller than this on screen (CSS px, either way) was a slip
 
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v))
 const r2 = v => Math.round(v * 100) / 100
@@ -210,6 +223,41 @@ function strokeHit(s, ax, ay, bx, by, r) {
   return false
 }
 
+/** Cut a stroke at a frame r { x, y, w, h }: the runs of it inside, and what is left of it outside. */
+function cutStroke(s, r) {
+  const p = s.pts, n = p.length >> 1, x1 = r.x + r.w, y1 = r.y + r.h
+  const within = (x, y) => x >= r.x && x <= x1 && y >= r.y && y <= y1
+  // a inside, b outside: where the line between them leaves the frame
+  const edge = (ax, ay, bx, by) => {
+    let t = 1
+    if (bx < r.x) t = Math.min(t, (r.x - ax) / (bx - ax))
+    if (bx > x1) t = Math.min(t, (x1 - ax) / (bx - ax))
+    if (by < r.y) t = Math.min(t, (r.y - ay) / (by - ay))
+    if (by > y1) t = Math.min(t, (y1 - ay) / (by - ay))
+    return [r2(ax + (bx - ax) * t), r2(ay + (by - ay) * t)]
+  }
+  const runs = []
+  let run = null
+  for (let i = 0; i < n; i++) {
+    const x = p[2 * i], y = p[2 * i + 1], inside = within(x, y)
+    if (!run || run.inside !== inside) {
+      const prev = run
+      run = { inside, pts: [], pr: [] }
+      runs.push(run)
+      if (prev) {
+        const lx = p[2 * i - 2], ly = p[2 * i - 1]
+        const cut = inside ? edge(x, y, lx, ly) : edge(lx, ly, x, y)
+        prev.pts.push(...cut); prev.pr.push(s.pr?.[i - 1])
+        run.pts.push(...cut); run.pr.push(s.pr?.[i])
+      }
+    }
+    run.pts.push(x, y); run.pr.push(s.pr?.[i])
+  }
+  if (runs.length === 1 && !runs[0].inside) return { inside: [], outside: [s] }
+  const part = run => ({ id: uid(), tool: s.tool, color: s.color, size: s.size, pts: run.pts, ...(s.pr ? { pr: run.pr } : {}) })
+  return { inside: runs.filter(run => run.inside).map(part), outside: runs.filter(run => !run.inside).map(part) }
+}
+
 // ── image import ────────────────────────────────────────────────────────────
 const readDataURL = file => new Promise((resolve, reject) => {
   const fr = new FileReader()
@@ -290,6 +338,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
   let tool = 'pen', drawTool = 'pen'
   const style = { pen: { color: PEN_COLORS[0][0], w: 1 }, hl: { color: HL_COLORS[0][0], w: 1 } }
   let sel = null                         // id of the selected image
+  let region = null                      // the marked frame { x, y, w, h } in world units (tool 'region')
   let gesture = null
   const pointers = new Map()             // pointerId → { x, y } in stage coordinates
   let hover = null                       // eraser ring position
@@ -368,7 +417,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
   const tools = el('div', 'scr-tools')
   tools.setAttribute('role', 'toolbar')
   tools.setAttribute('aria-label', 'Tools')
-  const TOOLS = [['select', 'Select', 'V'], ['pen', 'Pen', 'P'], ['hl', 'Marker', 'H'], ['eraser', 'Eraser', 'E']]
+  const TOOLS = [['select', 'Select', 'V'], ['pen', 'Pen', 'P'], ['hl', 'Marker', 'H'], ['eraser', 'Eraser', 'E'], ['region', 'Mark a region to send', 'R']]
   const toolBtns = {}
   for (const [id, label, key] of TOOLS) {
     const b = btn('scr-btn scr-tool', label, id, `${label} · ${key}`)
@@ -421,6 +470,17 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
   const bDel = btn('scr-btn scr-danger', 'Delete picture', 'trash', 'Delete · Del')
   ctxBar.append(bFront, bBack, el('span', 'scr-sep'), bDel)
 
+  // what to do with the marked region
+  const regBar = el('div', 'scr-ctx scr-region')
+  regBar.setAttribute('role', 'toolbar')
+  regBar.setAttribute('aria-label', 'Marked region')
+  regBar.hidden = true
+  const bRegSend = el('button', 'scr-region-send', REGION_WORD)
+  bRegSend.type = 'button'
+  bRegSend.dataset.tip = 'Sends the agent this part as a picture and its strokes as data, then clears it here · Enter'
+  const bRegDrop = btn('scr-btn', 'Discard the mark', 'close', 'Discard the mark · Esc')
+  regBar.append(bRegSend, bRegDrop)
+
   // send: one button. With room it stands at the end of the toolbar, on a
   // narrow screen in a bar of its own under the canvas (see placeSend).
   const SEND_TIP = sendTip ?? 'Sends the agent what you see right now, and the whole canvas with it'
@@ -443,7 +503,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
   const live = el('div', 'scr-sr')
   live.setAttribute('aria-live', 'polite')
 
-  stage.append(canvas, hint, drop, top, confirmEl, ctxBar, toastEl, errorEl, bar)
+  stage.append(canvas, hint, drop, top, confirmEl, ctxBar, regBar, toastEl, errorEl, bar)
   scr.append(stage, dock, live, file)
   root.append(scr)
 
@@ -600,6 +660,16 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
         ctx.stroke()
       }
     }
+    if (region) {
+      const x = region.x * view.z + view.x, y = region.y * view.z + view.y, w = region.w * view.z, h = region.h * view.z
+      ctx.fillStyle = 'rgb(27 106 87 / .08)'
+      ctx.fillRect(x, y, w, h)
+      ctx.setLineDash([7, 5])
+      ctx.strokeStyle = SELECT
+      ctx.lineWidth = 1.5
+      ctx.strokeRect(x, y, w, h)
+      ctx.setLineDash([])
+    }
     if (tool === 'eraser' && hover) {
       ctx.beginPath()
       ctx.arc(hover[0], hover[1], ERASER_R, 0, Math.PI * 2)
@@ -610,6 +680,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
       ctx.stroke()
     }
     placeCtx(im)
+    placeRegion()
   }
   function cancelQueued() { if (raf) { cancelAnimationFrame(raf); raf = 0 } }
 
@@ -624,6 +695,19 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     if (ty + bh > H - 76) ty = clamp(y + 12, 60, Math.max(60, H - 76 - bh))
     const tx = clamp(x + w / 2 - bw / 2, 8, Math.max(8, W - bw - 8))
     ctxBar.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`
+  }
+
+  function placeRegion() {
+    const show = !!region && !gesture
+    if (regBar.hidden === show) regBar.hidden = !show
+    if (!show) return
+    const bw = regBar.offsetWidth, bh = regBar.offsetHeight
+    const x = region.x * view.z + view.x, y = region.y * view.z + view.y, w = region.w * view.z, h = region.h * view.z
+    let ty = y + h + 12
+    if (ty + bh > H - 76) ty = y - bh - 12
+    if (ty < 60) ty = clamp(y + h - bh - 12, 60, Math.max(60, H - 76 - bh))
+    const tx = clamp(x + w / 2 - bw / 2, 8, Math.max(8, W - bw - 8))
+    regBar.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`
   }
 
   // ── document changes ─────────────────────────────────────────────────────
@@ -697,6 +781,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     } else closeStyle()
     if (next !== 'select') sel = null
     if (next !== 'eraser') hover = null
+    if (next !== 'region') region = null
     sync()
     invalidate()
   }
@@ -756,6 +841,13 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     commit({ images: [...images, ...added] })
     sel = added[added.length - 1].id
     setTool('select')
+  }
+  /** A picture that is already on the page (the session's pictures above the canvas): fetched and placed like a dropped file. */
+  async function placeFrom(url, name, at) {
+    try {
+      const blob = await (await fetch(url)).blob()
+      await addImages([new File([blob], name || 'picture', { type: blob.type })], at)
+    } catch { toast('The picture could not be read.', 'error', 4000) }
   }
   function reorder(toFront) {
     const im = selected()
@@ -824,7 +916,17 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     const r = ERASER_R / view.z
     const next = strokes.filter(s => !strokeHit(s, g.wx, g.wy, wx, wy, r))
     g.wx = wx; g.wy = wy
+    const im = hitImage(wx, wy)
+    if (im) g.pics.add(im.id)
     if (next.length !== strokes.length) { strokes = next; sync(); dirty() }
+  }
+  /** The eraser is lifted. It took ink away, or, where it met no ink at all, the pictures it touched:
+   *  so wiping a note off a photo never takes the photo along. */
+  function endErase(g) {
+    const now = strokes
+    strokes = g.base.strokes
+    if (now !== strokes) commit({ strokes: now })
+    else if (g.pics.size) commit({ images: images.filter(i => !g.pics.has(i.id)) })
   }
   /** Stop the running one-pointer gesture, e.g. because a second finger arrived. */
   function abortGesture() {
@@ -836,7 +938,9 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
       const long = performance.now() - g.t0 > 350 && g.pts.length > 12
       endDraw(g, long)
     } else if (g.type === 'erase') {
-      if (strokes !== g.base.strokes) { const now = strokes; strokes = g.base.strokes; commit({ strokes: now }) }
+      endErase(g)
+    } else if (g.type === 'region') {
+      region = null
     } else if (g.type === 'move' || g.type === 'resize') {
       images = g.base.images
       changed(true)
@@ -870,9 +974,12 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
       gesture = { type: 'draw', id: e.pointerId, tool, color: st.color, size: SIZES[tool][st.w], pen: tool === 'pen' && e.pointerType === 'pen', pts: [], pr: [], t0: performance.now() }
       addPoint(gesture, e, true)
     } else if (tool === 'eraser') {
-      gesture = { type: 'erase', id: e.pointerId, base, wx, wy }
+      gesture = { type: 'erase', id: e.pointerId, base, wx, wy, pics: new Set() }
       hover = [px, py]
       erase(gesture, px, py)
+    } else if (tool === 'region') {
+      region = null
+      gesture = { type: 'region', id: e.pointerId, wx, wy }
     } else {
       const handle = hitHandle(px, py, touch)
       const im = handle ? selected() : hitImage(wx, wy)
@@ -923,6 +1030,10 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     }
     if (g.type === 'erase') { hover = [px, py]; erase(g, px, py); return invalidate() }
     const [wx, wy] = toWorld(px, py)
+    if (g.type === 'region') {
+      region = { x: Math.min(g.wx, wx), y: Math.min(g.wy, wy), w: Math.abs(wx - g.wx), h: Math.abs(wy - g.wy) }
+      return invalidate()
+    }
     if (g.type === 'move') {
       const dx = wx - g.wx, dy = wy - g.wy
       if (!g.moved && Math.hypot(dx, dy) * view.z < 3) return
@@ -953,7 +1064,9 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
         endDraw(g, true)
       } else if (g.type === 'erase') {
         if (e.pointerType === 'touch') hover = null
-        if (strokes !== g.base.strokes) { const now = strokes; strokes = g.base.strokes; commit({ strokes: now }) }
+        endErase(g)
+      } else if (g.type === 'region') {
+        if (region && Math.min(region.w, region.h) * view.z < REGION_MIN) region = null
       } else if (g.type === 'move' || g.type === 'resize') {
         if (images !== g.base.images) { const now = images; images = g.base.images; commit({ images: now }) }
       }
@@ -1000,6 +1113,8 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
   bFront.addEventListener('click', () => reorder(true))
   bBack.addEventListener('click', () => reorder(false))
   bDel.addEventListener('click', removeSelected)
+  bRegSend.addEventListener('click', () => sendRegion())
+  bRegDrop.addEventListener('click', () => { region = null; invalidate() })
   bClear.addEventListener('click', () => {
     if (!confirmEl.hidden) return closeConfirm()
     closeStyle()
@@ -1017,7 +1132,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
   })
 
   // ── drop and paste ───────────────────────────────────────────────────────
-  const hasFiles = e => [...(e.dataTransfer?.types ?? [])].includes('Files')
+  const hasFiles = e => [...(e.dataTransfer?.types ?? [])].some(t => t === 'Files' || t === PICTURE_TYPE)
   stage.addEventListener('dragenter', e => { if (hasFiles(e)) { e.preventDefault(); drop.hidden = false } })
   stage.addEventListener('dragover', e => { if (hasFiles(e)) { e.preventDefault(); e.dataTransfer.dropEffect = 'copy'; drop.hidden = false } })
   stage.addEventListener('dragleave', e => { if (!stage.contains(e.relatedTarget)) drop.hidden = true })
@@ -1025,8 +1140,11 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     if (!hasFiles(e)) return
     e.preventDefault()
     drop.hidden = true
-    addImages(e.dataTransfer.files, local(e))
+    const given = e.dataTransfer.getData(PICTURE_TYPE)
+    if (!given) return addImages(e.dataTransfer.files, local(e))
+    try { const { url, name } = JSON.parse(given); placeFrom(url, name, local(e)) } catch {}
   })
+  scr.addEventListener('scribble:place', e => placeFrom(e.detail.url, e.detail.name))
   const visible = () => scr.getClientRects().length > 0
   const typing = t => !!t?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
   document.addEventListener('paste', e => {
@@ -1067,9 +1185,10 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
       if (selected()) { e.preventDefault(); removeSelected() }
       return
     }
-    if (e.key === 'Escape') { if (sel) { sel = null; sync(); invalidate() } return }
+    if (e.key === 'Escape') { if (sel || region) { sel = region = null; sync(); invalidate() } return }
+    if (e.key === 'Enter' && region && !gesture && !document.activeElement?.matches?.('button')) { e.preventDefault(); return void sendRegion() }
     if (e.repeat) return
-    const map = { v: 'select', p: 'pen', h: 'hl', e: 'eraser' }
+    const map = { v: 'select', p: 'pen', h: 'hl', e: 'eraser', r: 'region' }
     if (map[key]) setTool(map[key])
     else if (key >= '1' && key <= '4') setWidth(Number(key) - 1)
     else if (key === 'i') file.click()
@@ -1176,6 +1295,66 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     }
   }
   bSend.addEventListener('click', doSend)
+
+  /** The marked frame goes to the agent: a picture of exactly that part, and the strokes inside it as numbers.
+   *  The board does not send by itself (see 'scribble:region' at the top). Sent, the frame is emptied: the
+   *  strokes are cut at its edge, a picture that lies wholly inside goes too. Undo brings it back. */
+  async function sendRegion() {
+    const r = region
+    if (!r || sending || gesture) return
+    errorEl.hidden = true
+    const began = epoch
+    const inFrame = () => strokes.map(s => cutStroke(s, r))
+    const touched = images.filter(i => i.x < r.x + r.w && i.x + i.w > r.x && i.y < r.y + r.h && i.y + i.h > r.y)
+    const inside = inFrame().flatMap(c => c.inside)
+    if (!inside.length && !touched.length) return toast('There is nothing inside the mark.', 'error')
+    sending = true
+    bRegSend.textContent = 'Sending …'
+    bRegSend.disabled = true
+    sync()
+    try {
+      await Promise.all(touched.map(i => picture(i.src).ready))
+      const scale = Math.min(3, VIEW_MAX / Math.max(r.w, r.h))
+      const cv = document.createElement('canvas')
+      const width = cv.width = Math.max(1, Math.round(r.w * scale)), height = cv.height = Math.max(1, Math.round(r.h * scale))
+      const c = cv.getContext('2d', { alpha: false })
+      c.fillStyle = PAPER.light
+      c.fillRect(0, 0, width, height)
+      c.setTransform(scale, 0, 0, scale, -r.x * scale, -r.y * scale)
+      paintContent(c, r.x, r.y, r.x + r.w, r.y + r.h, images, strokes)
+      const box = o => ({ x: r2(o.x), y: r2(o.y), w: r2(o.w), h: r2(o.h) })
+      const detail = {
+        png: toPNG(cv),
+        // where the region stands on the screen (for the flight into its session)
+        rect: (b => ({ x: b.left + r.x * view.z + view.x, y: b.top + r.y * view.z + view.y, w: r.w * view.z, h: r.h * view.z }))(canvas.getBoundingClientRect()),
+        data: {
+          v: 1,
+          about: 'A region the human marked on the canvas. Coordinates are canvas units. A point (x, y) lies at ((x - region.x) * picture.scale, (y - region.y) * picture.scale) in the picture. pts is x0, y0, x1, y1 and so on along the stroke; size is the line width; tool hl is a translucent marker. images are the pictures on the canvas that the region touches.',
+          region: box(r),
+          picture: { width, height, scale: r2(scale) },
+          strokes: inside.map(({ id, ...s }) => s),
+          images: touched.map(box),
+        },
+        sent: null,
+      }
+      scr.dispatchEvent(new CustomEvent('scribble:region', { bubbles: true, detail }))
+      if (!detail.sent) throw new Error('This page cannot send a region.')
+      await detail.sent
+      if (began === epoch) {
+        if (region === r) region = null
+        commit({ strokes: inFrame().flatMap(c => c.outside), images: images.filter(i => !(i.x >= r.x && i.y >= r.y && i.x + i.w <= r.x + r.w && i.y + i.h <= r.y + r.h)) })
+        toast('Region sent')
+        live.textContent = 'Region sent.'
+      }
+    } catch (err) {
+      showError(err?.message ? `Not sent: ${err.message}` : 'Sending did not work.')
+    }
+    sending = false
+    bRegSend.textContent = REGION_WORD
+    bRegSend.disabled = false
+    sync()
+    invalidate()
+  }
   bErrClose.addEventListener('click', () => { errorEl.hidden = true })
 
   // ── draft ────────────────────────────────────────────────────────────────
@@ -1229,6 +1408,7 @@ export function mountScribble(root, { send, draftKey = 'draft', onChange, sendLa
     undo.length = redo.length = 0
     imgCache.clear()
     sel = null
+    region = null
     gesture = null
     pointers.clear()
     errorEl.hidden = true

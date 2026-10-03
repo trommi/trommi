@@ -13,17 +13,21 @@
 //   - a key held down repeats only where that is harmless (moving), never an answer
 
 import { el } from './ui.js'
+import { getState } from './store.js'
+import { copyCard } from './cardclip.js'
 
 /** The layout. scope: who provides the actions. modal: while it is up, no other scope listens.
  *  keys: 'j', 'ArrowDown', 'Shift+ArrowRight', 'g i' (g, then i), '1…9' (any of them; the action gets the number).
  *  repeat: may fire while held. typing: also fires in a field. control: also fires on a focused button.
  *  native: listed here for the sheet, but handled where it lives (the browser, the composer, the canvas);
  *    while its scope is up the key is left alone, so nothing further down the table takes it.
- *  always: works under a modal scope too (the Focus window). */
+ *  always: works under a modal scope too (the Focus window).
+ *  marked: taken only while a row of a list is marked; else the key goes on down the table (R: write). */
 export const LAYOUT = [
   { scope: 'app', title: 'Anywhere', keys: [
     { id: 'help', keys: ['?'], does: 'this list', always: true },
     { id: 'pad', keys: ['p', 'g p'], does: 'Scratchpad', verb: 'the Scratchpad, from anywhere', always: true },
+    { id: 'pad.cards', keys: ['w', 'g x'], does: 'on the Desk: hide the cards so only the paper is left, and bring them back' },
     { id: 'go.inbox', keys: ['g i'], does: 'Desk', verb: 'go to the Desk' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'jump', verb: 'jump: type where to go' },
     { id: 'go.agents', keys: ['g a'], does: 'Ledger', verb: 'go to the Ledger (the Agents page)' },
@@ -33,6 +37,8 @@ export const LAYOUT = [
     { id: 'session.prev', keys: [','], does: 'previous session' },
     { id: 'back', keys: ['u', 'Backspace'], does: 'back: take the last answer back' },
     { id: 'theme', keys: ['t'], does: 'light or dark' },
+    { id: 'rail', keys: ['['], does: 'fold the sidebar to a rail, or open it' },
+    { id: 'desk.switch', keys: ['Mod+1…9'], does: 'desk 1 to 9', verb: 'switch to that desk' },
     { id: 'quicksend', keys: ['/'], does: 'quick send: write to a session from wherever you are', native: true },
     { id: 'sessions.move', keys: ['Alt+ArrowUp', 'Alt+ArrowDown'], does: 'move the session you are in up or down the sidebar', native: true },
     { id: 'field.leave', keys: ['Escape'], does: 'leave a field', typing: true },
@@ -67,11 +73,12 @@ export const LAYOUT = [
     { id: 'list.ask', keys: ['a'], does: 'ask back instead of answering' },
     { id: 'list.read', keys: ['h'], does: 'hear it: read the marked question aloud, again to stop' },
     { id: 'list.revise', keys: ['b'], does: 'Revise: back to the agent' },
-    { id: 'list.trust', keys: ['r'], does: 'Whatever: the agent decides' },
+    { id: 'list.trust', keys: ['r'], does: 'Whatever: the agent decides (on a marked row; else R writes to the session)', marked: true },
     { id: 'list.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
     { id: 'list.explain', keys: ['e'], does: 'explain: show all of it, then ask the session to explain' },
     { id: 'list.later', keys: ['l'], does: 'Snooze, or fetch it back' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'on an answered row: take that answer back' },
+    { id: 'list.copy', keys: ['Mod+c'], does: 'copy the question, to paste into another session' },
     { id: 'list.leave', keys: ['Escape'], does: 'close the choices, then drop the mark' },
   ] },
   { scope: 'focus', title: 'An opened question, and "Next, please"', modal: true, keys: [
@@ -95,6 +102,7 @@ export const LAYOUT = [
     { id: 'focus.read', keys: ['h'], does: 'hear it: read the question aloud, again to stop' },
     { id: 'focus.later', keys: ['l', 's'], does: 'Snooze: on to the next' },
     { id: 'focus.back', keys: ['u', 'Backspace'], does: 'back: take the last answer back' },
+    { id: 'focus.copy', keys: ['Mod+c'], does: 'copy the question, to paste into another session' },
     { id: 'focus.leave', keys: ['Escape'], does: 'leave a field, then the time machine, then close', typing: true, control: true },
   ] },
   { scope: 'conversation', title: 'In a session', keys: [
@@ -175,8 +183,8 @@ function nameOf(e) {
 }
 // Does a key of the table match what was pressed? Returns the number for a range, true, or null.
 function match(spec, name) {
-  // 'g 1…9': the first key as it is, then any of the range.
-  const range = spec.match(/^(.+ )?(\d)…(\d)$/)
+  // 'g 1…9', 'Mod+1…9': what leads as it is, then any of the range.
+  const range = spec.match(/^(.+[ +])?(\d)…(\d)$/)
   if (!range) return spec === name ? true : null
   const lead = range[1] ?? ''
   const digit = name.startsWith(lead) ? name.slice(lead.length) : ''
@@ -235,6 +243,7 @@ function run(name, e, { typing, control }) {
         let arg = null
         for (const spec of entry.keys) if ((arg = match(spec, name)) != null) break
         if (arg == null) continue
+        if (entry.marked && !shownNode('.inbox-row.is-current')) continue
         // The key belongs to whatever handles it in place: hands off, here and further down.
         if (entry.native) return false
         for (const provider of live) {
@@ -365,3 +374,17 @@ export function openSheet() {
   sheet.showModal()
   close.focus()
 }
+
+// ---- copy a decision: Ctrl+C (Cmd+C) on the marked row or the open card, while no text is selected ----
+// The copy itself is cardclip.js's: one line to the clipboard, and the card offered to every composer.
+const shownNode = sel => [...document.querySelectorAll(sel)].find(n => n.getClientRects().length && !n.closest('[inert]')) ?? null
+const copyFrom = sel => (n, e) => {
+  // In a field, or with text selected, Ctrl+C is the browser's.
+  if (typingIn(e?.target instanceof Element ? e.target : null) || String(getSelection?.() ?? '').trim()) return false   // a selection is copied as text, as everywhere
+  const id = shownNode(sel)?.dataset.id
+  const card = id != null && getState().all.cards.find(c => String(c.id) === id)
+  if (!card) return false
+  copyCard(card)
+}
+provide('list', { active: () => Boolean(shownNode('.inbox-row.is-current')), actions: { 'list.copy': copyFrom('.inbox-row.is-current') } })
+provide('focus', { active: () => Boolean(shownNode('.focus .focus-card[data-shown]')), actions: { 'focus.copy': copyFrom('.focus .focus-card[data-shown]') } })

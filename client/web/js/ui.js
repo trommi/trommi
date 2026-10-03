@@ -56,7 +56,7 @@ const THUMB_MIME = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp'
 function thumbOf({ id, key }) {
   if (!thumbs.has(id)) thumbs.set(id, (async () => {
     try {
-      const res = await fetch(`/a/${id}/blob`, { credentials: 'omit' })
+      const res = await fetch(`/a/${id}/blob`, { credentials: 'same-origin' })
       if (!res.ok) return null
       const blob = new Uint8Array(await res.arrayBuffer())
       const raw = Uint8Array.from(atob(key.replace(/-/g, '+').replace(/_/g, '/')), c => c.charCodeAt(0))
@@ -73,9 +73,136 @@ function thumbOf({ id, key }) {
   return thumbs.get(id)
 }
 
+// ---- sharing an asset with someone outside the board ----
+// A release is per asset and off by default (docs/asset-sharing.md): POST /asset/share { id } gives the asset a
+// second address, /r/<id>, that opens without a login. The page completes it with the key it already holds.
+// What the hub knows of a release stands in state.assets[i].share = { at, expires, opens, opened }.
+const shareOf = id => {
+  const share = boardState()?.assets?.find(a => a.id === id)?.share
+  return share && !(share.expires && Date.now() > share.expires) ? share : null
+}
+const SHARE_ENDS = [[0, 'No end'], [24, '24 hours'], [168, '7 days']]
+const shareUrls = new Map()       // asset id -> the outside address the hub named for it (without the key)
+const shareControls = new Set()   // every control that stands in the page: { button, paint }
+async function copyOut(text) {
+  try { await navigator.clipboard.writeText(text); return true } catch {}
+  // Without the clipboard API (plain http): the old way, through a field.
+  const field = el('textarea')
+  field.value = text
+  field.style.cssText = 'position:fixed;opacity:0'
+  document.body.append(field)
+  field.select()
+  let ok = false
+  try { ok = document.execCommand('copy') } catch {}
+  field.remove()
+  return ok
+}
+/** The Share control of one asset: { button, panel }. The button folds the panel out; the panel releases the
+ *  asset, shows the outside link with Copy, how often it was opened and until when, the end, and "Stop sharing".
+ *  The caller places both (the panel wants a line of its own). asset: { id, key }. */
+export function assetShare({ id, key }) {
+  const button = el('button', 'asset-share')
+  button.type = 'button'
+  button.setAttribute('aria-expanded', 'false')
+  const panel = el('span', 'asset-share-panel')
+  panel.hidden = true
+  const say = el('span', 'asset-share-say')
+  const error = el('span', 'asset-share-error')
+  error.setAttribute('role', 'alert')
+  error.hidden = true
+  const release = el('button', 'asset-share-go', 'Create outside link')
+  release.type = 'button'
+  const row = el('span', 'asset-share-row')
+  const field = el('input', 'asset-share-link')
+  field.readOnly = true
+  field.setAttribute('aria-label', 'The outside link')
+  field.addEventListener('focus', () => field.select())
+  const copy = el('button', 'asset-share-copy', 'Copy')
+  copy.type = 'button'
+  row.append(field, copy)
+  const foot = el('span', 'asset-share-foot')
+  const ends = el('label', 'asset-share-ends', 'Ends ')
+  const pick = el('select')
+  for (const [hours, word] of SHARE_ENDS) { const o = el('option', null, word); o.value = hours; pick.append(o) }
+  ends.append(pick)
+  const stop = el('button', 'asset-share-stop', 'Stop sharing')
+  stop.type = 'button'
+  foot.append(ends, stop)
+  panel.append(say, row, foot, release, error)
+
+  let busy = false
+  const paint = () => {
+    const share = shareOf(id)
+    button.textContent = share ? 'Shared' : 'Share'
+    button.toggleAttribute('data-shared', Boolean(share))
+    button.title = share ? 'Shared with an outside link. Click for the link, or to stop' : 'Make a link for someone outside the board'
+    row.hidden = foot.hidden = !share
+    release.hidden = Boolean(share)
+    if (!share) { say.textContent = 'Not shared. An outside link opens for anyone who has it, without a login.'; return }
+    // The hub names the address an outsider can reach (share.urls[0] in the state, the public one; or in its answer);
+    // an older hub does not: this page's own.
+    field.value = `${share.urls?.[0] ?? shareUrls.get(id) ?? `${location.origin}/r/${id}`}#${key}`
+    const until = share.expires ? `until ${new Date(share.expires).toLocaleString('en-GB', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}` : 'no end'
+    say.textContent = `Shared · opened ${share.opens === 1 ? '1 time' : `${share.opens ?? 0} times`} · ${until}. Anyone who has this link can open it.`
+    if (document.activeElement !== pick) pick.value = !share.expires ? 0 : share.expires - Date.now() <= 24 * 3600000 ? 24 : 168
+  }
+  const send = async body => {
+    if (busy) return
+    busy = true
+    panel.toggleAttribute('data-busy', true)
+    error.hidden = true
+    try {
+      const res = await fetch('/asset/share', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, ...body }) })
+      let out = {}
+      try { out = await res.json() } catch {}
+      // A 404 with code "no-asset" is the hub's word on the asset; one without a code is a hub that does not know the route.
+      if (!res.ok) throw new Error(res.status === 404 ? (out.code === 'no-asset' ? 'This asset is gone.' : 'This board cannot share yet: the hub needs a restart.') : out.error || res.statusText)
+      if (out.urls?.[0]) shareUrls.set(id, out.urls[0]); else if (!out.share) shareUrls.delete(id)
+      // The state follows by itself; until it does, what the hub just answered stands in.
+      const record = boardState()?.assets?.find(a => a.id === id)
+      if (record) { if (out.share) record.share = out.share; else delete record.share }
+    } catch (err) {
+      error.textContent = `Not saved: ${err.message}`
+      error.hidden = false
+    }
+    busy = false
+    panel.removeAttribute('data-busy')
+    paint()
+  }
+  button.addEventListener('click', e => {
+    e.preventDefault()
+    e.stopPropagation()
+    panel.hidden = !panel.hidden
+    button.setAttribute('aria-expanded', String(!panel.hidden))
+    paint()
+  })
+  panel.addEventListener('click', e => e.stopPropagation())
+  release.addEventListener('click', () => send({}))
+  stop.addEventListener('click', () => send({ release: false }))
+  pick.addEventListener('change', () => send({ expires_hours: Number(pick.value) }))
+  let timer = 0
+  copy.addEventListener('click', async () => {
+    copy.textContent = (await copyOut(field.value)) ? 'Copied' : 'Not copied'
+    clearTimeout(timer)
+    timer = setTimeout(() => { copy.textContent = 'Copy' }, 1800)
+  })
+  paint()
+  shareControls.add({ button, paint })
+  return { button, panel }
+}
+/** Bring every Share control in the page up to the board's state (called with each new state). */
+export function refreshAssetShares() {
+  for (const c of shareControls) {
+    if (c.button.isConnected) c.paint()
+    else if (c.seen) shareControls.delete(c)   // was in the page and is gone
+    if (c.button.isConnected) c.seen = true
+  }
+}
+
 /** A published asset as a compact card: a small picture or a drawn sign of its kind, its type and its title.
- *  A tap opens it in a new tab. One that was withdrawn is dashed and opens nothing. */
-export function assetLink(asset) {
+ *  A tap opens it in a new tab. One that was withdrawn is dashed and opens nothing. With share (the default)
+ *  a known asset comes wrapped (.asset-linked) with its Share button and panel. */
+export function assetLink(asset, { share = true } = {}) {
   const node = el(asset.gone ? 'span' : 'a', asset.gone ? 'asset-link is-gone' : 'asset-link')
   if (!asset.gone) {
     node.href = asset.href
@@ -97,7 +224,12 @@ export function assetLink(asset) {
   const text = el('span', 'asset-link-text')
   text.append(el('span', 'caps', kind), el('strong', null, asset.gone ? `${asset.title || 'Untitled'}: no longer available` : asset.title || 'Open it'))
   node.append(thumb, text)
-  return node
+  // One the board knows and that is still there can be shared: the button stands beside the card, its panel below.
+  if (asset.gone || !asset.known || !share) return node
+  const wrap = el('span', 'asset-linked')
+  const { button, panel } = assetShare(asset)
+  wrap.append(node, button, panel)
+  return wrap
 }
 
 // Asset cards that stand inside text remember the address they were made from, so that they can be
@@ -133,6 +265,7 @@ export function refreshAssetLinks(root = document) {
     node.replaceWith(linkNode(was.url))
     redrawn++
   }
+  refreshAssetShares()
   return redrawn
 }
 
@@ -141,20 +274,29 @@ export function refreshAssetLinks(root = document) {
 // itself is shown plainly, without any (rich() decides and sets this before it draws).
 const UNDER = /(?<![\w.])__(?=\S)([^_\n]+?)(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$))/gm
 let underlining = true
+// A page of this board by its path: it opens under the address this page was opened at, in a new tab.
+function pathLink(path) {
+  const a = el('a', null, path)
+  a.href = path
+  a.target = '_blank'
+  a.rel = 'noopener'
+  return a
+}
 function inline(parent, text) {
-  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(https?:\/\/[^\s<>)]+)|((?<![\w.])__(?=\S)[^_\n]+?(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$)))/gm
+  // (5: a bare path on this board to a page, "/designs/whatever10.html?k=pille#top": it starts at a slash that follows
+  // nothing wordy, names an .html file, and may carry a query and a fragment. "3/10" and "und/oder" are no paths.)
+  const re = /(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(https?:\/\/[^\s<>)]+)|((?<![\w.])__(?=\S)[^_\n]+?(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$)))|((?<![\w\/:.~\-])\/(?:[\w\-.]+\/)*[\w\-.]+\.html?(?:\?[\w\-.=&%+]*)?(?:#[\w\-.=&%+]*)?)/gm
   let last = 0
   for (const m of text.matchAll(re)) {
     parent.append(text.slice(last, m.index))
     // An address in backticks is still a link, not a box of code.
     if (m[1] && /^`https?:\/\/[^\s`]+`$/.test(m[1])) parent.append(linkNode(m[1].slice(1, -1)))
     // A path on this board in backticks (`/designs/index.html`) opens under the address the page was opened at.
-    else if (m[1] && /^`\/[\w\-./#?=&%+]+\.html?([#?][^\s`]*)?`$/.test(m[1])) {
-      const a = el('a', null, m[1].slice(1, -1))
-      a.href = m[1].slice(1, -1)
-      a.target = '_blank'
-      a.rel = 'noopener'
-      parent.append(a)
+    else if (m[1] && /^`\/[\w\-./#?=&%+]+\.html?([#?][^\s`]*)?`$/.test(m[1])) parent.append(pathLink(m[1].slice(1, -1)))
+    else if (m[5]) {
+      // What ends a sentence does not belong to the path.
+      const path = m[5].replace(/[.,;:!?]+$/, '')
+      parent.append(pathLink(path), m[5].slice(path.length))
     }
     else if (m[1]) parent.append(el('code', null, m[1].slice(1, -1)))
     else if (m[2]) parent.append(el('strong', null, m[2].slice(2, -2)))
@@ -206,6 +348,12 @@ export function rich(text) {
         const ul = el('ul')
         for (const l of lines) inline(ul.appendChild(el('li')), l.replace(/^\s*[-*]\s+/, ''))
         root.append(ul)
+      } else if (/^\s*☞/.test(lines[0]) && !root.querySelector('.rich-point')) {
+        // "☞ " before a paragraph is the agent's other mark for what matters: the drawn hand points at it.
+        // Once per text; a second ☞ is shown as written.
+        const p = root.appendChild(el('p', 'rich-point'))
+        p.append(pointingHand())
+        inline(p, lines.join('\n').replace(/^\s*☞\s*/, ''))
       } else {
         inline(root.appendChild(el('p')), lines.join('\n'))
       }
@@ -750,8 +898,8 @@ const SKETCH = {
   stack: [[[4.6, 11], [12, 10.6], [19.4, 11], [19.7, 15.4], [19.4, 19.8], [12, 20.1], [4.6, 19.8], [4.3, 15.4], [4.7, 10.7]], [[5.8, 10.4], [6.6, 7.4], [12, 7], [17.4, 7.4], [18.2, 10.4]], [[7.6, 6.8], [8.6, 4.2], [12, 3.9], [15.4, 4.2], [16.4, 6.8]], [[8.6, 15.4], [12, 15.2], [15.4, 15.5]]],
   // a speech bubble with its tail: write to someone
   bubble: [[[4.4, 8.6], [6, 6.4], [12, 6], [18.2, 6.4], [19.8, 8.8], [19.6, 14.6], [17.8, 16.8], [11.6, 17], [8.4, 20.6], [8.2, 17], [5.8, 16.6], [4.3, 14.4], [4.5, 8.2]]],
-  // a small desk: its top, two legs, a drawer with its knob, a sheet lying on it
-  desk: [[[3, 9.5], [12, 9.1], [21, 9.5]], [[5, 9.7], [5.2, 15], [5, 20.2]], [[19, 9.7], [18.8, 15], [19, 20.2]], [[12.5, 10], [12.7, 16], [18.8, 16]], [[15.3, 13], [16.1, 13]], [[6.8, 9.2], [7.4, 5.8], [12.4, 6.4], [12.1, 9.2]]],
+  // a desk with its lamp: the top, two legs, the lamp's foot, its arm with a knee, the shade bent over the top
+  desk: [[[2.4, 12.6], [12, 12.2], [21.6, 12.6]], [[4.6, 12.9], [4.9, 17], [4.6, 20.8]], [[19.4, 12.9], [19.1, 17], [19.4, 20.8]], [[15.4, 12], [17.4, 12.1], [19.4, 12]], [[17.4, 11.8], [19.6, 7.6], [19.9, 7.2], [19.4, 6.8], [14.6, 4.2]], [[14.8, 2.6], [11.4, 3.4], [9.4, 5.6], [8.8, 7.6], [9.2, 8], [15.4, 6.2], [15.8, 5.8], [15.4, 3.4], [14.6, 2.5]]],
   // a shrug: a small figure, shoulders up, both arms out, palms up
   shrug: [[[12, 3], [14.2, 4], [14.4, 6.4], [12.2, 7.6], [9.8, 6.6], [9.6, 4.2], [11.8, 3]], [[12, 9.8], [8.8, 9.2], [6.2, 11.6], [3.8, 9.4]], [[2, 8.8], [5.2, 8.2]], [[12, 9.8], [15.2, 9.2], [17.8, 11.6], [20.2, 9.4]], [[18.8, 8.2], [22, 8.8]], [[12, 9.8], [12.2, 15.6]], [[12.2, 15.6], [9.6, 21.2]], [[12.2, 15.6], [14.8, 21.2]]],
   // a table: a sheet ruled into cells
@@ -916,9 +1064,9 @@ export function adviceLoop() {
 /** The same, by the name of what it is. */
 export const adviceMark = adviceLoop
 
-/** Not in use: a small pointing hand, the old printer's sign (cuff, a thumb on top, one finger out,
- *  three curled under), drawn with the pen. It was the advice mark for an afternoon and was liked;
- *  kept for whatever it may point at next. Styles: .advice-hand in tokens.css. */
+/** A small pointing hand, the old printer's sign (cuff, a thumb on top, one finger out, three curled
+ *  under), drawn with the pen. It points at the paragraph an agent marks with "☞" (rich(), .rich-point).
+ *  Styles: .advice-hand in tokens.css, .rich-point in app.css. */
 const POINTING_HAND = [
   [[2.6, 7.6], [8.8, 7.4], [11.6, 4.6], [14.4, 4], [15, 6], [13.4, 8.4], [19, 8.6], [27.4, 8.8], [29.6, 10.4], [27.6, 12.2], [20.4, 12.3], [17.6, 12.5]],
   [[17.4, 12.6], [20, 13.2], [20.4, 15.2], [17.6, 15.9], [19.4, 16.6], [19.2, 18.6], [16.8, 19], [17.6, 20], [16.6, 21.6], [13.6, 21.6], [8.6, 21], [2.4, 20.6]],

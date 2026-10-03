@@ -2,6 +2,7 @@
 // become one) and the overview page of all sessions.
 
 import { el, doodle, pairDoodle, groupLoop, crown, sketch, raisedHand, loopPath, penSeed, ago, DRAWINGS, DRAWING_INFO, drawingMark, drawingOf, drawingHue, KNOCK_SKETCH, isKnock, knocksText, INBOX_WORD, INBOX_SKETCH } from './ui.js'
+import { link, sessionPath, walkPath } from './link.js'
 import { getState, setScope, star, editSession, pair, unpair, archive, moveSession } from './store.js'
 
 const NS = 'http://www.w3.org/2000/svg'
@@ -18,9 +19,15 @@ export function hueOf(id) {
  *  scribble takes the colour that comes from the session's id. */
 export const hueFor = agent => drawingHue(drawingOf(agent.mark)) ?? hueOf(agent.id)
 
+/** Who wears the crown. A hub that knows main agents (card Nr. 160) sends `main` on every session: the
+ *  crown then marks a main, and the starred session (where quick memos go) is marked quietly, by a small
+ *  gold dot at the foot of its mark. A hub that does not send `main` yet: the crown is the starred one's, as before. */
+export const knowsMains = agent => 'main' in agent
+export const crowned = agent => (knowsMains(agent) ? agent.main === true : Boolean(agent.starred))
+
 // Every session has its own scribble, so it is recognised before its name is read.
-/** vip: draw the crown of a starred session on it. Where the crown is a switch of its own beside the
- *  mark (crownToggle), the caller passes false. */
+/** vip: true draws the crown (and the memo dot of the starred one); false draws neither; 'main' draws only a
+ *  main's crown, for places where the starred switch (crownToggle) stands beside the mark. */
 // working: the session is at work. Its own mark then redraws itself: the whole drawing stays as a
 // trace, and a darker stroke travels along it (CSS: .is-drawing). Under reduced motion the trace and
 // the mark stand still.
@@ -39,7 +46,8 @@ export function avatar(agent, { vip = true, working = false } = {}) {
   node.style.setProperty('--hue', hueFor(agent))
   if (!agent.online) node.classList.add('is-offline')
   // A session that matters most: a scribbled crown sits crooked on the corner of its mark.
-  if (agent.starred && vip) { node.dataset.vip = ''; node.append(crown()) }
+  if (vip === 'main' ? agent.main === true : vip && crowned(agent)) { node.dataset.vip = ''; node.append(crown()) }
+  if (vip === true && agent.starred && knowsMains(agent)) { node.dataset.memo = ''; node.title = 'Quick memos go here' }
   node.setAttribute('aria-hidden', 'true')
   return node
 }
@@ -49,12 +57,14 @@ export function avatar(agent, { vip = true, working = false } = {}) {
  *  takes it off; on any other it is a faint outline that shows when the pointer or the keyboard is
  *  near, and a click puts it on. Placed by CSS (.crown-toggle), per place it stands in. */
 export function crownToggle(agent, cls = '') {
-  const b = el('button', `crown-toggle ${cls}`.trim())
+  // Where the crown marks mains, this switch is the small gold dot at the foot of the mark (crowns.css).
+  const memo = knowsMains(agent)
+  const b = el('button', `crown-toggle ${memo ? 'is-memo' : ''} ${cls}`.replace(/\s+/g, ' ').trim())
   b.type = 'button'
   b.setAttribute('aria-pressed', String(Boolean(agent.starred)))
-  b.title = agent.starred ? 'Remove VIP' : 'Make VIP'
-  b.setAttribute('aria-label', `${agent.name}: ${agent.starred ? 'remove VIP' : 'make VIP, its questions come first'}`)
-  b.append(crown())
+  b.title = memo ? (agent.starred ? 'Quick memos go here. Click to take that off' : 'Send quick memos here') : agent.starred ? 'Remove VIP' : 'Make VIP'
+  b.setAttribute('aria-label', memo ? `${agent.name}: ${agent.starred ? 'quick memos go here, take that off' : 'send quick memos here; its questions come first'}` : `${agent.name}: ${agent.starred ? 'remove VIP' : 'make VIP, its questions come first'}`)
+  b.append(memo ? el('i', 'memo-dot') : crown())
   b.addEventListener('click', e => { e.stopPropagation(); star(agent.id, !agent.starred).catch(() => {}) })
   return b
 }
@@ -62,7 +72,7 @@ export function crownToggle(agent, cls = '') {
 /** Sessions laid together: their scribbles over each other inside one loop drawn by hand. */
 export function pairAvatar(members, working = []) {
   const node = el('span', 'agent-pair')
-  const mark = pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueFor(a), vip: Boolean(a.starred) })))
+  const mark = pairDoodle(members.map(a => ({ id: a.id, mark: a.mark, hue: hueFor(a), vip: crowned(a) })))
   node.append(mark)
   // Each member that is at work redraws its own scribble inside the joint mark.
   for (const g of [...mark.querySelectorAll('g[data-member]')]) {
@@ -153,12 +163,13 @@ export const workingRing = ring
 // nothing open: no ring. Disconnected with questions: the ring and number in grey, still.
 // With questions open the badge is a button of its own beside the row's entry: a click goes through
 // that session's questions, one after the other (walk(), given by the page). who: the name(s) for its tooltip.
-export function badge({ open, online, running, stuck }, who = '', walk = null) {
+export function badge({ open, online, running, stuck }, who = '', walk = null, href = null) {
   if (!open && !(online && running)) return null
   const button = Boolean(open && walk)
-  const node = el(button ? 'button' : 'span', 'agent-badge')
+  // With an address (the walk through its questions, /s/<id>/walk) it is a real link: a new tab can take it.
+  const node = button && href ? link('agent-badge', href) : el(button ? 'button' : 'span', 'agent-badge')
   if (button) {
-    node.type = 'button'
+    if (!href) node.type = 'button'
     node.addEventListener('click', e => { e.stopPropagation(); walk() })
   }
   const questions = open === 1 ? '1 question' : `${open} questions`
@@ -206,13 +217,63 @@ export function tellApart(agents) {
 
 /** The sidebar. onSelect(id | null) is called when the user picks the inbox (null), a session or a group. */
 /** onWalk(id): go through the open questions of that session or group, one after the other. */
+// Which groups of a main and its subs stand unfolded: kept per browser. Folded is the rule.
+const FOLD_KEY = 'trommi-crowns-open'
+const unfolded = new Set((() => { try { const l = JSON.parse(localStorage.getItem(FOLD_KEY) ?? '[]'); return Array.isArray(l) ? l.filter(x => typeof x === 'string') : [] } catch { return [] } })())
+const keepFolds = () => { try { localStorage.setItem(FOLD_KEY, JSON.stringify([...unfolded])) } catch {} }
+const EDGES = 7   // more subs than this lie in the stack without an edge of their own
+
+// The bracket that holds the subs of an unfolded main: one pen stroke, corners rounded, never quite straight.
+const wob = (i, s) => (((Math.sin(i * 127.1 + 3.7) * 43758.5453) % 1 + 1) % 1 - .5) * 2 * s
+function penLine(pts) {
+  let d = `M ${pts[0][0].toFixed(1)} ${pts[0][1].toFixed(1)}`
+  for (let i = 1; i < pts.length - 1; i++) {
+    const [x, y] = pts[i], [nx, ny] = pts[i + 1]
+    d += ` Q ${x.toFixed(1)} ${y.toFixed(1)} ${((x + nx) / 2).toFixed(1)} ${((y + ny) / 2).toFixed(1)}`
+  }
+  const last = pts.at(-1)
+  return `${d} L ${last[0].toFixed(1)} ${last[1].toFixed(1)}`
+}
+
 export function mountAgents(root, { onSelect, onWalk }) {
   let signature = ''
   let lastState = null
+  let unfolding = null   // the main whose subs were unfolded by the last click: they come in one after the other, once
 
-  function entry({ id, label, sub, lead, active, mark = null, tip = '' }) {
-    const btn = el('button', 'agent-entry')
-    btn.type = 'button'
+  /** Fold or unfold the subs of a main; the keyboard stays on the crown that was pressed. */
+  function fold(id, open = !unfolded.has(id)) {
+    if (open) unfolded.add(id)
+    else unfolded.delete(id)
+    keepFolds()
+    unfolding = open ? id : null
+    const held = root.querySelector(`.agent-row[data-unit="${CSS.escape(id)}"] .crown-fold`) === document.activeElement
+    signature = ''
+    render(lastState)
+    unfolding = null
+    if (held) root.querySelector(`.agent-row[data-unit="${CSS.escape(id)}"] .crown-fold`)?.focus()
+  }
+  /** Draw the bracket of every unfolded main to its subs as they lie: down their left side, or under them in a phone's strip. */
+  function brackets() {
+    const flat = getComputedStyle(root).flexDirection === 'row'
+    const rail = !flat && document.documentElement.dataset.rail === 'folded'
+    for (const [gi, main] of [...root.querySelectorAll('.agent-row.is-main[data-fold="open"]')].entries()) {
+      const svg = main.querySelector('.crown-bracket')
+      const subs = [...root.querySelectorAll(`.agent-row.is-sub[data-parent="${CSS.escape(main.dataset.unit)}"]`)]
+      if (!svg || !subs.length) continue
+      const G = main.getBoundingClientRect(), first = subs[0].getBoundingClientRect(), last = subs.at(-1).getBoundingClientRect()
+      const w = i => wob(gi * 17 + i, 1.1)
+      let pts
+      if (flat) { const y = G.height + 3, x0 = first.left - G.left + 3, x1 = last.right - G.left - 3; pts = [[x0, y - 7], [x0 + w(1), y], [(x0 + x1) / 2, y - 1 + w(2)], [x1 + w(3), y], [x1, y - 7]] }
+      else { const x = rail ? 3 : 13, y0 = first.top - G.top + 5, y1 = last.bottom - G.top - 5; pts = [[x + 8, y0], [x, y0 + w(1)], [x + w(2), (y0 + y1) / 2], [x, y1 + w(3)], [x + 8, y1]] }
+      for (const p of svg.querySelectorAll('path')) p.setAttribute('d', penLine(pts))
+    }
+  }
+  window.addEventListener('resize', () => requestAnimationFrame(brackets))
+  new MutationObserver(() => requestAnimationFrame(brackets)).observe(document.documentElement, { attributes: true, attributeFilter: ['data-rail'] })
+
+  function entry({ id, label, sub, lead, active, mark = null, tip = '', href = '/' }) {
+    // A real link to the place (js/link.js): a plain click goes there in the page, the browser has the rest.
+    const btn = link('agent-entry', href)
     // While the overview of all sessions is up, nothing in the sidebar is the current place.
     if (active && document.body.dataset.page !== 'roster') btn.setAttribute('aria-current', 'true')
     if (tip) btn.title = tip
@@ -276,29 +337,46 @@ export function mountAgents(root, { onSelect, onWalk }) {
     // One row per session, or per group of sessions laid together, in the server's order.
     const units = []
     for (const a of all.agents) {
+      if (a.other_desk) continue   // a session of another desk that knocks: its card is in the stack, its row is on its own desk
       const group = a.group && all.groups.find(g => g.id === a.group)
       if (!group) units.push({ id: a.id, members: [a] })
       else if (!units.some(u => u.id === group.id)) units.push({ id: group.id, members: group.members })
     }
     for (const u of units) Object.assign(u, summary(all, u.members, state.later))
+    // A main and its subs (card Nr. 160): a session that names a main which stands here is listed under it,
+    // one level deep. Without `parent` in the state (a hub that does not know it) every unit stands alone.
+    const unitOf = new Map(units.flatMap(u => u.members.map(a => [a.id, u])))
+    const mainOf = u => { const m = unitOf.get(u.members.map(a => a.parent).find(Boolean)); return m && m !== u ? m : null }
+    for (const u of units) { const m = mainOf(u); if (m && !mainOf(m)) { u.parent = m; (m.subs ??= []).push(u) } }
+    for (const u of units) {
+      if (!u.subs) continue
+      // Unfolded by hand, or because the session in view is one of its subs.
+      u.unfolded = unfolded.has(u.id) || u.subs.some(s => s.id === scope)
+      u.whole = summary(all, [u, ...u.subs].flatMap(x => x.members), state.later)
+    }
     const fresh = all.queue.filter(id => !state.later.includes(id)).length
     // Of those, the knocks (urgent and blocking): they are what the inbox's badge shows first.
     const knocking = all.cards.filter(c => c.status === 'open' && isKnock(c) && all.queue.includes(c.id) && !state.later.includes(c.id)).length
     const working = units.filter(u => u.online && u.running).length
-    const next = JSON.stringify([scope, document.body.dataset.page, fresh, knocking, working, units.map(u => [u.id, u.members.map(a => [a.id, a.name, a.mark, a.task, a.online, a.starred, a.cwd, a.host]), u.open, u.running, u.stuck])])
+    const next = JSON.stringify([scope, document.body.dataset.page, fresh, knocking, working, units.map(u => [u.id, u.members.map(a => [a.id, a.name, a.mark, a.task, a.online, a.starred, a.cwd, a.host, a.parent, a.main]), u.open, u.running, u.stuck, u.unfolded])])
     if (next === signature) return
     signature = next
 
     const apart = tellApart(all.agents)
     const unitRow = u => {
       const single = u.members.length === 1 ? u.members[0] : null
+      // A folded main speaks for its subs: its ring sums the group, and it carries the hand of a sub that knocks.
+      const shut = Boolean(u.subs && !u.unfolded)
+      const shown = shut ? u.whole : u
       const row = entry({
         id: u.id,
         label: single ? single.name : u.members.map(a => ({ member: a.id, text: [a.name, apart.get(a.id)].filter(Boolean).join(' · ') })),
         sub: single ? apart.get(single.id) : '',
-        lead: single ? avatar(single) : pairAvatar(u.members),
+        // With subs the crown is a switch of its own on the corner of the mark (it folds), so the mark draws none.
+        lead: single ? avatar(single, { vip: !u.subs, working: false }) : pairAvatar(u.members),
         active: scope === u.id,
         tip: u.members.map(a => a.task).filter(Boolean).join(' · '),
+        href: sessionPath(u.members.map(a => a.id)),
       })
       row.dataset.unit = u.id
       row.dataset.members = u.members.map(a => a.id).join(' ')
@@ -318,9 +396,68 @@ export function mountAgents(root, { onSelect, onWalk }) {
         cut.addEventListener('click', () => { for (const a of u.members) editSession(a.id, { group: null }).catch(() => {}) })
         row.append(cut)
       }
+      if (u.parent) {
+        row.classList.add('is-sub')
+        row.dataset.parent = u.parent.id
+        row.style.setProperty('--i', u.parent.subs.indexOf(u))
+        if (u === u.parent.subs.at(-1)) row.classList.add('is-last')
+        if (unfolding === u.parent.id) row.classList.add('is-unfolding')
+      }
+      if (u.members.some(a => a.main === true) || u.subs) row.classList.add('is-main')
+      if (u.subs) {
+        const names = u.subs.map(s => pairName(s.members)), who = pairName(u.members)
+        row.dataset.fold = shut ? 'shut' : 'open'
+        row.style.setProperty('--ghue', hueFor(u.members[0]))
+        const tip = shut ? `Unfold ${who}'s ${names.length === 1 ? 'sub' : `${names.length} subs`}: ${names.join(', ')}` : `Fold ${who}'s subs`
+        const toggle = e => { e.stopPropagation(); fold(u.id, shut) }
+        // The crown is the switch: it sits on the corner of the main's mark, beside the entry (which opens the main's session).
+        const key = el('button', 'crown-fold')
+        key.type = 'button'
+        key.setAttribute('aria-expanded', String(!shut))
+        key.title = tip
+        key.setAttribute('aria-label', tip)
+        key.append(crown())
+        key.addEventListener('click', toggle)
+        row.append(key)
+        if (shut) {
+          // The subs as card edges behind the main's row, each in its own colour; the one that knocks is red.
+          // With more subs than edges, those that knock keep theirs.
+          const lie = u.subs.length > EDGES ? [...u.subs].sort((a, b) => Boolean(b.open && b.stuck) - Boolean(a.open && a.stuck)).slice(0, EDGES) : u.subs
+          const edges = el('span', 'crown-edges')
+          edges.title = tip
+          row.style.setProperty('--n', lie.length)
+          for (const [i, s] of lie.entries()) {
+            const edge = el('i', s.open && s.stuck ? 'is-knock' : '')
+            edge.style.setProperty('--i', i)
+            edge.style.setProperty('--hue', hueFor(s.members[0]))
+            edges.append(edge)
+          }
+          edges.addEventListener('click', toggle)
+          row.append(edges)
+        } else {
+          // The bracket: drawn once the rows lie (brackets()). Its second, wide stroke is only there to be hit.
+          const svg = document.createElementNS(NS, 'svg')
+          svg.setAttribute('class', `crown-bracket${unfolding === u.id ? ' is-unfolding' : ''}`)
+          svg.setAttribute('aria-hidden', 'true')
+          const hit = document.createElementNS(NS, 'path')
+          hit.setAttribute('class', 'crown-bracket-hit')
+          hit.addEventListener('click', toggle)
+          const title = document.createElementNS(NS, 'title')
+          title.textContent = tip
+          hit.append(title)
+          svg.append(document.createElementNS(NS, 'path'), hit)
+          row.append(svg)
+        }
+      }
       // The state at the end of the row, a button of its own where there are questions to go through.
-      const state = badge(u, pairName(u.members), onWalk && (() => onWalk(u.id)))
-      if (state) { row.classList.add('has-badge'); row.append(state) }
+      // On a folded main whose subs have the questions, the ring unfolds the group: there they stand.
+      const unfolds = shut && shown.open > u.open
+      const walk = unfolds ? () => fold(u.id, true) : onWalk && (() => onWalk(u.id))
+      const state = badge(shown, pairName(u.members), walk, unfolds ? null : walkPath(sessionPath(u.members.map(a => a.id))))
+      if (state) {
+        row.classList.add('has-badge'); row.append(state)
+        if (shut && shown.open > u.open) { state.title = `${state.title.split(' · ').at(-1)} · with its subs: click to unfold`; state.setAttribute('aria-label', state.title) }
+      }
       if (!u.online) {
         row.classList.add('is-offline')
         const away = el('button', 'agent-archive')
@@ -336,11 +473,17 @@ export function mountAgents(root, { onSelect, onWalk }) {
 
     // The Desk is not a row here: it floats at the top (index.html #desk-go). Its state is painted there.
     paintDesk(fresh, knocking, working, scope == null && document.body.dataset.page !== 'roster')
-    const here = units.filter(u => u.online), away = units.filter(u => !u.online)
+    // A main stands with its subs right under it (when unfolded); the group is here while any of it is connected.
+    const top = units.filter(u => !u.parent)
+    const rows = u => [unitRow(u), ...(u.subs && u.unfolded ? u.subs.map(unitRow) : [])]
+    const live = u => u.online || Boolean(u.subs?.some(s => s.online))
+    const here = top.filter(live), away = top.filter(u => !live(u))
     root.replaceChildren(
-      ...here.map(unitRow),
-      ...(away.length ? [el('h2', 'caps agent-heading agent-heading-away', 'Disconnected'), ...away.map(unitRow)] : []),
+      ...here.flatMap(rows),
+      ...(away.length ? [el('h2', 'caps agent-heading agent-heading-away', 'Disconnected'), ...away.flatMap(rows)] : []),
     )
+    brackets()
+    requestAnimationFrame(brackets)
   }
   // The floating Desk says what waits and who works: every open card, the knocks, the sessions at work.
   function paintDesk(fresh, knocking, working, current) {
@@ -437,11 +580,14 @@ export function mountAgents(root, { onSelect, onWalk }) {
   function step(by) {
     const rows = rowsNow()
     const row = document.activeElement?.closest?.('.agent-row[data-unit]') ?? root.querySelector('.agent-entry[aria-current="true"]')?.closest('.agent-row[data-unit]')
-    const at = rows.indexOf(row)
-    if (at < 0 || !rows[at + by]) return false
+    // A main moves past whole groups, a sub among the subs of its main.
+    const peers = rows.filter(r => r.dataset.parent === row?.dataset.parent)
+    const at = peers.indexOf(row)
+    if (at < 0 || !peers[at + by]) return false
     const held = row.contains(document.activeElement)
     const unit = row.dataset.unit
-    moveSession(row.dataset.members.split(' ')[0], by < 0 ? beforeOf(rows[at - 1], false) : beforeOf(rows[at + 1], true)).catch(() => {})
+    const first = r => r?.dataset.members.split(' ')[0] ?? null
+    moveSession(first(row), by < 0 ? first(peers[at - 1]) : first(peers[at + 2])).catch(() => {})
       .finally(() => { if (held) setTimeout(() => root.querySelector(`.agent-row[data-unit="${CSS.escape(unit)}"] .agent-entry`)?.focus(), 60) })
     if (held) root.querySelector(`.agent-row[data-unit="${CSS.escape(unit)}"] .agent-entry`)?.focus()
     return true
@@ -456,7 +602,7 @@ export function mountAgents(root, { onSelect, onWalk }) {
   }, true)
   root.addEventListener('pointerdown', e => {
     const row = e.target.closest('.agent-row[data-unit]')
-    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut, .crown-toggle, button.agent-badge')) return
+    if (!row || e.button || e.target.closest('.agent-archive, .agent-cut, .crown-toggle, .crown-fold, .crown-edges, .crown-bracket, a.agent-badge, button.agent-badge')) return
     const ids = row.dataset.members.split(' ')
     // In a group the scribble under the pointer is the one that is taken out.
     const agent = e.target.closest('[data-member]')?.dataset.member ?? ids.at(-1)
@@ -491,6 +637,13 @@ export function mountAgents(root, { onSelect, onWalk }) {
   root.addEventListener('contextmenu', e => { if (drag) e.preventDefault() })
 
   return { render, move: step }
+}
+
+/** Unfold the group a session lies in, so that its row stands in the sidebar (for a jump to it from elsewhere). */
+export function revealSession(id) {
+  const parent = getState().all.agents.find(a => a.id === id)?.parent
+  if (!parent || unfolded.has(parent)) return
+  document.querySelector(`#agents .agent-row[data-unit="${CSS.escape(parent)}"][data-fold="shut"] .crown-fold`)?.click()
 }
 
 // ---- pick a session's drawing, rename it ---------------------------------------
@@ -549,10 +702,14 @@ export function openMarkPicker(agent, anchor) {
   ;(grid.querySelector('[aria-checked="true"]') ?? grid.firstChild).focus()
 }
 
+// Rename: a small form right at the name that was pressed (anchor; without one, the control that has the
+// keyboard). No veil over the page: Escape, Cancel or a click beside it closes; Enter saves.
 let editor = null
-export function openEditor(agent) {
+export function openEditor(agent, anchor = null) {
   editor?.remove()
+  const at = anchor ?? (document.activeElement?.getClientRects?.().length && document.activeElement !== document.body ? document.activeElement : null)
   const dialog = editor = el('dialog', 'session-editor')
+  dialog.setAttribute('aria-label', `Rename the session ${agent.name}`)
   const form = el('form')
   form.method = 'dialog'
   const name = el('input')
@@ -569,9 +726,9 @@ export function openEditor(agent) {
   const save = el('button', 'is-lead', 'Save')
   save.type = 'submit'
   row.append(cancel, save)
-  const label = el('label', 'caps', 'Name')
+  const label = el('label', 'caps', 'Rename the session')
   label.htmlFor = name.id
-  form.append(el('h2', null, 'Rename the session'), label, name, error, row)
+  form.append(label, name, error, row)
   form.addEventListener('submit', async e => {
     e.preventDefault()
     save.disabled = true
@@ -585,8 +742,17 @@ export function openEditor(agent) {
     }
   })
   dialog.append(form)
+  dialog.addEventListener('click', e => { if (e.target === dialog) dialog.close() })
   dialog.addEventListener('close', () => dialog.remove())
   document.body.append(dialog)
   dialog.showModal()
+  // Under what was pressed, or above it where there is no room below; never outside the window.
+  const a = at?.getBoundingClientRect()
+  if (a?.width) {
+    const w = dialog.offsetWidth, h = dialog.offsetHeight
+    dialog.dataset.anchored = ''
+    dialog.style.left = `${Math.max(8, Math.min(a.left, window.innerWidth - w - 8))}px`
+    dialog.style.top = `${a.bottom + 8 + h > window.innerHeight - 8 ? Math.max(8, a.top - h - 8) : a.bottom + 8}px`
+  }
   name.select()
 }

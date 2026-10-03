@@ -97,7 +97,7 @@ $('chat')?.addEventListener('click', e => {
   e.preventDefault()
   e.stopPropagation()
   if (!body.hasAttribute('data-joined-list') && bar.getClientRects().length) { body.setAttribute('data-joined-list', ''); paintBar(waiting) }
-  const card = group.querySelector(`.inbox-row[data-id="${CSS.escape(ref.dataset.id)}"]`)
+  const card = group.querySelector(`:is(.inbox-row, .inbox-done)[data-id="${CSS.escape(ref.dataset.id)}"]`)   // on the desk, or a line on a pile at the foot
   if (!card) return
   // One that was snoozed lies in a pile that may be pushed together: open it first.
   const pile = card.closest('.inbox-pile:not(.is-open)')
@@ -108,3 +108,77 @@ $('chat')?.addEventListener('click', e => {
     setTimeout(() => card.classList.remove('is-pointed'), 1400)
   })
 }, true)
+
+// ---- sessions laid together, wide window: the conversations' column can be dragged narrower and folded ----
+// An edge on the column's left: drag it (a double click gives the column its own width back); dragged past
+// its narrowest it folds to a strip at the right edge, and the strip opens it again. Both are kept in this
+// browser (localStorage). Below 1200px the conversations stand under the list, and none of this shows.
+const TALK = 'trommi-talk'
+const MIN_TALK = 300, MIN_LIST = 440, FOLD_BELOW = 220
+let talk = {}
+try { talk = JSON.parse(localStorage.getItem(TALK) ?? '{}') ?? {} } catch {}
+const keepTalk = () => { try { localStorage.setItem(TALK, JSON.stringify(talk)) } catch {} }
+const applyTalk = () => {
+  if (talk.w) body.style.setProperty('--talk-w', `${talk.w}px`)
+  else body.style.removeProperty('--talk-w')
+  body.toggleAttribute('data-talk-folded', Boolean(talk.folded))
+  fold.setAttribute('aria-expanded', String(!talk.folded))
+  strip.setAttribute('aria-expanded', String(!talk.folded))
+}
+const session = $('session')
+const edge = el('div', 'talk-edge')
+edge.setAttribute('role', 'separator')
+edge.setAttribute('aria-orientation', 'vertical')
+edge.setAttribute('aria-label', 'Drag to make the conversations wider or narrower')
+edge.title = 'Drag: wider or narrower. Double click: as it was'
+const fold = el('button', 'talk-fold')
+fold.type = 'button'
+fold.title = 'Fold the conversations away'
+fold.setAttribute('aria-label', fold.title)
+fold.append(el('span', null, '→'))
+const strip = el('button', 'talk-strip')
+strip.type = 'button'
+strip.title = 'Open the conversations'
+strip.setAttribute('aria-label', strip.title)
+const stripWords = el('span', 'talk-strip-words', 'Conversations')
+strip.append(el('b', null, '←'), stripWords)
+session?.append(edge, fold, strip)
+applyTalk()
+
+edge.addEventListener('dblclick', () => { talk = {}; keepTalk(); applyTalk() })
+edge.addEventListener('pointerdown', e => {
+  if (e.button !== 0) return
+  e.preventDefault()
+  edge.setPointerCapture(e.pointerId)
+  body.setAttribute('data-talk-drag', '')
+  const box = session.getBoundingClientRect()
+  let w = talk.w
+  const move = ev => {
+    const want = box.right - ev.clientX
+    w = Math.round(Math.max(MIN_TALK, Math.min(want, box.width - MIN_LIST)))
+    // Pulled past the narrowest: it will fold when let go (shown at its narrowest until then).
+    edge.toggleAttribute('data-will-fold', want < FOLD_BELOW)
+    body.style.setProperty('--talk-w', `${w}px`)
+  }
+  const up = ev => {
+    edge.removeEventListener('pointermove', move)
+    edge.removeEventListener('pointerup', up)
+    edge.removeEventListener('pointercancel', up)
+    body.removeAttribute('data-talk-drag')
+    const folding = edge.hasAttribute('data-will-fold') && ev.type === 'pointerup'
+    edge.removeAttribute('data-will-fold')
+    talk = folding ? { w: talk.w, folded: true } : { w }
+    keepTalk()
+    applyTalk()
+  }
+  edge.addEventListener('pointermove', move)
+  edge.addEventListener('pointerup', up)
+  edge.addEventListener('pointercancel', up)
+})
+fold.addEventListener('click', () => { talk = { ...talk, folded: true }; keepTalk(); applyTalk(); strip.focus({ preventScroll: true }) })
+strip.addEventListener('click', () => { talk = { ...talk, folded: false }; keepTalk(); applyTalk(); fold.focus({ preventScroll: true }) })
+// The strip names who is folded away.
+subscribe(state => {
+  const names = state.members.map(id => state.all.agents.find(a => a.id === id)?.name).filter(Boolean).join(' + ')
+  if (stripWords.textContent !== (names || 'Conversations')) stripWords.textContent = names || 'Conversations'
+})
