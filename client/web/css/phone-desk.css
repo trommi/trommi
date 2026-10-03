@@ -7,15 +7,14 @@
 @media (max-width: 860px) {
   .inbox-groups .inbox-row {
     min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: none; padding: 14px;
-    border-radius: 14px; box-shadow: none; background: color-mix(in srgb, var(--card-color) 8%, var(--surface));
+    border-radius: 14px; box-shadow: none; background: var(--tone-wash);
     user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
     transition: scale 120ms ease-out, box-shadow 120ms ease-out;
   }
   .inbox-groups .inbox-row > :not(.inbox-more) { grid-row: auto; grid-column: 1; }
   /* the finger is down and holding: the card answers before the sheet comes */
-  .inbox-groups .inbox-row.is-held { scale: .985; box-shadow: 0 0 0 2px var(--card-color); }
+  .inbox-groups .inbox-row.is-held { scale: .985; box-shadow: 0 0 0 2px var(--tone-pen); }
   /* what is read and chosen below the card (the unfolded options) can be selected as before */
-  .inbox-groups .inbox-more-in { user-select: text; -webkit-user-select: text; }
 
   /* not on the row: copy and clock, the Snooze corner, the text, the pictures and what the card carries */
   .inbox-groups .inbox-row :is(.inbox-tabs, .inbox-when, .inbox-body, .inbox-pics, .inbox-thumb, .inbox-carries, .inbox-sep, .inbox-who) { display: none; }
@@ -27,7 +26,7 @@
   /* two folded piles in a row stay apart: app.css pulls the second one up by more than this list's gap */
   .inbox-groups > .inbox-pile + .inbox-pile { margin-top: -6px; }
   .inbox-groups .inbox-group[data-sender] > .inbox-row { border-radius: 14px; box-shadow: none; }
-  .inbox-groups .inbox-group[data-sender] > .inbox-row.is-held { box-shadow: 0 0 0 2px var(--card-color); }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row.is-held { box-shadow: 0 0 0 2px var(--tone-pen); }
 
   /* one line: who (drawing and name), then the knock; under it the title */
   .inbox-groups .inbox-content { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; overflow: visible; }
@@ -35,7 +34,7 @@
   .inbox-groups .inbox-byline, .inbox-groups .inbox-row[data-from] .inbox-byline { position: static; order: -2; flex: 0 1 auto; min-width: 0; min-height: 20px; margin: 0; padding: 0; flex-wrap: nowrap; font-size: var(--t-sm); }
   .inbox-groups .inbox-row[data-from] .inbox-row-head:not(:empty) ~ .inbox-byline { min-height: 20px; margin: 0; }
   .inbox-groups .inbox-byline:not(:has(.inbox-from, .inbox-whenever)) { display: none; }
-  .inbox-groups .inbox-row[data-from] .inbox-content .inbox-byline .inbox-from { display: inline-flex; gap: 7px; color: var(--card-color); }
+  .inbox-groups .inbox-row[data-from] .inbox-content .inbox-byline .inbox-from { display: inline-flex; gap: 7px; color: var(--tone-pen); }
   .inbox-groups .inbox-byline .inbox-whenever { order: 1; }
   .inbox-groups .inbox-byline .inbox-from-mark { width: 20px; height: 20px; }
   .inbox-groups .inbox-row-head { order: -1; flex: none; height: auto; min-height: 0; margin: 0; padding: 0; align-items: center; }
@@ -47,10 +46,8 @@
 
   /* the answers: tiles in the session's colour, at finger size */
   .inbox-groups .inbox-actions { grid-column: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; padding: 0; }
-  .inbox-groups .inbox-answer { min-height: 58px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--card-color) 18%, transparent); }
-  .inbox-groups .inbox-answer.is-lead, .inbox-groups .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--card-color); box-shadow: none; }
-  .inbox-groups .inbox-more { margin: 0 -14px -14px; }
-  .inbox-groups .inbox-row.is-open .inbox-more { margin-top: 14px; }
+  .inbox-groups .inbox-answer { min-height: 58px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge); }
+  .inbox-groups .inbox-answer.is-lead, .inbox-groups .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--tone-pen); box-shadow: none; }
   .inbox-groups .inbox-row-error { margin: 8px 0 0; }
 
   /* how to get at the rest, said once under the Desk's open questions */
@@ -59,12 +56,11 @@
 
 /* ---- the sheet a long press brings up ---- */
 dialog.rowmenu {
-  --ink: hsl(var(--hue, 162) 46% 31%);
+  --ink: var(--tone-pen);
   position: fixed; inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
   border-radius: 20px 20px 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain;
   animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
 }
-:root[data-theme="dark"] dialog.rowmenu { --ink: hsl(var(--hue, 162) 52% 74%); }
 /* No veil over the page: a line and a shadow set the sheet off; Escape or a tap beside it closes. */
 dialog.rowmenu { box-shadow: 0 0 0 1px var(--line-strong), 0 -12px 40px -12px rgb(20 30 25 / .35); }
 dialog.rowmenu::backdrop { background: transparent; }

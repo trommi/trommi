@@ -4,32 +4,27 @@
 // session) and the key "/" make one, or go to the empty one that already floats.
 //
 // A note floats over whatever page is shown and stays there while one goes elsewhere and after a reload. It is
-// carried by its head; dropped on the Desk's bare paper it lies on the paper and scrolls with it (js/padlink.js
-// gives the layer and the paper's pixels: paperLayer(), paperPoint()). Its head reads
-// "MEMO  TO <drawing> <name>" in one line; the receiver is a control (by default the session that receives
-// quick memos: the starred one, should there be several the one starred last while this page was open). Below:
-// ruled lines that grow with the words, a paperclip, the microphone (speech.js), chips for what goes along,
-// and at the lower right, at the end of the dashed tear line, the paper plane: "Tear off and send"
-// (Enter; Shift+Enter makes a new line). Sent, the note tears off and a quiet line says to whom. Esc or the stack button puts a note
-// away: it then lies on the yellow "Memos" stack of the Desk (an empty one is simply gone). The bin throws
-// it away; the quiet line offers the way back.
+// carried by the strip at its top; dropped on the Desk's bare paper it lies on the paper and scrolls with it
+// (js/padlink.js gives the layer and the paper's pixels: paperLayer(), paperPoint()). It is only yellow paper:
+// ruled lines that grow with the words, and at its foot the paperclip, the microphone (speech.js), the bin, and
+// at the end of the dashed tear line the crown. The crown sends: a memo goes to the crowned session of the desk
+// (Enter; Shift+Enter makes a new line). There is no choice of receiver. Sent, the note tears off and a quiet
+// line says to whom. Esc puts a note away: the yellow button then holds it (it shows how many it holds, and a click
+// on it lists them: one click takes a note out again, on every page; an empty note is simply gone). The bin throws it away; the quiet line offers the way back.
 // On a phone a note is a sheet at the bottom of the page, one at a time, not carried about; a tap beside it
 // puts it away.
 // It is not the Scratchpad: that one stays with the human, this one goes to a session.
 
 import { subscribe, getState, sendMessage } from './store.js'
-import { el, sketch } from './ui.js'
-import { avatar } from './agents.js'
+import { el, sketch, crown } from './ui.js'
+import { crowned } from './agents.js'
 import { dictationMic, isDictating } from './speech.js'
 import { pasteChip } from './cardclip.js'
 import { link, sessionPath } from './link.js'
 import { paperPoint, paperLayer } from './padlink.js'
-import { memos, memo, onMemos, newMemo, saveMemo, removeMemo, restoreMemo, memosOnHub, settleMemo, sendMemo, sheetMemo, setSheet, onStack } from './memos.js'
+import { memos, memo, onMemos, newMemo, saveMemo, removeMemo, restoreMemo, memosOnHub, settleMemo, sendMemo, sheetMemo, setSheet, onStack, memosAway, openMemo } from './memos.js'
 
-const KEY = 'trommi-king'
 const bar = document.querySelector('.topbar')
-const remembered = () => { try { return localStorage.getItem(KEY) } catch { return null } }
-const remember = id => { try { localStorage.setItem(KEY, id) } catch {} }
 const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 const sheet = matchMedia('(max-width: 860px)')   // a phone: the note is a sheet at the bottom
 const W = 340   // a note's width on a wide screen (css/quicksend.css)
@@ -37,8 +32,6 @@ const W = 340   // a note's width on a wide screen (css/quicksend.css)
 const svg = html => { const t = document.createElement('template'); t.innerHTML = html; return t.content.firstChild }
 // The button's mark: a yellow sticky note with a folded corner and two lines, in the board's pen.
 const stickyNote = () => svg('<svg class="memo-sticky" viewBox="0 0 24 24" aria-hidden="true"><path class="sticky-paper" d="M4.3 4.2 Q12 3.5 19.8 3.9 Q20.3 9.4 20 14.7 L14.8 20.2 Q9.3 20.4 4.1 19.9 Q3.8 12 4.3 4.2 Z"/><path class="sticky-fold" d="M20 14.7 Q17.4 14.5 15.3 14.9 Q14.7 17.4 14.8 20.2"/><path class="sticky-line" d="M7.6 8.6 Q12 8.1 16.3 8.4"/><path class="sticky-line" d="M7.7 12.1 Q10.6 11.7 13.4 12"/></svg>')
-// Tear off and send: a paper plane, drawn with the pen.
-const plane = () => svg('<svg class="memo-plane" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.4 11.4 Q12.2 7.2 20.6 3.6 Q17.6 12.2 14.3 20.5 Q12.6 16.9 11.2 13.2 Q7.2 12.5 3.4 11.4 Z"/><path d="M11.2 13.2 Q15.8 8.6 20.6 3.6"/></svg>')
 const button = (cls, ...kids) => { const b = el('button', cls); b.type = 'button'; b.append(...kids); return b }
 
 // ---- the button: a yellow sticky note. Whom a memo goes to is said by its tooltip and on the note ("To"). ----
@@ -72,24 +65,21 @@ function say(text, action = null) {
   lineTimer = setTimeout(() => { line.hidden = true }, 5000)
 }
 
-// ---- who receives by default: the starred session ----
-let sessions = [], usual = null, known = null
-const receiverOf = note => sessions.find(a => a.id === note.to) ?? usual
+// ---- who receives: the crown of the desk ----
+// A memo goes to the crowned session of the desk in view (agents.js crowned(): the one the human gave the crown;
+// the hub keeps it to one per desk, card Nr. 172), from wherever it is sent. Nothing else is a receiver, so the
+// note has one send button, the crown. With no crown on the desk it is hollow and leads to the Agents page, where
+// the crown is given with one click.
+let receiver = null
 function paintSessions(state) {
-  const starred = state.all.agents.filter(a => a.starred)
-  // One that got its star while the page was open is the receiver from then on.
-  if (known) for (const a of starred) if (!known.has(a.id)) remember(a.id)
-  known = new Set(starred.map(a => a.id))
-  const next = starred.find(a => a.id === remembered()) ?? starred.at(-1) ?? null
-  const list = state.all.agents.filter(a => !a.other_desk)
-  const sig = JSON.stringify([next?.id, list.map(a => [a.id, a.name, a.mark, a.icon, a.online, a.starred, a.main])])
+  const to = state.all.agents.find(a => !a.other_desk && !a.archived && crowned(a)) ?? null
+  const sig = JSON.stringify(to && [to.id, to.name])
   if (sig === paintSessions.sig) return
   paintSessions.sig = sig
-  sessions = list
-  usual = next
-  if (usual) opener.dataset.to = usual.id
+  receiver = to
+  if (receiver) opener.dataset.to = receiver.id
   else delete opener.dataset.to
-  opener.title = usual ? `Memo to ${usual.name} ( / )` : 'Memo: a note to a session ( / )'
+  opener.title = receiver ? `Memo to ${receiver.name} ( / )` : 'Memo: a note to the crowned session ( / )'
   opener.setAttribute('aria-label', opener.title)
   for (const v of views.values()) v.paintTo()
 }
@@ -124,20 +114,11 @@ function makeView(id) {
   form.setAttribute('role', 'dialog')
   form.setAttribute('aria-label', 'Memo')
 
-  // The head, one line: MEMO  TO <drawing> <name>, and at its end the stack and the bin. The note is carried by it.
+  // The head is the strip the note sticks by: nothing stands on it; the note is carried by it.
   const head = el('header', 'memo-head')
-  const to = el('label', 'memo-to')
-  const who = el('span', 'memo-who')
-  const pick = el('select', 'memo-pick')
-  pick.setAttribute('aria-label', 'Who receives this memo')
-  to.append(el('span', 'memo-to-word', 'To'), who, pick)
-  const away = button('memo-tool memo-away', sketch('stack'))
-  away.title = 'Put it on the Memos stack of the Desk (Esc)'
-  away.setAttribute('aria-label', 'Put the note on the Memos stack')
   const bin = button('memo-tool memo-bin', sketch('bin'))
   bin.title = 'Throw the note away'
   bin.setAttribute('aria-label', 'Throw the note away')
-  head.append(el('b', 'memo-title', 'Memo'), to, el('i'), away, bin)
 
   const field = el('textarea', 'memo-field')
   field.rows = 3
@@ -155,20 +136,15 @@ function makeView(id) {
   clip.title = 'Attach a picture or a file (or paste it, or drop it on the note)'
   clip.setAttribute('aria-label', 'Attach a picture or a file')
   const mic = dictationMic(field, { key: `quick:${id}`, onError: text => say(text) })
-  // Tear off and send: the paper plane at the end of the dashed line the note tears along.
-  const send = el('button', 'quick-send memo-send')
-  send.type = 'submit'
-  send.title = 'Tear off and send (Enter)'
-  send.setAttribute('aria-label', 'Tear off and send')
-  send.setAttribute('aria-keyshortcuts', 'Enter')
-  send.append(plane())
+  // Tear off and send: the crown at the end of the dashed line the note tears along (painted by paintTo()).
+  const sends = el('span', 'memo-sends')
   const tear = el('i', 'memo-tear')
   tear.setAttribute('aria-hidden', 'true')
   // A hub that keeps no notes yet: said quietly, the note lives in this browser then.
   const local = el('small', 'memo-local', 'this browser only')
   local.title = 'The hub does not keep notes yet (it has to be restarted): this note is kept in this browser.'
   const foot = el('footer', 'memo-foot')
-  foot.append(clip, mic, local, tear, send)
+  foot.append(clip, mic, bin, local, tear, sends)
   form.append(head, body, files, foot, picker)
   node.append(form)
 
@@ -183,18 +159,28 @@ function makeView(id) {
   function fit() {
     field.style.height = 'auto'
     field.style.height = `${Math.min(Math.max(field.scrollHeight, 84), Math.round(window.innerHeight * .4 / 28) * 28)}px`
-    send.disabled = !holds() || !receiverOf(note() ?? {})
+    for (const b of sends.querySelectorAll('.memo-send:not(.is-none)')) b.disabled = !holds()
   }
   function paintTo() {
-    const n = note()
-    if (!n) return
-    const target = receiverOf(n)
-    who.replaceChildren(...(target ? [avatar(target), el('b', null, target.name)] : [el('em', null, 'choose a session')]), sketch('unfold'))
-    pick.replaceChildren(...(target ? [] : [new Option('Choose a session', '')]), ...sessions.map(a => new Option(a.name, a.id)))
-    pick.value = target?.id ?? ''
-    form.setAttribute('aria-label', target ? `Memo to ${target.name}` : 'Memo')
-    field.setAttribute('aria-label', target ? `Your memo to ${target.name}` : 'Your memo')
+    const one = receiver
+    const b = button(`quick-send memo-send${one ? '' : ' is-none'}`, crown())
+    b.title = one ? `Send to ${one.name} (Enter)` : 'No crown on this desk yet: give a session the crown'
+    b.setAttribute('aria-label', b.title)
+    b.setAttribute('aria-keyshortcuts', 'Enter')
+    b.addEventListener('click', () => (receiver ? sendTo(receiver) : toCrowns()))
+    sends.replaceChildren(b)
+    form.setAttribute('aria-label', one ? `Memo to ${one.name}` : 'Memo')
+    field.setAttribute('aria-label', one ? `Your memo to ${one.name}` : 'Your memo')
     fit()
+  }
+  /** No crown on this desk: to the Agents page, where every line has the crown to give (agents.js crownToggle);
+   *  they show for a moment (ledger.css [data-crown-hint]) and the first has the keys. The note stays as it is. */
+  function toCrowns() {
+    say('No crown on this desk yet. Click the crown of a session on the Agents page: the memo goes there.')
+    document.getElementById('nav-roster')?.click()
+    document.body.dataset.crownHint = ''
+    setTimeout(() => { delete document.body.dataset.crownHint }, 8000)
+    setTimeout(() => document.querySelector('.ledger-face .crown-toggle')?.focus({ preventScroll: true }), 150)
   }
   function paintFiles() {
     filesSig = attached().map(a => a.url ?? a.name).join('|')
@@ -224,7 +210,6 @@ function makeView(id) {
     paintFiles()
     return true
   }
-  pick.addEventListener('change', () => { keep({ to: pick.value || null }); paintTo(); field.focus({ preventScroll: true }) })
   clip.addEventListener('click', () => picker.click())
   picker.addEventListener('change', async () => { await attach(picker.files); picker.value = ''; field.focus() })
   field.addEventListener('paste', e => { if (e.clipboardData?.files?.length) { e.preventDefault(); attach(e.clipboardData.files) } })
@@ -239,21 +224,19 @@ function makeView(id) {
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit() }
   })
 
-  /** Put the note away: on the Memos stack of the Desk; an empty one is gone. */
+  /** Put the note away: the memo button holds it; an empty one is gone. */
   function putAway() {
     if (node.dataset.state === 'sending') return
     const had = node.contains(document.activeElement)
     if (!holds()) removeMemo(id)
     else {
       saveMemo(id, { place: 'stack' })
-      const desk = link('quick-go', '/')
-      desk.textContent = 'Desk'
-      desk.addEventListener('click', () => { hush(); document.getElementById('nav-inbox')?.click() })
-      if (!deskShown()) say('The note lies on the Memos stack of the', desk)
+      const show = button('quick-go', 'Show')
+      show.addEventListener('click', () => { hush(); openList() })
+      say('Note put away: the memo button holds it.', show)
     }
     if (had) opener.focus({ preventScroll: true })
   }
-  away.addEventListener('click', putAway)
   bin.addEventListener('click', () => {
     const gone = removeMemo(id)
     if (!gone || !(gone.text.trim() || gone.files.length)) return
@@ -271,19 +254,22 @@ function makeView(id) {
     const timer = setTimeout(end, 900)
     form.addEventListener('animationend', over)
   })
-  form.addEventListener('submit', async e => {
+  // Enter: to the crown of the desk.
+  form.addEventListener('submit', e => {
     e.preventDefault()
+    if (!receiver) return toCrowns()
+    sendTo(receiver)
+  })
+  async function sendTo(target) {
     if (form.hasAttribute('aria-busy')) return
-    const n = note(), target = n && receiverOf(n)
-    if (!target) return pick.focus()
     if (!holds()) return field.focus()
     form.setAttribute('aria-busy', 'true')
     v.sending = true   // (the page leaves the note alone until it has flown off)
     try {
       const cards = clipped.ids()
       if (!cards && await settleMemo(id)) {
-        // The hub holds the note: it sends it as it stands (to the session shown here) and forgets it.
-        if (!n.to) saveMemo(id, { to: target.id }, { quiet: true })
+        // The hub holds the note: it sends it as it stands, to the crown (said to it now, whatever the note named before), and forgets it.
+        saveMemo(id, { to: target.id }, { quiet: true })
         await sendMemo(id)
       } else {
         // A hub that keeps no notes, or copied questions go along (the hub's note does not carry those): as a message.
@@ -307,7 +293,7 @@ function makeView(id) {
       v.sending = false
       form.removeAttribute('aria-busy')
     }
-  })
+  }
 
   // ---- carried by its head (a wide screen): anywhere over the page, or onto the Desk's paper ----
   // A phone: the sheet is not carried; a note that lies on the paper is moved about on the paper.
@@ -418,7 +404,13 @@ function stand(v, n) {
 function paintOpener() {
   const all = memos()
   opener.setAttribute('aria-expanded', String(all.some(n => !onStack(n))))
-  opener.toggleAttribute('data-draft', all.some(onStack))
+  const away = all.filter(onStack).length
+  opener.toggleAttribute('data-draft', away > 0)
+  // How many notes it holds: the small number on the button.
+  if (away) opener.dataset.count = String(away)
+  else delete opener.dataset.count
+  if (away) paintList()
+  else closeList()
   // A phone's sheet lies over the page behind a veil; the page knows (css/quicksend.css).
   document.body.toggleAttribute('data-memo-open', sheet.matches && [...views.values()].some(v => !v.node.hidden && !v.node.classList.contains('is-paper')))
 }
@@ -426,12 +418,12 @@ function sync(why = {}) {
   const all = memos()
   for (const [id, v] of views) if (!v.sending && !all.some(n => n.id === id && n.place !== 'stack')) { v.node.remove(); views.delete(id) }
   // A phone shows one sheet, and only a note he opened on this page (never one by itself on load): the others
-  // wait on the Memos stack of the Desk (js/memos.js onStack) until he taps them.
+  // wait with the memo button (js/memos.js onStack; its list) until he taps them.
   if (why.focus && why.id) setSheet(why.id)
   const top = sheet.matches ? all.find(n => n.place === 'float' && n.id === sheetMemo()) ?? null : null
   for (const n of all) {
     if (n.place === 'stack') continue
-    // Taken off the stack (or made elsewhere without a place): it gets one.
+    // Taken out again (or made elsewhere without a place): it gets one.
     if (n.place === 'float' && !n.x && !n.y && !sheet.matches) saveMemo(n.id, spot(), { quiet: true })
     const v = views.get(n.id) ?? makeView(n.id)
     v.update()
@@ -470,12 +462,64 @@ function write() {
   if (empty) { setSheet(empty.id); sync(); hush(); views.get(empty.id).node.hidden = false; front(empty.id); views.get(empty.id).field.focus({ preventScroll: true }); return }
   newMemo({ place: 'float', ...spot() })
 }
-opener.addEventListener('click', write)
-// A phone: a tap beside the sheet puts the note away (on the stack; nothing lies over the page meanwhile).
+// ---- the notes that were put away: the button holds them ----
+// With none put away the button makes a note at once. With some, a click opens a small list above (or below) it:
+// "New note" first, then every note that was put away, the newest first; a click on one takes it out again.
+const list = el('div', 'memo-list')
+list.setAttribute('role', 'menu')
+list.setAttribute('aria-label', 'Memos that were put away')
+list.hidden = true
+function paintList() {
+  if (list.hidden) return
+  const fresh = button('memo-list-new', sketch('pen'), el('span', null, 'New note'))
+  fresh.setAttribute('role', 'menuitem')
+  fresh.addEventListener('click', () => { closeList(); write() })
+  list.replaceChildren(fresh, ...memosAway().map(n => {
+    const words = n.text.trim().replace(/\s+/g, ' ')
+    const item = button('memo-list-note', el('strong', null, words || (n.files.length ? `${n.files.length} attached` : 'Empty note')), ...(words && n.files.length ? [el('small', null, `${n.files.length} attached`)] : []))
+    item.setAttribute('role', 'menuitem')
+    item.dataset.memo = n.id
+    item.title = 'Take the note out again'
+    item.addEventListener('click', () => { closeList(); openMemo(n.id) })
+    return item
+  }))
+}
+function openList() {
+  if (!memosAway().length) return
+  const host = floor()
+  if (list.parentNode !== host) host.append(list)
+  const r = opener.getBoundingClientRect(), up = r.top > window.innerHeight / 2
+  Object.assign(list.style, { right: `${Math.max(8, window.innerWidth - r.right)}px`, top: up ? '' : `${r.bottom + 8}px`, bottom: up ? `${window.innerHeight - r.top + 8}px` : '' })
+  list.hidden = false
+  opener.dataset.list = ''
+  paintList()
+  list.firstElementChild?.focus({ preventScroll: true })
+}
+function closeList() {
+  if (list.hidden) return false
+  const had = list.contains(document.activeElement)
+  list.hidden = true
+  delete opener.dataset.list
+  if (had) opener.focus({ preventScroll: true })
+  return true
+}
+opener.addEventListener('click', () => { if (closeList()) return; if (memosAway().length) openList(); else write() })
+document.addEventListener('pointerdown', e => { if (!list.hidden && !e.target.closest?.('.memo-list, .memo-open')) closeList() })
+list.addEventListener('keydown', e => {
+  const items = [...list.children], at = items.indexOf(document.activeElement)
+  if (e.key === 'ArrowDown' || e.key === 'ArrowUp') { e.preventDefault(); items[(at + (e.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length]?.focus() }
+})
+window.addEventListener('keydown', e => { if (e.key === 'Escape' && closeList()) { e.preventDefault(); e.stopPropagation() } }, true)
+// A phone: a tap beside the sheet puts the note away (the memo button holds it; nothing lies over the page meanwhile).
 document.addEventListener('pointerdown', e => {
-  if (!sheet.matches || e.target.closest?.('.memo, .memo-open, .quick-note')) return
+  if (!sheet.matches || e.target.closest?.('.memo, .memo-open, .quick-note, .memo-list')) return
   const v = views.get(sheetMemo())
-  if (v && !v.node.hidden && !v.node.classList.contains('is-paper')) v.putAway()
+  if (!v || v.node.hidden || v.node.classList.contains('is-paper')) return
+  v.putAway()
+  // That tap only put the note away: it does not also press what lay beside the sheet.
+  const swallow = ev => { ev.stopPropagation(); ev.preventDefault() }
+  window.addEventListener('click', swallow, { capture: true, once: true })
+  setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 600)
 })
 // Esc puts the note the keyboard is in away; what was written stays on it.
 // (Heard at the window, before the table of keys takes Esc to leave the field; a running dictation keeps its Esc.)

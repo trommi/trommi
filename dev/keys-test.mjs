@@ -10,7 +10,7 @@ import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { launchChromium } from './cdp.mjs'
+import { launchChromium, guard } from './cdp.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const port = Number(process.argv[2] || 8884)
@@ -35,6 +35,7 @@ const hub = spawn('node', [path.join(ROOT, 'server', 'server.mjs')], {
   env: { ...process.env, BOARD_PORT: String(port), BOARD_HOST: '127.0.0.1', BOARD_TOKEN: token, BOARD_DATA: dataDir, BOARD_HUB_ONLY: '1', BOARD_AGENT: '' },
   stdio: ['pipe', 'ignore', 'pipe'],
 })
+guard(hub, { dirs: [dataDir] })   // (stopped with the test, however the test ends: dev/cdp.mjs)
 let hubLog = ''
 hub.stderr.on('data', d => { hubLog += d })
 const links = []
@@ -46,7 +47,7 @@ async function stop(code) {
   fs.rmSync(dataDir, { recursive: true, force: true })
   process.exit(code)
 }
-process.on('SIGINT', () => stop(130))
+for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP']) process.on(sig, () => stop(130))
 
 const slug = name => name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
 const instanceOf = id => crypto.createHash('sha256').update(`${id}|${token}`).digest('hex').slice(0, 16)
@@ -169,7 +170,7 @@ const HELPERS = `
     list: () => [...document.querySelectorAll('.inbox-groups')].find(n => n.getClientRects().length),
     rows: () => [...(__k.list()?.querySelectorAll('.inbox-row:not(.is-leaving)') ?? [])],
     reach: () => __k.rows().filter(n => !n.closest('.inbox-pile:not(.is-open)')),
-    done: () => [...(__k.list()?.querySelectorAll('[data-pile="done"] .inbox-done') ?? [])].map(n => ({ id: n.dataset.id, text: n.innerText.replace(/\\s+/g, ' '), h: Math.round(n.getBoundingClientRect().height), current: n.classList.contains('is-current') })),
+    done: () => [...(__k.list()?.querySelectorAll(':is([data-pile="works"], [data-pile="done"]) .inbox-done[data-kind="answered"]') ?? [])].map(n => ({ id: n.dataset.id, text: n.innerText.replace(/\\s+/g, ' '), h: Math.round(n.getBoundingClientRect().height), current: n.classList.contains('is-current') })),
     row: id => __k.rows().find(n => n.dataset.id === id),
     cur: () => { const n = __k.list()?.querySelector('.inbox-row.is-current, .inbox-done.is-current'); return n ? { id: n.dataset.id, y: Math.round(n.getBoundingClientRect().top), later: 'later' in n.dataset, done: n.classList.contains('inbox-done'), open: n.classList.contains('is-open'), focus: document.activeElement === n } : null },
     inView: n => { const b = n.closest('main, .pane-list').getBoundingClientRect(), r = n.getBoundingClientRect(); return r.top >= b.top - 1 && r.bottom <= b.bottom + 1 },
@@ -352,70 +353,61 @@ async function main() {
   await key('u')
   await until('U on a snoozed line wakes it', () => ev(`return Boolean(__k.row(${JSON.stringify(c.b2)}))`) .then(there => there && !card(c.b2).snoozed_until))
 
+  // A row never unfolds in place: Enter and C open the card's own page, where the options stand.
+  const closeCard = async () => { for (let i = 0; i < 3 && await ev('return Boolean(__k.front())'); i++) await key('Escape', { pause: 400 }) }
   await markRow(c.a3)
-  await key('Enter', { pause: 450 })
-  check((await cur())?.open, 'Enter unfolds the choices of the marked row')
-  check((await ev('return __k.active()')).text.includes('Green'), 'the option the agent recommends has the focus')
-  await key('ArrowRight')
-  check((await ev('return __k.active()')).text.includes('Gold'), 'the right arrow moves to the next option')
-  await key('ArrowLeft')
-  await key('ArrowLeft')
-  check((await ev('return __k.active()')).text.includes('Ink'), 'the left arrow moves back')
+  await key('Enter', { pause: 700 })
+  check(await ev('return __k.frontTitle()') === 'Which colour for the mark?', 'Enter opens the marked row\'s card on its own page')
+  check(!(await ev('return Boolean(document.querySelector(".inbox-row.is-open, .inbox-more, .inbox-inline"))')), 'no row of the Desk unfolds in place')
   await shot('04-choices-open')
-  await key('Escape')
-  check(!(await cur())?.open && (await cur())?.id === c.a3, 'Escape folds the choices and keeps the mark')
-  await key('c', { pause: 450 })
+  await closeCard()
+  check(!(await ev('return Boolean(__k.front())')), 'Escape goes back to the Desk')
+  await markRow(c.a3)
+  await key('c', { pause: 700 })
   await key('3')
   await until('a digit picks that option', () => card(c.a3).choice === 'gold')
+  await until('the page closes on the answer', () => ev('return !__k.front()'))
   await key('u')
   await until('U takes it back', () => card(c.a3).status === 'open')
 
   await markRow(c.a4)
-  await key('c', { pause: 450 })
-  await key(' ')
-  await key('ArrowRight')
-  await key('ArrowRight')
-  await key(' ')
-  check(JSON.stringify(await ev('return [...__k.list().querySelectorAll(".is-current .inbox-option[aria-pressed]")].map(b => b.getAttribute("aria-pressed"))')) === '["true","false","true"]', 'Space toggles the option in focus (first and third)')
+  await key('c', { pause: 700 })
+  await key('1')
+  await key('3')
+  check(JSON.stringify(await ev('return [...__k.front().querySelectorAll(".focus-opts .focus-opt[aria-pressed]")].map(b => b.getAttribute("aria-pressed"))')) === '["true","false","true"]', 'digits tick the options (first and third)')
   await key('2')
   await key('2')
-  check(card(c.a4).status === 'open', 'toggling answers nothing yet')
+  check(card(c.a4).status === 'open', 'ticking answers nothing yet')
   await shot('05-several')
   await key('Enter')
   await until('Enter sends the picked options together', () => card(c.a4).status !== 'open' && card(c.a4).choices?.join() === 'unit,lint')
+  await until('the page closes on the answer', () => ev('return !__k.front()'))
   await key('u')
   await until('U takes it back', () => card(c.a4).status === 'open')
 
   // ---------------------------------------------------------------------------
   section('Inbox: ask back and Explain by key, keys rest in a field')
   await markRow(c.b3)
-  await key('a', { pause: 450 })
+  await key('a', { pause: 700 })
   const field = await ev('return __k.active()')
-  check(field.tag === 'INPUT' && /Ask the agent/.test(field.label ?? ''), 'A opens the row and puts the caret into the ask-back line')
+  check(field.tag === 'TEXTAREA' && Boolean(await ev('return Boolean(__k.front())')), 'A opens the card\'s page and puts the caret into its field')
   await type('yn l')
   await sleep(150)
-  check(card(c.b3).status === 'open' && !(await ev(`return 'later' in __k.row(${JSON.stringify(c.b3)}).dataset`)), 'letters typed in the field answer nothing and put nothing off')
-  await key('Escape')
-  check((await ev('return __k.active()')).cls.includes('inbox-row'), 'Escape leaves the field for the row')
-  await key('a', { pause: 300 })
-  await key('Enter')
-  await until('Enter sends the question back with the card', () => watch.state.messages.some(m => m.card_id === c.b3 && m.from === 'user' && m.text === 'yn l'))
-  await sleep(500)
-  check(await ev(`return !('later' in __k.row(${JSON.stringify(c.b3)}).dataset)`) && card(c.b3).status === 'open', 'a typed question back leaves the row where it is, open')
-  await key('Escape')
-  await key('Escape')
+  check(card(c.b3).status === 'open' && !card(c.b3).snoozed_until, 'letters typed in the field answer nothing and put nothing off')
+  await closeCard()
+  check(!(await ev('return Boolean(__k.front())')), 'Escape leaves the field, then the card')
 
   await markRow(c.a3)
-  await key('e', { pause: 450 })
-  check((await cur())?.open && !watch.state.messages.some(m => m.card_id === c.a3 && m.from === 'user'), 'E first unfolds the row and asks nothing')
-  await key('e')
-  await until('E again asks the session to explain', () => watch.state.messages.some(m => m.card_id === c.a3 && m.from === 'user' && /^Explain this question/.test(m.text)))
+  await key('e', { pause: 700 })
+  check(await ev('return __k.frontTitle()') === 'Which colour for the mark?' && !watch.state.messages.some(m => m.card_id === c.a3 && m.from === 'user'), 'E on a row opens the card\'s page and asks nothing')
+  await key('e', { pause: 600 })
+  await until('E in the opened card asks the session to explain', () => watch.state.messages.some(m => m.card_id === c.a3 && m.from === 'user' && /^Explain this question/.test(m.text)))
   // A card asked to explain waits for the session, not for the human: it leaves the desk for the slim list
   // "With the agent" (inbox.js, .inbox-revising), not for the Snooze pile.
+  await closeCard()
   await until('and the row goes to the list "With the agent"', () => ev(`return !__k.row(${JSON.stringify(c.a3)}) && Boolean(__k.list()?.querySelector('.inbox-revising-row[data-id=${JSON.stringify(c.a3)}]'))`))
-  check(/Asked to explain/.test((await back())?.text ?? ''), 'a note says "Asked to explain", with Back')
   await shot('06-asked-to-explain')
-  await alpha.call('reply', { text: 'Green is the brand colour; ink reads best; gold is for VIP only. I would take green.', card_id: c.a3 })
+  await alpha.call('reply', { text: 'Green is the brand colour; ink reads best; gold is for VIP only. I would take green.', card_id: c.a3, present: true })
   await until('the session\'s reply brings the row back to the desk', () => ev(`return Boolean(__k.row(${JSON.stringify(c.a3)})) && !('later' in __k.row(${JSON.stringify(c.a3)}).dataset)`), 6000)
   // A card too large for a row opens as a window; there Explain closes the window.
   await markRow(c.b5)
@@ -431,23 +423,24 @@ async function main() {
 
   // ---------------------------------------------------------------------------
   section('Inbox: the Answered group')
-  // The pile of answered questions with "Take back". While the Desk lists nothing answered (it was taken out
+  // An answered question lies on the stack "In the works" until its session closes it, then on "Done"; both offer
+  // "Take back". While the Desk lists nothing answered (it was taken out
   // and is to come back), these checks wait: one line says so instead of failing.
   await markRow(c.g3)
   await key('y')
   await until('Y answers', () => card(c.g3).status !== 'open')
   await sleep(600)
-  const pileThere = await ev('return Boolean(__k.list().querySelector(".inbox-group-answered"))')
+  const pileThere = await ev('return Boolean(__k.list().querySelector(\'[data-pile="works"] [data-kind="answered"]\'))')
   await key('u')
   await until('U takes it back', () => card(c.g3).status === 'open')
   if (!pileThere) { pendingNotes.push('the Desk shows no "Answered" pile: its checks (unfold, Take back by key and by click) were skipped'); console.log('  ~ pending: no "Answered" pile on the Desk') } else {
-    check(!(await ev('return Boolean(__k.list().querySelector(".inbox-group-answered"))')), 'with nothing answered there is no "Answered" group')
+    check(!(await ev('return Boolean(__k.list().querySelector(\'[data-kind="answered"]\'))')), 'with nothing answered no stack holds an answered line')
     await markRow(c.g2)
     await key('y')
     await until('Y answers', () => card(c.g2).status !== 'open')
-    await until('an "Answered" pile stands below the open rows, folded', () => ev('const g = __k.list().querySelector(".inbox-group-answered"); return Boolean(g) && !g.classList.contains("is-open") && Boolean(g.compareDocumentPosition(__k.reach().at(-1)) & Node.DOCUMENT_POSITION_PRECEDING) && /Done/.test(g.textContent)'))
+    await until('the stack "In the works" stands below the open rows, folded', () => ev('const g = __k.list().querySelector(\'[data-pile="works"]\'); return Boolean(g) && !g.classList.contains("is-open") && Boolean(g.compareDocumentPosition(__k.reach().at(-1)) & Node.DOCUMENT_POSITION_PRECEDING) && /In the works/.test(g.textContent)'))
     await sleep(5300)   // the note has left: this is the wrong answer that is noticed later
-    await click('__k.list().querySelector(".inbox-answered-toggle")')
+    await click('__k.list().querySelector(".inbox-works-toggle")')
     const listed = await ev('return __k.done()')
     if (check(listed.length === 1 && listed[0].id === c.g2, 'a click unfolds it: one slim row for the answered question')) {
       check(/Renew the certificate\?/.test(listed[0].text) && /Yes/.test(listed[0].text) && /Gamma/.test(listed[0].text) && /Take back/.test(listed[0].text), `the row says what was asked, what was answered and who asked ("${listed[0].text}")`)
@@ -468,6 +461,9 @@ async function main() {
     await gamma.call('close_card', { card_id: c.g2, summary: 'Left as it is.' })
     await until('the row says the agent has closed it', () => ev('return __k.done().some(d => /done by the agent/i.test(d.text))'))
     await sleep(700)   // the rows have come to rest
+    // (Closed by its session, the card has moved from "In the works" to the stack "Done".)
+    check(await ev(`return Boolean(__k.list().querySelector('[data-pile="done"] .inbox-done[data-id="${c.g2}"]')) && !__k.list().querySelector('[data-pile="works"] .inbox-done[data-id="${c.g2}"]')`), 'a card its session closed lies on the stack "Done", not on "In the works"')
+    if (!(await ev('return Boolean(__k.list().querySelector(\'[data-pile="done"].is-open\'))'))) { await click('__k.list().querySelector(".inbox-done-toggle")'); await sleep(500) }
     await click('__k.list().querySelector(\'[data-pile="done"] .inbox-takeback\')')
     await until('a click on "Take back" reopens it all the same', () => card(c.g2).status === 'open')
     await until('and the question stands in its group again, marked', async () => (await cur())?.id === c.g2 && !(await cur()).done)
@@ -809,6 +805,55 @@ async function main() {
   await sleep(500)
   await shot('32-phone-dark-back')
   await key('u', { pause: 500 })
+
+  // Card Nr. 171: G then 1…9 switch desks while there are several; with one desk they stay the sessions'.
+  section('Desks: D then 1…9')
+  {
+    await open('/')
+    const deskNow = () => ev('return import("/js/store.js").then(m => m.getState().all.desk)')
+    const scopeNow = () => ev('return document.body.dataset.scope')
+    const chipUp = () => ev('const c = document.querySelector(".keys-pending"); return Boolean(c) && !c.hidden')
+    const first = await deskNow()
+    await key('d', { pause: 250 })
+    check(!(await chipUp()), 'one desk: D starts no sequence')
+    await key('Escape')
+    const made = await ev('return fetch("/desk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name: "Zweiter Desk" }) }).then(r => r.json()).then(o => o.desk && o.desk.id)')
+    check(Boolean(made), 'a second desk is made')
+    await until('the page knows two desks', () => ev('return import("/js/store.js").then(m => (m.getState().all.desks || []).length === 2)'))
+    await ev(`return import("/js/store.js").then(m => { m.setDesk(${JSON.stringify(first)}); return true })`)
+    await sleep(300)
+    await keys('d', '2')
+    await until('two desks: D then 2 switches to the second desk', async () => (await deskNow()) === made)
+    check(await ev('return document.querySelector(".desk-name").textContent') === 'Zweiter Desk', 'the Desk box names the desk in view')
+    await keys('d', '9')
+    await sleep(200)
+    check(await deskNow() === made && await scopeNow() === 'all', 'D then 9 (no such desk) changes nothing, and opens no session')
+    await keys('d', '1')
+    await until('D then 1 switches back to the first desk', async () => (await deskNow()) === first)
+    check(await scopeNow() === 'all', 'D then 1 stays on the Desk (no session opened)')
+    await key('d', { pause: 250 })
+    const offered = await ev('return document.querySelector(".keys-pending").innerText.replace(/\\s+/g, " ")')
+    check(/desk 1 to 9/i.test(offered) && !/session 1 to 9/i.test(offered), `after D the chip offers the desks only: ${offered}`)
+    await key('Escape')
+    await keys('g', '1')
+    await until('two desks: G then 1 still goes to the first session', async () => { const s = await scopeNow(); return s && s !== 'all' })
+    check(await deskNow() === first, 'and G then 1 switches no desk')
+    await keys('g', 'a')
+    await sleep(400)
+    await key('d', { pause: 250 })
+    check(!(await chipUp()), 'on the Ledger page D stays the Ledger\'s key: no sequence starts')
+    await key('Escape')
+    await keys('g', 'i')
+    await sleep(300)
+    await key('?', { shift: true, pause: 300 })
+    const listed = await ev('return document.querySelector(".keys-sheet").innerText.replace(/\\s+/g, " ")')
+    check(/D ?then ?1…9 ?switch to that desk/.test(listed) && !/Ctrl ?1…9/.test(listed), 'the key sheet lists D then 1…9 for the desks, and no Ctrl key for them')
+    check(/G ?then ?1…9 ?go to that session of the sidebar/.test(listed), 'the key sheet lists G then 1…9 for the sessions beside it')
+    await shot('40-desk-keys-sheet')
+    await key('Escape')
+    await ev(`return fetch("/desk", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: ${JSON.stringify(made)}, remove: true }) }).then(r => r.ok)`)
+    await sleep(300)
+  }
 
   section('The page')
   check(!pageErrors.length, `no errors in the page: ${pageErrors.slice(0, 5).join(' | ')}`)

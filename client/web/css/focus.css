@@ -995,7 +995,7 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 .focus-answer > .focus-actions .focus-way.focus-shred { margin-left: auto; width: 44px; padding: 0; box-shadow: none; }
 .focus-answer > .focus-actions .focus-way.focus-shred .focus-way-word { display: none; }
 /* Snooze: the label that slides out at the card's right edge, the same one as on a row of the inbox (app.css, .inbox-later) */
-.focus-card { --card-color: var(--u); --card-ink: color-mix(in srgb, var(--u) 70%, var(--fg)); --card-line: color-mix(in srgb, var(--u) 22%, transparent); }
+.focus-card { --tone-pen: var(--u); --tone-wash: var(--u-soft); --card-ink: color-mix(in srgb, var(--u) 70%, var(--fg)); --card-line: color-mix(in srgb, var(--u) 22%, transparent); }
 .focus-card > .focus-snooze { top: 78px; right: 0; border-radius: 8px 0 0 8px; }
 @container focus (min-width: 900px) {
   .focus-card { grid-template: minmax(0, 1fr) / minmax(0, 1fr) auto minmax(260px, 33.3%); }
@@ -1241,16 +1241,6 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 
 /* ══ The same card unfolded in a row of the page (openInline): no window, no backdrop; its height follows its
    content, the buttons column stays in sight while the card is taller than the screen. ══ */
-.focus[data-inline] { position: static; z-index: auto; display: block; padding: 0; animation: none; }
-.focus[data-inline] > .focus-backdrop, .focus[data-inline] > .focus-nav, .focus[data-inline] .focus-more, .focus[data-inline] .focus-up { display: none !important; }
-.focus[data-inline] .focus-sheet { height: auto; max-height: none; overflow: clip; animation: none; border-radius: var(--r-lg); box-shadow: 0 0 0 1px var(--line); }
-.focus[data-inline] .focus-stage { display: block; overflow: visible; }
-.focus[data-inline] .focus-card { height: auto; max-height: none; overflow: visible; }
-.focus[data-inline] .focus-card:not([data-shown]) { display: none; }
-.focus[data-inline] .focus-talk, .focus[data-inline] .focus-scroll { height: auto; max-height: none; overflow: visible; flex: none; }
-.focus[data-inline] .focus-card > .focus-answer { position: sticky; top: 8px; align-self: start; max-height: calc(100dvh - 16px); overflow-y: auto; scrollbar-width: none; border: 0; margin: 8px 8px 8px 0; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); }
-.focus[data-inline] .focus-card[data-pictures] .focus-figure { height: clamp(220px, 52vh, 620px); }
-.focus[data-inline] .focus-card .focus-answer > .focus-actions { margin-top: var(--s-4); }
 /* dark: the buttons column has a clear edge against the stage */
 :root[data-theme="dark"] .focus .focus-card > .focus-answer { background: color-mix(in srgb, var(--surface) 90%, #fff); box-shadow: -1px 0 0 var(--line-strong); }
 
@@ -1393,7 +1383,9 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 /* On a card with a stage the title and the stage come first; a picture that belongs to no option (the overview)
    follows under the stage instead of pushing it out of sight. The tick is at the right, so the stage's heading is plain. */
 .focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) { display: flex; flex-direction: column; }
-.focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) > * { flex: none; }
+/* (Its parts are all divs. Not "> *": a :has() rule whose subject is any element makes the browser restyle the
+   whole page after every change to it, about 20 ms each time on a full board.) */
+.focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) > div { flex: none; }
 .focus-card[data-sections] .focus-scroll:has(.focus-secs[data-stage]) > .focus-media { order: 1; }
 .focus-secs[data-stage] .focus-sec-mark { display: none; }
 .focus-secs[data-stage] .focus-sec-pick { padding-left: 0; min-height: 32px; }
@@ -1623,15 +1615,17 @@ button.focus-by-part:hover, a.focus-by-part:hover { color: var(--fg); text-decor
 .focus:not([data-inline]):not([data-list]) > .focus-back-desk { max-width: min(280px, calc(100vw - 80px)); }
 .focus:not([data-inline]):not([data-list]) .focus-says { inset: 8px auto auto calc(var(--back-w, 78px) + 20px) !important; max-width: calc(100vw - var(--back-w, 78px) - 32px); }
 /* A row of the Desk unfolded in place has the same order as the card page: the title, the short text, then the gallery. */
-.focus[data-inline] .focus-card[data-pictures] .focus-scroll { display: flex; flex-direction: column; }
-.focus[data-inline] .focus-card[data-pictures] .focus-scroll > * { flex: none; }
-.focus[data-inline] .focus-card[data-pictures] .focus-scroll > .focus-lead { order: -2; }
-.focus[data-inline] .focus-card[data-pictures] .focus-scroll > .focus-body { order: -1; }
-.focus[data-inline] .focus-card[data-pictures] .focus-scroll > .focus-media { margin-top: var(--s-3); }
 
 /* The pair of square tiles (two options, one answer): a tile with a long detail grows past the square instead of
    cutting its drawing and its last line; both tiles stay equally high. */
 @container focus (min-width: 700px) {
   .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="duo"] .focus-opt { aspect-ratio: auto; height: auto; min-height: 128px; overflow: visible; }
   .focus:not([data-inline]):not([data-list]) .focus-card .focus-opts[data-count="duo"] .focus-opt-detail { overflow: visible; display: block; -webkit-line-clamp: none; white-space: normal; }
+}
+
+/* Phone, an info card with a picture (card Nr. 180, "low"): the picture is shown low, 140px, so "Acknowledge" is
+   in the first screen; a tap still opens it large. Decision cards keep the stage above. */
+@container focus (max-width: 699.98px) {
+  .focus:not([data-inline]) .focus-card[data-kind="info"][data-pictures] .focus-scroll > .focus-media > .focus-stage-view { height: 140px; }
+  .focus:not([data-inline]) .focus-card[data-kind="info"][data-pictures] .focus-scroll > .focus-media { flex: none; min-height: 0; }
 }

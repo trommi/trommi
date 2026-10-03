@@ -3,9 +3,10 @@
 // dev/session.mjs, so that whoever stands beside the agent encrypts, and the
 // hub only ever stores and serves ciphertext.
 //
-// A page or a file the agent publishes under a link. Whoever has the link can
-// open it, without a login: the key stands behind the # of the link, which a
-// browser never sends.
+// A page or a file the agent publishes under a link. Whoever has the link and
+// is signed in to the board can open it; someone outside needs a release, with
+// a link of its own (/r/<id>#<key>). The key stands behind the # of the link,
+// which a browser never sends.
 //
 // The blob, version 1:
 //   "ZWA1" | nonce, 12 bytes | AES-256-GCM ciphertext | tag, 16 bytes

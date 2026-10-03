@@ -20,7 +20,7 @@
     margin: var(--s-6) max(var(--gutter), calc((100% - var(--beside-col)) / 2 + var(--gutter))) 0;
   }
   body:not([data-pair]) .pane-who .agent-avatar { width: 56px; height: 56px; border-radius: 16px; }
-  body:not([data-pair]) .pane-who .crown-toggle { left: -14px; top: -12px; }
+  body:not([data-pair]) .pane-who .crown-toggle { left: 12px; top: -17px; }
   body:not([data-pair]) .pane-who .crown-toggle .crown-mark { width: 26px; }
   body:not([data-pair]) .pane-title h2 { font-size: clamp(1.7rem, 2.6vw, 2.2rem); line-height: 1.1; letter-spacing: -.025em; }
   /* Under the name: what the session is at, its model and machine. */
@@ -101,12 +101,12 @@ body[data-pair] #chat .log .ask-open .inbox-row > :not(.inbox-content),
 body[data-pair] #chat .log .ask-open .inbox-content > :not(.inbox-text),
 body[data-pair] #chat .log .ask-open .inbox-text > :not(.inbox-question) { display: none; }
 body[data-pair] #chat .log .ask-open .inbox-content { display: block; padding: 0; overflow: visible; }
-body[data-pair] #chat .log .ask-open .inbox-text { display: flex; align-items: baseline; gap: var(--s-2); width: 100%; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); border-left: 3px solid var(--card-color); background: var(--card-bg); }
-body[data-pair] #chat .log .ask-open .inbox-text::before { content: "Question"; flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--card-color); }
-body[data-pair] #chat .log .ask-open .inbox-text::after { content: "←"; flex: none; margin-left: auto; color: var(--card-color); }
+body[data-pair] #chat .log .ask-open .inbox-text { display: flex; align-items: baseline; gap: var(--s-2); width: 100%; padding: 6px 10px 6px 8px; border-radius: var(--r-sm); border-left: 3px solid var(--tone-pen); background: var(--card-bg); }
+body[data-pair] #chat .log .ask-open .inbox-text::before { content: "Question"; flex: none; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--tone-pen); }
+body[data-pair] #chat .log .ask-open .inbox-text::after { content: "←"; flex: none; margin-left: auto; color: var(--tone-pen); }
 body[data-pair] #chat .log .ask-open .inbox-question { display: block; font: 600 var(--t-sm)/1.35 var(--font); letter-spacing: 0; text-wrap: wrap; color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (max-width: 1199px) { body[data-pair] #chat .log .ask-open .inbox-text::after { content: "↑"; } }
-@media (any-hover: hover) { body[data-pair] #chat .log .ask-open .inbox-text:hover { background: color-mix(in srgb, var(--card-color) 12%, var(--surface)); } }
+@media (any-hover: hover) { body[data-pair] #chat .log .ask-open .inbox-text:hover { background: var(--tone-wash); } }
 
 /* ---- sessions laid together on a phone: the list is one line above the conversation, or the whole view ---- */
 .group-bar { display: none; }

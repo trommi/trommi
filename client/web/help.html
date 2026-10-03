@@ -173,7 +173,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 <section id="assets" aria-labelledby="h-assets">
   <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
   <div class="hp-prose">
-    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file and gets a link back: <code>&lt;board&gt;/a/&lt;id&gt;#&lt;key&gt;</code>. The link opens without a board login. Whoever has the whole link can open the asset; nobody else can, including someone who only has the address before the <code>#</code>.</p>
+    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file and gets a link back: <code>&lt;board&gt;/a/&lt;id&gt;#&lt;key&gt;</code>. The link opens only for someone who is signed in to the board and has the whole link. Someone outside needs a release (<code>share_asset</code>, or Share on the asset's card): it gives a second link, <code>&lt;board&gt;/r/&lt;id&gt;#&lt;key&gt;</code>, that opens without a login until the release ends or is taken back.</p>
     <p><strong>How it is encrypted.</strong> The channel process beside the agent makes a fresh random 256-bit key for each asset and encrypts with AES-256-GCM before anything leaves for the hub. The key is the part of the link after the <code>#</code>, which a browser never sends to a server. The viewer fetches the ciphertext and decrypts it in the browser, which is why the link needs HTTPS or localhost.</p>
   </div>
   <div class="hp-facts">

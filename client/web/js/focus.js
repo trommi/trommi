@@ -262,7 +262,7 @@ export function mountFocus({ onDecided } = {}) {
   const backdrop = el('div', 'focus-backdrop')
 
   const sheet = el('section', 'focus-sheet')
-  // (a page, not a pop-up: no dialog role, no modal; unfolded in a row it is a region of that row)
+  // (a page, not a pop-up: no dialog role, no modal)
   sheet.setAttribute('role', 'region')
   sheet.setAttribute('aria-label', 'Focus: open questions')
   sheet.tabIndex = -1
@@ -400,7 +400,6 @@ export function mountFocus({ onDecided } = {}) {
   let lastState = null
   let isOpen = false
   let single = false              // opened on one card: its window only, closes on the answer
-  let inlineHost = null, inlineDone = null   // unfolded inside a row of the page (openInline) instead of as the window
   let pastId = null               // the window was opened on a card that is not open any more: it is shown to read
   let wanted = null               // the one card asked for before the state had arrived
   let order = []
@@ -2474,8 +2473,6 @@ export function mountFocus({ onDecided } = {}) {
   // ── state → cards ───────────────────────────────────────────────────────
   function sync(motion) {
     const state = lastState
-    // (the row it was unfolded in was drawn anew and took the card with it: fold, and be the window again)
-    if (isOpen && inlineHost && !root.isConnected) return close()
     if (!isOpen || !state) return
     const byId = new Map(pool().cards.map(c => [c.id, c]))
     const isOpenCard = id => byId.get(id)?.status === 'open' && !decidedLocal.has(id)
@@ -2680,7 +2677,7 @@ export function mountFocus({ onDecided } = {}) {
     }
     // (the walk is a page of its own: the page behind it is not shown; app.js may hide more by this attribute)
     // (so is a card opened alone: a page, not a window over a dimmed page; the way back names where one came from)
-    if (isOpen && !inlineHost) {
+    if (isOpen) {
       document.body.dataset.focusPage = inList() ? 'walk' : 'card'
       const from = /^\/s\/([^/+]+)/.exec(location.hash.startsWith('#/') ? location.hash.slice(1) : location.pathname)?.[1]
       const session = from && !inList() ? (pool()?.agents ?? []).find(a => a.id === decodeURIComponent(from)) : null
@@ -3144,13 +3141,14 @@ export function mountFocus({ onDecided } = {}) {
   // ── open and close ──────────────────────────────────────────────────────
   /** Without a card: the walk, from the most urgent question. With one: the window of that
    *  card alone (the walk, if that card is not open any more). While open, open(id) goes there. */
-  function open(cardId, inline = false) {
-    if (inlineHost && !inline) close()   // the window is asked for while a card stands unfolded in a row: fold that first
+  function open(cardId) {
     if (isOpen) {
       if (cardId) go(cardId)
       return
     }
     clearTimeout(closeTimer)
+    // (a card answered here a moment ago and taken back on the Desk is open again: asked for by name, it is shown)
+    if (cardId) decidedLocal.delete(cardId)
     teardown()
     if (!root.isConnected) document.body.append(root)
     opener = document.activeElement instanceof HTMLElement && document.activeElement !== document.body ? document.activeElement : null
@@ -3169,8 +3167,7 @@ export function mountFocus({ onDecided } = {}) {
     current = single ? cardId : null
     root.hidden = false
     root.removeAttribute('data-closing')
-    // (unfolded in a row of the page, the page stays alive around it)
-    if (!inlineHost) {
+    {
       document.documentElement.classList.add('focus-lock')
       // What the page covers cannot take the keyboard while it is open; the board's own floating things (memo notes,
       // the memo button, a note of the page, a dialog) stay alive.
@@ -3228,22 +3225,14 @@ export function mountFocus({ onDecided } = {}) {
     document.documentElement.classList.remove('focus-lock')
     const finish = () => { root.hidden = true; root.removeAttribute('data-closing'); teardown() }
     clearTimeout(closeTimer)
-    const folded = inlineHost ? inlineDone : null
-    if (still() || inlineHost) finish()
+    if (still()) finish()
     else { root.dataset.closing = ''; closeTimer = setTimeout(finish, 200) }
-    if (inlineHost) {
-      // back to being the window, for the next time it is one
-      inlineHost = inlineDone = null
-      root.removeAttribute('data-inline')
-      document.body.append(root)
-    }
     const back = opener
     opener = null
     if (back?.isConnected) back.focus({ preventScroll: true })
     else document.activeElement?.blur?.()
     delete document.body.dataset.focusPage
     document.dispatchEvent(new CustomEvent('focus:close'))
-    folded?.()
   }
 
   // ── wiring ──────────────────────────────────────────────────────────────
@@ -3280,22 +3269,5 @@ export function mountFocus({ onDecided } = {}) {
     rec.scroll?.scrollTo({ top: 0 })
     return true
   }
-  /** The same card, unfolded in place inside host (a row of the Desk) instead of in the window: its height follows
-   *  its content, the page around it stays alive. Only one at a time: another call folds the one before. onClose()
-   *  is called whenever it folds (Esc, the close control, an answer, closeInline(), the window being opened).
-   *  False when the card cannot be shown. */
-  function openInline(host, cardId, { onClose } = {}) {
-    if (isOpen) close()
-    clearTimeout(closeTimer)
-    inlineHost = host
-    inlineDone = typeof onClose === 'function' ? onClose : null
-    root.dataset.inline = ''
-    host.append(root)
-    open(cardId, true)
-    if (!isOpen || !single) { if (isOpen) close(); else { inlineHost = inlineDone = null; root.removeAttribute('data-inline'); document.body.append(root) } return false }
-    requestAnimationFrame(() => { if (inlineHost === host) host.scrollIntoView({ block: 'nearest', behavior: still() ? 'instant' : 'smooth' }) })
-    return true
-  }
-  const closeInline = () => { if (inlineHost) close() }
-  return { open: id => open(id), close, ask, revise, gallery, openInline, closeInline, isInline: () => Boolean(inlineHost), isOpen: () => isOpen }
+  return { open: id => open(id), close, ask, revise, gallery, isOpen: () => isOpen }
 }

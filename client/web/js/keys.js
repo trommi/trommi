@@ -33,12 +33,13 @@ export const LAYOUT = [
     { id: 'go.agents', keys: ['g a'], does: 'Ledger', verb: 'go to the Ledger (the Agents page)' },
     { id: 'go.focus', keys: ['g f'], does: 'Next, please', verb: 'Next, please: every open question, one after the other' },
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar' },
+    // The desks have a family of their own (card Nr. 184): D then 1…9. G then 1…9 are always the sessions'.
+    { id: 'desk.switch', keys: ['d 1…9'], does: 'desk 1 to 9', verb: 'switch to that desk' },
     { id: 'session.next', keys: ['.'], does: 'next session' },
     { id: 'session.prev', keys: [','], does: 'previous session' },
     { id: 'back', keys: ['u', 'Backspace'], does: 'back: take the last answer back' },
     { id: 'theme', keys: ['t'], does: 'light or dark' },
     { id: 'rail', keys: ['['], does: 'fold the sidebar to a rail, or open it' },
-    { id: 'desk.switch', keys: ['Mod+1…9'], does: 'desk 1 to 9', verb: 'switch to that desk' },
     { id: 'quicksend', keys: ['/'], does: 'quick send: write to a session from wherever you are', native: true },
     { id: 'sessions.move', keys: ['Alt+ArrowUp', 'Alt+ArrowDown'], does: 'move the session you are in up or down the sidebar', native: true },
     { id: 'field.leave', keys: ['Escape'], does: 'leave a field', typing: true },
@@ -51,7 +52,7 @@ export const LAYOUT = [
     { id: 'ledger.answer', keys: ['y', 'n'], does: 'answer its question: yes, no', native: true },
     { id: 'ledger.rename', keys: ['r'], does: 'rename', native: true },
     { id: 'ledger.mark', keys: ['d'], does: 'another drawing', native: true },
-    { id: 'ledger.crown', keys: ['c'], does: 'crown: its questions come first', native: true },
+    { id: 'ledger.crown', keys: ['c'], does: 'crown: give it or take it off (memos of this desk go there)', native: true },
     { id: 'ledger.pair', keys: ['+'], does: 'lay together with another', native: true },
     { id: 'ledger.archive', keys: ['a'], does: 'archive (a disconnected one)', native: true },
     { id: 'ledger.order', keys: ['Shift+ArrowDown', 'Shift+ArrowUp'], does: 'move it down, up', native: true },
@@ -62,24 +63,19 @@ export const LAYOUT = [
     { id: 'list.prev', keys: ['k', 'ArrowUp'], does: 'previous question', repeat: true },
     { id: 'list.first', keys: ['Home'], does: 'first question' },
     { id: 'list.last', keys: ['End'], does: 'last question' },
-    { id: 'list.option.next', keys: ['ArrowRight'], does: 'next option, where choices are open', repeat: true, control: true },
-    { id: 'list.option.prev', keys: ['ArrowLeft'], does: 'previous option', repeat: true, control: true, quiet: true },
     { id: 'list.yes', keys: ['y'], does: 'yes: the thumb up; on a note from the agent: acknowledge' },
     { id: 'list.no', keys: ['n'], does: 'no: the thumb down; on a note from the agent: ask it to explain' },
-    { id: 'list.send', keys: ['Enter'], does: 'send, where several answers are allowed', control: true },
-    { id: 'list.open', keys: ['Enter', 'c'], does: 'open the choices, or the question as a window; a note from the agent: acknowledge' },
-    { id: 'list.pick', keys: ['1…9'], does: 'pick that option' },
-    { id: 'list.toggle', keys: [' '], does: 'pick the option in focus', native: true },
+    { id: 'list.open', keys: ['Enter', 'c'], does: 'open the question on its own page; a note from the agent: acknowledge' },
     { id: 'list.ask', keys: ['a'], does: 'ask back instead of answering' },
     { id: 'list.read', keys: ['h'], does: 'hear it: read the marked question aloud, again to stop' },
     { id: 'list.revise', keys: ['b'], does: 'Revise: back to the agent' },
     { id: 'list.trust', keys: ['r'], does: 'Whatever: the agent decides (on a marked row; else R writes to the session)', marked: true },
     { id: 'list.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
-    { id: 'list.explain', keys: ['e'], does: 'explain: show all of it, then ask the session to explain' },
+    { id: 'list.explain', keys: ['e'], does: 'explain: open the question; E there asks the session to explain' },
     { id: 'list.later', keys: ['l'], does: 'Snooze, or fetch it back' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'on an answered row: take that answer back' },
     { id: 'list.copy', keys: ['Mod+c'], does: 'copy the question, to paste into another session' },
-    { id: 'list.leave', keys: ['Escape'], does: 'close the choices, then drop the mark' },
+    { id: 'list.leave', keys: ['Escape'], does: 'drop the mark' },
   ] },
   { scope: 'focus', title: 'An opened question, and "Next, please"', modal: true, keys: [
     { id: 'focus.next', keys: ['ArrowRight', 'j'], does: 'next question, without answering (in the time machine: the next version)', repeat: true },
@@ -211,6 +207,7 @@ function setPending(prefix) {
   for (const group of LAYOUT) {
     for (const entry of group.keys) for (const spec of entry.keys) {
       if (!spec.startsWith(`${prefix} `) || !(scopes.includes(group.scope) || (under && entry.always))) continue
+      if (activeOf(group.scope).some(p => p.has?.(entry.id) === false)) continue   // not offered where it does nothing (the desks while there is one)
       const pair = el('span')
       pair.append(el('kbd', null, capOf(spec.slice(prefix.length + 1)).join('')), entry.does)
       parts.push(pair)
@@ -301,7 +298,9 @@ document.addEventListener('keydown', e => {
   // The first key of a sequence?
   const scopes = scopesNow()
   const under = isModal(scopes[0])
-  if (LAYOUT.some(g => g.keys.some(k => !k.native && (scopes.includes(g.scope) || (under && k.always)) && k.keys.some(spec => spec.startsWith(`${name} `))))) {
+  // (A key that a scope on screen handles in place stays that scope's: D is the Ledger's, so D then 1…9 rests there.)
+  if (LAYOUT.some(g => scopes.includes(g.scope) && g.keys.some(k => k.native && k.keys.includes(name)))) return
+  if (LAYOUT.some(g => g.keys.some(k => !k.native && (scopes.includes(g.scope) || (under && k.always)) && activeOf(g.scope).every(p => p.has?.(k.id) !== false) && k.keys.some(spec => spec.startsWith(`${name} `))))) {
     taken()
     setPending(name)
   }
@@ -363,7 +362,7 @@ export function openSheet() {
       const row = el('div')
       const keys = el('dt')
       // "← →" for a pair of moves reads better than two rows; the quiet twin lends its key.
-      const pair = entry.id === 'list.option.next' ? ['ArrowLeft', 'ArrowRight'] : entry.id === 'focus.option.next' ? ['ArrowUp', 'ArrowDown'] : null
+      const pair = entry.id === 'focus.option.next' ? ['ArrowUp', 'ArrowDown'] : null
       ;(pair ?? entry.keys).forEach((spec, i) => { if (i && !pair) keys.append(el('i', null, 'or')); keys.append(capsNode(spec)) })
       row.append(keys, el('dd', null, entry.verb ?? entry.does))
       list.append(row)

@@ -7,7 +7,7 @@
 // The list can be worked down with the keyboard alone; answer one, the next stands in its place.
 
 import { el, rich, agoNode, doodle, sketch, crown, kindOf, tidyLinks, linkInfo, adviceLoop, cardNote, ageClock, ago, LATER_WORD, LATER_SKETCH, WAKE_WORD, WAKE_SKETCH, ACK_WORD, ACK_SKETCH, WHAT_WORD, WHAT_SKETCH, TRUST_WORD, TRUST_SKETCH, HANDBACK_WORD, WALK_WORD, SHRED_WORD, SHRED_SKETCH, runBracket, KNOCK_SKETCH, isKnock, knockWord, knocksText, INBOX_WORD } from './ui.js'
-import { hueFor, workingRing, crowned, knowsMains } from './agents.js'
+import { hueFor, workingRing, crowned } from './agents.js'
 import { loopPath, penSeed, INBOX_SKETCH, HANDBACK_STATE } from './ui.js'
 import { richMark } from './richhtml.js'
 import { decide, putOff, sendMessage, reopen, closeInfo, trust, shred, takeBack, isLoaded } from './store.js'
@@ -17,7 +17,6 @@ import { say, pageHost, backUsedAt } from './back.js'
 import { copyButton, copyCard } from './cardclip.js'
 import { stacks } from './piles.js'
 import { link, cardPath, sessionPath, walkPath } from './link.js'
-import { memoPile, onMemos, memos, onStack } from './memos.js'
 
 // A card's number, as it is written wherever a card is named: small and quiet, for looking it up.
 export const cardNr = card => `Nr. ${card.number}`
@@ -87,20 +86,12 @@ const shortFit = new ResizeObserver(entries => {
   }
 })
 
-// "Choose" unfolds a card in its row. A card with more than fits there comfortably opens as a
-// window instead: a long text, code, several pictures, anything to play or download, many options.
-const needsWindow = card =>
-  (card.body ?? '').length > 480 || /```/.test(card.body ?? '') || card.options.length > 6 ||
-  (card.attachments ?? []).filter(a => kindOf(a) === 'image').length > 1 || (card.attachments ?? []).some(a => kindOf(a) !== 'image')
-
 // What the agent would pick: one option, or several where several are allowed.
 const advised = (card, key) => [].concat(card.recommended ?? []).includes(key)
 
 // What a row is: an open question, one that was put off, or one that was answered.
 const kindOfRow = node => (node.classList.contains('inbox-done') ? 'done' : 'later' in node.dataset ? 'later' : 'open')
 
-// Rows that stand unfolded, by card id: a list that is rebuilt keeps them open.
-const unfolded = new Set()
 
 /** The circle round a count, drawn with the pen (the same hand as the sidebar's ring); it stretches to its number. */
 const CIRCLE = loopPath(penSeed('count circle'), { rad: 14.2, drift: 1.4, jitter: .8, start: 4.1 })
@@ -116,13 +107,12 @@ function penCircle() {
   return svg
 }
 
-/** A session's mark, small, for a line that names who asked; a main wears its crown (agents.js crowned). */
+/** A session's mark, small, for a line that names who asked; the crowned one wears its crown (agents.js crowned). */
 function smallMark(session) {
   const mark = el('span', 'inbox-from-mark')
   mark.style.setProperty('--hue', hueFor(session))
   mark.append(doodle(session.mark ?? session.id))
   if (crowned(session)) mark.append(crown())
-  if (session.starred && knowsMains(session)) mark.dataset.memo = ''   // the quick memo's session: a gold dot (crowns.css)
   return mark
 }
 
@@ -165,7 +155,7 @@ export function carries(card) {
 }
 
 // Trust: leave the decision to the agent. Quiet, and it costs a row no space: a small word in the byline
-// of a thumb row, the last entry among the options of an unfolded "Choose" row. What the agent advised
+// of a thumb row. What the agent advised
 // is what it will take; with no advice it chooses itself.
 const advisedLabels = card => card.options.filter(o => [].concat(card.recommended ?? []).includes(o.key)).map(o => o.label).join(', ')
 const trustTip = card => (advisedLabels(card) ? `${TRUST_WORD}: leave it to the agent. It advised: ${advisedLabels(card)}` : `${TRUST_WORD}: leave it to the agent. It gave no advice and chooses itself`)
@@ -174,120 +164,6 @@ async function trustCard(card, onFail) {
     await trust(card.id)
     say(pageHost(), { head: TRUST_WORD, title: card.title, back: () => reopen(card.id) })
   } catch (err) { onFail(err) }
-}
-
-// What "Choose" unfolds under a row: the text, every option as a tile, and a line to ask the
-// agent back instead of answering. One tap on an option answers; where several answers are
-// allowed the options are toggles and one tile sends them.
-function unfoldNode(card, { onDecided, full = true }) {
-  const box = el('div', 'inbox-more-in')
-  // The text in full, unless the row above already shows all of it: nothing is said twice.
-  if (card.body && full) box.append(rich(card.body))
-  const error = el('p', 'inbox-error')
-  error.hidden = true
-  const options = el('div', 'inbox-options')
-  const picked = new Set()
-  const answer = async (keys, button) => {
-    for (const other of options.children) other.disabled = true
-    button.classList.add('is-picked')
-    try {
-      await decide(card.id, card.multiple ? keys : keys[0])
-      unfolded.delete(card.id)
-      const chosen = card.options.filter(o => keys.includes(o.key))
-      if (card.kind === 'decision') onDecided?.(card, { key: keys[0], label: chosen.map(o => o.label).join(', ') })
-    } catch (err) {
-      for (const other of options.children) other.disabled = false
-      button.classList.remove('is-picked')
-      paintSend()
-      error.textContent = `Not saved: ${why(err)}`
-      error.hidden = false
-    }
-  }
-  const send = el('button', 'inbox-option inbox-send')
-  send.type = 'button'
-  const paintSend = () => {
-    send.disabled = !picked.size
-    send.replaceChildren(el('strong', null, picked.size ? `Send ${picked.size}` : 'Send'), el('span', null, picked.size ? 'your choice' : 'pick one or more'))
-  }
-  card.options.forEach((o, i) => {
-    const b = el('button', 'inbox-option')
-    b.type = 'button'
-    b.dataset.key = o.key
-    b.append(el('kbd', null, String(i + 1)), el('strong', null, o.label))
-    if (o.detail) b.append(el('span', null, o.detail))
-    if (advised(card, o.key)) { b.classList.add('is-advised'); b.title = 'The agent recommends this'; b.append(adviceLoop()) }
-    if (card.multiple) {
-      b.setAttribute('aria-pressed', 'false')
-      b.addEventListener('click', () => {
-        if (picked.has(o.key)) picked.delete(o.key)
-        else picked.add(o.key)
-        b.setAttribute('aria-pressed', String(picked.has(o.key)))
-        paintSend()
-      })
-    } else b.addEventListener('click', () => answer([o.key], b))
-    options.append(b)
-  })
-  if (card.multiple) {
-    send.addEventListener('click', () => answer(card.options.map(o => o.key).filter(k => picked.has(k)), send))
-    paintSend()
-    options.append(send)
-  }
-  if (card.kind === 'decision') {
-    // The last entry: no option of the card's, but leaving it to the agent.
-    const leave = el('button', 'inbox-option inbox-trust-option')
-    leave.type = 'button'
-    leave.title = trustTip(card)
-    const word = el('strong')
-    word.append(sketch(TRUST_SKETCH), TRUST_WORD)
-    leave.append(word, el('span', null, advisedLabels(card) ? `the agent takes: ${advisedLabels(card)}` : 'the agent decides'))
-    leave.addEventListener('click', () => {
-      for (const other of options.children) other.disabled = true
-      trustCard(card, err => { for (const other of options.children) other.disabled = false; paintSend(); error.textContent = `Not saved: ${err.message}`; error.hidden = false })
-    })
-    options.append(leave)
-  }
-  // Asking back: a message to the session, tied to this card. The card stays open and stays where it is;
-  // only "Later" and "Explain" make it leave.
-  const ask = el('form', 'inbox-askback')
-  const field = el('input')
-  field.type = 'text'
-  field.placeholder = 'Ask back instead of answering'
-  field.setAttribute('aria-label', 'Ask the agent about this question')
-  field.autocomplete = 'off'
-  const go = el('button', null, 'Ask back')
-  go.type = 'submit'
-  const said = el('span', 'inbox-asked')
-  said.setAttribute('role', 'status')
-  ask.append(field, go, said)
-  if (card.kind !== 'permission') {
-    // Throwing the question away is offered here, once the card is open (on the row itself only while Shift is held).
-    const away = el('button', 'inbox-shred-open')
-    away.type = 'button'
-    away.title = `${SHRED_WORD}: throw this away unanswered. The session is told; it will not ask again`
-    away.append(sketch(SHRED_SKETCH), el('span', null, SHRED_WORD))
-    away.addEventListener('click', async () => {
-      away.disabled = true
-      try { await shred(card.id); unfolded.delete(card.id); say(pageHost(), { head: 'Shredded', title: card.title, back: () => reopen(card.id) }) }
-      catch (err) { away.disabled = false; error.textContent = `Not shredded: ${err.message}`; error.hidden = false }
-    })
-    ask.insertBefore(away, said)
-  }
-  ask.addEventListener('submit', async e => {
-    e.preventDefault()
-    const text = field.value.trim()
-    if (!text) return field.focus()
-    go.disabled = true
-    try {
-      await sendMessage(text, card.agent, card.id)
-      field.value = ''
-      said.textContent = 'Asked. The reply comes in the conversation.'
-    } catch (err) {
-      said.textContent = `Not sent: ${why(err)}`
-    }
-    go.disabled = false
-  })
-  box.append(options, error, ask)
-  return box
 }
 
 // Which of the row's ways out show as a tab at its edge (of inbox-later, inbox-revise, inbox-trust, inbox-shred).
@@ -346,7 +222,7 @@ function holdMenu(node, title, items) {
     sheet.showModal()
   }
   // Only in a list of questions (there the row is the calm card), and not on its answers or what unfolds under it.
-  const free = e => node.closest('.inbox-groups') && !e.target.closest('.inbox-actions, .inbox-more, .inbox-inline') && !node.classList.contains('is-unfolded')
+  const free = e => node.closest('.inbox-groups') && !e.target.closest('.inbox-actions')
   node.addEventListener('pointerdown', e => {
     held = false
     drop()
@@ -372,7 +248,7 @@ function holdMenu(node, title, items) {
  *  onOpen(cardId): open the card as a window of its own. onDecided(card, option): it was answered here.
  *  off: the card was put off. from: the session that asked, named on the
  *  row when nothing around it says so. fit: the list's lineFit(). */
-export function questionRow(card, { onOpen, onDecided, onGallery = null, onUnfold = null, off = false, from = null, fit = null } = {}) {
+export function questionRow(card, { onOpen, onDecided, onGallery = null, off = false, from = null, fit = null } = {}) {
   const node = el('article', 'inbox-row')
   node.tabIndex = -1   // the keyboard's mark puts the focus here, so Tab goes on from the marked row
   node.dataset.id = card.id
@@ -487,20 +363,8 @@ export function questionRow(card, { onOpen, onDecided, onGallery = null, onUnfol
     return more
   }
   if (extra.length) byline.prepend(carried())
-  // A click on the text unfolds the card in place where the page can (the Desk on a wide screen: onUnfold
-  // puts the whole card into the host and says whether it did); else it opens as a window. Unfolded,
-  // the row shows only the card (CSS: .inbox-row.is-unfolded) and may be wider than the column.
-  text.addEventListener('click', async () => {
-    if (onUnfold && !node.classList.contains('is-unfolded')) {
-      const host = el('div', 'inbox-inline')
-      const fold = () => { node.classList.remove('is-unfolded'); host.remove() }
-      node.classList.add('is-unfolded')
-      node.append(host)
-      if (await onUnfold(host, card.id, fold)) return
-      fold()
-    }
-    onOpen?.(card.id)
-  })
+  // A click on the text opens the card's own page (decided 3 October: no card unfolds in place any more).
+  text.addEventListener('click', () => onOpen?.(card.id))
   const content = el('div', 'inbox-content')
   content.append(head, text, when, byline)
   fit?.observe(title)
@@ -670,43 +534,14 @@ export function questionRow(card, { onOpen, onDecided, onGallery = null, onUnfol
     }
   } else {
     // More than two ways: one tile, "Choose", in the place of the right-hand thumb (its class is still
-    // called is-wide). The row unfolds downward with its options, and folds again on a second tap or
-    // Escape. Only a card with too much for that opens as a window.
-    const inline = !needsWindow(card)
-    const more = el('div', 'inbox-more')
-    const clip = el('div', 'inbox-more-clip')
-    more.append(clip)
+    // called is-wide). It opens the card's own page, where every option stands.
     const count = card.multiple ? `${card.options.length} options, several` : `${card.options.length} options`
-    const choose = tile('is-wide is-lead', 'choose', 'Choose', () => (inline ? unfold(!node.classList.contains('is-open')) : onOpen?.(card.id)))
+    const choose = tile('is-wide is-lead', 'choose', 'Choose', () => onOpen?.(card.id))
     // Only the word stands on the tile; how many options there are is said in its tooltip and to a screen reader.
     choose.title = count
     choose.setAttribute('aria-label', `Choose: ${count}`)
     hint(choose, 'list.open')
-    // Is the text more than the row shows: it is cut there, or it has a shape (a list, code, a link, lines).
-    const cut = () => body.scrollHeight > body.clientHeight + 2 || /\n|```|`|\*\*|https?:\/\//.test(card.body ?? '')
-    const unfold = open => {
-      if (open && !clip.firstChild) {   // built on first use
-        const full = Boolean(card.body) && (!body.isConnected || !body.clientHeight || cut())
-        clip.append(unfoldNode(card, { onDecided, full }))
-        node.toggleAttribute('data-fulltext', full)
-      }
-      node.classList.toggle('is-open', open)
-      choose.setAttribute('aria-expanded', String(open))
-      clip.inert = !open
-      if (open) unfolded.add(card.id)
-      else unfolded.delete(card.id)
-    }
     actions.append(choose)
-    if (inline) {
-      node.append(more)
-      unfold(unfolded.has(card.id))
-      node.addEventListener('keydown', e => {
-        if (e.key !== 'Escape' || !node.classList.contains('is-open')) return
-        e.stopPropagation()
-        unfold(false)
-        choose.focus()
-      })
-    }
   }
   return node
 }
@@ -719,18 +554,12 @@ const rowSig = (card, opts) => JSON.stringify([card.revised, card.urgency, card.
  *  (Nothing is added to the list for that: the next row has to land where the answered one was.)
  *  With agent (a session id) it lists only that session's questions, without the big heading.
  *  Returns { render(state) }. */
-export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold = null, agent = null }) {
+export function mountInbox(root, { onOpen, onDecided, onGallery = null, agent = null }) {
   let signature = ''
   let lastState = null
   const head = el('header', 'inbox-head')
   const list = el('div', 'inbox-groups')
   root.append(head, list)
-  // The Memos stack follows the notes (js/memos.js): drawn anew when what lies on it changes, not on every stroke in a floating note.
-  if (!agent) {
-    const lying = () => JSON.stringify(memos().filter(onStack).map(n => [n.id, n.text, n.to, n.files.length]))
-    let was = lying()
-    onMemos(() => { const now = lying(); if (now === was || !lastState) return; was = now; signature = ''; render(lastState) })
-  }
   const fit = lineFit()
   const rows = new Map()   // card id -> { sig, node }; an unchanged card keeps its node, so nothing flickers
   const cards = new Map()  // card id -> the card, for what the keys do with the marked row
@@ -738,9 +567,8 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
     const sig = rowSig(card, opts)
     const cached = rows.get(card.id)
     if (cached?.sig === sig) return cached.node
-    if (cached?.node.classList.contains('is-unfolded')) return cached.node   // it holds the card, unfolded: not rebuilt under it
     if (cached) fit.unobserve(cached.node.querySelector('.inbox-question'))
-    const node = questionRow(card, { onOpen, onDecided, onGallery, onUnfold, fit, ...opts })
+    const node = questionRow(card, { onOpen, onDecided, onGallery, fit, ...opts })
     cards.set(card.id, card)
     rows.set(card.id, { sig, node })
     return node
@@ -748,7 +576,8 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
 
   let fetching = null   // the id of a card that "Take back" is returning: its row is marked when it is here
   // ---- a line on one of the piles at the foot (piles.js): one sheet of a stack that is fanned out ----
-  // kind: 'asked' (in revision) | 'later' (snoozed) | 'answered' | 'shredded'. The mark of its kind (in revision:
+  // kind: 'later' (snoozed) | 'asked' (in revision) | 'answered' (decided, or closed) | 'shredded' | 'withdrawn' (by its
+  // session: nothing takes that back). The mark of its kind (in revision:
   // the turned card and the turning ring while the session works on it), the title, one grey line (said), who asked, since when,
   // and the way back: "Take back", or "Wake up" on a snoozed one. A click on the title opens the card.
   // The keys treat it as an answered row (.inbox-done): J/K reach it, U takes it back.
@@ -759,17 +588,19 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
     const node = el('article', 'inbox-done inbox-revising-row')
     node.tabIndex = -1
     node.dataset.id = card.id
-    node.dataset.kind = kind   // which of the piles it lies on: asked | later | answered | shredded
+    node.dataset.kind = kind   // why it lies there: later | asked | answered | shredded | withdrawn
     if (kind === 'later') node.dataset.later = ''
     const go = link('inbox-revising-open', cardPath(card, agent ? sessionPath(agent) : ''))
     go.title = `${cardNr(card)}: open it`
-    go.append(...(kind === 'asked' ? [sketch('reverse'), workingRing()] : [sketch(kind === 'later' ? LATER_SKETCH : kind === 'shredded' ? SHRED_SKETCH : 'tick')]),
+    go.append(...(kind === 'asked' ? [sketch('reverse'), workingRing()] : [sketch(kind === 'later' ? LATER_SKETCH : kind === 'shredded' || kind === 'withdrawn' ? SHRED_SKETCH : 'tick')]),
       el('strong', null, card.title), ...(said ? [el('span', 'inbox-revising-sent', said)] : []))
     go.addEventListener('click', () => onOpen?.(card.id))
     const tail = el('span', 'inbox-revising-tail')
     if (sender && !agent) tail.append(smallMark(sender), el('span', 'inbox-stack-who', sender.name))
     const since = kind === 'asked' ? card.with_agent : kind === 'later' ? card.snoozed_at : kind === 'shredded' ? card.shredded : card.decided
-    if (since) tail.append(agoNode(since))
+    if (since && kind !== 'withdrawn') tail.append(agoNode(since))
+    // What its session withdrew stays withdrawn (the hub takes nothing back there): the line has no way back.
+    if (kind === 'withdrawn') { node.append(go, tail); return node }
     const word = kind === 'later' ? WAKE_WORD : 'Take back'
     const take = el('button', 'inbox-takeback inbox-revising-take', word)
     take.type = 'button'
@@ -928,7 +759,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
     const box = scroller(list), { top, bottom } = sight()
     const seen = n => { const r = n.getBoundingClientRect(); return r.height > 0 && r.bottom > top && r.top < bottom }
     const all = nodes()
-    const node = [list.querySelector('.inbox-row:hover'), all.find(n => n.matches('.is-open, .is-unfolded') && seen(n)), held?.closest?.('.inbox-row'),
+    const node = [list.querySelector('.inbox-row:hover'), held?.closest?.('.inbox-row'),
       (box ? box.scrollTop : scrollY) > 0 ? all.find(n => n.getBoundingClientRect().top >= top) : null].find(n => n && seen(n))
     return node ? { node, kind: kindOfRow(node), top: node.getBoundingClientRect().top } : null
   }
@@ -980,7 +811,9 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
     // (In a session's own list: that session's answers. One code path for the inbox and for a session.)
     const answered = all.cards.filter(c => (!agent || c.agent === agent) && c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)))
       .sort((a, b) => (b.decided ?? 0) - (a.decided ?? 0))
-    const next = JSON.stringify([answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), all.cards.filter(c => c.status === 'shredded').map(c => c.id), off.map(c => c.id), state.handed, open.map(c => [c.id, c.unsnoozed, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
+    // What its session withdrew (or closed unanswered): closed without an answer of his. It lies in the basket.
+    const withdrawn = all.cards.filter(c => (!agent || c.agent === agent) && c.status === 'done' && c.kind !== 'permission' && !answered.includes(c))
+    const next = JSON.stringify([answered.map(c => [c.id, c.status, c.choice, c.choices, c.decided, c.title]), all.cards.filter(c => c.status === 'shredded').map(c => c.id), withdrawn.map(c => [c.id, c.title, c.summary]), off.map(c => c.id), state.handed, open.map(c => [c.id, c.unsnoozed, c.revised, c.urgency, c.urgency_reason, c.title, c.body, c.options, c.recommended, c.multiple, c.attachments?.length]), agents.map(a => [a.id, a.name, a.mark, a.starred])])
     if (next === signature) return
     signature = next
 
@@ -1014,8 +847,22 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
       count(fresh.length)
       walk.append(el('span', null, WALK_WORD), circled, sketch('go'))
       walk.addEventListener('click', () => { walk.blur(); onOpen?.(null) })
-      heading = el('h2', 'inbox-heading')
+      heading = el('h2', 'inbox-heading inbox-index')
       heading.append(walk)
+      // Index cards (card Nr. 166, "index"): "Next, please" is the divider in front; the next cards peek out
+      // behind it as small tabs with their sender's mark and title (a press brings that row into view), then "+N".
+      fresh.slice(1, 4).forEach((card, i) => {
+        const tab = el('button', 'inbox-index-tab')
+        tab.type = 'button'
+        tab.title = card.title
+        tab.style.zIndex = String(8 - i)
+        const sender = agents.find(a => a.id === card.agent)
+        if (sender) { tab.style.setProperty('--hue', hueFor(sender)); tab.append(smallMark(sender)) }
+        tab.append(el('span', null, card.title))
+        tab.addEventListener('click', () => list.querySelector(`.inbox-row[data-id="${CSS.escape(card.id)}"]`)?.scrollIntoView({ block: 'center', behavior: 'smooth' }))
+        heading.append(tab)
+      })
+      if (fresh.length > 4) { const more = el('span', 'inbox-index-tab inbox-index-more', `+${fresh.length - 4}`); more.title = `${fresh.length - 4} more behind`; heading.append(more) }
       // (The knocks are counted by the floating Desk above; the heading does not say them a second time.)
     } else if (fresh.length) line.append(...(knocking ? [knocks, ' · '] : []), ...(asking || !toRead ? [circled, needs] : []), ...(toRead ? [asking ? ' · ' : '', reading] : []))
     else line.append('Nothing needs you.')
@@ -1077,24 +924,29 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
       section.append(...cards.map(c => row(c, { from: agent ? null : sender })))
       parts.push(section)
     }
-    // What lies off the desk stands at its foot as two stacks of paper (piles.js). "Later": what comes back, the
-    // cards in revision first (handed back to their session by "Revise" or "What??"; they return by themselves),
-    // then the snoozed ones. "Done": what is finished, answered or shredded, the newest first.
+    // What lies off the desk stands at its foot (piles.js), one place per state, the newest first in each:
+    //   "Later"         open and put off by him (snoozed); it comes back when he wakes it or its time is up
+    //   "In the works"  with the session: open and handed back ("Revise", "What??"; it returns by itself), then
+    //                   answered and not closed yet (status "decided": the session is acting on the answer)
+    //   "Done"          answered and closed by the session (status "done"), an info that was read
+    //   the basket      shredded by him (he can fish it out), and withdrawn by its session (no way back)
     const asked = new Set(state.handed ?? [])
     const newest = (cards, at) => [...cards].sort((a, b) => at(b) - at(a))
     const waiting = newest(off.filter(c => asked.has(c.id)), c => c.with_agent ?? 0), put = newest(off.filter(c => !asked.has(c.id)), c => c.snoozed_at ?? 0)
     const shredded = all.cards.filter(c => (!agent || c.agent === agent) && c.status === 'shredded')
-    const done = newest([...answered, ...shredded], c => (c.status === 'shredded' ? c.shredded : c.decided) ?? 0)
+    const acting = newest(answered.filter(c => c.status === 'decided'), c => c.decided ?? 0), done = newest(answered.filter(c => c.status !== 'decided'), c => c.decided ?? 0)
+    const trash = newest([...shredded, ...withdrawn], c => (c.status === 'shredded' ? c.shredded : c.created) ?? 0)
+    const answeredLine = c => pileLine(c, 'answered', `${answerOf(c)}${c.status === 'done' ? ' · done by the agent' : ''}`)
     // In revision, the grey line is the newest word on the card from either side: what he sent, or the session's
     // acknowledgement since (the hub keeps the card in revision when the agent only replies). His own says "You:".
     const lastWord = c => { const last = [...all.messages].reverse().find(m => m.card_id === c.id && m.from !== 'event' && m.text); return last ? plain(`${last.from === 'user' ? 'You: ' : ''}${last.text}`) : '' }
     const until = c => (c.snoozed_until ? `Until ${new Date(c.snoozed_until).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : '')
     const answerOf = c => { if (c.kind === 'info') return 'Read'; if (c.trusted) return `${TRUST_WORD}${advisedLabels(c) ? `: ${advisedLabels(c)}` : ''}`; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
     const piles = [
-      { kind: 'later', word: 'Later', ring: waiting.length ? workingRing() : null, lines: [...waiting.map(c => () => pileLine(c, 'asked', lastWord(c))), ...put.map(c => () => pileLine(c, 'later', until(c)))] },
-      // The yellow stack: the memo notes that were put away (js/memos.js); a click on one opens it as the floating note. The Desk only.
-      ...(agent ? [] : [{ kind: 'memos', word: 'Memos', lines: memoPile(id => all.agents.find(a => a.id === id)?.name ?? '') }]),
-      { kind: 'done', also: 'answered', word: 'Done', lines: done.map(c => () => (c.status === 'shredded' ? pileLine(c, 'shredded', 'Shredded') : pileLine(c, 'answered', `${answerOf(c)}${c.status === 'done' ? ' · done by the agent' : ''}`))) },
+      { kind: 'later', word: 'Later', lines: put.map(c => () => pileLine(c, 'later', until(c))) },
+      { kind: 'works', word: 'In the works', ring: waiting.length ? workingRing() : null, lines: [...waiting.map(c => () => pileLine(c, 'asked', lastWord(c))), ...acting.map(c => () => answeredLine(c))] },
+      { kind: 'done', also: 'answered', word: 'Done', lines: done.map(c => () => answeredLine(c)) },
+      { kind: 'trash', word: 'Trash', bin: true, lines: trash.map(c => () => (c.status === 'shredded' ? pileLine(c, 'shredded', 'Shredded') : pileLine(c, 'withdrawn', `Withdrawn${c.summary ? `: ${plain(c.summary)}` : ''}`))) },
     ]
     foot = piles.some(p => p.lines.length) ? stacks(piles, { open: openPile, wide: widePile, onToggle: (kind, wide) => { openPile = kind; widePile = wide }, onShut: () => folded(false) }) : null
     if (foot) parts.push(foot.node)
@@ -1188,7 +1040,7 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
   const here = () => (current && nodes().find(n => n.dataset.id === current.id)) || null
   // With no row marked yet, start at the first one that is in sight.
   const firstInSight = all => all.find(n => n.getBoundingClientRect().top >= (root.closest('main, .pane-list')?.getBoundingClientRect().top ?? 0)) ?? all[0]
-  // Below the rows lie the piles (Later, With the agent, Answered), pushed together. The keyboard goes on
+  // Below the rows lie the piles (Later, In the works, Done, the basket), pushed together. The keyboard goes on
   // from the last row to their lines, one after the other; Enter on a line unfolds the pile, and its rows
   // are then rows like the others.
   const pileHeads = () => [...list.querySelectorAll('.inbox-pile:not(.is-open) .inbox-pile-head')]
@@ -1222,17 +1074,6 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
   }
   const marked = act => (arg, e) => { const node = here(); return node ? act(node, arg, e) : false }
   const press = button => { if (!button || button.disabled) return false; button.click(); return true }
-  const isOpen = node => node.classList.contains('is-open')
-  const optionsOf = node => [...node.querySelectorAll('.inbox-option:not(:disabled)')]
-  // Is the keyboard free for this row: nowhere in particular, or inside the row itself.
-  const mine = node => { const at = document.activeElement; return !at || at === document.body || node.contains(at) }
-  const toOption = node => { const all = optionsOf(node); (all.find(b => b.classList.contains('is-advised')) ?? all[0])?.focus({ preventScroll: true }) }
-  const stepOption = by => marked(node => {
-    const all = optionsOf(node)
-    if (!isOpen(node) || !all.length || !mine(node)) return false
-    const at = all.indexOf(document.activeElement)
-    all[at < 0 ? (by > 0 ? 0 : all.length - 1) : (at + by + all.length) % all.length].focus()
-  })
   provide('list', {
     active: shown,
     actions: {
@@ -1240,51 +1081,31 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
       'list.prev': move(at => at - 1),
       'list.first': move(() => 0, true),
       'list.last': move((_, n) => n - 1, true),
-      'list.option.next': stepOption(1),
-      'list.option.prev': stepOption(-1),
       'list.yes': onRow(node => press(node.querySelectorAll('.inbox-answer.is-thumb')[1])),
       'list.no': onRow(node => press(node.querySelectorAll('.inbox-answer.is-thumb')[0])),
       'list.later': onRow(node => press(node.querySelector('.inbox-later'))),
       'list.shred': onRow(node => press(node.querySelector('.inbox-shred'))),
       'list.trust': onRow(node => press(node.querySelector('.inbox-trust'))),
-      // Several answers allowed: Enter sends what is picked, and never toggles the option in focus.
-      'list.send': marked(node => {
-        const send = node.querySelector('.inbox-send')
-        if (!send || !isOpen(node) || !mine(node)) return false
-        if (!send.disabled) send.click()
-      }),
-      // The choices in the row, or the whole question as a window where there is too much for a row.
+      // The card's own page (a row never unfolds in place); on an info: Acknowledge.
       'list.open': onRow(node => {
         if (kindOfRow(node) === 'done') return true   // nothing to open; its key is "take back"
-        if (node.dataset.kind === 'info') return press(node.querySelector('.inbox-answer.is-ack'))   // on an info: Acknowledge
-        const choose = node.querySelector('.inbox-answer.is-wide')
-        if (!choose) { onOpen?.(node.dataset.id); return true }
-        if (!press(choose)) return false
-        // Unfolded, the row is taller: once it has grown, bring all of it into view.
-        if (isOpen(node)) { toOption(node); setTimeout(() => { if (node.isConnected && isOpen(node)) reveal(node) }, 280) }
-        else if (node.isConnected) node.focus({ preventScroll: true })
+        if (node.dataset.kind === 'info') return press(node.querySelector('.inbox-answer.is-ack'))
+        onOpen?.(node.dataset.id)
+        return true
       }),
-      'list.pick': marked((node, n) => (isOpen(node) ? press(node.querySelectorAll('.inbox-option[data-key]')[n - 1]) : false)),
-      // Ask back: the line under the choices; a row without choices opens as a window, with that line ready.
+      // Ask back: the card's page, with the field ready.
       'list.ask': onRow(node => {
         if (kindOfRow(node) === 'done') return true
-        const choose = node.querySelector('.inbox-answer.is-wide')
-        if (!node.querySelector('.inbox-more')) { onOpen?.(node.dataset.id, { ask: true }); return true }
-        if (!isOpen(node)) choose.click()
-        node.querySelector('.inbox-askback input')?.focus({ preventScroll: true })
-        reveal(node)
+        onOpen?.(node.dataset.id, { ask: true })
+        return true
       }),
-      // Explain: first everything the card holds (the unfolded row, or its window), then the question to the session.
+      // Explain: on an info What??; else the card's page, where What?? stands with everything the card holds.
       'list.explain': onRow(node => {
         const card = cards.get(node.dataset.id)
         if (!card || card.kind === 'permission') return false
-        if (card.kind === 'info') return press(node.querySelector('.inbox-answer.is-what'))   // on an info: What??
-        if (!node.querySelector('.inbox-more')) { onOpen?.(card.id); return true }
-        if (!isOpen(node)) { node.querySelector('.inbox-answer.is-wide').click(); toOption(node); return true }
-        sendMessage(EXPLAIN_TEXT, card.agent, card.id).then(() => {
-          putOff(card.id, true, true)
-          say(pageHost(), { head: 'Asked to explain', title: 'It comes back with the answer.', back: async () => putOff(card.id, false) })
-        }, err => error(`Not asked: ${why(err)}`))
+        if (card.kind === 'info') return press(node.querySelector('.inbox-answer.is-what'))
+        onOpen?.(card.id)
+        return true
       }),
       // Revise: the marked card goes back to its session at once (what the Revise tab does).
       'list.revise': marked(node => {
@@ -1298,7 +1119,6 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
       'list.leave': () => {
         const node = here()
         if (!node) return foot?.close() ?? false   // nothing marked: Escape gathers the stack that is fanned out
-        if (isOpen(node)) { node.querySelector('.inbox-answer.is-wide')?.click(); node.focus({ preventScroll: true }); return true }
         mark(null)
         if (node === document.activeElement) node.blur()
       },
@@ -1313,7 +1133,8 @@ export function mountInbox(root, { onOpen, onDecided, onGallery = null, onUnfold
   /** Bring an answered card into view: its pile is opened and its row shown. Returns whether it is there. */
   function revealCard(cardId) {
     if (!lastState) return false
-    openPile = 'done'
+    const card = lastState.all.cards.find(c => c.id === cardId)
+    openPile = card?.status === 'decided' ? 'works' : card?.status === 'shredded' ? 'trash' : 'done'
     widePile = true   // it may lie below the newest ones
     signature = ''
     render(lastState)

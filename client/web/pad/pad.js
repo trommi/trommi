@@ -115,11 +115,13 @@ const pictures = new Map()     // blob id → { img, ok, ready }
 // page), how far the Desk is scrolled (s), a sideways pan (panX). y0 is fixed once per browser (TOP_KEY): the
 // first time, so that what was drawn under the Desk's list, when the paper began there, stays where it was.
 const TOP_KEY = `trommi-deskpad-top:${PAD}`
-const desk = { x0: -24, y0: null, s: 0, panX: 0, bottom: -1, front: null, loaded: false }
+const desk = { x0: -24, y0: null, s: 0, panX: 0, z: 1, bottom: -1, width: -1, front: null, loaded: false }
 try { const v = Number(localStorage.getItem(TOP_KEY) ?? NaN); if (Number.isFinite(v)) desk.y0 = v } catch {}
 const deskTop = () => desk.y0 ?? -32
 function deskView() {
-  view.x = -desk.x0 - desk.panX; view.y = -deskTop() - desk.s; view.z = 1
+  // A point of the paper (px, py; 100 % pixels from its corner) stands on the screen at ((px - panX) * z, py * z - s):
+  // the Desk's cards do not scale, the paper under them does (a pinch on a phone, padZoom below).
+  view.z = desk.z; view.x = (-desk.x0 - desk.panX) * desk.z; view.y = -deskTop() * desk.z - desk.s
   dirty()
 }
 /** Content may lie above or left of the corner (it was put there on the pad's own page): the corner moves out to it. */
@@ -128,15 +130,16 @@ function deskOrigin() {
 }
 /** Tell the Desk how far down the paper is used, so that it keeps free paper below. */
 function deskExtent() {
-  let bottom = edit ? edit.y + edit.size * 3 : deskTop()
-  for (const el of els.values()) bottom = Math.max(bottom, el.y + el.h)
+  let bottom = edit ? edit.y + edit.size * 3 : deskTop(), right = 0
+  for (const el of els.values()) { bottom = Math.max(bottom, el.y + el.h); right = Math.max(right, el.x + el.w) }
   bottom = Math.ceil(bottom - deskTop())
-  if (bottom !== desk.bottom) { desk.bottom = bottom; tell('extent', { bottom }) }
+  const width = els.size ? Math.ceil(right + 24 - desk.x0) : 0   // how wide the paper is written: what "fit" has to show
+  if (bottom !== desk.bottom || width !== desk.width) { desk.bottom = bottom; desk.width = width; tell('extent', { bottom, width }) }
 }
 function deskPan(dx) {
   let right = 0
   for (const el of els.values()) right = Math.max(right, el.x + el.w)
-  desk.panX = clamp(desk.panX + dx, 0, Math.max(0, right + 24 - desk.x0 - W))
+  desk.panX = clamp(desk.panX + dx / desk.z, 0, Math.max(0, right + 24 - desk.x0 - W / desk.z))
   tell('pan', { x: desk.panX })
   deskView()
 }
@@ -1064,8 +1067,10 @@ canvas.addEventListener('pointermove', e => {
     if (pointers.size < 2) return
     const [a, b] = [...pointers.values()]
     if (DESK) {
-      // Two fingers move the paper: up and down scrolls the Desk, sideways pans. Measured on the screen,
-      // because this frame itself moves while the Desk scrolls.
+      // With the bare pointer two fingers are the Desk's: the browser scrolls, and a pinch zooms the paper (js/padlink.js).
+      if (pad.dataset.touch === 'scroll') return
+      // With a tool in hand two fingers move the paper: up and down scrolls the Desk, sideways pans. Measured on the
+      // screen, because this frame itself moves while the Desk scrolls.
       const sx = (a.sx + b.sx) / 2, sy = (a.sy + b.sy) / 2
       if (g.sy != null) { tell('scroll', { by: g.sy - sy }); deskPan(g.sx - sx) }
       g.sx = sx; g.sy = sy
@@ -1683,7 +1688,7 @@ if (DESK) {
       // it, or above world 0): it is laid so that this is where it still lies.
       let top = -32
       for (const el of els.values()) top = Math.min(top, el.y - 32)
-      desk.y0 = Math.round(top - listEnd)
+      desk.y0 = Math.round(top - listEnd / desk.z)
       try { localStorage.setItem(TOP_KEY, String(desk.y0)) } catch {}
       desk.s = null
       refresh()
@@ -1691,6 +1696,14 @@ if (DESK) {
     if (s === desk.s) return
     desk.s = s
     deskView()
+  }
+  /** The Desk zooms the paper: z, keeping the paper under the screen point x (of this frame) where it is. */
+  window.padZoom = (z, x = 0) => {
+    if (z === desk.z) return
+    const px = x / desk.z + desk.panX
+    desk.z = z
+    desk.panX = px - x / z
+    deskPan(0)
   }
 }
 if (EMBED) {

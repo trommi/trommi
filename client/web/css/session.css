@@ -1,10 +1,10 @@
-/* A session's page on a wide window (861px and up): heading, pill and conversation share one top grid.
-   The band at the top (app.css, --band: 64px, as high as the Desk box reaches) holds what floats: the heading
-   (drawing, name, the quiet line, the crown or memo switch; built by app.js paintTitle and beside.js) at its
-   left, the menu's pill in its middle. The conversation begins below the band, without a rule, and fades out
-   under it: no line is ever under a floating thing. The two filters ("Questions only" with its count, "Files") stand in a quiet row under the composer.
-   The markup is unchanged: .pane-title is laid over #session as a grid that takes no clicks itself; its
-   children are placed in its corners. Linked last, so it outweighs the head rules in app.css and beside.css.
+/* A session's page on a wide window (861px and up): band, heading, conversation, one under the other.
+   The band at the top (app.css, --band: 64px, as high as the Desk box reaches) holds only what floats: the Desk
+   box, the menu's pill in its middle, the corner buttons. The heading (drawing, name, the quiet line, the crown
+   switch) has its own line under the band, on the conversation's column, as the Desk's and the Agents' headings
+   do (3 Oct: in the band it competed with the pill). The conversation begins under the heading, without a rule,
+   and fades out at its top edge. The filter stands beside the composer.
+   Linked last, so it outweighs the head rules in app.css and beside.css.
    A phone: see the foot of this file. */
 
 @media (min-width: 861px) {
@@ -15,42 +15,46 @@
   body[data-view="chat"]:not([data-pair]) #session .log-inner,
   body[data-view="chat"]:not([data-pair]) #session .pane-list { padding-top: var(--s-4); }
   body[data-view="chat"]:not([data-pair]) #session :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
+  /* The same fade wherever else something scrolls away under the band: the conversation beside the canvas, and
+     with sessions laid together the column of their questions. (Their conversations each begin under a name
+     with a rule, and the canvas under its strip of pictures: those are not at the band.) */
+  body[data-view="scribble"]:not([data-pair]) #session #chat :is(.log, .pane-list),
+  body[data-pair][data-view="chat"] #session .group-questions { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
 
-  /* ---- the layer that carries heading and filters ---- */
+  /* ---- the heading's own line: under the band, never in it (the band holds only the Desk box, the pill and the
+     corner buttons, so the place one is in does not compete with the menu). It stands on the 80px line (band 64 +
+     16), on the conversation's column (app.css .column: 47.5rem, the gutter inside), and the conversation begins
+     under it. It is in the flow, not laid over: what the stream replaces in it keeps its height (one line each). */
   #session .pane-title {
-    position: absolute; z-index: 4; inset: calc(-1 * var(--band, 64px)) 0 0; grid-area: auto;
-    display: grid; grid-template-columns: max-content minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; align-items: start; gap: 0;
-    min-height: 0; margin: 0; padding: 8px 0 0; border: 0; pointer-events: none;
-    --head-w: min(30rem, calc((100vw - var(--side, 256px)) / 2 - 116px)); /* the band's half left of the pill, less the pill's half and the margins */
+    position: relative; z-index: 4; flex: none; grid-area: auto;
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; gap: 0;
+    box-sizing: border-box; width: 100%; max-width: 47.5rem; min-height: 0; margin: 0 auto; padding: var(--s-4) var(--gutter) var(--s-3); border: 0;
+    --head-w: 100%;
   }
-  /* (The layer begins at the window's top: the heading stands in the band, in every view of a session.) */
-  body[data-pair] #session .pane-title { --head-w: min(26rem, calc((100vw - var(--side, 256px)) / 2 - 170px)); }
 
-  /* ---- the heading: top left corner of the band, 8px from the top (the line of the Desk box and the pill) and
-     24px from the left (the page's gutter). Nothing scrolls under it, so it needs no ground of its own. ---- */
+  /* ---- the heading: drawing, name, the quiet line under the name (at the column's left edge). ---- */
   #session .pane-who:empty { display: none; }
   #session .pane-who {
     grid-column: 1; grid-row: 1; flex: none; display: flex; align-items: flex-start; gap: var(--s-3);
-    max-width: var(--head-w); min-height: 44px; margin: 0 0 0 var(--s-6); pointer-events: auto; z-index: 1;
+    max-width: var(--head-w); min-height: 44px; margin: 0; pointer-events: auto; z-index: 1;
   }
   #session .pane-who .agent-avatar { width: 44px; height: 44px; border-radius: 12px; }
   #session .pane-who .agent-pair { flex: none; }
   #session .pane-title h2 { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.02em; } /* the name of the place: a heading */
   body[data-pair] #session .pane-title h2 { align-self: center; font-size: 1.08rem; }
-  /* (The heading begins at the 8px line: the crown stays inside the window, its tip on that line, not above it.) */
-  #session .pane-who .crown-toggle { left: -14px; top: -4px; }
+  /* (The crown sits on the drawing's corner, its tip on the heading's top line.) */
+  #session .pane-who .crown-toggle { left: 7px; top: -4px; }
   /* The crown a main session's drawing wears (app.css .agent-avatar .crown-mark stands a quarter above the drawing):
-     here the drawing begins on the 8px line, so the crown sits on its corner instead, wholly inside the window. */
-  #session .pane-who .agent-avatar .crown-mark { top: 6%; left: -20%; width: 52%; }
-  #session .pane-who .crown-toggle .crown-mark { width: 20px; }
-  #session .pane-who .crown-toggle.is-memo { top: auto; bottom: -9px; }
+     here it sits on its corner, as it did in the band. */
+  #session .pane-who .agent-avatar .crown-mark { top: 2%; left: 22%; width: 52%; }
+  #session .pane-who .crown-toggle .crown-mark { width: 22px; }
   /* Under the name: what the session is at, its model and machine, on one line. */
   body:not([data-pair]) #session .pane-now {
     grid-column: 1; grid-row: 2; display: flex; flex-wrap: nowrap; align-items: baseline; gap: var(--s-2);
-    position: relative; z-index: 1; max-width: var(--head-w); min-height: 0; margin: -15px 0 0 var(--s-6); padding-left: 56px;
+    position: relative; z-index: 1; max-width: var(--head-w); min-height: 0; margin: -15px 0 0; padding-left: 56px;
     color: var(--muted); font-size: var(--t-sm); line-height: 1.25; white-space: nowrap; overflow: hidden;
   }
-  #session .pane-now span:first-child { flex: 0 1 auto; min-width: 2.5em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  #session .pane-now span:first-child { flex: 0 0 auto; min-width: 2.5em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
   #session .pane-now .caps { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: .68rem; }
   /* A name alone (no line under it) stands at the drawing's middle. */
   #session .pane-title:has(.pane-now:empty) .pane-who { align-items: center; }

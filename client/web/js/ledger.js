@@ -156,13 +156,13 @@ function mountLedger(root) {
     const grip = el('span', 'ledger-grip')
     if (view.sort === 'order' && !view.find.trim()) { grip.dataset.grab = a.id; grip.title = 'Drag to move it; drop it onto another session to lay the two together'; grip.append(el('i'), el('i'), el('i')) }
 
-    // The mark opens the drawings (while the session works it redraws itself); the crown beside it is the switch for VIP.
+    // The mark opens the drawings (while the session works it redraws itself); the crown beside it is the switch that gives the crown.
     const face = el('span', 'ledger-face')
     const mark = button('ledger-mark')
     mark.title = 'Choose a drawing'
     mark.setAttribute('aria-label', `${a.name}: choose a drawing`)
     mark.setAttribute('aria-haspopup', 'dialog')
-    mark.append(avatar(a, { vip: 'main' }))
+    mark.append(avatar(a, { vip: false }))
     mark.addEventListener('click', e => { if (phone.matches) return; e.stopPropagation(); openMarkPicker(a, mark) })   // a phone's line only opens
     face.append(mark, crownToggle(a, 'ledger-crown'))
 
@@ -290,7 +290,7 @@ function mountLedger(root) {
       return b
     }
     dialog.append(el('h3', null, a.name), item('Open the conversation', () => go(a.id)), item('Rename', () => openEditor(a)), item('Choose a drawing', () => openMarkPicker(a, mark)),
-      item(knowsMains(a) ? (a.starred ? 'Stop sending quick memos here' : 'Send quick memos here') : a.starred ? 'Take the crown off' : 'Crown it (VIP)', () => act(star(a.id, !a.starred))))
+      item(a.starred ? 'Take the crown off' : 'Give it the crown (memos of this desk go here)', () => act(star(a.id, !a.starred))))
     if (a.parent) dialog.append(item(`Stand alone (leave main agent ${last.all.agents.find(m => m.id === a.parent)?.name ?? a.parent})`, () => act(editSession(a.id, { parent: null }))))
     if (group) dialog.append(item(`Take out of the group with ${group.members.filter(m => m.id !== a.id).map(m => m.name).join(' + ')}`, () => act(unpair(a.id))))
     else if (last.all.agents.length > 1) dialog.append(item('Lay together with…', () => togglePair(a.id)))

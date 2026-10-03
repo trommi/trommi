@@ -1,0 +1,62 @@
+/* The stamp on a stack's top sheet (card Nr. 188: the numbering stamp, in colour, two leading zeros; his notes since:
+   a sign drawn with the board's pen, the word back above it, the gear turning).
+   Markup (server/views/stacks.mjs), one element on the top sheet of Later, In the works and Done; the small bin has none:
+     <span class="stack-stamp" data-stamp="later|works|done">
+       <span class="stack-stamp-word">Snooze</span>
+       <span class="stack-stamp-line"><span class="stack-stamp-sign" aria-hidden="true"></span><span class="stack-stamp-num"><i>0</i><i>0</i><i>5</i></span></span>
+     </span>
+   Line 1 the word (Snooze | Working | Done), set in spaced capitals. Line 2 the sign (three growing Z | a gear | a tick,
+   drawn here as a mask, by data-stamp) and the number: the stack's count behind "00", "Nr." before it is drawn here; one
+   <i> per digit sets each wheel a little out of line, fixed by its place, as on a numbering stamp (as plain text the
+   digits stand in line). The gear turns while the stack holds something. The stamp carries the count, so the sheet
+   shows no other count; an empty stack (.is-empty) shows "000", faint.
+   It scales with the stack: --w is the stack's width (css/piles.css), 124px when nothing sets it. The inks are the
+   tokens --stamp-ink-later | -works | -done (css/tokens.css), light and dark. The uneven ink is one small picture of
+   noise used as a mask, rastered once; only the gear moves, on the compositor. Load after css/piles.css. */
+.stack-stamp[data-stamp] { --u: calc(var(--w, 124px) / 124); --ink: var(--stamp-ink-later);
+  /* its place is the top sheet (as css/piles.css sets it): a box of 136 x 90 over the paper, the stamp in its middle */
+  position: absolute; z-index: 1; inset: 0 0 auto; aspect-ratio: 136 / 90; rotate: -3deg;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(3 * var(--u));
+  color: var(--ink); white-space: nowrap; pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.22'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 71px 43px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.22'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 71px 43px; }
+.stack-stamp[data-stamp="works"] { --ink: var(--stamp-ink-works); rotate: 2deg; -webkit-mask-position: -31px -9px; mask-position: -31px -9px; }
+.stack-stamp[data-stamp="done"] { --ink: var(--stamp-ink-done); rotate: -1.5deg; -webkit-mask-position: -57px -21px; mask-position: -57px -21px; }
+/* line 1, the word: small spaced capitals */
+.stack-stamp[data-stamp] > .stack-stamp-word { display: block; padding-left: .28em; color: inherit; font: 700 calc(9 * var(--u))/1 var(--font); letter-spacing: .28em; text-transform: uppercase; }
+/* line 2: the sign, then the number */
+.stack-stamp[data-stamp] > .stack-stamp-line { display: flex; align-items: center; gap: calc(4 * var(--u)); }
+/* the sign, cut into the die: Snooze the three growing Z (js/pen.js SNOOZE_Z), Working a gear, Done a tick, drawn with
+   the board's pen (wobbly line, round caps, uneven teeth; generated once, fixed) */
+.stack-stamp[data-stamp] .stack-stamp-sign { flex: none; display: block; width: calc(19 * var(--u)); height: calc(19 * var(--u)); background-color: var(--ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke-width='2.4' transform='rotate(-4 12 12)'%3E%3Cpath d='M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3'/%3E%3Cpath d='M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2'/%3E%3Cpath d='M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke-width='2.4' transform='rotate(-4 12 12)'%3E%3Cpath d='M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3'/%3E%3Cpath d='M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2'/%3E%3Cpath d='M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat; }
+.stack-stamp[data-stamp="works"] .stack-stamp-sign { width: calc(20 * var(--u)); height: calc(20 * var(--u)); -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E"); }
+.stack-stamp[data-stamp="done"] .stack-stamp-sign { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 12.6 Q6.4 15.4 7.9 17.1 Q9.4 18.9 11.0 16.0 Q12.6 13.2 14.8 10.4 Q17.0 7.6 19.3 5.5 L21.6 3.4' stroke-width='2.6'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 12.6 Q6.4 15.4 7.9 17.1 Q9.4 18.9 11.0 16.0 Q12.6 13.2 14.8 10.4 Q17.0 7.6 19.3 5.5 L21.6 3.4' stroke-width='2.6'/%3E%3C/svg%3E"); }
+/* the number: "Nr." and the wheels, heavy figures of one width */
+.stack-stamp[data-stamp] .stack-stamp-num { display: flex; align-items: baseline; color: inherit; font: 700 calc(20 * var(--u))/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.stack-stamp[data-stamp] .stack-stamp-num::before { content: "Nr."; margin-right: calc(4 * var(--u)); font: 700 calc(8.5 * var(--u))/1 var(--font); letter-spacing: .04em; }
+.stack-stamp-num > i { display: block; margin-inline: calc(-.6 * var(--u)); font-style: normal; transform: scaleX(.86) rotate(-1deg); }
+.stack-stamp-num > i:nth-child(6n + 2) { translate: 0 calc(.9 * var(--u)); rotate: 2.5deg; }
+.stack-stamp-num > i:nth-child(6n + 3) { translate: 0 calc(-.8 * var(--u)); rotate: -1.5deg; }
+.stack-stamp-num > i:nth-child(6n + 4) { translate: 0 calc(.6 * var(--u)); rotate: -3deg; }
+.stack-stamp-num > i:nth-child(6n + 5) { translate: 0 calc(-1 * var(--u)); rotate: 2deg; }
+.stack-stamp-num > i:nth-child(6n) { translate: 0 calc(.7 * var(--u)); rotate: -2deg; }
+/* In the works: the gear turns while there is something on the stack (one turn in 7 s; transform only, so it stays on
+   the compositor; the ink's noise lies on the stamp around it and does not turn along). Still on an empty stack. */
+@keyframes stack-stamp-turn { to { transform: rotate(1turn); } }
+.inbox-stack:not(.is-empty) .stack-stamp[data-stamp="works"] .stack-stamp-sign { animation: stack-stamp-turn 7s linear infinite; will-change: transform; }
+@media (prefers-reduced-motion: reduce) { .stack-stamp[data-stamp="works"] .stack-stamp-sign { animation: none; } }
+/* an empty stack: the stamp is there, faint (the lift of an open or hovered stack is css/piles.css) */
+.inbox-stack.is-empty .stack-stamp[data-stamp] { opacity: .6; }
+/* Done: stamped into the lower right corner of its sheet, smaller and turned, as one stamps a finished file
+   (his note on the live stacks: "das Erledigt dann doch in die Ecke stempeln"). */
+.stack-stamp[data-stamp="done"] { --u: calc(var(--w, 124px) / 124 * .86); box-sizing: border-box; align-items: flex-end; justify-content: flex-end; padding: 0 8% 9% 0; transform-origin: 86% 84%; rotate: -9deg; }
+.stack-stamp[data-stamp="done"] > .stack-stamp-word { padding-left: 0; margin-right: -.28em; }
+/* In a small tab (server/views/stacks.mjs, card Nr. 198: c): the stamp lies in one line, sign, word and count, in its
+   ink; no "Nr.", no out-of-line wheels, no noise; the gear still turns while "Working" holds something. */
+.stack-tabs .stack-stamp.stack-tab-stamp[data-stamp] { --u: .82; position: static; inset: auto; aspect-ratio: auto; rotate: 0deg; display: inline-flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 7px; padding: 0; -webkit-mask: none; mask: none; }
+.stack-tabs .stack-stamp[data-stamp="trash"] { --ink: var(--fg); }
+.stack-tabs .stack-tab-stamp > .stack-stamp-word { padding-left: 0; margin-right: 0; font: 700 .72rem/1 var(--font); letter-spacing: .14em; }
+.stack-tabs .stack-tab-stamp .stack-stamp-sign { width: 17px; height: 17px; }
+.stack-tabs .stack-tab-stamp > .stack-stamp-num { font: 700 .82rem/1 var(--mono); }
+.stack-tabs .stack-tab-stamp > .stack-stamp-num::before { content: none; }

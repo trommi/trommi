@@ -1,13 +1,13 @@
 // Memos: small yellow sticky notes the human writes to a session. A note exists from the moment it is made
 // until it is torn off and sent, or thrown away. This file is the notes themselves (no looks): what they
-// hold, where they lie, and where they are kept. The floating note is js/quicksend.js; the yellow "Memos"
-// stack on the Desk is built by js/inbox.js from memoPile().
+// hold, where they lie, and where they are kept. The floating note is js/quicksend.js; the notes that were put
+// away are held by the yellow memo button there (its count, and the list a click on it opens: memosAway()).
 //
 //   note = { id, text, to, files: [{ name, data }], place, x, y, ts }
 //     chips   copied questions that go along ([{ id, number, title, choice_label }]); kept in this browser only
 //     to      the session it goes to; null: the session that receives quick memos (the starred one)
 //     place   'float'  over whatever page is shown, at x/y of the window
-//             'stack'  put away: it lies on the Memos stack of the Desk
+//             'stack'  put away: the memo button holds it (the name is from when the Desk had a "Memos" stack; the hub keeps it)
 //             'paper'  on the Desk's paper, at x/y of the paper (it scrolls with it)
 //
 // Kept on the hub (state.memos, POST /memo), so every device shows the same notes: a change goes there a moment
@@ -16,7 +16,6 @@
 // follow), and go to the hub once it knows them. This browser's copy is kept in both cases, so a reload has the
 // notes at once. A note's files are { name, data } (a data: URL) until the hub has them, then { name, url, … }.
 
-import { el, sketch } from './ui.js'
 import { subscribe, getState } from './store.js'
 
 const KEY = 'trommi-memos'
@@ -100,34 +99,19 @@ export function restoreMemo(note) {
   tell({ id: note.id, focus: true })
 }
 // A phone shows a floating note as a sheet at the bottom, one at a time, and only the one he opened on this page:
-// a note left floating on a wide screen never opens by itself there. Until he taps it, it lies on the stack.
+// a note left floating on a wide screen never opens by itself there. Until he taps it, the memo button holds it.
 const phone = matchMedia('(max-width: 860px)')
 let sheetId = null
 /** A phone: the note that is open as the sheet (null: none). */
 export const sheetMemo = () => sheetId
 export function setSheet(id) { sheetId = id }
-/** Does the note lie on the Memos stack of the Desk (as this screen shows it)? */
+/** Is the note put away, held by the memo button (as this screen shows it)? */
 export const onStack = n => n.place === 'stack' || (phone.matches && n.place === 'float' && n.id !== sheetId)
-/** Take a note off the stack: it floats over the page again, the keyboard in it. */
+/** Take a note that was put away out again: it floats over the page, the keyboard in it. */
 export function openMemo(id) { sheetId = id; return saveMemo(id, { place: 'float' }, { focus: true }) }
 
-/** The lines of the Desk's "Memos" stack: one per note that was put away, the newest first. nameOf(id): the receiver's name. */
-export function memoPile(nameOf = () => '') {
-  return notes.filter(onStack).sort((a, b) => b.ts - a.ts).map(n => () => {
-    const node = el('article', 'inbox-done inbox-revising-row memo-line')
-    node.tabIndex = -1
-    node.dataset.memo = n.id
-    const go = el('button', 'inbox-revising-open memo-line-open')
-    go.type = 'button'
-    go.title = 'Open the note'
-    const words = n.text.trim().replace(/\s+/g, ' ')
-    const to = nameOf(n.to)
-    go.append(sketch('page'), el('strong', null, words || (n.files.length ? `${n.files.length} attached` : 'Empty note')), ...(to ? [el('span', 'inbox-revising-sent', `To ${to}`)] : []))
-    go.addEventListener('click', () => openMemo(n.id))
-    node.append(go)
-    return node
-  })
-}
+/** The notes that were put away, the newest first. */
+export const memosAway = () => notes.filter(onStack).sort((a, b) => b.ts - a.ts)
 
 // ---- the hub ----
 let hub = false   // the hub keeps notes (its state has `memos`)

@@ -52,11 +52,13 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-mark { display: block; padding: 0; border: 0; border-radius: 12px; background: none; }
 .ledger-face .agent-avatar { width: 38px; height: 38px; }
 @media (any-hover: hover) { .ledger-mark:hover .agent-avatar { box-shadow: 0 0 0 2px var(--line-strong); } }
-.ledger-face .crown-toggle { left: -12px; top: -12px; }
+.ledger-face .crown-toggle { left: 5px; top: -14px; }
 @media (hover: hover) {
   .ledger-face .crown-toggle[aria-pressed="false"] { opacity: 0; }
   .ledger-line:hover .crown-toggle[aria-pressed="false"], .ledger-line.is-cur .crown-toggle[aria-pressed="false"] { opacity: .5; }
   .ledger-face .crown-toggle[aria-pressed="false"]:is(:hover, :focus-visible) { opacity: 1; }
+  /* sent here from a memo that found no crown on the desk (quicksend.js toCrowns): every line shows the crown to give */
+  body[data-crown-hint] .ledger-face .crown-toggle[aria-pressed="false"] { opacity: .85; }
 }
 .ledger-name { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--s-2); }
 .ledger-rename { max-width: 100%; padding: 0; border: 0; background: none; text-align: left; }
@@ -140,7 +142,9 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 @media (min-width: 1241px) and (max-width: 1500px) {
   .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) 88px var(--acts, 132px); }
   .ledger:has(select.ledger-desk) .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) 88px var(--acts, 132px); }
-  .ledger:has(select.ledger-desk) .ledger-line > :nth-child(6) { display: none; }
+  /* (Named by class, not a bare :nth-child: a :has() rule whose subject is any element makes the browser restyle
+     the whole page after every change to it.) */
+  .ledger:has(select.ledger-desk) .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6) { display: none; }
 }
 @media (min-width: 861px) and (max-width: 1240px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 104px minmax(0, 1.8fr) var(--acts, 132px); } }
 @media (min-width: 861px) and (max-width: 1360px) {

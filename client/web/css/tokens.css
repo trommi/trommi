@@ -31,8 +31,24 @@
 
   --deny: #a8322d;
 
-  /* the crown of a session that matters most: the wash inside it, and the pen it is drawn with */
+  /* Tones: our own session and card colours. A session has one hue (--hue, 0 to 359, set on its row, card or
+     drawing; 162 is the bell's green) and every hue comes in the same four weights, measured in oklch so that
+     no hue is louder or paler than its neighbour: wash (the pastel ground of a tile), edge (the pastel of a
+     card's edge and of a line), mid (a quiet sign, a dashed line), pen (the dark outline, words, the filled tile).
+     Each weight is a lightness and a chroma here; the rule below the themes turns them into --tone-wash,
+     --tone-edge, --tone-mid and --tone-pen. --tone-turn turns the hue so that 162 lands on the bell's green. */
+  --tone-wash-l: .95;  --tone-wash-c: .022;
+  --tone-edge-l: .88;  --tone-edge-c: .045;
+  --tone-mid-l: .64;   --tone-mid-c: .075;
+  --tone-pen-l: .47;   --tone-pen-c: .085;
+  --tone-turn: 10;
+
+  /* the crown of a desk's crowned session: gold, the pen it is drawn with, the wash inside it, the three stones */
   --gold: #c39a1f; --gold-pen: #a8820f;
+
+  /* the inks of the stamps on the stacks (css/stamps.css): stamp blue, violet, green */
+  --stamp-ink-later: #2b3f9e; --stamp-ink-works: #5c3aa0; --stamp-ink-done: #1b6a57;
+  --crown-wash: #f2c94c; --crown-jewel: #cf3a2b;
 
   /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
   --st-decision: #c62f25;  --st-decision-soft: #fbe0de;
@@ -79,7 +95,13 @@
   --urg-high: #f2a56c; --urg-high-soft: #3a2415;
   --urg-critical: #ff8a80; --urg-critical-soft: #41191a;
   --deny: #f08a83;
+  --tone-wash-l: .28; --tone-wash-c: .03;
+  --tone-edge-l: .4;  --tone-edge-c: .05;
+  --tone-mid-l: .62;  --tone-mid-c: .075;
+  --tone-pen-l: .8;   --tone-pen-c: .095;
   --gold: #d2ab3c; --gold-pen: #dcb84e;
+  --stamp-ink-later: #9aacf2; --stamp-ink-works: #bda2f0; --stamp-ink-done: #6fd0b5;
+  --crown-jewel: #ff6f5c;
   --st-decision: #ff8a80; --st-decision-soft: #41191a;
   --st-working: #f2c14e; --st-working-soft: #3a2f10;
   --st-done: #6cd598; --st-done-soft: #14301f;
@@ -87,6 +109,17 @@
   --shadow-md: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px -12px rgb(0 0 0 / .7);
   --shadow-lg: 0 2px 4px rgb(0 0 0 / .4), 0 28px 56px -18px rgb(0 0 0 / .85);
   color-scheme: dark;
+}
+
+/* The four tones of a hue (see --tone-* above). Worked out wherever a hue is set: inline by the page
+   (style="--hue: 205"), or by a class that names its own hue; everything inside inherits them. Without a hue
+   the tones are the bell's green. A new place that sets --hue in a stylesheet joins this list. */
+:root, [style*="--hue"], .agent-avatar, .crown-bracket {
+  --tone-h: calc(var(--hue, 162) + var(--tone-turn));
+  --tone-wash: oklch(var(--tone-wash-l) var(--tone-wash-c) var(--tone-h));
+  --tone-edge: oklch(var(--tone-edge-l) var(--tone-edge-c) var(--tone-h));
+  --tone-mid: oklch(var(--tone-mid-l) var(--tone-mid-c) var(--tone-h));
+  --tone-pen: oklch(var(--tone-pen-l) var(--tone-pen-c) var(--tone-h));
 }
 
 /* Shared primitive: inline video and audio attachments, used by chat and cards alike. */
@@ -109,7 +142,7 @@
 .advice-loop path { stroke: var(--advice); stroke-linecap: butt; stroke-linejoin: round; opacity: var(--marker); }
 /* On a tile filled with colour: no band (it would be a smudge behind white words) but a light line
    under the words, like a pale marker on dark paper. A host says so with --advice-under: 1. */
-.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised { --advice-under: 1; --advice: color-mix(in srgb, var(--surface) 82%, var(--card-color, var(--urg-normal))); --marker: .95; }
+.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised { --advice-under: 1; --advice: color-mix(in srgb, var(--surface) 82%, var(--tone-pen)); --marker: .95; }
 .advice-loop.is-under path { stroke-linecap: round; }
 /* The Focus window's pair of squares appends no mark of its own: there the band is laid behind the
    label as a background (the same marker, one line). The two strokes of the old circle are gone. */
@@ -150,3 +183,21 @@ a.asset-link:hover { box-shadow: 0 0 0 1px var(--fg); }
 .asset-link.is-gone { background: none; box-shadow: none; outline: 1px dashed var(--line-strong); outline-offset: -1px; }
 .asset-link.is-gone strong { color: var(--muted); font-weight: 600; }
 
+
+/* The clipboard (css/clipboard.css: the Trommi menu, opened). The sheet's paper, the rule under each line, the wash
+   under the pointer; the board (kraft, a pen line around it, drawn once and stretched as a border image) and the
+   metal clip are drawings, so each theme has its own. */
+:root {
+  --clip-paper: color-mix(in srgb, var(--surface) 88%, #efe2b4);
+  --clip-rule: color-mix(in srgb, #4a7fc0 20%, transparent);
+  --clip-wash: color-mix(in srgb, var(--fg) 7%, transparent);
+  --clip-shadow: 0 16px 30px -14px rgb(60 40 20 / .5);
+  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%23cdb597' stroke='%236b4f33' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%236b4f33' stroke-opacity='.5'/%3E%3C/svg%3E");
+  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%233f4843' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23c5cac6' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.75' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] {
+  --clip-rule: color-mix(in srgb, #7fa9dd 22%, transparent);
+  --clip-shadow: 0 16px 30px -14px rgb(0 0 0 / .7);
+  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%236f5a42' stroke='%23b89670' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%230e1311' stroke-opacity='.6'/%3E%3C/svg%3E");
+  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%23e3e8e4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23818984' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.35' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
+}
