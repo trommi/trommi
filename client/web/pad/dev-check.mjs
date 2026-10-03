@@ -1,8 +1,8 @@
 // Development only: drive the pad in headless Chromium with real pointer, touch,
 // wheel and key input (DevTools protocol), check what it did, and save screenshots.
 //   dev/trio.sh 8861 600 &   then   node client/web/pad/dev-check.mjs "http://localhost:8861/pad/?t=demo" OUT_DIR
-//   On a board it goes on to the board itself: the pad opened from the inbox, a session, a pair, the agents page
-//   and the Focus window, closed again, reloaded, a selection sent to a demo agent, a second browser as another device.
+//   On a board it goes on to the board itself, where the whole Desk is paper: the pen in hand, an area sent to a
+//   demo agent (what was sent leaves the paper, undo restores, a failed send removes nothing), a second device.
 //   without a board:  (cd client/web && python3 -m http.server 8872)  and  …/dev-check.mjs http://localhost:8872/pad/ OUT_DIR
 // Needs the command sandbox disabled (Chromium), like dev/cdp.mjs. Exit code 1 if a check fails.
 import fs from 'node:fs'
@@ -261,17 +261,23 @@ const summary = `await pad.settled?.(3000); return { n: pad.elements().length, t
   check('the payload has a PNG, the plain text and the element ids', payload.png.startsWith('data:image/png') && payload.text.includes('Ship the pad prototype') && (real || payload.text.includes('Sample transcript')) && payload.elements.length === n + 2 && payload.bbox.w > 0, JSON.stringify({ text: payload.text.slice(0, 60), bbox: payload.bbox, n: payload.elements.length }))
   fs.writeFileSync(path.join(outDir, 'payload.json'), JSON.stringify(payload, null, 2))
   await s.shot('09-send-dialog')
-  await s.js(`document.getElementById('send-go').click(); await new Promise(r => setTimeout(r, 900))`)
-  const result = await s.js(`return { open: document.getElementById('send-dialog').open, note: document.getElementById('send-result').hidden ? null : document.getElementById('send-result').textContent, sent: pad.elements().filter(e => e.sent.length).length, toast: document.getElementById('toast').textContent }`)
+  // (Wait for the answer rather than a fixed time: the send goes to the board and back.)
+  await s.js(`document.getElementById('send-go').click(); for (let i = 0; i < 40 && document.getElementById('send-dialog').open && document.getElementById('send-result').hidden; i++) await new Promise(r => setTimeout(r, 100)); await new Promise(r => setTimeout(r, 400))`)
+  const result = await s.js(`return { open: document.getElementById('send-dialog').open, note: document.getElementById('send-result').hidden ? null : document.getElementById('send-result').textContent, sent: pad.elements().filter(e => e.sent.length).length, left: pad.elements().length, toast: document.getElementById('toast').textContent }`)
   if (st.sync.mode === 'local') {
     check('with no board behind the page, sending says so and marks nothing as sent', result.open && /Not sent/.test(result.note ?? '') && result.sent === 0, result.note ?? 'no note')
     await s.shot('10-send-not-sent')
     await s.js(`document.getElementById('send-dialog').close()`)
   } else {
-    check('on a board, Send delivers: the dialog closes and every element carries where it went', !result.open && result.sent === n + 2 && /^Sent to /.test(result.toast), `${result.toast}; ${result.sent} marked`)
+    // What was sent leaves the paper (it is with the session now); one undo brings it back.
+    check('on a board, Send delivers: the dialog closes and what was sent leaves the paper', !result.open && result.left === 0 && /^Sent to /.test(result.toast), `${result.toast}; ${result.left} left on the paper${result.note ? `; the panel says: ${result.note}` : ''}`)
     await s.shot('10-sent')
-    const server = await s.js(`return (await (await fetch('/pad/elements?pad=global')).json()).elements.map(e => e.sent.length)`)
-    check('the server keeps the elements and their "sent"', server.length === n + 2 && server.every(k => k === 1), server.join(','))
+    const server = await s.js(`await pad.settled?.(3000); return (await (await fetch('/pad/elements?pad=global')).json()).elements.length`)
+    check('the server no longer holds the elements that were sent', server === 0, `${server} on the server`)
+    await s.key('z', { modifiers: CTRL })
+    await sleep(300)
+    const back = await s.js(`await pad.settled?.(3000); return { here: pad.elements().length, server: (await (await fetch('/pad/elements?pad=global')).json()).elements.length }`)
+    check('one undo puts everything that was sent back on the paper', back.here === n + 2 && back.server === n + 2, `${back.here} on the paper, ${back.server} on the server, expected ${n + 2}`)
   }
 
   // persistence: reload, same records
@@ -347,290 +353,139 @@ for (const [name, hash] of [['light', ''], ['dark', '#dark']]) {
   await s.close()
 }
 
-// ── inside the board: the pad from anywhere ─────────────────────────────────
-// Only on a board (the address carries its login). The board is driven like a human would:
-// the control in the bar, the key, Esc, Back, a reload.
+// ── inside the board: the whole Desk is paper ───────────────────────────────
+// Only on a board (the address carries its login). The pad's page lies under the Desk's list in a frame
+// (#deskpad, js/padlink.js): P or the pen switch puts the paper in front of the cards; what is framed and sent
+// leaves the paper, one undo brings it back; a send that fails removes nothing.
+// (The pad as a layer over the page, behind ?deskpad=0, is no longer checked here.)
 const onBoard = await fetch(`${origin}/healthz`).then(r => r.ok && r.headers.get('content-type')?.includes('json'), () => false)
 if (onBoard) {
-  const FRAME = `const frame = document.querySelector('#padlink iframe'); const pad = frame?.contentWindow?.pad; const doc = frame?.contentDocument;`
+  const FRAME = `const frame = document.querySelector('#deskpad iframe'); const pad = frame?.contentWindow?.pad; const doc = frame?.contentDocument;`
   const app = `${origin}/${token}`
-  const where = `return { path: location.pathname + location.search, open: document.getElementById('padlink')?.hasAttribute('data-open') ?? false, pressed: document.getElementById('pad-open')?.getAttribute('aria-pressed'), scope: document.body.dataset.scope, page: document.body.dataset.page ?? null, focus: Boolean(document.querySelector('.focus')) }`
-  const rectOf = (s, sel, inFrame = false) => s.js(`${FRAME} const n = (${inFrame} ? doc : document).querySelector(${JSON.stringify(sel)}); if (!n) return null; const r = n.getBoundingClientRect(); return [r.left + r.width / 2, r.top + r.height / 2, r.width, r.height]`)
-  const clickOn = async (s, sel, inFrame = false) => { const r = await rectOf(s, sel, inFrame); if (!r) throw new Error(`nothing matches ${sel}`); await s.click(r[0], r[1]); await sleep(350) }
-  const padSummary = `${FRAME} await pad.settled?.(3000); return { n: pad.elements().length, types: pad.elements().map(e => e.type), sel: pad.selection().length, sent: pad.elements().filter(e => e.sent.length).length, ...pad.state() }`
+  const where = `const box = document.getElementById('inbox'); return { path: location.pathname, front: box?.hasAttribute('data-paper-front') ?? false, hidden: box?.hasAttribute('data-cards-hidden') ?? false, first: box?.firstElementChild?.id ?? null, bar: Boolean(document.getElementById('pad-open')?.getClientRects().length) }`
+  const padSummary = `${FRAME} await pad.settled?.(3000); return { n: pad.elements().length, types: pad.elements().map(e => e.type), ...pad.state() }`
+  const onServer = s => s.js(`return (await (await fetch('/pad/elements?pad=global')).json()).elements.length`)
+  const messages = s => s.js(`return (await import('/js/store.js')).getState().all.messages.length`)
+  // A place on the paper beside the cards (the list stands in a column; its right margin is free on a wide screen).
+  const X = 1300
 
   const s = await session(1440, 900, { at: app })
   let at = await s.js(where)
-  const btn = await rectOf(s, '#pad-open')
-  check('board: the control is in the bar, on every page', Boolean(btn) && btn[1] > 840 && at.path === '/' && !at.open, btn ? `at ${Math.round(btn[0])},${Math.round(btn[1])}` : 'missing')
-  await s.shot('30-board-inbox')
-
-  // from the inbox
-  await clickOn(s, '#pad-open')
-  at = await s.js(where)
   let st = await s.js(padSummary)
-  check('board: the control lays the pad over the inbox, at /pad', at.open && at.path === '/pad' && at.pressed === 'true' && st.embed && st.host.open && st.board.sessions.length === 3, `${at.path}, sessions=${st.board.sessions.map(x => x.name).join('/')}`)
-  await s.click(420, 300)
-  await s.type('Thought in the inbox')
-  await s.key('Escape')
-  await s.click(1200, 760); await s.key('Escape')
-  await s.drag([[640, 420], [720, 380], [800, 460], [900, 400]])
-  st = await s.js(padSummary)
-  check('board: typing and drawing land on the pad and reach the server', st.n === 2 && st.sync.mode === 'online' && st.sync.pending === 0 && (await s.js(`return (await (await fetch('/pad/elements?pad=global')).json()).elements.length`)) === 2, `${st.types.join(',')}, ${st.sync.mode}`)
-  await s.shot('31-board-pad-over-inbox')
-  await s.key('Escape')
-  at = await s.js(where)
-  check('board: Esc closes it, back in the inbox', !at.open && at.path === '/' && at.scope === 'all' && at.pressed === 'false', at.path)
+  check('board: the paper is the first thing in the Desk, the pad runs in it, and the bar has no pad control', at.path === '/' && at.first === 'deskpad' && st.embed && !at.bar && !at.front, JSON.stringify(at))
+  await s.shot('30-board-desk')
 
-  // from a session: the key, Back, and the session is where sending goes
-  await s.js(`[...document.querySelectorAll('#agents .agent-entry')][1].click(); await new Promise(r => setTimeout(r, 400))`)
-  const sessionPath = (await s.js(where)).path
+  // P picks up the pen: the paper is in front; typing and drawing land on it and reach the server
   await s.js(`document.activeElement?.blur?.()`)
-  const t0 = Date.now()
   await s.key('p')
+  await sleep(400)
   at = await s.js(where)
+  check('board: P picks up the pen, the paper comes in front of the cards', at.front, JSON.stringify(at))
+  await s.click(X, 300)
+  await s.type('Thought on the Desk')
+  await s.key('Escape')
+  await s.drag([[X - 60, 420], [X - 20, 380], [X + 40, 460], [X + 90, 400]])
   st = await s.js(padSummary)
-  const label = await s.js(`${FRAME} return [...pad.elements()].length && doc.getElementById('send-to-label').textContent`)
-  check('board: P opens it from a session; nothing is fetched again', at.open && at.path === '/pad' && st.n === 2 && /^\/s\/[^/+]+$/.test(sessionPath), `${sessionPath} → ${at.path} in ${Date.now() - t0} ms incl. checks`)
-  await s.key('a', { modifiers: CTRL })
-  await sleep(200)
-  const direct = await s.js(`${FRAME} return { label: doc.getElementById('send-to-label').textContent, other: !doc.getElementById('send-other').hidden, prefer: pad.state().host.prefer }`)
-  check('board: from a session, "Send to" names that session', /^Send to Web-Frontend$/.test(direct.label) && direct.other && direct.prefer.length === 1, `${direct.label} ${JSON.stringify(direct.prefer)}`)
-  await s.shot('32-board-pad-from-session')
-  await s.js(`history.back(); await new Promise(r => setTimeout(r, 500))`)
-  at = await s.js(where)
-  check('board: browser Back closes it, back in that session', !at.open && at.path === sessionPath, at.path)
+  check('board: typing and drawing land on the paper and reach the server', st.n === 2 && st.types.includes('text') && st.types.includes('stroke') && st.sync.mode === 'online' && st.sync.pending === 0 && (await onServer(s)) === 2, `${st.types.join(',')}, ${st.sync.mode}`)
+  await s.shot('31-board-paper-in-front')
 
-  // a reload on the pad stays on the pad; closing then still goes back to the session
-  await s.key('p')
-  await s.reload()
-  at = await s.js(where)
-  st = await s.js(padSummary)
-  check('board: a reload stays on the pad with everything on it', at.open && at.path === '/pad' && st.n === 2 && st.host.prefer.length === 1, `${st.n} elements, prefer ${JSON.stringify(st.host.prefer)}`)
-  await clickOn(s, '#back', true)
-  at = await s.js(where)
-  check('board: the pad\'s close button goes back to the session, also after the reload', !at.open && at.path === sessionPath && at.scope !== 'all', at.path)
+  // send an area: frame it, pick the session; what was in the frame leaves the paper
+  const frameAll = async () => {
+    await s.key('a')
+    const b = await s.js(`${FRAME} const v = pad.view(), e = pad.elements(); return { x0: Math.min(...e.map(e => e.x)) * v.z + v.x, y0: Math.min(...e.map(e => e.y)) * v.z + v.y, x1: Math.max(...e.map(e => e.x + e.w)) * v.z + v.x, y1: Math.max(...e.map(e => e.y + e.h)) * v.z + v.y, top: frame.getBoundingClientRect().top, left: frame.getBoundingClientRect().left }`)
+    await s.drag([[b.left + b.x0 - 14, b.top + b.y0 - 14], [b.left + b.x1 + 14, b.top + b.y1 + 14]])
+    await sleep(300)
+    return s.js(`${FRAME} const a = pad.area(); const items = [...doc.querySelectorAll('#area-menu .pad-menu-item')]; return { tool: pad.state().tool, ids: a?.ids.length ?? 0, items: items.map(i => i.textContent), open: !doc.getElementById('area-menu').hidden }`)
+  }
+  let chooser = await frameAll()
+  check('area: A, then a drag frames what lies there and the chooser lists the sessions', chooser.tool === 'area' && chooser.ids === 2 && chooser.open && chooser.items.length === 3, `${chooser.ids} framed; ${chooser.items.join(' | ')}`)
+  await s.shot('32-board-area-chooser')
 
-  // send the selection to the session: the agent gets it, the conversation shows it
-  const before = await s.js(`const m = (await import('/js/store.js')).getState().all.messages; return m.length`)
-  await s.key('p')
-  await s.key('v')
-  await s.key('a', { modifiers: CTRL })
-  await sleep(200)
-  await clickOn(s, '#send-to', true)
-  await sleep(500)
-  const dialog = await s.js(`${FRAME} return { open: doc.getElementById('send-dialog').open, title: doc.getElementById('send-title').textContent }`)
-  await s.shot('33-board-send-dialog')
-  await clickOn(s, '#send-go', true)
-  await sleep(1200)
+  // a send that fails removes nothing
+  await s.js(`${FRAME} const w = frame.contentWindow; w.__fetch = w.fetch; w.fetch = (u, o) => (String(u).includes('/pad/send') ? Promise.reject(new TypeError('Failed to fetch')) : w.__fetch(u, o))`)
+  const before0 = await messages(s)
+  await s.key('Enter')
+  await sleep(2500)
   st = await s.js(padSummary)
-  check('board: Send delivers the selection to that session and marks the elements', dialog.open && dialog.title === 'Send to Web-Frontend' && st.sent === 2, `${dialog.title}; ${st.sent} marked`)
-  await s.shot('34-board-sent')
-  await s.key('Escape'); await s.key('Escape')
+  const failedSend = await s.js(`${FRAME} return { toast: doc.getElementById('toast').textContent, area: Boolean(pad.area()) }`)
+  check('area: a send that fails removes nothing from the paper and says so', st.n === 2 && (await onServer(s)) === 2 && (await messages(s)) === before0 && !/^Sent to /.test(failedSend.toast), `${st.n} on the paper; note: "${failedSend.toast}"`)
+  await s.js(`${FRAME} const w = frame.contentWindow; w.fetch = w.__fetch`)
+  await s.key('Escape')
+
+  chooser = await frameAll()
+  const before1 = await messages(s)
+  const target = chooser.items[0] ?? ''
+  await s.key('Enter')
+  await sleep(2500)
+  st = await s.js(padSummary)
+  const sent = await s.js(`${FRAME} return { toast: doc.getElementById('toast').textContent, area: Boolean(pad.area()), menu: !doc.getElementById('area-menu').hidden }`)
+  check('area: sent, what was in the frame leaves the paper and the server; a note says where it went', st.n === 0 && (await onServer(s)) === 0 && /^Sent to /.test(sent.toast) && !sent.area && !sent.menu, `${st.n} left; "${sent.toast}"`)
+  await s.shot('33-board-area-sent')
   await sleep(3500)   // the demo agent answers after a moment
-  const talk = await s.js(`const st = (await import('/js/store.js')).getState(); return st.all.messages.slice(${before}).map(m => ({ from: m.from, agent: m.agent, text: m.text, att: (m.attachments ?? []).map(a => a.name + ' ' + a.url) }))`)
-  const mine = talk.find(m => m.from === 'user' && m.att.some(a => a.startsWith('From the pad /files/pad-')))
+  const talk = await s.js(`const st = (await import('/js/store.js')).getState(); return st.all.messages.slice(${before1}).map(m => ({ from: m.from, text: m.text, att: (m.attachments ?? []).map(a => a.name + ' ' + a.url) }))`)
+  const mine = talk.find(m => m.from === 'user' && m.att.some(a => /\/files\/pad-/.test(a)))
   const reply = talk.find(m => m.from === 'agent' && /Pad erhalten|image_path|pad-[0-9a-f]+\.png/.test(m.text))
-  check('board: the conversation shows what was sent, with its picture', Boolean(mine) && mine.text.includes('Thought in the inbox'), JSON.stringify(mine ?? talk).slice(0, 200))
-  check('board: the demo agent received it: it names the elements and the PNG it was given', Boolean(reply), reply ? reply.text : 'no reply: ' + JSON.stringify(talk).slice(0, 200))
+  check('board: the conversation shows what was sent, with its picture', Boolean(mine) && mine.text.includes('Thought on the Desk'), JSON.stringify(mine ?? talk).slice(0, 200))
   const png = reply?.text.match(/`([^`]+\.png)`/)?.[1]
-  check('board: the PNG the agent was pointed to exists on disk and is a PNG', Boolean(png) && fs.existsSync(png) && fs.readFileSync(png).subarray(1, 4).toString() === 'PNG', png ?? '')
-  if (png) fs.copyFileSync(png, path.join(outDir, '35-what-the-agent-got.png'))
-  at = await s.js(where)
-  check('board: after sending and closing, the session is still where the human is', !at.open && at.path === sessionPath, at.path)
-  await s.shot('36-board-conversation-after-send')
+  check('board: the demo agent received it, and the PNG it was pointed to exists and is a PNG', Boolean(reply) && Boolean(png) && fs.existsSync(png) && fs.readFileSync(png).subarray(1, 4).toString() === 'PNG', reply ? reply.text.slice(0, 120) : 'no reply: ' + JSON.stringify(talk).slice(0, 200))
+  if (png && fs.existsSync(png)) fs.copyFileSync(png, path.join(outDir, '34-what-the-agent-got.png'))
+  // one undo puts it back
+  await s.click(X, 700); await s.key('Escape')
+  await s.key('z', { modifiers: CTRL })
+  await sleep(600)
+  st = await s.js(padSummary)
+  check('area: one undo puts what was sent back on the paper', st.n === 2 && (await onServer(s)) === 2, `${st.n} on the paper, ${await onServer(s)} on the server (sent to ${target.slice(0, 20)})`)
+
+  // a stroke that crosses the frame's edge is cut there: the part outside stays
+  await s.key('p')
+  await s.drag([[X - 200, 600], [X - 100, 600], [X, 600], [X + 100, 600]])
+  await s.key('a')
+  await s.drag([[X - 220, 570], [X - 60, 630]])
+  await sleep(300)
+  await s.key('Enter')
+  await sleep(2500)
+  const cut = await s.js(`${FRAME} await pad.settled?.(3000); const v = pad.view(), fl = frame.getBoundingClientRect().left; return pad.elements().filter(e => e.type === 'stroke').map(e => [Math.round(e.x * v.z + v.x + fl), Math.round((e.x + e.w) * v.z + v.x + fl)])`)
+  check('area: a stroke crossing the frame is cut at its edge, the part outside stays on the paper', cut.some(([x0, x1]) => x0 >= X - 70 && x1 >= X + 80) && !cut.some(([x0]) => x0 < X - 190 && x0 > X - 210), JSON.stringify(cut))
+  await s.shot('35-board-stroke-cut')
 
   // a second device: another browser with its own profile sees the change as it happens
   const other = await session(1100, 800, { wipe: false })
   const seen0 = (await other.js(summary)).n
   await s.key('p')
-  await s.key('p')   // inside the pad, P is the pen
-  await s.drag([[300, 600], [380, 640], [460, 590]])
+  await s.drag([[X - 80, 760], [X, 800], [X + 80, 750]])
   await sleep(1200)
-  const seen1 = (await other.js(summary))
-  check('two devices: what is drawn on one appears on the other without a reload', seen0 === 2 && seen1.n === 3 && seen1.sync.mode === 'online', `${seen0} → ${seen1.n}`)
-  await other.click(550, 400); await other.type('from the second device'); await other.key('Escape')
+  const seen1 = await other.js(summary)
+  check('two devices: what is drawn on the Desk appears on the other without a reload', seen1.n === seen0 + 1 && seen1.sync.mode === 'online', `${seen0} → ${seen1.n}`)
+  const mineBefore = (await s.js(padSummary)).n
+  await other.key('p')
+  await other.drag([[500, 380], [560, 420], [640, 370]])
   await sleep(1200)
+  const theirs = await other.js(summary)
+  await sleep(1500)
   st = await s.js(padSummary)
-  check('two devices: and the other way round, into the pad inside the board', st.n === 4 && st.types.filter(t => t === 'text').length === 2, st.types.join(','))
-  // delete there, undo there: the tombstone and its undo both travel
-  await other.key('Delete')
-  await sleep(1000)
-  const gone = (await s.js(padSummary)).n
-  await other.key('z', { modifiers: CTRL })
-  await sleep(1000)
-  st = await s.js(padSummary)
-  check('two devices: a delete travels, and so does its undo', gone === 3 && st.n === 4, `${gone} → ${st.n}`)
+  check('two devices: and the other way round, onto the paper of the Desk', st.n === mineBefore + 1, `${mineBefore} → ${st.n}; the other device has ${theirs.n} (${theirs.types.join(',')}), ${theirs.sync.mode}, pending ${theirs.sync.pending}; server ${await onServer(s)}`)
   await other.close()
+
+  // Escape puts the pen down: the cards answer again. The eye hides the cards, also over an opened card's way back.
   await s.key('Escape'); await s.key('Escape')
-
-  // a pair
-  await s.js(`const store = await import('/js/store.js'); const a = store.getState().all.agents; await store.pair(a[1].id, a[2].id); await new Promise(r => setTimeout(r, 600))`)
-  await s.js(`[...document.querySelectorAll('#agents .agent-entry')].find(n => n.querySelector('.agent-pair'))?.click(); await new Promise(r => setTimeout(r, 400))`)
-  const pairPath = (await s.js(where)).path
-  await clickOn(s, '#pad-open')
-  await s.key('v'); await s.key('a', { modifiers: CTRL })
-  await sleep(200)
-  await clickOn(s, '#send-to', true)
-  const menu = await s.js(`${FRAME} return [...doc.querySelectorAll('#send-menu .pad-menu-item')].map(b => b.textContent)`)
-  check('board: from a pair, the menu lists its two sessions first', pairPath.includes('+') && menu.length === 3 && menu.slice(0, 2).every(t => t.includes('where you were')) && !menu[2].includes('where you were'), `${pairPath}: ${menu.join(' | ')}`)
-  await s.shot('37-board-pad-from-pair')
-  await s.key('Escape'); await s.key('Escape'); await s.key('Escape')
-  at = await s.js(where)
-  check('board: closed, back in the pair', !at.open && at.path === pairPath, at.path)
-  await s.js(`const store = await import('/js/store.js'); await store.unpair(store.getState().members[0]); await new Promise(r => setTimeout(r, 500))`)
-
-  // the agents page, and over the Focus window
-  await s.js(`document.getElementById('nav-roster').click(); await new Promise(r => setTimeout(r, 300))`)
-  await clickOn(s, '#pad-open')
-  at = await s.js(where)
-  await s.key('Escape')
-  const back = await s.js(where)
-  check('board: from the agents page and back', at.open && back.path === '/agents' && back.page === 'roster' && !back.open, back.path)
-  await s.js(`document.getElementById('focus-open').click(); await new Promise(r => setTimeout(r, 700))`)
-  const inFocus = await s.js(where)
-  await s.js(`document.activeElement?.blur?.()`)
-  await s.key('p')
-  at = await s.js(where)
-  const onTop = await s.js(`const n = document.elementFromPoint(700, 450); return n?.tagName`)
-  await s.shot('38-board-pad-over-focus')
-  await s.key('Escape')
-  const after = await s.js(where)
-  check('board: P opens it over the Focus window, Esc returns into Focus', inFocus.focus && at.open && onTop === 'IFRAME' && !after.open && after.focus && after.path === inFocus.path, `${inFocus.path} → ${at.path} → ${after.path}`)
-  await s.key('Escape')
-
-  // send an area: frame a part of the paper, pick the session, and it is cut out and flies there
-  await s.js(`[...document.querySelectorAll('#agents .agent-entry')][1].click(); await new Promise(r => setTimeout(r, 400))`)
-  await clickOn(s, '#pad-open')
-  await s.js(`${FRAME}
-    const w = frame.contentWindow
-    const cv = doc.createElement('canvas'); cv.width = 320; cv.height = 200
-    const c = cv.getContext('2d'); const g = c.createLinearGradient(0, 0, 320, 200)
-    g.addColorStop(0, '#1b6a57'); g.addColorStop(1, '#f2c14e'); c.fillStyle = g; c.fillRect(0, 0, 320, 200)
-    c.fillStyle = '#fff'; c.font = '600 28px sans-serif'; c.fillText('screenshot.png', 40, 110)
-    const blob = await new Promise(r => cv.toBlob(r, 'image/png'))
-    const dt = new w.DataTransfer(); dt.items.add(new w.File([blob], 'screenshot.png', { type: 'image/png' }))
-    doc.getElementById('pad').dispatchEvent(new w.DragEvent('drop', { bubbles: true, cancelable: true, clientX: 1050, clientY: 560, dataTransfer: dt }))
-    await new Promise(r => setTimeout(r, 900))`)
-  await s.key('Escape')
-  await s.key('f')
-  await sleep(600)
-  const toolBefore = (await s.js(padSummary)).tool
-  await s.key('a')
-  const box = await s.js(`${FRAME} const v = pad.view(), e = pad.elements(); const x0 = Math.min(...e.map(e => e.x)) * v.z + v.x, y0 = Math.min(...e.map(e => e.y)) * v.z + v.y, x1 = Math.max(...e.map(e => e.x + e.w)) * v.z + v.x, y1 = Math.max(...e.map(e => e.y + e.h)) * v.z + v.y; return { x0, y0, x1, y1, n: e.length, types: e.map(e => e.type), z: v.z }`)
-  // the frame takes the upper left three quarters: some elements whole, some cut by its edge
-  const fx0 = box.x0 - 14, fy0 = box.y0 - 14, fx1 = box.x0 + (box.x1 - box.x0) * 0.8, fy1 = box.y0 + (box.y1 - box.y0) * 0.86
-  await s.page.send('Input.dispatchMouseEvent', { type: 'mousePressed', x: fx0, y: fy0, button: 'left', buttons: 1, clickCount: 1 })
-  for (let i = 1; i <= 8; i++) { await s.page.send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: fx0 + ((fx1 - fx0) * i) / 8, y: fy0 + ((fy1 - fy0) * i) / 8, button: 'left', buttons: 1 }); await sleep(10) }
-  await s.shot('50-area-dragging')
-  await s.page.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: fx1, y: fy1, button: 'left', buttons: 0, clickCount: 1 })
   await sleep(300)
-  const chooser = await s.js(`${FRAME} const a = pad.area(); const items = [...doc.querySelectorAll('#area-menu .pad-menu-item')]; return { tool: pad.state().tool, area: a, items: items.map(i => i.textContent), marks: items.filter(i => i.querySelector('.pad-mark svg')).length, focus: doc.activeElement?.id, types: a ? a.ids.map(id => pad.elements().find(e => e.id === id).type) : [] }`)
-  check('area: A, then a drag frames a part of the paper and the chooser lists the sessions with their marks, the one you came from first', chooser.tool === 'area' && chooser.area && chooser.items.length === 3 && chooser.marks === 3 && /^Web-Frontendwhere you were.*Enter$/.test(chooser.items[0]) && chooser.focus === 'area-menu', `${chooser.area?.ids.length} of ${box.n} elements: ${chooser.types.join(',')}; ${chooser.items.join(' | ')}`)
-  check('area: what lies in the frame, whole or in part, goes: strokes, a note and a picture', ['stroke', 'text', 'image'].every(t => chooser.types.includes(t)), chooser.types.join(','))
-  await s.shot('51-area-chooser')
-  const beforeArea = await s.js(`return (await import('/js/store.js')).getState().all.messages.length`)
-  // slow the animations down to look at them
-  await s.page.send('Animation.enable')
-  await s.page.send('Animation.setPlaybackRate', { playbackRate: 0.1 })
-  await s.key('Enter')
-  await sleep(1100)
-  const strip = await s.js(`const n = document.querySelector('.padlink-strip'); const t = n?.querySelector('.is-target'); const sh = document.querySelector('.padlink-fly > div:not(.padlink-strip)'); return { strip: Boolean(n), marks: n?.children.length, target: Boolean(t), sheet: Boolean(sh) }`)
-  await s.shot('52-swoosh-cut-out')
-  await sleep(3200)
-  await s.shot('53-swoosh-in-flight')
-  await sleep(1700)
-  await s.shot('54-swoosh-at-the-mark')
-  await s.page.send('Animation.setPlaybackRate', { playbackRate: 1 })
-  await sleep(2500)
-  check('area: the board shows a strip of the sessions\' marks at the left edge and the cut-out piece flies above the pad', strip.strip && strip.marks === 3 && strip.target && strip.sheet, JSON.stringify(strip))
-  st = await s.js(padSummary)
-  const aft = await s.js(`${FRAME} return { layer: Boolean(document.querySelector('.padlink-fly')), area: pad.area(), menu: !doc.getElementById('area-menu').hidden, toast: doc.getElementById('toast').textContent, sentIds: pad.elements().filter(e => e.sent.some(l => l.session === 'web-frontend')).length }`)
-  check('area: afterwards nothing is lost: the elements stay, marked as sent; a note says where it went; the tool in hand is the one from before', !aft.layer && !aft.area && !aft.menu && aft.toast === 'Sent to Web-Frontend' && st.n === box.n && aft.sentIds >= chooser.area.ids.length && st.tool === toolBefore, `${aft.toast}; ${aft.sentIds} marked; tool ${st.tool}`)
-  await sleep(2500)
-  const talk2 = await s.js(`const st = (await import('/js/store.js')).getState(); return st.all.messages.slice(${beforeArea}).map(m => ({ from: m.from, text: m.text, att: (m.attachments ?? []).map(a => a.name + ' ' + a.url) }))`)
-  const reply2 = talk2.find(m => m.from === 'agent' && /Vom Pad erhalten/.test(m.text))
-  const png2 = reply2?.text.match(/`([^`]+\.png)`/)?.[1]
-  const said = Number(reply2?.text.match(/erhalten: (\d+)/)?.[1])
-  let dims = null
-  if (png2 && fs.existsSync(png2)) { const b = fs.readFileSync(png2); dims = [b.readUInt32BE(16), b.readUInt32BE(20)]; fs.copyFileSync(png2, path.join(outDir, '55-area-what-the-agent-got.png')) }
-  const want = chooser.area ? [Math.round(chooser.area.w * Math.min(2, 2000 / Math.max(chooser.area.w, chooser.area.h))), Math.round(chooser.area.h * Math.min(2, 2000 / Math.max(chooser.area.w, chooser.area.h)))] : null
-  check('area: the demo agent received the element list and a PNG of exactly that rectangle', Boolean(reply2) && said === chooser.area.ids.length && dims && Math.abs(dims[0] - want[0]) <= 1 && Math.abs(dims[1] - want[1]) <= 1, `${said} elements, PNG ${dims?.join('x')} (frame ${want?.join('x')})`)
-  // an empty frame sends nothing; Esc puts the tool away
-  await s.key('a')
-  await s.drag([[60, 700], [200, 800]])
-  const empty = await s.js(`${FRAME} return { area: pad.area(), toast: doc.getElementById('toast').textContent, menu: !doc.getElementById('area-menu').hidden }`)
-  await s.key('Escape')
-  check('area: a frame around nothing says so and sends nothing; Esc puts the tool away', !empty.area && !empty.menu && /Nothing in that area/.test(empty.toast) && (await s.js(padSummary)).tool === toolBefore, empty.toast)
-  await s.key('Escape')
+  if ((await s.js(where)).front) await s.js(`document.getElementById('deskpad-pen').click()`)
+  await sleep(300)
+  at = await s.js(where)
+  check('board: the pen put down, the cards are in front again', !at.front, JSON.stringify(at))
+  await s.js(`document.getElementById('deskpad-eye').click(); await new Promise(r => setTimeout(r, 300))`)
+  const hid = await s.js(where)
+  await s.shot('36-board-cards-hidden')
+  await s.js(`document.getElementById('deskpad-eye').click(); await new Promise(r => setTimeout(r, 300))`)
+  at = await s.js(where)
+  check('board: the eye hides the cards and shows them again', hid.hidden && !at.hidden, `${hid.hidden} → ${at.hidden}`)
 
   // arriving on the address itself
   await s.go(`${origin}/pad`)
   at = await s.js(where)
-  await s.key('Escape')
-  const home = await s.js(where)
-  check('board: /pad opened directly shows the pad; closing lands in the inbox', at.open && at.path === '/pad' && !home.open && home.path === '/', `${at.path} → ${home.path}`)
-
-  // dark, through the board's own switch, and through the pad's
-  await s.js(`document.getElementById('theme-toggle').click()`)
-  await clickOn(s, '#pad-open')
-  const darkIn = await s.js(`${FRAME} return doc.documentElement.dataset.theme`)
-  await s.shot('39-board-pad-dark')
-  await clickOn(s, '#theme', true)
-  const lightOut = await s.js(`${FRAME} return [doc.documentElement.dataset.theme ?? 'light', document.documentElement.dataset.theme ?? 'light']`)
-  check('board: the theme is one: the board\'s switch darkens the pad, the pad\'s switch lightens the board', darkIn === 'dark' && lightOut.join() === 'light,light', `${darkIn} → ${lightOut}`)
-  await s.key('Escape')
+  check('board: /pad lands on the Desk with the pen in hand', at.path === '/' && at.first === 'deskpad' && at.front, JSON.stringify(at))
   check('board: no script errors on desktop', !s.errors.length, s.errors.join(' | '))
   await s.close()
-
-  // phone
-  for (const [name, hash] of [['light', ''], ['dark', '#dark']]) {
-    const p = await session(400, 860, { mobile: true, hash, at: app, wipe: false })
-    const tap = async (x, y) => { await p.touch('touchStart', [[x, y]]); await sleep(40); await p.touch('touchEnd', []); await sleep(350) }
-    const b = await rectOf(p, '#pad-open')
-    const fitsBar = await p.js(`return [...document.querySelectorAll('.topbar > *')].every(n => { const r = n.getBoundingClientRect(); return !r.width || (r.left >= 0 && r.right <= innerWidth + 0.5) })`)
-    check(`board phone ${name}: the control is in the top bar, thumb-sized, and the bar still fits`, Boolean(b) && b[2] >= 40 && b[3] >= 40 && fitsBar, b ? `${Math.round(b[2])}x${Math.round(b[3])} at ${Math.round(b[0])},${Math.round(b[1])}` : 'missing')
-    await p.js(`[...document.querySelectorAll('#agents .agent-entry')][1].click(); await new Promise(r => setTimeout(r, 400))`)
-    const from = (await p.js(where)).path
-    await p.shot(`40-phone-${name}-session`)
-    await tap(b[0], b[1])
-    let w = await p.js(where)
-    const n0 = (await p.js(padSummary)).n
-    await p.touch('touchStart', [[80, 520]])
-    for (let i = 1; i <= 10; i++) { await p.touch('touchMove', [[80 + i * 22, 520 + Math.sin(i / 2) * 30]]); await sleep(12) }
-    await p.touch('touchEnd', [])
-    await sleep(400)
-    const pst = await p.js(padSummary)
-    check(`board phone ${name}: a tap opens the pad over the session, a finger draws`, w.open && w.path === '/pad' && pst.n === n0 + 1 && pst.sync.pending === 0, `${n0} → ${pst.n}`)
-    await p.shot(`41-phone-${name}-pad`)
-    // send an area on a phone: the piece flies into the chooser's row
-    const areaBtn = await rectOf(p, '.pad-tool[data-tool="area"]', true)
-    const toolsFit = await p.js(`${FRAME} const r = doc.querySelector('.pad-tools').getBoundingClientRect(); return r.left >= 0 && r.right <= frame.contentWindow.innerWidth + 0.5`)
-    await tap(areaBtn[0], areaBtn[1])
-    const pb = await p.js(`${FRAME} const v = pad.view(), e = pad.elements().at(-1); return [e.x * v.z + v.x, e.y * v.z + v.y, (e.x + e.w) * v.z + v.x, (e.y + e.h) * v.z + v.y]`)
-    await p.touch('touchStart', [[pb[0] - 12, pb[1] - 12]])
-    for (let i = 1; i <= 8; i++) { await p.touch('touchMove', [[pb[0] - 12 + ((pb[2] - pb[0] + 24) * i) / 8, pb[1] - 12 + ((pb[3] - pb[1] + 24) * i) / 8]]); await sleep(12) }
-    await p.touch('touchEnd', [])
-    await sleep(350)
-    const pm = await p.js(`${FRAME} const m = doc.getElementById('area-menu'), r = m.getBoundingClientRect(); return { open: !m.hidden, fits: r.left >= 0 && r.right <= frame.contentWindow.innerWidth + 0.5 && r.bottom <= frame.contentWindow.innerHeight, first: m.querySelector('.pad-menu-item')?.textContent, n: pad.area()?.ids.length }`)
-    await p.shot(`42-phone-${name}-area-chooser`)
-    await p.page.send('Animation.enable')
-    await p.page.send('Animation.setPlaybackRate', { playbackRate: 0.1 })
-    const row = await rectOf(p, '#area-menu .pad-menu-item', true)
-    await tap(row[0], row[1])
-    await sleep(3000)
-    const local = await p.js(`${FRAME} return { sheet: doc.getElementById('fly').children.length, strip: Boolean(document.querySelector('.padlink-strip')) }`)
-    await p.shot(`43-phone-${name}-swoosh`)
-    await p.page.send('Animation.setPlaybackRate', { playbackRate: 1 })
-    await sleep(2500)
-    const after = await p.js(`${FRAME} return { toast: doc.getElementById('toast').textContent, sheet: doc.getElementById('fly').children.length, area: pad.area(), sent: pad.elements().at(-1).sent.length }`)
-    check(`board phone ${name}: Send area fits the toolbar, the chooser fits the screen, the piece flies into the chooser's row and it is sent`, toolsFit && pm.open && pm.fits && pm.n >= 1 && /^Web-Frontend/.test(pm.first) && local.sheet === 1 && !local.strip && after.toast === 'Sent to Web-Frontend' && after.sheet === 0 && !after.area && after.sent >= 1, `${pm.first}; ${after.toast}; ${JSON.stringify(local)}`)
-    const close = await rectOf(p, '#back', true)
-    await tap(close[0], close[1])
-    w = await p.js(where)
-    check(`board phone ${name}: its close button goes back to the session, no errors`, !w.open && w.path === from && !p.errors.length, `${w.path} ${p.errors.join(' | ')}`)
-    await p.close()
-  }
 }
 
 const failed = results.filter(r => !r.ok)
