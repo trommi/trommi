@@ -33,19 +33,20 @@
 .rh.is-capped .rh-open, .rh.is-wide .rh-open { top: auto; bottom: 0; }
 
 /* The big view. */
-.rh-large {
-  width: min(1100px, calc(100vw - 32px)); height: min(900px, calc(100dvh - 32px)); max-width: none; max-height: none;
-  padding: 0; border: 1px solid var(--line-strong); border-radius: var(--r-lg); background: var(--surface); color: var(--fg);
-  box-shadow: var(--shadow-lg); overflow: hidden;
-}
-.rh-large[open] { display: flex; flex-direction: column; }
-.rh-large::backdrop { background: var(--overlay); }
-.rh-large-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-3) var(--s-2) var(--s-5); border-bottom: 1px solid var(--line); }
+/* The big view is a page of its own (large.html): a thin bar, and the frame fills the rest. */
+.rh-page { margin: 0; height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--fg); font: 400 15px/1.5 var(--font); }
+.rh-large-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--line); }
 .rh-large-name { font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-.rh-large-close { min-height: 36px; padding: 0 var(--s-4); border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
-.rh-large-close:hover { border-color: var(--fg); }
+.rh-large-bar a { color: var(--muted); font-size: var(--t-sm); text-underline-offset: 3px; }
 .rh-large-stage { flex: 1; min-height: 0; }
 .rh-large-stage .rh-frame { height: 100%; max-height: none; }
-@media (max-width: 600px) {
-  .rh-large { width: 100vw; height: 100dvh; border: 0; border-radius: 0; }
+.rh-large-stage p { margin: var(--s-6) var(--s-4); color: var(--muted); }
+a.rh-open { text-decoration: none; display: inline-flex; align-items: center; }
+
+/* Phone polish (docs/qa-phone-design.md): a table that is too wide scrolls sideways in its frame; its words stay
+   whole (the text around it breaks anywhere, and a narrow column then stood one syllable per line). */
+@media (max-width: 860px) {
+  .rich-table th, .rich-table td { overflow-wrap: normal; word-break: normal; }
+  .rh-open { min-height: 36px; }
+  .rh.is-capped, .rh.is-wide { padding-bottom: 44px; }
 }

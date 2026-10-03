@@ -139,3 +139,6 @@ section { display: grid; gap: var(--s-4); min-width: 0; }
   .adm-log li { grid-template-columns: minmax(0, 1fr); gap: 0; }
   .adm-ask { max-width: none; }
 }
+
+/* Phone polish (docs/qa-phone-design.md): a finger needs 40px */
+@media (max-width: 860px) { .adm-back { padding-block: 15px; margin-top: -15px; margin-bottom: calc(var(--s-4) - 15px); } }

@@ -137,3 +137,6 @@ section { display: grid; gap: var(--s-5); min-width: 0; scroll-margin-top: var(-
   .hp-table th, .hp-table td { border: 0; padding: 2px 0; }
   .hp-table td::before { content: attr(data-when); display: block; font: 600 var(--t-xs)/1.6 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
 }
+
+/* Phone polish (docs/qa-phone-design.md): a finger needs 40px */
+@media (max-width: 860px) { .hp-back { padding-block: 15px; margin-top: -15px; margin-bottom: calc(var(--s-4) - 15px); } .hp-nav a { padding: 14px 4px; margin-inline: -4px; } }

@@ -64,7 +64,9 @@ body[data-keys="g"] .agent-row[data-unit]:nth-of-type(-n+10)::before {
   width: min(760px, calc(100vw - 2 * var(--s-4))); max-height: min(86vh, 860px); margin: auto; padding: var(--s-6) var(--s-8) var(--s-6);
   border: 0; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto;
 }
-.keys-sheet::backdrop { background: var(--overlay); }
+/* No veil over the page: the sheet lies on it with a line and a shadow; Escape, "?" or a click beside it closes. */
+.keys-sheet { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.keys-sheet::backdrop { background: transparent; }
 .keys-sheet header { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); margin-bottom: var(--s-5); }
 .keys-sheet h2 { font: 800 2rem/1.05 var(--display); letter-spacing: -.02em; }
 .keys-close { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 36px; padding: 0 var(--s-3); border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font-weight: 600; font-size: var(--t-sm); }

@@ -1,0 +1,19 @@
+/* Real links (js/link.js): what one navigates with is an <a href>, and looks exactly like the button it
+   was. Zero specificity (:where), so every rule written for the class still decides; this only takes the
+   browser's link looks away and gives back what a button has by itself. The focus ring is the page's own. */
+:where(a[data-nav]) {
+  display: inline-block; color: inherit; text-decoration: none; text-align: center; cursor: pointer;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-user-drag: none;
+}
+/* A session in the sidebar is carried by a held finger (js/agents.js): no link preview comes up under it. */
+a.agent-entry { -webkit-touch-callout: none; }
+
+/* The state ring as a link (its walk has an address): what app.css says for button.agent-badge. */
+a.agent-badge { border: 0; border-radius: 50%; background: none; font-family: inherit; cursor: pointer; transition: scale 140ms ease-out; }
+a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
+a.agent-badge:active { scale: .95; }
+
+/* A button centres its words by itself; a link of a set height does it this way. */
+a.memo-ledger, a.ledger-more { display: inline-flex; align-items: center; justify-content: center; }
+/* The Agents page: the answers of a line keep their place now that the question before them is a link. */
+.ledger-does > a ~ .ledger-ans:first-of-type { margin-left: 0; }

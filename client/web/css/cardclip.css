@@ -52,3 +52,12 @@ body:not([data-scope="all"]):not([data-page]) .quick .cardclip-bar, body:not([da
 /* a finger has no hover: the button on a Desk row is always there, quietly */
 @media (hover: none) { .inbox-when > .cardclip-copy { opacity: .75; } }
 @media (max-width: 860px) { .cardclip-note { bottom: calc(176px + env(safe-area-inset-bottom)); } }
+/* The copy icon, the number and the clock stand at the top right of a Desk row: the question keeps clear of them. */
+.inbox-content:has(.inbox-when > .cardclip-copy) .inbox-question { padding-right: 82px; }
+/* (a narrow row with a head puts them on the line of the head, above the question) */
+@container rows (max-width: 560px) { .inbox-content:has(> .inbox-row-head:not(:empty)):has(.inbox-when > .cardclip-copy) .inbox-question { padding-right: 0; } }
+
+/* Phone polish (docs/qa-phone-design.md): a finger needs 40px, in the card's corner as for its neighbours there. */
+@container focus (max-width: 699.98px) {
+  .focus .focus-card-ends > .cardclip-copy, .focus[data-single] .focus-card[data-marks] .focus-card-ends > button.cardclip-copy { width: 40px; height: 40px; }
+}

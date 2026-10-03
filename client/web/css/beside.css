@@ -84,6 +84,11 @@ body[data-pair][data-filter="questions"] .log { visibility: visible; }
   body[data-pair][data-view="chat"]:not([data-page]) .group-questions { flex: none; max-height: min(46dvh, 480px); padding: var(--s-4) var(--gutter) var(--s-5); border-bottom: 1px solid var(--line-strong); }
   body[data-pair][data-view="chat"]:not([data-page]) .group-questions:not(:has(.inbox-row, .inbox-pile)) { display: none; }
 }
+/* Wide: the first card of sessions laid together stands on the 80px line, like a single session's first line
+   (the band ends at 64px; the list's empty head keeps its 16px below it, so the column needs no room of its own). */
+@media (min-width: 861px) {
+  body[data-pair][data-view="chat"]:not([data-page]) .group-questions { padding-top: 0; }
+}
 
 /* ---- an open question inside the conversation: a small reference to its card in the column ----
    Only its title is left, on one quiet line in the question's colour; a click brings the card into
@@ -114,4 +119,38 @@ body[data-pair] #chat .log .ask-open .inbox-question { display: block; font: 600
   body[data-pair][data-view="chat"]:not([data-page]) .group-questions { display: none; }
   body[data-pair][data-joined-list][data-view="chat"]:not([data-page]) .group-questions { display: block; flex: 1; max-height: none; border-bottom: 0; }
   body[data-pair][data-joined-list][data-view="chat"]:not([data-page]) #chat { display: none; }
+}
+
+/* ---- sessions laid together, wide window: the edge that drags the conversations' column, and its fold ----
+   (js/beside.js; width and fold are kept per browser). Folded, the column is a strip at the right edge. */
+.talk-edge, .talk-fold, .talk-strip { display: none; }
+@media (min-width: 1200px) {
+  body[data-pair][data-view="chat"]:not([data-page]):not([data-scope="all"]) #session { position: relative; }
+  body[data-pair][data-view="chat"]:not([data-page]):not([data-scope="all"]) .talk-edge {
+    display: block; position: absolute; z-index: 5; grid-column: 2; grid-row: 2; top: 0; bottom: 0; left: -6px; width: 12px;
+    cursor: col-resize; touch-action: none;
+  }
+  .talk-edge::after { content: ""; position: absolute; left: 5px; top: 0; bottom: 0; width: 2px; border-radius: 2px; background: transparent; transition: background 120ms; }
+  .talk-edge:hover::after, body[data-talk-drag] .talk-edge::after { background: var(--line-strong); }
+  .talk-edge[data-will-fold]::after { background: var(--fg); }
+  body[data-talk-drag] { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+  body[data-talk-drag] #session :is(iframe, .rh-frame) { pointer-events: none; }
+  /* Fold: a small round button on the edge, at the top of the column. */
+  body[data-pair][data-view="chat"]:not([data-talk-folded]):not([data-page]):not([data-scope="all"]) .talk-fold {
+    display: grid; place-items: center; position: absolute; z-index: 6; grid-column: 2; grid-row: 2; top: 10px; left: -14px;
+    width: 28px; height: 28px; padding: 0; border: 1px solid var(--line-strong); border-radius: 50%;
+    background: var(--surface); color: var(--muted); font: 600 .9rem/1 var(--font); box-shadow: var(--shadow-sm, 0 1px 2px rgb(0 0 0 / .08));
+  }
+  .talk-fold:hover { color: var(--fg); border-color: var(--fg); }
+  /* Folded: the column is a strip; the list of questions takes the rest. */
+  body[data-pair][data-talk-folded] { --talk-w: 44px !important; }
+  body[data-pair][data-talk-folded] #chat { display: none !important; }
+  body[data-pair][data-talk-folded] .talk-edge { display: none !important; }
+  body[data-pair][data-talk-folded][data-view="chat"]:not([data-page]):not([data-scope="all"]) .talk-strip {
+    display: flex; flex-direction: column; align-items: center; gap: var(--s-3); grid-column: 2; grid-row: 2; min-height: 0;
+    padding: var(--s-3) 0; border: 0; border-left: 1px solid var(--line); background: var(--surface-2); color: var(--muted); cursor: pointer;
+  }
+  .talk-strip b { display: grid; place-items: center; width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--line-strong); background: var(--surface); color: var(--fg); font: 600 .9rem/1 var(--font); }
+  .talk-strip-words { writing-mode: vertical-rl; min-height: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; }
+  .talk-strip:hover { color: var(--fg); background: var(--surface); }
 }

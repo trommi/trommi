@@ -1,0 +1,76 @@
+/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
+   A main carries the crown. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
+   indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
+   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, the phone's strip and the keys treat them as rows.
+   Built by agents.js; nothing here applies while the hub sends neither `main` nor `parent`. */
+
+/* ---- the main's row: a card, the top of its stack ---- */
+.agent-row.is-main[data-fold] { --ghue: 162; margin-top: 6px; }
+.agent-row.is-main[data-fold] .agent-entry { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.agent-row.is-main[data-fold] .agent-entry:hover { background: color-mix(in srgb, var(--surface) 60%, var(--sunken)); }
+.agent-row.is-main[data-fold] .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 60%, var(--line-strong)), var(--shadow-sm); }
+.agent-row.is-main[data-fold] > .agent-badge { z-index: 2; }
+.agent-row.is-main .agent-text strong { font-weight: 700; }
+
+/* ---- the crown as the switch that folds and unfolds ---- */
+.crown-fold { position: absolute; z-index: 3; left: 0; top: -5px; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; cursor: pointer; transition: scale var(--d-fast); }
+.crown-fold .crown-mark { position: static; width: 20px; rotate: -17deg; fill: color-mix(in srgb, var(--gold) 34%, var(--surface)); }
+.crown-fold:hover, .crown-fold:focus-visible { scale: 1.15; }
+body.is-pairing .crown-fold { visibility: hidden; }
+
+/* ---- folded: the subs as card edges under the main's row ---- */
+.agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 8px); }
+.crown-edges { position: absolute; z-index: 0; left: 0; right: 0; top: calc(100% - 3px); height: calc(var(--n) * 4px + 3px); cursor: pointer; }
+.crown-edges::after { content: ""; position: absolute; inset: 0 0 -5px; }
+.crown-edges i { position: absolute; top: calc(var(--i) * 4px - 6px); left: calc(5px + var(--i) * 2.5px); right: calc(5px + var(--i) * 2.5px); height: 12px; border-radius: 0 0 9px 9px; background: color-mix(in srgb, hsl(var(--hue) 55% 50%) 30%, var(--surface)); box-shadow: 0 0 0 1px var(--line-strong); z-index: calc(20 - var(--i)); rotate: calc((var(--i) - 3) * .25deg); transition: translate var(--d-fast); }
+.crown-edges i.is-knock { height: 16px; background: var(--urg-critical); box-shadow: 0 0 0 1px var(--urg-critical); }
+@media (hover: hover) { .crown-edges:hover i { translate: 0 calc(1px + var(--i) * .5px); } }
+
+/* ---- unfolded: the subs under the main, the bracket beside them ---- */
+.crown-bracket { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; fill: none; stroke: color-mix(in srgb, hsl(var(--ghue) 55% 42%) 75%, var(--muted)); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+:root[data-theme="dark"] .crown-bracket { stroke: color-mix(in srgb, hsl(var(--ghue) 55% 66%) 75%, var(--muted)); }
+.crown-bracket .crown-bracket-hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.agent-row.is-sub.is-unfolding { animation: crown-in 260ms cubic-bezier(.2, .8, .3, 1) backwards; animation-delay: calc(var(--i, 0) * 28ms); }
+.crown-bracket.is-unfolding { animation: crown-in 300ms 120ms ease-out backwards; }
+@keyframes crown-in { from { opacity: 0; translate: 0 -10px; scale: .97; } }
+@media (prefers-reduced-motion: reduce) { .agent-row.is-sub.is-unfolding, .crown-bracket.is-unfolding { animation: none; } .crown-edges i { transition: none; } }
+
+@media (min-width: 861px) {
+  .agent-row.is-sub .agent-avatar { width: 28px; height: 28px; }
+  .agent-row.is-sub .agent-entry { min-height: 40px; }
+  .agent-row.is-main[data-fold="open"] { margin-bottom: 3px; }
+  /* the first row stands on the 80px line, crowned or not (the crown itself may reach above it) */
+  #agents > .agent-row.is-main[data-fold]:first-child { margin-top: 0; }
+  .agent-row.is-sub.is-last { margin-bottom: 8px; }
+  :root:not([data-rail="folded"]) .agent-row.is-sub { margin-left: 22px; }
+  /* the rail: the same, 60px wide; the names are gone, the bracket runs down the rail's left edge */
+  [data-rail="folded"] .agent-row.is-sub .agent-entry { padding-block: 5px !important; }
+  [data-rail="folded"] .crown-fold { left: 4px; top: -7px; }
+  [data-rail="folded"] .crown-edges { left: 2px; right: 2px; }
+  [data-rail="folded"] .crown-edges i { left: calc(4px + var(--i) * 2px); right: calc(4px + var(--i) * 2px); }
+}
+
+/* a phone's strip: the stack lies under the main's pill, an unfolded main's subs stand beside it over the bracket */
+@media (max-width: 860px) {
+  #agents:has(.agent-row.is-main[data-fold]) { align-items: flex-start; }
+  .agent-row.is-main[data-fold] { margin-top: 0; margin-inline: 3px; }
+  .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 2px + 3px); }
+  .agent-row.is-main[data-fold="open"], .agent-row.is-sub { margin-bottom: 6px; }
+  .crown-fold { left: -6px; top: -8px; }
+  .crown-fold::after { content: ""; position: absolute; inset: -4px -6px -8px -4px; }
+  .crown-edges { top: calc(100% - 10px); height: calc(var(--n) * 2px + 10px); }
+  .crown-edges i { top: calc(var(--i) * 2px); left: calc(12px + var(--i) * 2.5px); right: calc(12px + var(--i) * 2.5px); border-radius: 0 0 10px 10px; }
+  .crown-edges i.is-knock { height: 14px; }
+}
+
+/* ---- the starred session (quick memos go there) no longer wears a crown: a small gold dot at the foot of its mark ---- */
+.inbox-from-mark[data-memo]::after { content: ""; position: absolute; left: -3px; bottom: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 1.5px var(--surface); }
+.agent-avatar[data-memo]::after { content: ""; position: absolute; left: -1px; bottom: -1px; width: 7px; height: 7px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 2px var(--bg); }
+.agent-entry[aria-current="true"] .agent-avatar[data-memo]::after, .agent-row.is-main[data-fold] .inbox-from-mark[data-memo]::after { content: ""; position: absolute; left: -3px; bottom: -2px; width: 6px; height: 6px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 1.5px var(--surface); }
+.agent-avatar[data-memo]::after { box-shadow: 0 0 0 2px var(--surface); }
+/* the same dot as the switch beside a mark (session title, Agents page): hollow until it is set */
+.crown-toggle.is-memo .memo-dot { display: block; width: 9px; height: 9px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 2px var(--bg); }
+.crown-toggle.is-memo[aria-pressed="false"] .memo-dot { background: var(--bg); box-shadow: inset 0 0 0 1.6px var(--muted); }
+.pane-who .crown-toggle.is-memo { top: calc(50% - 2px); }
+body:not([data-pair]) .pane-who .crown-toggle.is-memo { top: auto; bottom: -12px; }
+.ledger-face .crown-toggle.is-memo { top: auto; bottom: -12px; }
