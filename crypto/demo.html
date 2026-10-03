@@ -130,7 +130,7 @@ if (z) {
     return `members: ${z.activeMembers(agent.state).map(m => `${m.name} (${m.role === 1 ? 'human' : 'agent'})`).join(', ')} · epoch ${agent.state.epoch} · history key: ${joined.secret.hist ? 'yes' : 'no (agents get none)'}`
   })
   await step('phone', 'Send three messages to the agent', async () => {
-    const send = t => z.sealEnvelope({ device: phone.device, state: phone.state, secret: room.secret, chains: phone.chains, kind: z.KIND.CHAT, payload: z.utf8(t), recipient: agent.device.id })
+    const send = t => z.sealEnvelope({ device: phone.device, state: phone.state, secret: room.secret, chains: phone.chains, kind: z.KIND.CHAT, timelineKind: z.TIMELINE.CHAT, timelineId: 'session/' + z.hex(agent.device.id), payload: z.utf8(t), recipient: agent.device.id })
     e1 = await send('run the tests'); e2 = await send('then deploy to staging'); e3 = await send('and tell me when it is done')
     hub.envelopes.push(e1.bytes, e2.bytes, e3.bytes)
     return `what the hub stores for message 1 (${e1.bytes.length} bytes): ${short(e1.bytes, 40)}`

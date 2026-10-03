@@ -231,9 +231,10 @@ full   = 0x01 0x02 ‖ header var16 ‖ nonce(12) ‖ ciphertext var32 ‖ signa
 pruned = 0x01 0x03 ‖ header var16 ‖ nonce(12) ‖ ciphertextHash(32) ‖ signature(64)
 
 header = 0x01 ‖ flags u8 ‖ roomId(32) ‖ epoch u32 ‖ keyId u32 ‖ sender(32) ‖ seq u64 ‖ prev(32)
-         ‖ logSeq u32 ‖ logHash(32) ‖ recipient(32) ‖ time u64
+         ‖ logSeq u32 ‖ logHash(32) ‖ recipient(32) ‖ time u64 ‖ kind u8
          ‖ seenCount u16 ‖ ( sender(32) ‖ seq u64 ‖ hash(32) ) × seenCount
-         ‖ [ cardId(16) ‖ cardState u8 ‖ urgency u8 ‖ answeredAt u64 ]   present iff flags bit 1
+         ‖ [ cardId(16) ‖ cardState u8 ‖ urgency u8 ‖ answeredAt u64 ]   present iff flags bit 1 (heads only)
+         ‖ [ timelineKind u8 ‖ timelineId str8(100) ]                    present iff the kind is a thread kind
          ‖ blobCount u8 ‖ blobId(16) × blobCount
 
 ciphertext     = AES-256-GCM(senderKey, nonce, aad = header, paddedBody)     includes the 16-byte tag
@@ -242,7 +243,7 @@ envelopeHash   = H("trommi/v1/envelope", header ‖ nonce ‖ ciphertextHash)
 signature      = Sign(sender, "trommi/v1/envelope-sig", envelopeHash)
 ```
 
-Header fields: `flags` bit 0 = "send a push", bit 1 = card fields present, other bits must be zero. `keyId` is 0 (the room key; reserved for a key per agent session). `seq` starts at 1 per sender and room. `prev` is the `envelopeHash` of the sender's previous envelope, zeros for the first. `logSeq`, `logHash` name the newest log entry the sender knew. `recipient` is a device id, or zeros for everyone. `time` is the sender's clock in milliseconds. `seen` lists, per other sender and sorted by sender id, the newest envelope of that sender the author had accepted. The fixed part is 192 bytes, each `seen` entry 72, the card block 26.
+Header fields: `flags` bit 0 = "send a push", bit 1 = card (object) fields present, bit 2 = `is_head`, other bits must be zero. `kind` is the envelope kind (the same numbers as the body's `kind`, below); a receiver refuses an envelope whose body kind differs (`kind-mismatch`). Kinds 1 (timeline item) and 8 (scribble, kept decodable, unused) are **thread kinds**: `is_head` must be 0, the card block must be absent, and the timeline is present: `timelineKind` (1 chat, 2 canvas; any value 1 to 255 is accepted so that new timeline kinds need no hub change) and `timelineId` (`str8`: a `u8` length 1 to 100, then that many bytes of well-formed UTF-8, e.g. `card/<object id hex>`, `session/<agent device id hex>`, `desk/<desk id>`). Every other kind is a head: `is_head` must be 1 and there is no timeline. A mismatch is `bad-format`. Decided 4 October 2026: kind and timeline are readable by the hub, so it can page one timeline with one index hit. `keyId` is 0 (the room key; reserved for a key per agent session). `seq` starts at 1 per sender and room. `prev` is the `envelopeHash` of the sender's previous envelope, zeros for the first. `logSeq`, `logHash` name the newest log entry the sender knew. `recipient` is a device id, or zeros for everyone. `time` is the sender's clock in milliseconds. `seen` lists, per other sender and sorted by sender id, the newest envelope of that sender the author had accepted. The fixed part is 193 bytes (with `kind`), each `seen` entry 72, the card block 26, the timeline 2 plus the id.
 
 **Card block, readable by the hub.** `cardState`: 1 open, 2 answered, 3 closed (withdrawn, expired or closed without an answer). `urgency`: 0 low, 1 normal, 2 high, 3 critical; the hub decides about push messages by it. `answeredAt`: milliseconds, 0 while open; the hub deletes the ciphertext of a card's envelopes 30 days after it. Other values are refused. The block is in the header, so it is signed and is associated data: the hub reads it and cannot change it. Title, text, options and the chosen option are in the ciphertext.
 
@@ -270,6 +271,8 @@ decide again (7)       = 0x01 ‖ cardId(16) ‖ previousHash(32) ‖ choice str
 
 `cardHash` is the `envelopeHash` of the agent's envelope that created or last changed the card: it covers the options and everything else the human saw. `requestHash` is the `envelopeHash` of the agent's permission request. `previousHash` is the `envelopeHash` of the answer being taken back.
 
+**Thread items fetched later** (`openVerifiedEnvelope`). At sync time a client may receive only the pruned form of a thread item; `verifyEnvelope` checks it and advances the chain with its `envelopeHash`. When the full envelope is fetched later, `openVerifiedEnvelope(bytes, { state, secrets, envelopeHash })` recomputes `envelopeHash` from header, nonce and SHA-256 of the ciphertext, refuses anything else (`hash-mismatch`), verifies the signature under the sender's key from the log, decrypts and checks the body kind. It never touches the chains: nothing is decrypted that the chain did not vouch for.
+
 **Receiver checks, in this order** (`verifyEnvelope`, then `openEnvelope`):
 
 1. Format, versions, room id, `keyId` = 0.
@@ -279,7 +282,7 @@ decide again (7)       = 0x01 ‖ cardId(16) ‖ previousHash(32) ‖ choice str
 5. The signature verifies under the sender's key from the log.
 6. Chain: `seq` is the receiver's last accepted number for this sender plus one and `prev` matches. Otherwise `replay` (already accepted), `equivocation` (same number, other hash), `gap` (numbers missing; the error says which), `chain-break` (right number, wrong predecessor). A sender never seen before must start at 1.
 7. `seen`: a hash that differs from the one the receiver holds under the same number is `equivocation`. A higher number than the receiver has is reported as withheld, not as an error.
-8. Decrypt with the sender key of the named epoch; check body version and padding. Only now does the receiver's chain advance.
+8. Decrypt with the sender key of the named epoch; check body version and padding, and that the body kind equals the header kind (`kind-mismatch`). Only now does the receiver's chain advance.
 
 ## 10. Commands (the agent's gate)
 
@@ -360,6 +363,7 @@ Deviations:
 10. **Device ids are 32 bytes** (hash of both public keys). The concept does not fix a size.
 11. **Recovery keeps the agents** and removes every human device. This is a rule of the log since the decision of 2 October 2026, no longer a default.
 12. **Wrapped asset key and asset link** are additions asked for by the task. In the concept an asset key only travels inside a message.
+13. **Kind, `is_head` and the timeline are in the cleartext header** (4 October 2026). The concept keeps the kind inside the ciphertext. The hub now sees whether an envelope is a head, its kind, and for thread items which timeline it belongs to (`card/<id>`, `session/<agent>`, `desk/<id>`), so it can page timelines and keep chat apart from strokes without reading content. The kind inside the body is still checked against the one outside. This changed the header bytes: `vectors.json` was regenerated (all envelope vectors differ from the version before).
 
 Choices where the concept was open or ambiguous:
 
@@ -424,7 +428,7 @@ The hub hands out `challenge` (32 random bytes, two minutes, one use). `deviceId
 | `sealedBox` | a sealed box with a fixed ephemeral key |
 | `room` | genesis entry, room id, epoch 1 secret and commitments, one wrap for the phone and one for the recovery key |
 | `invites` | three invites: laptop (human, check code compared), agent (link in its prompt, no check code), helper (agent, invited by the laptop). Each with link, secret, invite id, offer, request, reveal, check code, add entry, wrap, and the room key the new member opens |
-| `envelopes` | sender keys; chat (phone 1), card (agent 1, urgency high), answer (phone 2, chained to phone 1), each split into header, nonce, ciphertext, signature, hash, and `hubSees`; two pruned forms; `afterRecovery`: the tablet's first envelope in epoch 3, opened by the agent |
+| `envelopes` | sender keys; chat (phone 1, thread item in timeline `session/test`), card (agent 1, urgency high), answer (phone 2, chained to phone 1), each split into header, nonce, ciphertext, signature, hash, and `hubSees`; two pruned forms; `afterRecovery`: the tablet's first envelope in epoch 3, opened by the agent |
 | `binds`, `hubAuth` | command bindings; a signed hub sign-in |
 | `epochChanges.remove` | the laptop removes the helper: entry, epoch 2 secret, a wrap for each who stays, back link |
 | `epochChanges.recover` | the recovery: phone and laptop out, tablet in, agent kept; the wrap the code opened, epoch 3 secret, wraps for agent, tablet and the new recovery key, back link, the new code |

@@ -7,6 +7,7 @@ import { createHub, memoryStorage, SESSION_TTL_MS, CHALLENGE_TTL_MS, MAX_REQUEST
 const { ROLE, KIND, hex, utf8, concat } = z
 const HUB = 'https://hub.example'
 const DAY = 86400000
+const TL = { timelineKind: 1, timelineId: 'session/test' }
 const tests = []
 const test = (name, fn) => tests.push({ name, fn })
 async function rejects(fn, code) {
@@ -84,7 +85,7 @@ async function makeWorld({ storage = memoryStorage() } = {}) {
   return w
 }
 async function post(w, from, opts = {}) {
-  const env = await z.sealEnvelope({ device: from.device, state: from.state, secret: from.secrets.get(from.state.epoch), chains: from.chains, kind: KIND.CHAT, payload: utf8('hello'), time: w.now(), ...opts })
+  const env = await z.sealEnvelope({ device: from.device, state: from.state, secret: from.secrets.get(from.state.epoch), chains: from.chains, kind: KIND.CHAT, payload: utf8('hello'), time: w.now(), ...opts, ...(z.isThreadKind(opts.kind ?? KIND.CHAT) && !('timelineKind' in opts) ? TL : {}) })
   return { env, res: await w.hub.postEnvelope(from.token, env.bytes) }
 }
 async function remove(w, signer, ids) {
@@ -204,7 +205,7 @@ test('refuses a removed member: its entries, its sign-in, its token, its envelop
   const w = await makeWorld()
   await post(w, w.laptop)
   const stale = w.laptop.token
-  const late = await z.sealEnvelope({ device: w.laptop.device, state: w.laptop.state, secret: w.laptop.secrets.get(1), chains: w.laptop.chains, kind: KIND.CHAT, payload: utf8('still here?'), time: w.now() })
+  const late = await z.sealEnvelope({ device: w.laptop.device, state: w.laptop.state, secret: w.laptop.secrets.get(1), chains: w.laptop.chains, kind: KIND.CHAT, ...TL, payload: utf8('still here?'), time: w.now() })
   const { res } = await remove(w, w.phone, [w.laptop.device.id])
   assert.deepEqual(res.signedOut, [hex(w.laptop.device.id)])
   await rejects(async () => w.hub.wraps(stale), 'unauthorised')                       // the token died with the removal
@@ -322,10 +323,10 @@ test('envelopes: the hub reads card id, status and urgency, nothing else; refuse
   await rejects(() => w.hub.postEnvelope(w.agent.token, flip(env.bytes, env.bytes.length - 1)), ['bad-signature', 'replay'])
   await rejects(async () => w.hub.postEnvelope(w.agent.token, await z.pruneEnvelope(env.bytes)), 'bad-format')
   // A second history under number 1 (the device lost its state), and a jump ahead.
-  const twin = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: z.newChains(), kind: KIND.CHAT, payload: utf8('other'), time: w.now() })
+  const twin = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: z.newChains(), kind: KIND.CHAT, ...TL, payload: utf8('other'), time: w.now() })
   await rejects(() => w.hub.postEnvelope(w.agent.token, twin.bytes), 'equivocation')
-  const skipped = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: w.agent.chains, kind: KIND.CHAT, time: w.now() })
-  const third = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: w.agent.chains, kind: KIND.CHAT, time: w.now() })
+  const skipped = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: w.agent.chains, kind: KIND.CHAT, ...TL, time: w.now() })
+  const third = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: w.agent.chains, kind: KIND.CHAT, ...TL, time: w.now() })
   await rejects(() => w.hub.postEnvelope(w.agent.token, third.bytes), 'gap')
   await w.hub.postEnvelope(w.agent.token, skipped.bytes)
   await w.hub.postEnvelope(w.agent.token, third.bytes)
@@ -366,7 +367,7 @@ test('answered cards lose their ciphertext 30 days after the answer; open cards 
   assert.equal(again.roomId, hex(w.roomId))
   const t = (await again.signIn(await z.signHubAuth({ device: w.agent.device, roomId: w.roomId, hub: HUB, challenge: again.challenge() }))).token
   await rejects(() => again.postEnvelope(t, card.env.bytes), 'replay')
-  const next = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: w.agent.chains, kind: KIND.CHAT, time: w.now() })
+  const next = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, secret: w.agent.secrets.get(1), chains: w.agent.chains, kind: KIND.CHAT, ...TL, time: w.now() })
   assert.equal((await again.postEnvelope(t, next.bytes)).n, 5)
 })
 

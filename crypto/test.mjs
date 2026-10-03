@@ -14,6 +14,7 @@ const MIN = 60 * 1000
 
 // ---- harness -------------------------------------------------------------------
 
+const TL = { timelineKind: 1, timelineId: 'session/test' }
 const tests = []
 let section = ''
 const group = name => { section = name }
@@ -98,7 +99,7 @@ async function makeWorld() {
 async function send(world, from, opts = {}) {
   const env = await z.sealEnvelope({
     device: from.device, state: from.state, secret: from.secrets.get(from.state.epoch), chains: from.chains,
-    kind: KIND.CHAT, payload: utf8('hello'), time: T0, ...opts,
+    kind: KIND.CHAT, payload: utf8('hello'), time: T0, ...opts, ...(z.isThreadKind(opts.kind ?? KIND.CHAT) && !('timelineKind' in opts) ? TL : {}),
   })
   world.hub.envelopes.push(env.bytes)
   return env
@@ -542,7 +543,7 @@ test('round trip, header fields, padding, an independent decrypt with node:crypt
 })
 test('a flipped bit anywhere (version, header, nonce, ciphertext, tag, signature) is rejected', async () => {
   const w = await makeWorld()
-  const env = await send(w, w.phone, { card: { id: fill(16, 1), state: 1 }, blobs: [fill(16, 2)] })
+  const env = await send(w, w.phone, { kind: KIND.CARD, card: { id: fill(16, 1), state: 1 }, blobs: [fill(16, 2)] })
   const codes = new Set()
   for (let i = 0; i < env.bytes.length; i++) {
     const e = await rejects(() => recv(w.laptop, flip(env.bytes, i, i % 8)), ['bad-signature', 'bad-format', 'bad-version', 'wrong-room', 'log-behind', 'log-fork', 'not-member', 'wrong-epoch'])
@@ -685,13 +686,67 @@ test('pruned envelopes (ciphertext deleted after 30 days) still verify and keep 
   const w = await makeWorld()
   const [a, b, c] = [await send(w, w.phone), await send(w, w.phone), await send(w, w.phone, { payload: utf8('still here') })]
   const pa = await z.pruneEnvelope(a.bytes), pb = await z.pruneEnvelope(b.bytes)
-  assert.ok(pa.length < 320, `pruned size ${pa.length}`)
+  assert.ok(pa.length < 340, `pruned size ${pa.length}`)
   await rejects(() => recv(w.laptop, pa), 'pruned')
   const v = await z.verifyEnvelope(pa, { state: w.laptop.state, chains: w.laptop.chains })
   assert.deepEqual(v.hash, a.hash); assert.equal(v.pruned, true)
   for (let i = 0; i < pb.length; i++) await rejects(() => z.verifyEnvelope(flip(pb, i), { state: w.laptop.state, chains: w.laptop.chains }), ['bad-signature', 'bad-format', 'bad-version', 'wrong-room', 'log-behind', 'log-fork', 'not-member', 'wrong-epoch', 'gap', 'replay'])
   await z.verifyEnvelope(pb, { state: w.laptop.state, chains: w.laptop.chains })
   assert.equal(txt((await recv(w.laptop, c)).payload), 'still here')
+})
+test('is_head: flag bit 2, signed; unknown flag bits are still refused', async () => {
+  const w = await makeWorld()
+  const head = await send(w, w.phone, { kind: KIND.STATUS, isHead: true })
+  const item = await send(w, w.phone)
+  assert.equal(z.peekEnvelope(head.bytes).header.isHead, true)
+  assert.equal(z.peekEnvelope(item.bytes).header.isHead, false)
+  assert.equal(z.peekEnvelope(head.bytes).headerBytes[1], 4)
+  // The flag must match the kind, and both are under the signature.
+  const flagAt = 2 + 2 + 1
+  const dropped = head.bytes.slice(); dropped[flagAt] = 0
+  await rejects(() => recv(w.laptop, dropped), 'bad-format')
+  const kindAt = 2 + 2 + 190
+  assert.equal(head.bytes[kindAt], KIND.STATUS)
+  const otherKind = head.bytes.slice(); otherKind[kindAt] = KIND.ANSWER
+  await rejects(() => recv(w.laptop, otherKind), 'bad-signature')
+  // A thread item names its timeline; a head has none; a thread item has no object block.
+  assert.deepEqual([z.peekEnvelope(item.bytes).header.timelineKind, z.peekEnvelope(item.bytes).header.timelineId], [1, 'session/test'])
+  assert.equal(z.peekEnvelope(head.bytes).header.timelineId, null)
+  await rejects(() => send(w, w.phone, { timelineKind: null }), 'bad-argument')
+  await rejects(() => send(w, w.phone, { kind: KIND.STATUS, timelineKind: 1, timelineId: 'x' }), 'bad-argument')
+  await rejects(() => send(w, w.phone, { card: { id: fill(16, 1), state: 1 } }), 'bad-argument')
+  await rejects(() => send(w, w.phone, { timelineKind: 1, timelineId: 'x'.repeat(101) }), 'bad-argument')
+  await rejects(() => send(w, w.phone, { kind: KIND.STATUS, isHead: false }), 'bad-argument')
+  // The kind inside must equal the signed kind outside (a sender's own lie is caught too).
+  const p = z.peekEnvelope(item.bytes)
+  const lying = await craft(w, w.phone, p.headerBytes, w.phone.device.id, (() => { const b = bodyOf('x'); b[1] = KIND.STATUS; return b })())
+  assert.equal((await recv(w.laptop, head)).header.isHead, true)
+  await rejects(() => recv(w.laptop, lying), 'kind-mismatch')
+  assert.equal(txt((await recv(w.laptop, item)).payload), 'hello')
+  for (const bit of [3, 4, 5, 6, 7]) await rejects(async () => z.peekEnvelope(flip(item.bytes, flagAt, bit)), 'bad-format')
+})
+test('a thread item verified in its pruned form opens later only as exactly that envelope', async () => {
+  const w = await makeWorld()
+  const a = await send(w, w.phone, { payload: utf8('thread item') })
+  const b = await send(w, w.phone, { payload: utf8('next') })
+  // At sync time the laptop gets the pruned form of a: the chain verifies and advances.
+  const v = await z.verifyEnvelope(await z.pruneEnvelope(a.bytes), { state: w.laptop.state, chains: w.laptop.chains })
+  assert.deepEqual(v.ciphertextHash, await z.sha256(z.peekEnvelope(a.bytes).ciphertext))
+  assert.equal(txt((await recv(w.laptop, b)).payload), 'next')
+  // Later the thread is opened: the full a, checked against the hash the chain accepted.
+  const opened = await z.openVerifiedEnvelope(a.bytes, { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: v.hash, self: w.laptop.device.id })
+  assert.equal(txt(opened.payload), 'thread item')
+  assert.equal(opened.kind, KIND.CHAT)
+  assert.equal(w.laptop.chains.get(b64u(w.phone.device.id)).seq, 2)
+  // Another envelope of the same sender, any flipped bit, a pruned form: refused.
+  await rejects(() => z.openVerifiedEnvelope(b.bytes, { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: v.hash }), 'hash-mismatch')
+  for (let i = 2; i < a.bytes.length; i += 7) await rejects(() => z.openVerifiedEnvelope(flip(a.bytes, i), { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: v.hash }), ['hash-mismatch', 'bad-signature', 'bad-format', 'bad-version', 'wrong-room'])
+  await rejects(async () => z.openVerifiedEnvelope(await z.pruneEnvelope(a.bytes), { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: v.hash }), 'pruned')
+  await rejects(() => z.openVerifiedEnvelope(a.bytes, { state: w.laptop.state, secrets: new Map(), envelopeHash: v.hash }), 'no-key')
+  // The parts a hub keeps in columns give back the same bytes, full and pruned.
+  const p = z.peekEnvelope(a.bytes)
+  assert.deepEqual(z.joinEnvelope({ headerBytes: p.headerBytes, nonce: p.nonce, ciphertext: p.ciphertext, signature: p.signature }), a.bytes)
+  assert.deepEqual(z.joinEnvelope({ headerBytes: p.headerBytes, nonce: p.nonce, ciphertextHash: v.ciphertextHash, signature: p.signature }), await z.pruneEnvelope(a.bytes))
 })
 test('membership at the named log state: not yet a member, removed since, log behind', async () => {
   const w = await makeWorld()
@@ -729,7 +784,7 @@ test('urgency and card status are readable on the outside, signed, and nothing e
   assert.deepEqual(seen.card, { id: cardId, state: 1, urgency: 3, answeredAt: 0 })
   assert.ok(!includesBytes(env.bytes, utf8('Wire')))
   // The hub cannot lower or raise it: the header is under the signature and is the associated data.
-  const at = env.bytes.indexOf(0xc7) + 16 + 1
+  const at = 4 + z.peekEnvelope(env.bytes).headerBytes.length - 1 - 8 - 1   // urgency: before answeredAt and the blob count
   assert.equal(env.bytes[at], 3)
   const lowered = env.bytes.slice(); lowered[at] = 0
   await rejects(() => recv(w.laptop, lowered), 'bad-signature')
@@ -1067,7 +1122,7 @@ test('adds no member: forged entry, re-signed entry, its own genesis', async () 
   const own = await z.createRoom({ device: hub, recovery: rec, time: T0 })
   await rejects(() => sync(w.laptop, w, [own.entry]), 'wrong-room')
   // An envelope from a device of that fake room.
-  const env = await z.sealEnvelope({ device: hub, state: own.state, secret: own.secret, chains: z.newChains(), kind: KIND.CHAT, time: T0 })
+  const env = await z.sealEnvelope({ device: hub, state: own.state, secret: own.secret, chains: z.newChains(), kind: KIND.CHAT, ...TL, time: T0 })
   await rejects(() => recv(w.laptop, env), 'wrong-room')
 })
 test('drops, reorders, replays, splices: every case is noticed by both a human device and the agent', async () => {
@@ -1294,7 +1349,7 @@ async function buildVectors() {
   // Envelopes in epoch 1: phone 1, agent 1 (a card), phone 2 (the answer, chained to phone 1).
   const chains = { phone: z.newChains(), agent: z.newChains() }
   const cardId = fill(16, 0xc1), blobId = fill(16, 0xb1)
-  const e1 = await z.sealEnvelope({ device: phone, state, secret: room.secret, chains: chains.phone, kind: KIND.CHAT, payload: utf8('hello'), time: T0 + 1, _rng: fixedRng(0x80) })
+  const e1 = await z.sealEnvelope({ device: phone, state, secret: room.secret, chains: chains.phone, kind: KIND.CHAT, ...TL, payload: utf8('hello'), time: T0 + 1, _rng: fixedRng(0x80) })
   await z.openEnvelope(e1.bytes, { state, chains: chains.agent, secrets: new Map([[1, members.Agent]]) })
   const e2 = await z.sealEnvelope({ device: agent, state, secret: members.Agent, chains: chains.agent, kind: KIND.CARD, payload: utf8('{"title":"Deploy?","options":["yes","no"]}'), card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.HIGH }, blobs: [blobId], push: true, time: T0 + 2, _rng: fixedRng(0x81) })
   await z.openEnvelope(e2.bytes, { state, chains: chains.phone, secrets: new Map([[1, room.secret]]) })
@@ -1304,12 +1359,12 @@ async function buildVectors() {
   const env = (e, more) => {
     const p = z.peekEnvelope(e.bytes), h = p.header
     return { ...more, epoch: h.epoch, seq: h.seq, prev: H(h.prev), logSeq: h.logSeq, logHash: H(h.logHash), seen: h.seen.map(x => ({ sender: who(x.sender), seq: x.seq, hash: H(x.hash) })),
-      hubSees: { push: h.push, card: h.card ? { id: H(h.card.id), state: h.card.state, urgency: h.card.urgency, answeredAt: h.card.answeredAt } : null, blobs: h.blobs.map(H) },
+      hubSees: { push: h.push, isHead: h.isHead, kind: h.kind, timelineKind: h.timelineKind, timelineId: h.timelineId, card: h.card ? { id: H(h.card.id), state: h.card.state, urgency: h.card.urgency, answeredAt: h.card.answeredAt } : null, blobs: h.blobs.map(H) },
       header: H(p.headerBytes), nonce: H(p.nonce), ciphertext: H(p.ciphertext), ciphertextHash: H(nodeCrypto.createHash('sha256').update(p.ciphertext).digest()), signature: H(p.signature), hash: H(e.hash), bytes: H(e.bytes) }
   }
   v.envelopes = {
     senderKeys: { phone: H(await z.deriveSenderKey(room.roomId, room.secret, phone.id)), agent: H(await z.deriveSenderKey(room.roomId, room.secret, agent.id)) },
-    chat: env(e1, { rngSeed: 0x80, sender: 'phone', kind: KIND.CHAT, payload: H(utf8('hello')), time: T0 + 1 }),
+    chat: env(e1, { rngSeed: 0x80, sender: 'phone', kind: KIND.CHAT, ...TL, payload: H(utf8('hello')), time: T0 + 1 }),
     card: env(e2, { rngSeed: 0x81, sender: 'agent', kind: KIND.CARD, payload: H(utf8('{"title":"Deploy?","options":["yes","no"]}')), time: T0 + 2, cardId: H(cardId), blobId: H(blobId) }),
     answer: env(e3, { rngSeed: 0x82, sender: 'phone', kind: KIND.ANSWER, bind: H(answerBind), payload: H(utf8('{"note":"go"}')), recipient: 'agent', time: T0 + 3 }),
     pruned: H(await z.pruneEnvelope(e1.bytes)),
@@ -1342,9 +1397,9 @@ async function buildVectors() {
   // After the recovery the agent takes the new room key from its wrap and reads the new human device.
   const agentSecret3 = await z.unwrapEpochKey(state, agent, recovered.wraps.find(x => H(x.id) === H(agent.id)).sealed, 3)
   const tabletChains = z.newChains()
-  const e4 = await z.sealEnvelope({ device: tablet, state, secret: recovered.secret, chains: tabletChains, kind: KIND.CHAT, payload: utf8('back again'), recipient: agent.id, time: T0 + 40, _rng: fixedRng(0xb4) })
+  const e4 = await z.sealEnvelope({ device: tablet, state, secret: recovered.secret, chains: tabletChains, kind: KIND.CHAT, ...TL, payload: utf8('back again'), recipient: agent.id, time: T0 + 40, _rng: fixedRng(0xb4) })
   await z.openEnvelope(e4.bytes, { state, chains: chains.agent, secrets: new Map([[3, agentSecret3]]), self: agent.id })
-  v.envelopes.afterRecovery = env(e4, { rngSeed: 0xb4, sender: 'tablet', kind: KIND.CHAT, payload: H(utf8('back again')), recipient: 'agent', time: T0 + 40, senderKey: H(await z.deriveSenderKey(room.roomId, recovered.secret, tablet.id)), agentRoomKey: sec(agentSecret3) })
+  v.envelopes.afterRecovery = env(e4, { rngSeed: 0xb4, sender: 'tablet', kind: KIND.CHAT, ...TL, payload: H(utf8('back again')), recipient: 'agent', time: T0 + 40, senderKey: H(await z.deriveSenderKey(room.roomId, recovered.secret, tablet.id)), agentRoomKey: sec(agentSecret3) })
 
   const typeName = Object.fromEntries(Object.entries(ENTRY).map(([k, n]) => [n, k.toLowerCase()]))
   v.log = {
@@ -1512,7 +1567,7 @@ async function bench() {
   const N = 1050
   const envs = []
   const t0 = performance.now()
-  for (let i = 0; i < N; i++) envs.push(await z.sealEnvelope({ device: d, state: w.phone.state, secret: w.phone.secrets.get(1), chains: w.phone.chains, kind: KIND.CHAT, payload, time: T0 }))
+  for (let i = 0; i < N; i++) envs.push(await z.sealEnvelope({ device: d, state: w.phone.state, secret: w.phone.secrets.get(1), chains: w.phone.chains, kind: KIND.CHAT, ...TL, payload, time: T0 }))
   console.log(`  ${'seal envelope (1 KiB: pad, encrypt, hash, sign)'.padEnd(46)} ${((performance.now() - t0) / N).toFixed(3)} ms`)
   const t1 = performance.now()
   for (const e of envs) await z.openEnvelope(e.bytes, { state: w.agent.state, chains: w.agent.chains, secrets: w.agent.secrets })
