@@ -8,7 +8,6 @@ import { sendMessage, reopen, getState, subscribe, isLoaded } from './store.js'
 import { el, rich, clock, kindOf, mediaNodes, doodle, ASSET_LABEL, sizeText, refreshAssetLinks, linkInfo, assetLink, assetShare, sketch, TRUST_WORD } from './ui.js'
 import { questionRow, lineFit, mountInbox } from './inbox.js'
 import { mountFiles, gather } from './history.js'
-import { dictationMic } from './speech.js'
 import { pasteChip, cardChips } from './cardclip.js'
 import { tellApart } from './agents.js'
 import { link, cardPath, sessionPath } from './link.js'
@@ -562,8 +561,6 @@ function createPane(agent, ctx) {
   const clip = button('mic composer-clip', 'Attach a picture or a file (or paste it, or drop it on the conversation)')
   clip.title = 'Attach a picture or a file'
   clip.append(sketch('clip'))
-  // speak instead of typing: the words appear in the draft while you talk (speech.js)
-  const mic = dictationMic(draft, { key: `chat:${agent}`, onError: text => ctx.onError?.(text) })
   const send = el('button', 'send')
   send.type = 'submit'
   send.setAttribute('aria-label', 'Send')
@@ -575,7 +572,7 @@ function createPane(agent, ctx) {
   canvas.setAttribute('aria-pressed', String(document.body.dataset.view === 'scribble'))
   canvas.append(icon('canvas'))
   canvas.addEventListener('click', () => ctx.onCanvas?.(agent))
-  form.append(chips, clip, draft, picker, mic, canvas, send)
+  form.append(chips, clip, draft, picker, canvas, send)
   // A copied decision goes along as a chip (cardclip.js): offered above the field, or Ctrl+V.
   const clipped = pasteChip(draft, { host: form, onChange: () => fitDraft() })
   const dockColumn = el('div', 'column')

@@ -538,7 +538,6 @@ html.focus-lock, html.focus-lock body { overflow: hidden !important; overscroll-
 .focus-composer .focus-ask-open { display: none; }
 .focus-composer .focus-ask-field { display: block; height: 40px; min-height: 40px; padding: 8px 0; border-radius: 0; background: none; box-shadow: none; resize: none; line-height: 24px; overflow-y: hidden; scrollbar-width: thin; color: var(--fg); }
 .focus-composer .focus-ask-field:hover, .focus-composer .focus-ask-field:focus { background: none; box-shadow: none; }
-.focus-composer .focus-ask > .dictate-mic { width: 40px; height: 40px; }
 /* Send, Explain, Later: three buttons of one rank at the right of the field. Plain small tiles in the look of the
    answer tiles; what is drawn by hand is only the mark in each. Send is filled once there is something to send. */
 .focus-actions { flex: 0 1 auto; display: flex; flex-wrap: nowrap; align-items: center; gap: 6px; min-height: 50px; }
@@ -984,7 +983,7 @@ a.focus-asset:hover, button.focus-asset:hover { background: color-mix(in srgb, v
 .focus-discuss .focus-ask-field { flex: 1 1 4rem; min-width: 0; height: 36px; min-height: 36px; padding: 6px 4px; border-radius: 0; background: none; box-shadow: none; resize: none; line-height: 24px; font-size: .95rem; color: var(--fg); }
 .focus-discuss .focus-ask-field:hover, .focus-discuss .focus-ask-field:focus { background: none; box-shadow: none; }
 .focus-discuss .focus-ask-field::placeholder { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.focus-discuss .focus-clip, .focus-discuss .focus-ask > .dictate-mic { width: 34px; height: 36px; }
+.focus-discuss .focus-clip { width: 34px; height: 36px; }
 .focus-discuss .focus-saved { height: 36px; padding: 0 6px 0 2px; }
 .focus-discuss .focus-saved kbd, .focus-discuss .focus-saved-hint { display: none; }
 /* Under the answers: Revise, and apart from it the wastebasket. */

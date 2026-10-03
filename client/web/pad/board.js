@@ -1,16 +1,14 @@
-// The pad's link to the board it is served from: who the sessions are, whether the
-// board can turn speech into text, and where a selection is sent. With no board
-// behind the page (a plain file server, file://) everything still works, with
-// sample sessions and a speech stub, and says so.
+// The pad's link to the board it is served from: who the sessions are and where a
+// selection is sent. With no board behind the page (a plain file server, file://)
+// everything still works, with sample sessions, and says so.
 
 const SAMPLE_SESSIONS = [
   { id: 'sample-web', name: 'Web frontend', online: true, sample: true },
   { id: 'sample-api', name: 'API', online: true, sample: true },
   { id: 'sample-infra', name: 'Infra', online: false, sample: true },
 ]
-export const SAMPLE_TRANSCRIPT = 'Sample transcript: this is where your spoken words land. (No speech service on this page, nothing was recorded.)'
 
-const state = { board: false, speech: false, sessions: SAMPLE_SESSIONS }
+const state = { board: false, sessions: SAMPLE_SESSIONS }
 const listeners = new Set()
 let store = null   // /js/store.js, when the page runs on a board
 
@@ -35,7 +33,6 @@ export async function connectBoard(embedded = false) {
     store.subscribe(s => {
       if (!store.isLoaded()) return
       state.board = true
-      state.speech = Boolean(s.speech)
       state.sessions = s.all.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online) }))
       for (const fn of listeners) fn(state)
       clearTimeout(timer)
@@ -45,22 +42,11 @@ export async function connectBoard(embedded = false) {
 }
 
 /** What the board around an embedded pad says about itself. */
-export function setBoard({ sessions, speech }) {
+export function setBoard({ sessions }) {
   state.board = true
-  state.speech = Boolean(speech)
   // mark: the session's scribble as the board draws it (an SVG), hue: its colour.
   state.sessions = sessions.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), mark: a.mark ?? null, hue: a.hue ?? null }))
   for (const fn of listeners) fn(state)
-}
-
-/** Recorded audio to text, through the board. Only call when boardState().speech is true. */
-export async function transcribe(blob) {
-  if (store) return store.transcribe(blob)
-  const res = await fetch('/speech/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob })
-  let out = {}
-  try { out = await res.json() } catch {}
-  if (!res.ok) throw new Error(out.error || res.statusText)
-  return out.text ?? ''
 }
 
 /** Send a selection to a session. Resolves with { message_id } or rejects with a

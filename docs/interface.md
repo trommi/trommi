@@ -605,7 +605,7 @@ the object every page gets on `GET /events`, whole, on every change
 | --- | --- | --- | --- | --- |
 | `agents`, `messages`, `cards`, `tasks`, `assets` | the lists above | hub | `store.js` | used |
 | `queue` | ids of open cards in the order the human sees them | hub | inbox, question card | used |
-| `speech` | boolean: a speech key is set | hub | microphone and read-aloud are offered | used |
+| `speech` | boolean: a speech key is set | hub | read-aloud is offered | used |
 | `hub` | id of the session that is the hub | hub | nobody in the app | not shown |
 | `next_number` | integer | hub | nobody | not shown |
 | `pending` | events waiting for sessions that are away | hub | never sent to a page | used |
@@ -631,10 +631,6 @@ Every request needs the login cookie (`board_<port>`, set once by `GET /?t=<toke
 | `POST /canvas` | `{agent, doc}` | Saves it while the human draws. | used |
 | `POST /scribble` | `{agent, doc, png, view?, text?}` | Sends the drawing to the session. The web client never sends `text` (the caption). | used |
 | `GET /scribbles/<id>.png\|json` |  | A sent drawing. | used |
-| `POST /speech/live` |  | Starts a dictation; the answer is an event stream (`ready`, `delta`, `final`, `error`). | used |
-| `POST /speech/live/<id>` | PCM16 mono 16 kHz, raw | Audio in small pieces. | used |
-| `POST /speech/live/<id>/stop` |  | Ends the dictation; the whole recording is transcribed once more. | used |
-| `POST /speech/transcribe` | audio, raw | One recording to text (voice notes on the pad). | used |
 | `POST /speech/say` | `{text, lang?}` | Text to audio, for read-aloud. | used |
 | `GET /speech/card/<id>` |  | A whole card as audio. `store.js` exports the address; nothing calls it. | not shown |
 | `GET /files/<name>` |  | An attachment, with Range requests; an HTML file is served sandboxed. | used |

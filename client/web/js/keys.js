@@ -88,7 +88,6 @@ export const LAYOUT = [
     { id: 'focus.option.next', keys: ['ArrowDown'], does: 'next option, once the keyboard is on one', repeat: true, control: true },
     { id: 'focus.option.prev', keys: ['ArrowUp'], does: 'previous option', repeat: true, control: true, quiet: true },
     { id: 'focus.ask', keys: ['a'], does: 'write to the session about the question' },
-    { id: 'focus.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
     { id: 'focus.explain', keys: ['e'], does: 'explain: write what is unclear, Enter asks the session' },
     { id: 'focus.handback', keys: ['b'], does: 'Revise: back to the agent, with what you wrote' },
     { id: 'focus.trust', keys: ['r'], does: 'Whatever: the agent decides' },
@@ -104,7 +103,6 @@ export const LAYOUT = [
   { scope: 'conversation', title: 'In a session', keys: [
     { id: 'chat.write', keys: ['r'], does: 'write to the session' },
     { id: 'chat.read', keys: ['h'], does: 'hear it: read the latest message aloud, again to stop' },
-    { id: 'chat.voice', keys: ['v'], does: 'dictate: tap to start and stop, or hold it while you talk' },
     { id: 'chat.questions', keys: ['q'], does: 'questions only, and back' },
     { id: 'chat.files', keys: ['f'], does: 'files, and back' },
     { id: 'chat.pane', keys: ['o'], does: 'the other session of a pair' },

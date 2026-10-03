@@ -362,8 +362,8 @@ The paper under the Desk is **absent** in the slice (package C mounts it as an i
 - other desks (`state.desks`): the model shows the whole board as one desk
 
 **Missing on the card page**
-- drawing and pinning notes on the card (marks), notes on single options, attachments and dictation
-  in the field, reading aloud, the saved draft (the note of a draft is shown; nothing is saved while typing)
+- drawing and pinning notes on the card (marks), notes on single options, attachments
+  in the field, reading aloud (dictation: removed, out of scope for launch), the saved draft (the note of a draft is shown; nothing is saved while typing)
 - earlier versions of a revised card and the revision note; sections with their own pictures (the
   body is rendered whole)
 - the picture stage's arrow to the option a picture belongs to; zoom inside the large picture

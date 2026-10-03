@@ -100,7 +100,9 @@ docker compose -f deploy/compose.yaml up -d --build
 docker compose -f deploy/compose.yaml exec hub cat /data/url.txt
 ```
 
-`deploy/Dockerfile` builds in two stages on `node:24-alpine` (dependencies with `npm ci --omit=dev`, then only `server/server.mjs`, `client/web` and `node_modules`), runs as the unprivileged user `node`, keeps state in the volume `/data`, and has a health check: any answer below 500 on `/` counts, because no route answers without a login. `deploy/Dockerfile.dockerignore` keeps `data/` out of the build context. `compose.yaml` adds a read-only root, no capabilities, `no-new-privileges`, and publishes the port on the host's loopback only. The image is about 270 MB, of which the node binary is 125 MB.
+`deploy/Dockerfile` builds in two stages on `node:26-alpine` (dependencies with `npm ci --omit=dev`, then `server/` with `views/` and `store/`, `crypto/`, `client/web` with `t/`, `vendor/` and `js/pen.js`, the two demo pictures the test cards attach, and `node_modules`). It runs as the unprivileged user `node`, keeps state in the volume `/data` (`BOARD_DATA=/data`, `BOARD_HUB_ONLY=1`), and its health check asks `GET /healthz`, which answers `200 {"ok":true}` without a login. `deploy/Dockerfile.dockerignore` lets in only what is listed, so `data/`, tests, notes and the design drafts stay out of the build context. `compose.yaml` adds a read-only root, no capabilities, `no-new-privileges`, and publishes the port on the host's loopback only. The image is about 290 MB, of which the node binary is most.
+
+Not in the image: `vipsthumbnail` or `magick`. Without one of them the hub makes no small preview pictures and serves the originals; add `apk add --no-cache vips-tools` to the second stage if phones should get thumbnails.
 
 **What a containerised hub can do today: serve the board to browsers. What it cannot: be linked by agent sessions outside the container.** Three things stand in the way, all in `server.mjs`:
 
@@ -157,7 +159,7 @@ tailscale serve status
 Then put the printed name into `hub.env` as `BOARD_PUBLIC_URL=https://MACHINE.TAILNET.ts.net` and restart the hub, so `data/url.txt` and the admin page show a link a phone can open. The serve configuration is kept by `tailscaled` across reboots (`--bg`). It needs MagicDNS and HTTPS certificates enabled for the tailnet.
 
 - **Serve, not funnel.** Serve answers only devices in your tailnet. Funnel publishes the same port to the whole internet, and all that stands between the internet and "type into Claude and approve its tool use on your machine" would be one long-lived token that sits in a link, with no rate limit and no way to revoke a single device. Do not funnel this board until per-device keys exist.
-- **HTTPS is what unlocks the microphone.** Browsers give `getUserMedia` (dictation) only to secure contexts: HTTPS or `localhost`. Over `http://192.168.…:8790` a phone shows no working microphone. The tailnet name has a real certificate, so the phone's browser treats it as secure. The same holds later for WebCrypto, which the crypto concept depends on.
+- **HTTPS is what makes the phone's browser treat the board as secure.** The tailnet name has a real certificate. WebCrypto, which the crypto concept depends on, and push notifications need a secure context (HTTPS or `localhost`). (Dictation, which needed the microphone, was removed: out of scope for launch.)
 - **A side effect to know.** Requests that come through `tailscale serve` reach the hub from `127.0.0.1`. The rule "agents only from this machine" therefore does not hold for the tailnet: any tailnet device that knows the token can call `/agent/*`. A request with a forwarding header and the token passed the check in the test. The token still guards it; the fix is under "For the server".
 
 ## 5. Backups, restore, upgrades, rotation
@@ -216,20 +218,31 @@ State migrations run inside the server when it loads the state (missing numbers,
 
 **Rotate the admin key:** there is no button. Stop the hub, delete `data/admin-token`, start it, and read the new key from the file. A restart also ends every admin login. If pinned with `BOARD_ADMIN_TOKEN`, change it in `hub.env` and restart.
 
-## 6. Troubleshooting
+## 6. Deploy at 1.0
+
+Until 1.0 the hub on the PC is a development hub: no service is installed and nothing runs as a container. On the day of 1.0, in this order:
+
+1. **Backup first.** `deploy/backup.sh` (with secrets, kept where `data/` may be) and one test restore into a scratch directory: `deploy/restore.sh <archive> --data /tmp/restore-check`, compare the counts it prints with those of the backup.
+2. **Pick the form.** One machine with the agent sessions on it: the systemd user service (`deploy/install-user-service.sh --enable`, then `loginctl enable-linger $USER`). The container only serves browsers; sessions cannot link to it (section 2).
+3. **Bind to loopback.** `BOARD_HOST=127.0.0.1` in `hub.env` (the container publishes on `127.0.0.1` only).
+4. **Tailscale serve, never Funnel.** `deploy/tailscale-serve.sh --apply`, then `BOARD_PUBLIC_URL=https://MACHINE.TAILNET.ts.net` in `hub.env` and restart. `tailscale funnel status` must show nothing for this port.
+5. **Check it.** `curl -s http://127.0.0.1:8790/healthz` gives `{"ok":true}`; the login link from `data/url.txt` opens on the phone over HTTPS; a session links (`linked to the hub on port …`).
+6. **Backups from then on.** A cron line or timer of your own for `deploy/backup.sh --to <elsewhere> --keep 14`; restore as in section 5 (stop the hub first, `--replace`).
+7. **Rotate after the move.** If the token was ever in a chat, a screenshot or a shared link: rotate it on `/admin.html`.
+
+## 7. Troubleshooting
 
 | Symptom | Cause and way out |
 | --- | --- |
 | Service is `active` but the journal shows no `hub on …` line | **Port taken.** The service waits for the port. `ss -ltnp 'sport = :8790'` names the holder. If it is not Trommi, stop it or set another `BOARD_PORT` in `hub.env` (and in every session's environment, and run `tailscale-serve.sh` again). |
 | The holder is a `node …/server.mjs` that belongs to a Claude Code session | **A session holds the port** (it took over while the service was down, or was there first). The board works, with that session as hub, on the same data directory. To hand the port back, end or restart that session. With several sessions running another one may take over first, because a spoke tries again after 150 to 650 ms and the service only every 2 s; then end them one after another or all at once. This is the gap the first server change closes. |
 | Board shows old state, or two boards disagree | **Stale or second hub.** A hub left over from before (`sleep … \| node server/server.mjs`, a `dev/` script) holds the port, or a hub on another port uses another data directory. Check the holder's pid and its `BOARD_DATA` (`tr '\0' '\n' < /proc/<pid>/environ \| grep BOARD_`). Never run two hubs on one data directory with different ports: both write the same `pad.db`. |
-| A session never appears, its tools answer "the board did not answer" or ask to retry | **Spoke cannot link.** In order: is the hub up (`curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:8790/` gives 401)? Same `BOARD_PORT`? Same data directory, so the same `token` file? Is the hub in a container without host networking (403 for every agent call)? The session's stderr says `linked to the hub on port … as "…"` when it works. |
+| A session never appears, its tools answer "the board did not answer" or ask to retry | **Spoke cannot link.** In order: is the hub up (`curl -s http://127.0.0.1:8790/healthz` gives `{"ok":true}`)? Same `BOARD_PORT`? Same data directory, so the same `token` file? Is the hub in a container without host networking (403 for every agent call)? The session's stderr says `linked to the hub on port … as "…"` when it works. |
 | Sessions get 403, browsers get "Access only through the link in data/url.txt" | **Token mismatch.** A browser holds a cookie from before a rotation: open the current link from `data/url.txt`. A session read a different token: it has another `BOARD_DATA`, or `BOARD_TOKEN` is pinned on one side only. A session re-reads `data/token` after a refusal, so a mismatch that persists is a configuration difference, not timing. |
 | Service fails at once, `status=1` from `ExecStartPre` | The checkout's `server.mjs` predates `BOARD_HUB_ONLY`. Update the checkout. |
 | Service fails with `226/NAMESPACE` | The sandbox could not be set up: the data directory in `ReadWritePaths` does not exist, or unprivileged user namespaces are off. Run the install script again; it creates the directory. |
 | `status=203/EXEC` | The node binary in the unit is gone (a version manager removed it). Run the install script again, or pass `--node`. |
 | Attachment refused with `ENOENT` or `EACCES` although the file exists | The path is one the sandbox hides (`~/.ssh` and the others), or the hub runs in a container and does not see the host's files. |
-| No microphone on the phone | The page was opened over plain HTTP. Use the `https://…ts.net` link. No microphone anywhere: no speech key. |
 | Hub stops when you log out | Lingering is off: `loginctl enable-linger $USER`. |
 
 ## For the server
@@ -237,7 +250,7 @@ State migrations run inside the server when it loads the state (missing numbers,
 Nothing below is implemented; `deploy/` works without it, with the gaps named above.
 
 1. **Let the fixed hub keep the port.** In `/agent/link` the hub's hello becomes `{ hello: id, ping: PING, dedicated: HUB_ONLY }`. A spoke that received `dedicated: true` remembers it, and in `joinHub()`'s `retry` it calls `joinHub()` again instead of `start()`, so it never listens. And in `start()`, the hub-only wait becomes `setTimeout(start, 200)` instead of 2000. Measured today: after the hub stopped, a linked spoke took the port when the successor came 1 s later; the successor won only when started immediately.
-2. **`GET /healthz` without login**, answering `200 {"ok":true}` and nothing else, placed before the token check. The container's health check and any monitor can then tell "serving" from "answers 401 for another reason".
+2. ~~`GET /healthz` without login~~: done, answers `200 {"ok":true}` before the token check; the container's health check uses it.
 3. **Do not trust loopback behind a proxy.** In `agentRoute`, refuse when the request carries `x-forwarded-for` or `tailscale-user-login`. A direct spoke never sends them; `tailscale serve` always does.
 4. **Create the data subdirectories with mode 0700** (`files`, `scribbles`, `assets`, `speech`); today they are 0755 outside the service, whose umask already covers it.
 5. Later, with the crypto steps: a route to rotate the admin key; the CORS and login changes of section 3; the remote-spoke changes of section 2.
@@ -250,6 +263,8 @@ On the author's machine, without touching the live hub on port 8790 or the repos
 - **The unit's command line:** `/usr/bin/node server/server.mjs` in a bare environment with `BOARD_HUB_ONLY=1`, stdin from `/dev/null`, a temporary data directory, port 8842: stays up, answers 401 without login, 302 for the login link, 200 with the cookie, streams `/events`, ends on SIGTERM leaving a valid `state.json`. The same without the flag exits with status 0 within a second.
 - **Port race** on port 8843 with a hub and one spoke, as described in "For the server".
 - **Container:** image built with rootless Docker, run on port 8844 with the options from `compose.yaml`: answers, health check turns healthy, an agent call from the host gets 403, stops cleanly. Both compose files parse (`docker compose config`).
+- **Container, again on 3 Oct 2026** (node 26, whole `server/`, `/healthz`): run with `--init --read-only --cap-drop ALL --security-opt no-new-privileges` on port 18847 with an empty data directory. `/healthz` 200, `/` 401 without login and 200 with the cookie, `/t/application.js`, `/js/pen.js`, `/css/turbo.css`, `/admin.html` 200 with the cookie, `/agent/tool` 403 from the host; health check `healthy` after 30 s; the hub created `pad.db`, `token`, `admin-token`, `push-vapid.pem` and its subdirectories in the volume, all 0600/0700. `docker stop` ends it at once (exit 143, SIGTERM; SQLite in WAL mode keeps the database consistent).
+- **CI:** `.github/workflows/test.yml` runs `node server/test.mjs` (with the Turbo tests it imports, about a minute) on Node 26. The browser tests in `dev/` need Chromium and stay local.
 - **Backup:** in `server/test.mjs` ("backup and restore"): a hub running on a throwaway data directory is backed up, the archive holds one `pad.db` and no `-wal`/`-shm`/`url.txt`, secrets are 0600, the output names no secret and no content; restored into another directory, records per kind are those of the moment of the snapshot (what was written afterwards is not in it), attachment and asset ciphertext are byte-equal, a hub started on the restored directory serves the cards and messages and accepts the old cookie; `--no-secrets`, `--keep`, `--replace`, refusal of a foreign archive, of a non-data directory and of a directory with an open database. One real run against the live `data/` on 3 Oct 2026 (read only, archive written elsewhere): 174 MB, 1274 files, 154 cards, 1180 messages, 111 assets; restored copy had the same counts.
 - **Tailscale helper:** printing only.
 

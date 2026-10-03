@@ -9,7 +9,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { html, raw, esc } from './views/html.mjs'
-import { rich, plain, fitsTile, micButton } from './views/text.mjs'
+import { rich, plain, fitsTile } from './views/text.mjs'
 import { sketchSvg, doodleSvg, hueFor } from '../client/web/js/pen.js'
 
 const SERVER = fileURLToPath(new URL('./server.mjs', import.meta.url))
@@ -40,9 +40,6 @@ function units() {
   assert.match(text, /<div class="rich-html" data-controller="richhtml" data-richhtml-source-value="&lt;table&gt;&lt;tr&gt;&lt;td onclick=&quot;x\(\)&quot;&gt;cell/)
   assert.match(String(rich('☞ Das hier zuerst.\n\nRest.')), /<p class="rich-point"><svg viewBox="0 2 32 22" class="advice-hand"/)
   assert.equal(plain('**Hi** `x` https://example.org/some/long/path?q=1 __u__'), 'Hi x example.org/some/long/path u')
-  // the microphone for dictation: only where the hub has a speech service, tied to its field by id
-  assert.match(String(micButton('card-field-1', true)), /^<button class="dictate-mic" type="button" data-controller="dictate" data-dictate-field-value="card-field-1"/)
-  assert.equal(String(micButton('card-field-1', false)), '')
   // markdown links, also with a path as label; *italic*; numbered lists after a line of text; paragraphs apart
   assert.match(String(rich('Siehe [Zehn Abzüge](/designs/x.html) und [/pad/ bei 360](/pad/).')), /<a href="\/designs\/x\.html" target="_blank" rel="noopener" title="\/designs\/x\.html">Zehn Abzüge<\/a> und <a href="\/pad\/"[^>]*>\/pad\/ bei 360<\/a>\./)
   assert.match(String(rich('[Seite](https://example.org/a?b=1)')), /<a href="https:\/\/example\.org\/a\?b=1" target="_blank" rel="noopener noreferrer"[^>]*>Seite<\/a>/)
@@ -127,6 +124,8 @@ export async function run() {
     assert.ok(!page.includes('<script>alert(1)</script>'))
     assert.ok(page.includes('Probe &lt;b&gt;'))
     assert.match(page, /<span class="inbox-gutter-name" aria-hidden="true">Probe &lt;b&gt;<\/span><\/a>/)   // who asks: drawing and name, beside the row
+    assert.match(page, /<a class="inbox-gutter is-sidebar-arrow" data-nav /)   // card Nr. 208: the name goes, an arrow from the sidebar shows who asks
+    assert.match(page, /<div hidden data-controller="pointto" data-action="pointerover@document->pointto#over /)
     assert.ok(!page.includes('Probe <b>'))
     assert.ok(page.includes('<span class="inbox-body-text">Text mit fett und &lt;b&gt;Markup&lt;/b&gt;.</span>'))
     // a two-way question answers from the row: a form, one button per option; the agent's first option is the lead
@@ -169,7 +168,7 @@ export async function run() {
     assert.match(page, new RegExp(`<button class="tc-opt" type="submit" form="card-form-${second}" formaction="/t/cards/${second}/decide" name="key" value="x"`))
     assert.match(page, new RegExp(`formaction="/t/cards/${second}/trust"`))
     assert.match(page, new RegExp(`<form class="tc-ask tc-chat" id="card-form-${second}" method="post" action="/t/cards/${second}/message"`))
-    assert.match(page, /<a class="tc-back" data-nav href="\/t\/"/)
+    assert.match(page, /<a class="tc-back" data-nav href="\/t\/" aria-keyshortcuts="Escape"><span>Back to Desk<\/span><kbd>Esc<\/kbd><\/a>/)
     assert.match(page, new RegExp(`src="/t/stream\\?rev=[0-9a-f]+-\\d+&view=card&bar=1&amp;card=${second}"`))
     assert.equal((await get('/t/q/99999')).status, 404)
     // the walk leads to the oldest open card
@@ -376,6 +375,8 @@ export async function run() {
     assert.match(page, new RegExp(`<details class="tc-revise"[\\s\\S]*?<summary class="tc-tile tc-reverse"[\\s\\S]*?<form class="tc-revise-form" method="post" action="/t/cards/${split}/revise"`))
     assert.equal((await post(`/t/cards/${split}/revise`, { note: 'Kürzer bitte.' })).status, 303)
     assert.ok((await cardOf(split)).with_agent)
+    // ---- the Dev menu's test cards: a test desk with Test Alpha and Test Beta (last: it adds a desk): server/turbo-fixtures-test.mjs ----
+    await (await import('./turbo-fixtures-test.mjs')).fixturesTests({ base, cookie, ask, get, post, STREAM, stateOnce, cardOf, eventually })
     assert.doesNotMatch(log, /turbo stream:/)
   } finally {
     for (const req of open) req.destroy()

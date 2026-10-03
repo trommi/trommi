@@ -27,7 +27,7 @@
 // scroll position, and a running video survive both pushes and navigation.
 
 import { subscribe, decide, reopen, putOff, sendMessage, isLoaded, getState, closeInfo } from './store.js'
-import { readCard, stopReading, dictationMic, startDictation, stopDictation, isDictating } from './speech.js'
+import { readCard, stopReading } from './speech.js'
 import { provide } from './keys.js'
 import { say, pageHost, backNow, forgetBack } from './back.js'
 import { EXPLAIN_TEXT, cardNr } from './inbox.js'
@@ -712,7 +712,7 @@ export function mountFocus({ onDecided } = {}) {
       field.enterKeyHint = 'send'
       field.setAttribute('aria-label', 'Write to the agent about this question. Enter asks it and the question stays open; an answer takes what you wrote along as a note.')
       field.value = rec.askText
-      // Send stands in the field, at its right end beside the microphone: a plain small button with the pen's arrow.
+      // Send stands in the field, at its right end: a plain small button with the pen's arrow.
       // Writing on a card and handing it back are one act: the field's button is the reverse card (the drawing of
       // Revise). It sends the words, they show in the feed for a moment, and the card goes back to its agent.
       const send = button('focus-ask-send', 'Send and hand back')
@@ -765,7 +765,6 @@ export function mountFocus({ onDecided } = {}) {
         delete ask.dataset.drop
         addFiles(rec, e.dataTransfer.files)
       })
-      field.after(dictationMic(field, { key: `${rec.id}:ask`, primary: true, onError: text => info(text, true) }))   // speak instead of typing (speech.js)
       askOpen.addEventListener('click', () => field.focus({ preventScroll: true }))
       field.addEventListener('input', () => { rec.askText = field.value; paintDraft(rec) })   // (paintDraft also sees to the draft on the hub)
       // Enter sends with a real keyboard, Shift+Enter breaks the line; on a touch screen Enter stays a line break
@@ -2817,7 +2816,7 @@ export function mountFocus({ onDecided } = {}) {
   provide('focus', {
     active: () => isOpen,
     // In the window of one card there is no next and no previous.
-    has: id => !(shown && shown.card.status !== 'open' && id !== 'focus.leave') && !(single && shown?.version == null && (id === 'focus.next' || id === 'focus.prev')) && !(id === 'focus.voice' && !getState().speech),
+    has: id => !(shown && shown.card.status !== 'open' && id !== 'focus.leave') && !(single && shown?.version == null && (id === 'focus.next' || id === 'focus.prev')),
     actions: {
       // (in the time machine the same keys step through the versions of the card)
       'focus.next': key(() => { if (shown?.version != null) return stepVersion(1); if (!single) go(1) }),
@@ -2846,13 +2845,6 @@ export function mountFocus({ onDecided } = {}) {
       // Once the keyboard is on an option, up and down go through all of them (more than nine have no digit).
       'focus.option.next': key(() => stepOption(1)),
       'focus.option.prev': key(() => stepOption(-1)),
-      // Dictate into the composer: a tap starts, the next stops; held for longer than a moment, letting go stops.
-      'focus.voice': key(() => {
-        if (isDictating()) return void stopDictation()
-        if (!shown?.askField) return false
-        startDictation(shown.askField)
-        return ms => { if (ms > 300) stopDictation() }
-      }),
       'focus.ask': key(ask),
       'focus.leave': key((_, e) => {
         const typing = e.target instanceof Element && e.target.closest('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
@@ -3217,7 +3209,6 @@ export function mountFocus({ onDecided } = {}) {
     isOpen = false
     wanted = null
     stopReading()
-    stopDictation()
     zoom?.close()
     for (const m of stage.querySelectorAll('video, audio')) { try { m.pause() } catch {} }
     for (const n of inerted) n.inert = false

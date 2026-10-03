@@ -81,7 +81,7 @@ export function memoOpener(model, base, scope = null) {
 /** What the Desk's paper needs to know (the pad's chooser of sessions): read by the controller paper (client/web/t/lib/paper.js). */
 export function paperIsland(model) {
   const sessions = model.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), hue: a.hue, mark: String(markArt({ ...a, starred: false })) }))
-  return html`<div id="paper-island" data-controller="paper" hidden${model.state.speech ? raw(' data-speech') : ''} data-sessions="${JSON.stringify(sessions)}"></div>`
+  return html`<div id="paper-island" data-controller="paper" hidden data-sessions="${JSON.stringify(sessions)}"></div>`
 }
 
 /** For the layout, once per page: the button, the notes, and on the Desk the paper's element. */

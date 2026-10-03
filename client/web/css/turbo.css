@@ -482,13 +482,9 @@ a.inbox-index-tab:hover { color: var(--fg); background: var(--surface); }
 .inbox-next .inbox-next-n { font-weight: 700; color: var(--fg); }
 .inbox-next > .inbox-go .sketch { width: 16px; height: 16px; }
 @media (min-width: 861px) { .inbox-title > p.inbox-next { padding-left: 46px; } }
-/* Proposal, behind a switch (views/gutter-hover.mjs, off by default): the session's name beside a Desk card shows
-   only while the pointer or the keyboard is on the card, written out into the margin under the drawing, with a
-   small arrow drawn from it to the card. A phone is unchanged (no column of drawings there). */
-.inbox-gutter-arrow { display: none; }
-@media (min-width: 861px) {
-  .inbox-group[data-sender] > .inbox-row > .inbox-gutter.is-hover-name .inbox-gutter-name { left: auto; right: 14px; width: max-content; max-width: 120px; translate: none; text-align: right; font-size: .8rem; opacity: 0; transition: opacity 120ms; }
-  .inbox-gutter.is-hover-name .inbox-gutter-arrow { display: block; position: absolute; left: 19px; top: calc(100% + 3px); width: 31px; height: 23px; overflow: visible; fill: none; stroke: currentColor; stroke-width: 1.8px; stroke-linecap: round; stroke-linejoin: round; opacity: 0; transition: opacity 120ms; pointer-events: none; }
-  .inbox-gutter.is-hover-name .inbox-gutter-arrow path { vector-effect: non-scaling-stroke; }
-  .inbox-group[data-sender] > .inbox-row:is(:hover, :focus-within) > .inbox-gutter.is-hover-name :is(.inbox-gutter-name, .inbox-gutter-arrow) { opacity: 1; }
-}
+/* Decided on card Nr. 208 (switch in views/gutter-hover.mjs, on by default): who asks is a hand-drawn arrow
+   from the session's row in the sidebar to the card under the pointer (controller "pointto"); the name under the
+   drawing beside the card goes, the drawing stays. A phone is unchanged. */
+.inbox-gutter.is-sidebar-arrow .inbox-gutter-name { display: none !important; }
+.pointto-layer { position: fixed; inset: 0; z-index: 40; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; fill: none; stroke-width: 2.2px; stroke-linecap: round; stroke-linejoin: round; }
+@media (max-width: 860px) { .pointto-layer { display: none; } }

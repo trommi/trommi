@@ -29,12 +29,14 @@ import { register as memoPage } from './views/memo.mjs'   // memos and the Desk'
 import { register as jumpPage } from './views/menu.mjs'   // the menu's jump field (worker D)
 import { register as agentsPage } from './views/agents.mjs'   // the Agents page and a session's forms (worker B)
 import { register as stacksPage } from './views/stacks.mjs'   // the search in a stack at the Desk's foot
+import { register as fixturesPage } from './fixtures.mjs'   // the Dev menu's test cards: a test desk with Test Alpha and Test Beta
 const PAGES = [
   agentsPage,
   jumpPage,
   memoPage,
   sessionPage,
   stacksPage,
+  fixturesPage,
 ]
 
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'

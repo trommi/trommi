@@ -340,15 +340,24 @@ async function groupReload() {
   check(laid, 'the paper was laid under them meanwhile')
   check(live, 'the live stream was connected meanwhile')
   check(await ev(`return localStorage.getItem('trommi-desk-cards-hidden') === null`), 'the stale hidden flag is cleared')
-  // The eye (and W) still hides the cards in this page, and says so in the signal colour; a reload brings them back.
-  // (on a phone the switches may be tucked to a tab over a card: the first click only brings them out)
-  if (size === 'phone') await ev(`const e = document.getElementById('deskpad-eye'); if (document.querySelector('.deskpad-over').hasAttribute('data-tuck')) e.click(); e.click(); return true`); else await press('#deskpad-eye', 'the eye switch')
-  const eyeState = await ev(`return [document.getElementById('inbox').hasAttribute('data-cards-hidden'), document.getElementById('deskpad-eye').getAttribute('aria-pressed')].join()`)
-  check(eyeState === 'true,true', `the eye hides the cards and stands pressed (hidden, pressed: ${eyeState})`)
-  check(await ev(`const e = document.getElementById('deskpad-eye'); return getComputedStyle(e).backgroundColor !== getComputedStyle(e.parentElement).backgroundColor`), 'the pressed eye stands out from its pill')
+  // The two switches (t/lib/clear.js) stand round at the Desk's lower left, apart from the memo button at the right.
+  const atLeft = await ev(`const b = id => document.getElementById(id)?.getBoundingClientRect(), pen = b('deskpad-pen'), clear = b('deskpad-clear'), memo = b('memo-open'), desk = document.getElementById('inbox').getBoundingClientRect()
+    return Boolean(pen && clear && memo && pen.width >= 44 && clear.height >= 44 && pen.right <= clear.left && pen.left >= desk.left && pen.left - desk.left < 40 && clear.right < innerWidth / 2 && clear.bottom <= innerHeight && innerHeight - clear.bottom < 40 && memo.left - clear.right > 100)`)
+  check(atLeft, 'pen and clear-the-table stand at the lower left of the Desk, apart from the memo button, at least 44 px')
+  check(await ev(`return !document.getElementById('deskpad-eye') && !document.querySelector('.deskpad-switch')`), 'the old pen and eye pill is gone')
+  // Clear the table (and W) wipes the cards off in this page and says so in the signal colour; a reload brings them back.
+  await press('#deskpad-clear', 'the clear-the-table switch')
+  await waitFor('the wipe is over', `return !document.getElementById('inbox').hasAttribute('data-clearing')`, 3000).catch(() => {})
+  const clearState = await ev(`const box = document.getElementById('inbox'); return [box.hasAttribute('data-cards-hidden'), document.getElementById('deskpad-clear').getAttribute('aria-pressed'), getComputedStyle(box.querySelector(':scope > .inbox-groups')).visibility].join()`)
+  check(clearState === 'true,true,hidden', `clear-the-table hides the cards and stands pressed (hidden, pressed, visibility: ${clearState})`)
+  check(await ev(`const e = document.getElementById('deskpad-clear'); return getComputedStyle(e).backgroundColor !== getComputedStyle(document.getElementById('deskpad-pen')).backgroundColor`), 'the pressed clear-the-table switch stands out in the signal colour')
+  await press('#deskpad-clear', 'the clear-the-table switch again')
+  await waitFor('the cards are back', `return !document.getElementById('inbox').hasAttribute('data-cards-hidden') && !document.getElementById('inbox').hasAttribute('data-clearing')`, 3000).catch(() => {})
+  check(await ev(`return getComputedStyle(document.querySelector('#inbox > .inbox-groups')).visibility === 'visible'`), 'a second press slides the cards back')
+  await press('#deskpad-clear', 'the clear-the-table switch, to see a reload')
   await load('/')
   check((await stays()).all, 'after a reload the hidden cards are back')
-  check(await ev(`return document.getElementById('deskpad-eye')?.getAttribute('aria-pressed') !== 'true'`), 'after a reload the eye is not pressed')
+  check(await ev(`return document.getElementById('deskpad-clear')?.getAttribute('aria-pressed') !== 'true'`), 'after a reload clear-the-table is not pressed')
 }
 
 async function groupStacks() {

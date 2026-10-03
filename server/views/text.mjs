@@ -2,11 +2,7 @@
 // markdown agents write as safe HTML. The rules are those of the old client (js/ui.js, js/inbox.js); the
 // output is strings made with html`` (html.mjs), so every piece of board content is escaped.
 import { html, raw, esc } from './html.mjs'
-import { pointingHandSvg, sketchSvg, loopPath, penSeed } from '../../client/web/js/pen.js'
-
-/** The microphone for live dictation into the field with this id (controller "dictate"; css/speech.css).
- *  Only where the hub has a speech service: pass model.state.speech. */
-export const micButton = (fieldId, speech) => (speech ? html`<button class="dictate-mic" type="button" data-controller="dictate" data-dictate-field-value="${fieldId}" data-action="pointerdown->dictate#keep click->dictate#toggle" aria-pressed="false" aria-label="Dictate: speak, the words appear as you talk" title="Dictate: speak, the words appear as you talk"><svg viewBox="0 0 32 32" class="dictate-ring" aria-hidden="true"><path d="${loopPath(penSeed(`dictate:${fieldId}`), { rad: 14.2 })}"/></svg>${raw(sketchSvg('mic'))}</button>` : '')
+import { pointingHandSvg } from '../../client/web/js/pen.js'
 
 // ---- the board's words (one place; the old client has them in js/ui.js) ----
 export const WORDS = {

@@ -434,14 +434,5 @@ export async function loadCanvas(agent) {
 /** Save the canvas of a session while the human draws. */
 export const saveCanvas = (agent, doc) => post('/canvas', { agent, doc })
 
-/** Recorded audio (a Blob) to text. */
-export async function transcribe(blob) {
-  const res = await fetch('/speech/transcribe', { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob })
-  let out = {}
-  try { out = await res.json() } catch {}
-  if (!res.ok) throw new Error(out.error || res.statusText)
-  return out.text ?? ''
-}
-
 /** Where the spoken version of a card lives. */
 export const cardAudioUrl = cardId => `/speech/card/${encodeURIComponent(cardId)}`

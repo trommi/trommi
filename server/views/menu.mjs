@@ -7,6 +7,7 @@ import { html, raw } from './html.mjs'
 import { WORDS, cardNr } from './text.mjs'
 import { cardPath } from './desk.mjs'
 import { sketchSvg } from '../../client/web/js/pen.js'
+import { fixtureItems } from '../fixtures.mjs'   // Dev: Create / Remove test cards (the test desk with Test Alpha and Test Beta)
 
 const sk = name => raw(sketchSvg(name))
 const JUMP_MAX = 8
@@ -38,7 +39,7 @@ export function menuDoors(model, base) {
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents">${sk('heads')}<span>Agents</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
-<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><button role="menuitem" type="button" id="dev-fake" data-action="click->menu#dev" data-menu-body-param='{"n":5}'>Create 5 fake decisions</button><button role="menuitem" type="button" id="dev-fake-clear" data-action="click->menu#dev" data-menu-body-param='{"clear":true}'>Remove fake decisions</button><a role="menuitem" href="/screens.html" id="dev-screens">All screens</a><a role="menuitem" href="/old/" data-turbo="false" id="dev-old">Old board</a><a role="menuitem" href="/admin.html" data-turbo="false" id="dev-admin">Admin</a><p class="menu-dev-note" id="menu-dev-note" data-menu-target="note" role="status"></p></div></details>
+<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><button role="menuitem" type="button" id="dev-fake" data-action="click->menu#dev" data-menu-body-param='{"n":5}'>Create 5 fake decisions</button><button role="menuitem" type="button" id="dev-fake-clear" data-action="click->menu#dev" data-menu-body-param='{"clear":true}'>Remove fake decisions</button>${fixtureItems(base)}<a role="menuitem" href="/screens.html" id="dev-screens">All screens</a><a role="menuitem" href="/old/" data-turbo="false" id="dev-old">Old board</a><a role="menuitem" href="/admin.html" data-turbo="false" id="dev-admin">Admin</a><p class="menu-dev-note" id="menu-dev-note" data-menu-target="note" role="status"></p></div></details>
 </nav>`
 }
 

@@ -14,7 +14,7 @@ What is planned and not built is in the last section and is marked as such.
 | Channel process | The same `server/server.mjs`, started by Claude Code over stdio, once per session (`.mcp.json`). | Claude Code (MCP over stdio), the hub (HTTP on loopback) |
 | Claude Code | The agent | Its channel process |
 | Helper session | `dev/session.mjs`: a script or subagent on the board without Claude Code | The hub, by the same two routes as a channel process |
-| Tinfoil | `https://inference.tinfoil.sh/v1`: speech to text, text to speech | The hub only |
+| Tinfoil | `https://inference.tinfoil.sh/v1`: text to speech | The hub only |
 
 **Who becomes the hub.** Every `server.mjs` tries to listen on the port. The one that gets it is the hub (`becomeHub`); every other one links to it as a spoke (`joinHub`) and takes over when the link drops. With `BOARD_HUB_ONLY=1` a process is only the hub, registers no session of its own and needs no stdin; spokes then wait for it instead of taking the port.
 
@@ -79,24 +79,15 @@ Weak spots:
 
 ## 4. Speech
 
-The key is `TINFOIL_API_KEY` or `data/tinfoil.key` and stays on the hub. The state carries `speech: true | false`; without a key the page offers no microphone.
+The key is `TINFOIL_API_KEY` or `data/tinfoil.key` and stays on the hub. The state carries `speech: true | false`; without a key the page offers no read-aloud.
 
-Dictation (live):
-
-1. `POST /speech/live`: the response is an event stream, first `ready {id, rate: 16000, max_seconds}`.
-2. The hub opens `wss://inference.tinfoil.sh/v1/realtime?intent=transcription` (model `voxtral-mini-4b-realtime`, bearer key).
-3. The page posts PCM16 mono 16 kHz every 200 ms to `POST /speech/live/<id>`; the hub forwards it as `input_audio_buffer.append` and keeps the recording in memory.
-4. Tinfoil's `…input_audio_transcription.delta` goes to the page as `event: delta {text}`.
-5. `POST /speech/live/<id>/stop`. The polish pass: the whole recording goes as a WAV file to `POST /audio/transcriptions` (`whisper-large-v3-turbo`).
-6. `event: final {text, polished, reason, seconds}` replaces the provisional words. The text stays in the field; nothing is sent by itself.
-
-At most 4 dictations at once, 180 s each. `POST /speech/transcribe` turns one whole recording into text (the pad's voice notes).
+Dictation (speech to text, live in a field and as voice notes on the pad) was removed, out of scope for launch (3 October 2026); git history keeps it.
 
 Read aloud: `POST /speech/say` `{text, lang}` in pieces, or `GET /speech/card/<id>` for a whole card. The hub asks `POST /audio/speech` (`qwen3-tts`) and caches the result as `data/speech/<hash>.mp3`. The agent tool `create_voiceover` uses the same function and returns the path.
 
 Weak spots:
 
-- Speech is not end-to-end encrypted, and the crypto concept keeps it that way: the hub and Tinfoil get audio and text in the clear.
+- Speech is not end-to-end encrypted, and the crypto concept keeps it that way: the hub and Tinfoil get the text in the clear.
 - `data/speech/` is only cleaned by the "orphans" action on the admin page.
 
 ## 5. Scratchpad

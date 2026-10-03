@@ -79,10 +79,9 @@ process.stderr.write = (chunk, ...rest) => {
   return writeStderr(chunk, ...rest)
 }
 // Speech runs on Tinfoil's OpenAI-compatible API. Without a key the board
-// works as before and simply offers no microphone or read-aloud.
+// works as before and simply offers no read-aloud.
 const SPEECH = path.join(DATA, 'speech')
 const SPEECH_API = process.env.BOARD_SPEECH_API || 'https://inference.tinfoil.sh/v1'
-const STT_MODEL = process.env.BOARD_STT_MODEL || 'whisper-large-v3-turbo'
 const TTS_MODEL = process.env.BOARD_TTS_MODEL || 'qwen3-tts'
 // The voice, and what a text in a known language is spoken with instead ("de", "en"). Each of the
 // per-language settings is optional: BOARD_TTS_MODEL_DE, BOARD_TTS_VOICE_DE, BOARD_TTS_LANGUAGE_DE.
@@ -507,6 +506,46 @@ function clearFakeDecisions() {
   commit()
   return numbers
 }
+// ---- fixtures: the test desk with Test Alpha and Test Beta (server/fixtures.mjs, dev/fixtures.mjs) ----
+// The sessions are taken as they are when they exist (the crown test sessions, linked by dev/session.mjs), with their
+// subs, else made as sessions of the hub's own like "Demo". Either way they move to a desk of their own (fixture: true),
+// so the real desk stays as it is, and are marked fixture: true: while nobody listens, an answer closes the card.
+// What the fixtures filed is marked fixture: true too (server/fixtures.mjs); dropFixtures takes exactly that away.
+function fixtureDesk(name) {
+  let desk = state.desks.find(d => d.fixture)
+  if (!desk) {
+    if (state.desks.length >= DESKS_MAX) throw fail(409, `at most ${DESKS_MAX} desks`)
+    desk = { id: newId(), name, created: Date.now(), fixture: true }
+    state.desks = [...state.desks, desk]
+  }
+  return desk
+}
+function fixtureSession({ id, name, desk }) {
+  let agent = state.agents.find(a => a.id === id)
+  if (!agent) {
+    const now = Date.now()
+    agent = { id, name, label: name, demo: true, cwd: '', host: '', platform: '', model: 'none', client: '', task: '', joined: now, connected: now, seen: now, online: false, archived: false, desk }
+    state.agents.push(agent)
+  }
+  agent.fixture = true
+  for (const a of state.agents.filter(x => x === agent || x.parent === agent.id)) toDesk(a, desk)
+  return agent
+}
+function dropFixtures() {
+  const cards = state.cards.filter(c => c.fixture), ids = new Set(cards.map(c => c.id))
+  const mine = m => m.fixture === true || ids.has(m.card_id)
+  const messages = state.messages.filter(mine)
+  for (const [dir, name] of filesOf([...messages, ...cards])) removeFile(dir, name)
+  const shown = new Set(messages.map(m => m.asset?.id).filter(Boolean))
+  dropAssets(state.assets.filter(a => shown.has(a.id)), 'withdrawn')
+  if (messages.length) messagesChanged()
+  state.messages = state.messages.filter(m => !mine(m))
+  state.cards = state.cards.filter(c => !c.fixture)
+  state.tasks = state.tasks.filter(t => !(t.id === 'fixtures' && state.agents.some(a => a.id === t.agent && a.fixture)))
+  commit()
+  return cards.map(c => c.number)
+}
+// ---- (end fixtures) ----
 
 // An agent only ever touches its own cards.
 function findCard(agent, id) {
@@ -684,9 +723,10 @@ function setIcon(id, icon) {
 // The queue of an agent that is away lives in the state file, so it outlasts the hub.
 async function deliver(agent, method, params) {
   // Nobody listens for the demo session: an answer to one of its test cards closes the card, and nothing waits.
-  if (agent === DEMO_ID && !links.has(agent)) {
-    const card = params?.meta?.kind === 'decision' ? state.cards.find(c => c.id === params.meta.card_id && c.agent === DEMO_ID) : null
-    if (card && card.status === 'decided') try { runTool(DEMO_ID, 'close_card', { card_id: card.id, summary: 'Test card: closed by itself' }) } catch {}
+  // (The same for the fixture sessions Test Alpha and Test Beta: server/fixtures.mjs.)
+  if ((agent === DEMO_ID || state.agents.some(a => a.id === agent && a.fixture)) && !links.has(agent)) {
+    const card = params?.meta?.kind === 'decision' ? state.cards.find(c => c.id === params.meta.card_id && c.agent === agent) : null
+    if (card && card.status === 'decided') try { runTool(agent, 'close_card', { card_id: card.id, summary: 'Test card: closed by itself' }) } catch {}
     return
   }
   if (links.get(agent)?.send(method, params)) return
@@ -980,7 +1020,7 @@ const mcp = new Server(
       'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
       'Sessions can belong together: a main agent and its helpers. If you lead helper sessions, say so with introduce (main: true) and have every helper you start introduce itself with parent set to your session id; a session that already runs you can take with adopt_session. If you were started as a helper, pass parent in your own introduce. The board then shows the helpers under their main.',
       'Other agents may share this board; the human sees all stacks merged into one, oldest first. You only see and change your own cards and status lines.',
-      'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply. The human may dictate messages, so expect transcription slips in chat and read them charitably.',
+      'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply.',
       'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
       'The human also keeps one pad for everything: notes, drawings, pictures and spoken text, each an element of its own. <channel source="board" kind="pad" elements="ID,ID" image_path="/abs/selection.png"> means they selected some of it and sent it to you: the body is the words of the selected notes in reading order, image_path is a picture of exactly the selection, so read it; elements are the ids of what was selected.',
       'The human answers with one tap and can take an answer back: <channel source="board" kind="decision_reopened" card_id="..." previous_choice="KEY"> means the card is open again. Stop acting on the old choice, undo what you safely can, tell them briefly via reply what you rolled back, and wait for the new choice.',
@@ -2425,127 +2465,6 @@ async function speak(input, instructions = '', lang = '') {
 // The service answers with MP3 or WAV, whatever was asked for; the page is told which it is.
 const audioType = audio => (audio.subarray(0, 4).toString('latin1') === 'RIFF' ? 'audio/wav' : 'audio/mpeg')
 
-async function transcribe(audio, type) {
-  const form = new FormData()
-  form.append('model', STT_MODEL)
-  form.append('file', new Blob([audio], { type }), `audio.${type.includes('mp4') ? 'm4a' : type.includes('ogg') ? 'ogg' : type.includes('wav') ? 'wav' : type.includes('mpeg') ? 'mp3' : 'webm'}`)
-  const res = await speechFetch('/audio/transcriptions', { method: 'POST', body: form })
-  return String((await res.json()).text ?? '').trim()
-}
-
-// ---- live dictation ---------------------------------------------------------
-// True streaming, not a re-transcription loop: Tinfoil's voxtral-mini-4b-realtime takes
-// PCM16 over a WebSocket (OpenAI Realtime transcription dialect) and sends the words back
-// while the human is still speaking; what it sent is never revised. The key stays here, so
-// the page gets the words as an event stream (POST /speech/live) and posts its audio in
-// small pieces (POST /speech/live/ID), then POST /speech/live/ID/stop.
-// The realtime model is the smaller one and mishears more. So when the human stops, the
-// whole recording goes once more through the file model, and that text is the final one;
-// if that fails, the streamed text stands.
-const LIVE_MODEL = process.env.BOARD_STT_LIVE_MODEL || 'voxtral-mini-4b-realtime'
-const LIVE_POLISH = !/^(0|off|no|false)$/i.test(process.env.BOARD_STT_LIVE_POLISH ?? '')
-const LIVE_SECONDS = Number(process.env.BOARD_STT_LIVE_SECONDS || 180)   // longest dictation
-const LIVE_IDLE = Number(process.env.BOARD_STT_LIVE_IDLE_MS || 15000)    // no audio for this long: the page is gone
-const LIVE_WAIT = Number(process.env.BOARD_STT_LIVE_WAIT_MS || 10000)    // for the service to open, and to finish
-const LIVE_RATE = 16000                                                  // PCM16 mono, what the page sends
-const LIVE_SESSIONS = 4
-const live = new Map()   // id -> a running dictation
-
-const wavOf = pcm => {
-  const head = Buffer.alloc(44)
-  head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVEfmt ', 8)
-  head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20); head.writeUInt16LE(1, 22)
-  head.writeUInt32LE(LIVE_RATE, 24); head.writeUInt32LE(LIVE_RATE * 2, 28); head.writeUInt16LE(2, 32); head.writeUInt16LE(16, 34)
-  head.write('data', 36); head.writeUInt32LE(pcm.length, 40)
-  return Buffer.concat([head, pcm])
-}
-
-function liveOpen(req, res) {
-  const key = speechKey()
-  if (!key) throw fail(503, 'Speech is not set up (TINFOIL_API_KEY or data/tinfoil.key is missing)')
-  if (live.size >= LIVE_SESSIONS) throw fail(429, 'Too many dictations at once; stop one first')
-  const s = { id: crypto.randomBytes(9).toString('hex'), pcm: [], bytes: 0, text: '', queue: [], open: false, stopping: null, over: false, timer: null, ws: null }
-  live.set(s.id, s)
-  res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-store', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' })
-  s.emit = (event, data) => { if (!s.over) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`) }
-  s.wait = (ms, fn) => { clearTimeout(s.timer); s.timer = setTimeout(fn, ms) }
-  s.end = () => {
-    if (s.over) return
-    s.over = true
-    clearTimeout(s.timer)
-    live.delete(s.id)
-    try { s.ws.close() } catch {}
-    res.end()
-  }
-  s.fail = message => { s.emit('error', { message }); s.end() }
-  // The words are in: say them once more with the better model, then close.
-  s.finish = async transcript => {
-    if (s.finishing) return
-    s.finishing = true
-    clearTimeout(s.timer)
-    try { s.ws.close() } catch {}
-    let text = String(transcript ?? s.text).trim(), polished = false
-    // Nothing heard live: the file model would only invent words for the silence.
-    const better = text && await (s.better ??= s.polish())
-    if (better) { text = better; polished = true }
-    s.emit('final', { text, polished, reason: s.stopping ?? 'stop', seconds: Math.round(s.bytes / LIVE_RATE / 2 * 10) / 10 })
-    s.end()
-  }
-  s.polish = () => (LIVE_POLISH && s.bytes ? transcribe(wavOf(Buffer.concat(s.pcm)), 'audio/wav').catch(() => '') : Promise.resolve(''))
-  s.stop = reason => {
-    if (s.stopping || s.over) return
-    s.stopping = reason
-    if (!s.bytes) return s.finish('')
-    // Both at once: the live model says its last words while the file model reads the whole recording.
-    s.better = s.polish()
-    const commit = () => { try { s.ws.send(JSON.stringify({ type: 'input_audio_buffer.commit' })) } catch {} }
-    if (s.open) commit()
-    else s.queue.push(commit)
-    s.wait(LIVE_WAIT, () => s.finish())
-  }
-  // The page went away (closed, lost its network, pressed Esc): nothing is left running.
-  res.on('close', s.end)
-
-  const ws = s.ws = new WebSocket(`${SPEECH_API.replace(/^http/, 'ws')}/realtime?intent=transcription`, { headers: { Authorization: `Bearer ${key}` } })
-  ws.onmessage = e => {
-    let m
-    try { m = JSON.parse(e.data) } catch { return }
-    if (m.type === 'session.created') {
-      ws.send(JSON.stringify({ type: 'session.update', session: { type: 'transcription', audio: { input: { format: { type: 'audio/pcm', rate: LIVE_RATE }, transcription: { model: LIVE_MODEL } } } } }))
-      s.open = true
-      for (const queued of s.queue.splice(0)) typeof queued === 'function' ? queued() : ws.send(queued)
-    } else if (m.type === 'conversation.item.input_audio_transcription.delta' && typeof m.delta === 'string') {
-      s.text += m.delta
-      s.emit('delta', { text: m.delta })
-    } else if (m.type === 'conversation.item.input_audio_transcription.completed') {
-      s.finish(m.transcript)
-    } else if (m.type === 'error') {
-      s.fail(`Speech service: ${String(m.error?.message ?? m.message ?? 'error').slice(0, 300)}`)
-    }
-  }
-  ws.onerror = () => { if (!s.finishing) s.fail('Speech service: the live connection failed') }
-  ws.onclose = () => { if (!s.finishing) s.fail('Speech service: the live connection closed') }
-  s.wait(LIVE_WAIT, () => (s.open ? s.stop('idle') : s.fail('Speech service: the live connection did not open')))
-  s.emit('ready', { id: s.id, rate: LIVE_RATE, max_seconds: LIVE_SECONDS })
-}
-
-function liveAudio(id, pcm) {
-  const s = live.get(id)
-  if (!s || s.stopping) throw fail(s ? 409 : 404, 'This dictation has ended')
-  if (pcm.length % 2) throw fail(400, 'audio must be whole 16-bit samples')
-  const room = LIVE_SECONDS * LIVE_RATE * 2 - s.bytes
-  const part = pcm.length > room ? pcm.subarray(0, room) : pcm
-  if (part.length) {
-    s.pcm.push(part)
-    s.bytes += part.length
-    const frame = JSON.stringify({ type: 'input_audio_buffer.append', audio: part.toString('base64') })
-    if (s.open) s.ws.send(frame)
-    else s.queue.push(frame)
-  }
-  if (pcm.length >= room) return s.stop('limit')
-  if (s.open) s.wait(LIVE_IDLE, () => s.stop('idle'))
-}
-
 // What a card sounds like when read out: markdown stripped, code skipped, options numbered.
 function cardScript(card) {
   const plain = String(card.body ?? '')
@@ -3424,6 +3343,8 @@ const turbo = turboRoutes({
   addMessage, addEvent, commit, deliver, decide, trust, shred, snooze, closeInfo, reopen, memo: memoAct,
   storeUploads, uploadPath, setDraft,   // a card's page: files with an answer, the draft kept while typing (turbo.mjs)
   message: humanMessage, uploadLimit: UPLOAD_BODY, assetBases,   // the session page (turbo-session.mjs)
+  // the Dev menu's test cards (server/fixtures.mjs)
+  fixtures: { state: () => state, commit, runTool, storeAsset, desk: fixtureDesk, session: fixtureSession, drop: dropFixtures, message: humanMessage, decide, snooze },
 })
 const withoutToken = url => {
   const rest = new URLSearchParams(url.search)
@@ -3594,18 +3515,6 @@ async function handleRequest(req, res) {
       const body = await readJson(req, 96e6)
       const id = await storeScribble(targetAgent(body.agent), body)
       return send(res, 200, JSON.stringify({ ok: true, id }))
-    }
-    if (req.method === 'POST' && url.pathname === '/speech/transcribe') {
-      const audio = await readRaw(req, 25e6)
-      return send(res, 200, JSON.stringify({ text: await transcribe(audio, req.headers['content-type'] || 'audio/webm') }))
-    }
-    if (req.method === 'POST' && url.pathname === '/speech/live') return liveOpen(req, res)
-    if (req.method === 'POST' && url.pathname.startsWith('/speech/live/')) {
-      const [id, verb] = url.pathname.slice('/speech/live/'.length).split('/')
-      if (verb === 'stop') live.get(id)?.stop('stop')
-      else if (verb) return send(res, 404, '{"error":"not found"}')
-      else liveAudio(id, await readRaw(req, 2e6))
-      return send(res, 200, '{"ok":true}')
     }
     // Any text read aloud: a message, a question. The page sends it in pieces, cleaned of markup.
     if (req.method === 'POST' && url.pathname === '/speech/say') {

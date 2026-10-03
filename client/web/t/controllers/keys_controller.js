@@ -33,7 +33,7 @@ function start(signal) {
   const base = () => document.body.dataset.tBase ?? ''
   const view = () => document.body.dataset.tView ?? ''
   const shown = node => Boolean(node && !node.closest('[hidden], [inert]') && node.getClientRects().length)
-  const typingIn = node => Boolean(node?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])'))
+  const typingIn = node => Boolean(node?.closest?.('input:not([type=checkbox], [type=radio], [type=button], [type=submit]), textarea, select, [contenteditable]:not([contenteditable="false"])'))
   const isControl = node => Boolean(node?.closest?.('button, a[href], summary, [role="button"]'))
   /** Go to a page the way a click on a link does (Turbo for the pages rendered here, a whole load for the others: t/boot.js). */
   function go(path) {
