@@ -269,10 +269,10 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
 
   // ---- who may write what (R1, R6), the hub's second line --------------------------
 
-  async function authoriseEnvelope(h, senderRole) {
+  /** Key scope and epoch (R3, R6): who may write under this key now. Returns the session ({ state, since, agents }) or null. */
+  async function authoriseScope(h, senderRole) {
     const sender = id(h.sender)
     const human = senderRole === ROLE.HUMAN
-    const recipient = isZeroId(h.recipient) ? null : id(h.recipient)
     let sess = null
     if (h.keyScope === KEY_SCOPE.SESSION) {
       const c = await sessionOf(id(h.sessionId))
@@ -293,6 +293,14 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
         if (since == null || now() - since > z.EPOCH_GRACE_MS) fail('wrong-epoch', 'sent in an old key epoch: fetch the member list')
       }
     }
+    return sess
+  }
+
+  async function authoriseEnvelope(h, senderRole) {
+    const sender = id(h.sender)
+    const human = senderRole === ROLE.HUMAN
+    const recipient = isZeroId(h.recipient) ? null : id(h.recipient)
+    const sess = await authoriseScope(h, senderRole)
     const scopeOf = info => `${info.keyScope}:${info.sessionId ?? ''}`
     const myScope = `${h.keyScope}:${h.sessionId ? id(h.sessionId) : ''}`
     let pushAllowed = false
@@ -374,7 +382,9 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
 
     challenge() {
       for (const [k, exp] of challenges) if (now() > exp) challenges.delete(k)
-      if (challenges.size > 10000) fail('too-many', 'too many open challenges')
+      // A flood of anonymous challenges must not lock members out: the oldest open one makes room (an honest device
+      // signs its challenge within a round trip, long before 10,000 newer ones arrive).
+      while (challenges.size >= 10000) challenges.delete(challenges.keys().next().value)
       const c = rng(32)
       challenges.set(b64u(c), now() + CHALLENGE_TTL_MS)
       return c
@@ -535,6 +545,21 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       c.seq = h.seq; c.hash = v.hash; c.hashes.set(h.seq, v.hash)
       chains.set(k, c)
       return { n, push: pushAllowed, card, isHead: h.isHead, kind: h.kind, recipient: isZeroId(h.recipient) ? null : id(h.recipient) }
+    }),
+
+    /**
+     * C05: an ephemeral envelope (typing, a pen preview) is relayed only if it is the signed-in device's own, signed,
+     * from an active member, under a key it may use now. Its chain position is not checked or advanced (never stored).
+     * Returns the audience: { humans: true, agents: [hex] } (session scope: humans and the assigned agents; room: humans).
+     */
+    checkEphemeral: (token, bytes) => serial(async () => {
+      const s = session(token, { member: true })
+      const head = z.peekEnvelope(bytes)
+      if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
+      if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device sends its own envelopes only')
+      const v = await z.verifyEnvelope(bytes, { state: room(), chains: z.newChains(), allowChainStart: true, commit: false })
+      const sess = await authoriseScope(v.header, s.role)
+      return { agents: sess ? sess.agents : [] }
     }),
 
     envelopes(token, { after = 0, limit = 200 } = {}) {

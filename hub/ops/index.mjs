@@ -27,14 +27,16 @@ const HOUR = 3600000
 
 export async function createOps({ db, dataDir, files, room, closeRoom, announce, bearer, ipOf, now = Date.now, log = () => {}, env = process.env }) {
   const versions = clientVersions({ env, log, now })
-  const flow = flowControl({ maxWrites: envNumber(env, 'HUB_WRITE_QUEUE', 512), streamBufferBytes: envNumber(env, 'HUB_STREAM_BUFFER_BYTES', 4 << 20) })
-  const tests = testRooms({ db, dataDir, publicKey: env.HUB_TEST_PUBLIC_KEY || undefined, closeRoom, now, log })
+  const flow = flowControl({ maxWrites: envNumber(env, 'HUB_WRITE_QUEUE', 512), maxMembershipWrites: envNumber(env, 'HUB_WRITE_QUEUE_MEMBERSHIP', 32),
+    maxWritesPerIp: envNumber(env, 'HUB_WRITE_PER_IP', 16), ipOf, streamBufferBytes: envNumber(env, 'HUB_STREAM_BUFFER_BYTES', 4 << 20) })
+  const tests = testRooms({ db, dataDir, publicKey: env.HUB_TEST_PUBLIC_KEY, closeRoom, now, log })
   const quota = attachmentQuota({ db, files, quotaBytes: envNumber(env, 'ROOM_ATTACHMENT_QUOTA_BYTES', 1 << 30), announce, log })
   const escrow = passwordEscrow({ db, now })
   const escrowReads = windowLimit(envNumber(env, 'HUB_LIMIT_ESCROW_READS_PER_HOUR', 10), HOUR, now)
   const wal = walKeeper({ db, dataDir, truncateBytes: envNumber(env, 'HUB_WAL_TRUNCATE_BYTES', 64 << 20) })
   const metrics = hubMetrics({ dataDir, flow, wal, now })
-  const unlimited = (req, roomId) => tests.isTestRequest(req) || (!!roomId && tests.isTestRoom(roomId))
+  // Limits are lifted for test rooms only (a signed founding with test_room: true is handled in server.mjs).
+  const unlimited = (req, roomId) => !!roomId && tests.isTestRoom(roomId)
 
   const guard = fn => () => { try { const p = fn(); p?.catch?.(err => log(`ops: ${err.message}`)) } catch (err) { log(`ops: ${err.message}`) } }
   const timers = [setInterval(guard(() => wal.checkpoint()), 10000), setInterval(guard(() => tests.expire()), 600000)]
@@ -62,16 +64,22 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
     }
     if (sub === 'escrow') {
       if (m === 'GET') {
-        // Anonymous: the room is not loaded, only looked up.
-        if (!db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(roomId)) return sendJson(res, 404, { error: 'no-room', message: 'no such room on this hub' })
-        if (!unlimited(req, roomId)) {
-          const wait = escrowReads.take(`room:${roomId}`) || escrowReads.take(`ip:${ipOf(req)}`)
-          if (wait) { res.setHeader('retry-after', String(wait)); return sendJson(res, 429, { error: 'rate-limited', message: 'too many escrow reads; try again later' }) }
-        }
+        // Anonymous, never unlimited. The address budget is charged first, so one address cannot spend the room's.
+        // "No room" and "no escrow" are one answer.
+        const wait = escrowReads.take(`ip:${ipOf(req)}`) || escrowReads.take(`room:${roomId}`)
+        if (wait) { res.setHeader('retry-after', String(wait)); return sendJson(res, 429, { error: 'rate-limited', message: 'too many escrow reads; try again later' }) }
+        if (!db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(roomId)) return sendJson(res, 404, { error: 'not-found', message: 'this room has no password escrow' })
         return sendJson(res, 200, escrow.get(roomId))
       }
-      const me = (await room(roomId)).hub.authorise(bearer(req), { human: true })
-      if (m === 'PUT') return sendJson(res, 200, escrow.put(roomId, me.id, await readJson(req, 8192)))
+      const r = await room(roomId)
+      const me = r.hub.authorise(bearer(req), { human: true })
+      if (m === 'PUT') {
+        const body = await readJson(req, 8192)
+        r.hub.authorise(bearer(req), { human: true })        // C04: still a member once the body is in
+        const out = escrow.put(roomId, me.id, body)
+        announce(roomId, 'escrow_changed', { escrow_version: out.escrow_version, updater_device_id: me.id })
+        return sendJson(res, 200, out)
+      }
       if (m === 'DELETE') { escrow.delete(roomId); return sendJson(res, 200, { ok: true }) }
     }
     return false

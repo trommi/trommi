@@ -6,7 +6,8 @@ ENV COMMIT=$COMMIT \
     NODE_ENV=production \
     HUB_PORT=8790 \
     HUB_DATA=/data \
-    HUB_URL=https://hub.trommi.com
+    HUB_URL=https://hub.trommi.com \
+    HUB_TRUST_CF=1
 WORKDIR /app
 COPY crypto/zcrypto.mjs crypto/hub.mjs crypto/session-grants.mjs crypto/
 COPY hub/server.mjs hub/store.mjs hub/attachments.mjs hub/push.mjs hub/

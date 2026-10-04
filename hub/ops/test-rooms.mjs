@@ -1,15 +1,16 @@
-// test-rooms.mjs: rooms for load tests, opened by a signed test request. The load harness holds the private
-// half of HUB_TEST_PUBLIC_KEY (default: the key below; a public key is not a secret) and signs
+// test-rooms.mjs: rooms for load tests, opened by a signed test request. OFF unless HUB_TEST_PUBLIC_KEY is set to an
+// Ed25519 public key (base64url x); there is no default key ("off" or empty: off; keep it off before launch).
+// The load harness holds the private half and signs
 //   x-test-signature: v1.<timestamp ms>.<nonce>.<sig>, sig = base64url Ed25519 signature of
 //   "trommi-test-request/v1\n<METHOD>\n<path?query>\n<timestamp>\n<nonce>" (nonce: 16 random base64url characters).
-// Valid for 60 s and once. Such a request may found a room with `test_room: true`, may DELETE a test room,
-// and skips the rate limits; envelopes of a test room skip them too. A test room expires after 24 hours.
+// Valid for 60 s and once. Such a request may found a room with `test_room: true` (without the founding token and
+// the per-address founding limit) and may DELETE a test room. Rate limits are lifted only for the routes of a room in
+// the test-room set; never for a real room and never for the escrow. A test room expires after 24 hours.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { refuse } from './http.mjs'
 
-export const DEFAULT_TEST_PUBLIC_KEY = 'etF-f9k4ZWZpX3iTdR4BujGesFXSgXxp18UzLbiVDec'
 const DAY = 86400000, FRESH_MS = 60000, LABEL = 'trommi-test-request/v1'
 
 const message = (method, pathAndQuery, at, nonce) => Buffer.from(`${LABEL}\n${method}\n${pathAndQuery}\n${at}\n${nonce}`)
@@ -20,14 +21,22 @@ export function signTestRequest(privateKey, method, pathAndQuery, at = Date.now(
   return `v1.${at}.${nonce}.${crypto.sign(null, message(method, pathAndQuery, at, nonce), privateKey).toString('base64url')}`
 }
 
-export function testRooms({ db, dataDir, publicKey = DEFAULT_TEST_PUBLIC_KEY, closeRoom = async () => {}, now = Date.now, log = () => {}, lifetimeMs = DAY }) {
+/** The public key from the environment value, or null (test rooms off) when unset, empty or "off". */
+function publicKeyOf(value) {
+  const v = String(value ?? '').trim()
+  if (!v || /^(off|0|false|no)$/i.test(v)) return null
+  return crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: v }, format: 'jwk' })
+}
+
+export function testRooms({ db, dataDir, publicKey = null, closeRoom = async () => {}, now = Date.now, log = () => {}, lifetimeMs = DAY }) {
   db.exec('CREATE TABLE IF NOT EXISTS test_rooms (room_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL) WITHOUT ROWID')
   const ids = new Set(db.prepare('SELECT room_id FROM test_rooms').all().map(r => r.room_id))
-  const key = crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey }, format: 'jwk' })
+  const key = publicKeyOf(publicKey)
   const used = new Map()             // nonce -> expiry: each signed request works once
   const verdicts = new WeakMap()     // req -> boolean, so one request can be asked several times
 
   function verify(req) {
+    if (!key) return false
     const m = /^v1\.(\d{13})\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{86})$/.exec(req.headers['x-test-signature'] ?? '')
     if (!m) return false
     const at = Number(m[1]), t = now()
@@ -53,11 +62,13 @@ export function testRooms({ db, dataDir, publicKey = DEFAULT_TEST_PUBLIC_KEY, cl
   }
 
   return {
+    enabled: !!key,
     isTestRequest,
-    isTestRoom: roomId => ids.has(roomId),
+    /** In the test-room set while test rooms are on (with the key unset, old test rooms are ordinary rooms). */
+    isTestRoom: roomId => !!key && ids.has(roomId),
     /** Before founding: is this a test room, and may it be one? */
     wanted(req, body) {
-      if (body.test_room !== true) return false
+      if (body?.test_room !== true) return false
       if (!isTestRequest(req)) refuse(403, 'forbidden', 'a test room needs a signed test request (x-test-signature)')
       return true
     },

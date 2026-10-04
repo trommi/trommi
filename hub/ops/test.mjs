@@ -37,7 +37,7 @@ async function newHub(opts = {}, env = {}) {
   const saved = { ...process.env }
   Object.assign(process.env, env)
   try {
-    const hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: dir, commit: 'test', log: () => {}, ...opts })
+    const hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: dir, commit: 'test', log: () => {}, trustCloudflare: true, ...opts })
     return { hub, dir, base: hub.hubUrl, hubUrl: hub.hubUrl, ip: freshIp() }
   } finally { process.env = saved }
 }
@@ -158,7 +158,7 @@ test('versions: an open stream of a client that is now too old gets upgrade_requ
 
 // ---- test rooms and limits -------------------------------------------------------------------
 
-test('limits from the environment; a signed test request lifts them (right key, path, fresh, once)', async () => {
+test('limits from the environment; a signed test request lifts nothing on a real room; a test room\'s routes are unlimited', async () => {
   assert.deepEqual(limitsFromEnv({ envelopesPerSecond: 50, json: 10 }, { HUB_LIMIT_ENVELOPES_PER_SECOND: '5000', HUB_LIMIT_JSON: 'x' }), { envelopesPerSecond: 5000, json: 10 })
   assert.equal(LIMITS.openRequestsPerIpMinute, 6)
   const w = await newHub()
@@ -170,11 +170,18 @@ test('limits from the environment; a signed test request lifts them (right key, 
   await expect(w, 'POST', p, { headers: { 'x-test-signature': signTestRequest(other, 'POST', p) } }, 429, 'rate-limited')          // someone else's key
   await expect(w, 'POST', p, { headers: signed('POST', `${R(w)}/devices`) }, 429, 'rate-limited')                                 // another path
   await expect(w, 'POST', p, { headers: signed('POST', p, Date.now() - 61000) }, 429, 'rate-limited')                             // stale
-  for (let i = 0; i < 10; i++) await expect(w, 'POST', p, { headers: signed('POST', p) }, 200)
-  const once = signed('POST', p)
-  await expect(w, 'POST', p, { headers: once }, 200)
-  await expect(w, 'POST', p, { headers: once }, 429, 'rate-limited')                                                              // replayed
+  await expect(w, 'POST', p, { headers: signed('POST', p) }, 429, 'rate-limited')                                                 // a real room: never lifted
+  // A test room (founded by a signed request) has no open-route limit.
+  await foundRoom(w, { extra: { test_room: true }, headers: signed('POST', '/v1/rooms') })
+  for (let i = 0; i < 12; i++) await expect(w, 'POST', `${R(w)}/challenge`, {}, 200)
   await w.hub.close()
+  // Off: HUB_TEST_PUBLIC_KEY unset or "off" accepts no test signature at all.
+  for (const key of ['off', '']) {
+    const off = await newHub({}, { HUB_TEST_PUBLIC_KEY: key })
+    assert.equal(off.hub.ops.testRooms.enabled, false)
+    await expect(off, 'POST', '/v1/rooms', { body: { test_room: true }, headers: signed('POST', '/v1/rooms') }, 403, 'forbidden')
+    await off.hub.close()
+  }
 })
 
 test('test rooms: founding needs a signed request; DELETE removes rows and attachments; others cannot be deleted; expiry after 24 h', async () => {
@@ -196,7 +203,8 @@ test('test rooms: founding needs a signed request; DELETE removes rows and attac
     if (w.hub.db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = \'room_id\'').get(t)) assert.equal(w.hub.db.prepare(`SELECT COUNT(*) AS n FROM "${t}" WHERE room_id = ?`).get(testRoom).n, 0, t)
   }
   // An ordinary room is not deletable, not even with the token.
-  await foundRoom(w, { headers: signed('POST', '/v1/rooms') })
+  await expect(w, 'POST', '/v1/rooms', { body: {}, headers: signed('POST', '/v1/rooms') }, 403, 'forbidden')   // signed: test rooms only
+  await foundRoom(w)
   const normal = w.roomId
   await expect(w, 'DELETE', R(w), { headers: signed('DELETE', R(w)) }, 404, 'not-found')
   // Expiry.
@@ -356,10 +364,10 @@ test('escrow: put by a human, read by anyone with the room id (10 per hour per r
   // 10 reads of this room in the hour (the first answered 404 and counts too): the room is closed for reads from anywhere.
   const r = await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 429, 'rate-limited')
   assert.ok(Number(r.headers.get('retry-after')) > 3000)
-  await expect(w, 'GET', `${R(w)}/escrow`, { headers: signed('GET', `${R(w)}/escrow`) }, 200)
-  await expect(w, 'GET', `/v1/rooms/${'c'.repeat(64)}/escrow`, {}, 404, 'no-room')
+  await expect(w, 'GET', `${R(w)}/escrow`, { headers: signed('GET', `${R(w)}/escrow`) }, 429, 'rate-limited')       // a test signature lifts nothing
+  // "No room" and "no escrow" are one answer.
+  await expect(w, 'GET', `/v1/rooms/${'c'.repeat(64)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')
   await expect(w, 'DELETE', `${R(w)}/escrow`, { token: w.phone.token }, 200)
-  await expect(w, 'GET', `${R(w)}/escrow`, { headers: signed('GET', `${R(w)}/escrow`) }, 404, 'not-found')
   await w.hub.close()
 })
 
