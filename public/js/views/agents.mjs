@@ -15,7 +15,7 @@ import { html, raw } from './html.mjs'
 import { avatar, badge } from './sidebar.mjs'
 import { agoSpan } from './text.mjs'
 import { cardPath } from './desk.mjs'
-import { renameControl, markControl, marksFrame, marksHolder, sessionForms, answerFields } from './session-edit.mjs'
+import { renameControl, markControl, marksFrame, marksHolder, sessionForms, answerFields, LATER } from './session-edit.mjs'
 import { sketchSvg, crownSvg } from '../pen.js'
 
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
@@ -59,9 +59,8 @@ function around(m, base) {
 const stateWord = (u, hand) => (hand ? 'stopped' : !u.online ? 'away' : u.running ? 'working' : u.open ? 'asking' : 'idle')
 const post = (action, fields, button) => html`<form method="post" action="${action}">${answerFields(STAY)}${fields}${button}</form>`
 
-// What a <details> of a line holds is put in only when it opens (controller "ledger"): a page of many sessions
+// What a <details> of a line holds is put in only when it opens (controller "later"): a page of many sessions
 // would otherwise carry every session's name in every line's lists.
-const LATER = raw(' data-controller="ledger" data-action="toggle->ledger#fill"')
 const later = inner => html`<template>${inner}</template>`
 
 // A choice that drops down from a small control: its options are the buttons of one form.
@@ -78,7 +77,7 @@ function sheet(u, ctx, { group, others }) {
 ${later(html`<div class="ledger-sheet t-sheet" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
 <a class="ledger-sheet-item" data-nav href="${base}/s/${encodeURIComponent(a.id)}">Open the conversation</a>
 ${post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="ledger-sheet-item" type="submit">Rename</button>`)}
-<details class="t-sheet-marks"><summary class="ledger-sheet-item">Choose a drawing</summary>${marksHolder(a, base, { stay: true, where: 's' })}</details>
+<details class="t-sheet-marks"${LATER}><summary class="ledger-sheet-item">Choose a drawing</summary>${marksHolder(a, base, { stay: true, where: 's' })}</details>
 ${item(`${forms}/star`, 'starred', a.starred ? '0' : '1', a.starred ? 'Take the crown off' : 'Give the crown')}
 ${a.parent ? item(`${forms}/edit`, 'parent', '', `Stand alone (leave main agent ${m.byAgent.get(a.parent)?.name ?? a.parent})`) : ''}
 ${group ? item(`${forms}/unpair`, 'out', '1', `Take out of the group with ${others}`) : ''}

@@ -24,22 +24,20 @@ export function renameControl(agent, base, { stay = false, back = '', cls = 'led
 }
 
 const framed = (agent, where) => `marks-${where ? `${where}-` : ''}${agent.id}`
-const marksQuery = ({ stay, back, where }) => new URLSearchParams({ ...(stay ? { stay: '1' } : {}), ...(back ? { back } : {}), ...(where ? { in: where } : {}) }).toString()
 
 /** The grid of drawings, as the frame that the picker fetches when it is opened. */
 export function marksFrame(agent, base, { stay = false, back = '', where = '' } = {}) {
   return html`<turbo-frame id="${framed(agent, where)}"><form method="post" action="${sessionForms(agent, base)}/edit" data-turbo-frame="_top">${answerFields({ stay, back })}<div class="mark-grid" role="radiogroup" aria-label="Drawing">${DRAWINGS.map(name => html`<button class="mark-tile" type="submit" name="icon" value="${drawingMark(name)}" role="radio" aria-checked="${String(agent.mark === drawingMark(name))}" aria-label="${name}" title="${name}" style="--hue:${drawingHue(name)}">${raw(doodleSvg(drawingMark(name)))}</button>`)}</div></form></turbo-frame>`
 }
 
-/** The place the grid of drawings loads into (lazily: when it comes into view, that is when its <details> opens). */
-export const marksHolder = (agent, base, opts = {}) => {
-  const query = marksQuery(opts)
-  return html`<turbo-frame id="${framed(agent, opts.where)}" src="${sessionForms(agent, base)}/marks${query ? `?${query}` : ''}" loading="lazy"><p class="t-pop-wait">Drawings…</p></turbo-frame>`
-}
+/** The grid of drawings, put in when its <details> opens (that <details> carries LATER: controller "later"). */
+export const marksHolder = (agent, base, opts = {}) => html`<template>${marksFrame(agent, base, opts)}</template>`
+/** On a <details> whose content waits in a <template> until it opens. */
+export const LATER = raw(' data-controller="later" data-action="toggle->later#fill"')
 
 /** The mark as the control that opens the drawings. (Without a crown: where the crown is shown, it is a control of its own.) */
 export function markControl(agent, base, { stay = false, back = '', cls = 'ledger-mark' } = {}) {
-  return html`<details class="t-pick t-pick-mark"><summary class="${cls}" data-ledger="mark" title="Choose a drawing" aria-label="${agent.name}: choose a drawing">${avatar(agent, { crown: false })}</summary>
+  return html`<details class="t-pick t-pick-mark"${LATER}><summary class="${cls}" data-ledger="mark" title="Choose a drawing" aria-label="${agent.name}: choose a drawing">${avatar(agent, { crown: false })}</summary>
 <div class="mark-picker t-pop">${marksHolder(agent, base, { stay, back })}</div></details>`
 }
 
