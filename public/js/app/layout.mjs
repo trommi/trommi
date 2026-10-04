@@ -3,7 +3,7 @@
 // import map and the live stream (the router keeps the head and patches the body).
 import { html, raw } from '../views/html.mjs'
 import { sidebarRows, deskState } from '../views/sidebar.mjs'
-import { sketchSvg } from '../pen.js'
+import { sketchSvg, doodleSvg } from '../pen.js'
 import { menuDoors } from '../views/menu.mjs'
 import { pageSheets } from '../views/keys.mjs'
 import { memoLayer } from '../views/memo.mjs'
@@ -25,7 +25,7 @@ export const CSS = {
 function doors(model, base) {
   let out = String(menuDoors(model, base))
   const sk = name => sketchSvg(name)
-  out = out.replace('<div class="menu-foot">', `<a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Geräte und Einstellungen">${sk('phone')}<span>Geräte</span></a><div class="menu-foot">`)
+  out = out.replace('<div class="menu-foot">', `<a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Geräte und Einstellungen">${doodleSvg('draw:phone')}<span>Geräte</span></a><div class="menu-foot">`)
   out = out.replace(/<button role="menuitem" type="button" id="dev-fake"[\s\S]*?<\/button><button role="menuitem" type="button" id="dev-fake-clear"[\s\S]*?<\/button>/, '')
   out = out.replace(/<a role="menuitem" href="\/old\/"[^>]*>Old board<\/a><a role="menuitem" href="\/admin.html"[^>]*>Admin<\/a>/, '')
   out = out.replace('<a role="menuitem" href="/screens.html" id="dev-screens">All screens</a>', `<a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Mock room</a>`)
