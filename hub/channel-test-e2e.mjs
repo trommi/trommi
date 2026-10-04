@@ -272,6 +272,23 @@ export async function integration({ test, tmp }) {
       assert.equal([...human.model.sessions.values()].filter(s => s.profile?.agent_name === 'Design').length, before)
     })
 
+    await test('e2e: a renamed project folder keeps its identity (slot name kept in .trommi/slot-base)', async () => {
+      const entries = human.model.room.last_entry_number
+      assert.match(fs.readFileSync(path.join(project, '.trommi', 'slot-base'), 'utf8'), /project/)
+      await channel.close()
+      const moved = `${project}-renamed`
+      fs.renameSync(project, moved)
+      try {
+        channel = await startChannel({ env: { ...env, TROMMI_FOLDER: moved }, cwd: moved })
+        await channel.ready().catch(e => { throw new Error(`${e.message}\n${channel.stderr()}`) })
+        assert.match(channel.stderr(), new RegExp(`as ${agentId.slice(0, 12)}`))
+        assert.equal(human.model.room.last_entry_number, entries, 'no new member entry')
+        await channel.close()
+      } finally { fs.renameSync(moved, project) }
+      channel = await startChannel({ env, cwd: project })
+      await channel.ready()
+    })
+
     await test('e2e: forged commands are dropped and reported as alert/<n>', async () => {
       const forge = await import('./channel-test-forge.mjs').catch(() => null)
       if (!forge) throw new Error('forging helpers missing')
