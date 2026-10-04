@@ -817,6 +817,30 @@ await test('S2 commands fail closed (R3, MEDIUM-6): a failed member refresh hold
   eq(cmds.filter(c => c.command === 'answer').length, 1, 'once')
 })
 
+await test('S2 a removal re-keys every session in ONE atomic post (session_grants: all or none)', async () => {
+  const { phone, laptop, agents } = await room({ laptop: true, agents: 3 })
+  await settleAll(phone, laptop, ...agents)
+  const calls = { batch: 0, single: 0 }
+  const b = phone.hub.postSessionGrants.bind(phone.hub), one = phone.hub.postSessionGrant.bind(phone.hub)
+  phone.hub.postSessionGrants = async g => { calls.batch++; return b(g) }
+  phone.hub.postSessionGrant = async (...a) => { calls.single++; return one(...a) }
+  const epochs = agents.map(a => phone.sessionKeys.get(a.session_id).state.epoch)
+  await phone.removeDevices([laptop.my_device_id])
+  eq(calls, { batch: 1, single: 0 }, 'one post for three sessions')
+  agents.forEach((a, i) => eq(phone.sessionKeys.get(a.session_id).state.epoch, epochs[i] + 1, `session ${i} re-keyed`))
+  for (const a of agents) { await a.sendMessage({ text: 'after' }); await a.settle() }
+  // all or none: a batch with one broken grant stores nothing
+  const sids = agents.map(a => a.session_id)
+  const before = await Promise.all(sids.map(sid => phone.hub.sessionGrants(sid, -1).then(r => r.signed_grants.length)))
+  const g0 = await phone._makeGrant(sids[0], { agent_device_ids: phone.sessionKeys.get(sids[0]).state.agentIds, rotate: true })
+  const body0 = { session_id: sids[0], signed_grant: z.b64u(g0.r.grant), sealed_session_keys: g0.r.wraps.map(w => ({ device_id: z.hex(w.id), key_sealed: z.b64u(w.sealed) })), key_back_link: g0.r.backLink ? z.b64u(g0.r.backLink) : undefined }
+  let err = null
+  try { await b([body0, { ...body0, session_id: sids[1] }]) } catch (e) { err = e }
+  assert(err, 'the broken batch is refused')
+  const after = await Promise.all(sids.map(sid => phone.hub.sessionGrants(sid, -1).then(r => r.signed_grants.length)))
+  eq(after, before, 'nothing of it was stored')
+})
+
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
   const N = BENCH ? 20000 : 6000
   const { phone, agents: [agent] } = await room({ agents: 1 })

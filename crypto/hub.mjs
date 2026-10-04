@@ -235,7 +235,24 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
   /** The agents currently assigned to a session: in its newest grant and still active members. */
   const assignedAgents = st => (st?.agentIds ?? []).filter(a => activeRole(a) === ROLE.AGENT)
 
-  async function acceptGrant({ sessionId, grant, wraps, backLink }) {
+  async function acceptGrant(args) {
+    const p = await prepareGrant(args)
+    tx(() => p.write())
+    return p.finish()
+  }
+  /**
+   * Several grants at once (one removal re-keys every session): all are checked first, then written in ONE transaction,
+   * or none is. Sessions must be distinct. Returns the results in order.
+   */
+  async function acceptGrants(list) {
+    if (!Array.isArray(list) || !list.length || list.length > 1024) fail('bad-argument', 'grants: a list of 1 to 1024')
+    if (new Set(list.map(g => g.sessionId)).size !== list.length) fail('bad-argument', 'one grant per session in a batch')
+    const prepared = []
+    for (const g of list) prepared.push(await prepareGrant(g))
+    tx(() => { for (const p of prepared) p.write() })
+    return prepared.map(p => p.finish())
+  }
+  async function prepareGrant({ sessionId, grant, wraps, backLink }) {
     if (!/^[0-9a-f]{32}$/.test(sessionId ?? '')) fail('bad-argument', 'a session id is 32 hex characters')
     if (!(grant instanceof Uint8Array)) fail('bad-format', 'grant must be bytes')
     const c = await sessionOf(sessionId)
@@ -259,14 +276,18 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
           id(backLink.slice(2, 18)) !== sessionId || new DataView(backLink.buffer, backLink.byteOffset).getUint32(18) !== next.epoch) fail('incomplete', 'a new session key comes with the link back to the old one')
     } else if (backLink) fail('bad-format', 'only a new session key epoch carries a back link')
     const at = now()
-    tx(() => {
-      storage.putGrant(sessionId, { bytes: grant, grantNumber: next.grantNumber, grantHash: id(next.grantHash), previousGrantHash: prev ? id(prev.grantHash) : '0'.repeat(64), epoch: next.epoch, signer: next.signerId, receivedAt: at })
-      for (const w of given) storage.putSessionWrap(sessionId, next.epoch, w.id, w.sealed)
-      if (rose) storage.putSessionBackLink(sessionId, next.epoch, backLink)
-    })
-    if (!prev || rose) c.since.set(next.epoch, at)
-    c.state = next
-    return { grantNumber: next.grantNumber, grantHash: id(next.grantHash), sessionKeyEpoch: next.epoch, agentIds: next.agentIds }
+    return {
+      write() {
+        storage.putGrant(sessionId, { bytes: grant, grantNumber: next.grantNumber, grantHash: id(next.grantHash), previousGrantHash: prev ? id(prev.grantHash) : '0'.repeat(64), epoch: next.epoch, signer: next.signerId, receivedAt: at })
+        for (const w of given) storage.putSessionWrap(sessionId, next.epoch, w.id, w.sealed)
+        if (rose) storage.putSessionBackLink(sessionId, next.epoch, backLink)
+      },
+      finish() {
+        if (!prev || rose) c.since.set(next.epoch, at)
+        c.state = next
+        return { sessionId, grantNumber: next.grantNumber, grantHash: id(next.grantHash), sessionKeyEpoch: next.epoch, agentIds: next.agentIds }
+      },
+    }
   }
 
   // The chain advances only once the envelope is stored: a failed write must not leave the hub a number ahead (C15).
@@ -430,6 +451,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
 
     /** A human device (or the recovery key) posts a session grant with the session key sealed for everyone who holds it. Self-authenticating. */
     postGrant: args => serial(() => acceptGrant(args)),
+    postGrants: list => serial(() => acceptGrants(list)),
     async grants(token, sessionId) {
       session(token)
       return storage.grants(sessionId).map(g => g.bytes)
