@@ -1431,6 +1431,30 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   void snap
 })
 
+await test('warm reload: a member entry posted while the stream opens is not lost; the stream delivers within 2 s', async () => {
+  const st = memoryStorage({ extractable_keys: false })
+  const { phone, agents: [agent, gone] } = await room({ agents: 2 })
+  const laptop = await addHuman(phone, 'Laptop', st)
+  await settleAll(phone, laptop, agent, gone)
+  await laptop.stop()                                        // the page goes away (a reload)
+  // The reloaded page signs in and reads the member list; just before its stream reaches the hub another device
+  // changes the list (here: the phone removes an agent). The stream replays envelopes from the cursor, not member entries.
+  let raced = false
+  const hooked = async (url, init) => {
+    if (!raced && String(url).includes('/stream')) { raced = true; await phone.removeDevices([gone.my_device_id]) }
+    return fetch(url, init)
+  }
+  const again = track(await openRoom({ storage: st, fetch: hooked }))
+  await again.start()
+  assert(raced, 'the removal raced the stream')
+  await until(() => again.model.members.get(gone.my_device_id)?.is_active === false, 'the reloaded device sees the removal', 2000)
+  // and the stream is really live: another device posts, it arrives within 2 s
+  const t0 = Date.now()
+  const id = await agent.sendCard({ title: 'after the reload', options: [{ key: 'a', label: 'A' }] })
+  await until(() => again.model.cards.get(id)?.title === 'after the reload', 'a card posted after the reload arrives live', 2000)
+  console.log(`     card after the reload at the reloaded device in ${Date.now() - t0} ms`)
+})
+
 if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', async () => {
   const N = BENCH ? 5000 : 1000
   const { phone, agents: [agent] } = await room({ agents: 1 })
