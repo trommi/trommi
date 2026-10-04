@@ -82,8 +82,15 @@ async function hostileEnd(w, R) {
   // the hub turns honest again: do the clients find their way back to the truth?
   a.active = false
   for (const d of w.devs.values()) if (d.client && !d.dead) { try { await d.client.catchUp() } catch {} }
+  // a device that met gaps re-reads the room after its gap backoff (2 s doubling, at most 10 min): wait for the ones due soon
+  const due = Date.now() + 20000
+  while (Date.now() < due && [...w.devs.values()].some(d => d.client && !d.dead && (d.client._gapTimer || d.client._needResync || d.client._resyncing))) await sleep(100)
   try { await w.quiesce({ timeout_ms: 20000 }); await C.checkConvergence(R) }
-  catch (e) { w.known.set(`H1-no-recovery-after-${a.kind}`, `after a hub that ${a.kind}s turned honest again the clients did not converge (${String(e.message).split(String.fromCharCode(10))[0].slice(0, 160)}): skipped or reordered envelopes are never fetched again because the cursor moved on`) }
+  catch (e) {
+    // H1 (fixed): the clients converge once the hub is honest, within the gap backoff. Only a backoff that grew past the
+    // wait above during a long attack (by design, at most 10 min) is reported as known.
+    if (![...w.devs.values()].some(d => d.client && (d.client._gapBackoff ?? 0) > 16000)) throw new Finding('H1', `after a hub that ${a.kind}s turned honest: ${e.message}`)
+    w.known.set(`H1-no-recovery-after-${a.kind}`, `after a hub that ${a.kind}s turned honest again the clients did not converge within the 20 s wait (gap backoff past 16 s) (${String(e.message).split(String.fromCharCode(10))[0].slice(0, 160)}): skipped or reordered envelopes are never fetched again because the cursor moved on`) }
   await C.checkSafety(R, { deep: true })
   w.known.set(`hostile-counters-${a.kind}`, JSON.stringify(a.counters))
 }

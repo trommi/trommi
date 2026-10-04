@@ -1015,6 +1015,60 @@ await test('fuzz H1: after a hub withheld envelopes and turned honest, the devic
   }
 })
 
+await test('fuzz H1 (traces smutqst44-w3-0, smutqtk5n-w2-3): a device whose own envelope came back withheld settles once the hub is honest', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  phone._stream.close(); phone._stream = null              // the hostile hub decides what the phone sees
+  const realEnvelopes = phone.hub.envelopes.bind(phone.hub)
+  let honest = false
+  const mine = e => z.peekEnvelope(z.unb64u(e.envelope)).header.sender.every((b, i) => b === z.unhex(phone.my_device_id)[i])
+  phone.hub.envelopes = async q => { const r = await realEnvelopes(q); return honest ? r : { ...r, envelopes: r.envelopes.filter(e => !mine(e)) } }
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'own, withheld from me' })
+  await agent.sendMessage({ text: 'after it' })
+  await settleAll(agent)
+  await phone.catchUp()
+  assert(phone.byHash.size === 1, 'the own echo is missing')
+  honest = true
+  await phone.settle({ timeout_ms: 10_000 })
+  eq(phone.byHash.size, 0, 'the own envelope came back through a resync')
+})
+
+await test('fuzz H1 stale member list (trace smutrlbw7-w3-5): an envelope naming a member entry the hub does not show yet is read again, not skipped', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c.content?.text))
+  const real = agent.hub.members.bind(agent.hub)
+  let stale = true
+  agent.hub.members = async q => { const r = await real(q); return stale ? { ...r, signed_entries: [], last_entry_number: agent.state.head.seq } : r }
+  const laptop = await addHuman(phone, 'Laptop')
+  await settleAll(laptop, phone)
+  await laptop.sendMessage({ agent_device_id: agent.my_device_id, text: 'from the new laptop' })
+  await settleAll(laptop)
+  await agent.catchUp()
+  assert(!cmds.includes('from the new laptop'), 'not yet: the member list is stale')
+  stale = false
+  await until(() => cmds.includes('from the new laptop'), 'applied once the hub shows the entry', 12_000)
+})
+
+await test('fuzz H1 fork (trace smutrv1gi-w2-7): the newest envelope withheld from a device (no later one shows a gap) arrives once the hub is honest', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c.content?.text))
+  agent._stream.close(); agent._stream = null
+  const real = agent.hub.envelopes.bind(agent.hub)
+  let withhold = null
+  agent.hub.envelopes = async q => { const r = await real(q); return { ...r, envelopes: r.envelopes.filter(e => e.envelope_number !== withhold) } }
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'the newest one' })
+  await settleAll(phone)
+  withhold = phone.model.room.last_envelope_number
+  await agent.catchUp()
+  assert(!cmds.includes('the newest one'), 'withheld')
+  withhold = null
+  await until(() => cmds.includes('the newest one'), 'arrives after the gap backoff', 8000)
+})
+
 if (!useTestHub) await test('fuzz F15: an answer the agent refuses does not leave the card closed at the hub (retention would prune an open card)', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const id = await agent.sendCard({ title: 'which?', options: [{ key: 'a', label: 'A' }] })

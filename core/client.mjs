@@ -608,9 +608,11 @@ export class Client {
         if (first <= cur + 1) { r = { envelopes: scan.envelopes.filter(e => e.envelope_number > cur), last_envelope_number: scan.last_envelope_number }; scan.envelopes = [] }
         else r = await this.hub.envelopes({ after_envelope_number: cur, limit: Math.min(PAGE, first - cur - 1) })
       } else r = await this.hub.envelopes({ after_envelope_number: cur, limit: PAGE })
-      if (!r.envelopes.length) break
+      // H1: the hub says there is more but hands out nothing: withheld on the way; read the room again later
+      if (!r.envelopes.length) { if (r.last_envelope_number > cur) { this._gapSeen(); if (this._needResync) this.serial(() => (this._needResync ? this._resync() : null)).catch(e => this._localAlert('resync', e)) } break }
       await this.processRecords(r.envelopes)
       if (this.model.room.last_envelope_number >= r.last_envelope_number) break
+      if (this.model.room.last_envelope_number === cur) break       // stopped at a record to read again later (F12, H1)
     }
     // F2: catch-up reads conversations as headers; a hand-back in them is settled from the conversation (settle() waits).
     if (this.is_human && this.model.room.last_envelope_number > before) this._revisions = this._resolveRevisions().catch(e => this._localAlert('revisions', e))
@@ -717,6 +719,7 @@ export class Client {
       const commands = []                // agents: commands in order
       let t0 = performance.now(), tStart = t0
       const todo = records.filter(r => r.envelope_number > this.model.room.last_envelope_number)
+      let holes = false
       const WINDOW = 64
       let window = [], wAt = 0
       for (let i = 0; i < todo.length; i++) {
@@ -730,6 +733,9 @@ export class Client {
           }
         }
         const pre = window[i - wAt]
+        // H1: the hub numbers envelopes without holes and never deletes one; a hole is an envelope withheld on the way
+        // (a hostile hub, or a proxy): its sender may send nothing after it that would show a gap, so read the room again.
+        if (r.envelope_number > this.model.room.last_envelope_number + 1) { if (this._resyncing) this._gapInResync = true; else holes = true }
         try {
           const rec = await this._commit(pre)
           if (pre.missingKey) (this._missingKeys ??= new Set()).add(pre.missingKey)
@@ -746,8 +752,10 @@ export class Client {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[rec]', e.stack.split('\n').slice(0, 5).join(' | '))
           // F12: a network failure while handling a record (a member or grant fetch it needed) says nothing about the
           // record: stop here without moving the cursor past it, and read on from it a little later.
-          if (isTransient(e)) {
-            this._scheduleCatchUp()
+          // H1: the same for an envelope naming a member list entry the hub still does not show after a refresh (only a
+          // hub serving a stale member list does that): read on once it does, never skip the envelope.
+          if (isTransient(e) || e.code === 'log-behind') {
+            this._scheduleCatchUp(e.code === 'log-behind' ? 5000 : 1500)
             break
           }
           M.pushAlert(this.model, change, { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
@@ -767,10 +775,20 @@ export class Client {
       this._emitChange(change)
       if (commands.length) await this._deliverCommands(commands)
       if (!this.is_human) this._reassertRefused?.()      // F15, also when the commands were held back
+      this._checkMissedEchoes()
+      if (holes) this._gapSeen()
       if (live) this._maybeSnapshot()
     }
   }
 
+  /**
+   * H1: an own envelope the hub acknowledged at a number the cursor has passed without it coming back (a hostile hub
+   * withheld or altered it there): read the room again (with the gap backoff), or settle() would wait for it forever.
+   */
+  _checkMissedEchoes() {
+    if (this._resyncing || !this.byHash.size) return
+    if (this.recentSent.some(it => it.envelope_number != null && it.envelope_number <= this.model.room.last_envelope_number && this.byHash.has(it.hash))) this._gapSeen()
+  }
   _gapSeen() {
     const wait = this._gapBackoff ?? 2000
     const since = Date.now() - (this._lastGapResync ?? 0)
@@ -821,8 +839,10 @@ export class Client {
       for (;;) {
         const r = await this.hub.envelopes({ after_envelope_number: this.model.room.last_envelope_number, limit: PAGE })
         if (!r.envelopes.length) break
+        const at = this.model.room.last_envelope_number
         await this._processBatch(r.envelopes)
         if (this.model.room.last_envelope_number >= r.last_envelope_number) break
+        if (this.model.room.last_envelope_number === at) break        // stopped at a record to read again later (F12, H1)
       }
     } finally {
       this._resyncing = false
@@ -1012,6 +1032,9 @@ export class Client {
     trimChain(c)
     this._dirty.chains.add(key)
     this.stats.verified++
+    // H1: an own envelope met in a resync (its echo was withheld or altered before) is its echo now.
+    const ownLocal = sender === this.my_device_id ? this.byHash.get(hex(hash)) ?? null : null
+    if (pre.void && sender === this.my_device_id) { this.byHash.delete(hex(hash)); this.sentContent.delete(hex(hash)) }
     if (pre.void) {
       // A void record: the chain moves on, nothing applies. Review 3: the void flag is the hub's word, not the sender's,
       // so a hub could drop any envelope quietly that way. Only a reason this device can re-check from the signed header
@@ -1034,7 +1057,7 @@ export class Client {
       return null
     }
     if (pre.opened) this.stats.decrypted++
-    return this._record(pre.envelope_number, v, pre.opened, pre.content_state, null)
+    return this._record(pre.envelope_number, v, pre.opened, pre.content_state, ownLocal)
   }
 
   /** R2: carry each sender's view of the others forward (seen lists only what changed, R5). */
@@ -1303,6 +1326,7 @@ export class Client {
       if (this._pump) await Promise.race([this._pump, sleep(50)])   // a halted pump waits long: look at outbox_blocked again soon
       if (this._background?.size) { await Promise.all([...this._background]); continue }   // e.g. an agent's F15 re-send
       if (!this.outbox.length && this.byHash.size === 0) { if (this._revisions) await this._revisions; return }
+      if (!this.outbox.length) { this._checkMissedEchoes(); if (this._needResync) await this.serial(() => this._needResync && this._resync()) }
       if (!this._stream || this.model.room.connection !== 'live') await this.catchUp()
       else await sleep(10)
     }
