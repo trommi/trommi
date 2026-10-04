@@ -19,7 +19,8 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | `model.mjs` | the board model reducer and the projections |
 | `agent.mjs` | what an agent does: objects, messages, status, permission requests, `authoriseCommand` |
 | `storage-memory.mjs`, `storage-idb.mjs`, `storage-file.mjs` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
-| `test.mjs` | `node client/core/test.mjs` |
+| `test.mjs` | `node client/core/test.mjs` (Node, against `hub/server.mjs` in-process) |
+| `browser-test.mjs` | the same files in headless Chromium with IndexedDB |
 
 ## Opening a room
 
@@ -145,6 +146,8 @@ Answer = {
 
 **Rules the reducer applies, identically on every client** (so humans and agents agree):
 
+- R1: a new object's `object_id` must be H("trommi/v1/object-id", creator ‖ `sender_sequence` of version 1) (first 16 bytes); version 1 names no predecessor (`previous_version_hash` zeros). Timeline items follow the authority table of the README (a session's chat: the agent or a human addressing it; a card's chat: its creator or a human addressing the creator; desk canvas: humans). Refusals are `Alert`s and change nothing.
+- R2: registers and memo versions are settled by signed causal order (`seen` frontiers carried forward per sender; concurrent: later `sent_at`, then `sender_device_id`), never by hub order. A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
 - A card version counts only from the card's creator (the sender of version 1), with `object_version` = previous + 1 and `previous_version_hash` = the current `version_hash`. Anything else becomes an `Alert` and is ignored.
 - An answer counts only from an active human device, addressed to the owning agent, while the card is open, bound to the **current** `version_hash`, and (for `answer_action: 'answer'` without `trusted`) with every choice an option key. An answer to an older version is ignored (alert `answer-stale`): the agent refuses it too, the card stays open.
 - `decide_again` counts only if it names the answer in force; it reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
@@ -221,7 +224,7 @@ OutboxItem = { local_id, envelope_kind, object_id, timeline_key, recipient_devic
 
 ### The stack (projection)
 
-`model.stack`: cards with `object_state: 'open'`, not snoozed (`snoozes` value with `until` in the future), whose session is not archived (`session_settings.archived`), ordered by urgency (critical, high, normal, low), then `first_envelope_number` (oldest first). Permission requests are not in it; they are `open_permission_ids` and the app shows them first. `stackOf(model, { desk_id })` filters to the sessions on a desk.
+`model.stack`: cards with `object_state: 'open'`, not snoozed (`snoozes` value with `until` in the future), whose session is not archived (`session_settings.archived`), ordered by urgency (critical, high, normal, low), then `created_at` (oldest first, R2). Permission requests are not in it; they are `open_permission_ids` and the app shows them first. `stackOf(model, { desk_id })` filters to the sessions on a desk.
 
 ## Change notifications
 
@@ -300,10 +303,18 @@ command = {
   content,                 // the decoded body
   choices, previous_choices, allow,   // as fitting
   late,                    // the human had not seen the agent's newest envelope
+  history,                 // R4: sent before this process started, and this storage never delivered anything from that sender: context, not a prompt
+  envelope_hash, sender_sequence, sent_at,
+  card,                    // answer / decide_again / message on a card: the card as it is now (model shape)
+  permission,              // verdict: the request
 }
+client.ledger.has(envelope_hash) / await client.ledger.mark(envelope_hash)   // R4 executed-command ledger, persisted (5000 newest)
+client.on('error', e => e.code === 'log-fork' ...)   // R3: the member list forked or rolled back: no command is delivered until client.resumeCommands()
 ```
 
-Every envelope addressed to the agent passes `authoriseCommand` (active human sender, addressed to this agent, current epoch or the previous one for two minutes, the bind matches the current version or request) before it becomes a `command`. A refused one is not delivered; the core writes the agent register `alert/<envelope_number>` (`{ code, message, sender_device_id }`) and emits `alert`. Commands are delivered once: the core persists the number of the last delivered command and, after a restart, delivers what arrived meanwhile (fetching thread bodies addressed to it).
+Before handing out any answer, verdict or decide-again the core refreshes the member list (R3) and drops commands whose sender was removed meanwhile. Delivery is once per (human sender, `sender_sequence`), persisted with the cursor.
+
+Every envelope addressed to the agent passes `authoriseCommand` (active human sender, addressed to this agent, current epoch or the previous one for two minutes, the bind matches the current version or request) before it becomes a `command`. A refused one is not delivered; the core writes the agent register `alert/<envelope_hash>` (`{ code, message, sender_device_id, envelope_number }`) and emits `alert`. Commands are delivered once: the core persists the number of the last delivered command and, after a restart, delivers what arrived meanwhile (fetching thread bodies addressed to it).
 
 ## Storage adapter
 
@@ -321,6 +332,11 @@ Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` dele
 
 ## Performance design
 
-- Verification of the delta runs in batches with a yield between batches (no task over ~50 ms); in browsers the verify+decrypt step can run in a Worker (`sync-worker.mjs`, the same module code; the main thread only reduces and renders). Throughput is measured in `test.mjs` (headers/s, decrypts/s).
+- Verification runs in two phases: signatures and decryption for windows of 64 envelopes at once (WebCrypto works them in parallel, off the JavaScript thread), then the sender chains strictly in hub order. The loop yields every ~12 ms, so no long task. A Worker turned out unnecessary so far (measured below); if it becomes one, `_precheck` is the piece that moves.
+- Measured (4 October 2026, this PC): Node catch-up 21,500 envelopes/s processing (17,000/s incl. HTTP to the local hub); Chromium headless catch-up of 20,000 envelopes in 1.4 s (14,000/s incl. HTTP, IndexedDB writes included), **0 long tasks**; warm start from IndexedDB 8 ms open + 9 ms start (delta 1 envelope); newest 50 items of a timeline fetched and decrypted in 15 ms. Tests: `node client/core/test.mjs`, `node client/core/browser-test.mjs --n=20000` (needs Chromium outside the sandbox).
 - Thread items are verified from their pruned header at sync time (one signature each, no decryption); bodies are fetched and decrypted only for opened timelines and items addressed to an agent.
 - Projections (`stack`, counts) are recomputed only for the sessions and cards a batch touched.
+
+## Keys (R6 prepared)
+
+`client.keyFor({ kind, object, timeline, recipient })` is the only place that chooses the key an envelope is sealed with (today: the room key of the current epoch); `client.openKeys` is its opening side. Per-session keys (README R6: session scope for a session's cards, chat, canvas and agent registers; room scope for desks, memos, human registers, device labels) plug in there once `crypto/zcrypto.mjs` has key scopes and session grants. Until then sessions are keyed by the agent's `device_id`; the switch to `session_id` will be announced to app and channel first.
