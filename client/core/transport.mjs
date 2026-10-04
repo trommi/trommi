@@ -8,7 +8,7 @@ const REFRESH_BEFORE_MS = 60_000
 export const normaliseHubUrl = url => String(url).replace(/\/+$/, '')
 
 /** Every id that goes into a URL path is lowercase hex of its exact length (never raw text from a body or the hub). */
-const HEX = { room_id: 64, attachment_id: 32, invite_id: 32, session_id: 32, share_id: 32 }
+const HEX = { room_id: 64, attachment_id: 32, invite_id: 32, session_id: 32, share_id: 32, escrow_id: 32 }
 export function checkId(what, v) {
   const n = HEX[what]
   if (typeof v !== 'string' || v.length !== n || !/^[0-9a-f]+$/.test(v)) throw new ZError('bad-argument', `${what} must be ${n} lowercase hex characters`)
@@ -136,8 +136,9 @@ export class Hub {
   getShared(share_id, share_secret) { return this.request('GET', `/shares/${checkId('share_id', share_id)}`, { auth: false, binary: true, headers: { 'x-share-secret': share_secret } }) }
   getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { binary: true }) }
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
-  getEscrow() { return this.request('GET', this.roomPath('/escrow'), { auth: false }) }
-  putEscrow({ escrow_version, key_escrow }) { return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, key_escrow } }) }
+  /** v2: GET /escrow/:escrow_id (the id comes from the passphrase); without an id the v1 route. */
+  getEscrow(escrow_id = null) { return this.request('GET', this.roomPath(escrow_id ? `/escrow/${checkId('escrow_id', escrow_id)}` : '/escrow'), { auth: false }) }
+  putEscrow({ escrow_version, escrow_id, key_escrow }) { return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, ...(escrow_id ? { escrow_id } : {}), key_escrow } }) }
   deleteEscrow() { return this.request('DELETE', this.roomPath('/escrow')) }
   pushKey() { return this.request('GET', '/push_key', { auth: false }) }
 

@@ -4,7 +4,7 @@ import * as z from './zcrypto.mjs'
 import { Hub, normaliseHubUrl } from './transport.mjs'
 import { Client, secretToJson, secretFromJson, verifiedHeads } from './client.mjs'
 import './agent.mjs'
-import { openEscrow } from './escrow.mjs'
+import { openEscrow, escrowKeyAndId, openEscrowV2 } from './escrow.mjs'
 import * as G from './session-grants.mjs'
 
 /** As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6). */
@@ -183,8 +183,16 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
   const { hub_url, room_id } = parseRoomLink(room_link)
   if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
   const pub = new Hub({ hub_url, room_id, fetch, client: client_name })
-  const { key_escrow } = await pub.getEscrow()
-  const code = await openEscrow({ room_id, key_escrow, passphrase })
+  // v2: the escrow id comes from the passphrase (a wrong passphrase finds nothing); v1 blobs (by room id) as a fallback.
+  const { key, escrow_id } = await escrowKeyAndId(passphrase, room_id)
+  let code
+  try { code = await openEscrowV2({ room_id, key_escrow: (await pub.getEscrow(escrow_id)).key_escrow, key, escrow_id }) }
+  catch (e) {
+    if (e.code !== 'not-found') throw e
+    let v1
+    try { v1 = await pub.getEscrow() } catch (e2) { if (e2.code === 'not-found') throw new ZError('wrong-passphrase', 'this passphrase does not open an escrow of this room'); throw e2 }
+    code = await openEscrow({ room_id, key_escrow: v1.key_escrow, passphrase })
+  }
   const rec = await z.recoveryDevice(code)
   const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
   await hub.signIn()
