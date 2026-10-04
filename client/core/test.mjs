@@ -951,6 +951,49 @@ if (!useTestHub) await test('fuzz F15: an answer the agent refuses does not leav
   eq(phone.model.cards.get(id).object_state, 'open', 'open on the phone')
 })
 
+if (!useTestHub) await test('fuzz F9: after retention pruned an answered card, a device that joins later shows it answered, not open', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'old one', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'phone has it')
+  await phone.answer({ object_id: id, choices: ['a'] })
+  await settleAll(phone, agent)
+  hub.prune({ days: -1 })                                   // as if 30 days had passed
+  const late = await addHuman(phone, 'Late laptop')
+  await until(() => late.model.cards.get(id), 'the late device knows the card')
+  await settleAll(late)
+  eq(late.model.cards.get(id).object_state, 'answered', 'answered from the signed header')
+})
+
+await test('fuzz F8: loadTimeline after a restart pages from the newest item again', async () => {
+  const dir = path.join(scratch, 'f8-phone')
+  const { client: phone } = await foundRoom({ hub_url: HUB, storage: await fileStorage({ dir }), device_name: 'Phone' })
+  await phone.start()
+  const agent = await addAgent(phone, 'F8')
+  for (let i = 0; i < 3; i++) await phone.sendMessage({ agent_device_id: agent.my_device_id, text: `m${i}` })
+  await settleAll(phone, agent)
+  const key = `chat:session/${agent.session_id}`
+  await phone.loadTimeline(key)
+  await phone.stop()
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
+  await again.start()
+  const r = await again.loadTimeline(key)
+  assert(r.loaded >= 3, `loaded ${r.loaded} after the restart`)
+})
+
+await test('fuzz F4: an agent invite whose finalize hits a network failure once still adds the agent', async () => {
+  const { phone } = await room()
+  const realPost = phone.hub.postMember.bind(phone.hub)
+  let failed = 0
+  phone.hub.postMember = async (...a) => { if (!failed++) throw new z.ZError('offline', 'simulated', { status: 0 }); return realPost(...a) }
+  const inv = await phone.createInvite({ device_role: 'agent' })
+  const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Retry', poll_ms: 50 })
+  const c = track(await Promise.race([j.client, sleep(15_000).then(() => { j.cancel(); throw new Error('timeout: the agent was never added') })]))
+  assert(failed >= 1, 'the failure happened')
+  await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'added after the retry')
+  eq(phone.model.invites.get(inv.invite_id).invite_state, 'joined', 'the invite says joined')
+})
+
 if (z.KEY_SCOPE) await test('agent child session: the agent opens one without approval; the human sees it under the parent; another agent cannot read it; it survives a restart', async () => {
   const dir = path.join(scratch, 'agent-child')
   const { phone, agents: [bot] } = await room({ laptop: true, agents: 1 })
