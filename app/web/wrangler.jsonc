@@ -3,6 +3,8 @@
   "name": "trommi-app",
   "main": "src/index.js",
   "compatibility_date": "2026-10-01",
+  // The build step (dev/build.mjs): the stylesheets into one bundle. It writes only in Cloudflare's build (WORKERS_CI=1).
+  "build": { "command": "node dev/build.mjs" },
   // The app is static: every navigation that is not a file gets index.html (the app routes in the page).
   // The worker runs first only to send http to https.
   "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true }

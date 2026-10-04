@@ -1,13 +1,13 @@
 # Trommi app
 
-The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`, repo `trommi/trommi-hub`) only in sealed envelopes. No build step, no framework: plain ES modules and CSS, served as they are. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`).
+The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`, repo `trommi/trommi-hub`) only in sealed envelopes. No framework: plain ES modules and CSS, served as they are; the one build step joins the stylesheets into one file (see "The build"). Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`).
 
 Its markup, CSS, pen drawings and controllers came from the old server-rendered Turbo board (taken over on 4 Oct 2026, trommi-hub commit f6b89b8; the old board was removed from the repository the same day). The copies here are the app's own source: edit them here.
 
 ## Running it
 
 ```bash
-node dev/serve.mjs 8900                 # static server with the SPA fallback and the CSP of public/_headers
+node dev/serve.mjs 8900                 # static server with the SPA fallback, the CSP of public/_headers and the build (in memory; --raw: without)
 open http://127.0.0.1:8900/             # not logged in on this device: Create account or Log in
 open http://127.0.0.1:8900/?mock=1      # the mock room: fixture cards of every kind, simulated agents, no hub
 open http://127.0.0.1:8900/?mock=crazy  # a very big mock room (performance)
@@ -21,6 +21,12 @@ Tests (headless Chromium, `CHROMIUM` env or `chromium` on the path):
 node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E]   # create account + kit, agent invite, cards, picture, answer, undo, What??, 2nd device by QR, 3rd by email + password, 4th by Emergency Kit
 node dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot, console errors
 ```
+
+### The build
+
+`dev/build.mjs` (no dependencies) makes one stylesheet of the ~25 `<link data-sheet>` lines of `public/index.html`, in their order, as `public/css/bundle.<hash>.css` (cached for good, `_headers`), and points `index.html` and the shell list of `sw.js` at it. The sheets in `public/css` stay the files to edit; the bundle is never committed. Cloudflare's build runs it on its checkout before the deploy (`WORKERS_CI=1` writes; elsewhere `node dev/build.mjs --write`, plain `node dev/build.mjs` only checks). `dev/serve.mjs` serves the same build from memory, so local runs and the e2e see what is deployed. Without the build the source shell works as it is.
+
+Views switch sheets on and off (`layout.mjs` CSS, `js/app/sheets.mjs`): the hub linked only a page's own sheets, and some rules of one view's sheet would change another view. In the bundle each sheet a view may switch off is wrapped as `@supports (--sheet: name) { @media all { … } }`; `sheets.mjs` sets that `@media` to `not all`, which takes its rules out at the same place in the cascade, like a disabled `<link>`. A sheet that does not parse on its own (unbalanced braces, an unclosed comment or string) stops the build: in a bundle it would spill into the next sheet. Further build steps go into `build()` of `dev/build.mjs`.
 
 Before a push: `dev/release.sh` (writes the shell's file list and version into `public/sw.js`). A release without it still reaches every device: the worker revalidates each file it serves (ETag) and, when one changed, fetches the shell again and offers "Neu laden".
 
@@ -58,7 +64,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 ```
 public/
-  index.html             the shell: all stylesheets (enabled per view), fonts, one module: js/app/boot.mjs
+  index.html             the shell: all stylesheets (enabled per view; one bundle once built), fonts, one module: js/app/boot.mjs
   _headers               CSP and caching (Cloudflare; dev/serve.mjs reads it too)
   sw.js                  service worker: shell cache (versioned), /att/<id> (decrypted attachments), push
   css/  js/pen.js …      the board's look (taken over from the old board, now the app's own source)
@@ -104,7 +110,7 @@ The core owns the schema (trommi-hub `client/core/README.md`, "Storage adapter")
 - **Patch only**: after a change, only elements whose markup changed are replaced; Desk rows are cached per card object (a card the change did not name keeps its row string), the sidebar per row, the body per part (a navigation keeps the topbar and sidebar if their markup is the same).
 - **Windowed**: conversations are timelines loaded newest page first (50), older pages on "Earlier"; a session page loads its cards' threads lazily; Desk rows and log messages out of sight are skipped by layout and paint (`content-visibility: auto`).
 - **Lazy decrypt**: attachments are rendered as `/att/<id>` with `loading="lazy"`; the service worker asks the page, which fetches and decrypts only that file, only when it is shown or opened.
-- **No framework, no build**: modules load lazily (controllers on first use), the shell is cached by the service worker per release.
+- **No framework, one stylesheet**: modules load lazily (controllers on first use), the shell is cached by the service worker per release.
 - **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only), no inline script, fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
 
 ### The mock room

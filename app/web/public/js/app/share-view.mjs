@@ -6,6 +6,7 @@
 import { Hub, openShared, parseShareLink } from '/vendor/index.mjs'
 import { hubUrl } from './room.mjs'
 import { CLIENT } from './version.mjs'
+import { useSheets } from './sheets.mjs'
 
 const el = (tag, props = {}, ...kids) => { const n = Object.assign(document.createElement(tag), props); n.append(...kids); return n }
 const kindOf = bytes => {
@@ -27,7 +28,7 @@ function frame(html) {
 
 export async function showShare() {
   document.title = 'Shared · Trommi'
-  for (const link of document.querySelectorAll('link[data-sheet]')) link.disabled = !['tokens', 'app', 'fonts', 'trommi', 'room'].includes(link.dataset.sheet)
+  useSheets(['tokens', 'app', 'fonts', 'trommi', 'room'])
   const main = el('main', { id: 'share', className: 'room share' })
   document.body.replaceChildren(main)
   const say = (text, cls = 'room-lead') => main.replaceChildren(el('p', { className: cls, textContent: text }))
