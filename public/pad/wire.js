@@ -1,6 +1,5 @@
-// The canvas on the wire (trommi-hub README "Canvases", Security rules R1, R2, R9), without DOM and without the core:
-// the shapes as timeline items carry them, the reducer that turns a canvas timeline into shapes, and the snapshot.
-// canvas.js drives it with the core; node pad/wire-test.mjs tests it.
+// The canvas on the wire (trommi-hub README "Canvases", Security rules R1, R2, R9), without DOM: the shapes as timeline
+// items carry them, the reducer that turns a canvas timeline into shapes, and the snapshot. canvas.js drives it with the core.
 //
 // A canvas item's body (content_type and its fields as in the README):
 //   strokes    { strokes: [Entry] }           new shapes, or a piece of a stroke still being drawn (~ every 150 ms)
@@ -21,20 +20,9 @@
 // sender's items come in its sender_sequence order, and the frontier (sender -> [sequence, envelope_hash]) says up to
 // where a sender is applied. The snapshot carries that frontier; items it covers are skipped.
 
-const Q = 8   // 1/8 px
+import { b64u, unb64u } from '../vendor/zcrypto.mjs'
 
-// ---- base64url ----
-export function b64u(bytes) {
-  let s = ''
-  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000))
-  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '')
-}
-export function unb64u(text) {
-  const s = atob(String(text).replace(/-/g, '+').replace(/_/g, '/'))
-  const out = new Uint8Array(s.length)
-  for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i)
-  return out
-}
+const Q = 8   // 1/8 px
 
 // ---- points (R9) ----
 /** World points [x0, y0, x1, y1, …] -> base64url. A jump wider than an int16 delta (4096 px) is split into steps;

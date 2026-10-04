@@ -3,6 +3,7 @@
 // has are registered here. Turbo-specific parts are gone: the router renders the pages, the <turbo-stream> element
 // animates a Desk row that leaves, boot.mjs says the connection.
 import { Application, Controller } from './stimulus.mjs'
+import { ago } from '../views/text.mjs'
 
 const application = Application.start()
 window.Stimulus = application
@@ -144,13 +145,6 @@ application.missing = name => {
 }
 
 // ---- times keep themselves current ----
-function ago(ts) {
-  const min = Math.round((Date.now() - ts) / 60000)
-  if (min < 1) return 'just now'
-  if (min < 60) return `${min} min ago`
-  if (min < 1440) return `${Math.round(min / 60)} h ago`
-  return new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
-}
 setInterval(() => { for (const n of document.querySelectorAll('[data-ts]')) n.textContent = ago(Number(n.dataset.ts)) }, 30000)
 
 // A tile that was tapped shows it until the hub has answered.

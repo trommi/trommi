@@ -27,7 +27,7 @@ export function ago(ts, now = Date.now()) {
   if (min < 1440) return `${Math.round(min / 60)} h ago`
   return new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
-/** A time that keeps itself current in the page (island "ago" in t/boot.js reads data-ts). */
+/** A time that keeps itself current in the page (js/app/application.mjs rewrites every [data-ts] each 30 s). */
 export const agoSpan = (ts, cls = 'ago') => html`<span class="${cls}" data-ts="${ts}">${ago(ts)}</span>`
 
 // ---- links ----
