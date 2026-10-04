@@ -17,9 +17,13 @@ import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import * as esbuild from 'esbuild'
+import { marketplaceFiles } from './plugin.mjs'
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
 const OUT = path.join(REPO, 'app/web/public/connector.mjs')
+// The Claude Code plugin and its marketplace (connector/plugin.mjs), served at https://app.trommi.com/plugins/.
+const PLUGINS = path.join(REPO, 'app/web/public/plugins')
+const pluginsOnDisk = () => { try { return Object.fromEntries(fs.readdirSync(PLUGINS).sort().map(f => [f, fs.readFileSync(path.join(PLUGINS, f))])) } catch { return {} } }
 
 export async function bundle() {
   const r = await esbuild.build({
@@ -42,10 +46,15 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   if (process.argv.includes('--check')) {
     const have = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : ''
     if (have !== text) { console.error('connector bundle is stale: run node connector/bundle.mjs and commit app/web/public/connector.mjs'); process.exit(1) }
+    const want = marketplaceFiles(text), disk = pluginsOnDisk()
+    if (Object.keys(want).sort().join() !== Object.keys(disk).join() || Object.entries(want).some(([f, b]) => !b.equals(disk[f]))) { console.error('plugin marketplace is stale: run node connector/bundle.mjs and commit app/web/public/plugins/'); process.exit(1) }
     console.log(`connector bundle current (${(text.length / 1024).toFixed(0)} KiB, sha256 ${sha(text).slice(0, 12)})`)
   } else {
     fs.writeFileSync(OUT, text)
     fs.writeFileSync(`${OUT}.sha256`, `${sha(text)}\n`)
+    fs.rmSync(PLUGINS, { recursive: true, force: true })
+    fs.mkdirSync(PLUGINS, { recursive: true })
+    for (const [f, b] of Object.entries(marketplaceFiles(text))) fs.writeFileSync(path.join(PLUGINS, f), b)
     console.log(`wrote ${path.relative(REPO, OUT)} (${(text.length / 1024).toFixed(0)} KiB, sha256 ${sha(text).slice(0, 12)})`)
   }
 }

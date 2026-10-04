@@ -106,7 +106,7 @@ export function deskHead(model, base) {
  *  It stands in the heading (#desk-head), which the live stream replaces: the note goes once a session is there. */
 const deskInvite = () => html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0"><section class="desk-invite" id="desk-invite" aria-labelledby="desk-invite-title">
 ${sk('heads', 'desk-invite-art')}<h2 id="desk-invite-title">Invite your first agent</h2>
-<p>You get one command for any computer with Claude Code: run it in the project folder, then start Claude Code there with <code>--dangerously-load-development-channels server:trommi</code>. Its questions land here.</p>
+<p>You get one command for any computer with Claude Code: run it in the project folder, then start Claude Code there with plain <code>claude</code>. Its questions land here.</p>
 <form method="post" action="/pair"><input type="hidden" name="role" value="agent"><button type="submit" class="desk-invite-go" id="desk-invite-go">${PLUS}<span>Invite an agent</span></button></form>
 </section></header>`
 
