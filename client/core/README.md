@@ -21,6 +21,7 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | `storage-memory.mjs`, `storage-idb.mjs`, `storage-file.mjs` | storage adapters (memory for tests, IndexedDB for browsers, a directory for Node) |
 | `test.mjs` | `node client/core/test.mjs` (Node, against `hub/server.mjs` in-process) |
 | `browser-test.mjs` | the same files in headless Chromium with IndexedDB |
+| `load.mjs` | load generator on the real core (stream F): `createLoadRoom({ hub_url, humans, agents, fetch })`, `runMix(room, { total, mix, rate, concurrency })` -> rate, send -> verified latency p50/p95/p99 |
 
 ## Opening a room
 
@@ -351,7 +352,7 @@ Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` dele
 ## Performance design
 
 - Verification runs in two phases: signatures and decryption for windows of 64 envelopes at once (WebCrypto works them in parallel, off the JavaScript thread), then the sender chains strictly in hub order. The loop yields every ~12 ms, so no long task. A Worker turned out unnecessary so far (measured below); if it becomes one, `_precheck` is the piece that moves.
-- Measured (4 October 2026, this PC): Node catch-up 21,500 envelopes/s processing (17,000/s incl. HTTP to the local hub); Chromium headless catch-up of 20,000 envelopes in 1.4 s (14,000/s incl. HTTP, IndexedDB writes included), **0 long tasks**; warm start from IndexedDB 8 ms open + 9 ms start (delta 1 envelope); newest 50 items of a timeline fetched and decrypted in 15 ms. Tests: `node client/core/test.mjs`, `node client/core/browser-test.mjs --n=20000` (needs Chromium outside the sandbox).
+- Measured (4 October 2026, this PC): Node catch-up 21,500 envelopes/s processing (17,000/s incl. HTTP to the local hub); Chromium headless catch-up of 20,000 envelopes in 1.4 s (14,000/s incl. HTTP, IndexedDB writes included), **0 long tasks**; warm start from IndexedDB 8 ms open + 9 ms start (delta 1 envelope); newest 50 items of a timeline fetched and decrypted in 15 ms. Local load (`load.mjs`, 2 humans + 8 agents, mixed kinds, paced at 150/s): send -> verified on another device p50 2 ms, p95 5.5 ms, p99 12 ms. Unpaced the senders outrun the hub's 50/s per device limit and latency becomes outbox queueing. Tests: `node client/core/test.mjs`, `node client/core/browser-test.mjs --n=20000` (needs Chromium outside the sandbox).
 - Thread items are verified from their pruned header at sync time (one signature each, no decryption); bodies are fetched and decrypted only for opened timelines and items addressed to an agent.
 - Projections (`stack`, counts) are recomputed only for the sessions and cards a batch touched.
 
