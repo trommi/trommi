@@ -171,6 +171,7 @@ export class Client {
     }
     this._setConnection('catching_up')
     await this.catchUp()
+    this._resolveRevisions().catch(e => this._localAlert('revisions', e))
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
     if (stream) this._openStream()
     else this._setConnection('live')
@@ -215,6 +216,30 @@ export class Client {
     } else if (event === 'join_request') {
       if (data.invite_id) this._checkInvite(data.invite_id).catch(e => this._localAlert('invite', e))
     }
+  }
+
+  /**
+   * "In revision" needs the body of the newest human message on a card (hand_back / explain), which catch-up only
+   * sees as a header. For open cards whose conversation has a human item newer than the card's version, fetch the
+   * newest page of that conversation and settle it.
+   */
+  async _resolveRevisions() {
+    if (!this.is_human) return
+    const change = M.emptyChange()
+    for (const card of this.model.cards.values()) {
+      if (card.object_state !== 'open') continue
+      const t = this.model.timelines.get(card.timeline_key)
+      if (!t || t.newest_human_envelope_number <= card.envelope_number || card.in_revision) continue
+      const items = await this._readTimeline(card.timeline_key, { before: this.model.room.last_envelope_number + 1, limit: 20 })
+      let rev = null
+      for (const it of items) {
+        if (it.envelope_number <= card.envelope_number || !it.content) continue
+        if (it.sender_device_id === card.agent_device_id && it.content.present_card) rev = null
+        else if (this.model.members.get(it.sender_device_id)?.device_role === 'human' && (it.content.hand_back || it.content.explain)) rev = { by: it.content.hand_back ? 'hand_back' : 'explain', envelope_number: it.envelope_number }
+      }
+      if (rev) { card.in_revision = rev; change.cards.add(card.object_id); change.sessions.add(card.agent_device_id) }
+    }
+    if (change.cards.size) { this._markDirty(change, []); this._emitChange(change) }
   }
 
   /** Page through GET envelopes from the cursor to the hub's end. */

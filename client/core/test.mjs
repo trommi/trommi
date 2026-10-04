@@ -140,6 +140,9 @@ await test('cards round trip: create, revise, answer, decide again, hand back, c
   await settleAll(laptop)
   await until(() => phone.model.cards.get(id).in_revision?.by === 'hand_back', 'in revision on phone')
   await until(() => commands.some(c => c.command === 'message' && c.content.hand_back), 'agent got hand back')
+  // a device that was offline sees the hand back only as a header at catch-up: it settles "in revision" from the newest page
+  const late = await addHuman(phone, 'Late')
+  await until(() => late.model.cards.get(id)?.in_revision?.by === 'hand_back', 'in revision after catch-up')
   await agent.revise(id, { body: 'Too slow. B = in the background.' })
   await settleAll(agent)
   await until(() => phone.model.cards.get(id).object_version === 3 && !phone.model.cards.get(id).in_revision, 'revision ends it')
