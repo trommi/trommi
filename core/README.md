@@ -129,7 +129,7 @@ Card = {
   urgency,                                  // 'low' | 'normal' | 'high' | 'critical'
   // content of the current version (body fields, README names):
   card_type,                                // 'decision' | 'info'
-  title, body, options,                     // options: [{ key, label, detail, short? }]
+  title, teaser, body, options,             // teaser: the Desk row's two lines or null; options: [{ key, label, detail, short? }]
   sections, html, allows_multiple, recommended, urgency_reason, attachments,
   change_note, close_summary, withdraw_reason, merged_into_object_id, merged_from_object_ids,
   object_version,                           // 1, 2, ...

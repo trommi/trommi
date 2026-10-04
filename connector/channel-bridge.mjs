@@ -8,7 +8,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { cleanFences, htmlBeside, strippedHint, fences } from './richhtml.mjs'
-import { URGENCIES, STATUSES, MAX_ASSET, ASSET_TYPES, shortOf } from './channel-tools.mjs'
+import { URGENCIES, STATUSES, MAX_ASSET, ASSET_TYPES, TEASER_MAX, shortOf } from './channel-tools.mjs'
 
 const withShort = value => (shortOf(value) ? { short: shortOf(value) } : {})
 const listArg = (value, what) => {
@@ -77,6 +77,14 @@ function sectionsOf(args, names) {
 const bodyOf = sections => sections.map(s => (s.key == null ? s.text : `**${s.label}**${s.text ? `: ${s.text}` : ''}`)).join('\n\n')
 const NO_ADVICE = Symbol('no advice')
 
+/** A card's teaser: the two short lines under the title on the Desk row. Plain text on one paragraph; empty is none. */
+function teaserArg(value) {
+  const said = String(value ?? '').replace(/\s+/g, ' ').trim()
+  const n = [...said].length
+  if (n > TEASER_MAX) throw new Error(`teaser is ${n} characters, at most ${TEASER_MAX}: the Desk shows only two short lines. Keep the question in it and move the rest into the body or sections`)
+  return said || null
+}
+
 /** The content of a decision card, checked as today's board checks it. Body field names (README). */
 function questionFields(args, names = []) {
   const sections = args.sections != null || args.text != null ? sectionsOf(args, names) : null
@@ -103,7 +111,7 @@ function questionFields(args, names = []) {
   if (stray != null) throw new Error(`recommended must be the key of one of the options; got "${stray}"`)
   if (Array.isArray(given) && !multiple) throw new Error('recommended as a list needs multiple: true; a card with one answer has one recommendation')
   return {
-    card_type: 'decision', title: String(args.title), body, html: html || null, options,
+    card_type: 'decision', title: String(args.title), teaser: teaserArg(args.teaser), body, html: html || null, options,
     sections: sections ? sections.map(s => (s.key == null ? s : { ...s, recommended: advised.includes(s.key) })) : null,
     allows_multiple: multiple, recommended: Array.isArray(given) ? advised : advised[0] ?? null,
     urgency, urgency_reason: String(args.urgency_reason ?? '').trim(),
@@ -124,7 +132,7 @@ function infoFields(args, names = []) {
   if (!String(args.title ?? '').trim()) throw new Error('an info needs a title')
   if (!body.trim() && !html) throw new Error('an info needs something to read: body, sections or text')
   return {
-    card_type: 'info', title: String(args.title), body, html: html || null, options: [], sections, allows_multiple: false, recommended: null,
+    card_type: 'info', title: String(args.title), teaser: teaserArg(args.teaser), body, html: html || null, options: [], sections, allows_multiple: false, recommended: null,
     urgency: urgencyArg(args.urgency, 'normal'), urgency_reason: String(args.urgency_reason ?? '').trim(),
   }
 }
@@ -340,7 +348,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     return {
       id: c.object_id, kind: c.card_type, status: open ? 'open' : c.closed_how === 'answered' ? 'decided' : c.closed_how === 'shredded' ? 'shredded' : 'done',
       urgency: c.urgency, urgency_reason: c.urgency_reason ?? '', queue_position: model().stack.indexOf(c.object_id) + 1 || null,
-      title: c.title, version: versionOf(c),
+      title: c.title, ...(c.teaser ? { teaser: c.teaser } : {}), version: versionOf(c),
       ...(answer ? { answered_version: answer.bound_object_version, choice: answer.choices?.[0] ?? null, choices: answer.choices ?? [], note: answer.note ?? '', ...(answer.trusted ? { trusted: true } : {}) } : {}),
       ...(c.in_revision ? { with_agent: c.in_revision.by } : {}),
       multiple: Boolean(c.allows_multiple),
@@ -356,7 +364,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       throw new Error(`card ${card.object_id} was already decided (choice: ${card.answer?.choices?.[0] ?? ''}); the human answered the question as it stood, so act on that answer, or call close_card and ask anew with create_decision`)
     }
     if (card.object_state !== 'open') throw new Error(`card ${card.object_id} is already done`)
-    const FIELDS = ['title', 'body', 'options', 'sections', 'text', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments', 'html']
+    const FIELDS = ['title', 'teaser', 'body', 'options', 'sections', 'text', 'multiple', 'recommended', 'urgency', 'urgency_reason', 'attachments', 'html']
     if (!FIELDS.some(k => args[k] != null)) throw new Error(`nothing to revise: pass at least one of ${FIELDS.join(', ')}`)
     const info = card.card_type === 'info'
     const resection = args.sections != null || args.text != null
@@ -371,7 +379,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     const attachments = args.attachments == null ? card.attachments ?? [] : await uploadAll(args.attachments)
     const names = attachments.map(a => a.file_name)
     const fields = (info ? infoFields : questionFields)({
-      title: args.title ?? card.title, ...wording, ...(info ? {} : { multiple }), urgency,
+      title: args.title ?? card.title, teaser: args.teaser ?? card.teaser, ...wording, ...(info ? {} : { multiple }), urgency,
       html: resection ? args.html : args.html ?? card.html ?? undefined,
       urgency_reason: args.urgency_reason ?? (urgency === card.urgency ? card.urgency_reason : ''),
       ...(info ? {} : { recommended: args.recommended != null ? (args.recommended.length ? args.recommended : NO_ADVICE) : resection ? undefined : multiple && Array.isArray(card.recommended) ? kept : kept[0] ?? NO_ADVICE }),

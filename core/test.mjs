@@ -843,6 +843,33 @@ await test('message memo: a note sent to a session carries { object_id, written_
   }
 })
 
+await test('card teaser: optional, checked on encode, dropped on decode when bad, carried to the model', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const card = extra => ({ object_type: 'card', object_version: 1, card_type: 'info', title: 'T', body: 'B', ...extra })
+  const enc = c => JSON.parse(new TextDecoder().decode(codec.encodePayload(codec.KIND.object_version, c)))
+  eq(enc(card({ teaser: 'Two short lines.' })).teaser, 'Two short lines.', 'a good teaser is kept')
+  eq('teaser' in enc(card({})), false, 'a card without teaser stays valid')
+  eq(enc(card({ teaser: null })).teaser, null, 'null means none')
+  eq(enc(card({ teaser: 'é'.repeat(codec.TEASER_MAX) })).teaser.length, codec.TEASER_MAX, 'exactly the limit')
+  for (const bad of ['', ' padded ', 'two\nlines', 'x'.repeat(codec.TEASER_MAX + 1), 42, ['a']]) {
+    let err = null
+    try { codec.encodePayload(codec.KIND.object_version, card({ teaser: bad })) } catch (e) { err = e }
+    eq(err?.code, 'bad-argument', `encode refuses teaser ${JSON.stringify(bad)}`)
+    const opened = codec.decodePayload(new TextEncoder().encode(JSON.stringify({ schema_version: 1, ...card({ teaser: bad }) })))
+    eq([opened.content_state, opened.content.title, 'teaser' in opened.content], ['ok', 'T', false], `decode drops teaser ${JSON.stringify(bad)}`)
+  }
+  const id = await agent.sendCard({ title: 'Export?', teaser: 'Large accounts time out; raise the limit or export in the background?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  const plain = await agent.sendCard({ title: 'Old style', body: 'No teaser here', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id) && phone.model.cards.get(plain), 'cards arrive')
+  eq(phone.model.cards.get(id).teaser, 'Large accounts time out; raise the limit or export in the background?', 'the model carries it')
+  eq(phone.model.cards.get(plain).teaser, null, 'an old card has none')
+  await agent.revise(id, { body: 'more' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id).object_version === 2, 'v2')
+  eq(phone.model.cards.get(id).teaser, 'Large accounts time out; raise the limit or export in the background?', 'a revision keeps it')
+})
+
 await test('S2 write-ahead: a crash right after the hub accepted a post reuses no sequence number', async () => {
   const dir = path.join(scratch, 'agent-crash')
   const { phone } = await room()
