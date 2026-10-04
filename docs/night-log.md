@@ -31,6 +31,11 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - Open: answer → Desk repaint 240–280 ms on phone 4x (the Desk render path, with C).
 - Phone (618d89e, dda34ca): parity at 390/360 light/dark; PWA update flow; long-press sheet 18–24 ms.
   - Phone 4x crazy room: first paint 573 ms, open session 127 ms, back to Desk 197 ms, longest task 444 ms (over budget, C on the Desk render path).
+- Desk (trommi/trommi 33afa40, dbc49fc, c5bd7a3): 165/165 Desk checks at 1440 and 390.
+  - Crazy room (300 open), desktop / phone 4x: answer 28 / 63 ms, Next 28 / 94 ms, patch 3.6 / 12.5 ms, longest task on phone 93 ms.
+  - Open: whole-page switches on phone 4x take 95–150 ms (over the 100 ms budget).
+- First load of the crazy room (113k envelopes) on a new device: 367 s → 31 s (C, cc891d3). The rest is core catch-up; a room snapshot (B) targets < 10 s.
+- v1.1 (A crypto + hub, B core 20/20 incl. R6 isolation + handover, lease, cut, escrow login) is green on branch hub-v11. Coordinated cutover pending C (app) + D (channel).
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
