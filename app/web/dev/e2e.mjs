@@ -250,6 +250,7 @@ try {
   check(await A.js("return !document.querySelector('#desk-stacks [data-stack=later], #desk-stacks [data-stack=works], #desk-stacks [data-stack=done], #desk-stacks [data-stack=trash]')"), 'no separate Snooze / Working / Done / Trash stacks any more')
   check(await A.js("const s = [...document.querySelectorAll('.off-fan .off-sheet')]; return s.length >= 4 && s.length <= 5 && s.every(x => x.querySelector('.off-sign'))"), 'the folded pile shows the newest sheets, each with its sign')
   const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.revise}', '${pile.done}'].map(id => [id, document.querySelector('.off-line[data-id="' + id + '"]')?.dataset.g]))`)
+  check(await A.js(`return !document.querySelector('.off-line[data-id="${pile.done}"] .inbox-takeback')`), 'a card its session closed (Done) offers no Take back')
   check(g[pile.snooze] === 'later' && g[pile.shred] === 'trash' && g[pile.revise] === 'works' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
   await A.js("document.querySelector('.off-head').click()")
   await A.until("document.querySelector('.off-pile.is-open .off-chips')", 'pile unfolded')

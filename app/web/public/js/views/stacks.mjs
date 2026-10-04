@@ -76,6 +76,9 @@ export function stackCards(model) {
 /** The sign of a place, in its stamp's ink (css/stamps.css): three Z, the gear, the tick; the basket for Trash. */
 const signOf = g => (g === 'trash' ? html`<span class="off-sign" data-g="trash" aria-hidden="true">${raw(sketchSvg('basket-full'))}</span>` : html`<span class="stack-stamp off-sign" data-stamp="${g}" data-g="${g}" aria-hidden="true"><span class="stack-stamp-sign"></span></span>`)
 const PLACE = { later: 'Snoozed', works: 'Working', done: 'Done', trash: 'Trash' }
+// A card its session closed (status done, his answer on it) has no way back: the core does not count a decide-again
+// there, so a Take back would do nothing. (An info he read he closed himself.)
+const closedByAgent = c => c.status === 'done' && c.kind !== 'info'
 function line(sheet, model, base, rest = false) {
   const { card, kind, g } = sheet, said = sheet.said
   const sender = model.byAgent.get(card.agent)
@@ -86,7 +89,7 @@ function line(sheet, model, base, rest = false) {
   return html`<article class="inbox-done off-line${rest ? ' is-rest' : ''}" tabindex="-1" data-id="${card.id}" data-kind="${kind}" data-g="${g}"${kind === 'later' ? raw(' data-later') : ''}>
 ${signOf(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(card, base)}" title="${cardNr(card)} · ${PLACE[g]}: open it"><strong>${card.title}</strong>${said ? html`<span class="off-said">${said}</span>` : ''}</a>
 <span class="off-tail">${sender ? html`${smallMark(sender)}<span class="off-who">${sender.name}</span>` : ''}${since ? agoSpan(since) : ''}</span>
-${kind === 'withdrawn' ? html`<span class="off-way"></span>` : html`<form class="off-way" method="post" action="${base}/cards/${card.id}/${way}"><input type="hidden" name="stay" value="1"><button class="inbox-takeback" type="submit" title="${tip}" aria-label="${word}: ${card.title}">${word}</button></form>`}
+${kind === 'withdrawn' || closedByAgent(card) ? html`<span class="off-way"></span>` : html`<form class="off-way" method="post" action="${base}/cards/${card.id}/${way}"><input type="hidden" name="stay" value="1"><button class="inbox-takeback" type="submit" title="${tip}" aria-label="${word}: ${card.title}">${word}</button></form>`}
 </article>`
 }
 
