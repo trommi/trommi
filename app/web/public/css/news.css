@@ -17,7 +17,7 @@
 .news-list { list-style: none; margin: 0; padding: 0; display: grid; }
 .news-line { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 0; }
 .news-act { flex: none; margin: 0; }
-.news-tick { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: none; box-shadow: inset 0 0 0 1.5px var(--line-strong); color: transparent; cursor: pointer; }
+.news-tick { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line-strong); color: transparent; cursor: pointer; }
 .news-tick .sketch { width: 15px; height: 15px; opacity: 0; }
 .news-tick:hover .sketch, .news-tick:focus-visible .sketch { opacity: 1; }
 .news-tick:hover, .news-tick:focus-visible { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
