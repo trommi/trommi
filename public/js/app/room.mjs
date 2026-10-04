@@ -9,6 +9,7 @@ import { sketchSvg, doodleSvg } from '../pen.js'
 import { BELL } from './layout.mjs'
 import { CLIENT } from './version.mjs'
 import { qrSvg } from './qr.mjs'
+import { passphraseProblem as corePassphraseProblem } from '/vendor/escrow.mjs'
 
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -24,14 +25,12 @@ const ago = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 6
 const sk = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${name}`) : sketchSvg(name))
 const has = (o, fn) => typeof o?.[fn] === 'function'
 const code6 = c => `${String(c).slice(0, 3)} ${String(c).slice(3)}`
-// The core's passphrase rule (passphraseProblem), loaded with the core; its reasons said in German.
-let coreRule = null
-import('/vendor/index.mjs').then(x => { coreRule = x.passphraseProblem ?? null }).catch(() => {})
+// The core's passphrase rule; its reasons said in German.
 const PROBLEM = { 'at least 14 characters': 'Mindestens 14 Zeichen.', 'at least four words, or 20 characters': 'Mindestens 4 Wörter (oder 20 Zeichen).', 'too repetitive': 'Zu viele Wiederholungen.' }
 /** null if the passphrase is good enough, else why not (German). */
 export function passphraseProblem(p) {
   p = String(p ?? '')
-  const why = coreRule ? coreRule(p) : p.length < 14 ? 'at least 14 characters' : p.trim().split(/\s+/).filter(w => w.length >= 2).length < 4 && p.length < 20 ? 'at least four words, or 20 characters' : null
+  const why = corePassphraseProblem(p)
   return why ? (PROBLEM[why] ?? why) : null
 }
 /** Signing in with a password on a fresh browser waits for the hub and crypto side (A); ?pwlogin shows it early. */
