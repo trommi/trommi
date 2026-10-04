@@ -33,11 +33,13 @@ async function newDevice(storage) {
   return z.generateDevice({ extractable: !!storage.extractable_keys })
 }
 
-async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null }) {
+async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null, save = true }) {
   const me = z.memberAt(state, device.id)
   const client = new Client({ storage, hub_url: roomRecord.hub_url, room_id: roomRecord.room_id, device, state, secrets: new Map(secrets.filter(Boolean).map(s => [s.epoch, s])),
     my_role: me ? roleName(me.role) : roomRecord.my_role, roomRecord, fetch, client: clientName })
-  await client._saveRoom()
+  // A stored room is not saved again before it is loaded: that wrote an empty session list over the stored session
+  // keys (review 3: a recovery's keys, older epochs an agent was given).
+  if (save) await client._saveRoom()
   await client.loadPersisted()
   return client
 }
@@ -68,7 +70,7 @@ export async function openRoom({ storage, client: client_name = null, fetch = nu
   const device = await storage.loadDevice()
   if (!device) throw new ZError('no-device', 'the room is stored but the device key is missing')
   const state = await z.verifyLog(roomRecord.entries.map(unb64u), unhex(roomRecord.room_id))
-  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch, client: client_name })
+  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch, client: client_name, save: false })
 }
 
 /**
@@ -142,17 +144,29 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   // A12: the new code reaches the human before the entry that makes it valid is posted (show it, never store it).
   if (on_recovery_code) await on_recovery_code(newCode)
   const r = await z.recoverRoom({ state, code, newCode, newDevice: device, name: '', recoveryWrap: unb64u(wrap.key_sealed), removeAgents: remove_agents.map(unhex), cuts })
-  await hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
+  // Review 3 (A12): the new device, its room record and the session keys reach storage BEFORE the entry is posted. A
+  // crash after the post used to leave every session stale with nobody holding its key (the old humans are removed,
+  // the new recovery key has no session wraps): now the next start finds the keys and re-keys the sessions.
   await storage.saveDevice(device, { room_id })
   // The recovery key held every older epoch through the back links: open them so history stays readable.
   const secrets = [r.secret, r.previous]
-  const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false, epoch_changed_at: Date.now() }
+  const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false, epoch_changed_at: Date.now(), recovery_pending: true }
   const client = await makeClient({ storage, device, state: r.state, secrets, roomRecord, fetch, client: client_name })
+  for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
+  await client._saveRoom()
+  try {
+    await hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
+  } catch (e) {
+    // Refused (not a crash): nothing changed on the hub; forget the room again so this storage can be used anew.
+    if (e.status >= 400 && e.status < 500) await storage.set('room', undefined).catch(() => {})
+    throw e
+  }
+  delete client.roomRecord.recovery_pending
+  await client._saveRoom().catch(e => client._localAlert('storage', e))
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
   // Every session gets a new key: the old human devices held them (R6). Agents that stay keep their sessions.
   // The entry is in: from here on nothing may lose the new code. A failed re-key is finished at the next start (stale grants).
-  for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
   await client._healStaleSessions().catch(e => client._localAlert('rekey', e))
   await client._saveRoom().catch(e => client._localAlert('storage', e))
   return { client, recovery_code: newCode }
@@ -216,8 +230,8 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const device = await newDevice(storage)
   const added = await z.addMember(state, rec, { member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub } })
   const sealed = await z.wrapEpochKey(added.state, secret, device.id)
+  await storage.saveDevice(device, { room_id })            // before the entry that makes it a member (review 3)
   await hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: [{ device_id: hex(device.id), key_sealed: b64u(sealed) }] })
-  await storage.saveDevice(device, { room_id })
   const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
   const client = await makeClient({ storage, device, state: added.state, secrets: [secret], roomRecord, fetch, client: client_name })
   await client.hub.signIn()

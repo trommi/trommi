@@ -1005,6 +1005,9 @@ function decodeRequest(bytes) {
   return { ...q, body, mac: bytes.slice(bytes.length - 96, bytes.length - 64), signature: bytes.slice(bytes.length - 64) }
 }
 
+/** The signing key a join request names (hex), unverified; null for junk. For counting distinct answering devices. */
+export function joinRequestSigner(bytes) { try { return hex(decodeRequest(bytes).signPub) } catch { return null } }
+
 // Hashes over the signed bodies, not over the Ed25519 signatures (R9): offer body; request body ‖ MAC.
 const offerBodyOf = offer => decodeOffer(offer).body
 const requestSignedOf = request => request.slice(0, request.length - 64)

@@ -404,6 +404,29 @@ await test('recovery: new device by code, humans out, agents kept, new code', as
   await until(() => agent.model.cards.get(id2).object_state === 'answered', 'agent obeys the tablet')
 })
 
+await test('review 3 recovery crash: a crash right after the entry was posted keeps the session keys; the next start re-keys and the agent writes again', async () => {
+  const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
+  const sid = agent.session_id
+  await settleAll(agent, phone)
+  await phone.stop()
+  const storage = memoryStorage()
+  // The hub takes the recovery entry, then the process dies before anything else (the reply never arrives).
+  const crashing = async (url, init) => {
+    const res = await fetch(url, init)
+    if (init?.method === 'POST' && /\/members$/.test(String(url)) && res.ok) throw new Error('crash after the post')
+    return res
+  }
+  let err = null
+  try { await recoverRoom({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage, device_name: 'Tablet', fetch: crashing }) } catch (e) { err = e }
+  assert(err, 'the recovery process died')
+  const tablet = track(await openRoom({ storage }))
+  await tablet.start()
+  await until(async () => { await tablet._refreshSessions(); const k = tablet.sessionKeys.get(sid); return k && !G.grantIsStale(k.state, tablet.state) }, 'the session was re-keyed on the next start', 10_000)
+  await agent.sendMessage({ text: 'after the recovery crash' })
+  await settleAll(agent, tablet)
+  await until(async () => (await tablet.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the recovery crash'), 'the agent writes and the tablet reads it')
+})
+
 await test('tamper detection: a changed byte, a forged sender, a replay', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const id = await agent.sendCard({ title: 'T', options: [{ key: 'a', label: 'A' }] })
@@ -747,6 +770,10 @@ await test('S2 history after state loss: every old command of a sender is histor
   const { phone } = await room()
   const agent = await addAgent(phone, 'Loss', await fileStorage({ dir }))
   for (const text of ['old 1', 'old 2', 'old 3']) await phone.sendMessage({ agent_device_id: agent.my_device_id, text })
+  // Review 3: an old command whose signed sent_at lies in the future (the phone's clock, or a forger) is history too.
+  const realNow = Date.now
+  Date.now = () => realNow() + 3600_000
+  try { await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'old future' }) } finally { Date.now = realNow }
   await settleAll(phone, agent)
   await agent.stop()
   // Lose the sync state and the ledger (cursor, delivered, others' chains); keep the room, the key and the own chain.
@@ -761,12 +788,59 @@ await test('S2 history after state loss: every old command of a sender is histor
   await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'new' })
   await settleAll(phone, again)
   await until(() => cmds.some(c => c.content.text === 'new'), 'the new one arrives')
-  eq(cmds.filter(c => c.content.text.startsWith('old')).map(c => c.history), [true, true, true], 'all old ones are history')
+  eq(cmds.filter(c => c.content.text.startsWith('old')).map(c => c.history), [true, true, true, true], 'all old ones are history, the future-dated one too')
   eq(cmds.find(c => c.content.text === 'new').history, false, 'the new one is live')
   // and after another restart the boundary holds (it was persisted)
   await again.stop()
   const third = track(await openRoom({ storage: await fileStorage({ dir }) }))
   eq(third.historyBefore, again.historyBefore, 'boundary persisted')
+})
+
+await test('review 3: a held command met again in a replay is emitted once', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  agent.commandsHalted = 'log-fork'                        // e.g. a forked member list: commands are held
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'held once' })
+  await settleAll(phone, agent)
+  await agent.serial(() => agent._resync())                // a replay meets the same envelope again
+  eq(cmds.length, 0, 'held')
+  await agent.resumeCommands()
+  eq(cmds.filter(c => c.content.text === 'held once').length, 1, 'emitted once')
+})
+
+await test('review 3 agent invites: a link two devices answer adds nobody; with confirm_code it is bound to the agent whose code the human confirms', async () => {
+  const { phone } = await room()
+  // (1) A leaked bearer link: the intended agent and someone else both answer before the phone looks. Before: the
+  // first comer was added. Now: nobody, the invite is spent, the phone shows invite-contested.
+  const inv = await phone.createInvite({ device_role: 'agent' })
+  await phone.stop()
+  const intruder = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Intruder', poll_ms: 50 })
+  const agent = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Agent', poll_ms: 50 })
+  intruder.client.catch(() => {}); agent.client.catch(() => {})
+  await until(async () => (await phone.hub.getRequests(inv.invite_id)).signed_requests.length >= 2, 'both answered')
+  await phone.start()
+  await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'failed', `the invite is spent (${JSON.stringify(phone.model.invites.get(inv.invite_id))} ${JSON.stringify(phone.model.alerts.slice(-2))})`)
+  eq(phone.model.invites.get(inv.invite_id).error, 'invite-contested', 'contested')
+  await sleep(300)
+  eq([...phone.model.members.values()].filter(m => m.device_role === 'agent').length, 0, 'nobody was added')
+  intruder.cancel(); agent.cancel()
+  // (2) confirm_code: the human confirms the code the intended agent prints; an intruder who answered first is not added.
+  const bound = await phone.createInvite({ device_role: 'agent', confirm_code: true })
+  const first = joinRoom({ link: bound.link, storage: memoryStorage(), device_name: 'Intruder', poll_ms: 50 })
+  first.client.catch(() => {})
+  await until(() => phone.model.invites.get(bound.invite_id).invite_state === 'confirm_code', 'waits for the code')
+  let err = null
+  try { await phone.confirmInvite(bound.invite_id, '000000' === await first.check_code ? '111111' : '000000') } catch (e) { err = e }
+  eq(err?.code, 'code-mismatch', 'the intended agent\'s code does not match the intruder\'s request')
+  first.cancel()
+  const ok3 = await phone.createInvite({ device_role: 'agent', confirm_code: true })
+  const real = joinRoom({ link: ok3.link, storage: memoryStorage(), device_name: 'Real', poll_ms: 50 })
+  await until(() => phone.model.invites.get(ok3.invite_id).invite_state === 'confirm_code', 'waits for the code')
+  await phone.confirmInvite(ok3.invite_id, await real.check_code)
+  const c = track(await real.client)
+  await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'the intended agent is added')
 })
 
 await test('S2 no rewind (D2): a refused envelope is voided or halts the chain; no sequence number is signed twice', async () => {

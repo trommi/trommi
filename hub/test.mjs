@@ -179,9 +179,11 @@ async function posted(w, c, opts) {
   return { env, n: res.json.envelope_number }
 }
 /** A reader for the SSE stream (fetch with the Bearer header). */
-async function openStream(w, c, after = 0, token = c.token) {
+async function openStream(w, c, after = 0, token = c.token, headers = undefined) {
   const ac = new AbortController()
-  const res = await fetch(`${w.base}${R(w)}/stream?after_envelope_number=${after}`, { headers: { authorization: `Bearer ${token}`, 'cf-connecting-ip': w.ip }, signal: ac.signal })
+  // Agents name their lease generation on streams too (review 3); by default the test process's lease ('test').
+  if (headers === undefined && token === c.token && z.memberAt(c.state, c.device.id)?.role === ROLE.AGENT) headers = await leaseHeader(w, c)
+  const res = await fetch(`${w.base}${R(w)}/stream?after_envelope_number=${after}`, { headers: { authorization: `Bearer ${token}`, 'cf-connecting-ip': w.ip, ...(headers ?? {}) }, signal: ac.signal })
   const s = { status: res.status, events: [], closed: false, waiters: [], res, close: () => ac.abort() }
   if (res.status !== 200) { s.json = await res.json(); return s }
   assert.equal(res.headers.get('content-type'), 'text/event-stream; charset=utf-8')
@@ -438,7 +440,11 @@ test('agent lease: one process per key; a new process takes over, the old one ge
   const w = await world()
   const a = await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })
   assert.ok(a.lease_generation > 0); assert.ok(a.expires_at > Date.now())
-  const s = await openStream(w, w.agent)
+  // Review 3: a stream, an upload and an ephemeral post of an agent need the generation too.
+  await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token }, 409, 'lease-lost')
+  await refused(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10) }, 409, 'lease-lost')
+  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: 'x' } }, 409, 'lease-lost')
+  const s = await openStream(w, w.agent, 0, w.agent.token, { 'x-lease-generation': String(a.lease_generation) })
   assert.equal((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })).lease_generation, a.lease_generation, 'the same process renews')
   await refused(w, 'POST', `${R(w)}/agent_lease`, { token: w.phone.token, body: { process_instance: 'p1' } }, 403, 'forbidden')
   // A crashed process is replaced: the new one takes the lease, the old stream is closed.
@@ -448,6 +454,8 @@ test('agent lease: one process per key; a new process takes over, the old one ge
   // The old process cannot take it back by renewing, nor reconnect its stream under the old generation.
   await refused(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1', renew: true } }, 409, 'lease-lost')
   await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token, headers: { 'x-lease-generation': String(a.lease_generation) } }, 409, 'lease-lost')
+  await refused(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10), headers: { 'x-lease-generation': String(a.lease_generation) } }, 409, 'lease-lost')
+  assert.equal((await api(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10), headers: { 'x-lease-generation': String(b.lease_generation) } })).status, 201, 'the holder uploads')
   // The holder still renews.
   assert.equal((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p2', renew: true } })).lease_generation, b.lease_generation)
   const old = await seal(w.agent)
@@ -463,7 +471,7 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   await posted(w, w.laptop, { payload: utf8('before') })
   const laptopStream = await openStream(w, w.laptop)
   const agentStream = await openStream(w, w.agent)
-  await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })
+  await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'test' } })
   // The phone removes the laptop.
   const r = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.laptop.device.id], previous: w.phone.secrets.get(1) })
   const out = await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r.backLink) } })
@@ -517,7 +525,7 @@ test('ephemeral: relayed to the other open streams only, never stored; own envel
   const agentStream = await openStream(w, w.agent)
   // Typing indicator from the agent: a sealed envelope that is relayed, not chained into anything stored.
   const typing = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.STATUS, payload: utf8('{"typing":true}') })
-  assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(typing.bytes) } }), { ok: true })
+  assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(typing.bytes) }, headers: await leaseHeader(w, w.agent) }), { ok: true })
   const ev = await phoneStream.until(e => e.event === 'ephemeral', 'ephemeral at the phone')
   assert.equal(ev.data.device_id, hex(w.agent.device.id)); assert.equal(ev.data.envelope, b64u(typing.bytes))
   await sleep(100)
@@ -566,10 +574,10 @@ test('attachments: written once, served whole and in ranges, members only, 64 Mi
   const file = crypto.randomBytes(200000)
   const asset = await z.encryptAsset(new Uint8Array(file))
   const id = hex(asset.blobId)
-  const put = await fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}`, 'content-type': 'application/octet-stream' }, body: asset.blob })
+  const put = await fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}`, 'content-type': 'application/octet-stream', ...await leaseHeader(w, w.agent) }, body: asset.blob })
   assert.equal(put.status, 201)
   assert.deepEqual(await put.json(), { attachment_id: id, total_size: asset.blob.length })
-  const again = await fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}` }, body: asset.blob })
+  const again = await fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}`, ...await leaseHeader(w, w.agent) }, body: asset.blob })
   assert.equal(again.status, 409); assert.equal((await again.json()).error, 'replay')
   const whole = await fetch(`${w.base}${R(w)}/attachments/${id}`, { headers: { authorization: `Bearer ${w.phone.token}` } })
   assert.equal(whole.status, 200)
@@ -611,7 +619,7 @@ test('share links: the uploader shares an attachment with a secret; anyone with 
   const w = await world()
   const asset = await z.encryptAsset(crypto.randomBytes(100000))
   const aid = hex(asset.blobId)
-  assert.equal((await fetch(`${w.base}${R(w)}/attachments/${aid}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}` }, body: asset.blob })).status, 201)
+  assert.equal((await fetch(`${w.base}${R(w)}/attachments/${aid}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}`, ...await leaseHeader(w, w.agent) }, body: asset.blob })).status, 201)
   const secret = crypto.randomBytes(32), shareId = crypto.randomBytes(16).toString('hex')
   const share = { share_id: shareId, share_secret_hash: b64u(crypto.createHash('sha256').update(secret).digest()), expires_at: Date.now() + 3600000 }
   await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.phone.token, body: share }, 403, 'forbidden')
@@ -858,7 +866,7 @@ test('review 2 C06: cf-connecting-ip only when enabled, and only from a loopback
 test('review 2 C02/C04/C05/H3, ids: no attachment hijack, removed devices finish nothing, ephemeral verified, pending uploads expire, ids strict', async () => {
   let clock = Date.now()
   const w = await world({ now: () => clock })
-  const put = (c, id, body) => fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${c.token}` }, body })
+  const put = async (c, id, body) => fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${c.token}`, ...(c === w.agent ? await leaseHeader(w, c) : {}) }, body })
   // C02: the phone's attachment, named by the agent's card, stays the phone's (not bound to the agent's object).
   const asset = await z.encryptAsset(utf8('desk picture'))
   assert.equal((await put(w.phone, hex(asset.blobId), asset.blob)).status, 201)
@@ -885,7 +893,7 @@ test('review 2 C02/C04/C05/H3, ids: no attachment hijack, removed devices finish
   assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(eph.bytes) } }), { ok: true })
   // An agent cannot relay under the room key (it holds none).
   const agentEph = await seal(w.agent, { keyScope: 0, secret: w.phone.secrets.get(1) }).catch(() => null)
-  if (agentEph) await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(agentEph.bytes) } }, 403)
+  if (agentEph) await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(agentEph.bytes) }, headers: await leaseHeader(w, w.agent) }, 403)
   // C04: the laptop starts an upload, is removed while it runs, and the upload stores nothing.
   const big = await z.encryptAsset(new Uint8Array(200000))
   const req = http.request(`${w.base}${R(w)}/attachments/${hex(big.blobId)}`, { method: 'PUT', headers: { authorization: `Bearer ${w.laptop.token}`, 'content-length': big.blob.length } })
