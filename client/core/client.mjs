@@ -1,0 +1,924 @@
+// client.mjs: one room as seen by one device. The sync engine (one cursor, verify every header, decrypt heads,
+// lazy timelines), the outbox, persistence, membership changes, and the human actions. The agent actions are in
+// agent.mjs (mixed into the same class). Contract: client/core/README.md.
+import * as z from './zcrypto.mjs'
+import { Hub } from './transport.mjs'
+import * as codec from './codec.mjs'
+import * as M from './model.mjs'
+
+const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
+const CHAIN_HASHES_KEPT = 256
+const PAGE = 1000
+const YIELD_MS = 12
+const PERSIST_DELAY_MS = 150
+const pad = n => String(n).padStart(12, '0')
+const roleName = r => (r === ROLE.HUMAN ? 'human' : 'agent')
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const yieldNow = () => new Promise(r => setTimeout(r, 0))
+const randomHex = n => hex(globalThis.crypto.getRandomValues(new Uint8Array(n)))
+const isZeroHex = h => !h || /^0+$/.test(h)
+
+// ---- (de)serialising crypto state --------------------------------------------------------------
+
+export const secretToJson = s => ({ epoch: s.epoch, key: b64u(s.key), hist: s.hist ? b64u(s.hist) : null })
+export const secretFromJson = o => ({ epoch: o.epoch, key: unb64u(o.key), hist: o.hist ? unb64u(o.hist) : null })
+const pinToJson = p => ({ seq: p.seq, hash: b64u(p.hash), hashes: p.hashes.map(b64u), lastRecoverSeq: p.lastRecoverSeq })
+const pinFromJson = o => o && ({ seq: o.seq, hash: unb64u(o.hash), hashes: o.hashes.map(unb64u), lastRecoverSeq: o.lastRecoverSeq })
+function chainToJson(c) {
+  const hashes = [...c.hashes].sort((a, b) => a[0] - b[0]).slice(-CHAIN_HASHES_KEPT)
+  return { seq: c.seq, hash: b64u(c.hash), hashes: hashes.map(([s, h]) => [s, b64u(h)]) }
+}
+const chainFromJson = o => ({ seq: o.seq, hash: unb64u(o.hash), hashes: new Map(o.hashes.map(([s, h]) => [s, unb64u(h)])) })
+function trimChain(c) { if (c.hashes.size > CHAIN_HASHES_KEPT * 2) { const keep = [...c.hashes.keys()].sort((a, b) => a - b).slice(-CHAIN_HASHES_KEPT); c.hashes = new Map(keep.map(k => [k, c.hashes.get(k)])) } }
+
+/** Members of a verified zcrypto log state, in model shape. */
+export function membersOf(state) {
+  return [...state.members.values()].map(m => ({ device_id: hex(m.id), device_role: roleName(m.role), is_active: m.removedSeq === null, added_entry_number: m.addedSeq, removed_entry_number: m.removedSeq }))
+}
+
+export class Client {
+  constructor({ storage, hub_url, room_id, device, state, secrets, my_role, roomRecord, fetch }) {
+    this.storage = storage
+    this.device = device
+    this.state = state
+    this.secrets = secrets              // Map epoch -> secret
+    this.chains = z.newChains()
+    this.roomRecord = roomRecord
+    this.hub = new Hub({ hub_url, room_id, fetch, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
+    this.model = M.emptyModel()
+    Object.assign(this.model.room, { room_id, hub_url: this.hub.hub_url, my_device_id: hex(device.id), my_role, key_epoch: state.epoch, last_entry_number: state.head.seq })
+    this.listeners = new Map()
+    this.outbox = []                    // [{ local_id, bytes(b64u), seq, hash(hex), kind, ... }]
+    this.recentSent = []                // acked envelopes kept for gap repair
+    this.echoes = new Map()             // local_id -> undo()
+    this.byHash = new Map()             // own envelope hash -> local_id (until it comes back)
+    this.invitesPrivate = new Map()     // invite_id -> zcrypto invite record (+ code)
+    this.commandsDelivered = 0
+    this.attachmentCache = new Map()
+    this.sentContent = new Map()        // own envelope hash -> content (until it comes back), for own pruned copies
+    this.localHeads = new Map()         // own objects: object_id -> { object_version, version_hash, content } as last SENT
+    this.stats = { verified: 0, decrypted: 0, verify_ms: 0, batches: 0 }
+    this._queue = Promise.resolve()
+    this._dirty = { records: new Map(), chains: new Set(), timer: null }
+    this._stream = null
+    this._started = false
+    this._pump = null
+    this.epochChangedAt = roomRecord.epoch_changed_at ?? null
+  }
+
+  get my_device_id() { return this.model.room.my_device_id }
+  get is_human() { return this.model.room.my_role === 'human' }
+
+  // ---- events --------------------------------------------------------------------------
+  on(event, fn) { if (!this.listeners.has(event)) this.listeners.set(event, new Set()); this.listeners.get(event).add(fn); return () => this.off(event, fn) }
+  off(event, fn) { this.listeners.get(event)?.delete(fn) }
+  emit(event, data) { for (const fn of this.listeners.get(event) ?? []) { try { fn(data) } catch (e) { console.error('[core] listener', e) } } }
+  _emitChange(change) {
+    if (change.alerts) for (const a of this.model.alerts.slice(-5)) if (!a._emitted) { a._emitted = true; this.emit('alert', a) }
+    if (!M.changeIsEmpty(change)) this.emit('change', change)
+  }
+
+  /** Run fn strictly after everything queued before (stream records, sends, membership changes). */
+  serial(fn) { const run = this._queue.then(fn, fn); this._queue = run.catch(() => {}); return run }
+
+  // ---- warm start ----------------------------------------------------------------------------
+
+  /** Load the persisted model, chains and cursor (called by openRoom). */
+  async loadPersisted() {
+    const st = this.storage
+    const sync = await st.get('sync')
+    for (const [k, v] of await st.range('chain/')) this.chains.set(k.slice(6), chainFromJson(v))
+    if (sync) { this.model.room.last_envelope_number = sync.cursor; this.commandsDelivered = sync.commands_delivered ?? 0 }
+    const m = this.model
+    m._device_registers = new Map((await st.get('devregs')) ?? [])
+    M.applyMembers(m, membersOf(this.state), M.emptyChange())
+    const online = (await st.get('devices')) ?? []
+    M.applyDevices(m, online, M.emptyChange())
+    for (const [, v] of await st.range('session/')) m.sessions.set(v.agent_device_id, M.deserialiseSession(v))
+    for (const [, v] of await st.range('card/')) m.cards.set(v.object_id, v)
+    for (const [, v] of await st.range('perm/')) m.permissions.set(v.object_id, v)
+    for (const [, v] of await st.range('memo/')) m.memos.set(v.object_id, v)
+    for (const [, v] of await st.range('pub/')) m.published.set(v.object_id, v)
+    for (const [, v] of await st.range('tlmeta/')) m.timelines.set(v.timeline_key, M.deserialiseTimelineMeta(v))
+    const regs = await st.range('reg/')
+    M.deserialiseHuman(m, { raw: regs.map(([k, v]) => [k.slice(4), v]) })
+    for (const [, v] of await st.range('invite/')) {
+      this.invitesPrivate.set(v.invite_id, inviteFromJson(v))
+      m.invites.set(v.invite_id, v.public)
+    }
+    const outbox = (await st.get('outbox')) ?? []
+    this.outbox = outbox
+    for (const o of outbox) this.byHash.set(o.hash, o.local_id)
+    m.outbox = outbox.map(o => o.public)
+    for (const s of m.sessions.values()) { const mem = m.members.get(s.agent_device_id); if (mem) { s.device_name = mem.device_name; s.is_active = mem.is_active; s.agent_session_id = mem.agent_session_id } }
+    M.project(m, M.emptyChange())
+  }
+
+  async _saveRoom() {
+    const r = this.roomRecord
+    r.entries = this.state.entries.map(e => b64u(z.concat(e.body, e.signature)))
+    r.pin = pinToJson(z.pinOf(this.state))
+    r.secrets = [...this.secrets.values()].map(secretToJson)
+    r.epoch_changed_at = this.epochChangedAt
+    await this.storage.set('room', r)
+  }
+
+  // ---- start / stop ----------------------------------------------------------------------------
+
+  async start({ stream = true } = {}) {
+    if (this._started) return
+    this._started = true
+    this._setConnection('connecting')
+    await this.hub.signIn()
+    await this.serial(() => this._refreshMembers())
+    await this._refreshDevices().catch(() => {})
+    this._pumpOutbox()
+    if (!this.roomRecord.device_register_sent && this.roomRecord.device_info) {
+      await this.setRegisters({ [`device/${this.my_device_id}`]: this.roomRecord.device_info }, { own_device: true })
+      this.roomRecord.device_register_sent = true
+      await this._saveRoom()
+    }
+    this._setConnection('catching_up')
+    await this.catchUp()
+    for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
+    if (stream) this._openStream()
+    else this._setConnection('live')
+  }
+
+  async stop() {
+    this._started = false
+    this._stream?.close()
+    this._stream = null
+    for (const inv of this.invitesPrivate.values()) clearInterval(inv._timer)
+    clearTimeout(this._dirty.timer)
+    await this.flush()
+    this._setConnection('offline')
+  }
+
+  _setConnection(c) {
+    if (this.model.room.connection === c) return
+    this.model.room.connection = c
+    const ch = M.emptyChange(); ch.room = true
+    this._emitChange(ch)
+  }
+
+  _openStream() {
+    this._stream = this.hub.stream({
+      after_envelope_number: () => this.model.room.last_envelope_number,
+      onState: (s, err) => {
+        if (s === 'open') this._setConnection('live')
+        else if (s === 'closed') { this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
+      },
+      onEvent: ev => this._onStreamEvent(ev),
+    })
+  }
+
+  async _onStreamEvent({ event, data }) {
+    if (event === 'envelope') {
+      if (data.envelope_number <= this.model.room.last_envelope_number) return
+      if (data.envelope_number > this.model.room.last_envelope_number + 1) await this.catchUp()   // missed something: page it in
+      if (data.envelope_number === this.model.room.last_envelope_number + 1) await this.processRecords([data], { live: true })
+    } else if (event === 'member_entry') {
+      await this.serial(() => this._refreshMembers())
+      this._refreshDevices().catch(() => {})
+    } else if (event === 'join_request') {
+      if (data.invite_id) this._checkInvite(data.invite_id).catch(e => this._localAlert('invite', e))
+    }
+  }
+
+  /** Page through GET envelopes from the cursor to the hub's end. */
+  async catchUp() {
+    for (;;) {
+      const r = await this.hub.envelopes({ after_envelope_number: this.model.room.last_envelope_number, limit: PAGE })
+      if (!r.envelopes.length) break
+      await this.processRecords(r.envelopes)
+      if (this.model.room.last_envelope_number >= r.last_envelope_number) break
+    }
+  }
+
+  // ---- membership and keys ----------------------------------------------------------------------
+
+  async _refreshMembers() {
+    const r = await this.hub.members({ after_entry_number: this.state.head.seq })
+    const change = M.emptyChange()
+    if (r.last_entry_number < this.state.head.seq) {
+      M.pushAlert(this.model, change, { code: 'log-rollback', message: `the hub shows member list entry ${r.last_entry_number}, this device saw ${this.state.head.seq}` })
+      this._emitChange(change)
+      return
+    }
+    let state = this.state, epochBefore = state.epoch
+    try {
+      for (const e of r.signed_entries) state = await z.applyEntry(state, unb64u(e))
+      const verdict = z.checkLogAgainstPin(state, pinFromJson(this.roomRecord.pin))
+      if (verdict.status === 'recovery-override') M.pushAlert(this.model, change, { code: 'recovery-override', message: 'a recovery replaced the member list this device knew' })
+    } catch (e) {
+      M.pushAlert(this.model, change, { code: e.code ?? 'bad-entry', message: e.message })
+      this._emitChange(change)
+      return
+    }
+    if (state === this.state && r.signed_entries.length === 0) return
+    this.state = state
+    if (state.epoch !== epochBefore) this.epochChangedAt = Date.now()
+    this.model.room.last_entry_number = state.head.seq
+    this.model.room.key_epoch = state.epoch
+    change.room = true
+    M.applyMembers(this.model, membersOf(state), change)
+    const me = state.members.get(b64u(this.device.id))
+    if (!me || me.removedSeq !== null) {
+      this.model.room.connection = 'removed'
+      M.pushAlert(this.model, change, { code: 'removed', message: 'this device was removed from the room' })
+      await this._saveRoom()
+      this._emitChange(change)
+      this._stream?.close()
+      return
+    }
+    if (!this.secrets.has(state.epoch)) await this._fetchKeys()
+    await this._saveRoom()
+    this._emitChange(change)
+  }
+
+  async _fetchKeys() {
+    const have = Math.max(0, ...this.secrets.keys())
+    const r = await this.hub.sealedRoomKeys(have)
+    for (const k of r.sealed_room_keys) {
+      if (this.secrets.has(k.key_epoch)) continue
+      this.secrets.set(k.key_epoch, await z.unwrapEpochKey(this.state, this.device, unb64u(k.key_sealed), k.key_epoch))
+    }
+    if (this.is_human) await this._walkBackLinks()
+  }
+
+  /** Human devices: open the back links down to epoch 1, so history from before joining can be read. */
+  async _walkBackLinks() {
+    let low = Math.min(...this.secrets.keys())
+    if (low <= 1) return
+    const r = await this.hub.keyBackLinks()
+    const links = new Map(r.key_back_links.map(l => [l.key_epoch, unb64u(l.key_back_link)]))
+    while (low > 1 && links.has(low) && this.secrets.get(low)?.hist) {
+      const prev = await z.openBackLink(this.state, this.secrets.get(low), links.get(low))
+      this.secrets.set(prev.epoch, prev)
+      low = prev.epoch
+    }
+  }
+
+  async _refreshDevices() {
+    const r = await this.hub.devices()
+    const change = M.emptyChange()
+    M.applyDevices(this.model, r.devices, change)
+    await this.storage.set('devices', r.devices.map(d => ({ device_id: d.device_id, is_online: d.is_online, agent_session_id: d.agent_session_id ?? null })))
+    this._emitChange(change)
+  }
+
+  // ---- the sync engine -------------------------------------------------------------------------
+
+  /**
+   * Process records { envelope_number, envelope(b64u) } in hub order. Verifies every header chain (pruned forms
+   * included), decrypts what came in full, reduces into the model, persists the touched records in one write.
+   */
+  processRecords(records, { live = false } = {}) {
+    return this.serial(async () => {
+      const change = M.emptyChange()
+      const tl = []                      // timeline item records to persist
+      const commands = []                // agents: commands in order
+      let t0 = performance.now(), tStart = t0
+      for (const r of records) {
+        if (r.envelope_number <= this.model.room.last_envelope_number) continue
+        try {
+          const rec = await this._verifyRecord(r)
+          if (rec) {
+            const cmd = this.model.room.my_role === 'agent' ? this._preAuthorise(rec) : null
+            const result = M.applyRecord(this.model, rec, change)
+            if (rec.kind === codec.KIND.timeline_item) tl.push(rec)
+            if (cmd) commands.push({ ...cmd, applied: result.applied, refused: cmd.refused ?? (rec.is_head && !result.applied ? result.refused : null) })
+          }
+        } catch (e) {
+          M.pushAlert(this.model, change, { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
+        }
+        this.model.room.last_envelope_number = r.envelope_number
+        if (performance.now() - t0 > YIELD_MS) { await yieldNow(); t0 = performance.now() }
+      }
+      this.stats.verify_ms += performance.now() - tStart
+      this.stats.batches++
+      change.room = true
+      M.project(this.model, change)
+      this._markDirty(change, tl)
+      this._emitChange(change)
+      if (commands.length) await this._deliverCommands(commands)
+    })
+  }
+
+  /** Verify one record; decrypt it if it came in full. Returns the reducer record, or null for an own replay. */
+  async _verifyRecord({ envelope_number, envelope }) {
+    const bytes = unb64u(envelope)
+    const peek = z.peekEnvelope(bytes)
+    const h = peek.header
+    const sender = hex(h.sender)
+    let v, opened = null, content_state = 'ok'
+    // Our own envelopes: the chain advanced when we sealed them. Check the hub's copy is exactly ours.
+    if (sender === this.my_device_id) {
+      const own = this.chains.get(b64u(h.sender))
+      const known = own?.hashes.get(h.seq)
+      if (!known) throw new ZError('equivocation', `an envelope in this device's name that it did not send (#${h.seq})`)
+      const localId = this.byHash.get(hex(known))
+      if (!peek.pruned) {
+        opened = await z.openVerifiedEnvelope(bytes, { state: this.state, secrets: this.secrets, envelopeHash: known, self: this.device.id })
+        v = { header: opened.header, hash: opened.hash, member: opened.member }
+      } else {
+        const got = await z.hash(z.LABEL.envelope, peek.headerBytes, peek.nonce, peek.ciphertextHash)
+        if (!z.bytesEqual(got, known)) throw new ZError('equivocation', `the hub shows another envelope #${h.seq} in this device's name`)
+        v = { header: h, hash: known, member: null }
+        content_state = h.isHead ? 'pruned' : 'header'
+      }
+      this.stats.verified++
+      const rec = this._record(envelope_number, v, opened, content_state, localId)
+      const sent = this.sentContent.get(rec.envelope_hash)
+      if (sent && !rec.content) { rec.content = sent; rec.content_state = 'ok' }
+      this.sentContent.delete(rec.envelope_hash)
+      return rec
+    }
+    const tries = 2
+    for (let i = 0; i < tries; i++) {
+      try {
+        if (!peek.pruned) {
+          try {
+            opened = await z.openEnvelope(bytes, { state: this.state, chains: this.chains, secrets: this.secrets, self: this.device.id, allowRemovedSender: true })
+            v = opened
+            this.stats.decrypted++
+          } catch (e) {
+            if (!['no-key', 'decrypt-failed', 'kind-mismatch', 'bad-format', 'bad-version'].includes(e.code)) throw e
+            v = await z.verifyEnvelope(bytes, { state: this.state, chains: this.chains, allowRemovedSender: true })
+            content_state = 'undecryptable'
+            opened = null
+          }
+        } else {
+          v = await z.verifyEnvelope(bytes, { state: this.state, chains: this.chains, allowRemovedSender: true })
+          content_state = h.isHead ? 'pruned' : 'header'
+        }
+        break
+      } catch (e) {
+        if (e.code === 'log-behind' && i === 0) { await this._refreshMembers(); continue }
+        if (e.code === 'replay') return null
+        throw e
+      }
+    }
+    trimChain(this.chains.get(b64u(h.sender)))
+    this._dirty.chains.add(b64u(h.sender))
+    this.stats.verified++
+    return this._record(envelope_number, v, opened, content_state, null)
+  }
+
+  _record(envelope_number, v, opened, content_state, local_id) {
+    const h = v.header
+    const sender = hex(h.sender)
+    let content = null, bind = null
+    if (opened) {
+      const d = codec.decodePayload(opened.payload)
+      content = d.content; content_state = d.content_state
+      try { bind = codec.decodeBindFor(opened.kind, opened.bind) } catch { bind = null }
+    }
+    const member = this.state.members.get(b64u(h.sender))
+    return {
+      envelope_number, envelope_hash: hex(v.hash), sender_device_id: sender, sender_role: member ? roleName(member.role) : 'unknown',
+      recipient_device_id: h.recipient.every(b => b === 0) ? null : hex(h.recipient), sent_at: h.time, kind: h.kind, is_head: h.isHead,
+      object: h.card ? { object_id: hex(h.card.id), object_state: h.card.state, urgency: h.card.urgency, answered_at: h.card.answeredAt } : null,
+      timeline_kind: h.timelineKind ? (codec.TIMELINE_KIND_NAME[h.timelineKind] ?? String(h.timelineKind)) : null, timeline_id: h.timelineId,
+      attachment_ids: h.blobs.map(hex), content, content_state, bind, local_id: local_id ?? null,
+      _header: h, _bind: opened?.bind ?? null, _epoch: h.epoch,
+      ...(local_id ? this._undoEcho(local_id, v.hash) : {}),
+    }
+  }
+
+  // ---- persistence -------------------------------------------------------------------------------
+
+  _markDirty(change, tlRecs) {
+    const d = this._dirty.records
+    const m = this.model
+    for (const id of change.cards) { const c = m.cards.get(id); if (c) d.set(`card/${id}`, c) }
+    for (const id of change.sessions) { const s = m.sessions.get(id); if (s) d.set(`session/${id}`, M.serialiseSession(s)) }
+    for (const id of change.permissions) { const p = m.permissions.get(id); if (p) d.set(`perm/${id}`, p) }
+    for (const id of change.memos) { const x = m.memos.get(id); if (x) d.set(`memo/${id}`, x) }
+    for (const id of change.published) { const x = m.published.get(id); if (x) d.set(`pub/${id}`, x) }
+    for (const key of change.timelines) { const t = m.timelines.get(key); if (t) d.set(`tlmeta/${key}`, M.serialiseTimelineMeta(t)) }
+    for (const key of change.registers) {
+      if (key.startsWith('device/')) d.set('devregs', [...(m._device_registers ?? [])])
+      else if (m.human.raw.has(key) && !m.human.raw.get(key).pending) d.set(`reg/${key}`, m.human.raw.get(key))
+      else if (!m.human.raw.has(key)) d.set(`reg/${key}`, undefined)
+    }
+    for (const rec of tlRecs) {
+      const key = M.timelineKey(rec.timeline_kind, rec.timeline_id)
+      d.set(`tl/${key}/${pad(rec.envelope_number)}`, { n: rec.envelope_number, h: rec.envelope_hash, s: rec.sender_device_id, r: rec.recipient_device_id, t: rec.sent_at, c: rec.content, cs: rec.content_state })
+    }
+    if (!this._dirty.timer) this._dirty.timer = setTimeout(() => { this._dirty.timer = null; this.flush().catch(e => this.emit('error', e)) }, PERSIST_DELAY_MS)
+  }
+
+  /** Write everything dirty in one transaction, with the cursor and the touched chains. */
+  async flush() {
+    clearTimeout(this._dirty.timer); this._dirty.timer = null
+    const entries = [...this._dirty.records]
+    this._dirty.records = new Map()
+    for (const k of this._dirty.chains) { const c = this.chains.get(k); if (c) entries.push([`chain/${k}`, chainToJson(c)]) }
+    this._dirty.chains = new Set()
+    entries.push(['sync', { cursor: this.model.room.last_envelope_number, commands_delivered: this.commandsDelivered }])
+    await this.storage.setMany(entries)
+    if (this.storage.flush) await this.storage.flush()
+  }
+
+  // ---- sending: seal, echo, outbox ------------------------------------------------------------
+
+  /**
+   * Seal one envelope and queue it. opts: { kind, content, bind, recipient, object: { object_id, object_state, urgency, answered_at },
+   * timeline: { timeline_kind, timeline_id }, push, echo: () => undo }. Returns { local_id, envelope_hash }.
+   */
+  async _send({ kind, content, bind = null, recipient = null, object = null, timeline = null, push = false, echo = null, after = null }) {
+    const local_id = `local-${randomHex(8)}`
+    if (echo) {
+      const undo = echo(local_id)
+      if (undo) this.echoes.set(local_id, undo)
+    }
+    return this.serial(async () => {
+      try {
+        if (typeof content === 'function') ({ content, object = object, bind = bind } = content())
+        const payload = codec.encodePayload(kind, content)
+        if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
+        const blobs = codec.attachmentIdsOf(content).map(unhex)
+        const secret = this.secrets.get(this.state.epoch)
+        if (!secret) throw new ZError('no-key', 'no key for the current epoch')
+        const sealed = await z.sealEnvelope({
+          device: this.device, state: this.state, secret, chains: this.chains, kind, payload, bind: bind ?? new Uint8Array(0),
+          recipient: recipient ? unhex(recipient) : null, push, blobs,
+          card: object ? { id: unhex(object.object_id), state: codec.OBJECT_STATE[object.object_state] ?? 1, urgency: codec.URGENCY[object.urgency] ?? 1, answeredAt: object.answered_at ?? 0 } : null,
+          timelineKind: timeline ? codec.TIMELINE_KIND[timeline.timeline_kind] ?? timeline.timeline_kind : null, timelineId: timeline?.timeline_id ?? null,
+        })
+        const hashHex = hex(sealed.hash)
+        this.sentContent.set(hashHex, content)
+        if (after) after(sealed, content)
+        const pub = { local_id, envelope_kind: codec.KIND_NAME[kind], object_id: object?.object_id ?? null, timeline_key: timeline ? M.timelineKey(timeline.timeline_kind, timeline.timeline_id) : null,
+          recipient_device_id: recipient, content, outbox_state: 'sending', error: null }
+        const item = { local_id, bytes: b64u(sealed.bytes), seq: sealed.seq, hash: hashHex, public: pub }
+        this.outbox.push(item)
+        this.byHash.set(hashHex, local_id)
+        this.model.outbox.push(pub)
+        // The own chain and the outbox reach storage before the hub sees the envelope: a crash must not reuse a number.
+        const me = b64u(this.device.id)
+        await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(this.chains.get(me))]])
+        const ch = M.emptyChange(); ch.outbox = true; this._emitChange(ch)
+        this._pumpOutbox()
+        return { local_id, envelope_hash: hashHex, seq: sealed.seq }
+      } catch (e) {
+        this._rollbackEcho(local_id)
+        throw e
+      }
+    })
+  }
+
+  _pumpOutbox() {
+    if (this._pump) return this._pump
+    this._pump = (async () => {
+      await null
+      let backoff = 300
+      while (this.outbox.length) {
+        const item = this.outbox[0]
+        try {
+          const r = await this.hub.postEnvelope(item.bytes)
+          item.envelope_number = r.envelope_number
+          this._acked(item)
+          backoff = 300
+        } catch (e) {
+          if (globalThis.process?.env?.CORE_DEBUG) console.error('[core] post', e.code, e.message)
+          if (e.code === 'replay') { this._acked(item); continue }
+          if (e.code === 'gap') {
+            for (const old of this.recentSent) { try { await this.hub.postEnvelope(old.bytes) } catch {} }
+            await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)
+            continue
+          }
+          if (e.status === 0 || e.status >= 500 || e.status === 429 || e.code === 'unauthorised') {
+            await sleep(e.retry_after ? e.retry_after * 1000 : backoff); backoff = Math.min(backoff * 2, 15_000)
+            if (!this._started && e.status === 0) break
+            continue
+          }
+          // Refused for good: drop it from the queue, roll the echo back, say so.
+          this.outbox.shift()
+          item.public.outbox_state = 'failed'; item.public.error = e.code
+          this._rollbackEcho(item.local_id)
+          const ch = M.emptyChange(); ch.outbox = true
+          M.pushAlert(this.model, ch, { code: e.code ?? 'refused', message: `the hub refused an envelope: ${e.message}` })
+          await this.storage.set('outbox', this.outbox)
+          this._emitChange(ch)
+        }
+      }
+      this._pump = null
+    })()
+    return this._pump
+  }
+
+  _acked(item) {
+    this.outbox.shift()
+    this.recentSent.push(item)
+    if (this.recentSent.length > 32) this.recentSent.shift()
+    const at = this.model.outbox.indexOf(item.public)
+    if (at >= 0) this.model.outbox.splice(at, 1)
+    this.storage.set('outbox', this.outbox).catch(() => {})
+    const ch = M.emptyChange(); ch.outbox = true; this._emitChange(ch)
+  }
+
+  /** Wait until the outbox is empty and the hub's copies came back through sync. */
+  async settle({ timeout_ms = 10_000 } = {}) {
+    const until = Date.now() + timeout_ms
+    while (Date.now() < until) {
+      await this._queue
+      if (this._pump) await this._pump
+      if (!this.outbox.length && this.byHash.size === 0) return
+      if (!this._stream || this.model.room.connection !== 'live') await this.catchUp()
+      else await sleep(10)
+    }
+    throw new ZError('timeout', `outbox not settled (${this.outbox.length} waiting, ${this.byHash.size} not echoed)`)
+  }
+
+  _undoEcho(local_id, hashBytes) {
+    this.byHash.delete(hex(hashBytes))
+    const undo = this.echoes.get(local_id)
+    this.echoes.delete(local_id)
+    if (undo) undo({ confirmed: true })
+    return {}
+  }
+  _rollbackEcho(local_id) {
+    const undo = this.echoes.get(local_id)
+    this.echoes.delete(local_id)
+    if (!undo) return
+    const ch = undo({ confirmed: false }) ?? M.emptyChange()
+    M.project(this.model, ch)
+    this._emitChange(ch)
+  }
+
+  // echo helpers: apply now, return an undo
+  _echoTimelineItem(timeline, content, recipient, object_id) {
+    return local_id => {
+      const key = M.timelineKey(timeline.timeline_kind, timeline.timeline_id)
+      const t = M.timelineOf(this.model, key)
+      const item = { envelope_number: null, local_id, pending: true, envelope_hash: null, sender_device_id: this.my_device_id, recipient_device_id: recipient, sent_at: Date.now(),
+        item_state: 'loaded', content_type: content.content_type, content }
+      t.items.set(local_id, item)
+      const ch = M.emptyChange(); ch.timelines.add(key)
+      if (object_id) ch.cards.add(object_id)
+      this._emitChange(ch)
+      return ({ confirmed }) => {
+        if (!confirmed) { t.items.delete(local_id); const c = M.emptyChange(); c.timelines.add(key); return c }
+        // confirmed: the reducer replaces the item in place (same local_id); keep the echo until then.
+      }
+    }
+  }
+  _echoRegisters(values) {
+    return local_id => {
+      const ch = M.emptyChange()
+      const before = new Map()
+      for (const [k, v] of Object.entries(values)) {
+        if (!isHumanRegisterKey(k)) continue
+        before.set(k, this.model.human.raw.get(k))
+        M.setHumanRegister(this.model, k, v, { envelope_number: null, sender_device_id: this.my_device_id, pending: true }, ch)
+      }
+      M.project(this.model, ch)
+      this._emitChange(ch)
+      return ({ confirmed }) => {
+        if (confirmed) return
+        const c = M.emptyChange()
+        for (const [k, old] of before) M.setHumanRegister(this.model, k, old?.value ?? null, { envelope_number: old?.envelope_number ?? null, sender_device_id: old?.by_device_id ?? null }, c)
+        return c
+      }
+    }
+  }
+  _echoAnswer(object_id, answer, state) {
+    return local_id => {
+      const card = this.model.cards.get(object_id)
+      if (!card) return null
+      const saved = { answer: card.answer, object_state: card.object_state, closed_how: card.closed_how }
+      card.answer = { ...answer, pending: true, local_id }
+      card.object_state = state
+      const ch = M.emptyChange(); ch.cards.add(object_id); ch.sessions.add(card.agent_device_id)
+      M.project(this.model, ch)
+      this._emitChange(ch)
+      // The real answer is judged against the card as it was: undo first in either case.
+      return () => { Object.assign(card, saved); const c = M.emptyChange(); c.cards.add(object_id); return c }
+    }
+  }
+
+  _localAlert(where, e) {
+    const ch = M.emptyChange()
+    M.pushAlert(this.model, ch, { code: e.code ?? where, message: `${where}: ${e.message}` })
+    this._emitChange(ch)
+  }
+
+  // ---- timelines: lazy, newest first ---------------------------------------------------------
+
+  /** Load the next older page of a timeline into the window: from storage when the bodies are cached, else GET threads. */
+  async loadTimeline(timeline_key, { limit = 50 } = {}) {
+    const t = M.timelineOf(this.model, timeline_key)
+    t.window_open = true
+    const before = Number.isFinite(t.loaded_down_to) ? t.loaded_down_to : this.model.room.last_envelope_number + 1
+    const items = await this._readTimeline(timeline_key, { before, limit })
+    for (const it of items) t.items.set(it.envelope_number, it)
+    if (items.length) t.loaded_down_to = Math.min(t.loaded_down_to, items[0].envelope_number)
+    const olderKnown = await this.storage.range(`tl/${timeline_key}/`, { before: `tl/${timeline_key}/${pad(t.loaded_down_to)}`, limit: 1, reverse: true })
+    t.has_more = olderKnown.length > 0 || this._hubHasMore
+    const ch = M.emptyChange(); ch.timelines.add(timeline_key)
+    this._emitChange(ch)
+    return { loaded: items.length, has_more: t.has_more }
+  }
+
+  /** A windowed read for scrolling: items oldest first, before an envelope number, bodies fetched as needed. Does not grow the window. */
+  async timelineWindow(timeline_key, { before_envelope_number = Infinity, limit = 50 } = {}) {
+    const before = Number.isFinite(before_envelope_number) ? before_envelope_number : this.model.room.last_envelope_number + 1
+    return this._readTimeline(timeline_key, { before, limit })
+  }
+
+  async _readTimeline(timeline_key, { before, limit }) {
+    if (this._dirty.records.size) await this.flush()
+    const prefix = `tl/${timeline_key}/`
+    let recs = (await this.storage.range(prefix, { before: prefix + pad(before), limit, reverse: true })).map(([, v]) => v)
+    const missing = recs.filter(r => !r.c && r.cs !== 'pruned' && r.cs !== 'undecryptable')
+    if (missing.length || recs.length < limit) {
+      const { timeline_kind, timeline_id } = M.parseTimelineKey(timeline_key)
+      const res = await this.hub.threads({ timeline_kind, timeline_id, before_envelope_number: before, limit })
+      this._hubHasMore = res.has_more
+      const byN = new Map(recs.map(r => [r.n, r]))
+      const writes = []
+      for (const { envelope_number, envelope } of res.envelopes) {
+        let r = byN.get(envelope_number) ?? (await this.storage.get(prefix + pad(envelope_number)))
+        if (!r) continue                                   // not verified by sync yet: the stream brings it
+        if (r.c) { byN.set(envelope_number, r); continue }
+        try {
+          const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.secrets, envelopeHash: unhex(r.h), self: this.device.id })
+          const d = codec.decodePayload(o.payload)
+          r = { ...r, c: d.content, cs: d.content_state }
+          this.stats.decrypted++
+        } catch (e) {
+          r = { ...r, cs: e.code === 'pruned' ? 'pruned' : 'undecryptable' }
+          if (e.code === 'hash-mismatch' || e.code === 'bad-signature') this._localAlert('timeline', e)
+        }
+        byN.set(envelope_number, r)
+        writes.push([prefix + pad(envelope_number), r])
+      }
+      if (writes.length) await this.storage.setMany(writes)
+      recs = [...byN.values()].sort((a, b) => b.n - a.n).slice(0, limit)
+    }
+    return recs.sort((a, b) => a.n - b.n).map(r => itemFromStored(r))
+  }
+
+  // ---- attachments ------------------------------------------------------------------------------
+
+  async uploadAttachment(bytes, meta = {}) {
+    const asset = await z.encryptAsset(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes))
+    await this.hub.putAttachment(hex(asset.blobId), asset.blob)
+    const ref = codec.attachmentRef(asset, meta)
+    this.attachmentCache.set(ref.attachment_id, bytes)
+    return ref
+  }
+  async fetchAttachment(ref) {
+    const hit = this.attachmentCache.get(ref.attachment_id)
+    if (hit) return hit
+    const blob = await this.hub.getAttachment(ref.attachment_id)
+    const bytes = await z.decryptAsset(blob, unb64u(ref.file_key), unb64u(ref.sha256))
+    if (this.attachmentCache.size > 64) this.attachmentCache.delete(this.attachmentCache.keys().next().value)
+    this.attachmentCache.set(ref.attachment_id, bytes)
+    return bytes
+  }
+  async attachmentBlob(ref) { return new Blob([await this.fetchAttachment(ref)], { type: ref.media_type ?? 'application/octet-stream' }) }
+
+  // ---- human actions -----------------------------------------------------------------------------
+
+  _needHuman() { if (!this.is_human) throw new ZError('forbidden', 'only a human device can do this') }
+  _card(object_id) { const c = this.model.cards.get(object_id); if (!c) throw new ZError('not-found', `no card ${object_id}`); return c }
+
+  /** A message: from a human to one agent (session or card conversation), from an agent to everyone. */
+  async sendMessage({ agent_device_id = null, object_id = null, ...fields }) {
+    const content = { content_type: 'message', ...fields }
+    let recipient = null, timeline
+    if (this.is_human) {
+      const card = object_id ? this._card(object_id) : null
+      recipient = card?.agent_device_id ?? agent_device_id
+      if (!recipient) throw new ZError('bad-argument', 'a message from a human names an agent or a card')
+      timeline = { timeline_kind: 'chat', timeline_id: object_id ? `card/${object_id}` : `session/${recipient}` }
+    } else {
+      timeline = { timeline_kind: 'chat', timeline_id: object_id ? `card/${object_id}` : `session/${this.my_device_id}` }
+    }
+    return this._send({ kind: codec.KIND.timeline_item, content, recipient, timeline, echo: this._echoTimelineItem(timeline, content, recipient, object_id) })
+  }
+
+  async answer({ object_id, choices = [], note, option_notes, attachments, marks, trusted, answer_action = 'answer' }) {
+    this._needHuman()
+    const card = this._card(object_id)
+    if (card.object_state !== 'open') throw new ZError('card-closed', 'the card is not open')
+    const content = { answer_action, choices, note, option_notes, attachments, marks, trusted }
+    const bind = z.encodeAnswerBind({ cardId: unhex(object_id), cardHash: unhex(card.version_hash), choice: choices[0] ?? '' })
+    const state = answer_action === 'answer' ? 'answered' : 'closed'
+    const answered_at = Date.now()
+    return this._send({ kind: codec.KIND.answer, content, bind, recipient: card.agent_device_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
+      echo: this._echoAnswer(object_id, { answer_action, choices, note: note ?? null, option_notes: option_notes ?? {}, attachments: attachments ?? [], marks: marks ?? [], trusted: !!trusted,
+        bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: null, envelope_hash: null, by_device_id: this.my_device_id, answered_at, taken_back_at: null }, state) })
+  }
+  trust({ object_id, note }) {
+    const card = this._card(object_id)
+    const rec = card.recommended == null ? [] : Array.isArray(card.recommended) ? card.recommended : [card.recommended]
+    return this.answer({ object_id, choices: rec, note, trusted: true })
+  }
+  markRead({ object_id }) { return this.answer({ object_id, answer_action: 'read' }) }
+  shred({ object_id, note }) { return this.answer({ object_id, answer_action: 'shred', note }) }
+
+  async decideAgain({ object_id }) {
+    this._needHuman()
+    const card = this._card(object_id)
+    if (!card.answer?.envelope_hash) throw new ZError('decision-mismatch', 'no answer in force to take back')
+    const bind = z.encodeRedecideBind({ cardId: unhex(object_id), previousHash: unhex(card.answer.envelope_hash), choice: card.answer.choices[0] ?? '' })
+    return this._send({ kind: codec.KIND.decide_again, content: {}, bind, recipient: card.agent_device_id, object: { object_id, object_state: 'open', urgency: card.urgency } })
+  }
+
+  async verdict({ object_id, allow }) {
+    this._needHuman()
+    const p = this.model.permissions.get(object_id)
+    if (!p) throw new ZError('not-found', 'no such permission request')
+    const bind = z.encodeVerdictBind({ requestId: unhex(object_id), requestHash: unhex(p.version_hash), expiresAt: p.expires_at, allow: !!allow })
+    return this._send({ kind: codec.KIND.verdict, content: {}, bind, recipient: p.agent_device_id, object: { object_id, object_state: 'answered', urgency: 'critical', answered_at: Date.now() } })
+  }
+
+  /** Registers: human keys from human devices, agent keys from agents, `device/<own id>` from anyone. */
+  async setRegisters(values, { own_device = false } = {}) {
+    for (const k of Object.keys(values)) {
+      if (k.startsWith('device/')) { if (k !== `device/${this.my_device_id}`) throw new ZError('forbidden', 'a device writes only its own device register'); continue }
+      if (this.is_human ? !isHumanRegisterKey(k) && isAgentRegisterKey(k) : isHumanRegisterKey(k)) throw new ZError('forbidden', `${k} is not a ${this.model.room.my_role} key`)
+    }
+    return this._send({ kind: codec.KIND.status, content: { values }, echo: this.is_human ? this._echoRegisters(values) : null })
+  }
+  setDraft(object_id, draft) { return this.setRegisters({ [`draft/${object_id}`]: draft ?? null }) }
+  snooze(object_id, until) { return this.setRegisters({ [`snooze/${object_id}`]: until == null ? null : { until } }) }
+  duck(object_id, value) { return this.setRegisters({ [`duck/${object_id}`]: value ?? null }) }
+  setCrown(value) { return this.setRegisters({ crown: value ?? null }) }
+  setDesk(desk_id, value) { return this.setRegisters({ [`desk/${desk_id}`]: value ?? null }) }
+  setSessionSettings(agent_device_id, value) { return this.setRegisters({ [`session/${agent_device_id}`]: value ?? null }) }
+  markReadUpTo(agent_device_id, envelope_number) { return this.setRegisters({ [`read_up_to/${agent_device_id}`]: envelope_number }) }
+  setDeviceInfo(info) { return this.setRegisters({ [`device/${this.my_device_id}`]: info }) }
+
+  async saveMemo({ object_id = null, text, x = 0, y = 0, color = null, desk_id = null }) {
+    this._needHuman()
+    const old = object_id ? this.model.memos.get(object_id) : null
+    const id = object_id ?? randomHex(16)
+    const content = { object_type: 'memo', object_version: (old?.object_version ?? 0) + 1, previous_version_hash: old?.version_hash ?? null, text, x, y, color, desk_id }
+    await this._send({ kind: codec.KIND.object_version, content, object: { object_id: id, object_state: 'open', urgency: 'normal' } })
+    return id
+  }
+  async deleteMemo(object_id) {
+    const old = this.model.memos.get(object_id)
+    if (!old) throw new ZError('not-found', 'no such memo')
+    const content = { object_type: 'memo', object_version: old.object_version + 1, previous_version_hash: old.version_hash, text: old.text, x: old.x, y: old.y, color: old.color, desk_id: old.desk_id }
+    return this._send({ kind: codec.KIND.object_version, content, object: { object_id, object_state: 'closed', urgency: 'normal' } })
+  }
+
+  /** Canvas items: strokes, erase, move, send_away, selection_sent; timeline_id e.g. 'desk/<desk_id>'. */
+  async sendStrokes({ timeline_id, content_type = 'strokes', recipient_device_id = null, ...fields }) {
+    const content = { content_type, ...fields }
+    const timeline = { timeline_kind: content_type === 'selection_sent' && recipient_device_id ? 'chat' : 'canvas', timeline_id }
+    return this._send({ kind: codec.KIND.timeline_item, content, recipient: recipient_device_id, timeline, echo: this._echoTimelineItem(timeline, content, recipient_device_id, null) })
+  }
+  async loadTimelineAfter(timeline_key, after_envelope_number) {
+    const { timeline_kind, timeline_id } = M.parseTimelineKey(timeline_key)
+    const res = await this.hub.threads({ timeline_kind, timeline_id, after_envelope_number, limit: 1000 })
+    const t = M.timelineOf(this.model, timeline_key)
+    t.window_open = true
+    const prefix = `tl/${timeline_key}/`
+    for (const { envelope_number, envelope } of res.envelopes) {
+      const r = await this.storage.get(prefix + pad(envelope_number))
+      if (!r) continue
+      try {
+        const o = r.c ? null : await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.secrets, envelopeHash: unhex(r.h), self: this.device.id })
+        const stored = o ? { ...r, ...(d => ({ c: d.content, cs: d.content_state }))(codec.decodePayload(o.payload)) } : r
+        if (o) await this.storage.set(prefix + pad(envelope_number), stored)
+        t.items.set(envelope_number, itemFromStored(stored))
+      } catch (e) { this._localAlert('timeline', e) }
+    }
+    const ch = M.emptyChange(); ch.timelines.add(timeline_key); this._emitChange(ch)
+    return { loaded: res.envelopes.length, has_more: res.has_more }
+  }
+
+  // ---- membership: invites, removal ---------------------------------------------------------
+
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms } = {}) {
+    this._needHuman()
+    const role = device_role === 'agent' ? ROLE.AGENT : ROLE.HUMAN
+    const { link, offer, invite } = await z.createInvite({ state: this.state, inviter: this.device, hub: this.hub.hub_url, role, app: app_url, ...(ttl_ms ? { ttlMs: ttl_ms } : {}) })
+    const r = await this.hub.postInvite(b64u(offer))
+    const invite_id = r.invite_id
+    const pub = { invite_id, device_role, link, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
+    invite.public = pub
+    this.invitesPrivate.set(invite_id, invite)
+    this.model.invites.set(invite_id, pub)
+    await this._saveInvite(invite_id)
+    const ch = M.emptyChange(); ch.invites.add(invite_id); this._emitChange(ch)
+    this._watchInvite(invite_id)
+    return pub
+  }
+  async _saveInvite(invite_id) { const inv = this.invitesPrivate.get(invite_id); await this.storage.set(`invite/${invite_id}`, inviteToJson(invite_id, inv)) }
+
+  /** Poll the invite's requests while it is open (the join_request event triggers a check at once too). */
+  _watchInvite(invite_id) {
+    const inv = this.invitesPrivate.get(invite_id)
+    if (!inv || inv._timer) return
+    inv._timer = setInterval(() => {
+      if (!this._started || inv.finalized || inv.public.invite_state === 'failed' || inv.public.invite_state === 'confirm_code' || Date.now() > inv.expiresAt + 1000) {
+        if (Date.now() > inv.expiresAt && inv.public.invite_state === 'open') this._setInvite(invite_id, { invite_state: 'expired' })
+        if (inv.public.invite_state !== 'confirm_code' || Date.now() > inv.expiresAt + z.INVITE_CONFIRM_MS) { clearInterval(inv._timer); inv._timer = null }
+        return
+      }
+      this._checkInvite(invite_id).catch(() => {})
+    }, 1000)
+  }
+
+  _setInvite(invite_id, fields) {
+    const inv = this.invitesPrivate.get(invite_id)
+    Object.assign(inv.public, fields)
+    this._saveInvite(invite_id).catch(() => {})
+    const ch = M.emptyChange(); ch.invites.add(invite_id); this._emitChange(ch)
+  }
+
+  async _checkInvite(invite_id) {
+    const inv = this.invitesPrivate.get(invite_id)
+    if (!inv || inv.used || inv._checking) return
+    inv._checking = true
+    try {
+      const r = await this.hub.getRequests(invite_id)
+      for (const q of r.signed_requests) {
+        let accepted
+        try { accepted = await z.acceptJoinRequest({ invite: inv, request: unb64u(q), inviter: this.device }) }
+        catch (e) { if (e.code === 'invite-expired') { this._setInvite(invite_id, { invite_state: 'expired', error: e.code }); return } continue }
+        await this.hub.postReveal(invite_id, b64u(accepted.reveal))
+        inv.code = accepted.code
+        this._setInvite(invite_id, { newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: inv.role === ROLE.AGENT ? 'adding' : 'confirm_code' })
+        if (inv.role === ROLE.AGENT) await this._finalizeInvite(invite_id, { skipCheckCode: true })
+        return
+      }
+    } finally { inv._checking = false }
+  }
+
+  /** Human invites: the six digits the human typed on this (the inviting) device. A wrong code burns the invite. */
+  async confirmInvite(invite_id, typed_code) {
+    const inv = this.invitesPrivate.get(invite_id)
+    if (!inv || inv.public.invite_state !== 'confirm_code') throw new ZError('bad-invite', 'this invite waits for no code')
+    if (String(typed_code).replace(/\s/g, '') !== inv.code) {
+      inv.finalized = true
+      this._setInvite(invite_id, { invite_state: 'failed', error: 'code-mismatch' })
+      throw new ZError('code-mismatch', 'the code does not match: nobody was added, the invite is spent')
+    }
+    this._setInvite(invite_id, { invite_state: 'adding' })
+    await this._finalizeInvite(invite_id, { codeConfirmed: true })
+  }
+
+  _finalizeInvite(invite_id, opts) {
+    return this.serial(async () => {
+      const inv = this.invitesPrivate.get(invite_id)
+      try {
+        const secret = this.secrets.get(this.state.epoch)
+        const added = await z.finalizeInvite({ invite: inv, state: this.state, inviter: this.device, secret, ...opts })
+        const newId = inv.public.newcomer.device_id
+        await this.hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: [{ device_id: newId, key_sealed: b64u(added.wrap) }] })
+        clearInterval(inv._timer); inv._timer = null
+        this._setInvite(invite_id, { invite_state: 'joined' })
+        await this._refreshMembers()
+      } catch (e) {
+        this._setInvite(invite_id, { invite_state: 'failed', error: e.code ?? 'failed' })
+        throw e
+      }
+    })
+  }
+
+  /** Remove devices: one entry, one new epoch, sealed for everyone who stays (agents included) and the recovery key. */
+  removeDevices(device_ids) {
+    this._needHuman()
+    return this.serial(async () => {
+      await this._refreshMembers()
+      const previous = this.secrets.get(this.state.epoch)
+      const r = await z.removeMembers(this.state, this.device, { ids: device_ids.map(unhex), previous })
+      await this.hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
+      this.secrets.set(r.secret.epoch, r.secret)
+      await this._refreshMembers()
+      return { key_epoch: r.secret.epoch }
+    })
+  }
+
+  async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
+}
+
+function itemFromStored(r) {
+  return { envelope_number: r.n, local_id: null, pending: false, envelope_hash: r.h, sender_device_id: r.s, recipient_device_id: r.r, sent_at: r.t,
+    item_state: r.c ? (r.cs === 'ok' ? 'loaded' : r.cs) : (r.cs === 'pruned' || r.cs === 'undecryptable' ? r.cs : 'header'), content_type: r.c?.content_type ?? null, content: r.c ?? null }
+}
+
+const HUMAN_KEY = /^(crown$|draft\/|snooze\/|duck\/|desk\/|session\/|read_up_to\/|canvas_snapshot\/)/
+const AGENT_KEY = /^(profile$|status_line\/|alert\/)/
+export const isHumanRegisterKey = k => HUMAN_KEY.test(k)
+export const isAgentRegisterKey = k => AGENT_KEY.test(k)
+
+function inviteToJson(invite_id, inv) {
+  return { invite_id, public: inv.public, roomId: b64u(inv.roomId), hub: inv.hub, role: inv.role, secret: b64u(inv.secret), nonce: b64u(inv.nonce), inviteId: b64u(inv.inviteId),
+    expiresAt: inv.expiresAt, offer: b64u(inv.offer), used: inv.used, finalized: inv.finalized, request: inv.request ? b64u(inv.request) : null, acceptedAt: inv.acceptedAt, code: inv.code ?? null }
+}
+function inviteFromJson(o) {
+  return { public: o.public, roomId: unb64u(o.roomId), hub: o.hub, role: o.role, secret: unb64u(o.secret), nonce: unb64u(o.nonce), inviteId: unb64u(o.inviteId), expiresAt: o.expiresAt,
+    offer: unb64u(o.offer), used: o.used, finalized: o.finalized, request: o.request ? unb64u(o.request) : null, acceptedAt: o.acceptedAt, code: o.code }
+}
+export { isZeroHex, randomHex }
