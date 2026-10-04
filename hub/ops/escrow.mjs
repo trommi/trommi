@@ -37,11 +37,12 @@ export function passwordEscrow({ db, now = Date.now }) {
       if (blob.length > ESCROW_MAX_BYTES) refuse(413, 'too-large', `key_escrow is at most ${ESCROW_MAX_BYTES} bytes`)
       const escrowId = body.escrow_id
       if (typeof escrowId !== 'string' || !/^[0-9a-f]{32}$/.test(escrowId)) refuse(400, 'bad-argument', 'escrow_id (32 lowercase hex) is required from escrow_version 2')
-      if (body.replaces === undefined) refuse(400, 'bad-argument', 'replaces (the revision this escrow replaces, 0 when there is none) is required')
+      // Without `replaces` (clients before review 3): create only, never a silent overwrite.
+      const replaces = body.replaces === undefined ? 0 : body.replaces
       const at = now()
       let revision
       db.tx(() => {
-        revision = swap(roomId, body.replaces) + 1
+        revision = swap(roomId, replaces) + 1
         db.q(`INSERT INTO escrows (room_id, escrow_version, key_escrow, updater_device_id, updated_at, escrow_id, revision) VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT (room_id) DO UPDATE SET escrow_version = excluded.escrow_version, key_escrow = excluded.key_escrow,
           updater_device_id = excluded.updater_device_id, updated_at = excluded.updated_at, escrow_id = excluded.escrow_id, revision = excluded.revision`).run(roomId, version, blob, deviceId, at, escrowId, revision)

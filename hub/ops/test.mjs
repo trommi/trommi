@@ -375,12 +375,12 @@ test('escrow (review 3): v1 PUT refused, v1 blobs only to a signed-in human, com
   // v1 is retired: a new v1 escrow is refused (before: accepted and served by room id, one GET = unlimited offline guessing).
   await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 1, key_escrow: blob } }, 400, 'escrow-v1-retired')
   await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: b64u(new Uint8Array(4097)), replaces: 0 } }, 413, 'too-large')
-  // Compare-and-swap: replaces is required and must name the current revision.
-  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob } }, 400, 'bad-argument')
+  // Compare-and-swap: replaces must name the current revision (absent: create only).
   await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 3 } }, 409, 'escrow-changed')
   const put = (await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 0 } }, 200)).json
   assert.equal(put.revision, 1)
   await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 0 } }, 409, 'escrow-changed')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob } }, 409, 'escrow-changed')   // an old client: create only
   const st = (await expect(w, 'GET', `${R(w)}/escrow`, { token: w.phone.token }, 200)).json
   assert.deepEqual([st.has_escrow, st.revision, st.escrow_version, st.key_escrow], [true, 1, 2, undefined], 'status for a member: no v2 blob')
   await expect(w, 'DELETE', `${R(w)}/escrow`, { token: w.phone.token }, 409, 'escrow-changed')
