@@ -202,15 +202,14 @@ const agentMethods = {
     }
     const alerts = {}
     for (const c of commands) {
-      const known = this.delivered.has(c.sender_device_id)
       if ((this.delivered.get(c.sender_device_id) ?? 0) < c.sender_sequence) this.delivered.set(c.sender_device_id, c.sender_sequence)
       if (c.refused) {
         alerts[`alert/${c.envelope_hash}`] = { code: c.refused, message: c.message ?? '', sender_device_id: c.sender_device_id, envelope_number: c.envelope_number }
         this.emit('alert', { code: c.refused, message: c.message ?? '', envelope_number: c.envelope_number, sender_device_id: c.sender_device_id, source: 'local' })
         continue
       }
-      // R4: a process without a delivered-up-to for this sender treats what was sent before it started as history, not as a prompt.
-      c.history = !known && c.sent_at < this.startedAt && this._freshStorage
+      // R4: every command sent before the history boundary (the first start without sync state) is history, not a prompt.
+      c.history = this.historyBefore != null && c.sent_at < this.historyBefore
       this.emit('command', commandOf(this.model, c))
     }
     if (Object.keys(alerts).length) this.setRegisters(alerts).catch(e => this.emit('error', e))   // not awaited: we are inside the sync queue

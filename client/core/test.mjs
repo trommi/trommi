@@ -594,8 +594,17 @@ if (z.KEY_SCOPE) await test('R6 session keys: agent A cannot read session B; han
   const c2 = await a2.sendCard({ title: 'history of session 2', options: [{ key: 'a', label: 'A' }] })
   await settleAll(a2, phone)
   const a4 = await addAgent(phone, 'Agent 4')
+  const epochBefore = phone.sessionKeys.get(sid2).state.epoch
   await phone.assignSession({ session_id: sid2, agent_device_ids: [a4.my_device_id], with_history: true })
   await until(() => a4.session_ids.includes(sid2), 'a4 assigned')
+  // B01: a handover with history still rotates; the previous agent holds no key of the new epoch.
+  const epochAfter = phone.sessionKeys.get(sid2).state.epoch
+  eq(epochAfter, epochBefore + 1, 'handover with history rotates the session key')
+  await a2._refreshSessions().catch(() => {})
+  assert(!a2.sessionKeys.get(sid2)?.secrets.has(epochAfter), 'a2 cannot open the new epoch')
+  let werr = null
+  try { const w = await a2.hub.sealedSessionKeys(sid2, 0) ; if (!w.sealed_session_keys.some(x => x.session_key_epoch === epochAfter)) werr = { code: 'none' } } catch (e) { werr = e }
+  assert(werr, 'no wrap of the new epoch for a2')
   await until(async () => { await a4.catchUp(); return a4.model.cards.get(c2)?.title === 'history of session 2' }, 'a4 reads the history of session 2')
 })
 
@@ -633,6 +642,54 @@ await test('S2 ids: no raw ids in URLs; a body naming a non-hex or unlisted atta
   await settleAll(phone, agent)
   await until(() => cmds.some(c => c.content.text === 'fine'), 'the next message arrives')
   assert(!cmds.some(c => c.content?.text === 'evil'), 'the unlisted-attachment body never reaches the agent')
+})
+
+await test('S2 write-ahead: a crash right after the hub accepted a post reuses no sequence number', async () => {
+  const dir = path.join(scratch, 'agent-crash')
+  const { phone } = await room()
+  const agent = await addAgent(phone, 'Crash', await fileStorage({ dir }))
+  await agent.sendMessage({ text: 'zero' })
+  await settleAll(agent, phone)
+  await agent.stop()
+  const { execFile } = await import('node:child_process')      // async: the hub runs in this process
+  const out = await new Promise(res => execFile(process.execPath, [path.join(HERE, 'test-crash-child.mjs'), dir], { encoding: 'utf8', timeout: 30_000 }, (e, stdout, stderr) => res(String(stdout) + (e && !stdout ? String(stderr).slice(0, 400) : ''))))
+  assert(/accepted \d+/.test(out), `child posted and died (${out.trim()})`)
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
+  await again.start()
+  await again.sendMessage({ text: 'two' })
+  await again.settle()
+  await settleAll(phone)
+  assert(!again.model.alerts.some(a => /equivocation|refused/.test(a.code + a.message)), `no equivocation (${again.model.alerts.map(a => a.code).join(',')})`)
+  const sid = again.session_id
+  const texts = async () => (await phone.timelineWindow(`chat:session/${sid}`, { limit: 20 })).map(i => i.content?.text)
+  await until(async () => { const t = await texts(); return t.includes('one') && t.includes('two') }, 'both messages on the board')
+})
+
+await test('S2 history after state loss: every old command of a sender is history, not only the first', async () => {
+  const dir = path.join(scratch, 'agent-loss')
+  const { phone } = await room()
+  const agent = await addAgent(phone, 'Loss', await fileStorage({ dir }))
+  for (const text of ['old 1', 'old 2', 'old 3']) await phone.sendMessage({ agent_device_id: agent.my_device_id, text })
+  await settleAll(phone, agent)
+  await agent.stop()
+  // Lose the sync state and the ledger (cursor, delivered, others' chains); keep the room, the key and the own chain.
+  const st = await fileStorage({ dir })
+  const me = z.b64u(z.unhex(agent.my_device_id))
+  await st.setMany([['sync', undefined], ['ledger', undefined], ...(await st.keys('chain/')).filter(k => k !== `chain/${me}`).map(k => [k, undefined])])
+  await sleep(20)
+  const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
+  const cmds = []
+  again.on('command', c => cmds.push(c))
+  await again.start()
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'new' })
+  await settleAll(phone, again)
+  await until(() => cmds.some(c => c.content.text === 'new'), 'the new one arrives')
+  eq(cmds.filter(c => c.content.text.startsWith('old')).map(c => c.history), [true, true, true], 'all old ones are history')
+  eq(cmds.find(c => c.content.text === 'new').history, false, 'the new one is live')
+  // and after another restart the boundary holds (it was persisted)
+  await again.stop()
+  const third = track(await openRoom({ storage: await fileStorage({ dir }) }))
+  eq(third.historyBefore, again.historyBefore, 'boundary persisted')
 })
 
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {

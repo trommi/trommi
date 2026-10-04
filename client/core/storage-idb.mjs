@@ -12,15 +12,17 @@ export function idbStorage({ name = 'trommi', prefix = '' } = {}) {
   })
   const done = req => new Promise((resolve, reject) => { req.onsuccess = () => resolve(req.result); req.onerror = () => reject(req.error) })
   const txDone = tx => new Promise((resolve, reject) => { tx.oncomplete = () => resolve(); tx.onerror = tx.onabort = () => reject(tx.error) })
-  const store = async mode => (await db()).transaction('kv', mode).objectStore('kv')
+  // setMany(entries, { durable: true }) asks for strict durability: oncomplete then means on disk (Chrome's default
+  // 'relaxed' does not). The client uses it for the outbox and its own chain head before it posts (R4 write-ahead).
+  const store = async (mode, durable = false) => (await db()).transaction('kv', mode, durable ? { durability: 'strict' } : undefined).objectStore('kv')
   const P = k => prefix + k
   return {
     extractable_keys: false,
     async get(key) { return done((await store('readonly')).get(P(key))) },
     async set(key, value) { const s = await store('readwrite'); s.put(value, P(key)); await txDone(s.transaction) },
     async delete(key) { const s = await store('readwrite'); s.delete(P(key)); await txDone(s.transaction) },
-    async setMany(entries) {
-      const s = await store('readwrite')
+    async setMany(entries, { durable = false } = {}) {
+      const s = await store('readwrite', durable)
       for (const [k, v] of entries) v === undefined ? s.delete(P(k)) : s.put(v, P(k))
       await txDone(s.transaction)
     },
