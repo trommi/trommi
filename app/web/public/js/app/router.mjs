@@ -19,7 +19,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
 
   // ---- painting a page ----
   function enableCss(name) {
-    useSheets([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'push', 'trommi', 'room', 'news'])
+    useSheets([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'push', 'trommi', 'room', 'news', 'gallery'])
   }
   // Each part stands between two comments (<!--p:key--> … <!--/p:key-->), so what a stream put in its place
   // still belongs to it.
