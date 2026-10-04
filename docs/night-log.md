@@ -85,6 +85,18 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - All P3 channel items fixed (47b4da0, e37528e).
   - Live presence fixed (df15ada).
   - Batched session grants on removal (eef3452).
+- **Load/perf (F, 7008157, docs/perf-night.md, info card Nr. 220).** Local means the real hub code on this PC; live means hub.trommi.com measured from outside.
+  - Memory: hub RSS flat at 160–220 MB from 0 to 1.19M envelopes (local). Before the leak fix it was 1.6 GB and rising.
+  - 1,000 stalled streams: 177 → 212 MB, probe p99 89 ms. Before the fix: 5 GB and minute-long stalls.
+  - Throughput: 2,826/s max, 1,762/s sustained to 1.19M. Delivery p99 5–24 ms up to 900/s.
+  - Catch-up of 1.18M envelopes: 141 s. hub.db is 1.6 KB per envelope.
+  - Chat next to 10k strokes: one covering-index hit, 1 ms.
+  - Live normal room: delivery p50 45 ms, p99 72–114 ms; a fresh device catches up 5.2k envelopes in 3.1 s.
+  - App, crazy room v1.1 with snapshot (40 % scale): first load 2.4 s desktop / 3.4 s phone (v1.0 core was 367 → 29 s).
+  - Budgets: desktop ≈ pass. **Phone fails**: open/switch session and card thread p95 290–580 ms, long tasks up to 501 ms.
+  - Not done: 1M on prod (test key off, no server metrics). The canvas without a snapshot takes 6.8/19.8 s for 20k strokes.
+- Hub restart forgot agent leases, so every deploy would have stopped running channels. Found by C; S2 is fixing it (persisted leases). Answer durability across a hub restart was verified by C (5e4d91b): nothing lost, delivered 0.85 s after the hub returns.
+- After a snapshot join, histories don't show (F). S2 is fixing it.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
