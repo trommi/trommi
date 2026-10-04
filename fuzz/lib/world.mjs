@@ -4,6 +4,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
+import { threadId } from 'node:worker_threads'
 import { makeRng } from './rng.mjs'
 
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -33,6 +34,9 @@ export function fencedStorage(base, gen) {
   })
 }
 
+// ports below the ephemeral range, a private block per worker thread: no two worlds ever probe the same number
+let portCounter = 0
+const nextPort = () => 20000 + ((threadId || 150) % 220) * 50 + (portCounter++ % 50)
 export class World {
   constructor({ seed, target, remote = null, dir = null, log = () => {}, limits = 'fast' }) {
     this.seed = seed; this.t = target; this.remote = remote; this.log = log
@@ -55,6 +59,7 @@ export class World {
   async startHub() {
     if (this.remote) { this.hubUrl = this.remote.replace(/\/+$/, ''); return }
     if (this.limits === 'fast') Object.assign(this.t.LIMITS, { foundPerIpHour: 1e9, envelopesPerSecond: 1e6, envelopeBurst: 1e6, openRequestsPerIpMinute: 1e9, streamsPerDevice: 64 })
+    if (!this.hubPort) this.hubPort = nextPort()
     this.hub = await this.t.startHub({ port: this.hubPort, host: '127.0.0.1', dataDir: path.join(this.dir, 'hub'), log: m => { if (/fail|error|internal|exception/i.test(m)) this.hubLog.push(m) }, pingMs: 4000, retentionEveryMs: 2 ** 31 - 1 })
     this.hubPort = this.hub.port
     this.hubUrl = this.hub.hubUrl
@@ -68,10 +73,15 @@ export class World {
   }
   async restartHub() {
     if (this.remote) return false
-    await this.stopHub({ holdPort: true })
+    const prev = this._restarting ?? Promise.resolve()
+    const run = prev.then(() => this._restartHub())
+    this._restarting = run.catch(() => {})
+    return run
+  }
+  async _restartHub() {
+    await this.stopHub()
     if (this.rng_sleep) await sleep(this.rng_sleep)
-    if (this.placeholder) { await new Promise(ok => this.placeholder.close(ok)); this.placeholder = null }
-    for (let i = 0; ; i++) { try { await this.startHub(); break } catch (e) { if (e.code !== 'EADDRINUSE' || i > 40) throw e; await sleep(100) } }
+    for (let i = 0; ; i++) { try { await this.startHub(); break } catch (e) { if (e.code !== 'EADDRINUSE' || i > 100) throw e; await sleep(100) } }
     this.stats.hubRestarts++
     return true
   }
@@ -97,6 +107,9 @@ export class World {
         let res = await fetch(url, { ...init, signal: ac.signal })
         const ms = performance.now() - t0
         world.http.total++
+        dev.calls = (dev.calls ?? 0) + 1
+        const key = `${dev.name} ${init.method ?? 'GET'} ${String(url).replace(/^https?:\/\/[^/]+/, '').replace(/[0-9a-f]{32,}/g, '<id>').replace(/\?.*/, '')}`
+        world.http.hot ??= new Map(); world.http.hot.set(key, (world.http.hot.get(key) ?? 0) + 1)
         world.http.byStatus[res.status] = (world.http.byStatus[res.status] ?? 0) + 1
         if (!isStream) world.http.slowest = Math.max(world.http.slowest, ms)
         if (res.status >= 500) world.http.status500.push({ url: String(url).replace(/[0-9a-f]{32,}/g, '<id>'), status: res.status, method: init.method ?? 'GET' })
@@ -160,6 +173,13 @@ export class World {
     const live = (devs ?? [...this.devs.values()]).filter(d => d.client && !d.dead && !d.removed)
     for (;;) {
       let pending = null
+      // an agent whose lease was lost has stopped itself (the channel process would exit): start it again, as the channel's supervisor would
+      for (const d of live) if (d.role === 'agent' && d.client?._leaseLost) {
+        this.known.set('F16-agent-lease-lost-after-hub-restart', 'after a hub restart (every deploy) a running agent gets 409 lease-lost on its next post; the core stops itself (README: the channel process exits) and its outbox is stuck until the process is started again')
+        this.killDev(d); this.stats.crashes++
+        await sleep(100)
+        try { await this.boot(d) } catch (e) { await sleep(500); d.faults = { delay: 0, lose_response: 0, offline: 0 }; try { await this.boot(d) } catch (e2) { { if (/tab-conflict/.test(e2.message)) { d.dead = true; d.client = null; continue } throw new Finding('exception', `agent restart after lease-lost failed: ${e2.message}`) } } }
+      }
       for (const d of live) {
         try { await d.client.settle({ timeout_ms: Math.max(1000, end - Date.now()) }) } catch (e) { pending = `${d.name}: ${e.message}`; break }
       }

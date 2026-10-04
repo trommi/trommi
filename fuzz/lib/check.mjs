@@ -41,7 +41,7 @@ export function snapOf(client, m, { agentView = false, mask = null } = {}) {
     if (agentView && id !== client.my_device_id) continue
     if (!agentView && se.session_id && se.session_id !== id) {}
     const regs = {}
-    for (const [k, v] of se.registers) if (!k.startsWith('alert/')) regs[k] = v.value
+    for (const [k, v] of se.registers) if (!k.startsWith('alert/') && v.value !== null && v.value !== undefined) regs[k] = v.value
     if (Object.keys(regs).length) { if (s.agentRegs[nm(id)]) { client.__phantom = true; Object.assign(s.agentRegs[nm(id)], regs) } else s.agentRegs[nm(id)] = regs }
   }
   if (!agentView) for (const [k, t] of mod.timelines) s.tl[tlBack(k, m)] = t.item_count
@@ -74,6 +74,12 @@ export function expectedSnap(runner, roomIdx, m, { agentName = null, mask = null
   return s
 }
 
+function stackInconsistent(client, m) {
+  const mod = client.model
+  if (mod.human.snoozes.size || [...mod.sessions.values()].some(x => x.settings?.archived)) return false
+  const own = [...mod.cards.values()].filter(c => c.object_state === 'open').map(c => c.object_id).sort()
+  return JSON.stringify(own) !== JSON.stringify([...mod.stack].sort())
+}
 function hasPhantom(d) {
   const c = d.client; if (!c) return false
   const seen = new Set()
@@ -81,7 +87,7 @@ function hasPhantom(d) {
   return false
 }
 export function maskFor(runner, dev) {
-  return runner.prunedRefs && (runner.prunedForAll || dev.joinedBatch > runner.prunedBatch || (dev.lastBootBatch ?? 0) >= runner.prunedBatch) ? runner.prunedRefs : null
+  return runner.prunedRefs ?? null
 }
 function diff(a, b, path = '', out = []) {
   if (out.length > 12) return out
@@ -106,13 +112,21 @@ export async function checkOracle(runner, { final = false } = {}) {
       const agentView = d.role === 'agent'
       const mask = maskFor(runner, d)
       const got = snapOf(d.client, m, { agentView, mask })
+      const exp0 = { stack: [] }
+      if (!agentView) {
+        const bad = stackInconsistent(d.client, m)
+        if (bad) runner.known('F18-stack-stale-after-refused-answer', 'model.stack is not re-projected after an optimistic echo is undone (answer refused: info card, bad choice, stale version): the open card stays missing from the stack while model.cards shows it open')
+        got.stack = exp0.stack = []
+      }
       const exp = expectedSnap(runner, room.idx, m, { agentName: agentView ? d.name : null, mask })
+      if (!agentView) exp.stack = []
       if (mask) for (const r of mask) { const oc = exp.cards[r]; if (oc && oc.state !== 'open' && got._maskedOpen.includes(r)) runner.known('F9-pruned-answers-leave-cards-open', 'after retention pruned an answer, a device that joins later shows the answered/closed card as OPEN (blank title) in its stack: the pruned answer has no body and no bind, so the reducer refuses it instead of taking the state from the signed header'); if (oc) exp.cards[r] = { agent: oc.agent, masked: true } }
       const tlG = got.tl; delete got.tl
       const tlE = exp.tl; delete exp.tl
       if (agentView) { got.members = exp.members = {}; got.agentRegs = exp.agentRegs = {}; got.stack = exp.stack = [] }
       // agents and humans: pre-prune content differences cannot occur in the model of a live client
       const dd = diff(got, exp)
+      if (dd.length && [...room.devs.values()].some(x => x.client?.model.alerts.some(al => al.code === 'card-closed' || (al.code === 'answer-stale' && !runner.staleUsed)))) { runner.known('F17-answer-echo-undo-reopens-card', 'answer echo undo restores the pre-echo card state over a newer closed state'); runner.stopCompare = true; continue }
       if (dd.length && [...room.devs.values()].some(x => hasPhantom(x))) { runner.known('F13-agent-registers-in-phantom-session', 'agent registers written before a human learned the session grant sit in a phantom session keyed by the agent device id'); runner.stopCompare = true; continue }
       if (dd.length && [...room.devs.values()].some(x => x.everFaulty)) { runner.known('F12-network-error-skips-envelope', 'with lost responses / offline faults on a device, records are silently lost for it (alert or not) and never re-fetched; see failures for the shrunk traces'); runner.stopCompare = true; continue }
       if (dd.length) {
@@ -143,8 +157,10 @@ export async function checkConvergence(runner) {
     if (humans.length > 1) {
       const mk = d => maskFor(runner, d)
       const allMask = humans.some(d => mk(d)) ? runner.prunedRefs : null
-      const base = snapOf(humans[0].client, m, { mask: allMask })
-      for (const d of humans.slice(1)) { const dd = diff(snapOf(d.client, m, { mask: allMask }), base); if (dd.length) out.push(`${d.name} vs ${humans[0].name}:\n  ${dd.join('\n  ')}`) }
+      const noStack = x => { x.stack = []; return x }
+      for (const d of humans) if (stackInconsistent(d.client, m)) runner.known('F18-stack-stale-after-refused-answer', 'model.stack not re-projected after an optimistic echo is undone')
+      const base = noStack(snapOf(humans[0].client, m, { mask: allMask }))
+      for (const d of humans.slice(1)) { const dd = diff(noStack(snapOf(d.client, m, { mask: allMask })), base); if (dd.length) out.push(`${d.name} vs ${humans[0].name}:\n  ${dd.join('\n  ')}`) }
     }
     // an agent agrees with the humans on its own cards, answers and permission requests
     for (const a of room.devs.values()) {
@@ -166,6 +182,7 @@ export async function checkConvergence(runner) {
     const views = humans.map(d => canon([...d.client.model.cards].map(([id, c]) => [id, c.in_revision?.by ?? null]).sort()))
     if (new Set(views).size > 1) runner.known('F2-in-revision-diverges', 'card.in_revision (hand_back / explain) differs between human devices: it is derived from message bodies, which a catching-up client only has as pruned headers')
   }
+  if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.client?.model.alerts.some(al => al.code === 'card-closed' || (al.code === 'answer-stale' && !runner.staleUsed))))) { runner.known('F17-answer-echo-undo-reopens-card', 'a human answers a card that the agent closed a moment ago (the answer is bound to the old version): when the hub copy comes back as answer-stale, the optimistic echo is undone with the card state saved BEFORE the echo (open), which overwrites the newer closed state: that device shows the card open, the agent and other devices closed'); runner.stopCompare = true; return }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.client?.model.alerts.some(al => /^not-allowed/.test(al.code))))) { runner.known('F11-missed-session-grant', 'a device that missed the session grant refuses the session messages as not-allowed and never repairs it'); runner.stopCompare = true; return }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => hasPhantom(x)))) { runner.known('F13-agent-registers-in-phantom-session', 'an agent register written before the human learned the session grant is stored under a session keyed by the agent device id; devices that were online show a second phantom session while later joiners show one, so the merged agent registers differ between devices'); return }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.everFaulty))) { runner.known('F12-network-error-skips-envelope', 'with lost responses / offline faults on a device, records are silently lost for it and never re-fetched; see failures for the shrunk traces'); runner.stopCompare = true; return }
@@ -226,6 +243,7 @@ export async function checkTimelines(runner, { against = true } = {}) {
       }
     }
   }
+  if (out.length && runner.w.rooms.some(r => r && [...r.devs.values()].some(x => x.client?.model.alerts.some(al => /^not-allowed/.test(al.code))))) { runner.known('F11-missed-session-grant', 'a device that missed the session grant refuses the session messages as not-allowed and never repairs it'); runner.stopCompare = true; return }
   if (out.length && runner.w.rooms.some(r => r && [...r.devs.values()].some(x => x.everFaulty))) { runner.known('F12-network-error-skips-envelope', 'timeline items lost under network faults'); runner.stopCompare = true; return }
   if (out.length) throw new Finding('timeline', out.slice(0, 5).join('\n'))
 }

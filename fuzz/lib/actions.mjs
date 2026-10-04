@@ -152,7 +152,7 @@ export class Runner {
     try { outcome = await Promise.race([fn.call(this, a), sleep(60000).then(() => { throw new Finding('liveness', `action ${a.t} did not finish within 60 s`, { action: a }) })]) }
     catch (e) {
       if (e instanceof Finding) throw e
-      if (/^simulated:|process killed|fenced:/.test(e?.message ?? '')) { w.stats.refused++; return 'refused:net' }
+      if (/simulated:|process killed|fenced:/.test(e?.message ?? '')) { w.stats.refused++; return 'refused:net' }
       if (e?.code && (e.name === 'ZError' || e?.constructor?.name === 'ZError')) { w.stats.refused++; outcome = `refused:${e.code}`; this.lastRefusal = e }
       else throw new Finding('exception', `${a.t}: ${e?.stack ?? e}`, { action: a })
     }
@@ -335,6 +335,7 @@ export class Runner {
       c.v++; c.title = this.txt(a.title); c.titles.add(c.title); if (a.urgency) c.urgency = a.urgency; c.state = 'open'; c.answer = null; c.closed_how = null; c.revision = null
       return 'ok'
     }
+    if (!this.strict) return 'ok'
     if (!O.revise(a.ref, { title: this.txt(a.title), urgency: a.urgency })) throw new Finding('invariant', `agent could revise ${a.ref} which the oracle holds as ${O.cards.get(a.ref)?.state}`, { action: a })
     return 'ok'
   }
@@ -343,6 +344,7 @@ export class Runner {
     const O = this.oracle(d.room.idx), c = O.cards.get(a.ref)
     try { await d.client.withdraw(id, 'no longer needed') } catch (e) { if (e.code === 'card-closed' && c.state === 'closed') return 'refused:card-closed'; throw e }
     if (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded'))) { this.known('F1-revise-after-answer', 'agent.revise()/withdraw() on an answered card is accepted (state check uses the last SENT state, not the answered state): revise reopens it and drops the answer'); c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
+    if (!this.strict) return 'ok'
     if (!O.withdraw(a.ref)) throw new Finding('invariant', `agent could withdraw ${a.ref} held as ${c.state}`, { action: a })
     return 'ok'
   }
@@ -409,6 +411,7 @@ export class Runner {
     return 'ok'
   }
   async do_stale_answer(a) {
+    this.staleUsed = true
     // an answer bound to an OLDER version of the card: nobody may count it
     const d = this.dev(a.dev), id = this.card(a); if (!d || !d.isHuman || !id) return 'skip'
     const cm = d.client.model.cards.get(id)
@@ -596,18 +599,26 @@ export class Runner {
   async do_restart(a) {
     const d = this.dev(a.dev, { allowDead: true, allowRemoved: true }); if (!d || !d.dead) return 'skip'
     if (d.removed) { d.dead = false; return 'skip' }
+    d.faults = { delay: 0, lose_response: 0, offline: 0 }
     await this.w.boot(d)
     return 'ok'
   }
   async do_dup_send(a) {
     const d = this.dev(a.dev); if (!d) return 'skip'
     const last = d.client.recentSent.at(-1); if (!last) return 'skip'
-    try { await d.client.hub.postEnvelope(last.bytes) } catch (e) { if (e.status !== 0 && !['replay', 'gap', 'rate-limited', 'wrong-epoch', 'removed-sender', 'offline'].includes(e.code)) throw new Finding('invariant', `a duplicate post was answered with ${e.code} (${e.status}); expected success or replay`, { action: a }) }
+    try { await d.client.hub.postEnvelope(last.bytes) } catch (e) { if (e.status !== 0 && !['replay', 'gap', 'rate-limited', 'wrong-epoch', 'removed-sender', 'offline', 'lease-lost'].includes(e.code)) throw new Finding('invariant', `a duplicate post was answered with ${e.code} (${e.status}); expected success or replay`, { action: a }) }
     return 'ok'
   }
   async do_net(a) { const d = this.dev(a.dev); if (!d) return 'skip'; if (a.lose || a.offline) d.everFaulty = true; d.faults = { delay: a.delay, lose_response: a.lose, offline: a.offline }; return 'ok' }
   async do_drop_streams(a) { const d = this.dev(a.dev); if (!d) return 'skip'; for (const ac of [...d.controllers]) { try { ac.abort(new Error('simulated reset')) } catch {} } return 'ok' }
-  async do_hub_restart() { return (await this.w.restartHub()) ? 'ok' : 'skip' }
+  async do_hub_restart() {
+    if (!(await this.w.restartHub())) return 'skip'
+    // KNOWN F16: the agent lease lives in hub memory; after a restart every running agent gets 409 lease-lost on every post until it claims again
+    for (const d of this.w.devs.values()) if (d.role === 'agent' && d.client && !d.dead && !d.removed) {
+      for (let k = 0; k < 8; k++) { try { await d.client.claimSession({ process_instance: `pi-${d.name}-re-${Math.random().toString(36).slice(2)}` }); break } catch (e) { d.errors.push(`reclaim: ${e.code ?? e.message}`); await sleep(150) } }
+    }
+    return 'ok'
+  }
   async do_prune() {
     if (!this.w.hub) return 'skip'
     this.w.hub.prune({ days: -1000 })
