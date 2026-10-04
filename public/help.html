@@ -18,7 +18,7 @@
   <h1>How Trommi works</h1>
   <p>Your agents ask, you answer. Two minutes, and you know the whole app.</p>
   <nav class="hp-nav" aria-label="On this page">
-    <a href="#desk">Desk</a><a href="#answer">Answering</a><a href="#ways">Four other ways</a><a href="#sessions">Sessions</a><a href="#notes">Notes</a><a href="#keys">Keys</a>
+    <a href="#desk">Desk</a><a href="#answer">Answering</a><a href="#ways">Four other ways</a><a href="#sessions">Sessions</a><a href="#notes">Notes</a><a href="#keys">Keys</a><a href="#agents">For agents</a>
   </nav>
 </header>
 
@@ -90,6 +90,68 @@
   <h2 class="hp-title" id="h-keys">Keys <b>the whole app without the mouse</b></h2>
   <p class="hp-lead">Plain keys, no Ctrl or Alt unless shown. They rest while you type in a field. In the app, <kbd>?</kbd> shows the keys that work where you are. This list is read from the app's own key table.</p>
   <div id="key-list" class="hp-keys"><p class="hp-wait">Loading the keys…</p></div>
+</section>
+
+<header class="hp-part" id="agents">
+  <h2>For agents, and for whoever sets them up</h2>
+  <p>An agent is a member of your room like your phone: the channel process beside a Claude Code session has its own device keys and talks to you only in signed, encrypted envelopes. Below: what travels between the session and you, in which direction, and what never makes the trip.</p>
+  <nav class="hp-nav" aria-label="The channel">
+    <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
+  </nav>
+</header>
+
+<section id="picture" aria-labelledby="h-picture">
+  <h2 class="hp-title" id="h-picture">The picture <b>four parties, two directions</b></h2>
+  <figure class="hp-figure">
+    <div id="diagram"></div>
+    <figcaption>Every session starts its own <code>hub/channel.mjs</code>: that process is the channel. It seals what the agent says before it leaves the machine; the hub only stores and forwards envelopes it cannot open; this app opens them on your device. Green arrows run towards the agent, dark ones towards you.</figcaption>
+  </figure>
+</section>
+
+<section id="missing" aria-labelledby="h-missing">
+  <h2 class="hp-title" id="h-missing">What the channel cannot deliver <b>and what stands in</b></h2>
+  <div class="hp-two">
+    <ul class="hp-never">
+      <li>The model's thinking</li>
+      <li>Its tool calls</li>
+      <li>The terminal's output</li>
+      <li>Text while it streams</li>
+    </ul>
+    <div class="hp-prose">
+      <p>A channel is narrow: an MCP server sees the tool calls made <em>to it</em> and nothing else of the session. The agent sees its own thinking; the channel gets none of it, so Trommi cannot show it.</p>
+      <p><strong>The substitute is a habit, not a feed.</strong> The agent's instructions say: what you should know goes into <code>reply</code>, and the reasoning or evidence into its <code>details</code> field, which is shown collapsed under the message. Progress goes into <code>set_status</code>.</p>
+      <p>Seeing the session live would need a second road beside the channel (hooks, the Agent SDK, or herdr). Trommi does not have one yet.</p>
+    </div>
+  </div>
+</section>
+
+<section id="events" aria-labelledby="h-events">
+  <h2 class="hp-title" id="h-events">Events <b>everything besides tool calls</b></h2>
+  <p class="hp-lead">What Claude Code is sent, and what it sends by itself. A channel event reaches the model as a <code>&lt;channel&gt;</code> tag: <code>content</code> is the text inside, each <code>meta</code> field an attribute. Meta values are strings.</p>
+  <div id="event-list" class="hp-list"><p class="hp-wait">Loading…</p></div>
+</section>
+
+<section id="tools" aria-labelledby="h-tools">
+  <h2 class="hp-title" id="h-tools">Tools <b id="tool-count">what the agent can do</b></h2>
+  <p class="hp-lead">Every way from the agent to you is a tool call. The descriptions are the words the agent itself is given; this list is read from the channel's own tool table, so it cannot drift from it.</p>
+  <div id="tool-list" class="hp-list"><p class="hp-wait">Loading…</p></div>
+</section>
+
+<section id="assets" aria-labelledby="h-assets">
+  <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
+  <div class="hp-prose">
+    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only members of the room can open it. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
+    <p><strong>How it is encrypted.</strong> The channel process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside the room, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
+  </div>
+  <div class="hp-facts">
+    <div><dt>Stored on the hub</dt><dd>Ciphertext of the file, its size, the time, the device that uploaded it; for a link, a hash of its secret and when it ends</dd></div>
+    <div><dt>Never on the hub</dt><dd>The file key, the title, the type, the file name</dd></div>
+    <div><dt>Lifetime</dt><dd id="asset-life">Deleted 30 days after its card is answered or closed; an outside link lasts at most 30 days</dd></div>
+  </div>
+  <div class="hp-prose">
+    <p><strong>One limit on all of this.</strong> Whoever serves this app serves the code that decrypts. Altered code could send keys home. “The hub cannot read it” holds against a hub that stores and looks, not against one that serves altered code. Here they are two servers: the app comes from app.trommi.com, the hub is hub.trommi.com.</p>
+    <p><strong>HTML pages run in a sandbox.</strong> A published page may come from an agent that was misled, so the viewer treats it as hostile: it runs in a frame with no origin of its own, cannot read the key, the room or your devices, cannot open windows, submit forms or load anything from the network. A page must therefore be self-contained: inline CSS and scripts, images as <code>data:</code> URLs. Type nothing secret into a published page.</p>
+  </div>
 </section>
 
 </main>
