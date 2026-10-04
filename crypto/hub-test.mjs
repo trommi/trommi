@@ -261,7 +261,7 @@ test('invites: only a human member posts its own offer; expiry; one answer; junk
   const stray = await z.createJoinRequest({ link: other.link, offer: other.offer, log: served.entries, device, now: w.now() })
   await rejects(() => w.hub.postRequest(inviteId, stray.request), 'bad-invite')
   const { requestHash } = await w.hub.postRequest(inviteId, request)
-  assert.deepEqual(await w.hub.postRequest(inviteId, request), { requestHash }, 'the same request twice is one request')
+  assert.deepEqual(await w.hub.postRequest(inviteId, request), { requestHash, inviter: hex(w.phone.device.id), repeated: true }, 'the same request twice is one request')
   await rejects(async () => w.hub.requests(w.laptop.token, inviteId), 'forbidden')
   // A second device races with the same (stolen) link. The inviter answers the first.
   const thief = await z.generateDevice()
@@ -317,7 +317,7 @@ test('envelopes: the hub reads card id, status and urgency, nothing else; refuse
   const w = await makeWorld()
   const cardId = new Uint8Array(16).fill(0xc1)
   const { env, res } = await post(w, w.agent, { kind: KIND.CARD, payload: utf8('{"title":"Deploy?"}'), card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.HIGH }, push: true })
-  assert.deepEqual(res, { n: 1, push: true, card: { id: hex(cardId), state: 1, urgency: 2, answeredAt: 0 } })
+  assert.deepEqual(res, { n: 1, push: true, card: { id: hex(cardId), state: 1, urgency: 2, answeredAt: 0 }, isHead: true, kind: KIND.CARD, recipient: null })
   await rejects(() => w.hub.postEnvelope(w.agent.token, env.bytes), 'replay')
   await rejects(() => w.hub.postEnvelope(w.phone.token, env.bytes), 'wrong-sender')
   await rejects(() => w.hub.postEnvelope(w.agent.token, flip(env.bytes, env.bytes.length - 1)), ['bad-signature', 'replay'])

@@ -55,7 +55,7 @@ const slug = name => String(name).toLowerCase().replace(/[^a-z0-9]+/g, '-').repl
  * createHub({ hubUrl, storage, now, rng }) -> hub. Byte values are Uint8Array, ids travel as hex strings
  * in results. Every refusal is a ZError with a stable `code`.
  */
-export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.now, rng = n => globalThis.crypto.getRandomValues(new Uint8Array(n)) }) {
+export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.now, rng = n => globalThis.crypto.getRandomValues(new Uint8Array(n)), emptyNames = false, randomSessionIds = false }) {
   if (!hubUrl) fail('bad-argument', 'the hub needs its own address: devices sign it when they sign in')
   let state = null                       // the verified member list
   const chains = z.newChains()           // per-sender envelope chains, as far as the hub accepted them
@@ -64,9 +64,17 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
   const live = new Map()                 // agent session id -> instance (one process per key file)
 
   // Come back up from what is stored: the hub trusts its own disk no more than a client trusts the hub.
+  // A storage that keeps every envelope's hash and chain position in columns (hub/store.mjs) can hand over
+  // the head of each sender's chain instead: the envelopes were verified when they came in, and older hashes
+  // are looked up only when a replay or a `seen` entry asks for them. Startup then costs the member list only.
+  const tx = storage.transaction ? fn => storage.transaction(fn) : fn => fn()
   const stored = storage.entries()
   if (stored.length) state = await z.verifyLog(stored)
-  for (const e of storage.envelopes(0, Infinity)) await z.verifyEnvelope(e.bytes, { state, chains, allowRemovedSender: true })
+  if (storage.chainHeads) {
+    for (const c of storage.chainHeads()) chains.set(b64u(z.unhex(c.sender)), { seq: c.seq, hash: c.hash, hashes: lazyHashes(storage, c.sender) })
+  } else {
+    for (const e of storage.envelopes(0, Infinity)) await z.verifyEnvelope(e.bytes, { state, chains, allowRemovedSender: true })
+  }
 
   // One change at a time: verification is asynchronous, and two entries must not both see the same head.
   let queue = Promise.resolve()
@@ -113,6 +121,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     const next = await z.applyEntry(state, entry)      // throws bad-entry, bad-signature, bad-format
     const e = next.entries.at(-1)
     if (founding !== (e.type === ENTRY.GENESIS)) fail('bad-entry', 'a room is founded through found(), and only once')
+    if (emptyNames && e.member && e.member.name !== '') fail('bad-format', 'device names are not given to the hub: the name field must be empty')
 
     const recovery = { id: next.recovery.id, role: ROLE.HUMAN, name: 'the recovery key' }
     let wanted
@@ -134,18 +143,21 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       if (!answered || answered.device !== id(wanted[0].id) || inv.role !== roleName(e.member.role) || inv.inviter !== id(e.signer)) fail('bad-invite', 'the entry is not the outcome of this invite')
     }
 
-    // Everything checked: now write.
-    storage.appendEntry(entry)
-    for (const w of sealed) storage.putWrap(next.epoch, w.id, w.sealed)
-    if (rotated) storage.putBackLink(next.epoch, backLink)
-    if (inv) storage.putInvite(inv.id, { ...inv, usedAt: now(), member: id(wanted[0].id), entrySeq: e.seq })
+    // Everything checked: now write, all of it or nothing.
+    tx(() => {
+      storage.appendEntry(entry, { seq: e.seq, hash: id(next.head.hash), prevHash: id(e.prev), type: e.type, signer: id(e.signer), at: now(), state: next })
+      for (const w of sealed) storage.putWrap(next.epoch, w.id, w.sealed)
+      if (rotated) storage.putBackLink(next.epoch, backLink)
+      if (inv) storage.putInvite(inv.id, { ...inv, usedAt: now(), member: id(wanted[0].id), entrySeq: e.seq })
+    })
     state = next
     const removed = []
     for (const [token, s] of sessions) {
       if (s.kind === 'recovery' ? rotated && e.type === ENTRY.RECOVER : !z.memberAt(state, s.idBytes)) { sessions.delete(token); removed.push(s.id) }
     }
     for (const m of state.members.values()) if (m.removedSeq === e.seq) live.delete(storage.sessionOf(id(m.id)))
-    return { seq: e.seq, hash: id(state.head.hash), epoch: state.epoch, type: e.type, signedOut: removed }
+    const removedIds = [...state.members.values()].filter(m => m.removedSeq === e.seq).map(m => id(m.id))
+    return { seq: e.seq, hash: id(state.head.hash), epoch: state.epoch, type: e.type, signedOut: removed, removed: removedIds }
   }
 
   const openInvite = (inviteId, { used = false } = {}) => {
@@ -158,6 +170,9 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
 
   return {
     hubUrl,
+    /** Check a token for a route that is answered outside this module: { id, kind, role } or a ZError. */
+    authorise: (token, opts) => { const s = session(token, opts); return { id: s.id, kind: s.kind, role: s.role === ROLE.HUMAN ? 'human' : s.role === ROLE.AGENT ? 'agent' : null } },
+    get state() { return state },
     get roomId() { return state ? id(state.roomId) : null },
     /** What the hub knows about the room: the public member list, nothing else. */
     members: () => [...room().members.values()].map(m => ({ id: id(m.id), role: roleName(m.role), name: m.name, active: m.removedSeq === null })),
@@ -242,14 +257,15 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     postRequest: (inviteId, request) => serial(async () => {
       const inv = openInvite(inviteId)
       const q = await z.verifyInviteRequest(request)
+      if (emptyNames && q.name !== '') fail('bad-format', 'device names are not given to the hub: the name field must be empty')
       if (id(q.inviteId) !== inv.id || !bytesEqual(q.roomId, room().roomId) || roleName(q.role) !== inv.role) fail('bad-invite', 'the request does not belong to this invite')
       if (room().members.has(b64u(q.id))) fail('bad-invite', 'this device is or was a member')
       const requestHash = id(await z.hash(z.LABEL.inviteRequest, request))
-      if (inv.requests.some(r => r.hash === requestHash)) return { requestHash }
+      if (inv.requests.some(r => r.hash === requestHash)) return { requestHash, inviter: inv.inviter, repeated: true }
       if (inv.reveal) fail('invite-used', 'the inviter already answered another request')
       if (inv.requests.length >= MAX_REQUESTS_PER_INVITE) fail('too-many', 'too many requests for one invite')
       storage.putInvite(inv.id, { ...inv, requests: [...inv.requests, { hash: requestHash, bytes: request, device: id(q.id), at: now() }] })
-      return { requestHash }
+      return { requestHash, inviter: inv.inviter }
     }),
 
     /** For the inviter: the requests that came in, in order of arrival. */
@@ -304,11 +320,19 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       const head = z.peekEnvelope(bytes)
       if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
       if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device posts its own envelopes only')
-      const v = await z.verifyEnvelope(bytes, { state: room(), chains })
+      const v = await z.verifyEnvelope(bytes, { state: room(), chains, commit: false })
       const h = v.header
       const card = h.card ? { id: id(h.card.id), state: h.card.state, urgency: h.card.urgency, answeredAt: h.card.answeredAt } : null
-      const n = storage.appendEnvelope(bytes, { sender: s.id, seq: h.seq, epoch: h.epoch, recipient: h.recipient.every(b => b === 0) ? null : id(h.recipient), push: h.push, card, time: now(), pruned: false })
-      return { n, push: h.push, card }
+      const n = storage.appendEnvelope(bytes, {
+        sender: s.id, seq: h.seq, epoch: h.epoch, recipient: h.recipient.every(b => b === 0) ? null : id(h.recipient), push: h.push, card, time: now(), pruned: false,
+        header: h, hash: v.hash, ciphertextHash: v.ciphertextHash, headerBytes: v._split.headerBytes, nonce: v._split.nonce, ciphertext: v._split.ct, signature: v._split.signature,
+      })
+      // The chain advances only once the envelope is stored: a failed write must not leave the hub a number ahead.
+      const k = b64u(h.sender)
+      const c = chains.get(k) ?? { seq: 0, hash: null, hashes: new Map() }
+      c.seq = h.seq; c.hash = v.hash; c.hashes.set(h.seq, v.hash)
+      chains.set(k, c)
+      return { n, push: h.push, card, isHead: h.isHead, kind: h.kind, recipient: h.recipient.every(b => b === 0) ? null : id(h.recipient) }
     }),
 
     /** Envelopes after the hub's number `after`, in the order the hub accepted them. */
@@ -357,8 +381,13 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       let sessionId = storage.sessionOf(s.id)
       if (!sessionId) {
         const taken = new Set(storage.boundSessions())
-        sessionId = slug(name)
-        for (let n = 2; taken.has(sessionId); n++) sessionId = `${slug(name)}-${n}`
+        if (randomSessionIds) {
+          // 16 random hex characters: says nothing about the project or the agent's name.
+          do sessionId = hex(rng(8)); while (taken.has(sessionId))
+        } else {
+          sessionId = slug(name)
+          for (let n = 2; taken.has(sessionId); n++) sessionId = `${slug(name)}-${n}`
+        }
         storage.bindSession(s.id, sessionId)
       }
       const holder = live.get(sessionId)
@@ -367,5 +396,16 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       return { sessionId, device: s.id }
     },
     releaseSession(sessionId, instance) { if (live.get(sessionId) === instance) live.delete(sessionId) },
+    /** Forget the running process of this device's session (its last stream closed). */
+    releaseDevice(deviceId) { const sid = storage.sessionOf(deviceId); if (sid) live.delete(sid) },
+  }
+}
+
+/** The hashes of one sender's chain, looked up in the store when asked (replay, `seen`), the newest kept in memory. */
+function lazyHashes(storage, sender) {
+  const recent = new Map()
+  return {
+    get(seq) { return recent.get(seq) ?? storage.envelopeHash(sender, seq) ?? undefined },
+    set(seq, hash) { recent.set(seq, hash); if (recent.size > 32) recent.delete(recent.keys().next().value) },
   }
 }

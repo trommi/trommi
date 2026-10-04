@@ -1,7 +1,6 @@
-# Deploys the hub to trommi-hub on every push to main.
-# For now it ships the hello-world stand-in (deploy/hello) to prove the chain:
-# build on GitHub -> Tailscale (tag:trommi-ci) -> docker load on the server ->
-# compose restart -> https://hub.trommi.com/healthz reports this commit.
+# Deploys the thin hub (hub/server.mjs, image hub/Dockerfile) to trommi-hub on every push to main:
+# test -> build on GitHub -> Tailscale (tag:trommi-ci) -> docker load on the server ->
+# stop, back up /srv/trommi/data, start -> https://hub.trommi.com/healthz reports this commit.
 name: Deploy
 
 on:
@@ -32,8 +31,18 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+
+      - name: Test crypto and hub
+        run: |
+          node crypto/test.mjs --no-bench
+          node crypto/hub-test.mjs
+          node hub/test.mjs
+
       - name: Build image
-        run: docker build --build-arg COMMIT=${{ github.sha }} -t "$IMAGE" deploy/hello
+        run: docker build -f hub/Dockerfile --build-arg COMMIT=${{ github.sha }} -t "$IMAGE" .
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
@@ -50,9 +59,10 @@ jobs:
         run: |
           ssh -o StrictHostKeyChecking=no "$HOST" "set -e
             cd /srv/trommi
-            if [ -f data/pad.db ]; then tar -czf backups/data-\$(date +%Y%m%d-%H%M%S).tgz data; fi
-            ls -1t backups/*.tgz 2>/dev/null | tail -n +15 | xargs -r rm -f
             docker tag $IMAGE trommi-hub:current
+            # Stopped for the copy, so the SQLite files are consistent (a few seconds without the hub).
+            if [ -f data/hub.db ]; then docker compose stop hub; tar -czf backups/data-\$(date +%Y%m%d-%H%M%S).tgz data; fi
+            ls -1t backups/*.tgz 2>/dev/null | tail -n +15 | xargs -r rm -f
             docker compose up -d hub
             docker image prune -f >/dev/null"
 
