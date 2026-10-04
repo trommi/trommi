@@ -1,7 +1,3 @@
-
-import { BELL, Controller, controller, copyText, doodleSvg, errorLine, html, raw, roomShell, roomTabs, sketchSvg } from './ui.mjs'
-import { CLIENT, account, core, ses, stream } from './app.mjs'
-
 // ---- room ----
 // The room's own screens. Inside a room (pages of the board): /devices (who is in the room, the two ways to add a
 // device, inviting an agent, removing), /pair/:id (the QR code, then "Add a new device?" with four codes to tap),
@@ -10,6 +6,8 @@ import { CLIENT, account, core, ses, stream } from './app.mjs'
 // code), Forgot password (Emergency Kit), and the old recovery code. The UI says "account", never "room".
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (escrow, usage, session handover) are shown only when the core has them.
+import { BELL, Controller, controller, copyText, doodleSvg, errorLine, html, raw, roomShell, roomTabs, sketchSvg } from './ui.mjs'
+import { CLIENT, account, core, ses, stream } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
 const foundCode = () => ses('trommi-found-code', new URLSearchParams(location.search).get('found_code')) || undefined
@@ -18,7 +16,7 @@ const ago = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 6
 const art = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${name}`) : sketchSvg(name))
 const has = (o, fn) => typeof o?.[fn] === 'function'
 const code6 = c => `${String(c).slice(0, 3)} ${String(c).slice(3)}`
-// One place for agents and devices (the menu's "Agents & devices"): the Agents page carries the same tabs (views/agents.mjs).
+// One place for agents and devices (the menu's "Agents & devices"): the Agents page carries the same tabs (agents.mjs).
 const copyBox = (value, label, cls = '') => html`<div class="room-link${cls ? ` ${cls}` : ''}" data-controller="room"><input readonly value="${value}" aria-label="${label}" data-room-target="field" data-action="focus->room#select"><button type="button" data-action="room#copy" data-room-text-param="${value}"><span data-room-target="label">Copy</span></button></div>`
 const sessionName = s => s.settings?.name || s.profile?.agent_name || s.agent_session_id || s.device_name || 'Session'
 
@@ -170,7 +168,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
     const settingsMain = (error = '', said = '', kit = null) => {
       const room = m().room
       const st = room.account
-      const link = has(k, 'roomLink') && room.hub_url ? k.roomLink(room.hub_url, room.room_id) : null
+      const link = client.hub && has(k, 'roomLink') && room.hub_url ? k.roomLink(room.hub_url, room.room_id) : null
       const form = (action, inner, word, id) => html`<form method="post" action="${action}" class="room-form" data-controller="room" id="${id}">${inner}<button type="submit" class="room-primary">${word}</button></form>`
       const accountPart = !client.hub ? html`<p class="room-meta">No account in the demo.</p>`
         : st === undefined ? html`<p class="room-wait">${room.account_error ? `Not reachable: ${room.account_error}` : 'Loading…'}</p>`
@@ -732,7 +730,7 @@ async function scanQr(video, onText) {
 }
 
 // ---- controller "room" ----
-// The account pages' small helpers (js/app/room.mjs): copy a link or command, select a read-only field on focus,
+// The account pages' small helpers (auth.mjs): copy a link or command, select a read-only field on focus,
 // Generate a password, download or print the Emergency Kit, and the storage numbers (navigator.storage; client.usage()).
 
 const size = n => (n == null ? '–' : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} kB` : n < 1e9 ? `${(n / 1e6).toFixed(1).replace('.', ',')} MB` : `${(n / 1e9).toFixed(2).replace('.', ',')} GB`)

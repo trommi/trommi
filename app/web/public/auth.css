@@ -1,5 +1,8 @@
-/* The account screens (create account, log in, Emergency Kit, pair, recover, devices, invite, settings) and the reload notice. Owner: pairing
-   area (js/app/room.mjs). Sober: the board's tokens and type; pen drawings only on the two choice buttons. */
+/* The page for people outside the room (/a/<share_id>): the shared page in a sandboxed frame, or the picture. */
+#share.share { margin: 0; position: fixed; inset: 0; max-width: none; padding: 16px; overflow: auto; background: var(--bg, #fff); }
+.share-frame { display: block; width: 100%; height: calc(100vh - 32px); border: 1px solid var(--line, #d8d6cf); border-radius: 12px; background: #fff; }
+.share-picture { display: block; max-width: 100%; max-height: calc(100vh - 32px); margin: 0 auto; border-radius: 8px; }/* The account screens (create account, log in, Emergency Kit, pair, recover, devices, invite, settings) and the reload notice. Owner: pairing
+   area (auth.mjs). Sober: the board's tokens and type; pen drawings only on the two choice buttons. */
 .room { box-sizing: border-box; width: 100%; max-width: 712px; margin: 0 auto; padding: 72px 16px 96px; color: var(--fg); }
 #room-screen { grid-column: 1 / -1; width: 100%; min-height: 100dvh; background: var(--bg); }
 #room-screen .room { padding-top: max(48px, 10vh); }
@@ -13,8 +16,8 @@
 .room-meta a, .room-lead a { color: var(--accent); }
 .room-wait { color: var(--muted); }
 .room-wait::before { content: ""; display: inline-block; width: .6em; height: .6em; margin-right: .55em; border-radius: 50%; background: var(--accent); animation: room-pulse 1.2s ease-in-out infinite; vertical-align: .05em; }
-@keyframes room-pulse { 50% { opacity: .2 } }
-@media (prefers-reduced-motion: reduce) { .room-wait::before { animation: none; } }
+@media (prefers-reduced-motion: reduce) { .room-wait::before { animation: none; }
+}
 .room-error { color: var(--deny); font-weight: 500; }
 .room-ok { color: var(--accent); font-weight: 600; }
 
@@ -95,12 +98,6 @@
 .room-history label { display: flex !important; align-items: center; gap: 6px; font-weight: 400 !important; }
 .room-history input { accent-color: var(--accent); width: 18px; height: 18px; }
 .room-gone { margin-top: 24px; }
-
-/* settings */
-.room-strength { margin: -4px 0 0; font-size: 13px; color: var(--muted); padding-left: 14px; position: relative; }
-.room-strength::before { content: ""; position: absolute; left: 0; top: .45em; width: 8px; height: 8px; border-radius: 50%; background: var(--line-strong); }
-.room-strength[data-level="1"]::before { background: var(--urg-high); }
-.room-strength[data-level="2"]::before, .room-strength[data-level="3"]::before { background: var(--st-done); }
 .room-usage { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin: 0; }
 .room-usage div { padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface); }
 .room-usage dt { font-size: 13px; color: var(--muted); }
@@ -112,7 +109,6 @@
 .room-notice-go { font: 600 14px/1 var(--font); padding: 9px 14px; border-radius: var(--r-pill); border: 0; background: var(--accent); color: var(--accent-fg); cursor: pointer; white-space: nowrap; }
 .room-notice-go:hover { background: var(--accent-hover); }
 :root[data-theme="dark"] .room-notice-go { background: var(--accent-fg); color: var(--accent); }
-@keyframes room-rise { from { opacity: 0; translate: -50% 12px; } }
 
 @media (max-width: 600px) {
   .room { padding-top: 64px; }
@@ -135,7 +131,6 @@
 .room-kit .room-meta { margin-top: 8px; }
 .room-kit-words { list-style: decimal; columns: 3 9em; column-gap: 24px; margin: 14px 0 6px; padding-left: 1.6em; font: 500 17px/1.9 var(--mono); }
 @media print {
-  body * { visibility: hidden !important; }
   .room-kit, .room-kit * { visibility: visible !important; }
   .room-kit { position: absolute; inset: 0 auto auto 0; width: 100%; border: 1px solid #000; color: #000; background: #fff; }
 }

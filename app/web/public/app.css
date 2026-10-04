@@ -1,0 +1,767 @@
+/* ==== app.css ==== *//* Shared design tokens. Every colour, shadow, radius, and easing in the app
+   comes from here; component files never use literal colours. */
+:root {
+  /* surfaces */
+  --bg: #f5f6f2;
+  --surface: #ffffff;
+  --surface-2: #fafbf8;
+  --sunken: #eceee8;
+  --overlay: rgb(12 18 15 / .55);
+
+  /* text */
+  --fg: #141c18;
+  --muted: #5c6862;
+  --faint: #8a958f;
+
+  /* lines */
+  --line: #e1e5df;
+  --line-strong: #c9d0c8;
+
+  /* brand */
+  --accent: #1b6a57;
+  --accent-hover: #155646;
+  --accent-soft: #dcefe8;
+  --accent-fg: #ffffff;
+
+  /* urgency, set by the agent per card: fg colour and soft background */
+  --urg-low: #6b7771;       --urg-low-soft: #eceee8;
+  --urg-normal: #1b6a57;    --urg-normal-soft: #dcefe8;
+  --urg-high: #b4551b;      --urg-high-soft: #fbe9dc;
+  --urg-critical: #b3261e;  --urg-critical-soft: #fbe0de;
+
+  --deny: #a8322d;
+
+  /* Tones: our own session and card colours. A session has one hue (--hue, 0 to 359, set on its row, card or
+     drawing; 162 is the bell's green) and every hue comes in the same four weights, measured in oklch so that
+     no hue is louder or paler than its neighbour: wash (the pastel ground of a tile), edge (the pastel of a
+     card's edge and of a line), mid (a quiet sign, a dashed line), pen (the dark outline, words, the filled tile).
+     Each weight is a lightness and a chroma here; the rule below the themes turns them into --tone-wash,
+     --tone-edge, --tone-mid and --tone-pen. --tone-turn turns the hue so that 162 lands on the bell's green. */
+  --tone-wash-l: .95;  --tone-wash-c: .022;
+  --tone-edge-l: .88;  --tone-edge-c: .045;
+  --tone-mid-l: .64;   --tone-mid-c: .075;
+  --tone-pen-l: .47;   --tone-pen-c: .085;
+  --tone-turn: 10;
+
+  /* the crown of a desk's crowned session: gold, the pen it is drawn with, the wash inside it, the three stones */
+  --gold: #c39a1f; --gold-pen: #a8820f;
+
+  /* the inks of the stamps on the stacks (desk.css): stamp blue, violet, green */
+  --stamp-ink-later: #2b3f9e; --stamp-ink-works: #5c3aa0; --stamp-ink-done: #1b6a57; --stamp-ink-notes: #8a5f0c;
+  --crown-wash: #f2c94c; --crown-jewel: #cf3a2b;
+
+  /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
+  --st-decision: #c62f25;  --st-decision-soft: #fbe0de;
+  --st-working: #b07a06;   --st-working-soft: #fbf0cf;
+  --st-done: #1f8a4c;      --st-done-soft: #dcf2e4;
+
+  /* elevation */
+  --shadow-sm: 0 1px 2px rgb(20 30 25 / .06);
+  --shadow-md: 0 1px 2px rgb(20 30 25 / .06), 0 8px 24px -10px rgb(20 30 25 / .16);
+  --shadow-lg: 0 2px 4px rgb(20 30 25 / .06), 0 24px 48px -16px rgb(20 30 25 / .28);
+
+  /* shape */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* spacing scale */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
+
+  /* type */
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --t-xs: .72rem; --t-sm: .84rem; --t-md: .95rem; --t-lg: 1.1rem; --t-xl: 1.35rem; --t-2xl: 1.7rem;
+
+  /* motion */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --d-fast: 140ms; --d-med: 260ms; --d-slow: 480ms;
+}
+
+/* Light is the default for everyone. Dark applies only when the user picks it
+   (data-theme="dark" on <html>), never from the system setting. */
+:root[data-theme="dark"] {
+  --bg: #0e1311; --surface: #171d1a; --surface-2: #1c2420; --sunken: #111715; --overlay: rgb(0 0 0 / .65);
+  --fg: #e9eeea; --muted: #9aa8a0; --faint: #6c7a73;
+  --line: #252f2a; --line-strong: #35423b;
+  --accent: #6fd0b5; --accent-hover: #8adcc5; --accent-soft: #17332b; --accent-fg: #08130f;
+  --urg-low: #8b9891; --urg-low-soft: #1c2420;
+  --urg-normal: #6fd0b5; --urg-normal-soft: #17332b;
+  --urg-high: #f2a56c; --urg-high-soft: #3a2415;
+  --urg-critical: #ff8a80; --urg-critical-soft: #41191a;
+  --deny: #f08a83;
+  --tone-wash-l: .28; --tone-wash-c: .03;
+  --tone-edge-l: .4;  --tone-edge-c: .05;
+  --tone-mid-l: .62;  --tone-mid-c: .075;
+  --tone-pen-l: .8;   --tone-pen-c: .095;
+  --gold: #d2ab3c; --gold-pen: #dcb84e;
+  --stamp-ink-later: #9aacf2; --stamp-ink-works: #bda2f0; --stamp-ink-done: #6fd0b5; --stamp-ink-notes: #e2bd5c;
+  --crown-jewel: #ff6f5c;
+  --st-decision: #ff8a80; --st-decision-soft: #41191a;
+  --st-working: #f2c14e; --st-working-soft: #3a2f10;
+  --st-done: #6cd598; --st-done-soft: #14301f;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px -12px rgb(0 0 0 / .7);
+  --shadow-lg: 0 2px 4px rgb(0 0 0 / .4), 0 28px 56px -18px rgb(0 0 0 / .85);
+  color-scheme: dark;
+}
+
+/* The agent's advice: a swipe of a highlighter behind the words of the option it would pick (ui.js
+   adviceLoop, the one place that draws the mark; it is appended to the option or to its label and
+   finds the lines of the words by itself). One pass per line, behind the words, never on them.
+   Ink: --advice; how strong: --marker. It
+   has slanted, uneven ends and is taller than a selection, so it reads as marked by hand, not as
+   selected or ticked. */
+.is-advised { position: relative; isolation: isolate; --advice: var(--urg-high); --marker: .26; }
+:root[data-theme="dark"] .is-advised { --marker: .34; }
+.advice-loop { position: absolute; z-index: -1; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; fill: none; }
+/* (Rules written for the old loop stretched it beyond its host; the marker measures the words itself and stays inside, so it never makes its host scroll.) */
+.advice-loop.advice-marker { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; rotate: none !important; }
+.advice-loop path { stroke: var(--advice); stroke-linecap: butt; stroke-linejoin: round; opacity: var(--marker); }
+.advice-loop.is-under path { stroke-linecap: round; }
+
+/* Not in use: the pointing hand (ui.js pointingHand), which was the advice mark for an afternoon. */
+.advice-hand { position: absolute; z-index: 1; left: -19px; top: 50%; width: 27px; height: auto; translate: 0 -50%; rotate: -3deg; overflow: visible; pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.advice-hand-ink { stroke: var(--advice, var(--urg-high)); stroke-width: 1.8; }
+.advice-hand-paper { stroke: var(--advice-paper, transparent); stroke-width: 5; }
+
+/* Words the agent underlined (`__so__` in its text; ui.js rich()): a line drawn under them by hand, in
+   the accent colour. The line is a drawn stroke repeated along the words, so it follows them over
+   line breaks. */
+.rich-under { padding-bottom: 3px; background: var(--under-ink) repeat-x 0 100% / 72px 7px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+:root { --under-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 7' preserveAspectRatio='none' fill='none' stroke='%231b6a57' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M0.0 4.0 Q9.0 3.2 14.5 3.9 Q20.0 4.6 26.5 4.0 Q33.0 3.4 39.5 4.0 Q46.0 4.5 52.0 3.9 Q58.0 3.3 65.0 3.6 L72.0 4.0'/%3E%3C/svg%3E"); }
+:root[data-theme="dark"] { --under-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 7' preserveAspectRatio='none' fill='none' stroke='%236fd0b5' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M0.0 4.0 Q9.0 3.2 14.5 3.9 Q20.0 4.6 26.5 4.0 Q33.0 3.4 39.5 4.0 Q46.0 4.5 52.0 3.9 Q58.0 3.3 65.0 3.6 L72.0 4.0'/%3E%3C/svg%3E"); }
+
+/* Shared primitive: a table in a text (ui.js rich()): ruled like a sheet, a heavier rule under its head.
+   Wider than its column, it scrolls sideways on its own. */
+.rich-table-wrap { max-width: 100%; overflow-x: auto; }
+.rich-table { border-collapse: collapse; font-size: .95em; line-height: 1.4; }
+.rich-table th, .rich-table td { padding: 6px 14px 6px 0; text-align: left; vertical-align: top; white-space: normal; border-bottom: 1px solid var(--line-strong); }
+.rich-table th { font-weight: 600; border-bottom: 2px solid var(--fg); white-space: nowrap; }
+.rich-table tr:last-child td { border-bottom: 0; }
+.rich-table th:last-child, .rich-table td:last-child { padding-right: 0; }
+
+/* Shared primitive: a link to something a session published, as a compact card (ui.js assetLink):
+   a small picture or a drawn sign of its kind, its type, its title. Used wherever rich() runs. */
+.asset-link { display: flex; align-items: center; gap: var(--s-3); width: fit-content; max-width: min(100%, 26rem); margin-block: 2px; padding: 6px var(--s-4) 6px 6px; border-radius: var(--r-sm); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--fg); text-decoration: none; white-space: normal; transition: box-shadow 100ms ease-out; }
+a.asset-link:hover { box-shadow: 0 0 0 1px var(--fg); }
+.asset-link.is-gone { background: none; box-shadow: none; outline: 1px dashed var(--line-strong); outline-offset: -1px; }
+.asset-link.is-gone strong { color: var(--muted); font-weight: 600; }
+
+/* The clipboard (sidebar.css: the Trommi menu, opened). The sheet's paper, the rule under each line, the wash
+   under the pointer; the board (kraft, a pen line around it, drawn once and stretched as a border image) and the
+   metal clip are drawings, so each theme has its own. */
+:root {
+  --clip-paper: color-mix(in srgb, var(--surface) 88%, #efe2b4);
+  --clip-rule: color-mix(in srgb, #4a7fc0 20%, transparent);
+  --clip-wash: color-mix(in srgb, var(--fg) 7%, transparent);
+  --clip-shadow: 0 16px 30px -14px rgb(60 40 20 / .5);
+  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%23cdb597' stroke='%236b4f33' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%236b4f33' stroke-opacity='.5'/%3E%3C/svg%3E");
+  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%233f4843' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23c5cac6' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.75' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] {
+  --clip-rule: color-mix(in srgb, #7fa9dd 22%, transparent);
+  --clip-shadow: 0 16px 30px -14px rgb(0 0 0 / .7);
+  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%236f5a42' stroke='%23b89670' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%230e1311' stroke-opacity='.6'/%3E%3C/svg%3E");
+  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%23e3e8e4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23818984' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.35' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
+}
+/* ==== app.css ==== *//* Shell: page layout, a session's conversation with its filters, lists, sidebar, phone views.
+   Every colour, shadow, radius, and easing comes from tokens.css. */
+
+/* ---- base ---------------------------------------------------------------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+/* (The app's own page, index.html <html data-ui>; help.html shares the tokens above, not this frame.) */
+html:where([data-ui]) { height: 100%; -webkit-text-size-adjust: 100%; }
+html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; overscroll-behavior: none; }
+:where([data-ui]) body {
+  --bar-h: 52px;
+  --gutter: var(--s-6);
+  height: 100vh;
+  height: var(--app-h, 100dvh);
+  display: grid;
+  grid-template-columns: 256px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--surface);
+  color: var(--fg);
+  font: 15px/1.55 var(--font);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+}
+:where([data-ui]) :is(h1, h2, h3, p, ul, dl, dd) { margin: 0; }
+:where([data-ui]) :is(button, textarea, input) { font: inherit; color: inherit; }
+:where([data-ui]) button { cursor: pointer; touch-action: manipulation; }
+[hidden] { display: none !important; }
+:focus { outline: none; }
+::selection { background: var(--accent-soft); color: var(--fg); }
+.offscreen { position: fixed; left: -200vw; top: 0; opacity: 0; }
+
+.ico { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.caps { font-size: var(--t-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
+@keyframes blink { 50% { opacity: .3; } }
+
+.icon-btn {
+  width: 40px; height: 40px; flex: none; display: grid; place-items: center;
+  border: 0; border-radius: var(--r-pill); background: none; color: var(--muted);
+  transition: background var(--d-fast) var(--ease-out), color var(--d-fast) var(--ease-out);
+}
+.icon-btn:hover { background: var(--sunken); color: var(--fg); }
+/* Filters lay a list over the conversation: two quiet words at the head's right end, filled while one holds. */
+.filters { flex: none; display: flex; align-items: center; gap: var(--s-1); }
+.filters button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.filters button:hover { color: var(--fg); background: var(--sunken); }
+.filters button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+.filters b { display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+.filters b:empty { display: none; }
+body[data-view="scribble"] .filters { display: none; }
+/* The switch between the session's two modes is part of its title: words, the current one underlined. */
+.modes { flex: none; display: flex; align-items: center; margin-right: calc(-1 * var(--s-3)); }
+.modes button { position: relative; min-height: 40px; padding: 0 var(--s-3); border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font-size: var(--t-md); font-weight: 500; white-space: nowrap; }
+.modes button + button { margin-left: var(--s-2); }
+.modes button + button::before { content: "·"; position: absolute; left: calc(-1 * var(--s-1) - .15em); color: var(--faint); font-weight: 700; }
+.modes button:hover { color: var(--fg); background: var(--sunken); }
+.modes button[aria-current] { color: var(--fg); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
+/* Something new was said while you were looking at a list or the canvas. */
+.modes button[data-unread]::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
+body[data-view="scribble"] #scribble { display: block; }
+.column { width: 100%; max-width: 47.5rem; margin-inline: auto; padding-inline: var(--gutter); }
+/* "☞" before a paragraph (ui.js rich()): the drawn hand points at it from the margin, the text a shade stronger */
+.rich-point { position: relative; padding-left: 34px; font-weight: 600; }
+.rich-point > .advice-hand { left: 0; top: .72em; width: 26px; rotate: -2deg; }
+.files { display: flex; flex-wrap: wrap; gap: var(--s-2); }
+.asset-text { flex: 1 1 14rem; min-width: 0; display: grid; gap: 2px; }
+.asset-text .caps { color: var(--faint); }
+.asset-text strong { font: 800 1.15rem/1.25 var(--display); overflow-wrap: anywhere; }
+.asset-text span:not(.caps) { color: var(--muted); font-size: var(--t-sm); }
+.asset-actions { flex: none; display: flex; gap: var(--s-2); }
+.asset-open, .asset-copy { min-height: 40px; display: inline-flex; align-items: center; padding: 0 var(--s-4); border: 1px solid var(--fg); border-radius: var(--r-pill); font-size: var(--t-sm); font-weight: 600; text-decoration: none; white-space: nowrap; }
+.asset-open { background: var(--fg); color: var(--bg); }
+.asset-copy { background: none; color: var(--fg); border-color: var(--line-strong); }
+.asset-copy:hover { border-color: var(--fg); }
+.asset-actions { flex-wrap: wrap; }
+.asset-preview { grid-area: preview; position: relative; display: grid; place-items: center; width: 176px; height: 112px; overflow: hidden; border-radius: 6px; background: var(--sunken); color: var(--faint); text-decoration: none; }
+.asset-preview::after { content: ""; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--line); pointer-events: none; }
+a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
+.asset-preview .asset-glyph { width: 34px; height: 34px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.asset-preview > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; background: var(--sunken); opacity: 0; transition: opacity 160ms; }
+.asset-preview > iframe { position: absolute; left: 0; top: 0; width: 1280px; height: 900px; border: 0; transform-origin: 0 0; pointer-events: none; background: #fff; opacity: 0; transition: opacity 160ms; }
+.asset-preview.is-shown > :is(img, iframe) { opacity: 1; }
+.asset-page-label { position: absolute; z-index: 1; left: 6px; bottom: 6px; padding: 3px 6px; border-radius: 4px; background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px var(--line); font: 600 10px/1 var(--font); letter-spacing: .04em; text-transform: uppercase; }
+.has-preview .asset-text { grid-area: text; padding-top: 2px; display: flex; flex-direction: column; gap: 3px; }
+.has-preview .asset-text .caps { order: 3; font-size: var(--t-xs); }
+.has-preview .asset-text strong { font: 800 1.05rem/1.25 var(--display); }
+.has-preview .asset-note { display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; color: var(--muted); font-size: var(--t-sm); }
+.has-preview .asset-actions { grid-area: actions; align-self: end; flex-wrap: wrap; align-items: center; gap: 2px; margin-left: -2px; }
+.has-preview .asset-open { gap: 7px; min-height: 36px; padding: 0 14px; }
+.has-preview .asset-open::after { content: ""; width: 14px; height: 14px; background: currentColor; -webkit-mask: var(--asset-open-icon) center / contain no-repeat; mask: var(--asset-open-icon) center / contain no-repeat; }
+.has-preview .asset-copy { gap: 6px; min-height: 36px; padding: 0 8px; border: 0; border-radius: 6px; background: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.has-preview .asset-copy::before { content: ""; width: 15px; height: 15px; background: currentColor; -webkit-mask: var(--asset-link-icon) center / contain no-repeat; mask: var(--asset-link-icon) center / contain no-repeat; }
+.has-preview .asset-copy:hover { color: var(--fg); background: color-mix(in srgb, var(--fg) 6%, transparent); }
+@media (max-width: 600px) {
+  .asset-preview { width: 104px; height: 72px; }
+  .has-preview .asset-text { align-self: center; }
+}
+.dots { display: inline-flex; gap: 4px; padding-top: 3px; }
+.dots i { width: 5px; height: 5px; border-radius: 50%; background: var(--accent); animation: hop 1.3s var(--ease-in-out) infinite; }
+.dots i:nth-child(2) { animation-delay: .16s; }
+.dots i:nth-child(3) { animation-delay: .32s; }
+@keyframes hop { 0%, 70%, 100% { opacity: .3; transform: none; } 35% { opacity: 1; transform: translateY(-3px); } }
+@keyframes breathe { 50% { opacity: .55; } }
+
+/* only messages that arrive live animate in */
+.is-new { animation: arrive var(--d-slow) var(--ease-out) both; }
+@keyframes arrive { from { opacity: 0; transform: translateY(10px); } }
+.sk { display: block; height: 14px; border-radius: var(--r-pill); background: var(--sunken); animation: shimmer 1.5s var(--ease-in-out) infinite; }
+@keyframes shimmer { 50% { opacity: .45; } }
+@keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.94); } }
+
+.send-error {
+  display: flex; align-items: flex-start; gap: 8px; margin: 0 var(--s-2) var(--s-2);
+  padding: 9px 12px; border-radius: var(--r-md);
+  background: var(--urg-critical-soft); color: var(--urg-critical); font-size: var(--t-sm); font-weight: 500;
+  animation: arrive var(--d-med) var(--ease-out) both;
+}
+.send-error .ico { width: 17px; height: 17px; margin-top: 2px; }
+.send {
+  width: 40px; height: 40px; flex: none; display: grid; place-items: center; position: relative;
+  border: 0; border-radius: 50%; background: var(--accent); color: var(--accent-fg);
+  transition: background var(--d-fast) var(--ease-out), color var(--d-fast) var(--ease-out), transform var(--d-fast) var(--ease-out);
+}
+.send .ico { stroke-width: 2.2; }
+.send:hover { background: var(--accent-hover); }
+.send:active { transform: scale(.94); }
+.send:disabled { background: var(--sunken); color: var(--faint); cursor: default; transform: none; }
+.is-sending .send .ico { opacity: 0; }
+.is-sending .send::after {
+  content: ""; position: absolute; width: 18px; height: 18px; border-radius: 50%;
+  border: 2px solid currentColor; border-top-color: transparent; animation: spin .7s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@keyframes fade { from { opacity: 0; } }
+@keyframes zoom { from { opacity: 0; transform: scale(.96); } }
+
+/* ---- toast: an answer that can be taken back, or something that went wrong --- */
+
+/* On a wide screen it stands in the empty foot of the sidebar, above the bar; on a phone just
+   above whatever is fixed to the bottom (app.js measures that): it covers no title and no tile,
+   and it takes no room in the list, so the rows stay where they are. */
+.toast {
+  position: fixed; z-index: 20; left: var(--s-3); bottom: calc(var(--toast-bottom, var(--bar-h)) + var(--s-3));
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) 10px; width: 232px; padding: 10px 12px;
+  border-radius: var(--r-md); background: var(--fg); color: var(--bg); box-shadow: var(--shadow-lg);
+  font-size: var(--t-sm); font-weight: 500; line-height: 1.4; animation: drop var(--d-slow) var(--ease-out) both;
+}
+.toast i { width: 8px; height: 8px; flex: none; border-radius: 50%; background: var(--urg-critical-soft); }
+.toast[data-kind="undo"] i { display: none; }
+.toast span { flex: 1 1 0; min-width: 0; overflow-wrap: anywhere; }
+.toast button { flex: 1 0 100%; min-height: 36px; padding: 0 var(--s-4); border: 0; border-radius: var(--r-pill); background: var(--bg); color: var(--fg); font-weight: 600; }
+.toast button:disabled { opacity: .5; }
+@keyframes drop { from { opacity: 0; transform: translateY(10px); } }
+
+/* ---- marks drawn by hand: each session's scribble, and the icons of the same family ---- */
+.doodle { width: 100%; height: 100%; display: block; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.sketch { display: block; width: 24px; height: 24px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+@keyframes loop-open { to { stroke-dashoffset: -16; } }
+body.is-pairing, body.is-pairing * { cursor: grabbing !important; }
+.is-drawing .mark-trace { opacity: .5; }
+@keyframes mark-travel { from { stroke-dashoffset: 100; } to { stroke-dashoffset: 0; } }
+.ring-loop { stroke: currentColor; stroke-width: 1.25; }
+.ring-drop { stroke: currentColor; transform-box: view-box; transform-origin: 50% 50%; animation: agent-flow var(--ring-turn, 1900ms) cubic-bezier(.45,.12,.55,.88) infinite; }
+@keyframes agent-flow { to { rotate: 360deg; } }
+@media (prefers-reduced-motion: reduce) {
+  .ring-drop { display: none; }
+}
+.hand-mark { stroke: currentColor; }
+.hand-loop { fill: var(--hand-soft, none); stroke-width: 1.5; }
+.hand-pen { stroke-width: 1.45; }
+
+/* ---- microphone and focus button ---- */
+.mic { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; color: var(--muted); }
+.mic:hover { background: var(--sunken); color: var(--fg); }
+
+/* ---- inbox: with no session selected, the grouped list of open questions is the whole page ---- */
+#inbox { display: none; }
+body[data-scope="all"] #inbox { container: inboxpage / inline-size; display: block; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: var(--s-8) var(--gutter) var(--s-10); }
+/* The two round buttons stand fixed at the bottom right (quick send, the pad): the Desk keeps a lane free for
+   them on its right, so the rows' tiles and tabs never scroll under them (his rule: nothing lies over what
+   one presses). A phone has them in the top bar instead. */
+@media (min-width: 861px) {
+  body[data-scope="all"]:not([data-page]) #inbox { padding-right: calc(var(--gutter) + 60px); }
+}
+/* From 1224px (sidebar 256 + column 800 + twice 84) the column's own margin is that lane: it stands centred, under the pill. */
+@media (min-width: 1224px) {
+  body[data-scope="all"]:not([data-page]) #inbox { padding-right: var(--gutter); }
+}
+/* "It knocks": a row that has just arrived urgent or blocking gives two quick small nudges (js/knock.js);
+   the mark of its session in the sidebar does the same, once. Under reduced motion nothing moves. */
+@keyframes knock { 0%, 26%, 54%, 100% { translate: 0 0; rotate: 0deg; } 12% { translate: 6px 0; rotate: .35deg; } 40% { translate: 5px 0; rotate: .3deg; } }
+@keyframes row-shred { from { opacity: 1; translate: 0 0; } 40% { opacity: .9; } to { opacity: 0; translate: 0 38px; scale: 1 .86; } }
+/* the tally: pen strokes, five to a gate; beyond what is drawn, "+15" */
+.tally { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.tally-mark { flex: none; display: block; height: 24px; max-width: 100%; overflow: visible; fill: none; stroke: currentColor; stroke-width: 2.1; stroke-linecap: round; stroke-linejoin: round; }
+.tally-more { font: 700 var(--t-sm)/1 var(--font); font-variant-numeric: tabular-nums; }
+/* ---- a session's head and its canvas (js/chat.js) ----
+   The switch "Conversation · Scribble" is gone: the canvas opens from the composer. Nothing floats over the head:
+   the memo button is left out inside a session ("/" still opens it), the Scratchpad is one quiet icon at its right end. */
+html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
+@media (min-width: 1200px) {
+  html body:not([data-pair]):not([data-scope="all"]) .filters { margin: 0 var(--s-4) 9px 0; }
+}
+/* The canvas in the pane's place: it carries the way back to the conversation. */
+body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
+@media (min-width: 1200px) {
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #scribble { grid-column: 2; grid-row: 2; border-left: 1px solid var(--line); }
+}
+/* The choice of drawing opens right under the picture that was clicked: forty tiles in the session's colour. */
+.mark-picker { position: fixed; margin: 0; padding: var(--s-3); border: 0; border-radius: 14px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
+.mark-picker::backdrop { background: transparent; }
+.mark-grid { display: grid; grid-template-columns: repeat(8, 38px); gap: 6px; }
+.mark-tile { --ink: var(--tone-pen); width: 38px; height: 38px; padding: 6px; border: 0; border-radius: 11px; background: var(--tone-wash); color: var(--ink); transition: scale 100ms ease-out; }
+@media (any-hover: hover) { .mark-tile:hover { scale: 1.12; }
+}
+.mark-tile[aria-checked="true"] { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--ink); }
+/* ---- wide screens: no bar. The logo with its menu floats at the top centre of the page, a small
+   pill; the menu drops down centred under it. In the sidebar the Inbox entry stays at the top while
+   the sessions scroll. ---- */
+@media (min-width: 861px) {
+  :where([data-ui]) body { grid-template-rows: minmax(0, 1fr); }
+  /* ---- the menu's pill (card Nr. 161 "pille"; then "Desk wieder links, oben das Menü heißt Trommi"): the menu's
+     opener floats at the top centre of the page: the bell mark, the word "Trommi", a caret; a click anywhere on it
+     (or Ctrl+K) opens the menu under it. It is the product's menu, not the Desk: the Desk box stands at the top of
+     the sidebar again, without a caret, and carries the ring, the knocks and the count. The pill stands in a band of
+     its own above every view (Desk, session, Scribble, Agents), so it is always there and lies over nothing; the
+     pad's button stands in the same band at the right. Only the opened card and the walk cover it. (The opener is a
+     fixed child of .topbar, which is placed without a transform.) */
+  :root { --side: 256px; --band: 64px; }
+}
+
+/* ---- phone: sessions as a strip, a session's two modes behind a tab bar ---- */
+@media (max-width: 860px) {
+  :where([data-ui]) body { --bar-h: 48px; --gutter: var(--s-4); grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto minmax(0, 1fr) auto; }
+  .filters { margin-left: auto; }
+  .filters button { min-height: 36px; }
+  /* (room at the foot, so the last row can be scrolled clear of the two floating buttons) */
+  body[data-scope="all"] #inbox { grid-column: 1; grid-row: 3; padding: var(--s-5) var(--gutter) 96px; }
+  .toast { left: var(--gutter); right: var(--gutter); width: auto; flex-wrap: nowrap; padding: 6px 6px 6px var(--s-4); border-radius: var(--r-pill); }
+  .toast:not(:has(button)) { padding-block: 10px; border-radius: var(--r-md); }
+  .toast button { flex: none; }
+  .mic { width: 44px; height: 44px; }
+  .icon-btn { width: 44px; height: 44px; }   /* below 16px iOS zooms the page on focus */
+  .send { width: 44px; height: 44px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; transition-delay: 0s !important; scroll-behavior: auto !important;
+  }
+}
+@media (max-width: 860px) {
+  /* the drawings to choose from: as many columns as the phone has room for (the eighth was cut off) */
+  .mark-grid { width: min(332px, calc(100vw - 76px)); grid-template-columns: repeat(auto-fill, 38px); justify-content: space-between; gap: 4px; }
+  .mark-tile { position: relative; }
+  .mark-tile::after { content: ""; position: absolute; inset: -2px; }
+}
+/* ==== sidebar.css ==== */
+@keyframes crown-in { from { opacity: 0; translate: 0 -10px; scale: .97; } }
+@keyframes mark-fill { 0% { stroke-dashoffset: 100; opacity: 1; } 60% { stroke-dashoffset: 0; opacity: 1; } 84% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+/* ==== app.css ==== *//* What just happened, and "Back" (js/back.js): one note at the top left of the view, in ink,
+   tilted a little like a slip of paper laid on the page. It names what happened to the question
+   that just left and takes it back; a scribbled line under it runs out. It never lies over the
+   answers, which are at the right. */
+.says-host { position: absolute; z-index: 30; pointer-events: none; }
+.says-page { position: fixed; }
+.says {
+  position: relative; pointer-events: auto; display: flex; align-items: center; gap: var(--s-3); width: max-content; max-width: min(430px, calc(100vw - 28px));
+  padding: 9px 10px 13px 14px; border-radius: 10px 13px 9px 12px; background: var(--fg); color: var(--bg);
+  box-shadow: 0 2px 3px rgb(20 30 25 / .12), 0 12px 26px -10px rgb(20 30 25 / .5);
+  rotate: -.7deg; transform-origin: 100% 50%; animation: says-in 260ms cubic-bezier(.25, 1.4, .5, 1);
+}
+@keyframes says-in { from { opacity: 0; translate: -10px -8px; } }
+.says-words { min-width: 0; display: grid; gap: 2px; }
+.says-words b { font: 800 1.02rem/1.15 var(--display); letter-spacing: -.005em; overflow-wrap: anywhere; }
+.says-words span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--t-sm)/1.3 var(--font); opacity: .8; }
+.says-back { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 10px 0 8px; border: 0; border-radius: var(--r-pill); background: var(--bg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); transition: scale 100ms ease-out; }
+.says-back:hover { filter: brightness(.94); }
+.says-back:active { scale: .96; }
+.says-back:disabled { opacity: .5; }
+.back-arrow { flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }
+.says-back kbd { min-width: 20px; padding: 3px 5px; border-radius: 5px; background: color-mix(in srgb, var(--fg) 10%, transparent); font: 500 .7rem/1 var(--mono); text-align: center; }
+@media (pointer: coarse) { .says-back kbd { display: none; } .says-back { min-height: 44px; padding-inline: 12px 14px; }
+}
+/* The time left runs out along a scribbled line. */
+.back-line { position: absolute; left: 14px; bottom: 4px; width: calc(100% - 28px); height: 6px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; opacity: .6; overflow: visible; pointer-events: none; }
+.back-line path { vector-effect: non-scaling-stroke; stroke-dasharray: 100; animation: back-time var(--back-ms, 4s) linear forwards; }
+.says[data-paused] .back-line path { animation-play-state: paused; }
+@keyframes back-time { to { stroke-dashoffset: 100; } }
+/* The line is the clock, not an ornament: it keeps running where motion is reduced. */
+@media (prefers-reduced-motion: reduce) {
+  .says.says { animation: none !important; }
+  .says.says .back-line path { animation-duration: var(--back-ms, 4s) !important; }
+}
+@keyframes row-answered { to { opacity: 0; translate: 72px -6px; rotate: 1.2deg; } }
+@keyframes row-later { to { opacity: 0; translate: 0 64px; scale: .96; } }
+@keyframes focus-leave-answered { to { opacity: 0; transform: translate3d(0, -64px, 0) rotate(-.6deg); } }
+@keyframes focus-leave-later { to { opacity: 0; transform: translate3d(0, 88px, 0) scale(.95); } }
+@keyframes row-fade { to { opacity: 0; } }
+
+/* A phone has no free corner: while a note is up, the view gives it a strip at its lower edge
+   (above the tab bar; the composer moves up with the view), so the note lies over nothing. */
+@media (max-width: 860px) {
+  body[data-says] main { margin-bottom: 72px; }
+  .says-page .says { rotate: 0deg; max-width: calc(100vw - 16px); padding-block: 7px 11px; }
+}
+/* For a moment a new note lets taps through, so a second tap meant for the next answer cannot hit "Back". */
+.says[data-fresh] { pointer-events: none; }
+/* ==== session.css ==== */
+
+@media (min-width: 1200px) {
+  :where([data-ui]) body { --beside-col: 50.5rem; --talk-w: clamp(340px, 30vw, 440px); }
+  /* (The name's box reaches under them and is positioned: they stand above it, so they can be pressed.) */
+  body:not([data-pair]):not([data-scope="all"]) :is(.filters, .modes) { position: relative; z-index: 1; }
+  body:not([data-pair]):not([data-scope="all"]) .filters { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-3) 10px 0; }
+  body:not([data-pair]):not([data-scope="all"]) .modes { grid-column: 3; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-4) 6px 0; }
+  body[data-pair] #scribble { grid-column: 1 / -1; grid-row: 2; }
+}
+body[data-pair] #filter-questions { display: none; }
+@media (min-width: 1200px) {
+  body[data-talk-drag] { cursor: col-resize; user-select: none; -webkit-user-select: none; }
+  /* Folded: the column is a strip; the list of questions takes the rest. */
+  body[data-pair][data-talk-folded] { --talk-w: 44px !important; }
+}
+/* ==== card.css ==== *//* Copying a decision into another session's conversation (js/cardclip.js). Clean, quiet controls. */
+
+/* the copy button */
+.cardclip-copy { flex: none; width: 28px; height: 28px; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--muted); cursor: pointer; transition: background var(--d-fast), color var(--d-fast); }
+.cardclip-copy:hover { background: var(--sunken); color: var(--fg); }
+.cardclip-copy.is-done { color: var(--accent); }
+.cardclip-copy .cardclip-ico { width: 17px; height: 17px; stroke-width: 1.8; rotate: none; }
+.cardclip-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardclip-answer { flex: 0 1 auto; min-width: 3em; max-width: 45%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--accent); font-weight: 600; }
+.cardclip-off { flex: none; width: 22px; height: 22px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 6px; background: none; color: var(--muted); font: 400 16px/1 var(--font); cursor: pointer; }
+.cardclip-off:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.cardclip-offer { display: inline-flex; align-items: center; height: 28px; padding: 0 3px 0 0; border-radius: 8px; box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); }
+.cardclip-paste { height: 28px; padding: 0 4px 0 10px; border: 0; background: none; color: inherit; font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; cursor: pointer; }
+/* ==== desk.css ==== */
+@keyframes rowmenu-up { from { translate: 0 100%; } }
+@keyframes rowmenu-fade { from { opacity: 0; } }
+
+/* ---- a new version of the app took over (js/app/pwa.mjs): one quiet line above the round buttons at the foot ---- */
+.app-update {
+  position: fixed; z-index: 2700; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); translate: -50% 0;
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 32px); padding: 6px 6px 6px 16px;
+  border-radius: 999px; background: var(--fg); color: var(--bg); font: 500 var(--t-sm)/1.3 var(--font); box-shadow: var(--shadow-md);
+  animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
+}
+.app-update button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--bg); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
+/* ==== desk.css ==== */
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+/* ==== desk.css ==== */
+/* In the works: the gear turns while there is something on the stack (one turn in 7 s; transform only, so it stays on
+   the compositor; the ink's noise lies on the stamp around it and does not turn along). Still on an empty stack. */
+@keyframes stack-stamp-turn { to { transform: rotate(1turn); } }
+/* ==== app.css ==== */
+/* ==== app.css ==== *//* Real links (js/link.js): what one navigates with is an <a href>, and looks exactly like the button it
+   was. Zero specificity (:where), so every rule written for the class still decides; this only takes the
+   browser's link looks away and gives back what a button has by itself. The focus ring is the page's own. */
+:where(a[data-nav]) {
+  display: inline-block; color: inherit; text-decoration: none; text-align: center; cursor: pointer;
+  touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-user-drag: none;
+}
+/* ==== notes.css ==== */
+@keyframes memo-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+@keyframes memo-into-env { 0%, 8% { transform: none; opacity: 1; } 44% { transform: translate(var(--env-x), var(--env-y)) scale(var(--env-s)); opacity: 1; } 48%, 100% { transform: translate(var(--env-x), var(--env-y)) scale(var(--env-s)); opacity: 0; } }
+@keyframes memo-env-flap { 0% { transform: perspective(300px) rotateX(0); } 16%, 42% { transform: perspective(300px) rotateX(-170deg); } 54%, 100% { transform: perspective(300px) rotateX(0); } }
+@keyframes memo-env-seal { 0%, 52% { opacity: 0; transform: scale(1.6); } 58% { opacity: 1; transform: scale(.92); } 62%, 100% { opacity: 1; transform: none; } }
+@keyframes memo-env-fly {
+  0%, 62% { transform: none; opacity: 1; animation-timing-function: cubic-bezier(.4, 0, .7, .6); }
+  80% { transform: translate(calc(var(--fly-x, 40px) * .45), calc(var(--fly-y, -40vh) * .45 - 60px)) rotate(-8deg) scale(.8); opacity: 1; animation-timing-function: cubic-bezier(.3, .4, .5, 1); }
+  100% { transform: translate(var(--fly-x, 40px), var(--fly-y, -40vh)) rotate(-14deg) scale(.4); opacity: .8; } }
+@keyframes memo-landed { 0% { transform: none; } 35% { transform: scale(1.28) rotate(-6deg); } 70% { transform: scale(.94); } 100% { transform: none; } }
+@keyframes memo-up { from { transform: translateY(100%); } }
+@keyframes memo-fade { from { opacity: 0; } }
+/* ==== app.css ==== */
+:root { --keys-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 25c9-3.500 19-1 33-3.200'/%3E%3Cpath d='M27.500 11.500c3.800 4.200 6.800 7.300 11.500 10-4.600 2.600-8.300 6.700-10.800 12.500'/%3E%3C/svg%3E"); }
+@keyframes keys-point { from { translate: -14px 0; opacity: 0; } }
+/* The option the arrows are on, among the choices of the marked row. */
+
+/* ---- a sequence under way: "g", then where to ---- */
+.keys-pending {
+  position: fixed; z-index: 60; left: 50%; bottom: 76px; translate: -50% 0; max-width: calc(100vw - 2 * var(--s-4));
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2) var(--s-4); padding: 10px var(--s-4);
+  border-radius: var(--r-md); background: var(--fg); color: var(--bg); box-shadow: var(--shadow-lg);
+  font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase;
+  animation: keys-rise 140ms ease-out;
+}
+.keys-pending[hidden] { display: none; }
+.keys-pending span { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
+.keys-pending > kbd:first-child { margin-right: var(--s-1); }
+.keys-pending kbd { box-shadow: none; }
+@keyframes keys-rise { from { translate: -50% 8px; opacity: 0; } }
+
+/* ---- the sheet behind "?" ---- */
+.keys-sheet {
+  width: min(760px, calc(100vw - 2 * var(--s-4))); max-height: min(86vh, 860px); margin: auto; padding: var(--s-6) var(--s-8) var(--s-6);
+  border: 0; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto;
+}
+/* No veil over the page: the sheet lies on it with a line and a shadow; Escape, "?" or a click beside it closes. */
+.keys-sheet { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.keys-sheet::backdrop { background: transparent; }
+.keys-sheet header { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); margin-bottom: var(--s-5); }
+.keys-sheet h2 { font: 800 2rem/1.05 var(--display); letter-spacing: -.02em; }
+.keys-close { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 36px; padding: 0 var(--s-3); border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font-weight: 600; font-size: var(--t-sm); }
+.keys-close:hover { background: var(--sunken); color: var(--fg); }
+.keys-groups { columns: 2 300px; column-gap: var(--s-10); }
+.keys-groups section { break-inside: avoid; margin-bottom: var(--s-6); }
+/* The heading is the divider, as for the senders in the inbox. */
+.keys-sheet h3 { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-3); font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+.keys-sheet h3::after { content: ""; flex: 1; border-top: 1px solid var(--line-strong); }
+.keys-sheet dl { display: grid; gap: 9px; }
+.keys-sheet dl > div { display: grid; grid-template-columns: 7rem minmax(0, 1fr); align-items: baseline; gap: var(--s-3); }
+.keys-sheet dt { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+.keys-sheet dd { font-size: var(--t-sm); line-height: 1.35; color: var(--fg); }
+.keys-caps { display: inline-flex; align-items: center; gap: 4px; }
+.keys-sheet dt i { font: 500 .68rem/1 var(--font); font-style: normal; color: var(--faint); }
+.keys-foot { margin-top: var(--s-2); padding-top: var(--s-4); border-top: 1px dashed var(--line-strong); font-size: var(--t-sm); color: var(--muted); }
+@media (max-width: 700px) { .keys-sheet { padding: var(--s-5); }
+}
+/* ==== agents.css ==== */
+/* ==== app.css ==== *//* Rich content in a text (ui.mjs): the columns of a markdown table, and the frame an agent's
+   HTML stands in. Loaded by the module itself. The table's own rules are in tokens.css (.rich-table). */
+
+/* A column of numbers: right-aligned, figures of one width. */
+.rich-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rich-table .mid { text-align: center; }
+.rich-table-wrap { scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+
+/* An HTML block: a frame without an edge of its own, as tall as its content, at most most of the screen. */
+/* A block of its own formatting, so that beside something floated (the answers of a question) it takes the
+   room that is left instead of dropping below it. */
+.rh { position: relative; display: flow-root; max-width: 100%; min-width: 0; contain: paint; }
+/* A frame without an origin is drawn by a process of its own, and the browser asks that process where a click
+   lands. Scrolled out under the head of a conversation it would still take the clicks meant for the controls
+   there (seen in Chromium, where a message has a transform), unless the block is a clip of its own: contain on
+   the block, a clip path on the frame. Either is enough; both stand. */
+.rh-frame { display: block; width: 100%; height: 96px; max-height: 70vh; border: 0; background: transparent; clip-path: inset(0); }
+/* Beyond the cap it scrolls inside, and says so with a rule at its foot. */
+.rh.is-capped .rh-frame { border-bottom: 1px solid var(--line-strong); }
+
+/* "Open large": quiet, at the block's upper right; it stands when the block is cut or wider than its
+   place, and comes on hover or focus otherwise. */
+.rh-open {
+  position: absolute; top: 0; right: 0; z-index: 1; min-height: 26px; padding: 0 10px;
+  border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--muted);
+  font: 600 var(--t-xs)/1 var(--font); letter-spacing: .02em; white-space: nowrap; cursor: pointer;
+  opacity: 0; pointer-events: none; transition: opacity var(--d-fast) ease-out;
+}
+.rh-open:hover { color: var(--fg); border-color: var(--fg); }
+/* Where it always stands it sits under the block, so it never covers a table's head. */
+.rh.is-capped, .rh.is-wide { padding-bottom: 34px; }
+.rh.is-capped .rh-open, .rh.is-wide .rh-open { top: auto; bottom: 0; }
+
+/* The big view: over the whole window, a thin bar with Close, the frame fills the rest. */
+.rh-large { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: var(--surface); color: var(--fg); }
+.rh-large-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-4); padding-top: max(var(--s-2), env(safe-area-inset-top)); border-bottom: 1px solid var(--line); }
+.rh-large-name { font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
+.rh-large-close { min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.rh-large .rh-frame { flex: 1; height: auto; max-height: none; }
+
+/* Phone polish (docs/qa-phone-design.md): a table that is too wide scrolls sideways in its frame; its words stay
+   whole (the text around it breaks anywhere, and a narrow column then stood one syllable per line). */
+@media (max-width: 860px) {
+  .rich-table th, .rich-table td { overflow-wrap: normal; word-break: normal; }
+  .rh-open { min-height: 36px; }
+  .rh.is-capped, .rh.is-wide { padding-bottom: 44px; }
+}
+/* ==== session.css ==== */
+
+/* ---- the filters are real links (js/link.js; hrefs kept by app.js paintLinks): what app.css says for
+   `.filters button`, for the anchor. (#mode-*, #tab-* are links too; .modes and .tabbar are shown nowhere.) ---- */
+.filters a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.filters a:hover { color: var(--fg); background: var(--sunken); }
+.filters a[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+/* ==== card.css ==== */
+::view-transition-old(tc-card) { animation: tc-fly 260ms cubic-bezier(.5, 0, .75, 0) both; }
+::view-transition-new(tc-card) { animation: tc-land 220ms 80ms ease-out both; }
+@keyframes tc-fly { to { translate: 46% -6%; rotate: 5deg; opacity: 0; } }
+@keyframes tc-land { from { opacity: 0; scale: .985; } }
+@media (prefers-reduced-motion: reduce) { ::view-transition-old(tc-card), ::view-transition-new(tc-card) { animation: none; }
+}
+/* ==== session.css ==== */
+/* ==== session.css ==== *//* Read aloud. The logic is in js/speech.js (old client) and controller "say".
+   Colours come from tokens.css. (Live dictation was removed: out of scope for launch.) */
+
+/* ---- Read aloud: the small speaker beside every message ----
+   Quiet at rest: it shows when the message is under the pointer or it has the focus, and stays
+   while it reads. Where nothing hovers (touch) it is always there, small and pale. */
+.say { position: relative; display: none; flex: none; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--faint); cursor: pointer; opacity: 0; vertical-align: middle; font-size: 0; line-height: 0; letter-spacing: 0; transition: opacity var(--d-fast), color var(--d-fast), background var(--d-fast); -webkit-tap-highlight-color: transparent; touch-action: manipulation; -webkit-touch-callout: none; user-select: none; }
+.say:hover { background: var(--sunken); color: var(--fg); }
+/* Under a finger the small speaker takes a tap from 38px around it; what is seen stays 26px. */
+@media (pointer: coarse) { .say::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; }
+}
+.say > * { grid-area: 1 / 1; }
+
+/* Reading: the speaker becomes a stop, a ring closes round it as the message is read. */
+.say[data-say="loading"], .say[data-say="playing"] { color: var(--accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent); }
+.say[data-say="loading"] { animation: say-wait 1.4s var(--ease-in-out) infinite; }
+.say[data-say="failed"] { color: var(--urg-critical); }
+@keyframes say-wait { 50% { box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 45%, transparent); } }
+@media (hover: none) {
+  .say:hover { background: none; color: var(--faint); }
+  .say[data-say="loading"]:hover, .say[data-say="playing"]:hover { color: var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .say[data-say="loading"] { animation: none; }
+}
+/* ==== app.css ==== */
+
+/* ---- toast: one quiet line at the top right, the same on every page (ui.mjs) ----
+   "<what happened>: <of what>  ↶ Undo", newest on top, three at most; a scribbled line under it is the time left. */
+#says-host { top: 12px; right: 12px; left: auto; z-index: 80; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; max-width: calc(100vw - 24px); }
+#says-host:empty { display: none; }
+.says form { margin: 0; flex: none; }
+#says-host .says {
+  rotate: 0deg; max-width: min(440px, calc(100vw - 24px)); min-height: 44px; box-sizing: border-box; gap: 10px;
+  padding: 4px 4px 6px 14px; border-radius: 12px; background: var(--surface); color: var(--fg);
+  box-shadow: 0 0 0 1px var(--line), var(--shadow-md); transform-origin: 100% 0; animation: toast-in 200ms var(--ease-out);
+}
+#says-host .says[hidden] { display: none; }
+@keyframes toast-in { from { opacity: 0; translate: 0 -6px; } }
+#says-host .says-words { display: flex; align-items: baseline; gap: .35em; min-width: 0; padding-block: 6px; white-space: nowrap; }
+#says-host .says-words b { flex: none; font: 600 var(--t-sm)/1.3 var(--font); letter-spacing: 0; }
+#says-host .says-words b:not(:last-child)::after { content: ':'; }
+#says-host .says-words span { min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 400 var(--t-sm)/1.3 var(--font); color: var(--muted); opacity: 1; }
+#says-host .says[role="alert"] .says-words b { color: var(--deny); }
+#says-host .says-back { min-height: 36px; padding: 0 10px 0 8px; gap: 5px; background: transparent; color: var(--accent); }
+#says-host .says-back:hover { filter: none; background: var(--accent-soft); }
+#says-host .says-back .back-arrow { width: 17px; height: 17px; }
+#says-host .says-back kbd { color: var(--muted); }
+#says-host .says:not(:has(form)) { padding-right: 14px; }
+#says-host .back-line { left: 14px; bottom: 1px; width: calc(100% - 28px); color: var(--accent); opacity: .35; }
+@media (max-width: 860px) {
+  #says-host { top: 8px; right: 8px; max-width: calc(100vw - 16px); }
+  #says-host .says { max-width: calc(100vw - 16px); padding-block: 4px 6px; }
+}
+.keys-sheet header form { margin: 0; }
+.keys-foot a { color: inherit; }
+
+/* ---- The Agents page (agents.mjs) and a session's small forms (ui.mjs, controller "pops") ----
+   The lines are agents.css. New here: controls that are <details> with their content lying over the page
+   (no veil), forms where the old client had buttons, a main's subs under it, what the hub refused, the phone. */
+.t-pick { position: relative; min-width: 0; max-width: 100%; }
+.t-pick > summary { list-style: none; cursor: pointer; }
+.t-pick > summary::-webkit-details-marker { display: none; }
+.t-pop { position: absolute; z-index: 40; left: 0; top: calc(100% + 8px); margin: 0; user-select: text; -webkit-user-select: text; }
+.t-pop-wait { padding: var(--s-2) var(--s-3); color: var(--muted); font-size: var(--t-sm); white-space: nowrap; }
+.mark-picker.t-pop { width: max-content; max-width: calc(100vw - 16px); }
+.t-menu { display: grid; gap: 2px; min-width: 168px; max-width: min(280px, calc(100vw - 16px)); max-height: min(60vh, 420px); overflow-y: auto; padding: 6px; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.t-menu button { min-height: 36px; padding: 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-sm)/1.2 var(--font); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.t-menu button[aria-current="true"] { font-weight: 700; box-shadow: inset 3px 0 0 var(--fg); }
+@media (max-width: 860px) {
+  .t-sheet { position: fixed; z-index: 90; left: 0; right: 0; bottom: 0; display: grid; gap: 2px; box-sizing: border-box; width: auto; max-width: none; max-height: 82dvh; overflow-y: auto; user-select: text; -webkit-user-select: text; }
+  .t-sheet form { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: var(--s-2); margin: 0; }
+  .t-sheet input[type="text"] { min-width: 0; min-height: 48px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-md); background: transparent; color: var(--fg); font-size: max(16px, 1em); }
+  .t-sheet-marks > summary { list-style: none; display: flex; align-items: center; cursor: pointer; }
+  .t-sheet-marks > summary::-webkit-details-marker { display: none; }
+  .t-sheet-marks .mark-grid { margin: var(--s-2) var(--s-3) var(--s-3); width: auto; }
+}
+.status-detail { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.status-ago { flex: none; color: var(--faint); font-size: var(--t-xs); }
+.status-mark { flex: none; width: 18px; height: 18px; display: grid; place-items: center; color: var(--accent); }
+.status-mark svg { width: 18px; height: 18px; fill: none; }
+.status-mark .ring-loop { opacity: .38; stroke-width: 2.2; }
+@keyframes files-turn { to { transform: rotate(1turn); } }
+@keyframes files-jumped { 0%, 45% { box-shadow: 0 0 0 3px var(--accent); } 100% { box-shadow: 0 0 0 3px transparent; } }
+button.t-chip-drop { background: none; color: var(--muted); text-decoration: underline; cursor: pointer; }
+/* One drawing per run (his pick B, "Ein Zeichen, eine Linie"): only the first card of a session's run shows the session's
+   drawing and name beside it; a hand-drawn line in the session's colour runs down from under it and turns into each
+   following card with a small hook (the hook is the link into the session the drawing was). A single card is as before.
+   On a phone the line runs in the margin left of the cards and only the first card names the session. A card that
+   arrives live joins its session's run (app/board.mjs, desk live diff). */
+:root {
+  --run-line: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 100' preserveAspectRatio='none'%3E%3Cpath d='M4.4 0C2.6 13 5.9 26 4.2 41S2.3 64 5 78S3.4 94 4 100' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
+  --run-hook: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 14'%3E%3Cpath d='M2 1C2.6 7.5 6.5 10 26.5 8.6' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
+  --run-hook-s: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 14'%3E%3Cpath d='M2 1C2.3 6.5 4.6 9.4 11 9' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+/* ==== app.css ==== */
+/* ==== app.css ==== */
+/* An attachment the hub no longer has (retention, quota). */
+.att-gone { display: inline-flex; align-items: center; min-height: 48px; padding: 8px 12px; border: 1px dashed var(--line, #d8d6cf); border-radius: 10px; color: var(--muted, #6b6b66); font-size: 13px; }
+/* ==== auth.css ==== */
+@keyframes room-pulse { 50% { opacity: .2 } }
+@keyframes room-rise { from { opacity: 0; translate: -50% 12px; } }
+@media print {
+  body * { visibility: hidden !important; }
+}
+/* ==== desk.css ==== */
+/* ==== media.css ==== *//* Everything the agents sent (media.mjs): the pile "Media N" at the foot of the Desk and the plain media
+   gallery /assets it opens. The pile is paper like its neighbours (desk.css .off-pile); the gallery is sober. */
+
+/* ---- the page /assets ---- */
+#gallery { display: none; }
+/* ==== whiteboard.css ==== */

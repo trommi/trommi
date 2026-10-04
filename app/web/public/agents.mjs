@@ -1,5 +1,5 @@
 // The Agents page (<base>/agents): the ledger of all sessions, one line each, and the forms that change a
-// session (docs/turbo.md). The markup is the one css/ledger.css styles (the old client built it in js/ledger.js).
+// session (docs/turbo.md). The markup is the one agents.css styles (the old client built it in js/ledger.js).
 //   - a line: mark (opens the drawings; the crown at its corner gives or takes the desk's one crown), name (renames), state,
 //     what it asks (a link to the card's own page) or does, model, machine, last seen, and what can be done with it
 //   - a main stands with its subs under it; disconnected sessions and the archive are groups of their own
@@ -11,10 +11,8 @@
 //   - hooks for the keys: a line is .ledger-line[data-id][data-state], id="ledger-<id>"; its controls carry
 //     data-ledger="rename|mark|crown|main|desk|open|walk|question|pair|unpair|archive|fetch|up|down|more"
 // On a phone a line is mark, name, state and "…": a tap opens the session, "…" a sheet at the lower edge.
-
 import { BASE } from './app.mjs'
 import { LATER, agoSpan, answerFields, avatar, badge, cardPath, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, roomTabs, sessionForms, sk } from './ui.mjs'
-
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const SEP = raw('<i class="ledger-sep"> · </i>')
 const STAY = { stay: true }

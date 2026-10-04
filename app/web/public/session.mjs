@@ -1,7 +1,7 @@
 // A session's page: its heading in the band, the conversation, the composer, the filter ("Questions only"), the
-// files drawer and a picture as a page of its own. The markup is the one css/app.css and css/session.css style (the old
+// files drawer and a picture as a page of its own. The markup is the one app.css and session.css style (the old
 // client built it in js/chat.js, js/beside.js, js/history.js and app.js paintTitle); what is new stands in
-// css/turbo.css under "the session page".
+// app.css under "the session page".
 //
 //   GET  <base>/s/<id>                  the conversation: the latest PAGE messages; ?before=<message> the ones before
 //                                       that one (the "Earlier" link at the top loads them into a Turbo Frame)
@@ -18,10 +18,8 @@
 //
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
-
 import { BASE, blockedOf, quietOf } from './app.mjs'
 import { Controller, WORDS, advisedLabels, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, mq, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
-
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
@@ -70,7 +68,7 @@ const choiceLabel = card => { const keys = card.choices?.length ? card.choices :
 const isPicture = a => kindOf(a) === 'image' && a.url
 
 // ---- what a render of one session needs, worked out once ----
-/** model: views/model.mjs. Returns null when the session is not on the board. */
+/** model: app.mjs. Returns null when the session is not on the board. */
 function sessionOf(model, id, { floor = 0, more = false } = {}) {
   const agent = model.byAgent.get(id)
   if (!agent) return null
@@ -178,7 +176,7 @@ ${asset.note ? html`<p class="as-note">${asset.note}</p>` : ''}<div class="as-st
 </div>`
 }
 
-// The agent's words (views/text.mjs rich), with its code blocks dressed: a head with the button that copies (controller "copy").
+// The agent's words (ui.mjs rich), with its code blocks dressed: a head with the button that copies (controller "copy").
 // (What rich() returns is escaped: a literal <pre><code> in it is one this code made.)
 const CODE_HEAD = `<div class="code" data-controller="copy"><div class="code-head"><span class="code-lang">Code</span><button type="button" class="code-copy" data-action="copy#copy">${ico('copy')}<span data-copy-target="label">Copy</span></button></div><pre data-copy-target="source"><code>`
 const words = (text, opts) => raw(String(rich(text, opts)).replaceAll('<pre><code>', CODE_HEAD).replaceAll('</code></pre>', '</code></pre></div>'))
@@ -222,7 +220,7 @@ function build(m, cont, about, s, base) {
     const list = m.attachments ?? []
     return html`<article class="msg msg-user${cont ? ' cont' : ''}" id="msg-${m.id}">${list.filter(a => a.kind === 'scribble' && a.url).map(a => html`<a class="scribble-card" href="${a.url}" target="_blank" rel="noopener" aria-label="Scribble sent: open the picture"><img${srcOf(a, 280)} alt="" loading="lazy" decoding="async" width="280" height="210"><span>Scribble</span></a>`)}${attachments(list.filter(a => a.kind !== 'scribble'), s, base, m.id)}${aboutNode}${m.cards?.length ? html`<div class="cardclip-row">${m.cards.map(c => html`<a class="cardclip-chip is-link" data-nav href="${sessionPath(s.id, base)}/q/${encodeURIComponent(c.number)}" title="Nr. ${c.number} · ${c.title}${c.choice_label ? ` → ${c.choice_label}` : ''}"><b>Nr. ${c.number}</b><span class="cardclip-title">${c.title}</span>${c.choice_label ? html`<span class="cardclip-answer">→ ${c.choice_label}</span>` : ''}</a>`)}</div>` : ''}${m.text ? html`<div class="bubble"><p>${m.text}</p></div>` : ''}${timeNode(m.ts, 'msg-time')}</article>`
   }
-  // The agent's words (the light markdown; a layout fenced as html goes into the sandboxed frame, views/text.mjs), with what it attached.
+  // The agent's words (the light markdown; a layout fenced as html goes into the sandboxed frame, ui.mjs), with what it attached.
   const text = m.published ? assetCard(assetOf(m, s), s, base) : raw(String(words(m.text ?? '', { assets, extra: m.html ?? '' })).replace(/<\/div>$/, () => `${attachments(m.attachments, s, base, m.id)}</div>`))
   return html`<article class="msg msg-agent${cont ? ' cont' : ''}" id="msg-${m.id}"${cont ? html` title="${FULL.format(m.ts)}"` : ''}>${cont ? '' : html`<header class="msg-head">${AGENT_MARK}<span class="msg-name">Agent</span>${timeNode(m.ts, 'msg-time')}</header>`}${aboutNode}${text}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details, { assets })}</details>` : ''}</article>`
 }
@@ -242,10 +240,10 @@ function logItems(s, base, from = 0, to = s.messages.length) {
 }
 
 // ---- the pieces of the page that change by themselves (each has an id; the live stream replaces it) ----
-/** The session's drawing and name: the page's heading, on its own line under the band (css/session.css). */
+/** The session's drawing and name: the page's heading, on its own line under the band (session.css). */
 function sessionWho(s, base) {
   const a = s.agent
-  // The mark opens the drawings, the name renames (views/session-edit.mjs); the live stream brings what was changed.
+  // The mark opens the drawings, the name renames (ui.mjs); the live stream brings what was changed.
   // The raised red hand when the session is really stopped (server/blocked.mjs), with the cause in words.
   const stopped = blockedOf(a, s.model.state), quiet = stopped ? null : quietOf(a, s.model.state)
   return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : quiet ? html`<span class="t-quiet" title="Connected and working, nothing new for a while">${quiet.text}</span>` : ''}</div>`
@@ -260,7 +258,7 @@ function sessionNow(s, base = '') {
 /** The filter beside the composer: one quiet icon that opens a small menu, All / Questions only (with the number that
  *  waits) / Files, the one in view ticked; a dot on the icon while a filter is on. A <details> (controller "pops" closes
  *  it on Escape or a click beside it); the entries are real links, so it works without scripts. */
-const FILTERS = [['', 'All messages', null], ['questions', 'Questions only', 'filter-questions'], ['files', 'Files', 'filter-files']]   // (Files: on a phone only, css/turbo.css; it opens the drawer)
+const FILTERS = [['', 'All messages', null], ['questions', 'Questions only', 'filter-questions'], ['files', 'Files', 'filter-files']]   // (Files: on a phone only, app.css; it opens the drawer)
 function sessionFilters(s, base, mode = '') {
   const here = sessionPath(s.id, base)
   const href = { '': here, questions: `${here}?only=questions`, files: `${here}/files` }
@@ -622,7 +620,7 @@ export function register(t) {
 }
 
 // ---- controller "composer" ----
-// The composer of a session's page (views/session.mjs): a plain form that works by itself. This adds what a form
+// The composer of a session's page (session.mjs): a plain form that works by itself. This adds what a form
 // cannot do alone: Enter sends (Shift+Enter is a new line; on a touch screen Enter stays a new line, and Ctrl/Cmd+Enter
 // sends everywhere), the field grows with its words, the chosen files stand as chips that can be taken off, a pasted
 // picture or a file dropped anywhere on the page is attached, a card copied elsewhere ("Copy" on a card, controller
@@ -809,7 +807,7 @@ controller('composer', class extends Controller {
 })
 
 // ---- controller "log" ----
-// A session's conversation (server/views/session.mjs), on .chat-pane. The hub rendered it and the log stands at its
+// A session's conversation (session.mjs), on .chat-pane. The hub rendered it and the log stands at its
 // end by itself (css: a reversed column). This adds what only the browser knows:
 //   - "To the end", with the number of messages that arrived while one was reading further up, and the view
 //     that stays where it is when they arrive;
@@ -935,7 +933,7 @@ controller('log', class extends Controller {
 })
 
 // ---- controller "files" ----
-// A session's files drawer (server/views/session.mjs filesDrawer): "N files" beside the quiet line (on a phone,
+// A session's files drawer (session.mjs filesDrawer): "N files" beside the quiet line (on a phone,
 // "Files (N)" in the filter menu) opens it, the chip again, Escape, a click beside it or its × close it. The list is
 // a frame: the link that opens it loads it once (data-turbo-frame); later it is kept current by the live stream.
 // "Jump to" scrolls to the message and marks it for a moment when it is on the page; otherwise its link loads the
@@ -991,7 +989,7 @@ controller('files', class extends Controller {
 })
 
 // ---- controller "share" ----
-// "Copy link" of something a session published (views/session.mjs assetCard, assetPage): copies the address of the
+// "Copy link" of something a session published (session.mjs assetCard, assetPage): copies the address of the
 // app's viewer for it. It opens for the people of this room (the contents are end-to-end encrypted with the room's
 // keys); there is no outside link.
 

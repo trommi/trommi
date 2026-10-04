@@ -1,9 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
-// The markup is the one css/app.css and css/crowns.css style (the old client built it in js/agents.js).
-
+// The markup is the one app.css and sidebar.css style (the old client built it in js/agents.js).
 import { BASE, stream } from './app.mjs'
-import { BELL, Controller, avatar, badge, controller, crownSvg, edgeQuirk, handSvg, html, knocksText, raw, sk, sketchSvg, toast } from './ui.mjs'
-
+import { BELL, Controller, PLUS, avatar, badge, controller, crownSvg, edgeQuirk, handSvg, html, knocksText, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -25,7 +23,7 @@ ${badge(u, shown, base)}
 
 const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New agent</span></button></form>`
 
-/** The sidebar's row. Marked as the place in view by the page (body[data-t-view="whiteboard"], css/whiteboard.css),
+/** The sidebar's row. Marked as the place in view by the page (body[data-t-view="whiteboard"], whiteboard.css),
  *  so the live stream that renews the sidebar never has to know which page it is on. */
 const whiteboardRow = base => html`<div class="agent-row whiteboard-row" id="whiteboard-row"><a class="agent-entry" data-nav href="${base}/whiteboard" draggable="false" title="Whiteboard: draw, sketch, send a piece to a session (P)"><span class="agent-avatar whiteboard-mark" aria-hidden="true">${raw(sketchSvg('pen'))}</span><span class="agent-text"><strong>Whiteboard</strong></span></a></div>`
 
@@ -125,9 +123,9 @@ controller('folds', class extends Controller {
 // ---- menu ----
 // The Trommi menu (what opens from the floating pill at the top centre), the jump page's results (/jump; the menu
 // itself has no search field for now), and the sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
-// js/bar.js), so css/app.css and css/clipboard.css style it; the controller t/controllers/menu_controller.js adds the
+// js/bar.js), so app.css and sidebar.css style it; the controller controller "menu" adds the
 // arrows and a new desk, sheet_controller.js the long press. Opening and closing the
-// menu and the theme: t/application.js.
+// menu and the theme: ui.mjs.
 
 const DEFAULT_DESK = 'main'
 
@@ -141,7 +139,7 @@ function desksOf(model) {
 // Small drawings of the menu's own, in the pen's line: Log out, the plus of "New desk", and the light of the desk lamp.
 // Log out: a door frame, open to the right, and an arrow walking out of it.
 const LEAVE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:-1deg"><path d="M10.2 4.3Q7.4 4.1 5.2 4.4Q4.9 12.1 5.2 19.7Q7.7 19.9 10.1 19.8"/><path d="M9.4 12.2Q14.5 11.8 19.5 12.1"/><path d="M16.3 8.7Q18.2 10.4 19.6 12.1Q18 13.8 16.2 15.3"/></svg>')
-const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:3deg"><path d="M12.2 5.2Q11.8 12 12 18.8"/><path d="M5.3 12.3Q12 11.7 18.7 12.1"/></svg>')
+const NEW_DESK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:3deg"><path d="M12.2 5.2Q11.8 12 12 18.8"/><path d="M5.3 12.3Q12 11.7 18.7 12.1"/></svg>')
 // The lamp switched on, drawn under the desk's lines: the shade glowing, a soft cone of light down onto the top, three short rays.
 const LIGHT = '<g class="lamp-light"><path class="lamp-glow" d="M14.9 2.4Q11.7 3.7 10.7 4.7Q9.6 5.7 9 6.6Q8.5 7.4 9 7.6Q9.5 7.9 12.4 7Q15.2 6.1 15.6 6.1Q15.9 6.1 15.8 4.7Q15.7 3.4 14.9 2.4Z"/><path class="lamp-cone" d="M9.2 7.9Q12.4 7.1 15.6 6.3L17.3 11.9Q12 12.1 6.4 12.2Z"/><path d="M7.6 9Q5.9 10.1 4.3 11.2"/><path d="M7.1 7.2Q5.3 7.3 3.5 7.5"/><path d="M7.9 5Q6.4 4.2 4.9 3.5"/></g>'
 /** The desk drawing of the menu's desk rows and the Desk box's switcher (layout.mjs); the desk in view has its lamp on. */
@@ -151,14 +149,14 @@ const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(
  *  Three calm groups: the desks, each a row with the desk drawing (the one in view has its lamp on), the Demo as one more
  *  desk, and a quiet "New desk" (a line to name it, Enter makes it: menu_controller.js); places (Agents & devices,
  *  Help, Keys); this device (Push, Log out, and the theme as a small sun/moon beside Log out). The connection is not
- *  said here: a lost one is a dot on the pill (views/layout.mjs). */
+ *  said here: a lost one is a dot on the pill (app.mjs). */
 function menuDoors(model, base) {
   const desks = desksOf(model)
   const lit = d => (model.desk ? d.id === model.desk : d === desks[0])
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" hidden>
 <div class="menu-desks" id="menu-desks">${desks.map((d, i) => html`<a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(lit(d))}">${deskMark(lit(d))}<b>${d.name}</b><i${d.knocks && i ? raw(' class="is-knock"') : ''}>${d.open} open</i>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a>`)}
 <a role="menuitem" class="menu-desk is-demo" href="${base}/?mock=1" data-turbo="false" draggable="false" id="dev-mock" title="The demo: a made-up room, nothing is kept">${deskMark(false)}<b>Demo</b><i>sample room</i></a>
-<button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${PLUS}<span>New desk</span></button>
+<button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents and devices: the sessions, and who is in the room">${sk('heads')}<span>Agents &amp; devices</span></a><a role="menuitem" href="${base}/assets" data-nav draggable="false" id="menu-assets" title="Media: everything your agents sent">${sk('picture')}<span>Media</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
@@ -191,7 +189,7 @@ ${menuDoors(model, base)}
 }
 
 // ---- controller "menu" ----
-// The Trommi menu (server/views/menu.mjs renders it; t/application.js opens and closes it and switches the theme).
+// The Trommi menu (sidebar.mjs renders it; ui.mjs opens and closes it and switches the theme).
 // Here: the arrows through the entries, a new desk, and "#jump" in the address, which opens it (the menu has no
 // search field for now; Ctrl K opens the menu with the keyboard on the desk in view).
 
@@ -297,8 +295,8 @@ controller('menu', class extends Controller {
 
 // ---- controller "rail" ----
 // The rail (card Nr. 150): the sidebar folded to the sessions' drawings with their marks (crown, bracket, the drawing
-// that fills itself in while a session works, the count). Wide screens only (css/app.css, [data-rail="folded"]).
-// The small "|<" at the sidebar's foot folds and opens it, and so does the key [ (t/lib/keys.js presses this button).
+// that fills itself in while a session works, the count). Wide screens only (app.css, [data-rail="folded"]).
+// The small "|<" at the sidebar's foot folds and opens it, and so does the key [ (ui.mjs (keys) presses this button).
 // Remembered per browser: the layout's head sets data-rail on <html> before first paint; this controller only flips it.
 // The rail shows no names, so a row says its name in a note beside it while the pointer or the keyboard is on it.
 
@@ -357,7 +355,7 @@ controller('rail', class extends Controller {
 })
 
 // ---- controller "lean" ----
-// A crowned main's folded stack in the sidebar (views/sidebar.mjs, css/crowns.css): when the pointer thumbs it, its
+// A crowned main's folded stack in the sidebar (sidebar.mjs, sidebar.css): when the pointer thumbs it, its
 // card edges fan out towards the side the mouse is on. Over the middle they go straight down, at the right they lean
 // right, at the left they lean left. Sets --lean (-1 … 1) and --lean-abs (0 … 1) on the row; the CSS turns them into
 // the fan. A mouse or pen only (a touch has no hover), and nothing under prefers-reduced-motion.

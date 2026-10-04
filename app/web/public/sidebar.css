@@ -1,0 +1,666 @@
+/* The four tones of a hue (see --tone-* above). Worked out wherever a hue is set: inline by the page
+   (style="--hue: 205"), or by a class that names its own hue; everything inside inherits them. Without a hue
+   the tones are the bell's green. A new place that sets --hue in a stylesheet joins this list. */
+:root, [style*="--hue"], .agent-avatar, .crown-bracket {
+  --tone-h: calc(var(--hue, 162) + var(--tone-turn));
+  --tone-wash: oklch(var(--tone-wash-l) var(--tone-wash-c) var(--tone-h));
+  --tone-edge: oklch(var(--tone-edge-l) var(--tone-edge-c) var(--tone-h));
+  --tone-mid: oklch(var(--tone-mid-l) var(--tone-mid-c) var(--tone-h));
+  --tone-pen: oklch(var(--tone-pen-l) var(--tone-pen-c) var(--tone-h));
+}
+#agents { scrollbar-width: none; }
+#agents::-webkit-scrollbar { display: none; }
+
+/* ---- top bar ------------------------------------------------------------- */
+
+.topbar {
+  grid-column: 1 / -1;
+  display: flex; flex-wrap: wrap; align-items: center; gap: 0 var(--s-3);
+  min-height: calc(var(--bar-h) + env(safe-area-inset-top, 0px));
+  padding: env(safe-area-inset-top, 0px) max(var(--s-3), env(safe-area-inset-right, 0px)) 0 max(var(--s-5), env(safe-area-inset-left, 0px));
+  background: var(--surface);
+  border-bottom: 1px solid var(--line);
+  position: relative; z-index: 5;
+}
+.brand { display: flex; align-items: center; gap: 10px; margin-right: auto; min-width: 0; }
+.brand h1 { font: 700 1.08rem/1 var(--display); letter-spacing: -.012em; white-space: nowrap; }
+.brand-mark { width: 26px; height: 26px; flex: none; }
+
+.conn {
+  display: inline-flex; align-items: center; gap: 7px;
+  height: 28px; padding: 0 11px 0 9px;
+  border-radius: var(--r-pill);
+  font-size: var(--t-xs); font-weight: 500; letter-spacing: .01em; color: var(--muted);
+  transition: background var(--d-med) var(--ease-out), color var(--d-med) var(--ease-out);
+}
+.conn i { width: 8px; height: 8px; border-radius: 50%; background: var(--faint); position: relative; }
+.conn[data-state="online"] i { background: var(--accent); }
+.conn[data-state="online"] i::after {
+  content: ""; position: absolute; inset: -3px; border-radius: 50%; background: var(--accent); opacity: .22;
+}
+.conn[data-state="connecting"] i { animation: blink 1.2s var(--ease-in-out) infinite; }
+.conn[data-state="offline"] { background: var(--urg-high-soft); color: var(--urg-high); }
+.conn[data-state="offline"] i { background: var(--urg-high); animation: blink 1.2s var(--ease-in-out) infinite; }
+.ico-sun { display: none; }
+:root[data-theme="dark"] .ico-sun { display: block; }
+:root[data-theme="dark"] .ico-moon { display: none; }
+
+.agent-mark {
+  width: 24px; height: 24px; flex: none; display: grid; place-items: center;
+  border-radius: var(--r-sm); background: var(--accent); color: var(--accent-fg);
+}
+.agent-mark .ico { width: 14px; height: 14px; fill: currentColor; stroke: none; }
+.agent-mark-lg { width: 48px; height: 48px; border-radius: var(--r-md); box-shadow: var(--shadow-md); }
+.agent-mark-lg .ico { width: 26px; height: 26px; }
+
+/* (the menu pill's mark and word too: a phone's opener is the caret alone) */
+.brand-open > .pill-mark, .brand-open > .pill-word { display: none; }
+/* (the rail's button and note exist on wide screens only: see the min-width block below) */
+.rail-fold, .rail-tip { display: none; }
+/* ---- sidebar: the inbox, then the sessions ---- */
+#agents { display: flex; flex-direction: column; gap: 2px; min-height: 0; overflow-y: auto; padding: var(--s-4) var(--s-2); background: var(--bg); border-right: 1px solid var(--line); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.agent-heading { margin-top: var(--s-4); padding: 0 var(--s-3) var(--s-2); color: var(--faint); }
+/* Dashed: these are not here right now. */
+.agent-heading-away { display: flex; align-items: center; gap: var(--s-2); }
+.agent-heading-away::after { content: ""; flex: 1; border-top: 1px dashed var(--line-strong); }
+/* Invite an agent: a small drawn "+" in a dashed ring, in the avatars' column under the connected sessions (sidebar.mjs). */
+/* The invite row: a quiet "+ New agent" under the last session, the plus where the drawings stand, the words on the
+   names' line; green while there is no session yet (the obvious first step). Phone: the last chip. */
+.agent-invite { display: flex; margin: 2px 0 0; padding: 0; }
+.agent-invite-go { flex: 1; min-width: 0; min-height: 46px; display: flex; align-items: center; gap: var(--s-3); padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: inherit; text-align: left; cursor: pointer; transition: color var(--d-fast), background var(--d-fast); }
+.agent-invite-go .sketch { flex: none; width: 34px; height: 22px; stroke-width: 2.1; }
+.agent-invite-label { font-weight: 500; white-space: nowrap; }
+#agents:not(:has(.agent-row[data-unit])) .agent-invite-go { background: var(--accent-soft); color: var(--accent); }
+#agents:not(:has(.agent-row[data-unit])) .agent-invite-label { font-weight: 600; }
+.agent-row { display: flex; align-items: center; min-width: 0; border-radius: var(--r-md); }
+.agent-entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); min-height: 46px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; text-align: left; transition: background var(--d-fast); }
+.agent-entry:hover { background: var(--sunken); }
+.agent-entry[aria-current="true"] { background: var(--surface); box-shadow: var(--shadow-sm); }
+/* The inbox is the place, not one row of the list: a block of its own at the top of the sidebar, on
+   paper, a little taller, its name in the display face; the sessions follow below it after some air. */
+.agent-text { flex: 1; min-width: 0; display: grid; }
+.agent-text strong { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Sessions laid together: one name per line. The ones that were laid on lie a little crooked and
+   a little to the side, as if put there by hand: that is the plus. */
+.agent-text strong + strong { rotate: -1.8deg; translate: 7px 0; transform-origin: 0 60%; }
+.agent-text strong + strong + strong { rotate: 1.3deg; translate: 3px 1px; }
+.agent-text:has(strong + strong) { line-height: 1.3; }
+.agent-text small { font-size: var(--t-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.agent-row.is-offline .agent-text strong { font-weight: 500; color: var(--muted); }
+/* A session's mark stands without a ground: the drawing alone, in the session's colour. */
+.agent-avatar { --hue: 162; flex: none; position: relative; width: 34px; height: 34px; padding: 1px; display: grid; place-items: center; border-radius: 11px; color: var(--tone-pen); }
+.agent-avatar .doodle { stroke-width: 2; }
+.agent-avatar.is-offline { filter: grayscale(1); opacity: .6; }
+/* The crowned session of a desk (card Nr. 172): a sketched crown, crooked on the corner of its mark: a gold wash,
+   one wobbly pen line, a red stone on each point (ui.js crown()). In the joint mark of a group it sits on that
+   session's scribble. */
+.crown-mark { position: absolute; left: -24%; top: -34%; width: 68%; height: auto; rotate: -15deg; overflow: visible; fill: none; stroke: none; pointer-events: none; }
+.crown-wash { fill: var(--crown-wash); stroke: none; }
+.crown-pen { fill: none; stroke: var(--gold-pen); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.crown-jewel { fill: var(--crown-jewel); stroke: var(--gold-pen); stroke-width: 1; }
+/* the crown not given: its outline only */
+.crown-toggle[aria-pressed="false"] .crown-wash { display: none; }
+.crown-toggle[aria-pressed="false"] .crown-pen { stroke: var(--muted); stroke-width: 1.6; }
+.crown-toggle[aria-pressed="false"] .crown-jewel { fill: var(--bg); stroke: var(--muted); }
+.crown-toggle[aria-pressed="false"]:hover :is(.crown-pen, .crown-jewel) { stroke: var(--gold-pen); }
+/* Give the crown (agents.js crownToggle): a button of its own on the corner of the mark, 28 px
+   to hit, beside the mark and not in it. The gold crown on the crowned session. Otherwise a faint outline
+   that shows when the pointer or the keyboard is on the row or the mark (always, faintly, where
+   nothing hovers), and one click gives the crown. */
+.crown-toggle { position: absolute; z-index: 2; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; transition: opacity var(--d-fast), scale var(--d-fast); }
+.crown-toggle .crown-mark { position: static; width: 24px; rotate: -15deg; pointer-events: none; }
+.crown-toggle[aria-pressed="false"] { opacity: .45; }
+@media (hover: hover) {
+  body.is-pairing .crown-toggle { visibility: hidden; }
+}
+.agent-row { position: relative; }
+.agent-row .crown-toggle { left: 11px; top: -13px; }
+/* The crown sits ON the drawing, like on a head: over its middle (a touch to the left, as it leans), its base
+   resting on the drawing's top edge. Not beside the corner. */
+.agent-avatar .crown-mark { left: 12%; top: -38%; width: 66%; }
+/* In the sidebar the crown is 23px wide; its base rests on the top of the drawing's strokes (a few px over them: the
+   drawings start 6-8px into their box), its stones at the card's top edge (the same on a main's fold switch, crowns.css). */
+#agents .agent-avatar .crown-mark { left: 5px; top: -8px; width: 23px; }
+.agent-row.is-dragging { opacity: .4; }
+/* One of a group is being carried: it fades where it stood. Carried clear of the row, the loop
+   round the group opens up: let go now and it leaves. */
+.agent-row.is-dragging:has(.is-carried) { opacity: 1; }
+.agent-row .is-carried { opacity: .25; }
+.agent-row.is-leaving strong.is-carried { text-decoration: line-through; }
+/* A name in a group is a handle. */
+.agent-text strong[data-member] { cursor: grab; }
+/* Let go here and the two are laid together: the loop drawn round the row is open and runs. */
+.agent-row.is-drop { background: var(--surface); }
+/* Let go here and it is moved to this place: a thin line between the rows. */
+.agent-row.is-insert-before::after, .agent-row.is-insert-after::after { content: ""; position: absolute; z-index: 2; left: 6px; right: 6px; height: 2px; border-radius: 2px; background: var(--fg); pointer-events: none; }
+.agent-row.is-insert-before::after { top: -2px; }
+.agent-row.is-insert-after::after { bottom: -2px; }
+/* Cutting a group apart: scribbled scissors that show only while the pointer is on the row (or the
+   keyboard on them), in the gap before the badge, so nothing in the row gives way to them and the
+   row is no taller than its names. Under the pointer they darken and the loop round the
+   group opens up, which says what they do without a tooltip. */
+.agent-row.is-group { position: relative; }
+.agent-row.is-group .agent-entry { position: relative; min-height: 52px; }
+.agent-row.is-group .agent-entry { padding-block: 9px; }
+.agent-row.is-group + .agent-row, .agent-row + .agent-row.is-group { margin-top: 4px; }
+
+/* ---- a session's state: no ground anywhere, colour and stroke carry it ----
+   At work, the session's own mark redraws itself: the whole drawing stays as a trace at half strength
+   and a darker stroke, about a third of each line, travels along it. Nothing turns at the right.
+   At the right end of the row stands the number of open questions, every number in one column; a
+   session that is stopped and waits for you has a hand drawn in red just before it, every hand on one
+   axis. A working session's number is small and muted, a disconnected one's faint. Idle: nothing. */
+.agent-avatar.is-drawing .doodle { position: absolute; left: 1px; top: 1px; width: calc(100% - 2px); height: calc(100% - 2px); }
+.is-drawing .mark-live path:not(.pair-crown *) { stroke-dasharray: 34 66; stroke-width: 2.5; animation: mark-travel 2800ms linear infinite; }
+@media (prefers-reduced-motion: reduce) { .is-drawing .mark-live path:not(.pair-crown *) { animation: none; stroke-dasharray: none; stroke-width: inherit; }
+}
+/* The ring at the end of a session row, circled by hand. Its number is the open questions; while the
+   session works a drop travels round it; a knock turns it into the raised hand in a red loop. */
+.agent-badge { flex: none; position: relative; width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; line-height: 1; color: var(--fg); }
+.agent-badge b { position: relative; }
+.agent-ring, .hand-mark { position: absolute; inset: 0; width: 100%; height: 100%; overflow: visible; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.agent-ring { color: color-mix(in srgb, var(--fg) 50%, var(--bg)); }
+/* Working: the ring itself steps back, and a short tapered stroke in the accent goes round it. The whole
+   stroke turns as one (the tip leads), eased, so each turn reads as one sweep of the pen. */
+.agent-badge[data-state="running"] .agent-ring { color: var(--accent); }
+.agent-badge[data-state="running"] .ring-loop { opacity: .38; }
+@media (prefers-reduced-motion: reduce) {
+  .agent-badge[data-state="running"] .ring-loop { opacity: 1; stroke-dasharray: 91 9; }
+}
+.agent-badge[data-state="waiting"] { --hand-soft: var(--urg-critical-soft); color: var(--urg-critical); }
+.agent-badge[data-state="waiting"] .agent-ring { color: var(--urg-critical); }
+.agent-badge[data-offline] { color: var(--faint); }
+.agent-badge[data-offline] .agent-ring { color: var(--line-strong, var(--faint)); }
+/* The badge stands beside the row's entry, over its right end, pulled in from the edge, so that it can
+   be a button of its own: a click goes through that session's questions. Under the pointer or the
+   keyboard the count is underlined and the hand gives a small wave. */
+.agent-row.has-badge .agent-entry { padding-right: 48px; }
+.agent-row > .agent-badge { position: relative; z-index: 1; margin: 0 12px 0 -42px; }
+button.agent-badge { border: 0; border-radius: 50%; background: none; font-family: inherit; cursor: pointer; transition: scale 140ms ease-out; }
+button.agent-badge:active { scale: .95; }
+/* Wide screens reach the overview of all sessions from the bar's words; phones from one icon in the top bar. */
+.roster-open { display: none; }
+.roster-open[aria-current] { background: var(--accent-soft); color: var(--accent); }
+.agent-row.is-knocking .agent-avatar { animation: knock 640ms cubic-bezier(.3, .7, .4, 1) 120ms; }
+.brand h1 { display: flex; }
+.brand-open { display: inline-flex; align-items: center; gap: 10px; min-height: 36px; margin-left: -8px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; transition: background var(--d-fast); }
+.brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
+.brand-fold { display: inline-flex; margin-left: -4px; color: var(--faint); rotate: 0deg; transition: rotate var(--d-med) var(--ease-out), color var(--d-fast); }
+.brand-fold .sketch { width: 16px; height: 16px; stroke-width: 2.2; }
+.brand-open:hover .brand-fold { color: var(--muted); }
+.brand-open[aria-expanded="true"] .brand-fold { rotate: 180deg; color: var(--fg); }
+/* The menu: a small sheet above the logo (below it on a phone, where the bar is at the top). */
+.sidedoors { position: absolute; z-index: 6; left: max(var(--s-3), env(safe-area-inset-left, 0px)); bottom: calc(100% + 6px); min-width: 208px; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
+.topbar .sidedoors a, .topbar .sidedoors button, .topbar .sidedoors #keys-open { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 12px 0 10px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 500 var(--t-md)/1 var(--font); text-align: left; text-decoration: none; }
+.sidedoors .sketch { width: 20px; height: 20px; stroke-width: 1.8; color: var(--muted); }
+/* a switch in the menu says how it stands */
+.sidedoors button { width: 100%; cursor: pointer; }
+.sidedoors button i { margin-left: auto; padding-left: var(--s-4); font: 600 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: .06em; text-transform: uppercase; color: var(--faint); }
+.sidedoors button[aria-checked="true"] i { color: var(--accent); }
+.sidedoors kbd { margin-left: auto; min-width: 22px; padding: 4px 6px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 0 var(--line-strong); font: 500 .72rem/1 var(--mono); color: var(--muted); text-align: center; }
+/* the theme: a switch that says how it stands, with the moon while it is light and the sun while it is dark */
+#theme-toggle i::after { content: "off"; }
+#theme-toggle[aria-pressed="true"] i::after { content: "on"; }
+#theme-toggle[aria-pressed="true"] i { color: var(--accent); }
+/* the connection, last in the menu: a line, not a control */
+.sidedoors .conn { margin: 4px 0 0; padding: 10px 12px 6px 14px; height: auto; border-top: 1px solid var(--line); border-radius: 0; font-size: var(--t-sm); }
+.sidedoors .conn[data-state="online"] span { position: static; width: auto; height: auto; overflow: visible; clip-path: none; }
+.sidedoors .conn[data-state="offline"] { margin: 4px -6px -6px; padding: 10px 18px 12px 20px; border-radius: 0 0 var(--r-md) var(--r-md); }
+/* When the connection is not there it must be seen without opening anything: the logo carries a mark,
+   and the word stands beside it in the bar. */
+/* Not connected: a small dot on the caret (the words stand in the menu's foot; a sentence here broke the bar). */
+.brand:has(.conn[data-state="offline"]) .brand-open::after, .brand:has(.conn[data-state="connecting"]) .brand-open::after { content: ""; flex: none; width: 8px; height: 8px; margin-left: 3px; border-radius: 50%; background: var(--faint); }
+.brand:has(.conn[data-state="offline"]) .brand-open::after { background: var(--urg-high); animation: blink 1.6s var(--ease-in-out) infinite; }
+/* The theme: a scribbled moon while it is light, a sun while it is dark. */
+.topbar .icon-btn { width: 36px; height: 36px; border-radius: 10px; }
+#theme-toggle .ico-sun, :root[data-theme="dark"] #theme-toggle .ico-moon { display: none; }
+:root[data-theme="dark"] #theme-toggle .ico-sun { display: block; }
+/* The sheet of keys: only where there is a keyboard. */
+@media (pointer: coarse) { .topbar #keys-open { display: none; }
+}
+@media (min-width: 861px) {
+  #agents { grid-column: 1; grid-row: 1; padding-top: 0; }
+  /* The Desk stands at the top of the sidebar, a block of its own that stays while the sessions scroll:
+     the desk drawing, "Desk", who works, the knocks and everything open; one click goes to the Desk from
+     anywhere. The caret at its right opens the menu under it. (Not moved by a transform: the floating
+     buttons at the foot are children of .topbar and must stay the page's.) */
+  /* The block: one line. The desk drawing stands over the sessions' drawings, the big word "Desk" over
+     their names; beside it the small turning ring while sessions work; the knocks and everything open
+     as small marks before the caret, whose column stands over the rows' rings. Even margins all round;
+     below it clear room, kept by a spacer that stays while the sessions scroll under it. */
+  /* The rail (card Nr. 150, bar.js toggleRail): the sidebar folded to the sessions' drawings with their state at
+     the corner (ring, count, the red hand of a knock); the Desk block is its drawing and the knocks. Names
+     come as a note beside the row under the pointer (.rail-tip). The small button at the foot folds and opens. */
+  .rail-tip { display: block; }
+  .rail-fold { position: fixed; z-index: 7; left: 8px; bottom: 14px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--faint); }
+  .rail-fold svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: rotate var(--d-fast); }
+  /* (The old client's full-screen focus view hid the rail button; the app has no such view: no :has() over the whole page.) */
+  #agents { padding-bottom: 60px; }
+  [data-rail="folded"] body { grid-template-columns: 76px minmax(0, 1fr); }
+  [data-rail="folded"] .rail-fold { left: 20px; }
+  [data-rail="folded"] .rail-fold svg { rotate: 180deg; }
+  [data-rail="folded"] .topbar { width: 60px; height: 64px; }
+  [data-rail="folded"] .topbar .desk-go { flex-direction: column; justify-content: center; gap: 5px; padding: 0; border-radius: 14px; }
+  [data-rail="folded"] .topbar .desk-go > .sketch { margin: 0; width: 26px; height: 26px; }
+  [data-rail="folded"] .topbar .desk-name { display: none; }
+  [data-rail="folded"] .topbar .desk-state { flex: none; margin: 0; justify-content: center; }
+  [data-rail="folded"] .topbar .desk-state:empty { display: none; }
+  [data-rail="folded"] #agents { padding-inline: 6px; }
+  [data-rail="folded"] #agents::before { height: 80px !important; margin-inline: -6px; }
+  [data-rail="folded"] .agent-row { justify-content: center; }
+  [data-rail="folded"] .agent-entry { flex: none; justify-content: center; width: 60px; padding: 8px 0 !important; }
+  [data-rail="folded"] .agent-text { display: none; }
+  [data-rail="folded"] .agent-row > .agent-badge { position: absolute; right: -2px; top: -4px; margin: 0; width: 24px; height: 24px; scale: .85; }
+  [data-rail="folded"] .agent-row.is-group .agent-entry { min-height: 0; }
+  [data-rail="folded"] .agent-row > :is(.agent-cut, .agent-archive) { display: none; }
+  [data-rail="folded"] #agents > :not(.agent-row) { display: none; }
+  [data-rail="folded"] #agents > .agent-invite { display: flex; justify-content: center; padding: 0; }
+  [data-rail="folded"] .agent-invite-go { flex: none; width: 60px; justify-content: center; padding: 8px 0; }
+  [data-rail="folded"] .agent-invite-label { display: none; }
+  .rail-tip { position: fixed; z-index: 9; padding: 6px 10px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); pointer-events: none; white-space: nowrap; }
+  #agents { padding-top: 0; }
+  /* the Desk box: 8px from the top and the sides (one inset all round), the first row 16px under it, on the line of the page's first content */
+  #agents::before { content: ""; flex: none; position: sticky; top: 0; z-index: 3; height: 72px; margin: 0 calc(-1 * var(--s-2)) 6px; background: var(--bg); }
+  .topbar { position: fixed; z-index: 7; top: 8px; left: 8px; right: auto; width: 240px; margin: 0; min-height: 0; height: 56px; padding: 0; border: 0; border-radius: 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); }
+  .topbar .brand { margin-right: 0; flex: 1; min-width: 0; height: 100%; }
+  .topbar .brand h1 { width: 100%; height: 100%; font: 800 1.75rem/1 var(--display); letter-spacing: -.03em; }
+  .topbar .deskpill { gap: 0; }
+  .topbar .desk-go { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; gap: 0; padding: 0 7px 0 6px; border-radius: 14px 0 0 14px; text-align: left; }
+  .topbar .desk-go:hover { background: none; }
+  .topbar .desk-go .brand-mark { display: none; }
+  .topbar .desk-go > .sketch { flex: none; width: 28px; height: 28px; margin: 0 15px 0 9px; stroke-width: 1.6; }
+  .topbar .desk-state { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; margin-left: 7px; }
+  .topbar .brand-open { align-self: stretch; width: 32px; min-width: 32px; margin-left: 0; padding: 0; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
+  .topbar .brand-open .brand-fold { margin-left: 0; } /* the band ends where the Desk box ends (8 + 56) */
+  :root[data-rail="folded"] { --side: 76px; }
+  .topbar .desk-go { border-radius: 14px; }
+  /* (logo.css, linked later, put the bell into the Desk button for the time the Desk was the pill: the Desk box
+     shows its desk drawing again, the bell stands in the menu's pill) */
+  html body .topbar .desk-go .brand-mark { display: none; }
+  html body .topbar .desk-go > .sketch { display: block; }
+  html .topbar .brand-open { position: fixed; z-index: 8; top: 8px; left: var(--side); right: 0; width: max-content; min-width: 0; height: 38px; min-height: 0; margin: 0 auto; padding: 0 10px 0 8px; gap: 8px; align-self: auto; border-radius: 999px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); white-space: nowrap; }
+  html .topbar .brand-open:hover, html .topbar .brand-open[aria-expanded="true"] { background: var(--surface); box-shadow: 0 0 0 1px var(--fg), var(--shadow-md); }
+  .brand-open > .pill-mark { display: block; flex: none; width: 22px; height: 22px; }
+  .brand-open > .pill-word { display: block; font: 700 1.02rem/1 var(--display); letter-spacing: 0; }
+  .topbar .brand-open[data-other-knock]::before { right: 2px; top: 0; }
+  html .topbar #brand-doors { position: fixed; z-index: 40; top: 54px; bottom: auto; left: var(--side); right: 0; margin-inline: auto; translate: none; width: 320px; max-height: calc(100dvh - 66px); overflow-y: auto; padding: 10px; border-radius: 18px; }
+  .agent-entry { border-radius: 14px; }
+  .agent-row > .agent-badge { margin-right: 8px; }
+}
+/* The menu, compact: the jump field, a quiet line for the project, four places two by two, and a foot
+   with the connection and two small switches. One thin rule between the parts. */
+.topbar .sidedoors { width: 244px; min-width: 0; gap: 0; padding: 6px; border-radius: 14px; }
+.menu-desks { display: grid; gap: 1px; padding-bottom: 4px; }
+.topbar .sidedoors .menu-desk { min-height: 32px; padding: 0 8px; font-size: var(--t-sm); }
+.menu-desk b { font-weight: 600; }
+.topbar .sidedoors .menu-desk i { text-transform: none; letter-spacing: 0; font-weight: 500; }
+.menu-desk[aria-checked="true"]::after { content: "✓"; margin-left: 8px; color: var(--accent); font-weight: 700; }
+.menu-desk b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.topbar .sidedoors .menu-desk kbd { margin-left: 10px; white-space: nowrap; }
+.topbar .sidedoors .menu-desk i.is-knock { color: var(--urg-high); }
+.menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
+.menu-desk-field { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
+.topbar .sidedoors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 12px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); }
+.menu-desk-error { margin: 0; padding: 2px 10px 4px; color: var(--urg-critical); font: 500 var(--t-xs)/1.3 var(--font); }
+.menu-desk-error:empty { display: none; }
+.brand-open[data-other-knock] { position: relative; }
+.brand-open[data-other-knock]::before { content: ""; position: absolute; right: 5px; top: 9px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--surface); }
+[data-desks] .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 861px) { [data-desks] .topbar .brand h1 { font-size: 1.32rem; letter-spacing: -.01em; }
+}
+@media (max-width: 860px) { .topbar .sidedoors .menu-desk kbd { display: none; } [data-desks] .desk-name { max-width: 7.5rem; }
+}
+
+/* ---- the floating Desk: the way to the Desk and what waits there; the caret beside it opens the menu ---- */
+.deskpill { display: flex; align-items: center; gap: 2px; }
+.desk-go { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: var(--r-pill); background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
+.desk-go:hover { background: var(--sunken); }
+.desk-state { display: inline-flex; align-items: center; gap: 8px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: 0; }
+.desk-state:empty { display: none; }
+.menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: 4px; border-top: 1px solid var(--line); }
+.topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
+.topbar .sidedoors .sketch { width: 17px; height: 17px; }
+.menu-foot { display: flex; align-items: center; gap: 2px; padding-top: 4px; border-top: 1px solid var(--line); }
+.topbar .sidedoors .menu-foot .conn { flex: 1; margin: 0; padding: 0 8px; height: 30px; border: 0; font-size: var(--t-xs); }
+.topbar .sidedoors .menu-foot .conn[data-state="offline"] { margin: 0; padding: 0 8px; border-radius: 8px; }
+.topbar .sidedoors .menu-foot button { flex: none; width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; }
+.topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: var(--sunken); }
+.topbar .sidedoors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) .sketch { color: var(--fg); }
+@media (min-width: 861px) {
+  /* one edge on the pill: the logo button has no ground of its own in it */
+  .brand-open:hover, .brand-open[aria-expanded="true"] { background: var(--sunken); }
+}
+@media (max-width: 860px) {
+  #agents { grid-row: 2; flex-direction: row; gap: var(--s-1); overflow-x: auto; overflow-y: hidden; padding: var(--s-2) var(--s-3); border-right: 0; border-bottom: 1px solid var(--line); scrollbar-width: none; }
+  #agents::-webkit-scrollbar { display: none; }
+  .agent-heading,
+.agent-row .crown-toggle[aria-pressed="false"] { display: none; }
+  .agent-row .crown-toggle { left: 4px; top: -9px; pointer-events: none; }
+  .agent-row.is-group .agent-entry { min-height: 44px; }
+  .agent-row { flex: none; }
+  .agent-row.is-insert-before::after, .agent-row.is-insert-after::after { left: auto; right: auto; top: 4px; bottom: 4px; width: 3px; height: auto; }
+  .agent-row.is-insert-before::after { left: -4px; }
+  .agent-row.is-insert-after::after { right: -4px; }
+  .sidedoors { bottom: auto; top: calc(100% + 6px); }
+  .brand-open { margin-left: -6px; padding: 0 6px; gap: 8px; }
+  .topbar .icon-btn { width: 44px; height: 40px; }
+  .roster-open { display: grid; }
+  .agent-entry { width: auto; flex: none; min-height: 44px; padding: 4px 10px 4px 6px; border-radius: var(--r-pill); gap: var(--s-2); }
+  .agent-invite { flex: none; margin: 0; }
+  .agent-invite-go { flex: none; min-height: 44px; padding: 4px 14px 4px 6px; gap: var(--s-2); border-radius: var(--r-pill); }
+  .agent-invite-go .sketch { width: 30px; height: 20px; }
+  .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1px var(--line-strong); }
+  .agent-text small { display: none; }
+  .agent-avatar { width: 30px; height: 30px; border-radius: 50%; }
+  .agent-text:has(strong + strong) { display: flex; gap: .35em; line-height: inherit; }
+  .agent-text strong + strong { rotate: none; translate: none; }
+  .agent-text strong + strong::before { content: "+ "; color: var(--faint); font-weight: 500; }
+  .agent-badge { width: 30px; height: 30px; }
+  .agent-row.has-badge .agent-entry { padding-right: 52px; }
+  .agent-row > .agent-badge { margin: 0 8px 0 -46px; }
+  .topbar { gap: 0 2px; padding-left: max(var(--s-4), env(safe-area-inset-left, 0px)); padding-right: max(var(--s-1), env(safe-area-inset-right, 0px)); }
+  .brand-open { margin-left: 0; min-width: 40px; min-height: 40px; justify-content: center; }
+  .desk-go { min-height: 40px; padding-left: 0; }
+  .desk-go > .sketch { display: none; }
+  .desk-go:hover { background: none; }
+}
+@media (pointer: coarse), (max-width: 860px) {
+  .topbar .sidedoors .menu-grid :is(a, button, #keys-open),
+.topbar .sidedoors .menu-desk { min-height: 44px; }
+  .topbar .sidedoors .menu-foot button { width: 44px; min-height: 44px; }
+}
+
+/* ---- the Desk's menu: one column, one type size for entries and one small for what they say ----
+   The jump field first (its key at the right), the desk(s), the four places as a list with one icon
+   column, then the two switches as labelled rows, and the connection as the last quiet line. */
+.topbar #brand-doors { gap: 0; padding: 8px; border-radius: 14px; box-shadow: 0 0 0 1px var(--line-strong), 0 12px 28px -10px rgb(20 30 25 / .28); }
+.topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { width: 100%; min-height: 36px; gap: 10px; padding: 0 12px; border-radius: 9px; font: 500 var(--t-sm)/1 var(--font); justify-content: flex-start; }
+.topbar #brand-doors .menu-grid :is(a, button) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
+.topbar #brand-doors .sketch { flex: none; width: 18px; height: 18px; stroke-width: 1.8; color: var(--muted); }
+.menu-desks { padding: 6px 0 0; }
+.menu-desks, .menu-grid, .menu-foot { margin-top: 6px; padding: 6px 0 0; border-top: 1px solid var(--line); }
+.menu-desks { border-top: 0; margin-top: 2px; }
+.menu-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
+.menu-desk:only-child::after { content: none; }
+.menu-desk[aria-checked="true"] i { color: var(--muted); }
+.menu-foot { display: grid; gap: 0; align-items: stretch; }
+.topbar #brand-doors .menu-foot .conn { order: 9; justify-content: flex-start; justify-self: start; height: 30px; margin: 4px 0 0; padding: 0 12px; border: 0; font-size: var(--t-xs); color: var(--muted); }
+.topbar #brand-doors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: none; }
+#theme-toggle::after { content: "Light"; }
+:root[data-theme="dark"] #theme-toggle::after { content: "Dark"; }
+#theme-toggle::after { margin-left: auto; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); }
+@media (pointer: coarse), (max-width: 860px) {
+  .topbar #brand-doors { width: min(300px, calc(100vw - 24px)); }
+  .topbar #brand-doors .menu-grid :is(a, button) { min-height: 44px; }
+  .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { min-height: 44px; width: 100%; }
+}
+
+/* ══ Phone polish (docs/qa-phone-design.md): found by measuring every state at 360, 390 and 430px. ══ */
+@media (max-width: 860px) {
+  /* The bar: the pad and the memo are placed from the right edge, outside the flow, so the Desk box could
+     run under them (its menu arrow lay 12px under the pad). The box now ends before them. When the counts
+     get long the Agents button leaves first (see "Tight" below); only if that is not enough do the last counts
+     (who works, then the total) leave whole instead of being cut or covered. */
+  .topbar .brand { flex: 0 1 auto; min-width: 0; max-width: calc(100% - 134px); }
+  .topbar .deskpill { min-width: 0; gap: 0; }
+  .topbar .desk-go { flex: 0 1 auto; min-width: 0; gap: 5px; padding-right: 2px; }
+  .topbar .desk-go .brand-mark, .topbar .desk-name { flex: none; }
+  .topbar .desk-state { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; align-content: flex-start; gap: 0 4px; height: 24px; overflow: hidden; }
+  .topbar .desk-state > * { height: 24px; }
+  .topbar .brand-open { flex: none; }
+  /* Tight (a 360px phone, or a two-digit knock count at 390px; js/bar.js sets data-tight, card Nr. 158): the
+     Agents button leaves the bar first and the counts keep their room. Agents stays an entry of the Desk menu. */
+  .topbar[data-tight] .roster-open { display: none; }
+  .topbar[data-tight] .brand { max-width: calc(100% - 94px); }
+
+  /* The strip of sessions: a row with a badge reached 8px past its own box, so the rows lay 4px over each
+     other. It now reaches 4px, which is the gap; the badge and the rows stay where they were. And one long
+     name does not take the whole strip. */
+  .agent-row.has-badge .agent-entry { padding-right: 48px; }
+  .agent-row > .agent-badge { margin-left: -42px; }
+  .agent-entry .agent-text { max-width: min(56vw, 15rem); }
+
+  /* The Desk's menu: a long desk name is cut with an ellipsis inside the menu (it made the field and every
+     line 37px wider than the menu, past its right edge). */
+  .topbar #brand-doors, .menu-desks { grid-template-columns: minmax(0, 1fr); }
+  .topbar #brand-doors > *,
+.topbar .sidedoors .menu-desk { min-width: 0; max-width: 100%; }
+  .topbar .sidedoors .menu-desk i { flex: none; white-space: nowrap; }
+}
+
+/* ---- The desk switcher (his pick e of five, "Zeichnung als Umschalter"): the Desk box shows the desk's own name in the
+   big type; the desk drawing before it, its lamp on (sidebar.mjs deskMark, trommi.css), is a button with a caret and the desk's number key under the lamp:
+   it opens the Trommi menu at its desk list (layout.mjs deskSwitch, application.mjs). The counts stand in the flow at
+   the right, the name takes what is left: a longer name steps down, a long one takes two lines. ---- */
+.desk-switch { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3px 3px 2px; border: 0; border-radius: 9px; background: none; color: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.desk-switch:hover, .desk-switch[aria-expanded="true"] { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.desk-switch > .sketch { display: block; width: 24px; height: 24px; margin: 0; stroke-width: 1.6; overflow: visible; }
+.desk-switch-hint { display: flex; align-items: center; gap: 1px; margin-top: -1px; color: var(--muted); }
+.desk-switch .desk-caret { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.desk-switch kbd { min-width: 11px; height: 12px; display: grid; place-items: center; padding: 0 2px; border-radius: 3px; font: 600 .55rem/1 var(--font); letter-spacing: 0; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong), inset 0 -1px 0 var(--line-strong); }
+html body .topbar .deskpill .desk-go > .sketch { display: none; }
+.topbar .deskpill .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-switch { margin: 2px 9px 0 10px; }
+  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-go { padding-left: 0; padding-right: 0; }
+  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-state { position: static; translate: none; flex: none; margin: 0 9px 0 4px; }
+  .topbar .desk-name[data-size="m"] { font-size: 1.3rem; }
+  .topbar .desk-name[data-size="l"] { font-size: .86rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.03em; }
+  /* the rail: the drawing alone again, the way to the Desk */
+  [data-rail="folded"] .topbar .deskpill > .desk-switch { display: none; }
+  html[data-rail="folded"] body .topbar .deskpill .desk-go > .sketch { display: block; }
+}
+@media (max-width: 860px) {
+  /* the drawing is the tap target (44px); the bell leaves the Desk box (it stands in the menu's pill) */
+  .topbar .deskpill > .desk-switch { width: 44px; height: 44px; margin: 0 6px 0 -6px; padding: 2px 0 1px; box-shadow: none; }
+  .topbar .desk-switch > .sketch { width: 24px; height: 24px; }
+  html body .topbar .deskpill .desk-go .brand-mark { display: none; }
+  /* the name before the counts, which give way first (they leave whole, as before); the box ends 90px from the right */
+  .topbar .brand { max-width: calc(100% - 90px); }
+  .topbar .deskpill > .desk-go { flex: 0 1 auto; }
+  .topbar .deskpill > .desk-state { flex: 0 1000 auto; min-width: 30px; }
+  .topbar .deskpill .desk-name { flex: 0 1 auto; text-align: left; }
+  .topbar .desk-name[data-size="l"] { max-width: 6.6rem; font-size: .84rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
+}
+/* opened from the drawing, the menu stands under it (the same menu as the pill's) */
+@media (min-width: 861px) {
+  html .topbar #brand-doors[data-from="desk"] { left: 8px; right: auto; top: 70px; margin-inline: 0; }
+}/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
+   One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
+   stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
+   indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
+   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, the phone's strip and the keys treat them as rows.
+   Built by agents.js; nothing here applies while the hub sends neither `main` nor `parent`. */
+
+/* ---- the main's row: a card, the top of its stack ---- */
+.agent-row.is-main[data-fold] { --ghue: 162; margin-top: 6px; }
+.agent-row.is-main[data-fold] .agent-entry { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.agent-row.is-main[data-fold] .agent-entry:hover { background: color-mix(in srgb, var(--surface) 60%, var(--sunken)); }
+.agent-row.is-main[data-fold] .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 60%, var(--line-strong)), var(--shadow-sm); }
+.agent-row.is-main[data-fold] > .agent-badge { z-index: 2; }
+.agent-row.is-main .agent-text strong { font-weight: 700; }
+
+/* ---- the crown as the switch that folds and unfolds ---- */
+/* (It sits on the drawing like the crown of a single session, app.css #agents .agent-avatar .crown-mark: over its middle, its base on the drawing's top.) */
+.crown-fold { position: absolute; z-index: 3; left: 13px; top: -7px; width: 32px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; cursor: pointer; transition: scale var(--d-fast); }
+.crown-fold .crown-mark { position: static; width: 23px; rotate: -15deg; }
+/* A main without the crown (one crown per desk, card Nr. 172): its switch is for the keyboard only. Nothing is
+   drawn and the pointer goes through to the entry; the stack and the bracket fold by the pointer. */
+.crown-fold.is-plain { pointer-events: none; opacity: 0; }
+body.is-pairing .crown-fold { visibility: hidden; }
+
+/* ---- folded: the subs as card edges under the main's row ---- */
+.agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 18px); }
+.crown-edges { position: absolute; z-index: 0; left: 0; right: 0; top: calc(100% - 3px); height: calc(var(--n) * 4px + 3px); cursor: pointer; }
+.crown-edges::after { content: ""; position: absolute; inset: 0 0 -5px; }
+/* an edge: its drawing (agents.js, edgeQuirk) stretched to the row, the pen as wide as everywhere; it lies a little crooked (--tilt, --dx: its own) */
+.crown-edges { --fx: 1.6px; --fy: .7px; --fr: .5deg; --tk: 1; }
+/* the fan spreads the same in total for any count: --p is the sheet's share (1 for the last), the full spread is six steps (one sheet moves all of it) */
+.crown-edges i { --p: calc((var(--i) + 1) / var(--n, 6)); position: absolute; top: calc(var(--i) * 4px - 7px); left: calc(5px + var(--i) * 2.5px); right: calc(5px + var(--i) * 2.5px); height: 15px; z-index: calc(20 - var(--i)); transform-origin: 16% 0; translate: var(--dx, 0px) 0; rotate: calc(var(--tilt, 0deg) * var(--tk)); transition: translate 190ms cubic-bezier(.3, 1.8, .5, 1), rotate 190ms cubic-bezier(.3, 1.8, .5, 1), transform-origin 190ms ease-out; transition-delay: calc(var(--i) * 9ms); }
+.crown-edges svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.crown-edges path { fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.crown-edges .e-n { display: none; }
+.crown-edges i.is-knock { height: 19px; }
+.crown-edges i.is-knock path { fill: var(--urg-critical); stroke: color-mix(in srgb, var(--urg-critical) 72%, var(--fg)); }
+
+/* ---- unfolded: the subs under the main, the bracket beside them ---- */
+.crown-bracket { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; --hue: var(--ghue); fill: none; stroke: var(--tone-pen); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.crown-bracket .crown-bracket-hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.agent-row.is-sub.is-unfolding { animation: crown-in 260ms cubic-bezier(.2, .8, .3, 1) backwards; animation-delay: calc(var(--i, 0) * 28ms); }
+.crown-bracket.is-unfolding { animation: crown-in 300ms 120ms ease-out backwards; }
+@media (prefers-reduced-motion: reduce) { .agent-row.is-sub.is-unfolding, .crown-bracket.is-unfolding { animation: none; } .crown-edges i { transition: none; }
+}
+
+@media (min-width: 861px) {
+  .agent-row.is-sub .agent-avatar { width: 28px; height: 28px; }
+  .agent-row.is-sub .agent-entry { min-height: 40px; }
+  .agent-row.is-main[data-fold="open"] { margin-bottom: 3px; }
+  /* the first row stands on the 80px line, crowned or not (the crown itself may reach above it) */
+  #agents > .agent-row.is-main[data-fold]:first-child { margin-top: 0; }
+  .agent-row.is-sub.is-last { margin-bottom: 8px; }
+  :root:not([data-rail="folded"]) .agent-row.is-sub { margin-left: 22px; }
+  /* the rail: the same, 60px wide; the names are gone, the bracket runs down the rail's left edge */
+  [data-rail="folded"] .agent-row.is-sub .agent-entry { padding-block: 5px !important; }
+  [data-rail="folded"] .crown-fold { left: 15px; top: -5px; }
+  [data-rail="folded"] .crown-edges { left: 2px; right: 2px; }
+  [data-rail="folded"] .crown-edges i { left: calc(4px + var(--i) * 2px); right: calc(4px + var(--i) * 2px); }
+  [data-rail="folded"] .crown-edges { --fx: .5px; --fy: .8px; --fr: 1.5deg; --tk: 2.4; }
+  [data-rail="folded"] .crown-edges .e-w { display: none; }
+  [data-rail="folded"] .crown-edges .e-n { display: inline; }
+}
+
+/* a phone's strip: the stack lies under the main's pill, an unfolded main's subs stand beside it over the bracket */
+@media (max-width: 860px) {
+  #agents:has(.agent-row.is-main[data-fold]) { align-items: flex-start; }
+  .agent-row.is-main[data-fold] { margin-top: 0; margin-inline: 3px; }
+  .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 2px + 3px); }
+  .agent-row.is-main[data-fold="open"], .agent-row.is-sub { margin-bottom: 6px; }
+  .crown-fold { left: 5px; top: -8px; }
+  .crown-fold .crown-mark { width: 21px; }
+  #agents .agent-avatar .crown-mark { left: 5px; top: -7px; width: 21px; }
+  .crown-fold::after { content: ""; position: absolute; inset: -4px -6px -8px -4px; }
+  .crown-edges { top: calc(100% - 10px); height: calc(var(--n) * 2px + 10px); }
+  .crown-edges { --fx: .6px; --fy: .5px; --fr: .7deg; --tk: 1.6; }
+  .crown-edges i { top: calc(var(--i) * 2px - 3px); left: calc(12px + var(--i) * 2.5px); right: calc(12px + var(--i) * 2.5px); }
+  .crown-edges i.is-knock { height: 17px; }
+  .crown-edges .e-w { display: none; }
+  .crown-edges .e-n { display: inline; }
+  .crown-edges path { stroke-width: .9; }
+}
+
+/* ---- a session at work (the sidebar, server-rendered: sidebar.mjs avatar working) ----
+   Its drawing fills itself in, scribble-like: a faint trace of it stays, and its strokes draw themselves over it,
+   hold a moment, fade, and begin again. Only the strokes' dash and opacity move. No ring stands at the right for it. */
+#agents .agent-avatar.is-drawing .mark-trace { opacity: .25; }
+#agents .agent-avatar.is-drawing .mark-live path { stroke-dasharray: 100 100; stroke-dashoffset: 100; stroke-width: 2.6; animation: mark-fill 2600ms cubic-bezier(.45, .05, .4, 1) infinite; }
+#agents .agent-avatar.is-drawing .mark-live path:nth-child(2n) { animation-delay: 160ms; }
+#agents .agent-avatar.is-drawing .mark-live path:nth-child(3n) { animation-delay: 320ms; }
+@media (prefers-reduced-motion: reduce) {
+  #agents .agent-avatar.is-drawing .mark-live path { animation: none; stroke-dashoffset: 0; }
+}
+#agents .agent-text .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }/* The logo: a counter bell with two ring strokes, drawn in the pen of the session marks.
+   Bare on the page ground beside "Desk"; the bell in the text colour, the ring strokes in the accent.
+   Linked after app.css, whose older rules for the mark (a green square with a white pen) it replaces. */
+.brand-mark { width: 28px; height: 28px; flex: none; overflow: visible; color: var(--fg); fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.brand-mark-ring { stroke: var(--accent); }
+/* Offline: the ring strokes turn red, as the square did. */
+.brand:has(.conn[data-state="offline"]) .brand-mark-ring { stroke: var(--urg-high); }
+/* A wide screen: the bell stands in the Desk pill in place of the small desk drawing. */
+@media (min-width: 861px) {
+  html .topbar .desk-go .brand-mark { display: block; width: 22px; height: 22px; margin: 0; stroke-width: 1.9; }
+  html .topbar .desk-go > .sketch { display: none; }
+}
+/* A session in the sidebar is carried by a held finger (js/agents.js): no link preview comes up under it. */
+a.agent-entry { -webkit-touch-callout: none; }
+
+/* The state ring as a link (its walk has an address): what app.css says for button.agent-badge. */
+a.agent-badge { border: 0; border-radius: 50%; background: none; font-family: inherit; cursor: pointer; transition: scale 140ms ease-out; }
+a.agent-badge:active { scale: .95; }
+/* While "g" waits, the sessions in the sidebar show their numbers. */
+body[data-keys="g"] #agents { counter-reset: place; }
+body[data-keys="g"] .agent-row[data-unit] { counter-increment: place; position: relative; }
+body[data-keys="g"] .agent-row[data-unit]:nth-of-type(-n+10)::before {
+  content: counter(place); position: absolute; z-index: 2; left: 2px; top: 2px; min-width: 20px; padding: 4px 5px; border-radius: 6px;
+  background: var(--fg); color: var(--bg); font: 500 .72rem/1 var(--mono); text-align: center; pointer-events: none;
+}
+.agent-row[hidden] { display: none !important; }
+a.agent-badge { text-decoration: none; }
+.topbar .sidedoors a.menu-desk { text-decoration: none; }
+.status-mark .agent-ring { position: static; color: inherit; }
+
+/* The crown switch in a session's heading (ui.mjs crownControl; placed by beside.css). */
+.t-crown-form { display: contents; }
+.topbar .roster-open { color: var(--muted); }
+.topbar .roster-open .sketch { width: 22px; height: 22px; }   /* the walk is an <a> too: the first tab stays */
+/* The opened Trommi menu: a plain sheet of paper under the pill (no clipboard: sidebar.css is kept for a
+   settings page). Paper surface, a thin pen line, a quiet shadow; the entries are simple rows. */
+.topbar #brand-doors:not([hidden]) {
+  background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px;
+  box-shadow: 0 10px 28px -16px rgb(20 30 25 / .45);
+}
+.topbar #brand-doors :is(.menu-desks, .menu-grid, .menu-foot, .menu-dev) { border-top-style: dashed; }
+
+/* The bracket round an unfolded main's subs is drawn inside the main's row (ui.mjs folds). */
+.agent-row.is-main[data-fold] { position: relative; }
+
+/* The Desk box: beside "Desk", small and quiet, the count with an arrow: the way into the walk (sidebar.mjs deskState). */
+.deskpill { position: relative; }
+.desk-state:empty { display: none; }
+.desk-next { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 2px; border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; }
+.desk-next:hover { color: var(--fg); background: var(--sunken); }
+.desk-next-n { min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; display: grid; place-items: center; border-radius: 11px; box-shadow: inset 0 0 0 1.5px var(--line-strong); color: var(--fg); font: 700 .74rem/1 var(--font); }
+.desk-next.is-knock .desk-next-n { box-shadow: inset 0 0 0 2px var(--urg-high); color: var(--urg-high); }
+.desk-next .sketch { width: 15px; height: 15px; stroke-width: 2; }
+@media (min-width: 861px) {
+  .topbar .desk-state { position: absolute; right: 12px; top: 50%; translate: 0 -50%; z-index: 2; }
+}
+@media (max-width: 860px) {
+  .topbar .desk-state { position: static; display: flex; align-items: center; margin: 0 2px 0 4px; translate: none; }
+}
+.topbar #brand-doors button.menu-desk-add { width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; color: var(--muted); }
+.topbar #brand-doors button.menu-desk-add svg { width: 18px; height: 18px; }
+.topbar #brand-doors .menu-desk-form[hidden] { display: none; }
+.topbar #brand-doors .menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
+.topbar #brand-doors .menu-desk-form .menu-desk-field { flex: 1; min-width: 0; width: auto; }
+.topbar #brand-doors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 14px; justify-content: center; border-radius: 8px; background: var(--fg); color: var(--bg); }
+/* The pill names the desk in view; a lost connection is a small warning dot on it, nothing else. */
+.brand-open .pill-word { max-width: 14ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.brand-open .pill-conn { display: none; }
+.brand-open .pill-conn[data-state="offline"] { display: inline-block; width: 8px; height: 8px; margin: 0 2px 0 4px; padding: 0; border: 0; border-radius: 50%; background: var(--urg-critical); }
+.brand-open .pill-conn i, .brand-open .pill-conn::after, .brand-open .pill-conn i::after { display: none; }
+.brand-open .pill-conn #conn-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.desk-blocked { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-right: 2px; border-radius: 50%; text-decoration: none; }
+.desk-blocked { position: relative; }
+.desk-blocked:hover { background: var(--urg-critical-soft); }
+/* In the folded rail the Desk box has no room for it: the session's own row shows the hand there. */
+@media (min-width: 861px) { [data-rail="folded"] .topbar .desk-blocked { display: none; }
+}/* "Push on this device" in the menu behind the logo (js/push.js): the switch, what it may say, and one line of help. */
+.push-row::after { content: "Off"; margin-left: auto; font: 500 var(--t-xs, 12px)/1 var(--font, inherit); color: var(--muted, #777); }
+.push-row[aria-checked="true"]::after { content: "On"; color: var(--accent, #1b6a57); }
+.push-row[aria-busy="true"]::after { content: "…"; }
+.push-note { margin: 2px 12px 6px; font: 400 var(--t-xs, 12px)/1.4 var(--font, inherit); color: var(--muted, #777); max-width: 34ch; }
+.push-note:empty { display: none; }/* The app's own few rules outside the areas (the room screens are in auth.css). */
+/* The Trommi menu (sidebar.mjs): the desks without a heading, each with the desk drawing; the one in view has its
+   lamp on (a warm cone and three rays) instead of a tick. "New desk" is a quiet line under them; the theme sits beside Log out. */
+.topbar { --lamp: #e2a21b; }   /* the menu's rows and the Desk box's switcher (app.css) */
+:root[data-theme="dark"] .topbar { --lamp: #f2bd4a; }
+.topbar #brand-doors .menu-desks { margin-top: 0; padding-top: 0; }
+.topbar #brand-doors .menu-desk[aria-checked]::after { content: none; }
+.topbar #brand-doors .menu-desk { gap: 10px; }
+.topbar #brand-doors .menu-desk .sketch.menu-lamp { width: 24px; height: 24px; stroke-width: 1.7; color: var(--muted); overflow: visible; }
+.topbar #brand-doors .menu-desk .sketch.menu-lamp.is-lit { color: var(--fg); }
+.topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700; }
+.menu-lamp .lamp-light { stroke: var(--lamp); stroke-width: 2; stroke-linecap: round; fill: none; }
+.menu-lamp .lamp-light :is(.lamp-glow, .lamp-cone) { fill: var(--lamp); stroke: none; }
+.menu-lamp .lamp-glow { fill-opacity: .85; }
+.menu-lamp .lamp-cone { fill-opacity: .42; }
+.topbar #brand-doors .menu-desk.is-demo i { opacity: .8; }
+.topbar #brand-doors button.menu-desk-add { width: 100%; min-height: 30px; padding: 0 12px 0 15px; gap: 13px; justify-content: flex-start; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
+.topbar #brand-doors button.menu-desk-add svg { width: 15px; height: 15px; }
+.topbar #brand-doors .menu-leave { display: flex; align-items: center; gap: 2px; }
+.topbar #brand-doors .menu-leave .menu-logout { flex: 1; min-width: 0; }
+.topbar #brand-doors .menu-leave button.menu-theme::after { content: none; }
+.topbar #brand-doors:focus { outline: 0; }
+.topbar #brand-doors .menu-leave button.menu-theme { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-radius: 9px; }
+@media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
+}

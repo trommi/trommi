@@ -4,7 +4,7 @@ name: Test
 
 on:
   push:
-    paths: ['core/**', 'hub/**', 'connector/**', 'fuzz/**', 'app/web/public/gen/**', 'app/web/public/connect.sh', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
+    paths: ['core/**', 'hub/**', 'connector/**', 'fuzz/**', 'app/web/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
   pull_request:
   workflow_dispatch:
 
@@ -16,6 +16,19 @@ permissions:
   contents: read
 
 jobs:
+  app:
+    name: App layout
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+      # app/web/README.md "Rules": the file set, who imports whom, no crypto outside the core, inline script hashes.
+      - run: node app/web/dev/check.mjs
+      - run: node app/web/dev/build.mjs
+
   hub:
     name: Hub and crypto suite
     runs-on: ubuntu-24.04
