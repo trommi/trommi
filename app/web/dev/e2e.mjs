@@ -2,7 +2,8 @@
 // Emergency Kit), invites an agent (a Node process on the
 // same client core), the agent files cards and status lines, A answers in the page, hands back, asks What??; a
 // second browser B joins with the invite link and the check code typed on A, and sees the same Desk; a third browser C
-// logs in with email + password, a fourth D with the Emergency Kit (forgot password).
+// logs in with email + password, a fourth D with the Emergency Kit (forgot password); C logs out (removed from the
+// member list, IndexedDB and caches empty) and logs in again.
 //   node dev/e2e.mjs [--app http://127.0.0.1:8900] [--hub http://127.0.0.1:8890] [--shots dir] [--resolve 'MAP …']
 // Prints timings (send -> visible on the other device) and exits 1 on a failure.
 import { launchChromium } from './cdp.mjs'
@@ -28,7 +29,7 @@ async function browser(name, width = 1440, height = 900) {
   const page = await b.page()
   const errors = []
   page.on('Runtime.exceptionThrown', e => errors.push(`${name} exception: ${e.exceptionDetails?.exception?.description ?? e.exceptionDetails?.text}`))
-  page.on('Runtime.consoleAPICalled', e => { if (e.type === 'error') errors.push(`${name} console: ${e.args.map(a => a.value ?? a.description ?? '').join(' ')}`) })
+  page.on('Runtime.consoleAPICalled', e => { if (e.type === 'warning' && process.env.E2E_WARN) console.log(name, 'warn:', e.args.map(a => a.value ?? a.description ?? '').join(' ')); if (e.type === 'error') errors.push(`${name} console: ${e.args.map(a => a.value ?? a.description ?? '').join(' ')}`) })
   await page.send('Runtime.enable'); await page.send('Page.enable')
   await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 })
   const js = async (code) => {
@@ -244,6 +245,36 @@ try {
   await A.until("document.querySelectorAll('.room-device').length >= 5", 'five devices listed')
   check(true, 'devices page lists laptop, phone, desktop, phone (kit), agent')
   await A.shot('e2e-10-devices.png')
+
+  // ---- C logs out (Trommi menu -> Log out, asked once): removed from the member list, everything local gone ----
+  const oldC = await C.js("return trommi.client.model.room.my_device_id")
+  await C.js("document.getElementById('brand-menu').click()")
+  await C.until("!document.getElementById('brand-doors').hidden && document.getElementById('menu-logout')", 'menu with Log out')
+  await C.js("document.getElementById('menu-logout').click()")
+  await C.until("document.getElementById('logout-ask')", 'log out asks')
+  check(await C.js("return document.getElementById('logout-ask').textContent.trim() === 'Log out of this device? You can log in again with email and password.'"), 'Log out asks once, with the agreed sentence')
+  await C.shot('e2e-11-logout-ask.png')
+  t0 = Date.now()
+  await C.js("document.getElementById('logout-go').click()")
+  await C.until("document.querySelector('#way-create') && document.querySelector('#way-login')", 'start page after log out', 30000)
+  timing('log out -> start page', Date.now() - t0)
+  check(await C.js("return document.getElementById('logged-out')?.textContent.startsWith('Logged out. Nothing')"), 'start page: logged out, device removed')
+  await C.shot('e2e-12-logged-out.png')
+  const left = await C.js(`const dbs = indexedDB.databases ? await indexedDB.databases() : []
+    let keys = 0
+    for (const d of dbs) { const db = await new Promise((ok, no) => { const r = indexedDB.open(d.name); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error) }); for (const n of db.objectStoreNames) keys += await new Promise(ok => { const r = db.transaction(n).objectStore(n).count(); r.onsuccess = () => ok(r.result) }); db.close() }
+    return { dbs: dbs.length, keys, local: localStorage.length, caches: (await caches.keys()).filter(n => !n.startsWith('shell-')).length }`)   // the worker fills its shell cache again (app files only)
+  check(left.keys === 0 && left.local === 0 && left.caches === 0, `nothing local left after log out but the app shell (${JSON.stringify(left)})`)
+  t0 = Date.now()
+  await A.until(`trommi.client.model.members.get('${oldC}')?.is_active === false`, 'A sees C removed', 20000).then(() => { check(true, 'the logged-out device is removed in the signed member list (seen on A)'); timing('log out on C -> removed on A', Date.now() - t0) }, async e => check(false, `${e.message} ${JSON.stringify(await A.js("const c = trommi.client; const q = await Promise.race([c.serial(async () => 'free'), new Promise(r => setTimeout(() => r('busy'), 3000))]); let direct = null; try { await c._refreshMembers(); direct = c.model.room.last_entry_number } catch (e) { direct = e.message } return { conn: c.model.room.connection, entry: c.model.room.last_entry_number, queue: q, direct }").catch(x => x.message))}`))
+  // and in again with email + password (D set a new one with the kit)
+  await C.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)
+  await C.until("document.querySelector('#way-login')", 'welcome on C again')
+  await C.js("document.querySelector('#way-login').click()")
+  await C.until("document.querySelector('#login-form')", 'login screen on C again')
+  await C.js(`const f = document.querySelector('#login-form'); f.querySelector('input[name=email]').value = '${EMAIL}'; f.querySelector('input[name=password]').value = 'a brand new password'; f.querySelector('input[name=device_name]').value = 'Desktop again'; f.querySelector('button[type=submit]').click()`)
+  await C.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'C logged in again', 30000).then(() => check(true, 'log in again with email + password after log out'), e => check(false, e.message))
+  check(await C.js(`return trommi.client.model.room.my_device_id !== '${oldC}' && trommi.client.model.members.get('${oldC}')?.is_active === false`), 'a new device id; the old one is removed in the member list')
 } catch (err) {
   check(false, err.message)
   await A.shot('e2e-fail-A.png').catch(() => {})

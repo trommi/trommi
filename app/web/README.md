@@ -45,6 +45,12 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
   the code goes to its log), Emergency Kit, Change password. Accounts from before email + password get "Add login"
   (needs the old recovery code); their recovery code still works at `/recover` (Forgot password → "An older account
   with a recovery code?").
+- **Log out** (Trommi menu, and Settings → Account): asks once ("Log out of this device? You can log in again with
+  email and password."; on the only device it adds that email and password or the Emergency Kit open the account). Then
+  the device removes itself from the member list (a removal signed by itself, core `leaveRoom()`), the streams close,
+  and every local trace of the app on this origin goes: IndexedDB, Cache Storage, localStorage, sessionStorage (the
+  service worker stays and fills its cache again). The start page comes. Offline: the wipe still happens and the start
+  page says the device stays under "Devices" until another device removes it.
 - What the hub learns: the email in plaintext and which room it belongs to; nothing it could open (trommi-hub README,
   "Accounts").
 

@@ -21,11 +21,13 @@ function desksOf(model) {
 
 // Two small drawings of the menu's own, in the pen's line: the Dev symbol (</>) and the plus of "New desk".
 const DEV = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:-2deg"><path d="M8.6 7.1Q6 9.6 3.9 12.2Q6.2 14.5 8.4 17"/><path d="M15.5 6.9Q18.1 9.4 20.1 11.9Q17.9 14.6 15.4 16.9"/><path d="M13.7 5.1Q12.1 11.8 10.4 18.9"/></svg>')
+// Log out: a door frame, open to the right, and an arrow walking out of it.
+const LEAVE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:-1deg"><path d="M10.2 4.3Q7.4 4.1 5.2 4.4Q4.9 12.1 5.2 19.7Q7.7 19.9 10.1 19.8"/><path d="M9.4 12.2Q14.5 11.8 19.5 12.1"/><path d="M16.3 8.7Q18.2 10.4 19.6 12.1Q18 13.8 16.2 15.3"/></svg>')
 const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:3deg"><path d="M12.2 5.2Q11.8 12 12 18.8"/><path d="M5.3 12.3Q12 11.7 18.7 12.1"/></svg>')
 
 /** The menu: <nav id="brand-doors">, hidden until the pill is pressed. For the layout's topbar, in place of its own <nav>.
  *  Three calm groups and Dev: the jump field (with the theme as one small sun/moon beside it); the desks with "+" for a
- *  new one (a line to name it, Enter makes it: menu_controller.js); Go to (Agents, Help, Keys); this device (Push); and
+ *  new one (a line to name it, Enter makes it: menu_controller.js); Go to (Agents, Help, Keys); this device (Push, Log out); and
  *  Dev folded away at the foot. The connection is not said here: a lost one is a dot on the pill (views/layout.mjs). */
 export function menuDoors(model, base) {
   const desks = desksOf(model)
@@ -38,6 +40,7 @@ export function menuDoors(model, base) {
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents">${sk('heads')}<span>Agents</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Devices and settings">${raw(doodleSvg('draw:phone'))}<span>Devices</span></a><div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
+<a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a>
 <details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Demo</a></div></details>
 </nav>`
 }
