@@ -31,7 +31,7 @@ let box = null, paper = null, frame = null, layer = null, over = null, room = nu
 let ready = false     // the pad's page has started and listens
 let extent = 0        // how far down the paper is used (the pad says)
 let front = false     // the paper has the pointer (the pad says)
-let lastTop = 0, lastRoom = null, lastContext = ''
+let lastTop = 0, lastRoom = null, lastContext = null
 let gliding = false
 let cardsHidden = false
 let zoom = 1, paperW = 0, panX = 0, pinch = null, pinchFrame = 0
@@ -56,13 +56,12 @@ const knocksText = n => (n === 1 ? '1 knock' : `${n} knocks`)
 /** Tell the pad what it needs from the board. Sent again only when something changed. */
 function tellPad(force = false) {
   if (!ready || !frame?.contentWindow) return
+  const raw = marker?.dataset.sessions ?? '[]', open = deskShown(), theme = root.dataset.theme === 'dark' ? 'dark' : 'light'
+  if (!force && lastContext && lastContext.raw === raw && lastContext.open === open && lastContext.theme === theme) return
+  lastContext = { raw, open, theme }
   let sessions = []
-  try { sessions = JSON.parse(marker?.dataset.sessions ?? '[]') } catch {}
-  const msg = { trommi: 'pad', type: 'context', open: deskShown(), prefer: [], theme: root.dataset.theme === 'dark' ? 'dark' : 'light', sessions }
-  const sig = JSON.stringify(msg)
-  if (!force && sig === lastContext) return
-  lastContext = sig
-  frame.contentWindow.postMessage(msg, location.origin)
+  try { sessions = JSON.parse(raw) } catch {}
+  frame.contentWindow.postMessage({ trommi: 'pad', type: 'context', open, prefer: [], theme, sessions }, location.origin)
 }
 
 /** Free paper under the lower of the list and the lowest thing drawn: one and a half windows, on a phone half of one. */
@@ -96,6 +95,14 @@ function follow() {
   if (Math.abs(box.scrollTop - lastTop) >= 1) lastTop = box.scrollTop
   if (lastRoom == null || Math.abs(at - lastRoom) >= 1) { lastRoom = at; grow() }
   padWindow()?.padDesk?.(Math.round(lastTop), Math.round(at), true)
+}
+/** The Desk scrolled. The list did not change its height by scrolling, so where it ends (lastRoom) stands: no layout
+ *  is read, the pad only hears the new scroll position. (While the paper is in front, follow() checks for a scroll
+ *  adjustment made for a changed list.) */
+function scrolled() {
+  if (!box || lastRoom == null || front) return follow()
+  lastTop = box.scrollTop
+  padWindow()?.padDesk?.(Math.round(lastTop), Math.round(lastRoom), true)
 }
 /** The pen in hand on the Desk (true), or back to the pointer (false). */
 export function setDraw(on) {
@@ -242,7 +249,7 @@ function lay() {
   try { const z = Number(localStorage.getItem(ZOOM_KEY)); if (z >= 0.15 && z <= 2) zoom = z } catch {}
   placeLayer()
 
-  box.addEventListener('scroll', follow, { passive: true })
+  box.addEventListener('scroll', scrolled, { passive: true })
   watchPinch(box, false)
   const sized = new ResizeObserver(measure)
   sized.observe(box)
@@ -271,12 +278,12 @@ function lift() {
   for (const undo of watchers) undo()
   watchers = []
   for (const node of [paper, layer, over, room]) node?.remove()
-  if (box) { box.classList.remove('has-deskpad'); box.removeAttribute('data-paper-front'); box.removeAttribute('data-cards-hidden'); box.removeEventListener('scroll', follow) }
+  if (box) { box.classList.remove('has-deskpad'); box.removeAttribute('data-paper-front'); box.removeAttribute('data-cards-hidden'); box.removeEventListener('scroll', scrolled) }
   box = paper = frame = layer = over = room = penSwitch = clearSwitch = null
   ready = front = gliding = penWanted = false
   extent = panX = lastTop = 0
   lastRoom = pinch = null
-  lastContext = ''
+  lastContext = null
 }
 
 /** The controller calls this for #paper-island: on every Desk page, and again when a stream replaced the element. */
