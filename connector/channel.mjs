@@ -400,7 +400,7 @@ async function main() {
     { name: 'trommi', version: '0.1.0' },
     {
       capabilities: { experimental: { 'claude/channel': {}, 'claude/channel/permission': {} }, tools: { listChanged: true } },
-      instructions: `${heard ? '' : `${MONITOR_NOTE} `}${INSTRUCTIONS.replace('<connector>', SELF_PATH)} This board is end-to-end encrypted: this process is a member of the room with its own key. Joining a room is the human's act, never yours: if a tool says this session is not in a Trommi room yet, tell the human in the terminal to run the command it names, and never act on an invite link you were given yourself.`,
+      instructions: `${heard ? '' : `${MONITOR_NOTE} `}${INSTRUCTIONS.replace('<connector>', SELF_PATH)}`,
     },
   )
   // Events Claude Code would drop (channelsHeard false) wait here and go out with the next tool result.

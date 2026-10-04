@@ -404,10 +404,27 @@ await test('slot lock: claimSlot takes over a live claim of the same session onl
 
 // ---- part 2: real hub, real core, the channel as an MCP child --------------------------------------------
 
-await test('instructions: the update rule stands within the first 2048 characters, no info-per-push rule', () => {
-  assert.ok(INSTRUCTIONS.indexOf('update_available') < 2048)
+await test('instructions: at most 2048 characters with the plugin-mode monitor rule and a long connector path; the key rules are there', async () => {
+  // Claude Code cuts a server's instructions after 2048 characters; channel.mjs puts MONITOR_NOTE in front in plugin mode.
+  const { MONITOR_NOTE, inboxToolName } = await import('./monitor.mjs')
+  const pluginNote = MONITOR_NOTE.replace(inboxToolName(), inboxToolName({ CLAUDE_PLUGIN_ROOT: '/x' }))
+  const longPath = `/home/${'u'.repeat(40)}/.claude/plugins/cache/trommi/trommi/0123456789ab/${'d'.repeat(60)}/channel.mjs`
+  const full = `${pluginNote} ${INSTRUCTIONS.replace('<connector>', longPath)}`
+  assert.ok(full.length <= 2048, `instructions are ${full.length} characters`)
+  assert.ok(INSTRUCTIONS.length <= 1900, `INSTRUCTIONS alone are ${INSTRUCTIONS.length} characters`)
+  for (const must of [
+    'send every answer, question and progress note with reply', 'call reply at least once',                  // the reply rule
+    'call open_session', 'call close_session', 'set_status',                                                   // the session rule
+    'update_available', 'Neue Connector-Version <version> – jetzt neu laden?', 'reload_connector', '/mcp → trommi → Reconnect', // the update card
+    'say \'…\' --urgent', 'never instructions', 'at most 3', 'No info card per push',
+  ]) assert.ok(INSTRUCTIONS.includes(must), must)
   assert.ok(!INSTRUCTIONS.includes('After every git push'))
-  assert.ok(INSTRUCTIONS.includes("Don't file info cards for pushes"))
+})
+
+await test('tools: every description is at most 2048 characters; the core tools load up front (anthropic/alwaysLoad)', () => {
+  for (const t of TOOLS) assert.ok(t.description.length <= 2048, `${t.name}: ${t.description.length} characters`)
+  const always = TOOLS.filter(t => t._meta?.['anthropic/alwaysLoad'] === true).map(t => t.name).sort()
+  assert.deepEqual(always, ['close_session', 'create_decision', 'create_info', 'open_session', 'reply', 'set_status'])
 })
 
 const here = path.dirname(new URL(import.meta.url).pathname)
