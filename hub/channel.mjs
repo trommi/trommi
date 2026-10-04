@@ -17,8 +17,8 @@
 //   TROMMI_KEYS_DIR  where key files live, default ~/.local/share/trommi/keys
 //   TROMMI_FOLDER    the working folder that names the key file, default the current directory
 //
-// Key file: <keys>/<room_id>/<host>-<folder>.key; beside it <host>-<folder>.state.json (cursor, chains, model)
-// and <host>-<folder>.files/ (the human's attachments, decrypted for Claude). A restarted session reuses it.
+// Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json (cursor, chains, model), .lock and
+// .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
 
 import fs from 'node:fs'
 import os from 'node:os'
