@@ -63,9 +63,9 @@ export const LAYOUT = [
     { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'jump', verb: 'jump: type where to go' },
     { id: 'go.walk', keys: ['g f'], does: 'Next, please', verb: 'Next, please: every open question, one after the other' },
-    // G then 1…9 are always the sessions'; the desks have D then 1…9 (card Nr. 184).
+    // 1…9 alone are the desks'; G then 1…9 are the sessions'.
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar', needs: 'sidebar' },
-    { id: 'desk.switch', keys: ['d 1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
+    { id: 'desk.switch', keys: ['1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
     { id: 'session.next', keys: ['.'], does: 'next session', needs: 'sidebar' },
     { id: 'session.prev', keys: [','], does: 'previous session', needs: 'sidebar' },
     { id: 'pen', keys: ['p'], does: 'the pen: draw on the paper' },
