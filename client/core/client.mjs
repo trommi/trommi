@@ -80,6 +80,18 @@ export class Client {
   }
 
   get my_device_id() { return this.model.room.my_device_id }
+
+  /**
+   * THE key choice (R6), in one place: which secret seals an envelope, given what it is about. Today every envelope
+   * uses the room key of the current epoch. With per-session keys this returns the session key (and the header's
+   * key scope + session id) for a session's cards, chat, canvas and agent registers, the room key for the rest.
+   * Returns { secret, scope } where scope is spread into sealEnvelope.
+   */
+  keyFor({ kind, object, timeline, recipient }) {
+    return { secret: this.secrets.get(this.state.epoch), scope: {} }
+  }
+  /** The opening side of keyFor: what openEnvelope / openVerifiedEnvelope get as `secrets` (a Map or a function of the epoch). */
+  get openKeys() { return this.secrets }
   get is_human() { return this.model.room.my_role === 'human' }
 
   // ---- events --------------------------------------------------------------------------
@@ -349,7 +361,7 @@ export class Client {
       const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false }
       if (!peek.pruned) {
         try {
-          pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.secrets, self: this.device.id })
+          pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.openKeys, self: this.device.id })
           pre.v = pre.opened
         } catch (e) {
           if (!['no-key', 'decrypt-failed', 'kind-mismatch', 'bad-format', 'bad-version'].includes(e.code)) throw e
@@ -529,10 +541,10 @@ export class Client {
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         const blobs = codec.attachmentIdsOf(content).map(unhex)
-        const secret = this.secrets.get(this.state.epoch)
+        const { secret, scope } = this.keyFor({ kind, object, timeline, recipient })
         if (!secret) throw new ZError('no-key', 'no key for the current epoch')
         const sealed = await z.sealEnvelope({
-          device: this.device, state: this.state, secret, chains: this.chains, kind, payload, bind: bind ?? new Uint8Array(0),
+          device: this.device, state: this.state, secret, chains: this.chains, ...scope, kind, payload, bind: bind ?? new Uint8Array(0),
           recipient: recipient ? unhex(recipient) : null, push, blobs,
           card: object ? { id: unhex(object.object_id), state: codec.OBJECT_STATE[object.object_state] ?? 1, urgency: codec.URGENCY[object.urgency] ?? 1, answeredAt: object.answered_at ?? 0 } : null,
           timelineKind: timeline ? codec.TIMELINE_KIND[timeline.timeline_kind] ?? timeline.timeline_kind : null, timelineId: timeline?.timeline_id ?? null,
