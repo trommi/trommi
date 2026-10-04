@@ -52,6 +52,24 @@ export function idbStorage({ name = 'trommi', prefix = '' } = {}) {
       })
       return out
     },
+    /** Every key and value in ONE read transaction (a consistent picture while another tab writes), except under skip prefixes. */
+    async snapshot({ skip = [] } = {}) {
+      const s = await store('readonly')
+      const out = new Map()
+      await new Promise((resolve, reject) => {
+        const req = s.openCursor(IDBKeyRange.bound(P(''), P('') + '\uffff'))
+        req.onsuccess = () => {
+          const c = req.result
+          if (!c) return resolve()
+          const k = c.key.slice(prefix.length)
+          const sk = skip.find(p => k.startsWith(p))
+          if (sk) return c.continue(P(sk) + '\uffff')
+          out.set(k, c.value); c.continue()
+        }
+        req.onerror = () => reject(req.error)
+      })
+      return out
+    },
     async saveDevice(device) {
       let record = device
       if (device.signKey?.extractable && device.kexKey?.extractable) {

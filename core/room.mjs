@@ -49,12 +49,14 @@ async function newDevice(storage) {
   return z.generateDevice({ extractable: !!(storage.extractable_keys || storage.wraps_keys) })   // a wrapping storage hands back non-extractable keys (storage-idb.mjs)
 }
 
-async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null, save = true }) {
+async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null, save = true, follower = false }) {
   const me = z.memberAt(state, device.id)
   const client = new Client({ storage, hub_url: roomRecord.hub_url, room_id: roomRecord.room_id, device, state, secrets: new Map(secrets.filter(Boolean).map(s => [s.epoch, s])),
     my_role: me ? roleName(me.role) : roomRecord.my_role, roomRecord, fetch, client: clientName })
   // A stored room is not saved again before it is loaded: that wrote an empty session list over the stored session
   // keys (review 3: a recovery's keys, older epochs an agent was given).
+  // A follower tab (tabs.mjs) reads only: no seal, no post, no lock of its own; the hub handle refuses writes too.
+  if (follower) { client.follower = true; client.externalLock = true; client.hub.readOnly = true }
   if (save) await client._saveRoom()
   await client.loadPersisted()
   return client
@@ -80,13 +82,13 @@ export async function foundRoom({ hub_url, storage, client: client_name = null, 
 }
 
 /** Open the room in this storage (warm start): verify the stored member list against the stored room id, load the model. */
-export async function openRoom({ storage, client: client_name = null, fetch = null }) {
+export async function openRoom({ storage, client: client_name = null, fetch = null, follower = false }) {
   const roomRecord = await storage.get('room')
   if (!roomRecord) return null
   const device = await storage.loadDevice()
   if (!device) throw new ZError('no-device', 'the room is stored but the device key is missing')
   const state = await z.verifyLog(roomRecord.entries.map(unb64u), unhex(roomRecord.room_id))
-  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch, client: client_name, save: false })
+  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch, client: client_name, save: false, follower })
 }
 
 /**

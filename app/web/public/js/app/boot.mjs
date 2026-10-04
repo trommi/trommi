@@ -31,7 +31,9 @@ async function openClient() {
   if (mock) return (await import('./mock-room.mjs')).openRoom({ mock })
   const core = await import('/vendor/index.mjs')
   const storage = core.idbStorage({ name: 'trommi', prefix: 'room/' })
-  try { return await core.openRoom({ storage, client: CLIENT }) }
+  // Several tabs of this browser: one writes (a Web Lock), the others read on their own and hand it their actions
+  // (core/tabs.mjs). Every tab stays usable; when the writing tab closes, the next one takes over.
+  try { return await core.openRoomInTabs({ storage, makeStorage: () => core.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT }) }
   catch (err) { await storage.close().catch(() => {}); throw err }   // a Log out from the error screen deletes the database
 }
 
@@ -131,24 +133,27 @@ export async function start(client, { fresh = false } = {}) {
   // word: the newest few items of the cards with their session.
   const opened = new Set()
   const load = (key, limit) => { if (opened.has(key)) return; opened.add(key); client.loadTimeline(key, { limit }).catch(err => console.warn('timeline', err)) }
-  document.addEventListener('turbo:load', () => {
+  const loadOpen = () => {
     const path = location.pathname
     const q = /^\/(?:s\/[^/]+\/)?[qc]\/([\w-]+)/.exec(path)
     if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) load(`chat:card/${card.id}`, 50) }
     if (path === '/') for (const c of model().revising ?? []) load(`chat:card/${c.id}`, 5)
-  })
+  }
+  document.addEventListener('turbo:load', loadOpen)
 
   await router.visit((location.pathname.replace(/^\/t(?=\/|$)/, '') || '/') + location.search + location.hash, { action: 'replace' })   // old /t/… addresses of the board
   window.trommi.firstPaintMs = performance.now() - T0
   window.trommi.openMs = typeof OPEN_MS === 'number' ? OPEN_MS : null
   window.trommi.readyAt = performance.now()   // since navigation start: cold or warm load to the painted page
   document.documentElement.dataset.ready = ''
-  client.start().catch(err => {
-    // One sealing client per device and room (a Web Lock): the room is open in another tab of this browser.
-    if (err?.code === 'tab-conflict') notice('Trommi is open in another tab. Work there, or close it and reload here.', err.message, false)
-    else console.error('start', err)
-    conn()
+  // This tab became the writing tab (the one before it closed): the core is a new client from storage. Draw it whole
+  // and fetch the open page's timeline again (the old client's windows went with it).
+  client.on('reset', () => {
+    pending = null; wasCatchingUp = false; clearTimeout(catchUpTimer)
+    renderWhole()
+    opened.clear(); loadOpen()
   })
+  client.start().catch(err => { console.error('start', err); conn() })
   if (fresh) router.refresh()
   return router
 }
@@ -162,7 +167,14 @@ let openError = null
 const client = sharing ? null : await openClient().catch(err => { console.error('open', err); openError = err; return null })
 const OPEN_MS = performance.now() - T0   // the room from storage (or the mock's fixture) in memory
 if (client) { keepStorage(); await start(client) }
-else if (!sharing) await roomScreen({ start: (c, o) => { keepStorage(); return start(c, o) }, hub: hubUrl(), openError })
+else if (!sharing) await roomScreen({ start: async (c, o) => { keepStorage(); return start(await adopt(c), o) }, hub: hubUrl(), openError })
+
+/** A room made in this tab (account created, device joined or logged in): this tab writes it; later tabs follow. */
+async function adopt(c) {
+  if (mock) return c
+  const core = await import('/vendor/index.mjs')
+  return core.adoptInTabs(c, { makeStorage: () => core.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT })
+}
 
 /** Ask the browser to keep this origin's storage (no eviction under storage pressure; Safari weighs it too). */
 function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
