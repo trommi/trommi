@@ -59,6 +59,13 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - Proposals for hub/crypto/core (duplicated HTTP helpers, session-grants copying zcrypto internals, FORMAT.md §6/§9 stale) were handed to S1/S2/C.
   - Left on purpose: channel-bridge question parsing and hub/push.mjs copy old-board code until the old board retires.
 - 04:50 the account usage limit killed every stream mid-step. Resumed 04:55 at a reduced pace: security fixers D, S1, S2 and integrator C first; parity fixer, Superkind, F and fuzz triage paused until the security fixes land. Half-done work found only in S1's worktree (session-grants, ops flow/test-rooms), handed back to S1.
+- Review-2 fixes landed:
+  - CRITICAL path traversal fixed in the channel (3f6b0ce; PoC as a regression test).
+  - Lease fencing required (1922506).
+  - Slot-lock race fixed with atomic link/rename (9b24958; 4 processes × 8 runs, exactly one winner).
+  - join is CLI-only, with no MCP tool (9b24958).
+  - Agent invites default to without history (app 60db893).
+- App warm reload now cache-first in the SW: desktop 236 → 47–57 ms (Turbo 34), phone 4x 130–150 ms. Cold desktop 260–550 ms (80 files, no build step; Turbo 58). Prod e2e 19/19.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
