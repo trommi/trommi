@@ -163,7 +163,7 @@ export class Client {
     M.applyMembers(m, membersOf(this.state), M.emptyChange())
     const online = (await st.get('devices')) ?? []
     M.applyDevices(m, online, M.emptyChange())
-    for (const [, v] of await st.range('session/')) m.sessions.set(v.agent_device_id, M.deserialiseSession(v))
+    for (const [, v] of await st.range('session/')) m.sessions.set(v.session_id ?? v.agent_device_id, M.deserialiseSession(v))
     for (const [, v] of await st.range('card/')) m.cards.set(v.object_id, v)
     for (const [, v] of await st.range('perm/')) m.permissions.set(v.object_id, v)
     for (const [, v] of await st.range('memo/')) m.memos.set(v.object_id, v)
