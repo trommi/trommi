@@ -43,7 +43,7 @@ export async function start(client, { fresh = false } = {}) {
   const hub = hubFacade(client, board)
   let cached = null
   const model = (d = desk) => {
-    if (pending) { update(); frame ||= requestAnimationFrame(() => apply()) }
+    if (pending && !wasCatchingUp) { update(); frame ||= requestAnimationFrame(() => apply()) }
     if (cached?.version === board.version && cached.desk === d) return cached.m
     const m = boardModel(board.state, hub.agents(), d)
     board.desk = m.desk
@@ -95,9 +95,25 @@ export async function start(client, { fresh = false } = {}) {
     conn()
     window.trommi.lastPatchMs = performance.now() - t + (window.trommi.lastUpdateMs ?? 0)
   }
+  // While the core catches up (a new device: thousands of envelopes in batches) the page is not patched per batch:
+  // it is rendered whole every CATCH_UP_MS and once more when the room is live. Patching per batch made a big room's
+  // first load quadratic (every batch re-diffed the Desk and re-measured its rows).
+  const CATCH_UP_MS = 2500
+  let catchUpTimer = 0, wasCatchingUp = false
+  const catchingUp = () => client.model.room.connection === 'catching_up'
+  const renderWhole = () => {
+    catchUpTimer = 0
+    cancelAnimationFrame(frame); frame = 0
+    pending = null; unpatched = false
+    board.update()
+    router.refresh()
+    conn()
+  }
   client.on('change', change => {
     if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
     else merge(pending, change)
+    if (catchingUp()) { if (!wasCatchingUp) { wasCatchingUp = true; conn() } catchUpTimer ||= setTimeout(renderWhole, CATCH_UP_MS); return }
+    if (wasCatchingUp) { wasCatchingUp = false; clearTimeout(catchUpTimer); renderWhole(); return }
     frame ||= requestAnimationFrame(() => apply())
   })
   document.addEventListener('turbo:load', conn)
