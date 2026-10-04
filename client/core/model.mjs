@@ -70,7 +70,7 @@ export function applyMembers(model, members, change) {
       is_active: m.is_active, added_entry_number: m.added_entry_number, removed_entry_number: m.removed_entry_number, is_me: m.device_id === model.room.my_device_id,
       is_online: old?.is_online ?? false, agent_session_id: old?.agent_session_id ?? null }
     model.members.set(m.device_id, next)
-    if (m.device_role === 'agent') touchSession(model, m.device_id, change)
+    if (m.device_role === 'agent') touchAgent(model, m.device_id, change)
   }
   change.members = true
 }
@@ -80,32 +80,51 @@ export function applyDevices(model, devices, change) {
     if (!m) continue
     m.is_online = !!d.is_online
     if (d.agent_session_id) m.agent_session_id = d.agent_session_id
-    if (m.device_role === 'agent') touchSession(model, d.device_id, change)
+    if (m.device_role === 'agent') touchAgent(model, d.device_id, change)
   }
   change.members = true
 }
 
-function sessionOf(model, agent_device_id) {
-  let s = model.sessions.get(agent_device_id)
+/** A session (R6): its own key, its agents (assigned by grants), its cards and chat. Keyed by session_id. */
+export function sessionOf(model, session_id) {
+  let s = model.sessions.get(session_id)
   if (!s) {
-    s = { agent_device_id, agent_session_id: null, device_name: '', is_active: true, is_online: false, profile: null, status_lines: [], agent_alerts: [], registers: new Map(),
-      settings: null, read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${agent_device_id}`), unread_count: 0, unread_numbers: [], last_activity_at: 0 }
-    model.sessions.set(agent_device_id, s)
+    s = { session_id, agent_device_ids: [], ever_agent_ids: [], agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false,
+      session_key_epoch: 0, with_history: false, profile: null, status_lines: [], agent_alerts: [], registers: new Map(),
+      settings: null, read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${session_id}`), unread_count: 0, unread_numbers: [], last_activity_at: 0 }
+    model.sessions.set(session_id, s)
   }
   return s
 }
-function touchSession(model, id, change) {
-  const s = sessionOf(model, id)
-  const m = model.members.get(id)
-  if (m) { s.agent_session_id = m.agent_session_id; s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online }
-  change.sessions.add(id)
+/** Copy the current agent's member facts onto its session. */
+function syncSessionAgent(model, s) {
+  const m = s.agent_device_id ? model.members.get(s.agent_device_id) : null
+  if (m) { s.agent_session_id = m.agent_session_id ?? m.device_id.slice(0, 16); s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online }
+}
+function touchAgent(model, agent_device_id, change) {
+  for (const s of model.sessions.values()) if (s.agent_device_ids.includes(agent_device_id) || s.agent_device_id === agent_device_id) { syncSessionAgent(model, s); change.sessions.add(s.session_id) }
+}
+/** A verified grant chain state (crypto/session-grants.mjs) for one session. */
+export function applySessionGrant(model, sessionState, change, everAgentIds = []) {
+  const s = sessionOf(model, sessionState.sessionId)
+  s.agent_device_ids = [...sessionState.agentIds]
+  for (const a of everAgentIds) if (!s.ever_agent_ids.includes(a)) s.ever_agent_ids.push(a)
+  for (const a of s.agent_device_ids) if (!s.ever_agent_ids.includes(a)) s.ever_agent_ids.push(a)
+  s.agent_device_id = s.agent_device_ids[0] ?? s.agent_device_id
+  s.session_key_epoch = sessionState.epoch
+  s.with_history = !!sessionState.withHistory
+  syncSessionAgent(model, s)
+  change.sessions.add(s.session_id)
+  change.stack = true
   return s
 }
+const everAgent = (model, sid, device) => !!sid && (model.sessions.get(sid)?.ever_agent_ids.includes(device) ?? false)
 
 // ---- alerts ---------------------------------------------------------------------------------
 
 let alertSeq = 0
 export function pushAlert(model, change, { code, message = '', envelope_number = null, sender_device_id = null, source = 'local' }) {
+  if (globalThis.process?.env?.CORE_DEBUG) console.error('[alert]', code, message, new Error().stack.split('\n').slice(2, 5).join(' | '))
   const alert = { alert_id: `${Date.now().toString(36)}-${(alertSeq++).toString(36)}`, code, message, envelope_number, sender_device_id, at: Date.now(), source }
   model.alerts.push(alert)
   if (model.alerts.length > ALERTS_MAX) model.alerts.splice(0, model.alerts.length - ALERTS_MAX)
@@ -122,13 +141,10 @@ export function pushAlert(model, change, { code, message = '', envelope_number =
  * Returns { applied: boolean, refused?: code } so the agent side can tell what counted.
  */
 export function applyRecord(model, rec, change) {
-  if (rec.sender_role === 'agent') {
-    const s = touchSession(model, rec.sender_device_id, change)
+  if (rec.session_id) {
+    const s = sessionOf(model, rec.session_id)
     s.last_activity_at = Math.max(s.last_activity_at, rec.sent_at)
-  } else if (rec.recipient_device_id && model.members.get(rec.recipient_device_id)?.device_role === 'agent') {
-    const s = sessionOf(model, rec.recipient_device_id)
-    s.last_activity_at = Math.max(s.last_activity_at, rec.sent_at)
-    change.sessions.add(rec.recipient_device_id)
+    change.sessions.add(rec.session_id)
   }
   switch (rec.kind) {
     case KIND.timeline_item: return applyTimelineItem(model, rec, change)
@@ -175,7 +191,10 @@ export function timelineRefusal(model, rec) {
   const p = parseTimelineKey(timelineKey(rec.timeline_kind, rec.timeline_id))
   const human = rec.sender_role === 'human'
   if (p.timeline_kind === 'chat') {
-    if (p.scope === 'session') return rec.sender_device_id === p.scope_id || (human && rec.recipient_device_id === p.scope_id) ? null : 'not-allowed'
+    if (p.scope === 'session') {
+      if (rec.session_id && rec.session_id !== p.scope_id) return 'not-allowed'
+      return everAgent(model, p.scope_id, rec.sender_device_id) || (human && everAgent(model, p.scope_id, rec.recipient_device_id)) ? null : 'not-allowed'
+    }
     if (p.scope === 'card') {
       const card = model.cards.get(p.scope_id)
       if (!card) return 'card-mismatch'
@@ -185,7 +204,7 @@ export function timelineRefusal(model, rec) {
   }
   if (p.timeline_kind === 'canvas') {
     if (p.scope === 'desk') return human ? null : 'not-allowed'
-    if (p.scope === 'session') return human || rec.sender_device_id === p.scope_id ? null : 'not-allowed'
+    if (p.scope === 'session') return human || everAgent(model, p.scope_id, rec.sender_device_id) ? null : 'not-allowed'
     if (p.scope === 'card') return human || rec.sender_device_id === model.cards.get(p.scope_id)?.agent_device_id ? null : 'not-allowed'
     return 'not-allowed'
   }
@@ -210,8 +229,8 @@ function applyTimelineItem(model, rec, change) {
   }
   change.timelines.add(key)
   const p = parseTimelineKey(key)
-  if (p.timeline_kind === 'chat' && rec.sender_role === 'agent') {
-    const s = sessionOf(model, rec.sender_device_id)
+  if (p.timeline_kind === 'chat' && rec.sender_role === 'agent' && rec.session_id) {
+    const s = sessionOf(model, rec.session_id)
     if (rec.envelope_number > s.read_up_to) { s.unread_numbers.push(rec.envelope_number); s.unread_count = s.unread_numbers.length }
   }
   if (p.timeline_kind === 'chat' && p.scope === 'card') {
@@ -223,7 +242,7 @@ function applyTimelineItem(model, rec, change) {
       if (c?.present_card) card.in_revision = null
       else if (rec.sender_role === 'human' && c && (c.hand_back || c.explain)) card.in_revision = { by: c.hand_back ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
       change.cards.add(card.object_id)
-      if (card.agent_device_id) change.sessions.add(card.agent_device_id)
+      if (card.session_id) change.sessions.add(card.session_id)
     }
   } else if (p.scope === 'session') change.sessions.add(p.scope_id)
   return { applied: true }
@@ -236,7 +255,7 @@ function newCard(object_id, agent_device_id, rec) {
     object_id, agent_device_id, object_state: 'open', urgency: 'normal', card_type: 'decision', title: '', body: null, options: [], sections: null, html: null,
     allows_multiple: false, recommended: null, urgency_reason: null, attachments: [], change_note: null, close_summary: null, withdraw_reason: null,
     merged_into_object_id: null, merged_from_object_ids: null, object_version: 0, version_hash: null, envelope_number: rec.envelope_number,
-    first_envelope_number: rec.envelope_number, created_at: rec.sent_at, updated_at: rec.sent_at, versions: [], answer: null, answers: [], closed_how: null,
+    first_envelope_number: rec.envelope_number, created_at: rec.sent_at, session_id: rec.session_id ?? null, updated_at: rec.sent_at, versions: [], answer: null, answers: [], closed_how: null,
     in_revision: null, timeline_key: timelineKey('chat', `card/${object_id}`), content_state: 'ok',
   }
 }
@@ -246,7 +265,8 @@ function applyObjectVersion(model, rec, change) {
   const object_id = rec.object?.object_id
   if (!object_id) return refuse(model, change, rec, 'bad-object', 'object version without object id')
   const c = rec.content
-  const type = c?.object_type ?? (model.memos.has(object_id) ? 'memo' : model.published.has(object_id) ? 'published' : 'card')
+  const type = c?.object_type ?? (model.memos.has(object_id) || rec.sender_role === 'human' ? 'memo' : model.published.has(object_id) ? 'published' : 'card')
+  if (!c && rec.content_state === 'undecryptable' && model.room.my_role === 'agent' && rec.sender_role === 'human') return { applied: false }   // room scope: not for agents
   if (type === 'memo') return applyMemo(model, rec, change)
   if (type === 'published') return applyPublished(model, rec, change)
   if (type !== 'card') return refuse(model, change, rec, 'unknown-object-type', `object_type ${type}`)
@@ -254,6 +274,8 @@ function applyObjectVersion(model, rec, change) {
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'cards come from agents')
   const fresh = !card
   if (card && card.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a card version from someone else than its creator')
+  if (rec.session_id && !everAgent(model, rec.session_id, rec.sender_device_id)) return refuse(model, change, rec, 'not-allowed', 'a card in a session this agent was never assigned to')
+  if (card && card.session_id !== (rec.session_id ?? null)) return refuse(model, change, rec, 'not-allowed', 'a card version in another session')
   if (fresh && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   if (c) {
     const expected = (card?.object_version ?? 0) + 1
@@ -264,8 +286,7 @@ function applyObjectVersion(model, rec, change) {
   if (fresh) {
     card = newCard(object_id, rec.sender_device_id, rec)
     model.cards.set(object_id, card)
-    const s = sessionOf(model, rec.sender_device_id)
-    s.card_ids.push(object_id)
+    if (rec.session_id) sessionOf(model, rec.session_id).card_ids.push(object_id)
   }
   const st = stateOf(rec)
   const wasOpen = card.object_state === 'open'
@@ -291,7 +312,7 @@ function applyObjectVersion(model, rec, change) {
     card.closed_how = card.merged_into_object_id ? 'merged' : card.withdraw_reason ? 'withdrawn' : card.answer?.answer_action === 'read' ? 'read' : card.answer?.answer_action === 'shred' ? 'shredded' : 'closed'
   } else if (card.object_state === 'answered') card.closed_how = 'answered'
   change.cards.add(object_id)
-  change.sessions.add(card.agent_device_id)
+  if (card.session_id) change.sessions.add(card.session_id)
   change.stack = true
   return { applied: true }
 }
@@ -343,10 +364,10 @@ function applyPublished(model, rec, change) {
   const c = rec.content ?? {}
   const expected = (old?.object_version ?? 0) + 1
   if (rec.content && c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `published version ${c.object_version}, expected ${expected}`)
-  model.published.set(object_id, { object_id, agent_device_id: rec.sender_device_id, attachments: c.attachments ?? old?.attachments ?? [], title: c.title ?? old?.title ?? '',
+  model.published.set(object_id, { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? old?.session_id ?? null, attachments: c.attachments ?? old?.attachments ?? [], title: c.title ?? old?.title ?? '',
     note: c.note ?? null, released_until: c.released_until ?? null, object_version: expected, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
   change.published.add(object_id)
-  if (rec.sender_role === 'agent') change.sessions.add(rec.sender_device_id)
+  if (rec.session_id) change.sessions.add(rec.session_id)
   return { applied: true }
 }
 
@@ -364,12 +385,14 @@ export function answerRefusal(model, rec) {
   const b = rec.bind
   if (!b || b.cardId !== card.object_id) return 'card-mismatch'
   if (card.object_state !== 'open') return 'card-closed'
-  if (b.cardHash !== card.version_hash) return 'answer-stale'
+  if ((b.versionHash ?? b.cardHash) !== card.version_hash) return 'answer-stale'
   const c = rec.content
   if (!c) return null   // pruned: the hub kept the header only; it counted when it was sent
   if (!['answer', 'read', 'shred'].includes(c.answer_action)) return 'bad-answer'
   const choices = c.choices ?? []
-  if ((choices[0] ?? '') !== b.choice) return 'bad-answer'
+  // R7: the bind carries the whole list of choices (v1: only the first).
+  const bound = b.choices ?? (b.choice ? [b.choice] : [])
+  if (JSON.stringify(bound) !== JSON.stringify(b.choices ? choices : choices.slice(0, 1))) return 'bad-answer'
   if (c.answer_action === 'answer' && !c.trusted) {
     const keys = new Set((card.options ?? []).map(o => o.key))
     if (card.card_type === 'info') return 'bad-answer'
@@ -399,7 +422,7 @@ function applyAnswer(model, rec, change) {
   card.in_revision = null
   card.updated_at = rec.sent_at
   change.cards.add(card.object_id)
-  change.sessions.add(card.agent_device_id)
+  card.session_id && change.sessions.add(card.session_id)
   change.stack = true
   return { applied: true }
 }
@@ -411,6 +434,7 @@ export function decideAgainRefusal(model, rec) {
   if (rec.recipient_device_id !== card.agent_device_id) return 'not-for-owner'
   if (!rec.bind || rec.bind.cardId !== card.object_id) return 'card-mismatch'
   if (!card.answer || card.answer.envelope_hash !== rec.bind.previousHash) return 'decision-mismatch'
+  if (rec.bind.versionHash && rec.bind.versionHash !== card.version_hash) return 'card-changed'
   if (card.object_state === 'closed' && card.closed_how !== 'read' && card.closed_how !== 'shredded') return 'card-closed'
   return null
 }
@@ -424,7 +448,7 @@ function applyDecideAgain(model, rec, change) {
   card.closed_how = null
   card.updated_at = rec.sent_at
   change.cards.add(card.object_id)
-  change.sessions.add(card.agent_device_id)
+  card.session_id && change.sessions.add(card.session_id)
   change.stack = true
   return { applied: true }
 }
@@ -438,10 +462,10 @@ function applyPermissionRequest(model, rec, change) {
   if (rec.bind && rec.bind.requestId !== object_id) return refuse(model, change, rec, 'bad-object', 'request id differs from object id')
   if (rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence)')
   const c = rec.content ?? {}
-  model.permissions.set(object_id, { object_id, agent_device_id: rec.sender_device_id, tool_name: c.tool_name ?? '', description: c.description ?? '', input_preview: c.input_preview ?? '',
+  model.permissions.set(object_id, { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? null, tool_name: c.tool_name ?? '', description: c.description ?? '', input_preview: c.input_preview ?? '',
     expires_at: rec.bind?.expiresAt ?? 0, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, sent_at: rec.sent_at, permission_state: 'pending', verdict: null })
   change.permissions.add(object_id)
-  change.sessions.add(rec.sender_device_id)
+  if (rec.session_id) change.sessions.add(rec.session_id)
   change.stack = true
   return { applied: true }
 }
@@ -461,7 +485,7 @@ function applyVerdict(model, rec, change) {
   p.verdict = { allow: rec.bind.allow, by_device_id: rec.sender_device_id, envelope_number: rec.envelope_number }
   p.permission_state = rec.bind.allow ? 'allowed' : 'denied'
   change.permissions.add(p.object_id)
-  change.sessions.add(p.agent_device_id)
+  if (p.session_id) change.sessions.add(p.session_id)
   change.stack = true
   return { applied: true }
 }
@@ -489,18 +513,19 @@ function applyStatus(model, rec, change) {
       if (m) {
         m.device_name = value?.device_name ?? ''; m.platform = value?.platform ?? null; m.folder = value?.folder ?? null; m.host = value?.host ?? null
         change.members = true
-        if (m.device_role === 'agent') touchSession(model, m.device_id, change)
+        if (m.device_role === 'agent') touchAgent(model, m.device_id, change)
       }
       change.registers.add(key)
     } else if (rec.sender_role === 'human' && isHumanKey(key)) {
       if (model.room.my_role === 'agent') continue   // agents ignore human keys
       setHumanRegister(model, key, value, rec, change)
     } else if (rec.sender_role === 'agent' && isAgentKey(key)) {
-      setAgentRegister(model, rec.sender_device_id, key, value, rec, change)
+      if (!rec.session_id || !everAgent(model, rec.session_id, rec.sender_device_id)) { refuse(model, change, rec, 'not-allowed', `${key} outside the agent's session`); continue }
+      setAgentRegister(model, rec.session_id, key, value, rec, change)
     } else if (rec.sender_role === 'agent' && isHumanKey(key) || rec.sender_role === 'human' && isAgentKey(key)) {
       refuse(model, change, rec, 'foreign-key', `${key} is not a ${rec.sender_role} key`)
     } else if (rec.sender_role === 'agent') {
-      setAgentRegister(model, rec.sender_device_id, key, value, rec, change)    // unknown agent keys are kept raw
+      if (rec.session_id && everAgent(model, rec.session_id, rec.sender_device_id)) setAgentRegister(model, rec.session_id, key, value, rec, change)    // unknown agent keys are kept raw
     } else if (model.room.my_role !== 'agent') {
       setHumanRegister(model, key, value, rec, change)                           // unknown human keys are kept raw
     }
@@ -538,8 +563,9 @@ export function setHumanRegister(model, key, value, rec, change) {
   change.registers.add(key)
 }
 
-function setAgentRegister(model, agent, key, value, rec, change) {
-  const s = sessionOf(model, agent)
+function setAgentRegister(model, session_id, key, value, rec, change) {
+  const s = sessionOf(model, session_id)
+  const agent = rec.sender_device_id
   const old = s.registers.get(key)
   if (old?.sender_sequence && rec.sender_sequence && rec.sender_sequence <= old.sender_sequence) return
   if (value === null || value === undefined) s.registers.delete(key)
@@ -550,7 +576,7 @@ function setAgentRegister(model, agent, key, value, rec, change) {
     const at = s.status_lines.findIndex(l => l.id === id)
     if (value === null || value === undefined) { if (at >= 0) s.status_lines.splice(at, 1) }
     else {
-      const line = { id, label: value.label ?? id, state: value.state ?? null, detail: value.detail ?? null, object_id: value.object_id ?? null, envelope_number: rec.envelope_number }
+      const line = { id, label: value.label ?? id, state: value.state ?? null, detail: value.detail ?? null, object_id: value.object_id ?? null, envelope_number: rec.envelope_number, updated_at: rec.sent_at }
       if (at >= 0) s.status_lines[at] = line; else s.status_lines.push(line)
     }
   } else if (key.startsWith('alert/')) {
@@ -562,7 +588,7 @@ function setAgentRegister(model, agent, key, value, rec, change) {
       pushAlert(model, change, { code: value?.code ?? 'agent-alert', message: value?.message ?? '', envelope_number: rec.envelope_number, sender_device_id: agent, source: 'agent' })
     }
   }
-  change.sessions.add(agent)
+  change.sessions.add(session_id)
   change.registers.add(key)
 }
 
@@ -577,8 +603,8 @@ export function project(model, change, now = Date.now()) {
   for (const s of model.sessions.values()) { s.open_card_ids = []; s.card_ids.sort((a, b) => (model.cards.get(a)?.created_at ?? 0) - (model.cards.get(b)?.created_at ?? 0)) }
   for (const c of model.cards.values()) {
     if (c.object_state !== 'open') continue
-    sessionOf(model, c.agent_device_id).open_card_ids.push(c.object_id)
-    if (!snoozed(c.object_id) && !archived(c.agent_device_id)) open.push(c)
+    if (c.session_id) sessionOf(model, c.session_id).open_card_ids.push(c.object_id)
+    if (!snoozed(c.object_id) && !archived(c.session_id)) open.push(c)
   }
   open.sort((a, b) => URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] || a.created_at - b.created_at || (a.agent_device_id < b.agent_device_id ? -1 : a.agent_device_id > b.agent_device_id ? 1 : 0))
   model.stack = open.map(c => c.object_id)
@@ -590,7 +616,7 @@ export function project(model, change, now = Date.now()) {
 /** Unread items: from the agent, in its session timeline and its cards' timelines, newer than read_up_to. Needs the unread index kept by the sync engine. */
 export function stackOf(model, { desk_id } = {}) {
   if (desk_id == null) return model.stack
-  return model.stack.filter(id => (model.sessions.get(model.cards.get(id)?.agent_device_id)?.settings?.desk ?? null) === desk_id)
+  return model.stack.filter(id => (model.sessions.get(model.cards.get(id)?.session_id)?.settings?.desk ?? null) === desk_id)
 }
 
 /** The items of a timeline window, sorted (pending echoes last). */

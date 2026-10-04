@@ -5,6 +5,24 @@ import { Hub, normaliseHubUrl } from './transport.mjs'
 import { Client, secretToJson, secretFromJson } from './client.mjs'
 import './agent.mjs'
 import { openEscrow } from './escrow.mjs'
+import * as G from '../../crypto/session-grants.mjs'
+
+/** As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6). */
+async function sessionsAsRecovery(hub, state, rec) {
+  const out = new Map()
+  let list = []
+  try { list = (await hub.sessions()).sessions } catch (e) { if (e.status === 404) return out; throw e }
+  for (const { session_id } of list) {
+    const r = await hub.sessionGrants(session_id, -1)
+    const sstate = await G.verifyGrants(r.signed_grants.map(unb64u), state)
+    const wraps = (await hub.sealedSessionKeys(session_id, 0)).sealed_session_keys
+    const w = wraps.find(x => x.session_key_epoch === sstate.epoch)
+    const secrets = new Map()
+    if (w) secrets.set(sstate.epoch, await G.unwrapSessionKey({ roomId: state.roomId, sessionState: sstate, device: rec, sealed: unb64u(w.key_sealed), epoch: sstate.epoch }))
+    out.set(session_id, { state: sstate, grants: r.signed_grants, secrets, since: null })
+  }
+  return out
+}
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -16,7 +34,7 @@ async function newDevice(storage) {
 
 async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null }) {
   const me = z.memberAt(state, device.id)
-  const client = new Client({ storage, hub_url: roomRecord.hub_url, room_id: roomRecord.room_id, device, state, secrets: new Map(secrets.map(s => [s.epoch, s])),
+  const client = new Client({ storage, hub_url: roomRecord.hub_url, room_id: roomRecord.room_id, device, state, secrets: new Map(secrets.filter(Boolean).map(s => [s.epoch, s])),
     my_role: me ? roleName(me.role) : roomRecord.my_role, roomRecord, fetch, client: clientName })
   await client._saveRoom()
   await client.loadPersisted()
@@ -83,7 +101,7 @@ export function joinRoom({ link, storage, client: client_name = null, device_nam
       }
       if (s.join_status === 'joined') {
         const entries = s.signed_entries.map(unb64u)
-        const done = await z.completeJoin({ join, device, log: entries, wrap: unb64u(s.key_sealed) })
+        const done = await z.completeJoin({ join, device, log: entries, wrap: s.key_sealed ? unb64u(s.key_sealed) : null })
         await storage.saveDevice(device, { room_id })
         const roomRecord = { hub_url: normaliseHubUrl(hub_url), room_id, my_device_id: hex(device.id), my_role: roleName(join.role), device_info: device_info ?? { device_name }, device_register_sent: false }
         const c = await makeClient({ storage, device, state: done.state, secrets: [done.secret], roomRecord, fetch, client: client_name })
@@ -102,7 +120,7 @@ export function joinRoom({ link, storage, client: client_name = null, device_nam
  * All devices lost, code at hand: sign in as the recovery key, enrol a new device, remove every human device, keep the agents,
  * new epoch, NEW recovery code (returned once).
  */
-export async function recoverRoom({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null }) {
+export async function recoverRoom({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, remove_agents = [] }) {
   hub_url = normaliseHubUrl(hub_url)
   const rec = await z.recoveryDevice(code)
   const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
@@ -114,7 +132,9 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   if (!wrap) throw new ZError('no-key', 'the hub holds no sealed key of the current epoch for the recovery key')
   const device = await newDevice(storage)
   const newCode = z.generateRecoveryCode()
-  const r = await z.recoverRoom({ state, code, newCode, newDevice: device, name: '', recoveryWrap: unb64u(wrap.key_sealed) })
+  const sessions = await sessionsAsRecovery(hub, state, rec)
+  const cuts = {}
+  const r = await z.recoverRoom({ state, code, newCode, newDevice: device, name: '', recoveryWrap: unb64u(wrap.key_sealed), removeAgents: remove_agents.map(unhex), cuts })
   await hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
   await storage.saveDevice(device, { room_id })
   // The recovery key held every older epoch through the back links: open them so history stays readable.
@@ -123,6 +143,11 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   const client = await makeClient({ storage, device, state: r.state, secrets, roomRecord, fetch, client: client_name })
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
+  // Every session gets a new key: the old human devices held them (R6). Agents that stay keep their sessions.
+  for (const [sid, k] of sessions) {
+    client.sessionKeys.set(sid, k)
+    await client._grantLocked(sid, { agent_device_ids: k.state.agentIds, rotate: true })
+  }
   await client._saveRoom()
   return { client, recovery_code: newCode }
 }
@@ -164,6 +189,7 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
   const wrap = keys.sealed_room_keys.find(k => k.key_epoch === state.epoch)
   if (!wrap) throw new ZError('no-key', 'the hub holds no sealed room key for the recovery key')
   const secret = await z.unwrapEpochKey(state, rec, unb64u(wrap.key_sealed), state.epoch)
+  const sessions = await sessionsAsRecovery(hub, state, rec)
   const device = await newDevice(storage)
   const added = await z.addMember(state, rec, { member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub } })
   const sealed = await z.wrapEpochKey(added.state, secret, device.id)
@@ -173,6 +199,11 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
   const client = await makeClient({ storage, device, state: added.state, secrets: [secret], roomRecord, fetch, client: client_name })
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
+  // The new device is a human member now: re-seal every session key for everyone who holds it (itself included).
+  for (const [sid, k] of sessions) {
+    client.sessionKeys.set(sid, k)
+    if (k.secrets.has(k.state.epoch)) await client._grantLocked(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })
+  }
   await client._saveRoom()
   client.model.room.has_passphrase = true
   return { client }

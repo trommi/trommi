@@ -6,6 +6,7 @@ import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
 import { sealEscrow, ESCROW_VERSION } from './escrow.mjs'
+import * as G from '../../crypto/session-grants.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
 const CHAIN_HASHES_KEPT = 256
@@ -69,6 +70,8 @@ export class Client {
     this.frontiers = new Map()          // sender -> Map(other sender -> highest sequence it has seen): causal order (R2)
     this.commandsHalted = null          // 'log-fork' halts every command until a human acts (R3)
     this.startedAt = Date.now()
+    this.sessionKeys = new Map()        // session_id -> { state (grant chain), secrets: Map(epoch -> secret), grants: [b64u], since: epoch change time } (R6)
+    this.leaseGeneration = null
     this.attachmentCache = new Map()
     this._echoItems = new Map()         // local_id -> pending TimelineItem (gets sender_sequence once sealed)
     this.sentContent = new Map()        // own envelope hash -> content (until it comes back), for own pruned copies
@@ -90,11 +93,33 @@ export class Client {
    * key scope + session id) for a session's cards, chat, canvas and agent registers, the room key for the rest.
    * Returns { secret, scope } where scope is spread into sealEnvelope.
    */
-  keyFor({ kind, object, timeline, recipient }) {
+  keyFor({ session_id = null }) {
+    if (session_id) {
+      const sk = this.sessionKeys.get(session_id)
+      const secret = sk?.secrets.get(sk.state.epoch)
+      if (!secret) throw new ZError('no-key', `no key for session ${session_id.slice(0, 8)}`)
+      return { secret, scope: { keyScope: z.KEY_SCOPE?.SESSION ?? 1, sessionId: unhex(session_id) } }
+    }
+    if (!this.is_human) throw new ZError('no-session', 'agents send under a session key: no session is assigned to this agent yet')
     return { secret: this.secrets.get(this.state.epoch), scope: {} }
   }
-  /** The opening side of keyFor: what openEnvelope / openVerifiedEnvelope get as `secrets` (a Map or a function of the epoch). */
-  get openKeys() { return this.secrets }
+  /** The opening side of keyFor: (epoch, header) -> secret, room or session scope. */
+  get openKeys() {
+    return this._openKeys ??= (epoch, h) => (h?.keyScope === 1 ? this.sessionKeys.get(hex(h.sessionId))?.secrets.get(epoch) : this.secrets.get(epoch))
+  }
+  /** Agents: the sessions assigned to this agent now (grants), the first one is the default for every send. */
+  get session_ids() { return [...this.sessionKeys.values()].filter(k => k.state.agentIds.includes(this.my_device_id)).map(k => k.state.sessionId) }
+  get session_id() { return this.session_ids[0] ?? null }
+  /** Agents: resolves with the first session assigned to this agent. */
+  whenSession() {
+    if (this.session_id) return Promise.resolve(this.session_id)
+    return new Promise(resolve => { const off = this.on('session', e => { off(); resolve(e.session_id) }) })
+  }
+  /** Humans: the session an agent is assigned to now (the first). */
+  sessionOfAgent(agent_device_id) {
+    for (const k of this.sessionKeys.values()) if (k.state.agentIds.includes(agent_device_id)) return k.state.sessionId
+    return null
+  }
   get is_human() { return this.model.room.my_role === 'human' }
 
   // ---- events --------------------------------------------------------------------------
@@ -102,6 +127,7 @@ export class Client {
   off(event, fn) { this.listeners.get(event)?.delete(fn) }
   emit(event, data) { for (const fn of this.listeners.get(event) ?? []) { try { fn(data) } catch (e) { console.error('[core] listener', e) } } }
   _emitChange(change) {
+    if (globalThis.process?.env?.CORE_DEBUG && change.alerts) for (const a of this.model.alerts.slice(-3)) if (!a._logged) { a._logged = true; console.error(`[core ${this.model.room.my_role} ${this.my_device_id.slice(0, 6)}] alert ${a.code}: ${a.message}`) }
     if (change.alerts) for (const a of this.model.alerts.slice(-5)) if (!a._emitted) { a._emitted = true; this.emit('alert', a) }
     if (!M.changeIsEmpty(change)) this.emit('change', change)
   }
@@ -124,6 +150,12 @@ export class Client {
     }
     this.ledgerSet = new Set((await st.get('ledger')) ?? [])
     const m = this.model
+    for (const [sid, rec] of Object.entries(this.roomRecord.sessions ?? {})) {
+      try {
+        const state = await G.verifyGrants(rec.grants.map(unb64u), this.state)
+        this.sessionKeys.set(sid, { state, grants: rec.grants, secrets: new Map(rec.secrets.map(x => [x.epoch, secretFromJson(x)])), since: rec.since })
+      } catch (e) { console.error('[core] stored grants of', sid, e.message) }
+    }
     m._device_registers = new Map((await st.get('devregs')) ?? [])
     M.applyMembers(m, membersOf(this.state), M.emptyChange())
     const online = (await st.get('devices')) ?? []
@@ -144,7 +176,7 @@ export class Client {
     this.outbox = outbox
     for (const o of outbox) this.byHash.set(o.hash, o.local_id)
     m.outbox = outbox.map(o => o.public)
-    for (const s of m.sessions.values()) { const mem = m.members.get(s.agent_device_id); if (mem) { s.device_name = mem.device_name; s.is_active = mem.is_active; s.agent_session_id = mem.agent_session_id } }
+    for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k))
     M.project(m, M.emptyChange())
   }
 
@@ -154,6 +186,7 @@ export class Client {
     r.pin = pinToJson(z.pinOf(this.state))
     r.secrets = [...this.secrets.values()].map(secretToJson)
     r.epoch_changed_at = this.epochChangedAt
+    r.sessions = Object.fromEntries([...this.sessionKeys].map(([sid, k]) => [sid, { grants: k.grants, secrets: [...k.secrets.values()].map(secretToJson), since: k.since ?? null }]))
     await this.storage.set('room', r)
   }
 
@@ -166,19 +199,91 @@ export class Client {
     this._setConnection('connecting')
     await this.hub.signIn()
     await this.serial(() => this._refreshMembers())
+    await this.serial(() => this._refreshSessions())
     await this._refreshDevices().catch(() => {})
     this._pumpOutbox()
-    if (!this.roomRecord.device_register_sent && this.roomRecord.device_info) {
-      await this.setRegisters({ [`device/${this.my_device_id}`]: this.roomRecord.device_info }, { own_device: true })
-      this.roomRecord.device_register_sent = true
-      await this._saveRoom()
-    }
+    await this._sendDeviceRegister()
     this._setConnection('catching_up')
     await this.catchUp()
     this._resolveRevisions().catch(e => this._localAlert('revisions', e))
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
     if (stream) this._openStream()
     else this._setConnection('live')
+  }
+
+  /** device/<id> right after joining; agents only once a session is assigned (they hold no room key). */
+  async _sendDeviceRegister() {
+    if (this.roomRecord.device_register_sent || !this.roomRecord.device_info) return
+    if (!this.is_human && !this.session_id) return
+    this.roomRecord.device_register_sent = true
+    await this._saveRoom()
+    await this.setRegisters({ [`device/${this.my_device_id}`]: this.roomRecord.device_info }, { own_device: true })
+  }
+
+  /**
+   * R6: fetch the grant chains of every session (new grants only), verify them against the member list, open this
+   * device's session keys (humans also walk the back links). Emits 'session' on an agent when a session is assigned to it.
+   */
+  async _refreshSessions() {
+    let list
+    try { list = (await this.hub.sessions()).sessions } catch (e) { if (e.status === 404) return; throw e }
+    const change = M.emptyChange()
+    const before = new Set(this.session_ids)
+    for (const { session_id } of list) {
+      const known = this.sessionKeys.get(session_id)
+      const r = await this.hub.sessionGrants(session_id, known ? known.state.grantNumber : -1)
+      if (!r.signed_grants.length && known) continue
+      let state = known?.state ?? null
+      const grants = [...(known?.grants ?? [])]
+      try {
+        for (const g of r.signed_grants) {
+          try { state = await G.applyGrant(state, unb64u(g), this.state) }
+          catch (e) { if (e.code !== 'log-behind') throw e; await this._refreshMembers(); state = await G.applyGrant(state, unb64u(g), this.state) }
+          grants.push(g)
+        }
+      } catch (e) { M.pushAlert(this.model, change, { code: e.code ?? 'bad-grant', message: `session ${session_id.slice(0, 8)}: ${e.message}` }); continue }
+      if (!state) continue
+      const k = known ?? { secrets: new Map(), since: null }
+      if (known && state.epoch !== known.state.epoch) k.since = Date.now()
+      k.state = state; k.grants = grants
+      this.sessionKeys.set(session_id, k)
+      const holds = this.is_human || state.agentIds.includes(this.my_device_id)
+      if (holds && !k.secrets.has(state.epoch)) {
+        const wraps = await this.hub.sealedSessionKeys(session_id, 0)
+        for (const w of wraps.sealed_session_keys) {
+          if (k.secrets.has(w.session_key_epoch)) continue
+          try {
+            k.secrets.set(w.session_key_epoch, await G.unwrapSessionKey({ roomId: this.state.roomId, sessionState: state, device: this.device, sealed: unb64u(w.key_sealed), epoch: w.session_key_epoch }))
+            if (this._missingKeys?.has(`${session_id}:${w.session_key_epoch}`)) this._needResync = true
+          }
+          catch (e) { M.pushAlert(this.model, change, { code: e.code ?? 'bad-key', message: `session key ${session_id.slice(0, 8)}/${w.session_key_epoch}: ${e.message}` }) }
+        }
+        await this._walkSessionBackLinks(session_id).catch(() => {})
+      }
+      M.applySessionGrant(this.model, state, change, everAgents(this.sessionKeys.get(session_id)))
+    }
+    await this._saveRoom()
+    M.project(this.model, change)
+    this._emitChange(change)
+    if (!this.is_human) for (const sid of this.session_ids) if (!before.has(sid)) {
+      const k = this.sessionKeys.get(sid)
+      this.emit('session', { session_id: sid, with_history: !!k.state.withHistory })
+      this._sendDeviceRegister().catch(e => this.emit('error', e))
+    }
+  }
+
+  async _walkSessionBackLinks(session_id) {
+    const k = this.sessionKeys.get(session_id)
+    let low = Math.min(...k.secrets.keys())
+    if (!(low > 1) || !k.secrets.get(low)?.hist) return
+    const r = await this.hub.sessionBackLinks(session_id)
+    const links = new Map(r.key_back_links.map(l => [l.session_key_epoch, unb64u(l.key_back_link)]))
+    while (low > 1 && links.has(low) && k.secrets.get(low)?.hist) {
+      const prev = await G.openSessionBackLink({ roomId: this.state.roomId, sessionState: k.state, secret: k.secrets.get(low), link: links.get(low) })
+      k.secrets.set(prev.epoch, prev)
+      if (this._missingKeys?.has(`${session_id}:${prev.epoch}`)) this._needResync = true
+      low = prev.epoch
+    }
   }
 
   /**
@@ -235,6 +340,8 @@ export class Client {
     } else if (event === 'member_entry') {
       await this.serial(() => this._refreshMembers())
       this._refreshDevices().catch(() => {})
+    } else if (event === 'session_grant') {
+      await this.serial(async () => { await this._refreshSessions(); if (this._needResync) await this._resync() })
     } else if (event === 'join_request') {
       if (data.invite_id) this._checkInvite(data.invite_id).catch(e => this._localAlert('invite', e))
     }
@@ -354,8 +461,14 @@ export class Client {
    * Process records { envelope_number, envelope(b64u) } in hub order. Verifies every header chain (pruned forms
    * included), decrypts what came in full, reduces into the model, persists the touched records in one write.
    */
-  processRecords(records, { live = false } = {}) {
+  processRecords(records, opts = {}) {
     return this.serial(async () => {
+      await this._processBatch(records, opts)
+      if (this._needResync) await this._resync()
+    })
+  }
+  async _processBatch(records, { live = false } = {}) {
+    {
       const change = M.emptyChange()
       const tl = []                      // timeline item records to persist
       const commands = []                // agents: commands in order
@@ -365,10 +478,18 @@ export class Client {
       let window = [], wAt = 0
       for (let i = 0; i < todo.length; i++) {
         const r = todo[i]
-        if (i >= wAt + window.length) { wAt = i; window = await Promise.all(todo.slice(i, i + WINDOW).map(x => this._precheck(x))) }
+        if (i >= wAt + window.length) {
+          wAt = i; window = await Promise.all(todo.slice(i, i + WINDOW).map(x => this._precheck(x)))
+          // A session key this device should hold but has not fetched yet (a grant just arrived): fetch, then open again.
+          if (window.some(p => p.needKeys)) {
+            await this._refreshSessions().catch(e => this._localAlert('sessions', e))
+            window = await Promise.all(window.map((p, j) => (p.needKeys ? this._precheck({ ...todo[i + j], retried: true }).then(q => (q.retriedKeys = true, q)) : p)))
+          }
+        }
         const pre = window[i - wAt]
         try {
           const rec = await this._commit(pre)
+          if (pre.missingKey) (this._missingKeys ??= new Set()).add(pre.missingKey)
           if (rec && rec.object && (rec.kind === codec.KIND.object_version || rec.kind === codec.KIND.permission_request)) {
             rec.object_id_ok = (await objectIdOf(rec.sender_device_id, rec.sender_sequence)) === rec.object.object_id
           }
@@ -379,6 +500,7 @@ export class Client {
             if (cmd) commands.push({ ...cmd, applied: result.applied, refused: cmd.refused ?? (rec.is_head && !result.applied ? result.refused : null) })
           }
         } catch (e) {
+          if (globalThis.process?.env?.CORE_DEBUG) console.error('[rec]', e.stack.split('\n').slice(0, 5).join(' | '))
           M.pushAlert(this.model, change, { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
         }
         this.model.room.last_envelope_number = r.envelope_number
@@ -391,7 +513,48 @@ export class Client {
       this._markDirty(change, tl)
       this._emitChange(change)
       if (commands.length) await this._deliverCommands(commands)
-    })
+    }
+  }
+
+  /**
+   * Keys arrived for epochs this device already saw envelopes of without being able to open them (a grant with
+   * history, a re-seal that came after a join): replay the room from the start, verifying everything again. The
+   * own chain for sealing is kept aside; commands already delivered stay delivered.
+   */
+  async _resync() {
+    this._needResync = false
+    const me = b64u(this.device.id)
+    const own = this.chains.get(me)
+    const keep = this.model
+    const m = M.emptyModel()
+    Object.assign(m.room, keep.room, { last_envelope_number: 0 })
+    m.members = keep.members; m.invites = keep.invites; m.outbox = keep.outbox; m._device_registers = keep._device_registers
+    for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k))
+    this.model = m
+    this.chains = new Map()
+    this.frontiers = new Map()
+    this._missingKeys = new Set()
+    this._resyncing = true
+    try {
+      for (;;) {
+        const r = await this.hub.envelopes({ after_envelope_number: this.model.room.last_envelope_number, limit: PAGE })
+        if (!r.envelopes.length) break
+        await this._processBatch(r.envelopes)
+        if (this.model.room.last_envelope_number >= r.last_envelope_number) break
+      }
+    } finally {
+      this._resyncing = false
+      if (own) this.chains.set(me, own)
+      this._dirty.chains.add(me)
+    }
+    M.project(this.model, M.emptyChange())
+    const ch = M.emptyChange()
+    for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines']) for (const id of this.model[k].keys()) ch[k].add(id)
+    ch.members = ch.stack = ch.room = true
+    this._markDirty(ch, [])
+    await this.flush()
+    this.stats.resyncs = (this.stats.resyncs ?? 0) + 1
+    this._emitChange(ch)
   }
 
   /**
@@ -404,14 +567,17 @@ export class Client {
     try {
       const peek = pre.peek = z.peekEnvelope(bytes)
       const h = peek.header
-      if (hex(h.sender) === this.my_device_id) return pre          // own envelopes: checked against our own chain in phase 2
+      if (hex(h.sender) === this.my_device_id && !this._resyncing) return pre          // own envelopes: checked against our own chain in phase 2
       const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false }
       if (!peek.pruned) {
         try {
           pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.openKeys, self: this.device.id })
           pre.v = pre.opened
+          if (pre.opened.quarantined) { pre.opened = null; pre.content_state = 'undecryptable' }   // signature and chain good, body broken (R4)
         } catch (e) {
+          if (e.code === 'no-key' && e.keyScope === 1 && !pre.retriedKeys) pre.needKeys = true
           if (!['no-key', 'decrypt-failed', 'kind-mismatch', 'bad-format', 'bad-version'].includes(e.code)) throw e
+          if (e.code === 'no-key') pre.missingKey = e.keyScope === 1 ? `${hex(e.sessionId)}:${e.epoch}` : `room:${e.epoch}`
           pre.v = await z.verifyEnvelope(bytes, opts)            // signature good, body unreadable: quarantine the body (R4)
           pre.content_state = 'undecryptable'
         }
@@ -419,7 +585,7 @@ export class Client {
         pre.v = await z.verifyEnvelope(bytes, opts)
         pre.content_state = h.isHead ? 'pruned' : 'header'
       }
-    } catch (e) { pre.error = e }
+    } catch (e) { pre.error = e; if (globalThis.process?.env?.CORE_DEBUG) console.error("[pre]", e.stack.split("\n").slice(0, 4).join(" | ")) }
     return pre
   }
 
@@ -434,14 +600,14 @@ export class Client {
     const h = peek.header
     const sender = hex(h.sender)
     const key = b64u(h.sender)
-    if (sender === this.my_device_id) {
+    if (sender === this.my_device_id && !this._resyncing) {
       const own = this.chains.get(key)
       const known = own?.hashes.get(h.seq)
       if (!known) throw new ZError('equivocation', `an envelope in this device's name that it did not send (#${h.seq})`)
       const localId = this.byHash.get(hex(known))
       let v, opened = null, content_state = 'ok'
       if (!peek.pruned) {
-        opened = await z.openVerifiedEnvelope(pre.bytes, { state: this.state, secrets: this.secrets, envelopeHash: known, self: this.device.id })
+        opened = await z.openVerifiedEnvelope(pre.bytes, { state: this.state, secrets: this.openKeys, envelopeHash: known, self: this.device.id })
         v = { header: opened.header, hash: opened.hash, member: opened.member }
       } else {
         const got = await z.hash(z.LABEL.envelope, peek.headerBytes, peek.nonce, peek.ciphertextHash)
@@ -510,6 +676,7 @@ export class Client {
       recipient_device_id: h.recipient.every(b => b === 0) ? null : hex(h.recipient), sent_at: h.time, kind: h.kind, is_head: h.isHead,
       object: h.card ? { object_id: hex(h.card.id), object_state: h.card.state, urgency: h.card.urgency, answered_at: h.card.answeredAt } : null,
       timeline_kind: h.timelineKind ? (codec.TIMELINE_KIND_NAME[h.timelineKind] ?? String(h.timelineKind)) : null, timeline_id: h.timelineId,
+      session_id: h.keyScope === 1 && h.sessionId ? hex(h.sessionId) : null,
       attachment_ids: h.blobs.map(hex), content, content_state, bind, local_id: local_id ?? null,
       causal: { sender_device_id: sender, sender_sequence: h.seq, sent_at: h.time, frontier: h.kind === codec.KIND.status || h.kind === codec.KIND.object_version ? Object.fromEntries(frontier) : null },
       sender_sequence: h.seq,
@@ -576,7 +743,7 @@ export class Client {
    * Seal one envelope and queue it. opts: { kind, content, bind, recipient, object: { object_id, object_state, urgency, answered_at },
    * timeline: { timeline_kind, timeline_id }, push, echo: () => undo }. Returns { local_id, envelope_hash }.
    */
-  async _send({ kind, content, bind = null, recipient = null, object = null, timeline = null, push = false, echo = null, after = null }) {
+  async _send({ kind, content, bind = null, recipient = null, object = null, timeline = null, push = false, echo = null, after = null, session_id = null }) {
     const local_id = `local-${randomHex(8)}`
     if (echo) {
       const undo = echo(local_id)
@@ -584,11 +751,11 @@ export class Client {
     }
     return this.serial(async () => {
       try {
-        if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind }
+        if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind; session_id = built.session_id ?? session_id }
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         const blobs = codec.attachmentIdsOf(content).map(unhex)
-        const { secret, scope } = this.keyFor({ kind, object, timeline, recipient })
+        const { secret, scope } = this.keyFor({ kind, object, timeline, recipient, session_id })
         if (!secret) throw new ZError('no-key', 'no key for the current epoch')
         const sealed = await z.sealEnvelope({
           device: this.device, state: this.state, secret, chains: this.chains, ...scope, kind, payload, bind: bind ?? new Uint8Array(0),
@@ -603,7 +770,8 @@ export class Client {
         if (echoItem) echoItem.sender_sequence = sealed.seq
         const pub = { local_id, envelope_kind: codec.KIND_NAME[kind], object_id: object?.object_id ?? null, timeline_key: timeline ? M.timelineKey(timeline.timeline_kind, timeline.timeline_id) : null,
           recipient_device_id: recipient, content, outbox_state: 'sending', error: null }
-        const item = { local_id, bytes: b64u(sealed.bytes), seq: sealed.seq, hash: hashHex, public: pub }
+        const item = { local_id, bytes: b64u(sealed.bytes), seq: sealed.seq, hash: hashHex, prev: b64u(sealed.header.prev), public: pub,
+          args: { kind, content, bind: bind?.length ? b64u(bind) : null, recipient, object, timeline, push, session_id } }
         this.outbox.push(item)
         this.byHash.set(hashHex, local_id)
         this.model.outbox.push(pub)
@@ -635,6 +803,7 @@ export class Client {
         } catch (e) {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[core] post', e.code, e.message)
           if (e.code === 'replay') { this._acked(item); continue }
+          if (e.code === 'lease-lost') { this.emit('error', e); await this.stop().catch(() => {}); break }
           if (e.code === 'gap') {
             for (const old of this.recentSent) { try { await this.hub.postEnvelope(old.bytes) } catch {} }
             await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)
@@ -645,14 +814,27 @@ export class Client {
             if (!this._started && e.status === 0) break
             continue
           }
-          // Refused for good: drop it from the queue, roll the echo back, say so.
-          this.outbox.shift()
-          item.public.outbox_state = 'failed'; item.public.error = e.code
-          this._rollbackEcho(item.local_id)
-          const ch = M.emptyChange(); ch.outbox = true
-          M.pushAlert(this.model, ch, { code: e.code ?? 'refused', message: `the hub refused an envelope: ${e.message}` })
-          await this.storage.set('outbox', this.outbox)
-          this._emitChange(ch)
+          // Refused for good: the hub never stored it, so its number is free again. Drop it, wind the own chain back to
+          // its predecessor, and seal everything queued behind it again (they named it as predecessor).
+          await this.serial(async () => {
+            const at = this.outbox.indexOf(item)
+            const later = at >= 0 ? this.outbox.splice(at) : []
+            later.shift()
+            item.public.outbox_state = 'failed'; item.public.error = e.code
+            this._rollbackEcho(item.local_id)
+            const me = b64u(this.device.id)
+            const c = this.chains.get(me)
+            if (c) { for (let q = item.seq; q <= c.seq; q++) c.hashes.delete(q); c.seq = item.seq - 1; c.hash = unb64u(item.prev); if (c.seq > 0) c.hashes.set(c.seq, c.hash) }
+            for (const l of later) { this.byHash.delete(l.hash); this.sentContent.delete(l.hash); const i = this.model.outbox.indexOf(l.public); if (i >= 0) this.model.outbox.splice(i, 1) }
+            this.byHash.delete(item.hash); this.sentContent.delete(item.hash)
+            await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(c)]])
+            const ch = M.emptyChange(); ch.outbox = true
+            M.pushAlert(this.model, ch, { code: e.code ?? 'refused', message: `the hub refused an envelope: ${e.message}` })
+            this._emitChange(ch)
+            this._resend = later.map(l => l.args)
+          })
+          for (const a of this._resend ?? []) this._send({ ...a, bind: a.bind ? unb64u(a.bind) : null }).catch(err => this._localAlert('resend', err))
+          this._resend = null
         }
       }
       this._pump = null
@@ -798,7 +980,7 @@ export class Client {
         if (!r) continue                                   // not verified by sync yet: the stream brings it
         if (r.c) { byN.set(envelope_number, r); continue }
         try {
-          const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.secrets, envelopeHash: unhex(r.h), self: this.device.id })
+          const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.openKeys, envelopeHash: unhex(r.h), self: this.device.id })
           const d = codec.decodePayload(o.payload)
           r = { ...r, c: d.content, cs: d.content_state }
           this.stats.decrypted++
@@ -842,17 +1024,18 @@ export class Client {
 
   /** A message: from a human to one agent (session or card conversation), from an agent to everyone. */
   async sendMessage({ agent_device_id = null, object_id = null, ...fields }) {
-    const content = { content_type: 'message', ...fields }
-    let recipient = null, timeline
+    let recipient = null, timeline, sid
+    const card = object_id ? this._card(object_id) : null
     if (this.is_human) {
-      const card = object_id ? this._card(object_id) : null
-      recipient = card?.agent_device_id ?? agent_device_id
-      if (!recipient) throw new ZError('bad-argument', 'a message from a human names an agent or a card')
-      timeline = { timeline_kind: 'chat', timeline_id: object_id ? `card/${object_id}` : `session/${recipient}` }
+      sid = card?.session_id ?? fields_session(fields) ?? (agent_device_id ? this.sessionOfAgent(agent_device_id) : null)
+      recipient = card?.agent_device_id ?? agent_device_id ?? this.sessionKeys.get(sid)?.state.agentIds[0] ?? null
+      if (!recipient || !sid) throw new ZError('bad-argument', 'a message from a human names a session (with an agent) or a card')
     } else {
-      timeline = { timeline_kind: 'chat', timeline_id: object_id ? `card/${object_id}` : `session/${this.my_device_id}` }
+      sid = card?.session_id ?? fields_session(fields) ?? this.session_id
     }
-    return this._send({ kind: codec.KIND.timeline_item, content, recipient, timeline, echo: this._echoTimelineItem(timeline, content, recipient, object_id) })
+    delete fields.session_id
+    timeline = { timeline_kind: 'chat', timeline_id: object_id ? `card/${object_id}` : `session/${sid}` }
+    return this._send({ kind: codec.KIND.timeline_item, content: { content_type: 'message', ...fields }, recipient, timeline, session_id: sid, echo: this._echoTimelineItem(timeline, { content_type: 'message', ...fields }, recipient, object_id) })
   }
 
   async answer({ object_id, choices = [], note, option_notes, attachments, marks, trusted, answer_action = 'answer' }) {
@@ -860,10 +1043,10 @@ export class Client {
     const card = this._card(object_id)
     if (card.object_state !== 'open') throw new ZError('card-closed', 'the card is not open')
     const content = { answer_action, choices, note, option_notes, attachments, marks, trusted }
-    const bind = z.encodeAnswerBind({ cardId: unhex(object_id), cardHash: unhex(card.version_hash), choice: choices[0] ?? '' })
+    const bind = z.encodeAnswerBind({ objectId: unhex(object_id), versionHash: unhex(card.version_hash), choices, cardId: unhex(object_id), cardHash: unhex(card.version_hash), choice: choices[0] ?? '' })
     const state = answer_action === 'answer' ? 'answered' : 'closed'
     const answered_at = Date.now()
-    return this._send({ kind: codec.KIND.answer, content, bind, recipient: card.agent_device_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
+    return this._send({ kind: codec.KIND.answer, content, bind, recipient: card.agent_device_id, session_id: card.session_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
       echo: this._echoAnswer(object_id, { answer_action, choices, note: note ?? null, option_notes: option_notes ?? {}, attachments: attachments ?? [], marks: marks ?? [], trusted: !!trusted,
         bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: null, envelope_hash: null, by_device_id: this.my_device_id, answered_at, taken_back_at: null }, state) })
   }
@@ -879,8 +1062,8 @@ export class Client {
     this._needHuman()
     const card = this._card(object_id)
     if (!card.answer?.envelope_hash) throw new ZError('decision-mismatch', 'no answer in force to take back')
-    const bind = z.encodeRedecideBind({ cardId: unhex(object_id), previousHash: unhex(card.answer.envelope_hash), choice: card.answer.choices[0] ?? '' })
-    return this._send({ kind: codec.KIND.decide_again, content: {}, bind, recipient: card.agent_device_id, object: { object_id, object_state: 'open', urgency: card.urgency } })
+    const bind = z.encodeRedecideBind({ objectId: unhex(object_id), previousHash: unhex(card.answer.envelope_hash), versionHash: unhex(card.version_hash), cardId: unhex(object_id), choice: card.answer.choices[0] ?? '' })
+    return this._send({ kind: codec.KIND.decide_again, content: {}, bind, recipient: card.agent_device_id, session_id: card.session_id, object: { object_id, object_state: 'open', urgency: card.urgency } })
   }
 
   async verdict({ object_id, allow }) {
@@ -888,16 +1071,16 @@ export class Client {
     const p = this.model.permissions.get(object_id)
     if (!p) throw new ZError('not-found', 'no such permission request')
     const bind = z.encodeVerdictBind({ requestId: unhex(object_id), requestHash: unhex(p.version_hash), expiresAt: p.expires_at, allow: !!allow })
-    return this._send({ kind: codec.KIND.verdict, content: {}, bind, recipient: p.agent_device_id, object: { object_id, object_state: 'answered', urgency: 'critical', answered_at: Date.now() } })
+    return this._send({ kind: codec.KIND.verdict, content: {}, bind, recipient: p.agent_device_id, session_id: p.session_id, object: { object_id, object_state: 'answered', urgency: 'critical', answered_at: Date.now() } })
   }
 
   /** Registers: human keys from human devices, agent keys from agents, `device/<own id>` from anyone. */
-  async setRegisters(values, { own_device = false } = {}) {
+  async setRegisters(values, { own_device = false, session_id = null } = {}) {
     for (const k of Object.keys(values)) {
       if (k.startsWith('device/')) { if (k !== `device/${this.my_device_id}`) throw new ZError('forbidden', 'a device writes only its own device register'); continue }
       if (this.is_human ? !isHumanRegisterKey(k) && isAgentRegisterKey(k) : isHumanRegisterKey(k)) throw new ZError('forbidden', `${k} is not a ${this.model.room.my_role} key`)
     }
-    return this._send({ kind: codec.KIND.status, content: { values }, echo: this.is_human ? this._echoRegisters(values) : null })
+    return this._send({ kind: codec.KIND.status, content: { values }, session_id: this.is_human ? session_id : (session_id ?? this.session_id), echo: this.is_human ? this._echoRegisters(values) : null })
   }
   setDraft(object_id, draft) { return this.setRegisters({ [`draft/${object_id}`]: draft ?? null }) }
   snooze(object_id, until) { return this.setRegisters({ [`snooze/${object_id}`]: until == null ? null : { until } }) }
@@ -989,7 +1172,9 @@ export class Client {
   async sendStrokes({ timeline_id, content_type = 'strokes', recipient_device_id = null, ...fields }) {
     const content = { content_type, ...fields }
     const timeline = { timeline_kind: content_type === 'selection_sent' && recipient_device_id ? 'chat' : 'canvas', timeline_id }
-    return this._send({ kind: codec.KIND.timeline_item, content, recipient: recipient_device_id, timeline, echo: this._echoTimelineItem(timeline, content, recipient_device_id, null) })
+    const p = M.parseTimelineKey(`x:${timeline_id}`)
+    const sid = p.scope === 'session' ? p.scope_id : p.scope === 'card' ? this.model.cards.get(p.scope_id)?.session_id ?? null : (this.is_human ? null : this.session_id)
+    return this._send({ kind: codec.KIND.timeline_item, content, recipient: recipient_device_id, timeline, session_id: sid, echo: this._echoTimelineItem(timeline, content, recipient_device_id, null) })
   }
   /** Canvas tail after a snapshot: every item after an envelope number, oldest first (loops over pages). Returns { loaded, items, has_more: false }. */
   async loadTimelineAfter(timeline_key, after_envelope_number) {
@@ -1032,13 +1217,13 @@ export class Client {
 
   // ---- membership: invites, removal ---------------------------------------------------------
 
-  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null } = {}) {
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false } = {}) {
     this._needHuman()
     const role = device_role === 'agent' ? ROLE.AGENT : ROLE.HUMAN
     const { link, offer, invite } = await z.createInvite({ state: this.state, inviter: this.device, hub: this.hub.hub_url, role, app: app_url, ...(ttl_ms ? { ttlMs: ttl_ms } : {}) })
     const r = await this.hub.postInvite(b64u(offer))
     const invite_id = r.invite_id
-    const pub = { invite_id, device_role, link, label, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
+    const pub = { invite_id, device_role, link, label, session_id, with_history, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
     invite.public = pub
     this.invitesPrivate.set(invite_id, invite)
     this.model.invites.set(invite_id, pub)
@@ -1082,6 +1267,7 @@ export class Client {
         catch (e) { if (e.code === 'invite-expired') { this._setInvite(invite_id, { invite_state: 'expired', error: e.code }); return } continue }
         await this.hub.postReveal(invite_id, b64u(accepted.reveal))
         inv.code = accepted.code
+        if (accepted.requestHash) inv.requestHash = accepted.requestHash
         const choices = [accepted.code]
         while (choices.length < 4) { const c = String(globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'); if (!choices.includes(c)) choices.push(c) }
         for (let i = choices.length - 1; i > 0; i--) { const j = globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1); [choices[i], choices[j]] = [choices[j], choices[i]] }
@@ -1111,17 +1297,26 @@ export class Client {
       const inv = this.invitesPrivate.get(invite_id)
       try {
         const secret = this.secrets.get(this.state.epoch)
-        const added = await z.finalizeInvite({ invite: inv, state: this.state, inviter: this.device, secret, ...opts })
+        const added = await z.finalizeInvite({ invite: inv, state: this.state, inviter: this.device, secret, ...(inv.requestHash ? { requestHash: inv.requestHash } : {}), ...opts })
         const newId = inv.public.newcomer.device_id
-        await this.hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: [{ device_id: newId, key_sealed: b64u(added.wrap) }] })
+        await this.hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: added.wrap ? [{ device_id: newId, key_sealed: b64u(added.wrap) }] : [] })
         clearInterval(inv._timer); inv._timer = null
-        this._setInvite(invite_id, { invite_state: 'joined' })
         await this._refreshMembers()
-        // R8: the label the human chose when inviting an agent wins over what the agent calls itself.
-        if (inv.role === ROLE.AGENT && inv.public.label) {
-          const cur = this.model.human.session_settings.get(newId) ?? {}
-          this.setRegisters({ [`session/${newId}`]: { ...cur, name: inv.public.label } }).catch(e => this._localAlert('invite', e))
+        if (inv.role === ROLE.AGENT) {
+          // R6: an agent gets a session: the one named in the invite (handover, with or without history) or a new one.
+          const sid = inv.public.session_id
+            ? (await this._assignSessionLocked({ session_id: inv.public.session_id, agent_device_ids: [newId], with_history: !!inv.public.with_history }), inv.public.session_id)
+            : await this._createSessionLocked({ agent_device_ids: [newId] })
+          inv.public.session_id = sid
+          // R8: the label the human chose when inviting wins over what the agent calls itself.
+          if (inv.public.label) {
+            const cur = this.model.human.session_settings.get(sid) ?? {}
+            this.setRegisters({ [`session/${sid}`]: { ...cur, name: inv.public.label } }).catch(e => this._localAlert('invite', e))
+          }
+        } else {
+          await this._resealSessionsLocked()   // a new human device gets every session key
         }
+        this._setInvite(invite_id, { invite_state: 'joined' })
       } catch (e) {
         this._setInvite(invite_id, { invite_state: 'failed', error: e.code ?? 'failed' })
         throw e
@@ -1129,18 +1324,82 @@ export class Client {
     })
   }
 
-  /** Remove devices: one entry, one new epoch, sealed for everyone who stays (agents included) and the recovery key. */
+  /**
+   * Remove devices: one member entry with the cut (R3: the last envelope of each removed device this device has seen),
+   * a new room key for the humans who stay, and a new session key for every session (R6) without the removed ones.
+   */
   removeDevices(device_ids) {
     this._needHuman()
     return this.serial(async () => {
       await this._refreshMembers()
+      await this._refreshSessions()
       const previous = this.secrets.get(this.state.epoch)
-      const r = await z.removeMembers(this.state, this.device, { ids: device_ids.map(unhex), previous })
+      const cuts = {}
+      for (const id of device_ids) { const c = this.chains.get(b64u(unhex(id))); if (c) cuts[id] = { seq: c.seq, hash: c.hash } }
+      const r = await z.removeMembers(this.state, this.device, { ids: device_ids.map(unhex), cuts, previous })
       await this.hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
       this.secrets.set(r.secret.epoch, r.secret)
       await this._refreshMembers()
+      const gone = new Set(device_ids)
+      for (const [sid, k] of this.sessionKeys) await this._grantLocked(sid, { agent_device_ids: k.state.agentIds.filter(a => !gone.has(a)), rotate: true })
       return { key_epoch: r.secret.epoch }
     })
+  }
+
+  // ---- sessions (R6): created, assigned and re-keyed by human devices ----------------------------
+
+  /** A new session for an agent (or none yet). Returns its session_id. */
+  createSession({ agent_device_ids = [], agent_device_id = null } = {}) {
+    this._needHuman()
+    return this.serial(() => this._createSessionLocked({ agent_device_ids: agent_device_id ? [agent_device_id] : agent_device_ids }))
+  }
+  async _createSessionLocked({ agent_device_ids }) {
+    const r = await G.createSessionGrant({ state: this.state, signer: this.device, agentIds: agent_device_ids })
+    await this._postGrant(r)
+    return r.sessionState.sessionId
+  }
+  /**
+   * Assign agents to a session or hand it over. with_history: the agents may read the session's earlier history (the
+   * current key is re-sealed with its history key); otherwise a new session key epoch starts first ("Darf er den
+   * bisherigen Verlauf lesen?" — no).
+   */
+  assignSession({ session_id, agent_device_ids = null, agent_device_id = null, with_history = false }) {
+    this._needHuman()
+    return this.serial(() => this._assignSessionLocked({ session_id, agent_device_ids: agent_device_ids ?? (agent_device_id ? [agent_device_id] : []), with_history }))
+  }
+  async _assignSessionLocked({ session_id, agent_device_ids, with_history }) {
+    await this._refreshSessions()
+    return this._grantLocked(session_id, { agent_device_ids, with_history, rotate: !with_history })
+  }
+  async _grantLocked(session_id, { agent_device_ids, with_history = false, rotate = false }) {
+    const k = this.sessionKeys.get(session_id)
+    if (!k) throw new ZError('not-found', `no session ${session_id}`)
+    const current = k.secrets.get(k.state.epoch)
+    const active = agent_device_ids.filter(a => z.memberAt(this.state, unhex(a))?.role === ROLE.AGENT)
+    const r = await G.createSessionGrant({ state: this.state, signer: this.device, sessionState: k.state, current, agentIds: active, withHistory: with_history, rotate: rotate || !current })
+    await this._postGrant(r, current)
+    return r.sessionState
+  }
+  /** Re-seal every session's current key for everyone who holds it now (a new human device). */
+  async _resealSessionsLocked() {
+    await this._refreshSessions()
+    for (const [sid, k] of this.sessionKeys) await this._grantLocked(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })
+  }
+  async _postGrant(r, current = null) {
+    const sid = r.sessionState.sessionId
+    await this.hub.postSessionGrant(sid, { signed_grant: b64u(r.grant), sealed_session_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
+    const k = this.sessionKeys.get(sid) ?? { secrets: new Map(), grants: [], since: null }
+    if (k.state && k.state.epoch !== r.sessionState.epoch) k.since = Date.now()
+    k.state = r.sessionState
+    k.grants = [...k.grants, b64u(r.grant)]
+    k.secrets.set(r.secret.epoch, r.secret)
+    if (current) k.secrets.set(current.epoch, current)
+    this.sessionKeys.set(sid, k)
+    const ch = M.emptyChange()
+    M.applySessionGrant(this.model, k.state, ch, everAgents(k))
+    M.project(this.model, ch)
+    await this._saveRoom()
+    this._emitChange(ch)
   }
 
   // ---- password escrow (optional; escrow.mjs) ----------------------------------------------------
@@ -1173,6 +1432,17 @@ export class Client {
 
 const MEMO_META = new Set(['object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
 function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
+
+const fields_session = f => f.session_id ?? null
+/** Every agent a session was ever assigned to (its history stays theirs to have written). */
+function everAgents(k) {
+  if (!k?.grants) return []
+  if (k._ever && k._everN === k.grants.length) return k._ever
+  const set = new Set()
+  for (const g of k.grants) for (const id of G.decodeGrant(unb64u(g)).agentIds) set.add(hex(id))
+  k._ever = [...set]; k._everN = k.grants.length
+  return k._ever
+}
 
 function itemFromStored(r) {
   return { envelope_number: r.n, local_id: null, pending: false, envelope_hash: r.h, sender_device_id: r.s, sender_sequence: r.q ?? null, recipient_device_id: r.r, sent_at: r.t,

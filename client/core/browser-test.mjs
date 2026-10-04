@@ -23,7 +23,7 @@ async function freePort(skip = new Set()) {
     const ok = await new Promise(res => { const s = net.createServer().once('error', () => res(false)).listen(p, '127.0.0.1', () => s.close(() => res(true))) })
     if (ok) return p
   }
-  throw new Error('no free port')
+  return 0   // range full (other streams' hubs): let the OS pick
 }
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-browser-'))
 const hubPort = await freePort()
@@ -35,9 +35,9 @@ const web = http.createServer((req, res) => {
   res.writeHead(200, { 'content-type': types[path.extname(p)] ?? 'application/octet-stream' })
   fs.createReadStream(p).pipe(res)
 })
-const webPort = await freePort(new Set([hubPort]))
+const webPort = await freePort(new Set([hub.port]))
 await new Promise(r => web.listen(webPort, '127.0.0.1', r))
-const ORIGIN = `http://127.0.0.1:${webPort}`
+const ORIGIN = `http://127.0.0.1:${web.address().port}`
 
 const browser = await launchChromium({ width: 800, height: 600 })
 let failed = 0
@@ -69,6 +69,7 @@ try {
   const j = joinRoom({ link: founded.link, storage: memoryStorage(), device_name: 'Node agent', poll_ms: 50 })
   const agent = await j.client
   await agent.start()
+  if (agent.whenSession) await agent.whenSession()
   const id = await agent.sendCard({ title: 'From Node', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
   await agent.settle()
   const commands = []
@@ -118,7 +119,7 @@ try {
     await client.start()
     const startMs = performance.now() - t1
     window.client = client
-    const key = 'chat:session/' + '${agent.my_device_id}'
+    const key = 'chat:session/' + '${agent.session_id ?? agent.my_device_id}'
     const t2 = performance.now()
     const page = await client.loadTimeline(key, { limit: 50 })
     const pageMs = performance.now() - t2
