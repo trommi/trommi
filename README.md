@@ -97,3 +97,20 @@ Several people (and agents) work on the app at once. Each area owns its files; t
 | **Phone layout** | `public/css/phone-desk.css`, `public/t/controllers/sheet_controller.js`, the `@media (max-width: …)` blocks of the area files in agreement with their owners |
 
 The model the views get is `board-state.mjs` (core model → board state) and `views/model.mjs`; an area that needs a field the core has but the board state lacks asks the integrator. Hub actions go through `hub-facade.mjs` (integrator).
+
+## Performance (measured 4 Oct 2026)
+
+Headless Chromium; "phone" = 390x844 with the CPU 4x slower. Scripts: `dev/perf.mjs` (mock rooms), `dev/e2e.mjs` (real hub), trommi-hub `dev/e2e/app-perf.mjs` (the crazy room on a real hub).
+
+| What | Desktop | Phone 4x |
+| --- | --- | --- |
+| Warm reload, app.trommi.com, to the Desk painted (service worker, cache-first) | 47–57 ms | 130–150 ms |
+| Cold load, app.trommi.com (≈80 files, no build step) | 260–550 ms | ≈400 ms |
+| Real room, warm reload from IndexedDB (e2e, 31 cards) | 16–63 ms | – |
+| Card sent by an agent → row on the Desk (prod, live stream) | 85–130 ms | – |
+| Answer → command at the agent (prod) | 170–250 ms | – |
+| Crazy room (113k envelopes): first load of a new device | 29 s (was 367 s) | 86 s |
+| Crazy room: Desk / huge session chat / switch session / card thread / answer / own send visible | 6 / 48 / 57 / 19 / 18 / 3 ms | 25 / 211 / 220 / 60 / – / 11 ms |
+| Mock crazy room (300 open cards, 50k messages): patch after a change | 4–7 ms | 20–30 ms |
+
+What made the difference: rows rendered only near the viewport (`desk-window.mjs`), patch-only updates keyed by id, no page patching while the core catches up (one whole render every 2.5 s and once when live), board state rebuilt only for what a change names, no `:has()` over the whole document, advice marks measured in one batch, the service worker serving every file from its cache and revalidating only `index.html`. Still over budget: opening and switching sessions on a 4x phone (≈200 ms), a new device's first load in a huge room (bound by the core's verify/decrypt of every envelope; the core's room snapshot is the way out).
