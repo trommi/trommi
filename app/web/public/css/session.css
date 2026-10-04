@@ -1,0 +1,114 @@
+/* A session's page on a wide window (861px and up): band, heading, conversation, one under the other.
+   The band at the top (app.css, --band: 64px, as high as the Desk box reaches) holds only what floats: the Desk
+   box, the menu's pill in its middle, the corner buttons. The heading (drawing, name, the quiet line, the crown
+   switch) has its own line under the band, on the conversation's column, as the Desk's and the Agents' headings
+   do (3 Oct: in the band it competed with the pill). The conversation begins under the heading, without a rule,
+   and fades out at its top edge. The filter stands beside the composer.
+   Linked last, so it outweighs the head rules in app.css and beside.css.
+   A phone: see the foot of this file. */
+
+@media (min-width: 861px) {
+  body:not([data-scope="all"]):not([data-page]) #session { position: relative; }
+  /* One session, its conversation: it begins below the band (app.css, --band), so no line of it can lie under the
+     pill or the heading, wherever it is scrolled to; its first line stands 16px under the band, on the line of the
+     sidebar's first row, and what scrolls away fades out over the band's last 12px instead of being cut. */
+  body[data-view="chat"]:not([data-pair]) #session .log-inner,
+  body[data-view="chat"]:not([data-pair]) #session .pane-list { padding-top: var(--s-4); }
+  body[data-view="chat"]:not([data-pair]) #session :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
+  /* The same fade wherever else something scrolls away under the band: the conversation beside the canvas, and
+     with sessions laid together the column of their questions. (Their conversations each begin under a name
+     with a rule, and the canvas under its strip of pictures: those are not at the band.) */
+  body[data-view="scribble"]:not([data-pair]) #session #chat :is(.log, .pane-list),
+  body[data-pair][data-view="chat"] #session .group-questions { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
+
+  /* ---- the heading's own line: under the band, never in it (the band holds only the Desk box, the pill and the
+     corner buttons, so the place one is in does not compete with the menu). It stands on the 80px line (band 64 +
+     16), on the conversation's column (app.css .column: 47.5rem, the gutter inside), and the conversation begins
+     under it. It is in the flow, not laid over: what the stream replaces in it keeps its height (one line each). */
+  #session .pane-title {
+    position: relative; z-index: 4; flex: none; grid-area: auto;
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; gap: 0;
+    box-sizing: border-box; width: 100%; max-width: 47.5rem; min-height: 0; margin: 0 auto; padding: var(--s-4) var(--gutter) var(--s-3); border: 0;
+    --head-w: 100%;
+  }
+
+  /* ---- the heading: drawing, name, the quiet line under the name (at the column's left edge). ---- */
+  #session .pane-who:empty { display: none; }
+  #session .pane-who {
+    grid-column: 1; grid-row: 1; flex: none; display: flex; align-items: flex-start; gap: var(--s-3);
+    max-width: var(--head-w); min-height: 44px; margin: 0; pointer-events: auto; z-index: 1;
+  }
+  #session .pane-who .agent-avatar { width: 44px; height: 44px; border-radius: 12px; }
+  #session .pane-who .agent-pair { flex: none; }
+  #session .pane-title h2 { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.02em; } /* the name of the place: a heading */
+  body[data-pair] #session .pane-title h2 { align-self: center; font-size: 1.08rem; }
+  /* (The crown sits on the drawing's corner, its tip on the heading's top line.) */
+  #session .pane-who .crown-toggle { left: 7px; top: -4px; }
+  /* The crown a main session's drawing wears (app.css .agent-avatar .crown-mark stands a quarter above the drawing):
+     here it sits on its corner, as it did in the band. */
+  #session .pane-who .agent-avatar .crown-mark { top: 2%; left: 22%; width: 52%; }
+  #session .pane-who .crown-toggle .crown-mark { width: 22px; }
+  /* Under the name: what the session is at, its model and machine, on one line. */
+  body:not([data-pair]) #session .pane-now {
+    grid-column: 1; grid-row: 2; display: flex; flex-wrap: nowrap; align-items: baseline; gap: var(--s-2);
+    position: relative; z-index: 1; max-width: var(--head-w); min-height: 0; margin: -15px 0 0; padding-left: 56px;
+    color: var(--muted); font-size: var(--t-sm); line-height: 1.25; white-space: nowrap; overflow: hidden;
+  }
+  #session .pane-now span:first-child { flex: 0 0 auto; min-width: 2.5em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  #session .pane-now .caps { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: .68rem; }
+  /* A name alone (no line under it) stands at the drawing's middle. */
+  #session .pane-title:has(.pane-now:empty) .pane-who { align-items: center; }
+
+  /* ---- the filters: a quiet row under the composer, at the column's left edge ---- */
+  #session .filters {
+    position: static; grid-column: 1 / -1; grid-row: 4; justify-self: start; align-self: end; gap: 2px;
+    margin: 0 0 6px calc(max(var(--gutter), (100% - 47.5rem) / 2 + var(--gutter)) + 2px); pointer-events: auto;
+  }
+  #session .filters :is(a, button) { min-height: 26px; padding: 0 9px; border-radius: 7px; font-size: var(--t-xs); }
+  #session .filters b { margin-left: 6px; padding: 1px 6px; }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: 38px; }
+  /* Sessions laid together have a composer each: "Files" stands beside their names in the band. */
+  body[data-pair] #session .filters { grid-column: 2; grid-row: 1 / 3; align-self: center; margin: 0 0 0 18px; }
+
+}
+
+/* ---- the filters are real links (js/link.js; hrefs kept by app.js paintLinks): what app.css says for
+   `.filters button`, for the anchor. (#mode-*, #tab-* are links too; .modes and .tabbar are shown nowhere.) ---- */
+.filters a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
+.filters a:hover { color: var(--fg); background: var(--sunken); }
+.filters a[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
+
+/* ---- a phone (860px and below): the same idea. One session: no strip and no rule above the conversation; it
+   flows from under the top bars to the composer. The session's name stands in the strip of sessions already,
+   so there is no heading. The two filters are a quiet row under the composer; while the keyboard is up
+   (app.js sets data-typing; or the viewport is short) the row is gone and its room goes to the conversation.
+   Sessions laid together keep their line of names (it picks the one column) with "Files", without the rule. ---- */
+@media (max-width: 860px) {
+  #session .pane-title { border-bottom: 0; }
+  body[data-view="chat"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #session { position: relative; }
+  body[data-view="chat"]:not([data-pair]) #session .pane-title {
+    position: absolute; z-index: 4; inset: 0; display: flex; align-items: flex-end; flex-wrap: nowrap;
+    min-height: 0; padding: 0 var(--gutter) max(3px, env(safe-area-inset-bottom, 0px)); pointer-events: none;
+  }
+  body[data-view="chat"]:not([data-pair]) #session .filters { margin: 0 0 0 4px; gap: 2px; pointer-events: auto; }
+  body[data-view="chat"]:not([data-pair]) #session .filters :is(a, button) { min-height: 32px; padding: 0 9px; font-size: var(--t-xs); }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: calc(38px + env(safe-area-inset-bottom, 0px)); }
+  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
+  body[data-pair] #session .filters :is(a, button) { min-height: 36px; }
+}
+@media (max-width: 860px) and (max-height: 520px) {
+  body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
+}
+
+/* Windowed paint: what of the conversation is out of sight is neither laid out nor painted (messages: trommi.css). */
+#session .log .event, #session .log .day { content-visibility: auto; contain-intrinsic-size: auto 36px; }
+/* (A question's Desk row in the conversation is not skipped: its box and shadow reach past it and would be clipped.) */
+
+/* The heading with a long name: the drawing keeps its size, the stop sign keeps its words, the name gives way. */
+#session .pane-who .t-session-edit { flex: 0 1 auto; }
+#session .pane-who .t-session-edit > .t-pick-mark, #session .pane-who .t-session-edit > .t-crown-form { flex: none; }
+#session .pane-who .t-session-edit > .t-pick-name { flex: 0 1 auto; min-width: 0; }
+#session .pane-who .t-blocked { flex: none; max-width: 45%; }
+#session .pane-who .t-blocked > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -1,0 +1,16 @@
+/* The guide's own few rules (were inline in the board's help.html); everything else is help.css. */
+/* The guide's own few rules; everything else is help.css. */
+kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px solid var(--line-strong); border-bottom-width: 2px; border-radius: 5px; background: var(--surface-2); color: var(--fg); font: 500 .8rem/1.5 var(--mono); text-align: center; white-space: nowrap; }
+.hp-word { font-weight: 600; color: var(--fg); white-space: nowrap; }
+.hp-ways { max-width: 70ch; }
+.hp-ways dt { font: 700 var(--t-md)/1.5 var(--display); }
+.hp-ways dt kbd { margin-left: var(--s-2); }
+.hp-keys { columns: 2 24rem; column-gap: var(--s-10); }
+.hp-keys > div { break-inside: avoid; margin-bottom: var(--s-8); }
+.hp-keys h3 { margin-bottom: var(--s-1); font: 600 var(--t-xs)/1.4 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.hp-keys .hp-params > div { grid-template-columns: minmax(0, 8.5rem) minmax(0, 1fr); }
+.hp-keys dt i { margin: 0 .35em; font: 400 var(--t-xs)/1 var(--font); color: var(--faint); }
+.hp-keys dt kbd + kbd { margin-left: 3px; }
+.hp-part { margin-top: var(--s-10); padding-top: var(--s-6); border-top: 2px solid var(--fg); }
+.hp-part h2 { font: 800 clamp(1.7rem, 3vw, 2.2rem)/1.1 var(--display); letter-spacing: -.02em; }
+.hp-part p { margin-top: var(--s-2); max-width: 70ch; color: var(--muted); }

@@ -1,0 +1,78 @@
+/* The Trommi menu, opened, is a clipboard: a kraft board with a pen line around it, a metal clip at its top
+   centre (right under the pill), and on it a sheet of paper that carries the menu's entries as lines.
+
+   Stands alone: no script belongs to it. It expects this markup (the old client and the Turbo pages both have it):
+
+     <div class="brand">                      the clip is this element's ::after, shown while the menu is open
+       …the opener (.brand-open)…
+       <nav class="sidedoors" hidden>         the board (its border) and the sheet (its padding box, which scrolls)
+         <label class="jump-box"><input id="jump-field"><kbd></kbd></label>      optional
+         <div id="jump-results"> <a role="option">…</a> </div>                  optional
+         <p class="menu-head">…</p>  <div class="menu-desks">…</div>             optional
+         <div class="menu-grid"> <a role="menuitem">…</a> </div>
+         <div class="menu-foot"> <p class="conn">…</p> <button role="menuitemcheckbox">…</button> </div>
+         <div class="menu-dev">…</div>                                           optional
+       </nav>
+     </div>
+
+   The menu is open while the nav has no "hidden" attribute. Every entry that is a line carries
+   role="menuitem…" or role="option". Colours and the two drawings: css/tokens.css (--clip-*).
+   ":not(#_#_)" matches always; it only lifts these rules over the menu's older ones in app.css, which name ids. */
+
+/* ---- the board and the sheet ---- */
+.sidedoors:not(#_#_) {
+  gap: 0; padding: 16px 10px 10px;
+  border: 12px solid transparent; border-image: var(--clip-board) 12 stretch; border-radius: 9px;
+  background: var(--clip-paper); background-clip: padding-box;
+  box-shadow: var(--clip-shadow);
+  overflow-y: auto; overscroll-behavior: contain;
+  transform-origin: 50% 0;
+  animation: clipboard-drop 170ms var(--ease-out) backwards;
+}
+/* the clip: on the board's top edge, its jaw over the sheet */
+.brand:has(> .sidedoors:not([hidden]))::after {
+  content: ""; position: absolute; z-index: 41; pointer-events: none;
+  height: 34px; background: var(--clip-metal) 50% 0 / 96px 34px no-repeat;
+  filter: drop-shadow(0 1.5px 1px rgb(0 0 0 / .22));
+  transform-origin: 50% 14px;
+  animation: clipboard-drop 170ms var(--ease-out) backwards;
+}
+/* It drops from the pill and settles: the board and its clip move as one piece (transform alone). */
+@keyframes clipboard-drop {
+  from { transform: translateY(-14px) rotate(-1.6deg); }
+  60% { transform: translateY(2px) rotate(.5deg); }
+  to { transform: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidedoors:not(#_#_), .brand:has(> .sidedoors:not([hidden]))::after { animation: none; }
+}
+
+/* ---- where it hangs ---- */
+/* Wide: under the pill at the top centre of the band. */
+@media (min-width: 861px) {
+  .sidedoors:not(#_#_) { top: 60px; width: 344px; max-height: calc(100dvh - 72px); }
+  .brand:has(> .sidedoors:not([hidden]))::after { position: fixed; top: 46px; left: var(--side); right: 0; width: 344px; margin-inline: auto; }
+}
+/* Phone: under the bar, as wide as the screen allows. */
+@media (max-width: 860px) {
+  .sidedoors:not(#_#_) { left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); top: calc(100% + 20px); bottom: auto; width: auto; max-width: 440px; max-height: calc(100dvh - 92px - env(safe-area-inset-top, 0px)); }
+  .brand:has(> .sidedoors:not([hidden]))::after { top: calc(100% + 6px); left: max(12px, env(safe-area-inset-left, 0px)); right: max(12px, env(safe-area-inset-right, 0px)); max-width: 440px; }
+}
+
+/* ---- the lines on the sheet ---- */
+/* Every entry stands on a ruled line; the pointer and the keyboard lay a pencil wash on it. */
+.sidedoors:not(#_#_) :is([role^="menuitem"], [role="option"]) { border-radius: 3px; background: linear-gradient(var(--clip-rule), var(--clip-rule)) 0 100% / 100% 1px no-repeat; box-shadow: none; }
+.sidedoors:not(#_#_) :is([role^="menuitem"], [role="option"]):is(:hover, :focus-visible, [aria-selected="true"]) { background-color: var(--clip-wash); }
+/* Sections: a small gap, no box and no line across. */
+.sidedoors:not(#_#_) :is(.menu-desks, .menu-grid, .menu-foot, .menu-dev) { margin-top: 10px; padding-top: 0; border-top: 0; }
+.sidedoors:not(#_#_) .menu-head + .menu-desks { margin-top: 0; }
+.sidedoors:not(#_#_) .menu-head { padding-top: 14px; }
+.sidedoors:not(#_#_) .menu-dev .menu-head { padding-top: 4px; }
+/* The jump field is a line to write on, not a box. */
+.sidedoors:not(#_#_) #jump-field { border-radius: 0; background: none; box-shadow: inset 0 -1.5px 0 color-mix(in srgb, var(--fg) 55%, transparent); }
+.sidedoors:not(#_#_) #jump-field:focus-visible { outline: 0; box-shadow: inset 0 -2px 0 var(--accent); }
+.sidedoors:not(#_#_) .jump-box kbd { background: var(--clip-paper); }
+/* A long list of results scrolls on the sheet. */
+.sidedoors:not(#_#_) #jump-results { max-height: min(44dvh, 300px); overflow-y: auto; overscroll-behavior: contain; }
+/* Small things written on the paper keep the paper under them. */
+.sidedoors:not(#_#_) .menu-desk-field { background: var(--clip-paper); }

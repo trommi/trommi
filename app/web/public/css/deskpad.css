@@ -1,0 +1,61 @@
+/* The Desk is the scratchpad (js/padlink.js): the whole Desk is paper, and heading, rows and stacks lie on it.
+   The pad itself (the page /pad/?desk, in a frame as high as the window) sticks to the top of the Desk's scroller,
+   under everything else in it, and paints the part of the paper that the scrolling has brought there. */
+#inbox.has-deskpad { position: relative; isolation: isolate; touch-action: pan-x pan-y; }   /* a pinch zooms the paper (js/padlink.js), not the page */
+/* A sticky box of no height stays where the page begins for the whole page, and takes no room among the Desk's own
+   things. It is held inside the scroller's padding, so what it carries is moved up by that padding. */
+.deskpad, .deskpad-over { position: sticky; top: 0; height: 0; overflow-anchor: none; }
+.deskpad { z-index: -1; }
+.deskpad iframe { position: absolute; top: calc(-1 * var(--deskpad-pt, 0px)); left: calc(-1 * var(--deskpad-pl, 0px)); display: block; width: var(--deskpad-w, 100%); height: var(--deskpad-view, 100vh); border: 0; background: var(--surface); }
+/* Free paper below the list: as high as js/padlink.js says (the lowest drawing, plus one and a half windows). */
+.deskpad-room { margin-top: var(--s-8); pointer-events: none; overflow-anchor: none; }
+/* Things that lie on the paper and scroll with it (the memo): above the drawing, below the cards. */
+.deskpad-layer { position: absolute; top: 0; left: 0; width: 0; height: 0; z-index: -1; overflow-anchor: none; transform-origin: 0 0; }
+
+/* Who gets the pointer. With the bare pointer the Desk's things work as always, and what falls between them goes
+   to the paper: the boxes that only hold them let it through. */
+#inbox.has-deskpad > :is(.inbox-head, .inbox-groups), #inbox.has-deskpad :is(.inbox-title, .inbox-group:not(.inbox-stack), .inbox-stacks) { pointer-events: none; }
+#inbox.has-deskpad :is(.inbox-title > *, .inbox-group:not(.inbox-stack) > *, .inbox-stacks > *, .inbox-groups > :not(.inbox-group, .inbox-stacks), .inbox-stack) { pointer-events: auto; }
+/* The paper in front (a tool in hand, something on it held): the cards go faint and let everything through, so a
+   stroke across a card is a stroke on the paper beneath it and answers nothing. */
+#inbox.has-deskpad[data-paper-front] > :is(.inbox-head, .inbox-groups, .inbox-news-at), #inbox.has-deskpad[data-paper-front] > :is(.inbox-head, .inbox-groups, .inbox-news-at) * { pointer-events: none !important; }
+#inbox.has-deskpad > :is(.inbox-head, .inbox-groups) { transition: opacity var(--d-med) var(--ease-out); }
+#inbox.has-deskpad[data-paper-front] > :is(.inbox-head, .inbox-groups) { opacity: .28; }
+/* Hidden: only the paper. They keep their room, so nothing on the paper moves. The knock strips at the edges stay. */
+#inbox.has-deskpad[data-cards-hidden] > :is(.inbox-head, .inbox-groups, .inbox-news-at) { visibility: hidden; }
+
+/* The two switches, at the Desk's lower left, over everything: the pen and the eye. */
+.deskpad-over { z-index: 7; pointer-events: none; }
+.deskpad-switch-at { position: absolute; left: calc(var(--s-3) - var(--deskpad-pl, 0px)); top: calc(var(--deskpad-view, 100vh) - var(--deskpad-pt, 0px) - 58px); }
+.deskpad-switch { display: flex; gap: 2px; padding: 3px; border-radius: var(--r-pill); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); pointer-events: auto; }
+.deskpad-switch-btn { position: relative; min-width: 38px; height: 38px; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 0 8px; border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font: 700 var(--t-xs)/1 var(--font); cursor: pointer; transition: background var(--d-fast), color var(--d-fast); }
+.deskpad-switch-btn:hover { background: var(--sunken); color: var(--fg); }
+.deskpad-switch-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.deskpad-switch-btn svg { width: 20px; height: 20px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.deskpad-switch-btn[aria-pressed="true"] { background: var(--fg); color: var(--surface); }
+.deskpad-switch-btn .deskpad-slash { display: none; }
+.deskpad-switch-btn[aria-pressed="true"] .deskpad-slash { display: inline; }
+.deskpad-switch-note:empty { display: none; }
+/* Cards hidden is never quiet: the eye stands out in the signal colour, with or without knocks. */
+#deskpad-eye[aria-pressed="true"] { background: var(--urg-high); color: var(--surface); }
+.deskpad-switch-btn[data-knocks] { background: var(--urg-high); color: var(--surface); padding-right: 12px; }
+
+/* No control for the pad in the bar any more; js/padlink.js keeps the element, hidden. The bar's own rules give it
+   a display, hence the weight. */
+.padlink-open[hidden] { display: none !important; }
+/* A phone. The pad's own bar takes the foot of the screen while the paper is in front, so the switches stand above it.
+   A thumb needs 44 px: the buttons are that large, and a ring in the pill's colour keeps the look at 38.
+   The switches never lie on a card: while the Desk scrolls, and at rest wherever a card would be under them,
+   js/padlink.js tucks the pill away to a tab at the left edge (data-tuck); a tap on the tab brings it out. */
+@media (max-width: 860px) {
+  .deskpad-switch-at { top: calc(var(--deskpad-view, 100vh) - var(--deskpad-pt, 0px) - 110px); }
+  .deskpad-switch { gap: 0; padding: 0; transition: translate var(--d-med) var(--ease-out), opacity var(--d-med) var(--ease-out); }
+  .deskpad-switch-btn { min-width: 44px; height: 44px; box-shadow: inset 0 0 0 3px var(--surface); }
+  .deskpad-over[data-tuck] .deskpad-switch { translate: calc(-100% - var(--s-3) + 16px) 0; }
+  .deskpad-over[data-tuck] .deskpad-switch-btn { pointer-events: none; opacity: 0; }
+  /* the tab shows a grip, so that it reads as something to pull */
+  .deskpad-over[data-tuck] .deskpad-switch::before { content: ""; position: absolute; right: 6px; top: 13px; width: 3px; height: 18px; border-radius: 2px; background: var(--line-strong); }
+  /* the tab's tap area: from the screen's edge, as high as the pill */
+  .deskpad-over[data-tuck] .deskpad-switch::after { content: ""; position: absolute; right: -32px; top: 0; width: 44px; height: 44px; }
+  @media (prefers-reduced-motion: reduce) { .deskpad-switch { transition: none; } }
+}

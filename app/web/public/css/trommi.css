@@ -1,0 +1,15 @@
+/* The app's own few rules outside the areas (the room screens are in css/room.css). */
+.menu-devices { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: inherit; text-decoration: none; border-radius: 8px; }
+.menu-devices:hover { background: var(--hover, rgb(0 0 0 / .05)); }
+.menu-devices svg { width: 20px; height: 20px; }
+/* Long Desk lists: rows out of sight are not laid out or painted until they come near. */
+#desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; overflow-clip-margin: 80px; }
+/* A Desk row that is not filled in yet (beyond the first rows; desk-window.mjs fills it when it comes near). */
+.inbox-row[data-later] { min-height: 172px; visibility: hidden; }
+@media (max-width: 860px) { .inbox-row[data-later] { min-height: 150px; } }
+/* An attachment the hub no longer has (retention, quota). */
+.att-gone { display: inline-flex; align-items: center; min-height: 48px; padding: 8px 12px; border: 1px dashed var(--line, #d8d6cf); border-radius: 10px; color: var(--muted, #6b6b66); font-size: 13px; }
+/* The page for people outside the room (/a/<share_id>): the shared page in a sandboxed frame, or the picture. */
+#share.share { margin: 0; position: fixed; inset: 0; max-width: none; padding: 16px; overflow: auto; background: var(--bg, #fff); }
+.share-frame { display: block; width: 100%; height: calc(100vh - 32px); border: 1px solid var(--line, #d8d6cf); border-radius: 12px; background: #fff; }
+.share-picture { display: block; max-width: 100%; max-height: calc(100vh - 32px); margin: 0 auto; border-radius: 8px; }

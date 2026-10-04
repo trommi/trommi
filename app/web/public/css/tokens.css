@@ -1,0 +1,203 @@
+/* Shared design tokens. Every colour, shadow, radius, and easing in the app
+   comes from here; component files never use literal colours. */
+:root {
+  /* surfaces */
+  --bg: #f5f6f2;
+  --surface: #ffffff;
+  --surface-2: #fafbf8;
+  --sunken: #eceee8;
+  --overlay: rgb(12 18 15 / .55);
+
+  /* text */
+  --fg: #141c18;
+  --muted: #5c6862;
+  --faint: #8a958f;
+
+  /* lines */
+  --line: #e1e5df;
+  --line-strong: #c9d0c8;
+
+  /* brand */
+  --accent: #1b6a57;
+  --accent-hover: #155646;
+  --accent-soft: #dcefe8;
+  --accent-fg: #ffffff;
+
+  /* urgency, set by the agent per card: fg colour and soft background */
+  --urg-low: #6b7771;       --urg-low-soft: #eceee8;
+  --urg-normal: #1b6a57;    --urg-normal-soft: #dcefe8;
+  --urg-high: #b4551b;      --urg-high-soft: #fbe9dc;
+  --urg-critical: #b3261e;  --urg-critical-soft: #fbe0de;
+
+  --deny: #a8322d;
+
+  /* Tones: our own session and card colours. A session has one hue (--hue, 0 to 359, set on its row, card or
+     drawing; 162 is the bell's green) and every hue comes in the same four weights, measured in oklch so that
+     no hue is louder or paler than its neighbour: wash (the pastel ground of a tile), edge (the pastel of a
+     card's edge and of a line), mid (a quiet sign, a dashed line), pen (the dark outline, words, the filled tile).
+     Each weight is a lightness and a chroma here; the rule below the themes turns them into --tone-wash,
+     --tone-edge, --tone-mid and --tone-pen. --tone-turn turns the hue so that 162 lands on the bell's green. */
+  --tone-wash-l: .95;  --tone-wash-c: .022;
+  --tone-edge-l: .88;  --tone-edge-c: .045;
+  --tone-mid-l: .64;   --tone-mid-c: .075;
+  --tone-pen-l: .47;   --tone-pen-c: .085;
+  --tone-turn: 10;
+
+  /* the crown of a desk's crowned session: gold, the pen it is drawn with, the wash inside it, the three stones */
+  --gold: #c39a1f; --gold-pen: #a8820f;
+
+  /* the inks of the stamps on the stacks (css/stamps.css): stamp blue, violet, green */
+  --stamp-ink-later: #2b3f9e; --stamp-ink-works: #5c3aa0; --stamp-ink-done: #1b6a57;
+  --crown-wash: #f2c94c; --crown-jewel: #cf3a2b;
+
+  /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
+  --st-decision: #c62f25;  --st-decision-soft: #fbe0de;
+  --st-working: #b07a06;   --st-working-soft: #fbf0cf;
+  --st-done: #1f8a4c;      --st-done-soft: #dcf2e4;
+
+  /* elevation */
+  --shadow-sm: 0 1px 2px rgb(20 30 25 / .06);
+  --shadow-md: 0 1px 2px rgb(20 30 25 / .06), 0 8px 24px -10px rgb(20 30 25 / .16);
+  --shadow-lg: 0 2px 4px rgb(20 30 25 / .06), 0 24px 48px -16px rgb(20 30 25 / .28);
+
+  /* shape */
+  --r-sm: 8px;
+  --r-md: 12px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+  --r-pill: 999px;
+
+  /* spacing scale */
+  --s-1: 4px; --s-2: 8px; --s-3: 12px; --s-4: 16px; --s-5: 20px; --s-6: 24px; --s-8: 32px; --s-10: 40px;
+
+  /* type */
+  --display: "Bricolage Grotesque", "Avenir Next", "Segoe UI", sans-serif;
+  --font: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, monospace;
+  --t-xs: .72rem; --t-sm: .84rem; --t-md: .95rem; --t-lg: 1.1rem; --t-xl: 1.35rem; --t-2xl: 1.7rem;
+
+  /* motion */
+  --ease-out: cubic-bezier(.16, 1, .3, 1);
+  --ease-spring: cubic-bezier(.34, 1.56, .64, 1);
+  --ease-in-out: cubic-bezier(.65, 0, .35, 1);
+  --d-fast: 140ms; --d-med: 260ms; --d-slow: 480ms;
+}
+
+/* Light is the default for everyone. Dark applies only when the user picks it
+   (data-theme="dark" on <html>), never from the system setting. */
+:root[data-theme="dark"] {
+  --bg: #0e1311; --surface: #171d1a; --surface-2: #1c2420; --sunken: #111715; --overlay: rgb(0 0 0 / .65);
+  --fg: #e9eeea; --muted: #9aa8a0; --faint: #6c7a73;
+  --line: #252f2a; --line-strong: #35423b;
+  --accent: #6fd0b5; --accent-hover: #8adcc5; --accent-soft: #17332b; --accent-fg: #08130f;
+  --urg-low: #8b9891; --urg-low-soft: #1c2420;
+  --urg-normal: #6fd0b5; --urg-normal-soft: #17332b;
+  --urg-high: #f2a56c; --urg-high-soft: #3a2415;
+  --urg-critical: #ff8a80; --urg-critical-soft: #41191a;
+  --deny: #f08a83;
+  --tone-wash-l: .28; --tone-wash-c: .03;
+  --tone-edge-l: .4;  --tone-edge-c: .05;
+  --tone-mid-l: .62;  --tone-mid-c: .075;
+  --tone-pen-l: .8;   --tone-pen-c: .095;
+  --gold: #d2ab3c; --gold-pen: #dcb84e;
+  --stamp-ink-later: #9aacf2; --stamp-ink-works: #bda2f0; --stamp-ink-done: #6fd0b5;
+  --crown-jewel: #ff6f5c;
+  --st-decision: #ff8a80; --st-decision-soft: #41191a;
+  --st-working: #f2c14e; --st-working-soft: #3a2f10;
+  --st-done: #6cd598; --st-done-soft: #14301f;
+  --shadow-sm: 0 1px 2px rgb(0 0 0 / .4);
+  --shadow-md: 0 1px 2px rgb(0 0 0 / .4), 0 10px 28px -12px rgb(0 0 0 / .7);
+  --shadow-lg: 0 2px 4px rgb(0 0 0 / .4), 0 28px 56px -18px rgb(0 0 0 / .85);
+  color-scheme: dark;
+}
+
+/* The four tones of a hue (see --tone-* above). Worked out wherever a hue is set: inline by the page
+   (style="--hue: 205"), or by a class that names its own hue; everything inside inherits them. Without a hue
+   the tones are the bell's green. A new place that sets --hue in a stylesheet joins this list. */
+:root, [style*="--hue"], .agent-avatar, .crown-bracket {
+  --tone-h: calc(var(--hue, 162) + var(--tone-turn));
+  --tone-wash: oklch(var(--tone-wash-l) var(--tone-wash-c) var(--tone-h));
+  --tone-edge: oklch(var(--tone-edge-l) var(--tone-edge-c) var(--tone-h));
+  --tone-mid: oklch(var(--tone-mid-l) var(--tone-mid-c) var(--tone-h));
+  --tone-pen: oklch(var(--tone-pen-l) var(--tone-pen-c) var(--tone-h));
+}
+
+/* Shared primitive: inline video and audio attachments, used by chat and cards alike. */
+.media { margin: 0; display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+.media video { display: block; width: 100%; max-height: min(60vh, 480px); border-radius: var(--r-md); background: #000; }
+.media audio { display: block; width: 100%; }
+.media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The agent's advice: a swipe of a highlighter behind the words of the option it would pick (ui.js
+   adviceLoop, the one place that draws the mark; it is appended to the option or to its label and
+   finds the lines of the words by itself). One pass per line, behind the words, never on them.
+   Ink: --advice; how strong: --marker. It
+   has slanted, uneven ends and is taller than a selection, so it reads as marked by hand, not as
+   selected or ticked. */
+.is-advised { position: relative; isolation: isolate; --advice: var(--urg-high); --marker: .26; }
+:root[data-theme="dark"] .is-advised { --marker: .34; }
+.advice-loop { position: absolute; z-index: -1; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; fill: none; }
+/* (Rules written for the old loop stretched it beyond its host; the marker measures the words itself and stays inside, so it never makes its host scroll.) */
+.advice-loop.advice-marker { left: 0 !important; top: 0 !important; width: 100% !important; height: 100% !important; rotate: none !important; }
+.advice-loop path { stroke: var(--advice); stroke-linecap: butt; stroke-linejoin: round; opacity: var(--marker); }
+/* On a tile filled with colour: no band (it would be a smudge behind white words) but a light line
+   under the words, like a pale marker on dark paper. A host says so with --advice-under: 1. */
+.inbox-answer.is-lead.is-advised, .inbox-option[aria-pressed="true"].is-advised, .focus-opt[data-state="done"].is-advised { --advice-under: 1; --advice: color-mix(in srgb, var(--surface) 82%, var(--tone-pen)); --marker: .95; }
+.advice-loop.is-under path { stroke-linecap: round; }
+/* The Focus window's pair of squares appends no mark of its own: there the band is laid behind the
+   label as a background (the same marker, one line). The two strokes of the old circle are gone. */
+.focus-opt.is-advised::before, .focus-opt.is-advised::after { content: none; }
+.focus-opts[data-count="duo"] .focus-opt.is-advised .focus-opt-label { margin-inline: -6px; padding-inline: 6px; background: linear-gradient(176deg, transparent 20%, color-mix(in srgb, var(--advice) 30%, transparent) 20%, color-mix(in srgb, var(--advice) 30%, transparent) 86%, transparent 86%); }
+
+/* Not in use: the pointing hand (ui.js pointingHand), which was the advice mark for an afternoon. */
+.advice-hand { position: absolute; z-index: 1; left: -19px; top: 50%; width: 27px; height: auto; translate: 0 -50%; rotate: -3deg; overflow: visible; pointer-events: none; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.advice-hand-ink { stroke: var(--advice, var(--urg-high)); stroke-width: 1.8; }
+.advice-hand-paper { stroke: var(--advice-paper, transparent); stroke-width: 5; }
+
+/* Words the agent underlined (`__so__` in its text; ui.js rich()): a line drawn under them by hand, in
+   the accent colour. The line is a drawn stroke repeated along the words, so it follows them over
+   line breaks. */
+.rich-under { padding-bottom: 3px; background: var(--under-ink) repeat-x 0 100% / 72px 7px; -webkit-box-decoration-break: clone; box-decoration-break: clone; }
+:root { --under-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 7' preserveAspectRatio='none' fill='none' stroke='%231b6a57' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M0.0 4.0 Q9.0 3.2 14.5 3.9 Q20.0 4.6 26.5 4.0 Q33.0 3.4 39.5 4.0 Q46.0 4.5 52.0 3.9 Q58.0 3.3 65.0 3.6 L72.0 4.0'/%3E%3C/svg%3E"); }
+:root[data-theme="dark"] { --under-ink: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 72 7' preserveAspectRatio='none' fill='none' stroke='%236fd0b5' stroke-width='1.7' stroke-linecap='round'%3E%3Cpath d='M0.0 4.0 Q9.0 3.2 14.5 3.9 Q20.0 4.6 26.5 4.0 Q33.0 3.4 39.5 4.0 Q46.0 4.5 52.0 3.9 Q58.0 3.3 65.0 3.6 L72.0 4.0'/%3E%3C/svg%3E"); }
+
+/* Shared primitive: a table in a text (ui.js rich()): ruled like a sheet, a heavier rule under its head.
+   Wider than its column, it scrolls sideways on its own. */
+.rich-table-wrap { max-width: 100%; overflow-x: auto; }
+.rich-table { border-collapse: collapse; font-size: .95em; line-height: 1.4; }
+.rich-table th, .rich-table td { padding: 6px 14px 6px 0; text-align: left; vertical-align: top; white-space: normal; border-bottom: 1px solid var(--line-strong); }
+.rich-table th { font-weight: 600; border-bottom: 2px solid var(--fg); white-space: nowrap; }
+.rich-table tr:last-child td { border-bottom: 0; }
+.rich-table th:last-child, .rich-table td:last-child { padding-right: 0; }
+
+/* Shared primitive: a link to something a session published, as a compact card (ui.js assetLink):
+   a small picture or a drawn sign of its kind, its type, its title. Used wherever rich() runs. */
+.asset-link { display: flex; align-items: center; gap: var(--s-3); width: fit-content; max-width: min(100%, 26rem); margin-block: 2px; padding: 6px var(--s-4) 6px 6px; border-radius: var(--r-sm); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); color: var(--fg); text-decoration: none; white-space: normal; transition: box-shadow 100ms ease-out; }
+a.asset-link:hover { box-shadow: 0 0 0 1px var(--fg); }
+.asset-thumb { flex: none; width: 44px; height: 44px; display: grid; place-items: center; border-radius: 5px; overflow: hidden; background: var(--sunken); color: var(--muted); }
+.asset-thumb img { display: block; width: 100%; height: 100%; object-fit: cover; }
+.asset-thumb svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+.asset-link-text { min-width: 0; display: grid; gap: 3px; }
+.asset-link-text .caps { font: 600 .72rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }
+.asset-link-text strong { font: 700 1rem/1.25 var(--display); color: var(--fg); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.asset-link.is-gone { background: none; box-shadow: none; outline: 1px dashed var(--line-strong); outline-offset: -1px; }
+.asset-link.is-gone strong { color: var(--muted); font-weight: 600; }
+
+
+/* The clipboard (css/clipboard.css: the Trommi menu, opened). The sheet's paper, the rule under each line, the wash
+   under the pointer; the board (kraft, a pen line around it, drawn once and stretched as a border image) and the
+   metal clip are drawings, so each theme has its own. */
+:root {
+  --clip-paper: color-mix(in srgb, var(--surface) 88%, #efe2b4);
+  --clip-rule: color-mix(in srgb, #4a7fc0 20%, transparent);
+  --clip-wash: color-mix(in srgb, var(--fg) 7%, transparent);
+  --clip-shadow: 0 16px 30px -14px rgb(60 40 20 / .5);
+  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%23cdb597' stroke='%236b4f33' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%236b4f33' stroke-opacity='.5'/%3E%3C/svg%3E");
+  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%233f4843' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23c5cac6' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.75' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] {
+  --clip-rule: color-mix(in srgb, #7fa9dd 22%, transparent);
+  --clip-shadow: 0 16px 30px -14px rgb(0 0 0 / .7);
+  --clip-board: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='60' height='60' viewBox='0 0 60 60'%3E%3Cpath d='M9.5 1.4Q30 .8 50.6 1.5Q58.4 1.8 58.6 9.6Q59.1 30 58.5 50.4Q58.3 58.5 50.2 58.6Q30 59.2 9.8 58.5Q1.6 58.3 1.5 50.3Q.9 30 1.4 9.7Q1.6 1.7 9.5 1.4Z' fill='%236f5a42' stroke='%23b89670' stroke-width='1.5' stroke-linejoin='round'/%3E%3Cpath d='M11.5 11.5H48.5V48.5H11.5Z' fill='none' stroke='%230e1311' stroke-opacity='.6'/%3E%3C/svg%3E");
+  --clip-metal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 96 34' fill='none' stroke='%23e3e8e4' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath fill='%23818984' d='M8 31Q7 20 12 17Q30 15.4 34 14Q36 4.6 48 4.4Q60 4.6 62 14Q66 15.4 84 17Q89 20 88 31Z'/%3E%3Cpath d='M41.6 12.6Q42 8.8 48 8.6Q54 8.8 54.4 12.6'/%3E%3Cpath stroke='%23fff' stroke-opacity='.35' stroke-width='1.2' d='M17 22.4Q48 20.8 79 22.2'/%3E%3C/svg%3E");
+}

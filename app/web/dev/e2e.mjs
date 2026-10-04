@@ -1,0 +1,262 @@
+// End to end, with real crypto against a real hub: browser A creates an account (email + generated password,
+// Emergency Kit), invites an agent (a Node process on the
+// same client core), the agent files cards and status lines, A answers in the page, hands back, asks What??; a
+// second browser B joins with the invite link and the check code typed on A, and sees the same Desk; a third browser C
+// logs in with email + password, a fourth D with the Emergency Kit (forgot password).
+//   node dev/e2e.mjs [--app http://127.0.0.1:8900] [--hub http://127.0.0.1:8890] [--shots dir] [--resolve 'MAP …']
+// Prints timings (send -> visible on the other device) and exits 1 on a failure.
+import { launchChromium } from './cdp.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
+import { joinRoom, memoryStorage } from '../public/vendor/index.mjs'
+import { execSync } from 'node:child_process'
+
+const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }
+// --hub-down 'cmd' / --hub-up 'cmd': stop and start the (local) hub around the first answer, to prove that an answer
+// given while the hub is away reaches the agent once it is back (the outbox retries; nothing is lost).
+const HUB_DOWN = arg('--hub-down', null), HUB_UP = arg('--hub-up', null)
+const APP = arg('--app', 'http://127.0.0.1:8900'), HUB = arg('--hub', 'http://127.0.0.1:8890'), SHOTS = arg('--shots', null), RESOLVE = arg('--resolve', null)
+const EMAIL = arg('--email', `e2e+${Date.now().toString(36)}@example.org`)
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+const results = []
+let failed = 0
+const check = (ok, what) => { results.push(`${ok ? 'ok  ' : 'FAIL'} ${what}`); if (!ok) failed++ }
+const timing = (what, ms) => results.push(`time ${what}: ${ms.toFixed(0)} ms`)
+
+async function browser(name, width = 1440, height = 900) {
+  const b = await launchChromium({ width, height, args: RESOLVE ? [`--host-resolver-rules=${RESOLVE}`] : [] })
+  const page = await b.page()
+  const errors = []
+  page.on('Runtime.exceptionThrown', e => errors.push(`${name} exception: ${e.exceptionDetails?.exception?.description ?? e.exceptionDetails?.text}`))
+  page.on('Runtime.consoleAPICalled', e => { if (e.type === 'error') errors.push(`${name} console: ${e.args.map(a => a.value ?? a.description ?? '').join(' ')}`) })
+  await page.send('Runtime.enable'); await page.send('Page.enable')
+  await page.send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: 1, mobile: width < 600 })
+  const js = async (code) => {
+    const r = await page.send('Runtime.evaluate', { expression: `(async () => { ${code} })()`, awaitPromise: true, returnByValue: true })
+    if (r.exceptionDetails) throw new Error(`${name}: ${r.exceptionDetails.exception?.description ?? r.exceptionDetails.text}`)
+    return r.result.value
+  }
+  const until = async (code, what, ms = 15000) => {
+    const t = Date.now()
+    while (Date.now() - t < ms) { if (await js(`return Boolean(${code})`).catch(() => false)) return Date.now() - t; await sleep(40) }
+    throw new Error(`${name}: timed out waiting for ${what}`)
+  }
+  const go = async url => { await page.send('Page.navigate', { url }); await sleep(200) }
+  const shot = async file => { if (!SHOTS) return; const s = await page.send('Page.captureScreenshot', { format: 'png' }); fs.writeFileSync(path.join(SHOTS, file), Buffer.from(s.data, 'base64')) }
+  return { b, page, js, until, go, shot, errors, close: () => b.close() }
+}
+
+const A = await browser('A')
+let B = null, C = null, D = null, agent = null, t0 = 0
+try {
+  // ---- A creates an account ----
+  await A.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)
+  await A.until("document.querySelector('#way-create')", 'welcome screen')
+  check(await A.js("return !/\\b(room|found)/i.test(document.querySelector('#room').textContent)"), 'welcome says account, not room')
+  await A.shot('e2e-1-welcome.png')
+  await A.js("document.querySelector('#way-create').click()")
+  await A.until("document.querySelector('#create-form')", 'create account screen')
+  await A.js(`document.querySelector('#create-form input[name=email]').value = '${EMAIL}'; document.querySelector('#create-form input[name=device_name]').value = 'Laptop'; document.querySelector('#create-form .room-gen').click()`)
+  await A.until("/^[a-z]+(-[a-z]+){4}$/.test(document.querySelector('#create-form input[name=password]').value)", 'generated password')
+  const password = await A.js("return document.querySelector('#create-form input[name=password]').value")
+  check(true, 'Generate fills a five-word password')
+  await A.shot('e2e-1b-create.png')
+  t0 = Date.now()
+  await A.js("document.querySelector('#create-form button[type=submit]').click()")
+  await A.until("document.querySelector('#kit-make')", 'Emergency Kit offer', 30000)
+  timing('create account (keys, Argon2id, found, register)', Date.now() - t0)
+  check(await A.js("return document.body.textContent.includes('nobody (not even Trommi) can recover your data') && !!document.querySelector('#kit-later')"), 'kit offer with Later and the one sentence')
+  await A.js("document.querySelector('#kit-make').click()")
+  await A.until("document.querySelectorAll('#kit-words li').length === 12", 'kit words')
+  const words = await A.js("return [...document.querySelectorAll('#kit-words li')].map(l => l.textContent).join(' ')")
+  check(await A.js("return !!document.querySelector('#kit-download') && !!document.querySelector('#kit-print')"), 'Emergency Kit: 12 words, Download and Print')
+  await A.shot('e2e-2-kit.png')
+  await A.js("document.querySelector('#kit-done').click()")
+  await A.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'account live')
+  check(await A.js("return document.title === 'Desk · Trommi' && !!document.querySelector('#inbox')"), 'empty Desk after creating the account')
+  await A.js("trommi.router.visit('/settings')")
+  await A.until(`document.getElementById('account-email')?.textContent === '${EMAIL.toLowerCase()}'`, 'account in Settings').then(() => check(true, 'Settings shows the account email'), e => check(false, e.message))
+  check(await A.js("return document.querySelector('#account').textContent.includes('Make a new kit')"), 'Settings: kit made')
+  await A.shot('e2e-2b-settings.png')
+
+  // ---- A invites an agent; the agent joins (no check code) ----
+  await A.js("trommi.router.visit('/devices')")
+  await A.until("document.querySelector('form[action=\"/pair\"] input[value=agent]')", 'devices page')
+  await A.js("document.querySelector('form[action=\"/pair\"] input[value=agent]').form.requestSubmit()")
+  await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')", 'agent invite page')
+  await A.shot('e2e-3-invite-agent.png')
+  const link = await A.js("return [...trommi.client.model.invites.values()].at(-1).link")
+  check(link.startsWith(`${APP}/join#v1.`) || link.includes('/join#v1.'), 'agent invite link with the secret after #')
+  const j = joinRoom({ link, storage: memoryStorage(), device_name: 'night-agent', device_info: { device_name: 'night-agent', platform: 'node', folder: '~/git/test', host: 'e2e' }, poll_ms: 100 })
+  agent = await j.client
+  agent.on('error', e => results.push(`note agent error: ${e?.code} ${e?.message}`))
+  await agent.start()
+  // v1.1: an agent holds no room key; the app's core grants it a session once it joined.
+  if (agent.whenSession) await Promise.race([agent.whenSession(), sleep(15000)])
+  await agent.claimSession?.({ process_instance: 'e2e', agent_name: 'night-agent' }).catch(e => results.push(`note claimSession: ${e.message}`))
+  await A.until("document.querySelector('[data-state=joined]')", 'agent joined on the invite page')
+  check(true, 'agent added without a check code')
+  const commands = []
+  agent.on('command', c => commands.push(c))
+  await agent.setStatus({ 'status_line/tests': { label: 'Tests', state: 'working', detail: '12/40' }, profile: { model: 'claude-opus-5-5', task: 'E2E-Test', icon: 'draw:flask', agent_name: 'night-agent' } })
+
+  // ---- a card: agent -> A, measured ----
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelector('#inbox')", 'desk')
+  t0 = Date.now()
+  const cardId = await agent.sendCard({ title: 'Welche Variante bauen?', body: 'Zwei Wege, beide getestet.', options: [{ key: 'a', label: 'Variante A' }, { key: 'b', label: 'Variante B' }], recommended: 'b' })
+  await A.until(`document.getElementById('row-${cardId}')`, 'card row on the Desk')
+  timing('card sent by agent -> row visible on A', Date.now() - t0)
+  check(await A.js("return !!document.querySelector('#agents .agent-row')"), 'session in the sidebar')
+  await A.shot('e2e-4-desk-card.png')
+
+  // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----
+  const png = fs.readFileSync(new URL('../public/mock/files/' + fs.readdirSync(new URL('../public/mock/files/', import.meta.url)).find(f => f.endsWith('.png')), import.meta.url))
+  const ref = await agent.uploadAttachment(png, { file_name: 'entwurf.png', media_type: 'image/png', width: 1440, height: 900 })
+  t0 = Date.now()
+  const picCard = await agent.sendCard({ title: 'Welcher Entwurf?', body: 'Bild anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }, { key: 'z', label: 'Später' }], attachments: [ref] })
+  await A.until(`document.getElementById('row-${picCard}')`, 'picture card row')
+  await A.until(`[...document.querySelectorAll('#row-${picCard} img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on the Desk'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
+
+  // ---- A answers with the row's tile; the agent gets the command ----
+  if (HUB_DOWN) { execSync(HUB_DOWN, { stdio: 'ignore' }); await sleep(500) }
+  t0 = Date.now()
+  await A.js(`document.querySelector('#row-${cardId} form[action$="/decide"] button[value="b"], #row-${cardId} button[name=key][value=b]')?.click()`)
+  await A.until(`!document.getElementById('row-${cardId}')`, 'row leaves after answering')
+  timing('answer click -> row gone (local echo)', Date.now() - t0)
+  if (HUB_UP) { await sleep(3000); execSync(HUB_UP, { stdio: 'ignore' }); t0 = Date.now(); results.push('note hub was down for the answer; timing below counts from the hub coming back') }
+  const tc = Date.now()
+  while (!commands.some(c => c.command === 'answer') && Date.now() - tc < 15000) await sleep(30)
+  timing('answer click -> command at the agent', Date.now() - t0)
+  check(commands.some(c => c.command === 'answer' && (c.choices ?? c.content?.choices ?? []).includes('b')), 'agent received the answer "b"')
+
+  // ---- take it back from the toast's Undo ----
+  const undo = await A.js("const b = document.querySelector('#says-host .says-back'); if (b) { b.click(); return true } return false")
+  if (undo) {
+    await A.until(`document.getElementById('row-${cardId}')`, 'row back after Undo')
+    check(true, 'Undo (decide again) puts the card back')
+    const tu = Date.now(); while (!commands.some(c => c.command === 'decide_again') && Date.now() - tu < 10000) await sleep(30)
+    check(commands.some(c => c.command === 'decide_again'), 'agent received decide_again')
+  } else check(false, 'toast with Undo after answering')
+
+  // ---- the card page: hand back (Revise) and What?? ----
+  const nr = await A.js(`return trommi.model().byCard.get('${cardId}').number`)
+  await A.js(`trommi.router.visit('/q/${nr}')`)
+  await A.until("document.querySelector('#cardpage')", 'card page')
+  await A.shot('e2e-5-card.png')
+  t0 = Date.now()
+  await A.js("document.querySelector('#cardpage button[formaction$=\"/what\"]').click()")
+  const tw = Date.now(); while (!commands.some(c => c.command === 'message' && c.content?.explain) && Date.now() - tw < 10000) await sleep(30)
+  check(commands.some(c => c.command === 'message' && c.content?.explain), 'agent received What?? (explain)')
+  timing('What?? -> command at the agent', Date.now() - t0)
+  check(await A.until("location.pathname === '/'", 'back on the Desk after What??').then(() => true, () => false), 'What?? goes back to the Desk, like the board')
+  await agent.sendMessage({ object_id: cardId, text: 'Erklärung: A ist schneller, B ist sicherer.' })
+  await A.js(`trommi.router.visit('/q/${nr}')`)
+  await A.until("location.pathname.startsWith('/q/') && document.querySelector('#cardpage') && document.body.textContent.includes('B ist sicherer')", 'explanation in the card thread', 15000).then(() => check(true, 'agent reply shows in the card thread'), e => check(false, e.message))
+
+  // ---- a file from the session's composer reaches the agent whole (encrypted, uploaded, decrypted there) ----
+  const sid = await A.js("return trommi.model().agents[0]?.id")
+  await A.js(`trommi.router.visit('/s/${sid}')`)
+  await A.until("document.querySelector('form.composer input[type=file]')", 'composer')
+  await A.js(`const f = document.querySelector('form.composer'); const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(4096).fill(7)], 'notiz.bin', { type: 'application/octet-stream' })); f.querySelector('input[type=file]').files = dt.files; f.querySelector('textarea').value = 'Mit Datei'; f.requestSubmit(f.querySelector('button[type=submit]'))`)
+  const tf = Date.now(); let fileCmd = null
+  while (!fileCmd && Date.now() - tf < 15000) { fileCmd = commands.find(c => c.command === 'message' && c.content?.attachments?.length); await sleep(50) }
+  const bytes = fileCmd ? await agent.fetchAttachment(fileCmd.content.attachments[0]).catch(() => null) : null
+  check(bytes?.length === 4096 && bytes[0] === 7, `a composer file reaches the agent whole (${bytes?.length ?? 'none'} bytes)`)
+
+  // ---- a second human device joins ----
+  await A.js("trommi.router.visit('/devices')")
+  await A.until("document.querySelector('form[action=\"/pair\"] input[value=human]')", 'devices')
+  await A.js("document.querySelector('form[action=\"/pair\"] input[value=human]').form.requestSubmit()")
+  await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')", 'human invite page')
+  const humanLink = await A.js("return [...trommi.client.model.invites.values()].at(-1).link")
+  B = await browser('B', 390, 844)
+  await B.go(humanLink.replace(/^https?:\/\/[^/]+/, APP))
+  await B.until("document.querySelector('#join-form')", 'join screen on B')
+  await B.shot('e2e-6-join.png')
+  await B.js("document.querySelector('#join-form input[name=device_name]').value = 'Phone'; document.querySelector('#join-form button').click()")
+  await B.until("document.getElementById('check-code')", 'check code on B')
+  const checkCode = (await B.js("return document.getElementById('check-code').textContent")).replace(/\D/g, '')
+  check(/^\d{6}$/.test(checkCode), 'B shows a six-digit check code')
+  await B.shot('e2e-7-check-code.png')
+  await A.until("document.querySelector('[data-state=confirm_code] .room-choice')", 'A asks which code B shows')
+  await A.shot('e2e-8-type-code.png')
+  check(await A.js(`return document.querySelectorAll('[data-state=confirm_code] .room-choice').length === 4 && [...document.querySelectorAll('[data-state=confirm_code] input[name=code]')].filter(i => i.value === '${checkCode}').length === 1`), 'A offers four codes, one of them B\'s')
+  await A.js(`[...document.querySelectorAll('[data-state=confirm_code] input[name=code]')].find(i => i.value === '${checkCode}').form.querySelector('button').click()`)
+  await B.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'B in the room', 20000)
+  check(true, 'B joined with the check code')
+  await B.until(`document.getElementById('row-${cardId}')`, 'B sees the card', 15000).then(() => check(true, 'B sees the same open card'), e => check(false, e.message))
+  await B.shot('e2e-9-phone-desk.png')
+
+  // ---- C: a fresh browser logs in with email + password ----
+  C = await browser('C', 1280, 800)
+  await C.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)
+  await C.until("document.querySelector('#way-login')", 'welcome on C')
+  await C.js("document.querySelector('#way-login').click()")
+  await C.until("document.querySelector('#login-form')", 'login screen on C')
+  check(await C.js("return !!document.querySelector('#way-pair') && !!document.querySelector('#way-forgot')"), 'login offers scan and Forgot password')
+  await C.js(`const f = document.querySelector('#login-form'); f.querySelector('input[name=email]').value = 'wrong-${EMAIL}'; f.querySelector('input[name=password]').value = '${password}'; f.querySelector('button[type=submit]').click()`)
+  await C.until("document.querySelector('.room-error')?.textContent.includes('Email or password is wrong')", 'wrong login refused', 20000).then(() => check(true, 'unknown email: "Email or password is wrong."'), e => check(false, e.message))
+  t0 = Date.now()
+  await C.js(`const f = document.querySelector('#login-form'); f.querySelector('input[name=email]').value = '${EMAIL}'; f.querySelector('input[name=password]').value = '${password}'; f.querySelector('input[name=device_name]').value = 'Desktop'; f.querySelector('button[type=submit]').click()`)
+  await C.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'C logged in', 30000)
+  timing('log in with email + password -> live', Date.now() - t0)
+  await C.until(`document.getElementById('row-${cardId}')`, 'C sees the card', 15000).then(() => check(true, 'C (email + password) sees the same open card'), e => check(false, e.message))
+  await C.shot('e2e-9b-password-login.png')
+
+  // ---- D: forgot password, with the Emergency Kit ----
+  D = await browser('D', 390, 844)
+  await D.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)
+  await D.until("document.querySelector('#way-login')", 'welcome on D')
+  await D.js("document.querySelector('#way-login').click()")
+  await D.until("document.querySelector('#way-forgot')", 'login on D')
+  await D.js("document.querySelector('#way-forgot').click()")
+  await D.until("document.querySelector('#forgot-form')", 'forgot screen')
+  await D.js(`const f = document.querySelector('#forgot-form'); f.querySelector('input[name=email]').value = '${EMAIL}'; f.querySelector('textarea[name=words]').value = '${words}'; f.querySelector('input[name=password]').value = 'a brand new password'; f.querySelector('button[type=submit]').click()`)
+  await D.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'D in with the kit', 30000).then(() => check(true, 'Forgot password: kit words + new password log D in'), e => check(false, e.message))
+  await D.shot('e2e-9c-forgot.png')
+
+  // ---- live: a message from the agent to the session, seen on B ----
+  t0 = Date.now()
+  const card2 = await agent.sendCard({ title: 'Info: Build fertig', body: 'Alles grün.', card_type: 'info' })
+  await B.until(`document.getElementById('row-${card2}')`, 'info card on B')
+  timing('info card sent -> visible on B', Date.now() - t0)
+  // A answers on the laptop, B sees the row leave.
+  t0 = Date.now()
+  await A.js("trommi.router.visit('/')")
+  await A.until(`document.getElementById('row-${card2}')`, 'info on A')
+  await A.js(`const f = document.querySelector('#row-${card2} form[action$="/close"]'); f ? f.requestSubmit() : document.querySelector('#row-${card2} button[formaction$="/close"]')?.click()`)
+  await B.until(`!document.getElementById('row-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
+
+  // ---- warm reload: the Desk paints from IndexedDB before the hub answers ----
+  for (let i = 0; i < 30; i++) await agent.sendCard({ title: `Frage ${i}`, options: [{ key: 'a', label: 'Ja' }, { key: 'b', label: 'Nein' }] })
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelectorAll('.inbox-row').length >= 30", '30 more rows on A')
+  await sleep(600)   // the core persists in batches
+  await A.go(`${APP}/`)
+  await A.until("document.documentElement.hasAttribute('data-ready')", 'reloaded')
+  const warm = await A.js("return { first: trommi.firstPaintMs, rows: document.querySelectorAll('.inbox-row').length, conn: trommi.client.model.room.connection }")
+  timing(`warm reload -> Desk painted (${warm.rows} rows, connection then: ${warm.conn})`, warm.first)
+  check(warm.rows >= 30, 'warm reload shows the cards from local storage')
+
+  // ---- devices: B removes nobody; A sees both humans and the agent ----
+  await A.js("trommi.router.visit('/devices')")
+  await A.until("document.querySelectorAll('.room-device').length >= 5", 'five devices listed')
+  check(true, 'devices page lists laptop, phone, desktop, phone (kit), agent')
+  await A.shot('e2e-10-devices.png')
+} catch (err) {
+  check(false, err.message)
+  await A.shot('e2e-fail-A.png').catch(() => {})
+  await B?.shot('e2e-fail-B.png').catch(() => {})
+} finally {
+  if (failed) {
+    const st = c => c && { connection: c.model.room.connection, outbox: c.model.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: c.model.room.outbox_blocked, alerts: c.model.alerts.slice(-6).map(a => [a.code, a.message?.slice(0, 120)]) }
+    results.push('diag agent: ' + JSON.stringify(st(agent)))
+    results.push('diag A: ' + JSON.stringify(await A.js("const c = window.trommi?.client; if (!c) return 'no client yet (no account open)'; return { connection: c.model.room.connection, outbox: c.model.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: c.model.room.outbox_blocked, alerts: c.model.alerts.slice(-6).map(a => [a.code, a.message?.slice(0, 120)]) }").catch(e => e.message)))
+  }
+  for (const e of [...A.errors, ...(B?.errors ?? []), ...(C?.errors ?? []), ...(D?.errors ?? [])]) results.push(`err  ${e}`)
+  agent?.stop?.()
+  await A.close(); await B?.close(); await C?.close(); await D?.close()
+}
+console.log(results.join('\n'))
+process.exit(failed ? 1 : 0)
