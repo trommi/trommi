@@ -264,6 +264,13 @@ await test('review 2 PoC: a human cannot write outside the cache through attachm
   assert.deepEqual(files.map(f => path.basename(f)), [`${'c'.repeat(32)}-evil`, `${'d'.repeat(32)}-file`])
 })
 
+await test('a halted chain stops every tool with a clear error, nothing is sent', async () => {
+  const { client, bridge } = bridgeWith()
+  client.settle = async () => { throw Object.assign(new Error('chain halted'), { code: 'chain-halted' }) }
+  await assert.rejects(bridge.callTool('reply', { text: 'hi' }), /stopped sending/)
+  assert.equal(client.calls.length, 0)
+})
+
 await test('permission relay: request -> object, verdict -> notifications/claude/channel/permission', async () => {
   const { client, bridge, events, state } = bridgeWith()
   const params = { request_id: 'abcde', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"npm test"}' }
