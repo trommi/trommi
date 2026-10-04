@@ -564,11 +564,16 @@ a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
 .agent-heading-away { display: flex; align-items: center; gap: var(--s-2); }
 .agent-heading-away::after { content: ""; flex: 1; border-top: 1px dashed var(--line-strong); }
 /* Invite an agent: a small drawn "+" in a dashed ring, in the avatars' column under the connected sessions (views/sidebar.mjs). */
-.agent-invite { display: flex; margin: 2px 0 0; padding: 0 var(--s-3); }
-.agent-invite-go { flex: none; width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1.5px dashed var(--line-strong); border-radius: 11px; background: none; color: var(--faint); cursor: pointer; transition: color var(--d-fast), border-color var(--d-fast), background var(--d-fast); }
-.agent-invite-go:hover, .agent-invite-go:focus-visible { color: var(--accent); border-color: var(--accent); background: var(--surface); }
+/* The invite row: a quiet "+ New agent" under the last session, the plus where the drawings stand, the words on the
+   names' line; green while there is no session yet (the obvious first step). Phone: the last chip. */
+.agent-invite { display: flex; margin: 2px 0 0; padding: 0; }
+.agent-invite-go { flex: 1; min-width: 0; min-height: 46px; display: flex; align-items: center; gap: var(--s-3); padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: inherit; text-align: left; cursor: pointer; transition: color var(--d-fast), background var(--d-fast); }
+.agent-invite-go:hover, .agent-invite-go:focus-visible { background: var(--sunken); color: var(--fg); }
 .agent-invite-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.agent-invite-go .sketch { width: 18px; height: 18px; stroke-width: 2; }
+.agent-invite-go .sketch { flex: none; width: 34px; height: 22px; stroke-width: 2.1; }
+.agent-invite-label { font-weight: 500; white-space: nowrap; }
+#agents:not(:has(.agent-row)) .agent-invite-go { background: var(--accent-soft); color: var(--accent); }
+#agents:not(:has(.agent-row)) .agent-invite-label { font-weight: 600; }
 .agent-row { display: flex; align-items: center; min-width: 0; border-radius: var(--r-md); }
 .agent-entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); min-height: 46px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; text-align: left; transition: background var(--d-fast); }
 .agent-entry:hover { background: var(--sunken); }
@@ -1468,6 +1473,8 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   [data-rail="folded"] .agent-row > :is(.agent-cut, .agent-archive) { display: none; }
   [data-rail="folded"] #agents > :not(.agent-row) { display: none; }
   [data-rail="folded"] #agents > .agent-invite { display: flex; justify-content: center; padding: 0; }
+  [data-rail="folded"] .agent-invite-go { flex: none; width: 60px; justify-content: center; padding: 8px 0; }
+  [data-rail="folded"] .agent-invite-label { display: none; }
   .rail-tip { position: fixed; z-index: 9; padding: 6px 10px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); pointer-events: none; white-space: nowrap; }
   #agents { padding-top: 0; }
   /* the Desk box: 8px from the top and the sides (one inset all round), the first row 16px under it, on the line of the page's first content */
@@ -1631,6 +1638,9 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .toast:not(:has(button)) { padding-block: 10px; border-radius: var(--r-md); }
   .toast button { flex: none; }
   .agent-entry { width: auto; flex: none; min-height: 44px; padding: 4px 10px 4px 6px; border-radius: var(--r-pill); gap: var(--s-2); }
+  .agent-invite { flex: none; margin: 0; }
+  .agent-invite-go { flex: none; min-height: 44px; padding: 4px 14px 4px 6px; gap: var(--s-2); border-radius: var(--r-pill); }
+  .agent-invite-go .sketch { width: 30px; height: 20px; }
   .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1px var(--line-strong); }
   .agent-text small { display: none; }
   .agent-avatar { width: 30px; height: 30px; border-radius: 50%; }
