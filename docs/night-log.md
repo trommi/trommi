@@ -66,6 +66,14 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - join is CLI-only, with no MCP tool (9b24958).
   - Agent invites default to without history (app 60db893).
 - App warm reload now cache-first in the SW: desktop 236 → 47–57 ms (Turbo 34), phone 4x 130–150 ms. Cold desktop 260–550 ms (80 files, no build step; Turbo 58). Prod e2e 19/19.
+- S1 hub/crypto review-2 fixes done (1d57cd7, fc4883e, 005422d, 16f71c4, 8249435, 657637c, 3e48540, 19b87db). Suites: crypto 76, hub-test 28, grants 8, hub 21, ops 10, core 21, channel 30, server ok.
+  - Grants from removed humans refused; session keys must change after a member change.
+  - Slow-upload slot exhaustion: timeouts, a per-address cap, a reserved pool for membership.
+  - Attachment hijack closed; re-authorisation after the body is read; verified ephemeral relay; cf-connecting-ip trusted only from private peers.
+  - FORMAT.md rewritten from the code (§19 grants, §20 refusals and void records).
+  - Test key off by default; new key at ~/.local/share/trommi/hub-test-key.v2.
+  - Escrow v2 addressed by a passphrase-derived id; pending uploads swept after 1 h; challenge flood can't lock out sign-in.
+  - Still open (README): C22 attachment padding, M6 recovery-key change, escrow still PBKDF2, per-device byte budgets, agents see room metadata.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
