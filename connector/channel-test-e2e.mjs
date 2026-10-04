@@ -272,6 +272,78 @@ export async function integration({ test, tmp }) {
       assert.equal([...human.model.sessions.values()].filter(s => s.profile?.agent_name === 'Design').length, before)
     })
 
+    await test('e2e: after a restart, answers in the main session and in a child session arrive as decision events within 2 s', async () => {
+      const ask = async session => (await channel.call('create_decision', { title: `Go ${session ?? 'main'}?`, options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }], ...(session ? { session } : {}) })).match(/card ([0-9a-f]{32})/)[1]
+      const inMain = await ask(null), inChild = await ask('Design')
+      await until('both cards at the human', () => human.model.cards.get(inMain) && human.model.cards.get(inChild)?.session_id === child)
+      for (const [id, session] of [[inMain, undefined], [inChild, 'Design']]) {
+        const t0 = Date.now()
+        await human.answer({ object_id: id, choices: ['y'] })
+        const ev = await until(`the decision on ${id}`, () => channel.events.find(e => !e.seen && chEvent('decision', id)(e)), 2000)
+        ev.seen = true
+        assert.ok(Date.now() - t0 <= 2000, `arrived after ${Date.now() - t0} ms`)
+        assert.equal(ev.params.meta.choice, 'y')
+        assert.equal(ev.params.meta.session, session)
+      }
+    })
+
+    await test('e2e: a Claude Code session started without the channels flag drops events: they come with the next tool result instead', async () => {
+      const { channelsHeard } = await import('./channel.mjs')
+      assert.equal(channelsHeard({ env: {}, args: ['claude', '--resume', 'abc'] }), false)
+      assert.equal(channelsHeard({ env: {}, args: ['claude', '--resume', 'abc', '--dangerously-load-development-channels', 'server:trommi'] }), true)
+      assert.equal(channelsHeard({ env: {}, args: ['node', '/x/@anthropic-ai/claude-code/cli.js', '--channels=server:trommi'] }), true)
+      assert.equal(channelsHeard({ env: {}, args: ['node', 'some-other-client.mjs'] }), true, 'not Claude Code: assumed to listen')
+      const id = (await channel.call('create_decision', { title: 'Deaf?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })).match(/card ([0-9a-f]{32})/)[1]
+      await until('the card at the human', () => human.model.cards.get(id))
+      await channel.close()
+      channel = await startChannel({ env: { ...env, TROMMI_CHANNEL_EVENTS: 'off' }, cwd: project })
+      await channel.ready()
+      await human.answer({ object_id: id, choices: ['n'], note: 'no thanks' })
+      await channel.next(chEvent('decision', id))
+      const said = await channel.call('list_cards')
+      assert.match(said, /started without --dangerously-load-development-channels server:trommi/)
+      assert.match(said, new RegExp(`<channel source="board" kind="decision" card_id="${id}" choice="n">\\nno thanks\\n</channel>`))
+      assert.doesNotMatch(await channel.call('list_cards'), /<channel /, 'each event once')
+      await channel.close()
+      channel = await startChannel({ env, cwd: project })
+      await channel.ready()
+      assert.doesNotMatch(await channel.call('list_cards'), /<channel |dangerously/, 'a listening session gets plain results')
+    })
+
+    await test('e2e: close_session archives a finished helper (lines cleared, readable in the archive); a quiet helper is idle, not stopped; open_session reopens', async () => {
+      globalThis.document ??= { addEventListener() {} }
+      const { BoardState } = await import('../app/web/public/js/app/board-state.mjs')
+      const { blockedOf, SILENT_MS } = await import('../app/web/public/js/app/node-stubs/blocked.mjs')
+      const board = new BoardState(human)
+      const design = () => board.update().agents.find(a => a.session_id === child)
+      await channel.call('set_status', { id: 'draw', label: 'Drawing', state: 'working', session: 'Design' })
+      await until('the working line', () => human.model.sessions.get(child).status_lines?.find(l => l.id === 'draw' && l.state === 'working'))
+      // The stopped-child bug: the helper said nothing for 46 min but its main agent is online and talking.
+      const st = board.update(), a = st.agents.find(x => x.session_id === child)
+      assert.ok(a.parent, 'Design is a child')
+      const now = Date.now() + SILENT_MS + 60000
+      assert.equal(blockedOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now), null)
+      assert.equal(blockedOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 46 * 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now)?.why, 'silent', 'the whole agent silent while working: stopped')
+      assert.equal(blockedOf({ ...a, online: true, active: 0, connected: 0, device_active: 0 }, { ...st, tasks: [] }, now), null, 'no working line: idle')
+      // An open question keeps a closed helper in the active list.
+      const q = (await channel.call('create_decision', { title: 'Still open?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }], session: 'Design' })).match(/card ([0-9a-f]{32})/)[1]
+      await until('the open card', () => human.model.cards.get(q)?.object_state === 'open')
+      assert.match(await channel.call('close_session', { name: 'design', summary: 'Pictures done: out/landing/' }), /closed: archived.*1 open question/)
+      await until('closed', () => human.model.sessions.get(child).profile?.closed_at)
+      assert.deepEqual(human.model.sessions.get(child).status_lines ?? [], [], 'its lines are cleared')
+      assert.equal(design().archived, false, 'open question: still active')
+      await channel.call('withdraw_card', { card_id: q, reason: 'test' })
+      await until('archived on the board', () => design()?.archived === true)
+      await until('the summary in the child', async () => {
+        await human.loadTimeline(`chat:session/${child}`).catch(() => {})
+        return [...(human.model.timelines.get(`chat:session/${child}`)?.items.values() ?? [])].some(i => i.content?.text === 'Pictures done: out/landing/')
+      })
+      assert.equal(blockedOf(design(), board.update()), null)
+      await assert.rejects(channel.call('close_session', { name: 'Nobody' }), /no child session "Nobody"/)
+      assert.match(await channel.call('open_session', { name: 'Design' }), /already open/)
+      await until('reopened', () => !human.model.sessions.get(child).profile?.closed_at && design()?.archived === false)
+    })
+
     await test('e2e: a renamed project folder keeps its identity (slot name kept in .trommi/slot-base)', async () => {
       const entries = human.model.room.last_entry_number
       assert.match(fs.readFileSync(path.join(project, '.trommi', 'slot-base'), 'utf8'), /project/)

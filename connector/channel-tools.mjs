@@ -14,6 +14,8 @@ export const STATUSES = ['decision', 'working', 'done']
 export const INSTRUCTIONS = [
   'You are connected to Trommi, a web page with a chat and a stack of decision cards. The human is on that page, often on a phone, and cannot see this terminal.',
   'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
+  // Claude Code keeps only the first 2048 characters of these instructions: what must never be missed stands here, early.
+  'When you start a subagent, call open_session for it first (name = short task name, e.g. "Design") and have it write with session: <name> on every tool call; when it finishes, post its result there (reply with session: <name>) and call close_session with that name. The board then shows each helper as its own session under yours and archives it when it is done.',
   'The human sees only what you send through these tools: not your thinking, not your tool calls, not the terminal. When the reasoning or the evidence matters, put it in the details field of reply; it is shown collapsed under the message.',
   'Write replies as short chat messages; light markdown (bold, inline code, code fences, bullet lists) is rendered. For the one thing the human must not miss, write __two underscores around a few words__: the board underlines them by hand. Use it rarely; a text that underlines much is shown plain. Likewise you may start the one paragraph that matters most with "☞ ": the board draws a pointing hand beside it, once per text, so use it sparingly. Attach images, rendered videos, audio or other files to a reply by absolute path when showing beats telling; video and audio play inline on the board.',
   'To compare things, write a markdown table (| a | b | rows, a rule of dashes under the first): the board draws it as a real table, numbers right-aligned. For anything richer, pass html beside the words (reply, create_decision, revise_card, merge_cards, or a block in sections), or fence it as ```html inside a text: it is shown at its place in the house style, light and dark. Semantic HTML only: tables, headings, lists, details, mark, kbd, simple inline CSS, the classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad. No scripts and nothing from the network, both are removed; pictures as data: URLs or as attachments. To show HTML as source instead, fence it as ```xml. Always say the gist in plain words in text (body for a question): that is what is read aloud and what clients without HTML show. A whole page to try out stays with publish_asset.',
@@ -49,7 +51,7 @@ export const INSTRUCTIONS = [
   'The human can attach files, pasted screenshots and small drawings to a chat message and to the note of an answer: the meta attribute files then holds their absolute paths, comma-separated, and image_path the first picture among them. Read them before you answer.',
   'When you introduce yourself, also pass icon: the drawing that fits your task, chosen from the names listed in the description of introduce. It becomes the symbol of your session; one the human picked by hand is kept.',
   'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
-  'Sessions can belong together: a main agent and its helpers. Your subagents (helpers you start in this same process, e.g. with the Agent tool) each get a child session of their own on the board, shown under your session: pass session with the helper\'s short name (e.g. "Design", "Server", "QA") to reply, create_decision, create_info, merge_cards, set_status, clear_status, introduce, list_cards and publish_asset, and it lands in that child session; the first use opens it (open_session does the same and sets its task and icon). Tell each subagent to pass its session name on every call. Without session everything goes to your own (main) session. Events from a child session carry meta session="<name>": route them to that helper. A separate Claude session with a key of its own is not a child: it may introduce itself with parent set to your session id.',
+  'Sessions can belong together: a main agent and its helpers. Your subagents (helpers you start in this same process, e.g. with the Agent tool) each get a child session of their own on the board, shown under your session: pass session with the helper\'s short name (e.g. "Design", "Server", "QA") to reply, create_decision, create_info, merge_cards, set_status, clear_status, introduce, list_cards and publish_asset, and it lands in that child session; the first use opens it (open_session does the same and sets its task and icon). Tell each subagent to pass its session name on every call. When the helper is done, call close_session: its status lines are cleared and the board moves it to the archive (still readable there; open_session with the same name opens it again). Without session everything goes to your own (main) session. Events from a child session carry meta session="<name>": route them to that helper. A separate Claude session with a key of its own is not a child: it may introduce itself with parent set to your session id.',
   'Other agents may share this board; the human sees all stacks merged into one, oldest first. You only see and change your own cards and status lines.',
   'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply.',
   'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
@@ -330,7 +332,7 @@ export const TOOLS = [
   },
   {
     name: 'open_session',
-    description: 'Open a child session under your own session for a helper (a subagent of yours), or return the one with that name. The board shows it under your session with its own chat, cards and status lines; the human sees and answers it there, and no other agent can read it. Then pass session: "<name>" to the other tools to write into it. Needs no approval.',
+    description: 'Open a child session under your own session for a helper (a subagent of yours), or return the one with that name (a closed one is opened again). Call it before you start a subagent, and close_session when it is done. The board shows it under your session with its own chat, cards and status lines; the human sees and answers it there, and no other agent can read it. Then pass session: "<name>" to the other tools to write into it. Needs no approval.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -338,6 +340,18 @@ export const TOOLS = [
         task: { type: 'string', description: 'What the helper works on, one line' },
         icon: { type: 'string', description: 'The name of the drawing that fits the helper\'s task (as in introduce)' },
         model: { type: 'string', description: 'The model the helper runs as' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'close_session',
+    description: 'Close a child session when its helper (subagent) is done: its status lines are cleared and the board moves it out of the active list into the archive, where the human can still read it. Post the helper\'s result first (reply with session: "<name>"), or pass it as summary. Open questions in it stay on the human\'s stack until answered. open_session with the same name opens it again.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The helper\'s short name, as given to open_session' },
+        summary: { type: 'string', description: 'Optional: the helper\'s result in a few lines, posted into the child session before it is closed' },
       },
       required: ['name'],
     },
@@ -416,6 +430,7 @@ export const TOOL_EXAMPLES = {
   share_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A', expires_hours: 72 },
   adopt_session: { id: 'web-ui' },
   open_session: { name: 'Design', task: 'Pictures for the landing page', icon: 'brush' },
+  close_session: { name: 'Design', summary: 'Three landing page pictures are in out/landing/, the blue one recommended' },
 }
 
 // Everything that travels over the channel besides tool calls, for the help page.
