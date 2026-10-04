@@ -181,7 +181,7 @@ function optionLinks(card) {
  *  - The talk. "What??" and the answer that follows it stand together as one "Explained" block; a hand-back and the
  *    revision it brought stand together ("Version n, as you asked").
  *  - Everything before the version that stands now folds away behind "Earlier versions (n)". */
-export function cardThread(card, model, base = '') {
+export function cardThread(card, model, base = '', { more = false } = {}) {
   const all = model.state.messages.filter(m => m.card_id === card.id)
   const assets = model.state.assets
   const who = model.byAgent.get(card.agent)
@@ -207,20 +207,24 @@ export function cardThread(card, model, base = '') {
   if (card.urgency_reason) lead.push(did(`Why it is urgent: ${card.urgency_reason}`, card.created))
 
   // ---- the talk, in pieces ----
-  const items = []   // { html, turn?: version }
+  const items = []   // { html, turn?: version, handback?, brought?: the version a hand-back brought }
+  let askedAt = -1   // the hand-back that waits for its version
   for (let i = 0; i < all.length; i++) {
     const m = all[i]
     if (m.from === 'event') {
       if (m.kind === 'revised' && m.version) {
         const note = String(m.text ?? '').replace(/^Presented again:?\s*/i, '').trim()
-        // A hand-back right before it: "as you asked".
-        const asked = items.at(-1)?.handback
+        // A hand-back before it (the session may have answered it first): "as you asked".
+        const asked = askedAt >= 0
+        if (asked) items[askedAt].brought = m.version
+        askedAt = -1
         const before = m.version > 1 && versionOf(card, m.version - 1)
         items.push({ turn: m.version, html: html`<div class="tc-turn" id="turn-${m.id}" data-version="${m.version}"><p class="tc-turn-head"><b>${m.again || m.version > 1 ? `Version ${m.version}` : 'Presented'}${asked ? ', as you asked' : ''}</b>${agoSpan(m.ts, 'msg-time')}</p>${note ? html`<p class="tc-turn-note">${note}</p>` : ''}${before ? html`<a class="tc-turn-before" data-nav href="${cardPath(card, base)}?v=${m.version - 1}">See version ${m.version - 1}</a>` : ''}</div>` })
       } else if (m.kind === 'handback_withdrawn') items.push({ html: did('You took it back', m.ts) })
       else if (m.kind === 'reopened') items.push({ html: did('Your answer was taken back: open again', m.ts) })
       continue
     }
+    if (m.from === 'user' && m.present) { items.push({ html: did('You took it back', m.ts) }); askedAt = -1; continue }
     if (!m.text && !m.attachments?.length) continue
     if (m.from === 'user' && m.explain && isBare(m)) {
       // What?? and what the session answered to it, as one block.
@@ -229,19 +233,22 @@ export function cardThread(card, model, base = '') {
       items.push({ html: html`<section class="tc-explained"><p class="tc-explained-head"><b>You asked: What??</b>${agoSpan(m.ts, 'msg-time')}</p>${answers.length ? answers.map((a, n) => agentMsg(a, n > 0)) : html`<p class="tc-quiet">Waiting for the explanation.</p>`}</section>` })
       continue
     }
-    if (m.from === 'user') { items.push({ handback: Boolean(m.handback), html: userMsg(m, isBare(m) ? WORDS.revise : m.text === EXPLAIN_TEXT ? WORDS.what : m.text) }); continue }
+    if (m.from === 'user') { if (m.handback) askedAt = items.length; items.push({ handback: Boolean(m.handback), html: userMsg(m, isBare(m) ? WORDS.revise : m.text === EXPLAIN_TEXT ? WORDS.what : m.text) }); continue }
     items.push({ html: agentMsg(m, items.at(-1)?.agent === true), agent: true })
     items.at(-1).agent = true
   }
   // ---- before the version that stands now: folded ----
   let lastTurn = items.findLastIndex(x => x.turn != null && x.turn > 1)
-  if (lastTurn > 0 && items[lastTurn - 1].handback) lastTurn--   // the hand-back stays with the version it brought
+  const brought = lastTurn > 0 ? items.findIndex(x => x.brought === items[lastTurn].turn) : -1
+  if (brought >= 0) lastTurn = brought   // the hand-back (and what was said after it) stays with the version it brought
   const earlier = lastTurn > 0 ? items.slice(0, lastTurn) : []
   const now = lastTurn > 0 ? items.slice(lastTurn) : items
   const turns = earlier.filter(x => x.turn != null).length
   const folded = earlier.length ? html`<details class="tc-fold tc-earlier"><summary>Earlier versions (${turns + 1})</summary>${earlier.map(x => x.html)}</details>` : ''
-  const any = lead.length || items.length
-  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${any ? '' : raw(' hidden')}>${lead}${folded}${now.map(x => x.html)}</section>`
+  // The talk is loaded newest page first: older comments come on request, at the top of the talk.
+  const older = more ? html`<a class="tc-older" data-nav href="${cardPath(card, base)}?older=1#card-thread-${card.id}" data-turbo-action="replace">Earlier comments</a>` : ''
+  const any = lead.length || items.length || more
+  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${any ? '' : raw(' hidden')}>${lead}${older}${folded}${now.map(x => x.html)}</section>`
 }
 
 /** Where the card stands in the stack, for the walk: { at, of, prev, next } (cards), or null when it is not waiting. */
@@ -252,7 +259,7 @@ export function placeOf(card, model) {
 
 /** The whole <main> of a card's page. pic: which picture stands. walk: a step of "Next, please". version: as it was
  *  then. from: the session it was opened from (/s/<id>/q/<n>): the way back and the links lead there. */
-export function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null } = {}) {
+export function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null, more: older = false } = {}) {
   const old = versionOf(card, version)
   const open = card.status === 'open' && !card.with_agent && !old
   const session = from ? model.byAgent.get(from) : null
@@ -283,7 +290,7 @@ ${cardLeft(card, model, self, { version, pic: shownPic, query })}
 ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </div>
 </article>
-${cardThread(card, model, self)}
+${cardThread(card, model, self, { more: older })}
 <form class="tc-ask tc-chat" id="${form}" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
 ${open && card.kind === 'decision' ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}

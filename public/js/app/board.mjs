@@ -183,10 +183,14 @@ export function createBoard({ hub, model, extraPages = [] }) {
       const from = opts.from && m.byAgent.has(opts.from) ? opts.from : null
       t.page(req, res, { model: m, title: `${card.title} · Trommi`, view: 'card', css: 'card', current: from, stream: `&card=${card.id}${from ? `&from=${encodeURIComponent(from)}` : ''}${old ? `&old=${old.n}` : ''}`, main: cardPage(card, m, BASE, { ...opts, from }), says: says(m.byCard.get(saidId), saidWhat) }, code)
     }
+    // The comments are a timeline loaded newest page first; ?older=1 asks for the page before (it comes in live).
+    const threadOf = card => `chat:card/${card.id}`
+    const moreOf = card => card.kind !== 'permission' && Boolean(hub.hasMore?.(threadOf(card)))
     t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)$/, ({ req, res, url, match }) => {
       const m = model(), card = m.cardByRef(match[2])
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
-      cardView(req, res, card, m, { said: String(url.searchParams.get('said') ?? ''), pic: Number(url.searchParams.get('pic')) || 1, walk: url.searchParams.has('walk'), version: Number(url.searchParams.get('v')) || null, from: match[1] ? decodeURIComponent(match[1]) : null })
+      if (url.searchParams.has('older') && moreOf(card)) hub.loadOlder(threadOf(card)).catch(err => console.warn('older comments', err))
+      cardView(req, res, card, m, { more: moreOf(card), said: String(url.searchParams.get('said') ?? ''), pic: Number(url.searchParams.get('pic')) || 1, walk: url.searchParams.has('walk'), version: Number(url.searchParams.get('v')) || null, from: match[1] ? decodeURIComponent(match[1]) : null })
     })
     t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)\/p\/(\d+)$/, ({ req, res, match: [, from, ref, at] }) => {
       const m = model(), card = m.cardByRef(ref)
@@ -207,7 +211,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
     t.live('card', {
       take: (m, clients) => new Map([...new Set(clients.filter(c => c.params.get('card')).map(c => `${c.params.get('card')}|${c.params.get('from') ?? ''}`))].map(k => {
         const [id, from] = k.split('|'), card = m.byCard.get(id), self = from ? `${BASE}/s/${encodeURIComponent(from)}` : BASE
-        return [k, card ? { face: cardLead(card, m, self), answer: cardAnswer(card, m, BASE), answerSig: cardAnswer({ ...card, draft: undefined }, m, BASE), thread: cardThread(card, m, self) } : null]
+        return [k, card ? { face: cardLead(card, m, self), answer: cardAnswer(card, m, BASE), answerSig: cardAnswer({ ...card, draft: undefined }, m, BASE), thread: cardThread(card, m, self, { more: moreOf(card) }) } : null]
       })),
       diff(was, now, client) {
         const id = client.params.get('card'), k = `${id}|${client.params.get('from') ?? ''}`, a = was.get(k), b = now.get(k)
