@@ -32,7 +32,7 @@ async function gunzip(bytes, encoding) {
 export function snapshotOf(client) {
   const m = client.model
   const chains = {}
-  for (const [k, c] of client.chains) if (k !== b64u(client.device.id)) chains[k] = [c.seq, b64u(c.hash)]
+  for (const [k, c] of client.chains) chains[k] = [c.seq, b64u(c.hash)]     // the writer's own chain too: the tail overlap needs every head
   return {
     schema: SNAPSHOT_SCHEMA, room_id: m.room.room_id, envelope_number: m.room.last_envelope_number,
     log_seq: client.state.head.seq, log_hash: hex(client.state.head.hash),

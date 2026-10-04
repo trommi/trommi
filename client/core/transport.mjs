@@ -5,7 +5,19 @@ import * as z from './zcrypto.mjs'
 const { ZError, b64u, unb64u } = z
 const REFRESH_BEFORE_MS = 60_000
 
-export const normaliseHubUrl = url => String(url).replace(/\/+$/, '')
+/**
+ * R9: the canonical hub address, `https://` + lowercase host [+ `:port`], no path. Plain http only for a local or private
+ * development hub (localhost, 127.x, ::1, 10.x, 192.168.x, 172.16-31.x, *.local, *.ts.net).
+ */
+export function normaliseHubUrl(url) {
+  let u
+  try { u = new URL(String(url).trim()) } catch { throw new ZError('bad-argument', 'not a hub address') }
+  const host = u.hostname.toLowerCase()
+  const local = /^(localhost|127\.\d+\.\d+\.\d+|\[::1\]|10\.\d+\.\d+\.\d+|192\.168\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(host) || /\.(local|ts\.net)$/.test(host)
+  if (u.protocol !== 'https:' && !(u.protocol === 'http:' && local)) throw new ZError('bad-argument', 'a hub address is https:// (plain http only for a local hub)')
+  if (u.username || u.password || u.search || u.hash || (u.pathname && u.pathname.replace(/\/+$/, '') !== '')) throw new ZError('bad-argument', 'a hub address has no path, query or credentials')
+  return `${u.protocol}//${u.host.toLowerCase()}`
+}
 
 /** Every id that goes into a URL path is lowercase hex of its exact length (never raw text from a body or the hub). */
 const HEX = { room_id: 64, attachment_id: 32, invite_id: 32, session_id: 32, share_id: 32, escrow_id: 32 }
@@ -24,6 +36,9 @@ export class Hub {
     this.client_name = client                   // 'app/1.2.3' | 'channel/0.1.0': sent as Trommi-Client on every request
     this.onTooOld = null
     this.onLeaseLost = null
+    this.onForbidden = null                     // stream refused with 403: the client checks the member list (removed: it closes the stream)
+    this._wakers = new Set()                    // sleeping stream reconnects, woken when a request gets through again
+    this._unreachable = false
     this.hub_url = normaliseHubUrl(hub_url)
     this.room_id = room_id
     this.signer = signer
@@ -76,7 +91,9 @@ export class Hub {
     }
     let res
     try { res = await this.fetch(url, { method, headers: h, body: payload }) }
-    catch (e) { throw new ZError('offline', `hub not reachable: ${e.message}`, { status: 0 }) }
+    catch (e) { this._unreachable = true; throw new ZError('offline', `hub not reachable: ${e.message}`, { status: 0 }) }
+    if (res.status >= 500) this._unreachable = true
+    else if (this._unreachable) { this._unreachable = false; this.wake() }   // the hub is back: reconnect streams now
     if (res.status === 401 && auth && !retried) {
       this.token = null
       return this.request(method, path, { body, auth, raw, headers, query, binary, retried: true })
@@ -149,12 +166,15 @@ export class Hub {
 
   /**
    * The live stream: fetch with the Bearer header, SSE parsing, resume with after_envelope_number from the last id,
-   * reconnect with backoff (0.5 s doubling to 30 s, reset after a healthy connection). Returns { close() }.
+   * reconnect with backoff (0.5 s doubling to 2 s, reset after a healthy connection; woken at once when a request gets through again). Returns { close() }.
    * onEvent({ event, data, id }) may be async; records are handed over strictly in order.
    * onState('connecting' | 'open' | 'closed', error?)
    */
+  /** Wake every stream that waits to reconnect (the hub answered again, the browser went online). */
+  wake() { for (const w of [...this._wakers]) w() }
+
   stream({ after_envelope_number = 0, onEvent, onState = () => {}, stale_ms = 70_000 }) {
-    let closed = false, controller = null, cursor = after_envelope_number, backoff = 500, timer = null
+    let closed = false, controller = null, cursor = after_envelope_number, backoff = 500, timer = null, reauth = 0
     const getCursor = typeof after_envelope_number === 'function' ? after_envelope_number : () => cursor
     const run = async () => {
       while (!closed) {
@@ -168,7 +188,7 @@ export class Hub {
             headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream', ...(this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {}) }, signal: controller.signal,
           })
           if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); closed = true; throw e }
-          if (res.status === 401) { this.token = null; throw new ZError('unauthorised', 'stream sign-in') }
+          if (res.status === 401) { this.token = null; reauth++; if (reauth <= 2) { onState('closed'); continue } throw new ZError('unauthorised', 'stream sign-in') }   // a restarted hub forgot the token: sign in again at once
           if (!res.ok) {
             let err = {}
             try { err = await res.json() } catch {}
@@ -178,6 +198,7 @@ export class Hub {
             throw e
           }
           onState('open')
+          reauth = 0
           kick()
           const reader = res.body.getReader()
           const dec = new TextDecoder()
@@ -217,13 +238,18 @@ export class Hub {
           clearTimeout(watchdog)
           if (closed) break
           onState('closed', e)
-          if (e?.code === 'not-member' || e?.code === 'removed-sender' || e?.code === 'client-too-old' || e?.status === 403) { closed = true; break }
+          if (e?.code === 'client-too-old') { closed = true; break }
+          // 403 (not-member, removed-sender, …): never give up on a hub's word alone (a restarting hub, a proxy). The client
+          // checks the signed member list; if this device was removed it closes the stream itself.
+          if (e?.status === 403) this.onForbidden?.(e)
         }
         clearTimeout(watchdog)
         if (closed) break
+        // Reconnect soon: at most 2 s apart (a deploy restarts the hub; a long backoff would hold every message back),
+        // and at once when any request gets through again.
         const wait = healthy ? 250 : backoff
-        backoff = Math.min(backoff * 2, 30_000)
-        await new Promise(r => { timer = setTimeout(r, wait + Math.random() * 250) })
+        backoff = Math.min(backoff * 2, 2_000)
+        await new Promise(r => { const done = () => { clearTimeout(timer); this._wakers.delete(done); r() }; this._wakers.add(done); timer = setTimeout(done, wait + Math.random() * 500) })
       }
     }
     const done = run()

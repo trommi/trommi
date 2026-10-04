@@ -86,6 +86,7 @@ export class Client {
     this.chains = z.newChains()
     this.roomRecord = roomRecord
     this.hub = new Hub({ hub_url, room_id, fetch, client, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
+    this.hub.onForbidden = () => { this.serial(() => this._refreshMembers()).catch(() => {}) }
     this.hub.onTooOld = e => { if (this._tooOld) return; this._tooOld = true; this.emit('error', e); this.stop().catch(() => {}) }
     this.hub.onLeaseLost = e => { if (this._leaseLost) return; this._leaseLost = true; clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {}) }
     this.model = M.emptyModel()
@@ -262,6 +263,7 @@ export class Client {
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
     if (stream) this._openStream()
     else this._setConnection('live')
+    if (!this._onOnline && globalThis.addEventListener) { this._onOnline = () => { this.hub.wake(); this._pumpOutbox() }; globalThis.addEventListener('online', this._onOnline) }
     // Presence (is_online) goes stale otherwise: refresh the device list every minute while running.
     clearInterval(this._devicesTimer)
     this._devicesTimer = setInterval(() => { if (this._started) this._refreshDevices().catch(() => {}) }, 60_000)
@@ -569,6 +571,8 @@ export class Client {
         } catch (e) {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[rec]', e.stack.split('\n').slice(0, 5).join(' | '))
           M.pushAlert(this.model, change, { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
+          // L10: a gap would silence that sender on this device for good: replay the room once (at most every 10 minutes).
+          if (e.code === 'gap' && !this._resyncing && Date.now() - (this._lastGapResync ?? 0) > 10 * 60_000) { this._lastGapResync = Date.now(); this._needResync = true }
         }
         this.model.room.last_envelope_number = r.envelope_number
         if (performance.now() - t0 > YIELD_MS) { await yieldNow(); t0 = performance.now() }
@@ -910,7 +914,7 @@ export class Client {
             continue
           }
           if (e.status === 0 || e.status >= 500 || e.status === 429 || e.code === 'unauthorised' || e.code === 'stale-session-key') {
-            await sleep(e.retry_after ? e.retry_after * 1000 : backoff); backoff = Math.min(backoff * 2, 15_000)
+            await sleep(e.retry_after ? e.retry_after * 1000 : backoff); backoff = Math.min(backoff * 2, 2_000)   // a restarting hub: retry soon
             if (!this._started && e.status === 0) break
             continue
           }
