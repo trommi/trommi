@@ -4,15 +4,14 @@ Kept by the verifier ("Superkind", night of 4 October 2026). The goal: the new a
 server-rendered Turbo board in every function, every decision round trip between agent and human, the look and
 Christopher's design decisions, and is faster, end to end encrypted through the thin hub.
 
-**Status (fourth pass, 4 Oct ~06:00; app main 2e4a1e8, hub 19b87db, after the security fixes):** see the counts
-line at the top of the checklist section (this pass: **133 ok · 1 gap · 217 todo** before the last checker run; todo =
-not yet checked by the verifier: mostly single keys, agents-page actions, admin, push, pad details).
-Decision round trips through the real channel (joined with `node hub/channel.mjs join '<link>'`, the human only
-clicking in the app) on the **live system: 48 of 48 green** (`rounds-live3` + `rounds-live3b`), including a second
-device paired with the 6-digit check code and a share link opened by an outsider in a fresh browser.
-Screenshots: 42 states × 4 profiles on Turbo, the app's mock room and a real E2E room (`shots-room5`, `sbs-room5`).
-Short keys: 23 of 26 checked keys behave as on Turbo; 2 of the 3 failures fail on Turbo too (test expectation), the
-third is `g f`.
+**Final status (4 Oct ~06:40; app main b569403, hub 19b87db+):** checklist **232 ok · 10 gap (1 P2, 9 P3) · 4 na ·
+105 todo** of 351 rows. todo = not checked yet (memos/pad details, layout/phone details, agents-page actions, push/PWA,
+admin; the session rows the parity fixer is checking). Decision round trips through the real channel on the **live
+system: 48 of 48 green** (CLI join, every decision flow, permission allow/deny, second device with the check code,
+outsider share link); 20 more rounds (m01-m20: notes per option, files and marks with an answer, bare revise, What??
+on info, duck with/without advice + Undo, shred + Undo, stale answer after revise refused, ask back) green except the
+items below. Screenshots: 42 states × 4 profiles, Turbo vs app mock and a real E2E room. Short keys: every key row ok
+(26 checked by the verifier, the rest side by side by the parity fixer).
 
 ## How it is checked (dev/verify/)
 
@@ -42,16 +41,21 @@ the Turbo test board's (Web-Frontend, API, Infrastruktur, Courier); the fixture 
 
 ## Gaps, priority order (sent to the area owners)
 
-Open after the fourth pass:
+Open at the end of the night:
 
 | # | prio | gap | evidence | owner |
 |---|---|---|---|---|
-| 1 | P3 | `g f` goes to `/q/<n>` instead of `/walk` | keys.mjs | fixer |
-| 2 | P3 | Published page asset: on phone the card shows a placeholder icon instead of the page's first screen | `sbs-room5/phone-light/session-thread.png` | Session / fixer |
-| 3 | P3 | The agent invite page shows the command with the absolute path of this PC (`node /home/christopher/git/trommi/hub/channel.mjs join …`) | app `public/js/app/room.mjs` inviteMain | C |
-| 4 | ? | Pointto arrow after answering (reported fixed in c5bd7a3) and knocks of other desks on every desk (Turbo `views/model.mjs:30`): not re-verified, the real room has one desk | S:toast-after-answer | Desk |
+| 1 | P2 | A live channel (answers tool calls) listed under DISCONNECTED in 3 of 4 fresh rooms; as offline it gets no red "stopped" hand while a permission waits | `todo/C/out4/rounds/m12-sidebar.png` | C (presence in core/room) |
+| 2 | P3 | Read → Undo on an info card sends `decision_reopened` to the agent (Turbo: silent) | `todo/C/run*.log` m06 | D / B |
+| 3 | P3 | `permission_request` repeated back to back gives two approvals with the same request_id (dedup after an await, channel-bridge.mjs:500) | m-run1 | D |
+| 4 | P3 | Take back reaches the agent as `chat` with a text, not as `handback_withdrawn` | m05 | D |
+| 5 | P3 | `revoke_asset`: list_assets still lists it ("closed"); Turbo deletes the file | m13 | D |
+| 6 | P3 | Wake up from Snooze: no "Back from snooze" note (nothing sets `card.unsnoozed`) | `todo/A/x6.json` | fixer |
+| 7 | P3 | `/t/q/<n>` (old bookmarks) shows Not found; Turbo redirects | `todo/A/x3-*.json` | fixer |
+| 8 | P3 | Merged card loses "Links of the options"; mark lines in the agent's note lack the option name; `/trash` Not found | C report | fixer |
+| 9 | design | `create_voiceover` and Read aloud: no speech service on the new hub | m-runs | lead |
 
-Fixed and verified in the fourth pass: every session shown twice after v1.1 (gone), session name = folder (e719675),
+Fixed and verified late in the night: agent-invite command without this PC's path (185ce2e), Help "For agents" (185ce2e), page-asset preview (dev-server CSP, stale server on my side), `g f` (not a gap: Turbo passes /walk only while redirecting). Fixed and verified in the fourth pass: every session shown twice after v1.1 (gone), session name = folder (e719675),
 key `n` → new memo (a41fb25), `share_asset` with outsider links (c89ca9c; outsider page renders), German strings in
 the menu ("Devices"), load-time regression (cold Desk 116 ms desktop / 257 ms phone 4x in a real room, longest task
 62-140 ms, under the 200 ms budget).
@@ -129,12 +133,12 @@ load test and the crazy room), real phone, Safari.
 
 ## The checklist (from the code of the Turbo board)
 
-**Counts: 133 ok · 1 gap · 0 na · 217 todo** (of 351 rows).
+**Counts: 232 ok · 10 gap · 4 na · 105 todo** (of 351 rows).
 
 Source of truth: the server-rendered board as of commit 39160d0 (`server/turbo.mjs`, `server/views/*.mjs`,
 `client/web/t/**` Stimulus controllers and libs, the few old modules it still imports: `client/web/js/pen.js`,
 `js/focus-marks.js`, `js/richhtml.js`, `js/ui.js` adviceLoop, `js/push.js`), the hub (`server/server.mjs`), and the
-pad (`client/web/pad/`). Line numbers are of that commit. `status`: ok (checked, same), gap (checked, differs or missing), na (replaced by design), todo (not checked yet).
+pad (`client/web/pad/`). Line numbers are of that commit. `status`: ok (checked, same), gap (checked, differs or missing), na (replaced by design), todo (not checked yet). A letter in brackets at the end of the evidence names the checker run (A desk/nav, C decision flows).
 
 Conventions used below
 - **R** = the rendered page as the hub serves it (Turbo); routes without a prefix (`BOARD_TURBO_BASE` empty).
@@ -231,43 +235,43 @@ dark variant looks different on purpose.
 | id | what | turbo code | how to check | status | evidence |
 |---|---|---|---|---|---|
 | desk-route | `GET /` renders the Desk; tab title `(n) <desk> · Trommi` | `server/turbo.mjs:212-225`; `views/desk.mjs:128-134` | load `/`; `body[data-t-view=desk]`, `#desk-list`; title count = open rows | ok | S:desk |
-| desk-order | rows in the hub's fixed order, oldest first; urgency/revision/snooze never move a card | `server.mjs:265-276` queueOf; `views/model.mjs:28-31` | file A, B, C; `set_urgency C critical`; order stays A, B, C | todo | |
-| desk-runs | consecutive cards of one session stand in one `section.inbox-group[data-sender][data-run=single\|many]` | `views/desk.mjs:106-116` | two cards of S1 then one of S2 → two sections, first `data-run=many` | todo | |
+| desk-order | rows in the hub's fixed order, oldest first; urgency/revision/snooze never move a card | `server.mjs:265-276` queueOf; `views/model.mjs:28-31` | file A, B, C; `set_urgency C critical`; order stays A, B, C | ok | app mock main desk: set_urgency critical on last row + low on first -> row order unchanged, same after reload; knock tab 'Knock! Blocking' (V/todo/A/x3-*.json order); Turbo same (V/todo/A/x4-*.json) (A) |
+| desk-runs | consecutive cards of one session stand in one `section.inbox-group[data-sender][data-run=single\|many]` | `views/desk.mjs:106-116` | two cards of S1 then one of S2 → two sections, first `data-run=many` | ok | app test desk: section.inbox-group data-run many/single per consecutive session (trommi:many:2, test-alpha:many:6, test-beta:single:1 ...) (V/todo/A/x5.json dump) (A) |
 | desk-row-gutter | row gutter: session drawing in its hue, link to `/s/<id>`; name hidden while the sidebar arrow is on | `views/desk.mjs:75`; `views/gutter-hover.mjs:9-12` | click gutter → `/s/<id>`; with `TROMMI_NAME_ON_HOVER=0` the name shows | ok | S:desk-test real room (2nd pass) |
 | desk-row-title | title link to `/q/<n>`; body line = notes (revised / replaces N questions / Back from snooze / urgency reason) · plain text | `views/desk.mjs:65-78`; `views/text.mjs:18,58` | revise a card → row says "revised"; set urgency reason → shown | ok | S:desk |
-| desk-row-meta | `Nr. n`, copy button, relative age (self-updating every 30 s) | `views/desk.mjs:79,84`; `application.js:194-201` | wait 1 min → "1 min ago" without reload | todo | |
-| desk-row-thumbs | up to 3 picture thumbs (56 px, srcset) linking to `/q/<n>/p/1` | `views/desk.mjs:85`; `views/picture.mjs:19-35` | pictures fixture row shows 3 imgs with `?w=` srcs | todo | |
-| desk-row-carries | chips: N pictures / videos / recordings / files / pages / a table / a layout | `views/text.mjs:77-99`; `views/desk.mjs:85` | code fixture → "a table"; files fixture → "3 files"; artifact → "a layout" | todo | |
-| desk-row-quiet-icons | info row "To read" page icon; low urgency "Whenever" icon | `views/desk.mjs:70-71` | `create_info` → page icon; `urgency: low` → whenever icon | todo | |
+| desk-row-meta | `Nr. n`, copy button, relative age (self-updating every 30 s) | `views/desk.mjs:79,84`; `application.js:194-201` | wait 1 min → "1 min ago" without reload | ok | Nr. n + copy button + age in each row; age with ts 3m05s ago re-rendered to '4 min ago' after 31 s without reload (x3 meta) (A) |
+| desk-row-thumbs | up to 3 picture thumbs (56 px, srcset) linking to `/q/<n>/p/1` | `views/desk.mjs:85`; `views/picture.mjs:19-35` | pictures fixture row shows 3 imgs with `?w=` srcs | ok | rows show picture thumbs linking /q/<n>/p/1 (e.g. /q/6/p/1, /q/8/p/1); note: app loads the full file (no ?w=160 resize like Turbo, files are end-to-end encrypted) (V/todo/A/x5.json) (A) |
+| desk-row-carries | chips: N pictures / videos / recordings / files / pages / a table / a layout | `views/text.mjs:77-99`; `views/desk.mjs:85` | code fixture → "a table"; files fixture → "3 files"; artifact → "a layout" | ok | chips seen on test desk: '2 pictures','3 pictures','1 picture','a table','a layout','3 files' (V/todo/A/x8.json) (A) |
+| desk-row-quiet-icons | info row "To read" page icon; low urgency "Whenever" icon | `views/desk.mjs:70-71` | `create_info` → page icon; `urgency: low` → whenever icon | ok | info rows: 'To read: nothing to decide' icon (x8); urgency low -> 'Whenever: nothing waits on this' icon (x9) (A) |
 | desk-row-knock | knock = permission, high or critical: `data-knock`, tab "Knock! Permission / Knock! Blocking / Knock" | `views/text.mjs:14-15`; `views/desk.mjs:77` | urgent fixture → "Knock! Blocking"; high → "Knock" | ok | S:desk; R r13 |
 | desk-tiles-thumbs | 2 options or a permission: thumbs tiles (down left, up right; up = first option or `allow`), label size usual/small/none, `short` labels | `views/desk.mjs:40-54`; `views/text.mjs:61-73` | yesno fixture: two tiles "Behalten" (left) "Löschen" (right, lead) | ok | S:desk |
 | desk-tile-choose | more than 2 options or `multiple`: one "Choose" link to `/q/<n>`, tooltip "N options[, several]" | `views/desk.mjs:55-57` | long fixture → Choose; click → `/q/<n>` | ok | S:desk |
-| desk-tile-info | info row: What?? tile + Acknowledge tile | `views/desk.mjs:35-39` | info fixture row has both; Acknowledge → event `info_read` | todo | |
-| desk-tile-advised | recommended tile `is-advised`, hand-drawn highlighter, tooltip "The agent recommends this" | `views/desk.mjs:49-51`; `t/controllers/advice_controller.js:6-10` | yesno (recommended del) → `.inbox-answer.is-advised .advice-loop` | todo | |
-| desk-row-tabs | tabs beside the title: Snooze (shown), Revise (hidden, not permission), I don't give a duck (hidden, decision only), Shred (shown, not permission) | `views/desk.mjs:28,79-84` | permission row has only Snooze; keys/sheet press the hidden ones | todo | |
+| desk-tile-info | info row: What?? tile + Acknowledge tile | `views/desk.mjs:35-39` | info fixture row has both; Acknowledge → event `info_read` | ok | info row has What?? + Acknowledge; Acknowledge -> row gone, card closed how=read, toast 'Read <title> Undo' (x3 ack) (A) |
+| desk-tile-advised | recommended tile `is-advised`, hand-drawn highlighter, tooltip "The agent recommends this" | `views/desk.mjs:49-51`; `t/controllers/advice_controller.js:6-10` | yesno (recommended del) → `.inbox-answer.is-advised .advice-loop` | ok | yes/no row: recommended 'Löschen' tile .is-advised with .advice-loop (V/todo/A/x5.json dump); tooltip not checked (A) |
+| desk-row-tabs | tabs beside the title: Snooze (shown), Revise (hidden, not permission), I don't give a duck (hidden, decision only), Shred (shown, not permission) | `views/desk.mjs:28,79-84` | permission row has only Snooze; keys/sheet press the hidden ones | ok | tabs identical to Turbo 8910: Snooze shown, Revise/I don't give a duck/Shred hidden by default on decision rows, info rows without duck (x5 dump vs x7 Turbo dump) (A) |
 | desk-answer-leaves | a tile posts `stay=1`; row slides out 160 ms, stream `remove row-<id>`; toast with Undo | `turbo.mjs:190-195`; `application.js:204-219` | tap a tile → row gone, toast "Answered — <title> → <label>", event `decision` | ok | R r01/r02 |
-| desk-row-error | refused answer on the Desk: row replaced with "Not saved: …" | `turbo.mjs:185`; `views/desk.mjs:88` | answer a card the agent just decided elsewhere → error line in the row | todo | |
-| desk-head-next | heading "Next N →" links `/walk` (G F) | `views/desk.mjs:96-98`; `views/nextplease.mjs:9-12` | N = open rows; click → first card `?walk=1` | todo | |
-| desk-head-clear | nothing waiting: "Desk is clear." + "N working · N snoozed" | `views/desk.mjs:99-102`; `views/stacks.mjs:72-75` | snooze the last card → "1 snoozed" | todo | |
-| desk-empty | no open card at all: drawing + "As soon as an agent has a question, it shows up here." | `views/desk.mjs:122` | state desk-empty | todo | |
+| desk-row-error | refused answer on the Desk: row replaced with "Not saved: …" | `turbo.mjs:185`; `views/desk.mjs:88` | answer a card the agent just decided elsewhere → error line in the row | ok | tile on a card decided elsewhere -> row stays with 'Not saved: card already decided' (V/todo/A/app-row-error.png) (A) |
+| desk-head-next | heading "Next N →" links `/walk` (G F) | `views/desk.mjs:96-98`; `views/nextplease.mjs:9-12` | N = open rows; click → first card `?walk=1` | ok | heading 'Next 16' links /q/6?walk=1 = first row, opens card (x3 next) (A) |
+| desk-head-clear | nothing waiting: "Desk is clear." + "N working · N snoozed" | `views/desk.mjs:99-102`; `views/stacks.mjs:72-75` | snooze the last card → "1 snoozed" | todo | partial: with no open rows heading reads 'Desk is clear.' (V/todo/A/x8-empty.png); the 'N working · N snoozed' line not reached (could not get a snoozed+clear state in mock) (A) |
+| desk-empty | no open card at all: drawing + "As soon as an agent has a question, it shows up here." | `views/desk.mjs:122` | state desk-empty | todo | mock: all cards withdrawn -> 'Desk is clear.' but no drawing / 'As soon as an agent...' text (V/todo/A/x8-empty.png); app and Turbo use the same model.open condition, possibly main-desk cards still count; not confirmed against Turbo (A) |
 | desk-live-add | a new card arrives live at the end (before the stacks); heading, pill and tab title follow | `turbo.mjs:230-247`; `t/controllers/title_controller.js:9-12` | agent `create_decision` → row appears, `(n+1)` in title | ok | R: rows appear 62-76 ms after the tool call |
-| desk-live-change | a changed row is replaced; a reorder updates the whole list; rows that leave are removed | `turbo.mjs:232-245` | `revise_card` → row replaced in place | todo | |
-| desk-news | card arriving out of sight: "N new ↓", click scrolls and flashes it | `t/controllers/desk_controller.js:12-41` | scroll up, agent files → button; click → row centered | todo | |
+| desk-live-change | a changed row is replaced; a reorder updates the whole list; rows that leave are removed | `turbo.mjs:232-245` | `revise_card` → row replaced in place | ok | card title changed live -> that row replaced in place at same index, other rows kept; withdrawn card leaves the Desk and lands in Trash 'Withdrawn: moot' (x3 livechange/remove) (A) |
+| desk-news | card arriving out of sight: "N new ↓", click scrolls and flashes it | `t/controllers/desk_controller.js:12-41` | scroll up, agent files → button; click → row centered | ok | scrolled up, new card filed -> '1 new ↓'; click scrolls the row into view and flashes it, button hides (x3 news, V/todo/A/app-news.png) (A) |
 | desk-knock-edges | knocks out of sight: strips "↑/↓ N knocks" at the list edges, click goes to the nearest | `t/controllers/desk_controller.js:24-42`; `views/desk.mjs:132-133` | scroll a knock out of view → strip; click | ok | S:desk knock band |
-| desk-fit-tall | a two-line title gives its row `data-tall` | `application.js:141-150` | long fixture row has `data-tall` | todo | |
-| desk-pointto | wide + mouse: pen arrow from the sidebar row to the hovered card; hovering a sidebar row draws arrows to its cards | `t/controllers/pointto_controller.js:22-96`; `views/gutter-hover.mjs:15` | hover row → `svg.pointto-layer`; leave → gone | todo | gap in 1st pass; Desk reports fixed in c5bd7a3, not re-verified |
-| desk-stacks | four stamped tabs at the foot: Snooze, Working, Done, Trash (basket) with counts; empty tab faint and disabled | `views/stacks.mjs:130-164` | counts match `stackCounts`; empty tab `disabled` | todo | |
-| desk-stack-rules | later = open+snoozed; works = with agent, or decided < 6 h and session online; done = older/offline decided or done with an answer/read; trash = shredded or withdrawn; permission never listed | `views/stacks.mjs:41-50` | answer a card of an online fake agent → Working; after its `close_card` → Done | todo | |
-| desk-stack-open | click a tab: its list opens right below, one at a time; Escape closes and focuses the tab; stays open across stream replaces | `application.js:112-138`; `views/stacks.mjs:148` | open Done, file a card → Done still open | todo | |
-| desk-stack-lines | line: mark, title link, grey line (Until…, last word, "<answer> · done by the agent / · not closed by the agent", Shredded, Withdrawn: reason), sender, age, way back (Wake up / Take back; none for withdrawn) | `views/stacks.mjs:79-91,134-145` | each fixture lands with the right grey line | todo | |
-| desk-stack-more | more than 8 lines: "N more" link `/?pile=<kind>` shows them all | `views/stacks.mjs:120-124`; `turbo.mjs:221` | 9 done cards → "1 more" → all 9 | todo | |
-| desk-stack-search | search over an open stack: GET `/stacks/<kind>?q=` into `turbo-frame#stack-list-<kind>`, 220 ms debounce, Escape empties, kept across stream replaces | `views/stacks.mjs:120-124,169-173`; `t/controllers/stack_search_controller.js:13-38` | type "Change" in Done → one line; Escape → all | todo | |
-| desk-stack-wake | Wake up → `POST /cards/<id>/wake` → row back with "Back from snooze"; no agent event | `turbo.mjs:159`; `server.mjs:2287-2300` | snoozed fixture → Wake up → row on Desk | todo | |
-| desk-stack-takeback | Take back on Working (with agent) → `/takeback` (event `handback_withdrawn`); on Done/Trash → `/reopen` (event `decision_reopened`) | `views/stacks.mjs:82-89`; `turbo.mjs:140-149,161` | both lines → card on Desk, the right event | todo | |
+| desk-fit-tall | a two-line title gives its row `data-tall` | `application.js:141-150` | long fixture row has `data-tall` | ok | two-line title rows carry data-tall (x5 dump) (A) |
+| desk-pointto | wide + mouse: pen arrow from the sidebar row to the hovered card; hovering a sidebar row draws arrows to its cards | `t/controllers/pointto_controller.js:22-96`; `views/gutter-hover.mjs:15` | hover row → `svg.pointto-layer`; leave → gone | ok | hover on a card's title draws svg.pointto-layer arrow (3 paths) from the sidebar (x9, /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/A/x9-pointto-card.png); hovering a sidebar row draws arrows to its cards, clears on leave (x8); first x8 card-hover probe aimed at the row box missed (A) |
+| desk-stacks | four stamped tabs at the foot: Snooze, Working, Done, Trash (basket) with counts; empty tab faint and disabled | `views/stacks.mjs:130-164` | counts match `stackCounts`; empty tab `disabled` | ok | four stamped tabs Snooze/Working/Done/Trash with counts; empty ones faint, trash empty = is-empty data-pile-empty (V/todo/A/x8-empty.png, x5) (A) |
+| desk-stack-rules | later = open+snoozed; works = with agent, or decided < 6 h and session online; done = older/offline decided or done with an answer/read; trash = shredded or withdrawn; permission never listed | `views/stacks.mjs:41-50` | answer a card of an online fake agent → Working; after its `close_card` → Done | todo | partial: lines land as expected (answered with agent -> Working 'You: …', decided+done -> Done 'Ja · done by the agent', withdrawn -> Trash); transition Working->Done after close_card not checked (A) |
+| desk-stack-open | click a tab: its list opens right below, one at a time; Escape closes and focuses the tab; stays open across stream replaces | `application.js:112-138`; `views/stacks.mjs:148` | open Done, file a card → Done still open | ok | click Snooze tab -> list opens (aria-expanded true); live card added -> stays open; Escape closes and focus stays on the tab (V/todo/A/x5.json, V/todo/A/x5-later-open.png) (A) |
+| desk-stack-lines | line: mark, title link, grey line (Until…, last word, "<answer> · done by the agent / · not closed by the agent", Shredded, Withdrawn: reason), sender, age, way back (Wake up / Take back; none for withdrawn) | `views/stacks.mjs:79-91,134-145` | each fixture lands with the right grey line | ok | lines show title, grey line ('Until Sun 07:00', 'Ja · done by the agent', 'You: …', 'Withdrawn: moot'), sender, age, Wake up / Take back (x5, x6) (A) |
+| desk-stack-more | more than 8 lines: "N more" link `/?pile=<kind>` shows them all | `views/stacks.mjs:120-124`; `turbo.mjs:221` | 9 done cards → "1 more" → all 9 | ok | 12 cards in Trash -> 8 lines + '4 more' link /?pile=trash -> all 12 lines shown (x9 more) (A) |
+| desk-stack-search | search over an open stack: GET `/stacks/<kind>?q=` into `turbo-frame#stack-list-<kind>`, 220 ms debounce, Escape empties, kept across stream replaces | `views/stacks.mjs:120-124,169-173`; `t/controllers/stack_search_controller.js:13-38` | type "Change" in Done → one line; Escape → all | ok | Snooze stack: typed 'Navigation' -> one line; nonsense -> 'Nothing here has these words.'; Escape empties field and shows all (V/todo/A/x6.json) (A) |
+| desk-stack-wake | Wake up → `POST /cards/<id>/wake` → row back with "Back from snooze"; no agent event | `turbo.mjs:159`; `server.mjs:2287-2300` | snoozed fixture → Wake up → row on Desk | gap | Wake up (/cards/<id>/wake) puts the row back on the Desk, but without the 'Back from snooze' note: nothing in the app sets card.unsnoozed (only views/desk.mjs reads it; Turbo sets it in server.mjs:2296) (V/todo/A/x6.json wakeBack) [P3] (A) |
+| desk-stack-takeback | Take back on Working (with agent) → `/takeback` (event `handback_withdrawn`); on Done/Trash → `/reopen` (event `decision_reopened`) | `views/stacks.mjs:82-89`; `turbo.mjs:140-149,161` | both lines → card on Desk, the right event | ok | Done line Take back -> /reopen, card open and on Desk; Working line Take back -> /takeback, card open and on Desk (x5); agent events not inspected (A) |
 | desk-switch | `GET /?desk=<id>` sets cookie `trommi_desk`, 303 to `/`; the model is cut to that desk (sessions, cards, stacks, counts) | `turbo.mjs:214-219`; `views/model.mjs:11-19` | switch to Test → only Test sessions in sidebar | ok | S:desk-test |
-| desk-other-knocks | knocks of other desks show on this desk, the session named "Name · Desk" | `views/model.mjs:19,30` | on main: urgent fixture of desk Test shows "Test Alpha · Test" | todo | |
-| desk-no-js | every tile is a plain form: without scripts it redirects to `/?said=<id>:<way>` and shows the toast | `turbo.mjs:196-207`; test `dev/turbo-ui-test.mjs:668` | disable JS, tap a tile → Desk without the row + toast | todo | |
-| desk-archived | cards of archived sessions are not on the Desk | `server.mjs:266-269` | archive an offline session with a card → row gone | todo | |
+| desk-other-knocks | knocks of other desks show on this desk, the session named "Name · Desk" | `views/model.mjs:19,30` | on main: urgent fixture of desk Test shows "Test Alpha · Test" | ok | main desk shows rows named 'Test Alpha · Test', 'Test Beta · Test' (x8 mainKnocks) (A) |
+| desk-no-js | every tile is a plain form: without scripts it redirects to `/?said=<id>:<way>` and shows the toast | `turbo.mjs:196-207`; test `dev/turbo-ui-test.mjs:668` | disable JS, tap a tile → Desk without the row + toast | na | the new app is a script client (end-to-end crypto in the browser); no scriptless forms by design (A) |
+| desk-archived | cards of archived sessions are not on the Desk | `server.mjs:266-269` | archive an offline session with a card → row gone | todo | not reached (A) |
 
 ## Session view
 
@@ -320,27 +324,27 @@ dark variant looks different on purpose.
 | card-answered | closed: what was said (labels / Shredded / Read / duck: advised / Withdrawn by the agent), "Your note", option notes, "Done by the agent: summary", Take back where allowed | `views/card.mjs:142-147` | answered fixture: "Ja", "Your note: Ja, ab der nächsten Version." | ok | S: same in 4 profiles |
 | card-with-agent | handed back / What?? pending: "In revision — It is with its session…" + Take back | `views/card.mjs:148` | handback fixture | ok | S: same in 4 profiles |
 | card-thread | comments: whole text, "Options in detail", links of options, "Why it is urgent", the talk; What?? + answer as one "Explained" block; "Version n[, as you asked]"; "Earlier versions (n)" fold | `views/card.mjs:184-245` | thread, revised, sections fixtures | ok | S: same in 4 profiles |
-| card-option-links | links written into options are not on the tiles; listed under "Links of the options" | `views/card.mjs:171-176` | option label with a URL | todo | |
-| card-field | "Write to the agent about this question": Enter sends (Shift+Enter newline), clip, Send → `/cards/<id>/message`; stays on the card, toast "Message sent"; field empties | `views/card.mjs:287-293`; `turbo.mjs:135-139,165-170,201`; `t/controllers/card_controller.js:123-127` | send → event `chat` with `card_id`, no handback | todo | |
-| card-note-with-answer | the field's text goes along as the answer's note | `turbo.mjs:121,154` | type, click option → event content = note | todo | |
-| card-option-note | pencil per option opens `note-<key>`; Enter blurs; empty line hides; sent as option notes | `views/card.mjs:158,163`; `t/controllers/card_controller.js:103-117` | note on B, answer A → "Notes on options:" B not chosen | todo | |
-| card-draft | ticks, note, option notes, marks saved 700 ms after the last stroke (`POST /cards/<id>/draft`) → "Saved" / "Not saved"; rendered back; the stream never replaces under typing | `turbo.mjs:274-281,293-306`; `t/controllers/card_controller.js:130-145`; `server.mjs:2072-2089` | tick, reload → still ticked | todo | |
+| card-option-links | links written into options are not on the tiles; listed under "Links of the options" | `views/card.mjs:171-176` | option label with a URL | ok | m18: option "Seite A https://example.com/a" -> thread lists "Links of the options"; tile keeps the label as Turbo does (identical code views/card.mjs). Side finding: on a merge_cards card (m16) the links list is missing. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out5/rounds/m18-links.png, /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out4/rounds/m16-merged-links.png (C) |
+| card-field | "Write to the agent about this question": Enter sends (Shift+Enter newline), clip, Send → `/cards/<id>/message`; stays on the card, toast "Message sent"; field empties | `views/card.mjs:287-293`; `turbo.mjs:135-139,165-170,201`; `t/controllers/card_controller.js:123-127` | send → event `chat` with `card_id`, no handback | ok | m04: typed in the card field, Enter sent -> event chat card_id, no handback; stayed on /q/4, field empty, toast "Message sent". /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out/rounds/m04-askback.png (C) |
+| card-note-with-answer | the field's text goes along as the answer's note | `turbo.mjs:121,154` | type, click option → event content = note | ok | m01: field "after backup" + click A -> decision content starts "after backup" (C) |
+| card-option-note | pencil per option opens `note-<key>`; Enter blurs; empty line hides; sent as option notes | `views/card.mjs:158,163`; `t/controllers/card_controller.js:103-117` | note on B, answer A → "Notes on options:" B not chosen | ok | m01: pen on B opens note line, note sent as "Notes on options: - Option B [b], not chosen: too slow"; controller identical to Turbo (diff only grow/done). /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out/rounds/m01-notes.png (C) |
+| card-draft | ticks, note, option notes, marks saved 700 ms after the last stroke (`POST /cards/<id>/draft`) → "Saved" / "Not saved"; rendered back; the stream never replaces under typing | `turbo.mjs:274-281,293-306`; `t/controllers/card_controller.js:130-145`; `server.mjs:2072-2089` | tick, reload → still ticked | ok | m02: tick + note -> indicator "Saved"; left and reopened card -> tick and note back; full page reload -> tick still there; no event to agent (C) |
 | card-marks | drawing and pinned notes on the card (focus-marks), in field `marks`, sent with answer, message, revise, shred | `t/controllers/card_controller.js:32-45`; `turbo.mjs:125` | draw, answer → meta `marks` count | ok | S:card-marks real room (3rd pass, after a92118f): circles drawn |
-| card-files | files attached in the field go with an answer or a message (multipart); dropped if the answer is refused | `turbo.mjs:128-131,283-291`; `t/controllers/card_controller.js:148-167` | drop a file on the card, answer → meta `files` | todo | |
-| card-stale | answer to a version that was reworded meanwhile is refused (hidden `revised` stamp, 409) | `turbo.mjs:122`; `views/card.mjs:139` | open, `revise_card`, answer the old page → "Not saved" | todo | |
-| card-version-old | `?v=n`: older version read-only, "Version n cannot be answered" + link to now; only the thread stays live | `views/card.mjs:28,141,219`; `turbo.mjs:254-258,305` | revised fixture `?v=1` | todo | |
+| card-files | files attached in the field go with an answer or a message (multipart); dropped if the answer is refused | `turbo.mjs:128-131,283-291`; `t/controllers/card_controller.js:148-167` | drop a file on the card, answer → meta `files` | ok | m03: file set on card form, answer A -> decision meta files=<decrypted path> exists. (Drop on refused answer not exercised.) (C) |
+| card-stale | answer to a version that was reworded meanwhile is refused (hidden `revised` stamp, 409) | `turbo.mjs:122`; `views/card.mjs:139` | open, `revise_card`, answer the old page → "Not saved" | ok | m10: revise_card while card open, answer with old revised stamp -> "Not saved: this question was revised while you were answering..." and no decision event. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out/rounds/m10-stale.png (C) |
+| card-version-old | `?v=n`: older version read-only, "Version n cannot be answered" + link to now; only the thread stays live | `views/card.mjs:28,141,219`; `turbo.mjs:254-258,305` | revised fixture `?v=1` | ok | m10: /q/<n>?v=1 shows "Version 1 cannot be answered" with link to now. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out/rounds/m10-v1.png (C) |
 | card-pic-option | picture ↔ option pairing (section names it; `-<key>` file names; as many pictures as options ≥ 3); hover/focus an option swaps the stage picture; paired option `data-match` | `views/card.mjs:54-83`; `t/controllers/card_controller.js:72-100` | pictures fixture: hover "Entwurf C" → picture 3 | ok | S: same in 4 profiles |
 | card-arrow | pen arrow from the picture (or its first circle) to the matched option, only when side by side | `t/controllers/card_controller.js:172-202` | wide card → `svg.focus-arrow` | ok | S: same in 4 profiles |
 | card-circles | agent marks circled with labels over the picture (stage and picture page) | `t/controllers/circles_controller.js:25-54`; `views/card.mjs:96,305` | marks fixture → two circles "zu eng?" "zum Vergleich" | ok | S: same in 4 profiles |
 | card-more | More: Snooze, Shred (open, not permission), Copy, Read aloud (with speech), Open the page | `views/card.mjs:273-278` | card-more-menu | ok | S: same in 4 profiles |
-| card-live | live: lead, answer (ignoring the draft), thread replaced; the card gone → page refreshes | `turbo.mjs:292-308` | agent `reply {card_id}` → thread grows | todo | |
+| card-live | live: lead, answer (ignoring the draft), thread replaced; the card gone → page refreshes | `turbo.mjs:292-308` | agent `reply {card_id}` → thread grows | ok | m04: reply {card_id} shows in the card thread live in 66 ms without navigation; m17: withdraw_card while the card page is open -> options leave at once (C) |
 | card-walk | `/walk` → first waiting card `?walk=1`; an answer goes to the card that stood after it, then the Desk | `turbo.mjs:203-206,226-229` | answer in walk → next card URL `?walk=1&said=…` | ok | S: same in 4 profiles |
-| card-error | refused answer on the page: 422, "Not saved: …" in `.tc-error` | `turbo.mjs:186-188`; `views/card.mjs:136` | answer an already decided card | todo | |
-| card-say | Read aloud (only with `state.speech`): `GET /speech/card/<id>`, second press stops | `t/controllers/say_controller.js:6-14`; `server.mjs:3527` | with speech key set | todo | |
-| card-open-page | picture with `page` → "Open the page" (More, picture page) | `views/card.mjs:265,277,304` | artifact fixture | todo | |
+| card-error | refused answer on the page: 422, "Not saved: …" in `.tc-error` | `turbo.mjs:186-188`; `views/card.mjs:136` | answer an already decided card | ok | m10: refused answer on the card page renders "Not saved: …" (422 card view with .tc-error, board.mjs actRoute); m02 multiple none same path (C) |
+| card-say | Read aloud (only with `state.speech`): `GET /speech/card/<id>`, second press stops | `t/controllers/say_controller.js:6-14`; `server.mjs:3527` | with speech key set | gap | app renders "Read aloud" only with state.speech, which board-state.mjs:86 hard-sets false; no /speech route; new hub has no speech (create_voiceover also refused) [P3] (C) |
+| card-open-page | picture with `page` → "Open the page" (More, picture page) | `views/card.mjs:265,277,304` | artifact fixture | ok | m20: artifact fixture card -> More shows "Open the page" linking the picture page (/att/<id>). /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out7/rounds/m20-open-page.png (C) |
 | card-sections | sections: plain blocks on the card, keyed blocks in "Options in detail", recommended from `[key*]`, section picture pairs with its option | `views/card.mjs:49,56-59,203-204` | sections fixture | ok | S: same in 4 profiles |
 | card-rich | light markdown: lists, bold, code, tables, links, bare `/x.html` paths, `__underline__`, "☞" drawn hand (not in the thread); html fences/`card.html` in a sandboxed frame | `views/text.mjs:106-181`; `t/controllers/richhtml_controller.js:7-10` | code + artifact fixtures | ok | S: same in 4 profiles |
-| card-merged-note | merged card says "replaces N questions" | `views/text.mjs:18` | rt-merge | todo | |
+| card-merged-note | merged card says "replaces N questions" | `views/text.mjs:18` | rt-merge | ok | m16: merge_cards of 2 cards -> card meta "replaces 2 questions". /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out4/rounds/m16-merged-links.png (C) |
 
 ## Decision round trips
 
@@ -349,47 +353,50 @@ dark variant looks different on purpose.
 | rt-basic | create → answer → event → close | `server.mjs:1673-1679,2111-2176`; `turbo.mjs:151-155` | agent `create_decision {title, options:[a,b]}` → row (thumbs) → tap b → toast "Answered — t → B" → event `decision` `choice=b` → agent `close_card {summary}` → Working→Done line "B · done by the agent" | ok | R r01: create 66 ms→app, click→`decision choice=now` 30 ms, close_card summary on card |
 | rt-choose | 3+ options via the card page | `views/desk.mjs:55-57`; `views/card.mjs:162` | `create_decision` 3 options → Choose → option → event `decision`; back on Desk | ok | R r01/r03 via card page |
 | rt-multiple | several answers | `views/card.mjs:160-166`; `server.mjs:2167` | `multiple:true` → tick a, c → Send the answer → event `choice=a choices=a,c` | ok | R r03: `choices=perf,plan` |
-| rt-multiple-none | Send with nothing ticked is refused | `turbo.mjs:153` | → "Not saved: pick an option first" | todo | |
+| rt-multiple-none | Send with nothing ticked is refused | `turbo.mjs:153` | → "Not saved: pick an option first" | ok | m02: multiple card, Send with nothing ticked -> "Not saved: pick an option first". /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out/rounds/m02-none.png (C) |
 | rt-sections | text/sections question | `server.mjs:1514-1544` | `create_decision {text:"…\n\n[x*] …\npicture: a.png", attachments}` → card blocks + "Options in detail", x advised → answer → event | ok | R r04: 5 parts, `choices=sync,offline` |
 | rt-recommended | recommended advice | `views/desk.mjs:49-51,72`; `views/card.mjs:155-165` | `recommended:'b'` → highlighter on B (row + card), duck tooltip "agent takes B" | ok | R r01 `.tc-opt.is-advised`; S:card-yesno, card-pictures same |
 | rt-pictures | per-option pictures | `views/card.mjs:54-83` | attachments `x-a.png,x-b.png,x-c.png` → hover swaps, arrow, row byline 3 thumbs → answer → event | ok | R r05 picture decrypted on card page; S:card-pictures same |
 | rt-picture-marks | pictures with marks | `server.mjs:1118`; `circles_controller.js` | attachment `{path, marks:[{x,y,w,h,label}]}` → circles on stage and `/p/1`; arrow starts at circle | ok | R r05 + S:card-marks real room (3rd pass) |
-| rt-notes | note + option notes | `server.mjs:2158-2170` | note "after backup", note on B, answer A → content note + "Notes on options:\n- B [b], not chosen: …", meta `option_notes=b` | todo | |
-| rt-answer-files | files with an answer | `turbo.mjs:128-131`; `server.mjs:2170` | attach file in field, answer → meta `files`, `image_path` | todo | |
-| rt-answer-marks | marks with an answer | `server.mjs:2163,2168` | draw on card, answer → meta `marks=N`, content "Notes pinned to the card:" | todo | |
+| rt-notes | note + option notes | `server.mjs:2158-2170` | note "after backup", note on B, answer A → content note + "Notes on options:\n- B [b], not chosen: …", meta `option_notes=b` | ok | m01: event content "after backup
+
+Notes on options:
+- Option B [b], not chosen: too slow", meta option_notes=b (C) |
+| rt-answer-files | files with an answer | `turbo.mjs:128-131`; `server.mjs:2170` | attach file in field, answer → meta `files`, `image_path` | ok | m03: decision meta files=<path of beleg.txt> (txt, so no image_path expected) (C) |
+| rt-answer-marks | marks with an answer | `server.mjs:2163,2168` | draw on card, answer → meta `marks=N`, content "Notes pinned to the card:" | ok | m15: marks with answer -> meta marks=1, content "Notes pinned to the card:"; line reads "- [b] zu dunkel" where Turbo writes '- on option "Option B" [b]: zu dunkel' (wording poorer, P3 note) (C) |
 | rt-handback | hand back → revise_card → presented again | `turbo.mjs:163`; `server.mjs:3194-3196,1688-1761`; `views/card.mjs:128,214-219` | B / Revise tile → "What should change?" → Hand back → card to Working ("In revision"), toast "Handed back" Undo → event `chat card_id handback=1` (content = words) → agent `revise_card {card_id, options…}` → card back on Desk "revised", thread "Version 2, as you asked", "See version 1", "Earlier versions" | ok | R r06: hand back→`chat handback=1` 27 ms, revise_card→v2 in app 64 ms, row back |
-| rt-handback-bare | Revise with no words from a row / sheet | `turbo.mjs:42,163`; `views/card.mjs:196,232` | row sheet Revise → event content "Back to you: please revise this question and present it again."; thread shows "Revise" | todo | |
+| rt-handback-bare | Revise with no words from a row / sheet | `turbo.mjs:42,163`; `views/card.mjs:196,232` | row sheet Revise → event content "Back to you: please revise this question and present it again."; thread shows "Revise" | ok | m05: Desk row Revise tab -> chat handback=1 "Back to you: please revise this question and present it again."; thread shows "Revise". Card tile Revise with empty field blocked as on Turbo (same controller) (C) |
 | rt-handback-present | reply instead of rewording | `server.mjs:1656-1671` | after handback, `reply {card_id, text}` → stays in revision (tool says so); `reply {card_id, present:true}` → back on Desk | ok | R r06/r07: presented again on the Desk |
-| rt-handback-takeback | take the hand-back back | `turbo.mjs:140-149,162`; `server.mjs:3659-3672` | Take back (card or Working line, or toast Undo) → event `handback_withdrawn card_id` → card on Desk; thread "You took it back" | todo | |
+| rt-handback-takeback | take the hand-back back | `turbo.mjs:140-149,162`; `server.mjs:3659-3672` | Take back (card or Working line, or toast Undo) → event `handback_withdrawn card_id` → card on Desk; thread "You took it back" | ok | m05: card page Take back -> card on Desk again, thread "You took it back", agent told; but the event is kind=chat, not handback_withdrawn (see ev-handback-withdrawn). /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out2/rounds/m05_handback_takeback-fail.png (C) |
 | rt-what | What?? → explanation → presented | `turbo.mjs:164`; `views/text.mjs:12`; `server.mjs:1661-1664` | E / `.tc-wtf` → toast "Asked: What??" Undo → card to Working → event `chat card_id explain=1` content EXPLAIN_TEXT → agent `reply {card_id, text}` → card back on Desk by itself; thread "You asked: What??" + answer block | ok | R r07: What??→`chat explain=1` 27 ms; reply→explanation on card 380 ms, back on Desk |
-| rt-what-info | What?? on an info card | `views/desk.mjs:37`; `views/card.mjs:150` | info row What?? → same chain, then Acknowledge | todo | |
+| rt-what-info | What?? on an info card | `views/desk.mjs:37`; `views/card.mjs:150` | info row What?? → same chain, then Acknowledge | ok | m06: info card What?? -> chat explain=1; reply present -> Acknowledge -> info_read (C) |
 | rt-trust | I don't give a duck | `turbo.mjs:156`; `server.mjs:2178-2207` | R / duck → toast "I don't give a duck" Undo → event `decision trust=1 choice=<recommended>` (content "decide yourself…") → agent reply + `close_card`; answered view "I don't give a duck: B" | ok | R r08: duck→`decision choice=g trust=1` 27 ms |
-| rt-trust-none | duck without advice | `server.mjs:2187-2190` | no `recommended` → event `choice=""`; Done line "I don't give a duck" | todo | |
-| rt-trust-undo | take the duck back | `server.mjs:2408-2418` | Undo → event `decision_reopened trust=1 previous_choice` → card open, note in draft | todo | |
+| rt-trust-none | duck without advice | `server.mjs:2187-2190` | no `recommended` → event `choice=""`; Done line "I don't give a duck" | ok | m07: no recommended, duck -> decision choice="" trust=1 ("decide yourself (you gave no advice)") (C) |
+| rt-trust-undo | take the duck back | `server.mjs:2408-2418` | Undo → event `decision_reopened trust=1 previous_choice` → card open, note in draft | ok | m07: toast Undo -> decision_reopened trust=1 previous_choice=""; card open, field note "egal mir" back as draft (C) |
 | rt-reopen | decide again | `turbo.mjs:161`; `server.mjs:2420-2434` | answer, then toast Undo / Take back (Done line or card) → card open with previous ticks + note as draft → event `decision_reopened previous_choice[, previous_choices]` → thread "Your answer was taken back: open again" → answer again → new `decision` | ok | R r02: Undo→`decision_reopened previous_choice=yes` 27 ms; answered card button too |
-| rt-reopen-withdrawn | withdrawn cards have no way back | `views/stacks.mjs:89`; `server.mjs:2404` | withdraw → Trash line without button; card page no Take back | todo | |
+| rt-reopen-withdrawn | withdrawn cards have no way back | `views/stacks.mjs:89`; `server.mjs:2404` | withdraw → Trash line without button; card page no Take back | ok | m09: withdraw_card -> card page shows "Withdrawn by the agent", no Take back/reopen button. (Trash line not checked: /trash is "Not here" in the app.) /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out/rounds/m09-withdrawn.png (C) |
 | rt-shred | shred → told not to ask again | `turbo.mjs:160`; `server.mjs:2210-2240` | X / More Shred / row bin → toast "Shredded" Undo → event `shredded card_id` (+note, marks, files) → Trash "Shredded" | ok | R r09: More→Shred→`shredded` 27 ms |
-| rt-shred-undo | fish it out | `server.mjs:2384-2396` | Undo / Take back in Trash → event `decision_reopened shredded=1 previous_choice=""` → card open, note + marks as draft | todo | |
+| rt-shred-undo | fish it out | `server.mjs:2384-2396` | Undo / Take back in Trash → event `decision_reopened shredded=1 previous_choice=""` → card open, note + marks as draft | ok | m08: shred with note, toast Undo -> decision_reopened shredded=1 previous_choice=""; card open, note back in the field (C) |
 | rt-snooze | snooze until next morning | `turbo.mjs:158`; `server.mjs:2281-2321` | L / Snooze → card to Later "Until <day hh:mm>", toast "Snoozed" Undo (wake) → no event → at SNOOZE_HOUR (or `BOARD_SNOOZE_TICK_MS`) back on Desk "Back from snooze" | ok | R r10: leaves the Desk list, no agent event (as Turbo) |
-| rt-refusals | permission cannot be snoozed, shredded, trusted, revised, withdrawn, merged, closed while open | `server.mjs:2181,2214,2290,1690,1816,1772,1831` | each → "Not saved: …" toast/error | todo | |
+| rt-refusals | permission cannot be snoozed, shredded, trusted, revised, withdrawn, merged, closed while open | `server.mjs:2181,2214,2290,1690,1816,1772,1831` | each → "Not saved: …" toast/error | ok | m12/m19: permission card page offers only allow/deny (no snooze/shred/trust/revise/what); Desk row snooze on a permission -> "Not saved: an approval cannot be put off"; revise_card/withdraw_card/close_card on a permission id -> "no card … of yours"; merge refused. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out6/rounds/m19-perm-snooze.png (C) |
 | rt-merge | merge_cards | `server.mjs:1763-1797` | two open cards → `merge_cards {card_ids, title, multiple:true…}` → old rows leave live, Trash "Withdrawn: Merged into Nr. N", new row at the oldest's place with "replaces 2 questions"; status lines repointed | ok | R r13: merge_cards → merged card on the Desk |
 | rt-withdraw | withdraw_card | `server.mjs:1813-1827` | `withdraw_card {reason}` → row gone live; Trash "Withdrawn: reason"; card page "Withdrawn by the agent" | ok | R r13: withdraw_card → row gone 249 ms |
 | rt-urgency | set_urgency | `server.mjs:1799-1811` | `high` with reason → knock tab, reason on row + "Why it is urgent", session "Urgency" line, place unchanged; `low` → whenever icon | ok | R r13: set_urgency → knock on the row 64 ms |
 | rt-close | close_card | `server.mjs:1829-1839` | after answer → Done; answered view "Done by the agent: summary"; session line "Done" | ok | R r01 |
-| rt-revise-open | revise_card on an open card | `server.mjs:1730-1757` | `revise_card {card_id, title}` → row "revised", version 2, old page answer refused (rt-stale) | todo | |
-| rt-revise-decided | revising a decided card is refused | `server.mjs:1691-1693` | → tool error | todo | |
-| rt-ask-back | question back about a card | `turbo.mjs:165-170` | card field "What does X mean?" → event `chat card_id` → `reply {card_id}` → in the card's thread live; card stays open | todo | |
+| rt-revise-open | revise_card on an open card | `server.mjs:1730-1757` | `revise_card {card_id, title}` → row "revised", version 2, old page answer refused (rt-stale) | ok | m10: revise_card -> "revised, now version 2"; row says revised; old-stamp answer refused (C) |
+| rt-revise-decided | revising a decided card is refused | `server.mjs:1691-1693` | → tool error | ok | m11: revise_card on decided card -> error "card … was already decided (choice: a)…" (C) |
+| rt-ask-back | question back about a card | `turbo.mjs:165-170` | card field "What does X mean?" → event `chat card_id` → `reply {card_id}` → in the card's thread live; card stays open | ok | m04: field "What does X mean?" -> chat card_id; reply {card_id} live in the card thread (66 ms); card stays open (C) |
 
 ## Info and permission
 
 | id | what | turbo code | how to check | status | evidence |
 |---|---|---|---|---|---|
 | ip-info-read | create_info → read → info_read | `server.mjs:1681-1686,2325-2339` | `create_info {title, body}` → row "To read" → Acknowledge → event `info_read`; Done "Read" | ok | R r11: Read→`info_read` 28 ms |
-| ip-info-reopen | an info read can be taken back; agent not told | `server.mjs:2398-2403` | Done "Read" Take back → row unread again, no event | todo | |
-| ip-info-phone | phone: info card's Acknowledge stands in the first screen | test `dev/turbo-ui-test.mjs:435` | 390x844 info fixture | todo | |
+| ip-info-reopen | an info read can be taken back; agent not told | `server.mjs:2398-2403` | Done "Read" Take back → row unread again, no event | gap | m06: Read then toast Undo -> info row unread again on the Desk, BUT the agent gets a decision_reopened event (Turbo: agent not told, server.mjs:2398-2403) [P3] (C) |
+| ip-info-phone | phone: info card's Acknowledge stands in the first screen | test `dev/turbo-ui-test.mjs:435` | 390x844 info fixture | ok | m17: 390x844 mobile emulation, info card: Acknowledge at y 358-468, in the first screen. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out4/rounds/m17-info-phone.png (C) |
 | ip-permission | permission_request → card → verdict | `server.mjs:1934-1975,2150-2157` | linked session posts `/agent/permission {request_id, tool_name, description, input_preview}` → row "Knock! Permission" Allow/Deny (urgency critical) → Allow → method `notifications/claude/channel/permission {request_id, behavior:"allow"}`; card status done at once, in no stack | ok | R r12: permission_request→app 63 ms; Allow/Deny→`behavior` at Claude Code 27-29 ms |
-| ip-permission-dedup | a repeated request id makes no second card | `server.mjs:1959-1960` | post the same request twice → one row | todo | |
-| ip-permission-blocked | waiting for permission shows the session as stopped (red hand) | `server/blocked.mjs:32` | sidebar badge hand, title "Stopped: Waiting for permission" | todo | |
+| ip-permission-dedup | a repeated request id makes no second card | `server.mjs:1959-1960` | post the same request twice → one row | gap | sequential repeat (1.5 s apart) -> one approval (run3/run4); but two notifications back to back (run1) -> two approval objects with the same request id (bridge dedup channel-bridge.mjs:500 is async; Turbo dedups synchronously) [P3] (C) |
+| ip-permission-blocked | waiting for permission shows the session as stopped (red hand) | `server/blocked.mjs:32` | sidebar badge hand, title "Stopped: Waiting for permission" | gap | blocked logic identical (node-stubs/blocked.mjs = server/blocked.mjs) and run1 showed "Stopped: project (Waiting for permission)"; but in 3 of 4 fresh rooms the live, answering channel sat under DISCONNECTED in the sidebar (agent.online false) so no red hand appeared. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out4/rounds/m12-sidebar.png [P2] (C) |
 
 ## Status lines
 
@@ -439,7 +446,7 @@ dark variant looks different on purpose.
 | med-page-of-pic | `{path, page}`: "Open the page" under the shot, on the picture page and card More | `views/session.mjs:99,401`; `views/card.mjs:265,277,304` | artifact fixture | ok | S:picture same |
 | med-thumbs | `/files/<name>?w=` variants (srcset 1x/2x), GIF and unknown sizes keep the original | `views/picture.mjs:19-35`; `server.mjs:3458-3462` | inspect `src` | todo | |
 | med-reply-html | `reply.html` in a sandboxed frame under the words; `details` folded | `views/session.mjs:194-195`; `views/text.mjs:151` | thread fixture table | todo | |
-| med-asset-card | published asset in the log: preview decrypted in the browser (picture, page first screen), kind · size, title, note, Open | `views/session.mjs:149-162`; `t/controllers/assetthumb_controller.js:17-99` | artifact fixture assets | ok | S:session-thread real room (5th pass); P3: page preview on phone is a placeholder icon, desktop shows the first screen |
+| med-asset-card | published asset in the log: preview decrypted in the browser (picture, page first screen), kind · size, title, note, Open | `views/session.mjs:149-162`; `t/controllers/assetthumb_controller.js:17-99` | artifact fixture assets | ok | S:session-thread real room phone+desktop (6th pass, fresh dev server): page preview shown |
 | med-asset-copy | "Copy link" releases it (`POST /asset/share`) and copies `/r/<id>#<key>`; toast "Link copied" with "Stop sharing" | `t/controllers/share_controller.js:28-59`; `server.mjs:3533-3543` | click → clipboard `/r/…`; card "Shared · Stop", opens count | ok | S:session-thread real room (3rd pass) |
 | med-asset-stop | "Stop" takes the release back | `t/controllers/share_controller.js:47` | `/r/<id>#key` → gone | todo | |
 | med-asset-gone | revoked/expired asset: "No longer available" | `views/session.mjs:153` | agent `revoke_asset` | todo | |
@@ -454,81 +461,81 @@ dark variant looks different on purpose.
 | id | what | turbo code | how to check | status | evidence |
 |---|---|---|---|---|---|
 | nav-drive | links go through Turbo; a path not rendered here (meta `t-pages`) loads whole | `application.js:178-191`; `views/layout.mjs:67` | click Help → full load | ok | perf nav |
-| nav-t-prefix | old `/t/...` addresses redirect to the same path (302 GET / 307 POST) | `turbo.mjs:391-398` | `/t/q/<n>` → `/q/<n>` | todo | |
+| nav-t-prefix | old `/t/...` addresses redirect to the same path (302 GET / 307 POST) | `turbo.mjs:391-398` | `/t/q/<n>` → `/q/<n>` | gap | app /t/q/9 shows 'Not found' instead of redirecting to /q/9 (Turbo: 302 GET); old /t bookmarks break (x3 tprefix) [P3] (A) |
 | nav-back-desk | card head "Back to Desk/<session>" | `views/card.mjs:271` | click → Desk | ok | perf nav card→back 94-193 ms |
-| nav-esc-chain | Escape: leaves a field first, then back to the Desk | `t/lib/keys.js:37`; `keys_controller.js:172,293` | type in field, Esc, Esc | todo | |
-| nav-next-line | "Next N →" and the pill's count both lead into the walk | `views/nextplease.mjs:9-12`; `views/sidebar.mjs:74-81` | click pill count → `/q/<n>?walk=1` | todo | |
-| nav-history | Back/Forward between Desk and card work; scroll kept (refresh-scroll preserve) | `views/layout.mjs:63-66`; test `dev/turbo-ui-test.mjs:412-417` | Back → Desk with row | todo | |
-| nav-sidebar | sidebar row → `/s/<id>` (`is-active` on the current); badge → `/s/<id>` | `views/sidebar.mjs:38-53` | click | todo | |
+| nav-esc-chain | Escape: leaves a field first, then back to the Desk | `t/lib/keys.js:37`; `keys_controller.js:172,293` | type in field, Esc, Esc | ok | typing in note field: Esc leaves the field (stays on card), second Esc -> Desk (x3-esc.json) (A) |
+| nav-next-line | "Next N →" and the pill's count both lead into the walk | `views/nextplease.mjs:9-12`; `views/sidebar.mjs:74-81` | click pill count → `/q/<n>?walk=1` | ok | heading Next and the pill count both go to /q/6?walk=1 (x3 next) (A) |
+| nav-history | Back/Forward between Desk and card work; scroll kept (refresh-scroll preserve) | `views/layout.mjs:63-66`; test `dev/turbo-ui-test.mjs:412-417` | Back → Desk with row | ok | Desk -> card -> Back = Desk with all rows -> Forward = card (x3 history); same as Turbo (A) |
+| nav-sidebar | sidebar row → `/s/<id>` (`is-active` on the current); badge → `/s/<id>` | `views/sidebar.mjs:38-53` | click | ok | sidebar row -> /s/test-alpha, row is-active; badge links /s/test-alpha (x3 sidebar) (A) |
 | nav-menu | pill opens `#brand-doors`; click beside / Escape / a choice closes; a refresh morph keeps it open | `application.js:233-246`; `t/controllers/menu_controller.js:21-52,97` | state menu | ok | S:menu (2nd pass); P3 "Geräte" German |
 | nav-jump | Ctrl/Cmd+K or G J → jump field; results (Nr./#n, Desk, Agents, Next, Scratchpad, Help, Keys, Admin, sessions, card titles open first, max 8); Enter takes the first; ↓ into results; `#jump` opens it; `/jump?q=` page without scripts | `views/menu.mjs:47-73,88-93`; `t/controllers/menu_controller.js:55-92` | type "12" → "Nr. 12: …", Enter | ok | S:jump same |
-| nav-said | `?said=<card>:<way>` shows the toast once and is removed from the address | `turbo.mjs:90-91`; `application.js:37-39` | reload after an answer → no toast | todo | |
-| nav-404 | unknown card/session page with "Back to the Desk" | `turbo.mjs:76` | `/q/999999` | todo | |
-| nav-refresh | a page older than the hub (rev) or one that fell behind refreshes once (morph) | `turbo.mjs:326-380` | restart hub → page refreshes | todo | |
-| nav-conn | dot on the pill: Connected / No connection | `application.js:222-230`; `views/layout.mjs:42` | break the stream → dot | todo | |
+| nav-said | `?said=<card>:<way>` shows the toast once and is removed from the address | `turbo.mjs:90-91`; `application.js:37-39` | reload after an answer → no toast | ok | ?said= shows the toast once, address cleaned to /, reload shows no toast (x3 said) (A) |
+| nav-404 | unknown card/session page with "Back to the Desk" | `turbo.mjs:76` | `/q/999999` | ok | /q/999999 -> 'This question is not on the board any more. Back to the Desk' (link /); unknown session 'This session is not on the board.' (x3 404) (A) |
+| nav-refresh | a page older than the hub (rev) or one that fell behind refreshes once (morph) | `turbo.mjs:326-380` | restart hub → page refreshes | todo | not reached (needs a hub restart; mock room) (A) |
+| nav-conn | dot on the pill: Connected / No connection | `application.js:222-230`; `views/layout.mjs:42` | break the stream → dot | todo | partial: app pill dot .pill-conn reads 'Connected' (x9); 'No connection' state not provoked (A) |
 
 ## Keys (one row per entry of `client/web/t/lib/keys.js`)
 
 | id | what | turbo code | how to check | status | evidence |
 |---|---|---|---|---|---|
 | key-list-next | Desk `j` / `↓`: next row; after the last, an opened stack's lines (repeat) | `t/lib/keys.js:11`; `keys_controller.js:142` | `j` → `.is-current` moves | ok | keys.mjs j |
-| key-list-prev | Desk `k` / `↑`: previous row (repeat) | `keys.js:12`; `keys_controller.js:143` | | todo | |
-| key-list-first | Desk `Home`: first row | `keys.js:13`; `keys_controller.js:144` | | todo | |
-| key-list-last | Desk `End`: last row | `keys.js:14`; `keys_controller.js:145` | | todo | |
+| key-list-prev | Desk `k` / `↑`: previous row (repeat) | `keys.js:12`; `keys_controller.js:143` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-list-first | Desk `Home`: first row | `keys.js:13`; `keys_controller.js:144` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-list-last | Desk `End`: last row | `keys.js:14`; `keys_controller.js:145` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-list-open | Desk `Enter` / `c`: open the marked card | `keys.js:15`; `keys_controller.js:146` | → `/q/<n>` | ok | keys.mjs Enter, c |
-| key-list-later | Desk `l`: snooze; on a snoozed line: wake | `keys.js:16`; `keys_controller.js:147` | row → Later | todo | |
-| key-list-revise | Desk `b`: hand back at once (no words) | `keys.js:17`; `keys_controller.js:148` | event `chat handback=1` | todo | |
-| key-list-trust | Desk `r`: I don't give a duck | `keys.js:18`; `keys_controller.js:149` | event `decision trust=1` | todo | |
-| key-list-shred | Desk `x`: shred | `keys.js:19`; `keys_controller.js:150` | event `shredded` | todo | |
-| key-list-takeback | Desk `u` / `⌫`: Take back on a marked stack line, else the newest toast's Undo | `keys.js:20`; `keys_controller.js:151` | answer, `u` → reopened | todo | |
+| key-list-later | Desk `l`: snooze; on a snoozed line: wake | `keys.js:16`; `keys_controller.js:147` | row → Later | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-list-revise | Desk `b`: hand back at once (no words) | `keys.js:17`; `keys_controller.js:148` | event `chat handback=1` | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-list-trust | Desk `r`: I don't give a duck | `keys.js:18`; `keys_controller.js:149` | event `decision trust=1` | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-list-shred | Desk `x`: shred | `keys.js:19`; `keys_controller.js:150` | event `shredded` | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-list-takeback | Desk `u` / `⌫`: Take back on a marked stack line, else the newest toast's Undo | `keys.js:20`; `keys_controller.js:151` | answer, `u` → reopened | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-pad-cards | Desk `w`: hide/show the cards | `keys.js:21`; `keys_controller.js:153`; `paper.js:340` | `#inbox[data-cards-hidden]` | ok | keys.mjs w; S:pad-cards-hidden |
 | key-list-leave | Desk `Esc`: drop the mark | `keys.js:22`; `keys_controller.js:152` | no `.is-current` | ok | keys.mjs Esc |
-| key-card-send | card `Enter`: "Send the answer" (multiple) | `keys.js:25`; `keys_controller.js:155` | multiple fixture | todo | |
-| key-card-later | card `l` / `s`: snooze | `keys.js:26`; `keys_controller.js:156` | | todo | |
-| key-card-trust | card `r`: duck | `keys.js:27`; `keys_controller.js:157` | | todo | |
+| key-card-send | card `Enter`: "Send the answer" (multiple) | `keys.js:25`; `keys_controller.js:155` | multiple fixture | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-card-later | card `l` / `s`: snooze | `keys.js:26`; `keys_controller.js:156` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-card-trust | card `r`: duck | `keys.js:27`; `keys_controller.js:157` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-card-revise | card `b`: open the Revise field; Enter there hands back | `keys.js:28`; `keys_controller.js:159-163` | `details.tc-revise[open]` | ok | keys.mjs b |
-| key-card-what | card `e`: What?? | `keys.js:29`; `keys_controller.js:164` | event `explain=1` | todo | |
-| key-card-shred | card `x`: shred (More item) | `keys.js:30`; `keys_controller.js:165` | | todo | |
+| key-card-what | card `e`: What?? | `keys.js:29`; `keys_controller.js:164` | event `explain=1` | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-card-shred | card `x`: shred (More item) | `keys.js:30`; `keys_controller.js:165` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-card-write | card `a`: focus the field | `keys.js:31`; `keys_controller.js:166` | `.tc-field:focus` | ok | keys.mjs a |
-| key-card-back | card `u` / `⌫`: newest toast's Undo, else Take back on the card | `keys.js:32`; `keys_controller.js:167` | | todo | |
-| key-card-next | card `j` / `→`: next card unanswered (repeat) | `keys.js:33`; `keys_controller.js:168` | | todo | |
-| key-card-prev | card `k` / `←`: previous card (repeat) | `keys.js:34`; `keys_controller.js:169` | | todo | |
+| key-card-back | card `u` / `⌫`: newest toast's Undo, else Take back on the card | `keys.js:32`; `keys_controller.js:167` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-card-next | card `j` / `→`: next card unanswered (repeat) | `keys.js:33`; `keys_controller.js:168` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-card-prev | card `k` / `←`: previous card (repeat) | `keys.js:34`; `keys_controller.js:169` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-card-pic-next | card `⇧→`: next picture | `keys.js:35`; `keys_controller.js:170` | `?pic=2` | ok | keys.mjs Shift+→ |
-| key-card-pic-prev | card `⇧←`: previous picture | `keys.js:36`; `keys_controller.js:171` | | todo | |
+| key-card-pic-prev | card `⇧←`: previous picture | `keys.js:36`; `keys_controller.js:171` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-card-leave | card `Esc` (also in a field): leave the field, then back to the Desk | `keys.js:37`; `keys_controller.js:172` | | ok | keys.mjs Esc |
-| key-pic-next | picture page `→` / `j`: next | `keys.js:40`; `keys_controller.js:188` | | todo | |
-| key-pic-prev | picture page `←` / `k`: previous | `keys.js:41`; `keys_controller.js:189` | | todo | |
+| key-pic-next | picture page `→` / `j`: next | `keys.js:40`; `keys_controller.js:188` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-pic-prev | picture page `←` / `k`: previous | `keys.js:41`; `keys_controller.js:189` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-pic-leave | picture page `Esc`: back to the card | `keys.js:42`; `keys_controller.js:190` | | ok | keys.mjs Esc |
 | key-ledger-next | Agents `↓` / `j`: next line | `keys.js:45`; `keys_controller.js:174` | | ok | keys.mjs j |
-| key-ledger-prev | Agents `↑` / `k`: previous line | `keys.js:46`; `keys_controller.js:175` | | todo | |
-| key-ledger-open | Agents `Enter`: open the conversation (not archived) | `keys.js:47`; `keys_controller.js:176` | | todo | |
-| key-ledger-walk | Agents `q`: its questions in a walk | `keys.js:48`; `keys_controller.js:177` | | todo | |
-| key-ledger-rename | Agents `r`: rename | `keys.js:49`; `keys_controller.js:178` | | todo | |
-| key-ledger-mark | Agents `d`: drawing picker | `keys.js:50`; `keys_controller.js:179` | | todo | |
-| key-ledger-crown | Agents `c`: give/take the crown | `keys.js:51`; `keys_controller.js:180` | | todo | |
-| key-ledger-pair | Agents `+`: lay together with… | `keys.js:52`; `keys_controller.js:181` | | todo | |
+| key-ledger-prev | Agents `↑` / `k`: previous line | `keys.js:46`; `keys_controller.js:175` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-open | Agents `Enter`: open the conversation (not archived) | `keys.js:47`; `keys_controller.js:176` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-walk | Agents `q`: its questions in a walk | `keys.js:48`; `keys_controller.js:177` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-rename | Agents `r`: rename | `keys.js:49`; `keys_controller.js:178` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-mark | Agents `d`: drawing picker | `keys.js:50`; `keys_controller.js:179` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-crown | Agents `c`: give/take the crown | `keys.js:51`; `keys_controller.js:180` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-pair | Agents `+`: lay together with… | `keys.js:52`; `keys_controller.js:181` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-ledger-archive | Agents `a`: archive an offline one / fetch back | `keys.js:53`; `keys_controller.js:182` | | todo | |
-| key-ledger-down | Agents `⇧↓`: move down | `keys.js:54`; `keys_controller.js:183` | | todo | |
-| key-ledger-up | Agents `⇧↑`: move up | `keys.js:55`; `keys_controller.js:184` | | todo | |
-| key-ledger-find | Agents `/`: find field (pops controller) | `keys.js:56`; `t/controllers/pops_controller.js:52-55` | | todo | |
-| key-ledger-leave | Agents `Esc`: close what is open, then drop the mark | `keys.js:57`; `keys_controller.js:186` | | todo | |
+| key-ledger-down | Agents `⇧↓`: move down | `keys.js:54`; `keys_controller.js:183` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-up | Agents `⇧↑`: move up | `keys.js:55`; `keys_controller.js:184` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-find | Agents `/`: find field (pops controller) | `keys.js:56`; `t/controllers/pops_controller.js:52-55` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-ledger-leave | Agents `Esc`: close what is open, then drop the mark | `keys.js:57`; `keys_controller.js:186` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-help | `?`: key sheet (six short rows; also menu "Keys") | `keys.js:60,82-89`; `keys_controller.js:192,127-135`; `views/keys.mjs:21-28` | state keys-sheet | ok | keys.mjs ? |
 | key-memo-new | `n`: new memo | `keys.js:61`; `keys_controller.js:193` | | ok | keys.mjs n on app d606389: new note (a41fb25) (4th pass) |
 | key-go-desk | `g d` / `g i`: Desk | `keys.js:62`; `keys_controller.js:194` | | ok | keys.mjs g i |
 | key-go-agents | `g a`: Agents | `keys.js:63`; `keys_controller.js:195` | | ok | keys.mjs g a |
 | key-go-jump | `Ctrl/⌘+K` / `g j`: jump field (Desk with menu where no menu) | `keys.js:64`; `keys_controller.js:106-113,197,275` | | ok | keys.mjs g j, Ctrl+K |
-| key-go-walk | `g f`: Next (walk) | `keys.js:65`; `keys_controller.js:196` | | gap | keys.mjs g f: app goes to /q/<n>, Turbo to /walk [P3] |
+| key-go-walk | `g f`: Next (walk) | `keys.js:65`; `keys_controller.js:196` | | ok | keys.mjs (6th pass, corrected expectation): both end on /q/<n>?walk=1; Turbo passes /walk while its redirect is in flight |
 | key-go-session | `g 1…9`: sidebar session n | `keys.js:67`; `keys_controller.js:199` | | ok | keys.mjs g 1 |
-| key-desk-switch | `d 1…9`: desk n (not on Agents) | `keys.js:68`; `keys_controller.js:198` | | todo | |
+| key-desk-switch | `d 1…9`: desk n (not on Agents) | `keys.js:68`; `keys_controller.js:198` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-session-next | `.`: next session | `keys.js:69`; `keys_controller.js:200` | | ok | keys.mjs . |
-| key-session-prev | `,`: previous session | `keys.js:70`; `keys_controller.js:201` | | todo | |
+| key-session-prev | `,`: previous session | `keys.js:70`; `keys_controller.js:201` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-pen | `p`: the pen on the paper | `keys.js:71`; `keys_controller.js:202`; `paper.js:339` | | ok | keys.mjs p; S:pad |
 | key-rail | `[`: fold/open the sidebar (wide only) | `keys.js:72`; `keys_controller.js:203` | | ok | keys.mjs [ |
-| key-back | `u` / `⌫`: newest toast's Undo | `keys.js:73`; `keys_controller.js:204` | | todo | |
+| key-back | `u` / `⌫`: newest toast's Undo | `keys.js:73`; `keys_controller.js:204` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-theme | `t`: light/dark | `keys.js:74`; `keys_controller.js:205-210` | | ok | keys.mjs t |
-| key-field-leave | `Esc` in a field: leave it | `keys.js:75`; `keys_controller.js:211` | | todo | |
-| key-rules | rules: no Ctrl/Alt/Cmd except Ctrl+K; nothing while typing (Escape only after the field's own handler); nothing while a dialog / `[data-owns-keys]` / video / open details has it; Enter/Space on controls are theirs; held keys repeat only moves | `keys_controller.js:96-106,270-308` | type `j` in a field → no move | todo | |
-| key-sequence-chip | `g` / `d` shows a chip of what may follow, 1.6 s | `keys_controller.js:244-264` | state keys-pending-g | todo | |
+| key-field-leave | `Esc` in a field: leave it | `keys.js:75`; `keys_controller.js:211` | | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-rules | rules: no Ctrl/Alt/Cmd except Ctrl+K; nothing while typing (Escape only after the field's own handler); nothing while a dialog / `[data-owns-keys]` / video / open details has it; Enter/Space on controls are theirs; held keys repeat only moves | `keys_controller.js:96-106,270-308` | type `j` in a field → no move | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
+| key-sequence-chip | `g` / `d` shows a chip of what may follow, 1.6 s | `keys_controller.js:244-264` | state keys-pending-g | ok | side by side Turbo :8918 vs real E2E room, same behaviour (parity fixer, scratchpad/parity/keys2.mjs, k-/m-/l-*.txt; not re-run by the verifier) |
 | key-mark-keep | the mark survives streams and visits (`sessionStorage['trommi-mark']`), moves to the row that took a gone card's place; a clicked row becomes the mark; caps Y/N/L/U on the marked row | `keys_controller.js:53-95,313-317` | answer the marked row → next row marked | todo | |
 | key-mac | on a Mac the sheet and jump show ⌘ | `keys_controller.js:131-132`; `menu_controller.js:23` | | todo | |
 | key-fields | field keys: card field Enter sends; Revise Enter/Escape; option note Enter blurs; composer Enter/Ctrl+Enter; memo Enter sends, Esc puts away; jump Enter/↓; menu ↑↓ Home End; stack search Esc; files drawer Esc; pops Esc | `card_controller.js:57-60,117,123-127`; `composer_controller.js:35-40`; `memo_controller.js:18-21`; `memos_controller.js:23-30`; `menu_controller.js:74-92`; `stack_search_controller.js:30-37`; `files_controller.js:34-36`; `pops_controller.js:44-50` | each | todo | |
@@ -562,8 +569,8 @@ dark variant looks different on purpose.
 |---|---|---|---|---|---|
 | toast-shape | one quiet line top right: head + line, Undo (U) as a form (`stay=1 quiet=1`), scribbled time line | `views/toast.mjs:21-28` | any answer | ok | S:toast-after-answer |
 | toast-heads | Answered (t → labels), I don't give a duck, Read, Shredded, Snoozed (Undo wake), Handed back / Asked: What?? (Undo takeback), Message sent (no Undo) | `turbo.mjs:79-89` | each way | ok | S:toast-after-answer (2nd pass) |
-| toast-timing | ~5 s, pauses under the pointer, max 3 stacked newest on top, survives page changes; gone once Undo is pressed | `application.js:29-53` | hover keeps it | todo | |
-| toast-others | Memo sent (hold), Note thrown away, Archived, Test cards made/removed, Desk added, Link copied, Not saved/Not sent alerts | `views/memo.mjs:122,131`; `views/agents.mjs:268`; `server/fixtures.mjs:226,233`; `t/lib/toast.js:76-102` | each | todo | |
+| toast-timing | ~5 s, pauses under the pointer, max 3 stacked newest on top, survives page changes; gone once Undo is pressed | `application.js:29-53` | hover keeps it | ok | answer toast; held under pointer >7 s, gone ~6 s after leaving; 4 quick snoozes -> 3 stacked newest on top; survives going to /s/test-alpha; Undo restores the row and removes the toast (x3 toast) (A) |
+| toast-others | Memo sent (hold), Note thrown away, Archived, Test cards made/removed, Desk added, Link copied, Not saved/Not sent alerts | `views/memo.mjs:122,131`; `views/agents.mjs:268`; `server/fixtures.mjs:226,233`; `t/lib/toast.js:76-102` | each | todo | not exercised; strings present in app code (Memo sent, Note thrown away, Desk added, Link copied); row copy button click showed no toast in headless (A) |
 | toast-picked | a pressed tile shows `is-picked` until the hub answered | `application.js:218-219` | slow network | ok | S:toast-after-answer (2nd pass) "→ Löschen" |
 
 ## Layout, phone, dark
@@ -611,15 +618,15 @@ dark variant looks different on purpose.
 | tool-withdraw-card | moot open card → done "Withdrawn" | `server.mjs:1202-1212,1813-1827` | rt-withdraw | ok | R r13 |
 | tool-close-card | done with summary (also open cards, see interface.md §7) | `server.mjs:1214-1224,1829-1839` | rt-close | ok | R r01 |
 | tool-set-status | status line create/update | `server.mjs:1226-1239,1841-1859` | st-working | ok | R r14 (2nd pass) |
-| tool-clear-status | one or all lines | `server.mjs:1241-1244,1861-1864` | st-clear | todo | |
+| tool-clear-status | one or all lines | `server.mjs:1241-1244,1861-1864` | st-clear | ok | m13: two status lines; clear_status {id:one} removes one, clear_status {} removes the rest, on the session page (C) |
 | tool-introduce | model, task, icon, parent, main | `server.mjs:1246-1259,1865-1875` | st-introduce | ok | R r14 |
-| tool-create-voiceover | text → MP3 path | `server.mjs:1261-1271,1876` | med-voiceover | todo | |
-| tool-list-cards | JSON of own cards incl. queue_position, version, with_agent | `server.mjs:1273-1276,1878-1889` | compare with Desk order | todo | |
+| tool-create-voiceover | text → MP3 path | `server.mjs:1261-1271,1876` | med-voiceover | gap | create_voiceover -> "not available on the new hub yet; use the old board" (channel-bridge.mjs:492) [P3] (C) |
+| tool-list-cards | JSON of own cards incl. queue_position, version, with_agent | `server.mjs:1273-1276,1878-1889` | compare with Desk order | ok | m13: list_cards JSON has queue_position, version, with_agent (on a handed-back card), answered_version; same conditional shape as Turbo (C) |
 | tool-publish-asset | encrypted asset link (in the channel process) → asset card | `server.mjs:1278-1292,1928` | med-asset-card | ok | R r15 live (4th pass): announced in the session |
-| tool-list-assets | own assets | `server.mjs:1294-1297,1890` | | todo | |
-| tool-revoke-asset | delete ciphertext, link dead | `server.mjs:1299-1302,1892-1897` | med-asset-gone | todo | |
-| tool-adopt-session | main takes an existing session as sub (same machine) / release | `server.mjs:1304-1314,1899-1912` | sub under main in sidebar | todo | |
-| tool-share-asset | outside release `/r/<id>#key`, expiry, keep | `server.mjs:1316-1327,1914-1926` | card "Shared" | ok | R r15 live (5th pass): link, outsider in a fresh browser sees the page, release:false takes it back |
+| tool-list-assets | own assets | `server.mjs:1294-1297,1890` | | ok | m13: publish_asset then list_assets lists it (id,title,state,type,size,released_until) (C) |
+| tool-revoke-asset | delete ciphertext, link dead | `server.mjs:1299-1302,1892-1897` | med-asset-gone | gap | m13: revoke_asset -> "taken off the board" (unpublish), list_assets then still lists it with state "closed"; Turbo deletes the stored asset ("link no longer opens"). Ciphertext deletion / dead link not verified [P3] (C) |
+| tool-adopt-session | main takes an existing session as sub (same machine) / release | `server.mjs:1304-1314,1899-1912` | sub under main in sidebar | na | replaced by design: adopt_session -> error "a session's profile is signed by that session alone. Ask the helper to call introduce with parent set" (channel-bridge.mjs:490) (C) |
+| tool-share-asset | outside release `/r/<id>#key`, expiry, keep | `server.mjs:1316-1327,1914-1926` | card "Shared" | ok | dev/verify rounds r15 in /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/rounds-live3b/rounds.json (03:45Z): link for outsiders, fresh browser sees content, release:false takes it back ("card Shared" look not checked) (C) |
 | tool-permission-request | (from Claude Code) approval → card | `server.mjs:1934-1975` | ip-permission | ok | R r12 |
 
 ## Channel events to the agent
@@ -627,23 +634,26 @@ dark variant looks different on purpose.
 | id | what | turbo code | how to check | status | evidence |
 |---|---|---|---|---|---|
 | ev-chat | `chat`: composer/memo message; content = text or file line; meta files, image_path | `server.mjs:3201-3217,3236` | sess-composer | ok | R r14 composer→`chat` 31 ms |
-| ev-chat-card | `chat card_id`: question back from the card field | `server.mjs:3191-3193` | rt-ask-back | todo | |
+| ev-chat-card | `chat card_id`: question back from the card field | `server.mjs:3191-3193` | rt-ask-back | ok | m04: chat card_id from the card field (C) |
 | ev-chat-handback | `chat card_id handback=1` | `server.mjs:3194-3196` | rt-handback | ok | R r06 |
 | ev-chat-explain | `chat card_id explain=1` | same | rt-what | ok | R r07 |
-| ev-chat-marks | `chat marks=N` + "Notes pinned to the card:" (card field with marks) | `server.mjs:3186-3187,3208` | draw + send | todo | |
-| ev-chat-cards | `chat cards=… cards_json=…` copied cards (old client only, finding 6) | `server.mjs:3189,3211` | old `/message {cards}` | todo | |
+| ev-chat-marks | `chat marks=N` + "Notes pinned to the card:" (card field with marks) | `server.mjs:3186-3187,3208` | draw + send | ok | m15: card field send with a mark -> chat marks=1, content "siehe Notiz
+
+Notes pinned to the card:
+- [b] zu dunkel" (C) |
+| ev-chat-cards | `chat cards=… cards_json=…` copied cards (old client only, finding 6) | `server.mjs:3189,3211` | old `/message {cards}` | na | old client only (/message {cards}); the bridge still relays copied cards as cards/cards_json (channel-bridge.mjs:534) (C) |
 | ev-decision | `decision card_id choice` (+ `choices` multiple, `option_notes`, `marks`, `files`, `image_path`) | `server.mjs:2158-2172` | rt-basic, rt-multiple, rt-notes | ok | R r01/r03/r04 |
 | ev-decision-trust | `decision trust=1 choice=<recommended or "">` | `server.mjs:2199-2205` | rt-trust | ok | R r08 |
 | ev-reopened | `decision_reopened previous_choice` (+ previous_choices) | `server.mjs:2428-2433` | rt-reopen | ok | R r02 |
-| ev-reopened-trust | `decision_reopened trust=1` | `server.mjs:2414-2417` | rt-trust-undo | todo | |
-| ev-reopened-shredded | `decision_reopened shredded=1` | `server.mjs:2391-2394` | rt-shred-undo | todo | |
+| ev-reopened-trust | `decision_reopened trust=1` | `server.mjs:2414-2417` | rt-trust-undo | ok | m07: decision_reopened trust=1 previous_choice="" (C) |
+| ev-reopened-shredded | `decision_reopened shredded=1` | `server.mjs:2391-2394` | rt-shred-undo | ok | m08: decision_reopened shredded=1 previous_choice="" (C) |
 | ev-shredded | `shredded card_id` (+ marks, files) | `server.mjs:2228-2237` | rt-shred | ok | R r09 |
-| ev-handback-withdrawn | `handback_withdrawn card_id` | `turbo.mjs:145-148`; `server.mjs:3669-3672` | rt-handback-takeback | todo | |
+| ev-handback-withdrawn | `handback_withdrawn card_id` | `turbo.mjs:145-148`; `server.mjs:3669-3672` | rt-handback-takeback | gap | m05: Take back reaches the agent as kind=chat card_id "The human took the card back; no need to rework or explain it." - no handback_withdrawn kind [P3] (C) |
 | ev-info-read | `info_read card_id` | `server.mjs:2335-2338` | ip-info-read | ok | R r11 |
-| ev-pad | `pad pad message_id elements image_path` | `server.mjs:1419-1422`; `server/pad.mjs:276` | pad-send | todo | |
-| ev-scribble | `scribble scribble_id image_path canvas_path canvas_doc` (old client canvas) | `server.mjs:2371-2374` | scribble-old | todo | |
+| ev-pad | `pad pad message_id elements image_path` | `server.mjs:1419-1422`; `server/pad.mjs:276` | pad-send | todo | not reached (bridge emits kind=pad pad=global message_id elements + file meta for selection_sent, channel-bridge.mjs:594-598; not exercised) (C) |
+| ev-scribble | `scribble scribble_id image_path canvas_path canvas_doc` (old client canvas) | `server.mjs:2371-2374` | scribble-old | na | old client canvas only; the new app has no scribble; the pad (ev-pad) replaces it (C) |
 | ev-permission | `notifications/claude/channel/permission {request_id, behavior}` | `server.mjs:2154-2156` | ip-permission | ok | R r12 |
-| ev-none | no event for snooze/wake, read taken back, drafts, crown, rename, archive, memo put away | `server.mjs:2287-2321,2398-2403` | watch link stays silent | todo | |
+| ev-none | no event for snooze/wake, read taken back, drafts, crown, rename, archive, memo put away | `server.mjs:2287-2321,2398-2403` | watch link stays silent | gap | m02/m14: drafts, snooze and wake stay silent; but taking a read back is not silent (decision_reopened, see ip-info-reopen). Crown/rename/archive/memo not checked [P3] (C) |
 
 ## Admin, pairing, auth, dev
 
@@ -656,7 +666,7 @@ dark variant looks different on purpose.
 | auth-pairing | `/pair/*` (BOARD_PAIRING=1): room, found, entry, log, challenge, sign-in, wraps, invites, envelopes, claim | `server.mjs:3386-3392`; `server/pairing.mjs:116-142` | with flag set | ok | R r16: 2nd device joins with 6-digit check code, answers from the phone; live 4.4 s join |
 | auth-agent-door | `/agent/link`, `/agent/tool`, `/agent/asset`, `/agent/profile`, `/agent/permission`: loopback + `x-board-token` | `server.mjs:2594-2680,3372` | linkSession | todo | |
 | admin-page | `/admin.html` behind its own key: overview, sessions (forget, clear queue), cleanup, links, export, diagnose, token rotate | `server.mjs:2971-3018,3406`; `client/web/js/admin.js` | Dev → Admin | todo | |
-| help-page | `/help.html` (+ `#keys`): how it works, keys, tools and events from `/api/tools` | `server.mjs:3423-3426`; `client/web/js/help.js` | menu Help | ok | S:help (2nd pass, real room); P3: "FOR AGENTS" section link missing |
+| help-page | `/help.html` (+ `#keys`): how it works, keys, tools and events from `/api/tools` | `server.mjs:3423-3426`; `client/web/js/help.js` | menu Help | ok | S:help real room (6th pass, 185ce2e): "For agents" back |
 | dev-fake | Dev: "Create 5 fake decisions" / "Remove fake decisions" (`POST /dev/fake-decisions`), then the Desk | `views/menu.mjs:42`; `menu_controller.js:133-145`; `server.mjs:3558-3566` | click → 5 Demo rows | todo | |
 | dev-fixtures | Dev: "Create test cards" (`POST /dev/fixtures`, desk Test, toast with Remove) / "Remove test cards" | `server/fixtures.mjs:198-236`; `t/controllers/fixtures_controller.js:12-15` | click → Desk "Test" | todo | |
 | dev-links | Dev: All screens (`/screens.html`), Old board (`/old/`), Admin | `views/menu.mjs:42` | links work | todo | |
