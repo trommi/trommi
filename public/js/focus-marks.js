@@ -202,7 +202,9 @@ export function cardMarks({ scroll, blocks, labelOf, onChange }) {
   }
   scroll.addEventListener('pointerover', e => { if (e.target === quill || quill.contains(e.target)) return; offer(blocks().find(b => b.contains(e.target))) })
   scroll.addEventListener('pointerleave', () => { quill.hidden = true })
-  document.addEventListener('selectionchange', () => {
+  // (The page is swapped without a reload: once the card is gone, this listener goes too, not one more per card opened.)
+  document.addEventListener('selectionchange', function selected() {
+    if (!scroll.isConnected) return document.removeEventListener('selectionchange', selected)
     const sel = getSelection()
     if (!sel || sel.isCollapsed || !scroll.contains(sel.anchorNode)) return
     offer(blocks().find(b => b.contains(sel.anchorNode)))
