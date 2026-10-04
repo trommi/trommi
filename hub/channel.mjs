@@ -37,13 +37,29 @@ const log = (...a) => console.error('[trommi]', ...a)
 const CLIENT = 'channel/0.1.0'
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
 
+/**
+ * The name the folder's key slots go by. The first run in a folder writes it to <folder>/.trommi/slot-base (with a
+ * .gitignore of its own), and every later run reads it from there, so a renamed or moved folder keeps its identity
+ * (its key, state and file cache). Without the file (read-only folder) the name comes from host and folder as before.
+ */
+function slotBase(folder, derived) {
+  const dir = path.join(folder, '.trommi'), file = path.join(dir, 'slot-base')
+  try { const kept = fs.readFileSync(file, 'utf8').trim(); if (/^[a-z0-9-]{1,200}$/.test(kept)) return kept } catch {}
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+    if (!fs.existsSync(path.join(dir, '.gitignore'))) fs.writeFileSync(path.join(dir, '.gitignore'), '*\n')
+    fs.writeFileSync(file, derived + '\n', { flag: 'wx' })
+  } catch {}
+  return derived
+}
+
 function channelConfig(env = process.env) {
   const keys_dir = path.resolve(env.TROMMI_KEYS_DIR || path.join(os.homedir(), '.local/share/trommi/keys'))
   const folder = path.resolve(env.TROMMI_FOLDER || process.cwd())
   const home = os.homedir()
   const shown = folder === home ? '~' : folder.startsWith(home + path.sep) ? `~/${path.relative(home, folder)}` : folder
   const host = os.hostname()
-  const base = `${slug(host)}-${slug(shown.replace(/^~\/?/, '')) || 'home'}`
+  const base = slotBase(folder, `${slug(host)}-${slug(shown.replace(/^~\/?/, '')) || 'home'}`)
   return { keys_dir, folder, shown, host, base, hub_url: env.TROMMI_HUB || 'https://hub.trommi.com', invite: env.TROMMI_INVITE || '', room: (env.TROMMI_ROOM || '').toLowerCase() }
 }
 
