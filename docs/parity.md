@@ -4,12 +4,13 @@ Kept by the verifier ("Superkind", night of 4 October 2026). The goal: the new a
 server-rendered Turbo board in every function, every decision round trip between agent and human, the look and
 Christopher's design decisions, and is faster, end to end encrypted through the thin hub.
 
-**Status (second pass, 4 Oct ~03:40; app main incl. 6213254, hub main incl. 6774b2d):** checklist
-**121 ok · 9 gap · 221 todo** of 351 rows. Screenshots: 42 states × 4 profiles on Turbo, on the app's mock room
-and on a **real E2E room** (`dev/verify/app-room.mjs`: the app founds the room, three `hub/channel.mjs` sessions file
-the same fixture cards). Decision round trips through the real channel: **46 of 47 checks green locally, 45 of 46
-on the live system** (app.trommi.com + hub.trommi.com); the one red is the outside share link of `publish_asset`
-(designed, open). Short keys: 21 of 26 checked keys behave as on Turbo (`dev/verify/keys.mjs`).
+**Status (third pass, 4 Oct ~04:30; app main 37af467, hub main 3047372 = protocol v1.1 live):** checklist
+**128 ok · 5 gap · 218 todo** of 351 rows (todo = not yet checked by the verifier, mostly single keys, agents-page
+actions, admin, push, old-client-only features). Screenshots: 42 states × 4 profiles on Turbo, on the app's mock room
+and on a **real E2E room** (`dev/verify/app-room.mjs`). Decision round trips through the real channel: **45 of 46
+checks green, locally and on the live system** (app.trommi.com + hub.trommi.com v1.1); the one red is
+`share_asset` (outside links): hub and app have share links since 3047372 / 19f56d3, the channel does not call them yet.
+Short keys: 21 of 26 checked keys behave as on Turbo (`dev/verify/keys.mjs`).
 
 ## How it is checked (dev/verify/)
 
@@ -39,20 +40,18 @@ the Turbo test board's (Web-Frontend, API, Infrastruktur, Courier); the fixture 
 
 ## Gaps, priority order (sent to the area owners)
 
-Open after the second pass:
+Open after the third pass:
 
 | # | prio | gap | evidence | owner |
 |---|---|---|---|---|
-| 1 | P1 | Marks on pictures are not drawn in a real room (mock fine): the model carries `{x, y, width, height}`, the board's marks code reads `{x, y, w, h}` | S:card-marks real room (`shots-room`) | Card / Integrator (board-state) |
-| 2 | P2 | Session names from the channel read "desktop · /full/path/to/folder"; Turbo shows the folder name ("trommi"); sidebar and headings become unreadable | S:desk, session real room | Channel (D) |
-| 3 | P2 | Cards inline in a conversation have corner ticks only, no border; the session drawing overlaps the name in the header; status pill cut to "Stopped: …" | S:session-thread, session real room vs `parity-shots/` | Session |
-| 4 | P2 | `publish_asset`: no link for people outside the room (Turbo: `<base>/a/<id>#<key>`, `share_asset`) | R r15 | Channel (D) + hub (designed, open) |
-| 5 | P2 | Key `n` opens the memo chooser when notes are put away instead of a new note (Turbo has the same code path; fix sent to C) | keys.mjs | Integrator (C) |
-| 6 | P3 | `g f` goes to `/q/<n>` instead of `/walk`; Help lacks "FOR AGENTS"; German "Geräte" entry and update banner in the English UI; phone session strip 7 px taller; agents row buttons shifted | S:*, keys.mjs | Integrator |
-| 7 | ? | Asset cards in the conversation and the files drawer: raw text / "0 files" in the mock (1st pass); not re-checked with a real published asset | S:session-thread, session-files (mock) | Session |
-| 8 | ? | Pointto arrow after answering: missing in the 1st pass, Desk reports fixed (c5bd7a3), not re-verified | S:toast-after-answer | Desk |
+| 1 | P2 | Session names from the channel read "desktop · /full/path/to/folder"; Turbo shows the folder name ("trommi"); the sidebar shows only "desktop · /tmp/cl…" | `parity-shots/room-desktop-light-session-thread.png`, S:desk real room | Channel (D) |
+| 2 | P2 | `share_asset` in the channel still says "not available on the new hub"; hub (3047372) and app (19f56d3) have share links now | R r15 | Channel (D) |
+| 3 | P2 | Key `n` opens the memo chooser when notes are put away (fix sent to C; Turbo has the same code path) | keys.mjs | Integrator (C) |
+| 4 | P2 | Load time: in the real room after the v1.1 cutover, cold Desk ready 165 ms desktop / 403 ms phone 4x (Turbo 58 / 128); longest task 223-249 ms at 4x CPU (budget 200); on app.trommi.com warm load went from 110 to 236 ms (213 requests through the service worker) | perf-app-room2.json, perf-app-prod-mock2.json | Integrator (C) |
+| 5 | P3 | `g f` goes to `/q/<n>` instead of `/walk`; Help lacks "FOR AGENTS"; German "Geräte" entry and update banner in the English UI; phone session strip 7 px taller; agents row buttons shifted | S:*, keys.mjs | Integrator |
+| 6 | ? | Pointto arrow after answering: reported fixed (c5bd7a3), not re-verified | S:toast-after-answer | Desk |
 
-Fixed between the passes and verified: pad layer on the closed Desk and its dark canvas, pad toolbar and pad mode,
+Fixed between the passes and verified: marks on pictures in real rooms (a92118f), inline cards' box, header with a long name and the stop pill (0af0af4), asset cards and the "2 files" chip in a real room, pad layer on the closed Desk and its dark canvas, pad toolbar and pad mode,
 help page, menu push row and "Geräte" icon, "→ choice" in the answer toast, attachment titles as captions, gutter
 drawings on the Desk, `set_status` with a fresh `card_id` (channel), `publish_asset` announced in the conversation.
 
@@ -116,6 +115,12 @@ until the target stands (no reload); live = agent tool call until visible.
 
 app.trommi.com (production, mock room, real network): desktop cold 371 ms ready / 480 ms first paint, warm **110 ms
 from the service worker** (5 kB); phone 4x cold 470 / warm 221 ms, longest task 209 ms.
+
+After the v1.1 cutover (third pass): real room on the dev server, cold Desk ready 165 / 354 / 403 ms (desktop /
+4x / phone 4x), warm 103 / 251 / 315 ms, desk→session 118 / 232 / 277 ms, longest task 90 / 249 / 223 ms;
+app.trommi.com (mock room) cold 390 / 391 / 448 ms, warm 236 / 267 / 362 ms from the service worker (203-223 requests).
+Live round trips on v1.1: agent call → in the app 30-92 ms (sections 219 ms, pictures 151 ms), human click → agent
+event 52-82 ms, phone answer → laptop row gone 397 ms.
 
 Reading: the app navigates faster than Turbo (no server round trip), and its live path stays well under 100 ms with
 full encryption. It loads slower: ~110 requests and 1.1-1.9 MB of modules on a cold load, ~100-200 ms of script
@@ -269,14 +274,14 @@ dark variant looks different on purpose.
 |---|---|---|---|---|---|
 | sess-route | `GET /s/<id>`: heading, quiet line, conversation, composer, filter; title `(n) <name> · Trommi` | `views/session.mjs:373-392,449-462` | load `/s/web-frontend` | ok | S:session |
 | sess-404 | unknown session → "This session is not on the board." (404) | `views/session.mjs:442-448` | `/s/nobody` | todo | |
-| sess-heading | drawing (opens drawings), crown toggle, name (renames), red hand "Stopped: <why>" | `views/session.mjs:209-215`; `views/session-edit.mjs:51-54` | stop a working session's link → hand appears | gap | S:session real room: name "desktop · /full/path" (channel; Turbo: folder name), drawing overlaps the name |
+| sess-heading | drawing (opens drawings), crown toggle, name (renames), red hand "Stopped: <why>" | `views/session.mjs:209-215`; `views/session-edit.mjs:51-54` | stop a working session's link → hand appears | gap | S:session real room: name "desktop · /full/path" from the channel (Turbo: folder name); layout fixed in 0af0af4 |
 | sess-quiet-line | task or connected/disconnected, model · host (caps), "N files" chip | `views/session.mjs:217-222` | `introduce {model, task}` → shown live | todo | |
 | sess-window | latest 60 messages; "Earlier messages N" loads the 60 before in `turbo-frame#earlier-<msg>` (`?before=`); "To the latest messages" | `views/session.mjs:24,258-268,377-382` | 70 messages → link "10"; click → older appear | todo | |
 | sess-days-times | day lines Today / Yesterday / date; times shown in the browser's zone with full tooltip | `views/session.mjs:53-63,197`; `t/controllers/log_controller.js:19-31` | messages across midnight → two day lines | todo | |
 | sess-msg-agent | agent message: head "Agent" + time (cont. messages grouped < 5 min), rich text, attachments, Details fold, "About <card>" link | `views/session.mjs:185-196` | `reply {text, details, card_id}` → all parts | ok | S:session; R r14 |
 | sess-msg-user | user message: bubble, scribble card, attachments, About link, copied-card chips (`m.cards`) | `views/session.mjs:189-192` | composer message with a picture → bubble + shot | todo | |
 | sess-code-copy | fenced code gets a head with Copy ("Copied" / "Not copied") | `views/session.mjs:166-167`; `t/controllers/copy_controller.js:6-32` | reply with ```js``` → Copy works | todo | |
-| sess-ask-open | an open question stands where it was asked as its Desk row (tiles answer; links `/s/<id>/q/<n>`) | `views/session.mjs:113-122` | `/s/courier` shows the approval row | gap | S:session-thread real room: inline card without border |
+| sess-ask-open | an open question stands where it was asked as its Desk row (tiles answer; links `/s/<id>/q/<n>`) | `views/session.mjs:113-122` | `/s/courier` shows the approval row | ok | S:session-thread real room (3rd pass) |
 | sess-ask-closed | a closed or waiting question is one line: Answered / I don't give a duck / Shredded / Done / With the agent / Snoozed, linking to its card | `views/session.mjs:103-130` | answer a card → row becomes "Answered <label>" line | todo | |
 | sess-events | event lines for decided, done, urgency, reopened, revised, trusted, snoozed, handed, shredded | `views/session.mjs:103-109` | `set_urgency` → "Urgency" line | todo | |
 | sess-composer | `POST /s/<id>/message` (text + up to 12 files, multipart); with Turbo the composer comes back empty and focused; message appears via stream; event `chat` | `views/session.mjs:275-283,483-508`; `server.mjs:3180-3218` | send "hi" → message in log; agent gets `kind=chat` content "hi" | ok | S:session; R r14 |
@@ -290,10 +295,10 @@ dark variant looks different on purpose.
 | sess-open-chip | "N open" chip while an open question of the log is out of sight; goes to the next | `views/session.mjs:249-254`; `t/controllers/log_controller.js:91-110` | scroll an asked row away → chip; click → row focused | ok | S:session-permission "1 open" |
 | sess-filter | filter icon menu: All messages / Questions only (count) / Files (N) (phone only); dot while on | `views/session.mjs:226-236` | `?only=questions` → ticked + dot | todo | |
 | sess-questions | `?only=questions` (and `/s/<id>/questions` redirect): "N questions wait for you" rows, then "Earlier questions" lines | `views/session.mjs:288-298,463` | load for test-alpha | ok | S:session-questions (order differs, P3) |
-| sess-files-drawer | "N files" chip opens the drawer (lazy frame `/s/<id>/files`), a group per card or message, thumbs, "Jump to"; Escape, click beside, × close; `/s/<id>/files` opens it | `views/session.mjs:300-369,464-473`; `t/controllers/files_controller.js:15-53` | open, Jump to → message `.is-jumped` | todo | mock "0 files" (1st pass); real room had no published assets |
+| sess-files-drawer | "N files" chip opens the drawer (lazy frame `/s/<id>/files`), a group per card or message, thumbs, "Jump to"; Escape, click beside, × close; `/s/<id>/files` opens it | `views/session.mjs:300-369,464-473`; `t/controllers/files_controller.js:15-53` | open, Jump to → message `.is-jumped` | ok | S:session-thread real room: "2 files" chip (3rd pass) |
 | sess-picture | `/s/<id>/files/<n>`: picture large, "i / n", prev/next (replace), Back to the conversation (`#msg-…`) or the files, "Open the page / the original" | `views/session.mjs:395-405,474-479` | click a shot in the log → page; Back → log | todo | |
 | sess-live | live: heading, quiet line, filter counts, new messages before `log-end-<id>`, changed messages, status, open chip, files list; a rewritten log refreshes | `views/session.mjs:511-557` | agent reply appears without reload | ok | R r14 reply visible 65 ms |
-| sess-card | `/s/<id>/q/<n>`: the card page, "Back to <session>", an answer returns to the session (`back` field) | `turbo.mjs:197-202,252-264`; `views/card.mjs:258-271,288` | answer from there → back on `/s/<id>?said=…` | gap | S:session-thread real room: inline cards have corner ticks only, no border |
+| sess-card | `/s/<id>/q/<n>`: the card page, "Back to <session>", an answer returns to the session (`back` field) | `turbo.mjs:197-202,252-264`; `views/card.mjs:258-271,288` | answer from there → back on `/s/<id>?said=…` | ok | S:session-thread real room (3rd pass, after 0af0af4): full box |
 | sess-old-only | not Turbo: `/s/<a>+<b>` (laid together), `/s/<id>/scribble` → old client | `views/session.mjs:455`; `server.mjs:3123,3417-3420` | load → redirect to `/old/#…` | todo | |
 
 ## Cards and decisions (the card page)
@@ -319,7 +324,7 @@ dark variant looks different on purpose.
 | card-note-with-answer | the field's text goes along as the answer's note | `turbo.mjs:121,154` | type, click option → event content = note | todo | |
 | card-option-note | pencil per option opens `note-<key>`; Enter blurs; empty line hides; sent as option notes | `views/card.mjs:158,163`; `t/controllers/card_controller.js:103-117` | note on B, answer A → "Notes on options:" B not chosen | todo | |
 | card-draft | ticks, note, option notes, marks saved 700 ms after the last stroke (`POST /cards/<id>/draft`) → "Saved" / "Not saved"; rendered back; the stream never replaces under typing | `turbo.mjs:274-281,293-306`; `t/controllers/card_controller.js:130-145`; `server.mjs:2072-2089` | tick, reload → still ticked | todo | |
-| card-marks | drawing and pinned notes on the card (focus-marks), in field `marks`, sent with answer, message, revise, shred | `t/controllers/card_controller.js:32-45`; `turbo.mjs:125` | draw, answer → meta `marks` count | gap | S:card-marks real room: marks not drawn; model has {width,height}, view wants {w,h} |
+| card-marks | drawing and pinned notes on the card (focus-marks), in field `marks`, sent with answer, message, revise, shred | `t/controllers/card_controller.js:32-45`; `turbo.mjs:125` | draw, answer → meta `marks` count | ok | S:card-marks real room (3rd pass, after a92118f): circles drawn |
 | card-files | files attached in the field go with an answer or a message (multipart); dropped if the answer is refused | `turbo.mjs:128-131,283-291`; `t/controllers/card_controller.js:148-167` | drop a file on the card, answer → meta `files` | todo | |
 | card-stale | answer to a version that was reworded meanwhile is refused (hidden `revised` stamp, 409) | `turbo.mjs:122`; `views/card.mjs:139` | open, `revise_card`, answer the old page → "Not saved" | todo | |
 | card-version-old | `?v=n`: older version read-only, "Version n cannot be answered" + link to now; only the thread stays live | `views/card.mjs:28,141,219`; `turbo.mjs:254-258,305` | revised fixture `?v=1` | todo | |
@@ -347,7 +352,7 @@ dark variant looks different on purpose.
 | rt-sections | text/sections question | `server.mjs:1514-1544` | `create_decision {text:"…\n\n[x*] …\npicture: a.png", attachments}` → card blocks + "Options in detail", x advised → answer → event | ok | R r04: 5 parts, `choices=sync,offline` |
 | rt-recommended | recommended advice | `views/desk.mjs:49-51,72`; `views/card.mjs:155-165` | `recommended:'b'` → highlighter on B (row + card), duck tooltip "agent takes B" | ok | R r01 `.tc-opt.is-advised`; S:card-yesno, card-pictures same |
 | rt-pictures | per-option pictures | `views/card.mjs:54-83` | attachments `x-a.png,x-b.png,x-c.png` → hover swaps, arrow, row byline 3 thumbs → answer → event | ok | R r05 picture decrypted on card page; S:card-pictures same |
-| rt-picture-marks | pictures with marks | `server.mjs:1118`; `circles_controller.js` | attachment `{path, marks:[{x,y,w,h,label}]}` → circles on stage and `/p/1`; arrow starts at circle | gap | R r05 ok on the drawn marker check in the dev run, but S:card-marks real room shows no circles (width/height vs w/h) |
+| rt-picture-marks | pictures with marks | `server.mjs:1118`; `circles_controller.js` | attachment `{path, marks:[{x,y,w,h,label}]}` → circles on stage and `/p/1`; arrow starts at circle | ok | R r05 + S:card-marks real room (3rd pass) |
 | rt-notes | note + option notes | `server.mjs:2158-2170` | note "after backup", note on B, answer A → content note + "Notes on options:\n- B [b], not chosen: …", meta `option_notes=b` | todo | |
 | rt-answer-files | files with an answer | `turbo.mjs:128-131`; `server.mjs:2170` | attach file in field, answer → meta `files`, `image_path` | todo | |
 | rt-answer-marks | marks with an answer | `server.mjs:2163,2168` | draw on card, answer → meta `marks=N`, content "Notes pinned to the card:" | todo | |
@@ -433,8 +438,8 @@ dark variant looks different on purpose.
 | med-page-of-pic | `{path, page}`: "Open the page" under the shot, on the picture page and card More | `views/session.mjs:99,401`; `views/card.mjs:265,277,304` | artifact fixture | ok | S:picture same |
 | med-thumbs | `/files/<name>?w=` variants (srcset 1x/2x), GIF and unknown sizes keep the original | `views/picture.mjs:19-35`; `server.mjs:3458-3462` | inspect `src` | todo | |
 | med-reply-html | `reply.html` in a sandboxed frame under the words; `details` folded | `views/session.mjs:194-195`; `views/text.mjs:151` | thread fixture table | todo | |
-| med-asset-card | published asset in the log: preview decrypted in the browser (picture, page first screen), kind · size, title, note, Open | `views/session.mjs:149-162`; `t/controllers/assetthumb_controller.js:17-99` | artifact fixture assets | todo | mock showed raw text (1st pass); not re-checked with a real published asset |
-| med-asset-copy | "Copy link" releases it (`POST /asset/share`) and copies `/r/<id>#<key>`; toast "Link copied" with "Stop sharing" | `t/controllers/share_controller.js:28-59`; `server.mjs:3533-3543` | click → clipboard `/r/…`; card "Shared · Stop", opens count | todo | see med-asset-card |
+| med-asset-card | published asset in the log: preview decrypted in the browser (picture, page first screen), kind · size, title, note, Open | `views/session.mjs:149-162`; `t/controllers/assetthumb_controller.js:17-99` | artifact fixture assets | ok | S:session-thread real room (3rd pass): asset cards with preview, Open, Copy link |
+| med-asset-copy | "Copy link" releases it (`POST /asset/share`) and copies `/r/<id>#<key>`; toast "Link copied" with "Stop sharing" | `t/controllers/share_controller.js:28-59`; `server.mjs:3533-3543` | click → clipboard `/r/…`; card "Shared · Stop", opens count | ok | S:session-thread real room (3rd pass) |
 | med-asset-stop | "Stop" takes the release back | `t/controllers/share_controller.js:47` | `/r/<id>#key` → gone | todo | |
 | med-asset-gone | revoked/expired asset: "No longer available" | `views/session.mjs:153` | agent `revoke_asset` | todo | |
 | med-asset-link | `/a/<id>#<key>` in text → asset chip named by title | `views/text.mjs:34-46,109-112` | reply with the link | gap | R r15: no outside link |
