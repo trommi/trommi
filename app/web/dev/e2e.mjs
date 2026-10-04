@@ -244,6 +244,11 @@ try {
   const warm = await A.js("return { first: trommi.firstPaintMs, rows: document.querySelectorAll('.inbox-row').length, conn: trommi.client.model.room.connection }")
   timing(`warm reload -> Desk painted (${warm.rows} rows, connection then: ${warm.conn})`, warm.first)
   check(warm.rows >= 30, 'warm reload shows the cards from local storage')
+  // the stream after the reload is really live: another device posts, it arrives within 2 s
+  await A.until("trommi.client.model.room.connection === 'live'", 'live after the reload')
+  t0 = Date.now()
+  const afterReload = await agent.sendCard({ title: 'nach dem Neuladen', card_type: 'info' })
+  await A.until(`trommi.client.model.cards.has('${afterReload}')`, 'card after the reload', 2000).then(() => { check(true, 'a card sent after the warm reload arrives live within 2 s'); timing('card after the warm reload -> on A', Date.now() - t0) }, e => check(false, e.message))
 
   // ---- devices: B removes nobody; A sees both humans and the agent ----
   await A.js("trommi.router.visit('/devices')")
@@ -276,7 +281,7 @@ try {
   if (heard) timing('log out on C -> removed on A (live)', Date.now() - t0)
   else {
     const probe = await agent.sendCard({ title: 'stream probe', card_type: 'info' })
-    const live = await A.until(`document.getElementById('row-${probe}')`, 'probe', 8000).then(() => true, () => false)
+    const live = await A.until(`trommi.client.model.cards.has('${probe}')`, 'probe', 8000).then(() => true, () => false)   // A is on /devices: no Desk rows there
     check(false, `A's live stream after the warm reload: ${live ? 'envelopes arrive, but no member_entry' : 'silent (no member_entry, no envelope), though the connection says live'}`)
     await A.js('await trommi.client.serial(() => trommi.client._refreshMembers())')
   }
