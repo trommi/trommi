@@ -46,7 +46,9 @@ if (!document.querySelector('link[href="/css/deskpad.css"]')) document.head.appe
 
 /** The desk in view: its paper is its canvas timeline. Without desks the board is one ('main'). */
 const deskNow = () => { try { return window.trommi?.model?.()?.desk || 'main' } catch { return 'main' } }
-const deskShown = () => Boolean(box?.isConnected && room?.getClientRects().length)
+// Whether the Desk is on screen: kept by the ResizeObserver of #inbox (measure), never read from layout on a scroll.
+let boxShown = false
+const deskShown = () => Boolean(box?.isConnected && boxShown)
 /** Where the list ends, in the paper's own pixels (from the top of the Desk). */
 const roomTop = () => room.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop
 const padWindow = () => (ready ? frame?.contentWindow : null)
@@ -72,8 +74,9 @@ function grow() {
   const h = `${Math.max(0, Math.round(Math.max(0, extent * zoom - roomTop()) + (phone.matches ? 0.5 : 1.5) * vh - pb))}px`
   if (room.style.height !== h) room.style.height = h
 }
-function measure() {
+function measure(entries) {
   if (!box) return
+  boxShown = entries?.[0] ? entries[0].contentRect.height > 0 : box.clientHeight > 0
   const cs = getComputedStyle(box)
   for (const node of [paper, over]) {
     node.style.setProperty('--deskpad-pt', cs.paddingTop)
@@ -218,6 +221,8 @@ function order() {
 /** Lay the paper under the Desk: the frame, the layer, the switches, the free room. */
 function lay() {
   waiting?.()
+  // The Desk may have been painted anew since mount() (a first catch-up, a desk switch): lay under the one shown now.
+  if (!paper && !box?.isConnected && marker?.isConnected) box = document.getElementById('inbox')
   if (!box?.isConnected || paper) return
   box.classList.add('has-deskpad')
   const permanent = (node, id) => { node.id = id; node.setAttribute('data-turbo-permanent', ''); return node }
@@ -230,6 +235,7 @@ function lay() {
   frame.setAttribute('aria-label', `${PAD_WORD}: the paper the Desk lies on`)
   frame.allow = 'clipboard-read; clipboard-write'
   laidDesk = deskNow()
+  frame.style.visibility = 'hidden'   // until the pad's page has painted (no white page while it loads, in dark mode)
   frame.src = `/pad/?embed=1&desk=1&canvas=${encodeURIComponent(`desk/${laidDesk}`)}`
   paper.append(frame)
   layer = permanent(document.createElement('div'), 'deskpad-layer')
@@ -258,9 +264,13 @@ function lay() {
   watchList()
   // A stream replaced a row, the heading or the list: the paper follows; it is not laid again.
   let due = 0
+  // Rows filled in while the Desk scrolls (desk-window) change only what lies inside the list: its height reaches
+  // the paper through the ResizeObserver above, so nothing here reads layout for them. Only a change of the Desk's own
+  // children (the list or heading replaced) is ordered and watched again; the knocks are counted while cards are hidden.
   const changed = new MutationObserver(records => {
-    if (records.every(r => over.contains(r.target) || layer.contains(r.target))) return
-    due ||= requestAnimationFrame(() => { due = 0; if (!box) return; order(); watchList(); paintSwitch(); follow() })
+    const top = records.some(r => r.target === box)
+    if (!top && !cardsHidden) return
+    due ||= requestAnimationFrame(() => { due = 0; if (!box) return; if (top) { order(); watchList(); tellPad() } paintSwitch() })
   })
   changed.observe(box, { childList: true, subtree: true })
   const onPhone = () => grow()
@@ -280,6 +290,7 @@ function lift() {
   for (const node of [paper, layer, over, room]) node?.remove()
   if (box) { box.classList.remove('has-deskpad'); box.removeAttribute('data-paper-front'); box.removeAttribute('data-cards-hidden'); box.removeEventListener('scroll', scrolled) }
   box = paper = frame = layer = over = room = penSwitch = clearSwitch = null
+  boxShown = false
   ready = front = gliding = penWanted = false
   extent = panX = lastTop = 0
   lastRoom = pinch = null
@@ -314,11 +325,15 @@ export function mount(node) {
 export function leave(node) { if (marker === node && !document.getElementById('paper-island')) lift() }
 
 // ---- once, for every Desk this tab shows ----
-document.addEventListener('turbo:before-cache', lift)
+// The app's router fires turbo:before-cache before every paint, also when the Desk is painted again in place (its
+// parts kept): the paper stays then, and turbo:render below checks what is left. A page without the Desk takes it down.
 // A refresh morphed the page in place: the paper stayed (data-turbo-permanent); its order and what the hub says are checked.
 for (const type of ['turbo:render', 'turbo:morph']) document.addEventListener(type, () => {
   if (!box) return
-  if (!box.isConnected) return lift()
+  const island = document.getElementById('paper-island')
+  if (!island) return lift()
+  // The Desk was painted anew (a new #inbox): the paper is laid again under the new one.
+  if (!box.isConnected) { lift(); mount(island); return }
   marker = document.getElementById('paper-island') ?? marker
   order(); paintSwitch(); follow(); tellPad()
 })
@@ -329,6 +344,7 @@ window.addEventListener('message', e => {
   const msg = e.data
   if (msg.type === 'ready') {
     ready = true
+    requestAnimationFrame(() => requestAnimationFrame(() => { if (frame) frame.style.visibility = '' }))
     tellPad(true)
     watchPinch(frame.contentDocument, true)
     if (zoom !== 1) { frame.contentWindow.padZoom?.(zoom, 0); placeLayer(); grow() }
