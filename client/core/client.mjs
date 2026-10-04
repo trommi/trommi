@@ -5,7 +5,7 @@ import * as z from './zcrypto.mjs'
 import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import { sealEscrow, ESCROW_VERSION } from './escrow.mjs'
+import { sealEscrowV2 } from './escrow.mjs'
 import * as G from './session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
@@ -448,7 +448,14 @@ export class Client {
     }
     let state = this.state, epochBefore = state.epoch
     try {
-      for (const e of r.signed_entries) state = await z.applyEntry(state, unb64u(e))
+      for (const e of r.signed_entries) {
+        state = await z.applyEntry(state, unb64u(e))
+        // A device added by the recovery key (a passphrase sign-in, or someone holding the code): every human device says so.
+        const last = state.entries.at(-1)
+        if (this.is_human && last?.signerKind === z.SIGNER?.RECOVERY && last.type === z.ENTRY.ADD) {
+          M.pushAlert(this.model, change, { code: 'recovery-add', message: 'a device was added with the recovery code or the passphrase: if that was not you, remove it and make a new recovery code' })
+        }
+      }
       const verdict = z.checkLogAgainstPin(state, pinFromJson(this.roomRecord.pin))
       if (verdict.status === 'recovery-override') M.pushAlert(this.model, change, { code: 'recovery-override', message: 'a recovery replaced the member list this device knew' })
     } catch (e) {
@@ -1569,25 +1576,32 @@ export class Client {
 
   // ---- password escrow (optional; escrow.mjs) ----------------------------------------------------
 
-  /** Seal the recovery code under a passphrase and store it on the hub. The code is needed once (the device never keeps it). */
-  async setPassphrase(passphrase, { recovery_code, iterations } = {}) {
+  /**
+   * Seal the recovery code under a passphrase (escrow v2) and store it on the hub. The code is needed once (the device
+   * never keeps it). Offer generatePassphrase() (escrow.mjs) as the passphrase; one of the human's own must pass
+   * passphraseProblem. Replaces any earlier escrow of the room.
+   */
+  async setPassphrase(passphrase, { recovery_code } = {}) {
     this._needHuman()
     if (!recovery_code) throw new ZError('bad-argument', 'setting a passphrase needs the recovery code once')
     const rec = await z.recoveryDevice(recovery_code)
     if (!z.bytesEqual(rec.id, this.state.recovery.id)) throw new ZError('bad-recovery-code', 'this code does not belong to the room')
-    const key_escrow = await sealEscrow({ room_id: this.model.room.room_id, recovery_code, passphrase, iterations })
-    await this.hub.putEscrow({ escrow_version: ESCROW_VERSION, key_escrow })
+    await this.hub.putEscrow(await sealEscrowV2({ room_id: this.model.room.room_id, recovery_code, passphrase }))
+    this.roomRecord.has_passphrase = true
+    await this._saveRoom()
     this._setRoom({ has_passphrase: true })
   }
   async removePassphrase() {
     this._needHuman()
     await this.hub.deleteEscrow()
+    this.roomRecord.has_passphrase = false
+    await this._saveRoom()
     this._setRoom({ has_passphrase: false })
   }
-  /** Ask the hub whether this room has an escrow (counts against the hub's read limit: call it on the settings page, not on every start). */
+  /** Whether this room has an escrow: a v1 escrow is visible to anyone; a v2 escrow (addressed by the passphrase) only as this device knows it. */
   async checkPassphrase() {
     try { await this.hub.getEscrow(); this._setRoom({ has_passphrase: true }) }
-    catch (e) { if (e.code === 'not-found') this._setRoom({ has_passphrase: false }); else throw e }
+    catch (e) { if (e.code === 'not-found') this._setRoom({ has_passphrase: !!this.roomRecord.has_passphrase }); else throw e }
     return this.model.room.has_passphrase
   }
   _setRoom(fields) { Object.assign(this.model.room, fields); const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
