@@ -348,6 +348,22 @@ test('quota over HTTP: usage for members, eviction announced on the stream, 413 
 
 // ---- escrow ------------------------------------------------------------------------------
 
+test('escrow v2: stored under a passphrase-derived escrow_id; served only for that id; never on the v1 route', async () => {
+  const w = await newHub()
+  await foundRoom(w)
+  const blob = b64u(crypto.getRandomValues(new Uint8Array(80)))
+  const eid = 'ab'.repeat(16)
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, key_escrow: blob } }, 400, 'bad-argument')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: 'AB'.repeat(16), key_escrow: blob } }, 400, 'bad-argument')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob } }, 200)
+  assert.equal((await expect(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': freshIp() } }, 200)).json.key_escrow, blob)
+  await expect(w, 'GET', `${R(w)}/escrow/${'cd'.repeat(16)}`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')
+  await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')     // v1 route never serves v2
+  await expect(w, 'GET', `${R(w)}/escrow/xyz`, { headers: { 'cf-connecting-ip': freshIp() } }, 400, 'bad-argument')
+  await expect(w, 'PUT', `${R(w)}/escrow/${eid}`, { token: w.phone.token, body: {} }, 404)
+  await w.hub.close()
+})
+
 test('escrow: put by a human, read by anyone with the room id (10 per hour per room and per address), 4 KiB, delete', async () => {
   const w = await newHub()
   await foundRoom(w)
