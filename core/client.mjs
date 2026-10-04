@@ -507,9 +507,8 @@ export class Client {
             const entry = this.state.head.seq
             await this._refreshMembers()
             if (this.state.head.seq !== entry) this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
-            await this._refreshSessions()
-            if (this._needResync) await this._resync()
           }).catch(e => this._localAlert('sessions', e))
+          this._queueSessionRefresh()
         }
         else if (s === 'closed') { this._liveFrom = null; this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
       },
@@ -527,12 +526,34 @@ export class Client {
       this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
       this._refreshDevices().catch(() => {})
     } else if (event === 'session_grant') {
-      await this.serial(async () => { await this._refreshSessions(); if (this._needResync) await this._resync() })
+      // A grant this device knows (its own re-seal or re-key, announced back to it) needs no refresh. Others: one
+      // refresh for a burst (a re-seal announces every session of the room at once; a refresh per grant held live
+      // envelopes back behind 27 round trips on a phone).
+      const k = this.sessionKeys.get(data.session_id)
+      if (k?.state && Number.isInteger(data.grant_number) && data.grant_number <= k.state.grantNumber) return
+      this._queueSessionRefresh()
     } else if (event === 'join_request') {
       if (data.invite_id) this._checkInvite(data.invite_id).catch(e => this._localAlert('invite', e))
     } else if (event === 'escrow_changed') {
       if (this.is_human) this._onEscrowChanged(data)
     }
+  }
+
+  /**
+   * One session refresh in the queue at a time: a grant announced while one waits is read by it; one announced while it
+   * runs queues the next. A new device's re-seal still on its way is waited for outside the queue, so live envelopes
+   * are not held back behind its upload.
+   */
+  _queueSessionRefresh() {
+    if (this._sessionRefreshQueued) return
+    this._sessionRefreshQueued = true
+    Promise.resolve(this._resealing).catch(() => {})
+      .then(() => this.serial(async () => {
+        this._sessionRefreshQueued = false
+        await this._refreshSessions()
+        if (this._needResync) await this._resync()
+      }))
+      .catch(e => { this._sessionRefreshQueued = false; this._localAlert('sessions', e) })
   }
 
   /**

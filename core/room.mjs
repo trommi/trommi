@@ -264,10 +264,13 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const reseal = [...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid)
   if (reseal.length) roomRecord.reseal_pending = reseal
   await client._saveRoom()
+  // The snapshot's first request goes out before the re-seal's sealing takes the CPU (about 0.2 s on a phone), the
+  // sealing then overlaps with the network instead of holding the request back.
   const signedIn = client.hub.signIn({ challenge: nextChallenge })
   client._snapshotPrefetch = signedIn.then(() => prefetchSnapshot(client))
   client._snapshotPrefetch.catch(() => {})
-  if (reseal.length) client._startReseal(reseal)
+  const resealing = signedIn.catch(() => {}).then(() => reseal.length ? client._startReseal(reseal) : null)
+  resealing.catch(() => {})
   await signedIn
   await client._walkBackLinks().catch(() => {})
   await client._saveRoom()
