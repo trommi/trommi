@@ -1,12 +1,12 @@
-// The Trommi menu (what opens from the floating pill at the top centre), the jump field's results, and the
-// sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
+// The Trommi menu (what opens from the floating pill at the top centre), the jump page's results (/jump; the menu
+// itself has no search field for now), and the sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
 // js/bar.js), so css/app.css and css/clipboard.css style it; the controller t/controllers/menu_controller.js adds the
-// jump field's typing and the arrows, sheet_controller.js the long press. Opening and closing the
+// arrows and a new desk, sheet_controller.js the long press. Opening and closing the
 // menu and the theme: t/application.js.
 import { html, raw } from './html.mjs'
 import { WORDS, cardNr } from './text.mjs'
 import { cardPath } from './desk.mjs'
-import { sketchSvg, doodleSvg } from '../pen.js'
+import { sketchSvg } from '../pen.js'
 
 const sk = name => raw(sketchSvg(name))
 const JUMP_MAX = 8
@@ -19,29 +19,32 @@ function desksOf(model) {
   return desks.map(d => { const mine = (model.allFresh ?? model.fresh).filter(c => deskOf(c) === d.id); return { id: d.id, name: d.name || 'Desk', open: mine.length, knocks: mine.some(c => ['high', 'critical'].includes(c.urgency)) } })
 }
 
-// Two small drawings of the menu's own, in the pen's line: the Dev symbol (</>) and the plus of "New desk".
-const DEV = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:-2deg"><path d="M8.6 7.1Q6 9.6 3.9 12.2Q6.2 14.5 8.4 17"/><path d="M15.5 6.9Q18.1 9.4 20.1 11.9Q17.9 14.6 15.4 16.9"/><path d="M13.7 5.1Q12.1 11.8 10.4 18.9"/></svg>')
+// Small drawings of the menu's own, in the pen's line: Log out, the plus of "New desk", and the light of the desk lamp.
 // Log out: a door frame, open to the right, and an arrow walking out of it.
 const LEAVE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:-1deg"><path d="M10.2 4.3Q7.4 4.1 5.2 4.4Q4.9 12.1 5.2 19.7Q7.7 19.9 10.1 19.8"/><path d="M9.4 12.2Q14.5 11.8 19.5 12.1"/><path d="M16.3 8.7Q18.2 10.4 19.6 12.1Q18 13.8 16.2 15.3"/></svg>')
 const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:3deg"><path d="M12.2 5.2Q11.8 12 12 18.8"/><path d="M5.3 12.3Q12 11.7 18.7 12.1"/></svg>')
+// The lamp switched on, drawn under the desk's lines: the shade glowing, a soft cone of light down onto the top, three short rays.
+const LIGHT = '<g class="lamp-light"><path class="lamp-glow" d="M14.9 2.4Q11.7 3.7 10.7 4.7Q9.6 5.7 9 6.6Q8.5 7.4 9 7.6Q9.5 7.9 12.4 7Q15.2 6.1 15.6 6.1Q15.9 6.1 15.8 4.7Q15.7 3.4 14.9 2.4Z"/><path class="lamp-cone" d="M9.2 7.9Q12.4 7.1 15.6 6.3L17.3 11.9Q12 12.1 6.4 12.2Z"/><path d="M7.6 9Q5.9 10.1 4.3 11.2"/><path d="M7.1 7.2Q5.3 7.3 3.5 7.5"/><path d="M7.9 5Q6.4 4.2 4.9 3.5"/></g>'
+/** The desk drawing of the sidebar; the desk in view has its lamp on. */
+const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(/(<svg[^>]*>)/, `$1${LIGHT}`) : sketchSvg('desk', 'menu-lamp'))
 
-/** The menu: <nav id="brand-doors">, hidden until the pill is pressed. For the layout's topbar, in place of its own <nav>.
- *  Three calm groups and Dev: the jump field (with the theme as one small sun/moon beside it); the desks with "+" for a
- *  new one (a line to name it, Enter makes it: menu_controller.js); Go to (Agents, Help, Keys); this device (Push, Log out); and
- *  Dev folded away at the foot. The connection is not said here: a lost one is a dot on the pill (views/layout.mjs). */
+/** The menu: <nav id="brand-doors">, hidden until the pill is pressed (or Ctrl K). For the layout's topbar, in place of its own <nav>.
+ *  Three calm groups: the desks, each a row with the desk drawing (the one in view has its lamp on), the Demo as one more
+ *  desk, and a quiet "New desk" (a line to name it, Enter makes it: menu_controller.js); places (Agents & devices,
+ *  Help, Keys); this device (Push, Log out, and the theme as a small sun/moon beside Log out). The connection is not
+ *  said here: a lost one is a dot on the pill (views/layout.mjs). */
 export function menuDoors(model, base) {
   const desks = desksOf(model)
-  return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Jump, desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen turbo:frame-load->menu#loaded" hidden>
-<div class="menu-top"><form id="jump-form" role="search" method="get" action="${base}/jump" data-turbo-frame="jump-results"><label class="jump-box"><input id="jump-field" data-menu-target="field" data-action="input->menu#typed keydown->menu#fieldKey" name="q" type="search" placeholder="Session, number, words…" aria-label="Jump to a session, a question by its number or words, or a place" aria-keyshortcuts="Control+K Meta+K" autocomplete="off" spellcheck="false"><kbd id="jump-key" data-menu-target="key">Ctrl K</kbd></label></form><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme" aria-label="Light or dark (T)" title="Light or dark (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}</button></div>
-<turbo-frame id="jump-results" data-menu-target="results" target="_top" role="listbox" aria-label="Places"></turbo-frame>
-<div class="menu-desks-head"><p class="menu-head">Desk</p><button type="button" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" title="New desk" aria-label="New desk">${PLUS}</button></div>
-<div class="menu-desks" id="menu-desks">${desks.map((d, i) => html`<a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(model.desk ? d.id === model.desk : i === 0)}"><b>${d.name}</b><i${d.knocks && i ? raw(' class="is-knock"') : ''}>${d.open} open</i>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a>`)}
+  const lit = d => (model.desk ? d.id === model.desk : d === desks[0])
+  return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" hidden>
+<div class="menu-desks" id="menu-desks">${desks.map((d, i) => html`<a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(lit(d))}">${deskMark(lit(d))}<b>${d.name}</b><i${d.knocks && i ? raw(' class="is-knock"') : ''}>${d.open} open</i>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a>`)}
+<a role="menuitem" class="menu-desk is-demo" href="${base}/?mock=1" data-turbo="false" draggable="false" id="dev-mock" title="The demo: a made-up room, nothing is kept">${deskMark(false)}<b>Demo</b><i>sample room</i></a>
+<button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${PLUS}<span>New desk</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
-<div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents">${sk('heads')}<span>Agents</span></a><a role="menuitem" href="${base}/assets" data-nav draggable="false" id="menu-assets" title="Assets: everything your agents sent">${sk('picture')}<span>Assets</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
-<a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Devices and settings">${raw(doodleSvg('draw:phone'))}<span>Devices</span></a><div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
-<a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a>
-<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Demo</a></div></details>
+<div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents and devices: the sessions, and who is in the room">${sk('heads')}<span>Agents &amp; devices</span></a><a role="menuitem" href="${base}/assets" data-nav draggable="false" id="menu-assets" title="Assets: everything your agents sent">${sk('picture')}<span>Assets</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
+<div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
+<div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme" aria-label="Light or dark (T)" title="Light or dark (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}</button></div>
 </nav>`
 }
 

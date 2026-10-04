@@ -1,6 +1,6 @@
 // The Trommi menu (server/views/menu.mjs renders it; t/application.js opens and closes it and switches the theme).
-// Here: the jump field (what is typed goes to the hub, the results come into the frame #jump-results; Enter
-// takes the first), the arrows through the entries, the Dev items, and "#jump" in the address, which opens it.
+// Here: the arrows through the entries, a new desk, and "#jump" in the address, which opens it (the menu has no
+// search field for now; Ctrl K opens the menu with the keyboard on the desk in view).
 import { Controller } from '/js/app/stimulus.mjs'
 import { toast } from '/t/lib/toast.js'   // "Desk added · Undo"
 
@@ -15,19 +15,18 @@ function go(path) {
 }
 
 export default class extends Controller {
-  static targets = ['field', 'results', 'key', 'deskForm', 'deskName', 'deskError']
+  static targets = ['deskForm', 'deskName', 'deskError']
   static values = { desk: String }
 
   connect() {
-    this.asked = ''
-    if (/Mac|iPhone|iPad/.test(navigator.platform) && this.hasKeyTarget) this.keyTarget.textContent = '⌘K'
-    // Opened (the pill, Ctrl+K, G then J): the jump field takes the keyboard, type and go.
-    this.watch = new MutationObserver(() => { if (!this.element.hidden && !this.element.contains(document.activeElement)) this.fieldTarget.focus() })
+    // Opened (the pill, Ctrl+K, G then J): the menu takes the keyboard; the first arrow goes to the desk in view.
+    this.element.tabIndex = -1
+    this.watch = new MutationObserver(() => { if (!this.element.hidden && !this.element.contains(document.activeElement)) this.element.focus({ preventScroll: true }) })
     this.watch.observe(this.element, { attributes: true, attributeFilter: ['hidden'] })
     // A refresh of the page (the live stream's "refresh" morphs it) must not shut the menu, the desk line or Dev under the hand.
     this.keep = e => {
       const t = e.target, name = e.detail?.attributeName
-      if ((t === this.element && name === 'hidden') || (t.id === 'brand-menu' && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden') || (t.id === 'menu-dev' && name === 'open')) e.preventDefault()
+      if ((t === this.element && name === 'hidden') || (t.id === 'brand-menu' && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden')) e.preventDefault()
     }
     document.addEventListener('turbo:before-morph-attribute', this.keep)
     this.away = e => { if (!this.element.hidden && e.target instanceof Element && !e.target.closest('.brand')) this.close() }
@@ -51,50 +50,22 @@ export default class extends Controller {
     this.opener?.setAttribute('aria-expanded', 'false')
   }
 
-  // ---- jump: type, and go ----
-  typed() {
-    clearTimeout(this.timer)
-    this.timer = setTimeout(() => this.ask(), 90)
-  }
-  ask() {
-    const q = this.fieldTarget.value.trim()
-    if (q === this.asked) return
-    this.asked = q
-    if (!q) { this.resultsTarget.replaceChildren(); this.resultsTarget.removeAttribute('src'); return }
-    this.fieldTarget.form.requestSubmit()
-  }
-  // What stands in the frame may be older than what was typed: then the first result is taken when it arrives.
-  loaded() { if (this.enter) { this.enter = false; this.first() } }
-  first() {
-    const first = this.resultsTarget.querySelector('a')
-    if (!first) return
-    this.close()
-    first.click()
-  }
-  fieldKey(event) {
-    if (event.key === 'Enter') {
-      event.preventDefault()
-      clearTimeout(this.timer)
-      if (this.fieldTarget.value.trim() === this.asked && !this.resultsTarget.hasAttribute('busy')) this.first()
-      else { this.enter = true; this.ask() }
-    }
-    if (event.key === 'ArrowDown') { event.preventDefault(); event.stopPropagation(); (this.resultsTarget.querySelector('a') ?? this.items[0])?.focus() }
-  }
-  // The arrows walk the entries; up from the first is the field again.
+  /** Where the keyboard starts: the desk in view (its lamp on), else the first entry. */
+  home() { return this.element.querySelector('.menu-desk[aria-checked="true"]') ?? this.items[0] }
+  // The arrows walk the entries, round at both ends.
   walk(event) {
-    if (event.target === this.fieldTarget) return
     const all = this.items, at = all.indexOf(document.activeElement)
+    if (at < 0 && ['ArrowDown', 'ArrowUp'].includes(event.key)) { event.preventDefault(); return this.home()?.focus() }
     const to = { ArrowDown: at + 1, ArrowUp: at - 1, Home: 0, End: all.length - 1 }[event.key]
     if (to == null) return
     event.preventDefault()
-    if (event.key === 'ArrowUp' && at === 0) return this.fieldTarget.focus()
     all[(to + all.length) % all.length]?.focus()
   }
 
   // ---- entries ----
   // A choice closes the menu; a switch (theme, push) leaves it open.
-  // (Dev is a fold: its summary opens it and leaves the menu open.)
-  chosen(event) { if (event.target.closest('[role="menuitem"]:not([data-menu-body-param]):not(summary), [role="menuitemradio"], [role="option"]')) this.close() }
+  // ("New desk" opens its line and leaves the menu open.)
+  chosen(event) { if (event.target.closest('[role="menuitem"]:not([data-menu-body-param]):not(#desk-add), [role="menuitemradio"], [role="option"]')) this.close() }
 
   // ---- a new desk: "+" opens a line for its name; Enter makes it (POST /desk, the hub's desks) and goes there ----
   newDesk() {
@@ -104,7 +75,7 @@ export default class extends Controller {
   }
   deskKey(event) {
     event.stopPropagation()   // the arrows and keys of the menu are not this line's
-    if (event.key === 'Escape') { event.preventDefault(); this.deskNameTarget.value = ''; this.deskFormTarget.hidden = true; this.deskErrorTarget.textContent = ''; this.fieldTarget.focus() }
+    if (event.key === 'Escape') { event.preventDefault(); this.deskNameTarget.value = ''; this.deskFormTarget.hidden = true; this.deskErrorTarget.textContent = ''; this.element.querySelector('#desk-add')?.focus() }
   }
   async makeDesk(event) {
     event.preventDefault()

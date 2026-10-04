@@ -29,7 +29,8 @@ const sk = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${nam
 const has = (o, fn) => typeof o?.[fn] === 'function'
 const code6 = c => `${String(c).slice(0, 3)} ${String(c).slice(3)}`
 const shell = (title, inner, cls = '') => html`<main id="room" class="room${cls ? ` ${cls}` : ''}" aria-label="${title}"><header class="room-head"><span class="room-bell">${BELL}</span><h2>${title}</h2></header>${inner}</main>`
-const tabs = on => html`<nav class="room-tabs" aria-label="Devices and settings"><a href="/devices" data-nav${on === 'devices' ? raw(' aria-current="page"') : ''}>Devices</a><a href="/settings" data-nav${on === 'settings' ? raw(' aria-current="page"') : ''}>Settings</a></nav>`
+// One place for agents and devices (the menu's "Agents & devices"): the Agents page carries the same tabs (views/agents.mjs).
+const tabs = on => html`<nav class="room-tabs" aria-label="Agents, devices and settings"><a href="/agents" data-nav>Agents</a><a href="/devices" data-nav${on === 'devices' ? raw(' aria-current="page"') : ''}>Devices</a><a href="/settings" data-nav${on === 'settings' ? raw(' aria-current="page"') : ''}>Settings</a></nav>`
 const copyBox = (value, label, cls = '') => html`<div class="room-link${cls ? ` ${cls}` : ''}" data-controller="room"><input readonly value="${value}" aria-label="${label}" data-room-target="field" data-action="focus->room#select"><button type="button" data-action="room#copy" data-room-text-param="${value}"><span data-room-target="label">Copy</span></button></div>`
 const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')
 const sessionName = s => s.settings?.name || s.profile?.agent_name || s.agent_session_id || s.device_name || 'Session'

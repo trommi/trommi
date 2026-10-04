@@ -102,14 +102,12 @@ function start(signal) {
 
   // ---- places ----
   const menuOpen = () => { const doors = $('#brand-doors'); return Boolean(doors && !doors.hidden) }
-  /** The Trommi menu with the keyboard in the jump field; on a page without the menu, the Desk with it open. */
+  /** The Trommi menu, opened with the keyboard on the desk in view (menu_controller.js); on a page without the menu, the Desk with it open. */
   function openJump() {
-    const doors = $('#brand-doors'), field = $('#jump-field')
-    if (!doors || !field) return go(`${base()}/#jump`)
+    const doors = $('#brand-doors')
+    if (!doors) return go(`${base()}/#jump`)
     doors.hidden = false
     $('#brand-menu')?.setAttribute('aria-expanded', 'true')
-    field.focus()
-    field.select()
   }
   const sessions = () => [...document.querySelectorAll('#agents .agent-row[data-unit]')].filter(shown).map(r => r.querySelector('.agent-entry')).filter(Boolean)
   const desks = () => [...document.querySelectorAll('#brand-doors .menu-desk[data-desk]')]
