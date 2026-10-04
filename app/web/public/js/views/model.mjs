@@ -26,9 +26,13 @@ export function boardModel(state, agents = state.agents, desk = null) {
   // to explain) is open but not waiting on the human: it lies on "Later" until it returns.
   const mine = c => onDesk(byAgent.get(c.agent))
   const allOpen = state.queue.map(id => byCard.get(id)).filter(Boolean)
-  const allFresh = allOpen.filter(c => !c.with_agent)   // the whole board's stack, for the menu's count per desk
+  // An info (a report, a note: nothing to decide) is no question: it is read in the news strip above the Desk
+  // (views/desk.mjs newsStrip, card Nr. "info-c"), never counted in Next, on the Desk or on a session's badge.
+  const isInfo = c => c.kind === 'info'
+  const allFresh = allOpen.filter(c => !c.with_agent && !isInfo(c))   // the whole board's stack, for the menu's count per desk
   const open = allOpen.filter(c => mine(c) || (!c.with_agent && isKnock(c)))
-  const fresh = open.filter(c => !c.with_agent)
+  const reads = open.filter(c => !c.with_agent && isInfo(c) && mine(c)).sort((a, b) => Number(isKnock(b)) - Number(isKnock(a)) || (b.created ?? 0) - (a.created ?? 0))   // knocks first, then the newest
+  const fresh = open.filter(c => !c.with_agent && !isInfo(c))
   const revising = open.filter(c => c.with_agent).sort((a, b) => b.with_agent - a.with_agent)
   const snoozed = state.cards.filter(c => c.status === 'open' && c.snoozed_until && !shelved.has(c.agent) && mine(c)).sort((a, b) => (b.snoozed_at ?? 0) - (a.snoozed_at ?? 0))
   const answered = state.cards.filter(c => c.status !== 'open' && ((c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && c.read)) && mine(c))
@@ -56,7 +60,7 @@ export function boardModel(state, agents = state.agents, desk = null) {
   for (const u of units) if (u.subs) u.whole = summary(new Set([u.id, ...u.subs.map(s => s.id)]))
 
   return {
-    state, agents: here, everyone, byAgent, byCard, open, fresh, allFresh, desk: deskId, desks: desks ?? [], revising, snoozed, done, units,
+    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, desk: deskId, desks: desks ?? [], revising, snoozed, done, units,
     knocking: fresh.filter(isKnock).length,
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,

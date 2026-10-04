@@ -240,14 +240,21 @@ try {
   // ---- live: a message from the agent to the session, seen on B ----
   t0 = Date.now()
   const card2 = await agent.sendCard({ title: 'Info: Build fertig', body: 'Alles grün.', card_type: 'info' })
-  await B.until(`document.getElementById('row-${card2}')`, 'info card on B')
+  // An info is no question: it stands in the news strip above the Desk (#read-<id>), not as a row, and Next does not count it.
+  await B.until(`document.getElementById('read-${card2}')`, 'info in the news strip on B')
   timing('info card sent -> visible on B', Date.now() - t0)
-  // A answers on the laptop, B sees the row leave.
+  check(await B.js(`return !document.getElementById('row-${card2}') && !trommi.model().fresh.some(c => c.id === '${card2}')`), 'an info is not a Desk row and not counted in Next')
+  // A reads it on the laptop (its tick), B sees the line leave.
   t0 = Date.now()
   await A.js("trommi.router.visit('/')")
-  await A.until(`document.getElementById('row-${card2}')`, 'info on A')
-  await A.js(`const f = document.querySelector('#row-${card2} form[action$="/close"]'); f ? f.requestSubmit() : document.querySelector('#row-${card2} button[formaction$="/close"]')?.click()`)
-  await B.until(`!document.getElementById('row-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
+  await A.until(`document.getElementById('read-${card2}')`, 'info on A')
+  await A.js(`document.querySelector('#read-${card2} form[action$="/close"]').requestSubmit()`)
+  await B.until(`!document.getElementById('read-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
+  // "All read" puts every info of the strip away at once.
+  const reads = [await agent.sendCard({ title: 'Info eins', card_type: 'info' }), await agent.sendCard({ title: 'Info zwei', card_type: 'info' })]
+  await A.until(reads.map(id => `document.getElementById('read-${id}')`).join(' && '), 'two infos in the strip on A')
+  await A.js("document.querySelector('#desk-news .news-all').requestSubmit()")
+  await B.until(`document.getElementById('desk-news')?.hidden && ${reads.map(id => `trommi.model().byCard.get('${id}')?.read`).join(' && ')}`, 'All read: strip gone on B, both read').then(() => check(true, 'All read closes every info'), e => check(false, e.message))
 
   // ---- warm reload: the Desk paints from IndexedDB before the hub answers ----
   for (let i = 0; i < 30; i++) await agent.sendCard({ title: `Frage ${i}`, options: [{ key: 'a', label: 'Ja' }, { key: 'b', label: 'Nein' }] })
