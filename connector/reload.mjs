@@ -9,6 +9,10 @@
 //
 // Detection: the hashes of both parts on disk are compared with the loaded ones (fs.watch on the folders, and every
 // TROMMI_UPDATE_POLL_MS, default 60 s); the hub's GET /v1/version names a recommended channel version (hourly).
+//
+// The single-file connector (connector/bundle.mjs -> app/web/public/connector.mjs, installed by the connect script as
+// ~/.local/share/trommi/connector/channel.mjs) has no sibling files: code and shell are one file there, so any new
+// version of it needs the restart, and loadCode is never used.
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -16,6 +20,9 @@ import { registerHooks } from 'node:module'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
+// Set by connector/bundle.mjs (esbuild define): this module runs inside the single-file connector.
+const BUNDLED = typeof __TROMMI_BUNDLE__ !== 'undefined'
+const SELF = fileURLToPath(import.meta.url)
 const CORE = path.join(HERE, '../core')
 export const CODE_FILES = ['channel-tools.mjs', 'channel-bridge.mjs', 'richhtml.mjs']
 const SHELL_FILES = ['channel.mjs', 'channel-lock.mjs', 'reload.mjs']
@@ -28,7 +35,7 @@ const hashOf = files => {
 }
 const coreFiles = () => { try { return fs.readdirSync(CORE).filter(f => f.endsWith('.mjs') && !isTest(f)).sort().map(f => path.join(CORE, f)) } catch { return [] } }
 /** Hashes of the two parts as they are on disk now. */
-export const diskVersion = () => ({
+export const diskVersion = () => (BUNDLED ? { code: hashOf([SELF]), shell: hashOf([SELF]) } : {
   code: hashOf(CODE_FILES.map(f => path.join(HERE, f))),
   shell: hashOf([...SHELL_FILES.map(f => path.join(HERE, f)), ...coreFiles()]),
 })
@@ -52,6 +59,7 @@ function hook() {
 
 /** Imports the code part at version `v` (a hash). Returns { TOOLS, INSTRUCTIONS, createBridge }. */
 export async function loadCode(v) {
+  if (BUNDLED) throw new Error('the single-file connector reloads only by a restart')
   hook()
   const tools = await import(`./channel-tools.mjs?v=${v}`)
   const bridge = await import(`./channel-bridge.mjs?v=${v}`)
@@ -90,7 +98,7 @@ export function watchUpdates({ loaded, onUpdate, hubUrl, clientVersion, log = ()
   }
   let debounce = null
   const watchers = []
-  for (const dir of [HERE, CORE]) {
+  for (const dir of BUNDLED ? [HERE] : [HERE, CORE]) {
     try { watchers.push(fs.watch(dir, () => { clearTimeout(debounce); debounce = setTimeout(check, 1500); debounce.unref?.() })) } catch {}
   }
   timer = setInterval(check, pollMs); timer.unref?.()

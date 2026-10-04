@@ -397,9 +397,11 @@ async function main() {
 }
 
 async function cli(argv) {
-  const [cmd, arg] = argv
+  const [cmd, given] = argv
   if (cmd === 'join') {
-    if (!arg) throw new Error('usage: node connector/channel.mjs join <invite link>')
+    // The link also comes by TROMMI_INVITE, so the connect script keeps it out of the process list.
+    const arg = given || process.env.TROMMI_INVITE
+    if (!arg) throw new Error('usage: node connector/channel.mjs join <invite link>  (or TROMMI_INVITE=<link> ... join)')
     const channel = await createChannel({ onCommand: () => {} })
     log('joining; confirm this session in the Trommi app')
     const me = await channel.join(arg)

@@ -9,13 +9,15 @@ import { bundle, vendorFiles, withVendor } from './build.mjs'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
 const RAW = process.argv.includes('--raw')
-const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.csv': 'text/csv', '.log': 'text/plain', '.txt': 'text/plain' }
+const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.csv': 'text/csv', '.log': 'text/plain', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.sha256': 'text/plain' }
 // Read on every request: a dev server left running must not serve an old CSP (it once blocked the Argon2 WASM).
 const readHeaders = () => { const headers = {}
 try { let cur = null; for (const line of fs.readFileSync(path.join(root, '_headers'), 'utf8').split('\n')) { if (!line.trim() || line.startsWith('#')) continue; if (!/^\s/.test(line)) { cur = line.trim(); headers[cur] = {} } else if (line.trim().startsWith('!')) headers[cur][line.trim().slice(1).trim()] = null; else { const [k, ...v] = line.trim().split(':'); headers[cur][k.trim()] = v.join(':').trim() } } } catch {}
   return headers }
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x')
+  // The connect script (curl -fsSL <app>/connect | sh -s '<link>'), as src/index.js serves it.
+  if (url.pathname === '/connect' || url.pathname === '/connect/') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, 'connect.sh'))) }
   let file = path.join(root, decodeURIComponent(url.pathname))
   if (!file.startsWith(root)) { res.writeHead(403); return res.end() }
   if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html')

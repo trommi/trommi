@@ -126,8 +126,8 @@ ${raw(L.gone)}
       const left = Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))
       let body
       // The link goes to the channel by the human's hands only (never pasted into the model's prompt).
-      if (state === 'open' && agent) body = html`<p class="room-lead">Run this in the project folder of the Claude Code session that should join (<code>&lt;path&gt;</code>: where trommi-hub is checked out):</p>
-${copyBox(`node <path>/connector/channel.mjs join '${inv.link}'`, 'Command', 'room-cmd')}<p class="room-lead">or start Claude Code there with the link:</p>${copyBox(`TROMMI_INVITE='${inv.link}' claude --dangerously-load-development-channels server:trommi`, 'Command', 'room-cmd')}
+      if (state === 'open' && agent) body = html`<p class="room-lead">On any computer with Claude Code and Node 22+, open a terminal in the project folder and run:</p>
+${copyBox(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Command', 'room-cmd')}<p class="room-lead">Then start Claude Code there with Trommi's channel (always with this flag, also when resuming; without it no message from here reaches the session):</p>${copyBox('claude --dangerously-load-development-channels server:trommi', 'Command', 'room-cmd')}
 <p class="room-wait">Waiting for the agent… The link works once, ${left} more min. An agent needs no code.</p>`
       else if (state === 'open') body = html`<div class="room-pair"><div class="room-qr" data-controller="room">${raw(qrSvg(inv.link, 'QR code to pair'))}</div>
 <ol class="room-steps"><li>On the new device, open the camera and scan the code. Or open app.trommi.com there and choose "Pair a device".</li><li>The new device shows a number. Tap the same one here.</li></ol></div>
