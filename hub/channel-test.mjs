@@ -284,15 +284,30 @@ await test('permission relay: request -> object, verdict -> notifications/claude
   assert.equal(events.length, 1)
 })
 
+await test('slot lock: a live claim keeps the slot busy, a dead one is cleared, unlock gives it back', async () => {
+  const { lockSlot, unlockSlot } = await import('./channel-lock.mjs')
+  const dir = path.join(tmp, 'lock-unit'), p = { dir, lock_file: path.join(dir, 's.lock') }
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(`${p.lock_file}.${process.ppid}`, '')          // a live process (our parent) holds it
+  assert.equal(lockSlot(p), false)
+  assert.ok(!fs.existsSync(`${p.lock_file}.${process.pid}`), 'a losing claim stays behind')
+  fs.rmSync(`${p.lock_file}.${process.ppid}`)
+  fs.writeFileSync(`${p.lock_file}.999999`, '')                    // a crashed process
+  assert.equal(lockSlot(p), true)
+  assert.deepEqual(fs.readdirSync(dir).sort(), [`s.lock.${process.pid}`])
+  unlockSlot(p)
+  assert.deepEqual(fs.readdirSync(dir), [])
+})
+
 await test('slot lock: of processes starting together, exactly one gets the slot, also over a stale lock (review 2 PoC)', async () => {
   const { execFile } = await import('node:child_process')
   const lockMod = new URL('./channel-lock.mjs', import.meta.url).href
   const dir = path.join(tmp, 'locks')
-  const child = at => `import { lockSlot } from ${JSON.stringify(lockMod)}; while (Date.now() < ${at}) {}; console.log(lockSlot({ dir: ${JSON.stringify(dir)}, lock_file: ${JSON.stringify(path.join(dir, 's-1.lock'))} }) ? 'GOT' : 'busy'); setTimeout(() => {}, 1500)`   // the winner holds on: a lock left by an exited winner is rightly stale
+  const child = at => `import { lockSlot } from ${JSON.stringify(lockMod)}; while (Date.now() < ${at}) {}; console.log(await lockSlot({ dir: ${JSON.stringify(dir)}, lock_file: ${JSON.stringify(path.join(dir, 's-1.lock'))} }) ? 'GOT' : 'busy'); setTimeout(() => {}, 1500)`   // the winner holds on: a lock left by an exited winner is rightly stale
   const bad = []
-  for (let run = 0; run < 8; run++) {
+  for (let run = 0; run < 12; run++) {
     fs.mkdirSync(dir, { recursive: true })
-    if (run % 2) fs.writeFileSync(path.join(dir, 's-1.lock'), '999999')     // left by a crashed process
+    if (run % 2) fs.writeFileSync(path.join(dir, 's-1.lock.999999'), '')     // the claim of a crashed process
     const at = Date.now() + 700
     const got = await Promise.all([0, 1, 2, 3].map(() => new Promise(res => execFile(process.execPath, ['--input-type=module', '-e', child(at)], (e, out) => res(String(out).trim())))))
     if (got.filter(g => g === 'GOT').length !== 1) bad.push(`run ${run}: ${got.join(' ')}`)
