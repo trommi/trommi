@@ -110,6 +110,25 @@ test('create account, then log in on a second device with email + password', asy
   } finally { await hub.close() }
 })
 
+test('log out of the only device (leaveRoom): it is removed from the member list; email + password still open the account', async () => {
+  const hub = await newHub()
+  try {
+    const a = await makeAccount(hub)
+    await a.client.start()
+    const gone = a.client.my_device_id
+    const out = await a.client.leaveRoom()
+    assert.equal(out.humans_left, 0)
+    await assert.rejects(a.client.hub.members(), e => e.status === 401 || e.status === 403, 'the hub refuses the device that left')
+    const { client: b } = await A.loginWithPassword({ hub_url: hub.hubUrl, email: a.email, password: PW, storage: memoryStorage(), device_name: 'Again', fetch: fetchFrom() })
+    await b.start()
+    const old = [...b.state.members.values()].find(m => Buffer.from(m.id).toString('hex') === gone)
+    assert.ok(old && old.removedSeq !== null, 'the old device is removed in the signed member list')
+    assert.equal(members(b), 1)
+    assert.equal(b.model.room.my_role, 'human')
+    await b.stop()
+  } finally { await hub.close() }
+})
+
 test('a room has one account; a second POST is 409; weak password refused in the core', async () => {
   const hub = await newHub()
   try {

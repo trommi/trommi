@@ -317,6 +317,9 @@ const invite = await client.createInvite({ device_role: 'agent', label, session_
 client.sessionOfAgent(agent_device_id)                // the session an agent is assigned to now
 // removeDevices() also rotates every session key (without the removed agents); a new human device gets every
 // session key re-sealed by its inviter; recovery and passphrase login re-key the sessions too.
+await client.leaveRoom()                              // log out: this human device removes itself (signed by itself, new room key for
+        // the humans who stay and the recovery key), then stops; -> { key_epoch, humans_left }. The sessions are re-keyed
+        // by the next start of a human that stays, or by the next login. The caller wipes the storage.
 
 // agent side
 client.session_ids, client.session_id                 // assigned sessions (grants), the first is the default
