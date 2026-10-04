@@ -616,6 +616,19 @@ export async function startHub({
       for (const o of out) deliver(r, { text: sse('session_grant', { session_id: o.sessionId, grant_number: o.grantNumber, session_key_epoch: o.sessionKeyEpoch }) })
       return send(res, 200, { grants: out.map(o => ({ session_id: o.sessionId, grant_number: o.grantNumber, grant_hash: o.grantHash, session_key_epoch: o.sessionKeyEpoch })) })
     }
+    // Grants, own sealed session keys and back links of many sessions in one answer (a new device, a reconnect).
+    if (a === 'session_grants' && !b && m === 'GET') {
+      const raw = url.searchParams.get('session_ids')
+      const ids = raw == null ? null : raw.split(',').filter(Boolean).map(x => hexParam(x, HEX32, 'session_id'))
+      if (ids && ids.length > 256) fail('bad-argument', 'at most 256 session_ids')
+      const out = hub.sessionBundle(bearer(req), ids)
+      return send(res, 200, { sessions: out.map(x => ({
+        session_id: x.sessionId,
+        signed_grants: x.grants.map(z.b64u),
+        sealed_session_keys: x.wraps.map(w => ({ session_key_epoch: w.epoch, key_sealed: z.b64u(w.sealed) })),
+        ...(x.links ? { key_back_links: x.links.map(l => ({ session_key_epoch: l.epoch, key_back_link: z.b64u(l.bytes) })) } : {}),
+      })) })
+    }
     if (a === 'sessions') {
       if (m === 'GET' && !b) {
         hub.authorise(bearer(req))
