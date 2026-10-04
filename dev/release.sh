@@ -4,7 +4,8 @@
 #   dev/release.sh
 set -euo pipefail
 cd "$(dirname "$0")/../public"
-files=$(find . -type f ! -path './mock/*' ! -name 'sw.js' ! -name '_headers' ! -name '*.md' | sed 's#^\.##' | LC_ALL=C sort)
+# Only what git tracks (what is deployed); a missing file would make the worker's install fail.
+files=$(git ls-files . | grep -v -e '^mock/' -e '^sw.js$' -e '^_headers$' -e '\.md$' | sed 's#^#/#' | LC_ALL=C sort)
 version=$(for f in $files; do sha256sum ".$f"; done | sha256sum | cut -c1-12)
 VERSION="$version" FILES="$files" node -e "
 const fs = require('fs')
