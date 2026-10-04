@@ -927,13 +927,13 @@ export class Client {
 
   // ---- membership: invites, removal ---------------------------------------------------------
 
-  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms } = {}) {
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null } = {}) {
     this._needHuman()
     const role = device_role === 'agent' ? ROLE.AGENT : ROLE.HUMAN
     const { link, offer, invite } = await z.createInvite({ state: this.state, inviter: this.device, hub: this.hub.hub_url, role, app: app_url, ...(ttl_ms ? { ttlMs: ttl_ms } : {}) })
     const r = await this.hub.postInvite(b64u(offer))
     const invite_id = r.invite_id
-    const pub = { invite_id, device_role, link, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
+    const pub = { invite_id, device_role, link, label, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
     invite.public = pub
     this.invitesPrivate.set(invite_id, invite)
     this.model.invites.set(invite_id, pub)
@@ -1008,6 +1008,11 @@ export class Client {
         clearInterval(inv._timer); inv._timer = null
         this._setInvite(invite_id, { invite_state: 'joined' })
         await this._refreshMembers()
+        // R8: the label the human chose when inviting an agent wins over what the agent calls itself.
+        if (inv.role === ROLE.AGENT && inv.public.label) {
+          const cur = this.model.human.session_settings.get(newId) ?? {}
+          this.setRegisters({ [`session/${newId}`]: { ...cur, name: inv.public.label } }).catch(e => this._localAlert('invite', e))
+        }
       } catch (e) {
         this._setInvite(invite_id, { invite_state: 'failed', error: e.code ?? 'failed' })
         throw e

@@ -271,7 +271,8 @@ await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail a
 Membership (human devices only):
 
 ```js
-const invite = await client.createInvite({ device_role: 'human' | 'agent', app_url: 'https://app.trommi.com/join' })  // -> Invite (model.invites)
+const invite = await client.createInvite({ device_role: 'human' | 'agent', app_url: 'https://app.trommi.com/join', label })  // -> Invite (model.invites)
+                                                       // label (agents, R8): written to session/<agent_device_id>.name once joined; it wins over device/<id>.device_name
 await client.confirmInvite(invite_id, typed_code)      // human role: the code the human typed; wrong code burns the invite
                                                        // agent role: added automatically once its request arrives (no code)
 await client.removeDevices([device_id, ...])           // one entry, one new epoch, sealed for everyone who stays
