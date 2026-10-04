@@ -551,3 +551,6 @@ export function arrowStrokes(points, seed) {
   return [penPath(line), penPath([barb(.5), [b[0] + .3, b[1]], b]), penPath([barb(-.5), b, b])]
 }
 
+
+// For ui.js (sketch and adviceLoop draw with the same hand and tables).
+export { seeded, penPath, SKETCH, SNOOZE_Z }

@@ -9,12 +9,10 @@
 // content is, takes the theme when it changes, and hands a clicked link to this page, which opens
 // it in a new tab (a link never moves the frame itself). No forms, no popups, no way to move the
 // page around it.
-// The server has already cleaned what it stored (server/richhtml.mjs); here it is parsed and
+// The agent's channel has already cleaned what it sent (trommi-hub hub/richhtml.mjs); here it is parsed and
 // cleaned once more by the browser's own parser, so that old state and other senders hold too.
 //
-// rich() in ui.js calls htmlBlock() for a ```html fence, and store.js folds the html field of
-// messages, cards, sections and versions into their text as such a fence (foldHtml), so every
-// place that draws a text with rich() shows the layout at its place without knowing of it.
+// The richhtml controller calls htmlBlock() for each block js/views/text.mjs marks; richMark() names a card's extras.
 
 const el = (tag, cls, text) => {
   const node = document.createElement(tag)
@@ -32,58 +30,7 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-richht
   document.head.append(link)
 }
 
-// ---- tables ----------------------------------------------------------------------
-
-// What counts as a number in a cell: 40, 1.250,50 €, ~12 ms, +3 %, 1.2 GB, $40/month.
-const NUMERIC = /^[~≈<>≤≥±+\-−–]?\s*[€$£¥]?\s*\d[\d.,'’   ]*\s*(%|‰|[€$£¥]|[a-zA-Zµ°²³]{1,8})?(\s*\/\s*[a-zA-Z]{1,8})?$/
-const NEUTRAL = /^([-–—]|n\/a|k\.\s?a\.)?$/i
-
-/** Set a table's columns: a column of numbers stands right-aligned, in figures of one width; a rule
- *  row as markdown writes it (:--, :-:, --:) says it outright. Returns the table. */
-export function tidyTable(table, rule = '') {
-  const rows = [...table.rows]
-  if (!rows.length || rows.some(r => [...r.cells].some(c => c.colSpan > 1 || c.rowSpan > 1))) return table
-  const said = String(rule).trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()).map(c => (/^:-+:$/.test(c) ? 'center' : /^-+:$/.test(c) ? 'right' : /^:-+$/.test(c) ? 'left' : ''))
-  const width = Math.max(...rows.map(r => r.cells.length))
-  for (let col = 0; col < width; col++) {
-    const cells = rows.map(r => r.cells[col]).filter(Boolean)
-    const body = cells.filter(c => c.tagName === 'TD').map(c => c.textContent.trim())
-    const numbers = body.filter(t => NUMERIC.test(t)).length
-    const numeric = numbers > 0 && body.every(t => NUMERIC.test(t) || NEUTRAL.test(t))
-    const align = said[col] || (numeric ? 'right' : '')
-    if (!align) continue
-    for (const cell of cells) {
-      // What the author set on a cell stands.
-      if (cell.hasAttribute('align') || /text-align/i.test(cell.getAttribute('style') ?? '')) continue
-      if (align === 'right') cell.classList.add('num')
-      else if (align === 'center') cell.classList.add('mid')
-    }
-  }
-  return table
-}
-
-const ROW = /^\s*\|.*\|\s*$/
 const RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
-
-/** A text in which every markdown table is a block of its own: a blank line before and after it, and
- *  pipes at both ends of its rows, so that rich() finds it also right under a sentence. */
-export function spaceTables(text) {
-  const lines = String(text).split('\n')
-  if (!lines.some(l => RULE.test(l) && l.includes('-'))) return String(text)
-  const out = []
-  for (let i = 0; i < lines.length; i++) {
-    const head = lines[i], rule = lines[i + 1]
-    if (!(head.includes('|') && rule != null && rule.includes('-') && RULE.test(rule) && (rule.includes('|') || ROW.test(head)))) { out.push(head); continue }
-    const piped = l => (ROW.test(l) ? l : `| ${l.trim().replace(/^\||\|$/g, '')} |`)
-    if (out.length && out.at(-1).trim()) out.push('')
-    out.push(piped(head), piped(rule))
-    i += 2
-    while (i < lines.length && lines[i].trim() && lines[i].includes('|')) out.push(piped(lines[i++]))
-    if (i < lines.length && lines[i].trim()) out.push('')
-    i--
-  }
-  return out.join('\n')
-}
 
 // ---- what a text carries, for places that show one line of it ---------------------
 
@@ -98,50 +45,6 @@ export function richMark(card) {
   if (blocks.length) return 'table'
   const lines = texts.replace(/```[\s\S]*?```/g, '').split('\n')
   return lines.some((l, i) => i && l.includes('-') && RULE.test(l) && lines[i - 1].includes('|')) ? 'table' : ''
-}
-
-/** A text for one line: without its layouts and without the rows of its tables. */
-export function withoutLayouts(text) {
-  const lines = String(text ?? '').replace(HTML_FENCE, ' ').split('\n')
-  return lines.filter((l, i) => !(ROW.test(l) || (l.includes('-') && RULE.test(l) && (lines[i - 1] ?? '').includes('|')))).join('\n')
-}
-
-// ---- the html field, folded into the text it belongs to ----------------------------
-
-const fence = html => `\`\`\`html\n${String(html).replace(/```/g, '&#96;&#96;&#96;')}\n\`\`\``
-const under = (text, html) => [String(text ?? '').trimEnd(), fence(html)].filter(Boolean).join('\n\n')
-
-function foldQuestion(q) {
-  if (!q || typeof q !== 'object') return
-  if (Array.isArray(q.sections) && q.sections.some(s => s?.html)) {
-    q.sections = q.sections.map(s => {
-      if (!s?.html) return s
-      const { html, ...rest } = s
-      return { ...rest, text: under(s.text, html) }
-    })
-    // The body is the same text for places that know nothing of sections; it shows the layouts too.
-    q.body = q.sections.map(s => (s.key == null ? s.text : `**${s.label}**${s.text ? `: ${s.text}` : ''}`)).join('\n\n')
-  }
-  if (q.html) {
-    q.body = under(q.body, q.html)
-    delete q.html
-  }
-}
-
-/** The board's state with every html field moved into its text as a ```html block, in place: a message's
- *  under its text, a card's under its body, a section's under its paragraph, and the same in a card's
- *  earlier versions. Whatever draws a text with rich() then shows the layout. Folding twice changes nothing. */
-export function foldHtml(data) {
-  for (const m of data?.messages ?? []) {
-    if (!m?.html) continue
-    m.text = under(m.text, m.html)
-    delete m.html
-  }
-  for (const card of data?.cards ?? []) {
-    foldQuestion(card)
-    for (const v of card?.versions ?? []) foldQuestion(v)
-  }
-  return data
 }
 
 // ---- the frame ---------------------------------------------------------------------
