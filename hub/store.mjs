@@ -88,6 +88,10 @@ CREATE TABLE IF NOT EXISTS attachments (
   PRIMARY KEY (room_id, attachment_id)
 ) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS attachments_by_object ON attachments (room_id, object_id) WHERE object_id IS NOT NULL;
+CREATE TABLE IF NOT EXISTS agent_leases (
+  room_id TEXT NOT NULL, device_id TEXT NOT NULL, process_instance TEXT NOT NULL, lease_generation INTEGER NOT NULL, expires_at INTEGER NOT NULL,
+  PRIMARY KEY (room_id, device_id)
+) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS push_subscriptions (
   room_id TEXT NOT NULL, device_id TEXT NOT NULL, endpoint TEXT NOT NULL, subscription TEXT NOT NULL, created_at INTEGER NOT NULL,
   PRIMARY KEY (room_id, device_id, endpoint)
@@ -213,6 +217,10 @@ export function roomStorage(db, roomId) {
       // A removed device's push subscriptions go in the same transaction (R6).
       for (const d of info.removed ?? []) q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ?').run(roomId, d)
     },
+    // R4 leases survive a hub restart (a deploy must not stop every running agent).
+    getLease(id) { const r = q('SELECT process_instance, lease_generation, expires_at FROM agent_leases WHERE room_id = ? AND device_id = ?').get(roomId, id); return r ? { instance: r.process_instance, generation: r.lease_generation, expiresAt: r.expires_at } : null },
+    putLease(id, l) { q('INSERT INTO agent_leases (room_id, device_id, process_instance, lease_generation, expires_at) VALUES (?, ?, ?, ?, ?) ON CONFLICT (room_id, device_id) DO UPDATE SET process_instance = excluded.process_instance, lease_generation = excluded.lease_generation, expires_at = excluded.expires_at').run(roomId, id, l.instance, l.generation, l.expiresAt) },
+    deleteLease(id) { q('DELETE FROM agent_leases WHERE room_id = ? AND device_id = ?').run(roomId, id) },
     putWrap(epoch, id, sealed) { q('INSERT OR IGNORE INTO sealed_room_keys (room_id, key_epoch, device_id, key_sealed) VALUES (?, ?, ?, ?)').run(roomId, epoch, id, sealed) },
     wraps: (id, afterEpoch = 0) => q('SELECT key_epoch, key_sealed FROM sealed_room_keys WHERE room_id = ? AND device_id = ? AND key_epoch > ? ORDER BY key_epoch').all(roomId, id, afterEpoch)
       .map(r => ({ epoch: r.key_epoch, id, sealed: bytes(r.key_sealed) })),

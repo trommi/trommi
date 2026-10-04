@@ -849,6 +849,9 @@ await test('S2 hub restart mid-session: an answer posted around the restart reac
   const { client: phone } = await foundRoom({ hub_url: url, storage: memoryStorage({ extractable_keys: false }), device_name: 'Phone' })
   track(phone); await phone.start()
   const agent = await addAgent(phone, 'Restart')
+  await agent.claimSession({ process_instance: 'restart-1' })
+  const errors = []
+  agent.on('error', e => errors.push(e.code))
   const id = await agent.sendCard({ title: 'restart', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
   await settleAll(agent, phone)
   await until(() => phone.model.cards.get(id), 'card')
@@ -863,6 +866,25 @@ await test('S2 hub restart mid-session: an answer posted around the restart reac
   const t0 = Date.now()
   await until(() => cmds.some(c => c.command === 'answer' && c.choices[0] === 'b'), 'the agent gets the answer', 4_000)
   console.log(`     answer at the agent ${Date.now() - t0} ms after the hub came back`)
+  // the lease survived the restart (stored): the agent keeps posting
+  eq(h.db.prepare('SELECT COUNT(*) AS n FROM agent_leases').get().n, 1, 'lease stored')
+  const m1 = await agent.sendMessage({ text: 'still here' })
+  await settleAll(agent, phone)
+  // a hub that lost the lease row altogether: the agent takes it again (no other live holder) and goes on
+  await h.close()
+  h = await startHub({ port, host: '127.0.0.1', dataDir: dir, log: () => {}, pingMs: 2000 })
+  h.db.exec('DELETE FROM agent_leases')
+  await agent.sendMessage({ text: 'after a lost lease' })
+  await settleAll(agent)
+  const sid = agent.session_id
+  await until(async () => (await phone.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after a lost lease'), 'posted after re-taking the lease', 8000)
+  assert(!errors.includes('lease-lost'), `no lease-lost (${errors.join(',')})`)
+  // a real takeover still fences the first process
+  const other = new (agent.hub.constructor)({ hub_url: agent.hub.hub_url, room_id: agent.model.room.room_id, signer: agent.hub.signer })
+  await other.agentLease({ process_instance: 'restart-2' })
+  await agent.sendMessage({ text: 'from the old process' }).catch(() => {})
+  await until(() => errors.includes('lease-lost'), 'old process fenced', 10_000)
+  void m1
   await phone.stop(); await agent.stop(); await h.close()
 })
 

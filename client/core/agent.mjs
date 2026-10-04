@@ -23,6 +23,7 @@ const agentMethods = {
     const instance = process_instance ?? randomHex(8)
     const r = await this.hub.agentLease({ process_instance: instance })
     this.hub.lease_generation = r.lease_generation
+    this._leaseInstance = instance
     clearInterval(this._leaseTimer)
     const every = Math.max(30_000, Math.min(5 * 60_000, ((r.expires_at ?? Date.now() + 600_000) - Date.now()) / 2))
     this._leaseTimer = setInterval(() => this.hub.agentLease({ process_instance: instance, renew: true }).then(x => { this.hub.lease_generation = x.lease_generation }).catch(e => {
