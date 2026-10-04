@@ -190,7 +190,7 @@ function start(signal) {
     'pic.leave': () => press($('.t-picture-back')),
 
     'help': () => toggleSheet(),
-    'memo.new': () => press($('#memo-open')),
+    'memo.new': () => import('/t/lib/memo.js').then(m => m.write()),
     'go.desk': () => go(`${base()}/`),
     'go.agents': () => go(`${base()}/agents`),
     'go.walk': () => go(`${base()}/walk`),

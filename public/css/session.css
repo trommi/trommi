@@ -104,4 +104,11 @@
 
 /* Windowed paint: what of the conversation is out of sight is neither laid out nor painted (messages: trommi.css). */
 #session .log .event, #session .log .day { content-visibility: auto; contain-intrinsic-size: auto 36px; }
-#session .log .ask-card { content-visibility: auto; contain-intrinsic-size: auto 190px; }
+/* (A question's Desk row in the conversation is not skipped: its box and shadow reach past it and would be clipped.) */
+
+/* The heading with a long name: the drawing keeps its size, the stop sign keeps its words, the name gives way. */
+#session .pane-who .t-session-edit { flex: 0 1 auto; }
+#session .pane-who .t-session-edit > .t-pick-mark, #session .pane-who .t-session-edit > .t-crown-form { flex: none; }
+#session .pane-who .t-session-edit > .t-pick-name { flex: 0 1 auto; min-width: 0; }
+#session .pane-who .t-blocked { flex: none; max-width: 45%; }
+#session .pane-who .t-blocked > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
