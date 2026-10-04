@@ -14,7 +14,7 @@ import {
 } from './elements.js'
 import { flySheet } from './fly.js'
 import { onBoard, boardState, setBoard, connectRoom } from './board.js'
-import { PAD_WORD } from './name.js'
+import { PAD_WORD, PLACE_WORD } from './name.js'
 
 const QUERY = new URLSearchParams(location.search)
 const PAD = QUERY.get('canvas') || 'desk/main'
@@ -24,6 +24,9 @@ const EMBED = QUERY.has('embed') && window.parent !== window
 // On the Desk (?desk): the pad is the paper the whole Desk lies on (js/padlink.js). It has no pan and no zoom of
 // its own: the Desk's scrolling moves it (padDesk below), and the paper is as wide as the Desk.
 const DESK = EMBED && QUERY.has('desk')
+// A place of the app (?place: the Whiteboard, js/views/whiteboard.mjs): the pad fills the page's main area beside the
+// sidebar. It has nothing to close (the sidebar leads away), its name is the place's, the flight of a sent piece is its own.
+const PLACE = EMBED && !DESK && QUERY.has('place')
 const tell = (type, extra = {}) => { if (EMBED) window.parent?.postMessage({ trommi: 'pad', type, ...extra }, location.origin) }
 let host = { open: !EMBED, prefer: [] }   // what the board last said: is the pad in sight, which session is behind it
 const AUTHOR = 'human'   // a record made here; on the wire the author is the signed sender (canvas.js)
@@ -1458,7 +1461,7 @@ async function sendArea(session, item) {
     // Anywhere else (a phone, the pad on its own) the piece flies into the chooser's row.
     a.cut = true
     invalidate()
-    const outside = EMBED && !DESK && W > 860
+    const outside = EMBED && !DESK && !PLACE && W > 860
     const flight = (async () => {
       await new Promise(r => setTimeout(r, 90))
       a.gone = true
@@ -1570,10 +1573,12 @@ if (EMBED) {
 
 async function start() {
   readTheme()
-  document.title = `${PAD_WORD} · Trommi`
-  $('pad-word').textContent = PAD_WORD
-  $('canvas').setAttribute('aria-label', `${PAD_WORD}: an endless surface for notes, drawings and pictures`)
+  const word = PLACE ? PLACE_WORD : PAD_WORD
+  document.title = `${word} · Trommi`
+  $('pad-word').textContent = word
+  $('canvas').setAttribute('aria-label', `${word}: an endless surface for notes, drawings and pictures`)
   $('pad-name').textContent = PAD
+  if (PLACE) { root.dataset.place = ''; $('back').hidden = true; $('pad-name').hidden = true }
   let saved = null
   try { saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null') } catch {}
   W = pad.clientWidth; H = pad.clientHeight

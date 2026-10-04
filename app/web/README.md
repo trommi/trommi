@@ -30,6 +30,20 @@ Views switch sheets on and off (`layout.mjs` CSS, `js/app/sheets.mjs`): the hub 
 
 Before a push: `dev/release.sh` (writes the shell's file list and version into `public/sw.js`). A release without it still reaches every device: the worker revalidates each file it serves (ETag) and, when one changed, fetches the shell again and offers "Neu laden".
 
+## The Whiteboard
+
+The Desk is cards on plain paper. Drawing has a place of its own: **Whiteboard**, the first row of the sidebar (on a
+phone the first chip of the sessions' line), the page `/whiteboard` (`P` leads there with the pen in hand; the old
+address `/pad` too). The page is the pad (`public/pad/`, embedded with `?place`) as large as the main area; select or
+frame something and **Send to…** a session, as before. Memos stay what they are: the round button on every page and
+the NOTES stack on the Desk.
+
+What is drawn is the desk's canvas timeline `desk/<32 hex>` (`js/views/whiteboard.mjs` `deskCanvas`: a desk id that is
+not 32 hex, such as `main`, is folded into 16 bytes, the same on every device). The Desk's paper before it wrote to
+`desk/<desk_id>` with the plain id, which the core refuses since protocol v1.1 (`parseTimelineId`): none of its strokes
+reached the hub, so there was nothing to carry over. A memo that lay on the paper (place `paper`) is read as put away
+and waits on the NOTES stack (`memo-store.mjs`); nothing is rewritten.
+
 ## The account (what a person sees)
 
 The UI says **account**, never "room" (inside, the core still founds and joins a room; one account = one room).
@@ -72,7 +86,7 @@ public/
   t/controllers t/lib    the board's Stimulus controllers, synced, running on js/app/stimulus.mjs
   vendor/                the client core: copied from the repository's core/ by dev/build.mjs (Cloudflare's build; dev/serve.mjs serves it from core/), not committed
   mock/                  fixture of the mock room (dev/make-fixture.mjs) and its pictures
-  pad/                   the Scratchpad (Desk paper)
+  pad/                   the pad: the Whiteboard's page (?embed&place, in /whiteboard) and the Scratchpad on its own
   js/app/
     boot.mjs             open the room (or the room screens), first paint from the local model, start the core
     board-state.mjs      THE SEAM: core model -> the state shape the views were written for (incremental)
@@ -127,7 +141,7 @@ Several people (and agents) work on the app at once. Each area owns its files; t
 | **Desk, stacks, Next line** | `public/js/views/{desk,stacks,nextplease}.mjs`, `public/css/{piles,stamps,slip}.css`, `public/t/controllers/{desk,stack_search}_controller.js` |
 | **Card page** (every decision flow: options, sections, pictures with marks, hand back, What??, Whatever, Shred, versions, info, permission) | `public/js/views/{card,picture}.mjs`, `public/css/{cardpage,cardclip,richhtml}.css`, `public/t/controllers/{card,circles,clip,pops,advice,richhtml}_controller.js`, `public/js/{focus-marks,richhtml,ui}.js`; the card routes in `board.mjs` (`registerCards`, `WAYS`) with the integrator |
 | **Session, chat, files, assets, Ledger** | `public/js/views/{session,session-edit,agents}.mjs`, `public/css/{session,beside,ledger,links,speech,asset}.css`, `public/t/controllers/{composer,files,log,lean,say,share,assetthumb,title}_controller.js` |
-| **Scratchpad, canvas, Desk paper** (E2E strokes + snapshots) | `public/pad/*`, `public/t/lib/{paper,clear}.js`, `public/t/controllers/paper_controller.js`, `public/css/{deskpad,scribble,clear,padlink}.css` |
+| **Whiteboard, pad, canvas** (E2E strokes + snapshots) | `public/pad/*`, `public/js/views/whiteboard.mjs`, `public/t/controllers/whiteboard_controller.js`, `public/css/{whiteboard,scribble,padlink}.css` |
 | **Memos** | `public/js/views/memo.mjs`, `public/t/lib/memo.js`, `public/t/controllers/{memo,memos}_controller.js`, `public/css/quicksend.css` |
 | **Account, pairing, devices, settings** (Create account, Log in, Emergency Kit, QR pairing, device list, storage usage, the reload notice's look) | `public/js/app/room.mjs`, `public/js/app/qr.mjs`, `public/css/room.css`, `public/t/controllers/room_controller.js` |
 | **Phone layout** | `public/css/phone-desk.css`, `public/t/controllers/sheet_controller.js`, the `@media (max-width: …)` blocks of the area files in agreement with their owners |

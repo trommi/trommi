@@ -18,7 +18,6 @@ export const LAYOUT = [
     { id: 'list.trust', keys: ['r'], does: 'Whatever: the agent decides' },
     { id: 'list.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'take back: the marked line of a stack, else the newest toast\'s Undo' },
-    { id: 'pad.cards', keys: ['w'], does: 'hide the cards so only the paper is left, and bring them back' },
     { id: 'list.leave', keys: ['Escape'], does: 'drop the mark' },
   ] },
   { scope: 'card', title: 'An opened question', keys: [
@@ -68,7 +67,7 @@ export const LAYOUT = [
     { id: 'desk.switch', keys: ['1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
     { id: 'session.next', keys: ['.'], does: 'next session', needs: 'sidebar' },
     { id: 'session.prev', keys: [','], does: 'previous session', needs: 'sidebar' },
-    { id: 'pen', keys: ['p'], does: 'the pen: draw on the paper' },
+    { id: 'pen', keys: ['p'], does: 'the Whiteboard, with the pen in hand' },
     { id: 'rail', keys: ['['], does: 'fold the sidebar to a rail, or open it', needs: 'sidebar' },
     { id: 'back', keys: ['u', 'Backspace'], does: 'undo: the newest toast\'s Undo' },
     { id: 'theme', keys: ['t'], does: 'light or dark' },

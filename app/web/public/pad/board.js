@@ -1,5 +1,5 @@
 // The pad's link to the room: the client core it works with, and who the sessions are (where a selection can go).
-// Inside the app (the Desk's paper, t/lib/paper.js) the page around the pad already holds the room: its client
+// Inside the app (the Whiteboard, js/views/whiteboard.mjs) the page around the pad already holds the room: its client
 // (window.trommi.client, one per room and device) is used, and the sessions come with the board's context message.
 // On its own page (/pad/) the pad opens the room itself, as the app does (or the mock room of this tab).
 

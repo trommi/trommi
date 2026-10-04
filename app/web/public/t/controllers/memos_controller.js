@@ -1,18 +1,16 @@
 // The memos of a page: <div id="memo-layer" data-controller="memos"> around the round yellow button, the list of
 // the notes that were put away, and the notes that are out (server/views/memo.mjs memoLayer()). The button makes a
 // note, or shows the list when notes wait there. What concerns all notes of the page is here too: streams that
-// change a note in place, the Desk's paper coming and going, a phone's tap beside the sheet, keeping what was
+// change a note in place, a phone's tap beside the sheet, keeping what was
 // typed when the page is left. The work is /t/lib/memo.js. The key "/" may click #memo-open.
 import { Controller } from '/js/app/stimulus.mjs'
-import { write, putAway, showAway, waits, onStream, standAll, offPaper, beside, flushAll, sheet } from '/t/lib/memo.js'
+import { write, putAway, showAway, waits, onStream, standAll, beside, flushAll, sheet } from '/t/lib/memo.js'
 
 export default class extends Controller {
   connect() {
     const on = (target, type, fn, opts) => { target.addEventListener(type, fn, opts); this.undo.push(() => target.removeEventListener(type, fn, opts)) }
     this.undo = []
     on(document, 'turbo:before-stream-render', onStream)
-    on(document, 'paper:ready', standAll)
-    on(document, 'paper:gone', offPaper)
     on(document, 'turbo:before-visit', () => flushAll())
     on(document, 'turbo:before-cache', () => flushAll())
     on(window, 'pagehide', () => flushAll())

@@ -4,7 +4,9 @@
 // stay as they were.
 //
 // The memo's own fields beyond the core's (text, x, y, color, desk_id) travel through as they are:
-//   place        'float' (over the page) | 'stack' (put away at the round button) | 'paper' (on the Desk's paper)
+//   place        'float' (over the page) | 'stack' (put away: the Desk's NOTES stack). A note that lay on the Desk's
+//                paper ('paper', before the Desk lost its paper to the Whiteboard on 4 Oct 2026) is read as 'stack':
+//                it waits on the NOTES stack with its words, nothing is rewritten.
 //   session      agent_device_id of the session whose page it was written on (shown only there, sent to it), or null
 //   to           agent_device_id it is addressed to (else the crown of the desk)
 //   attachments  README attachment references (uploaded, encrypted, before the version is written)
@@ -18,13 +20,13 @@ import { addressOf } from './board-state.mjs'
 import { rememberRef, uploadFile } from './att.mjs'
 
 const HOLD_MS = 3000
-const PLACES = ['float', 'stack', 'paper']
+const PLACES = ['float', 'stack']
 const attOf = r => { rememberRef(r); return { name: r.file_name ?? 'file', type: r.media_type ?? '', url: r.url ?? `/att/${r.attachment_id}` } }
 
 /** One memo as the views know it (agent ids for sessions; memos of older app versions named agent ids already). */
 function boardMemo(id, n, devToAgent) {
   const agent = d => (d ? devToAgent.get(d) ?? d : null)
-  return { id, text: n.text ?? '', to: agent(n.to), session: agent(n.session), place: PLACES.includes(n.place) ? n.place : 'float', x: n.x ?? 0, y: n.y ?? 0, desk: n.desk_id ?? null,
+  return { id, text: n.text ?? '', to: agent(n.to), session: agent(n.session), place: n.place === 'paper' ? 'stack' : PLACES.includes(n.place) ? n.place : 'float', x: n.x ?? 0, y: n.y ?? 0, desk: n.desk_id ?? null,
     attachments: (n.attachments ?? []).map(attOf), held: n.held ?? null, created: n.created_at ?? 0, updated: n.updated_at ?? 0 }
 }
 // (A new memo stands under its local_id until it is sealed: the page that made it gets it by its object_id.)

@@ -121,7 +121,7 @@ try {
   const cardId = await agent.sendCard({ title: 'Welche Variante bauen?', body: 'Zwei Wege, beide getestet.', options: [{ key: 'a', label: 'Variante A' }, { key: 'b', label: 'Variante B' }], recommended: 'b' })
   await A.until(`document.getElementById('row-${cardId}')`, 'card row on the Desk')
   timing('card sent by agent -> row visible on A', Date.now() - t0)
-  check(await A.js("return !!document.querySelector('#agents .agent-row')"), 'session in the sidebar')
+  check(await A.js("return !!document.querySelector('#agents .agent-row[data-unit]')"), 'session in the sidebar')
   check(await A.js("return !document.querySelector('#desk-invite') && !!document.querySelector('#agents #sidebar-invite') && getComputedStyle(document.querySelector('#sidebar-invite')).backgroundColor === 'rgba(0, 0, 0, 0)'"), 'Invite your first agent gone once a session is there; the + New agent row stays, quiet')
 
   // ---- the desk switcher: the desk drawing (lamp on) opens the Trommi menu at its desk list, on the desk in view ----
@@ -288,6 +288,42 @@ try {
   }
   check(await A.js("return document.querySelector('.off-pile.is-open') && document.querySelector('.off-chip[data-g=trash] input').checked"), 'the pile stays open with its filter while cards move')
   await A.shot('e2e-pile.png')
+  // ---- the Whiteboard: the Desk has no paper; the drawing is a place of its own in the sidebar, on the desk's canvas
+  //      timeline (desk/<32 hex>, js/views/whiteboard.mjs deskCanvas) ----
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelector('#inbox')", 'desk again')
+  await sleep(800)
+  check(await A.js("return !document.querySelector('#deskpad, #deskpad-pen, #deskpad-clear, #paper-island, .clear-btn')"), 'the Desk has no paper under it, no pen and no wipe button')
+  check(await A.js("return document.querySelector('#agents > .whiteboard-row a')?.getAttribute('href') === '/whiteboard' && document.querySelector('#agents > .agent-row') === document.querySelector('#whiteboard-row')"), 'the Whiteboard row stands first in the sidebar')
+  // A stroke on the desk's canvas, sealed through pad/canvas.js before the Whiteboard opens (as another device would).
+  await A.js(`const { openCanvas } = await import('/pad/canvas.js'); const { strokeFromWorld } = await import('/pad/elements.js'); const { deskCanvas } = await import('/js/views/whiteboard.mjs')
+    const tl = deskCanvas(trommi.model().desk)
+    const c = await openCanvas({ client: trommi.client, timeline_id: tl })
+    const k = strokeFromWorld([120, 140, 220, 190, 340, 160], null, { tool: 'pen', color: 'ink', size: 4 })
+    c.push([{ id: 'e2e-old-paper', before: null, after: { id: 'e2e-old-paper', pad: tl, type: 'stroke', rotation: 0, z: 1, group: null, author: 'human', rev: 1, blob: null, sent: [], ...k } }])
+    for (let i = 0; i < 150 && c.state().pending; i++) await new Promise(r => setTimeout(r, 100))
+    return c.state()`).then(st => check(!st.error && !st.pending, `a stroke on the desk's canvas timeline is sealed (${JSON.stringify(st)})`))
+  await A.js("document.querySelector('#whiteboard-row a').click()")
+  await A.until("location.pathname === '/whiteboard' && document.getElementById('whiteboard-frame')?.contentWindow?.pad", 'whiteboard page with the pad')
+  const pad = "document.getElementById('whiteboard-frame').contentWindow.pad"
+  await A.until(`${pad}.elements().length >= 1`, 'the canvas stroke on the Whiteboard').then(() => check(true, 'a stroke of the desk canvas shows on the Whiteboard'), e => check(false, e.message))
+  await A.until(`${pad}.state().board.sessions.some(s => s.id === '${sid}')`, 'sessions in the pad').then(() => check(true, 'the Whiteboard Send to… knows the sessions'), e => check(false, e.message))
+  // Draw one stroke with the mouse, as a person does: it is kept and comes back after a reload.
+  const r = await A.js("const b = document.getElementById('whiteboard-frame').getBoundingClientRect(); return { x: b.x + b.width / 2, y: b.y + b.height / 2 }")
+  await A.js(`${pad}.tool('pen')`)
+  const mouse = (type, x, y) => A.page.send('Input.dispatchMouseEvent', { type, x, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1, clickCount: 1 })
+  await mouse('mouseMoved', r.x, r.y); await mouse('mousePressed', r.x, r.y)
+  for (let i = 1; i <= 12; i++) await mouse('mouseMoved', r.x + i * 12, r.y + Math.sin(i / 2) * 20)
+  await mouse('mouseReleased', r.x + 144, r.y)
+  await A.until(`${pad}.elements().length >= 2 && !${pad}.state().sync.pending`, 'drawn stroke sealed').then(() => check(true, 'a stroke drawn on the Whiteboard is sealed'), e => check(false, e.message))
+  await A.shot('e2e-whiteboard.png')
+  await A.go(`${APP}/whiteboard`)
+  await A.until("document.documentElement.hasAttribute('data-ready') && document.getElementById('whiteboard-frame')?.contentWindow?.pad", 'whiteboard after reload', 30000)
+  await A.until(`${pad}.elements().length >= 2`, 'strokes after reload', 20000).then(() => check(true, 'the Whiteboard strokes come back after a reload'), e => check(false, e.message))
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelector('#inbox')", 'desk after the whiteboard')
+  await A.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))")
+  await A.until("location.pathname === '/whiteboard'", 'P leads to the Whiteboard', 5000).then(() => check(true, 'P on the Desk opens the Whiteboard'), e => check(false, e.message))
 
   // ---- a second human device joins ----
   await A.js("trommi.router.visit('/devices')")
