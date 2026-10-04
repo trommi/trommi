@@ -36,6 +36,7 @@ export function startPush(client) {
           await had.unsubscribe()
           paint(null)
         } else {
+          if (!client.hub?.pushKey) throw new Error('Im Testraum gibt es kein Push.')
           const why = obstacle()
           if (why) throw new Error(why)
           if ((await Notification.requestPermission()) !== 'granted') throw new Error('Mitteilungen wurden nicht erlaubt.')

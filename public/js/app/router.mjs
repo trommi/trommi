@@ -84,6 +84,9 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
     board.live(page.client, { reset: true })
     if (scroll === 'top') window.scrollTo(0, 0)
     else if (typeof scroll === 'number') requestAnimationFrame(() => window.scrollTo(0, scroll))
+    // As Turbo does: the first [autofocus] element of the new page gets the keyboard.
+    const auto = document.querySelector('main [autofocus], [autofocus]')
+    if (auto && !auto.closest('[hidden], dialog:not([open])')) auto.focus({ preventScroll: true })
     fire(document, 'turbo:render')
     fire(document, 'turbo:load', { url: location.href })
     onPage(page)

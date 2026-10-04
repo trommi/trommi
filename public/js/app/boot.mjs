@@ -13,6 +13,7 @@ import { attachTo } from './att.mjs'
 import { startDeskWindow } from './desk-window.mjs'
 import { CLIENT } from './version.mjs'
 import { startPush } from './push.mjs'
+import './pwa.mjs'
 
 // The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js).
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(err => console.warn('service worker', err.message))
@@ -58,7 +59,7 @@ export async function start(client, { fresh = false } = {}) {
   const b = createBoard({ hub, model, extraPages: [deskPages, roomPages(client)] })
   const router = createRouter({ board: b, flush: () => apply() })
   startDeskWindow(b)
-  if (!mock) startPush(client)
+  startPush(client)
   window.trommi = { client, board, router, model, mock: Boolean(mock) }
 
   // Changes come in batches; one frame patches the page for all that came meanwhile. A navigation or the end of a
