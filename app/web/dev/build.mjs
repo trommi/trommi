@@ -1,24 +1,18 @@
-// The app's build step: writes public/gen/ (generated, never edited by hand, not committed):
-//   gen/vendor/          the client core, copied from the repository's core/ (vendor())
-//   gen/bundle.<hash>.css one stylesheet instead of the shell's <link data-sheet> lines (bundle())
-//   gen/build.txt        which commit this build is
-// (gen/connector.mjs and gen/plugins/ are connector/bundle.mjs's, committed and checked by CI.)
-//   node dev/build.mjs            check only: every sheet parses into the bundle (prints its name), changes nothing
-//   node dev/build.mjs --write    write gen/ and point public/index.html and public/sw.js at the bundle
-// Cloudflare's build runs it with --write on its own checkout (WORKERS_CI=1 counts as --write); dev/serve.mjs serves
-// the same result from memory (build()), so local runs and the e2e see what is deployed. Running it again on a written
-// tree does nothing. Without it the source shell works as it is (each sheet its own <link>).
+// The app's build: everything generated is made here, at deploy time, and never committed.
+//   gen/vendor/            the client core, copied from the repository's core/ (plus two browser-safe connector files)
+//   gen/bundle.<hash>.css  the stylesheets of index.html as one file (their <link>s become one)
+//   gen/build.txt          which commit this build is (the Web app deploy workflow reads it)
+//   index.html             the modulepreload list between <!-- preload --> and <!-- /preload -->, data-build=<version>
+//   sw.js                  VERSION (a hash of every shell file) and SHELL (every file the app serves)
+// In the repository index.html and sw.js are templates (empty preload block, VERSION "dev", SHELL []), so two
+// branches never conflict there. (gen/connector.mjs and gen/plugins/ are connector/bundle.mjs's: they need the
+// repository's npm packages, which this dependency-free build does not have; they stay committed and CI checks them.)
 //
-// Views switch sheets on and off (js/app/sheets.mjs; the hub's CSS table, layout.mjs CSS): a disabled sheet's rules
-// are gone. In the bundle every sheet keeps its place in the order of the <link>s, and a sheet a view may switch off is
-// wrapped as  @supports (--sheet: name) { @media all { … } }  : setting that @media to "not all" removes exactly its
-// rules, at the same place in the cascade — the same as link.disabled. The sheets that are on in every view
-// (ALWAYS) are not wrapped: fonts.css holds @font-face rules, and richhtml.js reads tokens.css's :root rules.
-//
-// The client core (../../core) and the connector's tool reference are copied into public/gen/vendor/ (vendor()): the one
-// original lives in the repository's core/, nothing is committed under public/gen/vendor. sw.js gets the vendor files in
-// its shell list and their hash in its version. A missing source fails the build (Cloudflare then keeps the last
-// deployment) instead of shipping an app without its core.
+//   node dev/build.mjs            check only: generate in memory, print what it would write
+//   node dev/build.mjs --write    write it into public/ (Cloudflare's build: WORKERS_CI=1 counts as --write).
+//                                 Never commit what it writes into index.html and sw.js.
+// dev/serve.mjs serves generate() from memory, so the dev server needs no build step and never shows stale files.
+// A missing core fails the build (Cloudflare then keeps the last deployment) instead of shipping an app without it.
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -27,61 +21,32 @@ import { execFileSync } from 'node:child_process'
 
 export const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice(0, 12)
 
-// ---- the core into public/gen/vendor ----------------------------------------------------------------------------------
+// ---- the core ----
 const NOT_VENDORED = /(^test|-test\.mjs$|^test-|^load\.mjs$|^storage-file\.mjs$|^hub\.mjs$)/   // tests, Node-only, the hub's side
-/** Where each file of public/gen/vendor comes from: { name: absolute source path }. Throws when the core is missing. */
-export function vendorSources(repo = REPO) {
+function vendorFiles(repo) {
   const core = path.join(repo, 'core')
   if (!fs.existsSync(path.join(core, 'index.mjs'))) throw new Error(`build: the core is missing (${core}/index.mjs)`)
-  const map = {}
-  for (const f of fs.readdirSync(core).sort()) if (f.endsWith('.mjs') && !NOT_VENDORED.test(f)) map[f] = path.join(core, f)
+  const out = {}
+  for (const f of fs.readdirSync(core).sort()) if (f.endsWith('.mjs') && !NOT_VENDORED.test(f)) out[f] = fs.readFileSync(path.join(core, f), 'utf8')
   // The agent tool and event reference for the help page, and the HTML cleaner the agent's side uses (browser-safe).
-  for (const f of ['channel-tools.mjs', 'richhtml.mjs']) map[f] = path.join(repo, 'connector', f)
-  for (const [f, src] of Object.entries(map)) if (!fs.existsSync(src)) throw new Error(`build: ${src} is missing`)
-  return map
+  for (const f of ['channel-tools.mjs', 'richhtml.mjs']) out[f] = fs.readFileSync(path.join(repo, 'connector', f), 'utf8')
+  out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's core/. Do not edit: edit core/.\nexport const CORE_COMMIT = ${JSON.stringify(commitOf(repo))}\n`
+  return out
 }
-const commitOf = repo => {
+function commitOf(repo) {
   const env = process.env.WORKERS_CI_COMMIT_SHA || process.env.GITHUB_SHA
   if (env) return env.slice(0, 7)
   try { return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().slice(0, 7) } catch { return 'dev' }
 }
-/** The files of public/gen/vendor: { name: content }, core-version.mjs included. */
-export function vendorFiles(repo = REPO) {
-  const out = {}
-  for (const [f, src] of Object.entries(vendorSources(repo))) out[f] = fs.readFileSync(src, 'utf8')
-  const commit = commitOf(repo)
-  out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's core/. Do not edit: edit core/.\nexport const CORE_COMMIT = ${JSON.stringify(commit)}\n`
-  return out
-}
-/** sw.js with the vendor files in its shell list and their hash in its version. */
-export function withVendor(sw, files) {
-  const names = Object.keys(files).sort().map(f => `/gen/vendor/${f}`)
-  const hash = crypto.createHash('sha256').update(Object.keys(files).sort().map(f => f + files[f]).join('')).digest('hex').slice(0, 8)
-  if (sw.includes(`-v${hash}`)) return sw
-  // A second run (another core) replaces the vendor part of the version instead of adding one.
-  const out = sw.replace(/^const VERSION = "([^"]*)"$/m, (_, v) => `const VERSION = ${JSON.stringify(/-v[0-9a-f]{8}/.test(v) ? v.replace(/-v[0-9a-f]{8}/, `-v${hash}`) : `${v}-v${hash}`)}`)
-    .replace(/^const SHELL = (\[.*\])$/m, (_, list) => `const SHELL = ${JSON.stringify([...JSON.parse(list).filter(f => !f.startsWith('/gen/vendor/')), ...names])}`)
-  if (!out.includes(`-v${hash}`)) throw new Error('sw.js: SHELL or VERSION line not found')
-  return out
-}
-export function vendor({ write = false, pub = PUBLIC, repo = REPO } = {}) {
-  const files = vendorFiles(repo)
-  console.log(`build: ${Object.keys(files).length} core files -> public/gen/vendor/${write ? '' : ' (check only, nothing written)'}`)
-  if (!write) return files
-  const dir = path.join(pub, 'gen', 'vendor')
-  fs.rmSync(dir, { recursive: true, force: true })
-  fs.mkdirSync(dir, { recursive: true })
-  for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), c)
-  return files
-}
-const ALWAYS = new Set(['fonts', 'tokens', 'app', 'trommi', 'room'])
-const SHEET_LINK = /^<link rel="stylesheet" href="(\/[^"]+\.css)" data-sheet="([\w-]+)">\n/gm
-const FONT_PRELOAD = /^<link rel="preload" href="\/fonts\/fonts\.css" as="style">\n/m
 
+// ---- the stylesheets ----
+const SHEET_LINK = /^<link rel="stylesheet" href="(\/[^"]+\.css)"[^>]*>\n/gm
+const FONT_PRELOAD = /^<link rel="preload" href="\/fonts\/fonts\.css" as="style">\n/m
 /** Throws unless the braces of a sheet balance (outside comments and strings): in the bundle a stray brace would
  *  spill into the next sheet. */
-function checkBalance(css, file) {
+function checkSheet(css, file) {
   let depth = 0
   for (let i = 0; i < css.length; i++) {
     const c = css[i]
@@ -91,52 +56,68 @@ function checkBalance(css, file) {
     else if (c === '}' && --depth < 0) throw new Error(`${file}: "}" without "{" (offset ${i})`)
   }
   if (depth) throw new Error(`${file}: ${depth} "{" not closed`)
+  const bare = css.replace(/\/\*[\s\S]*?\*\//g, '')
+  // The bundle lives in /gen/: a relative url() would point somewhere else there.
+  if (/url\(\s*(?!['"]?(?:[a-z]+:|\/|%23|#))/i.test(bare)) throw new Error(`${file}: relative url()`)
+  if (/@import\b|@charset\b/.test(bare)) throw new Error(`${file}: @import/@charset cannot go into the bundle`)
 }
 
-/** The bundle for the shell in public/: { name, css, html, sw } or null when the shell has no sheet links (written). */
-export function bundle(pub = PUBLIC, swText = null) {
-  const html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8')
-  const links = [...html.matchAll(SHEET_LINK)]
-  if (!links.length) return null
-  const parts = links.map(([, href, name]) => {
-    const css = fs.readFileSync(path.join(pub, href), 'utf8')
-    checkBalance(css, href)
-    // The bundle lives in /gen/: a relative url() would point somewhere else there.
-    if (/url\(\s*(?!['"]?(?:[a-z]+:|\/|%23|#))/i.test(css.replace(/\/\*[\s\S]*?\*\//g, ''))) throw new Error(`${href}: relative url()`)
-    if (/@import\b|@charset\b/.test(css.replace(/\/\*[\s\S]*?\*\//g, ''))) throw new Error(`${href}: @import/@charset cannot go into the bundle`)
-    return ALWAYS.has(name) ? `/* ${href} */\n${css}\n` : `/* ${href} */\n@supports (--sheet: ${name}) { @media all {\n${css}\n} }\n`
+// ---- the shell: every file the app serves (the service worker keeps them) ----
+const NOT_SHELL = /^(gen\/|mock\/|sw\.js$|index\.html$|_headers$|connect\.sh$)|\.md$|(^|\/)\./
+function walk(dir, base = dir) {
+  return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
+    const p = path.join(dir, e.name)
+    return e.isDirectory() ? walk(p, base) : [path.relative(base, p).split(path.sep).join('/')]
   })
-  const css = parts.join('')
-  const hash = crypto.createHash('sha256').update(css).digest('hex').slice(0, 12)
-  const name = `/gen/bundle.${hash}.css`
-  // One <link> where the first sheet was; the font preload went with it (the fonts' @font-face are in the bundle).
+}
+/** The modules a cold start needs, following static imports from the entry (so one round trip fetches them all). */
+function preloads(read, entries) {
+  const seen = new Set(), queue = [...entries]
+  while (queue.length) {
+    const f = queue.shift()
+    const src = seen.has(f) ? null : read(f)
+    if (src == null) continue
+    seen.add(f)
+    for (const m of src.matchAll(/^\s*(?:import|export)\s+(?:[^'"]*?from\s+)?['"]([^'"]+)['"]/gm)) queue.push(m[1].startsWith('/') ? m[1] : path.posix.join(path.posix.dirname(f), m[1]))
+  }
+  return [...seen]
+}
+
+/** Everything the build makes: { 'path under public/': content }. Nothing is written. */
+export function generate({ pub = PUBLIC, repo = REPO } = {}) {
+  const out = {}
+  for (const [f, c] of Object.entries(vendorFiles(repo))) out[`gen/vendor/${f}`] = c
+  out['gen/build.txt'] = `source: trommi/trommi app/web\ncommit: ${commitOf(repo)}\n`
+
+  let html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8')
+  const links = [...html.matchAll(SHEET_LINK)]
+  const css = links.map(([, href]) => { const text = fs.readFileSync(path.join(pub, href), 'utf8'); checkSheet(text, href); return `/* ${href} */\n${text}\n` }).join('')
+  const bundle = `gen/bundle.${sha(css)}.css`
+  out[bundle] = css
   let first = true
-  const out = html.replace(FONT_PRELOAD, '').replace(SHEET_LINK, () => { if (!first) return ''; first = false; return `<link rel="stylesheet" href="${name}" data-bundle>\n` })
-  // The service worker keeps the bundle with the shell; its cache name changes with the bundle.
-  let sw = swText ?? fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
-  sw = sw.replace(/^const VERSION = "([^"]*)"$/m, (_, v) => `const VERSION = ${JSON.stringify(`${v}-${hash}`)}`)
-    .replace(/^const SHELL = (\[.*\])$/m, (_, list) => `const SHELL = ${JSON.stringify([...JSON.parse(list), name])}`)
-  if (!sw.includes(name)) throw new Error('sw.js: SHELL or VERSION line not found')
-  return { name, css, html: out, sw, sheets: links.length }
+  html = html.replace(FONT_PRELOAD, '').replace(SHEET_LINK, () => (first ? ((first = false), `<link rel="stylesheet" href="/${bundle}">\n`) : ''))
+
+  const files = [...walk(pub).filter(f => !NOT_SHELL.test(f)), ...Object.keys(out).filter(f => f !== 'gen/build.txt')].sort()
+  const content = f => out[f] ?? fs.readFileSync(path.join(pub, f))
+  const version = sha(Buffer.concat([...files.flatMap(f => [Buffer.from(f), Buffer.from(content(f))]), Buffer.from(html)]))
+  const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
+  const block = [`<!-- preload ${version} -->`, ...preloads(read, ['/js/app/boot.mjs', '/gen/vendor/index.mjs']).map(f => `<link rel="modulepreload" href="${f}">`), '<!-- /preload -->'].join('\n')
+  out['index.html'] = html.replace(/<!-- preload[^>]*-->[\s\S]*?<!-- \/preload -->/, block).replace('data-build="dev"', `data-build="${version}"`)
+  if (!out['index.html'].includes(block)) throw new Error('index.html: the <!-- preload --> block is missing')
+
+  const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
+  out['sw.js'] = sw.replace(/^const VERSION = .*$/m, `const VERSION = ${JSON.stringify(version)}`).replace(/^const SHELL = .*$/m, `const SHELL = ${JSON.stringify(['/', ...files.map(f => `/${f}`)])}`)
+  if (!out['sw.js'].includes(version)) throw new Error('sw.js: the VERSION line is missing')
+  return { out, version, sheets: links.length, files: files.length }
 }
 
-/** gen/build.txt: which commit this build is. */
-export const buildText = (repo = REPO) => `source: trommi/trommi app/web\ncommit: ${commitOf(repo)}\n`
-
-export function build({ write = false, pub = PUBLIC } = {}) {
-  const files = vendor({ write, pub })
-  if (write) fs.writeFileSync(path.join(pub, 'gen', 'build.txt'), buildText())
-  if (write) fs.writeFileSync(path.join(pub, 'sw.js'), withVendor(fs.readFileSync(path.join(pub, 'sw.js'), 'utf8'), files))
-  const b = bundle(pub)
-  if (!b) { console.log('build: the shell has its bundle already'); return }
-  console.log(`build: ${b.sheets} sheets -> ${b.name} (${(b.css.length / 1024).toFixed(0)} KiB)${write ? '' : ' (check only, nothing written)'}`)
+export function build({ write = false } = {}) {
+  const { out, version, sheets, files } = generate()
+  console.log(`build ${version}: ${Object.keys(out).filter(f => f.startsWith('gen/vendor/')).length} core files, ${sheets} sheets in one bundle, ${files} shell files${write ? '' : ' (check only, nothing written)'}`)
   if (!write) return
-  fs.writeFileSync(path.join(pub, b.name), b.css)
-  fs.writeFileSync(path.join(pub, 'index.html'), b.html)
-  fs.writeFileSync(path.join(pub, 'sw.js'), b.sw)
+  fs.rmSync(path.join(PUBLIC, 'gen', 'vendor'), { recursive: true, force: true })
+  for (const f of fs.readdirSync(path.join(PUBLIC, 'gen'))) if (/^bundle\..*\.css$/.test(f)) fs.rmSync(path.join(PUBLIC, 'gen', f))
+  for (const [f, c] of Object.entries(out)) { fs.mkdirSync(path.dirname(path.join(PUBLIC, f)), { recursive: true }); fs.writeFileSync(path.join(PUBLIC, f), c) }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  if (process.argv.includes('--vendor')) vendor({ write: true })     // dev/release.sh: public/gen/vendor for the preload list
-  else build({ write: process.argv.includes('--write') || process.env.WORKERS_CI === '1' })
-}
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) build({ write: process.argv.includes('--write') || process.env.WORKERS_CI === '1' })

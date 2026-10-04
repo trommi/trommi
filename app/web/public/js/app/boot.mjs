@@ -15,8 +15,10 @@ import { CLIENT } from './version.mjs'
 import { startPush } from './push.mjs'
 import './pwa.mjs'
 
-// The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js).
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(err => console.warn('service worker', err.message))
+// The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js). Not on the dev server
+// (dev/serve.mjs, the preview: html[data-build="dev"]): there a worker installed before is taken away.
+if (document.documentElement.dataset.build === 'dev') navigator.serviceWorker?.getRegistrations().then(list => list.forEach(r => r.unregister())).catch(() => {})
+else if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(err => console.warn('service worker', err.message))
 
 const T0 = performance.now()
 const params = new URLSearchParams(location.search)

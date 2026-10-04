@@ -1,7 +1,6 @@
 # Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, core/*,
-# connector/*), its build step (app/web/dev/build.mjs) copies core/ into public/vendor and bundles the stylesheets.
-# This job waits until https://app.trommi.com serves the pushed sw.js and app code (HTML is left out: Cloudflare may rewrite it), so the
-# "web-app" environment on GitHub shows which commit is live.
+# connector/*); its build step (app/web/dev/build.mjs) generates public/gen/, sw.js and the preloads. This job waits
+# until https://app.trommi.com serves this commit (gen/build.txt), so the "web-app" environment shows which is live.
 name: Web app deploy
 
 on:
@@ -25,25 +24,19 @@ jobs:
       name: web-app
       url: https://app.trommi.com
     steps:
-      - uses: actions/checkout@v4
-
       - name: Wait until app.trommi.com serves this commit
         run: |
-          # sw.js as Cloudflare's build writes it (app/web/dev/build.mjs: the stylesheet bundle into its shell list);
-          # the source sw.js means the build step did not run there (the app works, without the bundle).
-          src_sw=$(sha256sum app/web/public/sw.js | cut -d' ' -f1)
-          node app/web/dev/build.mjs --write
-          want_sw=$(sha256sum app/web/public/sw.js | cut -d' ' -f1)
-          want_app=$(sha256sum app/web/public/js/app/room.mjs | cut -d' ' -f1)
+          # Cloudflare's build (app/web/dev/build.mjs) writes gen/build.txt with the commit and fills sw.js; a sw.js
+          # with VERSION "dev" means the build step did not run there.
+          want=$(echo "${{ github.sha }}" | cut -c1-7)
           for i in $(seq 1 60); do
-            got_sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sha256sum | cut -d' ' -f1 || true)
-            got_app=$(curl -fsS --max-time 10 "https://app.trommi.com/js/app/room.mjs?ci=$i" | sha256sum | cut -d' ' -f1 || true)
-            echo "attempt $i: sw $([ "$got_sw" = "$want_sw" ] && echo ok || { [ "$got_sw" = "$src_sw" ] && echo unbuilt || echo old; }), app $([ "$got_app" = "$want_app" ] && echo ok || echo old)"
-            if [ "$got_sw" = "$src_sw" ] && [ "$got_app" = "$want_app" ]; then
-              echo "::error::app.trommi.com serves this commit without the build step: Cloudflare did not run 'node dev/build.mjs' (the core in public/vendor is missing)"
-              exit 1
+            got=$(curl -fsS --max-time 10 "https://app.trommi.com/gen/build.txt?ci=$i" | sed -n 's/^commit: //p' || true)
+            sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sed -n 's/^const VERSION = "\([^"]*\)".*/\1/p' || true)
+            echo "attempt $i: build.txt commit ${got:-none}, sw.js version ${sw:-none}"
+            if [ "$got" = "$want" ]; then
+              [ -n "$sw" ] && [ "$sw" != "dev" ] && exit 0
+              echo "::error::app.trommi.com serves this commit with an unbuilt sw.js (VERSION dev)"; exit 1
             fi
-            [ "$got_sw" = "$want_sw" ] && [ "$got_app" = "$want_app" ] && exit 0
             sleep 10
           done
           echo "app.trommi.com did not serve this commit within 10 minutes (check the Cloudflare build of trommi-app)"

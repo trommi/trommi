@@ -24,11 +24,16 @@ node dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot,
 
 ### The build
 
-`dev/build.mjs` (no dependencies) makes one stylesheet of the ~25 `<link data-sheet>` lines of `public/index.html`, in their order, as `public/gen/bundle.<hash>.css` (cached for good, `_headers`), and points `index.html` and the shell list of `sw.js` at it. The sheets in `public/css` stay the files to edit; the bundle is never committed. Cloudflare's build runs it on its checkout before the deploy (`WORKERS_CI=1` writes; elsewhere `node dev/build.mjs --write`, plain `node dev/build.mjs` only checks). `dev/serve.mjs` serves the same build from memory, so local runs and the e2e see what is deployed. Without the build the source shell works as it is.
-
-Views switch sheets on and off (`layout.mjs` CSS, `js/app/sheets.mjs`): the hub linked only a page's own sheets, and some rules of one view's sheet would change another view. In the bundle each sheet a view may switch off is wrapped as `@supports (--sheet: name) { @media all { … } }`; `sheets.mjs` sets that `@media` to `not all`, which takes its rules out at the same place in the cascade, like a disabled `<link>`. A sheet that does not parse on its own (unbalanced braces, an unclosed comment or string) stops the build: in a bundle it would spill into the next sheet. Further build steps go into `build()` of `dev/build.mjs`.
-
-Before a push: `dev/release.sh` (writes the shell's file list and version into `public/sw.js`). A release without it still reaches every device: the worker revalidates each file it serves (ETag) and, when one changed, fetches the shell again and offers "Neu laden".
+Nothing generated is committed. `dev/build.mjs` (no dependencies) makes, in Cloudflare's build at deploy time
+(`wrangler.jsonc` "build", `WORKERS_CI=1`): `public/gen/vendor/` (the core, from the repository's `core/`), one
+stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their order), `public/gen/build.txt`
+(the commit; the Web app deploy workflow waits until app.trommi.com serves it), the modulepreload list in
+`index.html` and `VERSION` + `SHELL` of `sw.js` (a hash of, and the list of, every file the app serves). In the
+repository `index.html` and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`): no release
+step, nothing to conflict on. `dev/serve.mjs` serves the same build from memory on every request, with `VERSION "dev"`
+(the service worker caches nothing): edit, reload, see it. `node dev/build.mjs` checks only; `--write` writes into
+`public/` (never commit that). `gen/connector.mjs` and `gen/plugins/` are made by `node connector/bundle.mjs` (it needs
+the repository's npm packages), committed, and checked by CI.
 
 ## The Whiteboard
 
