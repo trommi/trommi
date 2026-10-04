@@ -182,6 +182,8 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
   state.permissions ??= {}
   const model = () => client.model
   const me = () => model().room.my_device_id
+  // This agent's session on the board: its session_id once sessions have their own keys (R6), its device id before.
+  const mySession = () => model().sessions.get(client.session_id ?? me())
   const myCards = () => [...model().cards.values()].filter(c => c.agent_device_id === me()).sort((a, b) => a.first_envelope_number - b.first_envelope_number)
 
   function findCard(ref) {
@@ -382,7 +384,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const id = String(args.id ?? '').trim()
         if (!id) throw new Error('id is required')
         if (!STATUSES.includes(args.state)) throw new Error(`state must be one of ${STATUSES.join(', ')}; got "${args.state}"`)
-        const before = model().sessions.get(me())?.status_lines?.find(s => s.id === id)
+        const before = mySession()?.status_lines?.find(s => s.id === id)
         if (!before && !args.label) throw new Error(`label is required for the new status line "${id}"`)
         const card = args.card_id ? findCard(args.card_id) : null
         await client.setStatus({ [`status_line/${id}`]: {
@@ -392,14 +394,14 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         return `status "${id}" is ${args.state}`
       }
       case 'clear_status': {
-        const lines = model().sessions.get(me())?.status_lines ?? []
+        const lines = mySession()?.status_lines ?? []
         const gone = args.id ? [String(args.id)] : lines.map(s => s.id)
         if (gone.length) await client.setStatus(Object.fromEntries(gone.map(id => [`status_line/${id}`, null])))
         return 'cleared'
       }
       case 'introduce': {
         if (!args.model) throw new Error('model is required')
-        const was = model().sessions.get(me())?.profile ?? {}
+        const was = mySession()?.profile ?? {}
         await client.setStatus({ profile: {
           ...was, model: String(args.model), task: args.task != null ? String(args.task) : was.task ?? '',
           ...(args.icon != null ? { icon: String(args.icon) } : {}),

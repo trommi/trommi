@@ -173,6 +173,12 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
       }
       throw err
     }
+    // R6: an agent holds no room key; it can say something only once a human assigned it to a session.
+    if (client.whenSession && !client.session_id) {
+      me.phase = 'waiting-session'
+      log('waiting for the human to assign this agent to a session in the Trommi app')
+      await client.whenSession()
+    }
     // The name the board shows lives in the encrypted register device/<id>; the core writes it from device_info
     // after joining. Rewrite it when the folder or machine label changed.
     const id = client.model.room.my_device_id
@@ -270,6 +276,7 @@ export async function main() {
     const me = channel.me
     if (['conflict', 'halted', 'lease-lost', 'too-old'].includes(me.phase)) return me.error
     if (me.phase === 'joining') return 'Joining the Trommi room: waiting for the human to confirm this session in the Trommi app. Try again in a moment.'
+    if (me.phase === 'waiting-session') return 'This agent is in the Trommi room but not yet assigned to a session: the human assigns it in the Trommi app. Try again in a moment.'
     if (me.phase === 'starting') return 'Connecting to the Trommi hub; try again in a moment.'
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. Ask the human for an agent invite link (Trommi app: invite an agent) and call join with it, or start Claude Code with TROMMI_INVITE set.`
   }
