@@ -18,7 +18,7 @@
 .room-error { color: var(--deny); font-weight: 500; }
 .room-ok { color: var(--accent); font-weight: 600; }
 
-/* tabs: Geräte | Einstellungen */
+/* tabs: Devices | Settings */
 .room-tabs { display: flex; gap: 4px; margin: -4px 0 8px; border-bottom: 1px solid var(--line); }
 .room-tabs a { padding: 8px 12px; color: var(--muted); text-decoration: none; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .room-tabs a:hover { color: var(--fg); }

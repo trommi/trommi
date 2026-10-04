@@ -19,7 +19,7 @@ export const CSS = {
   card: ['tokens', 'app', 'crowns', 'back', 'cardclip', 'phone-desk', 'piles', 'stamps', 'logo', 'links', 'quicksend', 'keys', 'richhtml', 'cardpage', 'speech'],
   picture: ['tokens', 'app', 'back', 'logo', 'links', 'cardpage'],
   asset: ['tokens', 'app', 'back', 'logo', 'links', 'cardpage', 'asset'],   // a published page or picture, in the app's viewer
-  room: ['tokens', 'app', 'back', 'logo', 'links', 'keys'],
+  room: ['tokens', 'app', 'crowns', 'back', 'cardclip', 'phone-desk', 'piles', 'logo', 'links', 'quicksend', 'keys'],   // devices, pairing, settings: the sidebar stands beside them
 }
 
 function topbar(model, base, current, view = '') {

@@ -28,15 +28,15 @@ export default class extends Controller {
     const why = p ? passphraseProblem(p) : null
     const level = !p ? 0 : why ? 1 : p.length >= 28 ? 3 : 2
     this.meterTarget.dataset.level = level
-    this.meterTarget.textContent = !p ? 'Mindestens 4 Wörter und 14 Zeichen.'
-      : why ? `Noch nicht: ${why}`
-        : again && again !== p ? 'Stark genug. Die zweite Eingabe ist noch anders.'
-          : level === 3 ? 'Sehr gut.' : 'Stark genug.'
+    this.meterTarget.textContent = !p ? 'At least four words and 14 characters.'
+      : why ? `Not yet: ${why}`
+        : again && again !== p ? 'Strong enough. The second entry still differs.'
+          : level === 3 ? 'Very good.' : 'Strong enough.'
     if (this.hasGoTarget) this.goTarget.disabled = !(p && !why && again === p)
   }
 
   async usage() {
-    try { const e = await navigator.storage?.estimate?.(); this.localTarget.textContent = e ? size(e.usage) : 'unbekannt' } catch { this.localTarget.textContent = 'unbekannt' }
+    try { const e = await navigator.storage?.estimate?.(); this.localTarget.textContent = e ? size(e.usage) : 'unknown' } catch { this.localTarget.textContent = 'unknown' }
     if (!this.hasHubTarget) return
     try {
       const u = await window.trommi?.client?.usage?.()
