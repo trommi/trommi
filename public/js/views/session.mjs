@@ -19,7 +19,7 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { html, raw } from './html.mjs'
-import { WORDS, rich, kindOf, linkInfo, ago, agoSpan, advisedLabels } from './text.mjs'
+import { WORDS, rich, kindOf, agoSpan, advisedLabels } from './text.mjs'
 import { deskRow, runSection } from './desk.mjs'
 import { sessionHeadEdit } from './session-edit.mjs'
 import { srcOf } from './picture.mjs'
@@ -75,13 +75,16 @@ const isPicture = a => kindOf(a) === 'image' && a.url
 
 // ---- what a render of one session needs, worked out once ----
 /** model: views/model.mjs. Returns null when the session is not on the board. */
-export function sessionOf(model, id, outside = '', { floor = 0, more = false } = {}) {
+export function sessionOf(model, id, { floor = 0, more = false } = {}) {
   const agent = model.byAgent.get(id)
   if (!agent) return null
   const { state } = model
   const all = state.messagesOf ? state.messagesOf(id) : state.messages.filter(m => m.agent === id)
-  const messages = floor > 0 ? all.filter(m => m.seq >= floor) : all
+  let messages = floor > 0 ? all.filter(m => m.seq >= floor) : all
   const cards = state.cards.filter(c => c.agent === id)
+  // An approval it waits for stands at the end of the conversation, as its Desk row (it has no thread of its own).
+  const asks = model.fresh.filter(c => c.agent === id && c.kind === 'permission')
+  if (asks.length) messages = [...messages, ...asks.map(c => ({ id: `p${c.id}`, seq: Number.MAX_SAFE_INTEGER - 1, agent: id, from: 'event', kind: 'asked', card_id: c.id, text: c.title, ts: c.created }))]
   // The session's pictures, oldest first: what it sent and was sent, then what its questions carry.
   const pictures = [], nr = new Map()
   const add = list => { for (const a of list ?? []) if (isPicture(a) && !nr.has(a.url)) { pictures.push(a); nr.set(a.url, pictures.length) } }
@@ -91,7 +94,7 @@ export function sessionOf(model, id, outside = '', { floor = 0, more = false } =
   const askAt = new Map()
   for (const m of messages) if (m.from === 'event' && m.kind === 'asked' && m.card_id) askAt.set(m.card_id, m.id)
   const fresh = model.fresh.filter(c => c.agent === id)
-  return { id, agent, model, messages, cards, pictures, nr, askAt, fresh, tasks: state.tasks.filter(t => t.agent === id), outside, floor, more }
+  return { id, agent, model, messages, cards, pictures, nr, askAt, fresh, tasks: state.tasks.filter(t => t.agent === id), floor, more }
 }
 
 // ---- attachments ----
@@ -135,13 +138,11 @@ function ask(m, s, base) {
   return html`<div class="ask" id="msg-${m.id}">${eventLine({ kind, text: text === card.title ? '' : text, ts: m.ts }, { ...card, title: card.title || m.text }, base, { wrap: true })}</div>`
 }
 
-// Something the session published under a link of its own: an artifact. The card always shows a picture of it (the
-// controller "assetthumb" decrypts a picture or the first screen of a page in this browser; any other kind keeps the
-// drawn kind below), what it is, Open, and one "Copy link": the link that opens it for whoever gets it (the hub's
-// outside release, /asset/share and /r/<id>; controller "share"). No separate Share: a copied link someone cannot
-// open is no use (Christopher, card Nr. 197). While it is released, a quiet "Shared · Stop" stays on the card.
+// Something the session published (a published object, announced in its conversation): the card shows a picture
+// of it (a picture itself; a page's first screen, drawn by controller "assetthumb" in the sandboxed frame), what it
+// is, Open (the app's own viewer, /s/<id>/a/<object>) and "Copy link": that address, for the people of this room.
+// (The contents are end-to-end encrypted; a link for someone outside the room needs a release the hub does not have.)
 const ASSET_LABEL = { html: 'Page', image: 'Picture', video: 'Video', audio: 'Audio', file: 'File' }
-const keyOf = href => String(href).split('#')[1] ?? ''
 const ASSET_GLYPH = {
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 9.2a1.2 1.2 0 1 0 0-.1'],
   html: ['M3.5 5h17v14h-17z', 'M3.5 9h17', 'M6 7h.01M8.5 7h.01', 'M7 12.5h7M7 15.5h10'],
@@ -150,21 +151,43 @@ const ASSET_GLYPH = {
   file: ['M6 3h8l4 4v14H6z', 'M14 3v4h4', 'M9 12h6M9 15.5h6'],
 }
 const glyph = type => raw(`<svg viewBox="0 0 24 24" class="asset-glyph" aria-hidden="true">${(ASSET_GLYPH[type] ?? ASSET_GLYPH.file).map(d => `<path d="${d}"/>`).join('')}</svg>`)
-/** Released now: a release that ran out counts as none (copying releases it again). */
-const releasedNow = (share, now = Date.now()) => Boolean(share && (!share.expires || share.expires > now))
-export function assetCard(asset, said, assets, outside = '') {
-  const record = assets?.find(a => a.id === asset.id)
+const assetPath = (s, id, base) => `${sessionPath(s.id, base)}/a/${id}`
+/** The published object a message announces, or a stand-in when it was taken back (or is not known here). */
+function assetOf(m, s) {
+  const found = s.model.state.assets.find(a => a.id === m.published)
+  if (found) return found
+  const title = String(m.text ?? '').split('\n')[0].replace(/^\*\*(.*)\*\*$/, '$1').trim()
+  return { id: m.published, gone: true, type: 'file', title }
+}
+/** A preview: a picture as itself (decrypted when it comes into view), a page by controller "assetthumb". */
+const preview = (asset, type, inner = '') => (type === 'image' && asset.att?.url
+  ? html`<img src="${asset.att.url}" alt="" loading="lazy" decoding="async">${inner}`
+  : html`${glyph(type)}${inner}`)
+const thumbAttrs = (asset, type) => (type === 'html' && asset.att?.url ? html` data-controller="assetthumb" data-assetthumb-src-value="${asset.att.url}"` : '')
+export function assetCard(asset, s, base) {
   const type = ASSET_LABEL[asset.type] ? asset.type : 'file'
   const kind = ['Artifact', ASSET_LABEL[type], !asset.gone && asset.size ? sizeText(asset.size) : ''].filter(Boolean).join(' · ')
   if (asset.gone) return html`<div class="asset-slot"><div class="asset-card has-preview is-gone"><span class="asset-preview" data-kind="${type}">${glyph(type)}</span><div class="asset-text"><span class="caps">${kind}</span><strong>${asset.title || 'Untitled'}</strong><span class="asset-note">No longer available.</span></div></div></div>`
-  // The message carries the link under the board's public address; here it opens on this address.
-  const full = String(said ?? '').split(/\s+/).find(word => word.endsWith(asset.url) && word !== asset.url)
-  const href = (full && linkInfo(full, assets).asset?.href) || asset.url
-  const key = keyOf(href), id = asset.id ?? ''
-  const shared = Boolean(id && key) && releasedNow(record?.share)
-  const share = record?.share
-  const seen = shared ? `Anyone with the link can open it, without a login. Opened ${share.opens === 1 ? 'once' : `${share.opens ?? 0} times`}${share.expires ? `, until ${FULL.format(share.expires)}` : ''}.` : ''
-  return html`<div class="asset-slot"><div class="asset-card has-preview" data-controller="share" data-share-id-value="${id}" data-share-key-value="${key}" data-share-href-value="${href}" data-share-title-value="${asset.title || 'Untitled'}"${shared ? html` data-share-link-value="${outside}/r/${id}#${key}"` : ''}><a class="asset-preview" data-kind="${type}" href="${href}" target="_blank" rel="noopener" tabindex="-1" aria-hidden="true"${id && key && (type === 'image' || type === 'html') ? html` data-controller="assetthumb" data-assetthumb-kind-value="${type}"` : ''}>${glyph(type)}${type === 'html' ? raw('<span class="asset-page-label">Page</span>') : ''}</a><div class="asset-text"><span class="caps">${kind}</span><strong>${asset.title || 'Untitled'}</strong>${asset.note ? html`<span class="asset-note">${asset.note}</span>` : ''}</div><div class="asset-actions"><a class="asset-open" href="${href}" target="_blank" rel="noopener">Open</a><button type="button" class="asset-copy" data-action="share#copy" data-share-target="copy" title="${shared ? 'Copy the link: anyone who has it can open this' : 'Copy a link that opens this for anyone who has it'}">Copy link</button>${shared ? html`<span class="asset-shared" title="${seen}">Shared · <button type="button" class="asset-stop" data-action="share#stop">Stop</button></span>` : ''}</div></div></div>`
+  const view = assetPath(s, asset.id, base), title = asset.title || 'Untitled'
+  return html`<div class="asset-slot"><div class="asset-card has-preview" data-controller="share" data-share-link-value="${view}" data-share-title-value="${title}"><a class="asset-preview${type === 'image' ? ' is-shown' : ''}" data-kind="${type}" data-nav href="${view}" tabindex="-1" aria-hidden="true"${thumbAttrs(asset, type)}>${preview(asset, type, type === 'html' ? raw('<span class="asset-page-label">Page</span>') : '')}</a><div class="asset-text"><span class="caps">${kind}</span><strong>${title}</strong>${asset.note ? html`<span class="asset-note">${asset.note}</span>` : ''}</div><div class="asset-actions"><a class="asset-open" data-nav href="${view}">Open</a><button type="button" class="asset-copy" data-action="share#copy" title="Copy a link to it: it opens for the people of this room">Copy link</button></div></div></div>`
+}
+
+/** The viewer: the published thing at its own address, as large as the page lets it be. */
+export function assetPage(s, asset, base, from = '') {
+  const type = ASSET_LABEL[asset.type] ? asset.type : 'file'
+  const back = from && s.messages.some(m => m.id === from) ? `${sessionPath(s.id, base)}#msg-${from}` : sessionPath(s.id, base)
+  const arrow = raw('<svg viewBox="0 0 24 24" class="focus-icon" aria-hidden="true"><path d="M19 12H5M11 6l-6 6 6 6"/></svg>')
+  const url = asset.att?.url ?? ''
+  const stage = asset.gone || !url ? html`<p class="as-problem">This is no longer available.</p>`
+    : type === 'html' ? html`<div class="as-frame-box" data-controller="assetthumb" data-assetthumb-src-value="${url}" data-assetthumb-full-value="true"><p class="as-wait">Opening the page…</p></div>`
+      : type === 'image' ? html`<img class="as-media" src="${url}" alt="${asset.title}" decoding="async">`
+        : type === 'video' ? html`<video class="as-media" src="${url}" controls playsinline preload="metadata"></video>`
+          : type === 'audio' ? html`<audio class="as-media" src="${url}" controls preload="metadata"></audio>`
+            : html`<div class="as-file"><span class="as-file-name">${asset.att?.name ?? asset.title}</span>${asset.size ? html`<span class="caps">${sizeText(asset.size)}</span>` : ''}<a class="as-btn" href="${url}" download="${asset.att?.name ?? ''}">Download</a></div>`
+  return html`<div class="t-picture as-view" data-controller="share" data-share-link-value="${assetPath(s, asset.id, base)}" data-share-title-value="${asset.title || 'Untitled'}">
+<header class="t-picture-bar"><a class="focus-back-desk t-picture-back" data-nav href="${back}" aria-label="Back to the conversation">${arrow}<span>${s.agent.name}</span></a><span class="t-picture-where"><b>${ASSET_LABEL[type]}</b> ${asset.title || 'Untitled'}</span>${asset.gone ? '' : html`<button type="button" class="asset-copy as-copy" data-action="share#copy" title="Copy a link to it: it opens for the people of this room">Copy link</button>`}</header>
+${asset.note ? html`<p class="as-note">${asset.note}</p>` : ''}<div class="as-stage" data-type="${type}">${stage}</div>
+</div>`
 }
 
 // The agent's words (views/text.mjs rich), with its code blocks dressed: a head with the button that copies (controller "copy").
@@ -190,7 +213,7 @@ function message(m, prev, s, base) {
   const cont = Boolean(prev && prev.from === m.from && dayKey(prev.ts) === dayKey(m.ts) && (m.from === 'event' || m.ts - prev.ts < GROUP_GAP))
   const about = m.card_id ? s.model.byCard.get(m.card_id) : null
   const firstPic = (m.attachments ?? []).find(isPicture)
-  const key = `${m.pending ? 'p' : ''}|${m.text?.length ?? 0}|${m.attachments?.length ?? 0}|${m.ts}|${base}|${s.outside}|${cont}|${about?.title ?? ''}|${about?.number ?? ''}|${m.asset ? (m.asset.gone ? 'gone' : JSON.stringify(s.model.state.assets.find(a => a.id === m.asset.id)?.share ?? 0)) : ''}|${firstPic ? s.nr.get(firstPic.url) : ''}|${m.from === 'event' && s.askAt.has(m.card_id)}`
+  const key = `${m.pending ? 'p' : ''}|${m.text?.length ?? 0}|${m.attachments?.length ?? 0}|${m.ts}|${base}|${cont}|${about?.title ?? ''}|${about?.number ?? ''}|${m.published ? Boolean(s.model.state.assets.find(a => a.id === m.published)) : ''}|${firstPic ? s.nr.get(firstPic.url) : ''}|${m.from === 'event' && s.askAt.has(m.card_id)}`
   const k = `${s.id} ${m.id}`, had = kept.get(k)
   if (had?.key === key) return had.out
   const out = build(m, cont, about, s, base)
@@ -207,7 +230,7 @@ function build(m, cont, about, s, base) {
     return html`<article class="msg msg-user${cont ? ' cont' : ''}" id="msg-${m.id}">${list.filter(a => a.kind === 'scribble' && a.url).map(a => html`<a class="scribble-card" href="${a.url}" target="_blank" rel="noopener" aria-label="Scribble sent: open the picture"><img${srcOf(a, 280)} alt="" loading="lazy" decoding="async" width="280" height="210"><span>Scribble</span></a>`)}${attachments(list.filter(a => a.kind !== 'scribble'), s, base, m.id)}${aboutNode}${m.cards?.length ? html`<div class="cardclip-row">${m.cards.map(c => html`<a class="cardclip-chip is-link" data-nav href="${sessionPath(s.id, base)}/q/${encodeURIComponent(c.number)}" title="Nr. ${c.number} · ${c.title}${c.choice_label ? ` → ${c.choice_label}` : ''}"><b>Nr. ${c.number}</b><span class="cardclip-title">${c.title}</span>${c.choice_label ? html`<span class="cardclip-answer">→ ${c.choice_label}</span>` : ''}</a>`)}</div>` : ''}${m.text ? html`<div class="bubble"><p>${m.text}</p></div>` : ''}${timeNode(m.ts, 'msg-time')}</article>`
   }
   // The agent's words (the light markdown; a layout fenced as html goes into the sandboxed frame, views/text.mjs), with what it attached.
-  const text = m.asset ? assetCard(m.asset, m.text, assets, s.outside) : raw(String(words(m.text ?? '', { assets, extra: m.html ?? '' })).replace(/<\/div>$/, () => `${attachments(m.attachments, s, base, m.id)}</div>`))
+  const text = m.published ? assetCard(assetOf(m, s), s, base) : raw(String(words(m.text ?? '', { assets, extra: m.html ?? '' })).replace(/<\/div>$/, () => `${attachments(m.attachments, s, base, m.id)}</div>`))
   return html`<article class="msg msg-agent${cont ? ' cont' : ''}" id="msg-${m.id}"${cont ? html` title="${FULL.format(m.ts)}"` : ''}>${cont ? '' : html`<header class="msg-head">${AGENT_MARK}<span class="msg-name">Agent</span>${timeNode(m.ts, 'msg-time')}</header>`}${aboutNode}${text}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details, { assets })}</details>` : ''}</article>`
 }
 const dayLine = ts => html`<div class="day" data-day="${ts}"><span>${dayLabel(ts)}</span></div>`
@@ -328,11 +351,12 @@ export function looseFiles(s) {
   s.messages.forEach((m, i) => {
     if (m.from === 'event') return
     const items = []
-    if (m.asset && !seen.has(`asset ${m.asset.id}`)) {
-      seen.add(`asset ${m.asset.id}`)
-      items.push({ kind: 'asset', type: ASSET_LABEL[m.asset.type] ? m.asset.type : 'file', name: m.asset.title || 'Untitled', url: m.asset.gone ? null : m.asset.url })
+    if (m.published && !seen.has(`asset ${m.published}`)) {
+      seen.add(`asset ${m.published}`)
+      const asset = assetOf(m, s)
+      items.push({ kind: 'asset', type: ASSET_LABEL[asset.type] ? asset.type : 'file', name: asset.title || 'Untitled', url: asset.gone ? null : asset.id, asset })
     }
-    for (const a of m.attachments ?? []) {
+    for (const a of m.published ? [] : m.attachments ?? []) {
       if (!a?.url || onCards.has(a.url) || seen.has(a.url)) continue
       seen.add(a.url)
       items.push({ kind: a.kind === 'scribble' ? 'scribble' : kindOf(a), name: a.name || 'Scribble', url: a.url, n: isPicture(a) ? s.nr.get(a.url) : null, a })
@@ -361,7 +385,7 @@ const FILE_GLYPH = { video: 'video', audio: 'audio', image: 'image', scribble: '
 function fileThumb(item, s, base, msg) {
   if (item.kind === 'asset') {
     if (!item.url) return html`<span class="files-thumb asset-preview is-gone" data-kind="${item.type}" title="${item.name}: no longer available">${glyph(item.type)}</span>`
-    return html`<a class="files-thumb asset-preview" data-kind="${item.type}" href="${item.url}" target="_blank" rel="noopener" title="${item.name}"${item.type === 'image' || item.type === 'html' ? html` data-controller="assetthumb" data-assetthumb-kind-value="${item.type}"` : ''}>${glyph(item.type)}</a>`
+    return html`<a class="files-thumb asset-preview${item.type === 'image' ? ' is-shown' : ''}" data-kind="${item.type}" data-nav href="${assetPath(s, item.asset.id, base)}" title="${item.name}"${thumbAttrs(item.asset, item.type)}>${preview(item.asset, item.type)}</a>`
   }
   if (item.kind === 'image' || item.kind === 'scribble') {
     const img = html`<img${srcOf(item.a, 64)} alt="" loading="lazy" decoding="async" width="64" height="44">`
@@ -426,8 +450,6 @@ ${n > 1 ? html`<a class="focus-stage-step is-prev" data-nav href="${here}/files/
 // ---- routes, the form, the live pieces ----
 export function register(t) {
   const { BASE } = t
-  // The address an outsider reaches the board at (for the link of something shared), the public one first.
-  const outside = () => { try { return t.hub.assetBases?.()[0] ?? '' } catch { return '' } }
   const idOf = ref => { try { return decodeURIComponent(ref) } catch { return ref } }
   // The window of the session's own chat in memory: what is older than its oldest loaded item is not shown yet.
   const timeline = agent => (agent?.device_id ? t.hub.client?.model?.timelines?.get(`chat:session/${agent.device_id}`) : null)
@@ -436,7 +458,7 @@ export function register(t) {
     if (!tl?.has_more) return { floor: 0, more: false }
     return { floor: Number.isFinite(tl.loaded_down_to) ? tl.loaded_down_to : 0, more: true }
   }
-  const current = (id, m = t.model()) => sessionOf(m, id, outside(), windowOf(m.byAgent.get(id)))
+  const current = (id, m = t.model()) => sessionOf(m, id, windowOf(m.byAgent.get(id)))
   const find = (req, res, ref) => {
     const s = current(idOf(ref))
     if (!s) t.notFound(req, res, 'This session is not on the board.')
@@ -505,6 +527,14 @@ export function register(t) {
     if (!s) return
     if (!s.pictures.length) return t.redirect(res, `${sessionPath(s.id, BASE)}/files`)
     t.page(req, res, { model: s.model, title: `${s.agent.name} · picture ${match[2]}`, view: 'picture', sidebar: false, css: 'card', stream: null, main: sessionPicture(s, BASE, Number(match[2]), url.searchParams.get('from') ?? ''), bodyAttrs: ' data-focus-page="card"' })
+  })
+
+  // Something it published, in the app's viewer (?from=<message>: the way back to where it was announced).
+  t.get(/^\/s\/([^/+]+)\/a\/([0-9a-f]{8,64})$/, ({ req, res, url, match }) => {
+    const s = find(req, res, match[1])
+    if (!s) return
+    const asset = s.model.state.assets.find(a => a.id === match[2]) ?? { id: match[2], gone: true, type: 'file', title: 'Published' }
+    t.page(req, res, { model: s.model, title: `${asset.title || 'Published'} · ${s.agent.name}`, view: 'picture', sidebar: false, css: 'asset', stream: null, main: assetPage(s, asset, BASE, url.searchParams.get('from') ?? ''), bodyAttrs: ' data-focus-page="card"' })
   })
 
   // The composer: words, files (pictures, pasted or dropped ones) and copied cards (controller "composer"). The core

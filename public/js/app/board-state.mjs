@@ -66,7 +66,9 @@ export class BoardState {
     for (const s of m.sessions.values()) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(s.agent_device_id), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const memos = boardMemos(m, devToAgent)
-    const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => ({ id: p.object_id, agent: devToAgent.get(p.agent_device_id), type: p.attachments?.[0]?.media_type?.startsWith('image/') ? 'image' : 'html', title: p.title, size: p.attachments?.[0]?.total_size ?? 0, created: p.sent_at ?? 0 }))
+    // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
+    const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
+    const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(p.agent_device_id), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
     const self = this
     let messages = null
     const state = {
@@ -217,6 +219,7 @@ export class BoardState {
       if (cardId) msg.card_id = cardId
       if (c.details) msg.details = c.details
       if (c.html) msg.html = c.html
+      if (c.published_object_id) msg.published = c.published_object_id
       if (c.hand_back) msg.handback = true
       if (c.explain) msg.explain = true
       if (c.present_card) msg.present = true
