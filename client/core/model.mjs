@@ -8,17 +8,24 @@ const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const isZeroHash = h => /^0*$/.test(h)
 
 /**
- * R2: does X come after Y? X covers Y if X's sender had seen Y (its frontier reaches Y's sequence; same sender:
- * higher sequence). Concurrent: the later (sent_at, sender_device_id) wins. causal = { sender_device_id, sender_sequence, sent_at, frontier }.
+ * R2: the one order of writes to a register or memo, the same on every device whatever the hub's delivery order (a
+ * total order, so the winner does not depend on the order of comparisons): (lamport, sent_at, sender_device_id,
+ * sender_sequence). `lamport` is signed inside the body: the writer's counter, one above every lamport it had seen,
+ * so a write made after seeing another always sorts after it. Writes without one (older clients) count as lamport 0.
+ * causal = { sender_device_id, sender_sequence, sent_at, lamport }.
  */
+export function compareWrites(x, y) {
+  return ((x.lamport ?? 0) - (y.lamport ?? 0)) || (x.sender_device_id === y.sender_device_id ? x.sender_sequence - y.sender_sequence : 0) ||
+    (x.sent_at - y.sent_at) || (x.sender_device_id < y.sender_device_id ? -1 : x.sender_device_id > y.sender_device_id ? 1 : 0) || (x.sender_sequence - y.sender_sequence)
+}
+/** Does write X win over write Y (compareWrites)? */
 export function causallyAfter(x, y) {
   if (!y) return true
   if (!x) return false
-  if (x.sender_device_id === y.sender_device_id) return x.sender_sequence > y.sender_sequence
-  if ((x.frontier?.[y.sender_device_id] ?? 0) >= y.sender_sequence) return true
-  if ((y.frontier?.[x.sender_device_id] ?? 0) >= x.sender_sequence) return false
-  return x.sent_at !== y.sent_at ? x.sent_at > y.sent_at : x.sender_device_id > y.sender_device_id
+  return compareWrites(x, y) > 0
 }
+/** A body's lamport, if it is a sane integer. */
+export const lamportOf = c => (Number.isSafeInteger(c?.lamport) && c.lamport > 0 ? c.lamport : 0)
 
 export function emptyModel() {
   return {
@@ -350,7 +357,7 @@ function applyMemo(model, rec, change) {
   return { applied: true }
 }
 function memoOf(object_id, rec, c, old) {
-  const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, ...extra } = c
+  const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, lamport: _l, ...extra } = c
   return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
     desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
     version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false }
@@ -567,9 +574,9 @@ function setAgentRegister(model, session_id, key, value, rec, change) {
   const s = sessionOf(model, session_id)
   const agent = rec.sender_device_id
   const old = s.registers.get(key)
-  if (old?.sender_sequence && rec.sender_sequence && rec.sender_sequence <= old.sender_sequence) return
-  if (value === null || value === undefined) s.registers.delete(key)
-  else s.registers.set(key, { value, envelope_number: rec.envelope_number, sender_sequence: rec.sender_sequence })
+  // R2 as for human registers: one total order of writes; a delete stays as a tombstone (value null).
+  if (old && rec.causal && old.causal ? !causallyAfter(rec.causal, old.causal) : old?.sender_sequence && rec.sender_sequence && rec.sender_sequence <= old.sender_sequence) return
+  s.registers.set(key, { value: value ?? null, envelope_number: rec.envelope_number, sender_sequence: rec.sender_sequence, causal: rec.causal ?? null })
   if (key === 'profile') s.profile = value ?? null
   else if (key.startsWith('status_line/')) {
     const id = key.slice('status_line/'.length)
