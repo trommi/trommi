@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
     # Only what goes into the image restarts the hub (a restart drops every open stream).
-    paths: ['hub/**', 'crypto/**', '.github/workflows/deploy.yml']
+    paths: ['hub/**', 'crypto/**', 'deploy/**', '.github/workflows/deploy.yml']
   workflow_dispatch:
 
 concurrency:
@@ -58,14 +58,12 @@ jobs:
       - name: Ship image
         run: docker save "$IMAGE" | gzip | ssh -o StrictHostKeyChecking=no "$HOST" 'gunzip | docker load'
 
-      - name: Back up data and restart hub
+      - name: Back up data (online SQLite copy) and restart hub
         run: |
+          ssh -o StrictHostKeyChecking=no "$HOST" 'bash -s' < deploy/backup.sh
           ssh -o StrictHostKeyChecking=no "$HOST" "set -e
             cd /srv/trommi
             docker tag $IMAGE trommi-hub:current
-            # Stopped for the copy, so the SQLite files are consistent (a few seconds without the hub).
-            if [ -f data/hub.db ]; then docker compose stop hub; tar -czf backups/data-\$(date +%Y%m%d-%H%M%S).tgz data; fi
-            ls -1t backups/*.tgz 2>/dev/null | tail -n +15 | xargs -r rm -f
             docker compose up -d hub
             docker image prune -f >/dev/null"
 

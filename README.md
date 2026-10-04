@@ -149,6 +149,8 @@ On connect the hub first sends what `GET envelopes` would (same depth rule), the
 
 **Truth: `envelopes` and `member_entries`. Derived: `objects`, `timelines`.** The two derived tables are written from signed header fields in the same transaction as the envelope and can be dropped and rebuilt from `envelopes` at any time (the hub's tests do exactly that). The hub uses them for fast answers (open cards by urgency, counts, later the admin page). They are never a source of truth for a client: clients verify everything against signatures. Card options and all content stay inside `encrypted_body`.
 
+hub.db uses incremental auto-vacuum (pages freed by deleted rooms are returned every 30 s in small steps). Backups before each deploy: an online copy (`VACUUM INTO` in the running container) gzipped to `/srv/trommi/backups/hub-<stamp>.db.gz`, attachments mirrored to `backups/attachments/`; kept: 7 newest plus the newest of each of the last 7 days (`deploy/backup.sh`).
+
 Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB STREAM chunks, a random key per file), stored as files `/data/attachments/<room_id>/<attachment_id>`, served with `Range`. The store is a four-method interface (`put`, `get` with range, `size`, `delete`) so it can move to object storage later.
 
 **Retention.** 30 days after an object's newest head is answered or closed, every envelope of that object and of its chat timeline `card/<object_id>` is pruned to header, ciphertext hash and signature (`pruneEnvelope`) and its attachments are deleted; chains still verify. Envelopes without a card stay for now (whether chat goes after 30 days is a pending decision).
@@ -169,6 +171,7 @@ Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB
 | Password escrow reads | 10 per hour per room and per address (`HUB_LIMIT_ESCROW_READS_PER_HOUR`) |
 | Writes in flight | `HUB_WRITE_QUEUE` (512) POST/PUT/DELETE at once; beyond: `503 overloaded`, `retry-after: 1` |
 | Stream send buffer | `HUB_STREAM_BUFFER_BYTES` (4 MiB) per stream; beyond: dropped, resume by cursor |
+| All stream buffers together | `HUB_STREAM_BUFFER_TOTAL_BYTES` (256 MiB); beyond: the fattest streams are dropped until 80 % remain, they resume by cursor. Catch-up is sent in slices of 64 envelopes and waits for the socket above 256 KiB |
 
 Every rate limit of the table is configurable: `HUB_LIMIT_<NAME>` for each key of `LIMITS` in `hub/server.mjs` (`HUB_LIMIT_ENVELOPES_PER_SECOND`, `HUB_LIMIT_ENVELOPE_BURST`, `HUB_LIMIT_FOUND_PER_IP_HOUR`, `HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE`, `HUB_LIMIT_STREAMS_PER_DEVICE`, …).
 

@@ -116,6 +116,8 @@ export function openDb(dir, { log = () => {} } = {}) {
     }
   }
   const db = new DatabaseSync(file)
+  // Incremental auto-vacuum, set before the first table exists (a fresh file): deleted rooms give space back in small steps.
+  if (db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get().n === 0) db.exec('PRAGMA auto_vacuum = INCREMENTAL')
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA temp_store = MEMORY;')
   db.exec(SCHEMA)
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
@@ -129,6 +131,13 @@ export function openDb(dir, { log = () => {} } = {}) {
     try { const out = fn(); db.exec('COMMIT'); return out } catch (err) { db.exec('ROLLBACK'); throw err } finally { depth-- }
   }
   return db
+}
+
+/** Give free pages back to the file system, a few megabytes per call (off the hot path: a timer, after room deletions). */
+export function vacuumStep(db, pages = 2048) {
+  const free = db.prepare('PRAGMA freelist_count').get().freelist_count
+  if (free > 0) db.exec(`PRAGMA incremental_vacuum(${pages})`)
+  return free
 }
 
 /** Ciphertext bytes -> STREAM chunk count of an encrypted attachment (22-byte head, 64 KiB + tag per chunk). */
