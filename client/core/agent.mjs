@@ -21,7 +21,9 @@ const agentMethods = {
    */
   async claimSession({ process_instance } = {}) {
     this._needAgent()
-    const instance = process_instance ?? randomHex(8)
+    // One instance per process (R4): a claim without one (the outbox, before start() took the lease) uses the process's,
+    // never a fresh one, which would take this process's own lease over and fence its own posts and stream.
+    const instance = process_instance ?? this._leaseInstance ?? (this._processInstance ??= randomHex(8))
     const r = await this.hub.agentLease({ process_instance: instance })
     this.hub.lease_generation = r.lease_generation
     this._leaseInstance = instance

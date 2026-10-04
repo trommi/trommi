@@ -36,6 +36,7 @@ export class Hub {
     this.client_name = client                   // 'app/1.2.3' | 'channel/0.1.0': sent as Trommi-Client on every request
     this.onTooOld = null
     this.onLeaseLost = null
+    this.recoverLease = null                    // agents: async () => true if this process holds the lease again (renewal), false if another does
     this.onForbidden = null                     // stream refused with 403: the client checks the member list (removed: it closes the stream)
     this._wakers = new Set()                    // sleeping stream reconnects, woken when a request gets through again
     this._unreachable = false
@@ -76,8 +77,9 @@ export class Hub {
   /** One request. Throws ZError(code) with .status (and .retry_after) for every refusal. */
   baseHeaders() { return this.client_name ? { 'trommi-client': this.client_name, 'trommi-protocol': '1' } : { 'trommi-protocol': '1' } }
 
-  async request(method, path, { body, auth = true, raw = null, headers = {}, query = null, binary = false, retried = false } = {}) {
-    const h = { ...this.baseHeaders(), ...headers }
+  async request(method, path, { body, auth = true, raw = null, headers = {}, query = null, binary = false, retried = false, lease = false, leaseRetried = false } = {}) {
+    const h = { ...this.baseHeaders(), ...headers, ...(lease ? this.leaseHeaders() : {}) }
+    const generation = this.lease_generation
     if (auth) h.authorization = await this.authHeader()
     let payload
     if (raw) { payload = raw; h['content-type'] = 'application/octet-stream' }
@@ -96,13 +98,22 @@ export class Hub {
     else if (this._unreachable) { this._unreachable = false; this.wake() }   // the hub is back: reconnect streams now
     if (res.status === 401 && auth && !retried) {
       this.token = null
-      return this.request(method, path, { body, auth, raw, headers, query, binary, retried: true })
+      return this.request(method, path, { body, auth, raw, headers, query, binary, retried: true, lease, leaseRetried })
     }
     if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); throw e }
     if (!res.ok) {
       let err = {}
       try { err = await res.json() } catch {}
-      throw new ZError(err.error ?? `http-${res.status}`, err.message ?? res.statusText, { status: res.status, retry_after: Number(res.headers.get('retry-after')) || null, body: err })
+      const e = new ZError(err.error ?? `http-${res.status}`, err.message ?? res.statusText, { status: res.status, retry_after: Number(res.headers.get('retry-after')) || null, body: err })
+      // R4 on uploads and ephemeral posts: sent under a generation this process has since replaced, or the lease ran out
+      // while this process lives (a renewal gives it back): once more. Only a renewal refused by the hub (another live
+      // process holds the key) is lease-lost for good, and then the process stops (onLeaseLost).
+      if (e.code === 'lease-lost' && lease && !leaseRetried) {
+        let again = this.lease_generation !== generation
+        if (!again && this.recoverLease) { try { again = await this.recoverLease() } catch { throw e } if (!again) this.onLeaseLost?.(e) }
+        if (again) return this.request(method, path, { body, auth, raw, headers, query, binary, retried, lease, leaseRetried: true })
+      }
+      throw e
     }
     if (binary) return new Uint8Array(await res.arrayBuffer())
     const text = await res.text()
@@ -150,8 +161,8 @@ export class Hub {
   }
   sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
   sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/key_back_links`)) }
-  postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, headers: this.leaseHeaders() }) }
-  putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, headers: this.leaseHeaders() }) }
+  postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, lease: true }) }
+  putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, lease: true }) }
   /** R4: an agent names its lease generation on every write and stream (none for humans). */
   leaseHeaders() { return this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : { 'x-lease-generation': 'none' } }
   postShare(attachment_id, { share_id, share_secret_hash, expires_at }) { return this.request('POST', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares`), { body: { share_id, share_secret_hash, expires_at } }) }
@@ -188,6 +199,7 @@ export class Hub {
         let watchdog = null
         const kick = () => { clearTimeout(watchdog); watchdog = setTimeout(() => controller.abort(new Error('stream went silent')), stale_ms) }
         let healthy = false
+        const generation = this.lease_generation
         try {
           const res = await this.fetch(this.url(this.roomPath('/stream')) + `?after_envelope_number=${getCursor()}`, {
             headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream', ...this.leaseHeaders() }, signal: controller.signal,
@@ -198,8 +210,9 @@ export class Hub {
             let err = {}
             try { err = await res.json() } catch {}
             const e = new ZError(err.error ?? `http-${res.status}`, err.message ?? 'stream refused', { status: res.status })
-            // Another process took this agent key over (R4): no reconnect, the client stops.
-            if (e.code === 'lease-lost') { closed = true; this.onLeaseLost?.(e) }
+            // Opened under a generation this process has since replaced (its own newer claim): reconnect with the new one.
+            // Otherwise the client renews; it stops only if another live process holds the key (R4). No reconnect here.
+            if (e.code === 'lease-lost' && this.lease_generation === generation) { closed = true; this.onLeaseLost?.(e) }
             throw e
           }
           onState('open')
