@@ -87,7 +87,7 @@ export async function startHub({
   dataDir = process.env.HUB_DATA || '/data', hubUrl = process.env.HUB_URL, commit = process.env.COMMIT || 'dev',
   origins = (process.env.HUB_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
-  trustCloudflare = process.env.HUB_TRUST_CF === '1', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
+  trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
   pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS,
 } = {}) {
   const t0 = performance.now()
@@ -694,8 +694,14 @@ export async function startHub({
     if (url.pathname === '/v1/rooms' && req.method === 'POST') return found(req, res)
     const m = /^\/v1\/rooms\/([^/]+)(\/.*)?$/.exec(url.pathname)
     if (m) return roomRoute(req, res, url, m[1], m[2] ?? '')
+    // A person who opens the hub in a browser lands in the app: GET / and any other page navigation outside the API.
+    if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/v1/') && (url.pathname === '/' || isNavigation(req))) {
+      res.writeHead(302, { location: appUrl, 'cache-control': 'no-store', 'content-length': '0' }).end()
+      return
+    }
     fail('not-found', 'no such route')
   }
+  const isNavigation = req => req.headers['sec-fetch-mode'] === 'navigate' || /\btext\/html\b/.test(req.headers.accept ?? '')
 
   // F14: requests in flight are counted; close() refuses new ones and waits for these before the database closes.
   let closing = false, inFlight = 0, drained = null

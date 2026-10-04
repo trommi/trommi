@@ -276,6 +276,24 @@ test('healthz, push key, CORS for the app and localhost only, preflight cached',
   await w2.hub.close()
 })
 
+test('a browser that opens the hub lands in the app (302); API routes and other paths unchanged', async () => {
+  const w = await newHub()
+  for (const [path, headers] of [['/', {}], ['/', { accept: 'text/html,application/xhtml+xml' }], ['/some/page', { accept: 'text/html' }], ['/index.html', { accept: 'text/html' }]]) {
+    const r = await fetch(`${w.base}${path}`, { headers, redirect: 'manual' })
+    assert.equal(r.status, 302, path)
+    assert.equal(r.headers.get('location'), 'https://app.trommi.com')
+  }
+  assert.equal((await fetch(`${w.base}/`, { method: 'HEAD', redirect: 'manual' })).status, 302)
+  // fetch() sets its own sec-fetch-mode; a browser's navigation header goes through a raw request
+  const nav = await new Promise((resolve, reject) => http.get(`${w.base}/some/page`, { headers: { 'sec-fetch-mode': 'navigate' } }, r => { r.resume(); resolve(r) }).on('error', reject))
+  assert.equal(nav.statusCode, 302); assert.equal(nav.headers.location, 'https://app.trommi.com')
+  assert.equal((await fetch(`${w.base}/`, { method: 'POST', redirect: 'manual' })).status, 404)
+  assert.equal((await fetch(`${w.base}/favicon.ico`, { redirect: 'manual' })).status, 404)
+  assert.equal((await fetch(`${w.base}/v1/nothing`, { headers: { accept: 'text/html', 'sec-fetch-mode': 'navigate' }, redirect: 'manual' })).status, 404)
+  assert.deepEqual(await ok(w, 'GET', '/healthz'), { ok: true, commit: 'test', protocol_version: 1 })
+  await w.hub.close()
+})
+
 test('found, sign in, members; the same room twice, names, a token for another hub, junk', async () => {
   const w = await newHub(); w.ip = freshIp()
   const phone = await foundRoom(w)

@@ -25,7 +25,7 @@ Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehr
 
 ### Transport
 
-- HTTPS, JSON bodies. Base path `/v1`. `GET /healthz` → `{ ok, commit, protocol_version: 1 }` without sign-in.
+- HTTPS, JSON bodies. Base path `/v1`. `GET /healthz` → `{ ok, commit, protocol_version: 1 }` without sign-in. A browser that opens the hub (`GET /` or any page navigation outside `/v1`) gets `302` to `https://app.trommi.com` (`HUB_APP_URL`).
 - **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>` and `http://127.0.0.1:<any port>` (only when `NODE_ENV` is not `production`; the image sets production, so a local app against hub.trommi.com needs `HUB_ORIGINS`) and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, x-share-secret, trommi-client, trommi-protocol`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
 - **Sign-in:** `Authorization: Bearer <access_token>`. An access token comes from a signed challenge, is bound to one device and lasts 10 minutes. A client signs in again on `401 unauthorised` or a minute before `expires_at`. Writes need nothing more: member entries and envelopes are signed themselves.
 - **Client version:** every request carries `Trommi-Client: <app|channel|ios>/<semver>` and `Trommi-Protocol: 1` (below, "Versions and upgrades").
