@@ -44,3 +44,4 @@ jobs:
       - run: node crypto/hub-test.mjs
       - run: node hub/test.mjs
       - run: node hub/ops/test.mjs
+      - run: node hub/accounts-test.mjs

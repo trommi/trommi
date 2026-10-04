@@ -189,12 +189,25 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
   let code
   try { code = await openEscrowV2({ room_id, key_escrow: (await pub.getEscrow(escrow_id)).key_escrow, key, escrow_id }) }
   catch (e) { if (e.code === 'not-found') throw new ZError('wrong-passphrase', 'this passphrase does not open an escrow of this room'); throw e }
+  const { client } = await joinWithRecoveryCode({ hub_url, room_id, code, storage, client: client_name, device_name, device_info, fetch })
+  client.model.room.has_passphrase = true
+  return { client }
+}
+
+/**
+ * A fresh device that holds the room's recovery code (from the passphrase escrow or an account login, account.mjs):
+ * sign in as the recovery key, add ITSELF as a human device (entry signed by the recovery key; nobody is removed),
+ * seal the room key and every session key for itself. Every human device then shows the alert 'recovery-add'.
+ */
+export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null }) {
+  hub_url = normaliseHubUrl(hub_url)
+  if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
   const rec = await z.recoveryDevice(code)
   const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
   await hub.signIn()
   const m = await hub.members({ after_entry_number: -1 })
   const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
-  if (!z.bytesEqual(rec.id, state.recovery.id)) throw new ZError('bad-recovery-code', 'the escrow holds an old recovery code (a recovery happened since)')
+  if (!z.bytesEqual(rec.id, state.recovery.id)) throw new ZError('bad-recovery-code', 'an old recovery code (a recovery happened since)')
   const keys = await hub.sealedRoomKeys(0)
   const wrap = keys.sealed_room_keys.find(k => k.key_epoch === state.epoch)
   if (!wrap) throw new ZError('no-key', 'the hub holds no sealed room key for the recovery key')
@@ -215,6 +228,5 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
     if (k.secrets.has(k.state.epoch)) await client._grantLocked(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })
   }
   await client._saveRoom()
-  client.model.room.has_passphrase = true
   return { client }
 }

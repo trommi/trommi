@@ -43,6 +43,7 @@ jobs:
           node crypto/hub-test.mjs
           node hub/test.mjs
           node hub/ops/test.mjs
+          node hub/accounts-test.mjs
 
       - name: Build image
         run: docker build -f hub/Dockerfile --build-arg COMMIT=${{ github.sha }} -t "$IMAGE" .

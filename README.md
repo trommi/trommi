@@ -114,7 +114,41 @@ Any other `ZError` code is a 400.
 | `GET /v1/rooms/:room_id/escrow/:escrow_id` | anyone; 10 per hour per address; the room's 10 per hour count misses only | | the v2 escrow with that id, else `404 not-found`: every passphrase guess costs a slow derivation and an online, rate-limited request; a read with the right id is never refused for the room's budget, so nobody can lock the owner out |
 | `GET /v1/rooms/:room_id/escrow` | human (token) | | `{ has_escrow, revision, escrow_version, updated_at, updater_device_id }`, plus `key_escrow` only for a v1 escrow stored before review 3 (the migration path: `client.migratePassphrase`). Without a token: always `404 not-found` (no blob is served by room id any more) |
 | `DELETE /v1/rooms/:room_id/escrow?revision=` | human | | `{ ok, revision }`; compare-and-swap like PUT; announced as `escrow_changed` with `escrow_version: null` |
+| `POST /v1/rooms/:room_id/account` | human | `{ email, auth_key, key_wrapped, kdf }` (Accounts, below) | `201 { email, email_verified_at: null, revision: 1 }`, and a six-digit code is mailed. One account per room (`409 account-exists`). Never says whether the email is in use elsewhere |
+| `GET /v1/rooms/:room_id/account` | human | | `{ email, email_verified_at, created_at, updated_at, revision, key_wrapped, kdf, has_recovery, claim_expires_at? }`, else `404` |
+| `PUT /v1/rooms/:room_id/account/password` | human | `{ auth_key, key_wrapped, kdf, revision }` | `{ revision }`; compare-and-swap (`409 account-changed`) |
+| `PUT /v1/rooms/:room_id/account/recovery` | human | `{ recovery_auth, recovery_wrapped, revision }` (the Emergency Kit) | `{ revision }`; compare-and-swap |
+| `POST /v1/rooms/:room_id/account/verify` | human | `{ code }` | `{ email, email_verified_at }`; `400 wrong-code` (five tries per code, 30 minutes). Confirming deletes every other room's claim on that email |
+| `POST /v1/rooms/:room_id/account/code` | human | | a new code (once a minute; at most 5 mails per address and hour) |
+| `POST /v1/accounts/login` | anyone, rate-limited | `{ email, auth_key }` | `{ room_id, key_wrapped, kdf }`, else `401 wrong-login` for an unknown email and a wrong password alike |
+| `POST /v1/accounts/recover` | anyone, rate-limited | `{ email, recovery_auth }` | `{ room_id, recovery_wrapped }`, else `401 wrong-recovery` |
 | `DELETE /v1/rooms/:room_id` | a signed test request, test rooms only | | `{ ok }`: every row of the room and its attachments are gone |
+
+### Accounts (email + password)
+
+A person signs up with an email and a password of their own (at least 12 characters; the app offers a generated
+five-word one). The first device founds the room as before; the account only maps the email to that room and keeps,
+opaque to the hub, what lets a new device in. Format and code: `client/core/account.mjs`; hub: `hub/accounts.mjs`.
+
+- **In the browser:** `salt = SHA-256("trommi/v1/account-salt" 0 ‖ email)`, `master = Argon2id(password, salt, 64 MiB, t = 3, p = 1)`
+  (hash-wasm, vendored as `client/core/argon2.mjs`, checked against `node:crypto` and RFC 9106 in `hub/accounts-test.mjs`;
+  ≈ 0.15 s on a desktop, ≈ 0.5–1.5 s on a phone). HKDF gives an **auth key** (sent at login) and a **wrap key** (never leaves
+  the device) that seals the room's recovery code (`key_wrapped`).
+- **Log in on a new device:** email + password → `POST /v1/accounts/login` → the device opens `key_wrapped`, signs in as the
+  recovery key and adds itself as a human device (`joinWithRecoveryCode`; every other human device shows `recovery-add`).
+  Or scan the QR code of a signed-in device (pairing, unchanged).
+- **Emergency Kit:** twelve words of the EFF large list (155 bits), shown once to download or print (or "Later"; a new kit
+  can be made any time from the password). The same code sealed under the words; "Forgot password" = email + words + a
+  new password (`POST /v1/accounts/recover`, then `PUT …/account/password`).
+- **Change password:** current password opens `key_wrapped`, the code is sealed again under the new one. Nothing else is
+  re-encrypted.
+- **Email confirmation:** a six-digit code by mail (`hub/mail.mjs`: transports `log` (default), `outbox` (a folder, for
+  tests), `off`; **no real mail provider yet**, TODO). Several rooms may claim one email until one confirms it, which
+  deletes the other claims; an unconfirmed claim is deleted after 24 h, but only while a real transport is set (with the
+  log transport nobody could confirm; `HUB_ACCOUNT_EXPIRE=1` forces it).
+- **Limits:** login and recover 30 tries per address per 10 minutes (`HUB_LIMIT_LOGINS_PER_IP_10MIN`) and 10 failures per
+  email per hour (`HUB_LIMIT_LOGIN_FAILURES_PER_EMAIL_HOUR`; then even the right password waits, for known and unknown
+  emails alike); one scrypt per try (a dummy one for an unknown email), so answers take the same time.
 
 ### The stream
 
@@ -140,6 +174,7 @@ On connect the hub first sends what `GET envelopes` would (same depth rule), the
 | `rooms` | `room_id`, `founded_at`, `last_entry_number`, `last_envelope_number` |
 | `member_entries` | `room_id`, `entry_number`, `previous_entry_hash`, `entry_hash`, `entry_action` (`room_founded`, `device_added`, `devices_removed`, `recovery`), `signer_device_id`, `signed_entry` (the entry bytes with its `entry_signature`), `received_at` |
 | `devices` | `room_id`, `device_id`, `device_role` (`human`, `agent`), `key_signing_public`, `key_exchange_public`, `added_entry_number`, `removed_entry_number`, `removal_cut_sequence`, `removal_cut_hash` |
+| `accounts` | `room_id` (one account per room), `email` (**plaintext**, trimmed and lowercased), `email_verified_at`, `created_at`, `updated_at`, `revision`, `auth_salt` + `auth_hash` (scrypt of the client's auth key, never the password), `key_wrapped` (the room's recovery code, AES-GCM under a key only the password gives), `kdf`, `recovery_salt` + `recovery_hash` + `recovery_wrapped` (the same for the Emergency Kit words), the pending email code (salted SHA-256, expiry, tries) |
 | `sealed_room_keys` | `room_id`, `key_epoch`, `device_id`, `key_sealed` |
 | `key_back_links` | `room_id`, `key_epoch`, `key_back_link` |
 | `session_grants` | `room_id`, `session_id`, `grant_number`, `previous_grant_hash`, `grant_hash`, `session_key_epoch`, `signer_device_id`, `signed_grant`, `received_at` |
@@ -303,6 +338,14 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 - Freeze: with this, the v1 bytes are frozen (FORMAT.md §9 and vectors).
 - Checks without new bytes (v1.1.1, review 1 C23/C24): a key-exchange key counts with bit 255 cleared, so a second encoding of a member's key is refused, and no member shares a signing or key-exchange key with the recovery key; the sender-key cache is keyed by epoch and key bytes.
 - **Removal in one request.** A removal (and a recovery) re-keys every stale session in one atomic `POST session_grants`; a crash or refusal in between is finished by the next start of any human device, because a stale grant is itself the pending work.
+- **Accounts (4 October 2026):** the hub knows each account's **email in plaintext** and which room it belongs to, when it
+  was confirmed, and opaque blobs: a scrypt hash of a key derived from the password, and the room's recovery code sealed
+  under the password and under the Emergency Kit. It never sees the password, the kit words or the code. Remaining risk,
+  honestly: **whoever steals the hub's database can guess passwords offline** against Argon2id (64 MiB, t = 3) for one
+  email at a time (the salt is the email). A weak password falls; a long one or the generated five words (≈ 64 bits)
+  stand. The only rule is 12 characters (owner's decision: no blocklist, no strength gate). Online guessing is limited per
+  address and per email. A password opens the whole room, like the recovery code. The login endpoints give one answer
+  for unknown emails and wrong passwords; registering never reveals whether an email is taken.
 - **Still open (v1.1.1):** attachment lengths are not padded to buckets (C22: the hub sees an attachment's exact size; padding needs a format change in the encrypted reference); a leaked recovery code can only be revoked by a full recovery, there is no cheaper `recovery_key_changed` entry (M6); the password escrow uses PBKDF2 (v2: 2,000,000 iterations, addressed by a passphrase-derived id, so guesses are online unless someone holds the hub's database), not a memory-hard KDF: WebCrypto has no Argon2 and no small vetted pure-JS Argon2id is in the tree. Therefore only a generated passphrase (`generatePassphrase`, 120 bits) is accepted (review 3: a human's own phrase, a lyric or quote, falls offline to the database holder and unlocks the whole room); every human device shows `recovery-add` when the recovery key adds a device. Clients apply the epoch cutoff too (review 2 B03, completed in review 3): a device whose stream was open since before it learned of a key change refuses a live envelope in the older epoch 2 minutes after that; otherwise (after sleep or offline, in a resync, reading history) the signed times decide: the sender's header `time` must lie within 2 minutes plus 3 minutes of clock skew of the signed time of the entry or grant that began the next epoch. A refused stale envelope still moves its sender's chain on (no gap, so no resync that would apply it), and its hash is kept, so a resync refuses it again (alert `wrong-epoch`). Residual: a removed sender with a colluding hub can still backdate envelopes into that window for devices that were not live then. Agent writes into a session are authorised by the agents the grants gave that session key epoch.
 
 **R7. Binds.** `answer` binds object id, the hash of the version answered and the full list of choices (each must be an option). `decide_again` binds the answer taken back **and** the current version's hash. `verdict`: request id = `object_id`. `trusted` widens nothing: the agent picks its own recommendation and says so.
@@ -334,7 +377,7 @@ Start: `claude --dangerously-load-development-channels server:board server:tromm
 
 ### Founding and joining, in short
 
-1. **Found:** the app makes device keys, a recovery code (shown once) and key epoch 1; `POST /v1/rooms`; then `challenge` → `access_tokens`.
+1. **Found ("Create account" in the app):** the app makes device keys, a recovery code and key epoch 1; `POST /v1/rooms`; then `challenge` → `access_tokens`; then `POST account` (email, the code sealed under the password). The code itself is no longer shown: the password and the Emergency Kit open it.
 2. **Invite** (human or agent): `createInvite` → `POST invites`; the link `https://app.trommi.com/join#v1.<hub>.<room>.<secret>` leaves the device by the human's hands. The secret never reaches a server.
 3. **Join:** the newcomer `GET invites/:invite_id` (checks the list against the room id in the link) → `POST requests` → polls `status`. The inviter gets `join_request` → `GET requests` → checks the MAC → `POST reveal`. Both show the six-digit check code (a human types it on the inviting device; an agent needs none) → the inviter `POST members` with the add entry and, for a human, the sealed room key → the newcomer sees `joined`, verifies, opens its key, signs in.
 4. **Remove:** any human device: `removeMembers` → `POST members` with the new key epoch sealed for everyone who stays, and the back link. The hub cuts the removed device off.
