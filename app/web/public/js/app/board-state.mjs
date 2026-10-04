@@ -107,8 +107,14 @@ export class BoardState {
   }
 
   agents() {
+    // A child session its agent closed (close_session: the helper is done) goes to the archive by itself, unless a
+    // question of it is still open; the human's own archive setting wins either way.
+    const closedChild = s => Boolean(s.profile?.closed_at && s.profile?.parent_session && !(s.open_card_ids?.length))
     const m = this.model, crown = m.human.crown?.session_id ?? m.human.crown?.agent_device_id ?? null
     const list = sessionsOf(m).filter(s => s.is_active !== false || s.card_ids?.length)
+    // When the agent process behind a session last said anything, in any of its sessions (main or child).
+    const lastOfDevice = new Map()
+    for (const s of list) if (s.agent_device_id) lastOfDevice.set(s.agent_device_id, Math.max(lastOfDevice.get(s.agent_device_id) ?? 0, s.last_activity_at ?? 0))
     const out = list.map((s, i) => {
       const key = sessionKey(s), set = m.human.session_settings.get(key) ?? s.settings ?? {}
       const p = s.profile ?? {}
@@ -120,7 +126,7 @@ export class BoardState {
       return {
         id, device_id: key, session_id: s.session_id ?? null, agent_device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
         online: Boolean(s.is_online), model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
-        desk: set.desk ?? null, archived: Boolean(set.archived), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0,
+        desk: set.desk ?? null, archived: 'archived' in set ? Boolean(set.archived) : closedChild(s), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0, device_active: lastOfDevice.get(s.agent_device_id) ?? 0,
         removed: s.is_active === false,
       }
     })

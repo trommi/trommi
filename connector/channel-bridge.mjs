@@ -218,7 +218,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     if (!name) return null
     if (name.length > 40 || /[\n\r]/.test(name)) throw new Error('session is a helper\'s short name, at most 40 characters')
     const found = findChild(name)
-    if (found) return found
+    if (found) { await reopen(found); return found }
     if (!client.openChildSession) throw new Error('this hub connection cannot open child sessions')
     const key = name.toLowerCase()
     if (!opening.has(key)) {
@@ -231,6 +231,13 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       }).finally(() => opening.delete(key)))
     }
     return opening.get(key)
+  }
+  /** A closed child (close_session) that is written to again is open again: back in the human's active list. */
+  async function reopen(sid) {
+    const p = mySession(sid)?.profile
+    if (!p?.closed_at) return
+    const { closed_at, ...rest } = p
+    await client.setStatus({ profile: rest }, { session_id: sid })
   }
   const into = sid => (sid ? { session_id: sid } : {})
   const myCards = () => [...model().cards.values()].filter(c => c.agent_device_id === me()).sort((a, b) => a.first_envelope_number - b.first_envelope_number)
@@ -515,8 +522,23 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const profile = { ...(args.task != null ? { task: String(args.task) } : {}), ...(args.icon != null ? { icon: String(args.icon) } : {}), ...(args.model != null ? { model: String(args.model) } : {}) }
         const existed = findChild(name)
         const sid = existed ?? await sessionOf({ session: name }, profile)
+        if (existed) await reopen(existed)
         if (existed && Object.keys(profile).length) await client.setStatus({ profile: { ...(mySession(sid)?.profile ?? {}), ...profile } }, { session_id: sid })
         return `${existed ? 'child session already open' : 'child session opened'}: "${name}" (${sid}), under your session on the board. Pass session: "${name}" to reply, create_decision, create_info, merge_cards, set_status, clear_status, introduce, list_cards and publish_asset to write into it; the human's messages and answers there arrive with meta session="${name}".`
+      }
+      case 'close_session': {
+        const name = String(args.name ?? args.session ?? '').trim()
+        if (!name) throw new Error('name is required: the helper\'s short name, as given to open_session')
+        const sid = findChild(name)
+        if (!sid) throw new Error(`no child session "${name}"; open_session opens one`)
+        if (args.summary != null && String(args.summary).trim()) await client.sendMessage({ session_id: sid, text: cleanFences(String(args.summary), 'summary'), attachments: [] })
+        const s = mySession(sid)
+        // A helper that is done works on nothing: its lines would keep saying "working" (and look stuck).
+        const lines = s?.status_lines ?? []
+        if (lines.length) await client.setStatus(Object.fromEntries(lines.map(l => [`status_line/${l.id}`, null])), { session_id: sid })
+        await client.setStatus({ profile: { ...(s?.profile ?? {}), closed_at: Date.now() } }, { session_id: sid })
+        const open = myCards().filter(c => c.session_id === sid && c.object_state === 'open').length
+        return `child session "${name}" closed: archived on the board, still readable there${open ? `; ${open} open question${open === 1 ? '' : 's'} of it stay${open === 1 ? 's' : ''} on the human's stack, and the session stays in the active list until ${open === 1 ? 'it is' : 'they are'} answered` : ''}. open_session("${name}") opens it again.`
       }
       case 'publish_asset': {
         if (args.silent === true) throw new Error('silent assets are not available on the new hub yet: publish it without silent, or attach the file to a reply')
