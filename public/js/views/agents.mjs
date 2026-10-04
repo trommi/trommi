@@ -94,7 +94,7 @@ export function ledgerLine(u, ctx, { error = '' } = {}) {
   const ring = badge(u, u, base)
 
   // Stopped: the hand and the word; why it stopped is the cell's tooltip (the column is narrow: the words would run into the next one).
-  const state = html`<span class="ledger-state"${hand ? html` title="Stopped: ${u.blocked.text}"` : ''}>${ring}${ring && !hand && u.open ? SEP : ''}<span class="ledger-word">${word === 'asking' ? 'asks' : word}</span><span class="offscreen">${hand ? `: ${u.blocked.text}` : ''}</span></span>`
+  const state = html`<span class="ledger-state"${hand ? html` title="Stopped: ${u.blocked.text}"` : ''}>${ring}${ring && !hand && u.open ? SEP : ''}<span class="ledger-word">${word === 'asking' ? 'asks' : word}</span>${hand ? html`<span class="offscreen">: ${u.blocked.text}</span>${u.open ? html`${SEP}<b>${u.open}</b>` : ''}` : ''}</span>`
   // What it asks (its first question: a link to the card's own page) or what it does (its status line, else what it named).
   const card = cards[0], task = ctx.doing.get(a.id)
   const doing = task ? [task.label, task.detail].filter(Boolean).join(': ') : a.task || (a.online ? 'nothing named' : '')

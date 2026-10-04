@@ -3,7 +3,9 @@
 //   - "To the end", with the number of messages that arrived while one was reading further up, and the view
 //     that stays where it is when they arrive;
 //   - the "N open" chip: only while an open question of the conversation is out of sight, and the way to the next;
-//   - the times in this browser's own zone (the hub wrote them in its own).
+//   - the times in this browser's own zone (the hub wrote them in its own);
+//   - paging up by itself: the "Earlier messages" link is followed when it comes near while scrolling up;
+//   - the composer's own copy of a message (data-echo) leaves when the real one arrives.
 import { Controller } from '/js/app/stimulus.mjs'
 
 const two = n => String(n).padStart(2, '0')
@@ -31,7 +33,7 @@ function localise(root) {
 }
 
 export default class extends Controller {
-  static targets = ['log', 'jump', 'jumpText', 'open', 'openText']
+  static targets = ['log', 'jump', 'jumpText', 'open', 'openText', 'earlier']
 
   connect() {
     this.pinned = true
@@ -45,11 +47,26 @@ export default class extends Controller {
     this.sizes.observe(this.logTarget)
     this.paint()
   }
-  disconnect() { this.seen?.disconnect(); this.sizes?.disconnect() }
+  disconnect() { this.seen?.disconnect(); this.sizes?.disconnect(); this.near?.disconnect() }
+
+  // An "Earlier messages" link near the top of what is in view: followed (its frame brings the window before it).
+  earlierTargetConnected(link) {
+    if (!this.hasLogTarget) return
+    this.near ??= new IntersectionObserver(seen => {
+      for (const e of seen) if (e.isIntersecting && e.target.isConnected) { this.near.unobserve(e.target); e.target.click() }
+    }, { root: this.logTarget, rootMargin: '900px 0px 0px 0px' })
+    // Only once the reader scrolls: opening a conversation does not page by itself.
+    if (this.moved) this.near.observe(link)
+    else this.waiting = link
+  }
+  earlierTargetDisconnected(link) { this.near?.unobserve(link) }
 
   // (The log is a reversed column: its end is scrollTop 0, further up is negative.)
   get atEnd() { return Math.abs(this.logTarget.scrollTop) < 72 }
   scrolled() {
+    this.moved = true
+    if (this.waiting?.isConnected) this.near?.observe(this.waiting)
+    this.waiting = null
     this.pinned = this.atEnd
     if (this.pinned) this.unread = 0
     this.paint()
@@ -68,7 +85,14 @@ export default class extends Controller {
       localise(node.matches('time, .day') ? node.parentNode : node)
       // What is put in at the log's end (before its end mark) is new; anything else replaces what stood there, or is earlier.
       if (change.nextSibling?.id?.startsWith?.('log-end-') && node.matches('.msg-agent, .ask, .event')) fresh++
-      else if (change.nextSibling?.id?.startsWith?.('log-end-') && node.matches('.msg-user')) { this.pinned = true; this.unread = 0 }
+      else if (change.nextSibling?.id?.startsWith?.('log-end-') && node.matches('.msg-user')) {
+        this.pinned = true; this.unread = 0
+        // The core's echo of what the composer sent: the composer's copy with the same words leaves.
+        if (!node.hasAttribute('data-echo')) {
+          const words = node.querySelector('.bubble')?.textContent ?? ''
+          ;[...log.querySelectorAll('[data-echo]')].find(e => (e.querySelector('.bubble')?.textContent ?? '') === words)?.remove()
+        }
+      }
     }
     const grew = log.scrollHeight - this.height
     this.height = log.scrollHeight

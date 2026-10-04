@@ -101,3 +101,7 @@
   body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
   body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
 }
+
+/* Windowed paint: what of the conversation is out of sight is neither laid out nor painted (messages: trommi.css). */
+#session .log .event, #session .log .day { content-visibility: auto; contain-intrinsic-size: auto 36px; }
+#session .log .ask-card { content-visibility: auto; contain-intrinsic-size: auto 190px; }

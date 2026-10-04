@@ -11,7 +11,7 @@ import { sidebarRows, sidebarParts, deskState, slipCount } from '../views/sideba
 import { cardPage, cardLead, cardAnswer, cardThread, picturePage, imagesOf, versionOf } from '../views/card.mjs'
 import { WORDS, EXPLAIN_TEXT, isKnock } from '../views/text.mjs'
 import { toast } from '../views/toast.mjs'
-import { register as sessionPage, sessionOf, composer } from '../views/session.mjs'
+import { register as sessionPage } from '../views/session.mjs'
 import { register as memoPage } from '../views/memo.mjs'
 import { register as jumpPage } from '../views/menu.mjs'
 import { register as agentsPage } from '../views/agents.mjs'
@@ -220,29 +220,6 @@ export function createBoard({ hub, model, extraPages = [] }) {
     })
   }
 
-  // The composer of a session's page (the hub's version reads a multipart body; here the form is at hand).
-  function registerComposer() {
-    t.post(/^\/s\/([^/+]+)\/message$/, async ({ req, res, match, form }) => {
-      let id
-      try { id = decodeURIComponent(match[1]) } catch { id = match[1] }
-      const s = sessionOf(model(), id)
-      if (!s) return t.notFound(req, res, 'This session is not on the board.')
-      const files = filesOf(form)
-      const text = String(form.get('text') ?? '').replace(/\r\n/g, '\n')
-      try {
-        if (files.length > 10) throw new Error('at most 10 files at once')
-        if (!text.trim() && !files.length) throw new Error('write something first')
-        await hub.message({ agent: s.id, text, attachments: files })
-      } catch (err) {
-        const said = `Not sent: ${err.message || 'the board did not take it'}`
-        if (form.has('stay') && t.wantsStream(req)) return t.sendStream(req, res, stream('replace', `session-error-${s.id}`, html`<p class="composer-error" id="session-error-${s.id}" role="alert">${said}</p>`), 422)
-        return redirect(res, `${BASE}/s/${encodeURIComponent(s.id)}`)
-      }
-      if (form.has('stay') && t.wantsStream(req)) return t.sendStream(req, res, `${stream('replace', `session-error-${s.id}`, html`<p class="composer-error" id="session-error-${s.id}" role="alert" hidden></p>`)}${stream('replace', `composer-${s.id}`, composer(s, BASE, { focus: true }))}`)
-      redirect(res, `${BASE}/s/${encodeURIComponent(s.id)}`)
-    })
-  }
-
   // ---- around every page with a sidebar ----
   lives.set('', {
     snap: null,
@@ -252,7 +229,6 @@ export function createBoard({ hub, model, extraPages = [] }) {
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })
 
-  registerComposer()
   for (const register of [...extraPages, registerDesk, registerCards, agentsPage, jumpPage, memoPage, sessionPage, stacksPage]) register(t)
 
   /** One request of this page: a navigation (GET) or a form (POST). */

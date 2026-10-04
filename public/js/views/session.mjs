@@ -9,7 +9,12 @@
 //   GET  <base>/s/<id>/files            the conversation with the files drawer open; asked from the drawer's frame
 //                                       (header Turbo-Frame), only the drawer's list
 //   GET  <base>/s/<id>/files/<n>        one picture, large (n counts the session's pictures, the oldest is 1)
-//   POST <base>/s/<id>/message          the composer: text and files (multipart/form-data, or urlencoded)
+//   POST <base>/s/<id>/message          the composer: text, files, copied cards (a FormData of this page)
+//
+// Windowed: the conversation in memory is the newest page(s) of the session's timeline (the core loads 50 at a time)
+// and what the heads say about its questions. Only what is at least as new as the oldest loaded item of the
+// session's own chat is shown (the "floor"), so paging up never leaves holes; "Earlier" first shows what memory
+// holds, then asks the core for the next older page (t.hub.loadOlder).
 //
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
@@ -21,7 +26,7 @@ import { srcOf } from './picture.mjs'
 import { sketchSvg, ringSvg, handSvg } from '../pen.js'
 import { blockedOf } from '../app/node-stubs/blocked.mjs'
 
-export const PAGE = 60               // messages of one load: the page shows the latest, "Earlier" brings as many again
+export const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
 const WORKING_WINDOW = 10 * 60000    // so long after the human's last word the session counts as answering
 const MAX_FILES = 12                 // as the hub takes them in one message
@@ -70,11 +75,12 @@ const isPicture = a => kindOf(a) === 'image' && a.url
 
 // ---- what a render of one session needs, worked out once ----
 /** model: views/model.mjs. Returns null when the session is not on the board. */
-export function sessionOf(model, id, outside = '') {
+export function sessionOf(model, id, outside = '', { floor = 0, more = false } = {}) {
   const agent = model.byAgent.get(id)
   if (!agent) return null
   const { state } = model
-  const messages = state.messages.filter(m => m.agent === id)
+  const all = state.messagesOf ? state.messagesOf(id) : state.messages.filter(m => m.agent === id)
+  const messages = floor > 0 ? all.filter(m => m.seq >= floor) : all
   const cards = state.cards.filter(c => c.agent === id)
   // The session's pictures, oldest first: what it sent and was sent, then what its questions carry.
   const pictures = [], nr = new Map()
@@ -85,7 +91,7 @@ export function sessionOf(model, id, outside = '') {
   const askAt = new Map()
   for (const m of messages) if (m.from === 'event' && m.kind === 'asked' && m.card_id) askAt.set(m.card_id, m.id)
   const fresh = model.fresh.filter(c => c.agent === id)
-  return { id, agent, model, messages, cards, pictures, nr, askAt, fresh, tasks: state.tasks.filter(t => t.agent === id), outside }
+  return { id, agent, model, messages, cards, pictures, nr, askAt, fresh, tasks: state.tasks.filter(t => t.agent === id), outside, floor, more }
 }
 
 // ---- attachments ----
@@ -167,19 +173,29 @@ const CODE_HEAD = `<div class="code" data-controller="copy"><div class="code-hea
 const words = (text, opts) => raw(String(rich(text, opts)).replaceAll('<pre><code>', CODE_HEAD).replaceAll('</code></pre>', '</code></pre></div>'))
 
 // ---- one message ----
-// Messages do not change once they are sent, so what was rendered is kept with the message; only what depends on
-// something else (a question's state, a published link that was withdrawn, the card a message is about) is in the key.
-const kept = new WeakMap()
+// Messages do not change once they are sent, so what was rendered is kept by the message's id (the board state makes
+// new message objects after every change); only what can change (pending, the words once loaded) and what depends
+// on something else (a question's state, a published link that was withdrawn, the card a message is about) is in the key.
+const kept = new Map()
 function message(m, prev, s, base) {
-  if (m.from === 'event' && m.kind === 'asked') return ask(m, s, base)
+  if (m.from === 'event' && m.kind === 'asked') {
+    // A question's line or row: made again only when its card changed (the board state keeps a card's object until then).
+    const card = s.model.byCard.get(m.card_id), k = `${s.id} ${m.id}`, had = kept.get(k)
+    const key = `${base}|${s.askAt.get(m.card_id) === m.id}|${s.model.fresh.includes(card)}|${m.ts}`
+    if (had && had.card === card && had.key === key) return had.out
+    const out = ask(m, s, base)
+    kept.set(k, { card, key, out })
+    return out
+  }
   const cont = Boolean(prev && prev.from === m.from && dayKey(prev.ts) === dayKey(m.ts) && (m.from === 'event' || m.ts - prev.ts < GROUP_GAP))
   const about = m.card_id ? s.model.byCard.get(m.card_id) : null
   const firstPic = (m.attachments ?? []).find(isPicture)
-  const key = `${base}|${s.outside}|${cont}|${about?.title ?? ''}|${about?.number ?? ''}|${m.asset ? (m.asset.gone ? 'gone' : JSON.stringify(s.model.state.assets.find(a => a.id === m.asset.id)?.share ?? 0)) : ''}|${firstPic ? s.nr.get(firstPic.url) : ''}|${m.from === 'event' && s.askAt.has(m.card_id)}`
-  const had = kept.get(m)
+  const key = `${m.pending ? 'p' : ''}|${m.text?.length ?? 0}|${m.attachments?.length ?? 0}|${m.ts}|${base}|${s.outside}|${cont}|${about?.title ?? ''}|${about?.number ?? ''}|${m.asset ? (m.asset.gone ? 'gone' : JSON.stringify(s.model.state.assets.find(a => a.id === m.asset.id)?.share ?? 0)) : ''}|${firstPic ? s.nr.get(firstPic.url) : ''}|${m.from === 'event' && s.askAt.has(m.card_id)}`
+  const k = `${s.id} ${m.id}`, had = kept.get(k)
   if (had?.key === key) return had.out
   const out = build(m, cont, about, s, base)
-  kept.set(m, { key, out })
+  if (kept.size > 20000) kept.clear()
+  kept.set(k, { key, out })
   return out
 }
 function build(m, cont, about, s, base) {
@@ -200,7 +216,7 @@ const dayLine = ts => html`<div class="day" data-day="${ts}"><span>${dayLabel(ts
 export function logItems(s, base) {
   return s.messages.map((m, i) => {
     const prev = s.messages[i - 1]
-    return { id: m.id, day: !prev || dayKey(prev.ts) !== dayKey(m.ts) ? dayLine(m.ts) : '', node: message(m, prev, s, base) }
+    return { id: m.id, seq: m.seq ?? 0, day: !prev || dayKey(prev.ts) !== dayKey(m.ts) ? dayLine(m.ts) : '', node: message(m, prev, s, base) }
   })
 }
 
@@ -254,15 +270,18 @@ export function sessionOpen(s, base, shown = null) {
 }
 
 // ---- the conversation ----
-/** The link that brings the messages before `first` (a Turbo Frame: only they are loaded). */
-function earlier(s, base, first, left) {
-  return html`<turbo-frame class="log-earlier" id="earlier-${first}">${left ? html`<a class="log-earlier-link" data-nav href="${sessionPath(s.id, base)}?before=${first}">Earlier messages<b>${left}</b></a>` : ''}</turbo-frame>`
+/** The link that brings the messages before `first` (a Turbo Frame: only they are rendered). left: how many memory
+ *  holds before them; more: the core has older ones still (loaded when the link is followed). The log controller
+ *  follows it by itself when it comes near while scrolling up. */
+function earlier(s, base, first, left, more = s.more) {
+  return html`<turbo-frame class="log-earlier" id="earlier-${first}">${left || more ? html`<a class="log-earlier-link" data-nav href="${sessionPath(s.id, base)}?before=${first}" data-log-target="earlier">Earlier messages${left ? html`<b>${left}${more ? '+' : ''}</b>` : ''}</a>` : ''}</turbo-frame>`
 }
 /** A window of the log: the PAGE messages before `before` (a message id; null: the latest). */
 function logWindow(s, base, before = null) {
   const items = logItems(s, base)
   const at = before == null ? -1 : items.findIndex(i => i.id === before)
-  const end = at < 0 ? items.length : at, start = Math.max(0, end - PAGE)
+  // (An earlier window asked for a message memory no longer holds: nothing, rather than the latest a second time.)
+  const end = before != null && at < 0 ? 0 : at < 0 ? items.length : at, start = Math.max(0, end - PAGE)
   const shown = items.slice(start, end)
   return { shown, start, end, total: items.length, body: html`${shown.length ? earlier(s, base, shown[0].id, start) : ''}${shown.map(i => html`${i.day}${i.node}`)}` }
 }
@@ -273,11 +292,11 @@ const empty = (s, base) => html`<div class="empty-chat"><span class="agent-mark 
 
 /** The composer: a plain form. The island "composer" adds Enter to send, the field that grows, the list of chosen files. */
 export function composer(s, base, { text = '', focus = false } = {}) {
-  return html`<form class="composer" id="composer-${s.id}" method="post" action="${sessionPath(s.id, base)}/message" enctype="multipart/form-data" data-controller="composer" data-composer-agent-value="${s.id}"${focus ? raw(' data-composer-focus-value="true"') : ''} data-action="turbo:submit-end->composer#sent click->composer#aim dragover@window->composer#over dragleave@window->composer#left drop@window->composer#drop">
+  return html`<form class="composer" id="composer-${s.id}" method="post" action="${sessionPath(s.id, base)}/message" enctype="multipart/form-data" data-controller="composer" data-composer-agent-value="${s.id}"${focus ? raw(' data-composer-focus-value="true"') : ''} data-action="turbo:submit-start->composer#start turbo:submit-end->composer#sent click->composer#aim dragover@window->composer#over dragleave@window->composer#left drop@window->composer#drop">
 <input type="hidden" name="stay" value="1">
 <div class="composer-files" data-composer-target="chips"></div>
 <label class="mic composer-clip" title="Attach a picture or a file">${sk('clip')}<input class="offscreen" type="file" name="files" multiple data-composer-target="picker" data-action="change->composer#paint" aria-label="Attach pictures or files (at most ${MAX_FILES})"></label>
-<textarea name="text" id="composer-field-${s.id}" rows="1" data-composer-target="field" data-action="input->composer#typed keydown->composer#keys paste->composer#paste" autocomplete="off" enterkeyhint="enter" placeholder="Message to the agent" aria-label="Message to ${s.agent.name}">${text}</textarea>
+<textarea name="text" id="composer-field-${s.id}" rows="1" data-composer-target="field" data-action="input->composer#typed keydown->composer#keys paste->composer#paste focus->composer#paint" autocomplete="off" enterkeyhint="enter" placeholder="Message to the agent" aria-label="Message to ${s.agent.name}">${text}</textarea>
 <button class="send" type="submit" aria-label="Send" data-composer-target="send">${ico('send')}</button>
 </form>`
 }
@@ -404,46 +423,53 @@ ${n > 1 ? html`<a class="focus-stage-step is-prev" data-nav href="${here}/files/
 </div>`
 }
 
-// ---- a posted form with files (multipart/form-data), read without a library ----
-/** bytes: the body. Returns { fields: URLSearchParams, files: [{ name, type, bytes }] } (only files with a name and content). */
-export function readMultipart(bytes, contentType) {
-  const boundary = /boundary=(?:"([^"]+)"|([^;\s]+))/i.exec(contentType ?? '')
-  if (!boundary) throw new Error('the form has no boundary')
-  // A delimiter is "--boundary" at the very start or after a line break (RFC 2046, 5.1.1); the same words inside a
-  // file without the line break before them are the file's own bytes.
-  const mark = Buffer.from(`--${boundary[1] ?? boundary[2]}`), delim = Buffer.from(`\r\n${mark}`)
-  const fields = new URLSearchParams(), files = []
-  const first = bytes.subarray(0, mark.length).equals(mark) ? 0 : bytes.indexOf(delim)
-  let at = first < 0 ? -1 : first === 0 ? 0 : first + 2   // at: where "--boundary" starts
-  while (at >= 0) {
-    const start = at + mark.length
-    if (bytes.subarray(start, start + 2).toString() === '--') break   // the closing delimiter
-    const next = bytes.indexOf(delim, start)
-    if (next < 0) break
-    const headEnd = bytes.indexOf('\r\n\r\n', start)
-    if (headEnd >= 0 && headEnd < next) {
-      const head = bytes.subarray(start, headEnd).toString('utf8')
-      const body = bytes.subarray(headEnd + 4, next)   // the line break before the next delimiter belongs to it
-      const name = /\bname="([^"]*)"/i.exec(head)?.[1]
-      const file = /\bfilename="([^"]*)"/i.exec(head)
-      if (file) { if (file[1] && body.length) files.push({ name: file[1], type: /^content-type:\s*([^\r\n;]+)/im.exec(head)?.[1]?.trim().toLowerCase() ?? '', bytes: Buffer.from(body) }) }
-      else if (name != null) fields.append(name, body.toString('utf8'))
-    }
-    at = next + 2
-  }
-  return { fields, files }
-}
-
 // ---- routes, the form, the live pieces ----
 export function register(t) {
   const { BASE } = t
   // The address an outsider reaches the board at (for the link of something shared), the public one first.
   const outside = () => { try { return t.hub.assetBases?.()[0] ?? '' } catch { return '' } }
+  const idOf = ref => { try { return decodeURIComponent(ref) } catch { return ref } }
+  // The window of the session's own chat in memory: what is older than its oldest loaded item is not shown yet.
+  const timeline = agent => (agent?.device_id ? t.hub.client?.model?.timelines?.get(`chat:session/${agent.device_id}`) : null)
+  const windowOf = agent => {
+    const tl = timeline(agent)
+    if (!tl?.has_more) return { floor: 0, more: false }
+    return { floor: Number.isFinite(tl.loaded_down_to) ? tl.loaded_down_to : 0, more: true }
+  }
+  const current = (id, m = t.model()) => sessionOf(m, id, outside(), windowOf(m.byAgent.get(id)))
   const find = (req, res, ref) => {
-    let id
-    try { id = decodeURIComponent(ref) } catch { id = ref }
-    const s = sessionOf(t.model(), id, outside())
+    const s = current(idOf(ref))
     if (!s) t.notFound(req, res, 'This session is not on the board.')
+    return s
+  }
+  // The next older page of a timeline (a session's board id: its chat; or a timeline key), one request at a time.
+  const loading = new Map()
+  const older = ref => {
+    if (!loading.has(ref)) loading.set(ref, Promise.resolve(t.hub.loadOlder?.(ref)).catch(err => console.warn('timeline', err)).finally(() => loading.delete(ref)))
+    return loading.get(ref)
+  }
+  // Opened for the first time on this device: the newest page of its chat and of its recent questions' threads
+  // (from storage, else from the hub), waited for only briefly; what comes later arrives by the live stream.
+  const RECENT_THREADS = 20
+  async function firstPage(id) {
+    const model = t.hub.client?.model, agent = t.model().byAgent.get(id)
+    if (!model || !agent) return
+    const unread = tl => tl && tl.loaded_down_to === Infinity && tl.item_count > 0
+    const wait = []
+    if (unread(timeline(agent))) wait.push(older(id))
+    for (const cid of (model.sessions.get(agent.device_id)?.card_ids ?? []).slice(-RECENT_THREADS)) {
+      const key = `chat:card/${cid}`
+      if (unread(model.timelines.get(key))) wait.push(older(key))
+    }
+    if (wait.length) await Promise.race([Promise.all(wait), new Promise(r => setTimeout(r, 300))])
+  }
+  // "Earlier" asked for what is before `before`: when memory holds nothing older above the floor, the next page.
+  async function reach(s, before) {
+    for (let n = 0; n < 4 && s.more; n++) {
+      if (s.messages.findIndex(m => m.id === before) > 0) break
+      await older(s.id)
+      s = current(s.id) ?? s
+    }
     return s
   }
   const send = (req, res, s, opts = {}, code = 200) => t.page(req, res, {
@@ -453,15 +479,18 @@ export function register(t) {
   }, code)
 
   // (A '+' in the place of the id is the old client's "sessions laid together": not rendered here.)
-  t.get(/^\/s\/([^/+]+)$/, ({ req, res, url, match }) => {
-    const s = find(req, res, match[1])
+  t.get(/^\/s\/([^/+]+)$/, async ({ req, res, url, match }) => {
+    await firstPage(idOf(match[1]))
+    let s = find(req, res, match[1])
     if (!s) return
     // ?before=<message>: the window before that message. The "Earlier" link asks for it from inside a Turbo Frame.
     const before = url.searchParams.get('before')
+    if (before) s = await reach(s, before)
     send(req, res, s, { mode: url.searchParams.get('only') === 'questions' ? 'questions' : '', before, text: (url.searchParams.get('say') ?? '').slice(0, 2000), focus: url.searchParams.has('say') })
   })
   t.get(/^\/s\/([^/+]+)\/questions$/, ({ res, match }) => t.redirect(res, `${BASE}/s/${match[1]}?only=questions`))
-  t.get(/^\/s\/([^/+]+)\/files$/, ({ req, res, match }) => {
+  t.get(/^\/s\/([^/+]+)\/files$/, async ({ req, res, match }) => {
+    await firstPage(idOf(match[1]))
     const s = find(req, res, match[1])
     if (!s) return
     // Asked by the drawer's frame: only the frame with its list (Turbo takes the frame of that id out of the answer).
@@ -478,34 +507,29 @@ export function register(t) {
     t.page(req, res, { model: s.model, title: `${s.agent.name} · picture ${match[2]}`, view: 'picture', sidebar: false, css: 'card', stream: null, main: sessionPicture(s, BASE, Number(match[2]), url.searchParams.get('from') ?? ''), bodyAttrs: ' data-focus-page="card"' })
   })
 
-  // The composer. The words and files go the way of the old page's /message (hub.message: one place for what a
-  // message of the human is and how the session hears of it); here they arrive as a form.
-  const post = async ({ req, res, match }) => {
-    let s = find(req, res, match[1])
+  // The composer: words, files (pictures, pasted or dropped ones) and copied cards (controller "composer"). The core
+  // shows the message at once (its optimistic echo; the composer already put its own in), then seals and sends it.
+  t.post(/^\/s\/([^/+]+)\/message$/, async ({ req, res, match, form }) => {
+    const s = find(req, res, match[1])
     if (!s) return
-    let fields = new URLSearchParams(), files = []
+    const stay = form.has('stay') && t.wantsStream(req)
+    const text = String(form.get('text') ?? '').replace(/\r\n/g, '\n')
+    const files = form.getAll('files').filter(f => typeof f === 'object' && f && f.size > 0)
+    const cards = [...new Set(form.getAll('cards').map(String).filter(id => /^[0-9a-f]{8,64}$/.test(id)))].slice(0, 5)
     try {
-      const bytes = await t.hub.readRaw(req, t.hub.uploadLimit ?? 96e6)
-      const type = String(req.headers['content-type'] ?? '')
-      if (/^multipart\/form-data/i.test(type)) ({ fields, files } = readMultipart(bytes, type))
-      else fields = new URLSearchParams(bytes.toString('utf8'))
       if (files.length > MAX_FILES) throw new Error(`at most ${MAX_FILES} files at once`)
-      const text = String(fields.get('text') ?? '').replace(/\r\n/g, '\n')
-      if (!text.trim() && !files.length) throw new Error('write something first')
-      await t.hub.message({ agent: s.id, text, attachments: files.map(f => ({ name: f.name, data: `data:${/^[\w.+-]+\/[\w.+-]+$/.test(f.type) ? f.type : 'application/octet-stream'};base64,${f.bytes.toString('base64')}` })) })
+      if (!text.trim() && !files.length && !cards.length) throw new Error('write something first')
+      await t.hub.message({ agent: s.id, text, attachments: files, cards })
     } catch (err) {
       const said = `Not sent: ${err.message || 'the board did not take it'}`
-      // 422: Turbo counts it as not sent, so the composer keeps the form and the draft (composer_controller.js).
-      if (fields.has('stay') && t.wantsStream(req)) return t.sendStream(req, res, t.stream('replace', `session-error-${s.id}`, sendError(s, said)), 422)
-      s = sessionOf(t.model(), s.id, outside()) ?? s
-      return send(req, res, s, { error: said, text: String(fields.get('text') ?? '') }, 422)
+      // 422: counted as not sent, so the composer keeps the words and files (composer_controller.js).
+      if (stay) return t.sendStream(req, res, t.stream('replace', `session-error-${s.id}`, sendError(s, said)), 422)
+      return send(req, res, current(s.id) ?? s, { error: said, text }, 422)
     }
-    // Sent by Turbo: the message itself comes with the live stream, to this page as to every other; the form is fresh again.
-    if (fields.has('stay') && t.wantsStream(req)) return t.sendStream(req, res, `${t.stream('replace', `session-error-${s.id}`, sendError(s))}${t.stream('replace', `composer-${s.id}`, composer(s, BASE, { focus: true }))}`)
+    // Sent: the message itself is in the log already; the composer cleared itself.
+    if (stay) return t.sendStream(req, res, t.stream('replace', `session-error-${s.id}`, sendError(s)))
     t.redirect(res, sessionPath(s.id, BASE))
-  }
-  post.raw = true   // the body is read here (it may carry files), not parsed as a urlencoded form by the router
-  t.post(/^\/s\/([^/+]+)\/message$/, post)
+  })
 
   // Live: for every session that has a page open, its pieces; a page gets what differs, and a new message at the log's end.
   t.live('session', {
@@ -516,7 +540,7 @@ export function register(t) {
         if (!id) continue
         let p = out.get(id)
         if (!p) {
-          const s = sessionOf(m, id, outside())
+          const s = current(id, m)
           if (!s) { out.set(id, null); continue }
           p = { s, who: sessionWho(s, BASE), now: sessionNow(s, BASE), count: `${s.fresh.length} ${fileCount(s)}`, modes: {} }
           out.set(id, p)
@@ -540,10 +564,13 @@ export function register(t) {
       if (a.count !== b.count) out.push(t.stream('replace', `session-filters-${id}`, sessionFilters(b.s, BASE, mode)))
       if (mode === 'questions') { if (a.questions != null && t.differs(a.questions, b.questions)) out.push(t.stream('replace', `session-questions-${id}`, b.questions)) }
       else if (a.items && b.items) {
-        // What stood there and stands there still, changed: that element. What is new stands at the end; anything else is a log rewritten.
-        const fresh = b.items.filter(i => !a.byId.has(i.id))
+        // What stood there and stands there still, changed: that element. What is new stands at the end. What came in
+        // older than all that stood there is an earlier page ("Earlier" shows it); anything else is a log rewritten.
+        const first = a.items[0]?.seq ?? Infinity
+        const fresh = b.items.filter(i => !a.byId.has(i.id) && i.seq >= first)
         const tail = fresh.length ? b.items.slice(-fresh.length) : []
-        if (fresh.some((i, n) => tail[n] !== i)) return String(t.stream('refresh'))
+        // (More new ones than a window holds: the latest window again, rather than a log that grows without end.)
+        if (fresh.length > PAGE || fresh.some((i, n) => tail[n] !== i)) return String(t.stream('refresh'))
         for (const i of a.items) if (!b.byId.has(i.id)) out.push(t.stream('remove', `msg-${i.id}`))
         for (const i of b.items) { const old = a.byId.get(i.id); if (old && old.node !== i.node && t.differs(old.node, i.node)) out.push(t.stream('replace', `msg-${i.id}`, i.node)) }
         for (const i of fresh) out.push(t.stream('before', `log-end-${id}`, html`${i.day}${i.node}`))
