@@ -3,10 +3,10 @@
 #   crypto/zcrypto.mjs  -> <app>/public/vendor/zcrypto.mjs   (replaces client/core/zcrypto.mjs, the re-export shim)
 #   client/core/*.mjs   -> <app>/public/vendor/              (without tests, the Node-only file adapter)
 #   hub/channel-tools.mjs, hub/richhtml.mjs -> <app>/public/vendor/   (tool reference for the help page)
-# Usage: dev/sync-app.sh [app repo dir]   (default: $TROMMI_APP or the night scratchpad clone)
+# Usage: dev/sync-app.sh [app repo dir]   (default: $TROMMI_APP or ~/git/trommi, the legacy app repo trommi/trommi-app-legacy)
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
-app="${1:-${TROMMI_APP:-/tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/trommi-main}}"
+app="${1:-${TROMMI_APP:-$HOME/git/trommi}}"
 dest="$app/public/vendor"
 [ -d "$app/public" ] || { echo "no app repo at $app (expected public/)" >&2; exit 1; }
 mkdir -p "$dest"

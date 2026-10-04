@@ -45,6 +45,9 @@ jobs:
           node hub/ops/test.mjs
           node hub/accounts-test.mjs
 
+      - name: Fuzz (quick)
+        run: node fuzz/run.mjs --quick
+
       - name: Build image
         run: docker build -f hub/Dockerfile --build-arg COMMIT=${{ github.sha }} -t "$IMAGE" .
 
