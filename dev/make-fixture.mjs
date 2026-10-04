@@ -48,7 +48,7 @@ const att = a => {
   const src = path.join(dataDir, 'files', name)
   if (a.url?.startsWith('/files/') && fs.existsSync(src)) fs.copyFileSync(src, path.join(out, 'files', name))
   const type = a.type ?? (a.image ? (/\.png$/i.test(name) ? 'image/png' : /\.jpe?g$/i.test(name) ? 'image/jpeg' : /\.svg$/i.test(name) ? 'image/svg+xml' : 'image/png') : /\.html?$/i.test(name) ? 'text/html' : /\.json$/i.test(name) ? 'application/json' : /\.txt|\.log$/i.test(name) ? 'text/plain' : 'application/octet-stream')
-  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: a.name ?? name, media_type: type, total_size: a.size ?? 0, width: a.width, height: a.height, caption: a.caption, page: a.page, marks: a.marks, url: `/mock/files/${name}` }
+  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: a.name ?? name, media_type: type, total_size: a.size ?? 0, width: a.width, height: a.height, caption: a.caption ?? a.title, page: a.page?.url ?? a.page, marks: a.marks, url: `/mock/files/${name}` }
 }
 const content = c => ({
   card_type: c.kind === 'info' ? 'info' : 'decision', title: c.title, body: c.body ?? '', options: c.options ?? [], sections: c.sections ?? null, html: c.html ?? null,

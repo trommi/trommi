@@ -11,7 +11,10 @@ import { rememberRef } from './att.mjs'
 import { boardMemos } from './memo-store.mjs'
 
 const SESSION_ID_LEN = 12
-export const agentIdOf = s => s.agent_session_id || s.agent_device_id.slice(0, SESSION_ID_LEN)
+// A session's id on the board (its address /s/<id>): the start of the agent's device id, known from the first envelope
+// on and never changing. (The hub's agent_session_id is random hex and arrives later, with GET devices: it would move
+// the address. A readable one, as the mock room has, is kept.)
+export const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : s.agent_device_id.slice(0, SESSION_ID_LEN))
 
 export class BoardState {
   constructor(client) {
