@@ -82,6 +82,9 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 
 ## Open issues / requests for the morning
 
+- Prod has throwaway rooms that cannot be deleted (no delete for non-test rooms): e.g. cd1ef8bf0ed4 (5k envelopes, F), v1.1 smoke rooms, Superkind's room. Cleanup = one approved wipe via deploy (schema bump), with Christopher, before real use.
+- Perf regression on core v1.1 found by F: ~90 ms CPU per own envelope with 5,300 cards (O(cards)); removing an agent with 24 sessions takes 1.7–2.3 s (one grant post per session). S2 is on both.
+
 - Second security review (Codex, code at 691ecc4+): 9 HIGH findings, several reproduced (scratchpad/review2-codex.md). Fixes are running:
   - S1 hub/crypto: grants from removed humans, slot exhaustion, attachment hijack, ephemeral verification, forwarded-IP trust, FORMAT.md
   - S2 core: handover always rotates, atomic re-keying, transitive register order, no chain rewind, fsync write-ahead, history after state loss, epoch/assignment checks, snapshot trust
