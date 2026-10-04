@@ -361,6 +361,7 @@ await test('warm start from file storage: model, cursor, chains; then the delta'
   const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
   const loadMs = performance.now() - t0
   eq(again.model.cards.get(id)?.title, 'warm', 'card from storage before any network')
+  assert([...again.model.sessions].every(([k, v]) => k === v.session_id), 'sessions restored under their session_id, once each')
   const cmds = []
   again.on('command', c => cmds.push(c))
   await again.start()
