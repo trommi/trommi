@@ -301,10 +301,15 @@ export class Client {
       const tl = []                      // timeline item records to persist
       const commands = []                // agents: commands in order
       let t0 = performance.now(), tStart = t0
-      for (const r of records) {
-        if (r.envelope_number <= this.model.room.last_envelope_number) continue
+      const todo = records.filter(r => r.envelope_number > this.model.room.last_envelope_number)
+      const WINDOW = 64
+      let window = [], wAt = 0
+      for (let i = 0; i < todo.length; i++) {
+        const r = todo[i]
+        if (i >= wAt + window.length) { wAt = i; window = await Promise.all(todo.slice(i, i + WINDOW).map(x => this._precheck(x))) }
+        const pre = window[i - wAt]
         try {
-          const rec = await this._verifyRecord(r)
+          const rec = await this._commit(pre)
           if (rec && rec.object && (rec.kind === codec.KIND.object_version || rec.kind === codec.KIND.permission_request)) {
             rec.object_id_ok = (await objectIdOf(rec.sender_device_id, rec.sender_sequence)) === rec.object.object_id
           }
@@ -330,21 +335,54 @@ export class Client {
     })
   }
 
-  /** Verify one record; decrypt it if it came in full. Returns the reducer record, or null for an own replay. */
-  async _verifyRecord({ envelope_number, envelope }) {
+  /**
+   * Phase 1, run for many records at once (signatures and decryption run in parallel inside WebCrypto):
+   * everything that does not depend on the sender's chain. Uses an empty chain map, so no chain advances here.
+   */
+  async _precheck({ envelope_number, envelope }) {
     const bytes = unb64u(envelope)
-    const peek = z.peekEnvelope(bytes)
+    const pre = { envelope_number, bytes, peek: null, v: null, opened: null, content_state: 'ok', error: null }
+    try {
+      const peek = pre.peek = z.peekEnvelope(bytes)
+      const h = peek.header
+      if (hex(h.sender) === this.my_device_id) return pre          // own envelopes: checked against our own chain in phase 2
+      const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false }
+      if (!peek.pruned) {
+        try {
+          pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.secrets, self: this.device.id })
+          pre.v = pre.opened
+        } catch (e) {
+          if (!['no-key', 'decrypt-failed', 'kind-mismatch', 'bad-format', 'bad-version'].includes(e.code)) throw e
+          pre.v = await z.verifyEnvelope(bytes, opts)            // signature good, body unreadable: quarantine the body (R4)
+          pre.content_state = 'undecryptable'
+        }
+      } else {
+        pre.v = await z.verifyEnvelope(bytes, opts)
+        pre.content_state = h.isHead ? 'pruned' : 'header'
+      }
+    } catch (e) { pre.error = e }
+    return pre
+  }
+
+  /**
+   * Phase 2, strictly in hub order: the sender's chain (crypto/FORMAT.md §9 step 6 and 7, the same rules as
+   * zcrypto's verifyEnvelope) and our own envelopes. Returns the reducer record, or null for a replay.
+   */
+  async _commit(pre) {
+    if (pre.error?.code === 'log-behind') { await this._refreshMembers(); Object.assign(pre, await this._precheck({ envelope_number: pre.envelope_number, envelope: b64u(pre.bytes) })) }
+    if (pre.error) throw pre.error
+    const { peek } = pre
     const h = peek.header
     const sender = hex(h.sender)
-    let v, opened = null, content_state = 'ok'
-    // Our own envelopes: the chain advanced when we sealed them. Check the hub's copy is exactly ours.
+    const key = b64u(h.sender)
     if (sender === this.my_device_id) {
-      const own = this.chains.get(b64u(h.sender))
+      const own = this.chains.get(key)
       const known = own?.hashes.get(h.seq)
       if (!known) throw new ZError('equivocation', `an envelope in this device's name that it did not send (#${h.seq})`)
       const localId = this.byHash.get(hex(known))
+      let v, opened = null, content_state = 'ok'
       if (!peek.pruned) {
-        opened = await z.openVerifiedEnvelope(bytes, { state: this.state, secrets: this.secrets, envelopeHash: known, self: this.device.id })
+        opened = await z.openVerifiedEnvelope(pre.bytes, { state: this.state, secrets: this.secrets, envelopeHash: known, self: this.device.id })
         v = { header: opened.header, hash: opened.hash, member: opened.member }
       } else {
         const got = await z.hash(z.LABEL.envelope, peek.headerBytes, peek.nonce, peek.ciphertextHash)
@@ -353,41 +391,39 @@ export class Client {
         content_state = h.isHead ? 'pruned' : 'header'
       }
       this.stats.verified++
-      const rec = this._record(envelope_number, v, opened, content_state, localId)
+      const rec = this._record(pre.envelope_number, v, opened, content_state, localId)
       const sent = this.sentContent.get(rec.envelope_hash)
       if (sent && !rec.content) { rec.content = sent; rec.content_state = 'ok' }
       this.sentContent.delete(rec.envelope_hash)
       return rec
     }
-    const tries = 2
-    for (let i = 0; i < tries; i++) {
-      try {
-        if (!peek.pruned) {
-          try {
-            opened = await z.openEnvelope(bytes, { state: this.state, chains: this.chains, secrets: this.secrets, self: this.device.id, allowRemovedSender: true })
-            v = opened
-            this.stats.decrypted++
-          } catch (e) {
-            if (!['no-key', 'decrypt-failed', 'kind-mismatch', 'bad-format', 'bad-version'].includes(e.code)) throw e
-            v = await z.verifyEnvelope(bytes, { state: this.state, chains: this.chains, allowRemovedSender: true })
-            content_state = 'undecryptable'
-            opened = null
-          }
-        } else {
-          v = await z.verifyEnvelope(bytes, { state: this.state, chains: this.chains, allowRemovedSender: true })
-          content_state = h.isHead ? 'pruned' : 'header'
-        }
-        break
-      } catch (e) {
-        if (e.code === 'log-behind' && i === 0) { await this._refreshMembers(); continue }
-        if (e.code === 'replay') return null
-        throw e
-      }
+    const v = pre.v
+    const hash = v.hash
+    const chain = this.chains.get(key)
+    if (!chain) {
+      if (h.seq !== 1) throw new ZError('gap', `first envelope seen from this sender has number ${h.seq}`, { have: 0, got: h.seq })
+      if (!h.prev.every(b => b === 0)) throw new ZError('chain-break', 'the first envelope names a predecessor')
+    } else if (h.seq <= chain.seq) {
+      const known = chain.hashes.get(h.seq)
+      if (known && !z.bytesEqual(known, hash)) throw new ZError('equivocation', `two different envelopes with number ${h.seq} from one sender`)
+      return null                                                   // replay: already processed
+    } else if (h.seq > chain.seq + 1) {
+      throw new ZError('gap', `envelope ${h.seq} arrived, ${chain.seq + 1} is missing`, { have: chain.seq, got: h.seq })
+    } else if (!z.bytesEqual(h.prev, chain.hash)) {
+      throw new ZError('chain-break', 'the predecessor hash does not match the envelope accepted before')
     }
-    trimChain(this.chains.get(b64u(h.sender)))
-    this._dirty.chains.add(b64u(h.sender))
+    for (const s of h.seen) {
+      const known = this.chains.get(b64u(s.sender))?.hashes.get(s.seq)
+      if (known && !z.bytesEqual(known, s.hash)) throw new ZError('equivocation', 'the sender saw a different envelope than this device under the same number')
+    }
+    const c = chain ?? { seq: 0, hash: null, hashes: new Map() }
+    c.seq = h.seq; c.hash = hash; c.hashes.set(h.seq, hash)
+    this.chains.set(key, c)
+    trimChain(c)
+    this._dirty.chains.add(key)
     this.stats.verified++
-    return this._record(envelope_number, v, opened, content_state, null)
+    if (pre.opened) this.stats.decrypted++
+    return this._record(pre.envelope_number, v, pre.opened, pre.content_state, null)
   }
 
   /** R2: carry each sender's view of the others forward (seen lists only what changed, R5). */
