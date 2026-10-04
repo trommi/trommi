@@ -44,7 +44,9 @@ let B = null, agent = null
 try {
   // ---- A founds the room ----
   await A.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)
-  await A.until("document.querySelector('#found-form')", 'welcome screen')
+  await A.until("document.querySelector('#way-found')", 'welcome screen')
+  await A.js("document.querySelector('#way-found').click()")
+  await A.until("document.querySelector('#found-form')", 'found screen')
   await A.shot('e2e-1-welcome.png')
   await A.js("document.querySelector('#found-form input[name=device_name]').value = 'Laptop'; document.querySelector('#found-form button[type=submit]').click()")
   await A.until("document.getElementById('recovery-code')", 'recovery code')
@@ -140,9 +142,10 @@ try {
   const checkCode = (await B.js("return document.getElementById('check-code').textContent")).replace(/\D/g, '')
   check(/^\d{6}$/.test(checkCode), 'B shows a six-digit check code')
   await B.shot('e2e-7-check-code.png')
-  await A.until("document.querySelector('[data-state=confirm_code] input[name=code]')", 'A asks for the code')
+  await A.until("document.querySelector('[data-state=confirm_code] .room-choice')", 'A asks which code B shows')
   await A.shot('e2e-8-type-code.png')
-  await A.js(`const i = document.querySelector('[data-state=confirm_code] input[name=code]'); i.value = '${checkCode}'; i.form.requestSubmit()`)
+  check(await A.js(`return document.querySelectorAll('[data-state=confirm_code] .room-choice').length === 4 && [...document.querySelectorAll('[data-state=confirm_code] input[name=code]')].filter(i => i.value === '${checkCode}').length === 1`), 'A offers four codes, one of them B\'s')
+  await A.js(`[...document.querySelectorAll('[data-state=confirm_code] input[name=code]')].find(i => i.value === '${checkCode}').form.querySelector('button').click()`)
   await B.until("document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'", 'B in the room', 20000)
   check(true, 'B joined with the check code')
   await B.until(`document.getElementById('row-${cardId}')`, 'B sees the card', 15000).then(() => check(true, 'B sees the same open card'), e => check(false, e.message))
