@@ -482,6 +482,22 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       const top = Math.max(0, ...[...c.state.epochs].filter(([, info]) => info.withHistory).map(([e]) => e))
       return links.filter(l => l.epoch <= top)
     },
+    /**
+     * Several sessions in one answer (a new device opens 27 sessions with one request, not 81): per session its grant
+     * chain, the caller's own sealed session keys and, for humans and the recovery key, the key back links (agents ask
+     * the single route, which checks "with history"). sessionIds null: every session of the room.
+     */
+    sessionBundle(token, sessionIds = null) {
+      const s = session(token)
+      const ids = sessionIds ?? (storage.sessions?.() ?? []).map(x => x.session_id)
+      const links = s.kind === 'recovery' || s.role === ROLE.HUMAN
+      return ids.map(sessionId => ({
+        sessionId,
+        grants: storage.grants(sessionId).map(g => g.bytes),
+        wraps: storage.sessionWraps(sessionId, s.id, 0).map(w => ({ epoch: w.epoch, sealed: w.sealed })),
+        links: links ? storage.sessionBackLinks(sessionId) : null,
+      })).filter(x => x.grants.length)
+    },
     sessionsList: () => (storage.sessions?.() ?? []).map(x => ({ session_id: x.session_id, last_grant_number: x.last_grant_number, session_key_epoch: x.session_key_epoch })),
     /** The current state of a session (for the hub's own routes): { epoch, agentIds, grantNumber } or null. */
     async sessionInfo(sessionId) { const c = await sessionOf(sessionId); return c.state ? { epoch: c.state.epoch, agentIds: assignedAgents(c.state), grantNumber: c.state.grantNumber } : null },
