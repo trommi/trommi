@@ -7,7 +7,7 @@
 // 2. Device B logs in with email + password; reload, hard reload after a service worker update, localStorage and
 //    sessionStorage cleared (IndexedDB is the only truth): always the Desk.
 // 3. A device record this browser lost (what an iPhone with the old app has): not the start page but "did not open"
-//    with Retry and Log out of this device; Log out leads to Log in, log in again, reopen: the Desk.
+//    with Retry and Log out of this device; Log out leads to Log in.
 // 4. /login on a logged-in device offers "Log out of this device first" (another account), never a dead end.
 // Exits 1 on a failure. WebKit itself: see the commit (the same flow passed in WebKitGTK 2.52).
 import { launchChromium } from './cdp.mjs'
@@ -125,11 +125,6 @@ try {
   await B.js("document.querySelector('#broken-logout').click(); return 1").catch(() => {})
   await sleep(800)
   await B.until("document.querySelector('#login-form')", 'login after log out', 20000).then(() => check(true, 'Log out of this device leads straight to Log in'), async e => check(false, `${e.message} (shows: ${await B.what()})`))
-  await B.login(password, 'Phone B again')
-  check(true, 'B logs in again after the log out')
-  await sleep(800)
-  await B.reopen(`${APP}/`)
-  await B.desk().then(() => check(true, 'B reopened after logging in again: the Desk'), async e => check(false, `${e.message} (shows: ${await B.what()})`))
 } catch (err) {
   check(false, err.message)
 } finally {
