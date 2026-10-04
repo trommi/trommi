@@ -88,7 +88,7 @@ export async function startHub({
   origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
   trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
-  pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS,
+  pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT,
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
@@ -806,15 +806,27 @@ export async function startHub({
 
   const ops = await createOps({ db, dataDir, files, room, bearer, ipOf, now, log, closeRoom, announce: (id, event, data) => rooms.get(id)?.then(r => deliver(r, { text: sse(event, data) }), () => {}) })
   const accounts = createAccounts({ db, room, bearer, ipOf, mailer: createMailer({ log }), now, log })
+  // The read-only admin page (hub/admin.mjs) on its own listener, only with ADMIN_PORT. It never takes the hub down:
+  // a missing ADMIN_LOGINS or a busy port is logged and the hub runs without it.
+  let admin = null
+  if (adminPort) {
+    try {
+      const { startAdmin } = await import('./admin.mjs')
+      admin = await startAdmin({ dbPath: path.join(dataDir, 'hub.db'), dataDir, port: Number(adminPort), host: process.env.ADMIN_HOST || '127.0.0.1',
+        allowPublishedLoopback: process.env.ADMIN_PUBLISHED_LOOPBACK === '1', metrics: ops.metrics, log: { warn: m => log(m), error: (...a) => log(a.join(' ')) } })
+      log(`admin on ${process.env.ADMIN_HOST || '127.0.0.1'}:${admin.port}`)
+    } catch (err) { log(`admin not started: ${err.message}`) }
+  }
   await new Promise((ok, bad) => { server.once('error', bad); server.listen(port, host, ok) })
   const address = server.address()
   if (!hubUrl) hubUrl = `http://127.0.0.1:${address.port}`
   const startupMs = performance.now() - t0
   log(`listening on ${host}:${address.port} as ${hubUrl}, commit ${commit}, ready in ${startupMs.toFixed(1)} ms`)
   return {
-    server, port: address.port, hubUrl, db, startupMs, stats, prune, sweepPending, ops, accounts, capStreams, rebuildDerived: () => rebuildDerived(db),
+    server, port: address.port, hubUrl, db, startupMs, stats, prune, sweepPending, ops, accounts, admin, capStreams, rebuildDerived: () => rebuildDerived(db),
     async close() {
       closing = true
+      await admin?.close()
       clearTimeout(firstPrune)
       for (const t of timers) clearInterval(t)
       await ops.close()

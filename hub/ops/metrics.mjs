@@ -32,7 +32,7 @@ function histogram() {
 }
 
 const readProc = file => { try { return fs.readFileSync(file, 'utf8') } catch { return '' } }
-function hostStats(dataDir) {
+export function hostStats(dataDir) {
   const load = readProc('/proc/loadavg').split(' ').slice(0, 3).map(Number)
   const mem = Object.fromEntries(readProc('/proc/meminfo').split('\n').map(l => /^(\w+):\s+(\d+)/.exec(l)).filter(Boolean).map(m => [m[1], Number(m[2]) * 1024]))
   let disk = { total: 0, free: 0 }

@@ -220,6 +220,61 @@ try {
     assert.ok(!renderCell('share_secret_hash', 'x'.repeat(40)).includes('x'.repeat(40)));
     assert.ok(!renderCell('email', 'someone@example.com').includes('someone@example.com'));
   });
+  await test('container bind: 0.0.0.0 only with allowPublishedLoopback; any other address still refused', async () => {
+    const inContainer = await startAdmin({ dbPath, dataDir: dir, port: 0, host: '0.0.0.0', allowPublishedLoopback: true, env, log: quiet });
+    try {
+      assert.equal((await request('/', { login: null }, `http://127.0.0.1:${inContainer.port}`)).status, 403);
+    } finally { await inContainer.close(); }
+    await assert.rejects(startAdmin({ dbPath, dataDir: dir, port: 0, host: '10.0.0.1', allowPublishedLoopback: true, env, log: quiet }), /loopback/);
+  });
+
+  await test('wired into the hub with ADMIN_PORT: overview (CPU, RAM, disk, hub metrics), tables, login page', async () => {
+    const { startHub } = await import('./server.mjs');
+    const hubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-admin-hub-'));
+    const saved = { ...process.env };
+    Object.assign(process.env, { ADMIN_LOGINS: LOGIN, ADMIN_PASSWORD_HASH: env.ADMIN_PASSWORD_HASH });
+    const hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: hubDir, commit: 'test', log: () => {}, adminPort: '0' });
+    try {
+      assert.ok(hub.admin, 'admin listener started');
+      hub.ops.metrics.sample();
+      const server = `http://127.0.0.1:${hub.admin.port}`;
+      const login = await request('/', {}, server);
+      assert.equal(login.status, 403);
+      assert.match(await login.text(), /Admin password/);
+      const { cookie } = await signIn(PASSWORD, LOGIN, server);
+      const html = await (await request('/', { cookie }, server)).text();
+      assert.match(html, /Overview/);
+      assert.match(html, /CPU<\/th><td>load [\d.]+ /);
+      assert.match(html, /RAM<\/th><td>.* used of /);
+      assert.match(html, /Disk \(data\)<\/th><td>.* free of /);
+      assert.match(html, /open streams .* req\/s/);
+      assert.match(html, /envelopes \(/);
+      assert.match(html, /Passwort ändern/);
+      assert.match(html, /Abmelden/);
+    } finally {
+      await hub.close();
+      for (const k of ['ADMIN_LOGINS', 'ADMIN_PASSWORD_HASH']) if (k in saved) process.env[k] = saved[k]; else delete process.env[k];
+      fs.rmSync(hubDir, { recursive: true, force: true });
+    }
+  });
+
+  await test('hub without ADMIN_LOGINS: admin not started, hub still runs', async () => {
+    const { startHub } = await import('./server.mjs');
+    const hubDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-admin-hub2-'));
+    const saved = process.env.ADMIN_LOGINS;
+    delete process.env.ADMIN_LOGINS;
+    const lines = [];
+    const hub = await startHub({ port: 0, host: '127.0.0.1', dataDir: hubDir, commit: 'test', log: (m) => lines.push(m), adminPort: '0' });
+    try {
+      assert.equal(hub.admin, null);
+      assert.ok(lines.some((l) => /admin not started: .*ADMIN_LOGINS/.test(l)));
+      assert.equal((await fetch(`http://127.0.0.1:${hub.port}/healthz`)).status, 200);
+    } finally {
+      await hub.close();
+      if (saved !== undefined) process.env.ADMIN_LOGINS = saved;
+      fs.rmSync(hubDir, { recursive: true, force: true });
+    }
+  });
 } finally {
   await admin.close();
   fs.rmSync(dir, { recursive: true, force: true });

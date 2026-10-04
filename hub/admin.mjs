@@ -1,6 +1,9 @@
 // Read-only admin view of hub.db, on its own listener (default 8791), never part of the public 8790 listener.
 //
-// NOT WIRED IN: no server or compose file starts this yet (Christopher decides how it is reached).
+// Wired in by hub/server.mjs when ADMIN_PORT is set. On trommi-hub: ADMIN_HOST=0.0.0.0 inside the container with
+// ADMIN_PUBLISHED_LOOPBACK=1, the container port published on the host's 127.0.0.1:8791 only (compose.override.yaml,
+// written by the deploy), and `tailscale serve --https=8443 http://localhost:8791` in front of it:
+// https://trommi-hub.tail276436.ts.net:8443
 //
 // Two checks on every request, both required:
 //   1. Header Tailscale-User-Login names a login in ADMIN_LOGINS (required; there is no default login).
@@ -9,8 +12,10 @@
 //      is `tailscale serve` on that host, which strips any client-sent Tailscale-User-Login and sets it itself from
 //      the authenticated tailnet identity. Every other local process (and a sibling container sharing the host's
 //      network) could forge it, so the header alone is never enough: the password below is the second factor.
-//      Never put this listener behind any proxy that passes client headers through (cloudflared, nginx, a published
-//      Docker port): there the header is whatever the caller writes.
+//      Never put this listener behind any proxy that passes client headers through (cloudflared, nginx, a Docker port
+//      published beyond the host's loopback): there the header is whatever the caller writes. Inside a container the
+//      listener must bind 0.0.0.0 for Docker's port mapping to reach it; that is allowed only with
+//      allowPublishedLoopback (ADMIN_PUBLISHED_LOOPBACK=1), which states that the port is published on 127.0.0.1 only.
 //   2. A session cookie from the admin password (scrypt hash in <dataDir>/admin-password-hash, or the
 //      initial ADMIN_PASSWORD_HASH env value while that file does not exist).
 //
@@ -20,7 +25,9 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
+import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
+import { hostStats } from './ops/metrics.mjs';
 
 const scryptAsync = promisify(crypto.scrypt);
 const PAGE_SIZE = 50;
@@ -176,7 +183,31 @@ function renderPasswordPage(login, csrf, message = '') {
 <p><button>change</button> (signs out every admin session)</p></form></body></html>`;
 }
 
-export function renderPage(db, { table: tableName, room_id: roomId, page = 0 }, { dbPath, dataDir, login = '', csrf = '' } = {}) {
+function pct(part, whole) { return whole > 0 ? `${Math.round((100 * part) / whole)} %` : '?'; }
+
+/** Host and hub numbers: CPU (load / cores), RAM, free disk; the newest 10 s metrics sample when the hub passes its metrics. */
+export function renderOverview({ dataDir, metrics, startedAt, now = Date.now } = {}) {
+  const h = hostStats(dataDir || '/');
+  const cpus = h.cpus || os.availableParallelism();
+  const used = h.memTotal - h.memAvailable;
+  const rows = [
+    ['CPU', `load ${h.load.map((x) => x.toFixed(2)).join(' / ')} (1/5/15 min) on ${cpus} cores · ${pct(h.load[0], cpus)}`],
+    ['RAM', `${formatBytes(used)} used of ${formatBytes(h.memTotal)} (${pct(used, h.memTotal)}), ${formatBytes(h.memAvailable)} available`],
+    ['Disk (data)', `${formatBytes(h.disk.free)} free of ${formatBytes(h.disk.total)} (${pct(h.disk.free, h.disk.total)} free)`],
+  ];
+  const last = metrics?.history?.().at(-1);
+  if (last) {
+    rows.push(
+      ['Hub', `${last.open_streams} open streams · ${last.requests_per_second.toFixed(1)} req/s · ${last.envelopes_per_second.toFixed(2)} envelopes/s · write queue ${last.write_queue_depth}`],
+      ['Hub process', `RSS ${formatBytes(last.rss_bytes)} · heap ${formatBytes(last.heap_used_bytes)} · event-loop lag p99 ${last.event_loop_lag_p99_ms.toFixed(1)} ms · GC max ${last.gc_max_ms.toFixed(1)} ms`],
+      ['SQLite', `${formatBytes(last.sqlite_bytes)} · WAL ${formatBytes(last.wal_bytes)} · stream buffers ${formatBytes(last.outbound_bytes_total)}`],
+    );
+  } else if (metrics) rows.push(['Hub', 'first metrics sample in under 10 s']);
+  if (startedAt) rows.push(['Uptime', `${Math.floor((now() - startedAt) / 3600000)} h ${Math.floor(((now() - startedAt) % 3600000) / 60000)} min`]);
+  return `<h2>Overview</h2><table><tbody>${rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>`;
+}
+
+export function renderPage(db, { table: tableName, room_id: roomId, page = 0 }, { dbPath, dataDir, login = '', csrf = '', metrics, startedAt } = {}) {
   const tables = tableInfo(db);
   const selected = tables.find((t) => t.name === tableName) || tables.find((t) => t.name === 'envelopes') || tables[0];
   const roomFilter = typeof roomId === 'string' && /^[0-9a-f]{1,64}$/.test(roomId) ? roomId : '';
@@ -186,7 +217,8 @@ export function renderPage(db, { table: tableName, room_id: roomId, page = 0 }, 
   if (login) parts.push(topBar(login, csrf));
   const dbSize = dbPath ? fileSize(dbPath) + fileSize(`${dbPath}-wal`) : 0;
   const attachmentsSize = dataDir ? dirSize(path.join(dataDir, 'attachments')) : 0;
-  parts.push(`<p>hub.db: ${formatBytes(dbSize)} · attachments: ${formatBytes(attachmentsSize)}</p>`);
+  parts.push(renderOverview({ dataDir, metrics, startedAt }));
+  parts.push(`<p>hub.db: ${formatBytes(dbSize)} · attachments: ${formatBytes(attachmentsSize)}</p><h2>Tables</h2>`);
   parts.push('<nav>');
   for (const t of tables) {
     const label = `${esc(t.name)} (${t.count ?? '?'})`;
@@ -257,17 +289,20 @@ function safeEqual(a, b) {
 }
 
 /**
- * startAdmin({ dbPath | db, dataDir, port = 8791, host = '127.0.0.1', env = process.env, now? }); host must be loopback.
+ * startAdmin({ dbPath | db, dataDir, port = 8791, host = '127.0.0.1', env = process.env, metrics?, allowPublishedLoopback?, now? });
+ * host must be loopback, or 0.0.0.0 inside a container with allowPublishedLoopback (port published on the host's 127.0.0.1 only).
  * env: ADMIN_LOGINS (comma list, required), ADMIN_PASSWORD_HASH (initial hash, used only while <dataDir>/admin-password-hash is missing).
  * → Promise<{ server, port, close }>
  */
-export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, host = '127.0.0.1', env = process.env, now = Date.now, log = console } = {}) {
-  if (!['127.0.0.1', '::1', 'localhost'].includes(host)) throw new Error('admin: binds a loopback address only (the Tailscale-User-Login header is trusted only from tailscale serve on this host)');
+export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, host = '127.0.0.1', env = process.env, metrics, allowPublishedLoopback = false, now = Date.now, log = console } = {}) {
+  const loopback = ['127.0.0.1', '::1', 'localhost'].includes(host);
+  if (!loopback && !(allowPublishedLoopback && host === '0.0.0.0')) throw new Error('admin: binds a loopback address only (the Tailscale-User-Login header is trusted only from tailscale serve on this host)');
   const allowed = parseLogins(env.ADMIN_LOGINS);
   if (!allowed.size) throw new Error('admin: ADMIN_LOGINS is required (comma list of Tailscale logins); there is no default');
   const passwordFile = dataDir ? path.join(dataDir, PASSWORD_FILE) : null;
   const sessions = new Map(); // token -> { login, expires_at, csrf }
   const failures = []; // { login, at }
+  const startedAt = now();
 
   function currentHash() {
     if (passwordFile) {
@@ -386,7 +421,7 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
       if (url.pathname !== '/') return send(res, 404, 'not found\n');
       const database = openDb();
       if (!database) return send(res, 503, 'hub.db does not exist yet\n');
-      const page = renderPage(database, Object.fromEntries(url.searchParams), { dbPath, dataDir, login, csrf: session.csrf });
+      const page = renderPage(database, Object.fromEntries(url.searchParams), { dbPath, dataDir, login, csrf: session.csrf, metrics, startedAt });
       return send(res, 200, method === 'HEAD' ? '' : page, html);
     } catch (error) {
       if (error?.status === 413) return send(res, 413, 'too large\n');
