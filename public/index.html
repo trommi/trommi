@@ -1,16 +1,41 @@
 <!doctype html>
-<html lang="de">
+<html lang="en" data-ui="turbo">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#ffffff">
 <title>Trommi</title>
-<style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; min-height: 100vh; display: grid; place-items: center;
-         font: 600 2rem/1.2 system-ui, sans-serif; background: Canvas; color: CanvasText; }
-</style>
+<link rel="icon" type="image/svg+xml" href="/icons/trommi.svg">
+<link rel="manifest" href="/manifest.webmanifest">
+<script src="/js/app/theme.js"></script>
+<link rel="preload" href="/fonts/fonts.css" as="style">
+<link rel="stylesheet" href="/fonts/fonts.css" data-sheet="fonts">
+<link rel="stylesheet" href="/css/tokens.css" data-sheet="tokens">
+<link rel="stylesheet" href="/css/app.css" data-sheet="app">
+<link rel="stylesheet" href="/css/crowns.css" data-sheet="crowns">
+<link rel="stylesheet" href="/css/back.css" data-sheet="back">
+<link rel="stylesheet" href="/css/beside.css" data-sheet="beside">
+<link rel="stylesheet" href="/css/cardclip.css" data-sheet="cardclip">
+<link rel="stylesheet" href="/css/phone-desk.css" data-sheet="phone-desk">
+<link rel="stylesheet" href="/css/piles.css" data-sheet="piles">
+<link rel="stylesheet" href="/css/stamps.css" data-sheet="stamps">
+<link rel="stylesheet" href="/css/logo.css" data-sheet="logo">
+<link rel="stylesheet" href="/css/links.css" data-sheet="links">
+<link rel="stylesheet" href="/css/quicksend.css" data-sheet="quicksend">
+<link rel="stylesheet" href="/css/keys.css" data-sheet="keys">
+<link rel="stylesheet" href="/css/ledger.css" data-sheet="ledger">
+<link rel="stylesheet" href="/css/richhtml.css" data-sheet="richhtml">
+<link rel="stylesheet" href="/css/session.css" data-sheet="session">
+<link rel="stylesheet" href="/css/cardpage.css" data-sheet="cardpage">
+<link rel="stylesheet" href="/css/speech.css" data-sheet="speech">
+<link rel="stylesheet" href="/css/turbo.css" data-sheet="turbo">
+<link rel="stylesheet" href="/css/trommi.css" data-sheet="trommi">
+<link rel="modulepreload" href="/js/app/boot.mjs">
+<link rel="modulepreload" href="/js/app/board.mjs">
+<link rel="modulepreload" href="/js/views/desk.mjs">
+<script type="module" src="/js/app/boot.mjs"></script>
 </head>
-<body>
-<p>Hello, world — die Trommi-App kommt.<br><small>Deploy-Test 04.10.</small></p>
+<body data-view="chat" data-scope="all" data-t-view="desk" data-t-base="">
+<div id="stream-host" hidden></div>
 </body>
 </html>

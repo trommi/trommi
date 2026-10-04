@@ -1,0 +1,218 @@
+/* The memo (js/quicksend.js, js/memos.js): a yellow sticky note to a session. It floats over the page where
+   it was put, or lies on the Desk's paper. The controls are plain; the note itself is the one hand-made
+   thing: yellow paper, a ruled field, a dashed tear line that ends in the paper plane. Where the round button stands (bottom right beside the
+   Scratchpad's control; small at the top right in a session) is laid down in app.css together with
+   the pad's control: `.quick-open, .topbar .padlink-open`. */
+
+/* ---- closed: the button is a yellow sticky note (who receives is in its tooltip and on the slip) ---- */
+.topbar .quick-open { right: var(--s-4); width: 44px; height: 44px; border-radius: 50%; }
+.memo-open { --sticky: #f7d64f; --sticky-ink: #4a3c08; }
+:root[data-theme="dark"] .memo-open { --sticky: #e9c63f; }
+.memo-sticky { width: 27px; height: 27px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; pointer-events: none; }
+.memo-sticky .sticky-paper { fill: var(--sticky); }
+.memo-sticky .sticky-fold { fill: color-mix(in srgb, var(--sticky) 62%, #fff); }
+.memo-sticky .sticky-line { stroke: var(--sticky-ink); stroke-width: 1.4; }
+:root[data-theme="dark"] .memo-sticky :is(.sticky-paper, .sticky-fold) { stroke: var(--sticky-ink); }
+.memo-open[data-none] .memo-sticky { opacity: .55; }
+/* while a note is out, it keeps its paper (the note must stay readable): a firm ring instead of a filled button */
+.quick-open.memo-open[aria-expanded="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 2px var(--fg), var(--shadow-md); }
+/* notes were put away: the button holds them and says how many; a click lists them (.memo-list) */
+.memo-open[data-draft]::after { content: attr(data-count); position: absolute; right: -4px; top: -4px; min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 4px; display: grid; place-items: center; border-radius: 9px; background: var(--fg); color: var(--bg); font: 700 .68rem/1 var(--font); box-shadow: 0 0 0 2px var(--bg); }
+.memo-list { position: fixed; z-index: 2650; display: grid; gap: 5px; width: max-content; min-width: 190px; max-width: min(300px, calc(100vw - 16px)); max-height: min(60vh, 420px); overflow-y: auto; padding: 4px; }
+.memo-list[hidden] { display: none; }
+.memo-list > button { display: flex; align-items: baseline; gap: 8px; min-width: 0; min-height: 38px; padding: 8px 11px; border: 0; border-radius: 3px 3px 3px 9px / 3px 3px 3px 7px; background: #fbe886; color: #272008; font: 500 var(--t-sm)/1.3 var(--font); text-align: left; cursor: pointer; box-shadow: 0 1px 0 rgb(0 0 0 / .16), 0 6px 10px -7px rgb(0 0 0 / .45); }
+:root[data-theme="dark"] .memo-list > button { background: #ecd462; }
+.memo-list > button:nth-child(even) { rotate: .5deg; }
+.memo-list > button:nth-child(odd) { rotate: -.4deg; }
+.memo-list > button:is(:hover, :focus-visible) { outline: 2px solid var(--fg); outline-offset: 1px; }
+.memo-list-note strong { flex: 1 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.memo-list-note small { flex: none; font-size: var(--t-xs); color: #6a5d24; }
+.memo-list-new { align-items: center; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1.4px var(--fg), 0 6px 10px -7px rgb(0 0 0 / .45); font-weight: 600; }
+.memo-list > .memo-list-new { background: var(--surface); color: var(--fg); }
+.memo-list-new .sketch { flex: none; width: 17px; height: 17px; }
+body:not([data-scope="all"]):not([data-page]) .memo-sticky { width: 23px; height: 23px; }
+@media (max-width: 860px) { .memo-sticky { width: 23px; height: 23px; } }
+
+/* ---- the note: a sheet of a yellow pad, drawn with the board's pen (card Nr. 192) ---- */
+/* Yellow paper in both themes, written on with dark ink: the page's tokens are set anew inside it. The sheet is drawn
+   by three pictures (data URIs, painted once): --memo-sheet is the uneven pen outline with square corners, the flat
+   wash a touch off the line and one black pen line below, stretched over the slip (the pen keeps
+   its width); --memo-envelope the envelope the send button is (the crown is its seal), --memo-envelope-sealed
+   the same with the crown drawn in (kept for a later use). No ruled lines, no tear line, no rounded
+   corners, no shadow: it lies flat and sticks. */
+.memo {
+  --paper: #f7de6c; --fg: #3b300d; --muted: #6a5d24; --faint: #94863f; --line-strong: #d9c35a; --line: #e6d373; --bg: #f7de6c; --surface: #fff6bf; --sunken: #f3dc6c;
+  --memo-sheet: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%20preserveAspectRatio%3D'none'%3E%3Cpath%20d%3D'M2%202.6%20L100%201.8%20L99.6%20100.39999999999999%20L1.2%2099.19999999999999%20Z'%20fill%3D'%23f7de6c'%2F%3E%3Cpath%20d%3D'M0.7%201.1%20Q30%200.3%2062%200.9%20T99.4%200.7'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3Cpath%20d%3D'M99.1%200.2%20Q99.7%2030%2099.2%2060%20T99.4%2099'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3Cpath%20d%3D'M99.7%2098.6%20Q60%2099.3%2030%2098.39999999999999%20T0.4%2098.89999999999999'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3Cpath%20d%3D'M0.9%2099.19999999999999%20Q0.3%2060%200.8%2030%20T0.6%200.3'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3C%2Fsvg%3E");
+  --memo-envelope: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E");
+  --memo-env-body: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.6%2036.4%20Q16%2026%2024.4%2021.6%20M52.6%2036%20Q40%2026.4%2031.6%2021.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.3'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E");
+  --memo-env-flap: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2020'%3E%3Cpath%20d%3D'M3%201.2%20L52.8%20.8%20L28%2019.4%20Z'%20fill%3D'%23fbe9a8'%2F%3E%3Cpath%20d%3D'M3%201.2%20Q16%2012.6%2027.8%2019.2%20Q40%2012%2052.8%20.8'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E");
+  --memo-envelope-sealed: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cg%20transform%3D'translate(15.6%2016.4)%20rotate(-6)%20scale(.95)'%3E%3Cpath%20d%3D'M5%2016.9%20L3.9%206.6%20L9.8%2011.6%20L14%203.8%20L18.5%2011.4%20L24.5%206.2%20L23.3%2017.1%20Z'%20fill%3D'%23f2b632'%2F%3E%3Cpath%20d%3D'M3.7%2016.1%20Q3.5%2010.4%202.5%205.5%20Q6.2%207.4%208.8%2010.7%20Q10.3%206.2%2013.1%202.7%20Q15.9%206.1%2017.4%2010.5%20Q20%207%2023.7%205.1%20Q23.6%2010.9%2022.2%2016.3%20Q13.2%2015.2%204.5%2015.9'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.7'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Ccircle%20cx%3D'2.5'%20cy%3D'4.6'%20r%3D'2.1'%20fill%3D'%23cf3a2b'%20stroke%3D'%231d1a12'%20stroke-width%3D'1'%2F%3E%3Ccircle%20cx%3D'13'%20cy%3D'1.7'%20r%3D'2.3'%20fill%3D'%23cf3a2b'%20stroke%3D'%231d1a12'%20stroke-width%3D'1'%2F%3E%3Ccircle%20cx%3D'23.7'%20cy%3D'4.2'%20r%3D'2.1'%20fill%3D'%23cf3a2b'%20stroke%3D'%231d1a12'%20stroke-width%3D'1'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  position: fixed; z-index: 2600; left: 0; top: 0; width: 340px; max-width: calc(100vw - 8px);
+  font: 400 var(--t-md)/1.4 var(--font); color: var(--fg); text-align: left;
+}
+:root[data-theme="dark"] .memo {
+  --memo-sheet: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%20100%20100'%20preserveAspectRatio%3D'none'%3E%3Cpath%20d%3D'M2%202.6%20L100%201.8%20L99.6%20100.39999999999999%20L1.2%2099.19999999999999%20Z'%20fill%3D'%23d4bb55'%2F%3E%3Cpath%20d%3D'M0.7%201.1%20Q30%200.3%2062%200.9%20T99.4%200.7'%20fill%3D'none'%20stroke%3D'%23141108'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3Cpath%20d%3D'M99.1%200.2%20Q99.7%2030%2099.2%2060%20T99.4%2099'%20fill%3D'none'%20stroke%3D'%23141108'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3Cpath%20d%3D'M99.7%2098.6%20Q60%2099.3%2030%2098.39999999999999%20T0.4%2098.89999999999999'%20fill%3D'none'%20stroke%3D'%23141108'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3Cpath%20d%3D'M0.9%2099.19999999999999%20Q0.3%2060%200.8%2030%20T0.6%200.3'%20fill%3D'none'%20stroke%3D'%23141108'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%20vector-effect%3D'non-scaling-stroke'%2F%3E%3C%2Fsvg%3E");
+  --memo-envelope: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E");
+  --memo-env-body: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.6%2036.4%20Q16%2026%2024.4%2021.6%20M52.6%2036%20Q40%2026.4%2031.6%2021.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.3'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E");
+  --memo-env-flap: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2020'%3E%3Cpath%20d%3D'M3%201.2%20L52.8%20.8%20L28%2019.4%20Z'%20fill%3D'%23fbe9a8'%2F%3E%3Cpath%20d%3D'M3%201.2%20Q16%2012.6%2027.8%2019.2%20Q40%2012%2052.8%20.8'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E");
+  --memo-envelope-sealed: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cg%20transform%3D'translate(15.6%2016.4)%20rotate(-6)%20scale(.95)'%3E%3Cpath%20d%3D'M5%2016.9%20L3.9%206.6%20L9.8%2011.6%20L14%203.8%20L18.5%2011.4%20L24.5%206.2%20L23.3%2017.1%20Z'%20fill%3D'%23f2b632'%2F%3E%3Cpath%20d%3D'M3.7%2016.1%20Q3.5%2010.4%202.5%205.5%20Q6.2%207.4%208.8%2010.7%20Q10.3%206.2%2013.1%202.7%20Q15.9%206.1%2017.4%2010.5%20Q20%207%2023.7%205.1%20Q23.6%2010.9%2022.2%2016.3%20Q13.2%2015.2%204.5%2015.9'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.7'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Ccircle%20cx%3D'2.5'%20cy%3D'4.6'%20r%3D'2.1'%20fill%3D'%23cf3a2b'%20stroke%3D'%231d1a12'%20stroke-width%3D'1'%2F%3E%3Ccircle%20cx%3D'13'%20cy%3D'1.7'%20r%3D'2.3'%20fill%3D'%23cf3a2b'%20stroke%3D'%231d1a12'%20stroke-width%3D'1'%2F%3E%3Ccircle%20cx%3D'23.7'%20cy%3D'4.2'%20r%3D'2.1'%20fill%3D'%23cf3a2b'%20stroke%3D'%231d1a12'%20stroke-width%3D'1'%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E");
+  --fg: #2a210a; --paper: #d4bb55; --line-strong: #c4ad45; --line: #d6c052; --bg: #d4bb55; --sunken: #dcc24e; }
+.memo[hidden] { display: none; }
+.memo-slip { position: relative; display: grid; gap: 2px; margin: 0; padding: 0 14px 14px; border-radius: 0; background: var(--memo-sheet) 0 0 / 100% 100% no-repeat; transform-origin: 100% 100%; }
+.memo-slip.is-drop { box-shadow: 0 0 0 2px var(--accent); }
+.memo[data-state="open"] .memo-slip { animation: memo-in var(--d-med) var(--ease-out) both; }
+@keyframes memo-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
+/* carried: lifted off the page; over the Desk's paper it says that it would lie there */
+.memo.is-carried { z-index: 2700; }
+.memo.is-carried .memo-slip { rotate: -1.5deg; animation: none; }
+.memo.is-carried.over-paper .memo-slip { box-shadow: 0 0 0 2px var(--fg), 0 12px 16px -10px rgb(0 0 0 / .4); }
+/* on the Desk's paper: part of the page, it scrolls with the paper and lies under whatever floats */
+.memo.is-paper { position: absolute; z-index: 2; }
+.memo.is-paper.is-carried { z-index: 3; }
+.memo.is-paper .memo-head { cursor: grab; touch-action: none; }
+.memo.is-paper .memo-slip { animation: none; }
+
+/* the head: the binding band the note sticks by (drawn by .memo-slip). Nothing stands on it; the note is carried by it. */
+.memo-head { height: 22px; margin: 0 -14px 4px; border-radius: 0; background: none; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.memo.is-carried .memo-head { cursor: grabbing; }
+/* the note is held by one strip of tape at the top centre (the look of the slips, slip.css), half over the edge.
+   The tape and the strip under it along the top are where the note is carried. */
+.memo-head { position: relative; }
+.memo-head::before { content: ""; position: absolute; left: 50%; top: -11px; width: 72px; height: 22px; translate: -50% 0; rotate: -6deg; background: color-mix(in srgb, #e6d27a 58%, transparent); box-shadow: 0 0 0 .5px rgb(0 0 0 / .07); clip-path: polygon(3% 0, 100% 0, 97% 25%, 100% 50%, 97% 75%, 100% 100%, 0 100%, 3% 75%, 0 50%, 3% 25%); }
+:root[data-theme="dark"] .memo-head::before { background: color-mix(in srgb, #e6d27a 34%, transparent); }
+.memo-bin { opacity: .75; }
+.memo-slip:hover .memo-bin, .memo-bin:focus-visible { opacity: 1; }
+
+/* chips above the field (cardclip.js puts its bar first in .memo-body) */
+.memo-body { position: relative; min-width: 0; }
+.memo-body .cardclip-bar { padding: 8px 0 2px; }
+.memo-body .cardclip-chip { background: color-mix(in srgb, var(--fg) 9%, transparent); }
+/* no ruled lines. No scrollbar: the note grows with its words (in steps of its 28px line); past its height it scrolls. */
+.memo-field { display: block; width: 100%; height: 84px; min-height: 84px; margin: 0; padding: 0; border: 0; border-radius: 0; resize: none; background: none; font: 400 var(--t-md)/28px var(--font); color: var(--fg); overflow-y: auto; scrollbar-width: none; }
+.memo-field::-webkit-scrollbar { display: none; }
+.memo-field:focus-visible { outline: 0; }
+.memo-field::placeholder { color: transparent; }
+
+/* The attached files lie in the foot's row, beside the paperclip: bin, paperclip, the chips, room, the envelope.
+   (memo.mjs renders them before the foot; the grid puts both in one row, the chips over the foot's free middle.)
+   More than five fold into one chip: the paperclip and their number (a CSS counter); a click on it (memo_controller.js)
+   opens them as a list above the row, each with its ×. */
+.memo-slip { grid-template-columns: minmax(0, 1fr); }
+.memo-slip > .memo-head { grid-row: 1; }
+.memo-slip > .memo-body { grid-row: 2; }
+.memo-slip > .memo-foot, .memo-slip > .memo-files { grid-row: 3; grid-column: 1; }
+.memo-bin { order: -1; }
+.memo-files { --tools: 72px; z-index: 1; align-self: center; display: flex; flex-wrap: nowrap; gap: 4px; min-width: 0; margin: 0 64px 0 var(--tools); overflow: hidden; counter-reset: memo-files; }
+.memo-files:empty { display: none; }
+.memo-file { counter-increment: memo-files; flex: 0 1 auto; min-width: 46px; }
+.memo-files:has(> .memo-file:nth-child(6)):not([data-open]) > .memo-file { position: absolute; width: 1px; opacity: 0; pointer-events: none; }
+.memo-files:has(> .memo-file:nth-child(6))::after { content: counter(memo-files); flex: none; display: inline-flex; align-items: center; height: 28px; padding: 0 9px 0 26px; border-radius: 8px; background: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M15.8 7.4 L9.6 13.8 L8.6 16.4 L10.2 18.2 L12.8 17.4 L18.8 11.2 L19.6 7.8 L17.4 5.2 L14 5.6 L6.6 13.2 L5.2 17.2 L7.2 20.4 L11.2 20.6 L17.2 15' fill='none' stroke='%235a4c1c' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") 5px 50% / 18px 18px no-repeat, color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); cursor: pointer; }
+.memo-files:has(> .memo-file:nth-child(6)) { cursor: pointer; }
+.memo-files[data-open]:has(> .memo-file:nth-child(6)) { position: absolute; left: 14px; bottom: 54px; z-index: 3; display: grid; justify-items: start; gap: 4px; max-width: 260px; max-height: 50vh; margin: 0; padding: 8px; overflow: auto; background: var(--paper); box-shadow: inset 0 0 0 1.5px var(--fg); }
+.memo-files[data-open] > .memo-file { max-width: 100%; }
+/* two to five side by side: each only its drawing (the name is its tooltip; a click takes it off, as on every chip) */
+.memo-files:has(> .memo-file:nth-child(2)):not([data-open]) > .memo-file { flex: none; min-width: 0; width: 30px; padding: 0; justify-content: center; }
+.memo-files:has(> .memo-file:nth-child(2)):not([data-open]) > .memo-file :is(span, i) { display: none; }
+.memo-file { display: inline-flex; align-items: center; gap: 5px; max-width: 120px; height: 28px; padding: 0 6px 0 7px; border: 0; border-radius: 8px; background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); cursor: pointer; }
+.memo-file:hover { background: color-mix(in srgb, var(--fg) 15%, transparent); }
+.memo-file .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
+.memo-file span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.memo-file i { flex: none; font: 400 16px/1 var(--font); color: var(--muted); }
+
+/* the foot: paperclip, bin, then room (.memo-gap; .memo-tear in the old client, no longer drawn), then the envelope sealed with the crown (card Nr. 195) */
+.memo-foot { display: flex; align-items: center; gap: 2px; margin: 6px -6px 0 -6px; }
+.memo-tear { flex: 1; }
+.memo-local { flex: none; margin-left: 6px; font-size: .68rem; letter-spacing: .02em; color: var(--muted); white-space: nowrap; }
+.memo-local[hidden] { display: none; }
+.memo-tool { flex: none; width: 28px; height: 28px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 0; background: none; color: var(--muted); cursor: pointer; }
+.memo-tool:hover { background: color-mix(in srgb, var(--fg) 10%, transparent); color: var(--fg); }
+.memo-tool .sketch { width: 17px; height: 17px; }
+/* paperclip and bin lie together at the lower left, both large enough to hit (card Nr. 195) */
+.memo-foot .memo-tool { width: 38px; height: 38px; }
+.memo-foot .memo-tool .sketch { width: 23px; height: 23px; stroke-width: 1.8; }
+/* the crown sends: no button of its own, the crown is where the note goes, a drawn arrow points at it; the crowned
+   session's name shows on hover (data-name, server/views/memo.mjs). Hollow while the desk has no crown. */
+.memo-sends { flex: none; display: inline-flex; align-items: center; gap: 4px; }
+.memo-send { position: relative; flex: none; width: 58px; height: 44px; padding: 0; display: block; border: 0; border-radius: 0; background: var(--memo-envelope) center / 56px 40px no-repeat; color: var(--fg); rotate: -4deg; cursor: pointer; transition: rotate 140ms var(--ease-out), translate 140ms var(--ease-out); }
+/* the crown is the envelope's seal, on the tip of its flap */
+.memo-send .agent-avatar { position: absolute; left: 16px; top: 13px; width: 26px; height: 26px; rotate: -6deg; }
+.memo-send .crown-mark { position: absolute; left: 15px; top: 16px; width: 26px; height: auto; rotate: -6deg; --gold-pen: var(--fg); --crown-wash: #f2b632; --crown-jewel: #cf3a2b; }
+.memo-send:not(:disabled):hover { rotate: 0deg; translate: 3px -2px; }
+.memo-send:not(:disabled):active { translate: 1px 0; }
+.memo-send:disabled { opacity: .5; cursor: default; }
+.memo-send[data-name]::after { content: "to " attr(data-name); position: absolute; right: 0; bottom: calc(100% + 2px); padding: 3px 7px; background: var(--fg); color: var(--paper); font: 600 var(--t-xs)/1.2 var(--font); white-space: nowrap; pointer-events: none; opacity: 0; transition: opacity 120ms; }
+.memo-send[data-name]:is(:hover, :focus-visible)::after { opacity: 1; }
+.memo-send.is-none .crown-mark { --gold-pen: var(--muted); }
+.memo-send.is-none .crown-wash { display: none; }
+.memo-send.is-none .crown-jewel { fill: none; }
+.memo-send:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.memo-slip[aria-busy] .memo-send { opacity: .6; }
+
+/* ---- sent (after the hub took it): the envelope opens and takes the note, closes with the crown, swooshes off ----
+   t/lib/memo.js envelope() lays the envelope where the send button is and takes the note off when its flight ends;
+   aim() gives where it flies (--fly-x/--fly-y: the receiver's drawing in the sidebar). 1.2s, calm under reduced motion. */
+.memo[data-state="sending"] { pointer-events: none; }
+.memo[data-state="sending"] .memo-send { visibility: hidden; }
+.memo[data-state="sending"]:has(> .memo-env) > .memo-slip { transform-origin: 50% 50%; animation: memo-into-env 1200ms var(--ease-in-out) both; }
+@keyframes memo-into-env { 0%, 8% { transform: none; opacity: 1; } 44% { transform: translate(var(--env-x), var(--env-y)) scale(var(--env-s)); opacity: 1; } 48%, 100% { transform: translate(var(--env-x), var(--env-y)) scale(var(--env-s)); opacity: 0; } }
+.memo-env { position: absolute; z-index: 2; pointer-events: none; rotate: -4deg; animation: memo-env-fly 1200ms both; }
+.memo-env > i { position: absolute; display: block; }
+.memo-env-body { inset: 0; background: var(--memo-env-body) center / 100% 100% no-repeat; }
+/* the flap: hinged on the top edge, open it stands up behind, closed it lies down over the front */
+.memo-env-flap { left: 0; right: 0; top: 7px; height: 25px; transform-origin: 50% 0; background: var(--memo-env-flap) center / 100% 100% no-repeat; animation: memo-env-flap 1200ms var(--ease-in-out) both; }
+.memo-env-seal { left: 50%; top: 22px; width: 32px; translate: -50% -50%; display: grid; place-items: center; opacity: 0; animation: memo-env-seal 1200ms var(--ease-out) both; }
+.memo-env-seal .agent-avatar { width: 28px; height: 28px; }
+.memo-env-seal .crown-mark { position: static; width: 30px; height: auto; rotate: -6deg; --gold-pen: #1d1a12; --crown-wash: #f2b632; --crown-jewel: #cf3a2b; }
+@keyframes memo-env-flap { 0% { transform: perspective(300px) rotateX(0); } 16%, 42% { transform: perspective(300px) rotateX(-170deg); } 54%, 100% { transform: perspective(300px) rotateX(0); } }
+@keyframes memo-env-seal { 0%, 52% { opacity: 0; transform: scale(1.6); } 58% { opacity: 1; transform: scale(.92); } 62%, 100% { opacity: 1; transform: none; } }
+@keyframes memo-env-fly {
+  0%, 62% { transform: none; opacity: 1; animation-timing-function: cubic-bezier(.4, 0, .7, .6); }
+  80% { transform: translate(calc(var(--fly-x, 40px) * .45), calc(var(--fly-y, -40vh) * .45 - 60px)) rotate(-8deg) scale(.8); opacity: 1; animation-timing-function: cubic-bezier(.3, .4, .5, 1); }
+  100% { transform: translate(var(--fly-x, 40px), var(--fly-y, -40vh)) rotate(-14deg) scale(.4); opacity: .8; } }
+/* the receiver's drawing in the sidebar, as the letter lands on it */
+.agent-avatar.is-memo-landed { animation: memo-landed 520ms var(--ease-out); }
+@keyframes memo-landed { 0% { transform: none; } 35% { transform: scale(1.28) rotate(-6deg); } 70% { transform: scale(.94); } 100% { transform: none; } }
+
+/* the quiet line that says what happened to a note */
+.quick-note { position: fixed; z-index: 2600; right: var(--s-4); bottom: calc(var(--s-4) + 56px + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); max-width: calc(100vw - 2 * var(--s-4)); margin: 0; padding: 8px 13px; border-radius: 9px; background: var(--fg); color: var(--bg); font: 500 var(--t-sm)/1.3 var(--font); box-shadow: var(--shadow-md); animation: drop var(--d-med) var(--ease-out) both; }
+.quick-note[hidden] { display: none; }
+.quick-go { padding: 0; border: 0; background: none; color: inherit; font: inherit; font-weight: 600; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+body:not([data-scope="all"]):not([data-page]) .quick-note { bottom: auto; top: 54px; }
+
+/* the drawings keep their light-theme strength on the yellow paper */
+:root[data-theme="dark"] .memo .agent-avatar { filter: brightness(.5) saturate(1.4); }
+
+/* ---- a phone: a sheet at the bottom of the page, one note at a time ---- */
+@media (max-width: 860px) {
+  body:not([data-scope="all"]):not([data-page]) .quick-open { right: 56px; top: 6px; }
+  .memo:not(.is-paper) { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-width: none; }
+  /* no veil over the page: a line and a shadow at the sheet's upper edge */
+  .memo:not(.is-paper) .memo-slip { rotate: none; padding: 0 max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); border-radius: 0; transform-origin: 50% 100%; box-shadow: 0 -8px 16px -12px rgb(0 0 0 / .4); }
+  .memo[data-state="open"]:not(.is-paper) .memo-slip { animation-name: memo-up; }
+  .memo-head { cursor: default; height: 24px; margin: 0 calc(-1 * max(16px, env(safe-area-inset-right, 0px))) 6px calc(-1 * max(16px, env(safe-area-inset-left, 0px))); background: none; }
+  .memo-field { font-size: 16px; }
+  .memo-foot { margin-inline: 0; }
+  .memo-tool { width: 40px; height: 40px; }
+  .memo-foot .memo-tool { width: 40px; height: 40px; }
+  .memo-foot .memo-tool .sketch { width: 24px; height: 24px; }
+  .memo-send { width: 60px; height: 48px; }
+  .memo-files { --tools: 76px; }
+  .quick-note, body:not([data-scope="all"]):not([data-page]) .quick-note { top: auto; bottom: calc(var(--s-4) + 120px + env(safe-area-inset-bottom, 0px)); }
+}
+@keyframes memo-up { from { transform: translateY(100%); } }
+@keyframes memo-fade { from { opacity: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .memo[data-state] .memo-slip, .memo::before, .memo::after, .memo-env, .memo-env *, .agent-avatar.is-memo-landed, .quick-note { animation: none !important; }
+}
+
+/* On a card page the round button stands by itself, over the page: bottom right beside the card on a wide screen,
+   top right on a phone (the foot there holds the field and the arrows). */
+.quick-open.memo-open-free { right: var(--s-4); bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)); top: auto; width: 44px; height: 44px; border-radius: 50%; z-index: 2601; display: grid !important; }
+/* Always bottom right, on every page and width, above a phone's home bar (Christopher: "immer unten rechts"). The
+   paper's pen and eye switches stand bottom left. Strong on purpose: older rules put it into the top bar on narrow
+   pages (app.css, quick-open in .topbar). */
+html body .quick-open.memo-open-free { top: auto !important; bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)) !important; right: calc(var(--s-4) + env(safe-area-inset-right, 0px)) !important; left: auto !important; width: 44px !important; height: 44px !important; display: grid !important; }
+/* a session's page on a phone has its message field and its filter button across the foot, and the "open" jump just
+   above them at the right: the button stands above those */
+@media (max-width: 860px) { html body:has(form.composer) .quick-open.memo-open-free { bottom: calc(var(--s-4) + 136px + env(safe-area-inset-bottom, 0px)) !important; } }

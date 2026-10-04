@@ -1,0 +1,206 @@
+// The seam between the client core's model (client/core/README.md) and the views of today's board (public/js/views,
+// synced from trommi-hub server/views): boardState(client.model) returns the board's state in the shape the views were
+// written for ({ cards, queue, agents, tasks, messages, desks, memos, assets }), so the app renders the same markup.
+//
+// Incremental: a card's board form is kept per object_id and made again only when a change names it (or a register
+// that it shows: its draft, its snooze). The messages are built on first read (only a session's page and a card's
+// thread read them), from the timeline windows that are in memory plus the events every client knows from the heads
+// (asked, revised, answered, read, shredded, closed).
+
+const SESSION_ID_LEN = 12
+export const agentIdOf = s => s.agent_session_id || s.agent_device_id.slice(0, SESSION_ID_LEN)
+
+export class BoardState {
+  constructor(client) {
+    this.client = client
+    this.cardCache = new Map()       // object_id -> board card
+    this.eventCache = new Map()      // object_id -> [event messages]
+    this.state = null
+    this.version = 0
+  }
+  get model() { return this.client.model }
+
+  /** After a change of the core (or with no change: everything). Returns the new state object. */
+  update(change = null) {
+    const m = this.model
+    if (!change) { this.cardCache.clear(); this.eventCache.clear() }
+    else {
+      for (const id of change.cards) { this.cardCache.delete(id); this.eventCache.delete(id) }
+      for (const id of change.permissions) this.cardCache.delete(id)
+      for (const key of change.registers) {
+        const at = key.indexOf('/'), kind = key.slice(0, at), id = key.slice(at + 1)
+        if (kind === 'draft' || kind === 'snooze' || kind === 'duck') this.cardCache.delete(id)
+        if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear() }   // agent ids and names change
+      }
+      if (change.sessions.size || change.members) { this.cardCache.clear(); this.eventCache.clear() }
+    }
+    // Agents (sessions), their ids on the board, the numbers of the cards.
+    const devToAgent = new Map(), agentToDev = new Map()
+    for (const s of m.sessions.values()) { const id = agentIdOf(s); devToAgent.set(s.agent_device_id, id); agentToDev.set(id, s.agent_device_id) }
+    this.devToAgent = devToAgent; this.agentToDev = agentToDev
+    const all = [...m.cards.values()].sort((a, b) => a.first_envelope_number - b.first_envelope_number)
+    const perms = [...m.permissions.values()].sort((a, b) => a.envelope_number - b.envelope_number)
+    // Card numbers: the order cards (and permission requests) were first filed in, from 1. Never reused, the same on every device.
+    const numbered = [...all.map(c => [c.first_envelope_number, c.object_id]), ...perms.map(p => [p.envelope_number, p.object_id])].sort((a, b) => a[0] - b[0])
+    const numberOf = new Map(numbered.map(([, id], i) => [id, i + 1]))
+    this.numberOf = numberOf
+    const cards = []
+    for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { b = this.boardCard(c, numberOf.get(c.object_id)); this.cardCache.set(c.object_id, b) } cards.push(b) }
+    for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = this.permissionCard(p, numberOf.get(p.object_id)); this.cardCache.set(p.object_id, b) } cards.push(b) }
+    const agents = this.agents()
+    const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
+    const queue = cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id)
+    const tasks = []
+    for (const s of m.sessions.values()) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(s.agent_device_id), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
+    const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
+    const memos = [...m.memos.values()].filter(n => n.object_state !== 'closed' && !n.removed).map(n => ({ id: n.object_id, text: n.text ?? '', to: n.to ?? null, session: n.session ?? null, place: n.place ?? 'float', x: n.x ?? 0, y: n.y ?? 0, desk: n.desk_id, attachments: n.attachments ?? [], created: n.created_at ?? 0, updated: n.updated_at ?? 0 }))
+    const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => ({ id: p.object_id, agent: devToAgent.get(p.agent_device_id), type: p.attachments?.[0]?.media_type?.startsWith('image/') ? 'image' : 'html', title: p.title, size: p.attachments?.[0]?.total_size ?? 0, created: p.sent_at ?? 0 }))
+    const self = this
+    let messages = null
+    const state = {
+      cards, queue, agents, tasks, desks, memos, assets, pending: [], hub: {}, speech: false,
+      get messages() { return (messages ??= self.messages(cards)) },
+    }
+    this.state = state
+    this.version++
+    return state
+  }
+
+  agents() {
+    const m = this.model, crown = m.human.crown?.agent_device_id ?? null
+    const list = [...m.sessions.values()].filter(s => s.is_active !== false || s.card_ids?.length)
+    const out = list.map((s, i) => {
+      const set = m.human.session_settings.get(s.agent_device_id) ?? s.settings ?? {}
+      const p = s.profile ?? {}
+      const id = this.devToAgent.get(s.agent_device_id)
+      const wanted = 'parent' in set ? set.parent : p.parent_session
+      const parent = wanted && this.agentToDev.has(wanted) ? wanted : null
+      return {
+        id, device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
+        online: Boolean(s.is_online), model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === s.agent_device_id, parent, main: Boolean(p.is_main),
+        desk: set.desk ?? 'main', archived: Boolean(set.archived), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0,
+        removed: s.is_active === false,
+      }
+    })
+    return out.sort((a, b) => a.position - b.position)
+  }
+
+  att(a) {
+    if (!a) return null
+    const type = String(a.media_type ?? '')
+    const kind = type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : type.startsWith('audio/') ? 'audio' : 'file'
+    return { name: a.file_name ?? 'file', url: a.url ?? `/att/${a.attachment_id}`, image: kind === 'image', kind, type, size: a.total_size, width: a.width, height: a.height, caption: a.caption, page: a.page, marks: a.marks, ref: a }
+  }
+
+  boardCard(c, number) {
+    const m = this.model, a = c.answer, h = m.human
+    const status = c.object_state === 'open' ? 'open'
+      : c.closed_how === 'shredded' ? 'shredded'
+        : c.closed_how === 'answered' && c.object_state === 'answered' ? 'decided' : 'done'
+    const snooze = h.snoozes.get(c.object_id)
+    const draft = h.drafts.get(c.object_id)
+    const atts = list => (list ?? []).map(x => this.att(x)).filter(Boolean)
+    const versions = (c.versions ?? []).slice(0, -1).map(v => ({ n: v.object_version, at: v.sent_at, title: v.content?.title ?? '', body: v.content?.body ?? '', options: v.content?.options ?? [], ...(v.content?.sections ? { sections: v.content.sections } : {}), ...(v.content?.html ? { html: v.content.html } : {}), recommended: v.content?.recommended ?? null, multiple: Boolean(v.content?.allows_multiple), attachments: atts(v.content?.attachments), urgency: v.urgency, note: v.content?.change_note ?? '' }))
+    const current = c.versions?.at(-1)
+    const card = {
+      id: c.object_id, object_id: c.object_id, agent: this.devToAgent.get(c.agent_device_id) ?? c.agent_device_id.slice(0, SESSION_ID_LEN), number,
+      kind: c.card_type === 'info' ? 'info' : 'decision', status, urgency: c.urgency ?? 'normal', urgency_reason: c.urgency_reason ?? '',
+      title: c.title ?? '', body: c.body ?? '', options: c.options ?? [], attachments: atts(c.attachments), version: c.object_version ?? 1,
+      multiple: Boolean(c.allows_multiple), choice: a?.choices?.[0] ?? null, choices: a?.choices ?? [], note: a?.note ?? '', summary: c.close_summary || c.withdraw_reason || '',
+      created: c.created_at ?? 0, decided: a?.answered_at ?? (status === 'done' ? c.updated_at : null), recommended: c.recommended ?? null,
+      version_hash: c.version_hash, content_state: c.content_state,
+    }
+    if (c.sections) card.sections = c.sections
+    if (c.html) card.html = c.html
+    if (versions.length) { card.versions = versions; card.revised = current?.sent_at ?? c.updated_at; card.revisions = versions.length; card.revision_note = c.change_note ?? '' }
+    if (a) {
+      card.answered_version = a.bound_object_version
+      if (a.option_notes && Object.keys(a.option_notes).length) card.option_notes = a.option_notes
+      if (a.marks?.length) card.marks = a.marks
+      if (a.attachments?.length) card.note_attachments = atts(a.attachments)
+      if (a.trusted) card.trusted = true
+      if (a.answer_action === 'read') card.read = a.answered_at
+      if (a.answer_action === 'shred') card.shredded = a.answered_at
+      if (a.pending) card.pending = true
+    }
+    if (c.in_revision && status === 'open') card.with_agent = this.timeOf(c.timeline_key, c.in_revision.envelope_number) ?? c.updated_at ?? Date.now()
+    if (draft && status === 'open') card.draft = { keys: draft.keys ?? [], note: draft.note ?? '', notes: draft.notes ?? {}, ...(draft.marks?.length ? { marks: draft.marks } : {}), ts: draft.ts ?? 0 }
+    if (snooze?.until > Date.now() && status === 'open') { card.snoozed_until = snooze.until; card.snoozed_at = snooze.at ?? 0 }
+    if (c.merged_into_object_id) card.merged_into = c.merged_into_object_id
+    if (c.merged_from_object_ids?.length) card.merged_from = c.merged_from_object_ids.map(id => ({ id, number: this.numberOf?.get(id), title: m.cards.get(id)?.title ?? '' }))
+    return card
+  }
+  permissionCard(p, number) {
+    const status = p.permission_state === 'pending' && !(p.expires_at && p.expires_at < Date.now()) ? 'open' : 'done'
+    return {
+      id: p.object_id, object_id: p.object_id, agent: this.devToAgent.get(p.agent_device_id) ?? p.agent_device_id.slice(0, SESSION_ID_LEN), number, kind: 'permission', status, urgency: 'critical', urgency_reason: '',
+      request_id: p.object_id, title: `Approval: ${p.tool_name}`, body: `${p.description ?? ''}\n\n${p.input_preview ?? ''}`,
+      options: [{ key: 'allow', label: 'Allow', detail: '' }, { key: 'deny', label: 'Deny', detail: '' }], attachments: [], version: 1, multiple: false,
+      choice: p.verdict ? (p.verdict.allow ? 'allow' : 'deny') : null, choices: p.verdict ? [p.verdict.allow ? 'allow' : 'deny'] : [], note: '',
+      summary: p.permission_state === 'expired' ? 'Expired' : '', created: p.sent_at ?? 0, decided: p.verdict ? p.sent_at : null, recommended: null,
+    }
+  }
+  timeOf(key, n) {
+    const t = this.model.timelines.get(key)
+    return t?.items.get(n)?.sent_at ?? null
+  }
+
+  // ---- the conversation: timeline windows + what the heads say ----
+  messages(cards) {
+    const m = this.model, me = m.room.my_device_id
+    const humans = new Set([...m.members.values()].filter(x => x.device_role === 'human').map(x => x.device_id))
+    const out = []
+    for (const card of cards) {
+      if (card.kind === 'permission') continue
+      let ev = this.eventCache.get(card.id)
+      if (!ev) { ev = this.eventsOf(m.cards.get(card.id), card); this.eventCache.set(card.id, ev) }
+      out.push(...ev)
+    }
+    for (const t of m.timelines.values()) {
+      if (t.timeline_kind !== 'chat' || !t.items.size) continue
+      const isCard = t.timeline_id.startsWith('card/')
+      const cardId = isCard ? t.object_id : null
+      const agentDev = isCard ? m.cards.get(cardId)?.agent_device_id : t.object_id
+      const agent = this.devToAgent.get(agentDev)
+      if (!agent) continue
+      for (const i of t.items.values()) {
+        if (i.content_type && i.content_type !== 'message') continue
+        const human = i.sender_device_id === me || humans.has(i.sender_device_id)
+        const c = i.content ?? {}
+        const msg = {
+          id: i.envelope_number != null ? `e${i.envelope_number}` : i.local_id, seq: i.envelope_number ?? Number.MAX_SAFE_INTEGER, agent, from: human ? 'user' : 'agent',
+          text: i.item_state === 'loaded' ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : i.item_state === 'newer_schema' ? '(needs a newer app)' : '',
+          attachments: (c.attachments ?? []).map(x => this.att(x)).filter(Boolean), ts: i.sent_at ?? 0,
+        }
+        if (cardId) msg.card_id = cardId
+        if (c.details) msg.details = c.details
+        if (c.html) msg.html = c.html
+        if (c.hand_back) msg.handback = true
+        if (c.explain) msg.explain = true
+        if (c.marks?.length) msg.marks = c.marks
+        if (c.copied_cards?.length) msg.cards = c.copied_cards.map(id => { const b = this.cardCache.get(id); return b ? { id, number: b.number, title: b.title, agent: b.agent, choice_label: null } : { id, number: null, title: id, agent } })
+        if (i.pending) msg.pending = true
+        out.push(msg)
+      }
+    }
+    return out.sort((a, b) => a.seq - b.seq || (a.ts - b.ts))
+  }
+  eventsOf(c, card) {
+    if (!c) return []
+    const ev = (n, kind, text, ts, extra = {}) => ({ id: `v${n}${kind[0]}`, seq: n, agent: card.agent, from: 'event', kind, card_id: card.id, text, ts, ...extra })
+    const out = []
+    for (const v of c.versions ?? []) {
+      if (v.object_version === 1) out.push(ev(v.envelope_number, card.kind === 'info' ? 'info' : 'asked', v.content?.title ?? card.title, v.sent_at))
+      else out.push(ev(v.envelope_number, 'revised', v.content?.change_note || v.content?.title || card.title, v.sent_at, { version: v.object_version }))
+    }
+    const label = keys => keys.map(k => card.options.find(o => o.key === k)?.label ?? k).join(', ')
+    for (const a of c.answers ?? []) {
+      if (a.answer_action === 'read') out.push(ev(a.envelope_number, 'read', card.title, a.answered_at))
+      else if (a.answer_action === 'shred') out.push(ev(a.envelope_number, 'shredded', [card.title, a.note].filter(Boolean).join(' · '), a.answered_at))
+      else out.push(ev(a.envelope_number, 'decided', a.trusted ? `Whatever: your call${a.choices?.length ? ` · ${label(a.choices)}` : ''}` : label(a.choices ?? []), a.answered_at, a.trusted ? { trusted: true } : {}))
+      if (a.taken_back_at) out.push(ev(a.taken_back_at, 'reopened', card.title, a.answered_at + 1))
+    }
+    if (c.object_state === 'closed' && (c.close_summary || c.withdraw_reason)) out.push(ev((c.envelope_number ?? 0) + 0.5, 'done', c.withdraw_reason ? `Withdrawn: ${c.withdraw_reason}` : c.close_summary, c.updated_at))
+    return out
+  }
+}

@@ -2,5 +2,6 @@
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trommi-app",
   "compatibility_date": "2026-10-01",
-  "assets": { "directory": "./public" }
+  // The app is static: every navigation that is not a file gets index.html (the app routes in the page).
+  "assets": { "directory": "./public", "not_found_handling": "single-page-application" }
 }

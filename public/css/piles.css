@@ -1,0 +1,165 @@
+/* The piles at the foot of a list of questions (js/piles.js), one per state: Later (snoozed), In the works (in
+   revision, or answered and being acted on) and Done (closed) as three small stacks of paper drawn with the pen, and
+   at the end of the row a small waste-paper basket (shredded, withdrawn). A click fans a stack (or the basket) out below,
+   as full-width sheets. The sections keep the names the keys and the tests know (.inbox-pile,
+   .inbox-pile-head, .inbox-pile-sheets, .inbox-pile-item, .inbox-done); what the older piles in app.css and
+   back.css say about those is undone here. */
+.inbox-groups > .inbox-stacks { --gap: 22px; --bin: 46px; --w: min(124px, calc((100cqi - var(--inset, 0px) - 3 * var(--gap) - var(--bin)) / 3)); --shade: rgb(20 30 25 / .14); grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, var(--w)) var(--bin); grid-template-rows: auto auto; column-gap: var(--gap); justify-content: start; min-width: 0; margin-top: var(--s-8); }
+:root[data-theme="dark"] .inbox-groups > .inbox-stacks { --shade: rgb(0 0 0 / .55); }
+/* a phone: three stacks of 124px, the basket and the gaps are wider than the list, so the stacks share what is there
+   (--w above) and the basket stays small, instead of pushing the Desk sideways; the stamps are set smaller with them */
+@container rows (max-width: 430px) {
+  .inbox-groups > .inbox-stacks { --gap: 10px; --bin: 38px; }
+  .inbox-stacks .inbox-stack .inbox-stamp { padding: 3px 5px 2px 6px; font-size: .62rem; letter-spacing: .08em; }
+  .inbox-stacks .inbox-stack[data-stack="works"] .inbox-stamp { padding-inline: 4px; font-size: .52rem; letter-spacing: .03em; }
+  .inbox-stacks .inbox-stack .tally-mark { height: 14px; }
+}
+.inbox-stacks > .inbox-stack { grid-row: 1 / span 2; display: grid; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; margin: 0; padding: 0; cursor: auto; }
+.inbox-stack-title { align-self: end; display: grid; margin: 0; font: inherit; }
+
+/* a stack: the paper, on its top sheet the count (strokes, or a number), the turning ring, and its name as a stamp */
+.inbox-stacks .inbox-stack .inbox-stack-head { position: relative; flex: none; display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 6px; row-gap: 5px; width: 100%; min-height: 0; padding: 0 0 4px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: inherit; text-align: center; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-head::after { content: none; }
+.inbox-stacks .inbox-stack .inbox-stack-head:disabled { cursor: default; }
+.inbox-stack-paper { grid-area: 1 / 1 / 2 / 3; justify-self: center; position: relative; display: block; width: 100%; transition: translate 140ms ease-out; }
+.inbox-stack-paper > span:first-child { display: block; }
+.inbox-stack-sheets { display: block; width: 100%; height: auto; overflow: visible; filter: drop-shadow(0 2px 2.5px var(--shade)); }
+.inbox-stack-sheets path { fill: var(--surface); stroke: var(--fg); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+/* the top sheet is 124 x 78 in a box of 136 x 90: its upper part carries the count, its lower part the stamp */
+.inbox-stack-on { position: absolute; inset: 0 0 auto; box-sizing: border-box; aspect-ratio: 136 / 90; padding: 5% 0 25%; display: flex; align-items: center; justify-content: center; gap: 8px; }
+.inbox-stack-on .agent-ring { position: static; flex: none; width: 15px; height: 15px; color: var(--accent); }
+.inbox-stack-num { font: 700 1.4rem/1 var(--display); font-variant-numeric: tabular-nums; color: var(--fg); }
+.inbox-stacks .inbox-stack .tally { color: var(--fg); }
+.inbox-stacks .inbox-stack .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
+/* The name of a stack: a rubber stamp on its top sheet, below the count. Capitals in a double frame drawn a little out of
+   true, turned a few degrees (each stack its own tilt), in an ink of its own; the ink took unevenly (one small mask of
+   noise, rastered once). The inks are variables, so the palette can retune them. */
+.inbox-stacks { --stamp-works: #5c4a8a; --stamp-later: #46607c; --stamp-memos: #8a5f0c; --stamp-done: #1b6a57; }
+:root[data-theme="dark"] .inbox-stacks { --stamp-works: #b9a8e6; --stamp-later: #9fb6d0; --stamp-memos: #d9b35a; --stamp-done: #6fd0b5; }
+.inbox-stack-word { position: absolute; z-index: 1; inset: 0 0 auto; box-sizing: border-box; aspect-ratio: 136 / 90; padding-bottom: 10.5%; display: flex; align-items: flex-end; justify-content: center; pointer-events: none; transition: translate 140ms ease-out; }
+.inbox-stamp { --ink: var(--fg); position: relative; display: block; padding: 4px 7px 3px 8px; border: 1.5px solid var(--ink); border-radius: 3px 5px 4px 6px / 5px 3px 6px 4px; color: var(--ink); font: 800 .75rem/1 var(--display); letter-spacing: .12em; text-transform: uppercase; white-space: nowrap; rotate: -4deg;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.32'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 96px 40px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.32'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 96px 40px; }
+.inbox-stamp::before { content: ""; position: absolute; inset: 1.5px; border: 1px solid var(--ink); border-radius: 2px 4px 3px 4px / 4px 2px 4px 3px; }
+.inbox-stack[data-stack="later"] .inbox-stamp { --ink: var(--stamp-later); rotate: -5deg; }
+.inbox-stack[data-stack="memos"] .inbox-stamp { --ink: var(--stamp-memos); rotate: 3.5deg; mask-position: -31px -9px; -webkit-mask-position: -31px -9px; }
+.inbox-stack[data-stack="works"] .inbox-stamp { --ink: var(--stamp-works); rotate: 3deg; padding-inline: 5px; font-size: .66rem; letter-spacing: .05em; mask-position: -31px -9px; -webkit-mask-position: -31px -9px; }
+.inbox-stack[data-stack="done"] .inbox-stamp { --ink: var(--stamp-done); rotate: -2.5deg; mask-position: -57px -21px; -webkit-mask-position: -57px -21px; }
+/* the yellow paper is yellow in the dark too: its stamp keeps the dark ochre there */
+:root[data-theme="dark"] .inbox-stack.inbox-group-memos .inbox-stamp { --ink: #7a530a; }
+/* The server-rendered pages (server/views/stacks.mjs): a stack's name and count are ONE element on its top sheet,
+   .stack-stamp[data-stamp="later|works|done"] > .stack-stamp-word + .stack-stamp-num (a numbering stamp; it stands
+   instead of the strokes). Its look is css/stamps.css. Here is only a plain default for as long as that sheet is not
+   linked: the number large, the word small under it, no frame, in the middle of the sheet. (The top sheet is
+   136 x 90 of the stack's width: the box below is that sheet.) */
+.stack-stamp { position: absolute; z-index: 1; inset: 0 0 auto; aspect-ratio: 136 / 90; display: flex; flex-direction: column-reverse; align-items: center; justify-content: center; gap: 5px; color: var(--fg); pointer-events: none; transition: translate 140ms ease-out; }
+.stack-stamp-num { font: 700 1.25rem/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.stack-stamp-word { font: 700 .62rem/1 var(--font); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; color: var(--muted); }
+.inbox-stack.is-empty .stack-stamp { opacity: .5; }
+.inbox-stack.is-open .stack-stamp { translate: 0 -4px; }
+/* the ring of a session at work stands in the sheet's upper right corner, clear of the stamp */
+.stack-ring { position: absolute; z-index: 1; top: 0; right: 0; margin: 9% 9% 0 0; display: block; line-height: 0; }
+.stack-ring .agent-ring { position: static; display: block; width: 14px; height: 14px; color: var(--accent); }
+@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover .stack-stamp { translate: 0 -2px; } }
+@media (prefers-reduced-motion: reduce) { .stack-stamp { transition: none; } }
+@container rows (max-width: 430px) { .stack-stamp { gap: 4px; } .stack-stamp-num { font-size: 1.05rem; } .stack-stamp-word { font-size: .54rem; letter-spacing: .06em; } }
+/* "N more" as a link (the server-rendered pages): its words stand in the middle of the sheet, like the button's */
+.inbox-stacks .inbox-stack a.inbox-stack-more { display: flex; align-items: center; text-decoration: none; }
+/* The search over a fanned stack (server/views/stacks.mjs): one quiet line, a magnifier drawn with the pen and a field
+   on a ruled line; the sheets below it stand in a frame (.stack-list) that the search fills. */
+.inbox-stacks .stack-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; }
+.inbox-stacks .stack-search { margin: 0 0 3px; }
+.inbox-stacks .stack-search label { display: flex; align-items: center; gap: 8px; max-width: 360px; padding: 0 2px 0 4px; border-bottom: 1.3px solid color-mix(in srgb, var(--fg) 40%, var(--surface)); color: var(--muted); }
+.inbox-stacks .stack-search label:focus-within { border-bottom-color: var(--fg); color: var(--fg); }
+.inbox-stacks .stack-search .sketch { flex: none; width: 17px; height: 17px; }
+.inbox-stacks .stack-search input { flex: 1; min-width: 0; height: 34px; padding: 0; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1 var(--font); outline: 0; }
+.inbox-stacks .stack-search input::placeholder { color: var(--faint); opacity: 1; }
+.inbox-stacks .stack-search input::-webkit-search-cancel-button { cursor: pointer; }
+.inbox-stacks .stack-search-none { margin: 4px 0 2px 6px; color: var(--muted); font: 400 var(--t-sm)/1.4 var(--font); }
+@container rows (max-width: 600px) { .inbox-stacks .stack-search label { max-width: none; } .inbox-stacks .stack-search input { height: 40px; font-size: 16px; } }
+/* the waste-paper basket (.inbox-bin): small, at the end of the row, its foot on the line the stacks stand on. Its name
+   is not shown (it is there for whoever reads the page aloud); its count is a small number at its foot. */
+.inbox-bin .inbox-stack-word { clip-path: inset(50%); }
+/* the basket is a pen drawing (sketch 'basket'): its line as heavy as the stacks' outline (1.7px at 46px of 24 units) */
+.inbox-bin-drawing { display: block; width: 100%; height: auto; overflow: visible; }
+.inbox-stacks .inbox-bin .inbox-bin-drawing { stroke: var(--fg); stroke-width: .9; }
+.inbox-stacks .inbox-bin.is-empty .inbox-bin-drawing { stroke: color-mix(in srgb, var(--fg) 38%, var(--surface)); }
+.inbox-stacks .inbox-bin.is-open .inbox-bin-drawing { stroke-width: 1.3; }
+/* its count: a small number written beside it, by hand, no badge */
+.inbox-bin .inbox-stack-on { inset: auto -14px 2px auto; aspect-ratio: auto; padding: 0; }
+.inbox-bin-count { display: block; rotate: -8deg; color: var(--fg); font: 700 .82rem/1 var(--display); font-variant-numeric: tabular-nums; }
+/* the count as a number, for whoever reads the page aloud */
+.inbox-stacks .inbox-stack .inbox-stack-head > b { order: 0; display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; letter-spacing: 0; text-transform: none; }
+@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -2px; } }
+/* an empty pile: one faint sheet, the same size, quieter */
+.inbox-stack.is-empty .inbox-stack-sheets { filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--shade) 45%, transparent)); }
+.inbox-stack.is-empty .inbox-stack-sheets path { fill: var(--surface); stroke: color-mix(in srgb, var(--fg) 38%, var(--surface)); stroke-width: 1.5; }
+/* its stamp is faint, in the middle of the sheet: one still knows which stack it is */
+.inbox-stack.is-empty .inbox-stack-word { padding-bottom: 0; align-items: center; opacity: .5; }
+/* the open stack: its last sheet in heavy ink, lifted */
+.inbox-stack.is-open .inbox-stack-sheets path { stroke-width: 2.6; }
+.inbox-stack.is-open :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -4px; }
+
+/* the fan: the sheets of the open stack, across the whole list */
+.inbox-stacks .inbox-stack > .inbox-pile-sheets { display: none; scroll-margin: 200px 0 24px; }
+.inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: calc(100cqi - var(--inset, 0px)); margin: 12px 0 0 calc(var(--at) * -1 * (var(--w) + var(--gap))); padding-right: 6px; }
+.inbox-stacks .inbox-stack .inbox-pile-item { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 0 14px; border: 1.3px solid color-mix(in srgb, var(--fg) 55%, var(--surface)); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); transform-origin: 0 0; }
+.inbox-stacks .inbox-pile-item:nth-child(odd) { rotate: -.22deg; }
+.inbox-stacks .inbox-pile-item:nth-child(even) { rotate: .18deg; translate: 6px 0; }
+.inbox-stacks .inbox-stack .inbox-stack-more { min-height: 38px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-align: left; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-more:hover { color: var(--fg); border-color: var(--fg); }
+
+/* a sheet's line: mark, title, the grey line, who, when, the way back */
+.inbox-stacks .inbox-pile-item > .inbox-done { display: flex; align-items: center; gap: var(--s-3); min-height: 36px; padding: 0; border: 0; border-radius: 4px; background: none; box-shadow: none; }
+.inbox-stacks .inbox-revising-open .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
+.inbox-stacks .inbox-done[data-later] .inbox-revising-open .sketch { color: var(--gold-pen); }
+.inbox-stacks .inbox-revising-open .agent-ring { margin-left: -3px; }
+.inbox-stack-who { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.inbox-stacks .inbox-done .inbox-takeback { grid-column: auto; min-height: 28px; padding: 0 4px; border: 0; border-radius: 0; background: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; opacity: 1; }
+.inbox-stacks .inbox-done .inbox-takeback:hover { color: var(--fg); }
+.inbox-stacks .inbox-done .inbox-takeback:disabled { opacity: .5; }
+
+/* a narrow list (the phone, a slim pane): the lines without the grey text */
+@container rows (max-width: 600px) {
+  .inbox-stacks .inbox-stack .inbox-pile-item { padding: 0 10px; }
+  .inbox-stacks .inbox-revising-sent { display: none; }
+  .inbox-stacks .inbox-revising-open strong { flex: 1 1 auto; }
+}
+.group-questions .inbox-done.is-pointed { outline: 3px solid var(--fg); outline-offset: 3px; }
+@media (prefers-reduced-motion: reduce) { .inbox-stack-paper, .inbox-stack-word { transition: none; } }
+/* On the Desk of a wide screen the cards stand right of a narrow column with the session's drawing (app.css,
+   .inbox-gutter): the stacks stand under the cards, their paper's edge on the cards' left edge, and the fan
+   is as wide as the cards. */
+@media (min-width: 861px) {
+  #inbox .inbox-groups > .inbox-stacks { --inset: 46px; padding-left: var(--inset); }
+  #inbox .inbox-stacks .inbox-stack-title { margin-left: -5px; }
+  #inbox .inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
+  #inbox .inbox-stacks .inbox-pile-item:nth-child(even) { translate: 0 0; }
+}
+
+/* ---- The places as small stamped tabs (server/views/stacks.mjs, card Nr. 198: c) ----
+   One line of tabs under the cards (two rows on a phone); the open place's list stands below all tabs, as wide as
+   the cards. The sections give up their box (display: contents) so that tabs and the open list share one row of
+   flex items: the tabs first, the list after them (order). Only under .stack-tabs: the old client keeps its stacks. */
+.inbox-groups > .inbox-stacks.stack-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: var(--s-6); }
+.inbox-stacks.stack-tabs > .inbox-stack { display: contents; }
+.inbox-stacks.stack-tabs .inbox-stack-title { display: block; margin: 0; }
+.inbox-stacks.stack-tabs .inbox-stack .inbox-stack-head { display: inline-flex; align-items: center; width: auto; min-height: 36px; padding: 0 12px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: -.6deg; transition: translate 140ms ease-out; }
+.inbox-stacks.stack-tabs .inbox-stack:nth-child(even) .inbox-stack-head { rotate: .5deg; }
+@media (any-hover: hover) { .inbox-stacks.stack-tabs .inbox-stack-head:not(:disabled):hover { translate: 0 -2px; } }
+.inbox-stacks.stack-tabs .inbox-stack.is-open .inbox-stack-head { border-width: 2.2px; padding: 0 11px; translate: 0 -2px; }
+.inbox-stacks.stack-tabs .inbox-stack.is-empty .inbox-stack-head { border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; }
+.inbox-stacks.stack-tabs .inbox-stack.is-empty .stack-tab-stamp { opacity: .5; }
+/* the open place's list: below every tab, as wide as the cards */
+.inbox-stacks.stack-tabs .inbox-stack > .inbox-pile-sheets { display: none; }
+.inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { display: grid; order: 1; flex: 0 0 100%; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: 100%; margin: 6px 0 0; padding-right: 6px; }
+#inbox .inbox-groups > .inbox-stacks.stack-tabs { padding-left: var(--inset, 0px); }
+#inbox .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
+@container rows (max-width: 430px) { .inbox-groups > .inbox-stacks.stack-tabs { gap: 8px; } }
+/* the bin's small basket in its tab */
+.stack-tab-bin { flex: none; display: block; width: 19px; line-height: 0; }
+.stack-tab-bin .inbox-bin-drawing { width: 19px; height: auto; stroke: var(--fg); stroke-width: 1.5; }
+/* The tabs straight (his proposal "Mach das Schiefe da weg"): no turn, square corners of one radius, the stamp's sign
+   and word upright. Switched on by the class .is-straight on .stack-tabs (server/views/stacks.mjs: STRAIGHT). */
+.inbox-stacks.stack-tabs.is-straight .inbox-stack .inbox-stack-head { rotate: 0deg; border-radius: 6px; }
+.inbox-stacks.stack-tabs.is-straight .stack-stamp.stack-tab-stamp[data-stamp], .inbox-stacks.stack-tabs.is-straight .stack-tab-stamp > * { rotate: 0deg; transform: none; }

@@ -1,0 +1,52 @@
+/* Read aloud. The logic is in js/speech.js (old client) and t/controllers/say_controller.js.
+   Colours come from tokens.css. (Live dictation was removed: out of scope for launch.) */
+
+/* ---- Read aloud: the small speaker beside every message ----
+   Quiet at rest: it shows when the message is under the pointer or it has the focus, and stays
+   while it reads. Where nothing hovers (touch) it is always there, small and pale. */
+.say { position: relative; display: none; flex: none; place-items: center; width: 26px; height: 26px; padding: 0; border: 0; border-radius: 50%; background: none; color: var(--faint); cursor: pointer; opacity: 0; vertical-align: middle; font-size: 0; line-height: 0; letter-spacing: 0; transition: opacity var(--d-fast), color var(--d-fast), background var(--d-fast); -webkit-tap-highlight-color: transparent; touch-action: manipulation; -webkit-touch-callout: none; user-select: none; }
+.can-speak .say { display: inline-grid; }
+.msg:hover .say, .ask-open:hover .say, .ask-card:hover .say, .focus-title:hover .say, .say:focus-visible, .say[data-say] { opacity: 1; }
+.focus-card:hover .focus-title .say { opacity: .7; }
+.say:hover { background: var(--sunken); color: var(--fg); }
+.say:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* Under a finger the small speaker takes a tap from 38px around it; what is seen stays 26px. */
+@media (pointer: coarse) { .say::after { content: ""; position: absolute; inset: -6px; border-radius: 50%; } }
+.say > * { grid-area: 1 / 1; }
+.say-speaker { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; overflow: visible; }
+.say-stop { display: none; width: 8px; height: 8px; border-radius: 2px; background: currentColor; }
+.say-ring { position: absolute; inset: 0; width: 100%; height: 100%; fill: none; stroke: currentColor; stroke-width: 2.4; stroke-linecap: round; rotate: -90deg; opacity: 0; pointer-events: none; }
+.say-ring circle { stroke-dasharray: 1; stroke-dashoffset: calc(1 - var(--said, 0)); transition: stroke-dashoffset .3s linear; }
+
+/* Reading: the speaker becomes a stop, a ring closes round it as the message is read. */
+.say[data-say="loading"], .say[data-say="playing"] { color: var(--accent); box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 18%, transparent); }
+.say[data-say="loading"] .say-speaker, .say[data-say="playing"] .say-speaker { display: none; }
+.say[data-say="loading"] .say-stop, .say[data-say="playing"] .say-stop { display: block; }
+.say[data-say="playing"] .say-ring { opacity: 1; }
+.say[data-say="loading"] { animation: say-wait 1.4s var(--ease-in-out) infinite; }
+.say[data-say="failed"] { color: var(--urg-critical); }
+@keyframes say-wait { 50% { box-shadow: inset 0 0 0 2px color-mix(in srgb, currentColor 45%, transparent); } }
+
+/* Where it stands. An agent's message: beside the time. */
+.msg-head > .say { margin: -4px 0 -4px -4px; }
+/* A follow-up has no head: at the end of the first line of its text, or on a line of its own above a block. */
+.say.say-inline { float: right; margin: -1px 0 0 var(--s-2); }
+.can-speak .say.say-row { display: grid; margin: 0 0 2px auto; }
+/* The human's own: to the left of the bubble. */
+.bubble:has(> .say) { position: relative; }
+.bubble > .say { position: absolute; right: calc(100% + 4px); top: 50%; margin-top: -13px; }
+/* A question in the conversation: after its age, at the end of the row's head. */
+.inbox-row-head > .say { margin: -3px 0 -3px 2px; }
+/* The question of the window: at the end of its title. */
+.focus-title > .say { width: 30px; height: 30px; margin: -6px 0 -2px 8px; }
+.focus-title > .say .say-speaker { width: 21px; height: 21px; }
+
+@media (hover: none) {
+  .say, .focus-card:hover .focus-title .say { opacity: .62; }
+  .say:hover { background: none; color: var(--faint); }
+  .say[data-say="loading"]:hover, .say[data-say="playing"]:hover { color: var(--accent); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .say[data-say="loading"] { animation: none; }
+  .say-ring circle { transition: none; }
+}

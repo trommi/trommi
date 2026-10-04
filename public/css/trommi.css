@@ -1,0 +1,46 @@
+/* The app's own few rules: the room screens (found, join, devices, invite). Sober: the board's tokens and type,
+   no pen drawings. Everything else comes from the board's stylesheets (synced by dev/sync-board.sh). */
+.room { max-width: 640px; margin: 0 auto; padding: 72px 16px 96px; }
+#room-screen .room { padding-top: 12vh; }
+.room-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
+.room-head h2 { font: 700 28px/1.15 var(--font-display, "Bricolage Grotesque", system-ui); margin: 0; color: var(--ink, #1d1d1b); }
+.room-bell .brand-mark { width: 34px; height: 34px; fill: none; stroke: var(--accent, #1b6a57); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.room-lead { font-size: 16px; line-height: 1.5; color: var(--ink, #1d1d1b); margin: 0 0 16px; }
+.room-meta { font-size: 13px; color: var(--muted, #6b6b66); margin-top: 22px; }
+.room-wait { color: var(--muted, #6b6b66); font-style: italic; }
+.room-wait::before { content: ""; display: inline-block; width: .7em; height: .7em; margin-right: .5em; border-radius: 50%; background: currentColor; animation: room-pulse 1.2s ease-in-out infinite; vertical-align: middle; }
+@keyframes room-pulse { 50% { opacity: .25 } }
+.room-error { color: var(--danger, #b3261e); font-weight: 500; }
+.room-ok { color: var(--accent, #1b6a57); font-weight: 600; }
+.room-form { display: grid; gap: 14px; margin: 18px 0; }
+.room-form label { display: grid; gap: 6px; font-size: 14px; font-weight: 500; color: var(--ink, #1d1d1b); }
+.room-form input:not([type="checkbox"]), .room-link input, .room-code-input { font: inherit; font-size: 16px; padding: 10px 12px; border: 1px solid var(--line, #d8d6cf); border-radius: 10px; background: var(--card, #fff); color: var(--ink, #1d1d1b); min-width: 0; }
+.room-check { display: flex !important; grid-auto-flow: column; align-items: center; gap: 10px !important; font-weight: 400 !important; }
+.room button, .room-actions button { font: 600 15px/1 var(--font-ui, "IBM Plex Sans", system-ui); padding: 11px 16px; border-radius: 10px; border: 1px solid var(--line, #d8d6cf); background: var(--card, #fff); color: var(--ink, #1d1d1b); cursor: pointer; }
+.room button.room-primary { background: var(--accent, #1b6a57); border-color: var(--accent, #1b6a57); color: #fff; }
+.room button.room-danger { background: var(--danger, #b3261e); border-color: var(--danger, #b3261e); color: #fff; margin-top: 8px; }
+.room button:disabled { opacity: .6; cursor: progress; }
+.room-more summary { cursor: pointer; font-size: 14px; color: var(--muted, #6b6b66); }
+.room-more[open] { display: grid; gap: 12px; }
+.room-actions { display: flex; flex-wrap: wrap; gap: 10px; margin: 18px 0; }
+.room-link { display: flex; gap: 8px; margin: 0 0 14px; }
+.room-link input { flex: 1; font-family: var(--font-mono, "IBM Plex Mono", monospace); font-size: 13px; }
+.room-recovery { font: 500 20px/1.6 var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: .04em; padding: 16px; border: 1px dashed var(--line, #d8d6cf); border-radius: 12px; background: var(--card, #fff); word-break: break-word; user-select: all; }
+.room-code { font: 600 44px/1.2 var(--font-mono, "IBM Plex Mono", monospace); letter-spacing: .12em; margin: 12px 0; }
+.room-code-form { display: flex; gap: 10px; }
+.room-code-input { width: 9ch; font-family: var(--font-mono, "IBM Plex Mono", monospace); font-size: 24px !important; letter-spacing: .2em; text-align: center; }
+.room-devices { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.room-device { display: grid; grid-template-columns: auto 1fr auto; align-items: start; gap: 12px; padding: 12px 14px; border: 1px solid var(--line, #d8d6cf); border-radius: 12px; background: var(--card, #fff); }
+.room-device.is-removed { opacity: .55; }
+.room-device-dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 6px; background: var(--line, #c9c7bf); }
+.room-device-dot[data-online="yes"] { background: #2e9e6a; }
+.room-device-name { display: grid; gap: 2px; }
+.room-device-name em { font-style: normal; font-size: 12px; color: var(--accent, #1b6a57); }
+.room-device-name small { color: var(--muted, #6b6b66); font-size: 12px; }
+.room-remove summary { cursor: pointer; font-size: 13px; color: var(--danger, #b3261e); list-style: none; }
+.room-remove details[open] { max-width: 240px; font-size: 13px; }
+.menu-devices { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: inherit; text-decoration: none; border-radius: 8px; }
+.menu-devices:hover { background: var(--hover, rgb(0 0 0 / .05)); }
+.menu-devices svg { width: 20px; height: 20px; }
+/* Long Desk lists: rows out of sight are not laid out or painted until they come near. */
+#desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; }

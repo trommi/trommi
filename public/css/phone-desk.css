@@ -1,0 +1,78 @@
+/* The Desk on a phone: calm cards (card Nr. 153, "Karten ohne Nebensachen"; the drawing: designs/phone-calm.html).
+   At phone width a question row shows only who asks, the title and the answer tiles. The copy button, the
+   clock, the Snooze corner, the text and the pictures are not on the row: a long press brings Snooze, Revise,
+   Whatever, What??, Shred and Copy up as a sheet (js/inbox.js, holdMenu), a tap on the title opens the card
+   with its text and pictures. Only in a list of questions (.inbox-groups: the Desk, a session's own list); a
+   question inside a conversation keeps its text. Wide screens keep the row of app.css. Loaded after app.css. */
+@media (max-width: 860px) {
+  .inbox-groups .inbox-row {
+    min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: none; padding: 14px;
+    border-radius: 14px; box-shadow: none; background: var(--tone-wash);
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    transition: scale 120ms ease-out, box-shadow 120ms ease-out;
+  }
+  .inbox-groups .inbox-row > :not(.inbox-more) { grid-row: auto; grid-column: 1; }
+  /* the finger is down and holding: the card answers before the sheet comes */
+  .inbox-groups .inbox-row.is-held { scale: .985; box-shadow: 0 0 0 2px var(--tone-pen); }
+  /* what is read and chosen below the card (the unfolded options) can be selected as before */
+
+  /* not on the row: copy and clock, the Snooze corner, the text, the pictures and what the card carries */
+  .inbox-groups .inbox-row :is(.inbox-tabs, .inbox-when, .inbox-body, .inbox-pics, .inbox-thumb, .inbox-carries, .inbox-sep, .inbox-who) { display: none; }
+
+  /* every card says who asks, so a run needs no tab above it and its cards stand apart */
+  .inbox-groups .inbox-run-tab { display: none; }
+  .inbox-groups .inbox-group[data-sender] { gap: 10px; }
+  .inbox-groups { gap: 10px; }
+  /* two folded piles in a row stay apart: app.css pulls the second one up by more than this list's gap */
+  .inbox-groups > .inbox-pile + .inbox-pile { margin-top: -6px; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row { border-radius: 14px; box-shadow: none; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row.is-held { box-shadow: 0 0 0 2px var(--tone-pen); }
+
+  /* one line: who (drawing and name), then the knock; under it the title */
+  .inbox-groups .inbox-content { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; overflow: visible; }
+  .inbox-groups .inbox-content:has(> .inbox-row-head:empty) { padding-top: 0; }
+  .inbox-groups .inbox-byline, .inbox-groups .inbox-row[data-from] .inbox-byline { position: static; order: -2; flex: 0 1 auto; min-width: 0; min-height: 20px; margin: 0; padding: 0; flex-wrap: nowrap; font-size: var(--t-sm); }
+  .inbox-groups .inbox-row[data-from] .inbox-row-head:not(:empty) ~ .inbox-byline { min-height: 20px; margin: 0; }
+  .inbox-groups .inbox-byline:not(:has(.inbox-from, .inbox-whenever)) { display: none; }
+  .inbox-groups .inbox-row[data-from] .inbox-content .inbox-byline .inbox-from { display: inline-flex; gap: 7px; color: var(--tone-pen); }
+  .inbox-groups .inbox-byline .inbox-whenever { order: 1; }
+  .inbox-groups .inbox-byline .inbox-from-mark { width: 20px; height: 20px; }
+  .inbox-groups .inbox-row-head { order: -1; flex: none; height: auto; min-height: 0; margin: 0; padding: 0; align-items: center; }
+  .inbox-groups .inbox-tab { padding: 4px 7px 3px; border-radius: 6px; font: 700 .66rem/1 var(--font); letter-spacing: .07em; }
+  .inbox-groups .inbox-tab .sketch { width: 13px; height: 13px; margin: -2px 0; }
+  .inbox-groups .inbox-text, .inbox-groups .inbox-text.has-sender { flex: 0 0 100%; align-content: center; min-height: 40px; margin: -2px 0; padding: 0; }
+  .inbox-groups .inbox-row-head:not(:empty) + .inbox-text { margin-top: -2px; }
+  .inbox-groups .inbox-question { font: 700 1.3rem/1.18 var(--display); letter-spacing: -.015em; -webkit-line-clamp: 3; overflow-wrap: break-word; }
+
+  /* the answers: tiles in the session's colour, at finger size */
+  .inbox-groups .inbox-actions { grid-column: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; padding: 0; }
+  .inbox-groups .inbox-answer { min-height: 58px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge); }
+  .inbox-groups .inbox-answer.is-lead, .inbox-groups .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--tone-pen); box-shadow: none; }
+  .inbox-groups .inbox-row-error { margin: 8px 0 0; }
+
+  /* how to get at the rest, said once under the Desk's open questions */
+  #inbox .inbox-groups > .inbox-group[data-sender]:not(:has(~ .inbox-group[data-sender]))::after { content: "Hold a card: Snooze, Revise, Whatever, What??, Shred, Copy. Tap its title: text and pictures."; margin: 4px 12px 0; color: var(--faint); font: 500 var(--t-sm)/1.4 var(--font); text-align: center; text-wrap: balance; }
+}
+
+/* ---- the sheet a long press brings up ---- */
+dialog.rowmenu {
+  --ink: var(--tone-pen);
+  position: fixed; inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
+  border-radius: 20px 20px 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain;
+  animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
+}
+/* No veil over the page: a line and a shadow set the sheet off; Escape or a tap beside it closes. */
+dialog.rowmenu { box-shadow: 0 0 0 1px var(--line-strong), 0 -12px 40px -12px rgb(20 30 25 / .35); }
+dialog.rowmenu::backdrop { background: transparent; }
+@keyframes rowmenu-up { from { translate: 0 100%; } }
+@keyframes rowmenu-fade { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { dialog.rowmenu, dialog.rowmenu::backdrop { animation: none; } }
+.rowmenu-in { display: grid; padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.rowmenu-in::before { content: ""; justify-self: center; width: 38px; height: 4px; margin-bottom: 10px; border-radius: 2px; background: var(--line-strong); }
+.rowmenu-in h3 { overflow-wrap: anywhere; margin: 0 8px 8px; font: 700 1.15rem/1.2 var(--display); letter-spacing: -.01em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.rowmenu-in button { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: var(--fg); font: 500 1rem/1.2 var(--font); text-align: left; touch-action: manipulation; }
+.rowmenu-in button:active { background: var(--sunken); }
+.rowmenu-in button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
+.rowmenu-in button svg { flex: none; width: 22px; height: 22px; color: var(--ink); }
+.rowmenu-in button.is-shred, .rowmenu-in button.is-shred svg { color: var(--deny); }
+.rowmenu-in hr { width: auto; margin: 6px 8px; border: 0; border-top: 1px solid var(--line); }

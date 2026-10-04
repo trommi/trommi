@@ -1,0 +1,104 @@
+/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
+   One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
+   stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
+   indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
+   (.agent-row.is-main, then its .agent-row.is-sub), so the rail, the phone's strip and the keys treat them as rows.
+   Built by agents.js; nothing here applies while the hub sends neither `main` nor `parent`. */
+
+/* ---- the main's row: a card, the top of its stack ---- */
+.agent-row.is-main[data-fold] { --ghue: 162; margin-top: 6px; }
+.agent-row.is-main[data-fold] .agent-entry { position: relative; z-index: 1; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.agent-row.is-main[data-fold] .agent-entry:hover { background: color-mix(in srgb, var(--surface) 60%, var(--sunken)); }
+.agent-row.is-main[data-fold] .agent-entry[aria-current="true"] { box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--fg) 60%, var(--line-strong)), var(--shadow-sm); }
+.agent-row.is-main[data-fold] > .agent-badge { z-index: 2; }
+.agent-row.is-main .agent-text strong { font-weight: 700; }
+
+/* ---- the crown as the switch that folds and unfolds ---- */
+/* (It sits on the drawing like the crown of a single session, app.css #agents .agent-avatar .crown-mark: over its middle, its base on the drawing's top.) */
+.crown-fold { position: absolute; z-index: 3; left: 13px; top: -7px; width: 32px; height: 26px; padding: 0; display: grid; place-items: center; border: 0; border-radius: 50%; background: none; cursor: pointer; transition: scale var(--d-fast); }
+.crown-fold .crown-mark { position: static; width: 23px; rotate: -15deg; }
+/* A main without the crown (one crown per desk, card Nr. 172): its switch is for the keyboard only. Nothing is
+   drawn and the pointer goes through to the entry; the stack and the bracket fold by the pointer. */
+.crown-fold.is-plain { pointer-events: none; opacity: 0; }
+.crown-fold.is-plain:focus-visible { opacity: 1; outline: 2px solid var(--fg); outline-offset: -4px; }
+.crown-fold:hover, .crown-fold:focus-visible { scale: 1.15; }
+body.is-pairing .crown-fold { visibility: hidden; }
+
+/* ---- folded: the subs as card edges under the main's row ---- */
+.agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 8px); }
+.crown-edges { position: absolute; z-index: 0; left: 0; right: 0; top: calc(100% - 3px); height: calc(var(--n) * 4px + 3px); cursor: pointer; }
+.crown-edges::after { content: ""; position: absolute; inset: 0 0 -5px; }
+/* an edge: its drawing (agents.js, edgeQuirk) stretched to the row, the pen as wide as everywhere; it lies a little crooked (--tilt, --dx: its own) */
+.crown-edges { --fx: 1.6px; --fy: .7px; --fr: .5deg; --tk: 1; }
+.crown-edges i { position: absolute; top: calc(var(--i) * 4px - 7px); left: calc(5px + var(--i) * 2.5px); right: calc(5px + var(--i) * 2.5px); height: 15px; z-index: calc(20 - var(--i)); transform-origin: 16% 0; translate: var(--dx, 0px) 0; rotate: calc(var(--tilt, 0deg) * var(--tk)); transition: translate 190ms cubic-bezier(.3, 1.8, .5, 1), rotate 190ms cubic-bezier(.3, 1.8, .5, 1), transform-origin 190ms ease-out; transition-delay: calc(var(--i) * 9ms); }
+.crown-edges svg { display: block; width: 100%; height: 100%; overflow: visible; }
+.crown-edges path { fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
+.crown-edges .e-n { display: none; }
+.crown-edges i.is-knock { height: 19px; }
+.crown-edges i.is-knock path { fill: var(--urg-critical); stroke: color-mix(in srgb, var(--urg-critical) 72%, var(--fg)); }
+/* the pointer on the stack, or on the crown (the keys too): the edges fan out a little, like cards being thumbed. Transforms only:
+   nothing below moves; the lowest edge comes down some 9px, into the air above the next row.
+   They lean to the side the mouse is on (lean_controller.js sets --lean -1 … 1 on the row, --lean-abs its size): over
+   the middle straight down, at the right tilted right, at the left the mirror. Without it (the keys, the old client) they lean right. */
+@media (hover: hover) {
+  .crown-edges:hover i, .agent-row:has(> .crown-fold:is(:hover, :focus-visible)) > .crown-edges i { transform-origin: calc(50% - 34% * var(--lean, 1)) 0; translate: calc(var(--dx, 0px) * var(--lean-abs, 1) + var(--i) * var(--fx) * var(--lean, 1)) calc(1px + var(--i) * (var(--fy) + (1 - var(--lean-abs, 1)) * 1.6px)); rotate: calc(var(--tilt, 0deg) * var(--tk) * 2.2 * var(--lean-abs, 1) + (var(--i) + .5) * var(--fr) * var(--lean, 1)); }
+}
+
+/* ---- unfolded: the subs under the main, the bracket beside them ---- */
+.crown-bracket { position: absolute; left: 0; top: 0; width: 100%; height: 100%; overflow: visible; pointer-events: none; --hue: var(--ghue); fill: none; stroke: var(--tone-pen); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.crown-bracket .crown-bracket-hit { stroke: transparent; stroke-width: 14; pointer-events: stroke; cursor: pointer; }
+.agent-row.is-sub.is-unfolding { animation: crown-in 260ms cubic-bezier(.2, .8, .3, 1) backwards; animation-delay: calc(var(--i, 0) * 28ms); }
+.crown-bracket.is-unfolding { animation: crown-in 300ms 120ms ease-out backwards; }
+@keyframes crown-in { from { opacity: 0; translate: 0 -10px; scale: .97; } }
+@media (prefers-reduced-motion: reduce) { .agent-row.is-sub.is-unfolding, .crown-bracket.is-unfolding { animation: none; } .crown-edges i { transition: none; } }
+
+@media (min-width: 861px) {
+  .agent-row.is-sub .agent-avatar { width: 28px; height: 28px; }
+  .agent-row.is-sub .agent-entry { min-height: 40px; }
+  .agent-row.is-main[data-fold="open"] { margin-bottom: 3px; }
+  /* the first row stands on the 80px line, crowned or not (the crown itself may reach above it) */
+  #agents > .agent-row.is-main[data-fold]:first-child { margin-top: 0; }
+  .agent-row.is-sub.is-last { margin-bottom: 8px; }
+  :root:not([data-rail="folded"]) .agent-row.is-sub { margin-left: 22px; }
+  /* the rail: the same, 60px wide; the names are gone, the bracket runs down the rail's left edge */
+  [data-rail="folded"] .agent-row.is-sub .agent-entry { padding-block: 5px !important; }
+  [data-rail="folded"] .crown-fold { left: 15px; top: -5px; }
+  [data-rail="folded"] .crown-edges { left: 2px; right: 2px; }
+  [data-rail="folded"] .crown-edges i { left: calc(4px + var(--i) * 2px); right: calc(4px + var(--i) * 2px); }
+  [data-rail="folded"] .crown-edges { --fx: .5px; --fy: .8px; --fr: 1.5deg; --tk: 2.4; }
+  [data-rail="folded"] .crown-edges .e-w { display: none; }
+  [data-rail="folded"] .crown-edges .e-n { display: inline; }
+}
+
+/* a phone's strip: the stack lies under the main's pill, an unfolded main's subs stand beside it over the bracket */
+@media (max-width: 860px) {
+  #agents:has(.agent-row.is-main[data-fold]) { align-items: flex-start; }
+  .agent-row.is-main[data-fold] { margin-top: 0; margin-inline: 3px; }
+  .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 2px + 3px); }
+  .agent-row.is-main[data-fold="open"], .agent-row.is-sub { margin-bottom: 6px; }
+  .crown-fold { left: 5px; top: -8px; }
+  .crown-fold .crown-mark { width: 21px; }
+  #agents .agent-avatar .crown-mark { left: 5px; top: -7px; width: 21px; }
+  .crown-fold::after { content: ""; position: absolute; inset: -4px -6px -8px -4px; }
+  .crown-edges { top: calc(100% - 10px); height: calc(var(--n) * 2px + 10px); }
+  .crown-edges { --fx: .6px; --fy: .5px; --fr: .7deg; --tk: 1.6; }
+  .crown-edges i { top: calc(var(--i) * 2px - 3px); left: calc(12px + var(--i) * 2.5px); right: calc(12px + var(--i) * 2.5px); }
+  .crown-edges i.is-knock { height: 17px; }
+  .crown-edges .e-w { display: none; }
+  .crown-edges .e-n { display: inline; }
+  .crown-edges path { stroke-width: .9; }
+}
+
+
+/* ---- a session at work (the sidebar, server-rendered: views/sidebar.mjs avatar working) ----
+   Its drawing fills itself in, scribble-like: a faint trace of it stays, and its strokes draw themselves over it,
+   hold a moment, fade, and begin again. Only the strokes' dash and opacity move. No ring stands at the right for it. */
+#agents .agent-avatar.is-drawing .mark-trace { opacity: .25; }
+#agents .agent-avatar.is-drawing .mark-live path { stroke-dasharray: 100 100; stroke-dashoffset: 100; stroke-width: 2.6; animation: mark-fill 2600ms cubic-bezier(.45, .05, .4, 1) infinite; }
+#agents .agent-avatar.is-drawing .mark-live path:nth-child(2n) { animation-delay: 160ms; }
+#agents .agent-avatar.is-drawing .mark-live path:nth-child(3n) { animation-delay: 320ms; }
+@keyframes mark-fill { 0% { stroke-dashoffset: 100; opacity: 1; } 60% { stroke-dashoffset: 0; opacity: 1; } 84% { stroke-dashoffset: 0; opacity: 1; } 100% { stroke-dashoffset: 0; opacity: 0; } }
+@media (prefers-reduced-motion: reduce) {
+  #agents .agent-avatar.is-drawing .mark-live path { animation: none; stroke-dashoffset: 0; }
+}
+#agents .agent-text .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }

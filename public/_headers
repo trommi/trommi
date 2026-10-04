@@ -1,0 +1,11 @@
+# Cloudflare static assets headers (also read by dev/serve.mjs). Strict CSP: scripts, styles, fonts only from this
+# origin; data only to the hub. Style attributes are allowed (the views set --hue etc. per element).
+/*
+  Content-Security-Policy: default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; font-src 'self'; connect-src 'self' https://hub.trommi.com; frame-src 'self' blob:; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'self'
+  X-Content-Type-Options: nosniff
+  Referrer-Policy: no-referrer
+  Permissions-Policy: camera=(), geolocation=(), microphone=(self)
+/sw.js
+  Cache-Control: no-cache
+/index.html
+  Cache-Control: no-cache
