@@ -457,9 +457,14 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     const c = cmd.content ?? {}
     const card = cmd.object_id ? model().cards.get(cmd.object_id) : null
     const title = card?.title ?? cmd.object_id ?? ''
-    const send = (content, meta) => notify('notifications/claude/channel', { content, meta })
+    // late: the human had not seen this agent's newest envelope; history: older than what this process had
+    // delivered before it lost its state, context only, never a new prompt (README R4).
+    const flags = { ...(cmd.late ? { late: '1' } : {}), ...(cmd.history ? { history: '1' } : {}) }
+    const send = (content, meta) => notify('notifications/claude/channel', { content: cmd.history ? `(Earlier message, for context only; not a new request.)\n${content}` : content, meta: { ...meta, ...flags } })
     switch (cmd.command) {
       case 'message': {
+        // Only a message counts as chat; strokes and other timeline items are never commands (README R1/R4).
+        if (c.content_type && c.content_type !== 'message') return log(`timeline item ${c.content_type} not relayed`)
         const got = await download(c.attachments)
         const about = card && card.agent_device_id === me() && card.object_state === 'open' ? { card_id: card.object_id } : {}
         const copied = listArg(c.copied_cards, 'copied_cards')
@@ -473,7 +478,6 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
           kind: 'chat', ...about, ...(about.card_id && c.hand_back ? { handback: '1' } : {}), ...(about.card_id && c.explain ? { explain: '1' } : {}),
           ...(marks.length ? { marks: String(marks.length) } : {}),
           ...(copied.length ? { cards: copied.map(k => k.object_id ?? k.id ?? '').join(','), cards_json: JSON.stringify(copied) } : {}),
-          ...(cmd.late ? { late: '1' } : {}),
           ...fileMeta(got),
         })
       }
