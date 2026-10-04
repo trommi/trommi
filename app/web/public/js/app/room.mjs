@@ -199,7 +199,7 @@ ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere sa
 <p class="room-meta">${NO_RECOVERY}</p>`
       return shell('Settings', html`${tabs('settings')}
 ${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
-${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Account</h3>${accountPart}</section>` : ''}
+${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Account</h3>${accountPart}<p class="room-logout-line"><a href="/logout" data-nav id="settings-logout">Log out of this device</a></p></section>` : ''}
 <section class="room-section" aria-labelledby="store-head"><h3 id="store-head">Storage</h3><dl class="room-usage" data-controller="room" data-room-usage-value="${has(client, 'usage') ? 'hub' : 'local'}"><div><dt>On this device</dt><dd data-room-target="local">…</dd></div>${has(client, 'usage') ? html`<div><dt>On the hub (encrypted)</dt><dd data-room-target="hub">…</dd></div>` : ''}</dl><p class="room-meta">The hub deletes envelopes after 30 days; your devices keep what they decrypted.</p></section>
 ${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
 <p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`)
@@ -227,9 +227,52 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     accountPost(/^\/settings\/account\/code$/, (f, A) => A.resendEmailCode(client), 'sent')
     accountPost(/^\/settings\/account\/verify$/, (f, A) => A.verifyEmail(client, String(f.get('code'))), 'confirmed')
 
+    // ---- /logout (the Trommi menu and Settings -> Account): asks once, then logOut() ----
+    const logoutMain = (error = '') => {
+      const me = m().room.my_device_id
+      const others = [...(m().members?.values() ?? [])].filter(d => d.is_active && d.device_role === 'human' && d.device_id !== me).length
+      const st = m().room.account
+      const note = !client.hub ? 'The demo keeps nothing; this only ends it.'
+        : others ? ''
+          : st === null ? 'This is your only device, and this account has no email login yet: after this, only your recovery code opens it (app.trommi.com/recover).'
+            : 'This is your only device. After this, your email and password (or your Emergency Kit) open your account.'
+      return shell('Log out', html`${errorLine(error)}<p class="room-lead" id="logout-ask">Log out of this device? You can log in again with email and password.</p>
+${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="room-meta">Everything Trommi keeps on this device is deleted here; your account and your other devices stay as they are.</p>
+<form method="post" action="/logout" class="room-inline room-logout" id="logout-form"><button type="submit" class="room-danger" id="logout-go">Log out</button><a href="/" data-nav class="room-back" id="logout-cancel">Cancel</a></form>`)
+    }
+    t.get(/^\/logout$/, ({ req, res }) => { if (client.hub && isHuman() && m().room.account === undefined) loadAccount(); page(req, res, 'Log out', logoutMain(), { view: 'logout' }) })
+    t.post(/^\/logout$/, async () => { await logOut(client) })
+
     // A join link opened on a device that is in a room already.
     t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', shell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/devices" data-nav>Devices</a>.</p>`)))
   }
+}
+
+// ---- Log out: this device leaves the member list (a signed removal by itself), the streams close, every local trace of
+// the app on this origin goes (IndexedDB, Cache Storage, localStorage, sessionStorage; the service worker stays and
+// fills its cache again from the network), and the start page comes. Offline: the removal fails, the wipe still happens,
+// and the start page says the device stays in "Devices" until another device removes it.
+export async function logOut(client) {
+  let removed = !client?.hub   // the demo has nothing to remove
+  if (typeof client?.leaveRoom === 'function') {
+    try { await Promise.race([client.leaveRoom(), new Promise((_, no) => setTimeout(() => no(new Error('timeout')), 20_000))]); removed = true }
+    catch (err) { console.warn('log out: not removed', err?.code ?? '', err?.message ?? err) }
+  }
+  await client?.stop?.().catch?.(() => {})
+  await wipeLocal(client)
+  location.replace(removed ? '/?logged_out=1' : '/?logged_out=kept')
+}
+async function wipeLocal(client) {
+  try { await client?.storage?.close?.() } catch {}
+  try { for (const name of await caches.keys()) await caches.delete(name) } catch {}
+  try { localStorage.clear() } catch {}
+  try { sessionStorage.clear() } catch {}
+  let names = ['trommi']
+  try { if (indexedDB.databases) names = [...new Set([...names, ...(await indexedDB.databases()).map(d => d.name).filter(Boolean)])] } catch {}
+  // A connection still open elsewhere (another tab) blocks the delete: it finishes when that closes; this page goes on.
+  await Promise.all(names.map(name => new Promise(done => {
+    try { const r = indexedDB.deleteDatabase(name); r.onsuccess = r.onerror = () => done(); r.onblocked = () => setTimeout(done, 2000) } catch { done() }
+  })))
 }
 
 // ---- the account: shared pieces (screens before the board and the Settings page) ----
@@ -321,13 +364,16 @@ export async function roomScreen({ start, hub }) {
   const c = await core().catch(() => ({}))
   let lastEmail = ''
 
+  // After a log out (logOut): said once on the start page, then the address is plain again.
+  const loggedOut = new URLSearchParams(location.search).get('logged_out')
+  if (loggedOut) history.replaceState(null, '', '/')
   if (location.pathname === '/join' && location.hash.length > 1) return joinFlow()
   if (location.pathname === '/recover') recoverFlow()
   else welcome()
 
   function welcome(error = '') {
     show(shell('Trommi', html`<p class="room-lead">Your agents ask, you answer, from any device. End-to-end encrypted: the hub carries sealed envelopes only.</p>
-${errorLine(error)}
+${errorLine(error)}${loggedOut ? html`<p class="room-lead" id="logged-out" role="status">${loggedOut === 'kept' ? 'Logged out. This device could not reach the hub, so it still appears under "Devices" until you remove it from another device.' : 'Logged out. Nothing of Trommi is left on this device.'}</p>` : ''}
 <div class="room-ways room-ways-first">
 <button type="button" class="room-way room-way-go" id="way-create">${sk('house')}<b>Create account</b><span>New to Trommi? Email and a password, and this device is your first.</span></button>
 <button type="button" class="room-way room-way-go" id="way-login">${sk('key')}<b>Log in</b><span>You have an account? Log in with your email and password, or scan a code from a signed-in device.</span></button>

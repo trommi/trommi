@@ -139,3 +139,8 @@
   .room-kit, .room-kit * { visibility: visible !important; }
   .room-kit { position: absolute; inset: 0 auto auto 0; width: 100%; border: 1px solid #000; color: #000; background: #fff; }
 }
+/* Log out: the red button and Cancel on one line; the quiet link at the foot of Settings -> Account */
+.room-logout { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; }
+.room-logout .room-back { margin-top: 8px; }
+.room-logout-line { margin: 18px 0 0; font-size: 14px; }
+.room-logout-line a { color: var(--muted); }
