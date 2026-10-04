@@ -324,12 +324,57 @@ const ROUNDS = {
     check(await h.ev(`return document.body.textContent.includes('Nachtbericht')`), 'published asset announced in the session')
     await shot('r15-publish')
   },
+  async r16_second_device() {
+    // a phone joins with the invite and the six-digit check code; it sees the room; an answer on the phone reaches
+    // the agent and the laptop's row leaves
+    await visit('/devices')
+    await until(`document.querySelector('form[action="/pair"] input[value=human]')`, 'devices')
+    await h.ev(`document.querySelector('form[action="/pair"] input[value=human]').form.requestSubmit(); return 1`)
+    await until(`location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')`, 'human invite page')
+    const link = await h.ev(`return [...trommi.client.model.invites.values()].at(-1).link`)
+    const errorsB = []
+    const B = await openPage({ profile: 'phone-light', base: APP, hostRules: arg('hosts') ?? '', errors: errorsB })
+    try {
+      const t0 = Date.now()
+      await B.go(link.replace(/^https?:\/\/[^/]+/, APP))
+      if (!await B.waitFor(`return !!document.querySelector('#join-form')`, 15000)) throw new Error('join screen on the phone')
+      await B.ev(`document.querySelector('#join-form input[name=device_name]').value = 'Phone'; document.querySelector('#join-form button').click(); return 1`)
+      if (!await B.waitFor(`return !!document.getElementById('check-code')`, 15000)) throw new Error('check code on the phone')
+      const code = (await B.ev(`return document.getElementById('check-code').textContent`)).replace(/\D/g, '')
+      check(/^\d{6}$/.test(code), 'phone shows a six-digit check code')
+      await B.shot(path.join(OUT, 'rounds', 'r16-check-code.png'))
+      await until(`document.querySelector('[data-state=confirm_code] input[name=code]')`, 'laptop asks for the code')
+      await h.ev(`const i = document.querySelector('[data-state=confirm_code] input[name=code]'); i.value = '${code}'; i.form.requestSubmit(); return 1`)
+      if (!await B.waitFor(`return document.documentElement.hasAttribute('data-ready') && trommi.client.model.room.connection === 'live'`, 25000)) throw new Error('phone in the room')
+      timing('phone: open invite -> in the room (incl. typing the code)', Date.now() - t0)
+      check(true, 'second device joined with the check code')
+      const id = idOf(await ch.call('create_decision', { title: 'Vom Handy beantworten?', options: [{ key: 'ja', label: 'Ja' }, { key: 'nein', label: 'Nein' }] }))
+      const t1 = Date.now()
+      await B.ev(`trommi.router.visit('/'); return 1`)
+      if (!await B.waitFor(`return !!document.getElementById('row-${id}')`, 15000)) throw new Error('card on the phone')
+      timing('agent card -> row on the phone', Date.now() - t1)
+      await rowVisible(id, 'laptop')
+      await B.ev(`const nr = trommi.model().byCard.get('${id}').number; trommi.router.visit('/q/' + nr); return 1`)
+      if (!await B.waitFor(`return !!document.querySelector('.tc-opt[data-key="ja"]')`, 10000)) throw new Error('card page on the phone')
+      await B.shot(path.join(OUT, 'rounds', 'r16-phone-card.png'))
+      const t2 = Date.now()
+      await B.ev(`document.querySelector('.tc-opt[data-key="ja"]').click(); return 1`)
+      const e = await nextEvent(ev('decision', id), 'decision from the phone')
+      timing('phone answer -> agent', Date.now() - t2)
+      check(e.params.meta.choice === 'ja', 'agent gets the phone\'s answer')
+      await visit('/')
+      await until(`!document.getElementById('row-${id}')`, 'row leaves on the laptop').then(() => { timing('phone answer -> row gone on the laptop', Date.now() - t2); check(true, 'laptop row leaves after the phone answered') }, err => check(false, err.message))
+      for (const x of errorsB.slice(0, 5)) say(`err  phone: ${x}`)
+    } finally { await B.close() }
+  },
 }
 
 try {
   // ---- found a room in the app, invite the channel ----
   await h.go(`/?hub=${encodeURIComponent(hub.hub_url)}`)
-  await until(`document.querySelector('#found-form')`, 'welcome screen', 20000)
+  await until(`document.querySelector('#found-form, #way-found')`, 'welcome screen', 20000)
+  await h.ev(`document.querySelector('#way-found')?.click(); return 1`)
+  await until(`document.querySelector('#found-form')`, 'found form')
   await h.ev(`document.querySelector('#found-form input[name=device_name]').value = 'Superkind'; document.querySelector('#found-form button[type=submit]').click(); return 1`)
   await until(`document.getElementById('recovery-code')`, 'recovery code')
   await h.ev(`document.querySelector('#recovery-form input[name=kept]').click(); document.querySelector('#recovery-form button').click(); return 1`)

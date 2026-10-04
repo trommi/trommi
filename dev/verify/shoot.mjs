@@ -28,7 +28,7 @@ const manifest = fs.existsSync(path.join(out, 'manifest.json')) ? JSON.parse(fs.
 const calm = names.filter(n => !target.states[n]?.mutates), moving = names.filter(n => target.states[n]?.mutates)
 async function shootIn(profile, list) {
   const errors = []
-  const h = await openPage({ profile, base: ctx.base, hostRules: arg('hosts') ?? '', errors })
+  const h = await openPage({ profile, base: ctx.base, hostRules: arg('hosts') ?? '', errors, userDataDir: ctx.userDataDir ?? null })
   try {
     await target.prepare(h, ctx, PROFILES[profile])
     for (const name of list) {

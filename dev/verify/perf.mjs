@@ -45,7 +45,7 @@ window.__armReady = sel => window.__arm('ready', sel)
 
 async function fresh(profile) {
   const p = PROFILES[profile]
-  const h = await openPage({ profile: { ...p }, base: ctx.base, hostRules: arg('hosts') ?? '', init: [WATCH] })
+  const h = await openPage({ profile: { ...p }, base: ctx.base, hostRules: arg('hosts') ?? '', init: [WATCH], userDataDir: ctx.userDataDir ?? null })
   await h.page.send('Performance.enable')
   if (p.cpu > 1) await h.page.send('Emulation.setCPUThrottlingRate', { rate: p.cpu })
   await target.prepare(h, ctx, { dark: false })
