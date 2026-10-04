@@ -14,7 +14,7 @@
 // `memoryStorage()` is the reference storage; hub/store.mjs is the SQLite one with the same methods.
 
 import * as z from './zcrypto.mjs'
-import { applyGrant, grantManifestHash } from './session-grants.mjs'
+import { applyGrant, grantManifestHash, grantIsStale } from './session-grants.mjs'
 
 const { ZError, ROLE, ENTRY, KIND, KEY_SCOPE, TIMELINE, b64u, hex, unhex, bytesEqual } = z
 const fail = (code, message, extra) => { throw new ZError(code, message, extra) }
@@ -241,7 +241,9 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     const next = await applyGrant(prev, grant, room())          // chain, signer at its log state, agents, commitments
     if (next.sessionId !== sessionId) fail('bad-argument', 'the grant names another session')
     // The signer must still be an active human device (or the room's current recovery key).
-    if (!bytesEqual(unhex(next.signerId), room().recovery.id) && activeRole(next.signerId) !== ROLE.HUMAN) fail('forbidden', 'the signer is no longer an active human device')
+    if (!bytesEqual(unhex(next.signerId), room().recovery.id) && activeRole(next.signerId) !== ROLE.HUMAN) fail('stale-grant', 'the signer is no longer an active human device')
+    // B02/A1: a new grant names the member list as it is after the newest removal or recovery (a removed device cannot).
+    if (next.stale) fail('stale-grant', 'the grant names a member list from before a removal or recovery: build it on the current list')
     for (const a of next.agentIds) if (activeRole(a) !== ROLE.AGENT) fail('bad-grant', 'an assigned agent is no longer a member')
     // Sealed keys: every active human device, the recovery key, every assigned agent. Agents without history get the key only.
     const humans = z.activeMembers(room()).filter(m => m.role === ROLE.HUMAN).map(m => ({ id: m.id, human: true }))
@@ -276,6 +278,8 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       if (!c.state) fail('forbidden', 'no such session')
       sess = { ...c, agents: assignedAgents(c.state) }
       if (!human && !sess.agents.includes(sender)) fail('forbidden', 'this agent is not assigned to the session')
+      // A1: after a removal or recovery nobody sends under a session key the removed device may hold, until a human re-keys.
+      if (grantIsStale(c.state, room())) fail('stale-session-key', 'this session has not been re-keyed since the last removal or recovery: retry after the new grant')
       if (h.epoch > c.state.epoch) fail('wrong-epoch', 'a session key epoch the hub does not know')
       if (h.epoch < c.state.epoch) {
         const since = c.since.get(h.epoch + 1)
@@ -420,7 +424,9 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       if (s.kind === 'recovery' || s.role === ROLE.HUMAN) return links
       const c = await sessionOf(sessionId)
       if (!assignedAgents(c.state).includes(s.id)) fail('forbidden', 'not assigned to this session')
-      return links.filter(l => c.state.epochs.get(l.epoch)?.withHistory)
+      // A history key of epoch n opens the link of n, which holds the history key of n-1: "with history" is the whole chain below.
+      const top = Math.max(0, ...[...c.state.epochs].filter(([, info]) => info.withHistory).map(([e]) => e))
+      return links.filter(l => l.epoch <= top)
     },
     sessionsList: () => (storage.sessions?.() ?? []).map(x => ({ session_id: x.session_id, last_grant_number: x.last_grant_number, session_key_epoch: x.session_key_epoch })),
     /** The current state of a session (for the hub's own routes): { epoch, agentIds, grantNumber } or null. */

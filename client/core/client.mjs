@@ -1420,7 +1420,7 @@ export class Client {
   }
   async _assignSessionLocked({ session_id, agent_device_ids, with_history }) {
     await this._refreshSessions()
-    return this._grantLocked(session_id, { agent_device_ids, with_history, rotate: !with_history })
+    return this._grantLocked(session_id, { agent_device_ids, with_history, rotate: true })
   }
   async _grantLocked(session_id, { agent_device_ids, with_history = false, rotate = false }) {
     const k = this.sessionKeys.get(session_id)

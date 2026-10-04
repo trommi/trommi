@@ -36,7 +36,7 @@ const STATUS = {
   unauthorised: 401, 'bad-challenge': 401,
   forbidden: 403, 'not-member': 403, 'removed-sender': 403, 'wrong-sender': 403,
   'not-found': 404, 'no-room': 404,
-  replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'instance-conflict': 409, 'wrong-epoch': 409, 'lease-lost': 409, 'invite-burned': 410,
+  replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'instance-conflict': 409, 'wrong-epoch': 409, 'lease-lost': 409, 'stale-grant': 409, 'stale-session-key': 409, 'invite-burned': 410,
   'invite-expired': 410, 'too-large': 413, 'too-many': 429, 'rate-limited': 429, internal: 500,
 }
 const CATCH_UP_SLICE = 64
