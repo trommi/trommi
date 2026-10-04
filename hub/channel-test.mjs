@@ -221,6 +221,15 @@ await test('commands become the same channel events as today', async () => {
   assert.deepEqual(events.at(-1).meta, { kind: 'pad', pad: 'global', message_id: '77', elements: 's1,s2' })
 })
 
+await test('history and late commands are marked; strokes are never chat', async () => {
+  const { bridge, events } = bridgeWith()
+  await bridge.command({ command: 'message', content: { content_type: 'message', text: 'old' }, history: true, late: true })
+  assert.deepEqual(events.at(-1).meta, { kind: 'chat', late: '1', history: '1' })
+  assert.match(events.at(-1).content, /^\(Earlier message, for context only; not a new request\.\)\nold$/)
+  await bridge.command({ command: 'message', content: { content_type: 'strokes', strokes: [] } })
+  assert.equal(events.length, 1)
+})
+
 await test('permission relay: request -> object, verdict -> notifications/claude/channel/permission', async () => {
   const { client, bridge, events, state } = bridgeWith()
   const params = { request_id: 'abcde', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"npm test"}' }

@@ -132,7 +132,12 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
     let chain = new Promise(resolve => { opened = resolve })
     client.on('command', cmd => {
       if (me.phase === 'halted') return log(`command ${cmd.envelope_number} held back: the member list forked`)
-      chain = chain.then(() => onCommand(cmd)).catch(err => log(`command not relayed: ${err.message}`))
+      // Executed once (R4): the ledger survives restarts; a command is marked after Claude Code got it.
+      chain = chain.then(async () => {
+        if (cmd.envelope_hash && client.ledger?.has(cmd.envelope_hash)) return
+        await onCommand(cmd)
+        if (cmd.envelope_hash) await client.ledger?.mark(cmd.envelope_hash)
+      }).catch(err => log(`command not relayed: ${err.message}`))
     })
     client.on('error', err => {
       if (err?.code === 'lease-lost') {
