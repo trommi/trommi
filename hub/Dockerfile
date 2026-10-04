@@ -2,7 +2,10 @@
 #   docker build -f hub/Dockerfile --build-arg COMMIT=$(git rev-parse HEAD) -t trommi-hub .
 FROM node:26-alpine
 ARG COMMIT=unknown
+# Extra CORS origins baked in by the deploy (the tailnet design preview; .github/workflows/deploy.yml).
+ARG PREVIEW_ORIGINS=
 ENV COMMIT=$COMMIT \
+    HUB_PREVIEW_ORIGINS=$PREVIEW_ORIGINS \
     NODE_ENV=production \
     HUB_PORT=8790 \
     HUB_DATA=/data \

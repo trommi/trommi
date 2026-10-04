@@ -30,6 +30,9 @@ node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node
 node core/test.mjs && node connector/channel-test.mjs
 node fuzz/run.mjs --quick
 (cd app/web && node dev/serve.mjs 8900)     # the app as deployed (build in memory); e2e: app/web/README.md
+(cd app/web && node dev/serve.mjs 8901 --preview) && tailscale serve --bg --https=8443 http://127.0.0.1:8901
+                                            # design preview: the working tree at https://desktop.TAILNET.ts.net:8443
+                                            # (tailnet only) against the live hub; no shell cache, a reload shows every edit
 ```
 
 Each suite starts its own hubs on free ports with throwaway data directories. A local hub for the app:
@@ -57,7 +60,7 @@ Each suite starts its own hubs on free ports with throwaway data directories. A 
 ### Transport
 
 - HTTPS, JSON bodies. Base path `/v1`. `GET /healthz` → `{ ok, commit, protocol_version: 1 }` without sign-in. A browser that opens the hub (`GET /` or any page navigation outside `/v1`) gets `302` to `https://app.trommi.com` (`HUB_APP_URL`).
-- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>` and `http://127.0.0.1:<any port>` (only when `NODE_ENV` is not `production`; the image sets production, so a local app against hub.trommi.com needs `HUB_ORIGINS`) and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, x-share-secret, trommi-client, trommi-protocol`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
+- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>` and `http://127.0.0.1:<any port>` (only when `NODE_ENV` is not `production`; the image sets production, so a local app against hub.trommi.com needs `HUB_ORIGINS`) and the origins in `HUB_ORIGINS` and `HUB_PREVIEW_ORIGINS` (comma lists; the deploy bakes `HUB_PREVIEW_ORIGINS` into the image from the repository variable of that name, default `https://desktop.TAILNET.ts.net:8443`, the design preview); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, x-share-secret, trommi-client, trommi-protocol`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
 - **Sign-in:** `Authorization: Bearer <access_token>`. An access token comes from a signed challenge, is bound to one device and lasts 10 minutes. A client signs in again on `401 unauthorised` or a minute before `expires_at`. Writes need nothing more: member entries and envelopes are signed themselves.
 - **Deadlines (client/core):** no request waits forever: 30 s for a JSON route, 120 s for attachment bytes; a `GET` that met a network failure, its deadline or a 502/503/504 is tried twice more (0.3 s, 1 s); writes are never repeated by the transport. The stream has its own watchdog (70 s silent: reconnect).
 - **Client version:** every request carries `Trommi-Client: <app|channel|ios>/<semver>` and `Trommi-Protocol: 1` (below, "Versions and upgrades").

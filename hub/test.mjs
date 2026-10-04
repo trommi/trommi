@@ -274,6 +274,14 @@ test('healthz, push key, CORS for the app and localhost only, preflight cached',
   const w2 = await newHub({ origins: ['https://staging.trommi.com'] })
   assert.equal((await fetch(`${w2.base}/healthz`, { headers: { origin: 'https://staging.trommi.com' } })).headers.get('access-control-allow-origin'), 'https://staging.trommi.com')
   await w2.hub.close()
+  // The deploy's preview origins (HUB_PREVIEW_ORIGINS) add to HUB_ORIGINS.
+  const env = { o: process.env.HUB_ORIGINS, p: process.env.HUB_PREVIEW_ORIGINS }
+  process.env.HUB_ORIGINS = 'https://staging.trommi.com'; process.env.HUB_PREVIEW_ORIGINS = 'https://desk.example.ts.net:8443'
+  const w3 = await newHub()
+  for (const k of ['o', 'p']) if (env[k] == null) delete process.env[k === 'o' ? 'HUB_ORIGINS' : 'HUB_PREVIEW_ORIGINS']; else process.env[k === 'o' ? 'HUB_ORIGINS' : 'HUB_PREVIEW_ORIGINS'] = env[k]
+  for (const origin of ['https://staging.trommi.com', 'https://desk.example.ts.net:8443']) assert.equal((await fetch(`${w3.base}/healthz`, { headers: { origin } })).headers.get('access-control-allow-origin'), origin)
+  assert.equal((await fetch(`${w3.base}/healthz`, { headers: { origin: 'https://desk.example.ts.net' } })).headers.get('access-control-allow-origin'), null)
+  await w3.hub.close()
 })
 
 test('a browser that opens the hub lands in the app (302); API routes and other paths unchanged', async () => {

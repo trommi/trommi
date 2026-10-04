@@ -4,7 +4,7 @@
 // hub.mjs), this file is transport, storage, limits and the live stream.
 //
 // Run: node hub/server.mjs    env: HUB_PORT (8790), HUB_HOST (0.0.0.0), HUB_DATA (/data), HUB_URL (the address
-// devices sign; https://hub.trommi.com in prod), COMMIT, HUB_ORIGINS, HUB_FOUND_TOKEN, HUB_MAX_ROOMS (1000),
+// devices sign; https://hub.trommi.com in prod), COMMIT, HUB_ORIGINS (+ HUB_PREVIEW_ORIGINS, set by the deploy), HUB_FOUND_TOKEN, HUB_MAX_ROOMS (1000),
 // HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT, HUB_TRUST_CF (1: trust cf-connecting-ip, only from a loopback or private peer,
 // i.e. cloudflared on this machine or through Docker's port proxy; off by default).
 import http from 'node:http'
@@ -85,7 +85,7 @@ function buckets(rate, burst, now) {
 export async function startHub({
   port = Number(process.env.HUB_PORT || 8790), host = process.env.HUB_HOST || '0.0.0.0',
   dataDir = process.env.HUB_DATA || '/data', hubUrl = process.env.HUB_URL, commit = process.env.COMMIT || 'dev',
-  origins = (process.env.HUB_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
+  origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
   trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
   pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS,

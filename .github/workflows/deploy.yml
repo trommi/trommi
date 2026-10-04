@@ -50,8 +50,12 @@ jobs:
         continue-on-error: true
         run: node fuzz/run.mjs --quick
 
+      # PREVIEW_ORIGINS: the design preview served from the developer desktop over tailscale serve (tailnet only),
+      # which talks to this hub; the repository variable HUB_PREVIEW_ORIGINS (comma list) replaces the default.
       - name: Build image
-        run: docker build -f hub/Dockerfile --build-arg COMMIT=${{ github.sha }} -t "$IMAGE" .
+        env:
+          PREVIEW_ORIGINS: ${{ vars.HUB_PREVIEW_ORIGINS || 'https://desktop.TAILNET.ts.net:8443' }}
+        run: docker build -f hub/Dockerfile --build-arg COMMIT=${{ github.sha }} --build-arg PREVIEW_ORIGINS="$PREVIEW_ORIGINS" -t "$IMAGE" .
 
       - name: Connect to Tailscale
         uses: tailscale/github-action@v4
