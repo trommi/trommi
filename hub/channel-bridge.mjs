@@ -27,7 +27,7 @@ const urgencyArg = (value, fallback) => {
 // ---- a question as one structured text (as in server/server.mjs) -------------------------------------
 
 const FLAGGED = /^\[([\w.-]+)(\*)?\](?!\()[ \t]*/
-export function parseSections(text) {
+function parseSections(text) {
   return fences.hide(String(text).replace(/\r\n?/g, '\n')).split(/\n[ \t]*\n/).map(p => fences.show(p).trim()).filter(Boolean).map(par => {
     const flag = FLAGGED.exec(par)
     if (!flag) return { text: par }
@@ -78,7 +78,7 @@ const bodyOf = sections => sections.map(s => (s.key == null ? s.text : `**${s.la
 const NO_ADVICE = Symbol('no advice')
 
 /** The content of a decision card, checked as today's board checks it. Body field names (README). */
-export function questionFields(args, names = []) {
+function questionFields(args, names = []) {
   const sections = args.sections != null || args.text != null ? sectionsOf(args, names) : null
   if (sections && args.html) throw new Error('html and sections (or text) cannot be combined: give the layout to the block it belongs to, as html on that section, or fenced as ```html inside the text')
   const body = sections ? bodyOf(sections) : cleanFences(String(args.body ?? ''), 'body')
@@ -111,7 +111,7 @@ export function questionFields(args, names = []) {
 }
 
 /** The content of an info card. */
-export function infoFields(args, names = []) {
+function infoFields(args, names = []) {
   for (const key of ['options', 'multiple', 'recommended']) {
     if (args[key] != null) throw new Error(`an info has no ${key}: it asks nothing, the human reads it and closes it. Something to choose is a question: create_decision`)
   }
@@ -139,11 +139,11 @@ const MEDIA = {
   '.html': 'text/html', '.htm': 'text/html', '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.pdf': 'application/pdf',
   '.csv': 'text/csv', '.diff': 'text/x-diff', '.patch': 'text/x-diff', '.zip': 'application/zip',
 }
-export const mediaTypeOf = name => MEDIA[path.extname(String(name)).toLowerCase()] ?? 'application/octet-stream'
+const mediaTypeOf = name => MEDIA[path.extname(String(name)).toLowerCase()] ?? 'application/octet-stream'
 const assetTypeOf = media => (media === 'text/html' ? 'html' : /^(image|video|audio)\//.test(media) ? media.split('/')[0] : 'file')
 
 /** Width and height of a PNG or JPEG, or {} (cheap header read; nothing is decoded). */
-export function pictureSize(bytes) {
+function pictureSize(bytes) {
   if (bytes.length > 24 && bytes[0] === 0x89 && bytes[1] === 0x50) {
     const v = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
     return { width: v.getUint32(16), height: v.getUint32(20) }
