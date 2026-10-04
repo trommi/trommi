@@ -125,7 +125,7 @@ span.tc-step-card { opacity: .3; }
 
 /* the picture: low, it takes what the words leave of the card's height */
 turbo-frame.tc-media { flex: 1 1 0; min-height: 110px; display: flex; flex-direction: column; gap: 6px; }
-.tc-stage { position: relative; flex: 1 1 0; min-height: 0; max-height: 280px; display: flex; align-items: center; align-self: flex-start; max-width: 100%; }
+.tc-stage { position: relative; flex: 1 1 0; min-height: 0; max-height: 280px; display: flex; align-items: center; align-self: flex-start; max-width: 100%; min-width: 96px; }  /* (the arrows keep their sides while the picture is still being decrypted) */
 .tc-figure { position: relative; height: 100%; max-width: 100%; display: block; cursor: zoom-in; }
 .tc-figure img { height: 100%; max-width: 100%; width: auto; object-fit: contain; object-position: left center; border-radius: var(--r-md); box-shadow: 0 0 0 1px var(--line); background: var(--surface); display: block; }
 .tc-zoom { position: absolute; right: 8px; bottom: 8px; display: grid; place-items: center; width: 32px; height: 32px; border-radius: 50%; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-md); opacity: 0; transition: opacity var(--d-fast, 120ms); }

@@ -209,8 +209,9 @@ document.addEventListener('error', async e => {
   const el = e.target
   if (!(el instanceof HTMLImageElement || el instanceof HTMLMediaElement)) return
   const m = /\/att\/([0-9a-f]{32})(#.*)?$/.exec(el.getAttribute('src') ?? '')
-  if (!m || el.dataset.attTried) return
-  el.dataset.attTried = '1'
+  // (once per attachment and element: the card's stage puts another /att/ address into the same <img> on hover)
+  if (!m || el.dataset.attTried === m[1]) return
+  el.dataset.attTried = m[1]
   const blob = await blobOf(m[1])
   if (blob) { el.removeAttribute('srcset'); el.src = URL.createObjectURL(blob) + (m[2] ?? ''); return }
   // Gone from the hub (after 30 days, or evicted for the room's quota): said in place of the picture.
