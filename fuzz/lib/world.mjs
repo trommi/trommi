@@ -199,6 +199,8 @@ export class World {
           }
         }
       }
+      // a device that read something during the cursor checks may have queued a send (an agent's F15 re-send): settle again
+      if (!pending) for (const d of live) if (d.client && !d.dead && (d.client.outbox.length || d.client.byHash.size || d.client._background?.size)) { pending = `${d.name}: sending`; break }
       if (!pending) return true
       if (Date.now() > end) throw new Finding('liveness', `did not quiesce within ${timeout_ms} ms: ${pending}`)
       await sleep(15)

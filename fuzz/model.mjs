@@ -77,7 +77,8 @@ async function hostileEnd(w, R) {
   const a = w.attack
   await C.checkSafety(R, { deep: true })
   // detection: a client that was handed flipped bits must have said so
-  for (const [name, n] of a.tampered) { const d = w.devs.get(name); if (d?.client && n > 0 && d.client.model.alerts.length === 0) throw new Finding('undetected-tampering', `${name} was handed ${n} tampered envelope(s) and raised no alert`) }
+  // a device with network faults may drop a tampered copy unread (F12: a failed request stops the batch before it) and read the honest one later
+  for (const [name, n] of a.tampered) { const d = w.devs.get(name); if (d?.client && n > 0 && !d.everFaulty && d.client.model.alerts.length === 0) throw new Finding('undetected-tampering', `${name} was handed ${n} tampered envelope(s) and raised no alert`) }
   // the hub turns honest again: do the clients find their way back to the truth?
   a.active = false
   for (const d of w.devs.values()) if (d.client && !d.dead) { try { await d.client.catchUp() } catch {} }
