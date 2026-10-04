@@ -149,7 +149,7 @@ export class Runner {
     const fn = this[`do_${a.t}`]
     if (!fn) throw new Error(`no executor for ${a.t}`)
     let outcome
-    try { outcome = await Promise.race([fn.call(this, a), sleep(60000).then(() => { throw new Finding('liveness', `action ${a.t} did not finish within 60 s`, { action: a }) })]) }
+    try { outcome = await Promise.race([fn.call(this, a), sleep(a.t === 'found' && this.w.remote ? 3600e3 : 60000).then(() => { throw new Finding('liveness', `action ${a.t} did not finish within 60 s`, { action: a }) })]) }
     catch (e) {
       if (e instanceof Finding) throw e
       if (/simulated:|process killed|fenced:/.test(e?.message ?? '')) { w.stats.refused++; return 'refused:net' }
@@ -293,6 +293,7 @@ export class Runner {
       if (!done) throw e
     }
     target.removed = true; target.removedBatch = w.batch
+    for (const items of O.chat.values()) for (const it of items) if (it.from === target.name) it.certain = false   // may be beyond the cut
     O.remove([target.name])
     return 'ok'
   }
@@ -593,7 +594,7 @@ export class Runner {
       }
     }
     await this.w.crash(d)
-    if (pending) await pending
+    if (pending) await Promise.race([pending, sleep(3000)])   // a send of a killed process may never settle; that is not a finding
     return 'ok'
   }
   async do_restart(a) {

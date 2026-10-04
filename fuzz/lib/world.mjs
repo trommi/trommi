@@ -36,7 +36,7 @@ export function fencedStorage(base, gen) {
 
 // ports below the ephemeral range, a private block per worker thread: no two worlds ever probe the same number
 let portCounter = 0
-const nextPort = () => 20000 + ((threadId || 150) % 220) * 50 + (portCounter++ % 50)
+const nextPort = () => 20000 + (((process.pid * 31) + threadId * 7) % 220) * 50 + (portCounter++ % 50)
 export class World {
   constructor({ seed, target, remote = null, dir = null, log = () => {}, limits = 'fast' }) {
     this.seed = seed; this.t = target; this.remote = remote; this.log = log
@@ -59,8 +59,9 @@ export class World {
   async startHub() {
     if (this.remote) { this.hubUrl = this.remote.replace(/\/+$/, ''); return }
     if (this.limits === 'fast') Object.assign(this.t.LIMITS, { foundPerIpHour: 1e9, envelopesPerSecond: 1e6, envelopeBurst: 1e6, openRequestsPerIpMinute: 1e9, streamsPerDevice: 64 })
-    if (!this.hubPort) this.hubPort = nextPort()
-    this.hub = await this.t.startHub({ port: this.hubPort, host: '127.0.0.1', dataDir: path.join(this.dir, 'hub'), log: m => { if (/fail|error|internal|exception/i.test(m)) this.hubLog.push(m) }, pingMs: 4000, retentionEveryMs: 2 ** 31 - 1 })
+    const fresh = !this.hubPort
+    if (fresh) this.hubPort = nextPort()
+    for (let tries = 0; ; tries++) { try { this.hub = await this.t.startHub({ port: this.hubPort, host: '127.0.0.1', dataDir: path.join(this.dir, 'hub'), log: m => { if (/fail|error|internal|exception/i.test(m)) this.hubLog.push(m) }, pingMs: 4000, retentionEveryMs: 2 ** 31 - 1 }); break } catch (e) { if (e.code === 'EADDRINUSE' && fresh && tries < 30) { this.hubPort = nextPort(); continue } throw e } }
     this.hubPort = this.hub.port
     this.hubUrl = this.hub.hubUrl
   }
@@ -147,6 +148,7 @@ export class World {
   /** Boot (or reboot) a device from its storage: openRoom, start. */
   async boot(dev, { claim = true } = {}) {
     dev.dead = false
+    dev.faults = { delay: 0, lose_response: 0, offline: 0 }   // a process starts on a working network; faults are switched on by later actions
     dev.gen++
     dev.incarnation++
     dev.lastBootBatch = this.batch
@@ -181,6 +183,7 @@ export class World {
         try { await this.boot(d) } catch (e) { await sleep(500); d.faults = { delay: 0, lose_response: 0, offline: 0 }; try { await this.boot(d) } catch (e2) { { if (/tab-conflict/.test(e2.message)) { d.dead = true; d.client = null; continue } throw new Finding('exception', `agent restart after lease-lost failed: ${e2.message}`) } } }
       }
       for (const d of live) {
+        if (!d.client || d.dead) continue
         try { await d.client.settle({ timeout_ms: Math.max(1000, end - Date.now()) }) } catch (e) { pending = `${d.name}: ${e.message}`; break }
       }
       if (!pending) {

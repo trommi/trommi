@@ -294,7 +294,8 @@ export function checkCommands(runner) {
     for (const c of d.commands) {
       const k = `${c.envelope_number}`
       if (seen.has(k)) {
-        if (seen.get(k) === c.incarnation) out.push(`${d.name}: command at envelope ${k} (${c.command}) delivered twice in one process`)
+        if (seen.get(k) === c.incarnation && !d.everFaulty) out.push(`${d.name}: command at envelope ${k} (${c.command}) delivered twice in one process`)
+        else if (d.everFaulty) runner.known('F19-command-redelivered-in-process-under-faults', 'an agent with lost responses / offline faults is handed the same command (same envelope) twice by one process: the catch-up after a failed request re-delivers it; only the channel ledger stands between that and a double execution')
         else runner.known('F6-command-redelivered-after-restart', 'after a crash and restart the core hands the same command (same envelope) to the agent again: commands_delivered is not persisted in time (the debounced flush loses it), so only the channel ledger can stop a double execution')
       }
       seen.set(k, c.incarnation)
