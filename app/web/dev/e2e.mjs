@@ -124,13 +124,8 @@ try {
   check(await A.js("return !!document.querySelector('#agents .agent-row[data-unit]')"), 'session in the sidebar')
   check(await A.js("return !document.querySelector('#desk-invite') && !!document.querySelector('#agents #sidebar-invite') && getComputedStyle(document.querySelector('#sidebar-invite')).backgroundColor === 'rgba(0, 0, 0, 0)'"), 'Invite your first agent gone once a session is there; the + New agent row stays, quiet')
 
-  // ---- the desk switcher: the desk drawing (lamp on) opens the Trommi menu at its desk list, on the desk in view ----
-  check(await A.js("return document.querySelector('.desk-go .desk-name')?.textContent === 'Desk' && !!document.querySelector('#desk-switch .lamp-light')"), 'Desk box: the desk name, the drawing with its lamp on')
-  await A.js("document.getElementById('desk-switch').click()")
-  await A.until("!document.getElementById('brand-doors').hidden && document.activeElement?.matches('#brand-doors .menu-desk[aria-checked=\"true\"]')", 'switcher opens the desk list', 3000).then(() => check(true, 'clicking the desk drawing opens the switcher on the desk in view'), e => check(false, e.message))
-  check(await A.js("return document.getElementById('desk-switch').getAttribute('aria-expanded') === 'true' && document.getElementById('brand-doors').dataset.from === 'desk'"), 'switcher: expanded, the menu under the drawing')
-  await A.js("document.getElementById('desk-switch').click()")
-  check(await A.js("return document.getElementById('brand-doors').hidden && document.getElementById('desk-switch').getAttribute('aria-expanded') === 'false'"), 'a second click on the drawing closes it')
+  // ---- the Desk row: the desk drawing (lamp lit while something waits) and the desk's own name; no switcher there ----
+  check(await A.js("return document.querySelector('.desk-go .desk-name')?.textContent === 'Desk' && !!document.querySelector('#desk-lamp .lamp-light') && !document.querySelector('#desk-switch, .deskpill .desk-next, .deskpill .desk-blocked')"), 'Desk row: the name, the lamp lit (a question waits), no caret, no count or hand')
   await A.shot('e2e-4-desk-card.png')
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----
@@ -157,7 +152,7 @@ try {
   await A.until(`document.getElementById('row-${cardId}')`, 'back on the Desk')
 
   // ---- the pile "Media N" at the Desk's foot (the newest pictures and videos fanned); a click opens the plain gallery ----
-  await A.until("document.querySelector('#desk-stacks > #desk-media .media-sheet video') && document.querySelector('#desk-media .media-sheet img')", 'media pile with a picture and a video').then(() => check(true, 'Media pile: in the Desk foot beside Notes and Off the desk, a picture and a video fanned'), e => check(false, e.message))
+  await A.until("document.querySelector('#desk-stacks > #desk-media .photo video') && document.querySelector('#desk-media .photo img')", 'media pile with a picture and a video').then(() => check(true, 'Media pile: in the Desk foot beside Notes and Off the desk, one slip per item, thumbnails of a picture and a video'), e => check(false, e.message))
   check(await A.js("return !document.querySelector('.gal-shelf, #desk-shelf') && /^Media\\s*2$/.test(document.querySelector('#desk-media .off-label').textContent.trim())"), 'no shelf any more; the pile says Media 2')
   await A.until("[...document.querySelectorAll('#desk-media img')].some(i => i.complete && i.naturalWidth > 0)", 'the fanned picture decrypted', 15000).then(() => check(true, 'the fanned picture is decrypted and shown'), e => check(false, e.message))
   await A.js("document.getElementById('desk-media').click()")
@@ -232,28 +227,29 @@ try {
   const bytes = fileCmd ? await agent.fetchAttachment(fileCmd.content.attachments[0]).catch(() => null) : null
   check(bytes?.length === 4096 && bytes[0] === 7, `a composer file reaches the agent whole (${bytes?.length ?? 'none'} bytes)`)
 
-  // ---- a note: it lies on the Notes stack, plain; sent from there it reaches the agent marked as a note and stands in
+  // ---- the note: it waits at the sidebar's foot; sent from there (to the crown) it reaches the agent marked as a note and stands in
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
   await A.js(`const now = Date.now(); await trommi.client.saveMemo({ text: '${noteText}', x: 0, y: 0, place: 'stack', desk_id: trommi.board.desk ?? 'main', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
-  await A.until("document.querySelector('[data-stack=notes]:not(.is-empty) .stack-stamp-num')?.textContent === '1'", 'NOTES 1 on the Desk').then(() => check(true, 'a new note lies on the Notes stack'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('#memo-open .memo-count:not(.memo-count-phone)')"), 'the memo button carries no count of its own')
-  await A.js("document.querySelector('[data-stack=notes] .inbox-stack-head').click()")
-  await A.until("document.querySelector('[data-stack=notes].is-open .note-send select')", 'Notes stack open')
-  await A.js(`window.__bubbled = false; new MutationObserver(() => { if ([...document.querySelectorAll('.msg-user .bubble')].some(b => b.textContent.includes('${noteText}'))) window.__bubbled = true }).observe(document.documentElement, { childList: true, subtree: true }); const f = document.querySelector('[data-stack=notes] .note-send'); f.querySelector('select').value = '${sid}'; f.requestSubmit(f.querySelector('button'))`)
-  await A.js(`trommi.router.visit('/s/${sid}')`)
+  await A.until(`document.querySelector('#side-notes .side-note-first')?.textContent.startsWith('Notiz e2e')`, 'the note at the sidebar foot').then(() => check(true, 'the note waits at the sidebar foot, its first line shown'), e => check(false, e.message))
+  check(await A.js("return !document.querySelector('#memo-open:not([hidden])') || getComputedStyle(document.getElementById('memo-open')).display === 'none'"), 'no floating memo button')
+  await A.js("document.querySelector('#side-notes .side-note-head').click()")
+  await A.until("!document.querySelector('#side-notes .side-note-body').hidden", 'the note unfolds')
+  await A.js(`window.__bubbled = false; new MutationObserver(() => { if ([...document.querySelectorAll('.msg-user .bubble')].some(b => b.textContent.includes('${noteText}'))) window.__bubbled = true }).observe(document.documentElement, { childList: true, subtree: true }); document.querySelector('#side-notes .side-note-send').click()`)
+  const crownId = await A.js("return trommi.model().agents.find(a => a.starred)?.id")
+  await A.js(`trommi.router.visit('/s/${crownId ?? sid}')`)
   const tn = Date.now(); let noteCmd = null
   while (!noteCmd && Date.now() - tn < 15000) { noteCmd = commands.find(c => c.command === 'message' && c.content?.text === noteText); await sleep(50) }
   check(/^[0-9a-f]{32}$/.test(noteCmd?.content?.memo?.object_id ?? '') && Number.isSafeInteger(noteCmd?.content?.memo?.written_at), 'a sent note reaches the agent with memo { object_id, written_at }')
   await A.until(`[...document.querySelectorAll('.msg-note p')].some(p => p.textContent.includes('${noteText}'))`, 'taped note in the chat').then(() => check(true, 'the sent note stands taped in the session chat'), e => check(false, e.message))
   await sleep(1500)
   check(await A.js(`return !window.__bubbled && [...document.querySelectorAll('.msg-note p')].some(p => p.textContent.includes('${noteText}'))`), 'the taped note never turns into a bubble (echo -> hub copy)')
-  check(await A.js("return !trommi.model().state.memos.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the Notes stack')
+  check(await A.js("return !trommi.model().state.memos.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the sidebar')
   await A.shot('e2e-note-taped.png')
 
   // ---- the pile "Off the desk": one pile for every card that left the open rows (snoozed, in the works, done, trash);
-  //      folded it shows the newest five with their signs; unfolded: filter chips with counts, and every way back ----
+  //      folded it shows the newest five with their marks; unfolded: a line per card, its mark and title; the way back is on the card ----
   const pile = {}
   for (const [k, title] of [['snooze', 'Stapel: später'], ['shred', 'Stapel: weg'], ['revise', 'Stapel: erklären'], ['done', 'Stapel: erledigt'], ['acting', 'Stapel: beantwortet']]) pile[k] = await agent.sendCard({ title, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
   await A.js("trommi.router.visit('/')")
@@ -282,27 +278,21 @@ try {
     await A.js(`document.querySelector('#cardpage button[formaction$="/${way}"]').click()`)
     await A.until("location.pathname === '/'", `back on the Desk after ${way}`).catch(() => A.js("trommi.router.visit('/')"))
   }
-  await A.until(`document.querySelector('#desk-stacks [data-pile=off]') && ['${pile.snooze}', '${pile.shred}', '${pile.revise}'].every(id => document.querySelector('#desk-stacks .off-line[data-id="' + id + '"]')) && document.querySelector('#desk-stacks .off-line[data-id="${pile.done}"][data-g=done]')`, 'all four in the pile', 20000)
-    .then(() => check(true, 'snoozed, shredded, asked (What??) and done cards all lie in the one pile'), e => check(false, e.message))
+  await A.until(`document.querySelector('#desk-stacks [data-pile=off]') && ['${pile.snooze}', '${pile.shred}'].every(id => document.querySelector('#desk-stacks .off-line[data-id="' + id + '"]')) && document.querySelector('#desk-stacks .off-line[data-id="${pile.done}"][data-g=done]') && document.querySelector('#desk-ip .ipb-card[data-id="${pile.revise}"]')`, 'three in the pile, the asked one with the agents', 20000)
+    .then(() => check(true, 'snoozed, shredded and done cards lie in the one pile; the asked one (What??) stays on the Desk with the agents'), e => check(false, e.message))
   check(await A.js("return !document.querySelector('#desk-stacks [data-stack=later], #desk-stacks [data-stack=works], #desk-stacks [data-stack=done], #desk-stacks [data-stack=trash]')"), 'no separate Snooze / Working / Done / Trash stacks any more')
-  check(await A.js("const s = [...document.querySelectorAll('.off-fan .off-sheet')]; return s.length >= 4 && s.length <= 5 && s.every(x => x.querySelector('.off-sign'))"), 'the folded pile shows the newest sheets, each with its sign')
-  const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.revise}', '${pile.done}'].map(id => [id, document.querySelector('.off-line[data-id="' + id + '"]')?.dataset.g]))`)
-  check(await A.js(`return !document.querySelector('.off-line[data-id="${pile.done}"] .inbox-takeback')`), 'a card its session closed (Done) offers no Take back')
-  check(g[pile.snooze] === 'later' && g[pile.shred] === 'trash' && g[pile.revise] === 'works' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
-  await A.js("document.querySelector('.off-head').click()")
-  await A.until("document.querySelector('.off-pile.is-open .off-chips')", 'pile unfolded')
-  const counts = await A.js("return Object.fromEntries([...document.querySelectorAll('.off-chip')].map(c => [c.dataset.g, Number(c.querySelector('b').textContent)]))")
-  check(counts.all === counts.later + counts.works + counts.done + counts.trash && counts.later >= 1 && counts.works >= 1 && counts.done >= 1 && counts.trash >= 1, `filter chips count every place (${JSON.stringify(counts)})`)
-  await A.js("document.querySelector('.off-chip[data-g=trash] input').click()")
-  check(await A.js("const shown = [...document.querySelectorAll('.off-list .off-line')].filter(l => l.getClientRects().length); return shown.length > 0 && shown.every(l => l.dataset.g === 'trash')"), 'the Trash chip shows only the trash')
-  // every way back: restore from Trash, Wake up, Take back (asked), Take back (answered). (A card its session closed
-  // lies on Done; its Take back is a decide-again the core does not count, as before the pile.)
-  for (const [k, what] of [['shred', 'restored from Trash'], ['snooze', 'woken up'], ['revise', 'taken back from What?? (in the works)'], ['acting', 'taken back after answering (in the works)']]) {
-    await A.until(`document.querySelector('.off-pile.is-open')`, 'pile still open').catch(() => A.js("document.querySelector('.off-head').click()"))
-    await A.js(`const f = document.querySelector('.off-line[data-id="${pile[k]}"] form'); f.requestSubmit(f.querySelector('button'))`)
-    await A.until(`document.getElementById('row-${pile[k]}') && !document.querySelector('.off-line[data-id="${pile[k]}"]')`, what, 15000).then(() => check(true, `pile: ${what}, back on the Desk`), e => check(false, e.message))
-  }
-  check(await A.js("return document.querySelector('.off-pile.is-open') && document.querySelector('.off-chip[data-g=trash] input').checked"), 'the pile stays open with its filter while cards move')
+  check(await A.js("const s = [...document.querySelectorAll('[data-stack=off] .shop-slip .shop-line')]; return s.length >= 3 && s.length <= 5 && s.every(x => x.dataset.g)"), 'the folded list shows the newest lines, each marked by its place')
+  const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.done}'].map(id => [id, document.querySelector('.off-line[data-id="' + id + '"]')?.dataset.g]))`)
+  check(g[pile.snooze] === 'later' && g[pile.shred] === 'trash' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
+  await A.js("document.querySelector('[data-stack=off] .off-head').click()")
+  await A.until("document.querySelector('[data-stack=off].is-open .off-list .off-line')", 'list unfolded')
+  check(await A.js("const l = [...document.querySelectorAll('[data-stack=off] .off-list .off-line')]; return l.length > 0 && l.every(x => x.querySelector('.shop-mark') && x.querySelector('a.off-open')) && !document.querySelector('[data-stack=off] .off-chip, [data-stack=off] .off-way')"), 'each line: its mark and the title, no filters, no way back on the line')
+  // the way back is on the card: a line opens it, its Wake up brings it back to the Desk
+  await A.js(`document.querySelector('.off-line[data-id="${pile.snooze}"] a.off-open').click()`)
+  await A.until(`document.querySelector('#cardpage button[formaction$="/wake"]')`, 'the snoozed card with Wake up').then(() => check(true, 'a line opens its card, with its way back'), e => check(false, e.message))
+  await A.js(`document.querySelector('#cardpage button[formaction$="/wake"]').click()`)
+  await A.js("trommi.router.visit('/')")
+  await A.until(`document.getElementById('row-${pile.snooze}')`, 'woken up', 15000).then(() => check(true, 'woken up from its card, back on the Desk'), e => check(false, e.message))
   await A.shot('e2e-pile.png')
   // ---- the Whiteboard: the Desk has no paper; the drawing is a place of its own in the sidebar, on the desk's canvas
   //      timeline (desk/<32 hex>, js/views/whiteboard.mjs deskCanvas) ----
@@ -310,7 +300,7 @@ try {
   await A.until("document.querySelector('#inbox')", 'desk again')
   await sleep(800)
   check(await A.js("return !document.querySelector('#deskpad, #deskpad-pen, #deskpad-clear, #paper-island, .clear-btn')"), 'the Desk has no paper under it, no pen and no wipe button')
-  check(await A.js("return document.querySelector('#agents > .whiteboard-row a')?.getAttribute('href') === '/whiteboard' && document.querySelector('#agents > .agent-row') === document.querySelector('#whiteboard-row')"), 'the Whiteboard row stands first in the sidebar')
+  check(await A.js("return !!document.querySelector('#inbox .curl-grab') && !document.querySelector('#whiteboard-row, #desk-pad')"), 'the Scribble Board is the back of the Desk: its corner')
   // A stroke on the desk's canvas, sealed through the Whiteboard's openCanvas before it opens (as another device would).
   await A.js(`const { openCanvas, strokeFromWorld, deskCanvas } = await import('/whiteboard.mjs')
     const tl = deskCanvas(trommi.model().desk)
@@ -319,8 +309,8 @@ try {
     c.push([{ id: 'e2e-old-paper', before: null, after: { id: 'e2e-old-paper', pad: tl, type: 'stroke', rotation: 0, z: 1, group: null, author: 'human', rev: 1, blob: null, sent: [], ...k } }])
     for (let i = 0; i < 150 && c.state().pending; i++) await new Promise(r => setTimeout(r, 100))
     return c.state()`).then(st => check(!st.error && !st.pending, `a stroke on the desk's canvas timeline is sealed (${JSON.stringify(st)})`))
-  await A.js("document.querySelector('#whiteboard-row a').click()")
-  await A.until("location.pathname === '/whiteboard' && window.pad", 'whiteboard page with the pad')
+  await A.js("const g = document.querySelector('#inbox .curl-grab'), r = g.getBoundingClientRect(); for (const t of ['pointerdown', 'pointerup']) g.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 1, clientX: r.right - 8, clientY: r.bottom - 8 }))")
+  await A.until("location.pathname === '/scribble-board' && window.pad", 'whiteboard page with the pad')
   const pad = 'window.pad'
   await A.until(`${pad}.elements().length >= 1`, 'the canvas stroke on the Whiteboard').then(() => check(true, 'a stroke of the desk canvas shows on the Whiteboard'), e => check(false, e.message))
   await A.until(`${pad}.state().board.sessions.some(s => s.id === '${sid}')`, 'sessions in the pad').then(() => check(true, 'the Whiteboard Send to… knows the sessions'), e => check(false, e.message))
@@ -333,13 +323,13 @@ try {
   await mouse('mouseReleased', r.x + 144, r.y)
   await A.until(`${pad}.elements().length >= 2 && !${pad}.state().sync.pending`, 'drawn stroke sealed').then(() => check(true, 'a stroke drawn on the Whiteboard is sealed'), e => check(false, e.message))
   await A.shot('e2e-whiteboard.png')
-  await A.go(`${APP}/whiteboard`)
+  await A.go(`${APP}/scribble-board`)
   await A.until("document.documentElement.hasAttribute('data-ready') && window.pad", 'whiteboard after reload', 30000)
   await A.until(`${pad}.elements().length >= 2`, 'strokes after reload', 20000).then(() => check(true, 'the Whiteboard strokes come back after a reload'), e => check(false, e.message))
   await A.js("trommi.router.visit('/')")
   await A.until("document.querySelector('#inbox')", 'desk after the whiteboard')
   await A.js("document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'p', bubbles: true }))")
-  await A.until("location.pathname === '/whiteboard'", 'P leads to the Whiteboard', 5000).then(() => check(true, 'P on the Desk opens the Whiteboard'), e => check(false, e.message))
+  await A.until("location.pathname === '/scribble-board'", 'P leads to the Whiteboard', 5000).then(() => check(true, 'P on the Desk opens the Whiteboard'), e => check(false, e.message))
 
   // ---- a second human device joins ----
   await A.js("trommi.router.visit('/devices')")
@@ -408,22 +398,22 @@ try {
   // ---- live: a message from the agent to the session, seen on B ----
   t0 = Date.now()
   const card2 = await agent.sendCard({ title: 'Info: Build fertig', body: 'Alles grün.', card_type: 'info' })
-  // An info is no question: it stands in the news strip above the Desk (#read-<id>), not as a row, and Next does not count it.
-  await B.until(`document.getElementById('read-${card2}')`, 'info in the news strip on B')
+  // An info is no question, but it stands in the stack among them (#row-<id>, the page sign, What?? and the tick); Next does not count it.
+  await B.until(`document.getElementById('row-${card2}')`, 'info in the stack on B')
   timing('info card sent -> visible on B', Date.now() - t0)
-  check(await B.js(`return !document.getElementById('row-${card2}') && !trommi.model().fresh.some(c => c.id === '${card2}')`), 'an info is not a Desk row and not counted in Next')
+  check(await B.js(`return !!document.querySelector('#row-${card2} .inbox-answer.is-what') && !trommi.model().fresh.some(c => c.id === '${card2}')`), 'an info stands in the stack with its sign and is not counted in Next')
   // A reads it on the laptop (its tick), B sees the line leave.
   t0 = Date.now()
   await A.js("trommi.router.visit('/')")
-  await A.until(`document.getElementById('read-${card2}')`, 'info on A')
-  await A.js(`document.querySelector('#read-${card2} form[action$="/close"]').requestSubmit()`)
-  await B.until(`!document.getElementById('read-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
-  // The news are bare lines: a box to tick and the title; no header, count, sender, time or "All read". Each box reads its info.
+  await A.until(`document.getElementById('row-${card2}')`, 'info on A')
+  await A.js(`document.querySelector('#row-${card2} form[action$="/close"]').requestSubmit()`)
+  await B.until(`!document.getElementById('row-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
+  // Each info row: its sign, What?? and the tick; the tick reads it.
   const reads = [await agent.sendCard({ title: 'Info eins', card_type: 'info' }), await agent.sendCard({ title: 'Info zwei', card_type: 'info' })]
-  await A.until(reads.map(id => `document.getElementById('read-${id}')`).join(' && '), 'two infos as lines on A')
-  check(await A.js("return !document.querySelector('#desk-news :is(h3, .news-head, .news-all, .news-who, .news-ago, [data-ts])')"), 'the news lines carry no header, count, sender, time or All read')
-  for (const id of reads) await A.js(`document.querySelector('#read-${id} form[action$="/close"]').requestSubmit()`)
-  await B.until(`${reads.map(id => `!document.getElementById('read-${id}') && trommi.model().byCard.get('${id}')?.read`).join(' && ')}`, 'both ticked: lines gone on B, both read').then(() => check(true, 'ticking a line reads its info'), e => check(false, e.message))
+  await A.until(reads.map(id => `document.getElementById('row-${id}')`).join(' && '), 'two infos as lines on A')
+  check(await A.js(`return ${JSON.stringify(reads)}.every(id => document.querySelector('#row-' + id + ' .inbox-answer.is-ack') && document.querySelector('#row-' + id + ' button[formaction$="/what"]'))`), 'each info row has its sign and What??')
+  for (const id of reads) await A.js(`document.querySelector('#row-${id} form[action$="/close"]').requestSubmit()`)
+  await B.until(`${reads.map(id => `!document.getElementById('row-${id}') && trommi.model().byCard.get('${id}')?.read`).join(' && ')}`, 'both ticked: lines gone on B, both read').then(() => check(true, 'ticking a line reads its info'), e => check(false, e.message))
 
   // ---- warm reload: the Desk paints from IndexedDB before the hub answers ----
   for (let i = 0; i < 30; i++) await agent.sendCard({ title: `Frage ${i}`, options: [{ key: 'a', label: 'Ja' }, { key: 'b', label: 'Nein' }] })
