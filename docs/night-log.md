@@ -20,6 +20,9 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 
 ## Open issues / requests for the morning
 
+- Channel (stream D, done for v1.1): live smoke on hub.trommi.com: join 1.8 s, card to the human 101 ms after create_decision, decision event at the channel 84 ms after the answer. Open: R6 session keys, lease route, not ported (create_voiceover, share_asset, adopt_session, silent publish_asset), handback_withdrawn has no envelope; not yet tried in a real interactive Claude Code session. Throwaway rooms on prod: ae49694b…, 44dc925b… (delete after the test-room route exists).
+- Morning: add `"trommi": { "command": "node", "args": ["/home/christopher/git/trommi/hub/channel.mjs"] }` to .mcp.json, start `claude --dangerously-load-development-channels server:board server:trommi`, invite the agent in the app, paste the link into the session.
+
 - Admin view: code + 12 tests ready (Tailscale login + scrypt password, logout, change password), but the permission system refused the wiring twice. It needs the owner's own clearance in the session. A throwaway smoke room is on prod (to be deleted once the test-room delete route exists).
 
 - Owner: confirm "rotation on agent join" (assumed yes, R6).
