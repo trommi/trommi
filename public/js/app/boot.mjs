@@ -11,6 +11,7 @@ import { boardModel } from '../views/model.mjs'
 import { roomPages, roomScreen, hubUrl } from './room.mjs'
 import { attachTo } from './att.mjs'
 import { startDeskWindow } from './desk-window.mjs'
+import { CLIENT } from './version.mjs'
 
 // The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js).
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(err => console.warn('service worker', err.message))
@@ -27,11 +28,13 @@ const mock = sessionStorage.getItem('trommi-mock')
 async function openClient() {
   if (mock) return (await import('./mock-room.mjs')).openRoom({ mock })
   const core = await import('/vendor/index.mjs')
-  return core.openRoom({ storage: core.idbStorage({ name: 'trommi', prefix: 'room/' }) })
+  return core.openRoom({ storage: core.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT })
 }
 
 export async function start(client, { fresh = false } = {}) {
   attachTo(client)
+  // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
+  client.on('error', err => { if (err?.code === 'client-too-old') upgradeNotice(err.message) })
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -48,6 +51,8 @@ export async function start(client, { fresh = false } = {}) {
   const deskPages = t => {
     t.get(/^\/$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); t.redirect(res, '/') })
     t.get(/^\/desk\/([\w-]+)$/, ({ res, match }) => { desk = match[1]; write('trommi-desk', desk); t.redirect(res, '/') })
+    // The Scratchpad: the Desk with the pen in hand (t/lib/paper.js listens for trommi:pen).
+    t.get(/^\/pad$/, ({ res }) => { document.addEventListener('turbo:load', () => document.dispatchEvent(new CustomEvent('trommi:pen')), { once: true }); t.redirect(res, '/') })
   }
   const b = createBoard({ hub, model, extraPages: [deskPages, roomPages(client)] })
   const router = createRouter({ board: b })
@@ -107,3 +112,24 @@ export async function start(client, { fresh = false } = {}) {
 const client = await openClient().catch(err => { console.error('open', err); return null })
 if (client) await start(client)
 else await roomScreen({ start, hub: hubUrl() })
+
+function upgradeNotice(message) {
+  if (document.querySelector('.room-notice')) return
+  const box = document.createElement('div')
+  box.className = 'room-notice'
+  box.setAttribute('role', 'status')
+  const words = document.createElement('span')
+  words.textContent = 'Bitte neu laden: eine neue Version der App ist nötig.'
+  if (message) words.title = message
+  const go = document.createElement('button')
+  go.type = 'button'
+  go.className = 'room-notice-go'
+  go.textContent = 'Neu laden'
+  go.addEventListener('click', async () => {
+    go.disabled = true
+    try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update() } catch {}
+    location.reload()
+  })
+  box.append(words, go)
+  document.body.append(box)
+}

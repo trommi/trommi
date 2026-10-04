@@ -18,7 +18,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
 
   // ---- painting a page ----
   function enableCss(name) {
-    const want = new Set([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'trommi'])
+    const want = new Set([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'trommi', 'room'])
     for (const link of document.querySelectorAll('link[rel="stylesheet"][data-sheet]')) {
       const on = want.has(link.dataset.sheet)
       if (link.disabled === on) link.disabled = !on
@@ -91,7 +91,9 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
     if (action !== 'restore' && fire(document, 'turbo:before-visit', { url: url.href }, true).defaultPrevented) return
     const mine = ++visiting
     beforeVisit(url)
+    const tq = performance.now()
     const res = await board.request({ method: 'GET', path: url.pathname + url.search, headers: { accept: 'text/html' } })
+    const tr = performance.now()
     if (mine !== visiting) return
     if (res.kind === 'redirect') return visit(res.to, { action: action === 'restore' ? 'replace' : action === 'advance' ? 'replace-after' : action })
     if (action === 'advance') { saveScroll(); history.pushState({ trommi: true, scroll: 0 }, '', to) }
@@ -99,6 +101,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
     if (res.kind === 'page') paint(to, res.opts, { scroll: scroll ?? (action === 'restore' ? history.state?.scroll ?? 0 : 'top') })
     else paint(to, { title: 'Not found · Trommi', view: 'missing', main: '<main id="inbox" aria-label="Not found"><header class="inbox-head"><div class="inbox-title"><h2>Not here.</h2><p><a href="/" data-nav>Back to the Desk</a></p></div></header></main>', model: board.t.model() })
     if (url.hash) document.getElementById(decodeURIComponent(url.hash.slice(1)))?.scrollIntoView({ block: 'center' })
+    if (window.trommi) window.trommi.lastVisit = { render: tr - tq, paint: performance.now() - tr }
   }
   const saveScroll = () => { try { history.replaceState({ ...(history.state ?? {}), trommi: true, scroll: window.scrollY }, '') } catch {} }
   /** The page in view, rendered again from the model (a stream's "refresh", or after the room changed under it). */
@@ -122,7 +125,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
     else if (res.kind === 'redirect') return visit(res.to)
     const t = document.createElement('template')
     t.innerHTML = markup
-    const fresh = t.content.querySelector(`turbo-frame#${CSS.escape(frame.id)}`)
+    const fresh = t.content.querySelector(`turbo-frame#${globalThis.CSS.escape(frame.id)}`)
     if (!fresh) return visit(path)
     frame.replaceChildren(...fresh.childNodes)
     fire(frame, 'turbo:frame-load')

@@ -29,7 +29,12 @@ document.addEventListener('error', async e => {
   if (!m || el.dataset.attTried) return
   el.dataset.attTried = '1'
   const blob = await blobOf(m[1])
-  if (blob) { el.removeAttribute('srcset'); el.src = URL.createObjectURL(blob) }
+  if (blob) { el.removeAttribute('srcset'); el.src = URL.createObjectURL(blob); return }
+  // Gone from the hub (after 30 days, or evicted for the room's quota): said in place of the picture.
+  const gone = document.createElement('span')
+  gone.className = 'att-gone'
+  gone.textContent = 'Anhang nicht mehr verfügbar'
+  el.replaceWith(gone)
 }, true)
 document.addEventListener('click', async e => {
   const a = e.target instanceof Element ? e.target.closest('a[href^="/att/"]') : null
@@ -38,4 +43,5 @@ document.addEventListener('click', async e => {
   const id = a.getAttribute('href').slice(5)
   const blob = await blobOf(id)
   if (blob) window.open(URL.createObjectURL(blob), '_blank', 'noopener')
+  else a.replaceWith(Object.assign(document.createElement('span'), { className: 'att-gone', textContent: 'Anhang nicht mehr verfügbar' }))
 }, true)

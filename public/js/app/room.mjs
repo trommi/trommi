@@ -4,6 +4,7 @@
 // Sober on purpose (no pen drawings): this is about keys, not the board.
 import { html, raw } from '../views/html.mjs'
 import { BELL } from './layout.mjs'
+import { CLIENT } from './version.mjs'
 
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -116,7 +117,7 @@ ${error ? html`<p class="room-error" role="alert">${error}</p>` : ''}
         const hub_url = String(f.get('hub') || hub).replace(/\/+$/, '')
         write('trommi-hub', hub_url)
         const { foundRoom } = await core()
-        const { client, recovery_code } = await foundRoom({ hub_url, device_name: String(f.get('device_name')), storage: await storage(), found_token: String(f.get('found_token') || '') || undefined })
+        const { client, recovery_code } = await foundRoom({ hub_url, device_name: String(f.get('device_name')), storage: await storage(), found_token: String(f.get('found_token') || '') || undefined, client: CLIENT })
         recovery(client, recovery_code)
       } catch (err) { console.error(err); welcome(`The room was not founded: ${err.message}`) }
     })
@@ -140,7 +141,7 @@ ${error ? html`<p class="room-error" role="alert">${error}</p>` : ''}
       show(shell('Join a room', html`<p class="room-wait">Asking the inviting device…</p>`))
       try {
         const { joinRoom } = await core()
-        const join = await joinRoom({ link, device_name: name, storage: await storage() })
+        const join = await joinRoom({ link, device_name: name, storage: await storage(), client: CLIENT })
         history.replaceState(null, '', '/join')   // the secret leaves the address bar
         join.check_code.then(code => show(shell('Join a room', html`<p class="room-lead">Type this code on the device that invited you:</p><p class="room-code" id="check-code">${code.slice(0, 3)} ${code.slice(3)}</p><p class="room-wait">Waiting until it adds this device…</p>`)))
         const client = await join.client

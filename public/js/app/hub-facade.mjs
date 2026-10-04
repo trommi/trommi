@@ -24,12 +24,19 @@ export function hubFacade(client, board) {
     if (f.type?.startsWith('image/')) { try { const b = await createImageBitmap(f); meta.width = b.width; meta.height = b.height; b.close() } catch {} }
     return client.uploadAttachment(f, meta)
   }))
+  // A timeline key ('chat:session/<dev>'), or a session's board id (its chat).
+  const timelineOf = ref => (String(ref).includes(':') ? ref : `chat:session/${dev(ref)}`)
   const draftOff = id => client.setDraft(id, null).catch(() => {})
 
   const hub = {
     state: () => board.state,
     agents: () => board.state.agents.map(a => ({ ...a, main: Boolean(a.main || board.state.agents.some(b => b.parent === a.id)) })),
     assetBases: () => [location.origin],
+    client,
+    /** The next older page of a timeline into the window ("Earlier"): { loaded, has_more }. */
+    loadOlder: ref => client.loadTimeline(timelineOf(ref), { limit: 50 }),
+    /** Are there older items of that timeline than the window holds? */
+    hasMore: ref => Boolean(m().timelines.get(timelineOf(ref))?.has_more),
     uploadLimit: 64 * 1024 * 1024,
 
     async decide(cardId, answer, note = '', seen, notes, files = [], marks) {

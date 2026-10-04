@@ -49,6 +49,7 @@ export class BoardState {
     const cards = []
     for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { b = this.boardCard(c, numberOf.get(c.object_id)); this.cardCache.set(c.object_id, b) } cards.push(b) }
     for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = this.permissionCard(p, numberOf.get(p.object_id)); this.cardCache.set(p.object_id, b) } cards.push(b) }
+    this.byId = new Map(cards.map(c => [c.id, c]))
     const agents = this.agents()
     const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
     const queue = cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id)
@@ -62,6 +63,7 @@ export class BoardState {
     const state = {
       cards, queue, agents, tasks, desks, memos, assets, pending: [], hub: {}, speech: false,
       get messages() { return (messages ??= self.messages(cards)) },
+      messagesOf: agent => self.messagesOf(agent),
     }
     this.state = state
     this.version++
@@ -149,44 +151,60 @@ export class BoardState {
   }
 
   // ---- the conversation: timeline windows + what the heads say ----
+  /** Every message of the board (global; prefer messagesOf, which builds one session's only). */
   messages(cards) {
-    const m = this.model, me = m.room.my_device_id
-    const humans = new Set([...m.members.values()].filter(x => x.device_role === 'human').map(x => x.device_id))
     const out = []
-    for (const card of cards) {
-      if (card.kind === 'permission') continue
-      let ev = this.eventCache.get(card.id)
-      if (!ev) { ev = this.eventsOf(m.cards.get(card.id), card); this.eventCache.set(card.id, ev) }
+    for (const a of this.state.agents) out.push(...this.messagesOf(a.id))
+    return out.sort((x, y) => x.seq - y.seq || x.ts - y.ts)
+  }
+  /** One session's conversation: its cards' events, its chat and its cards' chats (the windows in memory), in
+   *  hub order. Built once per state and session. */
+  messagesOf(agent) {
+    const st = this.state, cached = st.__byAgent ??= new Map()
+    if (cached.has(agent)) return cached.get(agent)
+    const m = this.model, dev = this.agentToDev.get(agent), me = m.room.my_device_id
+    const humans = this.humans ??= new Set()
+    humans.clear(); for (const x of m.members.values()) if (x.device_role === 'human') humans.add(x.device_id)
+    const out = []
+    const cardIds = m.sessions.get(dev)?.card_ids ?? st.cards.filter(c => c.agent === agent).map(c => c.id)
+    for (const id of cardIds) {
+      const card = this.byId.get(id) ?? null
+      if (!card || card.kind === 'permission') continue
+      let ev = this.eventCache.get(id)
+      if (!ev) { ev = this.eventsOf(m.cards.get(id), card); this.eventCache.set(id, ev) }
       out.push(...ev)
+      this.itemsOf(m.timelines.get(`chat:card/${id}`), agent, id, out)
     }
-    for (const t of m.timelines.values()) {
-      if (t.timeline_kind !== 'chat' || !t.items.size) continue
-      const isCard = t.timeline_id.startsWith('card/')
-      const cardId = isCard ? t.object_id : null
-      const agentDev = isCard ? m.cards.get(cardId)?.agent_device_id : t.object_id
-      const agent = this.devToAgent.get(agentDev)
-      if (!agent) continue
-      for (const i of t.items.values()) {
-        if (i.content_type && i.content_type !== 'message') continue
-        const human = i.sender_device_id === me || humans.has(i.sender_device_id)
-        const c = i.content ?? {}
-        const msg = {
-          id: i.envelope_number != null ? `e${i.envelope_number}` : i.local_id, seq: i.envelope_number ?? Number.MAX_SAFE_INTEGER, agent, from: human ? 'user' : 'agent',
-          text: i.item_state === 'loaded' ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : i.item_state === 'newer_schema' ? '(needs a newer app)' : '',
-          attachments: (c.attachments ?? []).map(x => this.att(x)).filter(Boolean), ts: i.sent_at ?? 0,
-        }
-        if (cardId) msg.card_id = cardId
-        if (c.details) msg.details = c.details
-        if (c.html) msg.html = c.html
-        if (c.hand_back) msg.handback = true
-        if (c.explain) msg.explain = true
-        if (c.marks?.length) msg.marks = c.marks
-        if (c.copied_cards?.length) msg.cards = c.copied_cards.map(id => { const b = this.cardCache.get(id); return b ? { id, number: b.number, title: b.title, agent: b.agent, choice_label: null } : { id, number: null, title: id, agent } })
-        if (i.pending) msg.pending = true
-        out.push(msg)
+    this.itemsOf(m.timelines.get(`chat:session/${dev}`), agent, null, out)
+    out.sort((x, y) => x.seq - y.seq || x.ts - y.ts)
+    cached.set(agent, out)
+    return out
+  }
+  itemsOf(t, agent, cardId, out) {
+    if (!t?.items.size) return
+    const me = this.model.room.my_device_id
+    for (const i of t.items.values()) {
+      const kind = i.content_type ?? 'message'
+      if (kind !== 'message' && kind !== 'selection_sent') continue
+      const human = i.sender_device_id === me || this.humans.has(i.sender_device_id)
+      const c = i.content ?? {}
+      const msg = {
+        id: i.envelope_number != null ? `e${i.envelope_number}` : i.local_id, seq: i.envelope_number ?? Number.MAX_SAFE_INTEGER, agent, from: human ? 'user' : 'agent',
+        text: i.item_state === 'loaded' || !i.item_state ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : i.item_state === 'newer_schema' ? '(needs a newer app)' : '',
+        attachments: (c.attachments ?? []).map(x => this.att(x)).filter(Boolean), ts: i.sent_at ?? 0,
       }
+      // A selection of the Scratchpad sent to the session: shown as the board's Scribble card.
+      if (kind === 'selection_sent') msg.attachments = msg.attachments.map(x => ({ ...x, kind: 'scribble' }))
+      if (cardId) msg.card_id = cardId
+      if (c.details) msg.details = c.details
+      if (c.html) msg.html = c.html
+      if (c.hand_back) msg.handback = true
+      if (c.explain) msg.explain = true
+      if (c.marks?.length) msg.marks = c.marks
+      if (c.copied_cards?.length) msg.cards = c.copied_cards.map(id => { const b = this.cardCache.get(id); return b ? { id, number: b.number, title: b.title, agent: b.agent, choice_label: null } : { id, number: null, title: id, agent } })
+      if (i.pending) msg.pending = true
+      out.push(msg)
     }
-    return out.sort((a, b) => a.seq - b.seq || (a.ts - b.ts))
   }
   eventsOf(c, card) {
     if (!c) return []

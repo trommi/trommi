@@ -1092,9 +1092,11 @@ export function adviceLoop() {
   svg.setAttribute('class', 'advice-loop advice-marker')
   svg.setAttribute('aria-hidden', 'true')
   const wobble = Array.from({ length: 24 }, () => (r() - .5) * 2.4)   // the same hand on every redraw
-  const draw = () => {
+  // Measured and drawn in two phases for all marks of the page at once (one layout, not one per mark: a Desk of
+  // hundreds of advised options would otherwise thrash layout).
+  const measure = () => {
     const host = svg.parentElement
-    if (!host) return
+    if (!host) return null
     const label = host.querySelector('.focus-opt-label') ?? host.querySelector(':scope > strong, :scope > span:not(.inbox-disc)') ?? host
     // The words only: every piece of text in the label, line box by line box (a drawing in it has no line).
     const rects = []
@@ -1122,6 +1124,7 @@ export function adviceLoop() {
     // says so with --advice-under: 1, tokens.css) the mark is a light line drawn under the words instead,
     // no wider than they are, with a slight tilt.
     const under = getComputedStyle(host).getPropertyValue('--advice-under').trim() === '1'
+    return () => {
     svg.classList.toggle('is-under', under)
     svg.replaceChildren(...lines.map((l, n) => {
       const w = i => wobble[(n * 4 + i) % wobble.length]
@@ -1138,12 +1141,25 @@ export function adviceLoop() {
       }
       return path
     }))
+    }
   }
+  const draw = () => adviceFrame(measure)
   if (typeof ResizeObserver === 'function') {
     const watch = new ResizeObserver(draw)
     queueMicrotask(() => { if (svg.parentElement) watch.observe(svg.parentElement); draw() })
   }
   return svg
+}
+const adviceQueue = new Set()
+let adviceRaf = 0
+function adviceFrame(measure) {
+  adviceQueue.add(measure)
+  adviceRaf ||= requestAnimationFrame(() => {
+    adviceRaf = 0
+    const writes = [...adviceQueue].map(m => m())
+    adviceQueue.clear()
+    for (const write of writes) write?.()
+  })
 }
 /** The same, by the name of what it is. */
 export const adviceMark = adviceLoop
