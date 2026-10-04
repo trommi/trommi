@@ -220,7 +220,7 @@ Crypto `KIND` 8 (scribble) is not used: drawings are timeline items.
 
 **Registers.** A key's value is the one from the latest `status` envelope that set it in **signed causal order** (see Security rules, R2), never hub order; `null` deletes. Keys are scoped by the sender:
 
-- **Every device's own key** counts only from that device: `device/<device_id>` (`device_name`, `platform`, `folder`, `host`), written right after joining: "desktop · ~/git/valiido". The hub never sees a name.
+- **Every device's own key** counts only from that device: `device/<device_id>` (`device_name`, `platform`, `folder`, `host`), written right after joining, e.g. `device_name` "valiido", `folder` "~/git/valiido", `host` "desktop". The hub never sees a name.
 - **An agent's keys** count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `object_id`).
 - **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `read_up_to/<session_id>`, `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2).
 
