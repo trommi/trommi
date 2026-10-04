@@ -15,9 +15,14 @@
 //   manifest   = H("trommi/v1/session-manifest", for each recipient ascending: recipientId(32) || SHA-256(wrap))
 //   back link n = 0x01 0x0f || sessionId(16) || n u32 || AES-256-GCM(KDF(hist_n, salt roomId || sessionId, "trommi/v1/session-back-link", ctx n u32, 44)
 //                 -> key(32) || nonce(12), aad 0x01 0x0f || roomId || sessionId || n u32, key_{n-1} || hist_{n-1})
-// Rules (applyGrant): signer an active human at logSeq (or the recovery key); grantNumber/previousGrantHash chain from 0 /
-// zeros; first epoch 1; later epoch equal (re-seal, e.g. handover with history) or previous + 1 (rotation); assigned
-// agents active agents at logSeq; logSeq/logHash in the verifier's log.
+// Rules (applyGrant): signer an active human at logSeq (or the recovery key valid at logSeq); grantNumber/previousGrantHash
+// chain from 0 / zeros; first epoch 1; later epoch equal (re-seal: keeps every agent, may add) or previous + 1 (rotation);
+// assigned agents active agents at logSeq; logSeq/logHash in the verifier's log.
+// v1.1.1 (review 2, B02/A1): a member change is a removal or recovery entry. No grant backdates across one (logSeq below
+// its predecessor's with a member change in between), and a grant after one must rotate. A session whose newest grant's
+// logSeq lies below the newest member change the verifier knows is STALE (grantIsStale): its key reads, never sends, and
+// a human device re-keys it. So a removed device's grant (it can only name a log position before its own removal) is
+// stale the moment it is applied, and the hub refuses it (stale-grant) and session posts under it (stale-session-key).
 import * as z from './zcrypto.mjs'
 
 const { ZError, concat, bytesEqual, hex, ROLE } = z
@@ -200,10 +205,11 @@ export async function applyGrant(sessionState, grantBytes, roomState) {
   if (!bytesEqual(g.roomId, roomState.roomId)) fail('wrong-room', 'grant of another room')
   if (g.logSeq > roomState.head.seq) fail('log-behind', `the grant names member list entry ${g.logSeq}`, { logSeq: g.logSeq })
   if (!bytesEqual(roomState.hashes[g.logSeq], g.logHash)) fail('log-fork', `the grant names another member list entry ${g.logSeq}`)
-  const isRecovery = bytesEqual(g.signerId, roomState.recovery.id)
+  const rec = await recoveryIdAt(roomState, g.logSeq)
+  const isRecovery = !!rec && bytesEqual(g.signerId, rec.id)
   const signer = isRecovery ? null : z.memberAt(roomState, g.signerId, g.logSeq)
   if (!isRecovery && (!signer || signer.role !== ROLE.HUMAN)) bad('the signer is not an active human device')
-  if (!await z.verify(isRecovery ? roomState.recovery.signPub : signer.signPub, LABEL.grantSig, g.body, g.signature)) fail('bad-signature', 'session grant')
+  if (!await z.verify(isRecovery ? rec.signPub : signer.signPub, LABEL.grantSig, g.body, g.signature)) fail('bad-signature', 'session grant')
   if (!sessionState) {
     if (g.grantNumber !== 0 || !bytesEqual(g.previousGrantHash, ZERO32) || g.epoch !== 1) bad('the first grant has number 0, no predecessor and epoch 1')
   } else {
@@ -212,6 +218,14 @@ export async function applyGrant(sessionState, grantBytes, roomState) {
     if (!bytesEqual(g.previousGrantHash, sessionState.grantHash)) bad('predecessor hash does not match')
     if (g.epoch !== sessionState.epoch && g.epoch !== sessionState.epoch + 1) bad(`epoch ${g.epoch} after ${sessionState.epoch}`)
     if (g.epoch === sessionState.epoch && (!bytesEqual(g.keyCommit, sessionState.keyCommit) || !bytesEqual(g.histCommit, sessionState.histCommit))) bad('same epoch, different key')
+    // B02/A1: no backdating across a member change, and after one the key changes.
+    const lo = Math.min(g.logSeq, sessionState.logSeq), hi = Math.max(g.logSeq, sessionState.logSeq)
+    if (changeBetween(roomState, lo, hi)) {
+      if (g.logSeq < sessionState.logSeq) bad('names a member list entry before a removal its predecessor already saw')
+      if (g.epoch === sessionState.epoch) bad('after a removal or recovery the session key must change')
+    }
+    // B01: whoever loses the key gets a new epoch; a re-seal may only add agents.
+    if (g.epoch === sessionState.epoch && !sessionState.agentIds.every(a => g.agentIds.some(b => hex(b) === a))) bad('an agent loses the session: the key must change')
   }
   for (const id of g.agentIds) { const m = z.memberAt(roomState, id, g.logSeq); if (!m || m.role !== ROLE.AGENT) bad('an assigned device is not an active agent') }
   const epochs = new Map(sessionState?.epochs ?? [])
@@ -220,7 +234,25 @@ export async function applyGrant(sessionState, grantBytes, roomState) {
   return {
     sessionId: hex(g.sessionId), grantNumber: g.grantNumber, grantHash: await z.hash(LABEL.grant, g.body), epoch: g.epoch, agentIds: g.agentIds.map(hex),
     withHistory: g.withHistory, keyCommit: g.keyCommit, histCommit: g.histCommit, manifestHash: g.manifestHash, logSeq: g.logSeq, signerId: hex(g.signerId), time: g.time, epochs,
+    stale: changeBetween(roomState, g.logSeq, roomState.head.seq),
   }
+}
+
+// ---- member changes and staleness --------------------------------------------------------------
+
+/** Log positions of the removal and recovery entries (the member changes that end a key holder's access). */
+const memberChanges = roomState => roomState.entries.filter(e => e.type === z.ENTRY.REMOVE || e.type === z.ENTRY.RECOVER).map(e => e.seq)
+const changeBetween = (roomState, a, b) => memberChanges(roomState).some(seq => seq > a && seq <= b)
+/** The newest removal or recovery entry the room state knows, or -1. */
+export const lastMemberChange = roomState => memberChanges(roomState).at(-1) ?? -1
+/** True if a removal or recovery came after the session's newest grant: read with its key, never send; a human re-keys. */
+export const grantIsStale = (sessionState, roomState) => !!sessionState && changeBetween(roomState, sessionState.logSeq, roomState.head.seq)
+
+/** The recovery key's id as it was once entry `logSeq` had been applied (a recovery installs a new one). */
+async function recoveryIdAt(roomState, logSeq) {
+  let rec = null
+  for (const e of roomState.entries) { if (e.seq > logSeq) break; if (e.type === z.ENTRY.GENESIS || e.type === z.ENTRY.RECOVER) rec = e.recovery }
+  return rec ? { id: await z.deviceId(rec.signPub, rec.kexPub), signPub: rec.signPub } : null
 }
 
 /** Verify a whole grant chain. */
