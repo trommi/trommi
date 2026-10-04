@@ -6,6 +6,7 @@ import { Client, secretToJson, secretFromJson, verifiedHeads } from './client.mj
 import './agent.mjs'
 import { escrowKeyAndId, openEscrowV2 } from './escrow.mjs'
 import * as G from './session-grants.mjs'
+import { prefetchSnapshot } from './snapshot.mjs'
 
 /**
  * As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6).
@@ -228,12 +229,12 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
  * sign in as the recovery key, add ITSELF as a human device (entry signed by the recovery key; nobody is removed),
  * seal the room key and every session key for itself. Every human device then shows the alert 'recovery-add'.
  */
-export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null }) {
+export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, challenge = null }) {
   hub_url = normaliseHubUrl(hub_url)
   if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
   const rec = await z.recoveryDevice(code)
   const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
-  await hub.signIn()
+  await hub.signIn({ challenge })                           // the login answer carries a challenge: one round trip less
   // The member list, the sealed room keys and every session's grants and keys: three requests side by side.
   const [m, keys, bundle] = await Promise.all([hub.members({ after_entry_number: -1 }), hub.sealedRoomKeys(0), fetchSessionBundle(hub)])
   const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
@@ -246,17 +247,30 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const added = await z.addMember(state, rec, { member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub } })
   const sealed = await z.wrapEpochKey(added.state, secret, device.id)
   await storage.saveDevice(device, { room_id })            // before the entry that makes it a member (review 3)
+  // The new device's sign-in challenge is asked side by side with the post that makes it a member (a challenge is
+  // nobody's until it is signed; the hub checks membership when the signed one comes back).
+  const nextChallenge = hub.challenge()
+  nextChallenge.catch(() => {})
   await hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: [{ device_id: hex(device.id), key_sealed: b64u(sealed) }] })
   const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
   const client = await makeClient({ storage, device, state: added.state, secrets: [secret], roomRecord, fetch, client: client_name })
-  await client.hub.signIn()
   // The new device is a human member now: re-seal every session key for everyone who holds it (itself included), all
-  // sessions in one atomic post (POST session_grants), not one request per session; the room's older keys meanwhile.
-  for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
-  await Promise.all([
-    client._walkBackLinks().catch(() => {}),
-    client._resealSessions([...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid)),
-  ])
+  // sessions in one atomic post (POST session_grants, no sign-in needed), not one request per session. The device holds
+  // every key already (as the recovery key), so the first start does not wait for it: a phone uploads the re-seal (one
+  // wrap per holder and session) for about a second. The session refresh waits for it (client._resealing); a re-seal
+  // that did not get through is posted at the next start (roomRecord.reseal_pending). Meanwhile, as soon as the device
+  // is signed in: the room's older keys, and what the first start reads for a snapshot boot (snapshot.mjs).
+  client._adoptSessionKeys(sessions)
+  const reseal = [...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid)
+  if (reseal.length) roomRecord.reseal_pending = reseal
   await client._saveRoom()
+  const signedIn = client.hub.signIn({ challenge: nextChallenge })
+  client._snapshotPrefetch = signedIn.then(() => prefetchSnapshot(client))
+  client._snapshotPrefetch.catch(() => {})
+  if (reseal.length) client._startReseal(reseal)
+  await signedIn
+  await client._walkBackLinks().catch(() => {})
+  await client._saveRoom()
+  client._joinedAt = Date.now()                       // start() trusts the member list and keys it was just handed
   return { client }
 }

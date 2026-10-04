@@ -201,7 +201,11 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       if (s.kind === 'recovery' ? !bytesEqual(s.idBytes, state.recovery.id) : !z.memberAt(state, s.idBytes)) { sessions.delete(token); signedOut.push(s.id) }
     }
     for (const d of removedIds) { live.delete(storage.sessionOf?.(d)); leaseDrop(d) }
-    sessionCache.clear()
+    // The cached session states stay valid: a grant is checked against the member list as it was at its own logSeq (a
+    // prefix a new entry never changes). Only the stale flag looks at the head; the write checks recompute it
+    // (grantIsStale), it is refreshed here as well. Rebuilding every chain after each entry made the first re-seal of a
+    // new device verify every grant of the room again (1.5 s on the hub with 27 sessions of 20 grants each).
+    for (const c of sessionCache.values()) if (c.state) c.state = { ...c.state, stale: grantIsStale(c.state, state) }
     return { seq: e.seq, hash: id(state.head.hash), epoch: state.epoch, type: e.type, signedOut, removed: removedIds }
   }
   // The device an add entry enrolled, for the invite record.

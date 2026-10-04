@@ -186,7 +186,7 @@ export async function loginWithPassword({ hub_url, email, password, storage, dev
   const pub = new Hub({ hub_url, fetch, client: client_name })
   const r = await pub.request('POST', '/accounts/login', { auth: false, body: { email, auth_key: k.auth_key } })
   const code = await unwrapCode(k.wrap_key, r.room_id, r.key_wrapped, 'password')
-  return joinWithRecoveryCode({ hub_url: normaliseHubUrl(hub_url), room_id: r.room_id, code, storage, client: client_name, device_name, device_info, fetch })
+  return joinWithRecoveryCode({ hub_url: normaliseHubUrl(hub_url), room_id: r.room_id, code, storage, client: client_name, device_name, device_info, fetch, challenge: r.challenge ?? null })
 }
 
 /**
@@ -203,7 +203,7 @@ export async function resetPassword({ hub_url, email, words, new_password, stora
   const r = await pub.request('POST', '/accounts/recover', { auth: false, body: { email, recovery_auth: k.recovery_auth } })
   let code
   try { code = await unwrapCode(k.wrap_key, r.room_id, r.recovery_wrapped, 'recovery') } catch { throw new ZError('wrong-recovery', 'these words do not open the account') }
-  const { client } = await joinWithRecoveryCode({ hub_url: normaliseHubUrl(hub_url), room_id: r.room_id, code, storage, client: client_name, device_name, device_info, fetch })
+  const { client } = await joinWithRecoveryCode({ hub_url: normaliseHubUrl(hub_url), room_id: r.room_id, code, storage, client: client_name, device_name, device_info, fetch, challenge: r.challenge ?? null })
   const st = await accountStatus(client)
   await client.hub.request('PUT', client.hub.roomPath('/account/password'), { body: { ...(await passwordPart(email, new_password, r.room_id, code)), revision: st.revision } })
   return { client }

@@ -1541,7 +1541,7 @@ await test('warm reload: a member entry posted while the stream opens is not los
 // desktop and 29 s on a phone line with 27 sessions: ~320 requests, one by one, most of them per session. The login is
 // network-bound (round trips), so the budget is in requests and in round trips: every request here waits RTT_MS.
 await test('perf budget: a new device with 27 sessions logs in and goes live in few requests (no per-session routes)', async () => {
-  const RTT_MS = 40, MAX_REQUESTS = 24, MAX_MS = 18 * RTT_MS + 1500
+  const RTT_MS = 40, MAX_REQUESTS = 20, MAX_MS = 16 * RTT_MS + 1200      // 4 Oct, after: 17 requests, about 13 round trips
   const { phone, recovery_code, agents } = await room({ agents: 2 })
   for (let i = 0; i < 25; i++) await phone.createSession()
   for (const a of agents) { await a.sendMessage({ text: 'before the login' }); await a.settle() }
@@ -1577,6 +1577,62 @@ await test('perf budget: a new device with 27 sessions logs in and goes live in 
   const ab = await agents[0].hub.sessionBundle([agents[0].session_id, agents[1].session_id])
   assert(ab.sessions.every(x => !('key_back_links' in x)), 'agent: no back links')
   assert(ab.sessions.find(x => x.session_id === agents[1].session_id).sealed_session_keys.length === 0, 'agent: no keys of a session not its own')
+})
+
+// The same as the app does it: email + password on a new device in a room that boots from a snapshot (2,100
+// envelopes, 27 sessions). Measured live on 4 October 2026 before this budget: 7.3 s on the phone profile (165 ms per
+// round trip), 2.4 s desktop. The round trips on the way to the first paint are the budget: every request here waits
+// RTT_MS, requests side by side overlap, so the time counts the round trips one after another.
+await test('perf budget: email + password login with a snapshot boot: few requests, few round trips, the re-seal in the background', async () => {
+  const { addAccount, loginWithPassword } = await import('./account.mjs')
+  const RTT_MS = 60, MAX_REQUESTS = 22, MAX_ROUND_TRIPS = 12
+  const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
+  phone.options.snapshot = false
+  for (let i = 0; i < 26; i++) await phone.createSession()
+  for (let i = 0; i < 2100; i++) {
+    if (i % 300 === 0) await agent.sendCard({ title: `card ${i}`, options: [{ key: 'a', label: 'A' }] })
+    else await agent.sendMessage({ text: `m${i}` })
+  }
+  await settleAll(agent, phone)
+  await phone.writeSnapshot()
+  for (let i = 0; i < 20; i++) await agent.sendMessage({ text: `tail ${i}` })
+  await settleAll(agent, phone)
+  const email = `perf-${Date.now()}@example.org`, password = 'perf budget horse battery staple'
+  await addAccount(phone, { email, password, recovery_code })
+  eq(phone.sessionKeys.size, 27, '27 sessions')
+  const seen = []
+  let tFirst = null
+  const slow = async (url, init) => {
+    tFirst ??= performance.now()                            // from the login request on (Argon2 is CPU, not network)
+    const u = new URL(url)
+    seen.push(`${init?.method ?? 'GET'} ${u.pathname.replace(/[0-9a-f]{32,64}/g, ':id')}${u.search.includes('limit=1&') || u.search.endsWith('limit=1') ? ' (head)' : ''}`)
+    await sleep(RTT_MS)
+    return fetch(url, init)
+  }
+  const t0 = performance.now()
+  const fresh = track((await loginWithPassword({ hub_url: HUB, email, password, storage: memoryStorage(), device_name: 'Fresh', fetch: slow })).client)
+  const tJoined = performance.now() - t0
+  await fresh.start()
+  const ms = performance.now() - tFirst
+  const n = seen.length
+  const trips = ms / RTT_MS
+  console.log(`     ${n} requests to the first paint, ${ms.toFixed(0)} ms at ${RTT_MS} ms per round trip = ${trips.toFixed(1)} round trips incl. CPU (Argon2 and join ${tJoined.toFixed(0)} ms); budget ${MAX_REQUESTS} requests, ${MAX_ROUND_TRIPS} round trips`)
+  assert(fresh.stats.snapshot, 'booted from the snapshot')
+  eq(fresh.model.cards.size, phone.model.cards.size, 'every card')
+  eq(seen.filter(u => /\/sessions\/:id\//.test(u)), [], 'no per-session route')
+  eq(seen.filter(u => u.endsWith('(head)')), [], 'no extra head request: the newest page names the head (newest=1)')
+  assert(seen.indexOf('POST /v1/rooms/:id/access_tokens') < (seen.indexOf('POST /v1/rooms/:id/challenge') + 1 || Infinity), `the first sign-in uses the login answer's challenge: ${JSON.stringify(seen.slice(0, 4))}`)
+  assert(n <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${n}: ${JSON.stringify(seen)}`)
+  assert(trips <= MAX_ROUND_TRIPS, `at most ${MAX_ROUND_TRIPS} round trips to the first paint, took ${trips.toFixed(1)}: ${JSON.stringify(seen)}`)
+  // the re-seal finishes behind the paint: every session sealed for the new device, nothing pending
+  await until(() => !fresh._resealing && !fresh.roomRecord.reseal_pending, 're-seal done', 10_000)
+  const mine = await fresh.hub.sessionBundle()
+  eq(mine.sessions.filter(x => x.sealed_session_keys.length > 0).length, 27, 'the hub holds a sealed key of every session for the new device')
+  await until(() => fresh.model.room.connection === 'live', 'live', 10_000)
+  const t1 = Date.now()
+  await agent.sendMessage({ text: 'after the login' })
+  await until(() => fresh.model.room.last_envelope_number >= agent.model.room.last_envelope_number, 'a live message arrives', 5000)
+  console.log(`     live message at the new device ${Date.now() - t1} ms after sending (${RTT_MS} ms per request)`)
 })
 
 await test('no endless wait: a request that hangs fails after its deadline; a GET is tried again', async () => {

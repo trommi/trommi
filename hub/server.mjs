@@ -545,9 +545,11 @@ export async function startHub({
       if (m === 'GET') {
         // Members; also the recovery key, in the pruned form only (it signs the removal cuts of a recovery from the heads).
         const who = hub.authorise(bearer(req))
-        const after = intParam(url, 'after_envelope_number', 0, 0, Number.MAX_SAFE_INTEGER)
+        let after = intParam(url, 'after_envelope_number', 0, 0, Number.MAX_SAFE_INTEGER)
         const limit = intParam(url, 'limit', 1000, 1, 1000)
         const last = db.q('SELECT last_envelope_number FROM rooms WHERE room_id = ?').get(r.id).last_envelope_number
+        // newest=1: the newest `limit` envelopes after the cursor (a new device finds the snapshot pointer in one request)
+        if (url.searchParams.get('newest') === '1') after = Math.max(after, last - limit)
         const rows = envelopeRows(r.id, after, limit)
         const out = who.kind === 'recovery' ? rows.map(x => record({ ...x, encrypted_body: null })) : rows.map(record)
         return send(res, 200, { last_envelope_number: last, envelopes: out })
