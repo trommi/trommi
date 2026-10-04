@@ -865,6 +865,19 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   await full.start()
   const msFull = performance.now() - t1
   eq(full.model.cards.size, fresh.model.cards.size, 'replay agrees with the snapshot')
+  // D5/D6: the tail is read from before the snapshot's cursor (an overlap, numbers are hints) ...
+  assert(fresh.snapshotCursor === snap.envelope_number && fresh.stats.snapshot.envelope_number === snap.envelope_number, 'cursor')
+  // ... and a snapshot from before a removal is not trusted: a device joining after it replays instead
+  await phone.removeDevices([full.my_device_id])
+  const inv3 = await phone.createInvite({ device_role: 'human' })
+  const j3 = joinRoom({ link: inv3.link, storage: memoryStorage(), poll_ms: 50 })
+  const code3 = await j3.check_code
+  await until(() => phone.model.invites.get(inv3.invite_id).invite_state === 'confirm_code', 'confirm 3')
+  await phone.confirmInvite(inv3.invite_id, code3)
+  const third = track(await j3.client)
+  await third.start()
+  assert(!third.stats.snapshot, 'no boot from a snapshot older than the newest removal')
+  eq(third.model.cards.size, phone.model.cards.size, 'replayed instead')
   console.log(`     ${N} envelopes: first start with snapshot ${ms.toFixed(0)} ms (snapshot ${(fresh.stats.snapshot.bytes / 1024).toFixed(0)} KiB, ${fresh.stats.snapshot.ms.toFixed(0)} ms, tail ${fresh.stats.verified}); full replay ${msFull.toFixed(0)} ms`)
   void snap
 })

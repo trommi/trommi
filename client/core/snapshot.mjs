@@ -10,11 +10,13 @@
 import * as z from './zcrypto.mjs'
 import * as M from './model.mjs'
 import * as codec from './codec.mjs'
+import * as G from './session-grants.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError } = z
 export const SNAPSHOT_SCHEMA = 1
 export const SNAPSHOT_EVERY = 5000          // envelopes between two snapshots of one device
 const SCAN_PAGES = 12                       // pages of 1000 scanned back for the newest pointer
+const OVERLAP = 1000                        // envelopes before the snapshot's cursor read again after a boot (D6)
 
 async function gzip(bytes) {
   if (typeof CompressionStream === 'undefined') return { bytes, encoding: 'identity' }
@@ -78,7 +80,8 @@ export async function findSnapshot(client) {
       try {
         const o = await z.openEnvelope(bytes, { state: client.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false, secrets: client.openKeys, quarantine: false })
         const member = client.state.members.get(b64u(h.sender))
-        if (!member || member.role !== z.ROLE.HUMAN) continue
+        // D5/D6: only from a human device that is still a member now (not one removed since).
+        if (!member || member.role !== z.ROLE.HUMAN || member.removedSeq !== null) continue
         const d = codec.decodePayload(o.payload)
         const v = d.content?.values?.room_snapshot
         if (v?.attachment && v.envelope_number <= envelope_number) return { value: v, envelope_number, sender: hex(h.sender) }
@@ -97,6 +100,8 @@ export async function bootFromSnapshot(client) {
   if (!found) return false
   const v = found.value
   if (v.log_seq > client.state.head.seq || hex(client.state.hashes[v.log_seq]) !== v.log_hash) return false   // another member list: do not trust it
+  // A snapshot from before the newest removal or recovery may hold what a removed device wrote beyond its cut: replay instead.
+  if (G.lastMemberChange && v.log_seq < G.lastMemberChange(client.state)) return false
   const raw = await client.fetchAttachment(v.attachment)
   const snap = JSON.parse(new TextDecoder().decode(await gunzip(raw, v.encoding)))
   if (snap.schema !== SNAPSHOT_SCHEMA || snap.room_id !== client.model.room.room_id || snap.envelope_number !== v.envelope_number) return false
@@ -108,6 +113,7 @@ export async function bootFromSnapshot(client) {
       client.chains.set(k, { seq, hash: unb64u(hash), hashes: new Map([[seq, unb64u(hash)]]) })
       client._dirty.chains.add(k)
     }
+    client._snapshotChains = new Map(Object.entries(snap.chains).map(([k, [seq]]) => [hex(unb64u(k)), seq]))
     client.frontiers = new Map(Object.entries(snap.frontiers).map(([k, f]) => [k, new Map(Object.entries(f))]))
     for (const c of snap.model.cards) m.cards.set(c.object_id, c)
     for (const p of snap.model.permissions) m.permissions.set(p.object_id, p)
@@ -121,7 +127,10 @@ export async function bootFromSnapshot(client) {
     for (const x of snap.model.memos) client.lamport = Math.max(client.lamport ?? 0, x?.causal?.lamport ?? 0)
     m._device_registers = new Map(snap.model.device_registers)
     for (const [id, reg] of m._device_registers) { const mem = m.members.get(id); if (mem) Object.assign(mem, { device_name: reg?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null }) }
-    m.room.last_envelope_number = snap.envelope_number
+    // D6: the hub's numbers are retrieval hints, not proof. The tail is read from an overlap window before the snapshot's
+    // cursor; envelopes inside the frontier are recognised by (sender, sequence) and skipped (a different hash at a
+    // frontier position is equivocation), everything beyond the frontier is applied whatever number the hub gave it.
+    m.room.last_envelope_number = Math.max(0, snap.envelope_number - OVERLAP)
     client.snapshotCursor = snap.envelope_number
     const ch = M.emptyChange()
     for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines']) for (const id of m[k].keys()) ch[k].add(id)
