@@ -329,7 +329,8 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       })
       // The chain advances only once the envelope is stored: a failed write must not leave the hub a number ahead.
       const k = b64u(h.sender)
-      const c = chains.get(k) ?? { seq: 0, hash: null, hashes: new Map() }
+      // With a store that can look hashes up, memory holds only a small window per chain (no growth per envelope).
+      const c = chains.get(k) ?? { seq: 0, hash: null, hashes: storage.envelopeHash ? lazyHashes(storage, id(h.sender)) : new Map() }
       c.seq = h.seq; c.hash = v.hash; c.hashes.set(h.seq, v.hash)
       chains.set(k, c)
       return { n, push: h.push, card, isHead: h.isHead, kind: h.kind, recipient: h.recipient.every(b => b === 0) ? null : id(h.recipient) }
