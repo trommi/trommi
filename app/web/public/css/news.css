@@ -1,0 +1,37 @@
+/* The news strip above the Desk: the infos (reports, notes; nothing to decide), out of the stack of questions.
+   Markup: views/desk.mjs newsStrip (#desk-news > .news-strip > .news-head, .news-line…, details.news-more). */
+.news-at[hidden] { display: none; }
+.news-strip { max-width: 800px; margin: 0 auto var(--s-5); display: grid; padding: 4px 6px 6px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); text-align: left; }
+@media (min-width: 861px) { .news-at { max-width: 800px; margin-inline: auto; padding-left: 46px; } .news-strip { max-width: none; } }
+.news-head { display: flex; align-items: center; gap: 8px; padding: 6px 6px 6px 8px; color: var(--muted); }
+.news-head > .sketch { width: 18px; height: 18px; }
+.news-head h3 { margin: 0; font: 700 var(--t-sm)/1 var(--font); color: var(--fg); letter-spacing: .02em; }
+.news-n { padding: 2px 7px; border-radius: var(--r-pill); background: var(--sunken); color: var(--fg); font: 700 var(--t-xs)/1.2 var(--font); }
+.news-say { font-size: var(--t-xs); color: var(--faint); }
+.news-all { margin: 0 0 0 auto; }
+.news-all button { display: inline-flex; align-items: center; gap: 6px; padding: 5px 10px; border: 0; border-radius: var(--r-pill); background: none; color: var(--accent); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; cursor: pointer; }
+.news-all button:hover, .news-all button:focus-visible { background: var(--accent-soft); }
+.news-all .sketch { width: 16px; height: 16px; }
+
+.news-line { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; align-items: center; gap: var(--s-3); padding: 5px 6px 5px 8px; border-top: 1px solid var(--line); }
+.news-open { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--fg); text-decoration: none; }
+.news-open .inbox-from-mark { flex: none; width: 20px; height: 20px; }
+.news-open .inbox-from-mark svg { width: 20px; height: 20px; }
+.news-open strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-md)/1.3 var(--font); }
+.news-open:hover strong, .news-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
+.news-knock { flex: none; display: inline-flex; align-items: center; gap: 4px; padding: 2px 7px; border-radius: 4px; background: var(--urg-critical); color: #fff; font: 700 10px/1.4 var(--font); letter-spacing: .06em; text-transform: uppercase; }
+.news-knock .sketch { width: 12px; height: 12px; }
+.news-tail { display: inline-flex; align-items: center; gap: 8px; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+.news-who { color: var(--tone-pen, var(--muted)); font-weight: 600; }
+.news-act { margin: 0; }
+.news-tick { width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: var(--accent-soft); color: var(--accent); cursor: pointer; }
+.news-tick .sketch { width: 17px; height: 17px; }
+.news-tick:hover, .news-tick:focus-visible { background: var(--accent); color: var(--accent-fg); }
+
+.news-more { display: contents; }
+.news-more > summary { list-style: none; padding: 8px 8px 2px; border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
+.news-more > summary::-webkit-details-marker { display: none; }
+.news-more[open] > summary { order: 1; }
+.news-more:not([open]) .news-more-shut, .news-more[open] .news-more-open { display: none; }
+
+@media (max-width: 860px) { .news-say, .news-who { display: none; } .news-tail { gap: 4px; } .news-strip { margin-bottom: var(--s-4); } }

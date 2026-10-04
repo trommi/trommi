@@ -86,6 +86,27 @@ ${tiles(card, base)}
 </article>`
 }
 
+// ---- the news strip: the infos (reports, notes; nothing to decide), above the Desk, out of the stack ----
+// (Christopher's pick "C" of five, 4 October: a slim box over "Next", one line per info with a tick, three lines and
+// "N more" that unfolds, "All read". Empty, it is gone. Its id stays for the live stream: #desk-news.)
+const NEWS_SHOWN = 3
+function newsLine(card, model, base) {
+  const from = model.byAgent.get(card.agent), knock = isKnock(card)
+  return html`<article class="news-line" id="read-${card.id}" data-id="${card.id}"${knock ? raw(' data-knock') : ''}${from ? html` style="--hue:${from.hue}"` : ''}>
+<a class="news-open" data-nav href="${cardPath(card, base)}" title="${cardNr(card)}: open it">${from ? smallMark(from) : ''}<strong>${card.title}</strong>${knock ? html`<span class="news-knock">${sk('knock')}${knockWord(card)}</span>` : ''}</a>
+<span class="news-tail">${from ? html`<span class="news-who">${from.name}</span>` : ''}${agoSpan(card.created, 'news-ago')}</span>
+<form class="news-act" method="post" action="${act(card, base, 'close')}"><input type="hidden" name="stay" value="1"><button class="news-tick" type="submit" title="Read: put it away" aria-label="Read: ${card.title}">${sk('tick')}</button></form>
+</article>`
+}
+export function newsStrip(model, base) {
+  const r = model.reads ?? []
+  if (!r.length) return html`<div id="desk-news" class="news-at" hidden></div>`
+  const shown = r.slice(0, NEWS_SHOWN), rest = r.slice(NEWS_SHOWN)
+  return html`<div id="desk-news" class="news-at"><section class="news-strip" aria-label="News: ${r.length === 1 ? '1 info' : `${r.length} infos`}, nothing to decide">
+<header class="news-head">${sk('page')}<h3>News</h3><span class="news-n">${r.length}</span><span class="news-say">nothing to decide</span><form class="news-all" method="post" action="${base}/reads/close"><input type="hidden" name="stay" value="1"><button type="submit" title="Put every info here away as read">${sk('tick')}<span>All read</span></button></form></header>
+${shown.map(c => newsLine(c, model, base))}${rest.length ? html`<details class="news-more"><summary><span class="news-more-open">${rest.length} more</span><span class="news-more-shut">Less</span></summary>${rest.map(c => newsLine(c, model, base))}</details>` : ''}</section></div>`
+}
+
 // ---- the stacks at the foot: Later, In the works, Done and the small basket (views/stacks.mjs) ----
 export { deskStacks }
 
@@ -133,7 +154,7 @@ ${model.open.length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon
 // (Controller "desk": a card that arrives out of sight is said quietly, "1 new ↓"; a knock out of sight has a strip at
 //  the list's edge that leads to it.)
 export const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="Desk" data-controller="desk" data-action="turbo:before-stream-render@document->desk#changing">
-${deskHead(model, base)}
+${newsStrip(model, base)}${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>

@@ -6,7 +6,7 @@
 //   await board.request({ method, path, form, headers })  -> { kind: 'page' | 'stream' | 'redirect' | 'html' | 'none', … }
 //   board.live(clients)                          after a change: the stream actions per open page (only what changed)
 import { html, raw } from '../views/html.mjs'
-import { deskMain, deskRow, deskHead, deskStacks, deskList, runSection, cardPath } from '../views/desk.mjs'
+import { deskMain, deskRow, deskHead, deskStacks, deskList, runSection, cardPath, newsStrip } from '../views/desk.mjs'
 import { sidebarRows, sidebarParts, deskState, slipCount } from '../views/sidebar.mjs'
 import { cardPage, cardLead, cardAnswer, cardThread, picturePage, imagesOf, versionOf } from '../views/card.mjs'
 import { WORDS, EXPLAIN_TEXT, isKnock } from '../views/text.mjs'
@@ -116,7 +116,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
     const quiet = form.has('quiet') || !SAID[what]
     if (stay) {
       const m = model()
-      return t.sendStream(req, res, html`${m.fresh.some(c => c.id === id) ? '' : stream('remove', `row-${id}`)}${quiet ? '' : stream('prepend', 'says-host', says(m.byCard.get(id), what))}`)
+      return t.sendStream(req, res, html`${m.fresh.some(c => c.id === id) ? '' : stream('remove', `row-${id}`)}${card.kind === 'info' ? stream('replace', 'desk-news', newsStrip(m, BASE)) : ''}${quiet ? '' : stream('prepend', 'says-host', says(m.byCard.get(id), what))}`)
     }
     const said = quiet ? '' : `said=${id}:${what}`
     const home = String(form.get('back') ?? '')
@@ -159,11 +159,23 @@ export function createBoard({ hub, model, extraPages = [] }) {
       const next = model().fresh[0], said = url.searchParams.get('said')
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
+    // "All read" in the news strip: every info of this desk closed as read (each tells its session, as its own tick does).
+    t.post(/^\/reads\/close$/, async ({ req, res, form }) => {
+      const cards = model().reads ?? []
+      const done = await Promise.allSettled(cards.map(c => hub.closeInfo(c.id)))
+      const failed = done.filter(d => d.status === 'rejected').length, n = cards.length - failed
+      if (form.has('stay') && t.wantsStream(req)) {
+        const m = model()
+        return t.sendStream(req, res, html`${stream('replace', 'desk-news', newsStrip(m, BASE))}${stream('prepend', 'says-host', toast(failed ? { head: 'Not all saved', line: `${failed} of ${cards.length} could not be put away`, role: 'alert' } : { head: 'Read', line: n === 1 ? '1 info put away' : `${n} infos put away` }))}`)
+      }
+      return redirect(res, `${BASE}/`)
+    })
     t.live('desk', {
-      take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), stacks: deskStacks(m, BASE) }),
+      take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), stacks: deskStacks(m, BASE) }),
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
+        if (t.differs(was.news, now.news)) out.push(stream('replace', 'desk-news', now.news))
         const kept = was.order.filter(id => now.rows.has(id)), added = now.order.filter(id => !was.rows.has(id))
         const sameOrder = kept.every((id, i) => now.order[i] === id)
         if (!sameOrder) { const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }

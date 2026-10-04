@@ -94,7 +94,7 @@ export function sessionOf(model, id, { floor = 0, more = false } = {}) {
   // Where a question stands in the conversation: at the last time it was put there.
   const askAt = new Map()
   for (const m of messages) if (m.from === 'event' && m.kind === 'asked' && m.card_id) askAt.set(m.card_id, m.id)
-  const fresh = model.fresh.filter(c => c.agent === id)
+  const fresh = model.open.filter(c => c.agent === id && !c.with_agent)   // (its infos too: on its own page they stand as rows)
   return { id, agent, model, messages, cards, pictures, nr, askAt, fresh, tasks: state.tasks.filter(t => t.agent === id), floor, more }
 }
 
@@ -125,7 +125,7 @@ function ask(m, s, base) {
   const card = model.byCard.get(m.card_id)
   if (!card) return eventLine(m, null, base)
   const here = s.askAt.get(card.id) === m.id
-  if (here && model.fresh.includes(card)) {
+  if (here && s.fresh.includes(card)) {
     // (The row's own links go to <base>/q/<n>; inside a session they keep the session in the address.)
     const row = String(deskRow(card, model, base)).replaceAll(`href="${base}/q/`, `href="${sessionPath(s.id, base)}/q/`)
     return html`<div class="ask ask-card" id="msg-${m.id}">${raw(row)}</div>`
@@ -206,7 +206,7 @@ function message(m, prev, s, base) {
   if (m.from === 'event' && m.kind === 'asked') {
     // A question's line or row: made again only when its card changed (the board state keeps a card's object until then).
     const card = s.model.byCard.get(m.card_id), k = `${s.id} ${m.id}`, had = kept.get(k)
-    const key = `${base}|${s.askAt.get(m.card_id) === m.id}|${s.model.fresh.includes(card)}|${m.ts}`
+    const key = `${base}|${s.askAt.get(m.card_id) === m.id}|${s.fresh.includes(card)}|${m.ts}`
     if (had && had.card === card && had.key === key) return had.out
     const out = ask(m, s, base)
     kept.set(k, { card, key, out })
