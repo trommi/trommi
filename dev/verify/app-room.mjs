@@ -10,7 +10,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { startHub, startChannel } from '../../hub/channel-test-e2e.mjs'
 import { FIXTURES } from '../../server/fixtures.mjs'
-import { arg, openPage, sleep } from './lib.mjs'
+import { arg, openPage, sleep, joinByCli } from './lib.mjs'
 
 const dir = path.resolve(arg('verify-dir', '.'))
 const APP = arg('app', 'http://127.0.0.1:8900')
@@ -39,7 +39,9 @@ try {
     const link = await h.ev(`return [...trommi.client.model.invites.values()].at(-1).link`)
     const folder = path.join(work, name)
     fs.mkdirSync(folder, { recursive: true })
-    channels[name] = await startChannel({ env: { TROMMI_KEYS_DIR: path.join(work, 'keys'), TROMMI_FOLDER: folder, TROMMI_HUB: hub.hub_url, TROMMI_INVITE: link }, cwd: folder })
+    const chEnv = { TROMMI_KEYS_DIR: path.join(work, 'keys'), TROMMI_FOLDER: folder, TROMMI_HUB: hub.hub_url }
+    await joinByCli({ root: path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..'), env: chEnv, cwd: folder, link })
+    channels[name] = await startChannel({ env: chEnv, cwd: folder })
     await channels[name].ready()
   }
   const who = { alpha: channels['test-alpha'], beta: channels['test-beta'] }

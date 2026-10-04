@@ -4,13 +4,15 @@ Kept by the verifier ("Superkind", night of 4 October 2026). The goal: the new a
 server-rendered Turbo board in every function, every decision round trip between agent and human, the look and
 Christopher's design decisions, and is faster, end to end encrypted through the thin hub.
 
-**Status (third pass, 4 Oct ~04:30; app main 37af467, hub main 3047372 = protocol v1.1 live):** checklist
-**128 ok · 5 gap · 218 todo** of 351 rows (todo = not yet checked by the verifier, mostly single keys, agents-page
-actions, admin, push, old-client-only features). Screenshots: 42 states × 4 profiles on Turbo, on the app's mock room
-and on a **real E2E room** (`dev/verify/app-room.mjs`). Decision round trips through the real channel: **45 of 46
-checks green, locally and on the live system** (app.trommi.com + hub.trommi.com v1.1); the one red is
-`share_asset` (outside links): hub and app have share links since 3047372 / 19f56d3, the channel does not call them yet.
-Short keys: 21 of 26 checked keys behave as on Turbo (`dev/verify/keys.mjs`).
+**Status (fourth pass, 4 Oct ~06:00; app main 2e4a1e8, hub 19b87db, after the security fixes):** see the counts
+line at the top of the checklist section (this pass: **133 ok · 1 gap · 217 todo** before the last checker run; todo =
+not yet checked by the verifier: mostly single keys, agents-page actions, admin, push, pad details).
+Decision round trips through the real channel (joined with `node hub/channel.mjs join '<link>'`, the human only
+clicking in the app) on the **live system: 48 of 48 green** (`rounds-live3` + `rounds-live3b`), including a second
+device paired with the 6-digit check code and a share link opened by an outsider in a fresh browser.
+Screenshots: 42 states × 4 profiles on Turbo, the app's mock room and a real E2E room (`shots-room5`, `sbs-room5`).
+Short keys: 23 of 26 checked keys behave as on Turbo; 2 of the 3 failures fail on Turbo too (test expectation), the
+third is `g f`.
 
 ## How it is checked (dev/verify/)
 
@@ -40,16 +42,19 @@ the Turbo test board's (Web-Frontend, API, Infrastruktur, Courier); the fixture 
 
 ## Gaps, priority order (sent to the area owners)
 
-Open after the third pass:
+Open after the fourth pass:
 
 | # | prio | gap | evidence | owner |
 |---|---|---|---|---|
-| 1 | P2 | Session names from the channel read "desktop · /full/path/to/folder"; Turbo shows the folder name ("trommi"); the sidebar shows only "desktop · /tmp/cl…" | `parity-shots/room-desktop-light-session-thread.png`, S:desk real room | Channel (D) |
-| 2 | P2 | `share_asset` in the channel still says "not available on the new hub"; hub (3047372) and app (19f56d3) have share links now | R r15 | Channel (D) |
-| 3 | P2 | Key `n` opens the memo chooser when notes are put away (fix sent to C; Turbo has the same code path) | keys.mjs | Integrator (C) |
-| 4 | P2 | Load time: in the real room after the v1.1 cutover, cold Desk ready 165 ms desktop / 403 ms phone 4x (Turbo 58 / 128); longest task 223-249 ms at 4x CPU (budget 200); on app.trommi.com warm load went from 110 to 236 ms (213 requests through the service worker) | perf-app-room2.json, perf-app-prod-mock2.json | Integrator (C) |
-| 5 | P3 | `g f` goes to `/q/<n>` instead of `/walk`; Help lacks "FOR AGENTS"; German "Geräte" entry and update banner in the English UI; phone session strip 7 px taller; agents row buttons shifted | S:*, keys.mjs | Integrator |
-| 6 | ? | Pointto arrow after answering: reported fixed (c5bd7a3), not re-verified | S:toast-after-answer | Desk |
+| 1 | P3 | `g f` goes to `/q/<n>` instead of `/walk` | keys.mjs | fixer |
+| 2 | P3 | Published page asset: on phone the card shows a placeholder icon instead of the page's first screen | `sbs-room5/phone-light/session-thread.png` | Session / fixer |
+| 3 | P3 | The agent invite page shows the command with the absolute path of this PC (`node /home/christopher/git/trommi/hub/channel.mjs join …`) | app `public/js/app/room.mjs` inviteMain | C |
+| 4 | ? | Pointto arrow after answering (reported fixed in c5bd7a3) and knocks of other desks on every desk (Turbo `views/model.mjs:30`): not re-verified, the real room has one desk | S:toast-after-answer | Desk |
+
+Fixed and verified in the fourth pass: every session shown twice after v1.1 (gone), session name = folder (e719675),
+key `n` → new memo (a41fb25), `share_asset` with outsider links (c89ca9c; outsider page renders), German strings in
+the menu ("Devices"), load-time regression (cold Desk 116 ms desktop / 257 ms phone 4x in a real room, longest task
+62-140 ms, under the 200 ms budget).
 
 Fixed between the passes and verified: marks on pictures in real rooms (a92118f), inline cards' box, header with a long name and the stop pill (0af0af4), asset cards and the "2 files" chip in a real room, pad layer on the closed Desk and its dark canvas, pad toolbar and pad mode,
 help page, menu push row and "Geräte" icon, "→ choice" in the answer toast, attachment titles as captions, gutter
@@ -65,7 +70,7 @@ jump, rail, agents, picture page, session conversation, status lines, composer, 
 
 ## Decision round trips agent ↔ human (real channel, real hub, app UI)
 
-Times: local dev hub (desktop) / **live** (app.trommi.com + hub.trommi.com, 4 Oct ~03:20).
+Times: local dev hub (desktop) / **live** (app.trommi.com + hub.trommi.com, 4 Oct ~03:20). Fourth pass, live after the security fixes (05:50): agent call → app 41-65 ms (sections 186, pictures 212), click → agent event 52-105 ms, What?? reply on the card 375 ms, phone pairing 4.2 s, phone answer → laptop row gone 386 ms; the channel joins by CLI in 1.3 s.
 
 | round | result | times local / live |
 |---|---|---|
@@ -116,12 +121,6 @@ until the target stands (no reload); live = agent tool call until visible.
 app.trommi.com (production, mock room, real network): desktop cold 371 ms ready / 480 ms first paint, warm **110 ms
 from the service worker** (5 kB); phone 4x cold 470 / warm 221 ms, longest task 209 ms.
 
-After the v1.1 cutover (third pass): real room on the dev server, cold Desk ready 165 / 354 / 403 ms (desktop /
-4x / phone 4x), warm 103 / 251 / 315 ms, desk→session 118 / 232 / 277 ms, longest task 90 / 249 / 223 ms;
-app.trommi.com (mock room) cold 390 / 391 / 448 ms, warm 236 / 267 / 362 ms from the service worker (203-223 requests).
-Live round trips on v1.1: agent call → in the app 30-92 ms (sections 219 ms, pictures 151 ms), human click → agent
-event 52-82 ms, phone answer → laptop row gone 397 ms.
-
 Reading: the app navigates faster than Turbo (no server round trip), and its live path stays well under 100 ms with
 full encryption. It loads slower: ~110 requests and 1.1-1.9 MB of modules on a cold load, ~100-200 ms of script
 before the first row, and one task over the 200 ms budget at 4x CPU. Warm loads are fast only from the service worker
@@ -130,10 +129,12 @@ load test and the crazy room), real phone, Safari.
 
 ## The checklist (from the code of the Turbo board)
 
+**Counts: 133 ok · 1 gap · 0 na · 217 todo** (of 351 rows).
+
 Source of truth: the server-rendered board as of commit 39160d0 (`server/turbo.mjs`, `server/views/*.mjs`,
 `client/web/t/**` Stimulus controllers and libs, the few old modules it still imports: `client/web/js/pen.js`,
 `js/focus-marks.js`, `js/richhtml.js`, `js/ui.js` adviceLoop, `js/push.js`), the hub (`server/server.mjs`), and the
-pad (`client/web/pad/`). Line numbers are of that commit. `status`: ok (checked, same), gap (checked, differs or missing), todo (not checked yet).
+pad (`client/web/pad/`). Line numbers are of that commit. `status`: ok (checked, same), gap (checked, differs or missing), na (replaced by design), todo (not checked yet).
 
 Conventions used below
 - **R** = the rendered page as the hub serves it (Turbo); routes without a prefix (`BOARD_TURBO_BASE` empty).
@@ -274,7 +275,7 @@ dark variant looks different on purpose.
 |---|---|---|---|---|---|
 | sess-route | `GET /s/<id>`: heading, quiet line, conversation, composer, filter; title `(n) <name> · Trommi` | `views/session.mjs:373-392,449-462` | load `/s/web-frontend` | ok | S:session |
 | sess-404 | unknown session → "This session is not on the board." (404) | `views/session.mjs:442-448` | `/s/nobody` | todo | |
-| sess-heading | drawing (opens drawings), crown toggle, name (renames), red hand "Stopped: <why>" | `views/session.mjs:209-215`; `views/session-edit.mjs:51-54` | stop a working session's link → hand appears | gap | S:session real room: name "desktop · /full/path" from the channel (Turbo: folder name); layout fixed in 0af0af4 |
+| sess-heading | drawing (opens drawings), crown toggle, name (renames), red hand "Stopped: <why>" | `views/session.mjs:209-215`; `views/session-edit.mjs:51-54` | stop a working session's link → hand appears | ok | S:desk, session fresh v1.1 room: name = folder (e719675), layout 0af0af4 (4th pass) |
 | sess-quiet-line | task or connected/disconnected, model · host (caps), "N files" chip | `views/session.mjs:217-222` | `introduce {model, task}` → shown live | todo | |
 | sess-window | latest 60 messages; "Earlier messages N" loads the 60 before in `turbo-frame#earlier-<msg>` (`?before=`); "To the latest messages" | `views/session.mjs:24,258-268,377-382` | 70 messages → link "10"; click → older appear | todo | |
 | sess-days-times | day lines Today / Yesterday / date; times shown in the browser's zone with full tooltip | `views/session.mjs:53-63,197`; `t/controllers/log_controller.js:19-31` | messages across midnight → two day lines | todo | |
@@ -438,11 +439,11 @@ dark variant looks different on purpose.
 | med-page-of-pic | `{path, page}`: "Open the page" under the shot, on the picture page and card More | `views/session.mjs:99,401`; `views/card.mjs:265,277,304` | artifact fixture | ok | S:picture same |
 | med-thumbs | `/files/<name>?w=` variants (srcset 1x/2x), GIF and unknown sizes keep the original | `views/picture.mjs:19-35`; `server.mjs:3458-3462` | inspect `src` | todo | |
 | med-reply-html | `reply.html` in a sandboxed frame under the words; `details` folded | `views/session.mjs:194-195`; `views/text.mjs:151` | thread fixture table | todo | |
-| med-asset-card | published asset in the log: preview decrypted in the browser (picture, page first screen), kind · size, title, note, Open | `views/session.mjs:149-162`; `t/controllers/assetthumb_controller.js:17-99` | artifact fixture assets | ok | S:session-thread real room (3rd pass): asset cards with preview, Open, Copy link |
+| med-asset-card | published asset in the log: preview decrypted in the browser (picture, page first screen), kind · size, title, note, Open | `views/session.mjs:149-162`; `t/controllers/assetthumb_controller.js:17-99` | artifact fixture assets | ok | S:session-thread real room (5th pass); P3: page preview on phone is a placeholder icon, desktop shows the first screen |
 | med-asset-copy | "Copy link" releases it (`POST /asset/share`) and copies `/r/<id>#<key>`; toast "Link copied" with "Stop sharing" | `t/controllers/share_controller.js:28-59`; `server.mjs:3533-3543` | click → clipboard `/r/…`; card "Shared · Stop", opens count | ok | S:session-thread real room (3rd pass) |
 | med-asset-stop | "Stop" takes the release back | `t/controllers/share_controller.js:47` | `/r/<id>#key` → gone | todo | |
 | med-asset-gone | revoked/expired asset: "No longer available" | `views/session.mjs:153` | agent `revoke_asset` | todo | |
-| med-asset-link | `/a/<id>#<key>` in text → asset chip named by title | `views/text.mjs:34-46,109-112` | reply with the link | gap | R r15: no outside link |
+| med-asset-link | `/a/<id>#<key>` in text → asset chip named by title | `views/text.mjs:34-46,109-112` | reply with the link | ok | R r15 live (5th pass) |
 | med-viewer | `/a/<id>#<key>` viewer, `/r/<id>#<key>` outside page | `server.mjs:3383-3384` | open both | ok | S:picture same |
 | med-uploads | human files (composer, card field, memo) stored under `/files/`, event meta `files`, `image_path` | `server.mjs:3192,3210-3211` | send picture → path exists | ok | R r14 |
 | med-limits | 12 files per message, body ≤ 96 MB | `views/session.mjs:27`; `turbo.mjs:285` | 13 files → error | todo | |
@@ -512,11 +513,11 @@ dark variant looks different on purpose.
 | key-ledger-find | Agents `/`: find field (pops controller) | `keys.js:56`; `t/controllers/pops_controller.js:52-55` | | todo | |
 | key-ledger-leave | Agents `Esc`: close what is open, then drop the mark | `keys.js:57`; `keys_controller.js:186` | | todo | |
 | key-help | `?`: key sheet (six short rows; also menu "Keys") | `keys.js:60,82-89`; `keys_controller.js:192,127-135`; `views/keys.mjs:21-28` | state keys-sheet | ok | keys.mjs ? |
-| key-memo-new | `n`: new memo | `keys.js:61`; `keys_controller.js:193` | | gap | keys.mjs n: app focuses the chooser line "New memo" when a memo exists; Turbo opens a note |
+| key-memo-new | `n`: new memo | `keys.js:61`; `keys_controller.js:193` | | ok | keys.mjs n on app d606389: new note (a41fb25) (4th pass) |
 | key-go-desk | `g d` / `g i`: Desk | `keys.js:62`; `keys_controller.js:194` | | ok | keys.mjs g i |
 | key-go-agents | `g a`: Agents | `keys.js:63`; `keys_controller.js:195` | | ok | keys.mjs g a |
 | key-go-jump | `Ctrl/⌘+K` / `g j`: jump field (Desk with menu where no menu) | `keys.js:64`; `keys_controller.js:106-113,197,275` | | ok | keys.mjs g j, Ctrl+K |
-| key-go-walk | `g f`: Next (walk) | `keys.js:65`; `keys_controller.js:196` | | gap | keys.mjs g f: app goes to /q/<n>, Turbo to /walk (P3) |
+| key-go-walk | `g f`: Next (walk) | `keys.js:65`; `keys_controller.js:196` | | gap | keys.mjs g f: app goes to /q/<n>, Turbo to /walk [P3] |
 | key-go-session | `g 1…9`: sidebar session n | `keys.js:67`; `keys_controller.js:199` | | ok | keys.mjs g 1 |
 | key-desk-switch | `d 1…9`: desk n (not on Agents) | `keys.js:68`; `keys_controller.js:198` | | todo | |
 | key-session-next | `.`: next session | `keys.js:69`; `keys_controller.js:200` | | ok | keys.mjs . |
@@ -614,11 +615,11 @@ dark variant looks different on purpose.
 | tool-introduce | model, task, icon, parent, main | `server.mjs:1246-1259,1865-1875` | st-introduce | ok | R r14 |
 | tool-create-voiceover | text → MP3 path | `server.mjs:1261-1271,1876` | med-voiceover | todo | |
 | tool-list-cards | JSON of own cards incl. queue_position, version, with_agent | `server.mjs:1273-1276,1878-1889` | compare with Desk order | todo | |
-| tool-publish-asset | encrypted asset link (in the channel process) → asset card | `server.mjs:1278-1292,1928` | med-asset-card | gap | R r15: announced in the session now; no link for people outside yet (designed, open) |
+| tool-publish-asset | encrypted asset link (in the channel process) → asset card | `server.mjs:1278-1292,1928` | med-asset-card | ok | R r15 live (4th pass): announced in the session |
 | tool-list-assets | own assets | `server.mjs:1294-1297,1890` | | todo | |
 | tool-revoke-asset | delete ciphertext, link dead | `server.mjs:1299-1302,1892-1897` | med-asset-gone | todo | |
 | tool-adopt-session | main takes an existing session as sub (same machine) / release | `server.mjs:1304-1314,1899-1912` | sub under main in sidebar | todo | |
-| tool-share-asset | outside release `/r/<id>#key`, expiry, keep | `server.mjs:1316-1327,1914-1926` | card "Shared" | todo | |
+| tool-share-asset | outside release `/r/<id>#key`, expiry, keep | `server.mjs:1316-1327,1914-1926` | card "Shared" | ok | R r15 live (5th pass): link, outsider in a fresh browser sees the page, release:false takes it back |
 | tool-permission-request | (from Claude Code) approval → card | `server.mjs:1934-1975` | ip-permission | ok | R r12 |
 
 ## Channel events to the agent
