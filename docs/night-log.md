@@ -74,6 +74,8 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - Test key off by default; new key at ~/.local/share/trommi/hub-test-key.v2.
   - Escrow v2 addressed by a passphrase-derived id; pending uploads swept after 1 h; challenge flood can't lock out sign-in.
   - Still open (README): C22 attachment padding, M6 recovery-key change, escrow still PBKDF2, per-device byte budgets, agents see room metadata.
+- Channel slot lock: the stale-lock takeover had a real double-winner race. Rewritten as claim files without any takeover (63d35e4); stress 8×50 and 4×60 runs, exactly one winner; channel 32/32 five runs in a row.
+- S2 core fixes on main: 8075516 ids, 41d71bc handover rotates + fsync write-ahead + history boundary, 77fb6ec per-agent history, 12ab66b no chain rewind (void records), a262672 Lamport register order, d59201b crash-safe re-key + real recovery cuts, 2fd5fef snapshot trust. 5bf1127 (live epoch/assignment check) broke app→agent answers in C's prod e2e. The app vendor is pinned at d59201b (prod green 19/19) while S2 investigates.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
