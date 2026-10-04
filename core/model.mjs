@@ -87,7 +87,7 @@ export function applyMembers(model, members, change) {
     const reg = model._device_registers?.get(m.device_id) ?? null
     const next = { device_id: m.device_id, device_role: m.device_role, fingerprint: m.device_id.slice(0, 16).match(/.{4}/g).join(' '), device_name: reg?.device_name ?? old?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null,
       is_active: m.is_active, added_entry_number: m.added_entry_number, removed_entry_number: m.removed_entry_number, is_me: m.device_id === model.room.my_device_id,
-      is_online: old?.is_online ?? false, agent_session_id: old?.agent_session_id ?? null }
+      is_online: old?.is_online ?? false, offline_since: old?.offline_since ?? null, agent_session_id: old?.agent_session_id ?? null }
     model.members.set(m.device_id, next)
     if (m.device_role === 'agent') touchAgent(model, m.device_id, change)
   }
@@ -98,6 +98,7 @@ export function applyDevices(model, devices, change) {
     const m = model.members.get(d.device_id)
     if (!m) continue
     m.is_online = !!d.is_online
+    m.offline_since = m.is_online ? null : d.offline_since ?? null
     if (d.agent_session_id) m.agent_session_id = d.agent_session_id
     if (m.device_role === 'agent') touchAgent(model, d.device_id, change)
   }
@@ -108,7 +109,7 @@ export function applyDevices(model, devices, change) {
 export function sessionOf(model, session_id) {
   let s = model.sessions.get(session_id)
   if (!s) {
-    s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false,
+    s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false, offline_since: null,
       session_key_epoch: 0, with_history: false, profile: null, status_lines: [], agent_alerts: [], registers: new Map(),
       settings: null, read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${session_id}`), unread_count: 0, unread_numbers: [], last_activity_at: 0 }
     model.sessions.set(session_id, s)
@@ -118,7 +119,7 @@ export function sessionOf(model, session_id) {
 /** Copy the current agent's member facts onto its session. */
 function syncSessionAgent(model, s) {
   const m = s.agent_device_id ? model.members.get(s.agent_device_id) : null
-  if (m) { s.agent_session_id = m.agent_session_id ?? m.device_id.slice(0, 16); s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online }
+  if (m) { s.agent_session_id = m.agent_session_id ?? m.device_id.slice(0, 16); s.device_name = m.device_name; s.is_active = m.is_active; s.is_online = m.is_online; s.offline_since = m.offline_since ?? null }
 }
 function touchAgent(model, agent_device_id, change) {
   for (const s of model.sessions.values()) if (s.agent_device_ids.includes(agent_device_id) || s.agent_device_id === agent_device_id) { syncSessionAgent(model, s); change.sessions.add(s.session_id) }

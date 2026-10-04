@@ -85,6 +85,8 @@ function refreshShell() {
 self.addEventListener('push', event => {
   let message = {}
   try { message = event.data.json() } catch {}
+  // The hub's loss watch: an agent with running work whose connection stayed gone for a minute (hub/server.mjs).
+  if (message.kind === 'agent-lost') message = { ...message, title: 'Trommi: connection lost', body: 'An agent with running work lost its connection to Trommi.', tag: `lost-${String(message.device_id ?? '').slice(0, 16)}` }
   event.waitUntil(self.registration.showNotification(message.title || 'Trommi', {
     body: message.body || (message.urgency === 'critical' || message.urgency === 'high' ? 'Something knocks' : 'A new question'),
     tag: message.tag || 'trommi', renotify: true, icon: '/icons/trommi-192.png',

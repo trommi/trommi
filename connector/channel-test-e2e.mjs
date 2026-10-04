@@ -5,7 +5,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import net from 'node:net'
 import path from 'node:path'
-import { spawn } from 'node:child_process'
+import http from 'node:http'
+import crypto from 'node:crypto'
+import { spawn, execFile } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { fileStorage } from '../core/storage-file.mjs'
@@ -72,7 +74,12 @@ export async function startChannel({ env, cwd, script = path.join(here, 'channel
 
 export async function integration({ test, tmp }) {
   const core = await import('../core/index.mjs')
-  const hub = await startHub(tmp)
+  // A stand-in push service: the hub's loss watch pushes here (HUB_PUSH_HOSTS), after HUB_LOSS_MS.
+  const pushed = []
+  const pushService = http.createServer((req, res) => { const parts = []; req.on('data', c => parts.push(c)); req.on('end', () => { pushed.push(Buffer.concat(parts)); res.writeHead(201).end() }) })
+  await new Promise(r => pushService.listen(0, '127.0.0.1', r))
+  const pushHost = `127.0.0.1:${pushService.address().port}`
+  const hub = await startHub(tmp, { HUB_PUSH_HOSTS: pushHost, HUB_LOSS_MS: '1500' })
   const keys = path.join(tmp, 'keys')
   const project = path.join(tmp, 'project')
   fs.mkdirSync(project, { recursive: true })
@@ -250,6 +257,89 @@ export async function integration({ test, tmp }) {
         await until('the key taken on a tool call', async () => { try { await keyless.call('list_cards'); return true } catch { return false } }, 15000)
       } catch (e) { await keyless.close().catch(() => {}); throw e } finally { await second.close().catch(() => {}) }
       channel = keyless
+    })
+
+    const say = (args, extra = {}) => new Promise(res => execFile(process.execPath, [path.join(here, 'channel.mjs'), 'say', ...args], { env: { ...process.env, ...env, TROMMI_SAY_MS: '20000', ...extra }, cwd: project }, (e, so, se) => res({ code: e?.code ?? 0, out: so, err: se })))
+    const inMain = async text => {
+      const sid = human.sessionOfAgent(agentId)
+      await until(`"${text}" at the human`, async () => {
+        await human.loadTimeline(`chat:session/${sid}`).catch(() => {})
+        return [...(human.model.timelines.get(`chat:session/${sid}`)?.items.values() ?? [])].some(i => i.content?.text === text)
+      })
+    }
+    await test('e2e: say (the side channel) goes through the running connector, on its chain; --urgent files a critical info card', async () => {
+      const r = await say(['hello', 'by say'])
+      assert.equal(r.code, 0, r.err)
+      assert.match(r.out, new RegExp(`through the running connector \\(pid ${channel.pid}\\)`))
+      await inMain('hello by say')
+      const u = await say(['Trommi tools fail here', '--urgent'])
+      assert.equal(u.code, 0, u.err)
+      const card = await until('the urgent card', () => [...human.model.cards.values()].find(c => c.title === 'Trommi tools fail here'))
+      assert.equal(card.urgency, 'critical')
+      assert.match(await channel.call('reply', { text: 'and the connector goes on' }), /./)
+      await inMain('and the connector goes on')
+      assert.ok(!human.model.alerts?.some?.(a => /chain|fork/.test(a.code)), 'no chain alert at the human')
+    })
+
+    await test('e2e: say with no connector running opens the free key itself, once; the connector started afterwards goes on on the same chain', async () => {
+      await channel.close()
+      await until('the slot free', () => channel.exited, 5000)
+      const r = await say(['nobody runs'])
+      assert.equal(r.code, 0, r.err)
+      assert.match(r.out, /said as this folder's agent \(slot 1\)/)
+      await inMain('nobody runs')
+      assert.deepEqual(fs.readdirSync(path.join(keys, human.model.room.room_id)).filter(f => /\.lock\.\d+$/.test(f)), [], 'say gave the slot back')
+      channel = await startChannel({ env, cwd: project })
+      await channel.ready()
+      await channel.call('reply', { text: 'after say, same chain' })
+      await inMain('after say, same chain')
+      assert.equal(human.model.room.outbox_blocked ?? null, null)
+    })
+
+    await test('e2e: loss watch: a connector with running work that drops away is pushed to the human once; the app says since when; a clean end pushes nothing', async () => {
+      const browser = crypto.createECDH('prime256v1'), browserPub = browser.generateKeys(), auth = crypto.randomBytes(16)
+      await human.hub.pushSubscription({ endpoint: `http://${pushHost}/push/phone`, keys: { p256dh: browserPub.toString('base64url'), auth: auth.toString('base64url') } })
+      const open = b => {
+        const salt = b.subarray(0, 16), idlen = b[20], senderPub = b.subarray(21, 21 + idlen), ct = b.subarray(21 + idlen)
+        const hk = (s, ikm, info, len) => Buffer.from(crypto.hkdfSync('sha256', ikm, s, info, len))
+        const ikm = hk(auth, browser.computeSecret(senderPub), Buffer.concat([Buffer.from('WebPush: info\0'), browserPub, senderPub]), 32)
+        const d = crypto.createDecipheriv('aes-128-gcm', hk(salt, ikm, 'Content-Encoding: aes128gcm\0', 16), hk(salt, ikm, 'Content-Encoding: nonce\0', 12))
+        d.setAuthTag(ct.subarray(ct.length - 16))
+        const plain = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()])
+        return JSON.parse(plain.subarray(0, plain.lastIndexOf(2)).toString())
+      }
+      const before = pushed.length
+      await channel.call('set_status', { id: 'build', label: 'Build', state: 'working' })
+      await sleep(400)
+      process.kill(channel.pid, 'SIGKILL')   // a crash: no goodbye
+      const msg = open(await until('the loss push', () => pushed.length > before && pushed.at(-1), 8000))
+      assert.equal(msg.kind, 'agent-lost', JSON.stringify(msg))
+      assert.equal(msg.device_id, agentId, 'device')
+      assert.equal(msg.room_id, human.model.room.room_id, 'room')
+      await sleep(2500)
+      assert.equal(pushed.length, before + 1, 'once')
+      await human._refreshDevices()
+      const since = human.model.members.get(agentId).offline_since
+      assert.ok(since > Date.now() - 30000, 'the hub says since when')
+      globalThis.document ??= { addEventListener() {} }
+      const { BoardState } = await import('../app/web/public/js/app/board-state.mjs')
+      const { blockedOf } = await import('../app/web/public/js/app/node-stubs/blocked.mjs')
+      const st = new BoardState(human).update(), a = st.agents.find(x => x.session_id === human.sessionOfAgent(agentId))
+      assert.equal(a.offline_since, since, 'board state offline_since')
+      const stop = blockedOf(a, st, Date.now() + 61000)   // (the module counts from its own load too)
+      assert.equal(stop?.why, 'offline')
+      assert.match(stop.text, /^Connection lost since (\d+ \w+ )?\d\d:\d\d$/)
+      // A clean end (Claude Code closes the connector) disarms first: no push.
+      channel = await startChannel({ env, cwd: project })
+      await channel.ready()
+      await channel.call('set_status', { id: 'build', label: 'Build', state: 'working' })
+      await sleep(400)
+      await channel.close()
+      await sleep(2500)
+      assert.equal(pushed.length, before + 1, 'no push for a clean end')
+      channel = await startChannel({ env, cwd: project })
+      await channel.ready()
+      await channel.call('clear_status', { id: 'build' })
     })
 
     let child
@@ -460,6 +550,7 @@ export async function integration({ test, tmp }) {
     try { await channel?.close() } catch {}
     try { human?.stop() } catch {}
     hub.stop()
+    pushService.close()
   }
 }
 
