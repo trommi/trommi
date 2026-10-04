@@ -288,6 +288,8 @@ The hub never reads this; app and channel agree on it. The body's payload is UTF
   "marks": [{ "x": 0.1, "y": 0.2, "width": 0.3, "height": 0.1, "label": "…" }] }
 ```
 
+A `video/*` attachment (the channel maps `.mp4`, `.webm`, `.mov`) is shown on a card after its pictures as a player (`<video controls playsinline preload="metadata">`, never autoplaying); the app decrypts the whole file into a blob (up to the 64 MiB attachment limit) and its service worker answers the player's `Range` requests from that blob with `206`.
+
 A **session** on the board is an agent member. A human's envelope for a session has `recipient_device_id` = that agent; an agent's envelopes are for everyone. An object belongs to the member that created it; only its creator writes new versions (a memo: any human device).
 
 | `envelope_kind` (crypto `KIND`) | From | Header | Body (besides `schema_version`) |

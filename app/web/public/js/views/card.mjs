@@ -18,10 +18,11 @@ import { srcOf, thumb } from './picture.mjs'   // a stored picture at the size i
 
 const sk = name => raw(sketchSvg(name))
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
-const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6'
+const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
 const act = (card, base, what) => `${base}/cards/${card.id}/${what}`
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
+const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
 /** The version that stands now, as a number. */
 const liveVersion = card => card.version ?? (card.versions?.at(-1)?.n ?? 0) + 1
 /** The card as it was in version n (title, text, options, pictures), or null. */
@@ -89,18 +90,25 @@ function picturesOf(card, base) {
 }
 
 /** The picture of the card, low: one at a time, the others as small ones to pick; a click opens it large on its own
- *  page. A frame of its own, so picking another loads only this. */
+ *  page. A frame of its own, so picking another loads only this. Videos come after the pictures (?pic= counts on):
+ *  one stands on the stage as a player (decrypted to a blob by att.mjs / sw.js; never autoplays), its tile a play mark. */
 export function cardMedia(card, base, at = 1, query = '') {
-  const images = imagesOf(card)
-  if (!images.length) return ''
-  const i = Math.min(Math.max(1, at), images.length), a = images[i - 1]
+  const images = imagesOf(card), all = [...images, ...videosOf(card)]
+  if (!all.length) return ''
+  const i = Math.min(Math.max(1, at), all.length), a = all[i - 1], video = i > images.length
   const here = cardPath(card, base)
   const to = n => `${here}?pic=${n}${query}`
-  const key = pictureKeys(card).get(i - 1)
-  const step = (n, cls, label, d) => (images.length > 1 ? html`<a class="tc-step ${cls}" data-nav href="${to(n)}" data-turbo-action="replace" aria-label="${label}">${icon(d)}</a>` : '')
+  const key = video ? undefined : pictureKeys(card).get(i - 1)
+  const step = (n, cls, label, d) => (all.length > 1 ? html`<a class="tc-step ${cls}" data-nav href="${to(n)}" data-turbo-action="replace" aria-label="${label}">${icon(d)}</a>` : '')
+  const shown = video
+    ? html`<figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure>`
+    : html`<a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" aria-label="Enlarge picture ${i} of ${images.length}: ${a.name}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a, 640)} decoding="async" draggable="false"><span class="tc-zoom">${icon(ZOOM)}</span></a>`
+  const tile = (p, n) => (n >= images.length
+    ? html`<a class="tc-thumb tc-thumb-video" data-nav href="${to(n + 1)}" data-turbo-action="replace" aria-label="Show video ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}">${icon(PLAY)}</a>`
+    : html`<a class="tc-thumb" data-nav href="${to(n + 1)}" data-turbo-action="replace" aria-label="Show picture ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}"><img${srcOf(p, 64)} alt="" loading="lazy" decoding="async" draggable="false" width="48" height="34"></a>`)
   return html`<turbo-frame id="card-media-${card.id}" class="tc-media">
-<div class="tc-stage"><a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" aria-label="Enlarge picture ${i} of ${images.length}: ${a.name}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a, 640)} decoding="async" draggable="false"><span class="tc-zoom">${icon(ZOOM)}</span></a>${step(i > 1 ? i - 1 : images.length, 'is-prev', 'The picture before', ARROW_L)}${step(i < images.length ? i + 1 : 1, 'is-next', 'The next picture', ARROW_R)}</div>
-${images.length > 1 ? html`<div class="tc-thumbs">${images.map((p, n) => html`<a class="tc-thumb" data-nav href="${to(n + 1)}" data-turbo-action="replace" aria-label="Show picture ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}"><img${srcOf(p, 64)} alt="" loading="lazy" decoding="async" draggable="false" width="48" height="34"></a>`)}<span class="tc-where">${i} / ${images.length} · ${a.title || a.name}</span></div>` : html`<div class="tc-thumbs"><span class="tc-where">${a.title || a.name}</span></div>`}
+<div class="tc-stage${video ? ' is-video' : ''}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
+${all.length > 1 ? html`<div class="tc-thumbs">${all.map(tile)}<span class="tc-where">${i} / ${all.length} · ${a.title || a.name}</span></div>` : html`<div class="tc-thumbs"><span class="tc-where">${a.title || a.name}</span></div>`}
 </turbo-frame>`
 }
 
@@ -277,7 +285,8 @@ export function cardPage(card, model, base, { pic = 1, walk = false, error = '',
   const place = old ? null : placeOf(card, model)
   const query = `${walk ? '&walk=1' : ''}${old ? `&v=${old.n}` : ''}`
   const images = imagesOf(old ? { attachments: old.attachments ?? card.attachments } : card)
-  const shownPic = Math.min(Math.max(1, pic), Math.max(1, images.length))
+  const media = images.length + videosOf(old ? { attachments: old.attachments ?? card.attachments } : card).length
+  const shownPic = Math.min(Math.max(1, pic), Math.max(1, media))
   const pageLink = images[shownPic - 1]?.page?.url
   const step = (to, cls, label, d) => (to ? html`<a class="tc-step-card ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${icon(d)}</a>` : html`<span class="tc-step-card ${cls}" aria-hidden="true">${icon(d)}</span>`)
   const form = `card-form-${card.id}`
@@ -293,7 +302,7 @@ ${model.state.speech ? html`<button class="tc-more-item" type="button" data-cont
 ${pageLink ? html`<a class="tc-more-item" href="${pageLink}" target="_blank" rel="noopener noreferrer">${sk('page')}<span>Open the page</span></a>` : ''}
 </div></details>
 </nav>
-<article class="tc-card" id="card-${card.id}" data-id="${card.id}" data-kind="${card.kind}" data-urgency="${card.urgency}" aria-labelledby="card-title-${card.id}"${images.length ? raw(' data-pictures') : ''}>
+<article class="tc-card" id="card-${card.id}" data-id="${card.id}" data-kind="${card.kind}" data-urgency="${card.urgency}" aria-labelledby="card-title-${card.id}"${media ? raw(' data-pictures') : ''}>
 ${cardLeft(card, model, self, { version, pic: shownPic, query })}
 <div class="tc-right">
 ${cardAnswer(card, model, base, { error, version, pic: shownPic })}

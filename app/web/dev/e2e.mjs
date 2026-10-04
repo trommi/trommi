@@ -127,6 +127,20 @@ try {
   await A.until(`document.getElementById('row-${picCard}')`, 'picture card row')
   await A.until(`[...document.querySelectorAll('#row-${picCard} img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on the Desk'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
 
+  // ---- a card with a video: uploaded encrypted like a picture; on the card a <video> plays the decrypted blob ----
+  const webm = fs.readFileSync(new URL('../public/mock/files/clip.webm', import.meta.url))
+  const vref = await agent.uploadAttachment(webm, { file_name: 'ablauf.webm', media_type: 'video/webm' })
+  const vidCard = await agent.sendCard({ title: 'Dieser Ablauf?', body: 'Video anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }], attachments: [vref] })
+  await A.until(`document.getElementById('row-${vidCard}')`, 'video card row')
+  const vnr = await A.js(`return trommi.model().byCard.get('${vidCard}').number`)
+  await A.js(`trommi.router.visit('/q/${vnr}')`)
+  await A.until("document.querySelector('#cardpage .tc-video video[controls][playsinline]')", 'video player on the card').then(() => check(true, 'a video card shows a <video controls playsinline>'), e => check(false, e.message))
+  await A.until("(v => v && v.readyState >= 1 && v.duration > 2.5)(document.querySelector('#cardpage .tc-video video'))", 'video decrypted, its metadata read', 15000).then(() => check(true, 'encrypted video decrypted: metadata (3 s) loaded'), e => check(false, e.message))
+  check(await A.js("const v = document.querySelector('#cardpage .tc-video video'); return v.paused && !v.autoplay"), 'the video does not play by itself')
+  await A.shot('e2e-4b-video-card.png')
+  await A.js("trommi.router.visit('/')")
+  await A.until(`document.getElementById('row-${cardId}')`, 'back on the Desk')
+
   // ---- A answers with the row's tile; the agent gets the command ----
   if (HUB_DOWN) { execSync(HUB_DOWN, { stdio: 'ignore' }); await sleep(500) }
   t0 = Date.now()
