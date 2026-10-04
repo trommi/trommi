@@ -6,7 +6,7 @@
 
 
 // ---- html: the one escaping helper ----
-// The one escaping helper of the server-rendered board (docs/turbo.md).
+// The one escaping helper of the server-rendered board.
 //
 //   html`<p title="${card.title}">${card.body}</p>`
 //
@@ -293,7 +293,7 @@ const SKETCH = {
   go: [[[4.4, 12.2], [11, 11.7], [19.2, 12.1]], [[14.2, 7], [19.6, 12], [14.4, 17.2]]],
   // the theme: a moon for the dark one, a sun for the light one
   moon: [[[15.6, 3.8], [9, 5.6], [5.4, 11.6], [7.2, 18], [13.4, 20.6], [19.6, 17.6], [14.4, 15.6], [11.6, 10.6], [13, 5.8], [15.9, 4.2]]],
-  // Push on this device (js/push.js): a bell, its rim and its clapper.
+  // Push on this device: a bell, its rim and its clapper.
   bell: [[[4.6, 17.4], [6.8, 14.6], [7.2, 8.8], [9.8, 5.1], [12, 4.2], [14.2, 5.1], [16.8, 8.8], [17.2, 14.6], [19.4, 17.4]], [[4.2, 17.6], [12, 17.4], [19.8, 17.7]], [[10.2, 19.6], [12, 21.1], [13.8, 19.6]]],
   sun: [
     [[12, 7.6], [15.6, 9], [16.4, 12.4], [14.6, 15.8], [11.4, 16.4], [8.2, 14.6], [7.6, 11.2], [9.6, 8.2], [12.4, 7.5]],
@@ -613,7 +613,7 @@ export const sk = (name, cls) => raw(sketchSvg(name, cls))
 // ---- the board's words (one place; the old client has them in ui.mjs) ----
 export const WORDS = {
   later: 'Snooze', wake: 'Wake up', ack: 'Acknowledge', what: 'What??', trust: 'I don’t give a duck', revise: 'Revise',
-  revising: 'In revision', shred: 'Shred', walk: 'Next', desk: 'Desk', takeBack: 'Take back',
+  revising: 'In revision', shred: 'Shred', walk: 'Rapid fire', desk: 'Desk', takeBack: 'Take back',
 }
 export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
 
@@ -1170,8 +1170,132 @@ controller('fit', class extends Controller {
   disconnect() { fitting().unobserve(this.element) }
 })
 
+// ---- the page curl (his pick, 4 October: "the back of the Desk") ----
+// The Desk's bottom-right corner is lifted a little, the sketch paper showing under it; the Sketchpad is the back of
+// that sheet. Hover lifts it more, a drag peels it along a diagonal fold (the flap shaded, a shadow under it), a tap
+// or a pull past ~28 % turns the page: to /scribble-board from the Desk, to the Desk from the Scribble Board (the same corner
+// there). Esc turns back from the Sketchpad; P turns either way (ui.mjs keys). Markup: curlHTML(side) on both pages;
+// controller "curl" draws over the page's main area (fixed, in px of that area). Reduced motion: no peel, a fade.
+export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><svg class="curl-svg" aria-hidden="true"><defs><pattern id="curl-dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" class="curl-paper"/><circle cx="11" cy="11" r="1.1" class="curl-dot"/></pattern><pattern id="curl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(38)"><path d="M0,0 V5" class="curl-hatch-line"/></pattern><clipPath id="curl-clip"><path class="curl-clip-p"/></clipPath></defs><path class="curl-under"/><g class="curl-sketch" clip-path="url(#curl-clip)"><path class="curl-ink"/></g><path class="curl-cast"/><path class="curl-flap"/><path class="curl-flap-tone"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
+const CURL_REST_WIDE = 50, CURL_REST_PHONE = 56
+const restOf = () => (innerWidth < 861 ? CURL_REST_PHONE : CURL_REST_WIDE)
+function clipHalf(poly, c, keepBelow) {
+  const f = ([x, y]) => (keepBelow ? c - x - y : x + y - c), out = []
+  for (let i = 0; i < poly.length; i++) {
+    const a = poly[i], b = poly[(i + 1) % poly.length], fa = f(a), fb = f(b)
+    if (fa >= 0) out.push(a)
+    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]) }
+  }
+  return out
+}
+controller('curl', class extends Controller {
+  static values = { side: String, to: String }
+  connect() {
+    this.svg = this.element.querySelector('.curl-svg'); this.grab = this.element.querySelector('.curl-grab')
+    this.under = this.svg.querySelector('.curl-under'); this.ink = this.svg.querySelector('.curl-ink'); this.shade = this.svg.querySelector('.curl-shade'); this.flap = this.svg.querySelector('.curl-flap')
+    this.p = 0; this.drag = null; this.calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+    document.documentElement.dataset.curl = this.sideValue
+    const on = (t, n, f, o) => { t.addEventListener(n, f, o); (this.offs ??= []).push(() => t.removeEventListener(n, f, o)) }
+    on(window, 'resize', () => this.place())
+    on(this.grab, 'pointerenter', () => { if (!this.drag && !this.turning) this.tween(64, 220) })
+    on(this.grab, 'pointerleave', () => { if (!this.drag && !this.turning) this.tween(restOf(), 260) })
+    on(this.grab, 'pointerdown', e => { if (this.turning) return; this.grab.setPointerCapture(e.pointerId); cancelAnimationFrame(this.anim); this.drag = { x: e.clientX, y: e.clientY, moved: false } })
+    on(this.grab, 'pointermove', e => {
+      if (!this.drag) return
+      if (Math.hypot(e.clientX - this.drag.x, e.clientY - this.drag.y) > 6) this.drag.moved = true
+      if (!this.drag.moved || this.calm) return
+      const r = this.box; this.p = Math.max(restOf(), ((r.right - e.clientX) + (r.bottom - e.clientY)) / 2); this.render()
+    })
+    on(this.grab, 'pointerup', () => {
+      const was = this.drag; this.drag = null; if (!was) return
+      if (!was.moved || this.p > Math.min(this.box.width, this.box.height) * 0.28) this.turn(); else this.tween(restOf(), 300)
+    })
+    on(this.grab, 'keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.turn() } })
+    on(document, 'trommi:curl', () => this.turn())
+    on(document, 'keydown', e => {
+      if (e.key !== 'Escape' || this.sideValue !== 'pad' || e.defaultPrevented) return
+      const t = e.target; if (t?.closest?.('input, textarea, select, [contenteditable], dialog[open], .memo')) return
+      this.turn()
+    })
+    this.place()
+    // arriving from the other side: the sheet settles; else the corner lifts a little
+    let arrived = false; try { arrived = sessionStorage.getItem('trommi-curl') === '1'; sessionStorage.removeItem('trommi-curl') } catch {}
+    if (this.calm) { this.p = restOf(); this.render(); if (arrived) { this.element.parentElement?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 200 }) } return }
+    this.tween(restOf(), arrived ? 380 : 500)
+  }
+  disconnect() { cancelAnimationFrame(this.anim); for (const off of this.offs ?? []) off(); if (document.documentElement.dataset.curl === this.sideValue) delete document.documentElement.dataset.curl }
+  /** The overlay stands over the page's main area (the Desk's <main id="inbox"> or the Scribble Board's). */
+  place() {
+    const main = this.element.closest('main') ?? document.querySelector('main')
+    // (inside what is visible: the main area without its scroll bar, never beyond the window's right or bottom edge)
+    const r = main.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
+    const top = Math.max(r.top, 0), right = Math.min(r.left + (main.clientWidth || r.width), vw), h = Math.min(r.bottom, vh) - top, w = right - r.left
+    this.box = { left: r.left, top, width: w, height: h, right, bottom: top + h }
+    Object.assign(this.element.style, { left: `${r.left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` })
+    this.svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
+    // the memo note keeps its place beside or above the corner, also when a scroll bar takes the window's edge
+    document.documentElement.style.setProperty('--curl-edge', `${Math.max(0, vw - right)}px`)
+    this.render()
+  }
+  render() {
+    // Drawn, not flat (his word, 4 October): the fold runs at a skew (about 30°, slightly curved), the flap is outlined
+    // in ink with pen hatching at its fold, its shadow on the page is hatching too; under it the other side's paper.
+    // p: how far the corner is lifted. The fold meets the bottom edge at a = 1.4 p from the corner, the right edge at
+    // b = 0.8 p; the flap's tip is the corner mirrored over the fold.
+    const W = this.box.width, H = this.box.height, p = this.p, sel = c => this.svg.querySelector(c), f = n => n.toFixed(1)
+    this.svg.style.display = p > 0 ? '' : 'none'
+    if (p <= 0) return
+    const a = p * 1.4, b = p * 0.8
+    const F1 = [W - a, H], F2 = [W, H - b], C = [W, H]
+    const dx = F2[0] - F1[0], dy = F2[1] - F1[1], len2 = dx * dx + dy * dy
+    const t = ((C[0] - F1[0]) * dx + (C[1] - F1[1]) * dy) / len2, foot = [F1[0] + t * dx, F1[1] + t * dy]
+    const T = [2 * foot[0] - C[0], 2 * foot[1] - C[1]]
+    const mid = [(F1[0] + F2[0]) / 2, (F1[1] + F2[1]) / 2], nx = -dy / Math.sqrt(len2), ny = dx / Math.sqrt(len2), bow = Math.min(14, p * 0.08)
+    const Q = [mid[0] + nx * bow, mid[1] + ny * bow]
+    const fold = `M${f(F1[0])},${f(F1[1])} Q${f(Q[0])},${f(Q[1])} ${f(F2[0])},${f(F2[1])}`
+    const whole = a >= W || b >= H
+    const under = whole ? `M0,0 H${W} V${H} H0 Z` : `${fold} L${W},${H} Z`
+    sel('.curl-under').setAttribute('d', under); sel('.curl-clip-p').setAttribute('d', under)
+    // the flap: from the fold out to its tip, edges with a little wobble of the pen
+    const e1 = [(F2[0] + T[0]) / 2 + bow * 0.5, (F2[1] + T[1]) / 2 - bow * 0.3], e2 = [(F1[0] + T[0]) / 2 - bow * 0.3, (F1[1] + T[1]) / 2 + bow * 0.5]
+    const flap = `${fold} Q${f(e1[0])},${f(e1[1])} ${f(T[0])},${f(T[1])} Q${f(e2[0])},${f(e2[1])} ${f(F1[0])},${f(F1[1])} Z`
+    sel('.curl-flap').setAttribute('d', flap)
+    sel('.curl-cast').setAttribute('d', flap); sel('.curl-cast').setAttribute('transform', `translate(${f(-Math.min(9, p * 0.06))},${f(-Math.min(7, p * 0.05))})`)
+    const k = 0.24, B1 = [F1[0] + (T[0] - F1[0]) * k, F1[1] + (T[1] - F1[1]) * k], B2 = [F2[0] + (T[0] - F2[0]) * k, F2[1] + (T[1] - F2[1]) * k], QB = [Q[0] + (T[0] - mid[0]) * k, Q[1] + (T[1] - mid[1]) * k]
+    sel('.curl-flap-tone').setAttribute('d', `${fold} L${f(B2[0])},${f(B2[1])} Q${f(QB[0])},${f(QB[1])} ${f(B1[0])},${f(B1[1])} Z`)
+    sel('.curl-fold').setAttribute('d', fold)
+    if (this.sideValue === 'desk' && !this.sketched) {
+      this.sketched = true
+      const x = W - 92, y = H - 58
+      sel('.curl-ink').setAttribute('d', `M${x},${y + 30} q10,-18 22,-6 t24,-4 t22,8 M${x + 18},${y + 46} q16,-3 34,1 M${x + 52},${y + 18} q7,-9 13,0 q-6,8 -13,0`)
+    }
+  }
+  tween(to, ms, done) {
+    cancelAnimationFrame(this.anim)
+    const from = this.p, t0 = performance.now()
+    const step = t => { const k = Math.min(1, (t - t0) / ms), e = k < 0.5 ? 2 * k * k : 1 - Math.pow(-2 * k + 2, 2) / 2; this.p = from + (to - from) * e; this.render(); if (k < 1) this.anim = requestAnimationFrame(step); else done?.() }
+    this.anim = requestAnimationFrame(step)
+  }
+  /** Turn the sheet: it peels over the whole area, then the other side is the page. */
+  turn() {
+    if (this.turning) return
+    this.turning = true
+    const go = () => { try { sessionStorage.setItem('trommi-curl', '1') } catch {} ; window.Turbo?.visit ? window.Turbo.visit(this.toValue) : location.assign(this.toValue) }
+    if (this.calm) { const main = this.element.closest('main'); main?.animate?.([{ opacity: 1 }, { opacity: 0 }], { duration: 160, fill: 'forwards' }); return setTimeout(go, 160) }
+    this.place()
+    this.tween(this.box.width + this.box.height + 40, 620, go)
+  }
+})
+
 /** Wires the page (app.mjs boot): the controllers, times that keep themselves current, the tile that was tapped. */
 export function startUi() {
+  // A test (his word, 4 October): ?subcards=1 shows a main's subs as small cards, fanned like the stack they fold into;
+  // kept for the tab, ?subcards=0 ends it.
+  try {
+    const q = new URLSearchParams(location.search).get('subcards')
+    if (q !== null) { if (q === '1') sessionStorage.setItem('trommi-subcards', '1'); else sessionStorage.removeItem('trommi-subcards') }
+    if (sessionStorage.getItem('trommi-subcards') === '1') document.documentElement.dataset.subcards = '1'
+  } catch {}
   stimulus.start()
   setInterval(() => { for (const n of document.querySelectorAll('[data-ts]')) n.textContent = ago(Number(n.dataset.ts)) }, 30000)
   document.addEventListener('turbo:submit-start', e => { e.detail.formSubmission.submitter?.classList.add('is-picked') })
@@ -1692,7 +1816,7 @@ controller('title', class extends Controller {
 })
 
 // ---- controller "pops" ----
-// Small things that open right at their control (docs/turbo.md): <details class="t-pick"> with its content
+// Small things that open right at their control: <details class="t-pick"> with its content
 // lying over the page (rename, the drawings, a choice of desk or main agent, the phone's sheet of a line).
 // The hub renders them; this only does what <details> does not do by itself:
 //   - Escape or a click beside it closes; opening one closes the others; a "Cancel"/"Close" (data-pop-close) closes
@@ -1856,7 +1980,7 @@ controller('assetthumb', class extends Controller {
 })
 
 // ---- session edit ----
-// What the human changes on a session, as small forms that stand right where they are used (docs/turbo.md):
+// What the human changes on a session, as small forms that stand right where they are used:
 // rename (a form under the name: Enter saves, Escape closes), the drawing (a grid under the mark, fetched when
 // it is first opened). No veil, no dialog: each is a <details> whose content lies over the page; the controller
 // "pops" (controller "pops") closes it on Escape or a click beside it and puts the keyboard in the field.
@@ -1971,13 +2095,13 @@ const LAYOUT = [
     { id: 'go.desk', keys: ['g d', 'g i'], does: 'Desk', verb: 'go to the Desk' },
     { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
-    { id: 'go.walk', keys: ['g f'], does: 'Next, please', verb: 'Next, please: every open question, one after the other' },
+    { id: 'go.walk', keys: ['g f'], does: 'Rapid fire', verb: 'Rapid fire: every open question, one after the other' },
     // 1…9 alone are the desks'; G then 1…9 are the sessions'.
     { id: 'go.session', keys: ['g 1…9'], does: 'session 1 to 9', verb: 'go to that session of the sidebar', needs: 'sidebar' },
     { id: 'desk.switch', keys: ['1…9'], does: 'desk 1 to 9', verb: 'switch to that desk', needs: 'desks' },
     { id: 'session.next', keys: ['.'], does: 'next session', needs: 'sidebar' },
     { id: 'session.prev', keys: [','], does: 'previous session', needs: 'sidebar' },
-    { id: 'pen', keys: ['p'], does: 'the Whiteboard, with the pen in hand' },
+    { id: 'pen', keys: ['p'], does: 'turn the page: the Scribble Board on the back of the Desk, and back' },
     { id: 'rail', keys: ['['], does: 'fold the sidebar to a rail, or open it', needs: 'sidebar' },
     { id: 'back', keys: ['u', 'Backspace'], does: 'undo: the newest toast\'s Undo' },
     { id: 'theme', keys: ['t'], does: 'light or dark' },
@@ -2226,7 +2350,7 @@ function start(signal) {
     'go.session': n => { press(sessions()[n - 1]) },
     'session.next': () => sessionStep(1),
     'session.prev': () => sessionStep(-1),
-    'pen': () => (document.getElementById('whiteboard') ? document.dispatchEvent(new CustomEvent('trommi:pen')) : go(`${base()}/whiteboard`)),
+    'pen': () => (document.querySelector('[data-controller~="curl"]') ? document.dispatchEvent(new CustomEvent('trommi:curl')) : go(`${base()}/scribble-board`)),
     'rail': () => (matchMedia('(min-width: 861px)').matches ? press($('.rail-fold')) : false),   // the sidebar's "|<" (rail_controller.js)
     'back': () => backNote(),
     'theme': () => {
@@ -2381,7 +2505,7 @@ ${[...card.options].sort((a, b) => isYes(a) - isYes(b)).map(o => {
       const lead = isYes(o), advised = advisedKeys(card).includes(o.key)
       const cls = `is-thumb${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}${worded ? ' is-short' : ''}${advised ? ' is-advised' : ''}`
       const title = advised ? 'The agent recommends this' : [size === 'none' && !bare ? o.label : '', o.detail].filter(Boolean).join(': ')
-      return tile(cls, lead ? 'yes' : 'no', worded ? shortOf(o) : size === 'none' ? '' : o.label, { value: o.key, title, aria: o.label, short: worded })
+      return tile(cls, lead ? 'yes' : 'no', worded ? shortOf(o) : size === 'none' && !bare ? '' : o.label, { value: o.key, title, aria: o.label, short: worded })
     })}</form>`
   }
   // More than two ways: one tile, "Choose". It is a link to the card's own page, where every option stands.
@@ -2391,13 +2515,19 @@ ${[...card.options].sort((a, b) => isYes(a) - isYes(b)).map(o => {
 
 const knockAttr = card => (isKnock(card) ? raw(' data-knock') : '')
 /** One open question as a row. from: the session that asked. error: what went wrong with the last answer. */
+// The pull-tag of Later (a paper tag on its string): the selection bar's Later (desk.mjs, desk.css .sel-tag).
+export const LATER_TAG = raw('<svg viewBox="0 0 44 84" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M8 28 L36 27 L38 76 C38 80 35 82 32 82 L12 82.5 C9 82.5 6.6 80 6.8 77 Z" class="tag-paper"/><circle cx="22" cy="35" r="3.2"/><path d="M15 48 L29 47.6 M15 58 L29 57.6 M15 68 L25 67.7" class="tag-lines"/></svg>')
 export function deskRow(card, model, base, { error = '' } = {}) {
   const from = model.byAgent.get(card.agent)
   const assets = model.state.assets
-  const about = [cardNote(card), card.unsnoozed && !card.snoozed_until ? 'Back from snooze' : '', card.urgency_reason].filter(Boolean).join(' · ')
-  const words = plain(card.body, assets)
+  // (with the card's own teaser, the urgency's reason stays on the card's page: the teaser says what matters)
+  const about = [cardNote(card), card.unsnoozed && !card.snoozed_until ? 'Back from snooze' : '', card.teaser ? '' : card.urgency_reason].filter(Boolean).join(' · ')
+  // (the card's own teaser, two lines for the Desk; without one, the first lines of its body)
+  const words = card.teaser || plain(card.body, assets)
   const extra = carries(card, assets)
   const images = (card.attachments ?? []).filter(a => kindOf(a) === 'image')
+  // (Test, 4 October: the pictures and videos as a small fan beside the title; no "2 pictures" line.)
+  const media = [...images, ...(card.attachments ?? []).filter(a => kindOf(a) === 'video')]
   const knock = isKnock(card)
   const quiet = knock ? '' : card.kind === 'info' ? html`<span class="inbox-whenever inbox-toread" title="To read: nothing to decide" role="img" aria-label="To read">${sk('page')}</span>`
     : card.urgency === 'low' ? html`<span class="inbox-whenever" title="Whenever: nothing waits on this" role="img" aria-label="Whenever">${sk('whenever')}</span>` : ''
@@ -2406,15 +2536,16 @@ export function deskRow(card, model, base, { error = '' } = {}) {
   return html`<article class="inbox-row" id="row-${card.id}"${knockAttr(card)} tabindex="-1" data-id="${card.id}" data-urgency="${card.urgency}"${card.kind === 'info' ? raw(' data-kind="info"') : ''}${from ? html` data-from="${from.id}" style="--hue:${from.hue}"` : ''}>
 ${from ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
 <div class="inbox-content">
-<header class="inbox-row-head">${knock ? html`<span class="inbox-tab">${sk('knock')}${knockWord(card)}</span>` : ''}</header>
-<a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}: open it">${from ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit">${card.title}</strong>${about || words ? html`<span class="inbox-body">${about ? html`<span class="inbox-body-about">${about}</span>` : ''}${words ? html`<span class="inbox-body-text">${about ? ` · ${words}` : words}</span>` : ''}</span>` : ''}</a>
-<span class="inbox-when" title="${cardNr(card)} · asked ${ago(card.created)}">${copyButton(card)}<span class="inbox-nr">${cardNr(card)}</span><form class="inbox-tabs" method="post" action="${act(card, base, 'snooze')}"><input type="hidden" name="stay" value="1">
+<header class="inbox-row-head"></header>
+${media.length ? html`<a class="inbox-fan" data-nav href="${href}${images.length ? '/p/1' : ''}" aria-label="${media.length === 1 ? 'Look at the picture' : `Look at ${media.length} pictures and videos`}">${media.slice(0, 3).map(a => kindOf(a) === 'image' ? html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">` : html`<video src="${a.url}" muted playsinline preload="metadata"></video>`)}</a>` : ''}
+${from ? html`<button class="row-mark" type="button" style="--hue:${from.hue}" title="${from.name}: select (Shift: a range)" aria-label="Select: ${card.title}" aria-pressed="false" data-select>${markArt(from)}<span class="row-check" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M6.4 12.6Q8.8 15.1 10.4 17Q14 11.4 18.2 7.2"/></svg></span></button>` : ''}<a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}${from ? ` · ${from.name}` : ''}: ${card.title}">${from ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit">${knock ? html`<span class="row-urg is-${card.urgency === 'critical' ? 'block' : 'knock'}" role="img" title="${knockWord(card)}" aria-label="${knockWord(card)}">${card.urgency === 'critical' ? raw(handSvg()) : sk('knock')}</span>` : ''}${card.title}</strong>${from ? html`<span class="row-meta"><span class="row-meta-mark">${raw(doodleSvg(from.mark))}</span><span class="row-meta-who">${from.name}</span><span class="row-meta-dot">·</span>${agoSpan(card.created, 'row-meta-ago')}</span>` : ''}${about || words ? html`<span class="inbox-body">${about ? html`<span class="inbox-body-about">${about}</span>` : ''}${words ? html`<span class="inbox-body-text">${about ? ` · ${words}` : words}</span>` : ''}</span>` : ''}</a>
+<span class="inbox-when" title="${cardNr(card)} · asked ${ago(card.created)}"><form class="inbox-tabs" method="post" action="${act(card, base, 'snooze')}"><input type="hidden" name="stay" value="1">
 ${tab('inbox-later', 'snooze', WORDS.later, `${WORDS.later}: put this question off; it waits for you below`, act(card, base, 'snooze'))}
 ${card.kind !== 'permission' ? tab('inbox-revise', 'reverse', WORDS.revise, `${WORDS.revise}: hand it back to the session at once; it returns reworked`, act(card, base, 'revise'), true) : ''}
 ${card.kind === 'decision' ? tab('inbox-trust', 'duck', WORDS.trust, trustTip, act(card, base, 'trust'), true) : ''}
 ${card.kind !== 'permission' ? tab('inbox-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw this away unanswered. The session is told; it will not ask again`, act(card, base, 'shred')) : ''}
 </form>${agoSpan(card.created, 'inbox-ago')}</span>
-<p class="inbox-byline">${images.length ? html`<a class="inbox-thumb" data-nav href="${href}/p/1" aria-label="${images.length === 1 ? `Enlarge ${images[0].name}` : `Look at ${images.length} pictures`}">${images.slice(0, 3).map(a => html`<img${srcOf(a, 56)} alt="" loading="lazy" decoding="async" width="56" height="42">`)}</a>` : ''}${extra.length ? html`<span class="inbox-carries" title="This question carries ${extra.map(x => x.text).join(', ')}">${extra.map(x => html`<span>${sk(x.icon)}${x.text}</span>`)}</span>` : ''}${quiet}${from ? html`<span class="inbox-from">${smallMark(from)}<span>${from.name}</span></span><span class="inbox-sep"> · </span>` : ''}</p>
+<p class="inbox-byline">${quiet}${from ? html`<span class="inbox-from">${smallMark(from)}<span>${from.name}</span></span><span class="inbox-sep"> · </span>` : ''}</p>
 </div>
 ${tiles(card, base)}
 <p class="inbox-error inbox-row-error" role="alert"${error ? '' : raw(' hidden')}>${error}</p>
@@ -2484,7 +2615,7 @@ export function galleryItems(model, base = '') {
     const agent = model.byAgent.get(c.agent)
     if (!agent) continue
     const pics = (c.attachments ?? []).filter(a => kindOf(a) === 'image')
-    if (pics.length) out.push({ id: c.id, type: 'image', title: c.title, agent, ts: c.created ?? 0, url: pics[0].url, name: pics[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}/p/1`, from: `Nr. ${c.number}`, more: pics.length })
+    if (pics.length) out.push({ id: c.id, type: 'image', title: c.title, agent, ts: c.created ?? 0, url: pics[0].url, name: pics[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}/p/1`, from: `Nr. ${c.number}`, more: pics.length, urls: pics.slice(0, 3).map(a => a.url) })
     // Its videos stand on the card after the pictures (card.mjs cardMedia): the tile opens the card at the first one.
     const vids = (c.attachments ?? []).filter(a => kindOf(a) === 'video')
     if (vids.length) out.push({ id: `${c.id}-v`, type: 'video', title: c.title, agent, ts: c.created ?? 0, url: vids[0].url, name: vids[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}?pic=${pics.length + 1}`, from: `Nr. ${c.number}`, more: vids.length })
