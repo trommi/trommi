@@ -173,6 +173,26 @@ try {
   const bytes = fileCmd ? await agent.fetchAttachment(fileCmd.content.attachments[0]).catch(() => null) : null
   check(bytes?.length === 4096 && bytes[0] === 7, `a composer file reaches the agent whole (${bytes?.length ?? 'none'} bytes)`)
 
+  // ---- a note: it lies on the Notes stack, plain; sent from there it reaches the agent marked as a note and stands in
+  //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
+  const noteText = 'Notiz e2e: Backup vor der Migration'
+  await A.js(`const now = Date.now(); await trommi.client.saveMemo({ text: '${noteText}', x: 0, y: 0, place: 'stack', desk_id: trommi.board.desk ?? 'main', created_at: now, updated_at: now })`)
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelector('[data-stack=notes]:not(.is-empty) .stack-stamp-num')?.textContent === '1'", 'NOTES 1 on the Desk').then(() => check(true, 'a new note lies on the Notes stack'), e => check(false, e.message))
+  check(await A.js("return !document.querySelector('#memo-open .memo-count:not(.memo-count-phone)')"), 'the memo button carries no count of its own')
+  await A.js("document.querySelector('[data-stack=notes] .inbox-stack-head').click()")
+  await A.until("document.querySelector('[data-stack=notes].is-open .note-send select')", 'Notes stack open')
+  await A.js(`window.__bubbled = false; new MutationObserver(() => { if ([...document.querySelectorAll('.msg-user .bubble')].some(b => b.textContent.includes('${noteText}'))) window.__bubbled = true }).observe(document.documentElement, { childList: true, subtree: true }); const f = document.querySelector('[data-stack=notes] .note-send'); f.querySelector('select').value = '${sid}'; f.requestSubmit(f.querySelector('button'))`)
+  await A.js(`trommi.router.visit('/s/${sid}')`)
+  const tn = Date.now(); let noteCmd = null
+  while (!noteCmd && Date.now() - tn < 15000) { noteCmd = commands.find(c => c.command === 'message' && c.content?.text === noteText); await sleep(50) }
+  check(/^[0-9a-f]{32}$/.test(noteCmd?.content?.memo?.object_id ?? '') && Number.isSafeInteger(noteCmd?.content?.memo?.written_at), 'a sent note reaches the agent with memo { object_id, written_at }')
+  await A.until(`[...document.querySelectorAll('.msg-note p')].some(p => p.textContent.includes('${noteText}'))`, 'taped note in the chat').then(() => check(true, 'the sent note stands taped in the session chat'), e => check(false, e.message))
+  await sleep(1500)
+  check(await A.js(`return !window.__bubbled && [...document.querySelectorAll('.msg-note p')].some(p => p.textContent.includes('${noteText}'))`), 'the taped note never turns into a bubble (echo -> hub copy)')
+  check(await A.js("return !trommi.model().state.memos.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the Notes stack')
+  await A.shot('e2e-note-taped.png')
+
   // ---- a second human device joins ----
   await A.js("trommi.router.visit('/devices')")
   await A.until("document.querySelector('form[action=\"/pair\"] input[value=human]')", 'devices')

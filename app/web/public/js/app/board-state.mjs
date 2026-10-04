@@ -274,6 +274,8 @@ export class BoardState {
       if (c.details) msg.details = c.details
       if (c.html) msg.html = c.html
       if (c.published_object_id) { if (this.model.published.get(c.published_object_id)?.object_state === 'closed') continue; msg.published = c.published_object_id }   // a revoked asset leaves the conversation
+      // (A note of his sent to the session (content.memo): it stands in the conversation as the note, taped on.)
+      if (c.memo) msg.memo = { written: c.memo.written_at ?? null }
       if (c.hand_back) msg.handback = true
       if (c.explain) msg.explain = true
       if (c.present_card) msg.present = true

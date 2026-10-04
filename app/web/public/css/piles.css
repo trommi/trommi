@@ -163,3 +163,30 @@
    and word upright. Switched on by the class .is-straight on .stack-tabs (server/views/stacks.mjs: STRAIGHT). */
 .inbox-stacks.stack-tabs.is-straight .inbox-stack .inbox-stack-head { rotate: 0deg; border-radius: 6px; }
 .inbox-stacks.stack-tabs.is-straight .stack-stamp.stack-tab-stamp[data-stamp], .inbox-stacks.stack-tabs.is-straight .stack-tab-stamp > * { rotate: 0deg; transform: none; }
+
+/* ---- The Notes stack (views/stacks.mjs 'notes'): his notes as plain slips of the memo's yellow paper, no tape (the tape
+   is what a note gets when it is sent: css/session.css .msg-note). A line: the words (open to write), when, the session
+   it goes to with Send, Delete. ---- */
+.inbox-stacks .inbox-stack .inbox-pile-item.is-note { --note-paper: #fbeaa0; --note-ink: #3b300d; --note-muted: #6a5d24; border-color: color-mix(in srgb, #8a6d14 55%, transparent); background: var(--note-paper); color: var(--note-ink); }
+:root[data-theme="dark"] .inbox-stacks .inbox-stack .inbox-pile-item.is-note { --note-paper: #d9c35f; --note-ink: #231c06; --note-muted: #4d4214; border-color: #a58c2c; }
+.inbox-stacks .note-line > form { display: contents; }
+.inbox-stacks .note-line .note-open-form { display: block; flex: 1 1 auto; min-width: 0; }
+.inbox-stacks .note-open { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: 36px; padding: 0; border: 0; background: none; color: var(--note-ink); font: inherit; text-align: left; cursor: pointer; }
+.inbox-stacks .note-open strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.inbox-stacks .note-open .sketch { flex: none; width: 17px; height: 17px; color: var(--note-muted); }
+.inbox-stacks .note-line .inbox-revising-tail { flex: none; color: var(--note-muted); font-size: var(--t-xs); }
+.inbox-stacks .note-line .inbox-revising-tail * { color: inherit; }
+.inbox-stacks .note-line .note-send { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.inbox-stacks .note-line .note-to select { max-width: 150px; height: 28px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--note-ink) 30%, transparent); border-radius: 5px; background: color-mix(in srgb, #fff 45%, var(--note-paper)); color: var(--note-ink); font: 500 var(--t-xs)/1 var(--font); }
+.inbox-stacks .note-line .inbox-takeback, .inbox-stacks .note-new-go { color: var(--note-muted, var(--muted)); }
+.inbox-stacks .note-line .note-send-go { color: var(--note-ink); font-weight: 700; }
+.inbox-stacks .note-line .inbox-takeback:hover { color: var(--note-ink); }
+.inbox-stacks .note-new { margin: 0 0 3px; }
+.inbox-stacks .note-new-go { min-height: 30px; padding: 0 2px; border: 0; background: none; font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.inbox-stacks .note-new-go:hover { color: var(--fg); }
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+@container rows (max-width: 600px) {
+  .inbox-stacks .note-line { flex-wrap: wrap; row-gap: 0; padding-bottom: 4px; }
+  .inbox-stacks .note-line .note-open-form { flex-basis: 100%; }
+  .inbox-stacks .note-line .inbox-revising-tail { margin-right: auto; }
+}

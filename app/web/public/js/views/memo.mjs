@@ -70,12 +70,14 @@ export function memoOpener(model, base, scope = null) {
   const put = away(model, scope), n = put.length
   // (on a session's page a new note belongs to it)
   const here = scope ? html`<input type="hidden" name="session" value="${scope}">` : ''
-  const phoneN = n + out(model, scope).filter(m => m.place === 'float').length   // on a phone a floating note waits at the button too (css/turbo.css)
+  // (Put-away notes are counted by the Notes stack on the Desk (views/stacks.mjs), not here. On a phone a floating note
+  //  waits at the button: that one is counted, css/turbo.css.)
+  const phoneN = out(model, scope).filter(m => m.place === 'float').length
   const title = `${to ? `Memo to ${to.name}` : 'Memo: a note to the crowned session'} ( / )${n ? ` · ${n === 1 ? '1 note' : `${n} notes`} put away` : ''}`
   const words = m => m.text.trim().replace(/\s+/g, ' ').slice(0, 120) || (m.attachments?.length ? `${m.attachments.length} attached` : 'Empty note')
   // (A note left floating on a wide screen is listed on a phone too: there it is not out by itself.)
   const line = (m, float) => html`<form method="post" action="${base}/memos/${m.id}/open"${float ? raw(' class="memo-away-float"') : ''}><button class="memo-away-line" type="submit" role="menuitem" data-memo="${m.id}" title="Open the note">${sk('page')}<span>${words(m)}</span></button></form>`
-  return html`<div class="memo-new" id="memo-new"><form method="post" action="${base}/memos">${here}<button class="icon-btn quick-open memo-open memo-open-free" id="memo-open" type="submit" data-action="click->memos#open" aria-haspopup="${n ? 'menu' : 'dialog'}" aria-expanded="false"${n ? html` data-draft data-count="${n}"` : ''} title="${title}" aria-label="${title}">${STICKY}${phoneN ? html`<b class="memo-count memo-count-phone">${phoneN}</b>` : ''}${n ? html`<b class="memo-count">${n}</b>` : ''}</button></form>
+  return html`<div class="memo-new" id="memo-new"><form method="post" action="${base}/memos">${here}<button class="icon-btn quick-open memo-open memo-open-free" id="memo-open" type="submit" data-action="click->memos#open" aria-haspopup="${n ? 'menu' : 'dialog'}" aria-expanded="false" title="${title}" aria-label="${title}">${STICKY}${phoneN ? html`<b class="memo-count memo-count-phone">${phoneN}</b>` : ''}</button></form>
 <div class="memo-away" id="memo-away" role="menu" aria-label="Memos that were put away" data-action="turbo:submit-start->memos#shut" hidden><form method="post" action="${base}/memos">${here}<button class="memo-away-line memo-away-new" type="submit" role="menuitem" data-action="click->memos#write">${STICKY}<span>New memo</span></button></form>${put.map(m => line(m, false))}${out(model, scope).filter(m => m.place === 'float').map(m => line(m, true))}</div></div>`
 }
 
@@ -123,7 +125,9 @@ export function register(t) {
       return { says: toast({ head: 'Note thrown away', line: gone.text.trim().replace(/\s+/g, ' ').slice(0, 80) || `${gone.files} attached`, undo: { action: `${base}/memos`, fields: { text: gone.text, place: gone.place, x: gone.x, y: gone.y, ...(gone.session ? { session: gone.session } : {}) } } }) }
     },
     async send(memo, f, m) {
-      const to = receiverOf(memo, m)
+      // (From the Notes stack the line names the session it goes to: to=<session>; else its own session or the crown.)
+      const picked = f.get('to') ? m.agents.find(a => a.id === String(f.get('to'))) ?? null : null
+      const to = picked ?? receiverOf(memo, m)
       if (!to) throw new Error('no crown on this desk yet: give a session the crown on the Agents page')
       // The note goes as it stands in the form: to its session (a note of a session's page), else to the crown.
       const sent = await call({ id: memo.id, to: to.id, send: true, ...(f.has('text') ? { text: String(f.get('text')) } : {}) })

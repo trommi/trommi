@@ -216,3 +216,6 @@ html body .quick-open.memo-open-free { top: auto !important; bottom: calc(var(--
 /* a session's page on a phone has its message field and its filter button across the foot, and the "open" jump just
    above them at the right: the button stands above those */
 @media (max-width: 860px) { html body[data-t-view="session"] .quick-open.memo-open-free { bottom: calc(var(--s-4) + 136px + env(safe-area-inset-bottom, 0px)) !important; } }
+/* A note being written is plain paper: the tape is what it gets once sent, stuck into the conversation
+   (css/session.css .msg-note). Until then it lies on the Notes stack (views/stacks.mjs). */
+.memo-head::before { content: none; }
