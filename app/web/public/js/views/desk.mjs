@@ -9,7 +9,6 @@ import { srcOf } from './picture.mjs'   // a stored picture at the size it is sh
 import { deskStacks } from './stacks.mjs'   // the four places at the foot of the Desk
 import { nextPlease } from './nextplease.mjs'   // the heading as index cards (card Nr. 166)
 import { sketchSvg, ringSvg } from '../pen.js'
-import { galleryShelf } from './gallery.mjs'   // what the agents sent lately, under the cards
 
 const sk = (name, cls) => raw(sketchSvg(name, cls))
 export const cardPath = (card, base) => `${base}/q/${encodeURIComponent(card.number ?? card.id)}`
@@ -151,7 +150,7 @@ export const runSection = (sender, rows, n) => html`<section class="inbox-group"
 /** Everything inside .inbox-groups (#desk-list). rowOf(card): the row's markup (the stream keeps what it rendered). */
 export function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base) } = {}) {
   return html`${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
-${galleryShelf(model, base)}${deskStacks(model, base, pile, q)}
+${deskStacks(model, base, pile, q)}
 ${model.open.length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}`
 }
 

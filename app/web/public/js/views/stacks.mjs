@@ -31,6 +31,7 @@ import { smallMark } from './sidebar.mjs'
 import { crownOf } from './memo.mjs'
 import { deskMain } from './desk.mjs'   // (the search's page without script: the Desk; a cycle, used only at call time)
 import { sketchSvg } from '../pen.js'
+import { mediaPile } from './gallery.mjs'   // the third pile: the newest pictures and videos, fanned; a click opens the gallery
 
 const FAN_MAX = 8      // a fanned stack shows so many of the newest sheets, then "N more"
 const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
@@ -175,7 +176,7 @@ ${stackFan(pile, base, stands ? q : '', stands && terms.length ? pile.sheets.fil
   })(notes)
   // Off the desk: every card of the four places in one pile, the newest first.
   const all = piles.slice(1).flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
-  return html`<div class="inbox-stacks stack-tabs${STRAIGHT ? ' is-straight' : ''}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${notesTab}${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}</div>`
+  return html`<div class="inbox-stacks stack-tabs${STRAIGHT ? ' is-straight' : ''}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${notesTab}${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}${mediaPile(model, base)}</div>`
 }
 
 const FAN = 5        // the pile shows so many sheets fanned

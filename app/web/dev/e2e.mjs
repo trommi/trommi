@@ -156,6 +156,22 @@ try {
   await A.js("trommi.router.visit('/')")
   await A.until(`document.getElementById('row-${cardId}')`, 'back on the Desk')
 
+  // ---- the pile "Media N" at the Desk's foot (the newest pictures and videos fanned); a click opens the plain gallery ----
+  await A.until("document.querySelector('#desk-stacks > #desk-media .media-sheet video') && document.querySelector('#desk-media .media-sheet img')", 'media pile with a picture and a video').then(() => check(true, 'Media pile: in the Desk foot beside Notes and Off the desk, a picture and a video fanned'), e => check(false, e.message))
+  check(await A.js("return !document.querySelector('.gal-shelf, #desk-shelf') && /^Media\\s*2$/.test(document.querySelector('#desk-media .off-label').textContent.trim())"), 'no shelf any more; the pile says Media 2')
+  await A.until("[...document.querySelectorAll('#desk-media img')].some(i => i.complete && i.naturalWidth > 0)", 'the fanned picture decrypted', 15000).then(() => check(true, 'the fanned picture is decrypted and shown'), e => check(false, e.message))
+  await A.js("document.getElementById('desk-media').click()")
+  await A.until("document.body.dataset.page === 'gallery' && document.querySelectorAll('#gallery .gal-grid .gal-tile').length === 2", 'gallery with two tiles').then(() => check(true, 'clicking the pile opens the media gallery'), e => check(false, e.message))
+  check(await A.js("return [...document.querySelectorAll('#gallery .gal-tile .asset-preview')].every(p => p.querySelector('img, video, svg.asset-glyph'))"), 'gallery: no empty tile (each has its picture, video or drawn kind)')
+  check(await A.js("return [...document.querySelectorAll('#gallery .gal-seg a')].map(a => a.firstChild.textContent).join(' ') === 'All Pictures Videos Files' && !!document.querySelector('#gallery .gal-video video') && !!document.querySelector('#gallery .gal-video .gal-play')"), 'gallery: All · Pictures · Videos · Files; the video tile has its frame and a play mark')
+  await A.js("[...document.querySelectorAll('#gallery .gal-seg a')].find(a => a.textContent.startsWith('Videos')).click()")
+  await A.until("location.search.includes('kind=video') && document.querySelectorAll('#gallery .gal-tile').length === 1 && document.querySelector('#gallery .gal-tile .gal-video')", 'Videos filter').then(() => check(true, 'gallery filter Videos shows only the video'), e => check(false, e.message))
+  await A.shot('e2e-4c-gallery.png')
+  await A.js("document.querySelector('#gallery .gal-tile').click()")
+  await A.until("document.querySelector('#cardpage .tc-video video')", 'the big view from the gallery').then(() => check(true, 'a gallery tile opens the big view'), e => check(false, e.message))
+  await A.js("trommi.router.visit('/')")
+  await A.until(`document.getElementById('row-${cardId}')`, 'back on the Desk')
+
   // ---- A answers with the row's tile; the agent gets the command ----
   if (HUB_DOWN) { execSync(HUB_DOWN, { stdio: 'ignore' }); await sleep(500) }
   t0 = Date.now()
