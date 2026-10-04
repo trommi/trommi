@@ -161,18 +161,30 @@ export function createBoard({ hub, model, extraPages = [] }) {
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
     t.live('desk', {
-      take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), shelf: galleryShelf(m, BASE), stacks: deskStacks(m, BASE) }),
+      take: m => ({ order: m.fresh.map(c => c.id), agents: new Map(m.fresh.map(c => [c.id, c.agent])), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), shelf: galleryShelf(m, BASE), stacks: deskStacks(m, BASE) }),
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
         if (t.differs(was.news, now.news)) out.push(stream('replace', 'desk-news', now.news))
         const kept = was.order.filter(id => now.rows.has(id)), added = now.order.filter(id => !was.rows.has(id))
         const sameOrder = kept.every((id, i) => now.order[i] === id)
-        if (!sameOrder) { const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
+        // A run is one section with the session's drawing on its first card only. A removal that brings two runs of
+        // one session together (the card between them went) is drawn again whole, so they become one run.
+        const runsOf = (ids, agentOf) => ids.filter((id, i) => i === 0 || agentOf(ids[i - 1]) !== agentOf(id)).length
+        const keptSet = new Set(kept), wasRuns = []
+        for (const id of was.order) { if (!wasRuns.length || was.agents.get(wasRuns.at(-1).at(-1)) !== was.agents.get(id)) wasRuns.push([]); wasRuns.at(-1).push(id) }
+        const merges = runsOf(kept, id => was.agents.get(id)) < wasRuns.filter(r => r.some(id => keptSet.has(id))).length
+        if (!sameOrder || merges) { const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
         else {
           for (const id of was.order) if (!now.rows.has(id)) out.push(stream('remove', `row-${id}`))
           for (const id of kept) if (was.rows.get(id) !== now.rows.get(id) && t.differs(was.rows.get(id), now.rows.get(id))) out.push(stream('replace', `row-${id}`, now.rows.get(id)))
-          for (const id of added) { const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (sender) out.push(stream('before', 'desk-shelf', runSection(sender, now.rows.get(id), 1))) }
+          // A card that arrives after a card of its own session joins that run (no second drawing); else it starts one.
+          for (const id of added) {
+            const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (!sender) continue
+            const prev = now.order[now.order.indexOf(id) - 1]
+            if (prev && now.agents.get(prev) === card.agent) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
+            else out.push(stream('before', 'desk-shelf', runSection(sender, now.rows.get(id), 1)))
+          }
         }
         if (sameOrder && t.differs(was.shelf, now.shelf)) out.push(stream('replace', 'desk-shelf', now.shelf))
         if (t.differs(was.stacks, now.stacks)) out.push(stream('replace', 'desk-stacks', now.stacks))
