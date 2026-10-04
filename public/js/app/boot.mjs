@@ -35,7 +35,7 @@ async function openClient() {
 export async function start(client, { fresh = false } = {}) {
   attachTo(client)
   // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
-  client.on('error', err => { if (err?.code === 'client-too-old') upgradeNotice(err.message) })
+  client.on('error', err => { if (err?.code === 'client-too-old') notice('Bitte neu laden: eine neue Version der App ist nötig.', err.message, true) })
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -109,7 +109,12 @@ export async function start(client, { fresh = false } = {}) {
   await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
   window.trommi.firstPaintMs = performance.now() - T0
   document.documentElement.dataset.ready = ''
-  client.start().catch(err => { console.error('start', err); conn() })
+  client.start().catch(err => {
+    // One sealing client per device and room (a Web Lock): the room is open in another tab of this browser.
+    if (err?.code === 'tab-conflict') notice('Trommi ist in einem anderen Tab offen. Dort weiterarbeiten, oder ihn schließen und hier neu laden.', err.message, false)
+    else console.error('start', err)
+    conn()
+  })
   if (fresh) router.refresh()
   return router
 }
@@ -118,21 +123,22 @@ const client = await openClient().catch(err => { console.error('open', err); ret
 if (client) await start(client)
 else await roomScreen({ start, hub: hubUrl() })
 
-function upgradeNotice(message) {
+/** A calm full-width line at the foot (styled by css/room.css), with "Neu laden". update: fetch the new build first. */
+function notice(text, detail, update) {
   if (document.querySelector('.room-notice')) return
   const box = document.createElement('div')
   box.className = 'room-notice'
   box.setAttribute('role', 'status')
   const words = document.createElement('span')
-  words.textContent = 'Bitte neu laden: eine neue Version der App ist nötig.'
-  if (message) words.title = message
+  words.textContent = text
+  if (detail) words.title = detail
   const go = document.createElement('button')
   go.type = 'button'
   go.className = 'room-notice-go'
   go.textContent = 'Neu laden'
   go.addEventListener('click', async () => {
     go.disabled = true
-    try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update() } catch {}
+    if (update) { try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update() } catch {} }
     location.reload()
   })
   box.append(words, go)

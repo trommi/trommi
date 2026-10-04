@@ -35,18 +35,26 @@ export class BoardState {
         if (kind === 'draft' || kind === 'snooze' || kind === 'duck') this.cardCache.delete(id)
         if (kind === 'session' || key === 'crown') { this.cardCache.clear(); this.eventCache.clear() }   // agent ids and names change
       }
-      if (change.sessions.size || change.members) { this.cardCache.clear(); this.eventCache.clear() }
     }
-    // Agents (sessions), their ids on the board, the numbers of the cards.
+    // Agents (sessions) and their ids on the board. A card's board form names its agent: only when that naming
+    // changes (a session came, went or was renamed) are all cards made again; a status line changes nothing here.
     const devToAgent = new Map(), agentToDev = new Map()
     for (const s of m.sessions.values()) { const id = agentIdOf(s); devToAgent.set(s.agent_device_id, id); agentToDev.set(id, s.agent_device_id) }
+    const naming = [...devToAgent].join()
+    if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear() }
     this.devToAgent = devToAgent; this.agentToDev = agentToDev
-    const all = [...m.cards.values()].sort((a, b) => a.first_envelope_number - b.first_envelope_number)
-    const perms = [...m.permissions.values()].sort((a, b) => a.envelope_number - b.envelope_number)
-    // Card numbers: the order cards (and permission requests) were first filed in, from 1. Never reused, the same on every device.
-    const numbered = [...all.map(c => [c.first_envelope_number, c.object_id]), ...perms.map(p => [p.envelope_number, p.object_id])].sort((a, b) => a[0] - b[0])
-    const numberOf = new Map(numbered.map(([, id], i) => [id, i + 1]))
-    this.numberOf = numberOf
+    // Card numbers: the order cards (and permission requests) were first filed in, from 1. Never reused, the same on
+    // every device. Sorted again only when a card or request came that was not numbered yet.
+    const fresh = !change || !this.numberOf || [...change.cards, ...change.permissions].some(id => !this.numberOf.has(id)) || m.cards.size + m.permissions.size !== this.numberOf.size
+    if (fresh) {
+      const numbered = [...[...m.cards.values()].map(c => [c.first_envelope_number, c.object_id, 0]), ...[...m.permissions.values()].map(p => [p.envelope_number, p.object_id, 1])].sort((a, b) => a[0] - b[0])
+      this.numberOf = new Map(numbered.map(([, id], i) => [id, i + 1]))
+      this.order = numbered.filter(x => !x[2]).map(x => x[1])
+      this.permOrder = numbered.filter(x => x[2]).map(x => x[1])
+    }
+    const numberOf = this.numberOf
+    const all = this.order.map(id => m.cards.get(id)).filter(Boolean)
+    const perms = this.permOrder.map(id => m.permissions.get(id)).filter(Boolean)
     const cards = []
     for (const c of all) { let b = this.cardCache.get(c.object_id); if (!b || b.number !== numberOf.get(c.object_id)) { b = this.boardCard(c, numberOf.get(c.object_id)); this.cardCache.set(c.object_id, b) } cards.push(b) }
     for (const p of perms) { let b = this.cardCache.get(p.object_id); if (!b) { b = this.permissionCard(p, numberOf.get(p.object_id)); this.cardCache.set(p.object_id, b) } cards.push(b) }

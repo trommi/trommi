@@ -58,6 +58,8 @@ application.register('folds', class extends Controller {
   disconnect() { removeEventListener('resize', this.draw) }
   rowTargetConnected(row) { this.apply(row); cancelAnimationFrame(this.frame); this.frame = requestAnimationFrame(() => this.brackets()) }
   brackets() {
+    // Nothing unfolded: no bracket to draw, and no layout to force.
+    if (!this.element.querySelector('.agent-row[data-fold="open"]')) { for (const svg of this.bracketTargets) svg.style.display = 'none'; return }
     const flat = getComputedStyle(this.element).flexDirection === 'row'   // a phone's strip runs sideways: the bracket runs under the subs
     this.bracketTargets.forEach((svg, gi) => {
       const main = svg.closest('.agent-row')

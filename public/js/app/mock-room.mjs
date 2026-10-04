@@ -50,7 +50,7 @@ class MockClient {
   }
   on(event, fn) { if (!this.listeners.has(event)) this.listeners.set(event, new Set()); this.listeners.get(event).add(fn); return () => this.listeners.get(event).delete(fn) }
   emit(event, value) { for (const fn of this.listeners.get(event) ?? []) { try { fn(value) } catch (err) { console.error(err) } } }
-  changed(fill) { const c = ZERO(); fill(c); this.project(c); this.emit('change', c) }
+  changed(fill) { const c = ZERO(); fill(c); if (c.cards.size || c.registers.size || c.sessions.size || c.permissions.size || c.room) this.project(c); this.emit('change', c) }
   async start() { this.model.room.connection = 'live'; this.changed(c => { c.room = true }) }
   stop() {}
   next() { return ++this.model.room.last_envelope_number }
