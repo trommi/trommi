@@ -31,7 +31,7 @@ const WRAP_AGENT = 2 + 32 + 33 + 16      // sealed box around 0x01 || key
 const WRAP_HUMAN = 2 + 32 + 65 + 16      // sealed box around 0x02 || key || hist
 const BACK_LINK = 2 + 4 + 64 + 16
 const SESSION_BACK_LINK = 2 + 16 + 4 + 64 + 16
-const isSealed = (b, len) => b instanceof Uint8Array && b.length === len && b[0] === 1 && b[1] === z.OBJ.SEALED
+const isSealed = (b, len) => b instanceof Uint8Array && (Array.isArray(len) ? len.includes(b.length) : b.length === len) && b[0] === 1 && b[1] === z.OBJ.SEALED
 
 /** In-memory stand-in for the store. Everything the hub keeps is here, and nothing in it opens anything. */
 export function memoryStorage() {
@@ -247,8 +247,9 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     for (const a of next.agentIds) if (activeRole(a) !== ROLE.AGENT) fail('bad-grant', 'an assigned agent is no longer a member')
     // Sealed keys: every active human device, the recovery key, every assigned agent. Agents without history get the key only.
     const humans = z.activeMembers(room()).filter(m => m.role === ROLE.HUMAN).map(m => ({ id: m.id, human: true }))
-    const wanted = [...humans, { id: room().recovery.id, human: true }, ...next.agentIds.map(a => ({ id: unhex(a), human: next.withHistory }))]
-    const given = checkWraps(wraps, wanted, r => (r.human ? WRAP_HUMAN : WRAP_AGENT))
+    // With the history flag, each agent may or may not get the history key (per-agent history: only the agents handed it).
+    const wanted = [...humans, { id: room().recovery.id, human: true }, ...next.agentIds.map(a => ({ id: unhex(a), human: next.withHistory ? 'either' : false }))]
+    const given = checkWraps(wraps, wanted, r => (r.human === 'either' ? [WRAP_HUMAN, WRAP_AGENT] : r.human ? WRAP_HUMAN : WRAP_AGENT))
     if (!bytesEqual(await grantManifestHash(wraps), next.manifestHash)) fail('bad-grant', 'the sealed keys are not the ones the grant lists')
     const rose = prev && next.epoch > prev.epoch
     if (rose) {

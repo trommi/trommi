@@ -168,7 +168,7 @@ export function decodeGrant(bytes) {
  * rotate: a new session key epoch (removal, unassigning, "may not read the history"); else the current key is re-sealed.
  * `current`: the session secret of the current epoch (needed to re-seal and for the back link).
  */
-export async function createSessionGrant({ state, signer, sessionState = null, sessionId = null, current = null, agentIds = [], withHistory = false, rotate = false, time = Date.now() }) {
+export async function createSessionGrant({ state, signer, sessionState = null, sessionId = null, current = null, agentIds = [], withHistory = false, historyAgentIds = null, rotate = false, time = Date.now() }) {
   const signerKind = z.memberAt(state, signer.id)
   const isRecovery = bytesEqual(signer.id, state.recovery.id)
   if (!isRecovery && (!signerKind || signerKind.role !== ROLE.HUMAN)) fail('not-human', 'only a human device (or the recovery key) grants session keys')
@@ -179,10 +179,15 @@ export async function createSessionGrant({ state, signer, sessionState = null, s
   else { if (!current || current.epoch !== sessionState.epoch || !current.hist) fail('bad-argument', 'pass the full current session secret to re-seal it'); secret = current }
   const ids = [...agentIds].map(id => typeof id === 'string' ? z.unhex(id) : id).sort(cmp)
   for (const id of ids) { const m = z.memberAt(state, id); if (!m || m.role !== ROLE.AGENT) fail('bad-argument', 'only active agents can be assigned to a session') }
+  // Per-agent history: historyAgentIds names the agents that get the history key; the others get the key only. The
+  // grant's history flag then means "some agent got history in this grant". Absent: every agent follows withHistory.
+  const histIds = historyAgentIds ? new Set(historyAgentIds.map(id => (typeof id === 'string' ? id : hex(id)))) : null
+  const histFor = id => (histIds ? histIds.has(hex(id)) : withHistory)
+  if (histIds) withHistory = ids.some(histFor)
   const recipients = [
     ...z.activeMembers(state).filter(m => m.role === ROLE.HUMAN).map(m => ({ id: m.id, kexPub: m.kexPub, withHist: true })),
     { id: state.recovery.id, kexPub: state.recovery.kexPub, withHist: true },
-    ...ids.map(id => ({ id, kexPub: z.memberAt(state, id).kexPub, withHist: withHistory })),
+    ...ids.map(id => ({ id, kexPub: z.memberAt(state, id).kexPub, withHist: histFor(id) })),
   ]
   const wraps = await wrapSessionKey({ roomId: state.roomId, sessionId: sid, secret, recipients })
   const commits = await sessionCommits(sid, secret)
