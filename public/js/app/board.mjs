@@ -183,13 +183,16 @@ export function createBoard({ hub, model, extraPages = [] }) {
       const from = opts.from && m.byAgent.has(opts.from) ? opts.from : null
       t.page(req, res, { model: m, title: `${card.title} · Trommi`, view: 'card', css: 'card', current: from, stream: `&card=${card.id}${from ? `&from=${encodeURIComponent(from)}` : ''}${old ? `&old=${old.n}` : ''}`, main: cardPage(card, m, BASE, { ...opts, from }), says: says(m.byCard.get(saidId), saidWhat) }, code)
     }
-    // The comments are a timeline loaded newest page first; ?older=1 asks for the page before (it comes in live).
+    // The comments are a timeline loaded newest page first; ?older=1 loads the page before, then the card is shown.
     const threadOf = card => `chat:card/${card.id}`
     const moreOf = card => card.kind !== 'permission' && Boolean(hub.hasMore?.(threadOf(card)))
-    t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)$/, ({ req, res, url, match }) => {
-      const m = model(), card = m.cardByRef(match[2])
+    t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)$/, async ({ req, res, url, match }) => {
+      let m = model(), card = m.cardByRef(match[2])
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
-      if (url.searchParams.has('older') && moreOf(card)) hub.loadOlder(threadOf(card)).catch(err => console.warn('older comments', err))
+      if (url.searchParams.has('older') && moreOf(card)) {
+        try { await hub.loadOlder(threadOf(card)) } catch (err) { console.warn('older comments', err) }
+        m = model(); card = m.byCard.get(card.id) ?? card
+      }
       cardView(req, res, card, m, { more: moreOf(card), said: String(url.searchParams.get('said') ?? ''), pic: Number(url.searchParams.get('pic')) || 1, walk: url.searchParams.has('walk'), version: Number(url.searchParams.get('v')) || null, from: match[1] ? decodeURIComponent(match[1]) : null })
     })
     t.get(/^\/(?:s\/([^/]+)\/)?[qc]\/([\w-]+)\/p\/(\d+)$/, ({ req, res, match: [, from, ref, at] }) => {
