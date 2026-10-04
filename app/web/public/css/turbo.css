@@ -484,3 +484,30 @@ a.inbox-index-tab:hover { color: var(--fg); background: var(--surface); }
 .inbox-next .inbox-next-n { font-weight: 700; color: var(--fg); }
 .inbox-next > .inbox-go .sketch { width: 16px; height: 16px; }
 @media (min-width: 861px) { .inbox-title > p.inbox-next { padding-left: 46px; } }
+/* One drawing per run (his pick B, "Ein Zeichen, eine Linie"): only the first card of a session's run shows the session's
+   drawing and name beside it; a hand-drawn line in the session's colour runs down from under it and turns into each
+   following card with a small hook (the hook is the link into the session the drawing was). A single card is as before.
+   On a phone the line runs in the margin left of the cards and only the first card names the session. A card that
+   arrives live joins its session's run (app/board.mjs, desk live diff). */
+:root {
+  --run-line: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 100' preserveAspectRatio='none'%3E%3Cpath d='M4.4 0C2.6 13 5.9 26 4.2 41S2.3 64 5 78S3.4 94 4 100' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
+  --run-hook: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 28 14'%3E%3Cpath d='M2 1C2.6 7.5 6.5 10 26.5 8.6' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
+  --run-hook-s: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 14'%3E%3Cpath d='M2 1C2.3 6.5 4.6 9.4 11 9' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
+}
+/* the line: each card but the last draws its piece, from its hook down to the next card's hook */
+.inbox-group[data-sender] > .inbox-row:not(:last-of-type)::after { content: ""; position: absolute; left: -34px; top: 21px; width: 8px; height: calc(100% + 16px); background: var(--tone-pen); -webkit-mask: var(--run-line) center / 100% 100% no-repeat; mask: var(--run-line) center / 100% 100% no-repeat; pointer-events: none; }
+/* (the first card's piece starts under its drawing and name) */
+.inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type)::after { top: 72px; height: calc(100% - 72px + 16px + 21px); }
+.inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type):has(.inbox-row-head:not(:empty))::after { top: 94px; height: calc(100% - 94px + 16px + 21px); }
+@media (max-width: 860px) {
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:not(:last-of-type)::after, .inbox-groups .inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type)::after, .inbox-groups .inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type):has(.inbox-row-head:not(:empty))::after { left: -13px; top: 15px; height: calc(100% + 10px); }
+  /* every card of a run of two or more gets a hook from the line (a phone's rows stand in a grid: 14px padding) */
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:is(:not(:first-of-type), :not(:last-of-type)) > .inbox-gutter { display: block; position: absolute; left: -26px; top: 14px; width: 12px; height: 14px; background: var(--tone-pen); -webkit-mask: var(--run-hook-s) center / contain no-repeat; mask: var(--run-hook-s) center / contain no-repeat; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row > .inbox-gutter > * { display: none; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:not(:first-of-type) .inbox-byline .inbox-from { display: none !important; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:not(:first-of-type) .inbox-byline:not(:has(.inbox-whenever)) { display: none; }
+}
+@media (min-width: 861px) {
+  .inbox-group[data-sender] > .inbox-row:not(:first-of-type) > .inbox-gutter, .inbox-group[data-sender] > .inbox-row:not(:first-of-type):has(.inbox-row-head:not(:empty)) > .inbox-gutter { left: -32px; top: 20px; width: 28px; height: 14px; border-radius: 0; background: var(--tone-pen); -webkit-mask: var(--run-hook) center / contain no-repeat; mask: var(--run-hook) center / contain no-repeat; }
+  .inbox-group[data-sender] > .inbox-row:not(:first-of-type) > .inbox-gutter > * { display: none !important; }
+}
