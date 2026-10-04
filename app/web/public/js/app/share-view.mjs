@@ -3,7 +3,7 @@
 // to the hub only as the x-share-secret header, the file key never leaves the page. The hub hands out the encrypted
 // bytes; they are checked against the sha256 of the link, decrypted here, and shown: a page in the sandboxed frame
 // /a/frame.html (no origin, no network), a picture as a picture, anything else as a download.
-import { Hub, openShared, parseShareLink } from '/vendor/index.mjs'
+import { Hub, openShared, parseShareLink } from '/gen/vendor/index.mjs'
 import { hubUrl } from './room.mjs'
 import { CLIENT } from './version.mjs'
 import { useSheets } from './sheets.mjs'

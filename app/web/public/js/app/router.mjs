@@ -11,7 +11,7 @@ import { setVisitor, setRefresher, renderStreamMessage } from './turbo.mjs'
 
 const STREAM_ACCEPT = 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml'
 const fire = (target, name, detail = {}, cancelable = false) => { const e = new CustomEvent(name, { bubbles: true, cancelable, detail }); target.dispatchEvent(e); return e }
-const isAppPath = p => !/\.(?:css|js|mjs|json|png|svg|jpe?g|webp|gif|woff2?|webmanifest|html|txt|csv|log|ico)$/i.test(p) && !p.startsWith('/mock/') && !p.startsWith('/vendor/') && !p.startsWith('/att/')
+const isAppPath = p => !/\.(?:css|js|mjs|json|png|svg|jpe?g|webp|gif|woff2?|webmanifest|html|txt|csv|log|ico)$/i.test(p) && !p.startsWith('/mock/') && !p.startsWith('/gen/') && !p.startsWith('/att/')
 
 export function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush = () => {} }) {
   let page = null          // { path, client: { view, params }, opts }

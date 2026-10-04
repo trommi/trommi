@@ -3,11 +3,11 @@
 # the service worker keeps exactly this release and drops the previous one. No build: the files stay as they are.
 #   dev/release.sh
 set -euo pipefail
-node "$(dirname "$0")/build.mjs" --vendor   # public/vendor (git-ignored) from the repository's core/, for the preload list
+node "$(dirname "$0")/build.mjs" --vendor   # public/gen/vendor (git-ignored) from the repository's core/, for the preload list
 node "$(dirname "$0")/preload.mjs"
 cd "$(dirname "$0")/../public"
 # Only what git tracks (what is deployed); a missing file would make the worker's install fail.
-files=$(git ls-files . | grep -v -e '^mock/' -e '^connector\.mjs' -e '^connect\.sh$' -e '^sw.js$' -e '^_headers$' -e '^index.html$' -e '\.md$' | sed 's#^#/#' | LC_ALL=C sort)
+files=$(git ls-files . | grep -v -e '^mock/' -e '^gen/' -e '^connect\.sh$' -e '^sw.js$' -e '^_headers$' -e '^index.html$' -e '\.md$' | sed 's#^#/#' | LC_ALL=C sort)
 version=$(for f in $files; do sha256sum ".$f"; done | sha256sum | cut -c1-12)
 VERSION="$version" FILES="$files" node -e "
 const fs = require('fs')

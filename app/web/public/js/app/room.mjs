@@ -40,7 +40,7 @@ export function roomPages(client) {
   // What an agent invite should do once the agent joined (session handover; kept in this tab only).
   const handovers = new Map()
   let core = null   // the core's helpers (roomLink); the mock room has none
-  import('/vendor/index.mjs').then(x => { core = x }).catch(() => {})
+  import('/gen/vendor/index.mjs').then(x => { core = x }).catch(() => {})
   return t => {
     const m = () => client.model
     const page = (req, res, title, main, extra = {}, code = 200) => t.page(req, res, { title: `${title} · Trommi`, view: 'room', css: 'room', main, ...extra }, code)
@@ -177,7 +177,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
     const loadAccount = () => {
       if (!client.hub || m().room.account_loading) return
       client._setRoom({ account_loading: true })
-      import('/vendor/account.mjs').then(A => A.accountStatus(client)).then(st => client._setRoom({ account: st, account_loading: false }), err => client._setRoom({ account_error: err.message, account_loading: false }))
+      import('/gen/vendor/account.mjs').then(A => A.accountStatus(client)).then(st => client._setRoom({ account: st, account_loading: false }), err => client._setRoom({ account_error: err.message, account_loading: false }))
     }
     const settingsMain = (error = '', said = '', kit = null) => {
       const room = m().room
@@ -211,7 +211,7 @@ ${link ? html`<details class="room-section room-more" id="advanced"><summary>Adv
     t.get(/^\/settings$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Settings', settingsMain('', SAID[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
     const accountPost = (path, fn, done) => t.post(path, async ({ req, res, form }) => {
       let out
-      try { out = await fn(form, await import('/vendor/account.mjs')) } catch (err) {
+      try { out = await fn(form, await import('/gen/vendor/account.mjs')) } catch (err) {
         console.error(err)
         return page(req, res, 'Settings', settingsMain(accountError(err)), { view: 'settings' }, 422)
       }
@@ -278,7 +278,7 @@ async function wipeLocal(client) {
 }
 
 // ---- the account: shared pieces (screens before the board and the Settings page) ----
-const account = () => import('/vendor/account.mjs')
+const account = () => import('/gen/vendor/account.mjs')
 /** A password field with "Generate" (five words); `gen` false for the current password. */
 const pwField = ({ name = 'password', label = 'Password', gen = true, autocomplete = 'new-password' } = {}) => html`<label>${label}<span class="room-pwrow"><input type="password" name="${name}" required minlength="${gen ? 12 : 1}" autocomplete="${autocomplete}" spellcheck="false" autocapitalize="off">${gen ? html`<button type="button" class="room-gen" data-action="room#generate">Generate</button>` : ''}</span>${gen ? html`<small class="room-hint">At least 12 characters. Or press Generate: five words, easy to type.</small>` : ''}</label>`
 /** "Generate" fills a five-word password and shows it; pressed again it copies it. */
@@ -354,7 +354,7 @@ export async function roomScreen({ start, hub, openError = null }) {
     else if (b.id === 'kit-download') downloadKit(b.dataset.roomTextParam)
     else if (b.id === 'kit-print') window.print()
   })
-  const core = async () => import('/vendor/index.mjs')
+  const core = async () => import('/gen/vendor/index.mjs')
   const storage = async () => (await core()).idbStorage({ name: 'trommi', prefix: 'room/' })
   const done = async client => { root.remove(); history.replaceState(null, '', '/'); await start(client, { fresh: true }) }
   const on = (sel, ev, fn) => root.querySelector(sel)?.addEventListener(ev, fn)

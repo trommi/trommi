@@ -29,7 +29,7 @@ const mock = sessionStorage.getItem('trommi-mock')
 
 async function openClient() {
   if (mock) return (await import('./mock-room.mjs')).openRoom({ mock })
-  const core = await import('/vendor/index.mjs')
+  const core = await import('/gen/vendor/index.mjs')
   const storage = core.idbStorage({ name: 'trommi', prefix: 'room/' })
   // Several tabs of this browser: one writes (a Web Lock), the others read on their own and hand it their actions
   // (core/tabs.mjs). Every tab stays usable; when the writing tab closes, the next one takes over.
@@ -172,7 +172,7 @@ else if (!sharing) await roomScreen({ start: async (c, o) => { keepStorage(); re
 /** A room made in this tab (account created, device joined or logged in): this tab writes it; later tabs follow. */
 async function adopt(c) {
   if (mock) return c
-  const core = await import('/vendor/index.mjs')
+  const core = await import('/gen/vendor/index.mjs')
   return core.adoptInTabs(c, { makeStorage: () => core.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT })
 }
 

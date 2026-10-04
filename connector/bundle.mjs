@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // bundle.mjs: the connector as ONE self-contained file, for machines without a checkout of this repository.
 //
-//   node connector/bundle.mjs           write app/web/public/connector.mjs and connector.mjs.sha256
+//   node connector/bundle.mjs           write app/web/public/gen/connector.mjs and connector.mjs.sha256
 //   node connector/bundle.mjs --check   fail when the committed bundle differs from what the sources make (CI)
 //
 // connector/channel.mjs + core/ + @modelcontextprotocol/sdk + zod, bundled by esbuild (a pinned devDependency) into
@@ -20,9 +20,9 @@ import * as esbuild from 'esbuild'
 import { marketplaceFiles } from './plugin.mjs'
 
 const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const OUT = path.join(REPO, 'app/web/public/connector.mjs')
+const OUT = path.join(REPO, 'app/web/public/gen/connector.mjs')
 // The Claude Code plugin and its marketplace (connector/plugin.mjs), served at https://app.trommi.com/plugins/.
-const PLUGINS = path.join(REPO, 'app/web/public/plugins')
+const PLUGINS = path.join(REPO, 'app/web/public/gen/plugins')
 const pluginsOnDisk = () => { try { return Object.fromEntries(fs.readdirSync(PLUGINS).sort().map(f => [f, fs.readFileSync(path.join(PLUGINS, f))])) } catch { return {} } }
 
 export async function bundle() {
@@ -45,9 +45,9 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.a
   const text = await bundle()
   if (process.argv.includes('--check')) {
     const have = fs.existsSync(OUT) ? fs.readFileSync(OUT, 'utf8') : ''
-    if (have !== text) { console.error('connector bundle is stale: run node connector/bundle.mjs and commit app/web/public/connector.mjs'); process.exit(1) }
+    if (have !== text) { console.error('connector bundle is stale: run node connector/bundle.mjs and commit app/web/public/gen/connector.mjs'); process.exit(1) }
     const want = marketplaceFiles(text), disk = pluginsOnDisk()
-    if (Object.keys(want).sort().join() !== Object.keys(disk).join() || Object.entries(want).some(([f, b]) => !b.equals(disk[f]))) { console.error('plugin marketplace is stale: run node connector/bundle.mjs and commit app/web/public/plugins/'); process.exit(1) }
+    if (Object.keys(want).sort().join() !== Object.keys(disk).join() || Object.entries(want).some(([f, b]) => !b.equals(disk[f]))) { console.error('plugin marketplace is stale: run node connector/bundle.mjs and commit app/web/public/gen/plugins/'); process.exit(1) }
     console.log(`connector bundle current (${(text.length / 1024).toFixed(0)} KiB, sha256 ${sha(text).slice(0, 12)})`)
   } else {
     fs.writeFileSync(OUT, text)
