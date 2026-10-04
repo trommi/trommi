@@ -7,6 +7,8 @@
 // thread read them), from the timeline windows that are in memory plus the events every client knows from the heads
 // (asked, revised, answered, read, shredded, closed).
 
+import { rememberRef } from './att.mjs'
+
 const SESSION_ID_LEN = 12
 export const agentIdOf = s => s.agent_session_id || s.agent_device_id.slice(0, SESSION_ID_LEN)
 
@@ -87,6 +89,7 @@ export class BoardState {
 
   att(a) {
     if (!a) return null
+    rememberRef(a)
     const type = String(a.media_type ?? '')
     const kind = type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : type.startsWith('audio/') ? 'audio' : 'file'
     return { name: a.file_name ?? 'file', url: a.url ?? `/att/${a.attachment_id}`, image: kind === 'image', kind, type, size: a.total_size, width: a.width, height: a.height, caption: a.caption, page: a.page, marks: a.marks, ref: a }

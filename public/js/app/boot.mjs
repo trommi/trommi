@@ -9,6 +9,10 @@ import { createBoard } from './board.mjs'
 import { createRouter } from './router.mjs'
 import { boardModel } from '../views/model.mjs'
 import { roomPages, roomScreen, hubUrl } from './room.mjs'
+import { attachTo } from './att.mjs'
+
+// The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js).
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(err => console.warn('service worker', err.message))
 
 const T0 = performance.now()
 const params = new URLSearchParams(location.search)
@@ -26,6 +30,7 @@ async function openClient() {
 }
 
 export async function start(client, { fresh = false } = {}) {
+  attachTo(client)
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -80,6 +85,14 @@ export async function start(client, { fresh = false } = {}) {
     else if (s) { const dev = board.agentToDev.get(decodeURIComponent(s[1])); if (dev) key = `chat:session/${dev}` }
     const before = new URLSearchParams(location.search).get('before')
     if (key && (!opened.has(key) || before)) { opened.add(key); client.loadTimeline(key, { limit: 50 }).catch(err => console.warn('timeline', err)) }
+    // A session's page shows what was said about its questions too: the newest page of its recent cards' threads.
+    if (s && !q) {
+      const dev = board.agentToDev.get(decodeURIComponent(s[1])), sess = dev && client.model.sessions.get(dev)
+      for (const id of (sess?.card_ids ?? []).slice(-20)) {
+        const k = `chat:card/${id}`, t = client.model.timelines.get(k)
+        if (!opened.has(k) && t?.item_count) { opened.add(k); client.loadTimeline(k, { limit: 50 }).catch(() => {}) }
+      }
+    }
   })
   await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
   window.trommi.firstPaintMs = performance.now() - T0

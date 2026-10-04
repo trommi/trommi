@@ -1,0 +1,81 @@
+// The app's service worker. Three jobs:
+//   1. The app shell offline and instant: every file of the app (SHELL, written by dev/release.sh) is kept in a cache
+//      named by VERSION; a new VERSION is a new cache, the old one goes on activation. Hub data is never cached here
+//      (requests to the hub are not touched at all; the room lives in IndexedDB, encrypted where the core says so).
+//   2. Attachments: /att/<attachment_id> is answered by asking an open page of the app, which fetches and decrypts
+//      the file with the client core (only when the browser actually needs it: a visible <img loading=lazy>, a click).
+//   3. Push: a notification per push (the hub sends only { room_id, envelope_number, urgency }); a tap opens the app.
+const VERSION = "b3fec740799f"
+const SHELL = ["/","/css/admin.css","/css/app.css","/css/asset.css","/css/back.css","/css/beside.css","/css/cardclip.css","/css/cardpage.css","/css/clear.css","/css/clipboard.css","/css/crowns.css","/css/deskpad.css","/css/focus.css","/css/help.css","/css/keys.css","/css/ledger.css","/css/links.css","/css/logo.css","/css/padlink.css","/css/phone-desk.css","/css/piles.css","/css/push.css","/css/quicksend.css","/css/richhtml.css","/css/scribble.css","/css/session.css","/css/slip.css","/css/speech.css","/css/stamps.css","/css/tokens.css","/css/trommi.css","/css/turbo.css","/drawings.json","/fonts/f0.woff2","/fonts/f1.woff2","/fonts/f2.woff2","/fonts/f3.woff2","/fonts/f4.woff2","/fonts/f5.woff2","/fonts/f6.woff2","/fonts/f7.woff2","/fonts/fonts.css","/icons/trommi-180.png","/icons/trommi-192.png","/icons/trommi-512.png","/icons/trommi.svg","/index.html","/js/app/application.mjs","/js/app/att.mjs","/js/app/board-state.mjs","/js/app/board.mjs","/js/app/boot.mjs","/js/app/hub-facade.mjs","/js/app/layout.mjs","/js/app/mock-crazy.mjs","/js/app/mock-room.mjs","/js/app/node-stubs/blocked.mjs","/js/app/node-stubs/fixtures.mjs","/js/app/node-stubs/thumbs.mjs","/js/app/room.mjs","/js/app/router.mjs","/js/app/stimulus.mjs","/js/app/theme.js","/js/app/turbo.mjs","/js/focus-marks.js","/js/pen.js","/js/richhtml.js","/js/ui.js","/js/views/agents.mjs","/js/views/card.mjs","/js/views/desk.mjs","/js/views/gutter-hover.mjs","/js/views/html.mjs","/js/views/keys.mjs","/js/views/memo.mjs","/js/views/menu.mjs","/js/views/model.mjs","/js/views/nextplease.mjs","/js/views/picture.mjs","/js/views/session-edit.mjs","/js/views/session.mjs","/js/views/sidebar.mjs","/js/views/stacks.mjs","/js/views/text.mjs","/js/views/toast.mjs","/manifest.webmanifest","/pad/index.html","/t/controllers/advice_controller.js","/t/controllers/assetthumb_controller.js","/t/controllers/card_controller.js","/t/controllers/circles_controller.js","/t/controllers/clip_controller.js","/t/controllers/composer_controller.js","/t/controllers/copy_controller.js","/t/controllers/desk_controller.js","/t/controllers/files_controller.js","/t/controllers/fixtures_controller.js","/t/controllers/keys_controller.js","/t/controllers/lean_controller.js","/t/controllers/log_controller.js","/t/controllers/memo_controller.js","/t/controllers/memos_controller.js","/t/controllers/menu_controller.js","/t/controllers/paper_controller.js","/t/controllers/pointto_controller.js","/t/controllers/pops_controller.js","/t/controllers/rail_controller.js","/t/controllers/richhtml_controller.js","/t/controllers/say_controller.js","/t/controllers/share_controller.js","/t/controllers/sheet_controller.js","/t/controllers/stack_search_controller.js","/t/controllers/title_controller.js","/t/islands/richhtml.js","/t/lib/clear.js","/t/lib/keys.js","/t/lib/memo.js","/t/lib/paper.js","/t/lib/toast.js","/vendor/agent.mjs","/vendor/client.mjs","/vendor/codec.mjs","/vendor/core-version.mjs","/vendor/index.mjs","/vendor/model.mjs","/vendor/room.mjs","/vendor/storage-idb.mjs","/vendor/storage-memory.mjs","/vendor/transport.mjs","/vendor/zcrypto.mjs"]
+const CACHE = `shell-${VERSION}`
+// On the developer's machine the files change all the time: no shell cache there.
+const CACHING = VERSION !== 'dev' && !['localhost', '127.0.0.1'].includes(self.location.hostname)
+
+self.addEventListener('install', event => {
+  event.waitUntil((async () => {
+    if (CACHING) { const cache = await caches.open(CACHE); await cache.addAll(SHELL) }
+    await self.skipWaiting()
+  })())
+})
+self.addEventListener('activate', event => event.waitUntil((async () => {
+  for (const name of await caches.keys()) if (name.startsWith('shell-') && name !== CACHE) await caches.delete(name)
+  await self.clients.claim()
+})()))
+
+async function fromPage(id, clientId) {
+  const pages = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+  const first = pages.find(p => p.id === clientId)
+  const order = first ? [first, ...pages.filter(p => p !== first)] : pages
+  for (const page of order) {
+    const answer = await new Promise(resolve => {
+      const channel = new MessageChannel()
+      const timer = setTimeout(() => resolve(null), 20000)
+      channel.port1.onmessage = e => { clearTimeout(timer); resolve(e.data) }
+      page.postMessage({ type: 'trommi-att', id }, [channel.port2])
+    })
+    if (answer?.blob) return answer
+  }
+  return null
+}
+
+self.addEventListener('fetch', event => {
+  const url = new URL(event.request.url)
+  if (url.origin !== self.location.origin || event.request.method !== 'GET') return
+  const att = /^\/att\/([0-9a-f]{32})$/.exec(url.pathname)
+  if (att) {
+    event.respondWith((async () => {
+      const got = await fromPage(att[1], event.clientId || event.resultingClientId)
+      if (!got) return new Response('This file can only be opened inside the app, with the room open.', { status: 404, headers: { 'Content-Type': 'text/plain; charset=utf-8' } })
+      return new Response(got.blob, { headers: { 'Content-Type': got.type || 'application/octet-stream', 'Cache-Control': 'no-store', ...(got.name ? { 'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(got.name)}` } : {}) } })
+    })())
+    return
+  }
+  if (!CACHING || url.pathname.startsWith('/mock/')) return
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE)
+    // A navigation inside the app gets the shell (the app routes in the page).
+    const key = event.request.mode === 'navigate' && !/\.\w+$/.test(url.pathname) ? '/index.html' : url.pathname
+    return (await cache.match(key)) ?? fetch(event.request)
+  })())
+})
+
+self.addEventListener('push', event => {
+  let message = {}
+  try { message = event.data.json() } catch {}
+  event.waitUntil(self.registration.showNotification(message.title || 'Trommi', {
+    body: message.body || (message.urgency === 'critical' || message.urgency === 'high' ? 'Es klopft' : 'Neue Frage'),
+    tag: message.tag || 'trommi', renotify: true, icon: '/icons/trommi-192.png',
+    data: { url: typeof message.url === 'string' && message.url.startsWith('/') ? message.url : '/' },
+  }))
+})
+self.addEventListener('notificationclick', event => {
+  event.notification.close()
+  const url = new URL(event.notification.data?.url || '/', self.location.origin).href
+  event.waitUntil((async () => {
+    const pages = await self.clients.matchAll({ type: 'window', includeUncontrolled: true })
+    const page = pages[0]
+    if (!page) return self.clients.openWindow(url)
+    await page.focus().catch(() => {})
+    if (page.url !== url) await page.navigate(url).catch(() => self.clients.openWindow(url))
+  })())
+})

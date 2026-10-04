@@ -25,7 +25,7 @@ const T = ts => (ts ? ts + shift : ts)
 const extra = [
   { id: 'trommi', name: 'trommi', icon: 'draw:bell', task: 'Trommi: Board, Hub und App', model: 'claude-opus-5-5', online: true, main: true, desk: 'main' },
   { id: 'trommi-ui', name: 'UI', icon: 'draw:brush', task: 'Desk und Karten', model: 'claude-opus-5-5', online: true, parent: 'trommi', desk: 'main' },
-  { id: 'trommi-docs', name: 'Docs', icon: 'draw:page', task: 'README und Hilfe', model: 'claude-sonnet-5', online: false, parent: 'trommi', desk: 'main' },
+  { id: 'trommi-docs', name: 'Docs', icon: 'draw:book', task: 'README und Hilfe', model: 'claude-sonnet-5', online: false, parent: 'trommi', desk: 'main' },
   { id: 'crypto', name: 'crypto', icon: 'draw:key', task: 'Ende-zu-Ende-Verschlüsselung', model: 'claude-opus-5-5', online: true, desk: 'main' },
 ]
 const agents = [...extra, ...s.agents.map(a => ({ id: a.id, name: a.name, icon: a.icon, task: a.task, model: a.model, online: false, desk: a.desk }))]
