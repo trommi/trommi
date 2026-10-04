@@ -484,9 +484,3 @@ a.inbox-index-tab:hover { color: var(--fg); background: var(--surface); }
 .inbox-next .inbox-next-n { font-weight: 700; color: var(--fg); }
 .inbox-next > .inbox-go .sketch { width: 16px; height: 16px; }
 @media (min-width: 861px) { .inbox-title > p.inbox-next { padding-left: 46px; } }
-/* Decided on card Nr. 208 (switch in views/gutter-hover.mjs, on by default): who asks is a hand-drawn arrow
-   from the session's row in the sidebar to the card under the pointer (controller "pointto"); the name under the
-   drawing beside the card goes, the drawing stays. A phone is unchanged. */
-.inbox-gutter.is-sidebar-arrow .inbox-gutter-name { display: none !important; }
-.pointto-layer { position: fixed; inset: 0; z-index: 40; width: 100vw; height: 100vh; overflow: visible; pointer-events: none; fill: none; stroke-width: 2.2px; stroke-linecap: round; stroke-linejoin: round; }
-@media (max-width: 860px) { .pointto-layer { display: none; } }

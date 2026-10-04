@@ -8,7 +8,6 @@ import { smallMark, markArt, PLUS } from './sidebar.mjs'
 import { srcOf } from './picture.mjs'   // a stored picture at the size it is shown (thumbs.mjs)
 import { deskStacks, stackCounts } from './stacks.mjs'   // the four places at the foot of the Desk
 import { nextPlease } from './nextplease.mjs'   // the heading as index cards (card Nr. 166)
-import { gutterHoverClass, pointerHost } from './gutter-hover.mjs'   // an arrow from the sidebar to the card under the pointer (card Nr. 208)
 import { sketchSvg } from '../pen.js'
 
 const sk = (name, cls) => raw(sketchSvg(name, cls))
@@ -70,7 +69,7 @@ export function deskRow(card, model, base, { error = '' } = {}) {
   const trustTip = `I don’t give a duck: your call (R)${advisedLabels(card) ? ` · agent takes ${advisedLabels(card)}` : ''}`
   const href = cardPath(card, base)
   return html`<article class="inbox-row" id="row-${card.id}"${knockAttr(card)} tabindex="-1" data-id="${card.id}" data-urgency="${card.urgency}"${card.kind === 'info' ? raw(' data-kind="info"') : ''}${from ? html` data-from="${from.id}" style="--hue:${from.hue}"` : ''}>
-${from ? html`<a class="inbox-gutter${gutterHoverClass()}" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
+${from ? html`<a class="inbox-gutter" data-nav href="${base}/s/${encodeURIComponent(from.id)}" aria-label="From ${from.name}: open the session" data-name="${from.name}" style="--hue:${from.hue}">${smallMark(from)}<span class="inbox-gutter-name" aria-hidden="true">${from.name}</span></a>` : ''}
 <div class="inbox-content">
 <header class="inbox-row-head">${knock ? html`<span class="inbox-tab">${sk('knock')}${knockWord(card)}</span>` : ''}</header>
 <a class="inbox-text${from ? ' has-sender' : ''}" data-nav href="${href}" title="${cardNr(card)}: open it">${from ? html`<span class="inbox-from-mark inbox-who" style="--hue:${from.hue}" title="${from.name}" role="img" aria-label="From ${from.name}">${markArt(from)}</span>` : ''}<strong class="inbox-question" data-controller="fit">${card.title}</strong>${about || words ? html`<span class="inbox-body">${about ? html`<span class="inbox-body-about">${about}</span>` : ''}${words ? html`<span class="inbox-body-text">${about ? ` · ${words}` : words}</span>` : ''}</span>` : ''}</a>
@@ -134,7 +133,7 @@ ${model.open.length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon
 // (Controller "desk": a card that arrives out of sight is said quietly, "1 new ↓"; a knock out of sight has a strip at
 //  the list's edge that leads to it.)
 export const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="Desk" data-controller="desk" data-action="turbo:before-stream-render@document->desk#changing">
-${pointerHost()}${deskHead(model, base)}
+${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
