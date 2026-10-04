@@ -152,6 +152,17 @@ export async function integration({ test, tmp }) {
       await channel.call('reply', { text: 'got it' })
     })
 
+    await test('e2e: publish_asset puts a published object on the board and announces it in the conversation', async () => {
+      const id = (await channel.call('publish_asset', { content: '<h1>Report</h1>', title: 'Report', note: 'for you' })).match(/published as ([0-9a-f]{32})/)[1]
+      await until('published object', () => human.model.published.get(id)?.title === 'Report')
+      const timeline = `chat:session/${agentId}`
+      const shown = human.model.published.get(id).attachments[0].attachment_id
+      const said = await until('announcement', () => [...(human.model.timelines.get(timeline)?.items.values() ?? [])].find(i => i.content?.attachments?.[0]?.attachment_id === shown))
+      assert.equal(said.content.text, '**Report**\n\nfor you')
+      const bytes = await human.fetchAttachment(said.content.attachments[0])
+      assert.equal(new TextDecoder().decode(bytes), '<h1>Report</h1>')
+    })
+
     await test('e2e: permission round trip', async () => {
       await channel.client.notification({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'req1', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"ls"}' } })
       const pid = await until('permission at the human', () => [...human.model.permissions.values()].find(p => p.tool_name === 'Bash')?.object_id)

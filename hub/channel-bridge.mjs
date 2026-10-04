@@ -423,8 +423,12 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
           ref = await client.uploadAttachment(bytes, { file_name: `${String(args.title || 'page').replace(/[^\w.-]+/g, '-').slice(0, 60)}.html`, media_type })
         }
         const title = String(args.title || ref.file_name)
-        const id = await client.publish({ attachments: [{ ...ref, asset_type: args.type ?? assetTypeOf(ref.media_type) }], title, ...(args.note ? { note: String(args.note) } : {}), ...(args.keep === true ? { keep: true } : {}) })
-        return `published as ${id}: "${title}" is on the board, end-to-end encrypted; members open it in the Trommi app. Links for people outside the board are not available on the new hub yet.`
+        const asset = { ...ref, asset_type: args.type ?? assetTypeOf(ref.media_type) }
+        const note = args.note ? String(args.note) : null
+        const id = await client.publish({ attachments: [asset], title, ...(note ? { note } : {}) })
+        // Announced in the session's conversation, as today's board did: a message carrying the published object.
+        await client.sendMessage({ text: [`**${title}**`, note].filter(Boolean).join('\n\n'), attachments: [asset], published_object_id: id })
+        return `published as ${id}: "${title}" is shown in your conversation on the board, end-to-end encrypted; members open it in the Trommi app. Links for people outside the board are not available on the new hub yet.`
       }
       case 'list_assets':
         return JSON.stringify([...model().published.values()].filter(p => p.agent_device_id === me()).map(p => ({

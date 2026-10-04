@@ -186,6 +186,8 @@ await test('list_cards, publish_asset, list_assets, revoke_asset; the unported t
   const out = await bridge.callTool('publish_asset', { content: '<h1>x</h1>', title: 'Report' })
   const id = out.match(/published as ([0-9a-f]{32})/)[1]
   assert.equal(client.calls.find(c => c[0] === 'publish')[1].attachments[0].media_type, 'text/html')
+  const told = client.calls.find(c => c[0] === 'sendMessage')[1]
+  assert.equal(told.text, '**Report**'); assert.equal(told.published_object_id, id); assert.equal(told.attachments[0].media_type, 'text/html')
   assert.equal(JSON.parse(await bridge.callTool('list_assets', {}))[0].id, id)
   await bridge.callTool('revoke_asset', { id })
   assert.deepEqual(client.calls.at(-1), ['close', id, 'revoked'])
