@@ -30,12 +30,12 @@ const freePort = async () => {
   return new Promise(res => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)) }) })
 }
 
-export async function startHub(tmp) {
+export async function startHub(tmp, extraEnv = {}) {
   const port = await freePort()
   const data = fs.mkdtempSync(path.join(tmp, 'hub-'))
   const hub_url = `http://127.0.0.1:${port}`
   const child = spawn(process.execPath, [path.join(here, '../hub/server.mjs')], {
-    env: { ...process.env, HUB_PORT: String(port), PORT: String(port), HUB_HOST: '127.0.0.1', HUB_DATA: data, DATA_DIR: data, HUB_URL: hub_url, HUB_DB: path.join(data, 'hub.db') },
+    env: { ...process.env, HUB_PORT: String(port), PORT: String(port), HUB_HOST: '127.0.0.1', HUB_DATA: data, DATA_DIR: data, HUB_URL: hub_url, HUB_DB: path.join(data, 'hub.db'), ...extraEnv },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
   let err = ''
@@ -46,7 +46,7 @@ export async function startHub(tmp) {
 
 /** connector/channel.mjs as Claude Code starts it; collects every notification. */
 export async function startChannel({ env, cwd, script = path.join(here, 'channel.mjs') }) {
-  const events = []
+  const events = [], said = []
   const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...process.env, ...env }, cwd, stderr: 'pipe' })
   let err = ''
   const client = new Client({ name: 'channel-test', version: '1' }, { capabilities: {} })
@@ -58,12 +58,13 @@ export async function startChannel({ env, cwd, script = path.join(here, 'channel
   const call = async (name, args = {}) => {
     const r = await client.callTool({ name, arguments: args })
     const text = r.content?.[0]?.text ?? ''
+    said.push(text)
     if (r.isError) throw Object.assign(new Error(text), { tool_error: true })
     return text
   }
   const ready = () => until('the channel to be in the room', async () => { try { await call('list_cards'); return true } catch { return false } }, 20000)
   const next = (pred, what = 'a channel event') => until(what, () => events.find(e => !e.seen && pred(e)) && Object.assign(events.find(e => !e.seen && pred(e)), { seen: true }))
-  return Object.assign(handle, { client, events, call, ready, next, stderr: () => err, close: () => client.close() })
+  return Object.assign(handle, { client, events, said, call, ready, next, stderr: () => err, close: () => client.close() })
 }
 
 export async function integration({ test, tmp }) {
@@ -428,22 +429,50 @@ export async function integration({ test, tmp }) {
   }
 }
 
-/** Connector updates: a changed code file is hot-reloaded on reload_connector; a changed shell file asks for a restart. */
+/**
+ * Connector updates, in a joined room: a changed code file is hot-reloaded on reload_connector (same process, lease and
+ * stream: the human's answer to a card filed by the new code arrives), the hub's recommended version and a changed shell
+ * file ask for a restart, and the update is hinted once on the next tool result.
+ */
 export async function updates({ test, tmp }) {
+  const core = await import('../core/index.mjs')
+  const hub = await startHub(tmp, { HUB_RECOMMENDED_CHANNEL: '9.0.0' })
   // A copy of connector/ and core/ beside node_modules, so the test can change files without touching the repository.
   const repo = path.join(tmp, 'update-repo')
   for (const d of ['connector', 'core']) fs.cpSync(path.join(here, '..', d), path.join(repo, d), { recursive: true })
   fs.symlinkSync(path.join(here, '../node_modules'), path.join(repo, 'node_modules'))
   const project = path.join(tmp, 'update-project')
   fs.mkdirSync(project, { recursive: true })
-  const env = { TROMMI_KEYS_DIR: path.join(tmp, 'update-keys'), TROMMI_FOLDER: project, TROMMI_HUB: 'http://127.0.0.1:9', TROMMI_UPDATE_POLL_MS: '300' }
-  const ch = await startChannel({ env, cwd: project, script: path.join(repo, 'connector/channel.mjs') })
   const update = e => e.method === 'notifications/claude/channel' && e.params.meta?.kind === 'update'
+  let human, ch
   try {
-    await test('update: a changed tool file is announced, and reload_connector loads it without a restart (tool list changed)', async () => {
+    ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
+    await human.start()
+    const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
+    const env = { TROMMI_KEYS_DIR: path.join(tmp, 'update-keys'), TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, TROMMI_INVITE: invite.link, TROMMI_UPDATE_POLL_MS: '300', TROMMI_VERSION_CHECK_MS: '400' }
+    ch = await startChannel({ env, cwd: project, script: path.join(repo, 'connector/channel.mjs') })
+    await ch.ready()
+    const agents = () => [...human.model.members.values()].filter(m => m.device_role === 'agent').map(m => m.device_id)
+    const agentId = agents()[0]
+
+    await test('update: the hub recommends a newer channel: announced once with restart_required, hinted once on the next tool result', async () => {
+      const ev = await ch.next(e => update(e) && e.params.meta.version === '9.0.0', 'the hub update event')
+      assert.equal(ev.params.meta.restart_required, '1')
+      assert.match(ev.params.content, /Neue Connector-Version 9\.0\.0 – jetzt neu laden\?/)
+      await ch.call('list_cards'); await ch.call('list_cards')
+      await sleep(1000)
+      const hinted = ch.said.filter(t => /\[Trommi: a new connector version 9\.0\.0 is available\. It needs a real restart/.test(t))
+      assert.equal(hinted.length, 1, 'hinted once on a tool result')
+      assert.equal(ch.events.filter(e => update(e) && e.params.meta.version === '9.0.0').length, 1, 'the same hub version announced twice')
+    })
+
+    await test('update: changed tool files are announced, and reload_connector loads it without a restart (tool list changed)', async () => {
       const before = (await ch.client.listTools()).tools
       assert.ok(before.some(t => t.name === 'reload_connector'))
       const file = path.join(repo, 'connector/channel-tools.mjs')
+      // A new tool name in the definitions and in the bridge: both parts of the code come back as one version.
+      const bridgeFile = path.join(repo, 'connector/channel-bridge.mjs')
+      fs.writeFileSync(bridgeFile, fs.readFileSync(bridgeFile, 'utf8').replace("case 'list_cards': {", "case 'list_cards_v2': {"))
       fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace("name: 'list_cards',", "name: 'list_cards_v2',"))
       const ev = await ch.next(update, 'the update event')
       assert.equal(ev.params.meta.update_available, '1')
@@ -456,11 +485,31 @@ export async function updates({ test, tmp }) {
       assert.ok(after.includes('reload_connector'))
       assert.match(await ch.call('reload_connector'), /is current/)
     })
+
+    await test('update: the reload keeps process, lease and stream: same member, a card of the new code is answered live', async () => {
+      assert.equal(ch.exited, false)
+      assert.match(await ch.call('list_cards_v2'), /^\[/)
+      const out = await ch.call('create_decision', { title: 'After the reload?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })
+      const card = out.match(/card ([0-9a-f]{32})/)[1]
+      await until('the card at the human', () => human.model.cards.get(card)?.title === 'After the reload?')
+      await human.answer({ object_id: card, choices: ['y'] })
+      const ev = await ch.next(e => e.method === 'notifications/claude/channel' && e.params.meta?.kind === 'decision' && e.params.meta.card_id === card, 'the decision after the reload')
+      assert.equal(ev.params.meta.choice, 'y')
+      assert.deepEqual(agents(), [agentId], 'the reload made a new member')
+      assert.equal(ch.stderr().match(/\] in room /g)?.length, 1, 'the room was opened again')
+      assert.doesNotMatch(ch.stderr(), /lease|another process/)
+    })
+
     await test('update: a changed core file (shell) is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
       fs.appendFileSync(path.join(repo, 'core/transport.mjs'), '\n// changed by the update test\n')
       const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1', 'the restart event')
       assert.match(ev.params.content, /\/mcp/)
       assert.match(await ch.call('reload_connector'), /\/mcp, then trommi, then Reconnect/)
+      assert.match(await ch.call('list_cards_v2'), /^\[/, 'the old code keeps running until the restart')
     })
-  } finally { await ch.close() }
+  } finally {
+    try { await ch?.close() } catch {}
+    try { human?.stop() } catch {}
+    hub.stop()
+  }
 }
