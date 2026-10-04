@@ -160,6 +160,17 @@ try {
   await A.js(`const f = document.querySelector('#row-${card2} form[action$="/close"]'); f ? f.requestSubmit() : document.querySelector('#row-${card2} button[formaction$="/close"]')?.click()`)
   await B.until(`!document.getElementById('row-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
 
+  // ---- warm reload: the Desk paints from IndexedDB before the hub answers ----
+  for (let i = 0; i < 30; i++) await agent.sendCard({ title: `Frage ${i}`, options: [{ key: 'a', label: 'Ja' }, { key: 'b', label: 'Nein' }] })
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelectorAll('.inbox-row').length >= 30", '30 more rows on A')
+  await sleep(600)   // the core persists in batches
+  await A.go(`${APP}/`)
+  await A.until("document.documentElement.hasAttribute('data-ready')", 'reloaded')
+  const warm = await A.js("return { first: trommi.firstPaintMs, rows: document.querySelectorAll('.inbox-row').length, conn: trommi.client.model.room.connection }")
+  timing(`warm reload -> Desk painted (${warm.rows} rows, connection then: ${warm.conn})`, warm.first)
+  check(warm.rows >= 30, 'warm reload shows the cards from local storage')
+
   // ---- devices: B removes nobody; A sees both humans and the agent ----
   await A.js("trommi.router.visit('/devices')")
   await A.until("document.querySelectorAll('.room-device').length >= 3", 'three devices listed')
