@@ -80,10 +80,14 @@ try {
   check(await A.js("return document.querySelector('#account').textContent.includes('Make a new kit')"), 'Settings: kit made')
   await A.shot('e2e-2b-settings.png')
 
-  // ---- A invites an agent; the agent joins (no check code) ----
+  // ---- A invites an agent from the empty Desk ("Invite your first agent"); the agent joins (no check code) ----
   await A.js("trommi.router.visit('/devices')")
-  await A.until("document.querySelector('form[action=\"/pair\"] input[value=agent]')", 'devices page')
-  await A.js("document.querySelector('form[action=\"/pair\"] input[value=agent]').form.requestSubmit()")
+  await A.until("document.querySelector('#agent-invite')", 'devices page with Invite an agent')
+  await A.js("trommi.router.visit('/')")
+  await A.until("document.querySelector('#desk-invite-go')", 'Invite your first agent on the empty Desk')
+  check(await A.js("return !!document.querySelector('#agents #sidebar-invite[aria-label=\"Invite an agent\"]')"), 'sidebar has the + to invite an agent')
+  await A.shot('e2e-3a-desk-invite.png')
+  await A.js("document.querySelector('#desk-invite-go').click()")
   await A.until("location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')", 'agent invite page')
   await A.shot('e2e-3-invite-agent.png')
   const link = await A.js("return [...trommi.client.model.invites.values()].at(-1).link")
@@ -109,6 +113,7 @@ try {
   await A.until(`document.getElementById('row-${cardId}')`, 'card row on the Desk')
   timing('card sent by agent -> row visible on A', Date.now() - t0)
   check(await A.js("return !!document.querySelector('#agents .agent-row')"), 'session in the sidebar')
+  check(await A.js("return !document.querySelector('#desk-invite') && !!document.querySelector('#agents #sidebar-invite')"), 'Invite your first agent gone once a session is there; the + stays')
   await A.shot('e2e-4-desk-card.png')
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----

@@ -563,6 +563,12 @@ a.asset-preview:hover::after { box-shadow: inset 0 0 0 1px var(--line-strong); }
 /* Dashed: these are not here right now. */
 .agent-heading-away { display: flex; align-items: center; gap: var(--s-2); }
 .agent-heading-away::after { content: ""; flex: 1; border-top: 1px dashed var(--line-strong); }
+/* Invite an agent: a small drawn "+" in a dashed ring, in the avatars' column under the connected sessions (views/sidebar.mjs). */
+.agent-invite { display: flex; margin: 2px 0 0; padding: 0 var(--s-3); }
+.agent-invite-go { flex: none; width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 1.5px dashed var(--line-strong); border-radius: 11px; background: none; color: var(--faint); cursor: pointer; transition: color var(--d-fast), border-color var(--d-fast), background var(--d-fast); }
+.agent-invite-go:hover, .agent-invite-go:focus-visible { color: var(--accent); border-color: var(--accent); background: var(--surface); }
+.agent-invite-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.agent-invite-go .sketch { width: 18px; height: 18px; stroke-width: 2; }
 .agent-row { display: flex; align-items: center; min-width: 0; border-radius: var(--r-md); }
 .agent-entry { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); min-height: 46px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; text-align: left; transition: background var(--d-fast); }
 .agent-entry:hover { background: var(--sunken); }
@@ -1089,6 +1095,21 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* Nothing here yet: dashed and a little crooked, so it reads as not-yet-real. */
 .inbox-empty { justify-self: center; display: grid; justify-items: center; gap: var(--s-3); margin: var(--s-10) auto 0; color: var(--muted); text-align: center; font-size: var(--t-lg); }
 .inbox-empty .sketch { width: 96px; height: 96px; stroke-width: 1.1; color: var(--faint); }
+/* A new account's Desk (no session yet): "Invite your first agent", a calm sheet of paper with one way on (views/desk.mjs).
+   The empty Desk's own line below it says the same thing later, so it steps aside while the note stands. */
+.inbox-head:has(> .desk-invite) { justify-content: center; }
+.desk-invite { flex: 0 1 34rem; display: grid; justify-items: center; gap: var(--s-3); margin-top: var(--s-8); padding: var(--s-8) var(--s-6) var(--s-6); border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-sm); text-align: center; }
+.desk-invite .desk-invite-art { width: 72px; height: 72px; stroke-width: 1.2; color: var(--accent); }
+.desk-invite h2 { font: 800 var(--t-2xl)/1.15 var(--display); letter-spacing: -.02em; }
+.desk-invite p { max-width: 30rem; color: var(--muted); font-size: var(--t-md); line-height: 1.5; }
+.desk-invite code { font: .86em var(--mono); padding: 1px 4px; border-radius: 5px; background: var(--sunken); color: var(--fg); white-space: nowrap; }
+.desk-invite form { margin: var(--s-2) 0 0; }
+.desk-invite-go { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 44px; padding: 0 var(--s-5); border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font: 650 var(--t-md) var(--font); cursor: pointer; box-shadow: var(--shadow-sm); transition: background var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.desk-invite-go:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.desk-invite-go:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.desk-invite-go .sketch { width: 20px; height: 20px; stroke-width: 1.9; }
+#desk-head:has(> .desk-invite) ~ .inbox-groups .inbox-empty { display: none; }
+@media (max-width: 600px) { .desk-invite { margin-top: var(--s-4); padding: var(--s-6) var(--s-4) var(--s-5); } .desk-invite code { white-space: normal; overflow-wrap: anywhere; } }
 /* A narrower column: the text keeps its width, the picture waits behind the title. */
 @container rows (max-width: 700px) {
   .inbox-pics { display: none; }
@@ -1446,6 +1467,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   [data-rail="folded"] .agent-row.is-group .agent-entry { min-height: 0; }
   [data-rail="folded"] .agent-row > :is(.agent-cut, .agent-archive) { display: none; }
   [data-rail="folded"] #agents > :not(.agent-row) { display: none; }
+  [data-rail="folded"] #agents > .agent-invite { display: flex; justify-content: center; padding: 0; }
   .rail-tip { position: fixed; z-index: 9; padding: 6px 10px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); pointer-events: none; white-space: nowrap; }
   #agents { padding-top: 0; }
   /* the Desk box: 8px from the top and the sides (one inset all round), the first row 16px under it, on the line of the page's first content */
