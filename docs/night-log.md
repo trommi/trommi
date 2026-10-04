@@ -52,6 +52,12 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 - Outsider share links live (hub 3047372): `shares` table, uploader-only create, public GET with x-share-secret (timing-safe, 60/min/IP, Range). Channel share_asset is being wired (D), the viewer by C.
 - Channel live smoke on v1.1 prod (e719675): join + session assigned 1.8 s, card 91 ms, decision 85 ms, chat 50 ms; the session is named after its folder.
 - The v1 bytes/vectors are deliberately NOT frozen yet: they freeze after the second security review of the implemented code (requested from the coordinator).
+- KISS pass:
+  - App: ~1,300 lines of dead code removed (ui.js 1276 → 121, old islands, Dev menu leftovers, duplicate pen tables and base64url).
+  - Channel: module surface trimmed.
+  - README protocol and krypto-konzept brought in line with the code.
+  - Proposals for hub/crypto/core (duplicated HTTP helpers, session-grants copying zcrypto internals, FORMAT.md §6/§9 stale) were handed to S1/S2/C.
+  - Left on purpose: channel-bridge question parsing and hub/push.mjs copy old-board code until the old board retires.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
