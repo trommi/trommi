@@ -126,7 +126,11 @@ export class Runner {
     this.flags = { pruned: false }
     this.notes = []                    // oracle caveats
   }
-  known(id, text) { this.w.known.set(id, text) }
+  known(id, text) {
+    // FUZZ_STRICT=1: the masks of findings marked fixed in FINDINGS.md fail the run instead (to see what they still hide)
+    if (process.env.FUZZ_STRICT && /^F(3|4|6|7|8|11|12|17|18|19)-/.test(id)) throw new Finding('masked', `${id}: ${text.slice(0, 120)}`)
+    this.w.known.set(id, text)
+  }
   oracle(i) { let o = this.O.get(i); if (!o) this.O.set(i, o = new RoomOracle(i)); return o }
   roomOf(i) { return this.w.rooms[i] }
 
@@ -340,6 +344,7 @@ export class Runner {
       return 'ok'
     }
     if (!this.strict) return 'ok'
+    if (c && c.state !== 'open' && this.w.attack) { c.v++; c.title = this.txt(a.title); c.titles.add(c.title); if (a.urgency) c.urgency = a.urgency; c.state = 'open'; c.answer = null; c.closed_how = null; c.revision = null; return 'ok' }   // a hostile hub withheld the close from the agent
     if (!O.revise(a.ref, { title: this.txt(a.title), urgency: a.urgency })) throw new Finding('invariant', `agent could revise ${a.ref} which the oracle holds as ${O.cards.get(a.ref)?.state}`, { action: a })
     return 'ok'
   }
@@ -349,6 +354,7 @@ export class Runner {
     try { await d.client.withdraw(id, 'no longer needed') } catch (e) { if (e.code === 'card-closed' && c.state !== 'open') return 'refused:card-closed'; throw e }
     if (this.strict && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) { if (!this.w.attack) throw new Finding('invariant', `F1 again: agent could withdraw ${a.ref} which the oracle holds as ${c.state}${c.closed_how ? '/' + c.closed_how : ''}`, { action: a }); c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
     if (!this.strict) return 'ok'
+    if (c && c.state !== 'open' && this.w.attack) { c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
     if (!O.withdraw(a.ref)) throw new Finding('invariant', `agent could withdraw ${a.ref} held as ${c.state}`, { action: a })
     return 'ok'
   }
