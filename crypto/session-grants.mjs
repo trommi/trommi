@@ -15,7 +15,8 @@
 //   manifest   = H("trommi/v1/session-manifest", for each recipient ascending: recipientId(32) || SHA-256(wrap))
 //   back link n = 0x01 0x0f || sessionId(16) || n u32 || AES-256-GCM(KDF(hist_n, salt roomId || sessionId, "trommi/v1/session-back-link", ctx n u32, 44)
 //                 -> key(32) || nonce(12), aad 0x01 0x0f || roomId || sessionId || n u32, key_{n-1} || hist_{n-1})
-// Rules (applyGrant): signer an active human at logSeq (or the recovery key valid at logSeq); grantNumber/previousGrantHash
+// Rules (applyGrant): signer an active human at logSeq (or the recovery key valid at logSeq), or, for the first grant of a
+// session only, an active agent assigning itself alone without history (an agent's child session, 4 October 2026); grantNumber/previousGrantHash
 // chain from 0 / zeros; first epoch 1; later epoch equal (re-seal: keeps every agent, may add) or previous + 1 (rotation);
 // assigned agents active agents at logSeq; logSeq/logHash in the verifier's log.
 // v1.1.1 (review 2, B02/A1): a member change is a removal or recovery entry. No grant backdates across one (logSeq below
@@ -171,7 +172,9 @@ export function decodeGrant(bytes) {
 export async function createSessionGrant({ state, signer, sessionState = null, sessionId = null, current = null, agentIds = [], withHistory = false, historyAgentIds = null, rotate = false, time = Date.now() }) {
   const signerKind = z.memberAt(state, signer.id)
   const isRecovery = bytesEqual(signer.id, state.recovery.id)
-  if (!isRecovery && (!signerKind || signerKind.role !== ROLE.HUMAN)) fail('not-human', 'only a human device (or the recovery key) grants session keys')
+  // An agent may create a session of its own (a child of its main session): the first grant only, assigned to itself alone.
+  const agentOwn = !sessionState && signerKind?.role === ROLE.AGENT && agentIds.length === 1 && hex(typeof agentIds[0] === 'string' ? z.unhex(agentIds[0]) : agentIds[0]) === hex(signer.id) && !withHistory && !historyAgentIds
+  if (!isRecovery && !agentOwn && (!signerKind || signerKind.role !== ROLE.HUMAN)) fail('not-human', 'only a human device (or the recovery key) grants session keys; an agent only creates a session of its own')
   const sid = sessionState ? z.unhex(sessionState.sessionId) : need(sessionId ?? globalThis.crypto.getRandomValues(new Uint8Array(16)), 16, 'session id')
   let secret
   if (!sessionState) secret = newSessionSecret(1)
@@ -213,7 +216,10 @@ export async function applyGrant(sessionState, grantBytes, roomState) {
   const rec = await recoveryIdAt(roomState, g.logSeq)
   const isRecovery = !!rec && bytesEqual(g.signerId, rec.id)
   const signer = isRecovery ? null : z.memberAt(roomState, g.signerId, g.logSeq)
-  if (!isRecovery && (!signer || signer.role !== ROLE.HUMAN)) bad('the signer is not an active human device')
+  // An agent's own session (a child of its main session): only the first grant, assigning the signer alone, without
+  // history. Every later grant (re-seal, rotation, handover) comes from a human device as for any session.
+  const agentOwn = !isRecovery && signer?.role === ROLE.AGENT && !sessionState && g.agentIds.length === 1 && bytesEqual(g.agentIds[0], g.signerId) && !g.withHistory
+  if (!isRecovery && !agentOwn && (!signer || signer.role !== ROLE.HUMAN)) bad(signer?.role === ROLE.AGENT ? 'an agent signs only the first grant of a session of its own, assigned to itself alone' : 'the signer is not an active human device')
   if (!await z.verify(isRecovery ? rec.signPub : signer.signPub, LABEL.grantSig, g.body, g.signature)) fail('bad-signature', 'session grant')
   if (!sessionState) {
     if (g.grantNumber !== 0 || !bytesEqual(g.previousGrantHash, ZERO32) || g.epoch !== 1) bad('the first grant has number 0, no predecessor and epoch 1')
@@ -239,6 +245,8 @@ export async function applyGrant(sessionState, grantBytes, roomState) {
   return {
     sessionId: hex(g.sessionId), grantNumber: g.grantNumber, grantHash: await z.hash(LABEL.grant, g.body), epoch: g.epoch, agentIds: g.agentIds.map(hex),
     withHistory: g.withHistory, keyCommit: g.keyCommit, histCommit: g.histCommit, manifestHash: g.manifestHash, logSeq: g.logSeq, signerId: hex(g.signerId), time: g.time, epochs,
+    // Who created the session (the first grant's signer), and whether that was an agent (a child session it opened).
+    creatorId: sessionState?.creatorId ?? hex(g.signerId), createdByAgent: sessionState ? !!sessionState.createdByAgent : agentOwn,
     stale: changeBetween(roomState, g.logSeq, roomState.head.seq),
   }
 }

@@ -4,6 +4,7 @@
 import * as z from './zcrypto.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
+import * as G from './session-grants.mjs'
 import { Client, randomHex, objectIdOf, ZERO_HASH } from './client.mjs'
 
 const { unhex, hex, ZError } = z
@@ -140,6 +141,29 @@ const agentMethods = {
   },
 
   setStatus(values, { session_id = null } = {}) { this._needAgent(); return this.setRegisters(values, { session_id }) },
+
+  /**
+   * A child session (4 October 2026): the agent opens a session of its own under its main session, without a human's
+   * approval, for a helper ("Design", "Server"). It draws the session key, seals it to itself, every active human device
+   * and the recovery key (never to another agent), signs the first grant (crypto/session-grants.mjs: itself alone, no
+   * history) and writes its profile there with parent_session = its main session. Humans re-key it like any session.
+   * Returns the new session_id.
+   */
+  async openChildSession({ profile = {} } = {}) {
+    this._needAgent()
+    const parent = this.session_id
+    if (!parent) throw new ZError('no-session', 'no main session is assigned to this agent yet')
+    const sid = await this.serial(async () => {
+      await this._refreshMembers()
+      const r = await G.createSessionGrant({ state: this.state, signer: this.device, agentIds: [this.my_device_id] })
+      await this._postGrant(r)
+      return r.sessionState.sessionId
+    })
+    await this.setStatus({ profile: { ...profile, parent_session: parent, is_main: false } }, { session_id: sid })
+    return sid
+  },
+  /** The child sessions this agent opened itself (and still holds). */
+  childSessionIds() { return this.session_ids.filter(sid => this.sessionKeys.get(sid)?.state.creatorId === this.my_device_id) },
 
   async requestPermission({ tool_name, description = '', input_preview = '', expires_in_ms = 10 * 60_000, session_id = null }) {
     this._needAgent()

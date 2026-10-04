@@ -367,6 +367,8 @@ export class Runner {
     c.v++; c.state = 'closed'; c.closed_how = 'merged'; c.revision = null
     return 'ok'
   }
+  /** The card's owner agent was removed: it re-asserts nothing (F15) any more. */
+  ownerGone(c) { const ag = c ? this.w.devs.get(c.agent) : null; return !ag || !!ag.removed }
   async do_answer(a) {
     const d = this.dev(a.dev), id = this.card(a); if (!d || !d.isHuman || !id) return 'skip'
     const O = this.oracle(d.room.idx), c = O.cards.get(a.ref)
@@ -385,7 +387,7 @@ export class Runner {
     O.attempts.add(a.ref)
     const trusted = !!a.trust
     const rec = trusted ? (cm.recommended == null ? [] : [].concat(cm.recommended)) : choices
-    O.answer(a.ref, { action, choices: rec, trusted })
+    O.answer(a.ref, { action, choices: rec, trusted, ownerGone: this.ownerGone(c) })
     this.sent.human.set(`${a.ref}`, (this.sent.human.get(`${a.ref}`) ?? 0) + 1)
     return 'ok'
   }
@@ -394,7 +396,7 @@ export class Runner {
     const O = this.oracle(d.room.idx)
     O.attempts.add(a.ref)
     try { await d.client.markRead({ object_id: id }) } catch (e) { if (e.code === 'card-closed') return 'refused:card-closed'; throw e }
-    O.answer(a.ref, { action: 'read', choices: [] })
+    O.answer(a.ref, { action: 'read', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)) })
     return 'ok'
   }
   async do_shred(a) {
@@ -402,7 +404,7 @@ export class Runner {
     const O = this.oracle(d.room.idx)
     O.attempts.add(a.ref)
     try { await d.client.shred({ object_id: id }) } catch (e) { if (e.code === 'card-closed') return 'refused:card-closed'; throw e }
-    O.answer(a.ref, { action: 'shred', choices: [] })
+    O.answer(a.ref, { action: 'shred', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)) })
     return 'ok'
   }
   async do_decide_again(a) {

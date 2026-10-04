@@ -22,6 +22,15 @@ const sessionsOf = m => [...m.sessions].filter(([k, s]) => k === sessionKey(s)).
 const keyOf = o => o.session_id ?? o.agent_device_id
 /** How the core addresses a session for a send: { session_id } (v1.1) or { agent_device_id } (the mock, v1). */
 export const addressOf = (model, key) => (model.sessions.get(key)?.session_id ? { session_id: key } : { agent_device_id: key })
+// The parent a session names (profile.parent_session), as core model.parentSessionOf rules: a child session an agent
+// opened itself counts only under a session that agent is assigned to; any other claim as before (display only).
+function parentClaim(m, s) {
+  const want = s.profile?.parent_session
+  if (!want || typeof want !== 'string') return null
+  if (!s.created_by_agent) return want
+  const parent = m.sessions.get(want)
+  return parent && parent !== s && (parent.agent_device_ids ?? []).includes(s.creator_device_id) ? want : null
+}
 export const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : sessionKey(s).slice(0, SESSION_ID_LEN))
 
 export class BoardState {
@@ -100,15 +109,20 @@ export class BoardState {
       const key = sessionKey(s), set = m.human.session_settings.get(key) ?? s.settings ?? {}
       const p = s.profile ?? {}
       const id = this.devToAgent.get(key)
-      const wanted = 'parent' in set ? set.parent : p.parent_session
+      // The human's choice wins; else the session's own claim, a session id (child sessions, checked by the core) or a board id.
+      const claimed = parentClaim(m, s)
+      const wanted = 'parent' in set ? set.parent : claimed && this.devToAgent.has(claimed) ? this.devToAgent.get(claimed) : claimed
       const parent = wanted && this.agentToDev.has(wanted) ? wanted : null
       return {
         id, device_id: key, session_id: s.session_id ?? null, agent_device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
         online: Boolean(s.is_online), model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
-        desk: set.desk ?? 'main', archived: Boolean(set.archived), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0,
+        desk: set.desk ?? null, archived: Boolean(set.archived), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0,
         removed: s.is_active === false,
       }
     })
+    // A helper without a desk of its own lies on its main's desk (a child session lands where its main is).
+    const byId = new Map(out.map(a => [a.id, a]))
+    for (const a of out) if (a.desk == null) a.desk = (a.parent && byId.get(a.parent)?.desk) || 'main'
     return out.sort((a, b) => a.position - b.position)
   }
 

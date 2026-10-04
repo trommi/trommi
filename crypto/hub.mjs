@@ -33,6 +33,8 @@ const WRAP_AGENT = 2 + 32 + 33 + 16      // sealed box around 0x01 || key
 const WRAP_HUMAN = 2 + 32 + 65 + 16      // sealed box around 0x02 || key || hist
 const BACK_LINK = 2 + 4 + 64 + 16
 const SESSION_BACK_LINK = 2 + 16 + 4 + 64 + 16
+/** Child sessions an agent may open by itself (its own first grants), a bound on what one agent can add to every human device. */
+export const MAX_AGENT_SESSIONS = 32
 const isSealed = (b, len) => b instanceof Uint8Array && (Array.isArray(len) ? len.includes(b.length) : b.length === len) && b[0] === 1 && b[1] === z.OBJ.SEALED
 
 /** In-memory stand-in for the store. Everything the hub keeps is here, and nothing in it opens anything. */
@@ -61,6 +63,7 @@ export function memoryStorage() {
     objectInfo: id => s.objects.get(id) ?? null,
     putGrant(sessionId, g) { const list = s.grants.get(sessionId) ?? []; list.push(g); s.grants.set(sessionId, list) },
     grants: sessionId => [...(s.grants.get(sessionId) ?? [])],
+    sessionsCreatedBy: signer => [...s.grants.values()].filter(l => l[0]?.signer === signer).length,
     putSessionWrap(sessionId, epoch, id, sealed) { const k = `${sessionId}:${epoch}:${id}`; if (!s.sessionWraps.has(k)) s.sessionWraps.set(k, { sessionId, epoch, id, sealed }) },
     sessionWraps: (sessionId, id, afterEpoch = 0) => [...s.sessionWraps.values()].filter(w => w.sessionId === sessionId && w.id === id && w.epoch > afterEpoch).sort((a, b) => a.epoch - b.epoch),
     putSessionBackLink(sessionId, epoch, bytes) { const k = `${sessionId}:${epoch}`; if (!s.sessionLinks.has(k)) s.sessionLinks.set(k, { epoch, bytes }) },
@@ -261,8 +264,13 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     const prev = c.state
     const next = await applyGrant(prev, grant, room())          // chain, signer at its log state, agents, commitments
     if (next.sessionId !== sessionId) fail('bad-argument', 'the grant names another session')
-    // The signer must still be an active human device (or the room's current recovery key).
-    if (!bytesEqual(unhex(next.signerId), room().recovery.id) && activeRole(next.signerId) !== ROLE.HUMAN) fail('stale-grant', 'the signer is no longer an active human device')
+    // The signer must still be an active human device (or the room's current recovery key), or, for the first grant of
+    // an agent's own child session (applyGrant checked the shape: itself alone, no history), that agent still active.
+    const agentOwn = !prev && next.createdByAgent
+    if (agentOwn) {
+      if (activeRole(next.signerId) !== ROLE.AGENT) fail('stale-grant', 'the signer is no longer an active agent')
+      if ((storage.sessionsCreatedBy?.(next.signerId) ?? 0) >= MAX_AGENT_SESSIONS) fail('rate-limited', `an agent opens at most ${MAX_AGENT_SESSIONS} sessions of its own`)
+    } else if (!bytesEqual(unhex(next.signerId), room().recovery.id) && activeRole(next.signerId) !== ROLE.HUMAN) fail('stale-grant', 'the signer is no longer an active human device')
     // B02/A1: a new grant names the member list as it is after the newest removal or recovery (a removed device cannot).
     if (next.stale) fail('stale-grant', 'the grant names a member list from before a removal or recovery: build it on the current list')
     for (const a of next.agentIds) if (activeRole(a) !== ROLE.AGENT) fail('bad-grant', 'an assigned agent is no longer a member')

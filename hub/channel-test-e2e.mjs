@@ -217,6 +217,36 @@ export async function integration({ test, tmp }) {
       } finally { await second.close().catch(() => {}) }
     })
 
+    let child
+    await test('e2e: child session: open_session and session on tools; the human sees it under the main; answers come back with meta session', async () => {
+      const main = human.sessionOfAgent(agentId)
+      assert.match(await channel.call('open_session', { name: 'Design', task: 'pictures', icon: 'brush' }), /child session opened: "Design"/)
+      await channel.call('reply', { text: 'hello from Design', session: 'Design' })
+      await channel.call('set_status', { id: 'draw', label: 'Drawing', state: 'working', session: 'Design' })
+      const out = await channel.call('create_decision', { title: 'Which colour?', options: [{ key: 'r', label: 'Red' }, { key: 'b', label: 'Blue' }], session: 'Design' })
+      const id = out.match(/card ([0-9a-f]{32})/)[1]
+      // a second helper opened by its first use
+      await channel.call('reply', { text: 'Server here', session: 'Server' })
+      child = await until('the child at the human', () => [...human.model.sessions.values()].find(s => s.profile?.agent_name === 'Design')?.session_id)
+      assert.notEqual(child, main)
+      assert.equal(human.model.sessions.get(child).profile.parent_session, main, 'parent = the main session')
+      assert.equal(human.model.sessions.get(child).profile.task, 'pictures')
+      assert.deepEqual(human.model.sessions.get(child).agent_device_ids, [agentId])
+      await until('the status line in the child', () => human.model.sessions.get(child).status_lines?.find(l => l.id === 'draw'))
+      assert.ok(!human.model.sessions.get(main).status_lines?.find(l => l.id === 'draw'), 'not in the main session')
+      await until('the card in the child', () => human.model.cards.get(id)?.session_id === child)
+      await until('the second child', () => [...human.model.sessions.values()].find(s => s.profile?.agent_name === 'Server' && s.profile.parent_session === main))
+      assert.equal(human.sessionOfAgent(agentId), main, 'the human still writes to the main session by default')
+      await human.answer({ object_id: id, choices: ['b'] })
+      const ev = await channel.next(chEvent('decision', id))
+      assert.equal(ev.params.meta.session, 'Design')
+      await human.sendMessage({ agent_device_id: agentId, session_id: child, text: 'for Design' })
+      const chat = await channel.next(e => e.method === 'notifications/claude/channel' && e.params.content === 'for Design')
+      assert.equal(chat.params.meta.session, 'Design')
+      const listed = JSON.parse(await channel.call('list_cards', { session: 'Design' }))
+      assert.deepEqual(listed.map(c => [c.id, c.session]), [[id, 'Design']])
+    })
+
     await test('e2e: restart reuses the identity, no new member entry, catches up', async () => {
       const entries = human.model.room.last_entry_number
       const agents = [...human.model.members.values()].filter(m => m.device_role === 'agent').length
@@ -229,6 +259,17 @@ export async function integration({ test, tmp }) {
       assert.equal(human.model.room.last_entry_number, entries)
       assert.equal([...human.model.members.values()].filter(m => m.device_role === 'agent').length, agents)
       assert.match(channel.stderr(), new RegExp(`as ${agentId.slice(0, 12)}`))
+    })
+
+    await test('e2e: the child session survives a restart of the channel: same session, no new one', async () => {
+      const before = [...human.model.sessions.values()].filter(s => s.profile?.agent_name === 'Design').length
+      assert.match(await channel.call('open_session', { name: 'Design' }), /already open/)
+      await channel.call('reply', { text: 'Design after the restart', session: 'design' })
+      await until('the message in the same child', async () => {
+        await human.loadTimeline(`chat:session/${child}`).catch(() => {})
+        return [...(human.model.timelines.get(`chat:session/${child}`)?.items.values() ?? [])].some(i => i.content?.text === 'Design after the restart')
+      })
+      assert.equal([...human.model.sessions.values()].filter(s => s.profile?.agent_name === 'Design').length, before)
     })
 
     await test('e2e: forged commands are dropped and reported as alert/<n>', async () => {

@@ -174,7 +174,8 @@ export class Client {
   }
   /** Agents: the sessions assigned to this agent now (grants), the first one is the default for every send. */
   get session_ids() { return [...this.sessionKeys.values()].filter(k => k.state.agentIds.includes(this.my_device_id)).map(k => k.state.sessionId) }
-  get session_id() { return this.session_ids[0] ?? null }
+  // The main session is one a human gave this agent; the child sessions it opened itself (openChildSession) never are.
+  get session_id() { const ids = this.session_ids; return ids.find(sid => !this.sessionKeys.get(sid).state.createdByAgent) ?? ids[0] ?? null }
   /** Agents: resolves with the first session assigned to this agent. */
   whenSession() {
     if (this.session_id) return Promise.resolve(this.session_id)
@@ -182,6 +183,8 @@ export class Client {
   }
   /** Humans: the session an agent is assigned to now (the first). */
   sessionOfAgent(agent_device_id) {
+    // its main session first: a child session the agent opened itself is never its default
+    for (const k of this.sessionKeys.values()) if (k.state.agentIds.includes(agent_device_id) && !k.state.createdByAgent) return k.state.sessionId
     for (const k of this.sessionKeys.values()) if (k.state.agentIds.includes(agent_device_id)) return k.state.sessionId
     return null
   }
