@@ -274,6 +274,9 @@ await client.deleteMemo(object_id)                     // a closed version (obje
 await client.sendStrokes({ timeline_id, content_type, strokes?, stroke_ids?, offset?, text?, attachments? })  // canvas items
 const ref = await client.uploadAttachment(bytes, { file_name, media_type, width?, height?, caption?, page?, object_id? })  // encryptAsset + PUT; returns the README reference
 const bytes = await client.fetchAttachment(ref)        // GET + decrypt + sha256 check; cached in memory
+const { share_id, link, expires_at } = await client.shareAttachment(ref, { expires_at?, app_url? })   // uploader only; link for outsiders, ≤ 30 days
+await client.revokeShare(share_id, { attachment_id? })  // attachment_id needed only for a share another device made
+const bytes = await openShared(new Hub({ hub_url }), link)   // the viewer page: no room, no sign-in; parseShareLink(link) too
 const blob = await client.attachmentBlob(ref)          // browsers: a Blob with ref.media_type
 await client.loadTimeline(timeline_key, { limit: 50 }) // next older page into the window, newest first: from storage if cached, else GET threads; returns { loaded, has_more }
 await client.timelineWindow(timeline_key, { before_envelope_number, limit })   // windowed read for scrolling, does not grow the in-memory window; [TimelineItem] oldest first

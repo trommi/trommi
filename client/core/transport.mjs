@@ -122,6 +122,10 @@ export class Hub {
   sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${session_id}/key_back_links`)) }
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope } }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${attachment_id}`), { raw: bytes }) }
+  postShare(attachment_id, { share_id, share_secret_hash, expires_at }) { return this.request('POST', this.roomPath(`/attachments/${attachment_id}/shares`), { body: { share_id, share_secret_hash, expires_at } }) }
+  deleteShare(attachment_id, share_id) { return this.request('DELETE', this.roomPath(`/attachments/${attachment_id}/shares/${share_id}`)) }
+  /** For the outsider's viewer page: the ciphertext of a shared attachment, no sign-in. */
+  getShared(share_id, share_secret) { return this.request('GET', `/shares/${share_id}`, { auth: false, binary: true, headers: { 'x-share-secret': share_secret } }) }
   getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${attachment_id}`), { binary: true }) }
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
   getEscrow() { return this.request('GET', this.roomPath('/escrow'), { auth: false }) }

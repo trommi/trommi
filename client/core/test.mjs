@@ -8,7 +8,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
-import { foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, memoryStorage, timelineEvents, z } from './index.mjs'
+import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, memoryStorage, timelineEvents, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 
@@ -309,6 +309,18 @@ await test('attachments: encrypt, PUT, lazy GET, decrypt, sha256 bound', async (
   phone.attachmentCache.clear()
   try { await phone.fetchAttachment({ ...ref, sha256: z.b64u(new Uint8Array(32)) }) } catch (e) { err = e }
   eq(err?.code, 'decrypt-failed', 'wrong hash refused')
+  // a link for someone outside the room
+  if (!useTestHub) {
+    const { share_id, link } = await agent.shareAttachment(ref, { app_url: 'https://app.example' })
+    assert(link.startsWith(`https://app.example/a/${share_id}#`), 'link form')
+    const outsider = new Hub({ hub_url: HUB })
+    const got2 = await openShared(outsider, link)
+    assert(z.bytesEqual(got2, bytes), 'outsider decrypts')
+    await agent.revokeShare(share_id)
+    let e2 = null
+    try { await openShared(outsider, link) } catch (e) { e2 = e }
+    eq(e2?.code, 'not-found', 'revoked')
+  }
 })
 
 await test('removal and rotation: one entry, new epoch, removed device opens nothing new', async () => {
