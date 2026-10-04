@@ -426,6 +426,30 @@ try {
       fs.rmSync(hubDir, { recursive: true, force: true });
     }
   });
+  await test('Docker image copies every module the hub imports (hub/Dockerfile COPY list vs import graph of server.mjs)', async () => {
+    const root = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+    const copied = new Set();
+    for (const line of fs.readFileSync(path.join(root, 'hub/Dockerfile'), 'utf8').split('\n')) {
+      const m = /^COPY\s+(.+)\s+\S+$/.exec(line.trim());
+      if (!m) continue;
+      for (const src of m[1].split(/\s+/)) {
+        const abs = path.join(root, src);
+        if (fs.statSync(abs).isDirectory()) for (const f of fs.readdirSync(abs, { recursive: true })) copied.add(path.join(src, f));
+        else copied.add(src);
+      }
+    }
+    const seen = new Set();
+    const walk = (rel) => {
+      if (seen.has(rel)) return;
+      seen.add(rel);
+      const code = fs.readFileSync(path.join(root, rel), 'utf8');
+      for (const m of code.matchAll(/(?:\bfrom\s*|\bimport\s*\(?\s*)['"](\.{1,2}\/[^'"]+)['"]/g)) walk(path.relative(root, path.resolve(root, path.dirname(rel), m[1])));
+    };
+    walk('hub/server.mjs');
+    assert.ok(seen.has('hub/admin.mjs') && seen.has('hub/admin-view.mjs'));
+    const missing = [...seen].filter((f) => !copied.has(f));
+    assert.deepEqual(missing, [], `hub/Dockerfile does not COPY: ${missing.join(', ')}`);
+  });
 } finally {
   await admin.close();
   fs.rmSync(dir, { recursive: true, force: true });
