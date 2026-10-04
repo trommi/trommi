@@ -26,6 +26,7 @@ import { srcOf } from './picture.mjs'
 import { sketchSvg, ringSvg, handSvg } from '../pen.js'
 import { blockedOf } from '../app/node-stubs/blocked.mjs'
 
+export const LIVE = 160              // so many of the newest messages are kept up to date by the live stream
 export const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
 const WORKING_WINDOW = 10 * 60000    // so long after the human's last word the session counts as answering
@@ -236,11 +237,16 @@ function build(m, cont, about, s, base) {
 const dayLine = ts => html`<div class="day" data-day="${ts}"><span>${dayLabel(ts)}</span></div>`
 
 /** Every message of the session as it stands in the log: [{ id, day (a day line before it, or ''), node }]. */
-export function logItems(s, base) {
-  return s.messages.map((m, i) => {
-    const prev = s.messages[i - 1]
-    return { id: m.id, seq: m.seq ?? 0, day: !prev || dayKey(prev.ts) !== dayKey(m.ts) ? dayLine(m.ts) : '', node: message(m, prev, s, base) }
-  })
+/** The messages from index `from` to `to` (not included) as they stand in the log: [{ id, seq, day, node }]. */
+export function logItems(s, base, from = 0, to = s.messages.length) {
+  const out = []
+  for (let i = Math.max(0, from); i < to; i++) {
+    const m = s.messages[i], prev = s.messages[i - 1]
+    // (The oldest in memory while older ones exist: its day line comes with the page before it, see logWindow.)
+    const day = !prev ? (s.more ? '' : dayLine(m.ts)) : dayKey(prev.ts) !== dayKey(m.ts) ? dayLine(m.ts) : ''
+    out.push({ id: m.id, seq: m.seq ?? 0, day, node: message(m, prev, s, base) })
+  }
+  return out
 }
 
 // ---- the pieces of the page that change by themselves (each has an id; the live stream replaces it) ----
@@ -301,12 +307,15 @@ function earlier(s, base, first, left, more = s.more) {
 }
 /** A window of the log: the PAGE messages before `before` (a message id; null: the latest). */
 function logWindow(s, base, before = null) {
-  const items = logItems(s, base)
-  const at = before == null ? -1 : items.findIndex(i => i.id === before)
+  const total = s.messages.length
+  const at = before == null ? -1 : s.messages.findIndex(m => m.id === before)
   // (An earlier window asked for a message memory no longer holds: nothing, rather than the latest a second time.)
-  const end = before != null && at < 0 ? 0 : at < 0 ? items.length : at, start = Math.max(0, end - PAGE)
-  const shown = items.slice(start, end)
-  return { shown, start, end, total: items.length, body: html`${shown.length ? earlier(s, base, shown[0].id, start) : ''}${shown.map(i => html`${i.day}${i.node}`)}` }
+  const end = before != null && at < 0 ? 0 : at < 0 ? total : at, start = Math.max(0, end - PAGE)
+  const shown = logItems(s, base, start, end)   // only the window is rendered, however much memory holds
+  // An earlier window ends where the one below it begins: the day line between them, when the day changes there.
+  const next = before != null && at >= 0 ? s.messages[at] : null, last = s.messages[end - 1]
+  const joint = next && last && dayKey(last.ts) !== dayKey(next.ts) ? dayLine(next.ts) : ''
+  return { shown, start, end, total, body: html`${shown.length ? earlier(s, base, shown[0].id, start) : ''}${shown.map(i => html`${i.day}${i.node}`)}${joint}` }
 }
 
 // (The three starters are links: each brings the page again with its words in the field, ready to send or change.)
@@ -578,7 +587,8 @@ export function register(t) {
         if (p && !(mode in p.modes)) {
           p.modes[mode] = true
           if (mode === 'questions') p.questions = questionList(p.s, BASE)
-          else { p.files = filesList(p.s, BASE); p.items = logItems(p.s, BASE); p.byId = new Map(p.items.map(i => [i.id, i])); p.status = sessionStatus(p.s, BASE); p.open = sessionOpen(p.s, BASE, new Set(p.items.slice(-PAGE).map(i => i.id))) }
+          // The live part of the log: its newest LIVE messages (what "Earlier" brought further up stays as it was).
+          else { p.files = filesList(p.s, BASE); p.items = logItems(p.s, BASE, p.s.messages.length - LIVE); p.byId = new Map(p.items.map(i => [i.id, i])); p.all = new Set(p.s.messages.map(m => m.id)); p.status = sessionStatus(p.s, BASE); p.open = sessionOpen(p.s, BASE, new Set(p.items.slice(-PAGE).map(i => i.id))) }
         }
       }
       return out
@@ -601,7 +611,7 @@ export function register(t) {
         const tail = fresh.length ? b.items.slice(-fresh.length) : []
         // (More new ones than a window holds: the latest window again, rather than a log that grows without end.)
         if (fresh.length > PAGE || fresh.some((i, n) => tail[n] !== i)) return String(t.stream('refresh'))
-        for (const i of a.items) if (!b.byId.has(i.id)) out.push(t.stream('remove', `msg-${i.id}`))
+        for (const i of a.items) if (!b.all.has(i.id)) out.push(t.stream('remove', `msg-${i.id}`))
         for (const i of b.items) { const old = a.byId.get(i.id); if (old && old.node !== i.node && t.differs(old.node, i.node)) out.push(t.stream('replace', `msg-${i.id}`, i.node)) }
         for (const i of fresh) out.push(t.stream('before', `log-end-${id}`, html`${i.day}${i.node}`))
         if (t.differs(a.status, b.status)) out.push(t.stream('replace', `session-status-${id}`, b.status))
