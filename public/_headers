@@ -9,3 +9,7 @@
   Cache-Control: no-cache
 /index.html
   Cache-Control: no-cache
+# The sandboxed viewer for published pages (scripts of an agent's page run here, never in the app's origin).
+/a/frame.html
+  ! Content-Security-Policy
+  Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts

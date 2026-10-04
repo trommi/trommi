@@ -63,7 +63,15 @@ for (const c of s.cards.filter(c => c.kind !== 'permission')) {
 for (const m of s.messages.filter(m => m.from === 'user' || m.from === 'agent')) events.push({ ts: T(m.ts), type: 'message', m })
 events.sort((a, b) => a.ts - b.ts)
 
-const cards = new Map(), timelines = {}
+const cards = new Map(), timelines = {}, published = []
+// Published assets (the old board's /a/<id>): a published object and the session message that announces it.
+const ASSET_SOURCE = { html: ['demo/fixtures/artifact.html', 'text/html'], image: ['demo/design-g2.png', 'image/png'] }
+const assetRef = a => {
+  const [rel, type] = ASSET_SOURCE[a.type] ?? ASSET_SOURCE.html
+  const src = path.join(process.env.TROMMI_HUB ?? path.join(process.env.HOME, 'git/trommi'), rel), name = `asset-${a.id}${path.extname(rel)}`
+  if (fs.existsSync(src)) fs.copyFileSync(src, path.join(out, 'files', name))
+  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: path.basename(rel), media_type: type, total_size: a.size ?? 0, url: `/mock/files/${name}` }
+}
 const tl = key => (timelines[key] ??= [])
 for (const e of events) {
   const envelope_number = ++n, envelope_hash = hex(`env:${n}`, 64)
@@ -91,8 +99,13 @@ for (const e of events) {
   } else {
     const m = e.m, agentDev = byOld.get(m.agent)
     const key = m.card_id ? `chat:card/${oid(m.card_id)}` : `chat:session/${agentDev}`
-    tl(key).push({ envelope_number, local_id: null, pending: false, envelope_hash, sender_device_id: m.from === 'user' ? dev('laptop') : agentDev, recipient_device_id: m.from === 'user' ? agentDev : null, sent_at: e.ts, item_state: 'loaded', content_type: 'message',
-      content: { text: m.text ?? '', details: m.details, html: m.html, attachments: (m.attachments ?? []).map(att), hand_back: m.handback || undefined, explain: m.explain || undefined, marks: m.marks } })
+    let content = { text: m.text ?? '', details: m.details, html: m.html, attachments: (m.attachments ?? []).map(att), hand_back: m.handback || undefined, explain: m.explain || undefined, marks: m.marks }
+    if (m.asset) {
+      const ref = assetRef(m.asset), object_id = oid(`asset:${m.asset.id}`)
+      published.push({ object_id, agent_device_id: agentDev, attachments: [ref], title: m.asset.title, note: m.asset.note ?? '', released_until: null, object_version: 1, version_hash: hex(`pub:${m.asset.id}`, 64), envelope_number, sent_at: e.ts, object_state: 'open' })
+      content = { text: `**${m.asset.title}**\n\n${m.asset.note ?? ''}`, attachments: [ref], published_object_id: object_id }
+    }
+    tl(key).push({ envelope_number, local_id: null, pending: false, envelope_hash, sender_device_id: m.from === 'user' ? dev('laptop') : agentDev, recipient_device_id: m.from === 'user' ? agentDev : null, sent_at: e.ts, item_state: 'loaded', content_type: 'message', content })
     if (m.handback || m.explain) { const card = cards.get(oid(m.card_id)); if (card && card.object_state === 'open') card.in_revision = { by: m.handback ? 'hand_back' : 'explain', envelope_number } }
   }
 }
@@ -113,7 +126,7 @@ const members = [
 ]
 const fixture = {
   made_at: now, room: { room_id: hex('room', 64), hub_url: 'mock:', my_device_id: dev('laptop'), my_role: 'human', key_epoch: 1, last_entry_number: members.length - 1, last_envelope_number: n, connection: 'live' },
-  members, sessions, cards: [...cards.values()], permissions: [perm], memos, published: [], timelines, human,
+  members, sessions, cards: [...cards.values()], permissions: [perm], memos, published, timelines, human,
 }
 fs.writeFileSync(path.join(out, 'fixture.json'), JSON.stringify(fixture))
 console.log(`fixture: ${cards.size} cards, ${sessions.length} sessions, ${Object.values(timelines).flat().length} timeline items, ${fs.readdirSync(path.join(out, 'files')).length} files`)

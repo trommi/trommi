@@ -23,7 +23,7 @@ export function hubFacade(client, board) {
   const upload = async (files = [], object_id) => Promise.all(files.map(async f => {
     const meta = { file_name: f.name || 'file', media_type: f.type || 'application/octet-stream', object_id }
     if (f.type?.startsWith('image/')) { try { const b = await createImageBitmap(f); meta.width = b.width; meta.height = b.height; b.close() } catch {} }
-    return client.uploadAttachment(f, meta)
+    return client.uploadAttachment(new Uint8Array(await f.arrayBuffer()), meta)
   }))
   // A timeline key ('chat:session/<dev>'), or a session's board id (its chat).
   const timelineOf = ref => (String(ref).includes(':') ? ref : `chat:session/${dev(ref)}`)
