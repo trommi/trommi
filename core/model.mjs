@@ -304,7 +304,7 @@ function applyTimelineItem(model, rec, change) {
 
 function newCard(object_id, agent_device_id, rec) {
   return {
-    object_id, agent_device_id, object_state: 'open', urgency: 'normal', card_type: 'decision', title: '', body: null, options: [], sections: null, html: null,
+    object_id, agent_device_id, object_state: 'open', urgency: 'normal', card_type: 'decision', title: '', teaser: null, body: null, options: [], sections: null, html: null,
     allows_multiple: false, recommended: null, urgency_reason: null, attachments: [], change_note: null, close_summary: null, withdraw_reason: null,
     merged_into_object_id: null, merged_from_object_ids: null, object_version: 0, version_hash: null, envelope_number: rec.envelope_number,
     first_envelope_number: rec.envelope_number, created_at: rec.sent_at, session_id: rec.session_id ?? null, updated_at: rec.sent_at, versions: [], answer: null, answers: [], closed_how: null,

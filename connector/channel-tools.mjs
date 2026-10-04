@@ -42,7 +42,14 @@ export function shortOf(value) {
   return (cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : said.slice(0, SHORT_MAX)).trim()
 }
 
+// A card's teaser: the two short lines the Desk row shows under the title (the same limit as core/codec.mjs TEASER_MAX).
+export const TEASER_MAX = 160
+const deskRow = what => `The Desk shows only the title (one line) and the teaser (two short lines, at most ${TEASER_MAX} characters): make both carry ${what}; details go in the body or sections, seen when the card is opened.`
+const TEASER_PROP = { type: 'string', description: `Two short lines of plain text (at most ${TEASER_MAX} characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body.` }
+const TITLE_ONE_LINE = 'one line, at most about 70 characters'
+
 export const QUESTION_PROPS = {
+  teaser: TEASER_PROP,
   body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context.' },
   html: { type: 'string', description: `Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most ${HTML_MAX / 1024} KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html.` },
   options: {
@@ -127,11 +134,11 @@ export const TOOLS = [
   {
     _meta: ALWAYS_LOAD,
     name: 'create_decision',
-    description: 'Put a decision card on the board for the human to answer; never ask choices in chat. Returns the card id. Call list_cards first: for an open question on the same subject use revise_card or merge_cards instead. It must fit one card on one screen: a one-line title, a body of at most about 300 characters, at most 3 options (labels of at most four words, an optional detail of one short line), each with ONE picture (desktop view; phone or dark only where it looks different) or, better, a clickable prototype link. Offer only options you are about 80% sure are great; a proposal may show just the element in question. Background, reasoning and links go right after filing as a reply with this card_id, or onto an attached page. A question about looks or layout must carry a picture per option (named <anything>-<key>.png) or a page to try. A whole screen where a small part matters: attach it with mark (do not draw on it). Something that moves: a short video. A picture of something built comes with its page. Yes/no: exactly two options with labels under 18 characters, a short body, no attachments; the human answers with one tap from the inbox. Two options that are not plain yes/no get a short each. Put your pick first and set recommended. multiple: true when several options can hold at once (the answer carries choices="a,b"). When each option needs a sentence or two, pass sections or text instead of body and options. Set urgency honestly (most cards are normal; urgency_reason for high and critical). Do not block waiting for the answer: keep working on what does not depend on it.',
+    description: `Put a decision card on the board for the human to answer; never ask choices in chat. Returns the card id. Call list_cards first: for an open question on the same subject use revise_card or merge_cards instead. ${deskRow('the question')} It must fit one card on one screen: a title of at most about 70 characters, a body of at most about 300 characters, at most 3 options (labels of at most four words, an optional detail of one short line), each with ONE picture (desktop view; phone or dark only where it looks different) or, better, a clickable prototype link. Offer only options you are about 80% sure are great; a proposal may show just the element in question. Background, reasoning and links go right after filing as a reply with this card_id, or onto an attached page. A question about looks or layout must carry a picture per option (named <anything>-<key>.png) or a page to try. A whole screen where a small part matters: attach it with mark (do not draw on it). Something that moves: a short video. A picture of something built comes with its page. Yes/no: exactly two options with labels under 18 characters, a short body, no attachments; the human answers with one tap from the inbox. Two options that are not plain yes/no get a short each. Put your pick first and set recommended. multiple: true when several options can hold at once (the answer carries choices="a,b"). When each option needs a sentence or two, pass sections or text instead of body and options. Set urgency honestly (most cards are normal; urgency_reason for high and critical). Do not block waiting for the answer: keep working on what does not depend on it.`,
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'The question, one line' },
+        title: { type: 'string', description: `The question, ${TITLE_ONE_LINE}` },
         ...QUESTION_PROPS,
       },
       required: ['title'],
@@ -140,11 +147,12 @@ export const TOOLS = [
   {
     _meta: ALWAYS_LOAD,
     name: 'create_info',
-    description: 'Put something to read on the board: an explanation the human asked for, a report, how something works, what you found. Use it instead of dressing such a thing up as a question with made-up options; a plain progress note stays a reply. It lies in the stack like a question but asks nothing: no options; the human reads it and closes it, and you get a quiet <channel kind="info_read" card_id="…"> that needs no answer. Give the words as body, or structured as sections or text (plain blocks only), with a picture or diagram where it helps. If the human hands it back or asks about it, rework it with revise_card; withdraw_card takes it away. Returns the card id.',
+    description: `Put something to read on the board: an explanation the human asked for, a report, how something works, what you found. Use it instead of dressing such a thing up as a question with made-up options; a plain progress note stays a reply. It lies in the stack like a question but asks nothing: no options; the human reads it and closes it, and you get a quiet <channel kind="info_read" card_id="…"> that needs no answer. Give the words as body, or structured as sections or text (plain blocks only), with a picture or diagram where it helps. ${deskRow('the point')} If the human hands it back or asks about it, rework it with revise_card; withdraw_card takes it away. Returns the card id.`,
     inputSchema: {
       type: 'object',
       properties: {
-        title: { type: 'string', description: 'What it is about, one line' },
+        title: { type: 'string', description: `What it is about, ${TITLE_ONE_LINE}` },
+        teaser: TEASER_PROP,
         body: { type: 'string', description: 'The text, markdown. Or give sections or text.' },
         sections: {
           type: 'array',
@@ -159,12 +167,12 @@ export const TOOLS = [
   },
   {
     name: 'revise_card',
-    description: 'Rewrite one of your open cards in place: pass only what changes. The card keeps its id, its number and its place with the human. A question stays ONE card through its whole life: when the human hands it back (a chat event with card_id and handback="1") or a question back shows it was unclear, rework it here, do not file a new one and do not only reply; also when your work changed the options, or to fold a new point into a question you already have open. While you work on a handed-back card it is with you ("in revision"); the revision presents it again. Never present a card just to confirm receipt. Use withdraw_card and a new card only when the subject itself changed. The same budget as create_decision (title one line, body about 300 characters, at most 3 options, labels four words, details one short line; background as a reply with the card_id or behind a link) and the same rule for questions about looks: a picture per option or a page to try. Every rewording is a new version; the earlier ones stay visible to the human. Decided cards cannot be revised.',
+    description: 'Rewrite one of your open cards in place: pass only what changes. The card keeps its id, its number and its place with the human. A question stays ONE card through its whole life: when the human hands it back (a chat event with card_id and handback="1") or a question back shows it was unclear, rework it here, do not file a new one and do not only reply; also when your work changed the options, or to fold a new point into a question you already have open. While you work on a handed-back card it is with you ("in revision"); the revision presents it again. Never present a card just to confirm receipt. Use withdraw_card and a new card only when the subject itself changed. The same budget as create_decision (title one line of about 70 characters, teaser two short lines, body about 300 characters, at most 3 options, labels four words, details one short line; background as a reply with the card_id or behind a link) and the same rule for questions about looks: a picture per option or a page to try. Every rewording is a new version; the earlier ones stay visible to the human. Decided cards cannot be revised.',
     inputSchema: {
       type: 'object',
       properties: {
         card_id: { type: 'string' },
-        title: { type: 'string', description: 'The question, one line' },
+        title: { type: 'string', description: `The question, ${TITLE_ONE_LINE}` },
         ...QUESTION_PROPS,
         note: { type: 'string', description: 'One short line telling the human what changed, shown in the conversation; without it the new title is shown' },
       },
@@ -178,7 +186,7 @@ export const TOOLS = [
       type: 'object',
       properties: {
         card_ids: { type: 'array', minItems: 2, items: { type: 'string' }, description: 'The open cards this one replaces, at least two' },
-        title: { type: 'string', description: 'The one question, one line' },
+        title: { type: 'string', description: `The one question, ${TITLE_ONE_LINE}` },
         ...QUESTION_PROPS,
       },
       required: ['card_ids', 'title'],
@@ -367,7 +375,7 @@ export const TOOL_EXAMPLES = {
     details: 'Ran `npm test`: 48 of 48 pass.\nThe slow one was the index on `orders`.', attachments: ['/home/me/project/out/before-after.png'],
   },
   create_decision: {
-    title: 'Run the migration on production now?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
+    title: 'Run the migration on production now?', teaser: 'Locks orders for about 40 seconds; now, or tonight when nobody orders?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
     options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
   },
   create_info: {

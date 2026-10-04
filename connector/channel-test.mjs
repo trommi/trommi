@@ -12,7 +12,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createBridge } from './channel-bridge.mjs'
-import { TOOLS, TOOL_EXAMPLES, INSTRUCTIONS } from './channel-tools.mjs'
+import { TOOLS, TOOL_EXAMPLES, INSTRUCTIONS, TEASER_MAX } from './channel-tools.mjs'
+import * as codec from '../core/codec.mjs'
 import { encryptAsset, decryptAsset } from '../core/zcrypto.mjs'
 
 let passed = 0, failed = 0
@@ -190,6 +191,23 @@ await test('revise, set_urgency, withdraw, merge, close map onto the core', asyn
   client.model.cards.get(a).object_state = 'answered'
   await bridge.callTool('close_card', { card_id: a, summary: 'ran' })
   assert.deepEqual(client.calls.at(-1), ['close', a, 'ran'])
+})
+
+await test('teaser: the Desk row\'s two lines go to the card, are kept on revise, cleared with "", refused when too long', async () => {
+  const { client, bridge } = bridgeWith()
+  for (const t of TOOLS.filter(t => ['create_decision', 'create_info', 'revise_card', 'merge_cards'].includes(t.name))) assert.ok(t.inputSchema.properties.teaser, `${t.name} takes a teaser`)
+  for (const n of ['create_decision', 'create_info']) assert.match(TOOLS.find(t => t.name === n).description, /The Desk shows only the title \(one line\) and the teaser/)
+  assert.equal(TEASER_MAX, codec.TEASER_MAX)
+  const id = (await bridge.callTool('create_decision', { ...TOOL_EXAMPLES.create_decision, teaser: '  Locks orders\n for 40 s;   now or tonight?  ' })).split(' ')[1]
+  assert.equal(client.calls[0][1].teaser, 'Locks orders for 40 s; now or tonight?')
+  assert.equal((await bridge.callTool('create_info', { title: 'Plain', body: 'x' })) && client.calls.at(-1)[1].teaser, null)
+  await bridge.callTool('revise_card', { card_id: id, body: 'longer now' })
+  assert.equal(client.calls.at(-1)[2].teaser, 'Locks orders for 40 s; now or tonight?')
+  await bridge.callTool('revise_card', { card_id: id, teaser: '' })
+  assert.equal(client.calls.at(-1)[2].teaser, null)
+  const n = client.calls.length
+  await assert.rejects(bridge.callTool('create_info', { title: 'Long', body: 'x', teaser: 'y'.repeat(TEASER_MAX + 1) }), /teaser is 161 characters, at most 160/)
+  assert.equal(client.calls.length, n)
 })
 
 await test('set_status, clear_status, introduce write the agent registers', async () => {

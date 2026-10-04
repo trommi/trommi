@@ -23,7 +23,7 @@ export const FIELDS = Object.freeze({
   move: ['content_type', 'stroke_ids', 'offset'],
   send_away: ['content_type', 'stroke_ids', 'offset'],
   selection_sent: ['content_type', 'text', 'attachments', 'stroke_ids'],
-  card: ['object_type', 'object_version', 'previous_version_hash', 'card_type', 'title', 'body', 'options', 'sections', 'html', 'allows_multiple',
+  card: ['object_type', 'object_version', 'previous_version_hash', 'card_type', 'title', 'teaser', 'body', 'options', 'sections', 'html', 'allows_multiple',
     'recommended', 'urgency_reason', 'attachments', 'change_note', 'close_summary', 'withdraw_reason', 'merged_into_object_id', 'merged_from_object_ids'],
   memo: ['object_type', 'object_version', 'previous_version_hash', 'text', 'x', 'y', 'color', 'desk_id'],
   published: ['object_type', 'object_version', 'previous_version_hash', 'attachments', 'title', 'note', 'released_until'],
@@ -34,6 +34,13 @@ export const FIELDS = Object.freeze({
   decide_again: [],
 })
 export const CARD_CONTENT_FIELDS = FIELDS.card.slice(3)
+
+/** A card's `teaser` (README "card"): the two short lines the Desk row shows under the title. Optional plain text:
+ *  a string, already trimmed, not empty, no control characters (no line breaks), at most TEASER_MAX characters. */
+export const TEASER_MAX = 160
+export function teaserValid(t) {
+  return typeof t === 'string' && t.length > 0 && t === t.trim() && [...t].length <= TEASER_MAX && !/[\u0000-\u001f\u007f]/.test(t)
+}
 
 export const ATTACHMENT_FIELDS = ['attachment_id', 'file_key', 'sha256', 'file_name', 'media_type', 'total_size', 'width', 'height', 'caption', 'page', 'poster_attachment_id', 'marks']
 
@@ -75,6 +82,7 @@ export function memoRefValid(m) {
 
 export function encodePayload(kind, content) {
   if (kind === KIND.timeline_item && content?.content_type === 'message' && content.memo !== undefined && !memoRefValid(content.memo)) throw new z.ZError('bad-argument', 'memo must be { object_id: 32 hex, written_at?: ms }')
+  if (kind === KIND.object_version && content?.object_type === 'card' && content.teaser != null && !teaserValid(content.teaser)) throw new z.ZError('bad-argument', `teaser must be plain one-paragraph text, trimmed, at most ${TEASER_MAX} characters`)
   return te.encode(JSON.stringify(pick(content, fieldsFor(kind, content))))
 }
 
@@ -86,6 +94,7 @@ export function decodePayload(bytes) {
   if (!attachmentIdsValid(content)) return { content: null, content_state: 'undecryptable' }   // a ref id is not hex: refuse the body
   if (content.schema_version > SCHEMA_VERSION) return { content, content_state: 'newer_schema' }
   if (content.content_type === 'message' && content.memo !== undefined && !memoRefValid(content.memo)) delete content.memo   // a bad note mark: the message stays, plain
+  if (content.object_type === 'card' && content.teaser != null && !teaserValid(content.teaser)) delete content.teaser   // a bad teaser: the Desk falls back to the body
   return { content, content_state: 'ok' }
 }
 
