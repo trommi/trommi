@@ -402,7 +402,9 @@ ${errorLine(error)}<form id="recover-form" class="room-form">
       busy(e.target, 'Recovering…')
       try {
         const { hub_url, room_id } = parseAddress(f.get('room_link'))
-        const { client, recovery_code } = await c.recoverRoom({ hub_url, room_id, code: String(f.get('code')).trim(), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT })
+        // The new code comes before the recovery is posted (the core never loses it): it is on screen from then on.
+        const on_recovery_code = fresh => show(shell('Your new recovery code', html`<p class="room-lead">Write this down now. It replaces the old code.</p><p class="room-recovery" id="recovery-code">${fresh}</p><p class="room-wait">Recovering the room…</p>`), null)
+        const { client, recovery_code } = await c.recoverRoom({ hub_url, room_id, code: String(f.get('code')).trim(), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT, on_recovery_code })
         recovery(client, recovery_code, false)
       } catch (err) { console.error(err); recoverFlow(err.code === 'bad-recovery-code' ? 'This code does not belong to this room.' : `Not recovered: ${err.message}`) }
     })
