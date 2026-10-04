@@ -58,6 +58,7 @@ export class Client {
     this.roomRecord = roomRecord
     this.hub = new Hub({ hub_url, room_id, fetch, client, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
     this.hub.onTooOld = e => { if (this._tooOld) return; this._tooOld = true; this.emit('error', e); this.stop().catch(() => {}) }
+    this.hub.onLeaseLost = e => { if (this._leaseLost) return; this._leaseLost = true; clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {}) }
     this.model = M.emptyModel()
     Object.assign(this.model.room, { room_id, hub_url: this.hub.hub_url, my_device_id: hex(device.id), my_role, key_epoch: state.epoch, last_entry_number: state.head.seq })
     this.listeners = new Map()
@@ -820,7 +821,7 @@ export class Client {
         } catch (e) {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[core] post', e.code, e.message)
           if (e.code === 'replay') { this._acked(item); continue }
-          if (e.code === 'lease-lost') { this.emit('error', e); await this.stop().catch(() => {}); break }
+          if (e.code === 'lease-lost') { this.hub.onLeaseLost(e); break }
           if (e.code === 'gap') {
             for (const old of this.recentSent) { try { await this.hub.postEnvelope(old.bytes) } catch {} }
             await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)
