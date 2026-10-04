@@ -1088,7 +1088,18 @@ export class Client {
           // Before the snapshot this device never saw the header: check the sender's signature and membership on its own.
           try {
             const v = await z.verifyEnvelope(unb64u(envelope), { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false })
-            r = { n: envelope_number, h: hex(v.hash), s: hex(v.header.sender), q: v.header.seq, r: v.header.recipient.every(b => b === 0) ? null : hex(v.header.recipient), t: v.header.time, c: null, cs: 'header' }
+            const vh = v.header
+            // D5: the signed header must name this very timeline, as a thread item, from a sender allowed to write there,
+            // at most as far as the snapshot's frontier for that sender; one (sender, sequence) is one item whatever its number.
+            const sender = hex(vh.sender)
+            const tk = vh.timelineKind ? (codec.TIMELINE_KIND_NAME[vh.timelineKind] ?? String(vh.timelineKind)) : null
+            if (vh.kind !== codec.KIND.timeline_item || tk !== timeline_kind || vh.timelineId !== timeline_id) continue
+            const head = this._snapshotChains?.get(sender)
+            if (head != null && vh.seq > head) continue
+            const role = this.state.members.get(b64u(vh.sender))?.role === ROLE.HUMAN ? 'human' : 'agent'
+            if (M.timelineRefusal(this.model, { timeline_kind: tk, timeline_id: vh.timelineId, sender_role: role, sender_device_id: sender, recipient_device_id: vh.recipient.every(b => b === 0) ? null : hex(vh.recipient), session_id: vh.keyScope === 1 && vh.sessionId ? hex(vh.sessionId) : null, _epoch: vh.epoch })) continue
+            if ([...byN.values()].some(x => x.s === sender && x.q === vh.seq)) continue
+            r = { n: envelope_number, h: hex(v.hash), s: sender, q: vh.seq, r: vh.recipient.every(b => b === 0) ? null : hex(vh.recipient), t: vh.time, c: null, cs: 'header' }
           } catch { continue }
         }
         if (!r) continue                                   // not verified by sync yet: the stream brings it
