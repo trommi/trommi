@@ -30,6 +30,36 @@ if (typeof document !== 'undefined' && !document.querySelector('link[data-richht
   document.head.append(link)
 }
 
+// ---- tables ----------------------------------------------------------------------
+
+// What counts as a number in a cell: 40, 1.250,50 €, ~12 ms, +3 %, 1.2 GB, $40/month.
+const NUMERIC = /^[~≈<>≤≥±+\-−–]?\s*[€$£¥]?\s*\d[\d.,'’   ]*\s*(%|‰|[€$£¥]|[a-zA-Zµ°²³]{1,8})?(\s*\/\s*[a-zA-Z]{1,8})?$/
+const NEUTRAL = /^([-–—]|n\/a|k\.\s?a\.)?$/i
+
+/** Set a table's columns: a column of numbers stands right-aligned, in figures of one width; a rule
+ *  row as markdown writes it (:--, :-:, --:) says it outright. Returns the table. */
+function tidyTable(table, rule = '') {
+  const rows = [...table.rows]
+  if (!rows.length || rows.some(r => [...r.cells].some(c => c.colSpan > 1 || c.rowSpan > 1))) return table
+  const said = String(rule).trim().replace(/^\||\|$/g, '').split('|').map(c => c.trim()).map(c => (/^:-+:$/.test(c) ? 'center' : /^-+:$/.test(c) ? 'right' : /^:-+$/.test(c) ? 'left' : ''))
+  const width = Math.max(...rows.map(r => r.cells.length))
+  for (let col = 0; col < width; col++) {
+    const cells = rows.map(r => r.cells[col]).filter(Boolean)
+    const body = cells.filter(c => c.tagName === 'TD').map(c => c.textContent.trim())
+    const numbers = body.filter(t => NUMERIC.test(t)).length
+    const numeric = numbers > 0 && body.every(t => NUMERIC.test(t) || NEUTRAL.test(t))
+    const align = said[col] || (numeric ? 'right' : '')
+    if (!align) continue
+    for (const cell of cells) {
+      // What the author set on a cell stands.
+      if (cell.hasAttribute('align') || /text-align/i.test(cell.getAttribute('style') ?? '')) continue
+      if (align === 'right') cell.classList.add('num')
+      else if (align === 'center') cell.classList.add('mid')
+    }
+  }
+  return table
+}
+
 const RULE = /^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)*\|?\s*$/
 
 // ---- what a text carries, for places that show one line of it ---------------------
