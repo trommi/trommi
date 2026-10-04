@@ -12,6 +12,7 @@ import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithP
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
+import * as G from './session-grants.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BENCH = process.argv.includes('--bench')
@@ -378,12 +379,22 @@ await test('recovery: new device by code, humans out, agents kept, new code', as
   const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
   const id = await agent.sendCard({ title: 'before', options: [{ key: 'a', label: 'A' }] })
   await settleAll(agent, phone)
+  const answered = await agent.sendCard({ title: 'answered before', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(answered), 'phone has the card')
+  await phone.answer({ object_id: answered, choices: ['a'] })
+  await phone.setCrown({ who: 'old phone' })
+  await settleAll(phone)
   await phone.stop()
   const { client: tablet, recovery_code: next } = await recoverRoom({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage: memoryStorage(), device_name: 'Tablet' })
   track(tablet)
   assert(next !== recovery_code, 'new code')
   await tablet.start()
   await until(() => tablet.model.cards.get(id)?.title === 'before', 'history readable via back link')
+  // HIGH-3: the recovery signs real cuts, so the old phone's answer and registers survive on the new device
+  await until(() => tablet.model.cards.get(answered)?.object_state === 'answered', 'old answer kept')
+  eq(tablet.model.human.crown?.who, 'old phone', 'old register kept')
+  assert(!tablet.model.alerts.some(a => /beyond the cut/.test(a.message)), 'nothing refused as beyond the cut')
   await until(() => agent.model.room.key_epoch === 2, 'agent on the new epoch')
   const id2 = await agent.sendCard({ title: 'after', options: [{ key: 'a', label: 'A' }] })
   await settleAll(agent)
@@ -767,6 +778,24 @@ await test('S2 register order (D1): every delivery order of the same writes give
     }
     eq(finals.size, 1, `round ${round}: one outcome`)
   }
+})
+
+await test('S2 removal re-keys every session even when the remover fails half-way (A1)', async () => {
+  const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
+  await settleAll(phone, laptop, a1, a2)
+  const sid = a1.session_id
+  const epoch = phone.sessionKeys.get(sid).state.epoch
+  // the phone posts the removal entry, then every grant post fails (crash, network, hostile hub)
+  const realPost = phone.hub.postSessionGrant.bind(phone.hub)
+  phone.hub.postSessionGrant = async () => { throw new z.ZError('offline', 'simulated', { status: 0 }) }
+  await phone.removeDevices([a2.my_device_id]).catch(() => {})
+  phone.hub.postSessionGrant = realPost
+  // the other human device sees the removal and finishes the re-key (the pending work is the stale grant itself)
+  await until(async () => { await laptop._refreshSessions(); const k = laptop.sessionKeys.get(sid); return k.state.epoch > epoch && !G.grantIsStale(k.state, laptop.state) }, 'laptop re-keyed the session', 10_000)
+  // the agent sends under the new key and humans read it
+  await a1.sendMessage({ text: 'after the re-key' })
+  await settleAll(a1, laptop)
+  await until(async () => (await laptop.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the re-key'), 'readable')
 })
 
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {

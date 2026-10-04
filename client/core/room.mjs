@@ -2,7 +2,7 @@
 // state is in `storage`. Contract: client/core/README.md "Opening a room".
 import * as z from './zcrypto.mjs'
 import { Hub, normaliseHubUrl } from './transport.mjs'
-import { Client, secretToJson, secretFromJson } from './client.mjs'
+import { Client, secretToJson, secretFromJson, verifiedHeads } from './client.mjs'
 import './agent.mjs'
 import { openEscrow } from './escrow.mjs'
 import * as G from './session-grants.mjs'
@@ -121,7 +121,7 @@ export function joinRoom({ link, storage, client: client_name = null, device_nam
  * All devices lost, code at hand: sign in as the recovery key, enrol a new device, remove every human device, keep the agents,
  * new epoch, NEW recovery code (returned once).
  */
-export async function recoverRoom({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, remove_agents = [] }) {
+export async function recoverRoom({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, remove_agents = [], on_recovery_code = null }) {
   hub_url = normaliseHubUrl(hub_url)
   const rec = await z.recoveryDevice(code)
   const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
@@ -134,7 +134,13 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   const device = await newDevice(storage)
   const newCode = z.generateRecoveryCode()
   const sessions = await sessionsAsRecovery(hub, state, rec)
-  const cuts = {}
+  // R3: real cuts for every device the recovery removes (its last verified envelope), never an empty cut that would
+  // refuse all its history on every device that verifies the room later.
+  const removed = [...state.members.values()].filter(m => m.removedSeq === null && (m.role === ROLE.HUMAN || remove_agents.includes(hex(m.id)))).map(m => hex(m.id))
+  const cuts = (await verifiedHeads(hub, state, removed)) ?? {}
+  if (!Object.keys(cuts).length && removed.length) console.warn('[core] recovery: the hub let the recovery key read no envelopes; cuts are empty')
+  // A12: the new code reaches the human before the entry that makes it valid is posted (show it, never store it).
+  if (on_recovery_code) await on_recovery_code(newCode)
   const r = await z.recoverRoom({ state, code, newCode, newDevice: device, name: '', recoveryWrap: unb64u(wrap.key_sealed), removeAgents: remove_agents.map(unhex), cuts })
   await hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
   await storage.saveDevice(device, { room_id })
@@ -145,11 +151,10 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
   // Every session gets a new key: the old human devices held them (R6). Agents that stay keep their sessions.
-  for (const [sid, k] of sessions) {
-    client.sessionKeys.set(sid, k)
-    await client._grantLocked(sid, { agent_device_ids: k.state.agentIds, rotate: true })
-  }
-  await client._saveRoom()
+  // The entry is in: from here on nothing may lose the new code. A failed re-key is finished at the next start (stale grants).
+  for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
+  await client._healStaleSessions().catch(e => client._localAlert('rekey', e))
+  await client._saveRoom().catch(e => client._localAlert('storage', e))
   return { client, recovery_code: newCode }
 }
 
