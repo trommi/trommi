@@ -1522,7 +1522,12 @@ export class Client {
     await this._refreshSessions()
     return this._grantLocked(session_id, { agent_device_ids, with_history, rotate: true })
   }
-  async _grantLocked(session_id, { agent_device_ids, with_history = false, rotate = false }) {
+  async _grantLocked(session_id, opts) {
+    const { r, current } = await this._makeGrant(session_id, opts)
+    await this._postGrant(r, current)
+    return r.sessionState
+  }
+  async _makeGrant(session_id, { agent_device_ids, with_history = false, rotate = false }) {
     const k = this.sessionKeys.get(session_id)
     if (!k) throw new ZError('not-found', `no session ${session_id}`)
     const current = k.secrets.get(k.state.epoch)
@@ -1534,8 +1539,7 @@ export class Client {
     // agents already on the session keep what they had (their stored older keys), and get the new key without history.
     const historyAgentIds = with_history ? active.filter(a => !k.state.agentIds.includes(a)) : []
     const r = await G.createSessionGrant({ state: this.state, signer: this.device, sessionState: k.state, current, agentIds: active, withHistory: historyAgentIds.length > 0, historyAgentIds, rotate: rotate || !current })
-    await this._postGrant(r, current)
-    return r.sessionState
+    return { r, current }
   }
   /** Re-seal every session's current key for everyone who holds it now (a new human device). */
   async _resealSessionsLocked() {
@@ -1553,19 +1557,44 @@ export class Client {
       const stale = [...this.sessionKeys].filter(([, k]) => k.state && G.grantIsStale(k.state, this.state))
       if (!stale.length) return
       let refused = false
+      const items = []
       for (const [sid, k] of stale) {
         if (!k.secrets.get(k.state.epoch)) continue                   // not this device's to re-key (no current key)
-        try { await this._grantLocked(sid, { agent_device_ids: k.state.agentIds, rotate: true }) }
-        catch (e) { if (e.status >= 400 && e.status < 500) refused = true; else throw e }
+        items.push(await this._makeGrant(sid, { agent_device_ids: k.state.agentIds, rotate: true }))
       }
+      // one atomic post for all of them (a removal of one agent in a room with 24 sessions: one request, not 24)
+      try { await this._postGrants(items) }
+      catch (e) { if (e.status >= 400 && e.status < 500) refused = true; else throw e }
       if (!refused) return
       await this._refreshSessions()
     }
   }
 
   async _postGrant(r, current = null) {
+    await this.hub.postSessionGrant(r.sessionState.sessionId, grantBody(r))
+    await this._applyOwnGrants([{ r, current }])
+  }
+  /**
+   * Several grants in one atomic post (POST session_grants: all or none), e.g. a removal re-keying every session.
+   * Batches of 64; a hub without the route gets them one by one.
+   */
+  async _postGrants(items) {
+    for (let i = 0; i < items.length; i += 64) {
+      const part = items.slice(i, i + 64)
+      try { await this.hub.postSessionGrants(part.map(({ r }) => ({ session_id: r.sessionState.sessionId, ...grantBody(r) }))) }
+      catch (e) { if (e.status !== 404) throw e; for (const { r } of part) await this.hub.postSessionGrant(r.sessionState.sessionId, grantBody(r)) }
+      await this._applyOwnGrants(part)
+    }
+  }
+  async _applyOwnGrants(items) {
+    const ch = M.emptyChange()
+    for (const { r, current } of items) this._adoptGrant(r, current, ch)
+    M.project(this.model, ch)
+    await this._saveRoom()
+    this._emitChange(ch)
+  }
+  _adoptGrant(r, current, ch) {
     const sid = r.sessionState.sessionId
-    await this.hub.postSessionGrant(sid, { signed_grant: b64u(r.grant), sealed_session_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
     const k = this.sessionKeys.get(sid) ?? { secrets: new Map(), grants: [], since: null }
     if (k.state && k.state.epoch !== r.sessionState.epoch) k.since = Date.now()
     k.state = r.sessionState
@@ -1573,11 +1602,7 @@ export class Client {
     k.secrets.set(r.secret.epoch, r.secret)
     if (current) k.secrets.set(current.epoch, current)
     this.sessionKeys.set(sid, k)
-    const ch = M.emptyChange()
     M.applySessionGrant(this.model, k.state, ch, everAgents(k))
-    M.project(this.model, ch)
-    await this._saveRoom()
-    this._emitChange(ch)
   }
 
   // ---- password escrow (optional; escrow.mjs) ----------------------------------------------------
@@ -1619,6 +1644,7 @@ const MEMO_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_versi
 function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
 
 const fields_session = f => f.session_id ?? null
+const grantBody = r => ({ signed_grant: b64u(r.grant), sealed_session_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
 export const shareLink = (app_url, share_id, secret, ref) => `${String(app_url).replace(/\/+$/, '')}/a/${share_id}#${b64u(secret)}.${ref.file_key}.${ref.sha256}`
 /** Viewer page: parse a share link. -> { share_id, share_secret, file_key, sha256 } */
 export function parseShareLink(link) {

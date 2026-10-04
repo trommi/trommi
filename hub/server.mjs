@@ -587,6 +587,19 @@ export async function startHub({
       deliver(r, { text: sse('ephemeral', { device_id: me.id, envelope: body.envelope }) }, s => s.deviceId !== me.id && (humans.has(s.deviceId) || agents.has(s.deviceId)))
       return send(res, 200, { ok: true })
     }
+    // One atomic batch of session grants (a removal re-keys every session in one post): all or none.
+    if (a === 'session_grants' && !b && m === 'POST') {
+      const body = await readJson(req)
+      if (!Array.isArray(body.grants)) fail('bad-argument', 'grants must be a list')
+      const list = body.grants.map(g => ({
+        sessionId: hexParam(g?.session_id, HEX32, 'session_id'), grant: b64(g?.signed_grant, 'signed_grant'),
+        wraps: (Array.isArray(g?.sealed_session_keys) ? g.sealed_session_keys : fail('bad-argument', 'sealed_session_keys must be a list')).map(w => ({ id: z.unhex(hexParam(w?.device_id, HEX64, 'device_id')), sealed: b64(w?.key_sealed, 'key_sealed') })),
+        backLink: g?.key_back_link != null ? b64(g.key_back_link, 'key_back_link') : undefined,
+      }))
+      const out = await hub.postGrants(list)
+      for (const o of out) deliver(r, { text: sse('session_grant', { session_id: o.sessionId, grant_number: o.grantNumber, session_key_epoch: o.sessionKeyEpoch }) })
+      return send(res, 200, { grants: out.map(o => ({ session_id: o.sessionId, grant_number: o.grantNumber, grant_hash: o.grantHash, session_key_epoch: o.sessionKeyEpoch })) })
+    }
     if (a === 'sessions') {
       if (m === 'GET' && !b) {
         hub.authorise(bearer(req))

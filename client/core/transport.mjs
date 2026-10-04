@@ -126,6 +126,11 @@ export class Hub {
   postSessionGrant(session_id, { signed_grant, sealed_session_keys, key_back_link }) {
     return this.request('POST', this.roomPath(`/sessions/${checkId('session_id', session_id)}/grants`), { auth: false, body: { signed_grant, sealed_session_keys, key_back_link } })
   }
+  /** Several grants in one atomic post: grants = [{ session_id, signed_grant, sealed_session_keys, key_back_link }]. */
+  postSessionGrants(grants) {
+    for (const g of grants) checkId('session_id', g.session_id)
+    return this.request('POST', this.roomPath('/session_grants'), { auth: false, body: { grants } })
+  }
   sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
   sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/key_back_links`)) }
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope } }) }
