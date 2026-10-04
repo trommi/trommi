@@ -14,6 +14,7 @@ const CHAIN_HASHES_KEPT = 256
 const PAGE = 1000
 const YIELD_MS = 12
 const PERSIST_DELAY_MS = 150
+const BLOCKED_RETRY_MS = 60_000
 const pad = n => String(n).padStart(12, '0')
 const roleName = r => (r === ROLE.HUMAN ? 'human' : 'agent')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -583,9 +584,9 @@ export class Client {
    * Phase 1, run for many records at once (signatures and decryption run in parallel inside WebCrypto):
    * everything that does not depend on the sender's chain. Uses an empty chain map, so no chain advances here.
    */
-  async _precheck({ envelope_number, envelope }) {
+  async _precheck({ envelope_number, envelope, void: isVoid = false }) {
     const bytes = unb64u(envelope)
-    const pre = { envelope_number, bytes, peek: null, v: null, opened: null, content_state: 'ok', error: null }
+    const pre = { envelope_number, bytes, peek: null, v: null, opened: null, content_state: 'ok', error: null, void: !!isVoid }
     try {
       const peek = pre.peek = z.peekEnvelope(bytes)
       const h = peek.header
@@ -627,6 +628,11 @@ export class Client {
       const known = own?.hashes.get(h.seq)
       if (!known) throw new ZError('equivocation', `an envelope in this device's name that it did not send (#${h.seq})`)
       const localId = this.byHash.get(hex(known))
+      if (pre.void) {                                // the hub refused it and kept it as a void record: never applied
+        if (!this._voidedOwn?.has(hex(known)) && localId) this._localAlert('hub-voided', new ZError('hub-voided', `the hub voided envelope #${h.seq} after accepting it`))
+        this.byHash.delete(hex(known)); this.sentContent.delete(hex(known))
+        return null
+      }
       let v, opened = null, content_state = 'ok'
       if (!peek.pruned) {
         opened = await z.openVerifiedEnvelope(pre.bytes, { state: this.state, secrets: this.openKeys, envelopeHash: known, self: this.device.id })
@@ -669,6 +675,7 @@ export class Client {
     trimChain(c)
     this._dirty.chains.add(key)
     this.stats.verified++
+    if (pre.void) { this._advanceFrontier(sender, h); return null }   // a void record: the chain moves on, nothing applies
     if (pre.opened) this.stats.decrypted++
     return this._record(pre.envelope_number, v, pre.opened, pre.content_state, null)
   }
@@ -777,6 +784,7 @@ export class Client {
         if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind; session_id = built.session_id ?? session_id }
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
+        if (kind === codec.KIND.status && payload.length + (bind?.length ?? 0) + 16 > 4096) throw new ZError('too-large', 'a status body is at most 4 KiB')
         const blobs = codec.attachmentIdsOf(content).map(unhex)
         const { secret, scope } = this.keyFor({ kind, object, timeline, recipient, session_id })
         if (!secret) throw new ZError('no-key', 'no key for the current epoch')
@@ -829,6 +837,7 @@ export class Client {
           if (!this.is_human && this.hub.lease_generation == null) await this.claimSession()   // agents post under their lease (R4)
           const r = await this.hub.postEnvelope(item.bytes)
           item.envelope_number = r.envelope_number
+          if (this.model.room.outbox_blocked) { this.model.room.outbox_blocked = null; const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
           this._acked(item)
           backoff = 300
         } catch (e) {
@@ -845,27 +854,32 @@ export class Client {
             if (!this._started && e.status === 0) break
             continue
           }
-          // Refused for good: the hub never stored it, so its number is free again. Drop it, wind the own chain back to
-          // its predecessor, and seal everything queued behind it again (they named it as predecessor).
-          await this.serial(async () => {
-            const at = this.outbox.indexOf(item)
-            const later = at >= 0 ? this.outbox.splice(at) : []
-            later.shift()
-            item.public.outbox_state = 'failed'; item.public.error = e.code
-            this._rollbackEcho(item.local_id)
-            const me = b64u(this.device.id)
-            const c = this.chains.get(me)
-            if (c) { for (let q = item.seq; q <= c.seq; q++) c.hashes.delete(q); c.seq = item.seq - 1; c.hash = unb64u(item.prev); if (c.seq > 0) c.hashes.set(c.seq, c.hash) }
-            for (const l of later) { this.byHash.delete(l.hash); this.sentContent.delete(l.hash); const i = this.model.outbox.indexOf(l.public); if (i >= 0) this.model.outbox.splice(i, 1) }
-            this.byHash.delete(item.hash); this.sentContent.delete(item.hash)
-            await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(c)]])
-            const ch = M.emptyChange(); ch.outbox = true
-            M.pushAlert(this.model, ch, { code: e.code ?? 'refused', message: `the hub refused an envelope: ${e.message}` })
+          // Refused for good. A signed sequence number is never reused (D2): the own chain is NOT wound back.
+          if (e.body?.voided) {
+            // The hub stored it as a void record (header only, counted, never applied): the chain goes on behind it.
+            await this.serial(async () => {
+              item.public.outbox_state = 'failed'; item.public.error = e.code
+              this._rollbackEcho(item.local_id)
+              this.sentContent.delete(item.hash)
+              ;(this._voidedOwn ??= new Set()).add(item.hash)
+              this._acked(item)
+              const ch = M.emptyChange()
+              M.pushAlert(this.model, ch, { code: e.code ?? 'refused', message: `the hub refused an envelope: ${e.message}` })
+              this._emitChange(ch)
+            })
+            continue
+          }
+          // Not voided: keep the bytes, halt this device's sending (everything behind it waits), retry the same bytes
+          // now and then (a refusal can depend on state that changes). Never sign another envelope at this number.
+          if (!this.model.room.outbox_blocked || this.model.room.outbox_blocked.local_id !== item.local_id) {
+            item.public.outbox_state = 'blocked'; item.public.error = e.code
+            this.model.room.outbox_blocked = { local_id: item.local_id, code: e.code ?? 'refused', message: e.message ?? '' }
+            const ch = M.emptyChange(); ch.outbox = true; ch.room = true
+            M.pushAlert(this.model, ch, { code: 'chain-halted', message: `the hub refused an envelope (${e.code}): ${e.message}. Sending is halted; the same envelope is retried.` })
             this._emitChange(ch)
-            this._resend = later.map(l => l.args)
-          })
-          for (const a of this._resend ?? []) this._send({ ...a, bind: a.bind ? unb64u(a.bind) : null }).catch(err => this._localAlert('resend', err))
-          this._resend = null
+          }
+          for (let t = 0; t < BLOCKED_RETRY_MS && this._started; t += 250) await sleep(250)
+          if (!this._started) break
         }
       }
       this._pump = null
@@ -887,8 +901,9 @@ export class Client {
   async settle({ timeout_ms = 10_000 } = {}) {
     const until = Date.now() + timeout_ms
     while (Date.now() < until) {
+      if (this.model.room.outbox_blocked) throw new ZError('chain-halted', `sending is halted: the hub refused an envelope (${this.model.room.outbox_blocked.code})`)
       await this._queue
-      if (this._pump) await this._pump
+      if (this._pump) await Promise.race([this._pump, sleep(50)])   // a halted pump waits long: look at outbox_blocked again soon
       if (!this.outbox.length && this.byHash.size === 0) return
       if (!this._stream || this.model.room.connection !== 'live') await this.catchUp()
       else await sleep(10)
