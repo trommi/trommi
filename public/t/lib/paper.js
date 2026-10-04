@@ -1,13 +1,15 @@
 // The Desk is paper (docs/turbo.md "Controllers": controllers/paper_controller.js fetches this module for
 // #paper-island on the Desk's page and calls mount(); memos use paperPoint(), paperLayer(), onPaper()).
 //
-// The pad's own page (/pad/?embed=1&desk=1, client/web/pad/) stands in a frame as high as the window that sticks
+// The pad's own page (/pad/?embed=1&desk=1&canvas=desk/<desk_id>, public/pad/) stands in a frame as high as the window that sticks
 // to the top of the Desk's scroller (#inbox) and lies UNDER the heading, rows and stacks the hub rendered: they
 // are objects on the paper. The Desk's scrolling says which part of the paper the frame paints. This file is the
 // second half of the old client's js/padlink.js, carried over: the same frame, the same messages, the same
 // styles (css/deskpad.css); the pad itself is not touched. What is different here:
 //   - nothing is fetched or built until the page has painted and is idle, or the human first touches it;
 //   - the sessions for the pad's chooser come from the hub's markup (data-sessions), not from a state event;
+//   - what is on the paper is the desk's canvas timeline (desk/<desk_id>), end-to-end encrypted: the pad's page reads
+//     and writes it through the app's client (pad/canvas.js); another desk is another paper;
 //   - the elements carry data-turbo-permanent, and what a stream changes is a row or the list: the paper, the
 //     tool in hand and the zoom are not touched by it;
 //   - leaving the Desk (turbo:before-cache, or the element gone) takes the paper down, coming back lays it again.
@@ -23,6 +25,8 @@ const root = document.documentElement
 const phone = matchMedia('(max-width: 860px)')
 
 let marker = null     // #paper-island: what the hub says (sessions)
+let laidDesk = null   // the desk whose paper is laid
+let penLater = false  // the pen was asked for (/pad, P) before the Desk had its paper
 let box = null, paper = null, frame = null, layer = null, over = null, room = null, penSwitch = null, clearSwitch = null
 let ready = false     // the pad's page has started and listens
 let extent = 0        // how far down the paper is used (the pad says)
@@ -40,6 +44,8 @@ try { localStorage.removeItem(HIDE_KEY) } catch {}
 // The styles: css/deskpad.css, loaded with the island (its rules only apply once the paper is there).
 if (!document.querySelector('link[href="/css/deskpad.css"]')) document.head.append(Object.assign(document.createElement('link'), { rel: 'stylesheet', href: '/css/deskpad.css' }))
 
+/** The desk in view: its paper is its canvas timeline. Without desks the board is one ('main'). */
+const deskNow = () => { try { return window.trommi?.model?.()?.desk || 'main' } catch { return 'main' } }
 const deskShown = () => Boolean(box?.isConnected && room?.getClientRects().length)
 /** Where the list ends, in the paper's own pixels (from the top of the Desk). */
 const roomTop = () => room.getBoundingClientRect().top - box.getBoundingClientRect().top + box.scrollTop
@@ -216,7 +222,8 @@ function lay() {
   frame.tabIndex = -1   // not a stop for Tab: the paper is taken up with P or the pen switch, and left with Escape
   frame.setAttribute('aria-label', `${PAD_WORD}: the paper the Desk lies on`)
   frame.allow = 'clipboard-read; clipboard-write'
-  frame.src = '/pad/?embed=1&desk=1'
+  laidDesk = deskNow()
+  frame.src = `/pad/?embed=1&desk=1&canvas=${encodeURIComponent(`desk/${laidDesk}`)}`
   paper.append(frame)
   layer = permanent(document.createElement('div'), 'deskpad-layer')
   layer.className = 'deskpad-layer'
@@ -276,10 +283,13 @@ function lift() {
 export function mount(node) {
   marker = node
   const desk = document.getElementById('inbox')
-  if (box && box === desk && box.isConnected) return tellPad()   // the same Desk: only what the hub says is new
+  if (box && box === desk && box.isConnected && (!paper || laidDesk === deskNow())) return tellPad()   // the same Desk: only what the hub says is new
   lift()
   box = desk
   if (!box) return
+  // /pad (the router sets window.trommi.pen: its event may come before this module is loaded)
+  if (window.trommi?.pen) { window.trommi.pen = false; penLater = true }
+  if (penLater) { penLater = false; penWanted = true; return lay() }   // /pad: the paper at once, the pen in hand
   if (cardsHidden) return lay()   // hidden in this tab before (a Turbo visit away and back): the switch says so
   // Nothing of the pad is fetched before the page has painted: when the browser is idle, or at the first touch.
   const go = () => lay()
@@ -336,5 +346,5 @@ window.addEventListener('message', e => {
 // The keys of the paper, on the Desk: P takes the pen up (and puts it down), W hides the cards and brings them back.
 // The table of keys is the island "keys": it only says so on the document. (While the pad's frame has the
 // keyboard, the keys are the pad's: P is its pen, Escape gives the keyboard back.)
-document.addEventListener('trommi:pen', () => { if (box?.isConnected) togglePen() })
+document.addEventListener('trommi:pen', () => { if (box?.isConnected) togglePen(); else penLater = true })
 document.addEventListener('trommi:cards', () => { if (box?.isConnected) toggleCards() })

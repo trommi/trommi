@@ -1,33 +1,32 @@
-// The global pad: one endless surface for notes, drawings and pictures,
-// where every element is a record of its own and any selection can be sent
-// to a session. Prototype; the model and the server it needs are in docs/pad.md.
+// The Scratchpad: one endless surface for notes, drawings and pictures, where every element is a record of its own
+// and any selection can be sent to a session. Its elements live in a canvas timeline of the room, end-to-end
+// encrypted (canvas.js, wire.js): on the Desk desk/<desk_id>, on its own page ?canvas=<timeline_id>.
 //
 // How input is read:
 //   click on empty paper   a cursor there; typing makes a text element
 //   drag                   pen and highlighter draw; the select tool frames a selection
 //   click on an element    selects it; what is selected moves when dragged, with any tool
-import { openStore } from './db.js'
+import { openCanvas } from './canvas.js'
 import {
   INK, PEN_COLORS, HL_COLORS, SIZES, TEXT_SIZE, TEXT_WRAP, r2, newId, resolveInk, textFont,
   buildGeom, paintStroke, strokeFromWorld, layoutText, isText, paintElement, hitElement, strokeNear, inRect,
   unionBox, scaled, textOf, renderPNG, renderRect,
 } from './elements.js'
 import { flySheet } from './fly.js'
-import { connectBoard, onBoard, boardState, setBoard, sendSelection } from './board.js'
-import { startSync } from './sync.js'
+import { onBoard, boardState, setBoard, connectRoom } from './board.js'
 import { PAD_WORD } from './name.js'
 
 const QUERY = new URLSearchParams(location.search)
-const PAD = QUERY.get('pad') || 'global'
+const PAD = QUERY.get('canvas') || 'desk/main'
 // Inside the board (js/padlink.js lays this page over whatever is shown): the board says who
 // the sessions are and where the human came from, and "close" goes back there.
 const EMBED = QUERY.has('embed') && window.parent !== window
 // On the Desk (?desk): the pad is the paper the whole Desk lies on (js/padlink.js). It has no pan and no zoom of
 // its own: the Desk's scrolling moves it (padDesk below), and the paper is as wide as the Desk.
 const DESK = EMBED && QUERY.has('desk')
-const tell = (type, extra = {}) => { if (EMBED) window.parent.postMessage({ trommi: 'pad', type, ...extra }, location.origin) }
+const tell = (type, extra = {}) => { if (EMBED) window.parent?.postMessage({ trommi: 'pad', type, ...extra }, location.origin) }
 let host = { open: !EMBED, prefer: [] }   // what the board last said: is the pad in sight, which session is behind it
-const AUTHOR = 'human'   // with device keys this becomes the device id (docs/krypto-konzept.md)
+const AUTHOR = 'human'   // a record made here; on the wire the author is the signed sender (canvas.js)
 const MIN_Z = 0.05, MAX_Z = 8
 const UNDO_MAX = 200
 const CLICK_PX = 5        // further than this and a press is a drag
@@ -85,8 +84,10 @@ function icon(name) {
 for (const node of document.querySelectorAll('[data-icon]')) node.prepend(icon(node.dataset.icon))
 
 // ── state ───────────────────────────────────────────────────────────────────
-let db = null
-let sync = null                // the link to the server (sync.js)
+let timeline = null            // the canvas timeline (canvas.js), once it is loaded
+let canvasLoaded
+const canvasReady = new Promise(resolve => { canvasLoaded = resolve })   // the promise of it
+const early = []               // changes made before it was loaded: they go out once it is
 let els = new Map()            // id → record; tombstones are not in here
 const revs = new Map()         // id → highest revision seen, tombstones included
 let order = null               // records back to front, rebuilt when z changes
@@ -152,7 +153,6 @@ const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 const nextRev = id => { const r = (revs.get(id) ?? 0) + 1; revs.set(id, r); return r }
 /** A record as it is written: every write gets a time and the next revision. */
 const stamp = el => ({ ...el, updated: Date.now(), rev: nextRev(el.id), sent: els.get(el.id)?.sent ?? el.sent ?? [] })
-const tombstone = el => ({ id: el.id, pad: el.pad, deleted: true, author: AUTHOR, updated: Date.now(), rev: nextRev(el.id) })
 const topZ = () => ordered().reduce((m, e) => Math.max(m, e.z), 0)
 function make(type, box, data, z = topZ() + 1, blob = null) {
   const now = Date.now()
@@ -164,12 +164,7 @@ function makeText(type, x, y, data, blob = null) {
   return make(type, { x, y, w: lay.w, h: lay.h }, data, undefined, blob)
 }
 
-let saveError = false
 let firstLook = false   // no view was saved on this device and nothing is on the pad yet
-function persist(records) {
-  db.put(records).then(() => { saveError = false; renderStatus() }, () => { saveError = true; renderStatus() })
-  sync.push(records)
-}
 /** Records that came from the server: another tab or device changed them, or the server
  *  confirmed ours (with its time, its running number, and where they were sent). */
 function applyRemote(records) {
@@ -186,7 +181,7 @@ function applyRemote(records) {
   firstLook = false
 }
 /** Change the pad. changes: [{ id, before, after }]; after null deletes. One call is one undo step. */
-function apply(changes, record = true) {
+function apply(changes, record = true, how = 'erase') {
   changes = changes.filter(c => c.before !== c.after)
   if (!changes.length) return
   for (const c of changes) {
@@ -195,7 +190,7 @@ function apply(changes, record = true) {
   }
   order = null
   if (DESK) { deskOrigin(); deskView() }
-  persist(changes.map(c => c.after ?? tombstone(c.before)))
+  if (timeline) timeline.push(changes, how); else early.push([changes, how])
   if (record) {
     undo.push(changes)
     if (undo.length > UNDO_MAX) undo.shift()
@@ -232,7 +227,7 @@ function picture(id) {
   if (!p) {
     const img = new Image()
     p = { img, ok: false, ready: null }
-    p.ready = sync.getBlob(id).then(found => new Promise(resolve => {
+    p.ready = canvasReady.then(c => c.getBlob(id)).then(found => new Promise(resolve => {
       if (!found) return resolve()
       img.onload = () => { p.ok = true; dirty(); resolve() }
       img.onerror = () => resolve()
@@ -428,11 +423,11 @@ function placeOverlays(S) {
 }
 
 // ── view ────────────────────────────────────────────────────────────────────
-const VIEW_KEY = `${DESK ? 'deskview' : 'view'}:${PAD}`   // the Desk's paper keeps the pen, not a view
+const VIEW_KEY = `trommi-pad-${DESK ? 'deskview' : 'view'}:${PAD}`   // the Desk's paper keeps the pen, not a view
 let viewTimer = 0
 function saveViewSoon() {
   clearTimeout(viewTimer)
-  viewTimer = setTimeout(() => db?.meta(VIEW_KEY, { ...view, style, tool: drawTool }).catch(() => {}), 500)
+  viewTimer = setTimeout(() => { try { localStorage.setItem(VIEW_KEY, JSON.stringify({ ...view, style, tool: drawTool })) } catch {} }, 500)
 }
 function setView(x, y, z) {
   if (DESK) return deskView()
@@ -497,17 +492,15 @@ function refresh() {
 function renderStatus() {
   const b = boardState()
   const n = els.size
-  const s = sync?.state() ?? { mode: 'starting', pending: 0 }
-  const waiting = s.pending ? `, ${s.pending} to send` : ''
-  const where = saveError ? 'could not be saved on this device'
-    : s.error ? `the board refused a change (${s.error})`
-    : s.mode === 'online' ? (s.pending ? `saving ${s.pending}…` : 'saved on the board')
-    : s.mode === 'offline' ? `no connection: kept on this device${waiting}`
+  const s = timeline?.state() ?? { mode: 'starting', pending: 0 }
+  const where = s.error ? `not saved (${s.error})`
+    : s.mode === 'online' ? (s.pending ? 'saving…' : 'saved, end-to-end encrypted')
+    : s.mode === 'offline' ? 'no connection: kept on this device until it is back'
     : s.mode === 'starting' ? 'loading'
-    : db?.kind === 'memory' ? 'not kept (this browser refuses storage)' : 'saved on this device only'
-  const board = b.board ? `board: ${b.sessions.length} session${b.sessions.length === 1 ? '' : 's'}` : 'no board: sample sessions'
+    : 'kept in this page only (mock room)'
+  const board = `${b.sessions.length} session${b.sessions.length === 1 ? '' : 's'}`
   $('status').textContent = `${n} element${n === 1 ? '' : 's'} · ${where} · ${board}`
-  $('status').dataset.kind = saveError || s.error ? 'error' : s.mode === 'offline' ? 'warn' : ''
+  $('status').dataset.kind = s.error ? 'error' : s.mode === 'offline' ? 'warn' : ''
   pad.dataset.sync = s.mode
 }
 function updateCursor(mode) {
@@ -788,8 +781,7 @@ async function addImages(files, at) {
   for (const f of list) {
     try {
       const { blob, nw, nh } = await importImage(f)
-      const id = newId()
-      await sync.putBlob({ id, type: blob.type, blob })
+      const id = await (await canvasReady).putBlob(blob, { nw, nh, name: f.name })
       await picture(id).ready
       const k = Math.min(1, (0.6 * W) / view.z / nw, (0.5 * Math.max(120, H - 150)) / view.z / nh)
       const w = r2(nw * k), h = r2(nh * k)
@@ -830,7 +822,9 @@ function endDraw(g) {
   if (!g.pts.length) return
   const pr = g.pen && g.pr.some(p => Math.abs(p - g.pr[0]) > 0.03) ? g.pr : null
   const s = strokeFromWorld(g.pts, pr, { tool: g.tool, color: g.color, size: g.size })
-  add([make('stroke', s, s.data)])
+  const el = make('stroke', s, s.data, g.z)
+  timeline?.claim(g, el.id)   // its pieces went out while it was drawn: this is the rest of it
+  add([el])
 }
 function erase(g, px, py) {
   const [wx, wy] = toWorld(px, py)
@@ -848,6 +842,7 @@ function abortGesture() {
   preview = null
   if (!g) return
   if (g.type === 'draw' && g.moved && performance.now() - g.t0 > 350 && g.pts.length > 24) endDraw(g)
+  else if (g.type === 'draw') timeline?.drop(g)
   if (g.type === 'erase' && g.erased.size) remove([...g.erased].map(id => els.get(id)).filter(Boolean))
   dirty()
 }
@@ -901,7 +896,7 @@ canvas.addEventListener('pointerdown', e => {
       gesture = { ...base, type: 'marquee', keep: e.shiftKey ? new Set(sel) : new Set() }
     } else {
       const st = style[tool]
-      gesture = { ...base, type: 'draw', hit, tool, color: st.color, size: SIZES[tool][st.w], pen: tool === 'pen' && e.pointerType === 'pen', pts: [], pr: [] }
+      gesture = { ...base, type: 'draw', hit, tool, color: st.color, size: SIZES[tool][st.w], pen: tool === 'pen' && e.pointerType === 'pen', pts: [], pr: [], z: topZ() + 1 }
       addPoint(gesture, e, true)
     }
   }
@@ -951,6 +946,7 @@ canvas.addEventListener('pointermove', e => {
   if (g.type === 'draw') {
     const list = e.getCoalescedEvents?.() ?? []
     for (const c of list.length ? list : [e]) addPoint(g, c, false)
+    if (g.moved) timeline?.live(g)   // others see it while it is drawn: a piece every ~150 ms
     return invalidate()
   }
   if (g.type === 'erase') { hover = [px, py]; return erase(g, px, py) }
@@ -1280,16 +1276,11 @@ $('send-go').addEventListener('click', async () => {
   $('send-go').disabled = true
   $('send-go').textContent = 'Sending…'
   try {
-    // The server sends what it has: everything selected must have arrived there first.
-    if (sync.state().mode !== 'local' && !(await sync.settled())) throw new Error('The selection has not reached the board yet (no connection). Try again in a moment.')
-    const answer = await sendSelection({ ...payload, client_id: sync.clientId })
-    // Where an element went is the server's to note (no new revision, no undo step);
-    // it hands the records back with "sent" filled in.
-    if (answer.elements) sync.take(answer.elements, answer.seq ?? 0)
+    await sendTo(session, payload)
     takeAway(payload.elements.map(e => e.id))
     $('send-dialog').close()
     toast(`Sent to ${session.name}`)
-    tell('sent', { session: session.id, message_id: answer.message_id })
+    tell('sent', { session: session.id })
   } catch (err) {
     out.textContent = `Not sent. ${err.message}`
     out.hidden = false
@@ -1297,6 +1288,12 @@ $('send-go').addEventListener('click', async () => {
     $('send-go').disabled = false
   }
 })
+
+/** The picture of the selection and its words go to the session (canvas.js send: selection_sent, end-to-end). */
+async function sendTo(session, payload) {
+  if (!session.device) throw new Error('That session has no device in this room.')
+  await (await canvasReady).send({ to: session.device, text: payload.text, png: payload.png, ids: payload.elements.map(e => e.id) })
+}
 
 // What was sent leaves the paper: it is the agent's now. One step, so one undo brings all of it back.
 // Without a frame (a selection was sent) exactly those elements go. With a frame, notes and pictures that
@@ -1347,7 +1344,7 @@ function takeAway(ids, r = null) {
       changes.push({ id: piece.id, before: null, after: piece })
     }
   }
-  apply(changes)
+  apply(changes, true, 'send_away')
 }
 
 // ── send an area: frame it, pick a session, and it is cut out and flies there ──
@@ -1451,7 +1448,7 @@ async function sendArea(session, item) {
     await Promise.all(a.list.filter(e => e.type === 'image' && e.blob).map(e => picture(e.blob).ready))
     const shot = renderRect(ordered(), a, env())
     const payload = {
-      pad: PAD, session: session.id, client_id: sync.clientId,
+      pad: PAD, session: session.id,
       elements: a.list.map(e => ({ id: e.id, type: e.type, rev: e.rev, ...(isText(e) ? { text: e.data.text } : {}) })),
       text: textOf(a.list), bbox: shot.bbox, png: shot.png,
     }
@@ -1473,16 +1470,15 @@ async function sendArea(session, item) {
       } else await flySheet($('fly'), { png: shot.png, rect, target: item.querySelector('.pad-mark') ?? item })
     })()
     const post = (async () => {
-      if (sync.state().mode !== 'local' && !(await sync.settled())) throw new Error('It has not reached the board yet (no connection). Try again in a moment.')
-      return sendSelection(payload)
+      await sendTo(session, payload)
+      return {}
     })()
     const [, answer] = await Promise.all([flight, post.then(v => v, err => ({ failed: err }))])
     if (answer.failed) throw answer.failed
-    if (answer.elements) sync.take(answer.elements, answer.seq ?? 0)
     takeAway(a.list.map(e => e.id), a)
     // What was sent cannot be taken back (the agent has it), so the note only says where it went. Undo puts it back on the paper.
     toast(`Sent to ${session.name}`, 'info', 4000)
-    tell('sent', { session: session.id, message_id: answer.message_id })
+    tell('sent', { session: session.id })
     area = null
     $('area-menu').hidden = true
     if (tool === 'area') setTool(toolBefore)
@@ -1522,14 +1518,13 @@ function hostSays(msg) {
   if (msg.sessions) setBoard({ sessions: msg.sessions })
   if (msg.theme) setTheme(msg.theme === 'dark')
   paintSendTo()
-  if (host.open && !was) { sync?.resume(); if (!DESK) window.focus() }
+  if (host.open && !was && !DESK) window.focus()
   if (!host.open && was) {
     // Out of sight: keep what was being typed, stop listening.
     commitEditor()
     closePopovers()
     for (const dialog of document.querySelectorAll('dialog[open]')) dialog.close()
     delete pad.dataset.started
-    sync?.pause()
   }
 }
 if (DESK) {
@@ -1579,15 +1574,8 @@ async function start() {
   $('pad-word').textContent = PAD_WORD
   $('canvas').setAttribute('aria-label', `${PAD_WORD}: an endless surface for notes, drawings and pictures`)
   $('pad-name').textContent = PAD
-  db = await openStore()
-  sync = startSync({ pad: PAD, db, onRemote: applyRemote, onState: renderStatus })
-  if (!host.open) sync.pause()
-  const [records, saved] = await Promise.all([db.list(PAD), db.meta(VIEW_KEY)])
-  for (const r of records) {
-    revs.set(r.id, r.rev ?? 1)
-    if (!r.deleted) els.set(r.id, r)
-  }
-  order = null   // a first paint may already have cached the empty pad
+  let saved = null
+  try { saved = JSON.parse(localStorage.getItem(VIEW_KEY) ?? 'null') } catch {}
   W = pad.clientWidth; H = pad.clientHeight
   sizeCanvas()
   if (saved?.z) {
@@ -1600,9 +1588,21 @@ async function start() {
   buildSwatches()
   refresh()
   onBoard(() => { renderStatus(); paintSendTo() })
-  connectBoard(EMBED)
   tell('ready')
+  // The paper works at once; what is on it comes from the room (snapshot + tail), end-to-end encrypted.
+  const client = await connectRoom(EMBED)
+  if (!client) return renderStatus()
+  timeline = await openCanvas({ client, timeline_id: PAD, onRemote: applyRemote, onState: renderStatus })
+  canvasLoaded(timeline)
+  await timeline.eachSlice(list => { for (const r of list) els.set(r.id, r) })
+  order = null
+  for (const [changes, how] of early.splice(0)) timeline.push(changes, how)
+  if (DESK) { deskOrigin(); deskView() }
+  if (!saved?.z && !DESK && els.size) fit(false)
+  refresh()
+  window.addEventListener('pagehide', () => timeline.close())
 }
+
 start()
 
 // For scripts that drive the page (dev/cdp.mjs) and for the curious in the console.
@@ -1610,12 +1610,11 @@ window.pad = {
   elements: () => ordered(),
   selection: () => [...sel],
   view: () => ({ ...view }),
-  state: () => ({ tool, editing: Boolean(edit), undo: undo.length, redo: redo.length, store: db?.kind, board: boardState(), sync: sync?.state(), embed: EMBED, host }),
-  settled: ms => sync.settled(ms),
+  state: () => ({ tool, editing: Boolean(edit), undo: undo.length, redo: redo.length, board: boardState(), sync: timeline?.state(), embed: EMBED, host, timing: timeline?.timing }),
+  settled: () => canvasReady.then(c => c.settled()),
+  timeline: () => timeline,
   area: () => (area ? { x: area.x, y: area.y, w: area.w, h: area.h, ids: area.list.map(e => e.id), sending: Boolean(area.sending) } : null),
-  records: () => db.list(PAD),
   payload: async session => (await buildPayload(session ?? boardState().sessions[0], selected())).payload,
-  wipe: async () => { await db.wipe(); location.reload() },
   // for the page around an embedded pad (js/padlink.js)
   tool: name => setTool(name),
   rest: () => { commitEditor(); closePopovers(); sel.clear(); setTool('select') },
