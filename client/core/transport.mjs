@@ -104,12 +104,23 @@ export class Hub {
   deleteInvite(invite_id) { return this.request('DELETE', this.roomPath(`/invites/${invite_id}`)) }
   postReveal(invite_id, signed_reveal) { return this.request('POST', this.roomPath(`/invites/${invite_id}/reveal`), { body: { signed_reveal } }) }
   joinStatus(invite_id, request_hash) { return this.request('GET', this.roomPath(`/invites/${invite_id}/status`), { auth: false, query: { request_hash } }) }
-  postEnvelope(envelope) { return this.request('POST', this.roomPath('/envelopes'), { body: { envelope } }) }
+  postEnvelope(envelope) {
+    return this.request('POST', this.roomPath('/envelopes'), { body: { envelope }, headers: this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} })
+  }
   envelopes({ after_envelope_number = 0, limit = 1000 } = {}) { return this.request('GET', this.roomPath('/envelopes'), { query: { after_envelope_number, limit } }) }
   threads({ timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit = 50 }) {
     return this.request('GET', this.roomPath('/threads'), { query: { timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit } })
   }
   agentSession({ agent_name, process_instance }) { return this.request('POST', this.roomPath('/agent_sessions'), { body: { agent_name, process_instance } }) }
+  agentLease({ process_instance }) { return this.request('POST', this.roomPath('/agent_lease'), { body: { process_instance } }) }
+  sessions() { return this.request('GET', this.roomPath('/sessions')) }
+  sessionGrants(session_id, after_grant_number = -1) { return this.request('GET', this.roomPath(`/sessions/${session_id}/grants`), { query: { after_grant_number } }) }
+  postSessionGrant(session_id, { signed_grant, sealed_session_keys, key_back_link }) {
+    return this.request('POST', this.roomPath(`/sessions/${session_id}/grants`), { auth: false, body: { signed_grant, sealed_session_keys, key_back_link } })
+  }
+  sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${session_id}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
+  sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${session_id}/key_back_links`)) }
+  postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope } }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${attachment_id}`), { raw: bytes }) }
   getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${attachment_id}`), { binary: true }) }
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }

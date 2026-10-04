@@ -73,7 +73,7 @@ model = {
     is_online, agent_session_id,      // from GET devices (refreshed on start and on member_entry); may be stale
   }>,
 
-  sessions: Map<agent_device_id, Session>,       // one per agent member (active or removed, removed keep their history)
+  sessions: Map<session_id, Session>,            // R6: one per session (32 hex, random, made by a human device's first grant)
   cards: Map<object_id, Card>,
   permissions: Map<object_id, PermissionRequest>,
   memos: Map<object_id, Memo>,
@@ -90,14 +90,18 @@ model = {
 }
 ```
 
-### Session (an agent member)
+### Session (R6: a session has its own key; agents are assigned to it by grants)
 
 ```js
 Session = {
-  agent_device_id, agent_session_id,     // stable board id ('crypto', 'crypto-2'), from GET devices
-  device_name, is_active, is_online,
+  session_id,                            // 32 hex; timelines 'chat:session/<session_id>', registers session/<session_id>, read_up_to/<session_id>
+  agent_device_ids,                      // assigned now (latest grant); agent_device_id = the first of them
+  ever_agent_ids,                        // every agent ever assigned (their envelopes in this session stay valid history)
+  agent_device_id, agent_session_id,     // agent_session_id = agent_device_id.slice(0, 16) (v1.1)
+  session_key_epoch, with_history,       // the session key epoch; whether the current agents may read the earlier history
+  device_name, is_active, is_online,     // of the current agent: device_name from its encrypted device/<id> register (names are not in the member list, R8)
   profile: { model, task, icon, agent_name, parent_session, is_main } | null,   // agent register 'profile'
-  status_lines: [{ id, label, state, detail, object_id, envelope_number }],    // 'status_line/<id>', in order of first appearance
+  status_lines: [{ id, label, state, detail, object_id, envelope_number, updated_at }],    // 'status_line/<id>', in order of first appearance; updated_at = sent_at
   agent_alerts: [{ key, value, envelope_number }],    // agent registers 'alert/<n>' (refused commands)
   registers: Map<key, { value, envelope_number }>,   // all of this agent's registers, raw
   settings: { name, desk, archived, group, icon } | null,   // human register 'session/<agent_device_id>'
@@ -115,6 +119,7 @@ Session = {
 ```js
 Card = {
   object_id, agent_device_id,               // the creator; only it writes versions
+  session_id,                               // the session the card belongs to (its key scope)
   object_state,                             // 'open' | 'answered' | 'closed'  (from the newest head's header)
   urgency,                                  // 'low' | 'normal' | 'high' | 'critical'
   // content of the current version (body fields, README names):
@@ -297,12 +302,38 @@ await client.removeDevices([device_id, ...])           // one entry, one new epo
 
 ```
 
+## Sessions and keys (R6, v1.1)
+
+Agents hold no room key; everything an agent sends is under a session key. Human devices hold every session key.
+
+```js
+// human side
+const session_id = await client.createSession({ agent_device_id })                    // first grant: a new session for an agent
+await client.assignSession({ session_id, agent_device_id, with_history })             // hand over / add an agent
+        // with_history true: the current key is re-sealed with its history key (the agent reads the whole session)
+        // false: a new session key epoch first ("Darf er den bisherigen Verlauf lesen?" — nein): it reads from now on
+const invite = await client.createInvite({ device_role: 'agent', label, session_id?, with_history? })
+        // once the agent joined, the core posts the grant itself: a new session, or the handover of session_id
+client.sessionOfAgent(agent_device_id)                // the session an agent is assigned to now
+// removeDevices() also rotates every session key (without the removed agents); a new human device gets every
+// session key re-sealed by its inviter; recovery and passphrase login re-key the sessions too.
+
+// agent side
+client.session_ids, client.session_id                 // assigned sessions (grants), the first is the default
+await client.whenSession()                            // resolves once a grant assigns this agent
+client.on('session', ({ session_id, with_history }) => …)
+// every agent send takes an optional session_id (default client.session_id); without any: ZError 'no-session'
+```
+
+When keys arrive for epochs whose envelopes this device already saw unopened (a handover with history, a re-seal after a join), the core replays the room from the start once (`client.stats.resyncs`) so those heads are read.
+
 ## Agent API (the channel drives this)
 
 ```js
 const client = await openRoom({ storage })   // or (await joinRoom({ link, device_name, storage })).client
 await client.start()
-const { agent_session_id } = await client.claimSession({ agent_name, process_instance })
+const { agent_session_id, lease_generation } = await client.claimSession({ process_instance })
+        // v1.1 lease: a newer process takes over; this one then gets client 'error' code 'lease-lost' and stops
 
 const object_id = await client.sendCard({ card_type: 'decision', title, body?, options?, sections?, html?, allows_multiple?, recommended?, urgency?, urgency_reason?, attachments? })
 await client.revise(object_id, { ...changed fields, change_note? })     // new version; present again after a hand back

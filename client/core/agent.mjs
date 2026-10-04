@@ -13,12 +13,32 @@ const agentMethods = {
   _needAgent() { if (this.is_human) throw new ZError('forbidden', 'only an agent does this') },
 
   /** POST agent_sessions: the stable board id. A second process with the same key: ZError 'instance-conflict'. */
-  async claimSession({ process_instance, agent_name } = {}) {
+  /**
+   * The lease (v1.1): one running process per agent key. A new process takes over, the old one's posts get 409
+   * lease-lost (client 'error' code 'lease-lost', then it stops). Falls back to the v1 agent_sessions route.
+   * Returns { agent_session_id, lease_generation, expires_at }; agent_session_id = hex(device_id).slice(0, 16).
+   */
+  async claimSession({ process_instance } = {}) {
     this._needAgent()
-    const r = await this.hub.agentSession({ process_instance: process_instance ?? randomHex(8) })
-    this.model.room.agent_session_id = r.agent_session_id
+    const instance = process_instance ?? randomHex(8)
+    let r
+    try {
+      r = await this.hub.agentLease({ process_instance: instance })
+      this.hub.lease_generation = r.lease_generation
+      clearInterval(this._leaseTimer)
+      const every = Math.max(30_000, Math.min(5 * 60_000, ((r.expires_at ?? Date.now() + 600_000) - Date.now()) / 2))
+      this._leaseTimer = setInterval(() => this.hub.agentLease({ process_instance: instance }).then(x => { this.hub.lease_generation = x.lease_generation }).catch(e => {
+        if (e.code === 'lease-lost' || e.code === 'instance-conflict') { clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {}) }
+      }), every)
+      this._leaseTimer.unref?.()
+    } catch (e) {
+      if (e.status !== 404) throw e
+      r = await this.hub.agentSession({ process_instance: instance })
+    }
+    const agent_session_id = r.agent_session_id ?? this.my_device_id.slice(0, 16)
+    this.model.room.agent_session_id = agent_session_id
     const ch = M.emptyChange(); ch.room = true; this._emitChange(ch)
-    return r
+    return { ...r, agent_session_id }
   },
 
   /** The newest version of an own object: what was last sent (may be ahead of the model until the hub echoes it). */
@@ -38,8 +58,10 @@ const agentMethods = {
 
   /** One new version of an own object. `make(head)` returns { fields, object_state, urgency }. */
   /** One new version of an own object. `make(head)` returns { fields, object_state, urgency }. object_id null: a new object (R1 id). */
-  async _version(object_id, make, { push = false, kind = codec.KIND.object_version, bind = null } = {}) {
+  async _version(object_id, make, { push = false, kind = codec.KIND.object_version, bind = null, session_id = null } = {}) {
     let id = object_id
+    const sid = session_id ?? (object_id ? (this.model.cards.get(object_id)?.session_id ?? this.model.published.get(object_id)?.session_id ?? this.localHeads.get(object_id)?.session_id) : null) ?? this.session_id
+    if (!sid) throw new ZError('no-session', 'no session is assigned to this agent yet')
     const r = await this._send({
       kind, push,
       content: async () => {
@@ -50,17 +72,17 @@ const agentMethods = {
           ? { ...(head?.content ?? {}), ...fields, object_version: (head?.object_version ?? 0) + 1, previous_version_hash: head?.version_hash ?? ZERO_HASH }
           : fields
         for (const k of Object.keys(content)) if (content[k] === undefined) delete content[k]
-        return { content, object: { object_id: id, object_state, urgency }, bind: bind ? bind(id) : null }
+        return { content, object: { object_id: id, object_state, urgency }, bind: bind ? bind(id) : null, session_id: sid }
       },
-      after: (sealed, content) => kind === codec.KIND.object_version && this.localHeads.set(id, { object_version: content.object_version, version_hash: hex(sealed.hash), content, object_state: codec.OBJECT_STATE_NAME[sealed.header.card.state], urgency: codec.URGENCY_NAME[sealed.header.card.urgency] }),
+      after: (sealed, content) => kind === codec.KIND.object_version && this.localHeads.set(id, { session_id: sid, object_version: content.object_version, version_hash: hex(sealed.hash), content, object_state: codec.OBJECT_STATE_NAME[sealed.header.card.state], urgency: codec.URGENCY_NAME[sealed.header.card.urgency] }),
     })
     return { ...r, object_id: id }
   },
 
-  async sendCard({ card_type = 'decision', urgency = 'normal', ...fields }) {
+  async sendCard({ card_type = 'decision', urgency = 'normal', session_id = null, ...fields }) {
     this._needAgent()
     if (card_type === 'decision' && !(fields.options?.length >= 1)) throw new ZError('bad-argument', 'a decision needs options')
-    const r = await this._version(null, () => ({ fields: { object_type: 'card', card_type, ...fields }, object_state: 'open', urgency }), { push: true })
+    const r = await this._version(null, () => ({ fields: { object_type: 'card', card_type, ...fields }, object_state: 'open', urgency }), { push: true, session_id })
     return r.object_id
   },
 
@@ -88,13 +110,13 @@ const agentMethods = {
     await this._version(object_id, h => ({ fields: { withdraw_reason }, object_state: 'closed', urgency: h.urgency }))
   },
 
-  async merge(object_ids, fields) {
+  async merge(object_ids, { session_id = null, ...fields }) {
     this._needAgent()
     const heads = object_ids.map(id => [id, this._ownOpen(id)])
     for (const [, h] of heads) if (h.object_state !== 'open') throw new ZError('card-closed', 'only open cards can be merged')
     const urgency = fields.urgency ?? heads.map(([, h]) => h.urgency).reduce((a, b) => (URGENCY_ORDER.indexOf(b) > URGENCY_ORDER.indexOf(a) ? b : a), 'low')
     const { urgency: _u, ...rest } = fields
-    const new_id = await this.sendCard({ ...rest, urgency, merged_from_object_ids: object_ids })
+    const new_id = await this.sendCard({ ...rest, urgency, merged_from_object_ids: object_ids, session_id: session_id ?? this.model.cards.get(object_ids[0])?.session_id ?? null })
     for (const [id] of heads) await this._version(id, h => ({ fields: { merged_into_object_id: new_id }, object_state: 'closed', urgency: h.urgency }))
     return new_id
   },
@@ -110,19 +132,19 @@ const agentMethods = {
   },
   unpublish(object_id) { return this.close(object_id) },
 
-  async publish({ attachments, title, note, released_until }) {
+  async publish({ attachments, title, note, released_until, session_id = null }) {
     this._needAgent()
-    const r = await this._version(null, () => ({ fields: { object_type: 'published', attachments, title, note, released_until }, object_state: 'open', urgency: 'normal' }))
+    const r = await this._version(null, () => ({ fields: { object_type: 'published', attachments, title, note, released_until }, object_state: 'open', urgency: 'normal' }), { session_id })
     return r.object_id
   },
 
-  setStatus(values) { this._needAgent(); return this.setRegisters(values) },
+  setStatus(values, { session_id = null } = {}) { this._needAgent(); return this.setRegisters(values, { session_id }) },
 
-  async requestPermission({ tool_name, description = '', input_preview = '', expires_in_ms = 10 * 60_000 }) {
+  async requestPermission({ tool_name, description = '', input_preview = '', expires_in_ms = 10 * 60_000, session_id = null }) {
     this._needAgent()
     const expiresAt = Date.now() + expires_in_ms
     const r = await this._version(null, () => ({ fields: { tool_name, description, input_preview }, object_state: 'open', urgency: 'critical' }),
-      { kind: codec.KIND.permission_request, push: true, bind: id => z.encodeRequestBind({ requestId: unhex(id), expiresAt }) })
+      { kind: codec.KIND.permission_request, push: true, session_id, bind: id => z.encodeRequestBind({ requestId: unhex(id), expiresAt }) })
     return r.object_id
   },
 
@@ -133,10 +155,14 @@ const agentMethods = {
     if (rec.recipient_device_id !== this.my_device_id) return null
     if (rec.sender_sequence <= (this.delivered.get(rec.sender_device_id) ?? 0)) return null
     if (![codec.KIND.timeline_item, codec.KIND.answer, codec.KIND.verdict, codec.KIND.decide_again].includes(rec.kind)) return null
-    const base = { envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, sender_sequence: rec.sender_sequence, sent_at: rec.sent_at, sender_device_id: rec.sender_device_id, object_id: rec.object?.object_id ?? null,
+    const base = { session_id: rec.session_id ?? null, envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, sender_sequence: rec.sender_sequence, sent_at: rec.sent_at, sender_device_id: rec.sender_device_id, object_id: rec.object?.object_id ?? null,
       timeline_key: rec.timeline_id ? M.timelineKey(rec.timeline_kind, rec.timeline_id) : null, rec }
     if (rec.is_head && !rec.content) return { ...base, refused: 'undecryptable' }
-    const ctx = { state: this.state, agentId: this.device.id, now: Date.now(), epochChangedAt: this.epochChangedAt, ownSeq: this.chains.get(z.b64u(this.device.id))?.seq ?? 0 }
+    const sk = rec.session_id ? this.sessionKeys.get(rec.session_id) : null
+    if (rec.session_id && !sk?.state.agentIds.includes(this.my_device_id)) return { ...base, refused: 'not-assigned', message: 'a command in a session this agent does not hold' }
+    const ctx = { state: this.state, agentId: this.device.id, now: Date.now(), ownSeq: this.chains.get(z.b64u(this.device.id))?.seq ?? 0,
+      epochChangedAt: rec.session_id ? sk?.since ?? null : this.epochChangedAt, sessionEpoch: sk?.state.epoch ?? null,
+      seenOfMe: this.frontiers.get(rec.sender_device_id)?.get(this.my_device_id) ?? 0 }
     const card = rec.object ? this.model.cards.get(rec.object.object_id) : null
     if (rec.kind === codec.KIND.answer || rec.kind === codec.KIND.decide_again) {
       if (card) {
@@ -206,7 +232,7 @@ function commandOf(model, c) {
   const { rec } = c
   const content = rec.content ?? {}
   const card = c.object_id ? model.cards.get(c.object_id) ?? null : null
-  const out = { envelope_number: c.envelope_number, envelope_hash: c.envelope_hash, sender_device_id: c.sender_device_id, sender_sequence: c.sender_sequence, sent_at: c.sent_at,
+  const out = { session_id: c.session_id ?? null, envelope_number: c.envelope_number, envelope_hash: c.envelope_hash, sender_device_id: c.sender_device_id, sender_sequence: c.sender_sequence, sent_at: c.sent_at,
     object_id: c.object_id, timeline_key: c.timeline_key, content, late: !!c.late, history: !!c.history, card }
   switch (rec.kind) {
     case codec.KIND.timeline_item: {

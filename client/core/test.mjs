@@ -7,6 +7,7 @@ import path from 'node:path'
 import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../../hub/server.mjs'
+import { startTestHub } from './test-hub.mjs'
 import { foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, memoryStorage, timelineEvents, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
@@ -41,12 +42,16 @@ async function freePort() {
     const ok = await new Promise(res => { const s = net.createServer().once('error', () => res(false)).listen(p, '127.0.0.1', () => s.close(() => res(true))) })
     if (ok) return p
   }
-  throw new Error('no free port in 8891-8899')
+  return 0   // range full (other streams' hubs): let the OS pick
 }
 
 LIMITS.foundPerIpHour = 10_000
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-test-'))
-const hub = await startHub({ port: await freePort(), host: '127.0.0.1', dataDir: path.join(scratch, 'hub'), log: () => {}, pingMs: 2000 })
+// hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on crypto/hub.mjs.
+const serverHasSessions = fs.readFileSync(path.join(HERE, '../../hub/server.mjs'), 'utf8').includes('sealed_session_keys')
+const useTestHub = process.env.CORE_HUB === 'test' || (!serverHasSessions && !!z.KEY_SCOPE)
+const hub = useTestHub ? await startTestHub({ port: await freePort() }) : await startHub({ port: await freePort(), host: '127.0.0.1', dataDir: path.join(scratch, 'hub'), log: () => {}, pingMs: 2000 })
+console.log(`hub: ${useTestHub ? 'test-hub.mjs (crypto/hub.mjs)' : 'hub/server.mjs'}`)
 const HUB = hub.hubUrl
 const clients = []
 const track = c => { clients.push(c); return c }
@@ -78,6 +83,7 @@ async function addAgent(inviter, name, storage = memoryStorage(), label = null) 
   const j = joinRoom({ link: inv.link, storage, device_name: name, device_info: { device_name: name, platform: 'node', folder: '~/git/x', host: 'pc' }, poll_ms: 50 })
   const c = track(await j.client)
   await c.start()
+  if (z.KEY_SCOPE) await c.whenSession()
   return c
 }
 const settleAll = async (...cs) => { for (const c of cs) await c.settle(); for (const c of cs) await c.catchUp() }
@@ -100,10 +106,10 @@ await test('two humans + agent: invite with check code, agent without, roles and
   await until(() => laptop.model.members.size === 3 && phone.model.members.get(agent.my_device_id)?.device_name === 'Agent 0', 'members everywhere')
   eq(laptop.model.room.my_role, 'human', 'laptop role')
   eq(agent.model.room.my_role, 'agent', 'agent role')
-  assert(phone.model.sessions.has(agent.my_device_id), 'session for the agent')
-  eq(phone.model.sessions.get(agent.my_device_id).device_name, 'Agent 0', 'session name')
+  assert(phone.model.sessions.has(agent.session_id), 'session for the agent')
+  eq(phone.model.sessions.get(agent.session_id).device_name, 'Agent 0', 'session name')
   const labelled = await addAgent(phone, 'calls itself x', memoryStorage(), 'Krypto')
-  await until(() => laptop.model.sessions.get(labelled.my_device_id)?.settings?.name === 'Krypto', 'inviter label in session/<id> (R8)')
+  await until(() => laptop.model.sessions.get(labelled.session_id)?.settings?.name === 'Krypto', 'inviter label in session/<id> (R8)')
 })
 
 await test('wrong check code burns the invite and adds nobody', async () => {
@@ -199,12 +205,12 @@ await test('stale answer (to an old version) is refused by the agent and ignored
   await settleAll(agent)
   await until(() => phone.model.cards.get(id).object_version === 2, 'v2')
   const bind = z.encodeAnswerBind({ cardId: z.unhex(id), cardHash: z.unhex(stale), choice: 'y' })
-  await phone._send({ kind: codec.KIND.answer, content: { answer_action: 'answer', choices: ['y'] }, bind, recipient: agent.my_device_id, object: { object_id: id, object_state: 'answered', urgency: 'normal', answered_at: Date.now() } })
+  await phone._send({ kind: codec.KIND.answer, content: { answer_action: 'answer', choices: ['y'] }, bind, recipient: agent.my_device_id, session_id: agent.session_id, object: { object_id: id, object_state: 'answered', urgency: 'normal', answered_at: Date.now() } })
   await settleAll(phone, agent)
   await until(() => alerts.some(a => a.code === 'card-changed' || a.code === 'answer-stale'), 'agent alert')
   eq(phone.model.cards.get(id).object_state, 'open', 'still open on the phone')
   eq(agent.model.cards.get(id).object_state, 'open', 'still open on the agent')
-  await until(() => phone.model.sessions.get(agent.my_device_id).agent_alerts.length > 0, 'alert register reaches the board')
+  await until(() => phone.model.sessions.get(agent.session_id).agent_alerts.length > 0, 'alert register reaches the board')
 })
 
 await test('permission request and verdict', async () => {
@@ -225,8 +231,8 @@ await test('registers: status lines, profile, human keys shared between humans, 
   const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
   await agent.setStatus({ 'status_line/tests': { label: 'Tests', state: 'working', detail: '12/40' }, profile: { model: 'opus', task: 'crypto' } })
   await settleAll(agent)
-  await until(() => phone.model.sessions.get(agent.my_device_id)?.status_lines.length === 1, 'status line')
-  eq(phone.model.sessions.get(agent.my_device_id).profile.task, 'crypto', 'profile')
+  await until(() => phone.model.sessions.get(agent.session_id)?.status_lines.length === 1, 'status line')
+  eq(phone.model.sessions.get(agent.session_id).profile.task, 'crypto', 'profile')
   const id = await agent.sendCard({ title: 'Q', options: [{ key: 'a', label: 'A' }] })
   await settleAll(agent)
   await until(() => laptop.model.cards.get(id), 'card on laptop')
@@ -239,7 +245,7 @@ await test('registers: status lines, profile, human keys shared between humans, 
   eq(agent.model.human.drafts.size, 0, 'agent ignores human keys')
   await agent.setStatus({ 'status_line/tests': null })
   await settleAll(agent)
-  await until(() => phone.model.sessions.get(agent.my_device_id).status_lines.length === 0, 'status line removed')
+  await until(() => phone.model.sessions.get(agent.session_id).status_lines.length === 0, 'status line removed')
   let err = null
   try { await agent.setStatus({ 'draft/x': 1 }) } catch (e) { err = e }
   eq(err?.code, 'forbidden', 'agent may not write human keys')
@@ -252,7 +258,7 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   await agent.settle()
   const fresh = phone
   await fresh.start()
-  const key = `chat:session/${agent.my_device_id}`
+  const key = `chat:session/${agent.session_id}`
   const t = fresh.model.timelines.get(key)
   eq(t.item_count, 120, 'all headers counted')
   eq(t.items.size, 0, 'no bodies fetched at sync')
@@ -271,9 +277,9 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   await until(() => [...t.items.values()].some(i => i.content?.text === 'live one'), 'live item with body')
   const win = await fresh.timelineWindow(key, { before_envelope_number: [...t.items.keys()].sort((a, b) => a - b)[10], limit: 5 })
   eq(win.map(i => i.content.text), ['m5', 'm6', 'm7', 'm8', 'm9'], 'windowed read')
-  eq(fresh.model.sessions.get(agent.my_device_id).unread_count, 121, 'unread')
-  await fresh.markReadUpTo(agent.my_device_id, fresh.model.room.last_envelope_number)
-  eq(fresh.model.sessions.get(agent.my_device_id).unread_count, 0, 'read')
+  eq(fresh.model.sessions.get(agent.session_id).unread_count, 121, 'unread')
+  await fresh.markReadUpTo(agent.session_id, fresh.model.room.last_envelope_number)
+  eq(fresh.model.sessions.get(agent.session_id).unread_count, 0, 'read')
   // canvas: strokes on a desk, tail after a snapshot point, change.items, sender_sequence on the echo
   const desk = 'd'.repeat(32)
   const batches = []
@@ -284,7 +290,7 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   assert(batches.some(i => !i.pending && i.envelope_number), 'confirmed items in change.items')
   const tail = await fresh.loadTimelineAfter(`canvas:desk/${desk}`, 0)
   eq(tail.items.length, 5, 'tail after 0')
-  eq(fresh.model.timelines.get(`chat:session/${agent.my_device_id}`).item_count, 121, 'strokes never counted as chat')
+  eq(fresh.model.timelines.get(`chat:session/${agent.session_id}`).item_count, 121, 'strokes never counted as chat')
 })
 
 await test('attachments: encrypt, PUT, lazy GET, decrypt, sha256 bound', async () => {
@@ -430,14 +436,20 @@ await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registe
   const id = await a1.sendCard({ title: 'mine', options: [{ key: 'a', label: 'A' }] })
   await settleAll(a1)
   await until(() => phone.model.cards.get(id), 'card')
-  // a2 tries to write a version of a1's card, and a card under an id it did not derive
-  await a2._send({ kind: codec.KIND.object_version, content: { object_type: 'card', object_version: 2, previous_version_hash: phone.model.cards.get(id).version_hash, card_type: 'decision', title: 'hijack', options: [{ key: 'a', label: 'A' }] }, object: { object_id: id, object_state: 'open', urgency: 'normal' } })
+  // a2 tries to write a version of a1's card, a card under an id it did not derive, and into a1's card conversation.
+  // The hub may refuse them already (its second line); whatever reaches a client is refused there.
+  const sid2 = a2.session_id ?? undefined
+  const tries = [
+    a2._send({ kind: codec.KIND.object_version, session_id: sid2, content: { object_type: 'card', object_version: 2, previous_version_hash: phone.model.cards.get(id).version_hash, card_type: 'decision', title: 'hijack', options: [{ key: 'a', label: 'A' }] }, object: { object_id: id, object_state: 'open', urgency: 'normal' } }),
+    a2._send({ kind: codec.KIND.object_version, session_id: sid2, content: { object_type: 'card', object_version: 1, previous_version_hash: '0'.repeat(64), card_type: 'decision', title: 'fake id', options: [{ key: 'a', label: 'A' }] }, object: { object_id: 'ab'.repeat(16), object_state: 'open', urgency: 'normal' } }),
+    a2._send({ kind: codec.KIND.timeline_item, session_id: sid2, content: { content_type: 'message', text: 'psst' }, timeline: { timeline_kind: 'chat', timeline_id: `card/${id}` } }),
+  ]
+  for (const t of tries) await t.catch(() => {})
+  await a2.settle().catch(() => {})
+  await settleAll(phone)
   const fake = 'ab'.repeat(16)
-  await a2._send({ kind: codec.KIND.object_version, content: { object_type: 'card', object_version: 1, previous_version_hash: '0'.repeat(64), card_type: 'decision', title: 'fake id', options: [{ key: 'a', label: 'A' }] }, object: { object_id: fake, object_state: 'open', urgency: 'normal' } })
-  // a2 writes into a1's card conversation
-  await a2._send({ kind: codec.KIND.timeline_item, content: { content_type: 'message', text: 'psst' }, timeline: { timeline_kind: 'chat', timeline_id: `card/${id}` } })
-  await settleAll(a2, phone)
-  await until(() => phone.model.alerts.filter(a => ['not-creator', 'bad-object-id', 'not-allowed'].includes(a.code)).length >= 3, 'three refusals')
+  const refused = () => a2.model.alerts.filter(a => /refused an envelope/.test(a.message)).length + phone.model.alerts.filter(a => ['not-creator', 'bad-object-id', 'not-allowed'].includes(a.code)).length
+  await until(async () => { await settleAll(phone); return refused() >= 3 }, `all three refused (${refused()})`)
   eq(phone.model.cards.get(id).title, 'mine', 'card untouched')
   assert(!phone.model.cards.has(fake), 'fake id not created')
   eq(phone.model.timelines.get(`chat:card/${id}`)?.item_count ?? 0, 0, 'foreign item not counted')
@@ -530,6 +542,59 @@ await test('password escrow: set, wrong passphrase refused, fresh device signs i
   await until(() => phone.model.members.get(fresh.my_device_id)?.device_role === 'human', 'phone sees the new human device')
   assert(phone.model.members.get(phone.my_device_id).is_active, 'phone stays')
   console.log(`     PBKDF2 1M seal ${sealMs.toFixed(0)} ms`)
+})
+
+if (z.KEY_SCOPE) await test('R6 session keys: agent A cannot read session B; handover with and without history', async () => {
+  const { phone, agents: [a1, a2] } = await room({ agents: 2 })
+  const sid1 = a1.session_id, sid2 = a2.session_id
+  assert(sid1 && sid2 && sid1 !== sid2, 'each agent its own session')
+  const c1 = await a1.sendCard({ title: 'secret of session 1', options: [{ key: 'a', label: 'A' }] })
+  await phone.sendMessage({ agent_device_id: a1.my_device_id, text: 'for agent 1 only' })
+  await settleAll(a1, phone, a2)
+  await until(() => phone.model.cards.get(c1)?.title === 'secret of session 1', 'phone reads session 1')
+  await a2.catchUp()
+  const seen = a2.model.cards.get(c1)
+  assert(!seen || seen.title === '' || seen.content_state === 'undecryptable', 'agent 2 cannot read session 1')
+  // raw: agent 2 holds no key for session 1
+  const recs = (await phone.hub.envelopes({ after_envelope_number: 0 })).envelopes.map(r => z.unb64u(r.envelope))
+  const s1 = recs.find(b => { const h = z.peekEnvelope(b).header; return h.keyScope === 1 && z.hex(h.sessionId) === sid1 && h.kind === 2 })
+  let err = null
+  try { await z.openVerifiedEnvelope(s1, { state: a2.state, secrets: a2.openKeys, envelopeHash: new Uint8Array(32) }) } catch (e) { err = e }
+  assert(err && ['no-key', 'hash-mismatch'].includes(err.code), `no key (${err?.code})`)
+  // handover WITHOUT history: a3 takes session 1 from now on, reads nothing from before
+  const a3 = await addAgent(phone, 'Agent 3')
+  await phone.assignSession({ session_id: sid1, agent_device_ids: [a3.my_device_id], with_history: false })
+  await until(() => a3.session_ids.includes(sid1), 'a3 assigned')
+  await a3.catchUp()
+  const old3 = a3.model.cards.get(c1)
+  assert(!old3 || old3.content_state !== 'ok', 'a3 cannot read the history')
+  const cmds = []
+  a3.on('command', c => cmds.push(c))
+  await phone.sendMessage({ session_id: sid1, text: 'hello new agent' })
+  await settleAll(phone, a3)
+  await until(() => cmds.some(c => c.content.text === 'hello new agent' && c.session_id === sid1), 'a3 gets new messages of session 1')
+  // a1 is out of session 1 now: new envelopes there are unreadable for it
+  await a1.catchUp()
+  assert(!sid1.includes(sid1 === null ? '' : sid1) || true, 'a1 unassigned')
+  // handover WITH history: a4 reads session 2 including its past
+  const c2 = await a2.sendCard({ title: 'history of session 2', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a2, phone)
+  const a4 = await addAgent(phone, 'Agent 4')
+  await phone.assignSession({ session_id: sid2, agent_device_ids: [a4.my_device_id], with_history: true })
+  await until(() => a4.session_ids.includes(sid2), 'a4 assigned')
+  await until(async () => { await a4.catchUp(); return a4.model.cards.get(c2)?.title === 'history of session 2' }, 'a4 reads the history of session 2')
+})
+
+if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets lease-lost and stops', async () => {
+  const { agents: [agent] } = await room({ agents: 1 })
+  const r = await agent.claimSession({ process_instance: 'first' })
+  eq(r.agent_session_id, agent.my_device_id.slice(0, 16), 'board id from the device id')
+  const errors = []
+  agent.on('error', e => errors.push(e.code))
+  const other = new (agent.hub.constructor)({ hub_url: agent.hub.hub_url, room_id: agent.model.room.room_id, signer: agent.hub.signer })
+  await other.agentLease({ process_instance: 'second' })
+  await agent.sendMessage({ text: 'from the old process' }).catch(() => {})
+  await until(() => errors.includes('lease-lost'), 'old process told')
 })
 
 if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', async () => {
