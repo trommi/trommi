@@ -61,15 +61,16 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
       return sendJson(res, 200, { attachment_bytes: quota.used(roomId), quota_bytes: quota.quotaBytes })
     }
     if (sub === 'escrow') {
-      const r = await room(roomId)
       if (m === 'GET') {
+        // Anonymous: the room is not loaded, only looked up.
+        if (!db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(roomId)) return sendJson(res, 404, { error: 'no-room', message: 'no such room on this hub' })
         if (!unlimited(req, roomId)) {
           const wait = escrowReads.take(`room:${roomId}`) || escrowReads.take(`ip:${ipOf(req)}`)
           if (wait) { res.setHeader('retry-after', String(wait)); return sendJson(res, 429, { error: 'rate-limited', message: 'too many escrow reads; try again later' }) }
         }
         return sendJson(res, 200, escrow.get(roomId))
       }
-      const me = r.hub.authorise(bearer(req), { human: true })
+      const me = (await room(roomId)).hub.authorise(bearer(req), { human: true })
       if (m === 'PUT') return sendJson(res, 200, escrow.put(roomId, me.id, await readJson(req, 8192)))
       if (m === 'DELETE') { escrow.delete(roomId); return sendJson(res, 200, { ok: true }) }
     }
