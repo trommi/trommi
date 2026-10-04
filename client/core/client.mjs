@@ -49,6 +49,34 @@ export function membersOf(state) {
   return [...state.members.values()].map(m => ({ device_id: hex(m.id), device_role: roleName(m.role), is_active: m.removedSeq === null, added_entry_number: m.addedSeq, removed_entry_number: m.removedSeq }))
 }
 
+/**
+ * R3 cuts for devices this device holds no chain of (recovery, removal after a fresh start): page the hub's envelopes,
+ * verify every header chain (signatures, prev hashes), and return the verified head { seq, hash } per sender id (hex).
+ * A hub that withholds the newest envelopes only lowers the cut (it could withhold them anyway).
+ */
+export async function verifiedHeads(hub, state, ids) {
+  const want = new Set(ids)
+  const chains = new Map()
+  let after = 0
+  for (;;) {
+    let r
+    try { r = await hub.envelopes({ after_envelope_number: after, limit: 1000 }) }
+    catch (e) { if (e.code === 'forbidden') return null; throw e }      // an older hub: the recovery key reads no envelopes
+    for (const { envelope_number, envelope } of r.envelopes) {
+      after = Math.max(after, envelope_number)
+      try {
+        const bytes = unb64u(envelope)
+        if (!want.has(hex(z.peekEnvelope(bytes).header.sender))) continue
+        await z.verifyEnvelope(bytes, { state, chains, allowChainStart: true, allowRemovedSender: true, commit: true })
+      } catch { /* a broken or out-of-order envelope ends nothing: the cut is the last verified one */ }
+    }
+    if (!r.envelopes.length || after >= (r.last_envelope_number ?? after)) break
+  }
+  const out = {}
+  for (const id of want) { const c = chains.get(b64u(unhex(id))); if (c?.seq) out[id] = { seq: c.seq, hash: c.hash } }
+  return out
+}
+
 export class Client {
   constructor({ storage, hub_url, room_id, device, state, secrets, my_role, roomRecord, fetch, client = null }) {
     this.storage = storage
@@ -106,6 +134,17 @@ export class Client {
     }
     if (!this.is_human) throw new ZError('no-session', 'agents send under a session key: no session is assigned to this agent yet')
     return { secret: this.secrets.get(this.state.epoch), scope: {} }
+  }
+  /**
+   * A1: never seal under a session key a removed device may hold. While the session's newest grant predates a removal
+   * or recovery, a human re-keys it at once; an agent waits for the new grant (up to a minute), then gives up unsigned.
+   */
+  async _awaitFreshSession(session_id) {
+    const stale = () => { const k = this.sessionKeys.get(session_id); return !!(k?.state && G.grantIsStale?.(k.state, this.state)) }
+    if (!stale()) return
+    if (this.is_human) { await this._healStaleSessions(); if (!stale()) return }
+    for (let t = 0; t < 60_000 && stale(); t += 1000) { await sleep(1000); await this._refreshMembers().catch(() => {}); await this._refreshSessions().catch(() => {}) }
+    if (stale()) throw new ZError('stale-session-key', 'this session waits for a human device to re-key it after a removal')
   }
   /** The opening side of keyFor: (epoch, header) -> secret, room or session scope. */
   get openKeys() {
@@ -208,6 +247,7 @@ export class Client {
     await this.hub.signIn()
     await this.serial(() => this._refreshMembers())
     await this.serial(() => this._refreshSessions())
+    await this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
     await this._refreshDevices().catch(() => {})
     this._pumpOutbox()
     await this._sendDeviceRegister()
@@ -352,6 +392,7 @@ export class Client {
       if (data.envelope_number === this.model.room.last_envelope_number + 1) await this.processRecords([data], { live: true })
     } else if (event === 'member_entry') {
       await this.serial(() => this._refreshMembers())
+      this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
       this._refreshDevices().catch(() => {})
     } else if (event === 'session_grant') {
       await this.serial(async () => { await this._refreshSessions(); if (this._needResync) await this._resync() })
@@ -791,6 +832,7 @@ export class Client {
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         if (kind === codec.KIND.status && payload.length + (bind?.length ?? 0) + 16 > 4096) throw new ZError('too-large', 'a status body is at most 4 KiB')
         const blobs = codec.attachmentIdsOf(content).map(unhex)
+        if (session_id) await this._awaitFreshSession(session_id)
         const { secret, scope } = this.keyFor({ kind, object, timeline, recipient, session_id })
         if (!secret) throw new ZError('no-key', 'no key for the current epoch')
         const sealed = await z.sealEnvelope({
@@ -854,7 +896,7 @@ export class Client {
             await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)
             continue
           }
-          if (e.status === 0 || e.status >= 500 || e.status === 429 || e.code === 'unauthorised') {
+          if (e.status === 0 || e.status >= 500 || e.status === 429 || e.code === 'unauthorised' || e.code === 'stale-session-key') {
             await sleep(e.retry_after ? e.retry_after * 1000 : backoff); backoff = Math.min(backoff * 2, 15_000)
             if (!this._started && e.status === 0) break
             continue
@@ -1418,12 +1460,15 @@ export class Client {
       const previous = this.secrets.get(this.state.epoch)
       const cuts = {}
       for (const id of device_ids) { const c = this.chains.get(b64u(unhex(id))); if (c) cuts[id] = { seq: c.seq, hash: c.hash } }
+      const unknown = device_ids.filter(id => !cuts[id])
+      if (unknown.length) Object.assign(cuts, (await verifiedHeads(this.hub, this.state, unknown)) ?? {})   // never a blind cut at 0
       const r = await z.removeMembers(this.state, this.device, { ids: device_ids.map(unhex), cuts, previous })
       await this.hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
       this.secrets.set(r.secret.epoch, r.secret)
       await this._refreshMembers()
-      const gone = new Set(device_ids)
-      for (const [sid, k] of this.sessionKeys) await this._grantLocked(sid, { agent_device_ids: k.state.agentIds.filter(a => !gone.has(a)), rotate: true })
+      // A1: every session is re-keyed now. The pending work is in the signed state itself (a grant older than the removal is
+      // stale), so a crash or a refused post here is finished by the next start of any human device (_healStaleSessions).
+      await this._healStaleSessions().catch(e => this._localAlert('rekey', e))
       return { key_epoch: r.secret.epoch }
     })
   }
@@ -1473,6 +1518,27 @@ export class Client {
     await this._refreshSessions()
     for (const [sid, k] of this.sessionKeys) await this._grantLocked(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })
   }
+  /**
+   * A1: humans re-key every session whose newest grant predates a removal or recovery (G.grantIsStale), dropping agents
+   * that are no longer members. Runs at start, after member entries and after a removal; idempotent. A concurrent re-key
+   * by another human device makes the hub refuse ours: refresh and look again.
+   */
+  async _healStaleSessions() {
+    if (!this.is_human || !G.grantIsStale) return
+    for (let round = 0; round < 3; round++) {
+      const stale = [...this.sessionKeys].filter(([, k]) => k.state && G.grantIsStale(k.state, this.state))
+      if (!stale.length) return
+      let refused = false
+      for (const [sid, k] of stale) {
+        if (!k.secrets.get(k.state.epoch)) continue                   // not this device's to re-key (no current key)
+        try { await this._grantLocked(sid, { agent_device_ids: k.state.agentIds, rotate: true }) }
+        catch (e) { if (e.status >= 400 && e.status < 500) refused = true; else throw e }
+      }
+      if (!refused) return
+      await this._refreshSessions()
+    }
+  }
+
   async _postGrant(r, current = null) {
     const sid = r.sessionState.sessionId
     await this.hub.postSessionGrant(sid, { signed_grant: b64u(r.grant), sealed_session_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
