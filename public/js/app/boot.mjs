@@ -133,6 +133,7 @@ export async function start(client, { fresh = false } = {}) {
   await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
   window.trommi.firstPaintMs = performance.now() - T0
   window.trommi.openMs = typeof OPEN_MS === 'number' ? OPEN_MS : null
+  window.trommi.readyAt = performance.now()   // since navigation start: cold or warm load to the painted page
   document.documentElement.dataset.ready = ''
   client.start().catch(err => {
     // One sealing client per device and room (a Web Lock): the room is open in another tab of this browser.
