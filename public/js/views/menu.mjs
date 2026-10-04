@@ -1,13 +1,12 @@
 // The Trommi menu (what opens from the floating pill at the top centre), the jump field's results, and the
 // sheet a long press on a Desk row brings up on a phone. The menu's markup is the old client's (index.html,
 // js/bar.js), so css/app.css and css/clipboard.css style it; the controller t/controllers/menu_controller.js adds the
-// jump field's typing, the arrows and the Dev items, sheet_controller.js the long press. Opening and closing the
+// jump field's typing and the arrows, sheet_controller.js the long press. Opening and closing the
 // menu and the theme: t/application.js.
 import { html, raw } from './html.mjs'
 import { WORDS, cardNr } from './text.mjs'
 import { cardPath } from './desk.mjs'
-import { sketchSvg } from '../pen.js'
-import { fixtureItems } from '../app/node-stubs/fixtures.mjs'   // Dev: Create / Remove test cards (the test desk with Test Alpha and Test Beta)
+import { sketchSvg, doodleSvg } from '../pen.js'
 
 const sk = name => raw(sketchSvg(name))
 const JUMP_MAX = 8
@@ -38,8 +37,8 @@ export function menuDoors(model, base) {
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents">${sk('heads')}<span>Agents</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
-<div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
-<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><button role="menuitem" type="button" id="dev-fake" data-action="click->menu#dev" data-menu-body-param='{"n":5}'>Create 5 fake decisions</button><button role="menuitem" type="button" id="dev-fake-clear" data-action="click->menu#dev" data-menu-body-param='{"clear":true}'>Remove fake decisions</button>${fixtureItems(base)}<a role="menuitem" href="/screens.html" id="dev-screens">All screens</a><a role="menuitem" href="/old/" data-turbo="false" id="dev-old">Old board</a><a role="menuitem" href="/admin.html" data-turbo="false" id="dev-admin">Admin</a><p class="menu-dev-note" id="menu-dev-note" data-menu-target="note" role="status"></p></div></details>
+<a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Geräte und Einstellungen">${raw(doodleSvg('draw:phone'))}<span>Geräte</span></a><div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
+<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Mock room</a></div></details>
 </nav>`
 }
 
@@ -58,7 +57,6 @@ export function jumpPlaces(model, base, query) {
   if (hit('scratchpad pad')) out.push({ label: 'Scratchpad', icon: 'pen', href: `${base}/pad` })
   if (hit('help')) out.push({ label: 'Help', icon: 'page', href: '/help.html' })
   if (hit('keys keyboard')) out.push({ label: 'Keys', icon: 'keycap', href: '/help.html#keys' })
-  if (hit('admin')) out.push({ label: 'Admin', icon: 'key', href: '/admin.html' })
   for (const a of model.agents) if (hit(a.name)) out.push({ label: a.name, icon: 'bubble', href: `${base}/s/${encodeURIComponent(a.id)}` })
   // Words of a title: what is open first, then the rest, the newest first.
   if (q.length > 1) {

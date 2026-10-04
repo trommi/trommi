@@ -15,7 +15,7 @@ function go(path) {
 }
 
 export default class extends Controller {
-  static targets = ['field', 'results', 'key', 'note', 'deskForm', 'deskName', 'deskError']
+  static targets = ['field', 'results', 'key', 'deskForm', 'deskName', 'deskError']
   static values = { desk: String }
 
   connect() {
@@ -129,18 +129,4 @@ export default class extends Controller {
     } catch { this.deskErrorTarget.textContent = 'Not made: the board did not answer.' }
   }
   keys() { this.close(); document.dispatchEvent(new CustomEvent('trommi:keys')) }
-  // Test cards for the Desk (hub: POST /dev/fake-decisions). The menu stays open until the hub has answered.
-  async dev(event) {
-    const button = event.currentTarget
-    button.disabled = true
-    this.noteTarget.textContent = ''
-    try {
-      const res = await fetch('/dev/fake-decisions', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(event.params.body) })
-      let out = {}
-      try { out = await res.json() } catch {}
-      if (res.ok) { this.close(); if (document.body.dataset.tView !== 'desk') go(this.deskValue) }
-      else this.noteTarget.textContent = res.status === 404 ? 'Needs the hub restart.' : `Not done: ${out.error || res.statusText}`
-    } catch { this.noteTarget.textContent = 'Not done: the board did not answer.' }
-    button.disabled = false
-  }
 }

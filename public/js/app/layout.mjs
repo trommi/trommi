@@ -3,7 +3,7 @@
 // import map and the live stream (the router keeps the head and patches the body).
 import { html, raw } from '../views/html.mjs'
 import { sidebarRows, deskState } from '../views/sidebar.mjs'
-import { sketchSvg, doodleSvg } from '../pen.js'
+import { sketchSvg } from '../pen.js'
 import { menuDoors } from '../views/menu.mjs'
 import { pageSheets } from '../views/keys.mjs'
 import { memoLayer } from '../views/memo.mjs'
@@ -22,23 +22,12 @@ export const CSS = {
   room: ['tokens', 'app', 'back', 'logo', 'links', 'keys'],
 }
 
-// The menu of the hub, with the app's own places: the room's devices and pairing; Dev items of the hub left out.
-function doors(model, base) {
-  let out = String(menuDoors(model, base))
-  const sk = name => sketchSvg(name)
-  out = out.replace('<div class="menu-foot">', `<a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Geräte und Einstellungen">${doodleSvg('draw:phone')}<span>Geräte</span></a><div class="menu-foot">`)
-  out = out.replace(/<button role="menuitem" type="button" id="dev-fake"[\s\S]*?<\/button><button role="menuitem" type="button" id="dev-fake-clear"[\s\S]*?<\/button>/, '')
-  out = out.replace(/<a role="menuitem" href="\/old\/"[^>]*>Old board<\/a><a role="menuitem" href="\/admin.html"[^>]*>Admin<\/a>/, '')
-  out = out.replace('<a role="menuitem" href="/screens.html" id="dev-screens">All screens</a>', `<a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Mock room</a>`)
-  return raw(out)
-}
-
 function topbar(model, base, current, view = '') {
   const sk = name => raw(sketchSvg(name))
   return html`<header class="topbar"><div class="brand">
 <h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk: everything that waits for you"${current ? raw(' aria-current=""') : ''}>${sk('desk')}${BELL}<span class="desk-name" title="Desk">${model.deskName}</span></a><span class="desk-state" id="desk-state">${deskState(model, base)}</span>
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark pill-mark"'))}<b class="pill-word">Trommi</b><span class="conn pill-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
-${doors(model, base)}
+${menuDoors(model, base)}
 </div>
 <a href="${base}/agents" data-nav draggable="false" class="icon-btn roster-open" id="roster-open" aria-label="Agents" title="Agents"${view === 'agents' ? raw(' aria-current="page"') : ''}>${sk('heads')}</a></header>`
 }

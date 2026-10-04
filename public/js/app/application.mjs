@@ -8,7 +8,6 @@ const application = Application.start()
 window.Stimulus = application
 
 const $ = (sel, root = document) => root.querySelector(sel)
-const base = () => document.body.dataset.tBase ?? ''
 const read = (key, fallback) => { try { return JSON.parse(localStorage.getItem(key)) ?? fallback } catch { return fallback } }
 const write = (key, value) => { try { localStorage.setItem(key, JSON.stringify(value)) } catch {} }
 const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches
@@ -136,23 +135,13 @@ application.register('fit', class extends Controller {
   disconnect() { fit.unobserve(this.element) }
 })
 
-// ---- lazy controllers, and islands (data-island="name" -> /t/islands/<name>.js, mount(element)) ----
-const asked = new Set(), mounted = new WeakSet()
+// ---- lazy controllers ----
+const asked = new Set()
 application.missing = name => {
   if (!name || asked.has(name) || application.classes.has(name)) return
   asked.add(name)
   import(`/t/controllers/${name.replace(/-/g, '_')}_controller.js`).then(m => application.register(name, m.default)).catch(err => console.error(`controller ${name}:`, err))
 }
-function island(node) {
-  if (mounted.has(node) || node.hasAttribute('data-controller')) return
-  mounted.add(node)
-  const name = node.dataset.island
-  if (name === 'says') { node.dataset.action = 'pointerenter->says#pause pointerleave->says#run'; node.dataset.controller = 'says'; return }
-  import(`/t/islands/${name}.js`).then(m => m.mount(node)).catch(err => console.error(`island ${name}:`, err))
-}
-const look = root => { if (root instanceof Element) for (const node of [root, ...root.querySelectorAll('[data-island]')]) if (node.hasAttribute?.('data-island')) island(node) }
-new MutationObserver(records => { for (const r of records) for (const node of r.addedNodes) look(node) }).observe(document.documentElement, { childList: true, subtree: true })
-look(document.documentElement)
 
 // ---- times keep themselves current ----
 function ago(ts) {

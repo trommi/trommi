@@ -95,24 +95,6 @@ ${kind === 'withdrawn' ? '' : html`<form method="post" action="${base}/cards/${c
 // sheet looks over its rim ('basket-full').
 // The waste-paper basket: drawn with the pen (sketch 'basket' of the shared module); with something in it a crumpled
 // sheet looks over its rim ('basket-full').
-// A stack of paper, calm: the top sheet and at most three behind it (one per card up to three), each a little lower,
-// pushed and turned by a fixed small amount; the outlines wobble a little, seeded by the stack's name, so they are
-// the same on every render. (Not one sheet per card: thirty outlines were too busy.)
-const BEHIND = [[0, 0], [2.6, -1.1], [-2.2, 1.3], [3.2, -.7]]   // [dx, turn in degrees] of each sheet, the top one first
-function calmPaper(n, key) {
-  const r = penSeed(`stack:${key}`)
-  const W = 124, H = 78, pad = 6, step = 3.4, sheets = Math.max(1, Math.min(4, n))
-  const sheet = () => {
-    const c = [[pad, pad], [pad + W, pad], [pad + W, pad + H], [pad, pad + H]].map(([x, y]) => [x + (r() - .5) * 1.6, y + (r() - .5) * 1.6])
-    let d = `M${c[0][0].toFixed(1)} ${c[0][1].toFixed(1)}`
-    for (let i = 1; i <= 4; i++) { const a = c[i - 1], b = c[i % 4]; d += ` Q${((a[0] + b[0]) / 2 + (r() - .5) * 2).toFixed(1)} ${((a[1] + b[1]) / 2 + (r() - .5) * 2).toFixed(1)} ${b[0].toFixed(1)} ${b[1].toFixed(1)}` }
-    return `${d}Z`
-  }
-  let out = ''
-  for (let i = sheets - 1; i >= 0; i--) out += `<path transform="translate(${BEHIND[i][0]} ${(i * step).toFixed(1)}) rotate(${BEHIND[i][1]} ${pad + W / 2} ${pad + H / 2})" d="${sheet()}"/>`
-  const h = Math.round(H + 2 * pad + (sheets - 1) * step)
-  return `<svg class="inbox-stack-sheets" width="${W + 2 * pad}" height="${h}" viewBox="0 0 ${W + 2 * pad} ${h}" aria-hidden="true">${out}</svg>`
-}
 const basketSvg = n => sketchSvg(n ? 'basket-full' : 'basket', 'inbox-bin-drawing')
 
 /** The fan of a stack: a search field over its sheets (a GET into the frame, js controller "stack-search"; without

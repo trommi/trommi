@@ -134,8 +134,6 @@ function start(signal) {
     $('.keys-close', s)?.focus()
   }
   const backNote = () => press($('#says-host .says:not([hidden]) .says-back'))   // the newest toast's Undo (server/views/toast.mjs)
-  const options = () => [...document.querySelectorAll('.tc-answer .tc-opts .tc-opt[data-key]')]
-  const cardKind = () => $('.tc-card')?.dataset.kind
 
   /** What the keys do, by the id in the table. A function that returns false did not take the key. */
   const ACTIONS = {

@@ -37,13 +37,3 @@ export function blockedOf(agent, state, now = Date.now()) {
   }
   return null
 }
-
-/** Every blocked session of the board: Map id -> { why, text }. */
-export function blockedAll(state, now = Date.now()) {
-  const out = new Map()
-  for (const a of state.agents ?? []) { const b = blockedOf(a, state, now); if (b) out.set(a.id, b) }
-  return out
-}
-
-/** Which sessions are blocked, and why (without the minutes): a change of this is what the hub's tick passes on. */
-export const blockedKey = (state, now = Date.now()) => [...blockedAll(state, now)].map(([id, b]) => `${id}:${b.why}`).join(' ')
