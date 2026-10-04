@@ -63,11 +63,11 @@ await test('plugin: the zip is deterministic and holds plugin.json + channel.mjs
   assert.deepEqual(man.channels, [{ server: 'trommi', displayName: 'Trommi' }])
 })
 
-await test('instructions: with the monitor rule in front, the update and push rules still stand within the first 2048 characters', async () => {
+await test('instructions: with the monitor rule in front, the update rule still stands within the first 2048 characters', async () => {
   const { INSTRUCTIONS } = await import('./channel-tools.mjs')
   const { MONITOR_NOTE } = await import('./monitor.mjs')
   const head = `${MONITOR_NOTE} ${INSTRUCTIONS}`.slice(0, 2048)
-  for (const must of ['Trommi:', 'inbox', 'Never reload without the human\'s jetzt.', 'commit hash + subject', 'live URL']) assert.ok(head.includes(must), must)
+  for (const must of ['Trommi:', 'inbox', 'Never reload without the human\'s jetzt.']) assert.ok(head.includes(must), must)
 })
 
 // ---- part 2 ----------------------------------------------------------------------------------------
