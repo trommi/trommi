@@ -182,6 +182,7 @@ export function agentsMain(m, base, { find = '', sort = 'order', down = false, e
   const line = u => ledgerLine(u, ctx, { error: errors.get(u.id) })
   const anyMain = m.units.some(u => ctx.mainsFor(u).length)
   return html`<main id="ledger" aria-label="Agents"><div class="ledger-page">
+<nav class="room-tabs ledger-tabs" aria-label="Agents, devices and settings"><a href="${base}/agents" data-nav aria-current="page">Agents</a><a href="${base}/devices" data-nav>Devices</a><a href="${base}/settings" data-nav>Settings</a></nav>
 <header class="ledger-head"><h2>Agents</h2><p id="ledger-lead">${leadWords(m)}</p></header>
 <div class="ledger-tools"><form method="get" action="${base}/agents" role="search">${sort !== 'order' ? html`<input type="hidden" name="sort" value="${sort}">${down ? raw('<input type="hidden" name="down" value="1">') : ''}` : ''}<label class="ledger-find"><input type="search" name="find" value="${find}" autocomplete="off" placeholder="Find a session, a machine, a model" aria-label="Find a session"><kbd>/</kbd></label></form>${sort !== 'order' || words ? html`<a class="ledger-link" data-nav href="${base}/agents">${words ? 'Show all, in your order' : 'Back to your order'}</a>` : ''}</div>
 <div class="ledger" role="table" id="ledger-list" data-controller="pops"${sort !== 'order' || words ? raw(' data-sorted') : ''}${ctx.desks.length > 1 ? raw(' data-desks') : ''}${anyMain ? raw(' data-mains') : ''}>

@@ -1,7 +1,29 @@
 /* The app's own few rules outside the areas (the room screens are in css/room.css). */
-.menu-devices { display: flex; align-items: center; gap: 8px; padding: 8px 10px; color: inherit; text-decoration: none; border-radius: 8px; }
-.menu-devices:hover { background: var(--hover, rgb(0 0 0 / .05)); }
-.menu-devices svg { width: 20px; height: 20px; }
+/* The Trommi menu (views/menu.mjs): the desks without a heading, each with the desk drawing; the one in view has its
+   lamp on (a warm cone and three rays) instead of a tick. "New desk" is a quiet line under them; the theme sits beside Log out. */
+.topbar #brand-doors { --lamp: #e2a21b; }
+:root[data-theme="dark"] .topbar #brand-doors { --lamp: #f2bd4a; }
+.topbar #brand-doors .menu-desks { margin-top: 0; padding-top: 0; }
+.topbar #brand-doors .menu-desk[aria-checked]::after { content: none; }
+.topbar #brand-doors .menu-desk { gap: 10px; }
+.topbar #brand-doors .menu-desk .sketch.menu-lamp { width: 24px; height: 24px; stroke-width: 1.7; color: var(--muted); overflow: visible; }
+.topbar #brand-doors .menu-desk .sketch.menu-lamp.is-lit { color: var(--fg); }
+.topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700; }
+.menu-lamp .lamp-light { stroke: var(--lamp); stroke-width: 2; stroke-linecap: round; fill: none; }
+.menu-lamp .lamp-light :is(.lamp-glow, .lamp-cone) { fill: var(--lamp); stroke: none; }
+.menu-lamp .lamp-glow { fill-opacity: .85; }
+.menu-lamp .lamp-cone { fill-opacity: .42; }
+.topbar #brand-doors .menu-desk.is-demo i { opacity: .8; }
+.topbar #brand-doors button.menu-desk-add { width: 100%; min-height: 30px; padding: 0 12px 0 15px; gap: 13px; justify-content: flex-start; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
+.topbar #brand-doors button.menu-desk-add svg { width: 15px; height: 15px; }
+.topbar #brand-doors button.menu-desk-add:is(:hover, :focus-visible) { color: var(--fg); }
+.topbar #brand-doors .menu-leave { display: flex; align-items: center; gap: 2px; }
+.topbar #brand-doors .menu-leave .menu-logout { flex: 1; min-width: 0; }
+.topbar #brand-doors .menu-leave button.menu-theme::after { content: none; }
+.topbar #brand-doors:focus { outline: 0; }
+.topbar #brand-doors .menu-leave button.menu-theme { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-radius: 9px; }
+@media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; } }
+.ledger-tabs { margin: 0 0 var(--s-4, 16px); }
 /* Long Desk lists: rows out of sight are not laid out or painted until they come near. */
 #desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; overflow-clip-margin: 80px; }
 /* A Desk row that is not filled in yet (beyond the first rows; desk-window.mjs fills it when it comes near). */
