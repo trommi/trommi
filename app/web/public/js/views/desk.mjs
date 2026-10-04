@@ -4,7 +4,7 @@
 // the card's own page, its tiles are forms that answer with one tap.
 import { html, raw } from './html.mjs'
 import { WORDS, isKnock, knockWord, cardNr, cardNote, kindOf, plain, carries, quick, labelSize, BARE, shortOf, advisedKeys, advisedLabels, ago, agoSpan } from './text.mjs'
-import { smallMark, markArt } from './sidebar.mjs'
+import { smallMark, markArt, PLUS } from './sidebar.mjs'
 import { srcOf } from './picture.mjs'   // a stored picture at the size it is shown (thumbs.mjs)
 import { deskStacks, stackCounts } from './stacks.mjs'   // the four places at the foot of the Desk
 import { nextPlease } from './nextplease.mjs'   // the heading as index cards (card Nr. 166)
@@ -94,11 +94,21 @@ export { deskStacks }
 export function deskHead(model, base) {
   const n = model.fresh.length
   if (n) return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="inbox-title">${nextPlease(model, base)}</div></header>`
+  if (!model.units.length) return deskInvite()
   // (Counted as the tabs at the foot count them, views/stacks.mjs: the same words, the same numbers.)
   const n2 = stackCounts(model)
   const below = [n2.works ? `${n2.works} working` : '', n2.later ? `${n2.later} snoozed` : ''].filter(Boolean).join(' · ')
   return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0"><div class="inbox-title"><h2>${WORDS.desk} is clear.</h2>${below ? html`<p>${below}</p>` : ''}</div></header>`
 }
+
+/** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends
+ *  the form the Devices page sends (POST /pair, role agent; room.mjs), so the same invite page with the link follows.
+ *  It stands in the heading (#desk-head), which the live stream replaces: the note goes once a session is there. */
+const deskInvite = () => html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0"><section class="desk-invite" id="desk-invite" aria-labelledby="desk-invite-title">
+${sk('heads', 'desk-invite-art')}<h2 id="desk-invite-title">Invite your first agent</h2>
+<p>You get a one-time link for a Claude Code project: run <code>node hub/channel.mjs join '&lt;link&gt;'</code> there, or start Claude Code with <code>TROMMI_INVITE</code>. Its questions land here.</p>
+<form method="post" action="/pair"><input type="hidden" name="role" value="agent"><button type="submit" class="desk-invite-go" id="desk-invite-go">${PLUS}<span>Invite an agent</span></button></form>
+</section></header>`
 
 /** The rows as runs: cards of one session that follow each other stand in one section. Returns [{ sender, cards }]. */
 export function runs(model) {
