@@ -30,8 +30,9 @@ export function marksFrame(agent, base, { stay = false, back = '', where = '' } 
   return html`<turbo-frame id="${framed(agent, where)}"><form method="post" action="${sessionForms(agent, base)}/edit" data-turbo-frame="_top">${answerFields({ stay, back })}<div class="mark-grid" role="radiogroup" aria-label="Drawing">${DRAWINGS.map(name => html`<button class="mark-tile" type="submit" name="icon" value="${drawingMark(name)}" role="radio" aria-checked="${String(agent.mark === drawingMark(name))}" aria-label="${name}" title="${name}" style="--hue:${drawingHue(name)}">${raw(doodleSvg(drawingMark(name)))}</button>`)}</div></form></turbo-frame>`
 }
 
-/** The grid of drawings, put in when its <details> opens (that <details> carries LATER: controller "later"). */
-export const marksHolder = (agent, base, opts = {}) => html`<template>${marksFrame(agent, base, opts)}</template>`
+/** The place of the grid of drawings: made in the page when its <details> opens (that <details> carries LATER;
+ *  controller "later" calls marksFrame with what this names). Forty drawings per session are not made before. */
+export const marksHolder = (agent, base, { stay = false, back = '', where = '' } = {}) => html`<div class="marks-later" data-marks="${JSON.stringify({ agent: { id: agent.id, mark: agent.mark ?? '' }, base, opts: { stay, back, where } })}"><p class="t-pop-wait">Drawings…</p></div>`
 /** On a <details> whose content waits in a <template> until it opens. */
 export const LATER = raw(' data-controller="later" data-action="toggle->later#fill"')
 

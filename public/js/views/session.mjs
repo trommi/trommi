@@ -26,7 +26,7 @@ import { srcOf } from './picture.mjs'
 import { sketchSvg, ringSvg, handSvg } from '../pen.js'
 import { blockedOf } from '../app/node-stubs/blocked.mjs'
 
-export const LIVE = 160              // so many of the newest messages are kept up to date by the live stream
+export const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 export const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
 const WORKING_WINDOW = 10 * 60000    // so long after the human's last word the session counts as answering
@@ -604,16 +604,19 @@ export function register(t) {
       if (a.count !== b.count) out.push(t.stream('replace', `session-filters-${id}`, sessionFilters(b.s, BASE, mode)))
       if (mode === 'questions') { if (a.questions != null && t.differs(a.questions, b.questions)) out.push(t.stream('replace', `session-questions-${id}`, b.questions)) }
       else if (a.items && b.items) {
-        // What stood there and stands there still, changed: that element. What is new stands at the end. What came in
-        // older than all that stood there is an earlier page ("Earlier" shows it); anything else is a log rewritten.
+        // What stood there and stands there still, changed: that element. What is new goes in before the first message
+        // after it that stood there (at the end, mostly; a question's thread loaded late lands at its places). What came
+        // in older than all that stood there is an earlier page ("Earlier" shows it).
         const first = a.items[0]?.seq ?? Infinity
         const fresh = b.items.filter(i => !a.byId.has(i.id) && i.seq >= first)
-        const tail = fresh.length ? b.items.slice(-fresh.length) : []
         // (More new ones than a window holds: the latest window again, rather than a log that grows without end.)
-        if (fresh.length > PAGE || fresh.some((i, n) => tail[n] !== i)) return String(t.stream('refresh'))
+        if (fresh.length > PAGE) return String(t.stream('refresh'))
         for (const i of a.items) if (!b.all.has(i.id)) out.push(t.stream('remove', `msg-${i.id}`))
         for (const i of b.items) { const old = a.byId.get(i.id); if (old && old.node !== i.node && t.differs(old.node, i.node)) out.push(t.stream('replace', `msg-${i.id}`, i.node)) }
-        for (const i of fresh) out.push(t.stream('before', `log-end-${id}`, html`${i.day}${i.node}`))
+        let anchor = `log-end-${id}`
+        const at = []
+        for (let n = b.items.length - 1; n >= 0; n--) { const i = b.items[n]; if (a.byId.has(i.id)) anchor = `msg-${i.id}`; else if (i.seq >= first) at.push([i, anchor]) }
+        for (const [i, before] of at.reverse()) out.push(t.stream('before', before, html`${i.day}${i.node}`))
         if (t.differs(a.status, b.status)) out.push(t.stream('replace', `session-status-${id}`, b.status))
         if (t.differs(a.open, b.open)) out.push(t.stream('replace', `session-open-${id}`, b.open))
         // The drawer's list (a page whose drawer was never opened has no such element: the action does nothing there).
