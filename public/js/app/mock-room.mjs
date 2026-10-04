@@ -112,7 +112,7 @@ class MockClient {
       this.addItem(key, item, c)
       const card = object_id && this.model.cards.get(object_id)
       if (card && card.object_state === 'open' && (content.hand_back || content.explain)) { card.in_revision = { by: content.hand_back ? 'hand_back' : 'explain', envelope_number: this.model.room.last_envelope_number + 1 }; c.cards.add(object_id); c.stack = true }
-      if (card && content.present_card === false) { card.in_revision = null; c.cards.add(object_id) }
+      if (card && content.present_card) { card.in_revision = null; c.cards.add(object_id) }   // taken back: presented again
     })
     setTimeout(() => this.confirm(key, item), 60)
     if (this.simulate) this.agentAnswers(to, object_id, content)
@@ -239,7 +239,7 @@ class MockClient {
       const card = this.model.cards.get(object_id)
       return say(1200, { text: 'Verstanden, ich überarbeite die Karte.' }, () => setTimeout(() => this.revise(card, content.text), 1500))
     }
-    if (content.present_card === false) return
+    if (content.present_card) return
     say(900 + Math.random() * 800, { text: `Verstanden${content.text ? `: „${String(content.text).slice(0, 60)}“` : ''}. Ich mache weiter.` })
   }
   revise(card, why) {

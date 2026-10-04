@@ -43,6 +43,7 @@ export async function start(client, { fresh = false } = {}) {
   const hub = hubFacade(client, board)
   let cached = null
   const model = (d = desk) => {
+    if (pending) { update(); frame ||= requestAnimationFrame(() => apply()) }
     if (cached?.version === board.version && cached.desk === d) return cached.m
     const m = boardModel(board.state, hub.agents(), d)
     board.desk = m.desk
@@ -72,15 +73,27 @@ export async function start(client, { fresh = false } = {}) {
     if (el) el.dataset.state = words[0]
     if (text) text.textContent = words[1]
   }
-  const apply = ({ patch = true } = {}) => {
-    cancelAnimationFrame(frame); frame = 0
+  // update: the board state takes the pending change (at once, wherever the state is read: model() does it, so an
+  // action's own answer never reads the state from before it). patch: the open page gets its streams; that waits for
+  // the frame, so many changes cost one patch.
+  let unpatched = false
+  const update = () => {
     if (!pending) return
     const c = pending; pending = null
     const t = performance.now()
     board.update(c)
-    if (patch) router.changed()
+    unpatched = true
+    window.trommi.lastUpdateMs = performance.now() - t
+  }
+  const apply = () => {
+    cancelAnimationFrame(frame); frame = 0
+    update()
+    if (!unpatched) return
+    unpatched = false
+    const t = performance.now()
+    router.changed()
     conn()
-    window.trommi.lastPatchMs = performance.now() - t
+    window.trommi.lastPatchMs = performance.now() - t + (window.trommi.lastUpdateMs ?? 0)
   }
   client.on('change', change => {
     if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
