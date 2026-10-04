@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Help · Trommi</title>
+<link rel="icon" type="image/svg+xml" href="/icons/trommi.svg">
+<script src="/js/app/theme.js"></script>
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/css/tokens.css">
+<link rel="stylesheet" href="/css/help.css">
+<link rel="stylesheet" href="/css/help-page.css">
+<script type="module" src="/js/app/help-page.mjs"></script>
+</head>
+<body>
+<header class="hp-head">
+  <a class="hp-back" href="/">To the board</a>
+  <h1>How Trommi works</h1>
+  <p>Your agents ask, you answer. Two minutes, and you know the whole app.</p>
+  <nav class="hp-nav" aria-label="On this page">
+    <a href="#desk">Desk</a><a href="#answer">Answering</a><a href="#ways">Four other ways</a><a href="#sessions">Sessions</a><a href="#notes">Notes</a><a href="#keys">Keys</a><a href="#agents">For agents</a>
+  </nav>
+</header>
+
+<main>
+<section id="desk" aria-labelledby="h-desk">
+  <h2 class="hp-title" id="h-desk"><span>The <span data-word="INBOX_WORD">Desk</span></span> <b>everything that needs you</b></h2>
+  <div class="hp-prose">
+    <p>The <strong data-word="INBOX_WORD">Desk</strong> is one list of every open question from every session. Its heading counts them (“12 on your desk”). When nothing is left it says “Desk is clear.”</p>
+    <p><strong>Knocks come first.</strong> A knock is a question that will not wait: <span class="hp-word" data-word="KNOCK_WORD">Knock</span> is urgent, <span class="hp-word" data-word="KNOCK_BLOCKING_WORD">Knock! Blocking</span> means the agent cannot go on without you, <span class="hp-word" data-word="KNOCK_PERMISSION_WORD">Knock! Permission</span> is a tool the session wants your leave to use.</p>
+    <p><strong><span data-word="WALK_WORD">Next, please</span></strong> is the button that walks you through all open questions, one after the other. Answer one and the next is in front of you.</p>
+    <p>Some cards ask nothing: a report or a finding to read. Close one with <span class="hp-word" data-word="ACK_WORD">Acknowledge</span>.</p>
+  </div>
+</section>
+
+<section id="answer" aria-labelledby="h-answer">
+  <h2 class="hp-title" id="h-answer">Answering <b>one tap, or a few words</b></h2>
+  <div class="hp-prose">
+    <p><strong>Yes or no:</strong> thumb up or thumb down, right in the list. <strong>More options:</strong> open the question and pick one. Where several answers are allowed, tick them and send.</p>
+    <p>The option the agent would pick itself is marked by hand. It is advice; you decide.</p>
+    <p><strong>Say more if you like.</strong> Open a card to add a note to your answer or to a single option. On an opened card you can write right where your remark belongs and draw on it with the pen; the agent gets your notes together with the answer.</p>
+    <p><strong>Wrong tap?</strong> “Back” takes the last answer back. The question returns, and the agent is told to stop acting on the old answer.</p>
+  </div>
+</section>
+
+<section id="ways" aria-labelledby="h-ways">
+  <h2 class="hp-title" id="h-ways">Four other ways <b>when you do not want to answer</b></h2>
+  <dl class="hp-params hp-ways">
+    <div><dt data-word="LATER_WORD" data-key="list.later">Snooze</dt><dd>Not now. The question leaves the list and waits in the Snoozed pile at the foot of the Desk, in this browser. It comes back by itself if the agent makes it more urgent.</dd></div>
+    <div><dt data-word="HANDBACK_WORD" data-key="focus.handback">Revise</dt><dd>Hand the question back to the agent and say what should change. It returns as the same card, reworded.</dd></div>
+    <div><dt data-word="TRUST_WORD" data-key="list.trust">Whatever</dt><dd>You do not mind. The agent takes its own recommendation and tells you what it chose.</dd></div>
+    <div><dt data-word="SHRED_WORD" data-key="list.shred">Shred</dt><dd>Throw the question away unanswered. The agent is told not to ask it again.</dd></div>
+  </dl>
+  <div class="hp-prose">
+    <p><strong data-word="WHAT_WORD">What??</strong> is for a question you do not understand: write what is unclear, and the agent explains it in writing. The card stays yours to answer.</p>
+    <p>Each of these can be taken back, from the note that appears or from the piles at the foot of the Desk.</p>
+  </div>
+</section>
+
+<section id="sessions" aria-labelledby="h-sessions">
+  <h2 class="hp-title" id="h-sessions">Sessions and the crown <b>who is asking</b></h2>
+  <div class="hp-prose">
+    <p>Every agent is a <strong>session</strong> with a page of its own: its conversation with you, its questions, its files, and Scribble, a canvas to draw on and send.</p>
+    <p><strong>The crown.</strong> Put the crown on the session that matters most. Its questions come first on the Desk, and it receives your quick note.</p>
+    <p><strong>Laying sessions together.</strong> Sessions that belong to one piece of work can be stacked: one combined list of their questions, with their conversations beside it.</p>
+    <p><strong>The Ledger</strong> lists every session, one line each: what it works on, whether it waits for you, and the switches to rename, crown, lay together or archive it.</p>
+    <p><strong>Passing a decision on.</strong> A decision can be copied and pasted into a message to another session. That agent then reads the whole card: the question, the options and your answer.</p>
+  </div>
+  <p class="hp-label">Every place has an address</p>
+  <table class="hp-table">
+    <tbody>
+      <tr><th><code>/</code></th><td>The Desk</td></tr>
+      <tr><th><code>/q/&lt;n&gt;</code></th><td>Question number n, opened</td></tr>
+      <tr><th><code>/walk</code></th><td>“Next, please”: the walk through all open questions</td></tr>
+      <tr><th><code>/s/&lt;id&gt;</code></th><td>A session; <code>/s/&lt;a&gt;+&lt;b&gt;</code> sessions laid together</td></tr>
+      <tr><th><code>/agents</code></th><td>The Ledger</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<section id="notes" aria-labelledby="h-notes">
+  <h2 class="hp-title" id="h-notes"><span>Quick note and <span data-word="PAD_WORD">Scratchpad</span></span> <b>two places to write</b></h2>
+  <div class="hp-prose">
+    <p><strong>A quick note goes to an agent.</strong> From wherever you are, write a few words to the crowned session. It arrives as a plain message, no card. Pictures and files can go along.</p>
+    <p><strong>The <span data-word="PAD_WORD">Scratchpad</span> stays with you.</strong> It is your own notebook for notes, drawings and pictures, open from anywhere. No agent reads it; an agent sees only what you select there and send.</p>
+  </div>
+</section>
+
+<section id="keys" aria-labelledby="h-keys">
+  <h2 class="hp-title" id="h-keys">Keys <b>the whole app without the mouse</b></h2>
+  <p class="hp-lead">Plain keys, no Ctrl or Alt unless shown. They rest while you type in a field. In the app, <kbd>?</kbd> shows the keys that work where you are. This list is read from the app's own key table.</p>
+  <div id="key-list" class="hp-keys"><p class="hp-wait">Loading the keys…</p></div>
+</section>
+
+<header class="hp-part" id="agents">
+  <h2>For agents, and for whoever sets them up</h2>
+  <p>An agent is a member of your account like your phone: the channel process beside a Claude Code session has its own device keys and talks to you only in signed, encrypted envelopes. Below: what travels between the session and you, in which direction, and what never makes the trip.</p>
+  <nav class="hp-nav" aria-label="The channel">
+    <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
+  </nav>
+</header>
+
+<section id="picture" aria-labelledby="h-picture">
+  <h2 class="hp-title" id="h-picture">The picture <b>four parties, two directions</b></h2>
+  <figure class="hp-figure">
+    <div id="diagram"></div>
+    <figcaption>Every session starts its own <code>hub/channel.mjs</code>: that process is the channel. It seals what the agent says before it leaves the machine; the hub only stores and forwards envelopes it cannot open; this app opens them on your device. Green arrows run towards the agent, dark ones towards you.</figcaption>
+  </figure>
+</section>
+
+<section id="missing" aria-labelledby="h-missing">
+  <h2 class="hp-title" id="h-missing">What the channel cannot deliver <b>and what stands in</b></h2>
+  <div class="hp-two">
+    <ul class="hp-never">
+      <li>The model's thinking</li>
+      <li>Its tool calls</li>
+      <li>The terminal's output</li>
+      <li>Text while it streams</li>
+    </ul>
+    <div class="hp-prose">
+      <p>A channel is narrow: an MCP server sees the tool calls made <em>to it</em> and nothing else of the session. The agent sees its own thinking; the channel gets none of it, so Trommi cannot show it.</p>
+      <p><strong>The substitute is a habit, not a feed.</strong> The agent's instructions say: what you should know goes into <code>reply</code>, and the reasoning or evidence into its <code>details</code> field, which is shown collapsed under the message. Progress goes into <code>set_status</code>.</p>
+      <p>Seeing the session live would need a second road beside the channel (hooks, the Agent SDK, or herdr). Trommi does not have one yet.</p>
+    </div>
+  </div>
+</section>
+
+<section id="events" aria-labelledby="h-events">
+  <h2 class="hp-title" id="h-events">Events <b>everything besides tool calls</b></h2>
+  <p class="hp-lead">What Claude Code is sent, and what it sends by itself. A channel event reaches the model as a <code>&lt;channel&gt;</code> tag: <code>content</code> is the text inside, each <code>meta</code> field an attribute. Meta values are strings.</p>
+  <div id="event-list" class="hp-list"><p class="hp-wait">Loading…</p></div>
+</section>
+
+<section id="tools" aria-labelledby="h-tools">
+  <h2 class="hp-title" id="h-tools">Tools <b id="tool-count">what the agent can do</b></h2>
+  <p class="hp-lead">Every way from the agent to you is a tool call. The descriptions are the words the agent itself is given; this list is read from the channel's own tool table, so it cannot drift from it.</p>
+  <div id="tool-list" class="hp-list"><p class="hp-wait">Loading…</p></div>
+</section>
+
+<section id="assets" aria-labelledby="h-assets">
+  <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
+  <div class="hp-prose">
+    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only your devices and agents can open it. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
+    <p><strong>How it is encrypted.</strong> The channel process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside your account, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
+  </div>
+  <div class="hp-facts">
+    <div><dt>Stored on the hub</dt><dd>Ciphertext of the file, its size, the time, the device that uploaded it; for a link, a hash of its secret and when it ends</dd></div>
+    <div><dt>Never on the hub</dt><dd>The file key, the title, the type, the file name</dd></div>
+    <div><dt>Lifetime</dt><dd id="asset-life">Deleted 30 days after its card is answered or closed; an outside link lasts at most 30 days</dd></div>
+  </div>
+  <div class="hp-prose">
+    <p><strong>One limit on all of this.</strong> Whoever serves this app serves the code that decrypts. Altered code could send keys home. “The hub cannot read it” holds against a hub that stores and looks, not against one that serves altered code. Here they are two servers: the app comes from app.trommi.com, the hub is hub.trommi.com.</p>
+    <p><strong>HTML pages run in a sandbox.</strong> A published page may come from an agent that was misled, so the viewer treats it as hostile: it runs in a frame with no origin of its own, cannot read the key, your account or your devices, cannot open windows, submit forms or load anything from the network. A page must therefore be self-contained: inline CSS and scripts, images as <code>data:</code> URLs. Type nothing secret into a published page.</p>
+  </div>
+</section>
+
+</main>
+</body>
+</html>

@@ -1,0 +1,52 @@
+/* The pad, from anywhere (js/padlink.js): its control in the bar, and the layer it opens in. */
+
+/* The control looks drawn by hand, because that is what it leads to: an outline that does
+   not close evenly, a sheet with a scribble on it. */
+.padlink-open {
+  flex: none; display: inline-flex; align-items: center; gap: 6px;
+  min-height: 36px; padding: 0 13px 0 9px;
+  border: 1.5px solid var(--fg);
+  border-radius: 255px 18px 225px 18px / 18px 225px 18px 255px;
+  background: var(--surface); color: var(--fg);
+  font: 700 var(--t-sm)/1 var(--display); letter-spacing: -.005em;
+  rotate: -1.5deg;
+  transition: rotate var(--d-fast) var(--ease-out), background var(--d-fast), color var(--d-fast);
+}
+.padlink-open:hover { rotate: 0deg; background: var(--sunken); }
+.padlink-open:active { scale: .97; }
+.padlink-open[aria-pressed="true"] { background: var(--fg); color: var(--bg); rotate: 0deg; }
+.padlink-ico { width: 22px; height: 22px; flex: none; fill: none; stroke: currentColor; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+
+/* A phone's bar is short: the sheet alone, as large as a thumb needs. */
+@media (max-width: 860px) {
+  .padlink-open { width: 44px; height: 40px; min-height: 0; padding: 0; justify-content: center; margin-inline: 2px; }
+  .padlink-open span { display: none; }
+}
+
+/* The layer: always mounted, so opening it is only showing it. Above the Focus window (2000). */
+.padlink {
+  position: fixed; inset: 0; z-index: 3000;
+  height: var(--app-h, 100dvh);
+  background: var(--surface);
+  visibility: hidden; opacity: 0; pointer-events: none;
+  transition: opacity var(--d-fast) var(--ease-out), visibility 0s linear var(--d-fast);
+}
+.padlink[data-open] { visibility: visible; opacity: 1; pointer-events: auto; transition: opacity var(--d-fast) var(--ease-out); }
+.padlink iframe { display: block; width: 100%; height: 100%; border: 0; background: var(--surface); }
+@media (prefers-reduced-motion: reduce) { .padlink, .padlink[data-open] { transition: none; } }
+
+/* In a conversation: the picture of a selection sent from the pad, whole, on the white it was painted on. */
+.msg-user .shots { margin-left: auto; margin-bottom: var(--s-2); }
+.msg-user .shot { background: #fff; }
+.msg-user .shot img { object-fit: contain; object-position: center; }
+
+/* The swoosh: above the pad, a strip of the sessions' marks at the left edge (where the sidebar is)
+   for the moment a cut-out area flies into its session. */
+.padlink-fly { position: fixed; inset: 0; z-index: 3001; pointer-events: none; overflow: hidden; }
+.padlink-strip {
+  position: absolute; left: 0; top: 50%; translate: 0 0; transform: translateY(-50%);
+  display: grid; gap: var(--s-3); padding: var(--s-4) var(--s-3); max-height: 80vh; overflow: hidden;
+  border-radius: 0 var(--r-lg) var(--r-lg) 0; background: var(--bg); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg);
+}
+.padlink-strip .agent-avatar { width: 38px; height: 38px; opacity: .45; }
+.padlink-strip .agent-avatar.is-target { opacity: 1; box-shadow: 0 0 0 2px var(--surface), 0 0 0 3.5px var(--fg); }
