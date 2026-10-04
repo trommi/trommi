@@ -36,6 +36,10 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - Open: whole-page switches on phone 4x take 95–150 ms (over the 100 ms budget).
 - First load of the crazy room (113k envelopes) on a new device: 367 s → 31 s (C, cc891d3). The rest is core catch-up; a room snapshot (B) targets < 10 s.
 - v1.1 (A crypto + hub, B core 20/20 incl. R6 isolation + handover, lease, cut, escrow login) is green on branch hub-v11. Coordinated cutover pending C (app) + D (channel).
+- ~03:55 **v1.1 cutover live**: hub.trommi.com runs 691ecc4 (crypto + hub v1.1, core v1.1 with R6 session keys, room snapshot, channel v1.1). Verified by the lead on the merged head: crypto 74/74, hub-test 25/25, session-grants 4/4, hub 13/13, ops 9/9, core 21/21, channel 26/26, old server suite green. Prod hub.db wiped once (moved aside). New deploy backups use VACUUM INTO + gzip, 7 + daily. Global stream-buffer cap 256 MiB, catch-up sent in slices, incremental auto_vacuum.
+- Room snapshot (B): first start of a 20k room 29 ms vs 1,039 ms full replay. Browser catch-up without snapshot ~13k envelopes/s, 0 long tasks.
+- Session area (trommi/trommi 32eaf3a…035ca79): own message visible 2.4 ms desktop / 13 ms phone 4x; open session 45 / 145 ms; Earlier 6 / 25–35 ms.
+- Superkind live pass (pre-cutover): 45/46 round trips green; agent→app 44–64 ms, click→agent ~103 ms, phone join incl. code 4.4 s.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
