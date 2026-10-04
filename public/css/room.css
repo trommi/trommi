@@ -83,14 +83,13 @@
 .room-device-name { display: grid; gap: 2px; min-width: 0; }
 .room-device-name em { font-style: normal; font-size: 12px; color: var(--accent); }
 .room-device-name small { color: var(--muted); font-size: 12px; }
-.room-remove summary, .room-handover summary { cursor: pointer; font-size: 13px; color: var(--deny); list-style: none; text-align: right; }
-.room-handover { grid-column: 2 / -1; }
-.room-handover summary { color: var(--accent); text-align: left; }
-.room-handover details[open], .room-agent-form { display: grid; gap: 10px; }
+.room-remove summary { cursor: pointer; font-size: 13px; color: var(--deny); list-style: none; text-align: right; }
+.room-handover { margin-top: 10px; }
+.room-agent-form { display: grid; gap: 10px; }
 .room-remove details[open] { max-width: 260px; font-size: 13px; line-height: 1.45; }
 .room-remove details[open] p { margin: 6px 0 0; }
-.room-agent-form { margin-top: 12px; grid-template-columns: 1fr auto; align-items: end; }
-.room-agent-form > :not(label:first-of-type, button) { grid-column: 1 / -1; }
+.room-agent-form { margin-top: 14px; }
+.room-agent-form button, .room-handover button { justify-self: start; }
 .room-history { border: 0; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 14px; }
 .room-history legend { font-weight: 500; padding: 0; margin-bottom: 4px; width: 100%; }
 .room-history label { display: flex !important; align-items: center; gap: 6px; font-weight: 400 !important; }
@@ -121,6 +120,5 @@
   .room-pair { grid-template-columns: 1fr; justify-items: center; gap: 16px; }
   .room-qr { width: min(260px, 70vw); }
   .room-code { font-size: 44px; }
-  .room-agent-form { grid-template-columns: 1fr; }
   .room-remove details[open] { max-width: none; }
 }

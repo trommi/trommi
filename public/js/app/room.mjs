@@ -62,18 +62,19 @@ export function roomPages(client) {
     const member = d => {
       const me = d.is_me, human = d.device_role === 'human', name = d.device_name || (human ? 'Gerät' : 'Agent')
       const canRemove = d.is_active && !me && isHuman()
-      const handover = !human && d.is_active && isHuman() && has(client, 'assignSession') ? handoverForm(d) : ''
       return html`<li class="room-device${d.is_active ? '' : ' is-removed'}" id="device-${d.device_id}">
 <span class="room-device-dot" data-online="${d.is_online ? 'yes' : 'no'}" title="${d.is_online ? 'online' : 'nicht verbunden'}"></span>
 <span class="room-device-name"><b>${name}</b>${me ? html` <em>dieses Gerät</em>` : ''}<small>${human ? 'Person' : 'Agent'} · <span class="room-fp" title="Schlüssel-Fingerabdruck aus der signierten Mitgliederliste">${fp(d)}</span>${d.is_active ? '' : ' · entfernt'}</small></span>
 ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remove"><input type="hidden" name="device_id" value="${d.device_id}"><details><summary>Entfernen</summary><p>${human
         ? html`${name} kann danach nichts Neues mehr öffnen. Alle anderen bekommen einen neuen Raumschlüssel (Schlüsselwechsel); das dauert einen Moment.`
-        : html`${name} kann danach nichts Neues mehr lesen. Die anderen bekommen einen neuen Raumschlüssel; der Verlauf der Sitzung bleibt.`}</p><button type="submit" class="room-danger">${name} entfernen</button></details></form>` : ''}
-${handover}</li>`
+        : html`${name} kann danach nichts Neues mehr lesen. Die anderen bekommen einen neuen Raumschlüssel; der Verlauf der Sitzung bleibt.`}</p><button type="submit" class="room-danger">${name} entfernen</button></details></form>` : ''}</li>`
     }
-    const historyAsk = html`<fieldset class="room-history"><legend>Darf er den bisherigen Verlauf lesen?</legend><label><input type="radio" name="with_history" value="yes" required> Ja</label><label><input type="radio" name="with_history" value="no" required> Nein</label></fieldset>`
+    const historyAsk = (required = true) => html`<fieldset class="room-history"><legend>Darf er den bisherigen Verlauf lesen?</legend><label><input type="radio" name="with_history" value="yes"${required ? raw(' required') : ''}> Ja</label><label><input type="radio" name="with_history" value="no"${required ? raw(' required') : ''}> Nein</label></fieldset>`
     const sessionOptions = (except = null) => [...m().sessions.values()].filter(s => s.agent_device_id !== except).map(s => html`<option value="${s.agent_session_id || s.agent_device_id}">${sessionName(s)}</option>`)
-    const handoverForm = d => html`<form method="post" action="/devices/handover" class="room-handover"><input type="hidden" name="agent_device_id" value="${d.device_id}"><details><summary>Sitzung übergeben</summary><label>Sitzung<select name="session_id" required>${sessionOptions(d.device_id)}</select></label>${historyAsk}<button type="submit" class="room-primary">Übergeben</button></details></form>`
+    // Hand a session to an agent that is in the room: one form under the agents (not one per row: big rooms).
+    const handoverForm = agents => html`<details class="room-more room-handover"><summary>Sitzung an einen Agenten übergeben</summary><form method="post" action="/devices/handover" class="room-form">
+<label>Agent<select name="agent_device_id" required>${agents.map(d => html`<option value="${d.device_id}">${d.device_name || 'Agent'} · ${fp(d)}</option>`)}</select></label>
+<label>Sitzung<select name="session_id" required>${sessionOptions()}</select></label>${historyAsk()}<button type="submit" class="room-primary">Übergeben</button></form></details>`
     // The three lists, each one element with an id, so a change replaces only the list it touched.
     const lists = () => {
       const all = [...m().members.values()]
@@ -88,6 +89,7 @@ ${handover}</li>`
       }
     }
     const devicesMain = (error = '') => {
+      const L = lists(), active = [...m().members.values()].filter(d => d.is_active && d.device_role !== 'human')
       const escrow = has(client, 'setPassphrase') && PASSWORD_LOGIN
       const pw = m().room.has_passphrase
       return shell('Geräte', html`${tabs('devices')}
@@ -97,10 +99,10 @@ ${isHuman() ? html`<section class="room-section" aria-labelledby="add-head"><h3 
 <form method="post" action="/pair" class="room-way"><input type="hidden" name="role" value="human"><button type="submit" class="room-way-go" id="pair-start">${sk('phone')}<b>Gerät koppeln</b><span>Hier erscheint ein QR-Code. Das neue Gerät scannt ihn, dann tippst du eine Zahl an. Fertig.</span></button></form>
 ${escrow ? html`<a href="/settings#passwort" data-nav class="room-way room-way-go" id="password-way">${sk('key')}<b>Mit Passwort anmelden</b><span>${pw ? 'Ist eingerichtet. Auf dem neuen Gerät app.trommi.com öffnen und „Mit Passwort anmelden“ wählen.' : 'Ein neuer Browser kommt mit Raumadresse und Passwort hinein. Erst einrichten.'}</span></a>` : ''}
 </div></section>` : ''}
-<section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Deine Geräte</h3>${raw(lists().people)}</section>
-<section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agenten</h3>${raw(lists().agents)}
-${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name der Sitzung<input name="label" maxlength="40" placeholder="z. B. Website" autocomplete="off"></label>${has(client, 'assignSession') && m().sessions.size ? html`<label>Übernimmt<select name="session_id"><option value="">eine neue Sitzung</option>${sessionOptions()}</select></label>${historyAsk}` : ''}<button type="submit" id="agent-invite">Agent einladen</button></form>` : ''}</section>
-${raw(lists().gone)}
+<section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Deine Geräte</h3>${raw(L.people)}</section>
+<section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agenten</h3>${raw(L.agents)}${isHuman() && active.length && has(client, 'assignSession') ? handoverForm(active) : ''}
+${isHuman() ? html`<form method="post" action="/pair" class="room-agent-form"><input type="hidden" name="role" value="agent"><label>Name der Sitzung<input name="label" maxlength="40" placeholder="z. B. Website" autocomplete="off"></label>${has(client, 'assignSession') && m().sessions.size ? html`<label>Übernimmt<select name="session_id"><option value="">eine neue Sitzung</option>${sessionOptions()}</select></label>${historyAsk(false)}` : ''}<button type="submit" id="agent-invite">Agent einladen</button></form>` : ''}</section>
+${raw(L.gone)}
 <p class="room-meta">Jedes Gerät hat eigene Schlüssel; der Hub sieht nur versiegelte Umschläge. Der Fingerabdruck steht in der signierten Mitgliederliste: Er muss auf allen Geräten gleich aussehen.</p>`)
     }
     t.get(/^\/devices$/, ({ req, res }) => page(req, res, 'Geräte', devicesMain(), { stream: '&room=devices' }))
@@ -118,6 +120,7 @@ ${raw(lists().gone)}
         const label = String(form.get('label') ?? '').trim() || null
         const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}) })
         const session_id = String(form.get('session_id') ?? '')
+        if (agent && session_id && !form.get('with_history')) return page(req, res, 'Geräte', devicesMain('Darf er den bisherigen Verlauf lesen? Bitte Ja oder Nein wählen.'), {}, 422)
         if (agent && session_id) handovers.set(invite.invite_id, { session_id, with_history: form.get('with_history') === 'yes', done: false })
         t.redirect(res, `/pair/${invite.invite_id}`)
       } catch (err) { page(req, res, 'Geräte', devicesMain(`Keine Einladung: ${err.message}`), {}, 422) }
