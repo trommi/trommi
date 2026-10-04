@@ -46,6 +46,7 @@ async function freePort() {
 }
 
 LIMITS.foundPerIpHour = 10_000
+LIMITS.envelopesPerSecond = 100_000; LIMITS.envelopeBurst = 100_000
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-test-'))
 // hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on crypto/hub.mjs.
 const serverHasSessions = fs.readFileSync(path.join(HERE, '../../hub/server.mjs'), 'utf8').includes('sealed_session_keys')
@@ -97,7 +98,7 @@ await test('found: room, recovery code, device register, warm model', async () =
   eq(phone.model.room.key_epoch, 1, 'epoch')
   await phone.settle()
   eq(phone.model.members.get(phone.my_device_id).device_name, 'Phone', 'name from the encrypted device register')
-  eq(phone.model.room.connection, 'live', 'stream live')
+  await until(() => phone.model.room.connection === 'live', 'stream live')
 })
 
 await test('two humans + agent: invite with check code, agent without, roles and names', async () => {
@@ -595,6 +596,57 @@ if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets 
   await other.agentLease({ process_instance: 'second' })
   await agent.sendMessage({ text: 'from the old process' }).catch(() => {})
   await until(() => errors.includes('lease-lost'), 'old process told')
+})
+
+await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
+  const N = BENCH ? 20000 : 6000
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  phone.options.snapshot = false
+  const cards = []
+  for (let i = 0; i < N; i++) {
+    if (i % 100 === 0) cards.push(await agent.sendCard({ title: `card ${i}`, options: [{ key: 'a', label: 'A' }] }))
+    else if (i % 10 === 0) await agent.setStatus({ [`status_line/s${i % 7}`]: { label: `s${i}`, state: 'working' } })
+    else await agent.sendMessage({ text: `m${i}` })
+  }
+  await settleAll(agent, phone)
+  const snap = await phone.writeSnapshot()
+  for (let i = 0; i < 50; i++) await agent.sendMessage({ text: `tail ${i}` })
+  const after = await agent.sendCard({ title: 'after the snapshot', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  const inv = await phone.createInvite({ device_role: 'human' })
+  const j = joinRoom({ link: inv.link, storage: memoryStorage(), poll_ms: 50 })
+  const code = await j.check_code
+  await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'confirm')
+  await phone.confirmInvite(inv.invite_id, code)
+  const fresh = track(await j.client)
+  const t0 = performance.now()
+  await fresh.start()
+  const ms = performance.now() - t0
+  assert(fresh.stats.snapshot, 'booted from the snapshot')
+  assert(fresh.stats.verified < 400, `only the tail verified (${fresh.stats.verified})`)
+  eq(fresh.model.cards.size, phone.model.cards.size, 'same cards')
+  eq(fresh.model.cards.get(cards[3]).title, 'card 300', 'old card from the snapshot')
+  await until(() => fresh.model.cards.get(after)?.title === 'after the snapshot', 'tail card')
+  eq(fresh.model.sessions.get(agent.session_id).unread_count, phone.model.sessions.get(agent.session_id).unread_count, 'same unread count')
+  const key = `chat:session/${agent.session_id}`
+  await fresh.loadTimeline(key, { limit: 50 })
+  const p2 = await fresh.loadTimeline(key, { limit: 50 })
+  const older = [...fresh.model.timelines.get(key).items.values()].sort((a, b) => a.envelope_number - b.envelope_number)
+  assert(p2.loaded === 50 && older[0].content?.text?.startsWith('m'), 'items from before the snapshot load by signature')
+  // the same device without the snapshot, for comparison
+  const inv2 = await phone.createInvite({ device_role: 'human' })
+  const j2 = joinRoom({ link: inv2.link, storage: memoryStorage(), poll_ms: 50 })
+  const code2 = await j2.check_code
+  await until(() => phone.model.invites.get(inv2.invite_id).invite_state === 'confirm_code', 'confirm 2')
+  await phone.confirmInvite(inv2.invite_id, code2)
+  const full = track(await j2.client)
+  full.options.snapshot = false
+  const t1 = performance.now()
+  await full.start()
+  const msFull = performance.now() - t1
+  eq(full.model.cards.size, fresh.model.cards.size, 'replay agrees with the snapshot')
+  console.log(`     ${N} envelopes: first start with snapshot ${ms.toFixed(0)} ms (snapshot ${(fresh.stats.snapshot.bytes / 1024).toFixed(0)} KiB, ${fresh.stats.snapshot.ms.toFixed(0)} ms, tail ${fresh.stats.verified}); full replay ${msFull.toFixed(0)} ms`)
+  void snap
 })
 
 if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', async () => {
