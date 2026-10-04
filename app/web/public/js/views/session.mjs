@@ -105,7 +105,7 @@ function attachments(list, s, base, from) {
   const images = list.filter(isPicture)
   const files = list.filter(a => kindOf(a) === 'file')
   return html`${media.map(a => (kindOf(a) === 'video'
-    ? html`<figure class="media media-video"><video src="${a.url}" controls preload="metadata" playsinline></video><figcaption>${a.name}</figcaption></figure>`
+    ? html`<figure class="media media-video"><video src="${a.url}#t=0.001" controls preload="metadata" playsinline></video><figcaption>${a.name}</figcaption></figure>`
     : html`<figure class="media media-audio"><audio src="${a.url}" controls preload="metadata"></audio><figcaption>${a.name}</figcaption></figure>`))}${images.length ? html`<div class="shots${images.length === 1 ? ' shots-one' : ''}">${images.map(a => html`<a class="shot" data-nav href="${sessionPath(s.id, base)}/files/${s.nr.get(a.url) ?? 1}?from=${from}" aria-label="Enlarge ${a.name}"><img${srcOf(a, images.length === 1 ? 416 : 272)} alt="${a.name}" loading="lazy" decoding="async" width="320" height="240"></a>${a.page?.url ? html`<a class="focus-page-link" href="${a.page.url}" target="_blank" rel="noopener noreferrer">Open the page</a>` : ''}`)}</div>` : ''}${files.length ? html`<div class="files">${files.map(a => html`<a class="file-chip" href="${a.url}" target="_blank" rel="noopener">${ico('file')}<span>${a.name}</span></a>`)}</div>` : ''}`
 }
 
@@ -182,7 +182,7 @@ export function assetPage(s, asset, base, from = '') {
   const stage = asset.gone || !url ? html`<p class="as-problem">This is no longer available.</p>`
     : type === 'html' ? html`<div class="as-frame-box" data-controller="assetthumb" data-assetthumb-src-value="${url}" data-assetthumb-full-value="true"><p class="as-wait">Opening the page…</p></div>`
       : type === 'image' ? html`<img class="as-media" src="${url}" alt="${asset.title}" decoding="async">`
-        : type === 'video' ? html`<video class="as-media" src="${url}" controls playsinline preload="metadata"></video>`
+        : type === 'video' ? html`<video class="as-media" src="${url}#t=0.001" controls playsinline preload="metadata"></video>`
           : type === 'audio' ? html`<audio class="as-media" src="${url}" controls preload="metadata"></audio>`
             : html`<div class="as-file"><span class="as-file-name">${asset.att?.name ?? asset.title}</span>${asset.size ? html`<span class="caps">${sizeText(asset.size)}</span>` : ''}<a class="as-btn" href="${url}" download="${asset.att?.name ?? ''}">Download</a></div>`
   return html`<div class="t-picture as-view" data-controller="share" data-share-link-value="${assetPath(s, asset.id, base)}" data-share-title-value="${asset.title || 'Untitled'}">

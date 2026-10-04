@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { createBridge } from './channel-bridge.mjs'
 import { TOOLS, TOOL_EXAMPLES, INSTRUCTIONS } from './channel-tools.mjs'
+import { encryptAsset, decryptAsset } from '../core/zcrypto.mjs'
 
 let passed = 0, failed = 0
 const results = []
@@ -128,6 +129,29 @@ await test('attachments by absolute path are uploaded and referenced, with marks
   assert.deepEqual(f.attachments[0].marks, [{ x: 0.1, y: 0.2, width: 0.3, height: 0.1, label: 'here' }])
   assert.match(f.attachments[0].page, /^attachment:/)
   assert.equal(f.attachments[1].role, 'page')
+})
+
+await test('a video attachment goes as video/webm (mp4, mov too), encrypted like any file, and comes back whole', async () => {
+  const { client, bridge } = bridgeWith()
+  const clip = new URL('../app/web/public/mock/files/clip.webm', import.meta.url)
+  const file = path.join(tmp, 'flow.webm')
+  fs.copyFileSync(clip, file)
+  await bridge.callTool('create_decision', { title: 'Which flow?', options: [{ key: 'a', label: 'This' }, { key: 'b', label: 'Other' }], attachments: [file] })
+  const up = client.calls.find(c => c[0] === 'upload')
+  assert.equal(up[2].media_type, 'video/webm')
+  assert.equal(up[1], fs.statSync(file).size)
+  assert.equal(up[2].width, undefined)
+  assert.equal(client.calls.find(c => c[0] === 'sendCard')[1].attachments[0].media_type, 'video/webm')
+  for (const [ext, type] of [['mp4', 'video/mp4'], ['MOV', 'video/quicktime']]) {
+    const f = path.join(tmp, `clip.${ext}`)
+    fs.writeFileSync(f, Buffer.alloc(64))
+    await bridge.callTool('create_info', { title: 'Clip', body: 'see', attachments: [f] })
+    assert.equal(client.calls.filter(c => c[0] === 'upload').at(-1)[2].media_type, type)
+  }
+  const bytes = new Uint8Array(fs.readFileSync(file))
+  const sealed = await encryptAsset(bytes)
+  assert.ok(sealed.blob.length > bytes.length)
+  assert.deepEqual(await decryptAsset(sealed.blob, sealed.key, sealed.sha256), bytes)
 })
 
 await test('reply: chat to the session, on a card, present rules after hand back and explain', async () => {

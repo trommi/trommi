@@ -94,7 +94,7 @@ export default class extends Controller {
     if (key != null) fig.dataset.key = key; else delete fig.dataset.key
     fig.dataset.circlesMarksValue = JSON.stringify(pic.marks ?? [])
     const where = this.element.querySelector('.tc-where')
-    if (where) where.textContent = `${pic.at} / ${this.picturesValue.length} · ${pic.name}`
+    if (where) where.textContent = `${pic.at} / ${this.element.querySelectorAll('.tc-thumb').length || this.picturesValue.length} · ${pic.name}`
     this.element.querySelectorAll('.tc-thumb').forEach((t, i) => t.setAttribute('aria-pressed', String(i + 1 === pic.at)))
     img.addEventListener('load', () => this.link(), { once: true })
     this.link()

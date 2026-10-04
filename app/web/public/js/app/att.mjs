@@ -31,11 +31,11 @@ navigator.serviceWorker?.addEventListener('message', async e => {
 document.addEventListener('error', async e => {
   const el = e.target
   if (!(el instanceof HTMLImageElement || el instanceof HTMLMediaElement)) return
-  const m = /\/att\/([0-9a-f]{32})$/.exec(el.getAttribute('src') ?? '')
+  const m = /\/att\/([0-9a-f]{32})(#.*)?$/.exec(el.getAttribute('src') ?? '')
   if (!m || el.dataset.attTried) return
   el.dataset.attTried = '1'
   const blob = await blobOf(m[1])
-  if (blob) { el.removeAttribute('srcset'); el.src = URL.createObjectURL(blob); return }
+  if (blob) { el.removeAttribute('srcset'); el.src = URL.createObjectURL(blob) + (m[2] ?? ''); return }
   // Gone from the hub (after 30 days, or evicted for the room's quota): said in place of the picture.
   const gone = document.createElement('span')
   gone.className = 'att-gone'
