@@ -437,9 +437,17 @@ export class Client {
       onState: (s, err) => {
         if (s === 'open') {
           this._liveFrom ??= Date.now(); this._setConnection('live'); this._refreshDevices().catch(() => {})   // presence after every (re)connect
-          // F11: a grant announced while the stream was down is fetched now.
-          if (this._streamOpenedBefore) this.serial(async () => { await this._refreshSessions(); if (this._needResync) await this._resync() }).catch(e => this._localAlert('sessions', e))
-          this._streamOpenedBefore = true
+          // The stream replays envelopes from the cursor, but not member entries or grants: one posted after this device
+          // last read the member list (in start(), or before a drop) and before the hub registered this stream was never
+          // announced to it. The hub registers the stream in the same step as it sends the headers, so reading both lists now closes
+          // the gap (a warm reload missed a removal this way). F11: the same for a grant announced while the stream was down.
+          this.serial(async () => {
+            const entry = this.state.head.seq
+            await this._refreshMembers()
+            if (this.state.head.seq !== entry) this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
+            await this._refreshSessions()
+            if (this._needResync) await this._resync()
+          }).catch(e => this._localAlert('sessions', e))
         }
         else if (s === 'closed') { this._liveFrom = null; this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
       },
