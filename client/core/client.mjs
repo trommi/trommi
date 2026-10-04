@@ -223,6 +223,9 @@ export class Client {
     // R4: the history boundary. A process that starts without sync state treats every command sent before it started as
     // history, not as a prompt, and keeps that boundary across restarts (a hub replaying old commands later gains nothing).
     this.historyBefore = sync ? (sync.history_before ?? null) : this.startedAt
+    // Review 3: also by envelope number (the room's head when this state began), so a future-dated old command, whose
+    // signed sent_at is after the start, is history too. Read from the hub at the first start.
+    this.historyBeforeNumber = sync ? (sync.history_before_number ?? null) : null
     this.ledgerSet = new Set((await st.get('ledger')) ?? [])
     const m = this.model
     for (const [sid, rec] of Object.entries(this.roomRecord.sessions ?? {})) {
@@ -268,13 +271,18 @@ export class Client {
 
   // ---- start / stop ----------------------------------------------------------------------------
 
-  async start({ stream = true } = {}) {
+  async start({ stream = true, process_instance = null } = {}) {
     if (this._started) return
     await this._takeLock()
     this._started = true
     this._setConnection('connecting')
     await this.hub.signIn()
+    if (this._freshStorage && this.historyBeforeNumber == null && !this.is_human) {
+      const head = await this.hub.envelopes({ after_envelope_number: Number.MAX_SAFE_INTEGER, limit: 1 }).catch(() => null)
+      if (Number.isSafeInteger(head?.last_envelope_number)) { this.historyBeforeNumber = head.last_envelope_number; this._dirty.records.set('sync', this._syncRecord()) }
+    }
     await this.serial(() => this._refreshMembers())
+    if (this.roomRecord.recovery_pending) { delete this.roomRecord.recovery_pending; await this._saveRoom() }   // the hub has the recovery entry
     await this.serial(() => this._refreshSessions())
     await this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
     await this._refreshDevices().catch(() => {})
@@ -288,6 +296,8 @@ export class Client {
     this._maybeSnapshot()
     this._resolveRevisions().catch(e => this._localAlert('revisions', e))
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
+    // R4 (review 3): an agent's stream names its lease generation, so the lease is taken before the stream opens.
+    if (stream && !this.is_human && this.hub.lease_generation == null) await this.claimSession({ process_instance: process_instance ?? this._leaseInstance ?? undefined })
     if (stream) this._openStream()
     else this._setConnection('live')
     if (!this._onOnline && globalThis.addEventListener) { this._onOnline = () => { this.hub.wake(); this._pumpOutbox() }; globalThis.addEventListener('online', this._onOnline) }
@@ -401,7 +411,7 @@ export class Client {
     this._started = false
     this._stream?.close()
     this._stream = null
-    for (const inv of this.invitesPrivate.values()) clearInterval(inv._timer)
+    for (const inv of this.invitesPrivate.values()) { clearInterval(inv._timer); inv._timer = null }   // a restart watches them again
     clearInterval(this._devicesTimer); clearInterval(this._beatTimer)
     this._liveFrom = null
     clearTimeout(this._dirty.timer)
@@ -915,7 +925,7 @@ export class Client {
   }
 
   _syncRecord() {
-    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null, lamport: this.lamport ?? 0,
+    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null, history_before_number: this.historyBeforeNumber ?? null, lamport: this.lamport ?? 0,
       ...(this._staleHashes?.size ? { stale_hashes: [...this._staleHashes] } : {}),
       ...(this.snapshotCursor ? { snapshot_cursor: this.snapshotCursor, snapshot_chains: Object.fromEntries(this._snapshotChains ?? []) } : {}),
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
@@ -1489,13 +1499,19 @@ export class Client {
 
   // ---- membership: invites, removal ---------------------------------------------------------
 
-  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false } = {}) {
+  /**
+   * An invite link. Agent invites are bearer links: the first agent that answers is added. Review 3: with
+   * confirm_code: true an agent invite is bound to the intended agent like a human pairing (the channel prints the
+   * six-digit check code; the human confirms it with confirmInvite), and every agent invite that two different devices
+   * answer is burned instead of going to whoever came first (alert invite-contested).
+   */
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false, confirm_code = false } = {}) {
     this._needHuman()
     const role = device_role === 'agent' ? ROLE.AGENT : ROLE.HUMAN
     const { link, offer, invite } = await z.createInvite({ state: this.state, inviter: this.device, hub: this.hub.hub_url, role, app: app_url, ...(ttl_ms ? { ttlMs: ttl_ms } : {}) })
     const r = await this.hub.postInvite(b64u(offer))
     const invite_id = r.invite_id
-    const pub = { invite_id, device_role, link, label, session_id, with_history, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
+    const pub = { invite_id, device_role, link, label, session_id, with_history, confirm_code: device_role === 'agent' ? !!confirm_code : true, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
     invite.public = pub
     this.invitesPrivate.set(invite_id, invite)
     this.model.invites.set(invite_id, pub)
@@ -1533,6 +1549,14 @@ export class Client {
     inv._checking = true
     try {
       const r = await this.hub.getRequests(invite_id)
+      if (inv.role === ROLE.AGENT && new Set(r.signed_requests.map(q => z.joinRequestSigner(unb64u(q))).filter(Boolean)).size > 1) {
+        // Two devices answered one agent link: it leaked. Nobody is added (not "first comer wins").
+        inv.finalized = true
+        this._setInvite(invite_id, { invite_state: 'failed', error: 'invite-contested' })
+        this.hub.deleteInvite(invite_id).catch(() => {})
+        this._localAlert('invite', new ZError('invite-contested', 'two devices answered one agent invite link: nobody was added, the invite is spent'))
+        return
+      }
       for (const q of r.signed_requests) {
         let accepted
         try { accepted = await z.acceptJoinRequest({ invite: inv, request: unb64u(q), inviter: this.device }) }
@@ -1543,8 +1567,9 @@ export class Client {
         const choices = [accepted.code]
         while (choices.length < 4) { const c = String(globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'); if (!choices.includes(c)) choices.push(c) }
         for (let i = choices.length - 1; i > 0; i--) { const j = globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1); [choices[i], choices[j]] = [choices[j], choices[i]] }
-        this._setInvite(invite_id, { code_choices: choices, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: inv.role === ROLE.AGENT ? 'adding' : 'confirm_code' })
-        if (inv.role === ROLE.AGENT) await this._finalizeInvite(invite_id, { skipCheckCode: true })
+        const auto = inv.role === ROLE.AGENT && inv.public.confirm_code !== true
+        this._setInvite(invite_id, { code_choices: choices, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: auto ? 'adding' : 'confirm_code' })
+        if (auto) await this._finalizeInvite(invite_id, { skipCheckCode: true })
         return
       }
     } finally { inv._checking = false }

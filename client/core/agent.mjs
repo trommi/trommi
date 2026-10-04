@@ -187,6 +187,8 @@ const agentMethods = {
   async _deliverCommands(commands) {
     // Held commands go first, in order (MEDIUM-6: a halt holds commands back, it never drops them).
     if (this._heldCommands?.length && !this.commandsHalted) { commands = [...this._heldCommands, ...commands]; this._heldCommands = [] }
+    // Review 3: a held command and the same envelope met again in a replay (resync) are one command: once per envelope hash.
+    commands = dedupeCommands(commands)
     if (!this.commandsHalted && commands.some(c => !c.refused && c.rec.is_head)) {
       const err = await this._refreshMembers({ throwOnFork: true }).then(() => null, e => e)
       if (err?.code === 'log-fork' || err?.code === 'log-rollback') {
@@ -194,14 +196,14 @@ const agentMethods = {
         this.emit('error', new ZError(err.code, 'the member list forked: commands halted until a human acts'))
       } else if (err) {
         // R3 fails closed: no answer, verdict or decide-again without a fresh member list. Hold and try again soon.
-        ;(this._heldCommands ??= []).push(...commands)
+        this._heldCommands = dedupeCommands([...(this._heldCommands ?? []), ...commands])
         clearTimeout(this._heldTimer)
         this._heldTimer = setTimeout(() => this.serial(() => this._deliverCommands([])).catch(e => this.emit('error', e)), 3000)
         this._heldTimer.unref?.()
         return
       }
     }
-    if (this.commandsHalted) { (this._heldCommands ??= []).push(...commands); return }   // held, not marked delivered
+    if (this.commandsHalted) { this._heldCommands = dedupeCommands([...(this._heldCommands ?? []), ...commands]); return }   // held, not marked delivered
     for (const c of commands) {
       if (c.refused) continue
       const sender = z.memberAt(this.state, unhex(c.sender_device_id))
@@ -221,8 +223,10 @@ const agentMethods = {
         this.emit('alert', { code: c.refused, message: c.message ?? '', envelope_number: c.envelope_number, sender_device_id: c.sender_device_id, source: 'local' })
         continue
       }
-      // R4: every command sent before the history boundary (the first start without sync state) is history, not a prompt.
-      c.history = this.historyBefore != null && c.sent_at < this.historyBefore
+      // R4: every command sent before the history boundary (the first start without sync state) is history, not a prompt:
+      // by envelope number (the room's head then; review 3: the signed sent_at alone let a future-dated old command count
+      // as live) and by time.
+      c.history = (this.historyBeforeNumber != null && c.envelope_number <= this.historyBeforeNumber) || (this.historyBefore != null && c.sent_at < this.historyBefore)
       this.emit('command', commandOf(this.model, c))
     }
     if (Object.keys(alerts).length) this.setRegisters(alerts).catch(e => this.emit('error', e))   // not awaited: we are inside the sync queue
@@ -231,6 +235,11 @@ const agentMethods = {
 
   /** A human resolved a fork (or the channel decides to go on): deliver commands again, the held ones first. */
   resumeCommands() { this.commandsHalted = null; return this.serial(() => this._deliverCommands([])) },
+}
+
+function dedupeCommands(list) {
+  const seen = new Set()
+  return list.filter(c => { if (seen.has(c.envelope_hash)) return false; seen.add(c.envelope_hash); return true })
 }
 
 function commandOf(model, c) {

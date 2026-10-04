@@ -139,7 +139,7 @@ async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onRe
       }
       log(`client: ${err?.message ?? err}`)
     })
-    await client.start()
+    await client.start({ process_instance })
     try {
       const claim = client.claimLease ?? client.claimSession
       me.session = await claim.call(client, { agent_name: '', process_instance })
