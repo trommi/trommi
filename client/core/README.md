@@ -68,7 +68,7 @@ model = {
     device_id, device_role,           // 'human' | 'agent'
     device_name,                      // name from the member list (readable by the hub)
     is_active, added_entry_number, removed_entry_number,   // removed_entry_number null while active
-    is_me,
+    is_me, fingerprint,               // fingerprint: 'ab12 cd34 ef56 7890' (first 8 bytes of device_id), shown next to every name (R8)
     is_online, agent_session_id,      // from GET devices (refreshed on start and on member_entry); may be stale
   }>,
 
@@ -183,6 +183,7 @@ Timeline = {
 }
 TimelineItem = {
   envelope_number,                         // null while pending (own optimistic echo; then local_id is set)
+  sender_sequence,                         // the sender's chain number (on an echo once sealed): stroke ids are `${sender_device_id}/${sender_sequence}/${index}` (R1)
   local_id, pending,                       // own sends: shown at once (< 50 ms), replaced in place when the hub confirms
   envelope_hash, sender_device_id, recipient_device_id, sent_at,
   item_state: 'header' | 'loading' | 'loaded' | 'pruned' | 'undecryptable' | 'newer_schema',
@@ -214,7 +215,8 @@ Agent keys sent by humans, and human keys sent by agents, are ignored (alert).
 ### Invite (inviter side), alert, outbox
 
 ```js
-Invite = { invite_id, device_role, link, expires_at,
+Invite = { invite_id, device_role, link, label, expires_at,
+  code_choices,                                  // from 'confirm_code' on: four six-digit codes, shuffled, one true: the human taps the one the new device shows
   invite_state: 'open' | 'confirm_code' | 'adding' | 'joined' | 'expired' | 'failed',
   newcomer: null | { device_id, device_name },   // after the request arrived
   error: null | code }
@@ -234,6 +236,7 @@ change = {
   cards: Set<object_id>, sessions: Set<agent_device_id>, permissions: Set<object_id>,
   memos: Set<object_id>, published: Set<object_id>,
   timelines: Set<timeline_key>,            // items added, bodies loaded
+  items: Map<timeline_key, [TimelineItem]>,// exactly the items added or replaced in this batch (echo, confirmed, loaded)
   registers: Set<key>,                     // human and agent register keys that changed
   members: boolean, invites: Set<invite_id>, alerts: boolean, outbox: boolean,
   stack: boolean,                          // model.stack or open_permission_ids changed order or content
@@ -258,14 +261,18 @@ await client.verdict({ object_id, allow })            // to a permission request
 await client.setRegisters({ 'draft/<object_id>': { keys, note, notes, marks } | null, ... })   // human keys only
 // shorthands: setDraft(object_id, draft|null), snooze(object_id, until|null), duck(object_id, value|null), setCrown(value),
 //             setDesk(desk_id, value|null), setSessionSettings(agent_device_id, value|null), markReadUpTo(agent_device_id, envelope_number)
-await client.saveMemo({ object_id?, text, x, y, color, desk_id })   // new memo or new version
+const memo_id = await client.saveMemo({ object_id?, text, x, y, color, desk_id, ...app fields (place, session, to, attachments, held, …) })
+        // new memo or new version; optimistic (model.memos at once, pending: true; a new memo first under its local_id, then its object_id);
+        // quick edits chain on the version THIS client sealed last
+await client.deleteMemo(object_id)                     // a closed version (object_state 'closed'), optimistic too
 await client.sendStrokes({ timeline_id, content_type, strokes?, stroke_ids?, offset?, text?, attachments? })  // canvas items
 const ref = await client.uploadAttachment(bytes, { file_name, media_type, width?, height?, caption?, page?, object_id? })  // encryptAsset + PUT; returns the README reference
 const bytes = await client.fetchAttachment(ref)        // GET + decrypt + sha256 check; cached in memory
 const blob = await client.attachmentBlob(ref)          // browsers: a Blob with ref.media_type
 await client.loadTimeline(timeline_key, { limit: 50 }) // next older page into the window, newest first: from storage if cached, else GET threads; returns { loaded, has_more }
 await client.timelineWindow(timeline_key, { before_envelope_number, limit })   // windowed read for scrolling, does not grow the in-memory window; [TimelineItem] oldest first
-await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail after a snapshot
+await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail after a snapshot: { items (oldest first), loaded }, all pages
+roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for passphrase sign-in or recovery
 ```
 
 Membership (human devices only):

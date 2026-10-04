@@ -66,6 +66,8 @@ async function addHuman(inviter, name, storage = memoryStorage({ extractable_key
   const j = joinRoom({ link: inv.link, storage, device_name: name, poll_ms: 50 })
   const code = await j.check_code
   await until(() => inviter.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'inviter waits for code')
+  const choices = inviter.model.invites.get(inv.invite_id).code_choices
+  assert(choices.length === 4 && choices.includes(code) && new Set(choices).size === 4, 'four code choices, one true')
   await inviter.confirmInvite(inv.invite_id, code)
   const c = track(await j.client)
   await c.start()
@@ -251,6 +253,7 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   eq(p1.loaded, 50, 'first page')
   const texts = [...t.items.values()].sort((a, b) => a.envelope_number - b.envelope_number).map(i => i.content.text)
   eq(texts[49], 'm119', 'newest first')
+  assert([...t.items.values()].every(i => Number.isInteger(i.sender_sequence)), 'items carry sender_sequence')
   eq(texts[0], 'm70', 'page boundary')
   assert(p1.has_more, 'has more')
   await fresh.loadTimeline(key, { limit: 50 })
@@ -264,6 +267,17 @@ await test('timelines: lazy, newest first, paged; live items decrypted at once',
   eq(fresh.model.sessions.get(agent.my_device_id).unread_count, 121, 'unread')
   await fresh.markReadUpTo(agent.my_device_id, fresh.model.room.last_envelope_number)
   eq(fresh.model.sessions.get(agent.my_device_id).unread_count, 0, 'read')
+  // canvas: strokes on a desk, tail after a snapshot point, change.items, sender_sequence on the echo
+  const desk = 'd'.repeat(32)
+  const batches = []
+  fresh.on('change', c => { const l = c.items.get(`canvas:desk/${desk}`); if (l) batches.push(...l) })
+  for (let i = 0; i < 5; i++) await fresh.sendStrokes({ timeline_id: `desk/${desk}`, strokes: [{ points: 'AAAA', style: { tool: 'pen', color: '#000', size: 2 } }] })
+  await settleAll(fresh)
+  assert(batches.some(i => i.pending && Number.isInteger(i.sender_sequence)), 'echo gets its sequence once sealed')
+  assert(batches.some(i => !i.pending && i.envelope_number), 'confirmed items in change.items')
+  const tail = await fresh.loadTimelineAfter(`canvas:desk/${desk}`, 0)
+  eq(tail.items.length, 5, 'tail after 0')
+  eq(fresh.model.timelines.get(`chat:session/${agent.my_device_id}`).item_count, 121, 'strokes never counted as chat')
 })
 
 await test('attachments: encrypt, PUT, lazy GET, decrypt, sha256 bound', async () => {
@@ -427,6 +441,17 @@ await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registe
   await laptop.saveMemo({ object_id: mid, text: 'call Anna at 5', place: 'desk', session: 'abc', to: 'laptop' })
   await settleAll(laptop)
   await until(() => phone.model.memos.get(mid)?.text === 'call Anna at 5' && phone.model.memos.get(mid).object_version === 2, 'memo v2 by another human')
+  // memos: optimistic at once, quick edits chain on the last sealed version (no forks)
+  const quick = phone.saveMemo({ text: 'q1', place: 'float' })
+  assert([...phone.model.memos.values()].some(m => m.pending && m.text === 'q1'), 'memo echo before sealing')
+  const qid = await quick
+  for (let i = 2; i <= 5; i++) phone.saveMemo({ object_id: qid, text: `q${i}`, place: 'float' })
+  await settleAll(phone)
+  await until(() => laptop.model.memos.get(qid)?.text === 'q5' && laptop.model.memos.get(qid).object_version === 5, 'five chained versions')
+  eq(phone.model.memos.get(qid).pending, false, 'echo replaced')
+  await phone.deleteMemo(qid)
+  await settleAll(phone)
+  await until(() => laptop.model.memos.get(qid)?.object_state === 'closed', 'memo deleted')
   // registers: the laptop writes after having seen the phone's write -> the laptop wins on every client
   await phone.setCrown({ who: 'phone' })
   await settleAll(phone, laptop)

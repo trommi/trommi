@@ -25,9 +25,26 @@ Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehr
 ### Transport
 
 - HTTPS, JSON bodies. Base path `/v1`. `GET /healthz` → `{ ok, commit, protocol_version: 1 }` without sign-in.
-- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>`, `http://127.0.0.1:<any port>` and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
+- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>`, `http://127.0.0.1:<any port>` and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range, last-event-id, x-found-token, x-test-token, x-lease-generation, trommi-client, trommi-protocol`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
 - **Sign-in:** `Authorization: Bearer <access_token>`. An access token comes from a signed challenge, is bound to one device and lasts 10 minutes. A client signs in again on `401 unauthorised` or a minute before `expires_at`. Writes need nothing more: member entries and envelopes are signed themselves.
+- **Client version:** every request carries `Trommi-Client: <app|channel|ios>/<semver>` and `Trommi-Protocol: 1` (below, "Versions and upgrades").
 - Ids: `room_id` and `device_id` 64 hex characters (32 bytes), `invite_id`, `object_id`, `attachment_id` 32 hex characters (16 bytes). Times are milliseconds since 1970 (`…_at`).
+
+### Versions and upgrades
+
+Three version numbers, independent of each other:
+
+| What | Where | Who reads it |
+| --- | --- | --- |
+| Protocol (`Trommi-Protocol: 1`) | request header; routes and JSON of this section | the hub |
+| Format version byte | first byte of every signed structure (`crypto/FORMAT.md`) | every client (the hub checks headers only) |
+| `schema_version` | inside the encrypted body | app and channel only |
+
+- `GET /v1/version` (public) → `{ protocol_versions_supported: [1], minimum_client_versions: { app?, channel?, ios? }, recommended_client_versions: { … }, message? }`, from `HUB_MIN_APP`, `HUB_MIN_CHANNEL`, `HUB_MIN_IOS`, `HUB_RECOMMENDED_APP|CHANNEL|IOS`, `HUB_UPGRADE_MESSAGE`. A kind without a minimum is not checked.
+- A client below the minimum of its kind gets `426 { error: "client-too-old", minimum_version, message }` on **every** route. An open stream of a client that becomes too old while connected (minimum raised at run time) gets `event: upgrade_required` `{ minimum_version, message }` and is closed. A request without `Trommi-Client` is served for now (counted in the log once a minute); a later protocol version may require it.
+- `Trommi-Protocol` naming a version the hub does not speak → `400 bad-version` with the versions it does speak.
+- **The rule for every reader** (hub, app, channel): ignore unknown optional fields; refuse unknown *required* versions (format byte, protocol, a higher `schema_version`) with a clear message ("needs a newer app"), never guess.
+- **A v2 migration** would run like this: the hub serves `/v1` and `/v2` side by side and lists `[1, 2]`; clients that know v2 switch, `minimum_client_versions` rises in steps while the share of old clients (log, metrics) falls; when it is zero or the window (announced in `message`) ends, the hub drops v1. Stored data never needs a big-bang rewrite: rows keep their format byte, and new rows get the new one.
 
 ### Errors
 
@@ -41,9 +58,11 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 | 404 | `not-found`, `no-room` |
 | 409 | `replay`, `gap`, `equivocation`, `room-exists`, `invite-used`, `instance-conflict` |
 | 410 | `invite-expired` |
-| 413 | `too-large` |
+| 413 | `too-large`, `quota-exceeded` (with `used`, `quota`) |
+| 426 | `client-too-old` (with `minimum_version`) |
 | 429 | `too-many`, `rate-limited` (with `retry-after`) |
 | 500 | `internal` |
+| 503 | `overloaded` (with `retry-after`: the write queue is full) |
 
 `409 gap` on posting an envelope means the hub holds fewer of the sender's envelopes than the sender thinks (a lost write): the client posts the missing ones again, from its own outbox.
 
@@ -53,7 +72,7 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 
 | Route | Who | Request | Answer |
 | --- | --- | --- | --- |
-| `POST /v1/rooms` | anyone, rate-limited (if `HUB_FOUND_TOKEN` is set, also header `x-found-token`) | `{ signed_entry, sealed_room_keys: [{ device_id, key_sealed }] }`: the founding entry, the room key sealed for the first device and for the recovery key | `201 { room_id, entry_number: 0, entry_hash, key_epoch: 1 }` |
+| `POST /v1/rooms` | anyone, rate-limited (if `HUB_FOUND_TOKEN` is set, also header `x-found-token`) | `{ signed_entry, sealed_room_keys: [{ device_id, key_sealed }] }`: the founding entry, the room key sealed for the first device and for the recovery key; `test_room: true` with header `x-test-token` for a load-test room (Limits) | `201 { room_id, entry_number: 0, entry_hash, key_epoch: 1 }` |
 | `POST /v1/rooms/:room_id/challenge` | anyone | | `{ challenge }` (32 bytes, 2 minutes, one use) |
 | `POST /v1/rooms/:room_id/access_tokens` | a device or the recovery key | `{ signed_challenge }` (`signHubAuth` for this room and `HUB_URL`) | `{ access_token, device_id, signer: device \| recovery, device_role, expires_at }` |
 | `GET /v1/rooms/:room_id/members?after_entry_number=-1` | member, recovery, or `invite_id=` of an open invite | | `{ room_id, last_entry_number, signed_entries: [b64u] }` |
@@ -76,6 +95,12 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 | `GET /v1/rooms/:room_id/attachments/:attachment_id` | member | `Range` supported | the encrypted bytes |
 | `POST /v1/rooms/:room_id/push_subscriptions` | human | `{ subscription }` (Web Push), or `{ subscription, remove: true }` | `{ ok }` |
 | `GET /v1/push_key` | anyone | | `{ vapid_public_key }` |
+| `GET /v1/version` | anyone | | above, "Versions and upgrades" |
+| `GET /v1/rooms/:room_id/usage` | member | | `{ attachment_bytes, quota_bytes }` |
+| `PUT /v1/rooms/:room_id/escrow` | human | `{ escrow_version, key_escrow }`: the password escrow, opaque (format: `client/core`), ≤ 4 KiB, `escrow_version` 1…255 | `{ escrow_version, updated_at }`; replaces the previous one |
+| `GET /v1/rooms/:room_id/escrow` | anyone with the room id; 10 per hour per room and per address | | `{ escrow_version, key_escrow, updated_at }` or `404 not-found` |
+| `DELETE /v1/rooms/:room_id/escrow` | human | | `{ ok }` |
+| `DELETE /v1/rooms/:room_id` | header `x-test-token`, test rooms only | | `{ ok }`: every row of the room and its attachments are gone |
 
 ### The stream
 
@@ -86,9 +111,11 @@ event: envelope       data: {"envelope_number":42,"envelope":"<b64u>"}
 event: member_entry   data: {"entry_number":3,"entry_hash":"<hex>","key_epoch":2}   (fetch members, then sealed_room_keys)
 event: join_request   data: {"invite_id":"<hex>"}                                    (to the inviter only)
 event: ping           data: {}                                                       (every 25 s)
+event: attachment_evicted  data: {"attachment_ids":["<hex>"]}                        (quota, below)
+event: upgrade_required    data: {"minimum_version":"1.4.0","message":"…"}           (then the stream closes)
 ```
 
-On connect the hub first sends what `GET envelopes` would (same depth rule), then live envelopes in full: a new message is small and probably shown. A client may drop a thread item's body it does not show; the header stays. A removed device's streams are closed at once. `is_online` in `GET devices` means: the device has an open stream.
+On connect the hub first sends what `GET envelopes` would (same depth rule), then live envelopes in full: a new message is small and probably shown. A client may drop a thread item's body it does not show; the header stays. A removed device's streams are closed at once. `is_online` in `GET devices` means: the device has an open stream. A stream whose client does not read is dropped once more than `HUB_STREAM_BUFFER_BYTES` (4 MiB) wait for it; the client reconnects and resumes with its cursor.
 
 ### What the hub stores (SQLite `hub.db`, attachments as files)
 
@@ -129,6 +156,18 @@ Attachments are not in SQLite: encrypted client-side with `encryptAsset` (64 KiB
 | Envelopes | 50 per second per device, bursts of 200 |
 | Streams | 8 per device |
 | Invites | 16 open per room, 4 requests each, 10 minutes |
+| Attachments per room | `ROOM_ATTACHMENT_QUOTA_BYTES` (1 GiB), below |
+| Password escrow reads | 10 per hour per room and per address (`HUB_LIMIT_ESCROW_READS_PER_HOUR`) |
+| Writes in flight | `HUB_WRITE_QUEUE` (512) POST/PUT/DELETE at once; beyond: `503 overloaded`, `retry-after: 1` |
+| Stream send buffer | `HUB_STREAM_BUFFER_BYTES` (4 MiB) per stream; beyond: dropped, resume by cursor |
+
+Every rate limit of the table is configurable: `HUB_LIMIT_<NAME>` for each key of `LIMITS` in `hub/server.mjs` (`HUB_LIMIT_ENVELOPES_PER_SECOND`, `HUB_LIMIT_ENVELOPE_BURST`, `HUB_LIMIT_FOUND_PER_IP_HOUR`, `HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE`, `HUB_LIMIT_STREAMS_PER_DEVICE`, …).
+
+**Attachment quota.** The bytes of a room's attachments are summed from `attachments.total_size`. An upload that would pass the quota first evicts, oldest first: attachments of answered or closed objects (cards, published pages no longer released), and attachments only thread items name. Never evicted: attachments of open objects (a released published page is open), anything a `status` envelope names (canvas snapshot pointers), and attachments no envelope names yet (an upload whose envelope is still to come). Evictions are announced on the stream as `attachment_evicted`. If even that is not enough: `413 { error: "quota-exceeded", used, quota }` (before the upload when `content-length` is given). Honest gap: an old canvas snapshot that a newer one replaced is kept too, because the hub cannot tell registers apart.
+
+**Test rooms.** Founding with `test_room: true` needs header `x-test-token` = `HUB_TEST_TOKEN`; the room expires after 24 hours and `DELETE /v1/rooms/:room_id` with the token removes it at once (rows of every table with a `room_id`, its attachment folder). Requests that carry the token, and every envelope of a test room, skip the rate limits; the token also stands in for `x-found-token`.
+
+**Metrics** are never served on the public port. With `METRICS_PORT` set (server: 8792, mapped to the host's 127.0.0.1 only; `METRICS_HOST` 0.0.0.0 inside the container), `GET /metrics` gives Prometheus text: requests and latency histograms per route, envelopes ingested, write queue depth and refusals, open streams, bytes waiting per stream (sum and fullest), dropped streams, SQLite and WAL size and checkpoint lag, heap, RSS, event-loop lag, GC pauses, open files, host load, memory and data-disk space (`/proc/loadavg`, `/proc/meminfo`, `statfs`); `GET /metrics/history` the last hour in 10-second samples, for the admin page. The WAL is checkpointed every 10 s (passive; truncating above `HUB_WAL_TRUNCATE_BYTES`, 64 MiB).
 
 ### The data model: objects, timelines, registers, projections
 

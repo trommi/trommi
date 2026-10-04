@@ -35,14 +35,17 @@ function emptyHuman() {
 /** A change record: what a batch touched. Every field always present. */
 export function emptyChange() {
   return { cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(),
-    members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false }
+    members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false, items: new Map() }
 }
+/** change.items: Map<timeline_key, TimelineItem[]> added or replaced in this batch. */
+export function addItem(change, key, item) { let l = change.items.get(key); if (!l) change.items.set(key, l = []); l.push(item) }
 export function changeIsEmpty(c) {
-  return !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines', 'registers', 'invites'].every(k => c[k].size === 0)
+  return c.items.size === 0 && !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines', 'registers', 'invites'].every(k => c[k].size === 0)
 }
 export function mergeChange(into, c) {
   for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines', 'registers', 'invites']) for (const v of c[k]) into[k].add(v)
   for (const k of ['members', 'alerts', 'outbox', 'stack', 'room']) into[k] ||= c[k]
+  for (const [k, l] of c.items) for (const it of l) addItem(into, k, it)
   return into
 }
 
@@ -63,7 +66,7 @@ export function applyMembers(model, members, change) {
     seen.add(m.device_id)
     const old = model.members.get(m.device_id)
     const reg = model._device_registers?.get(m.device_id) ?? null
-    const next = { device_id: m.device_id, device_role: m.device_role, device_name: reg?.device_name ?? old?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null,
+    const next = { device_id: m.device_id, device_role: m.device_role, fingerprint: m.device_id.slice(0, 16).match(/.{4}/g).join(' '), device_name: reg?.device_name ?? old?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null,
       is_active: m.is_active, added_entry_number: m.added_entry_number, removed_entry_number: m.removed_entry_number, is_me: m.device_id === model.room.my_device_id,
       is_online: old?.is_online ?? false, agent_session_id: old?.agent_session_id ?? null }
     model.members.set(m.device_id, next)
@@ -160,7 +163,7 @@ export function timelineOf(model, key) {
 /** Item shape from a record (header + content when known). */
 export function itemFromRecord(rec) {
   return {
-    envelope_number: rec.envelope_number, local_id: rec.local_id ?? null, pending: false, envelope_hash: rec.envelope_hash, sender_device_id: rec.sender_device_id,
+    envelope_number: rec.envelope_number, local_id: rec.local_id ?? null, pending: false, envelope_hash: rec.envelope_hash, sender_device_id: rec.sender_device_id, sender_sequence: rec.sender_sequence ?? null,
     recipient_device_id: rec.recipient_device_id, sent_at: rec.sent_at,
     item_state: rec.content ? (rec.content_state === 'ok' ? 'loaded' : rec.content_state) : rec.content_state === 'pruned' ? 'pruned' : rec.content_state === 'undecryptable' ? 'undecryptable' : 'header',
     content_type: rec.content?.content_type ?? null, content: rec.content ?? null,
@@ -203,6 +206,7 @@ function applyTimelineItem(model, rec, change) {
     const item = itemFromRecord(rec)
     if (rec.local_id && t.items.has(rec.local_id)) t.items.delete(rec.local_id)
     t.items.set(rec.envelope_number, item)
+    addItem(change, key, item)
   }
   change.timelines.add(key)
   const p = parseTimelineKey(key)
@@ -301,18 +305,29 @@ function applyMemo(model, rec, change) {
   const object_id = rec.object.object_id
   if (rec.sender_role !== 'human') return refuse(model, change, rec, 'not-creator', 'memos come from human devices')
   const c = rec.content ?? {}
-  const old = model.memos.get(object_id)
+  const cur = model.memos.get(object_id)
+  const old = cur?.pending ? cur._base : cur          // an own optimistic echo is not a version
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
   if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'memo previous_version_hash names no known version')
   if (old && !causallyAfter(rec.causal, old.causal)) { old.version_hashes.push(rec.envelope_hash); return { applied: false } }
-  const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, ...extra } = c
-  model.memos.set(object_id, { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
-    desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
-    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
+  // Our own newer echo stays in front until its version comes back; it keeps the confirmed memo as its base.
+  if (cur?.pending && rec.local_id !== cur.local_id) {
+    cur._base = { ...memoOf(object_id, rec, c, old) }
+    change.memos.add(object_id)
+    return { applied: true }
+  }
+  model.memos.set(object_id, memoOf(object_id, rec, c, old))
   change.memos.add(object_id)
   return { applied: true }
 }
+function memoOf(object_id, rec, c, old) {
+  const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, ...extra } = c
+  return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
+    desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
+    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false }
+}
+
 function applyPublished(model, rec, change) {
   const object_id = rec.object.object_id
   const old = model.published.get(object_id)

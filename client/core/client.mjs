@@ -69,6 +69,7 @@ export class Client {
     this.commandsHalted = null          // 'log-fork' halts every command until a human acts (R3)
     this.startedAt = Date.now()
     this.attachmentCache = new Map()
+    this._echoItems = new Map()         // local_id -> pending TimelineItem (gets sender_sequence once sealed)
     this.sentContent = new Map()        // own envelope hash -> content (until it comes back), for own pruned copies
     this.localHeads = new Map()         // own objects: object_id -> { object_version, version_hash, content } as last SENT
     this.stats = { verified: 0, decrypted: 0, verify_ms: 0, batches: 0 }
@@ -534,7 +535,7 @@ export class Client {
     }
     for (const rec of tlRecs) {
       const key = M.timelineKey(rec.timeline_kind, rec.timeline_id)
-      d.set(`tl/${key}/${pad(rec.envelope_number)}`, { n: rec.envelope_number, h: rec.envelope_hash, s: rec.sender_device_id, r: rec.recipient_device_id, t: rec.sent_at, c: rec.content, cs: rec.content_state })
+      d.set(`tl/${key}/${pad(rec.envelope_number)}`, { n: rec.envelope_number, h: rec.envelope_hash, s: rec.sender_device_id, q: rec.sender_sequence, r: rec.recipient_device_id, t: rec.sent_at, c: rec.content, cs: rec.content_state })
     }
     if (!this._dirty.timer) this._dirty.timer = setTimeout(() => { this._dirty.timer = null; this.flush().catch(e => this.emit('error', e)) }, PERSIST_DELAY_MS)
   }
@@ -597,6 +598,8 @@ export class Client {
         const hashHex = hex(sealed.hash)
         this.sentContent.set(hashHex, content)
         if (after) after(sealed, content)
+        const echoItem = this._echoItems.get(local_id)
+        if (echoItem) echoItem.sender_sequence = sealed.seq
         const pub = { local_id, envelope_kind: codec.KIND_NAME[kind], object_id: object?.object_id ?? null, timeline_key: timeline ? M.timelineKey(timeline.timeline_kind, timeline.timeline_id) : null,
           recipient_device_id: recipient, content, outbox_state: 'sending', error: null }
         const item = { local_id, bytes: b64u(sealed.bytes), seq: sealed.seq, hash: hashHex, public: pub }
@@ -700,13 +703,15 @@ export class Client {
     return local_id => {
       const key = M.timelineKey(timeline.timeline_kind, timeline.timeline_id)
       const t = M.timelineOf(this.model, key)
-      const item = { envelope_number: null, local_id, pending: true, envelope_hash: null, sender_device_id: this.my_device_id, recipient_device_id: recipient, sent_at: Date.now(),
+      const item = { envelope_number: null, local_id, pending: true, envelope_hash: null, sender_device_id: this.my_device_id, sender_sequence: null, recipient_device_id: recipient, sent_at: Date.now(),
         item_state: 'loaded', content_type: content.content_type, content }
       t.items.set(local_id, item)
-      const ch = M.emptyChange(); ch.timelines.add(key)
+      this._echoItems.set(local_id, item)
+      const ch = M.emptyChange(); ch.timelines.add(key); M.addItem(ch, key, item)
       if (object_id) ch.cards.add(object_id)
       this._emitChange(ch)
       return ({ confirmed }) => {
+        this._echoItems.delete(local_id)
         if (!confirmed) { t.items.delete(local_id); const c = M.emptyChange(); c.timelines.add(key); return c }
         // confirmed: the reducer replaces the item in place (same local_id); keep the echo until then.
       }
@@ -765,6 +770,7 @@ export class Client {
     const olderKnown = await this.storage.range(`tl/${timeline_key}/`, { before: `tl/${timeline_key}/${pad(t.loaded_down_to)}`, limit: 1, reverse: true })
     t.has_more = olderKnown.length > 0 || this._hubHasMore
     const ch = M.emptyChange(); ch.timelines.add(timeline_key)
+    for (const it of items) M.addItem(ch, timeline_key, it)
     this._emitChange(ch)
     return { loaded: items.length, has_more: t.has_more }
   }
@@ -901,23 +907,81 @@ export class Client {
   markReadUpTo(agent_device_id, envelope_number) { return this.setRegisters({ [`read_up_to/${agent_device_id}`]: envelope_number }) }
   setDeviceInfo(info) { return this.setRegisters({ [`device/${this.my_device_id}`]: info }) }
 
-  async saveMemo({ object_id = null, text, x = 0, y = 0, color = null, desk_id = null, ...extra }) {
+  /** A memo's newest version as THIS client sealed it (may be ahead of the model while versions are in flight). */
+  _memoHead(object_id) {
+    const local = this.localHeads.get(object_id)
+    const m = this.model.memos.get(object_id)
+    const base = m?.pending ? m._base : m
+    if (local && (!base || local.object_version >= base.object_version)) return local
+    return base ? { object_version: base.object_version, version_hash: base.version_hash, content: memoFields(base) } : null
+  }
+
+  /**
+   * New memo or a new version. Optimistic: the memo is in model.memos at once (pending: true; a new one first under its
+   * local_id, then under its object_id once sealed). Versions chain on what this client sealed last. Resolves to the object_id.
+   */
+  async saveMemo({ object_id = null, ...fields }) {
     this._needHuman()
     let id = object_id
-    await this._send({ kind: codec.KIND.object_version, content: async () => {
-      if (!id) id = await objectIdOf(this.my_device_id, (this.chains.get(b64u(this.device.id))?.seq ?? 0) + 1)
-      const old = object_id ? this.model.memos.get(object_id) : null
-      return { content: { ...extra, object_type: 'memo', object_version: (old?.object_version ?? 0) + 1, previous_version_hash: old?.version_hash ?? ZERO_HASH, text, x, y, color, desk_id },
-        object: { object_id: id, object_state: 'open', urgency: 'normal' } }
-    } })
+    let echoKey = object_id
+    const r = await this._send({
+      kind: codec.KIND.object_version,
+      echo: local_id => {
+        echoKey = object_id ?? local_id
+        const prev = this.model.memos.get(echoKey)
+        const base = prev?.pending ? prev._base : prev ?? null
+        this.model.memos.set(echoKey, { ...(base ?? {}), ...fields, object_id: echoKey, local_id, pending: true, _base: base, object_state: 'open', by_device_id: this.my_device_id })
+        const ch = M.emptyChange(); ch.memos.add(echoKey); this._emitChange(ch)
+        return ({ confirmed }) => {
+          if (confirmed) return
+          const cur = this.model.memos.get(id ?? echoKey)
+          const c = M.emptyChange()
+          if (cur?.pending) { if (cur._base) this.model.memos.set(cur.object_id, cur._base); else this.model.memos.delete(cur.object_id); c.memos.add(cur.object_id) }
+          return c
+        }
+      },
+      content: async () => {
+        if (!id) id = await objectIdOf(this.my_device_id, (this.chains.get(b64u(this.device.id))?.seq ?? 0) + 1)
+        const head = object_id ? this._memoHead(object_id) : null
+        const content = { ...(head?.content ?? {}), ...fields, object_type: 'memo', object_version: (head?.object_version ?? 0) + 1, previous_version_hash: head?.version_hash ?? ZERO_HASH }
+        for (const k of Object.keys(content)) if (content[k] === undefined) delete content[k]
+        return { content, object: { object_id: id, object_state: fields.object_state === 'closed' ? 'closed' : 'open', urgency: 'normal' } }
+      },
+      after: (sealed, content) => {
+        this.localHeads.set(id, { object_version: content.object_version, version_hash: hex(sealed.hash), content: memoFields(content) })
+        if (echoKey !== id) {                     // a new memo: move the echo from its local id to its object id
+          const e = this.model.memos.get(echoKey)
+          this.model.memos.delete(echoKey)
+          if (e) this.model.memos.set(id, { ...e, object_id: id })
+          const ch = M.emptyChange(); ch.memos.add(echoKey); ch.memos.add(id); this._emitChange(ch)
+        }
+      },
+    })
     return id
   }
   async deleteMemo(object_id) {
-    const old = this.model.memos.get(object_id)
-    if (!old) throw new ZError('not-found', 'no such memo')
-    const { object_id: _o, by_device_id: _b, object_version: _v, version_hash: _h, version_hashes: _hs, causal: _c, envelope_number: _n, object_state: _s, ...fields } = old
-    const content = { ...fields, object_type: 'memo', object_version: old.object_version + 1, previous_version_hash: old.version_hash }
-    return this._send({ kind: codec.KIND.object_version, content, object: { object_id, object_state: 'closed', urgency: 'normal' } })
+    if (!this._memoHead(object_id)) throw new ZError('not-found', 'no such memo')
+    this._needHuman()
+    let echoed = null
+    return this._send({
+      kind: codec.KIND.object_version,
+      echo: local_id => {
+        const prev = this.model.memos.get(object_id)
+        const base = prev?.pending ? prev._base : prev
+        this.model.memos.set(object_id, { ...prev, object_state: 'closed', pending: true, local_id, _base: base })
+        echoed = base
+        const ch = M.emptyChange(); ch.memos.add(object_id); this._emitChange(ch)
+        return ({ confirmed }) => {
+          if (confirmed) return
+          const c = M.emptyChange(); if (echoed) this.model.memos.set(object_id, echoed); c.memos.add(object_id); return c
+        }
+      },
+      content: () => {
+        const head = this._memoHead(object_id)
+        return { content: { ...head.content, object_type: 'memo', object_version: head.object_version + 1, previous_version_hash: head.version_hash }, object: { object_id, object_state: 'closed', urgency: 'normal' } }
+      },
+      after: (sealed, content) => this.localHeads.set(object_id, { object_version: content.object_version, version_hash: hex(sealed.hash), content: memoFields(content) }),
+    })
   }
 
   /** Canvas items: strokes, erase, move, send_away, selection_sent; timeline_id e.g. 'desk/<desk_id>'. */
@@ -926,25 +990,44 @@ export class Client {
     const timeline = { timeline_kind: content_type === 'selection_sent' && recipient_device_id ? 'chat' : 'canvas', timeline_id }
     return this._send({ kind: codec.KIND.timeline_item, content, recipient: recipient_device_id, timeline, echo: this._echoTimelineItem(timeline, content, recipient_device_id, null) })
   }
+  /** Canvas tail after a snapshot: every item after an envelope number, oldest first (loops over pages). Returns { loaded, items, has_more: false }. */
   async loadTimelineAfter(timeline_key, after_envelope_number) {
+    if (this._dirty.records.size) await this.flush()
     const { timeline_kind, timeline_id } = M.parseTimelineKey(timeline_key)
-    const res = await this.hub.threads({ timeline_kind, timeline_id, after_envelope_number, limit: 1000 })
     const t = M.timelineOf(this.model, timeline_key)
     t.window_open = true
     const prefix = `tl/${timeline_key}/`
-    for (const { envelope_number, envelope } of res.envelopes) {
-      const r = await this.storage.get(prefix + pad(envelope_number))
-      if (!r) continue
-      try {
-        const o = r.c ? null : await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.secrets, envelopeHash: unhex(r.h), self: this.device.id })
-        const stored = o ? { ...r, ...(d => ({ c: d.content, cs: d.content_state }))(codec.decodePayload(o.payload)) } : r
-        if (o) await this.storage.set(prefix + pad(envelope_number), stored)
-        t.items.set(envelope_number, itemFromStored(stored))
-      } catch (e) { this._localAlert('timeline', e) }
+    const out = []
+    let after = after_envelope_number
+    for (;;) {
+      const res = await this.hub.threads({ timeline_kind, timeline_id, after_envelope_number: after, limit: 500 })
+      const writes = []
+      for (const { envelope_number, envelope } of res.envelopes) {
+        after = Math.max(after, envelope_number)
+        const r = await this.storage.get(prefix + pad(envelope_number))
+        if (!r) continue            // beyond this client's verified cursor: the stream brings it
+        try {
+          let stored = r
+          if (!r.c) {
+            const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.openKeys, envelopeHash: unhex(r.h), self: this.device.id })
+            const d = codec.decodePayload(o.payload)
+            stored = { ...r, c: d.content, cs: d.content_state }
+            writes.push([prefix + pad(envelope_number), stored])
+          }
+          const item = itemFromStored(stored)
+          t.items.set(envelope_number, item)
+          out.push(item)
+        } catch (e) { this._localAlert('timeline', e) }
+      }
+      if (writes.length) await this.storage.setMany(writes)
+      if (!res.has_more || !res.envelopes.length) break
     }
-    const ch = M.emptyChange(); ch.timelines.add(timeline_key); this._emitChange(ch)
-    return { loaded: res.envelopes.length, has_more: res.has_more }
+    const ch = M.emptyChange(); ch.timelines.add(timeline_key)
+    for (const it of out) M.addItem(ch, timeline_key, it)
+    this._emitChange(ch)
+    return { loaded: out.length, items: out, has_more: false }
   }
+
 
   // ---- membership: invites, removal ---------------------------------------------------------
 
@@ -998,7 +1081,10 @@ export class Client {
         catch (e) { if (e.code === 'invite-expired') { this._setInvite(invite_id, { invite_state: 'expired', error: e.code }); return } continue }
         await this.hub.postReveal(invite_id, b64u(accepted.reveal))
         inv.code = accepted.code
-        this._setInvite(invite_id, { newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: inv.role === ROLE.AGENT ? 'adding' : 'confirm_code' })
+        const choices = [accepted.code]
+        while (choices.length < 4) { const c = String(globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % 1000000).padStart(6, '0'); if (!choices.includes(c)) choices.push(c) }
+        for (let i = choices.length - 1; i > 0; i--) { const j = globalThis.crypto.getRandomValues(new Uint32Array(1))[0] % (i + 1); [choices[i], choices[j]] = [choices[j], choices[i]] }
+        this._setInvite(invite_id, { code_choices: choices, newcomer: { device_id: hex(accepted.member.id), device_name: accepted.member.name || '' }, invite_state: inv.role === ROLE.AGENT ? 'adding' : 'confirm_code' })
         if (inv.role === ROLE.AGENT) await this._finalizeInvite(invite_id, { skipCheckCode: true })
         return
       }
@@ -1058,8 +1144,11 @@ export class Client {
   async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
 }
 
+const MEMO_META = new Set(['object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
+function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
+
 function itemFromStored(r) {
-  return { envelope_number: r.n, local_id: null, pending: false, envelope_hash: r.h, sender_device_id: r.s, recipient_device_id: r.r, sent_at: r.t,
+  return { envelope_number: r.n, local_id: null, pending: false, envelope_hash: r.h, sender_device_id: r.s, sender_sequence: r.q ?? null, recipient_device_id: r.r, sent_at: r.t,
     item_state: r.c ? (r.cs === 'ok' ? 'loaded' : r.cs) : (r.cs === 'pruned' || r.cs === 'undecryptable' ? r.cs : 'header'), content_type: r.c?.content_type ?? null, content: r.c ?? null }
 }
 
