@@ -59,18 +59,23 @@ function around(m, base) {
 const stateWord = (u, hand) => (hand ? 'stopped' : !u.online ? 'away' : u.running ? 'working' : u.open ? 'asking' : 'idle')
 const post = (action, fields, button) => html`<form method="post" action="${action}">${answerFields(STAY)}${fields}${button}</form>`
 
+// What a <details> of a line holds is put in only when it opens (controller "ledger"): a page of many sessions
+// would otherwise carry every session's name in every line's lists.
+const LATER = raw(' data-controller="ledger" data-action="toggle->ledger#fill"')
+const later = inner => html`<template>${inner}</template>`
+
 // A choice that drops down from a small control: its options are the buttons of one form.
 function pick({ cls, hook, mark = '', title, label, action, name, options, set = false }) {
-  return html`<details class="t-pick ledger-pick"><summary class="${cls}" data-ledger="${hook}" title="${title}" aria-label="${title}"${set ? raw(' data-set') : ''}>${mark}<span>${label}</span></summary>
-<form class="t-pop t-menu" method="post" action="${action}">${answerFields(STAY)}${options.map(o => html`<button type="submit" name="${name}" value="${o.value}"${o.current ? raw(' aria-current="true"') : ''}>${o.label}</button>`)}</form></details>`
+  return html`<details class="t-pick ledger-pick"${LATER}><summary class="${cls}" data-ledger="${hook}" title="${title}" aria-label="${title}"${set ? raw(' data-set') : ''}>${mark}<span>${label}</span></summary>
+<form class="t-pop t-menu" method="post" action="${action}">${answerFields(STAY)}${later(options.map(o => html`<button type="submit" name="${name}" value="${o.value}"${o.current ? raw(' aria-current="true"') : ''}>${o.label}</button>`))}</form></details>`
 }
 
 // The phone's sheet for one line: everything the wide line offers beside it. No veil: it lies at the lower edge.
 function sheet(u, ctx, { group, others }) {
   const a = u.agent, { base, m, desks } = ctx, forms = sessionForms(a, base)
   const item = (action, name, value, words) => post(action, '', html`<button class="ledger-sheet-item" type="submit" name="${name}" value="${value}">${words}</button>`)
-  return html`<details class="t-pick ledger-dots"><summary class="ledger-ib ledger-menu" data-ledger="more" title="More: ${a.name}" aria-label="More for ${a.name}: rename, drawing, crown, group, archive">…</summary>
-<div class="ledger-sheet t-sheet" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
+  return html`<details class="t-pick ledger-dots"${LATER}><summary class="ledger-ib ledger-menu" data-ledger="more" title="More: ${a.name}" aria-label="More for ${a.name}: rename, drawing, crown, group, archive">…</summary>
+${later(html`<div class="ledger-sheet t-sheet" role="group" aria-label="Actions for ${a.name}"><h3>${a.name}</h3>
 <a class="ledger-sheet-item" data-nav href="${base}/s/${encodeURIComponent(a.id)}">Open the conversation</a>
 ${post(`${forms}/edit`, html`<input type="text" name="label" value="${a.name}" maxlength="60" autocomplete="off" enterkeyhint="done" aria-label="Name of the session">`, html`<button class="ledger-sheet-item" type="submit">Rename</button>`)}
 <details class="t-sheet-marks"><summary class="ledger-sheet-item">Choose a drawing</summary>${marksHolder(a, base, { stay: true, where: 's' })}</details>
@@ -80,7 +85,7 @@ ${group ? item(`${forms}/unpair`, 'out', '1', `Take out of the group with ${othe
 ${item(`${forms}/move`, 'dir', 'up', 'Move up')}${item(`${forms}/move`, 'dir', 'down', 'Move down')}
 ${!a.online ? item(`${forms}/edit`, 'archived', '1', 'Archive') : ''}
 ${desks.length > 1 ? desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, `Move to desk ${d.name}`)) : ''}
-<button class="ledger-sheet-item is-close" type="button" data-pop-close>Close</button></div></details>`
+<button class="ledger-sheet-item is-close" type="button" data-pop-close>Close</button></div>`)}</details>`
 }
 
 /** One session's line. error: what the hub refused, said under the line. */
@@ -104,8 +109,8 @@ export function ledgerLine(u, ctx, { error = '' } = {}) {
 
   const chip = group ? html`<span class="ledger-with" title="with ${others}"><span class="ledger-with-names">with ${others}</span>${post(`${forms}/unpair`, '', html`<button type="submit" data-ledger="unpair" title="Take ${a.name} out" aria-label="Take ${a.name} out of its group with ${others}">${sk('snip')}</button>`)}</span>` : ''
   const together = !group && m.agents.length > 1
-    ? html`<details class="t-pick ledger-pick"><summary class="ledger-ib" data-ledger="pair" title="Lay together with…" aria-label="${a.name}: lay together with…">${sk('heads')}</summary>
-<form class="t-pop t-menu" method="post" action="${forms}/pair">${answerFields(STAY)}${m.agents.filter(x => x.id !== a.id).map(x => html`<button type="submit" name="with" value="${x.id}">${x.name}</button>`)}</form></details>` : ''
+    ? html`<details class="t-pick ledger-pick"${LATER}><summary class="ledger-ib" data-ledger="pair" title="Lay together with…" aria-label="${a.name}: lay together with…">${sk('heads')}</summary>
+<form class="t-pop t-menu" method="post" action="${forms}/pair">${answerFields(STAY)}${later(m.agents.filter(x => x.id !== a.id).map(x => html`<button type="submit" name="with" value="${x.id}">${x.name}</button>`))}</form></details>` : ''
 
   const acts = html`<span class="ledger-acts">
 ${mains.length ? pick({ cls: 'ledger-desk ledger-main', hook: 'main', mark: sk('under'), title: `Main agent of ${a.name}: the session this one works for`, label: main ? main.name : 'No main', action: `${forms}/edit`, name: 'parent', set: Boolean(main), options: [{ value: '', label: 'No main', current: !main }, ...mains.map(x => ({ value: x.id, label: `↳ ${x.name}`, current: x.id === a.parent }))] }) : ''}
