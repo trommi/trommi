@@ -17,6 +17,8 @@ import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived, vacuumS
 import { fileStore } from './attachments.mjs'
 import { pusher } from './push.mjs'
 import { createOps, limitsFromEnv } from './ops/index.mjs'
+import { createAccounts } from './accounts.mjs'
+import { createMailer } from './mail.mjs'
 
 export const PROTOCOL_VERSION = 1
 const DAY = 86400000
@@ -670,6 +672,7 @@ export async function startHub({
       return
     }
     if (await ops.handle(req, res, url)) return
+    if (await accounts.handle(req, res, url)) return
     if (url.pathname === '/healthz' && req.method === 'GET') return send(res, 200, { ok: true, commit, protocol_version: PROTOCOL_VERSION })
     if (url.pathname === '/v1/push_key' && req.method === 'GET') return send(res, 200, { vapid_public_key: push.publicKey })
     const share = /^\/v1\/shares\/([^/]+)$/.exec(url.pathname)
@@ -763,16 +766,18 @@ export async function startHub({
   setTimeout(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, 60000).unref()
 
   const ops = await createOps({ db, dataDir, files, room, bearer, ipOf, now, log, closeRoom, announce: (id, event, data) => rooms.get(id)?.then(r => deliver(r, { text: sse(event, data) }), () => {}) })
+  const accounts = createAccounts({ db, room, bearer, ipOf, mailer: createMailer({ log }), now, log })
   await new Promise((ok, bad) => { server.once('error', bad); server.listen(port, host, ok) })
   const address = server.address()
   if (!hubUrl) hubUrl = `http://127.0.0.1:${address.port}`
   const startupMs = performance.now() - t0
   log(`listening on ${host}:${address.port} as ${hubUrl}, commit ${commit}, ready in ${startupMs.toFixed(1)} ms`)
   return {
-    server, port: address.port, hubUrl, db, startupMs, stats, prune, sweepPending, ops, capStreams, rebuildDerived: () => rebuildDerived(db),
+    server, port: address.port, hubUrl, db, startupMs, stats, prune, sweepPending, ops, accounts, capStreams, rebuildDerived: () => rebuildDerived(db),
     async close() {
       for (const t of timers) clearInterval(t)
       await ops.close()
+      accounts.close()
       for (const p of rooms.values()) { const r = await p.catch(() => null); if (r) for (const s of r.streams) if (!s.res.writableEnded) s.res.end() }
       await new Promise(ok => { server.close(ok); server.closeAllConnections() })
       db.close()
