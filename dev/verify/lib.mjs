@@ -106,3 +106,14 @@ export async function openPage({ profile, base, hostRules = '', init = [], error
   }
   return h
 }
+
+/** The channel joins as the human does it now: `node hub/channel.mjs join '<link>'` in the project folder (CLI only). */
+export async function joinByCli({ root, env, cwd, link, ms = 60000 }) {
+  const { spawn } = await import('node:child_process')
+  const p = spawn(process.execPath, [path.join(root, 'hub', 'channel.mjs'), 'join', link], { cwd, env: { ...process.env, ...env }, stdio: ['ignore', 'pipe', 'pipe'] })
+  let out = ''
+  p.stdout.on('data', c => { out += c }); p.stderr.on('data', c => { out += c })
+  const code = await new Promise(res => { const t = setTimeout(() => { p.kill(); res('timeout') }, ms); p.on('exit', c => { clearTimeout(t); res(c) }) })
+  if (code !== 0) throw new Error(`channel join exited ${code}: ${out.slice(-400)}`)
+  return out
+}

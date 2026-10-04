@@ -13,7 +13,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { startHub, startChannel } from '../../hub/channel-test-e2e.mjs'
 import { FIXTURES } from '../../server/fixtures.mjs'
-import { arg, openPage, sleep } from './lib.mjs'
+import { arg, openPage, sleep, joinByCli } from './lib.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..')
 const APP = arg('app', 'http://127.0.0.1:8900')
@@ -327,7 +327,22 @@ const ROUNDS = {
       const O = await openPage({ profile: 'desktop-light', base: APP, hostRules: arg('hosts') ?? '' })
       try {
         await O.go(link.replace(/^https?:\/\/[^/]+/, APP)); await sleep(2500)
-        const seen = await O.waitFor(`return [document, ...[...document.querySelectorAll('iframe')].map(f => { try { return f.contentDocument } catch { return null } })].some(d => d?.body?.textContent?.includes('Alles grün'))`, 15000)
+        // the page sits in a sandboxed frame of an opaque origin (its own process): read it through its own target
+        let seen = false
+        for (let i = 0; i < 30 && !seen; i++) {
+          const targets = await (await fetch(`http://127.0.0.1:${O.browser.port}/json`)).json().catch(() => [])
+          for (const t of targets.filter(t => t.webSocketDebuggerUrl)) {
+            const text = await new Promise(res => {
+              const ws = new WebSocket(t.webSocketDebuggerUrl)
+              const timer = setTimeout(() => { try { ws.close() } catch {} res('') }, 2000)
+              ws.onopen = () => ws.send(JSON.stringify({ id: 1, method: 'Runtime.evaluate', params: { expression: 'document.body ? document.body.innerText : ""', returnByValue: true } }))
+              ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id === 1) { clearTimeout(timer); ws.close(); res(m.result?.result?.value ?? '') } }
+              ws.onerror = () => { clearTimeout(timer); res('') }
+            })
+            if (String(text).includes('Alles grün')) seen = true
+          }
+          if (!seen) await sleep(500)
+        }
         check(Boolean(seen), 'an outsider (fresh browser, no room) opens the shared page and sees its content')
         await O.shot(path.join(OUT, 'rounds', 'r15-outsider.png'))
       } finally { await O.close() }
@@ -402,7 +417,10 @@ try {
   await until(`location.pathname.startsWith('/pair/') && document.querySelector('[data-state=open]')`, 'agent invite page')
   const link = await h.ev(`return [...trommi.client.model.invites.values()].at(-1).link`)
   const t0 = Date.now()
-  ch = await startChannel({ env: { TROMMI_KEYS_DIR: keys, TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, TROMMI_INVITE: link }, cwd: project })
+  const chEnv = { TROMMI_KEYS_DIR: keys, TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url }
+  await joinByCli({ root: ROOT, env: chEnv, cwd: project, link })
+  timing('channel join (CLI) -> joined', Date.now() - t0)
+  ch = await startChannel({ env: chEnv, cwd: project })
   await ch.ready()
   await until(`document.querySelector('[data-state=joined]')`, 'agent joined on the invite page').catch(() => {})
   timing('channel start with invite -> in the room', Date.now() - t0)
