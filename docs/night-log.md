@@ -49,6 +49,9 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - read on A → gone on B 269 ms
   - warm Desk 63 ms
   Prod v1.1 smoke by A: POST→SSE p50 29 ms.
+- Outsider share links live (hub 3047372): `shares` table, uploader-only create, public GET with x-share-secret (timing-safe, 60/min/IP, Range). Channel share_asset is being wired (D), the viewer by C.
+- Channel live smoke on v1.1 prod (e719675): join + session assigned 1.8 s, card 91 ms, decision 85 ms, chat 50 ms; the session is named after its folder.
+- The v1 bytes/vectors are deliberately NOT frozen yet: they freeze after the second security review of the implemented code (requested from the coordinator).
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
