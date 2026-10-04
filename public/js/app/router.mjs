@@ -12,7 +12,7 @@ const STREAM_ACCEPT = 'text/vnd.turbo-stream.html, text/html, application/xhtml+
 const fire = (target, name, detail = {}, cancelable = false) => { const e = new CustomEvent(name, { bubbles: true, cancelable, detail }); target.dispatchEvent(e); return e }
 const isAppPath = p => !/\.(?:css|js|mjs|json|png|svg|jpe?g|webp|gif|woff2?|webmanifest|html|txt|csv|log|ico)$/i.test(p) && !p.startsWith('/mock/') && !p.startsWith('/vendor/') && !p.startsWith('/att/')
 
-export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} }) {
+export function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush = () => {} }) {
   let page = null          // { path, client: { view, params }, opts }
   const parts = new Map()  // key -> { html, nodes: [Node] }
 
@@ -97,6 +97,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
     const to = url.pathname + url.search + url.hash
     if (action !== 'restore' && fire(document, 'turbo:before-visit', { url: url.href }, true).defaultPrevented) return
     const mine = ++visiting
+    flush()   // what an action just changed is in the state before the page is rendered
     beforeVisit(url)
     const tq = performance.now()
     const res = await board.request({ method: 'GET', path: url.pathname + url.search, headers: { accept: 'text/html' } })
@@ -178,6 +179,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
     try { res = await board.request({ method: 'POST', path: action.pathname + action.search, form: data, headers: { accept: STREAM_ACCEPT, referer: location.href } }) }
     catch (err) { error = err; console.error('form', err) }
     const success = !error && res && res.code < 400
+    flush()
     if (res?.kind === 'stream') { forget(res.body); renderStreamMessage(res.body) }
     else if (res?.kind === 'redirect') await visit(res.to)
     else if (res?.kind === 'page') { history.replaceState({ trommi: true }, '', location.href); paint(location.pathname + location.search, res.opts, { scroll: window.scrollY }) }

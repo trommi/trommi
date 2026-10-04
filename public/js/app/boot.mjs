@@ -55,12 +55,13 @@ export async function start(client, { fresh = false } = {}) {
     t.get(/^\/pad$/, ({ res }) => { document.addEventListener('turbo:load', () => document.dispatchEvent(new CustomEvent('trommi:pen')), { once: true }); t.redirect(res, '/') })
   }
   const b = createBoard({ hub, model, extraPages: [deskPages, roomPages(client)] })
-  const router = createRouter({ board: b })
+  const router = createRouter({ board: b, flush: () => apply() })
   startDeskWindow(b)
   window.trommi = { client, board, router, model, mock: Boolean(mock) }
 
-  // Changes come in batches; one frame patches the page for all that came meanwhile.
-  let pending = null
+  // Changes come in batches; one frame patches the page for all that came meanwhile. A navigation or the end of a
+  // form takes what is pending at once (flush), so a page never renders a state older than the action that led to it.
+  let pending = null, frame = 0
   const merge = (a, c) => { for (const k of Object.keys(c)) { if (c[k] instanceof Set) for (const v of c[k]) a[k].add(v); else a[k] = a[k] || c[k] } return a }
   const conn = () => {
     const state = client.model.room.connection, el = document.getElementById('conn'), text = document.getElementById('conn-text')
@@ -68,18 +69,20 @@ export async function start(client, { fresh = false } = {}) {
     if (el) el.dataset.state = words[0]
     if (text) text.textContent = words[1]
   }
+  const apply = ({ patch = true } = {}) => {
+    cancelAnimationFrame(frame); frame = 0
+    if (!pending) return
+    const c = pending; pending = null
+    const t = performance.now()
+    board.update(c)
+    if (patch) router.changed()
+    conn()
+    window.trommi.lastPatchMs = performance.now() - t
+  }
   client.on('change', change => {
-    if (!pending) {
-      pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
-      requestAnimationFrame(() => {
-        const c = pending; pending = null
-        const t = performance.now()
-        board.update(c)
-        router.changed()
-        conn()
-        window.trommi.lastPatchMs = performance.now() - t
-      })
-    } else merge(pending, change)
+    if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
+    else merge(pending, change)
+    frame ||= requestAnimationFrame(() => apply())
   })
   document.addEventListener('turbo:load', conn)
   // The timeline of the page in view is fetched when it is opened (newest page first; "Earlier" loads more).
