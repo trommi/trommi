@@ -404,14 +404,10 @@ await test('slot lock: claimSlot takes over a live claim of the same session onl
 
 // ---- part 2: real hub, real core, the channel as an MCP child --------------------------------------------
 
-await test('instructions: the info-after-push rule stands within the first 2048 characters', () => {
-  const i = INSTRUCTIONS.indexOf('After every git push')
-  assert.ok(i >= 0 && i < 1700, `rule at ${i}`)
-  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('create_info) in the session the work belongs to'))
-  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('commit hash + subject'))
-  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('live/deployed'))
-  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('https://github.com/<org>/<repo>/commit/<hash>'))
-  assert.ok(INSTRUCTIONS.indexOf('live URL') < 2048)
+await test('instructions: the update rule stands within the first 2048 characters, no info-per-push rule', () => {
+  assert.ok(INSTRUCTIONS.indexOf('update_available') < 2048)
+  assert.ok(!INSTRUCTIONS.includes('After every git push'))
+  assert.ok(INSTRUCTIONS.includes("Don't file info cards for pushes"))
 })
 
 const here = path.dirname(new URL(import.meta.url).pathname)
