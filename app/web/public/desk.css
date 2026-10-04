@@ -1374,7 +1374,7 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .inbox-groups .inbox-row .inbox-when .inbox-tabs .inbox-later { display: none; }
 .sel-bar .sel-clear .sketch { fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; }
 /* while cards are chosen, the bar has the bottom: the note and the corner step aside */
-#inbox.is-choosing ~ * .quick-open.memo-open-free, body:has(#inbox.is-choosing) .quick-open.memo-open-free, body:has(#inbox.is-choosing) .curl { opacity: 0; pointer-events: none; }
+:root.is-choosing .curl { opacity: 0; pointer-events: none; }
 
 /* ---- The foot's three objects on one line (his word, 4 October): the same box for each, the words under them on one
    baseline; the list straight ---- */

@@ -744,32 +744,51 @@ export function flipOut(rows, { ghost = true } = {}) {
   const places = boxes.map(box => ({ box, parent: box.parentElement, next: box.nextSibling }))
   if (calm()) { for (const b of boxes) b.remove(); return places }
   const list = rows[0].closest('#desk-list') ?? rows[0].parentElement
-  // what may move: the rows after a leaving row in its own section, and the list's own children after it
-  const moving = new Set()
+  // What may move: the rows after a leaving row in its own section, then the list's own children after it, in order;
+  // only what stands in sight (and a little below) is measured: a row far below has nothing to show, and measuring it
+  // would make the browser lay out and render it (rows out of sight are content-visibility: auto).
+  const moving = []
+  const seen = new Set(boxes)
   for (const box of boxes) {
-    if (box.matches('.inbox-row')) for (let n = box.nextElementSibling; n; n = n.nextElementSibling) moving.add(n)
+    const after = []
+    if (box.matches('.inbox-row')) for (let n = box.nextElementSibling; n; n = n.nextElementSibling) after.push(n)
     const top = box.matches('.inbox-row') ? box.parentElement : box
-    if (top?.parentElement === list) for (let n = top.nextElementSibling; n; n = n.nextElementSibling) moving.add(n)
+    if (top?.parentElement === list) for (let n = top.nextElementSibling; n; n = n.nextElementSibling) after.push(n)
+    for (const el of after) if (!seen.has(el)) { seen.add(el); moving.push(el) }
   }
-  for (const b of boxes) moving.delete(b)
-  const before = new Map([...moving].map(el => [el, el.getBoundingClientRect().top]))
+  const limit = (document.documentElement.clientHeight || innerHeight) + 120
+  // (one read pass, no second one: an element below moves up by the room of every leaving box above it, a box's
+  //  height and the gap after it; reading positions again after the removal would lay the page out once more)
+  const gapOf = el => parseFloat(getComputedStyle(el.parentElement ?? el).rowGap) || 0
+  const room = boxes.map(b => ({ b, h: b.getBoundingClientRect().height + gapOf(b) }))
+  const before = new Map()
+  for (const el of moving) {
+    const t = el.getBoundingClientRect().top
+    if (t > limit) break
+    const up = room.reduce((sum, { b, h }) => sum + (b.compareDocumentPosition(el) & Node.DOCUMENT_POSITION_FOLLOWING && !b.contains(el) ? h : 0), 0)
+    before.set(el, up)
+  }
   const n0 = leaving
   leaving += rows.length
   setTimeout(() => { leaving = Math.max(0, leaving - rows.length) }, 450)
   if (ghost) rows.forEach((row, i) => {
     const r = row.getBoundingClientRect(), copy = row.cloneNode(true)
     copy.removeAttribute('id'); copy.classList.add('is-ghost'); copy.inert = true
-    Object.assign(copy.style, { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: 0, zIndex: 40, pointerEvents: 'none', willChange: 'transform, opacity' })
+    Object.assign(copy.style, { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: 0, zIndex: 40, pointerEvents: 'none', contain: 'layout paint style' })
     document.body.append(copy)
     copy.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(28px)' }], { duration: 220, delay: (n0 + i) * 45, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' }).finished.then(() => copy.remove(), () => copy.remove())
   })
-  for (const b of boxes) b.remove()
-  for (const [el, top] of before) {
-    const d = top - el.getBoundingClientRect().top
-    if (Math.abs(d) < 1) continue
-    el.style.willChange = 'transform'
-    el.animate([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 250, delay: n0 * 45, easing: 'cubic-bezier(.3, .6, .3, 1)' }).finished.finally(() => { el.style.willChange = '' })
-  }
+  // (two frames: in this one the copy flies and the row is hidden; in the next the row leaves the layout and what stood
+  //  below glides up, so the list's new layout is not paid for in the frame of the tap)
+  for (const b of boxes) b.style.visibility = 'hidden'
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    for (const b of boxes) { b.remove(); b.style.visibility = '' }
+    for (const [el, d] of before) {
+      if (Math.abs(d) < 1 || !el.isConnected) continue
+      el.style.willChange = 'transform'
+      el.animate([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 250, delay: n0 * 45, easing: 'cubic-bezier(.3, .6, .3, 1)' }).finished.finally(() => { el.style.willChange = '' })
+    }
+  }))
   return places
 }
 /** Rows whose answer did not go through stand where they stood again. */
