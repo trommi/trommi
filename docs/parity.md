@@ -4,7 +4,7 @@ Kept by the verifier ("Superkind", night of 4 October 2026). The goal: the new a
 server-rendered Turbo board in every function, every decision round trip between agent and human, the look and
 Christopher's design decisions, and is faster, end to end encrypted through the thin hub.
 
-**Final status (4 Oct ~06:40; app main b569403, hub 19b87db+):** checklist **241 ok · 8 gap · 4 na · 98 todo** of 351 rows. todo = not checked yet (memos/pad details, layout/phone details, agents-page actions, push/PWA,
+**Final status (4 Oct ~06:40; app main b569403, hub 19b87db+):** checklist **247 ok · 2 gap · 4 na · 98 todo** of 351 rows. todo = not checked yet (memos/pad details, layout/phone details, agents-page actions, push/PWA,
 admin; the session rows the parity fixer is checking). Decision round trips through the real channel on the **live
 system: 48 of 48 green** (CLI join, every decision flow, permission allow/deny, second device with the check code,
 outsider share link); 20 more rounds (m01-m20: notes per option, files and marks with an answer, bare revise, What??
@@ -40,17 +40,15 @@ the Turbo test board's (Web-Frontend, API, Infrastruktur, Courier); the fixture 
 
 ## Gaps, priority order (sent to the area owners)
 
-Open at the end of the night:
+Open at the end of the night (after the live re-check of the last fixes, ~07:30):
 
 | # | prio | gap | evidence | owner |
 |---|---|---|---|---|
-| 1 | P2 | A live channel (answers tool calls) listed under DISCONNECTED in 3 of 4 fresh rooms; as offline it gets no red "stopped" hand while a permission waits | `todo/C/out4/rounds/m12-sidebar.png` | C (presence in core/room) |
-| 2 | P3 | Read → Undo on an info card sends `decision_reopened` to the agent (Turbo: silent) | `todo/C/run*.log` m06 | D / B |
-| 3 | P3 | `permission_request` repeated back to back gives two approvals with the same request_id (dedup after an await, channel-bridge.mjs:500) | m-run1 | D |
-| 4 | P3 | Take back reaches the agent as `chat` with a text, not as `handback_withdrawn` | m05 | D |
-| 5 | P3 | `revoke_asset`: list_assets still lists it ("closed"); Turbo deletes the file | m13 | D |
-| 8 | P3 | Mark lines in the agent's note lack the option name (Turbo: `- on option "Option B" [b]: …`). Merged-card links and `/trash` were not gaps: Turbo behaves the same, and its Trash is `/?pile=trash` | C report | D |
-| 9 | design | `create_voiceover` and Read aloud: no speech service on the new hub | m-runs | lead |
+| 1 | P3 | A freshly joined channel stays under DISCONNECTED for ~57 s (presence refreshes every minute); after that connected and the stopped hand works | `final-presence/rounds.json` | C / B |
+| 2 | P3 | Mark lines in the agent's note lack the option name (Turbo: `- on option "Option B" [b]: …`); not re-checked (fe7d5d8 not found on main) | C report | D |
+| 3 | design | `create_voiceover` and Read aloud: no speech service on the new hub | final-live m13 | lead |
+
+Verified fixed live in the last run (`final-live`, `final-presence`): presence and the stopped hand (df15ada / 9506b70), take back as `handback_withdrawn`, Read → Undo silent, permission dedup, `revoke_asset` leaves `list_assets` (47b4da0).
 
 Fixed and verified late in the night: agent-invite command without this PC's path (185ce2e), Help "For agents" (185ce2e), page-asset preview (dev-server CSP, stale server on my side), `g f` (not a gap: Turbo passes /walk only while redirecting). Fixed and verified in the fourth pass: every session shown twice after v1.1 (gone), session name = folder (e719675),
 key `n` → new memo (a41fb25), `share_asset` with outsider links (c89ca9c; outsider page renders), German strings in
@@ -130,7 +128,7 @@ load test and the crazy room), real phone, Safari.
 
 ## The checklist (from the code of the Turbo board)
 
-**Counts: 241 ok · 8 gap · 4 na · 98 todo** (of 351 rows).
+**Counts: 247 ok · 2 gap · 4 na · 98 todo** (of 351 rows).
 
 Source of truth: the server-rendered board as of commit 39160d0 (`server/turbo.mjs`, `server/views/*.mjs`,
 `client/web/t/**` Stimulus controllers and libs, the few old modules it still imports: `client/web/js/pen.js`,
@@ -389,11 +387,11 @@ Notes on options:
 | id | what | turbo code | how to check | status | evidence |
 |---|---|---|---|---|---|
 | ip-info-read | create_info → read → info_read | `server.mjs:1681-1686,2325-2339` | `create_info {title, body}` → row "To read" → Acknowledge → event `info_read`; Done "Read" | ok | R r11: Read→`info_read` 28 ms |
-| ip-info-reopen | an info read can be taken back; agent not told | `server.mjs:2398-2403` | Done "Read" Take back → row unread again, no event | gap | m06: Read then toast Undo -> info row unread again on the Desk, BUT the agent gets a decision_reopened event (Turbo: agent not told, server.mjs:2398-2403) [P3] (C) |
+| ip-info-reopen | an info read can be taken back; agent not told | `server.mjs:2398-2403` | Done "Read" Take back → row unread again, no event | ok | final-live m06: Read -> Undo, row unread again, no event to the agent |
 | ip-info-phone | phone: info card's Acknowledge stands in the first screen | test `dev/turbo-ui-test.mjs:435` | 390x844 info fixture | ok | m17: 390x844 mobile emulation, info card: Acknowledge at y 358-468, in the first screen. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out4/rounds/m17-info-phone.png (C) |
 | ip-permission | permission_request → card → verdict | `server.mjs:1934-1975,2150-2157` | linked session posts `/agent/permission {request_id, tool_name, description, input_preview}` → row "Knock! Permission" Allow/Deny (urgency critical) → Allow → method `notifications/claude/channel/permission {request_id, behavior:"allow"}`; card status done at once, in no stack | ok | R r12: permission_request→app 63 ms; Allow/Deny→`behavior` at Claude Code 27-29 ms |
-| ip-permission-dedup | a repeated request id makes no second card | `server.mjs:1959-1960` | post the same request twice → one row | gap | sequential repeat (1.5 s apart) -> one approval (run3/run4); but two notifications back to back (run1) -> two approval objects with the same request id (bridge dedup channel-bridge.mjs:500 is async; Turbo dedups synchronously) [P3] (C) |
-| ip-permission-blocked | waiting for permission shows the session as stopped (red hand) | `server/blocked.mjs:32` | sidebar badge hand, title "Stopped: Waiting for permission" | gap | blocked logic identical (node-stubs/blocked.mjs = server/blocked.mjs) and run1 showed "Stopped: project (Waiting for permission)"; but in 3 of 4 fresh rooms the live, answering channel sat under DISCONNECTED in the sidebar (agent.online false) so no red hand appeared. /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/todo/C/out4/rounds/m12-sidebar.png [P2] (C) |
+| ip-permission-dedup | a repeated request id makes no second card | `server.mjs:1959-1960` | post the same request twice → one row | ok | final-live m12: same request id twice -> one approval |
+| ip-permission-blocked | waiting for permission shows the session as stopped (red hand) | `server/blocked.mjs:32` | sidebar badge hand, title "Stopped: Waiting for permission" | ok | final-presence live: connected, then the stopped hand while the approval waits; P3: a freshly joined channel shows under DISCONNECTED for ~57 s (minute refresh) |
 
 ## Status lines
 
@@ -621,7 +619,7 @@ Notes on options:
 | tool-list-cards | JSON of own cards incl. queue_position, version, with_agent | `server.mjs:1273-1276,1878-1889` | compare with Desk order | ok | m13: list_cards JSON has queue_position, version, with_agent (on a handed-back card), answered_version; same conditional shape as Turbo (C) |
 | tool-publish-asset | encrypted asset link (in the channel process) → asset card | `server.mjs:1278-1292,1928` | med-asset-card | ok | R r15 live (4th pass): announced in the session |
 | tool-list-assets | own assets | `server.mjs:1294-1297,1890` | | ok | m13: publish_asset then list_assets lists it (id,title,state,type,size,released_until) (C) |
-| tool-revoke-asset | delete ciphertext, link dead | `server.mjs:1299-1302,1892-1897` | med-asset-gone | gap | m13: revoke_asset -> "taken off the board" (unpublish), list_assets then still lists it with state "closed"; Turbo deletes the stored asset ("link no longer opens"). Ciphertext deletion / dead link not verified [P3] (C) |
+| tool-revoke-asset | delete ciphertext, link dead | `server.mjs:1299-1302,1892-1897` | med-asset-gone | ok | final-live m13: revoke_asset removes it from list_assets |
 | tool-adopt-session | main takes an existing session as sub (same machine) / release | `server.mjs:1304-1314,1899-1912` | sub under main in sidebar | na | replaced by design: adopt_session -> error "a session's profile is signed by that session alone. Ask the helper to call introduce with parent set" (channel-bridge.mjs:490) (C) |
 | tool-share-asset | outside release `/r/<id>#key`, expiry, keep | `server.mjs:1316-1327,1914-1926` | card "Shared" | ok | dev/verify rounds r15 in /tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/verify/rounds-live3b/rounds.json (03:45Z): link for outsiders, fresh browser sees content, release:false takes it back ("card Shared" look not checked) (C) |
 | tool-permission-request | (from Claude Code) approval → card | `server.mjs:1934-1975` | ip-permission | ok | R r12 |
@@ -645,12 +643,12 @@ Notes pinned to the card:
 | ev-reopened-trust | `decision_reopened trust=1` | `server.mjs:2414-2417` | rt-trust-undo | ok | m07: decision_reopened trust=1 previous_choice="" (C) |
 | ev-reopened-shredded | `decision_reopened shredded=1` | `server.mjs:2391-2394` | rt-shred-undo | ok | m08: decision_reopened shredded=1 previous_choice="" (C) |
 | ev-shredded | `shredded card_id` (+ marks, files) | `server.mjs:2228-2237` | rt-shred | ok | R r09 |
-| ev-handback-withdrawn | `handback_withdrawn card_id` | `turbo.mjs:145-148`; `server.mjs:3669-3672` | rt-handback-takeback | gap | m05: Take back reaches the agent as kind=chat card_id "The human took the card back; no need to rework or explain it." - no handback_withdrawn kind [P3] (C) |
+| ev-handback-withdrawn | `handback_withdrawn card_id` | `turbo.mjs:145-148`; `server.mjs:3669-3672` | rt-handback-takeback | ok | final-live m05: take back -> handback_withdrawn |
 | ev-info-read | `info_read card_id` | `server.mjs:2335-2338` | ip-info-read | ok | R r11 |
 | ev-pad | `pad pad message_id elements image_path` | `server.mjs:1419-1422`; `server/pad.mjs:276` | pad-send | todo | not reached (bridge emits kind=pad pad=global message_id elements + file meta for selection_sent, channel-bridge.mjs:594-598; not exercised) (C) |
 | ev-scribble | `scribble scribble_id image_path canvas_path canvas_doc` (old client canvas) | `server.mjs:2371-2374` | scribble-old | na | old client canvas only; the new app has no scribble; the pad (ev-pad) replaces it (C) |
 | ev-permission | `notifications/claude/channel/permission {request_id, behavior}` | `server.mjs:2154-2156` | ip-permission | ok | R r12 |
-| ev-none | no event for snooze/wake, read taken back, drafts, crown, rename, archive, memo put away | `server.mjs:2287-2321,2398-2403` | watch link stays silent | gap | m02/m14: drafts, snooze and wake stay silent; but taking a read back is not silent (decision_reopened, see ip-info-reopen). Crown/rename/archive/memo not checked [P3] (C) |
+| ev-none | no event for snooze/wake, read taken back, drafts, crown, rename, archive, memo put away | `server.mjs:2287-2321,2398-2403` | watch link stays silent | ok | final-live m06: taking a read back is silent |
 
 ## Admin, pairing, auth, dev
 

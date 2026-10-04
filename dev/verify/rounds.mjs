@@ -64,6 +64,19 @@ const clickJs = async (sel, what) => { const ok = await h.ev(`const e = document
 const shot = name => h.shot(path.join(OUT, 'rounds', `${name}.png`))
 
 const ROUNDS = {
+  async r00_presence() {
+    // a live channel is shown as connected, and as stopped while an approval waits (Turbo: red hand in the sidebar)
+    await visit('/')
+    const t0 = Date.now()
+    const online = await h.waitFor(`return !!document.querySelector('#agents .agent-row') && !/disconnected/i.test(document.querySelector('#agents')?.innerText ?? '')`, 90000)
+    check(Boolean(online), 'live channel shown as connected in the sidebar', online ? `${Date.now() - t0} ms after join` : 'still under DISCONNECTED after 90 s')
+    await ch.client.notification({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'pres1', tool_name: 'Bash', description: 'Run ls', input_preview: '{"command":"ls"}' } })
+    const stopped = await h.waitFor(`return [...document.querySelectorAll('[title*="Stopped"], [aria-label*="Stopped"]')].some(e => /permission/i.test(e.getAttribute('title') ?? e.getAttribute('aria-label') ?? ''))`, 20000)
+    check(Boolean(stopped), 'sidebar shows the stopped hand while the approval waits')
+    await shot('r00-presence')
+    const pid = await h.ev(`return [...trommi.client.model.permissions.values()].find(p => p.request_id === 'pres1')?.object_id ?? null`)
+    if (pid) { await visit(`/q/${await nrOf(pid)}`); await until(`document.querySelector('.tc-card')`, 'approval'); await clickJs('.tc-opt[data-key="deny"]', 'deny'); await nextEvent(x => x.method === 'notifications/claude/channel/permission' && x.params.request_id === 'pres1', 'deny pres1').catch(() => {}) }
+  },
   async r01_answer_close() {
     const id = await timedCard('create_decision', { title: 'Migration heute Nacht?', body: 'Sperrt 40 s.', options: [{ key: 'tonight', label: 'Heute Nacht' }, { key: 'now', label: 'Jetzt' }], recommended: 'tonight' }, 'decision')
     await openCard(id)
