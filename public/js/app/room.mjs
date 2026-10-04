@@ -14,12 +14,14 @@ import { qrSvg } from './qr.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
 const local = ['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)
-/** The hub this app talks to: ?hub=… (remembered), else https://hub.trommi.com (local dev: http://127.0.0.1:8890). */
+const ses = (k, v) => { try { if (v != null) sessionStorage.setItem(k, v); return sessionStorage.getItem(k) } catch { return v ?? null } }
+/** The hub: fixed https://hub.trommi.com (local dev: http://127.0.0.1:8890). Hidden developer override, no UI: ?hub=<url> and ?found_code=<code>, read once and kept for the tab session. */
 export function hubUrl() {
-  const asked = new URLSearchParams(location.search).get('hub')
-  if (asked) write('trommi-hub', asked.replace(/\/+$/, ''))
-  return read('trommi-hub') || (local ? 'http://127.0.0.1:8890' : 'https://hub.trommi.com')
+  const q = new URLSearchParams(location.search)
+  const asked = q.get('hub')
+  return (ses('trommi-hub', asked ? asked.replace(/\/+$/, '') : null)) || (local ? 'http://127.0.0.1:8890' : 'https://hub.trommi.com')
 }
+const foundCode = () => ses('trommi-found-code', new URLSearchParams(location.search).get('found_code')) || undefined
 const deviceGuess = () => (/iPhone|Android.*Mobile/.test(navigator.userAgent) ? 'Phone' : /iPad|Android/.test(navigator.userAgent) ? 'Tablet' : 'Laptop')
 const ago = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 60 ? 'just now' : s < 3600 ? `${Math.round(s / 60)} min ago` : `${Math.round(s / 3600)} h ago` }
 const sk = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${name}`) : sketchSvg(name))
@@ -336,7 +338,6 @@ ${errorLine(error)}
 
   function createFlow(error = '') {
     show(shell('Create account', html`${errorLine(error)}<form id="create-form" class="room-form">${emailField(lastEmail)}${pwField()}${nameField}
-<details class="room-more"><summary>Server and access code</summary><label>Hub<input name="hub" value="${hub}"></label><label>Access code (if the hub asks for one)<input name="found_token" autocomplete="off"></label></details>
 <button type="submit" class="room-primary">Create account</button></form>
 <p class="room-meta">Your password never leaves this device. ${NO_RECOVERY}</p>${backLink}`))
     wireBack()
@@ -349,9 +350,8 @@ ${errorLine(error)}
       if (why) return createFlow('The password needs at least 12 characters.')
       busy(e.target, 'Creating your account…')
       try {
-        const hub_url = String(f.get('hub') || hub).replace(/\/+$/, '')
-        write('trommi-hub', hub_url)
-        const { client, recovery_code } = await A.createAccount({ hub_url, email: lastEmail, password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), found_token: String(f.get('found_token') || '') || undefined, client: CLIENT })
+        const hub_url = hub
+        const { client, recovery_code } = await A.createAccount({ hub_url, email: lastEmail, password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), found_token: foundCode(), client: CLIENT })
         kitOffer(client, recovery_code, A.normaliseEmail(lastEmail))
       } catch (err) { console.warn(err); createFlow(`Not created: ${accountError(err)}`) }
     })
