@@ -3,7 +3,38 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { launchChromium } from '../cdp.mjs'
+import { spawn } from 'node:child_process'
+import { launchChromium, guard } from '../cdp.mjs'
+
+/** Chromium on a profile folder that stays (a real E2E room lives in its IndexedDB); one at a time per folder. */
+async function launchOnProfile({ width, height, args = [], profile }) {
+  fs.mkdirSync(profile, { recursive: true })
+  try { fs.rmSync(path.join(profile, 'DevToolsActivePort')) } catch {}
+  for (const f of ['SingletonLock', 'SingletonSocket', 'SingletonCookie']) { try { fs.rmSync(path.join(profile, f)) } catch {} }
+  const proc = spawn(process.env.CHROMIUM || 'chromium', ['--headless=new', '--disable-gpu', '--no-proxy-server', '--disable-extensions', '--hide-scrollbars', '--no-first-run',
+    `--user-data-dir=${profile}`, '--remote-debugging-port=0', `--window-size=${width},${height}`, ...args, 'about:blank'], { stdio: 'ignore', detached: true })
+  guard(proc, { group: true })
+  let port = 0
+  for (let i = 0; i < 100 && !port; i++) { await sleep(100); try { port = Number(fs.readFileSync(path.join(profile, 'DevToolsActivePort'), 'utf8').split('\n')[0]) || 0 } catch {} }
+  if (!port) throw new Error('Chromium did not start on the kept profile')
+  const sessions = []
+  return {
+    pid: proc.pid, port, profile,
+    async page() {
+      let target
+      for (let i = 0; i < 50 && !target; i++) { try { target = (await (await fetch(`http://127.0.0.1:${port}/json`)).json()).find(t => t.type === 'page') } catch {} if (!target) await sleep(100) }
+      const ws = new WebSocket(target.webSocketDebuggerUrl)
+      await new Promise((res, rej) => { ws.onopen = res; ws.onerror = rej })
+      let seq = 0; const pending = new Map(), listeners = new Map()
+      ws.onmessage = e => { const m = JSON.parse(e.data); if (m.id != null) { const c = pending.get(m.id); if (!c) return; pending.delete(m.id); m.error ? c.reject(new Error(`${c.method}: ${m.error.message}`)) : c.resolve(m.result); return } for (const fn of listeners.get(m.method) ?? []) fn(m.params) }
+      const session = { send: (method, params = {}) => new Promise((resolve, reject) => { const id = ++seq; pending.set(id, { resolve, reject, method }); ws.send(JSON.stringify({ id, method, params })) }), on(ev, fn) { if (!listeners.has(ev)) listeners.set(ev, new Set()); listeners.get(ev).add(fn) }, close: () => ws.close() }
+      sessions.push(session)
+      await session.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+      return session
+    },
+    async close() { for (const s of sessions) { try { s.close() } catch {} } try { process.kill(-proc.pid, 'SIGTERM') } catch {} for (let i = 0; i < 30 && proc.exitCode == null; i++) await sleep(100); try { process.kill(-proc.pid, 'SIGKILL') } catch {} },
+  }
+}
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -27,9 +58,10 @@ export async function loadTarget(name) {
  *   h.go(path) h.ev(js) h.waitSel(sel, ms) h.click(sel) h.key(key, {ctrl, shift}) h.type(text) h.sleep(ms) h.shot(file)
  * hosts: --host-resolver-rules for public names (app.trommi.com behind a stale local DNS).
  */
-export async function openPage({ profile, base, hostRules = '', init = [], errors = [] }) {
+export async function openPage({ profile, base, hostRules = '', init = [], errors = [], userDataDir = null }) {
   const p = PROFILES[profile] ?? profile
-  const browser = await launchChromium({ width: p.width, height: p.height, args: hostRules ? [`--host-resolver-rules=${hostRules}`] : [] })
+  const args = hostRules ? [`--host-resolver-rules=${hostRules}`] : []
+  const browser = userDataDir ? await launchOnProfile({ width: p.width, height: p.height, args, profile: userDataDir }) : await launchChromium({ width: p.width, height: p.height, args })
   const page = await browser.page()
   await page.send('Page.enable'); await page.send('Runtime.enable'); await page.send('Network.enable')
   await page.send('Emulation.setDeviceMetricsOverride', { width: p.width, height: p.height, deviceScaleFactor: 1, mobile: Boolean(p.mobile) })
