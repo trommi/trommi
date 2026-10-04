@@ -65,13 +65,16 @@ export async function writeSnapshot(client) {
  * signature and sender (an active-at-the-time human device), decrypt it. Returns { value, envelope_number, sender } or null.
  */
 export async function findSnapshot(client) {
-  const head = await client.hub.envelopes({ after_envelope_number: 0, limit: 1 })
-  const last = head.last_envelope_number ?? 0
+  // The newest page and the head in one request (newest=1). A hub without it answers from envelope 1 on: then the
+  // head it names is the start of the scan, as before.
+  const first = await client.hub.envelopes({ after_envelope_number: 0, limit: 1000, newest: true })
+  const last = first.last_envelope_number ?? 0
   if (last < 2000) return null                     // small room: replaying is as fast
+  const newestPage = first.envelopes.length && first.envelopes.at(-1).envelope_number === last && first.envelopes[0].envelope_number === Math.max(1, last - 999) ? first : null
   const pages = []
   for (let page = 0, before = last; page < SCAN_PAGES && before > 0; page++) {
     const after = Math.max(0, before - 1000)
-    const r = await client.hub.envelopes({ after_envelope_number: after, limit: 1000 })
+    const r = page === 0 && newestPage ? newestPage : await client.hub.envelopes({ after_envelope_number: after, limit: 1000 })
     pages.unshift(r.envelopes.filter(e => e.envelope_number > after && e.envelope_number <= before))
     for (const { envelope_number, envelope } of [...r.envelopes].reverse()) {
       if (envelope_number > before) continue
@@ -94,17 +97,40 @@ export async function findSnapshot(client) {
   return null
 }
 
+/**
+ * Everything a snapshot boot reads from the hub, side by side where it can: the newest pages with the pointer, then
+ * the attachment and the overlap window before the scanned pages (both named by the pointer) together. A new device
+ * starts this as soon as it is signed in, while its re-seal is still on the way (room.mjs). -> { found, raw } | null.
+ */
+export async function prefetchSnapshot(client) {
+  const found = await findSnapshot(client)
+  if (!found) return null
+  const v = found.value
+  const scanned = found.scanned.envelopes
+  const from = Math.max(0, v.envelope_number - OVERLAP)            // the catch-up starts here (D6)
+  const lo = scanned.length ? scanned[0].envelope_number : found.scanned.last_envelope_number + 1
+  const overlap = lo - 1 > from && lo - 1 - from <= 1000
+    ? client.hub.envelopes({ after_envelope_number: from, limit: lo - 1 - from }).catch(() => null) : Promise.resolve(null)
+  const [raw, extra] = await Promise.all([client.fetchAttachment(v.attachment), overlap])
+  // The overlap joins the scanned pages when it closes the gap exactly (contiguous() checks); else it is read again later.
+  if (extra?.envelopes?.length) found.scanned = { ...found.scanned, envelopes: [...extra.envelopes.filter(e => e.envelope_number > from && e.envelope_number < lo), ...scanned] }
+  return { found, raw }
+}
+
 /** Load a snapshot into a fresh client (cursor 0). Returns true if loaded. */
 export async function bootFromSnapshot(client) {
   if (!client.is_human || client.model.room.last_envelope_number !== 0) return false
   const t0 = performance.now()
-  const found = await findSnapshot(client)
-  if (!found) return false
+  const pre = client._snapshotPrefetch
+  client._snapshotPrefetch = null
+  let got = pre ? await pre.catch(() => undefined) : undefined      // a failed prefetch is read again here
+  if (got === undefined) got = await prefetchSnapshot(client)
+  if (!got) return false
+  const { found, raw } = got
   const v = found.value
   if (v.log_seq > client.state.head.seq || hex(client.state.hashes[v.log_seq]) !== v.log_hash) return false   // another member list: do not trust it
   // A snapshot from before the newest removal or recovery may hold what a removed device wrote beyond its cut: replay instead.
   if (G.lastMemberChange && v.log_seq < G.lastMemberChange(client.state)) return false
-  const raw = await client.fetchAttachment(v.attachment)
   const snap = JSON.parse(new TextDecoder().decode(await gunzip(raw, v.encoding)))
   if (snap.schema !== SNAPSHOT_SCHEMA || snap.room_id !== client.model.room.room_id || snap.envelope_number !== v.envelope_number) return false
   await client.serial(async () => {

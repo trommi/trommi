@@ -302,17 +302,29 @@ export class Client {
     if (process_instance) this._processInstance = process_instance   // R4: every lease claim of this process names it
     this._setConnection('connecting')
     await this.hub.authHeader()                       // signs in unless a fresh token is at hand (a login just signed in)
-    // The device list (presence) is asked now, side by side with the member and session refresh, and applied after them.
+    // The device list (presence) is asked now, side by side with the member and session refresh, and applied after
+    // them without holding the start up. The session list too (it names each session's newest grant number; the grants
+    // themselves are read after the member list, which they are checked against).
     const devices = this.hub.devices().catch(() => null)
+    // A device that just joined (joinWithRecoveryCode, seconds ago) holds the member list and every session key it was
+    // just handed: no second read of either before the first paint (one round trip less on a phone). The refresh when
+    // the stream opens reads both lists again, as after every (re)connect.
+    const justJoined = this._joinedAt && Date.now() - this._joinedAt < 60_000
+    this._joinedAt = null
+    const sessionList = justJoined ? null : this.hub.sessions()
+    sessionList?.catch(() => {})
     if (this._freshStorage && this.historyBeforeNumber == null && !this.is_human) {
       const head = await this.hub.envelopes({ after_envelope_number: Number.MAX_SAFE_INTEGER, limit: 1 }).catch(() => null)
       if (Number.isSafeInteger(head?.last_envelope_number)) { this.historyBeforeNumber = head.last_envelope_number; this._dirty.records.set('sync', this._syncRecord()) }
     }
-    await this.serial(() => this._refreshMembers())
-    if (this.roomRecord.recovery_pending) { delete this.roomRecord.recovery_pending; await this._saveRoom() }   // the hub has the recovery entry
-    await this.serial(() => this._refreshSessions())
+    if (!justJoined) {
+      await this.serial(() => this._refreshMembers())
+      if (this.roomRecord.recovery_pending) { delete this.roomRecord.recovery_pending; await this._saveRoom() }   // the hub has the recovery entry
+      await this.serial(() => this._refreshSessions(sessionList))
+      if (this.roomRecord.reseal_pending?.length && this.is_human && !this._resealing) await this._startReseal(this.roomRecord.reseal_pending).catch(() => {})
+    }
     await this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
-    await this._refreshDevices(await devices).catch(() => {})
+    devices.then(d => d && this._refreshDevices(d)).catch(() => {})
     this._pumpOutbox()
     await this._sendDeviceRegister()
     this._setConnection('catching_up')
@@ -355,9 +367,10 @@ export class Client {
    * The session list names each session's newest grant number: only sessions with a grant this device has not seen are
    * fetched, all of them in one request (GET session_grants), so a reconnect costs one request, not one per session.
    */
-  async _refreshSessions() {
+  async _refreshSessions(prefetched = null) {
+    if (this._resealing) await this._resealing.catch(() => {})
     let list
-    try { list = (await this.hub.sessions()).sessions } catch (e) { if (e.status === 404) return; throw e }
+    try { list = (await (prefetched ?? this.hub.sessions())).sessions } catch (e) { if (e.status === 404) return; throw e }
     const change = M.emptyChange()
     const before = new Set(this.session_ids)
     const todo = []
@@ -1886,6 +1899,33 @@ export class Client {
     await this._refreshSessions()
     await this._resealSessions([...this.sessionKeys.keys()])
   }
+  /** Sessions handed over whole (a new device as the recovery key): into the model, as from storage at a load. */
+  _adoptSessionKeys(entries) {
+    const ch = M.emptyChange()
+    for (const [sid, k] of entries) {
+      this.sessionKeys.set(sid, k)
+      M.applySessionGrant(this.model, k.state, ch, everAgents(k), epochAgents(k))
+    }
+    M.project(this.model, ch)
+    this._emitChange(ch)
+  }
+  /**
+   * A new device's re-seal (room.mjs joinWithRecoveryCode), in the background: the session refresh waits for it, so
+   * the refresh never meets this device's own grants half adopted. Done: roomRecord.reseal_pending is cleared; failed:
+   * it stays and the next start posts it again.
+   */
+  _startReseal(session_ids) {
+    const p = (async () => {
+      const ids = session_ids.filter(sid => this.sessionKeys.get(sid)?.secrets.has(this.sessionKeys.get(sid).state.epoch))
+      if (ids.length) await this._resealSessions(ids)
+      delete this.roomRecord.reseal_pending
+      await this._saveRoom()
+    })()
+    this._resealing = p.finally(() => { if (this._resealing === done) this._resealing = null })
+    const done = this._resealing
+    done.catch(e => this._localAlert('reseal', e))
+    return done
+  }
   /** The same grant as _grantLocked(rotate: false) for each of these sessions, posted together (POST session_grants). */
   async _resealSessions(session_ids) {
     const items = []
@@ -1904,8 +1944,10 @@ export class Client {
   async _healStaleSessions() {
     if (!this.is_human || !G.grantIsStale) return
     for (let round = 0; round < 3; round++) {
-      const stale = [...this.sessionKeys].filter(([, k]) => k.state && G.grantIsStale(k.state, this.state))
+      let stale = [...this.sessionKeys].filter(([, k]) => k.state && G.grantIsStale(k.state, this.state))
       if (!stale.length) return
+      // a new device's re-seal still on its way: after it (its grants are part of the chain this re-key follows)
+      if (this._resealing) { await this._resealing.catch(() => {}); stale = [...this.sessionKeys].filter(([, k]) => k.state && G.grantIsStale(k.state, this.state)); if (!stale.length) return }
       let refused = false
       const items = []
       for (const [sid, k] of stale) {

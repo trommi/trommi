@@ -10,8 +10,8 @@
 //   PUT  /v1/rooms/:room/account/password   human token  { auth_key, key_wrapped, kdf, revision }  (compare-and-swap)
 //   PUT  /v1/rooms/:room/account/recovery   human token  { recovery_auth, recovery_wrapped, revision }
 //   POST /v1/rooms/:room/account/verify     human token  { code }    POST …/account/code: send a new code
-//   POST /v1/accounts/login                 anonymous    { email, auth_key }       -> { room_id, key_wrapped, kdf } | 401 wrong-login
-//   POST /v1/accounts/recover               anonymous    { email, recovery_auth }  -> { room_id, recovery_wrapped } | 401 wrong-recovery
+//   POST /v1/accounts/login                 anonymous    { email, auth_key }       -> { room_id, key_wrapped, kdf, challenge } | 401 wrong-login
+//   POST /v1/accounts/recover               anonymous    { email, recovery_auth }  -> { room_id, recovery_wrapped, challenge } | 401 wrong-recovery
 // Login and recover give one answer for "no such email" and "wrong secret", always after one scrypt (same time),
 // limited per address and per email (failures). Registering never says whether an email is in use elsewhere: an
 // email can be claimed by several rooms until one confirms it, which deletes the other claims. An unconfirmed claim
@@ -102,8 +102,10 @@ export function createAccounts({ db, room, bearer, ipOf, mailer, now = Date.now,
       refuse(401, wrong, 'email or secret is wrong')
     }
     failures.delete(email)
-    return sendJson(res, 200, reply(hit))
+    return sendJson(res, 200, await reply(hit))
   }
+  /** A sign-in challenge of the account's room with the login answer: the new device signs in one round trip sooner. */
+  const challengeOf = async roomId => { try { return Buffer.from((await room(roomId)).hub.challenge()).toString('base64url') } catch { return undefined } }
 
   async function roomRoute(req, res, roomId, sub) {
     const m = req.method
@@ -203,12 +205,12 @@ export function createAccounts({ db, room, bearer, ipOf, mailer, now = Date.now,
       const p = url.pathname
       if (p === '/v1/accounts/login' && req.method === 'POST') {
         await anonymous(req, res, { secretField: 'auth_key', saltCol: 'auth_salt', hashCol: 'auth_hash', wrong: 'wrong-login',
-          reply: r => ({ room_id: r.room_id, key_wrapped: Buffer.from(r.key_wrapped).toString('base64url'), kdf: JSON.parse(r.kdf) }) })
+          reply: async r => ({ room_id: r.room_id, key_wrapped: Buffer.from(r.key_wrapped).toString('base64url'), kdf: JSON.parse(r.kdf), challenge: await challengeOf(r.room_id) }) })
         return true
       }
       if (p === '/v1/accounts/recover' && req.method === 'POST') {
         await anonymous(req, res, { secretField: 'recovery_auth', saltCol: 'recovery_salt', hashCol: 'recovery_hash', wrong: 'wrong-recovery',
-          reply: r => ({ room_id: r.room_id, recovery_wrapped: Buffer.from(r.recovery_wrapped).toString('base64url') }) })
+          reply: async r => ({ room_id: r.room_id, recovery_wrapped: Buffer.from(r.recovery_wrapped).toString('base64url'), challenge: await challengeOf(r.room_id) }) })
         return true
       }
       const m = ROOM_ACCOUNT.exec(p)

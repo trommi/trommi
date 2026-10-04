@@ -58,20 +58,34 @@ export class Hub {
   url(path) { return `${this.hub_url}/v1${path}` }
   roomPath(path = '') { return `/rooms/${checkId('room_id', this.room_id)}${path}` }
 
-  async signIn() {
+  /**
+   * challenge: one the hub handed out already (the login answer carries one; a new device asks for one side by side
+   * with the post that makes it a member), so the sign-in costs one round trip, not two. A refused one is asked anew.
+   */
+  async signIn({ challenge: given = null } = {}) {
     if (this._signing) return this._signing
     this._signing = (async () => {
       if (!this.signer) throw new ZError('unauthorised', 'no signer for this hub client')
-      const { challenge } = await this.request('POST', this.roomPath('/challenge'), { auth: false })
-      const signed = await this.signer(unb64u(challenge))
-      const r = await this.request('POST', this.roomPath('/access_tokens'), { auth: false, body: { signed_challenge: b64u(signed) } })
-      this.token = r.access_token
-      this.token_expires_at = r.expires_at
-      this.signed_in_as = r
-      return r
+      if (given) {
+        const challenge = await Promise.resolve(given).catch(() => null)
+        // a challenge the hub no longer holds (expired, or a restarted hub): ask for a new one
+        if (challenge) { try { return await this._takeToken(challenge) } catch (e) { if (e.status !== 401 && e.status !== 400) throw e } }
+      }
+      return this._takeToken(null)
     })()
     try { return await this._signing } finally { this._signing = null }
   }
+  async _takeToken(challenge) {
+    if (!challenge) ({ challenge } = await this.request('POST', this.roomPath('/challenge'), { auth: false }))
+    const signed = await this.signer(unb64u(challenge))
+    const r = await this.request('POST', this.roomPath('/access_tokens'), { auth: false, body: { signed_challenge: b64u(signed) } })
+    this.token = r.access_token
+    this.token_expires_at = r.expires_at
+    this.signed_in_as = r
+    return r
+  }
+  /** A challenge for a sign-in a moment later (signIn({ challenge })). */
+  challenge() { return this.request('POST', this.roomPath('/challenge'), { auth: false }).then(r => r.challenge) }
 
   async authHeader() {
     if (!this.token || Date.now() > this.token_expires_at - REFRESH_BEFORE_MS) await this.signIn()
@@ -180,7 +194,8 @@ export class Hub {
   postEnvelope(envelope) {
     return this.request('POST', this.roomPath('/envelopes'), { body: { envelope }, headers: this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} })
   }
-  envelopes({ after_envelope_number = 0, limit = 1000 } = {}) { return this.request('GET', this.roomPath('/envelopes'), { query: { after_envelope_number, limit } }) }
+  /** newest: the newest `limit` envelopes after the cursor (a hub without it answers from the cursor on: check the numbers). */
+  envelopes({ after_envelope_number = 0, limit = 1000, newest = false } = {}) { return this.request('GET', this.roomPath('/envelopes'), { query: { after_envelope_number, limit, newest: newest ? 1 : undefined } }) }
   threads({ timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit = 50 }) {
     return this.request('GET', this.roomPath('/threads'), { query: { timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit } })
   }
