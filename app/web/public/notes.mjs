@@ -17,6 +17,9 @@
 import { Controller, avatar, controller, crownSvg, el, html, mq, raw, sk, toast } from './ui.mjs'
 import { addressOf, crownOf, rememberRef, renderStreamMessage, stream, uploadFile } from './app.mjs'
 const STICKY = raw('<svg class="memo-sticky" viewBox="0 0 24 24" aria-hidden="true"><path class="sticky-paper" d="M4.3 4.2 Q12 3.5 19.8 3.9 Q20.3 9.4 20 14.7 L14.8 20.2 Q9.3 20.4 4.1 19.9 Q3.8 12 4.3 4.2 Z"/><path class="sticky-fold" d="M20 14.7 Q17.4 14.5 15.3 14.9 Q14.7 17.4 14.8 20.2"/><path class="sticky-line" d="M7.6 8.6 Q12 8.1 16.3 8.4"/><path class="sticky-line" d="M7.7 12.1 Q10.6 11.7 13.4 12"/></svg>')
+// The round button's place is taken by a hand-drawn sticky note (his word, 4 October: "gezeichnet"): a wobbly ink
+// outline, the yellow a little off it like a print, a few pen lines as if written, its dog-ear.
+const MEMO_NOTE = raw('<svg class="memo-note" viewBox="0 0 52 52" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
 const isImage = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.name ?? '')
 const holds = memo => Boolean(memo.text.trim() || memo.attachments?.length)
 
@@ -71,7 +74,7 @@ function memoOpener(model, base, scope = null) {
   const words = m => m.text.trim().replace(/\s+/g, ' ').slice(0, 120) || (m.attachments?.length ? `${m.attachments.length} attached` : 'Empty note')
   // (A note left floating on a wide screen is listed on a phone too: there it is not out by itself.)
   const line = (m, float) => html`<form method="post" action="${base}/memos/${m.id}/open"${float ? raw(' class="memo-away-float"') : ''}><button class="memo-away-line" type="submit" role="menuitem" data-memo="${m.id}" title="Open the note">${sk('page')}<span>${words(m)}</span></button></form>`
-  return html`<div class="memo-new" id="memo-new"><form method="post" action="${base}/memos">${here}<button class="icon-btn quick-open memo-open memo-open-free" id="memo-open" type="submit" data-action="click->memos#open" aria-haspopup="${n ? 'menu' : 'dialog'}" aria-expanded="false" title="${title}" aria-label="${title}">${STICKY}${phoneN ? html`<b class="memo-count memo-count-phone">${phoneN}</b>` : ''}</button></form>
+  return html`<div class="memo-new" id="memo-new"><form method="post" action="${base}/memos">${here}<button class="icon-btn quick-open memo-open memo-open-free" id="memo-open" type="submit" data-action="click->memos#open" aria-haspopup="${n ? 'menu' : 'dialog'}" aria-expanded="false" title="New note (N)" aria-label="New note">${STICKY}${MEMO_NOTE}${phoneN ? html`<b class="memo-count memo-count-phone">${phoneN}</b>` : ''}</button></form>
 <div class="memo-away" id="memo-away" role="menu" aria-label="Memos that were put away" data-action="turbo:submit-start->memos#shut" hidden><form method="post" action="${base}/memos">${here}<button class="memo-away-line memo-away-new" type="submit" role="menuitem" data-action="click->memos#write">${STICKY}<span>New memo</span></button></form>${put.map(m => line(m, false))}${out(model, scope).filter(m => m.place === 'float').map(m => line(m, true))}</div></div>`
 }
 
@@ -80,7 +83,7 @@ export const memoLayer = (model, base, view, scope = null) => html`<div id="memo
 <div id="memos">${out(model, scope).map(m => memoNote(m, model, base))}</div></div>`
 
 
-/** The memo's forms and its part of the live stream (docs/turbo.md "Registering a page"). Needs hub.memo(body):
+/** The memo's forms and its part of the live stream. Needs hub.memo(body):
  *  what POST /memo does, as { code, text } (server.mjs memoAct). */
 export function register(t) {
   const base = t.BASE
@@ -298,7 +301,7 @@ export function memoStore(client, board) {
 }
 
 // ---- memo ----
-// Memos, the script side (docs/turbo.md "Controllers"): what the two controllers share. The hub renders every note
+// Memos, the script side: what the two controllers share. The hub renders every note
 // that is out and keeps them (state.memos); a note can be made, opened, sent and thrown away without any script
 // (they are forms). Here is what needs one:
 //   - a sent note tears off and flies away; Escape puts a note away (an empty one is gone): it then hangs off the
@@ -410,7 +413,9 @@ function front(note) { for (const other of notes()) other.style.zIndex = other =
  *  step up and to the left. On a card's page it must not lie on what one answers with. */
 function spot() {
   const n = notes().filter(m => m.dataset.place === 'float' && !m.hasAttribute('data-unplaced')).length
-  const at = { x: window.innerWidth - W - 16 - (n % 6) * 22, y: Math.max(64, window.innerHeight - 330 - (n % 6) * 22) }
+  // (a new note comes out of the sidebar's foot, where its button is and where it waits until it is sent)
+  const side = document.getElementById('agents')?.getBoundingClientRect()
+  const at = side && side.width > 120 ? { x: Math.round(side.right + 12 + (n % 6) * 22), y: Math.max(64, window.innerHeight - 300 - (n % 6) * 22) } : { x: window.innerWidth - W - 16 - (n % 6) * 22, y: Math.max(64, window.innerHeight - 330 - (n % 6) * 22) }
   if (!document.body.hasAttribute('data-focus-page')) return at
   const H = 210, vw = window.innerWidth, vh = window.innerHeight
   const taken = [...document.querySelectorAll('.focus-opt, .focus-way, .focus-ask-field, .memo')].map(node => node.getBoundingClientRect()).filter(r => r.width && r.height && r.right > 0 && r.left < vw && r.bottom > 0 && r.top < vh)
@@ -598,7 +603,7 @@ async function putAway(note) {
   if (had) opener()?.focus({ preventScroll: true })
   const out = await act(`${base()}/memos/${id}/stack`, { text: fieldOf(note).value }).catch(() => null)
   if (!out?.ok) return say('Not saved', 'The note could not be put away.')
-  if (kept) say('Memo put away', 'It waits at the yellow memo button.')
+  if (kept) say('Note kept', 'It waits in the sidebar until you send it.')
 }
 /** The words changed. */
 function typed(note) { fit(note); keep(note.dataset.id, { text: fieldOf(note).value }, 350) }
@@ -745,9 +750,14 @@ controller('memos', class extends Controller {
     on(document, 'turbo:before-cache', () => flushAll())
     on(window, 'pagehide', () => flushAll())
     on(window, 'resize', standAll)
-    on(document, 'trommi:memo', () => write())   // the key that writes a new note (ui.mjs keys)
+    on(document, 'trommi:memo', () => { if (!document.getElementById('side-notes')) write() })   // the key that writes a new note (ui.mjs keys); the sidebar's note takes it where it stands
     on(sheet, 'change', standAll)
-    on(document, 'pointerdown', e => { beside(e); if (this.listOpen && !(e.target instanceof Element && e.target.closest('#memo-new'))) showAway(false) })
+    on(document, 'pointerdown', e => {
+      beside(e)
+      if (this.listOpen && !(e.target instanceof Element && e.target.closest('#memo-new'))) showAway(false)
+      // a click beside the notes puts them on the pile (an empty one is gone): his word, 4 October
+      if (!sheet.matches && e.target instanceof Element && !e.target.closest('.memo, #memo-new, .says, [data-stack="notes"]')) for (const n of notes()) if (n.dataset.place === 'float') putAway(n)
+    })
     // Escape closes the list, or puts the note away the keyboard is in (heard at the window, before any table of keys).
     on(window, 'keydown', e => {
       if (e.key !== 'Escape') return
@@ -764,9 +774,10 @@ controller('memos', class extends Controller {
   get listOpen() { const list = document.getElementById('memo-away'); return Boolean(list && !list.hidden) }
   /** The round button: with notes put away it shows them (and "New memo"); with none it makes a note at once. */
   open(e) {
+    // (his word, 4 October: the button always starts a new note; the notes put away are on the NOTES block)
     e.preventDefault()
-    if (!waits().length) return write()
-    showAway(!this.listOpen)
+    showAway(false)
+    write()
   }
   write(e) { e.preventDefault(); showAway(false); write() }
   shut() { showAway(false) }

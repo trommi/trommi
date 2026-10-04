@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style (the old client built it in js/agents.js).
-import { BASE, stream } from './app.mjs'
-import { BELL, Controller, PLUS, avatar, badge, controller, crownSvg, edgeQuirk, handSvg, html, knocksText, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
+import { BELL, Controller, PLUS, avatar, badge, controller, crownSvg, edgeQuirk, html, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -12,7 +12,7 @@ function row(u, base, current) {
   const tip = u.subs ? `Unfold ${a.name}'s ${names.length === 1 ? 'sub' : `${names.length} subs`}: ${names.join(', ')}` : ''
   const lie = u.subs ? (u.subs.length > EDGES ? [...u.subs].sort((x, y) => Boolean(y.blocked) - Boolean(x.blocked)).slice(0, EDGES) : u.subs) : []
   const cls = ['agent-row', u.parent && 'is-sub', (a.main || u.subs) && 'is-main', shown.open || shown.blocked ? 'has-badge' : '', !u.online && 'is-offline', current === u.id && 'is-active'].filter(Boolean).join(' ')
-  return html`<div class="${cls}" id="agent-${a.id}" data-folds-target="row" data-unit="${a.id}" data-members="${a.id}"${u.parent ? html` data-parent="${u.parent.id}" hidden` : ''}${u.subs ? html` data-fold="shut" style="--ghue:${a.hue};--n:${lie.length}" data-controller="lean" data-action="pointermove->lean#follow pointerleave->lean#rest"` : ''}>
+  return html`<div class="${cls}" id="agent-${a.id}" data-folds-target="row" data-unit="${a.id}" data-members="${a.id}"${u.parent ? html` data-parent="${u.parent.id}" style="--hue:${a.hue};--i:${u.parent.subs.indexOf(u)}" hidden` : ''}${u.subs ? html` data-fold="shut" style="--ghue:${a.hue};--n:${lie.length}" data-controller="lean" data-action="pointermove->lean#follow pointerleave->lean#rest"` : ''}>
 <a class="agent-entry" data-nav href="${base}/s/${encodeURIComponent(a.id)}" draggable="false" title="${shown.online && shown.running ? `Working${a.task ? `: ${a.task}` : ''}` : a.task ?? ''}"${current === u.id ? raw(' aria-current="page"') : ''}>${avatar(a, { crown: !u.subs, working: Boolean(shown.online && shown.running) })}<span class="agent-text"><strong>${a.name}</strong>${shown.online && shown.running ? html`<span class="sr-only"> (working)</span>` : ''}</span></a>
 ${u.subs ? html`<button class="crown-fold${a.starred ? '' : ' is-plain'}" type="button" aria-expanded="false" title="${tip}" aria-label="${tip}" data-action="click->folds#toggle" data-folds-id-param="${a.id}">${a.starred ? raw(crownSvg()) : ''}</button>
 <svg class="crown-bracket" aria-hidden="true" data-folds-target="bracket"><path/><path class="crown-bracket-hit" data-action="click->folds#toggle" data-folds-id-param="${a.id}"><title>Fold ${a.name}'s subs</title></path></svg>
@@ -23,14 +23,102 @@ ${badge(u, shown, base)}
 
 const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New agent</span></button></form>`
 
-/** The sidebar's row. Marked as the place in view by the page (body[data-t-view="whiteboard"], whiteboard.css),
- *  so the live stream that renews the sidebar never has to know which page it is on. */
-const whiteboardRow = base => html`<div class="agent-row whiteboard-row" id="whiteboard-row"><a class="agent-entry" data-nav href="${base}/whiteboard" draggable="false" title="Whiteboard: draw, sketch, send a piece to a session (P)"><span class="agent-avatar whiteboard-mark" aria-hidden="true">${raw(sketchSvg('pen'))}</span><span class="agent-text"><strong>Whiteboard</strong></span></a></div>`
+// ---- the note in the sidebar (his word, 4 October: "nur EINE Notiz") ----
+// At the sidebar's foot, a fixed anchor (his word, 4 October: "immer unten links"): one yellow sticky. Folded it shows the note's first line, or "New note" when empty; a click
+// unfolds it upward into a field that grows with the words (Enter: a new line, Ctrl/Cmd+Enter sends), with the crown
+// (send straight to the crown, as the memo did) and the bin. Sent or thrown away, it is "New note" again. It is the
+// desk's newest unsent note (place "stack", no session). Folded rail: the sticky with a dot when it holds words. A
+// phone: a chip that opens it as a sheet.
+const NOTE_ICON = raw('<svg viewBox="0 0 52 52" class="side-note-ico" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
+const BIN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5 7.2 Q12 6.8 19 7.3"/><path d="M9.6 6.9 Q9.8 4.8 12 4.7 Q14.3 4.8 14.4 6.9"/><path d="M6.6 7.6 Q7.4 14 8.2 20.2 Q12 20.6 15.8 20.2 Q16.6 14 17.4 7.6"/></svg>')
+const deskNotesOf = model => (model.state.memos ?? []).filter(m => m.place === 'stack' && !m.held && !m.session && (!m.desk || !model.desk || m.desk === model.desk)).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
+function sideNotes(model, base) {
+  const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
+  const text = note?.text ?? ''
+  const first = text.split('\n')[0].trim()
+  return html`<section class="side-notes${text ? ' has-words' : ''}" id="side-notes" aria-label="Your note" data-controller="side-note" data-side-note-id-value="${note?.id ?? ''}" data-side-note-base-value="${base}">
+<button type="button" class="side-note-head" data-action="side-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="side-note-first">${first || 'New note'}</span></button>
+<div class="side-note-body" hidden><textarea class="side-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->side-note#typed keydown->side-note#key">${text}</textarea>
+<footer class="side-note-foot"><button type="button" class="side-note-bin" data-action="side-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="quick-send memo-send side-note-send" data-action="side-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="side-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
+</section>`
+}
+controller('side-note', class extends Controller {
+  static values = { id: String, base: String }
+  connect() {
+    this.field = this.element.querySelector('.side-note-field')
+    this.guard = e => { if (e.target?.getAttribute?.('target') === 'side-notes' && this.element.classList.contains('is-open')) e.preventDefault() }
+    document.addEventListener('turbo:before-stream-render', this.guard)
+    this.write = () => this.open()
+    document.addEventListener('trommi:memo', this.write)
+  }
+  disconnect() { document.removeEventListener('turbo:before-stream-render', this.guard); document.removeEventListener('trommi:memo', this.write); clearTimeout(this.timer) }
+  async post(path, fields = {}) {
+    const res = await fetch(`${this.baseValue}${path}`, { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields) })
+    const text = await res.text()
+    if (text) renderStreamMessage(text)
+    return res.ok
+  }
+  open() {
+    this.element.classList.add('is-open')
+    this.element.querySelector('.side-note-head').setAttribute('aria-expanded', 'true')
+    this.element.querySelector('.side-note-body').hidden = false
+    this.fit(); this.field.focus(); this.field.setSelectionRange(this.field.value.length, this.field.value.length)
+    this.away = e => { if (!this.element.contains(e.target)) this.close() }
+    setTimeout(() => document.addEventListener('pointerdown', this.away), 0)
+  }
+  close() {
+    document.removeEventListener('pointerdown', this.away)
+    this.element.classList.remove('is-open')
+    this.element.querySelector('.side-note-head').setAttribute('aria-expanded', 'false')
+    this.element.querySelector('.side-note-body').hidden = true
+    const first = this.field.value.trim().split('\n')[0].trim()
+    this.element.querySelector('.side-note-first').textContent = first || 'New note'
+    this.element.classList.toggle('has-words', Boolean(first))
+    this.save(true)
+  }
+  fit() { this.field.style.height = 'auto'; this.field.style.height = `${Math.min(this.field.scrollHeight + 2, 320)}px` }
+  typed() { this.fit(); clearTimeout(this.timer); this.timer = setTimeout(() => this.save(), 600) }
+  key(e) {
+    if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.send() }
+    else if (e.key === 'Escape') { e.preventDefault(); this.close() }
+  }
+  // The words are kept as they stand: a note of place "stack" (made the first time there are words, gone when empty).
+  async save(now = false) {
+    clearTimeout(this.timer)
+    const text = this.field.value
+    if (this.saving) { this.again = true; return }
+    this.saving = true
+    try {
+      if (!this.idValue) {
+        if (!text.trim()) return
+        await this.post('/memos', { place: 'stack', text })
+        const made = deskNotesOf(window.trommi?.model?.() ?? { state: {} })[0]
+        if (made) this.idValue = made.id
+      } else await this.post(`/memos/${this.idValue}/stack`, { text })
+      if (!text.trim()) this.idValue = ''
+    } finally { this.saving = false; if (this.again) { this.again = false; this.save() } }
+  }
+  async send() {
+    const text = this.field.value
+    if (!text.trim()) return this.field.focus()
+    if (!this.idValue) { await this.save(); if (!this.idValue) return }
+    const id = this.idValue
+    this.idValue = ''; this.field.value = ''
+    this.close()
+    await this.post(`/memos/${id}/send`, { text })
+  }
+  async bin() {
+    const id = this.idValue, text = this.field.value
+    this.idValue = ''; this.field.value = ''
+    this.close()
+    if (id) await this.post(`/memos/${id}/bin`, { text })
+  }
+})
 
-/** The rows of #agents: the Whiteboard first (a place, not a session), then the sessions. current: the session in view, if any. */
+/** The rows of #agents: the sessions (the Scribble Board is the back of the Desk: its page corner). current: the session in view, if any. */
 export function sidebarRows(model, base, current = null) {
   const { here, away } = sidebarParts(model, base, current)
-  return html`${whiteboardRow(base)}${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}`
+  return html`${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}${sideNotes(model, base)}`
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
  *  shape says their order, so that a change within one row replaces that row only (turbo.mjs). */
@@ -42,22 +130,13 @@ function sidebarParts(model, base, current = null) {
   return { here, away, shape: `${here.map(r => r[0]).join(' ')}|${away.map(r => r[0]).join(' ')}` }
 }
 
-/** What stands in the Desk box beside "Desk" (#desk-state): small and quiet, the count with an arrow, the way into the
- *  walk ("Next"); ringed in the knock's colour when something knocks. A small red hand before it when a session is
- *  stopped (blocked), leading to that session (to Agents when several are). Nothing when nothing waits and nobody is
- *  stopped. (No working ring here: the sidebar's rows show who works.) */
-function deskState(model, base = '') {
-  const fresh = model.fresh.length, knocking = model.knocking
-  const stopped = model.units.filter(u => u.blocked)
-  const hand = stopped.length ? stoppedHand(stopped, base) : ''
-  if (!fresh) return hand
-  const tip = `Next: walk through the ${fresh === 1 ? 'card' : `${fresh} cards`}${knocking ? ` (${knocksText(knocking)})` : ''}`
-  return html`${hand}<a class="desk-next${knocking ? ' is-knock' : ''}" data-nav href="${base}/walk" title="${tip}" aria-label="${tip}"><b class="desk-next-n">${fresh}</b>${raw(sketchSvg('go'))}</a>`
-}
-function stoppedHand(stopped, base) {
-  const tip = `Stopped: ${stopped.map(u => `${u.agent.name} (${u.blocked.text})`).join(', ')}`
-  const to = stopped.length === 1 ? `${base}/s/${encodeURIComponent(stopped[0].id)}` : `${base}/agents`
-  return html`<a class="desk-blocked" data-nav href="${to}" title="${tip}" aria-label="${tip}">${raw(handSvg())}</a>`
+/** The Desk box's drawing (#desk-lamp, kept current by the live stream): the desk with its lamp lit while something
+ *  waits on it (open questions of this desk's sessions), dark when it is clear. No count and no hand beside it (his word,
+ *  4 October): what waits is on the Desk, a stopped session shows its hand in its own row. */
+function deskLamp(model) {
+  const desks = model.state.desks?.length ? model.state.desks : [{ id: DEFAULT_DESK }]
+  const here = c => { const d = model.byAgent.get(c.agent)?.desk; return (desks.some(x => x.id === d) ? d : desks[0].id) === (model.desk ?? desks[0].id) }
+  return deskMark(model.fresh.some(here))   // (a knock of another desk stands on this one too, but lights its own lamp)
 }
 
 const $ = (sel, root = document) => root.querySelector(sel)
@@ -142,19 +221,25 @@ const LEAVE = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" st
 const NEW_DESK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true" style="rotate:3deg"><path d="M12.2 5.2Q11.8 12 12 18.8"/><path d="M5.3 12.3Q12 11.7 18.7 12.1"/></svg>')
 // The lamp switched on, drawn under the desk's lines: the shade glowing, a soft cone of light down onto the top, three short rays.
 const LIGHT = '<g class="lamp-light"><path class="lamp-glow" d="M14.9 2.4Q11.7 3.7 10.7 4.7Q9.6 5.7 9 6.6Q8.5 7.4 9 7.6Q9.5 7.9 12.4 7Q15.2 6.1 15.6 6.1Q15.9 6.1 15.8 4.7Q15.7 3.4 14.9 2.4Z"/><path class="lamp-cone" d="M9.2 7.9Q12.4 7.1 15.6 6.3L17.3 11.9Q12 12.1 6.4 12.2Z"/><path d="M7.6 9Q5.9 10.1 4.3 11.2"/><path d="M7.1 7.2Q5.3 7.3 3.5 7.5"/><path d="M7.9 5Q6.4 4.2 4.9 3.5"/></g>'
-/** The desk drawing of the menu's desk rows and the Desk box's switcher (layout.mjs); the desk in view has its lamp on. */
+/** The desk drawing of the menu's desk rows and the Desk box: its lamp lit while something waits on that desk. */
 const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(/(<svg[^>]*>)/, `$1${LIGHT}`) : sketchSvg('desk', 'menu-lamp'))
 
-/** The menu: <nav id="brand-doors">, hidden until the pill is pressed (or Ctrl K). For the layout's topbar, in place of its own <nav>.
- *  Three calm groups: the desks, each a row with the desk drawing (the one in view has its lamp on), the Demo as one more
- *  desk, and a quiet "New desk" (a line to name it, Enter makes it: menu_controller.js); places (Agents & devices,
- *  Help, Keys); this device (Push, Log out, and the theme as a small sun/moon beside Log out). The connection is not
- *  said here: a lost one is a dot on the pill (app.mjs). */
-function menuDoors(model, base) {
+/** The desk rows of the menu (#menu-desk-rows, kept current by the live stream): the desk in view checked (the marked
+ *  row); a desk's lamp is lit while something waits on it. */
+function menuDeskRows(model, base) {
   const desks = desksOf(model)
-  const lit = d => (model.desk ? d.id === model.desk : d === desks[0])
+  const here = d => (model.desk ? d.id === model.desk : d === desks[0])
+  return html`<span class="menu-desk-rows" id="menu-desk-rows">${desks.map((d, i) => html`<a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b><i${d.knocks && i ? raw(' class="is-knock"') : ''}>${d.open} open</i>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a>`)}</span>`
+}
+
+/** The menu: <nav id="brand-doors">, hidden until the pill or the Desk box's caret is pressed (or Ctrl K).
+ *  Three calm groups: the desks, each a row with the desk drawing (lamp lit while something waits there; the desk in
+ *  view is the marked row), the Demo as one more desk, and a quiet "New desk" (a line to name it, Enter makes it);
+ *  places (Agents & devices, Help, Keys); this device (Push, Log out, and the theme as a small sun/moon beside Log out).
+ *  The connection is not said here: a lost one is a dot on the pill (app.mjs). */
+function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" hidden>
-<div class="menu-desks" id="menu-desks">${desks.map((d, i) => html`<a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(lit(d))}">${deskMark(lit(d))}<b>${d.name}</b><i${d.knocks && i ? raw(' class="is-knock"') : ''}>${d.open} open</i>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a>`)}
+<div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
 <a role="menuitem" class="menu-desk is-demo" href="${base}/?mock=1" data-turbo="false" draggable="false" id="dev-mock" title="The demo: a made-up room, nothing is kept">${deskMark(false)}<b>Demo</b><i>sample room</i></a>
 <button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
@@ -168,20 +253,11 @@ function menuDoors(model, base) {
 // ---- the frame's top: the floating Desk with the desk switcher and the Trommi menu; the rail's fold ----
 export const RAIL_FOLD = raw(`<button type="button" class="rail-fold" data-controller="rail" data-action="click->rail#toggle pointerover@document->rail#tip focusin@document->rail#tip focusout@document->rail#untip turbo:before-cache@document->rail#untip" title="Fold the sidebar to a rail ( [ )" aria-label="Fold the sidebar to a rail ( [ )" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5.3 4.4Q4.8 11.6 5.4 19.7"/><path d="M15.1 6.1Q12.2 9.2 9.1 12.1Q12.1 14.7 14.8 18"/></svg></button>`)
 
-const CARET = raw('<svg class="desk-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 9.4Q9.4 12.2 12.1 15Q14.9 12.1 17.6 9.2"/></svg>')
 /** How big the desk's name may stand in the Desk box: s (as "Desk"), m (a little smaller), l (two smaller lines). */
 const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
-/** The desk switcher (his pick e of five, "Zeichnung als Umschalter"): the desk drawing with its lamp on is a button; a caret
- *  and the desk's number key under the lamp (the drawing of the menu's desk rows). It opens the Trommi menu at its desk list (application.mjs); 1-9 switch. */
-function deskSwitch(model) {
-  const at = (model.desks ?? []).findIndex(d => d.id === model.desk)
-  const key = model.desks?.length > 1 && at >= 0 && at < 9 ? html`<kbd>${at + 1}</kbd>` : ''
-  return html`<button type="button" class="desk-switch" id="desk-switch" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" title="Switch desk${model.desks?.length > 1 ? ' (1-9)' : ''}" aria-label="Switch desk (now: ${model.deskName})">${deskMark(true)}<span class="desk-switch-hint">${CARET}${key}</span></button>`
-}
-
 export function topbar(model, base, current, view = '') {
     return html`<header class="topbar"><div class="brand">
-<h1 class="deskpill">${deskSwitch(model)}<a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}>${deskMark(true)}${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a><span class="desk-state" id="desk-state">${deskState(model, base)}</span>
+<h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}><span class="desk-lamp" id="desk-lamp">${deskLamp(model)}</span>${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a>
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark pill-mark"'))}<b class="pill-word">Trommi</b><span class="conn pill-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
 </div>
@@ -215,7 +291,7 @@ controller('menu', class extends Controller {
     // A refresh of the page (the live stream's "refresh" morphs it) must not shut the menu, the desk line or Dev under the hand.
     this.keep = e => {
       const t = e.target, name = e.detail?.attributeName
-      if ((t === this.element && name === 'hidden') || ((t.id === 'brand-menu' || t.id === 'desk-switch') && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden')) e.preventDefault()
+      if ((t === this.element && name === 'hidden') || (t.id === 'brand-menu' && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden')) e.preventDefault()
     }
     document.addEventListener('turbo:before-morph-attribute', this.keep)
     this.away = e => { if (!this.element.hidden && e.target instanceof Element && !e.target.closest('.brand')) this.close() }
@@ -237,7 +313,6 @@ controller('menu', class extends Controller {
   close() {
     this.element.hidden = true
     this.opener?.setAttribute('aria-expanded', 'false')
-    document.getElementById('desk-switch')?.setAttribute('aria-expanded', 'false')
     delete this.element.dataset.from
   }
 
@@ -386,23 +461,12 @@ controller('lean', class extends Controller {
 export function register(t) {
   const { BASE, stream } = t
   // The Trommi menu opens and closes (the pill, the desk drawing, a click beside it, Escape); the theme switch.
-  const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false'); $('#desk-switch')?.setAttribute('aria-expanded', 'false'); delete doors.dataset.from } }
+  const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false'); delete doors.dataset.from } }
   document.addEventListener('click', e => {
     const t = e.target instanceof Element ? e.target : null
     if (!t) return
     const menu = t.closest('#brand-menu'), doors = $('#brand-doors')
-    if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); $('#desk-switch')?.setAttribute('aria-expanded', 'false'); return }
-    // The desk drawing (the desk switcher): the same menu, the keyboard on the desk in view in its desk list.
-    const desk = t.closest('#desk-switch')
-    if (desk && doors) {
-      if (!doors.hidden && desk.getAttribute('aria-expanded') === 'true') return shut()
-      doors.dataset.from = 'desk'   // under the drawing (app.css), not under the pill
-      doors.hidden = false
-      $('#brand-menu')?.setAttribute('aria-expanded', 'true'); desk.setAttribute('aria-expanded', 'true')
-      const row = doors.querySelector('.menu-desk[aria-checked="true"]') ?? doors.querySelector('.menu-desk')
-      row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: 'nearest' })
-      return
-    }
+    if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
     if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
     if (t.closest('#theme-toggle')) {
       const dark = document.documentElement.dataset.theme !== 'dark'
@@ -412,8 +476,8 @@ export function register(t) {
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') shut() })
   t.live('', {
-    take: m => ({ sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), pill: deskState(m, BASE) }),
-    diff: (was, now) => `${t.differs(was.pill, now.pill) ? stream('update', 'desk-state', now.pill) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), desks: menuDeskRows(m, BASE), notes: sideNotes(m, BASE) }),
+    diff: (was, now) => `${t.differs(was.notes, now.notes) ? stream('replace', 'side-notes', now.notes) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })

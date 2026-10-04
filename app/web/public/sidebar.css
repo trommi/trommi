@@ -243,8 +243,6 @@ button.agent-badge:active { scale: .95; }
   [data-rail="folded"] .topbar .desk-go { flex-direction: column; justify-content: center; gap: 5px; padding: 0; border-radius: 14px; }
   [data-rail="folded"] .topbar .desk-go > .sketch { margin: 0; width: 26px; height: 26px; }
   [data-rail="folded"] .topbar .desk-name { display: none; }
-  [data-rail="folded"] .topbar .desk-state { flex: none; margin: 0; justify-content: center; }
-  [data-rail="folded"] .topbar .desk-state:empty { display: none; }
   [data-rail="folded"] #agents { padding-inline: 6px; }
   [data-rail="folded"] #agents::before { height: 80px !important; margin-inline: -6px; }
   [data-rail="folded"] .agent-row { justify-content: center; }
@@ -269,7 +267,6 @@ button.agent-badge:active { scale: .95; }
   .topbar .desk-go:hover { background: none; }
   .topbar .desk-go .brand-mark { display: none; }
   .topbar .desk-go > .sketch { flex: none; width: 28px; height: 28px; margin: 0 15px 0 9px; stroke-width: 1.6; }
-  .topbar .desk-state { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; margin-left: 7px; }
   .topbar .brand-open { align-self: stretch; width: 32px; min-width: 32px; margin-left: 0; padding: 0; justify-content: center; border-radius: 0 14px 14px 0; box-shadow: -1px 0 0 var(--line); cursor: pointer; }
   .topbar .brand-open .brand-fold { margin-left: 0; } /* the band ends where the Desk box ends (8 + 56) */
   :root[data-rail="folded"] { --side: 76px; }
@@ -315,8 +312,6 @@ button.agent-badge:active { scale: .95; }
 .deskpill { display: flex; align-items: center; gap: 2px; }
 .desk-go { display: inline-flex; align-items: center; gap: 8px; min-height: 28px; padding: 0 8px 0 4px; border: 0; border-radius: var(--r-pill); background: none; color: inherit; font: inherit; letter-spacing: inherit; white-space: nowrap; cursor: pointer; }
 .desk-go:hover { background: var(--sunken); }
-.desk-state { display: inline-flex; align-items: center; gap: 8px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: 0; }
-.desk-state:empty { display: none; }
 .menu-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1px; padding-block: 4px; border-top: 1px solid var(--line); }
 .topbar .sidedoors .menu-grid :is(a, button, #keys-open) { min-height: 36px; gap: 10px; padding: 0 12px; font-size: var(--t-sm); }
 .topbar .sidedoors .sketch { width: 17px; height: 17px; }
@@ -395,7 +390,7 @@ button.agent-badge:active { scale: .95; }
   .topbar #brand-doors :is(a, button):not(.menu-foot *), .topbar #brand-doors .menu-foot button { min-height: 44px; width: 100%; }
 }
 
-/* ══ Phone polish (docs/qa-phone-design.md): found by measuring every state at 360, 390 and 430px. ══ */
+/* ══ Phone polish: found by measuring every state at 360, 390 and 430px. ══ */
 @media (max-width: 860px) {
   /* The bar: the pad and the memo are placed from the right edge, outside the flow, so the Desk box could
      run under them (its menu arrow lay 12px under the pad). The box now ends before them. When the counts
@@ -405,8 +400,6 @@ button.agent-badge:active { scale: .95; }
   .topbar .deskpill { min-width: 0; gap: 0; }
   .topbar .desk-go { flex: 0 1 auto; min-width: 0; gap: 5px; padding-right: 2px; }
   .topbar .desk-go .brand-mark, .topbar .desk-name { flex: none; }
-  .topbar .desk-state { flex: 0 1 auto; min-width: 0; flex-wrap: wrap; align-content: flex-start; gap: 0 4px; height: 24px; overflow: hidden; }
-  .topbar .desk-state > * { height: 24px; }
   .topbar .brand-open { flex: none; }
   /* Tight (a 360px phone, or a two-digit knock count at 390px; js/bar.js sets data-tight, card Nr. 158): the
      Agents button leaves the bar first and the counts keep their room. Agents stays an entry of the Desk menu. */
@@ -428,44 +421,34 @@ button.agent-badge:active { scale: .95; }
   .topbar .sidedoors .menu-desk i { flex: none; white-space: nowrap; }
 }
 
-/* ---- The desk switcher (his pick e of five, "Zeichnung als Umschalter"): the Desk box shows the desk's own name in the
-   big type; the desk drawing before it, its lamp on (sidebar.mjs deskMark, trommi.css), is a button with a caret and the desk's number key under the lamp:
-   it opens the Trommi menu at its desk list (layout.mjs deskSwitch, application.mjs). The counts stand in the flow at
-   the right, the name takes what is left: a longer name steps down, a long one takes two lines. ---- */
-.desk-switch { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3px 3px 2px; border: 0; border-radius: 9px; background: none; color: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
-.desk-switch:hover, .desk-switch[aria-expanded="true"] { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-strong); }
-.desk-switch > .sketch { display: block; width: 24px; height: 24px; margin: 0; stroke-width: 1.6; overflow: visible; }
-.desk-switch-hint { display: flex; align-items: center; gap: 1px; margin-top: -1px; color: var(--muted); }
-.desk-switch .desk-caret { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.desk-switch kbd { min-width: 11px; height: 12px; display: grid; place-items: center; padding: 0 2px; border-radius: 3px; font: 600 .55rem/1 var(--font); letter-spacing: 0; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong), inset 0 -1px 0 var(--line-strong); }
+/* ---- The Desk box (his word: "klassisch ganz rechts Dropdown"; sidebar.mjs topbar): the desk drawing, its lamp lit while
+   something waits on this desk (deskLamp, kept current by the live stream), the desk's own name in the big type (the way
+   to the Desk; a longer name steps down, a long one takes two lines), and at the far right a caret that opens the Trommi
+   menu at its desk list, under the box. No count, no hand beside it. ---- */
+.desk-lamp { flex: none; display: grid; }
+.desk-lamp > .sketch { display: block; overflow: visible; }
 html body .topbar .deskpill .desk-go > .sketch { display: none; }
 .topbar .deskpill .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 @media (min-width: 861px) {
-  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-switch { margin: 2px 9px 0 10px; }
-  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-go { padding-left: 0; padding-right: 0; }
-  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-state { position: static; translate: none; flex: none; margin: 0 9px 0 4px; }
-  .topbar .desk-name[data-size="m"] { font-size: 1.3rem; }
-  .topbar .desk-name[data-size="l"] { font-size: .86rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.03em; }
-  /* the rail: the drawing alone again, the way to the Desk */
-  [data-rail="folded"] .topbar .deskpill > .desk-switch { display: none; }
-  html[data-rail="folded"] body .topbar .deskpill .desk-go > .sketch { display: block; }
+  .topbar .deskpill > .desk-go { flex: 1; min-width: 0; padding: 0 8px 0 0; }
+  .topbar .desk-go .desk-lamp > .sketch { width: 28px; height: 28px; margin: 0 13px 0 15px; stroke-width: 1.6; }
+  .topbar .desk-name[data-size="m"] { font-size: 1.45rem; }
+  .topbar .desk-name[data-size="l"] { font-size: .98rem; line-height: 1.05; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
+  /* the rail: the drawing alone, the way to the Desk */
+  [data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 26px; height: 26px; }
 }
 @media (max-width: 860px) {
-  /* the drawing is the tap target (44px); the bell leaves the Desk box (it stands in the menu's pill) */
-  .topbar .deskpill > .desk-switch { width: 44px; height: 44px; margin: 0 6px 0 -6px; padding: 2px 0 1px; box-shadow: none; }
-  .topbar .desk-switch > .sketch { width: 24px; height: 24px; }
+  /* the drawing in place of the bell; the menu's own caret (#brand-menu, 44px, the same menu with the desks first)
+     stands at the right of the name, so the box has one caret, not two */
   html body .topbar .deskpill .desk-go .brand-mark { display: none; }
-  /* the name before the counts, which give way first (they leave whole, as before); the box ends 90px from the right */
+  .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin-right: 8px; stroke-width: 1.6; }
+  .topbar .deskpill > .brand-open { min-width: 44px; min-height: 44px; }
   .topbar .brand { max-width: calc(100% - 90px); }
-  .topbar .deskpill > .desk-go { flex: 0 1 auto; }
-  .topbar .deskpill > .desk-state { flex: 0 1000 auto; min-width: 30px; }
+  .topbar .deskpill > .desk-go { flex: 0 1 auto; min-width: 0; }
   .topbar .deskpill .desk-name { flex: 0 1 auto; text-align: left; }
-  .topbar .desk-name[data-size="l"] { max-width: 6.6rem; font-size: .84rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
+  .topbar .desk-name[data-size="l"] { max-width: 9rem; font-size: .9rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
 }
-/* opened from the drawing, the menu stands under it (the same menu as the pill's) */
-@media (min-width: 861px) {
-  html .topbar #brand-doors[data-from="desk"] { left: 8px; right: auto; top: 70px; margin-inline: 0; }
-}/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
+/* Main agents and their subs in the sidebar (card Nr. 160, "Stapel + Klammer").
    One crown per desk (card Nr. 172): only the session the human gave it to wears it; a main without it keeps its
    stack and bracket. Folded, its subs lie as coloured card edges behind its row; unfolded, they stand
    indented under it, held by a bracket drawn in the main's colour. The rows stay flat children of #agents
@@ -570,7 +553,7 @@ body.is-pairing .crown-fold { visibility: hidden; }
   html .topbar .desk-go .brand-mark { display: block; width: 22px; height: 22px; margin: 0; stroke-width: 1.9; }
   html .topbar .desk-go > .sketch { display: none; }
 }
-/* A session in the sidebar is carried by a held finger (js/agents.js): no link preview comes up under it. */
+/* A session in the sidebar is carried by a held finger: no link preview comes up under it. */
 a.agent-entry { -webkit-touch-callout: none; }
 
 /* The state ring as a link (its walk has an address): what app.css says for button.agent-badge. */
@@ -603,20 +586,7 @@ a.agent-badge { text-decoration: none; }
 /* The bracket round an unfolded main's subs is drawn inside the main's row (ui.mjs folds). */
 .agent-row.is-main[data-fold] { position: relative; }
 
-/* The Desk box: beside "Desk", small and quiet, the count with an arrow: the way into the walk (sidebar.mjs deskState). */
 .deskpill { position: relative; }
-.desk-state:empty { display: none; }
-.desk-next { display: inline-flex; align-items: center; gap: 2px; height: 26px; padding: 0 4px 0 2px; border-radius: 999px; color: var(--muted); text-decoration: none; white-space: nowrap; }
-.desk-next:hover { color: var(--fg); background: var(--sunken); }
-.desk-next-n { min-width: 22px; height: 22px; padding: 0 5px; box-sizing: border-box; display: grid; place-items: center; border-radius: 11px; box-shadow: inset 0 0 0 1.5px var(--line-strong); color: var(--fg); font: 700 .74rem/1 var(--font); }
-.desk-next.is-knock .desk-next-n { box-shadow: inset 0 0 0 2px var(--urg-high); color: var(--urg-high); }
-.desk-next .sketch { width: 15px; height: 15px; stroke-width: 2; }
-@media (min-width: 861px) {
-  .topbar .desk-state { position: absolute; right: 12px; top: 50%; translate: 0 -50%; z-index: 2; }
-}
-@media (max-width: 860px) {
-  .topbar .desk-state { position: static; display: flex; align-items: center; margin: 0 2px 0 4px; translate: none; }
-}
 .topbar #brand-doors button.menu-desk-add { width: 30px; min-height: 30px; padding: 0; justify-content: center; border-radius: 8px; color: var(--muted); }
 .topbar #brand-doors button.menu-desk-add svg { width: 18px; height: 18px; }
 .topbar #brand-doors .menu-desk-form[hidden] { display: none; }
@@ -629,27 +599,24 @@ a.agent-badge { text-decoration: none; }
 .brand-open .pill-conn[data-state="offline"] { display: inline-block; width: 8px; height: 8px; margin: 0 2px 0 4px; padding: 0; border: 0; border-radius: 50%; background: var(--urg-critical); }
 .brand-open .pill-conn i, .brand-open .pill-conn::after, .brand-open .pill-conn i::after { display: none; }
 .brand-open .pill-conn #conn-text { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.desk-blocked { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-right: 2px; border-radius: 50%; text-decoration: none; }
-.desk-blocked { position: relative; }
-.desk-blocked:hover { background: var(--urg-critical-soft); }
-/* In the folded rail the Desk box has no room for it: the session's own row shows the hand there. */
-@media (min-width: 861px) { [data-rail="folded"] .topbar .desk-blocked { display: none; }
-}/* "Push on this device" in the menu behind the logo (js/push.js): the switch, what it may say, and one line of help. */
+/* "Push on this device" in the menu behind the logo: the switch, what it may say, and one line of help. */
 .push-row::after { content: "Off"; margin-left: auto; font: 500 var(--t-xs, 12px)/1 var(--font, inherit); color: var(--muted, #777); }
 .push-row[aria-checked="true"]::after { content: "On"; color: var(--accent, #1b6a57); }
 .push-row[aria-busy="true"]::after { content: "…"; }
 .push-note { margin: 2px 12px 6px; font: 400 var(--t-xs, 12px)/1.4 var(--font, inherit); color: var(--muted, #777); max-width: 34ch; }
 .push-note:empty { display: none; }/* The app's own few rules outside the areas (the room screens are in auth.css). */
-/* The Trommi menu (sidebar.mjs): the desks without a heading, each with the desk drawing; the one in view has its
-   lamp on (a warm cone and three rays) instead of a tick. "New desk" is a quiet line under them; the theme sits beside Log out. */
-.topbar { --lamp: #e2a21b; }   /* the menu's rows and the Desk box's switcher (app.css) */
+/* The Trommi menu (sidebar.mjs): the desks without a heading, each with the desk drawing, its lamp on (a warm cone and
+   three rays) while something waits on that desk; the desk in view is the marked row. "New desk" is a quiet line under them; the theme sits beside Log out. */
+.topbar { --lamp: #e2a21b; }   /* the menu's rows and the Desk box's drawing */
 :root[data-theme="dark"] .topbar { --lamp: #f2bd4a; }
 .topbar #brand-doors .menu-desks { margin-top: 0; padding-top: 0; }
 .topbar #brand-doors .menu-desk[aria-checked]::after { content: none; }
 .topbar #brand-doors .menu-desk { gap: 10px; }
 .topbar #brand-doors .menu-desk .sketch.menu-lamp { width: 24px; height: 24px; stroke-width: 1.7; color: var(--muted); overflow: visible; }
 .topbar #brand-doors .menu-desk .sketch.menu-lamp.is-lit { color: var(--fg); }
+.topbar #brand-doors .menu-desk[aria-checked="true"] { background: var(--sunken); }
 .topbar #brand-doors .menu-desk[aria-checked="true"] b { font-weight: 700; }
+.topbar #brand-doors .menu-desk-rows { display: contents; }
 .menu-lamp .lamp-light { stroke: var(--lamp); stroke-width: 2; stroke-linecap: round; fill: none; }
 .menu-lamp .lamp-light :is(.lamp-glow, .lamp-cone) { fill: var(--lamp); stroke: none; }
 .menu-lamp .lamp-glow { fill-opacity: .85; }
@@ -663,4 +630,105 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors:focus { outline: 0; }
 .topbar #brand-doors .menu-leave button.menu-theme { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-radius: 9px; }
 @media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
+}
+
+/* ---- The Desk as one flat line (his word, 4 October: "nicht so erhaben, ein einzeiliges Element"; his pick a): the desk
+   drawing with its lamp, the name in the rows' type, the chevron, the Sketchpad's pen at the right end; a hairline
+   under it. No card, no shadow. ---- */
+.desk-pad { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: var(--accent); text-decoration: none; }
+.desk-pad .sketch { width: 22px; height: 22px; }
+.desk-pad:hover, .desk-pad[aria-current] { background: var(--sunken); }
+@media (min-width: 861px) {
+  .topbar { height: 48px; top: 8px; left: 8px; width: 240px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
+  #agents::before { height: 64px; }
+  .topbar .deskpill { height: 100%; gap: 2px; padding-right: 4px; }
+  .topbar .deskpill > .desk-go { padding: 0 6px 0 0; border-radius: 8px; }
+  .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin: 0 12px 0 10px; }
+  .topbar .deskpill .desk-name, .topbar .desk-name[data-size="m"], .topbar .desk-name[data-size="l"] { font: 700 var(--t-md)/1.2 var(--font); letter-spacing: 0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none; -webkit-line-clamp: unset; }
+  [data-rail="folded"] .topbar { width: 60px; height: 48px; }
+  [data-rail="folded"] .topbar .desk-pad { display: none; }
+}
+@media (max-width: 860px) { .topbar .deskpill > .desk-pad { margin-left: 2px; } }
+@media (min-width: 861px) { html body .topbar { box-shadow: 0 1px 0 var(--line) !important; } }
+@media (max-width: 860px) { .topbar .deskpill > .brand-open { order: 1; } .topbar .deskpill > .desk-pad { order: 2; } }
+/* the Desk row says the desk's own name; switching desks is in the Trommi menu (his word, 4 October) */
+@media (min-width: 861px) { .topbar .deskpill > .desk-go { padding-right: 12px; } }
+/* the folded rail: the desk's drawing alone, centred like the sessions' drawings; its name in the tooltip */
+@media (min-width: 861px) {
+  html[data-rail="folded"] .topbar .deskpill .desk-name { display: none !important; }
+  html[data-rail="folded"] .topbar { width: 60px; box-shadow: none !important; }
+  html[data-rail="folded"] .topbar .deskpill { justify-content: center; padding: 0; }
+  html[data-rail="folded"] .topbar .deskpill > .desk-go { flex: none; width: 60px; padding: 0; justify-content: center; align-items: center; }
+  html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 28px; height: 28px; }
+}
+
+/* ---- Test ?subcards=1 (his word, 4 October): a main's subs as small cards like the main's, each outlined in its own
+   colour (the coloured edges of the folded stack), a little indented and overlapping like a deck spread out; no
+   bracket line. The deck spreads when it unfolds. Wide screens only. ---- */
+@media (min-width: 861px) {
+  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-main[data-fold="open"] .crown-bracket { display: none; }
+  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub { position: relative; margin: -6px 6px 0 18px !important; z-index: calc(20 - var(--i, 0)); }
+  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-main[data-fold="open"] + .agent-row.is-sub { margin-top: -4px !important; }
+  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub .agent-entry { min-height: 40px; background: var(--surface); border-radius: 10px; box-shadow: 0 0 0 1.4px hsl(var(--hue) 45% 55%), 0 2px 4px -2px rgb(20 30 25 / .25); rotate: calc((var(--i, 0) - 1) * .5deg); }
+  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub .agent-entry:hover { background: color-mix(in srgb, var(--surface) 70%, var(--sunken)); }
+  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub.is-last { margin-bottom: 10px !important; }
+  :root[data-subcards] .agent-row.is-sub.is-unfolding { animation: subcard-in 320ms cubic-bezier(.2, .8, .3, 1) backwards; animation-delay: calc(var(--i, 0) * 40ms); }
+}
+@keyframes subcard-in { from { opacity: 0; translate: 0 calc(-24px - var(--i, 0) * 30px); rotate: 0deg; } }
+@media (prefers-reduced-motion: reduce) { :root[data-subcards] .agent-row.is-sub.is-unfolding { animation: none; } }
+
+/* ---- The note in the sidebar (sidebar.mjs sideNotes): one yellow sticky pinned at the sidebar's foot, above the fold button; folded its first line,
+   unfolded a field that grows, the bin and the crown ---- */
+.side-notes { margin: auto 0 0; padding: 12px 0 52px; position: sticky; bottom: 0; background: var(--bg); }
+.side-note-head { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: 40px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: 500 var(--t-md)/1.2 var(--font); text-align: left; cursor: pointer; }
+.side-note-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); color: var(--fg); }
+.side-note-first { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.side-notes.has-words .side-note-head { color: #3b300d; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .25), 0 1px 2px rgb(20 30 25 / .15); border-radius: 2px; rotate: -.6deg; }
+.side-notes.has-words .side-note-head:hover { background: #fae58a; }
+.side-note-ico { flex: none; width: 34px; height: 22px; overflow: visible; }
+.side-note-ico .note-fill { fill: #f5d64a; } .side-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .side-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; opacity: .8; }
+.side-notes.has-words .side-note-ico { width: 22px; }
+.side-notes.is-open .side-note-head { display: none; }
+.side-note-body[hidden] { display: none; }
+.side-note-body { display: grid; gap: 4px; padding: 10px 10px 6px; border-radius: 2px; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
+.side-note-field { width: 100%; min-height: 64px; resize: none; padding: 2px; border: 0; background: none; color: #2d2406; font: 500 var(--t-sm)/1.45 var(--font); outline: none; }
+.side-note-foot { display: flex; align-items: center; gap: 4px; }
+.side-note-foot > i { flex: 1; }
+.side-note-bin { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
+.side-note-bin .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.side-note-bin:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
+.side-notes .side-note-send { position: relative; width: 58px; height: 40px; }
+.side-note-nocrown { font-size: var(--t-xs); color: #6a5d24; }
+:root[data-theme="dark"] :is(.side-notes.has-words .side-note-head, .side-note-body) { background: #d9c35f; }
+@media (min-width: 861px) {
+  html[data-rail="folded"] .side-notes { display: flex; justify-content: center; }
+  html[data-rail="folded"] .side-note-head { position: relative; width: 48px; justify-content: center; padding: 6px 0; background: none !important; box-shadow: none !important; rotate: none; }
+  html[data-rail="folded"] .side-note-first { display: none; }
+  html[data-rail="folded"] .side-notes.has-words .side-note-head::after { content: ""; position: absolute; right: 8px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); }
+  html[data-rail="folded"] .side-notes.is-open .side-note-body { position: fixed; left: 80px; bottom: 60px; width: 300px; z-index: 30; }
+}
+@media (max-width: 860px) {
+  .side-notes { margin: 0; flex: none; }
+  .side-note-head { min-height: 44px; border-radius: 22px; padding: 0 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); max-width: 180px; }
+  .side-notes.is-open .side-note-body { position: fixed; z-index: 80; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); padding: 14px; rotate: none; border-radius: 6px; }
+}
+/* the floating memo button goes: the sidebar has it */
+html body .quick-open.memo-open-free, html[data-curl] body .quick-open.memo-open-free, html body[data-t-view] .quick-open.memo-open-free { display: none !important; }
+/* ---- One calm sidebar (his word, 4 October: "so noch komisch"): one inset for every row, the pills inside with equal
+   margins; "New note" a quiet row like "+ New agent", right under it, the unsent notes as small stickies under that;
+   the bracket of an unfolded main thinner and lighter ---- */
+@media (min-width: 861px) {
+  #agents { padding-inline: 10px; }
+  #agents .agent-row { margin-inline: 0; }
+  #agents .agent-row.is-main[data-fold] .agent-entry, #agents .agent-entry { width: auto; }
+  .agent-row.is-main[data-fold] { margin-inline: 0; }
+  .crown-bracket { stroke-width: 1.3; opacity: .45; }
+}
+.side-note-field:focus, .side-note-field:focus-visible { outline: none; box-shadow: none; }
+@media (min-width: 861px) { html[data-rail="folded"] #agents > .side-notes { display: flex !important; padding: 8px 0 56px; } }
+/* the note on the sidebar's bottom line, beside the fold button (his word: anchored, no gap) */
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) #agents { padding-bottom: 0; }
+  :root:not([data-rail="folded"]) #agents > .side-notes { margin-bottom: 0; padding: 8px 0 12px 40px; }
+  :root:not([data-rail="folded"]) #agents > .side-notes .side-note-head { padding-left: 8px; }
 }
