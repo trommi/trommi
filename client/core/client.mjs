@@ -18,6 +18,15 @@ const yieldNow = () => new Promise(r => setTimeout(r, 0))
 const randomHex = n => hex(globalThis.crypto.getRandomValues(new Uint8Array(n)))
 const isZeroHex = h => !h || /^0+$/.test(h)
 
+/** R1: object_id = first 16 bytes of H("trommi/v1/object-id", creator device_id || sender_sequence u64 of version 1). Hex. */
+export async function objectIdOf(creatorHex, seq) {
+  if (z.objectIdOf) return hex(await z.objectIdOf(unhex(creatorHex), seq))
+  const n = new Uint8Array(8)
+  new DataView(n.buffer).setBigUint64(0, BigInt(seq))
+  return hex((await z.hash('trommi/v1/object-id', unhex(creatorHex), n)).slice(0, 16))
+}
+export const ZERO_HASH = '0'.repeat(64)
+
 // ---- (de)serialising crypto state --------------------------------------------------------------
 
 export const secretToJson = s => ({ epoch: s.epoch, key: b64u(s.key), hist: s.hist ? b64u(s.hist) : null })
@@ -53,7 +62,11 @@ export class Client {
     this.echoes = new Map()             // local_id -> undo()
     this.byHash = new Map()             // own envelope hash -> local_id (until it comes back)
     this.invitesPrivate = new Map()     // invite_id -> zcrypto invite record (+ code)
-    this.commandsDelivered = 0
+    this.delivered = new Map()          // human sender device id -> highest sender_sequence handed out as a command (R4)
+    this.ledgerSet = new Set()          // executed commands (envelope hashes), kept by the channel via client.ledger (R4)
+    this.frontiers = new Map()          // sender -> Map(other sender -> highest sequence it has seen): causal order (R2)
+    this.commandsHalted = null          // 'log-fork' halts every command until a human acts (R3)
+    this.startedAt = Date.now()
     this.attachmentCache = new Map()
     this.sentContent = new Map()        // own envelope hash -> content (until it comes back), for own pruned copies
     this.localHeads = new Map()         // own objects: object_id -> { object_version, version_hash, content } as last SENT
@@ -87,8 +100,14 @@ export class Client {
   async loadPersisted() {
     const st = this.storage
     const sync = await st.get('sync')
+    this._freshStorage = !sync
     for (const [k, v] of await st.range('chain/')) this.chains.set(k.slice(6), chainFromJson(v))
-    if (sync) { this.model.room.last_envelope_number = sync.cursor; this.commandsDelivered = sync.commands_delivered ?? 0 }
+    if (sync) {
+      this.model.room.last_envelope_number = sync.cursor
+      this.delivered = new Map(Object.entries(sync.delivered ?? {}))
+      this.frontiers = new Map(Object.entries(sync.frontiers ?? {}).map(([k, v]) => [k, new Map(Object.entries(v))]))
+    }
+    this.ledgerSet = new Set((await st.get('ledger')) ?? [])
     const m = this.model
     m._device_registers = new Map((await st.get('devregs')) ?? [])
     M.applyMembers(m, membersOf(this.state), M.emptyChange())
@@ -198,12 +217,13 @@ export class Client {
 
   // ---- membership and keys ----------------------------------------------------------------------
 
-  async _refreshMembers() {
+  async _refreshMembers({ throwOnFork = false } = {}) {
     const r = await this.hub.members({ after_entry_number: this.state.head.seq })
     const change = M.emptyChange()
     if (r.last_entry_number < this.state.head.seq) {
       M.pushAlert(this.model, change, { code: 'log-rollback', message: `the hub shows member list entry ${r.last_entry_number}, this device saw ${this.state.head.seq}` })
       this._emitChange(change)
+      if (throwOnFork) throw new ZError('log-rollback', 'member list rolled back')
       return
     }
     let state = this.state, epochBefore = state.epoch
@@ -214,6 +234,7 @@ export class Client {
     } catch (e) {
       M.pushAlert(this.model, change, { code: e.code ?? 'bad-entry', message: e.message })
       this._emitChange(change)
+      if (throwOnFork) throw e
       return
     }
     if (state === this.state && r.signed_entries.length === 0) return
@@ -284,6 +305,9 @@ export class Client {
         if (r.envelope_number <= this.model.room.last_envelope_number) continue
         try {
           const rec = await this._verifyRecord(r)
+          if (rec && rec.object && (rec.kind === codec.KIND.object_version || rec.kind === codec.KIND.permission_request)) {
+            rec.object_id_ok = (await objectIdOf(rec.sender_device_id, rec.sender_sequence)) === rec.object.object_id
+          }
           if (rec) {
             const cmd = this.model.room.my_role === 'agent' ? this._preAuthorise(rec) : null
             const result = M.applyRecord(this.model, rec, change)
@@ -366,9 +390,19 @@ export class Client {
     return this._record(envelope_number, v, opened, content_state, null)
   }
 
+  /** R2: carry each sender's view of the others forward (seen lists only what changed, R5). */
+  _advanceFrontier(sender, h) {
+    let f = this.frontiers.get(sender)
+    if (!f) this.frontiers.set(sender, f = new Map())
+    for (const s of h.seen) { const o = hex(s.sender); if ((f.get(o) ?? 0) < s.seq) f.set(o, s.seq) }
+    f.set(sender, h.seq)
+    return f
+  }
+
   _record(envelope_number, v, opened, content_state, local_id) {
     const h = v.header
     const sender = hex(h.sender)
+    const frontier = this._advanceFrontier(sender, h)
     let content = null, bind = null
     if (opened) {
       const d = codec.decodePayload(opened.payload)
@@ -382,7 +416,10 @@ export class Client {
       object: h.card ? { object_id: hex(h.card.id), object_state: h.card.state, urgency: h.card.urgency, answered_at: h.card.answeredAt } : null,
       timeline_kind: h.timelineKind ? (codec.TIMELINE_KIND_NAME[h.timelineKind] ?? String(h.timelineKind)) : null, timeline_id: h.timelineId,
       attachment_ids: h.blobs.map(hex), content, content_state, bind, local_id: local_id ?? null,
+      causal: { sender_device_id: sender, sender_sequence: h.seq, sent_at: h.time, frontier: h.kind === codec.KIND.status || h.kind === codec.KIND.object_version ? Object.fromEntries(frontier) : null },
+      sender_sequence: h.seq,
       _header: h, _bind: opened?.bind ?? null, _epoch: h.epoch,
+      object_id_ok: v.object_id_ok ?? null,
       ...(local_id ? this._undoEcho(local_id, v.hash) : {}),
     }
   }
@@ -401,13 +438,29 @@ export class Client {
     for (const key of change.registers) {
       if (key.startsWith('device/')) d.set('devregs', [...(m._device_registers ?? [])])
       else if (m.human.raw.has(key) && !m.human.raw.get(key).pending) d.set(`reg/${key}`, m.human.raw.get(key))
-      else if (!m.human.raw.has(key)) d.set(`reg/${key}`, undefined)
     }
     for (const rec of tlRecs) {
       const key = M.timelineKey(rec.timeline_kind, rec.timeline_id)
       d.set(`tl/${key}/${pad(rec.envelope_number)}`, { n: rec.envelope_number, h: rec.envelope_hash, s: rec.sender_device_id, r: rec.recipient_device_id, t: rec.sent_at, c: rec.content, cs: rec.content_state })
     }
     if (!this._dirty.timer) this._dirty.timer = setTimeout(() => { this._dirty.timer = null; this.flush().catch(e => this.emit('error', e)) }, PERSIST_DELAY_MS)
+  }
+
+  _syncRecord() {
+    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered),
+      frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
+  }
+
+  /** The executed-command ledger (R4): the channel marks a command executed; survives restarts. */
+  get ledger() {
+    return {
+      has: hash => this.ledgerSet.has(hash),
+      mark: async hash => {
+        this.ledgerSet.add(hash)
+        if (this.ledgerSet.size > 5000) this.ledgerSet.delete(this.ledgerSet.values().next().value)
+        await this.storage.set('ledger', [...this.ledgerSet])
+      },
+    }
   }
 
   /** Write everything dirty in one transaction, with the cursor and the touched chains. */
@@ -417,7 +470,7 @@ export class Client {
     this._dirty.records = new Map()
     for (const k of this._dirty.chains) { const c = this.chains.get(k); if (c) entries.push([`chain/${k}`, chainToJson(c)]) }
     this._dirty.chains = new Set()
-    entries.push(['sync', { cursor: this.model.room.last_envelope_number, commands_delivered: this.commandsDelivered }])
+    entries.push(['sync', this._syncRecord()])
     await this.storage.setMany(entries)
     if (this.storage.flush) await this.storage.flush()
   }
@@ -436,7 +489,7 @@ export class Client {
     }
     return this.serial(async () => {
       try {
-        if (typeof content === 'function') ({ content, object = object, bind = bind } = content())
+        if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind }
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         const blobs = codec.attachmentIdsOf(content).map(unhex)
@@ -757,10 +810,13 @@ export class Client {
 
   async saveMemo({ object_id = null, text, x = 0, y = 0, color = null, desk_id = null }) {
     this._needHuman()
-    const old = object_id ? this.model.memos.get(object_id) : null
-    const id = object_id ?? randomHex(16)
-    const content = { object_type: 'memo', object_version: (old?.object_version ?? 0) + 1, previous_version_hash: old?.version_hash ?? null, text, x, y, color, desk_id }
-    await this._send({ kind: codec.KIND.object_version, content, object: { object_id: id, object_state: 'open', urgency: 'normal' } })
+    let id = object_id
+    await this._send({ kind: codec.KIND.object_version, content: async () => {
+      if (!id) id = await objectIdOf(this.my_device_id, (this.chains.get(b64u(this.device.id))?.seq ?? 0) + 1)
+      const old = object_id ? this.model.memos.get(object_id) : null
+      return { content: { object_type: 'memo', object_version: (old?.object_version ?? 0) + 1, previous_version_hash: old?.version_hash ?? ZERO_HASH, text, x, y, color, desk_id },
+        object: { object_id: id, object_state: 'open', urgency: 'normal' } }
+    } })
     return id
   }
   async deleteMemo(object_id) {

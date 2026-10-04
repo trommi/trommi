@@ -399,6 +399,58 @@ await test('agent: merge, withdraw, set urgency, publish and unpublish', async (
   await until(() => phone.model.published.get(pub).object_state === 'closed', 'unpublished')
 })
 
+await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registers by causal order, not hub order', async () => {
+  const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
+  const id = await a1.sendCard({ title: 'mine', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a1)
+  await until(() => phone.model.cards.get(id), 'card')
+  // a2 tries to write a version of a1's card, and a card under an id it did not derive
+  await a2._send({ kind: codec.KIND.object_version, content: { object_type: 'card', object_version: 2, previous_version_hash: phone.model.cards.get(id).version_hash, card_type: 'decision', title: 'hijack', options: [{ key: 'a', label: 'A' }] }, object: { object_id: id, object_state: 'open', urgency: 'normal' } })
+  const fake = 'ab'.repeat(16)
+  await a2._send({ kind: codec.KIND.object_version, content: { object_type: 'card', object_version: 1, previous_version_hash: '0'.repeat(64), card_type: 'decision', title: 'fake id', options: [{ key: 'a', label: 'A' }] }, object: { object_id: fake, object_state: 'open', urgency: 'normal' } })
+  // a2 writes into a1's card conversation
+  await a2._send({ kind: codec.KIND.timeline_item, content: { content_type: 'message', text: 'psst' }, timeline: { timeline_kind: 'chat', timeline_id: `card/${id}` } })
+  await settleAll(a2, phone)
+  await until(() => phone.model.alerts.filter(a => ['not-creator', 'bad-object-id', 'not-allowed'].includes(a.code)).length >= 3, 'three refusals')
+  eq(phone.model.cards.get(id).title, 'mine', 'card untouched')
+  assert(!phone.model.cards.has(fake), 'fake id not created')
+  eq(phone.model.timelines.get(`chat:card/${id}`)?.item_count ?? 0, 0, 'foreign item not counted')
+  // registers: the laptop writes after having seen the phone's write -> the laptop wins on every client
+  await phone.setCrown({ who: 'phone' })
+  await settleAll(phone, laptop)
+  await until(() => laptop.model.human.crown?.who === 'phone', 'laptop saw phone')
+  await laptop.setCrown({ who: 'laptop' })
+  await settleAll(laptop, phone)
+  await until(() => phone.model.human.crown?.who === 'laptop', 'causally later wins')
+  // replay the phone's older write to a fresh client in reverse hub order: still the laptop
+  const fresh = await addHuman(phone, 'Fresh')
+  await settleAll(fresh)
+  eq(fresh.model.human.crown?.who, 'laptop', 'fresh client agrees')
+})
+
+await test('v1.1 R4: commands delivered once per (sender, sequence); ledger survives', async () => {
+  const dir = path.join(scratch, 'agent-ledger')
+  const { phone } = await room()
+  const agent = await addAgent(phone, 'Ledger', await fileStorage({ dir, write_delay_ms: 5 }))
+  const seen = []
+  agent.on('command', c => seen.push(c))
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'do it' })
+  await settleAll(phone, agent)
+  await until(() => seen.length === 1, 'delivered')
+  eq(seen[0].history, false, 'a fresh join gets real commands')
+  await agent.ledger.mark(seen[0].envelope_hash)
+  await agent.stop()
+  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  const later = []
+  again.on('command', c => later.push(c))
+  await again.start()
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'and this' })
+  await settleAll(phone, again)
+  await until(() => later.length === 1, 'only the new one')
+  eq(later[0].content.text, 'and this', 'new one')
+  assert(again.ledger.has(seen[0].envelope_hash), 'ledger persisted')
+})
+
 if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', async () => {
   const N = BENCH ? 5000 : 1000
   const { phone, agents: [agent] } = await room({ agents: 1 })

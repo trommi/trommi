@@ -5,6 +5,20 @@ import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS } f
 
 export const ALERTS_MAX = 200
 const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
+const isZeroHash = h => /^0*$/.test(h)
+
+/**
+ * R2: does X come after Y? X covers Y if X's sender had seen Y (its frontier reaches Y's sequence; same sender:
+ * higher sequence). Concurrent: the later (sent_at, sender_device_id) wins. causal = { sender_device_id, sender_sequence, sent_at, frontier }.
+ */
+export function causallyAfter(x, y) {
+  if (!y) return true
+  if (!x) return false
+  if (x.sender_device_id === y.sender_device_id) return x.sender_sequence > y.sender_sequence
+  if ((x.frontier?.[y.sender_device_id] ?? 0) >= y.sender_sequence) return true
+  if ((y.frontier?.[x.sender_device_id] ?? 0) >= x.sender_sequence) return false
+  return x.sent_at !== y.sent_at ? x.sent_at > y.sent_at : x.sender_device_id > y.sender_device_id
+}
 
 export function emptyModel() {
   return {
@@ -153,7 +167,31 @@ export function itemFromRecord(rec) {
   }
 }
 
+/** R1: who may write into which timeline. Returns null if allowed, else a refusal code. */
+export function timelineRefusal(model, rec) {
+  const p = parseTimelineKey(timelineKey(rec.timeline_kind, rec.timeline_id))
+  const human = rec.sender_role === 'human'
+  if (p.timeline_kind === 'chat') {
+    if (p.scope === 'session') return rec.sender_device_id === p.scope_id || (human && rec.recipient_device_id === p.scope_id) ? null : 'not-allowed'
+    if (p.scope === 'card') {
+      const card = model.cards.get(p.scope_id)
+      if (!card) return 'card-mismatch'
+      return rec.sender_device_id === card.agent_device_id || (human && rec.recipient_device_id === card.agent_device_id) ? null : 'not-allowed'
+    }
+    return 'not-allowed'
+  }
+  if (p.timeline_kind === 'canvas') {
+    if (p.scope === 'desk') return human ? null : 'not-allowed'
+    if (p.scope === 'session') return human || rec.sender_device_id === p.scope_id ? null : 'not-allowed'
+    if (p.scope === 'card') return human || rec.sender_device_id === model.cards.get(p.scope_id)?.agent_device_id ? null : 'not-allowed'
+    return 'not-allowed'
+  }
+  return null   // a timeline kind this client does not know yet: count it, show nothing
+}
+
 function applyTimelineItem(model, rec, change) {
+  const why = timelineRefusal(model, rec)
+  if (why) return refuse(model, change, rec, why, `not allowed in ${rec.timeline_id}`)
   const key = timelineKey(rec.timeline_kind, rec.timeline_id)
   const t = timelineOf(model, key)
   t.item_count++
@@ -210,10 +248,12 @@ function applyObjectVersion(model, rec, change) {
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'cards come from agents')
   const fresh = !card
   if (card && card.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a card version from someone else than its creator')
+  if (fresh && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   if (c) {
     const expected = (card?.object_version ?? 0) + 1
     if (c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `card version ${c.object_version}, expected ${expected}`)
     if (expected > 1 && c.previous_version_hash !== card.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
+    if (expected === 1 && c.previous_version_hash && !isZeroHash(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'version 1 names a predecessor')
   }
   if (fresh) {
     card = newCard(object_id, rec.sender_device_id, rec)
@@ -262,11 +302,13 @@ function applyMemo(model, rec, change) {
   if (rec.sender_role !== 'human') return refuse(model, change, rec, 'not-creator', 'memos come from human devices')
   const c = rec.content ?? {}
   const old = model.memos.get(object_id)
-  const expected = (old?.object_version ?? 0) + 1
-  if (rec.content && c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `memo version ${c.object_version}, expected ${expected}`)
-  if (rec.content && expected > 1 && c.previous_version_hash !== old.version_hash) return refuse(model, change, rec, 'bad-version', 'memo previous_version_hash')
+  if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
+  // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
+  if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'memo previous_version_hash names no known version')
+  if (old && !causallyAfter(rec.causal, old.causal)) { old.version_hashes.push(rec.envelope_hash); return { applied: false } }
   model.memos.set(object_id, { object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
-    desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: expected, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
+    desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
+    version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
   change.memos.add(object_id)
   return { applied: true }
 }
@@ -274,6 +316,7 @@ function applyPublished(model, rec, change) {
   const object_id = rec.object.object_id
   const old = model.published.get(object_id)
   if (old && old.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a published object from someone else than its creator')
+  if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   const c = rec.content ?? {}
   const expected = (old?.object_version ?? 0) + 1
   if (rec.content && c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `published version ${c.object_version}, expected ${expected}`)
@@ -370,6 +413,7 @@ function applyPermissionRequest(model, rec, change) {
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'permission requests come from agents')
   if (!object_id || model.permissions.has(object_id)) return refuse(model, change, rec, 'bad-object', 'permission request without a new object id')
   if (rec.bind && rec.bind.requestId !== object_id) return refuse(model, change, rec, 'bad-object', 'request id differs from object id')
+  if (rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence)')
   const c = rec.content ?? {}
   model.permissions.set(object_id, { object_id, agent_device_id: rec.sender_device_id, tool_name: c.tool_name ?? '', description: c.description ?? '', input_preview: c.input_preview ?? '',
     expires_at: rec.bind?.expiresAt ?? 0, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, sent_at: rec.sent_at, permission_state: 'pending', verdict: null })
@@ -443,8 +487,10 @@ function applyStatus(model, rec, change) {
 
 export function setHumanRegister(model, key, value, rec, change) {
   const h = model.human
-  if (value === null || value === undefined) h.raw.delete(key)
-  else h.raw.set(key, { value, envelope_number: rec.envelope_number, by_device_id: rec.sender_device_id, pending: !!rec.pending })
+  const old = h.raw.get(key)
+  // R2: the causally latest write wins, whatever order the hub delivered them in. A delete stays as a tombstone (value null).
+  if (!rec.pending && old && !old.pending && rec.causal && old.causal && !causallyAfter(rec.causal, old.causal)) return false
+  h.raw.set(key, { value: value ?? null, envelope_number: rec.envelope_number, by_device_id: rec.sender_device_id, pending: !!rec.pending, causal: rec.causal ?? old?.causal ?? null })
   const slash = key.indexOf('/')
   const prefix = slash < 0 ? key : key.slice(0, slash), id = slash < 0 ? null : key.slice(slash + 1)
   const put = (map, v) => (v === null || v === undefined ? map.delete(id) : map.set(id, v))
@@ -471,8 +517,10 @@ export function setHumanRegister(model, key, value, rec, change) {
 
 function setAgentRegister(model, agent, key, value, rec, change) {
   const s = sessionOf(model, agent)
+  const old = s.registers.get(key)
+  if (old?.sender_sequence && rec.sender_sequence && rec.sender_sequence <= old.sender_sequence) return
   if (value === null || value === undefined) s.registers.delete(key)
-  else s.registers.set(key, { value, envelope_number: rec.envelope_number })
+  else s.registers.set(key, { value, envelope_number: rec.envelope_number, sender_sequence: rec.sender_sequence })
   if (key === 'profile') s.profile = value ?? null
   else if (key.startsWith('status_line/')) {
     const id = key.slice('status_line/'.length)
@@ -503,15 +551,15 @@ export function project(model, change, now = Date.now()) {
   const snoozed = id => { const v = model.human.snoozes.get(id); return v && (v.until == null || v.until > now) }
   const archived = agent => !!model.sessions.get(agent)?.settings?.archived
   const open = []
-  for (const s of model.sessions.values()) { s.open_card_ids = []; s.card_ids.sort((a, b) => (model.cards.get(a)?.first_envelope_number ?? 0) - (model.cards.get(b)?.first_envelope_number ?? 0)) }
+  for (const s of model.sessions.values()) { s.open_card_ids = []; s.card_ids.sort((a, b) => (model.cards.get(a)?.created_at ?? 0) - (model.cards.get(b)?.created_at ?? 0)) }
   for (const c of model.cards.values()) {
     if (c.object_state !== 'open') continue
     sessionOf(model, c.agent_device_id).open_card_ids.push(c.object_id)
     if (!snoozed(c.object_id) && !archived(c.agent_device_id)) open.push(c)
   }
-  open.sort((a, b) => URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] || a.first_envelope_number - b.first_envelope_number)
+  open.sort((a, b) => URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] || a.created_at - b.created_at || (a.agent_device_id < b.agent_device_id ? -1 : a.agent_device_id > b.agent_device_id ? 1 : 0))
   model.stack = open.map(c => c.object_id)
-  for (const s of model.sessions.values()) s.open_card_ids.sort((a, b) => model.cards.get(a).first_envelope_number - model.cards.get(b).first_envelope_number)
+  for (const s of model.sessions.values()) s.open_card_ids.sort((a, b) => model.cards.get(a).created_at - model.cards.get(b).created_at)
   model.open_permission_ids = [...model.permissions.values()].filter(p => p.permission_state === 'pending' && now <= p.expires_at).sort((a, b) => a.envelope_number - b.envelope_number).map(p => p.object_id)
   if (before !== model.stack.join(',') + '|' + model.open_permission_ids.join(',')) change.stack = true
 }
@@ -560,6 +608,6 @@ export function serialiseHuman(h) {
 /** Human registers are rebuilt from raw values (one source of truth). */
 export function deserialiseHuman(model, o) {
   const change = emptyChange()
-  for (const [key, v] of o?.raw ?? []) setHumanRegister(model, key, v.value, { envelope_number: v.envelope_number, sender_device_id: v.by_device_id }, change)
+  for (const [key, v] of o?.raw ?? []) setHumanRegister(model, key, v.value, { envelope_number: v.envelope_number, sender_device_id: v.by_device_id, causal: v.causal }, change)
 }
 export { mapToObj, objToMap, URGENCY }
