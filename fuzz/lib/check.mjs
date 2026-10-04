@@ -351,7 +351,9 @@ export async function checkSafety(runner, { deep = false } = {}) {
         const ref = rf(id), oc = ref && O.cards.get(ref)
         if (!oc) { if (!ref || !O.cards.has(ref)) { out.push(`${d.name} shows a card nobody created: ${id.slice(0, 8)} "${String(c.title).slice(0, 40)}"`); } continue }
         if (c.title && !oc.titles.has(c.title)) out.push(`${d.name}: card ${ref} shows a title no version ever had: ${c.title.slice(0, 50)}`)
-        if (c.object_version > oc.v) out.push(`${d.name}: card ${ref} at version ${c.object_version}, only ${oc.v} were sent`)
+        // the owner agent may send versions on its own (F15: it re-asserts an open card after refusing an answer)
+        const sent = Math.max(oc.v, room.devs.get(oc.agent)?.client?.localHeads?.get(id)?.object_version ?? 0)
+        if (c.object_version > sent) out.push(`${d.name}: card ${ref} at version ${c.object_version}, only ${sent} were sent`)
         if (c.answer && !O.attempts.has(ref)) out.push(`${d.name}: card ${ref} shows an answer nobody gave`)
       }
       for (const [id, p] of d.client.model.permissions) { const ref = rf(id); if (!ref || !O.perms.has(ref)) out.push(`${d.name}: permission request nobody made`); else if (p.verdict && !O.perms.get(ref)) out.push('x') }

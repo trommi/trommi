@@ -87,10 +87,17 @@ const agentMethods = {
     if (card && card.agent_device_id !== this.my_device_id) throw new ZError('forbidden', 'not this agent\'s card')
     return head
   },
+  /** F1: an own card is open only if neither the last sent version nor the room (a human's answer, read, shred) closed it. */
+  _ownOpenState(object_id) {
+    const head = this._ownOpen(object_id)
+    const card = this.model.cards.get(object_id)
+    if (card && card.object_state !== 'open' && !card.answer?.pending) return { ...head, object_state: card.object_state }
+    return head
+  },
 
   async revise(object_id, { urgency, ...changes } = {}) {
     this._needAgent()
-    const head = this._ownOpen(object_id)
+    const head = this._ownOpenState(object_id)
     if (head.object_state !== 'open') throw new ZError('card-closed', 'only an open card can be revised')
     for (const f of ['close_summary', 'withdraw_reason', 'merged_into_object_id']) changes[f] = changes[f] ?? null
     await this._version(object_id, h => ({ fields: changes, object_state: 'open', urgency: urgency ?? h.urgency }))
@@ -99,14 +106,14 @@ const agentMethods = {
 
   async withdraw(object_id, withdraw_reason = '') {
     this._needAgent()
-    const head = this._ownOpen(object_id)
+    const head = this._ownOpenState(object_id)
     if (head.object_state !== 'open') throw new ZError('card-closed', 'only an open card can be withdrawn; close an answered one')
     await this._version(object_id, h => ({ fields: { withdraw_reason }, object_state: 'closed', urgency: h.urgency }))
   },
 
   async merge(object_ids, { session_id = null, ...fields }) {
     this._needAgent()
-    const heads = object_ids.map(id => [id, this._ownOpen(id)])
+    const heads = object_ids.map(id => [id, this._ownOpenState(id)])
     for (const [, h] of heads) if (h.object_state !== 'open') throw new ZError('card-closed', 'only open cards can be merged')
     const urgency = fields.urgency ?? heads.map(([, h]) => h.urgency).reduce((a, b) => (URGENCY_ORDER.indexOf(b) > URGENCY_ORDER.indexOf(a) ? b : a), 'low')
     const { urgency: _u, ...rest } = fields
@@ -230,7 +237,21 @@ const agentMethods = {
       this.emit('command', commandOf(this.model, c))
     }
     if (Object.keys(alerts).length) this.setRegisters(alerts).catch(e => this.emit('error', e))   // not awaited: we are inside the sync queue
+    // F15: the hub takes an object's state from the signed header alone, so a refused answer (bad choice, stale version,
+    // read on a decision) still marks the card closed there, and retention would prune it while it is open everywhere.
+    // The owner says it again: a new version, unchanged and open, becomes the hub's newest head.
+    const reassert = new Set()
+    for (const c of commands) {
+      if (!c.refused || c.rec.kind !== codec.KIND.answer || !c.object_id || c.rec.object?.object_state === codec.OBJECT_STATE.open) continue
+      const card = this.model.cards.get(c.object_id)
+      if (card && card.agent_device_id === this.my_device_id && card.object_state === 'open') reassert.add(c.object_id)
+    }
+    for (const id of reassert) queueMicrotask(() => this._version(id, h => ({ fields: {}, object_state: 'open', urgency: h?.urgency ?? 'normal' })).catch(e => this.emit('error', e)))
     this._dirty.records.set('sync', this._syncRecord())
+    // F6: what was handed out reaches storage at once (not with the debounced flush), so a crash right after does not
+    // hand the same command out again after the restart. Kept apart from the sync record, whose cursor must not run
+    // ahead of the model it belongs to.
+    if (commands.length) await this.storage.set('delivered', Object.fromEntries(this.delivered)).catch(e => this.emit('error', e))
   },
 
   /** A human resolved a fork (or the channel decides to go on): deliver commands again, the held ones first. */

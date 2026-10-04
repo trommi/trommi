@@ -849,6 +849,17 @@ test('review 2 C03: half-sent bodies cannot hold the write slots: a per-address 
   await w.hub.close()
 })
 
+test('fuzz F14: close() lets requests in flight finish and refuses new ones; never a 500 from a closed database', async () => {
+  const w = await world()
+  for (let i = 0; i < 3; i++) await posted(w, w.phone)
+  const reqs = []
+  for (let i = 0; i < 60; i++) reqs.push(api(w, 'GET', `${R(w)}/envelopes`, { token: w.phone.token }).catch(() => ({ status: 0 })))
+  const closing = w.hub.close()
+  const statuses = (await Promise.all(reqs)).map(r => r.status)
+  await closing
+  assert.ok(!statuses.includes(500), `statuses ${[...new Set(statuses)]}`)
+})
+
 test('review 2 C06: cf-connecting-ip only when enabled, and only from a loopback or private peer', async () => {
   const { trustedPeer } = await import('./server.mjs')
   for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '172.18.0.1', '10.1.2.3', '192.168.1.1', 'fd12:3456::1']) assert.ok(trustedPeer(ip), ip)

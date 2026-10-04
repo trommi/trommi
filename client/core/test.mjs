@@ -48,6 +48,7 @@ async function freePort() {
 }
 
 LIMITS.foundPerIpHour = 10_000
+LIMITS.openRequestsPerIpMinute = 100_000       // every test signs in and joins from 127.0.0.1
 LIMITS.envelopesPerSecond = 100_000; LIMITS.envelopeBurst = 100_000
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-test-'))
 // hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on crypto/hub.mjs.
@@ -779,7 +780,7 @@ await test('S2 history after state loss: every old command of a sender is histor
   // Lose the sync state and the ledger (cursor, delivered, others' chains); keep the room, the key and the own chain.
   const st = await fileStorage({ dir })
   const me = z.b64u(z.unhex(agent.my_device_id))
-  await st.setMany([['sync', undefined], ['ledger', undefined], ...(await st.keys('chain/')).filter(k => k !== `chain/${me}`).map(k => [k, undefined])])
+  await st.setMany([['sync', undefined], ['ledger', undefined], ['delivered', undefined], ...(await st.keys('chain/')).filter(k => k !== `chain/${me}`).map(k => [k, undefined])])
   await sleep(20)
   const again = track(await openRoom({ storage: await fileStorage({ dir }) }))
   const cmds = []
@@ -841,6 +842,113 @@ await test('review 3 agent invites: a link two devices answer adds nobody; with 
   await phone.confirmInvite(ok3.invite_id, await real.check_code)
   const c = track(await real.client)
   await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'the intended agent is added')
+})
+
+await test('fuzz F17/F18: undoing an answer echo keeps a newer card state and re-projects the stack', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'which?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.stack.includes?.(id) || phone.model.stack.some?.(x => x === id || x?.object_id === id), 'on the stack')
+  const inStack = () => phone.model.stack.some(x => x === id || x?.object_id === id)
+  // F18: an echo that is undone (the hub copy refused) puts the card back on the stack.
+  const undo1 = phone._echoAnswer(id, { answer_action: 'answer', choices: ['a'] }, 'answered')('local-f18')
+  phone.echoes.set('local-f18', undo1)
+  assert(!inStack(), 'the echo took it off the stack')
+  phone._undoEcho('local-f18', new Uint8Array(32))
+  assert(inStack(), 'back on the stack after the undo')
+  // F17: the agent closed the card while the answer was on its way: the undo must not reopen it.
+  const undo2 = phone._echoAnswer(id, { answer_action: 'answer', choices: ['b'] }, 'answered')('local-f17')
+  phone.echoes.set('local-f17', undo2)
+  await agent.close(id)
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id).object_state === 'closed', 'phone sees the close')
+  phone._undoEcho('local-f17', new Uint8Array(32))
+  eq(phone.model.cards.get(id).object_state, 'closed', 'still closed after the undo')
+})
+
+await test('fuzz F1: an agent cannot revise or withdraw a card a human already answered (the answer is kept)', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'which?', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'phone has it')
+  await phone.answer({ object_id: id, choices: ['a'] })
+  await settleAll(phone, agent)
+  await until(() => agent.model.cards.get(id)?.object_state === 'answered', 'agent sees the answer')
+  for (const f of [() => agent.revise(id, { title: 'changed' }), () => agent.withdraw(id, 'x')]) {
+    let err = null
+    try { await f() } catch (e) { err = e }
+    eq(err?.code, 'card-closed', 'refused')
+  }
+  await settleAll(agent, phone)
+  eq(phone.model.cards.get(id).object_state, 'answered', 'the answer stays')
+})
+
+await test('fuzz F6: a command handed to the agent is recorded at once, not only with the delayed flush', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  let got = null
+  agent.on('command', c => { got = c })
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'once' })
+  await until(() => got, 'command')
+  await sleep(20)
+  eq((await agent.storage.get('delivered'))?.[phone.my_device_id], got.sender_sequence, 'on storage before the flush')
+})
+
+await test('fuzz F12: a network error while handling a record does not skip it; it is read again', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  const realMembers = agent.hub.members.bind(agent.hub)
+  agent.hub.members = async () => { throw new z.ZError('offline', 'simulated', { status: 0 }) }
+  const laptop = await addHuman(phone, 'Laptop')       // a member entry the agent cannot fetch now
+  await laptop.sendMessage({ agent_device_id: agent.my_device_id, text: 'from the new laptop' })
+  await settleAll(laptop)
+  await sleep(300)
+  agent.hub.members = realMembers                        // the network is back
+  await until(() => cmds.some(c => c.content.text === 'from the new laptop'), 'the message arrives after all', 10_000)
+})
+
+await test('fuzz F11: a device that missed a session grant fetches it when that session\'s envelopes arrive', async () => {
+  const { phone, laptop } = await room({ laptop: true })
+  await settleAll(phone, laptop)
+  laptop._stream.close(); laptop._stream = null           // the laptop's stream is down while the agent is added
+  const a3 = await addAgent(phone, 'Late')
+  const id = await a3.sendCard({ title: 'from the new agent', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a3, phone)
+  await laptop.catchUp()
+  await until(() => laptop.model.cards.get(id)?.title === 'from the new agent', 'the laptop shows the card')
+  assert(!laptop.model.alerts.some(a => /^not-allowed/.test(a.code)), 'nothing refused as not-allowed')
+})
+
+await test('fuzz H1: after a hub withheld envelopes and turned honest, the device catches up within seconds, also the second time', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c.content.text))
+  agent._stream.close(); agent._stream = null              // the hostile hub decides what the agent sees
+  for (const round of [1, 2]) {
+    await phone.sendMessage({ agent_device_id: agent.my_device_id, text: `withheld ${round}` })
+    await phone.sendMessage({ agent_device_id: agent.my_device_id, text: `next ${round}` })
+    await settleAll(phone)
+    const r = await phone.hub.envelopes({ after_envelope_number: agent.model.room.last_envelope_number, limit: 100 })
+    const withheld = r.envelopes.findIndex(e => z.peekEnvelope(z.unb64u(e.envelope)).header.sender.every((b, i) => b === z.unhex(phone.my_device_id)[i]))
+    await agent.processRecords(r.envelopes.filter((_, i) => i !== withheld))   // the first one is withheld: a gap
+    await until(() => cmds.includes(`withheld ${round}`), `round ${round}: the withheld message arrives once the hub is honest`, 8000)
+  }
+})
+
+if (!useTestHub) await test('fuzz F15: an answer the agent refuses does not leave the card closed at the hub (retention would prune an open card)', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'which?', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'phone has it')
+  await phone.answer({ object_id: id, choices: ['not-an-option'] })      // signed, but invalid: every client refuses it
+  await settleAll(phone, agent)
+  const state = () => hub.db.prepare('SELECT object_state FROM objects WHERE room_id = ? AND object_id = ?').get(phone.model.room.room_id, id)?.object_state
+  await until(async () => { await settleAll(agent); return state() === 1 }, 'the hub holds the card as open again')
+  await settleAll(phone)
+  eq(phone.model.cards.get(id).object_state, 'open', 'open on the phone')
 })
 
 await test('S2 no rewind (D2): a refused envelope is voided or halts the chain; no sequence number is signed twice', async () => {

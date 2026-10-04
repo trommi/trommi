@@ -300,14 +300,15 @@ export class Runner {
   async do_recover(a) {
     const w = this.w, room = this.roomOf(a.room), O = this.oracle(a.room)
     if (!room) return 'skip'
-    // KNOWN F10: after a recovery every envelope of the removed human devices counts as 'beyond the cut' for all clients (the recovery names no cut): their registers, memos, answers and messages vanish from the model. The oracle cannot follow that, so the rest of this run is not compared.
-    this.known('F10-recovery-drops-removed-devices-history', "after recover() the clients refuse every envelope of the removed human devices ('removed-sender: beyond the cut its removal names', cut = none), including those sent long before: registers, memos, desks, answers and chat they wrote disappear for every device, new ones and old ones")
-    this.stopCompare = true
+    // F10 (fixed: the recovery signs real cuts): the removed devices' history stays; compared like after a removal.
     const storage = w.newStorage('human')
     const d = await this.newDevFrom(a.name, room, 'human', storage)
     const { client, recovery_code } = await w.t.core.recoverRoom({ hub_url: w.hubUrl, room_id: room.room_id, code: room.recovery_code, storage, device_name: `FZ ${a.name}`, fetch: w.makeFetch(d) })
     room.recovery_code = recovery_code
-    for (const [n, x] of room.devs) if (x.isHuman && n !== a.name && !x.removed) { x.removed = true; x.removedBatch = w.batch }
+    for (const [n, x] of room.devs) if (x.isHuman && n !== a.name && !x.removed) {
+      x.removed = true; x.removedBatch = w.batch
+      for (const items of O.chat.values()) for (const it of items) if (it.from === n) it.certain = false   // may be beyond the cut, as after a removal
+    }
     O.recover(a.name)
     d.joinedBatch = w.batch
     await client.stop()
@@ -329,8 +330,8 @@ export class Runner {
     const O = this.oracle(d.room.idx)
     const c = O.cards.get(a.ref)
     try { await d.client.revise(id, { title: this.txt(a.title), change_note: 'x', ...(a.urgency ? { urgency: a.urgency } : {}) }) }
-    catch (e) { if (e.code === 'card-closed' && c && c.state === 'closed') return 'refused:card-closed'; throw e }
-    if (c && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) {
+    catch (e) { if (e.code === 'card-closed' && c && c.state !== 'open') return 'refused:card-closed'; throw e }
+    if (this.strict && c && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) {
       // KNOWN F1: Client.revise checks the state it LAST SENT (open), not the answered state the humans put on the card: the revision reopens it and drops the answer.
       this.known('F1-revise-after-answer', 'agent.revise() on an answered card is accepted: the new version is sent as open, which silently discards the human answer (check uses localHeads state, not the model)')
       c.v++; c.title = this.txt(a.title); c.titles.add(c.title); if (a.urgency) c.urgency = a.urgency; c.state = 'open'; c.answer = null; c.closed_how = null; c.revision = null
@@ -343,8 +344,8 @@ export class Runner {
   async do_withdraw(a) {
     const d = this.dev(a.agent), id = this.card(a); if (!d || !id) return 'skip'
     const O = this.oracle(d.room.idx), c = O.cards.get(a.ref)
-    try { await d.client.withdraw(id, 'no longer needed') } catch (e) { if (e.code === 'card-closed' && c.state === 'closed') return 'refused:card-closed'; throw e }
-    if (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded'))) { this.known('F1-revise-after-answer', 'agent.revise()/withdraw() on an answered card is accepted (state check uses the last SENT state, not the answered state): revise reopens it and drops the answer'); c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
+    try { await d.client.withdraw(id, 'no longer needed') } catch (e) { if (e.code === 'card-closed' && c.state !== 'open') return 'refused:card-closed'; throw e }
+    if (this.strict && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) { this.known('F1-revise-after-answer', 'agent.revise()/withdraw() on an answered card is accepted (state check uses the last SENT state, not the answered state): revise reopens it and drops the answer'); c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
     if (!this.strict) return 'ok'
     if (!O.withdraw(a.ref)) throw new Finding('invariant', `agent could withdraw ${a.ref} held as ${c.state}`, { action: a })
     return 'ok'
