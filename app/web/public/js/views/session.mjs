@@ -24,7 +24,7 @@ import { deskRow, runSection } from './desk.mjs'
 import { sessionHeadEdit } from './session-edit.mjs'
 import { srcOf } from './picture.mjs'
 import { sketchSvg, ringSvg, handSvg } from '../pen.js'
-import { blockedOf } from '../app/node-stubs/blocked.mjs'
+import { blockedOf, quietOf } from '../app/node-stubs/blocked.mjs'
 
 export const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 export const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
@@ -257,8 +257,8 @@ export function sessionWho(s, base) {
   const a = s.agent
   // The mark opens the drawings, the name renames (views/session-edit.mjs); the live stream brings what was changed.
   // The raised red hand when the session is really stopped (server/blocked.mjs), with the cause in words.
-  const stopped = blockedOf(a, s.model.state)
-  return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : ''}</div>`
+  const stopped = blockedOf(a, s.model.state), quiet = stopped ? null : quietOf(a, s.model.state)
+  return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : quiet ? html`<span class="t-quiet" title="Connected and working, nothing new for a while">${quiet.text}</span>` : ''}</div>`
 }
 /** The quiet line under the name: what the session is at, its model and machine, and "N files" (the drawer). */
 export function sessionNow(s, base = '') {

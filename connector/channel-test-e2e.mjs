@@ -438,7 +438,7 @@ export async function integration({ test, tmp }) {
     await test('e2e: close_session archives a finished helper (lines cleared, readable in the archive); a quiet helper is idle, not stopped; open_session reopens', async () => {
       globalThis.document ??= { addEventListener() {} }
       const { BoardState } = await import('../app/web/public/js/app/board-state.mjs')
-      const { blockedOf, SILENT_MS } = await import('../app/web/public/js/app/node-stubs/blocked.mjs')
+      const { blockedOf, quietOf, QUIET_MS } = await import('../app/web/public/js/app/node-stubs/blocked.mjs')
       const board = new BoardState(human)
       const design = () => board.update().agents.find(a => a.session_id === child)
       await channel.call('set_status', { id: 'draw', label: 'Drawing', state: 'working', session: 'Design' })
@@ -446,9 +446,11 @@ export async function integration({ test, tmp }) {
       // The stopped-child bug: the helper said nothing for 46 min but its main agent is online and talking.
       const st = board.update(), a = st.agents.find(x => x.session_id === child)
       assert.ok(a.parent, 'Design is a child')
-      const now = Date.now() + SILENT_MS + 60000
+      const now = Date.now() + QUIET_MS + 60000
       assert.equal(blockedOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now), null)
-      assert.equal(blockedOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 46 * 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now)?.why, 'silent', 'the whole agent silent while working: stopped')
+      assert.equal(blockedOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 46 * 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now), null, 'the whole agent quiet while working: no stop')
+      assert.match(quietOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 46 * 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now)?.text, /^quiet for 46 min$/, 'only a grey hint')
+      assert.equal(quietOf({ ...a, online: true, active: now - 46 * 60000, connected: now - 46 * 60000, device_active: now - 60000 }, { ...st, tasks: st.tasks.map(t => ({ ...t, updated: now - 46 * 60000 })) }, now), null, 'a talking main agent: not quiet')
       assert.equal(blockedOf({ ...a, online: true, active: 0, connected: 0, device_active: 0 }, { ...st, tasks: [] }, now), null, 'no working line: idle')
       // An open question keeps a closed helper in the active list.
       const q = (await channel.call('create_decision', { title: 'Still open?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }], session: 'Design' })).match(/card ([0-9a-f]{32})/)[1]

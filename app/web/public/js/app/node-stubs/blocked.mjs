@@ -5,14 +5,14 @@
 //   - it is disconnected while a status line of its says "working" (for longer than a blip: OFFLINE_GRACE_MS),
 //   - it reported an error (agent.error, set through /agent/profile; a later call of the session clears it),
 //   - it waits for him: an open approval request, or an open card it marked as blocking (urgency critical),
-//   - it is connected, a line says "working", and nothing came from it for SILENT_MS. For a child session (a helper
-//     of a main agent, agent.parent) "it" is the agent process behind it: a quiet helper whose main agent is online
-//     and still talking (agent.device_active) is idle, not stopped; without a working line it is never stopped.
+// Being quiet is NOT a stop (decided "ruhig"): a connected session with a working line that said nothing for
+// QUIET_MS only gets a grey hint, quietOf() ("quiet for 24 min"): no red hand, no push, not in the Desk's badge.
+// For a child session (agent.parent) "it" is the agent process behind it: a helper whose main agent is online and
+// still talking (agent.device_active) is not quiet.
 // Shared by the views (model.mjs), the push (push.mjs) and the hub's tick that notices time passing (server.mjs).
 
-/** Nothing from a working session for this long: it is taken as stuck. Agents often work quietly for a while
- *  (a build, a subagent), so this is generous. */
-export const SILENT_MS = 15 * 60000
+/** Nothing from a working, connected session for this long: a quiet grey hint on the session, nothing more. */
+export const QUIET_MS = 15 * 60000
 /** A link that drops and comes back within this time (a restart of the session's bridge) is no stop. */
 export const OFFLINE_GRACE_MS = 60000
 
@@ -27,7 +27,7 @@ const clock = (t, now) => {
 }
 
 /** agent: a record of state.agents (online kept by the hub's commit). Returns null, or { why, text } where text is
- *  the plain words for a tooltip ("Connection lost since 14:05", "Error: …", "Waiting for permission", "Silent for 14 min"). */
+ *  the plain words for a tooltip ("Connection lost since 14:05", "Error: …", "Waiting for permission"). */
 export function blockedOf(agent, state, now = Date.now()) {
   if (!agent || agent.archived) return null
   const working = (state.tasks ?? []).filter(t => t.agent === agent.id && t.state === 'working')
@@ -41,9 +41,17 @@ export function blockedOf(agent, state, now = Date.now()) {
   const waiting = (state.cards ?? []).filter(c => c.agent === agent.id && c.status === 'open' && !c.with_agent)
   if (waiting.some(c => c.kind === 'permission')) return { why: 'permission', text: 'Waiting for permission' }
   if (waiting.some(c => c.urgency === 'critical')) return { why: 'blocking', text: 'Waiting for you: a blocking question' }
-  if (working.length) {
-    const last = Math.max(agent.active ?? 0, agent.connected ?? 0, agent.parent ? agent.device_active ?? 0 : 0, ...working.map(t => t.updated ?? 0))
-    if (now - last >= SILENT_MS) return { why: 'silent', text: `Silent for ${minutes(now - last)} min` }
-  }
   return null
+}
+
+/** The quiet hint: { text: "quiet for 24 min", minutes } for a connected session whose working line has seen nothing
+ *  for QUIET_MS, else null. Never a stop: blockedOf does not know it. */
+export function quietOf(agent, state, now = Date.now()) {
+  if (!agent || agent.archived || !agent.online) return null
+  const working = (state.tasks ?? []).filter(t => t.agent === agent.id && t.state === 'working')
+  if (!working.length) return null
+  const last = Math.max(agent.active ?? 0, agent.connected ?? 0, agent.parent ? agent.device_active ?? 0 : 0, ...working.map(t => t.updated ?? 0))
+  if (now - last < QUIET_MS) return null
+  const n = minutes(now - last)
+  return { text: `quiet for ${n} min`, minutes: n }
 }
