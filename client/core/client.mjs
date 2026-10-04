@@ -223,7 +223,7 @@ export class Client {
     this.outbox = outbox
     for (const o of outbox) this.byHash.set(o.hash, o.local_id)
     m.outbox = outbox.map(o => o.public)
-    for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k))
+    for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k), epochAgents(k))
     M.project(m, M.emptyChange())
   }
 
@@ -313,7 +313,7 @@ export class Client {
         }
         await this._walkSessionBackLinks(session_id).catch(() => {})
       }
-      M.applySessionGrant(this.model, state, change, everAgents(this.sessionKeys.get(session_id)))
+      M.applySessionGrant(this.model, state, change, everAgents(this.sessionKeys.get(session_id)), epochAgents(this.sessionKeys.get(session_id)))
     }
     await this._saveRoom()
     M.project(this.model, change)
@@ -594,7 +594,7 @@ export class Client {
     const m = M.emptyModel()
     Object.assign(m.room, keep.room, { last_envelope_number: 0 })
     m.members = keep.members; m.invites = keep.invites; m.outbox = keep.outbox; m._device_registers = keep._device_registers
-    for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k))
+    for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k), epochAgents(k))
     this.model = m
     this.chains = new Map()
     this.frontiers = new Map()
@@ -633,7 +633,7 @@ export class Client {
       const peek = pre.peek = z.peekEnvelope(bytes)
       const h = peek.header
       if (hex(h.sender) === this.my_device_id && !this._resyncing) return pre          // own envelopes: checked against our own chain in phase 2
-      const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false }
+      const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false, freshness: pre.void ? null : this._freshnessFor(h) }
       if (!peek.pruned) {
         try {
           pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.openKeys, self: this.device.id })
@@ -652,6 +652,20 @@ export class Client {
       }
     } catch (e) { pre.error = e; if (globalThis.process?.env?.CORE_DEBUG) console.error("[pre]", e.stack.split("\n").slice(0, 4).join(" | ")) }
     return pre
+  }
+
+  /**
+   * R3 on clients (B03/A7): live, an envelope in an older key epoch counts only within EPOCH_GRACE_MS after this device
+   * saw the epoch change (room: epochChangedAt; session: since). Not while replaying (resync) and not for epochs whose
+   * change this device never saw happen (a fresh device reading history).
+   */
+  _freshnessFor(h) {
+    if (this._resyncing || !this._started) return null
+    if (h.keyScope === 1) {
+      const k = h.sessionId ? this.sessionKeys.get(hex(h.sessionId)) : null
+      return k?.since ? { now: Date.now(), currentEpoch: k.state.epoch, currentSince: k.since } : null
+    }
+    return this.epochChangedAt ? { now: Date.now(), currentEpoch: this.state.epoch, currentSince: this.epochChangedAt } : null
   }
 
   /**
@@ -1550,7 +1564,7 @@ export class Client {
     if (current) k.secrets.set(current.epoch, current)
     this.sessionKeys.set(sid, k)
     const ch = M.emptyChange()
-    M.applySessionGrant(this.model, k.state, ch, everAgents(k))
+    M.applySessionGrant(this.model, k.state, ch, everAgents(k), epochAgents(k))
     M.project(this.model, ch)
     await this._saveRoom()
     this._emitChange(ch)
@@ -1602,6 +1616,15 @@ export async function openShared(hub, link) {
   return z.decryptAsset(blob, unb64u(p.file_key), unb64u(p.sha256))
 }
 /** Every agent a session was ever assigned to (its history stays theirs to have written). */
+/** Session key epoch -> the agents its grants gave that key (B03: who may write under it). */
+function epochAgents(k) {
+  if (!k?.grants) return null
+  if (k._byEpoch && k._byEpochN === k.grants.length) return k._byEpoch
+  const out = {}
+  for (const g of k.grants) { const d = G.decodeGrant(unb64u(g)); const l = (out[d.epoch] ??= []); for (const id of d.agentIds) if (!l.includes(hex(id))) l.push(hex(id)) }
+  k._byEpoch = out; k._byEpochN = k.grants.length
+  return out
+}
 function everAgents(k) {
   if (!k?.grants) return []
   if (k._ever && k._everN === k.grants.length) return k._ever
