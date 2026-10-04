@@ -1585,7 +1585,7 @@ await test('perf budget: a new device with 27 sessions logs in and goes live in 
 // RTT_MS, requests side by side overlap, so the time counts the round trips one after another.
 await test('perf budget: email + password login with a snapshot boot: few requests, few round trips, the re-seal in the background', async () => {
   const { addAccount, loginWithPassword } = await import('./account.mjs')
-  const RTT_MS = 60, MAX_REQUESTS = 22, MAX_ROUND_TRIPS = 12
+  const RTT_MS = 60, MAX_REQUESTS = 22, MAX_ROUND_TRIPS = 12, RESEAL_UPLOAD_MS = 1500
   const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
   phone.options.snapshot = false
   for (let i = 0; i < 26; i++) await phone.createSession()
@@ -1607,6 +1607,7 @@ await test('perf budget: email + password login with a snapshot boot: few reques
     const u = new URL(url)
     seen.push(`${init?.method ?? 'GET'} ${u.pathname.replace(/[0-9a-f]{32,64}/g, ':id')}${u.search.includes('limit=1&') || u.search.endsWith('limit=1') ? ' (head)' : ''}`)
     await sleep(RTT_MS)
+    if (init?.method === 'POST' && u.pathname.endsWith('/session_grants')) await sleep(RESEAL_UPLOAD_MS)   // a phone uploads it for a second
     return fetch(url, init)
   }
   const t0 = performance.now()
@@ -1624,15 +1625,29 @@ await test('perf budget: email + password login with a snapshot boot: few reques
   assert(seen.indexOf('POST /v1/rooms/:id/access_tokens') < (seen.indexOf('POST /v1/rooms/:id/challenge') + 1 || Infinity), `the first sign-in uses the login answer's challenge: ${JSON.stringify(seen.slice(0, 4))}`)
   assert(n <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${n}: ${JSON.stringify(seen)}`)
   assert(trips <= MAX_ROUND_TRIPS, `at most ${MAX_ROUND_TRIPS} round trips to the first paint, took ${trips.toFixed(1)}: ${JSON.stringify(seen)}`)
+  // live at once, while the re-seal is still uploading: a message is not held back behind it
+  assert(fresh._resealing, 'the re-seal is still on its way at the first paint')
+  await until(() => fresh.model.room.connection === 'live', 'live', 10_000)
+  const live = async label => {
+    const t1 = Date.now()
+    await agent.sendMessage({ text: label })
+    await agent.settle()
+    const n = agent.model.room.last_envelope_number
+    await until(() => fresh.model.room.last_envelope_number >= n, `${label} arrives`, 5000)
+    return Date.now() - t1
+  }
+  const during = await live('during the re-seal')
   // the re-seal finishes behind the paint: every session sealed for the new device, nothing pending
+  const nSessions = () => seen.filter(u => u === 'GET /v1/rooms/:id/sessions').length
+  const before = nSessions()
   await until(() => !fresh._resealing && !fresh.roomRecord.reseal_pending, 're-seal done', 10_000)
+  const after = await live('after the re-seal')
+  await sleep(4 * RTT_MS)
+  console.log(`     live message at the new device: ${during} ms during the re-seal, ${after} ms after (${RTT_MS} ms per request); session list reads after the re-seal: ${nSessions() - before}`)
+  assert(during < RESEAL_UPLOAD_MS / 2, `a live message is not held back behind the re-seal (${during} ms)`)
+  assert(nSessions() - before <= 2, `the re-seal's 27 grant announcements cost at most two session reads, not one each (${nSessions() - before})`)
   const mine = await fresh.hub.sessionBundle()
   eq(mine.sessions.filter(x => x.sealed_session_keys.length > 0).length, 27, 'the hub holds a sealed key of every session for the new device')
-  await until(() => fresh.model.room.connection === 'live', 'live', 10_000)
-  const t1 = Date.now()
-  await agent.sendMessage({ text: 'after the login' })
-  await until(() => fresh.model.room.last_envelope_number >= agent.model.room.last_envelope_number, 'a live message arrives', 5000)
-  console.log(`     live message at the new device ${Date.now() - t1} ms after sending (${RTT_MS} ms per request)`)
 })
 
 await test('no endless wait: a request that hangs fails after its deadline; a GET is tried again', async () => {
