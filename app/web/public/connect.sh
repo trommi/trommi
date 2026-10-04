@@ -8,6 +8,7 @@
 #   2. registers it for this folder: claude mcp add trommi --scope project (writes .mcp.json here),
 #   3. joins your account with the invite link (the link is passed by environment, never printed),
 #   4. tells you how to start Claude Code so that Trommi's messages reach it.
+# Without Node 22+ it offers to install it (Debian/Ubuntu: NodeSource + apt, macOS: Homebrew) and asks first.
 # POSIX sh: runs on Linux and macOS (dash, bash, zsh as sh).
 set -eu
 
@@ -26,9 +27,7 @@ case "$LINK" in
 esac
 
 # ---- what this machine needs --------------------------------------------------------------------------------------
-command -v node >/dev/null 2>&1 || fail "Node.js is missing. Install Node 22 or newer (https://nodejs.org), then run this again."
-NODE_MAJOR=$(node -p 'process.versions.node.split(".")[0]' </dev/null 2>/dev/null || echo 0)
-[ "$NODE_MAJOR" -ge 22 ] 2>/dev/null || fail "Node $(node -v 2>/dev/null) is too old; Trommi needs Node 22 or newer."
+node_ok || install_node
 command -v claude >/dev/null 2>&1 || fail "Claude Code (claude) is missing. Install it (https://claude.com/claude-code), then run this again."
 command -v curl >/dev/null 2>&1 || fail "curl is missing."
 
@@ -67,6 +66,46 @@ say ""
 say "  claude --dangerously-load-development-channels server:trommi"
 say ""
 say "Always start (or resume: claude --resume <id> ...) with that flag: without it Claude Code drops every Trommi message."
+}
+
+node_major() { node -p 'process.versions.node.split(".")[0]' </dev/null 2>/dev/null || echo 0; }
+node_ok() { command -v node >/dev/null 2>&1 && [ "$(node_major)" -ge 22 ] 2>/dev/null; }
+
+# Offers to install Node 22 when it is missing or too old. Asks first: stdin is the piped script, so the answer is read
+# from the terminal (/dev/tty). Without a terminal it stops with the hint (TROMMI_INSTALL_NODE=yes answers yes).
+install_node() {
+  HAVE="missing"; command -v node >/dev/null 2>&1 && HAVE="$(node -v 2>/dev/null) (too old)"
+  HINT="Trommi needs Node 22 or newer (now: $HAVE). Install it (https://nodejs.org), then run this again."
+  AS=""; [ "$(id -u)" = 0 ] || { command -v sudo >/dev/null 2>&1 && AS="sudo"; }
+  if [ "$(uname -s)" = Darwin ] && command -v brew >/dev/null 2>&1; then
+    HOW="brew install node"
+  elif command -v apt-get >/dev/null 2>&1 && { [ "$(id -u)" = 0 ] || [ -n "$AS" ]; }; then
+    HOW="Node 22 from NodeSource (deb.nodesource.com) with apt-get${AS:+ (with sudo)}"
+  else
+    fail "$HINT"
+  fi
+  ANSWER="${TROMMI_INSTALL_NODE:-}"
+  if [ -z "$ANSWER" ]; then
+    # In a subshell: a failed redirection of a special builtin would end the whole script (dash).
+    ( : </dev/tty ) 2>/dev/null || fail "$HINT"
+    printf 'Node.js 22 or newer is needed (now: %s). Install %s now? [y/N] ' "$HAVE" "$HOW" >/dev/tty
+    read -r ANSWER </dev/tty || ANSWER=""
+  fi
+  case "$ANSWER" in y|Y|yes|Yes|YES|j|J|ja|Ja) ;; *) fail "$HINT" ;; esac
+  if [ "$HOW" = "brew install node" ]; then
+    brew install node </dev/null || fail "brew install node failed. $HINT"
+  else
+    say "Installing Node 22…"
+    command -v curl >/dev/null 2>&1 || $AS apt-get install -y -qq curl </dev/null >/dev/null || fail "curl is missing."
+    NS="${TMPDIR:-/tmp}/trommi-nodesource.$$"
+    curl -fsSL https://deb.nodesource.com/setup_22.x -o "$NS" || fail "could not download the NodeSource setup. $HINT"
+    $AS bash "$NS" </dev/null >/dev/null 2>&1 || { rm -f "$NS"; fail "the NodeSource setup failed. $HINT"; }
+    rm -f "$NS"
+    $AS apt-get install -y -qq nodejs </dev/null >/dev/null 2>&1 || fail "apt-get install nodejs failed. $HINT"
+  fi
+  hash -r 2>/dev/null || true
+  node_ok || fail "Node is still not 22 or newer after the install. $HINT"
+  say "Node $(node -v) installed."
 }
 
 say() { printf '%s\n' "$*"; }

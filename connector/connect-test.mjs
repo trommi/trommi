@@ -5,7 +5,10 @@
 // installed single-file connector is started as Claude Code starts it (MCP over stdio, in that folder) and must be in
 // the room.
 //
-//   node connector/connect-test.mjs [--shell sh|dash|bash] [--docker IMAGE] [--real-claude]
+//   node connector/connect-test.mjs [--shell sh|dash|bash] [--docker IMAGE] [--real-claude] [--answer y]
+//
+// Without Node (--docker debian:stable-slim --answer y, as root): the script offers to install Node 22 (NodeSource) and
+// goes on after the yes; --answer n: it stops with the hint.
 //
 // --docker runs the script inside a container (host network): node:26-slim has dash as /bin/sh, node:26-alpine
 // busybox ash. Without --real-claude a stub `claude` on PATH stands in for Claude Code's `mcp add/remove` (it writes
@@ -21,7 +24,7 @@ import { startHub, startChannel } from './channel-test-e2e.mjs'
 const here = path.dirname(new URL(import.meta.url).pathname)
 const pub = path.join(here, '../app/web/public')
 const arg = (name, dflt) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : dflt }
-const SHELL = arg('--shell', 'sh'), IMAGE = arg('--docker', null), REAL = process.argv.includes('--real-claude')
+const SHELL = arg('--shell', 'sh'), IMAGE = arg('--docker', null), REAL = process.argv.includes('--real-claude'), ANSWER = arg('--answer', null)
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-connect-'))
 const home = path.join(tmp, 'home'), project = path.join(tmp, 'my project'), bin = path.join(tmp, 'bin')
@@ -61,7 +64,9 @@ try {
   await human.start()
   const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
   // The link is a secret: given by environment to the outer shell, never on a command line we print.
-  const line = `curl -fsSL "$APP/connect" | ${IMAGE ? 'sh' : SHELL} -s "$LINK"`
+  let line = `curl -fsSL "$APP/connect" | ${IMAGE ? 'sh' : SHELL} -s "$LINK"`
+  // --answer y: a terminal (script(1)) that types the answer to the script's question (install Node?) into /dev/tty.
+  if (ANSWER) line = `printf '%s\\n' '${ANSWER}' | script -qec '${line}' /dev/null`
   const env = { PATH: `${REAL ? `${path.dirname(execFileSync('sh', ['-c', 'command -v claude'], { encoding: 'utf8' }).trim())}` : bin}:${path.dirname(process.execPath)}:/usr/bin:/bin`, HOME: home, APP, LINK: invite.link, TROMMI_APP: APP }
   const r = IMAGE
     ? await run('docker', ['run', '--rm', '--network', 'host', '-e', 'APP', '-e', 'LINK', '-e', 'TROMMI_APP', '-e', `HOME=${home}`, '-v', `${tmp}:${tmp}`, '-w', project,
