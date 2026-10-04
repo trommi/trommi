@@ -55,7 +55,7 @@ export async function start(client, { fresh = false } = {}) {
     t.get(/^\/$/, ({ res, url }) => { const d = url.searchParams.get('desk'); if (d == null) return false; desk = d; write('trommi-desk', d); t.redirect(res, '/') })
     t.get(/^\/desk\/([\w-]+)$/, ({ res, match }) => { desk = match[1]; write('trommi-desk', desk); t.redirect(res, '/') })
     // The Scratchpad: the Desk with the pen in hand (t/lib/paper.js listens for trommi:pen).
-    t.get(/^\/pad$/, ({ res }) => { document.addEventListener('turbo:load', () => document.dispatchEvent(new CustomEvent('trommi:pen')), { once: true }); t.redirect(res, '/') })
+    t.get(/^\/pad$/, ({ res }) => { document.addEventListener('turbo:load', () => { window.trommi.pen = true; document.dispatchEvent(new CustomEvent('trommi:pen')) }, { once: true }); t.redirect(res, '/') })
   }
   const b = createBoard({ hub, model, extraPages: [deskPages, roomPages(client)] })
   const router = createRouter({ board: b, flush: () => apply() })
