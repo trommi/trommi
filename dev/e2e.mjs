@@ -68,6 +68,8 @@ try {
   const j = joinRoom({ link, storage: memoryStorage(), device_name: 'night-agent', device_info: { device_name: 'night-agent', platform: 'node', folder: '~/git/test', host: 'e2e' }, poll_ms: 100 })
   agent = await j.client
   await agent.start()
+  // v1.1: an agent holds no room key; the app's core grants it a session once it joined.
+  if (agent.whenSession) await Promise.race([agent.whenSession(), sleep(15000)])
   await agent.claimSession?.({ process_instance: 'e2e', agent_name: 'night-agent' }).catch(e => results.push(`note claimSession: ${e.message}`))
   await A.until("document.querySelector('[data-state=joined]')", 'agent joined on the invite page')
   check(true, 'agent added without a check code')

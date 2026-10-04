@@ -14,7 +14,13 @@ const SESSION_ID_LEN = 12
 // A session's id on the board (its address /s/<id>): the start of the agent's device id, known from the first envelope
 // on and never changing. (The hub's agent_session_id is random hex and arrives later, with GET devices: it would move
 // the address. A readable one, as the mock room has, is kept.)
-export const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : s.agent_device_id.slice(0, SESSION_ID_LEN))
+// A session's key in the core's model: its session_id (v1.1, R6), or the agent's device id (the mock room, v1).
+export const sessionKey = s => s.session_id ?? s.agent_device_id
+// What belongs to a session (a card, a request, a published object) names it by session_id or by its agent.
+const keyOf = o => o.session_id ?? o.agent_device_id
+/** How the core addresses a session for a send: { session_id } (v1.1) or { agent_device_id } (the mock, v1). */
+export const addressOf = (model, key) => (model.sessions.get(key)?.session_id ? { session_id: key } : { agent_device_id: key })
+export const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : sessionKey(s).slice(0, SESSION_ID_LEN))
 
 export class BoardState {
   constructor(client) {
@@ -42,7 +48,7 @@ export class BoardState {
     // Agents (sessions) and their ids on the board. A card's board form names its agent: only when that naming
     // changes (a session came, went or was renamed) are all cards made again; a status line changes nothing here.
     const devToAgent = new Map(), agentToDev = new Map()
-    for (const s of m.sessions.values()) { const id = agentIdOf(s); devToAgent.set(s.agent_device_id, id); agentToDev.set(id, s.agent_device_id) }
+    for (const s of m.sessions.values()) { const id = agentIdOf(s), key = sessionKey(s); devToAgent.set(key, id); agentToDev.set(id, key) }
     const naming = [...devToAgent].join()
     if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear() }
     this.devToAgent = devToAgent; this.agentToDev = agentToDev
@@ -66,12 +72,12 @@ export class BoardState {
     const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
     const queue = cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id)
     const tasks = []
-    for (const s of m.sessions.values()) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(s.agent_device_id), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
+    for (const s of m.sessions.values()) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const memos = boardMemos(m, devToAgent)
     // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
     const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
-    const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(p.agent_device_id), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
+    const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(keyOf(p)), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
     const self = this
     let messages = null
     const state = {
@@ -86,17 +92,17 @@ export class BoardState {
   }
 
   agents() {
-    const m = this.model, crown = m.human.crown?.agent_device_id ?? null
+    const m = this.model, crown = m.human.crown?.session_id ?? m.human.crown?.agent_device_id ?? null
     const list = [...m.sessions.values()].filter(s => s.is_active !== false || s.card_ids?.length)
     const out = list.map((s, i) => {
-      const set = m.human.session_settings.get(s.agent_device_id) ?? s.settings ?? {}
+      const key = sessionKey(s), set = m.human.session_settings.get(key) ?? s.settings ?? {}
       const p = s.profile ?? {}
-      const id = this.devToAgent.get(s.agent_device_id)
+      const id = this.devToAgent.get(key)
       const wanted = 'parent' in set ? set.parent : p.parent_session
       const parent = wanted && this.agentToDev.has(wanted) ? wanted : null
       return {
-        id, device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
-        online: Boolean(s.is_online), model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === s.agent_device_id, parent, main: Boolean(p.is_main),
+        id, device_id: key, session_id: s.session_id ?? null, agent_device_id: s.agent_device_id, name: p.agent_name || s.device_name || id, label: set.name || '', icon: set.icon || p.icon || '', icon_by: set.icon ? 'human' : 'agent',
+        online: Boolean(s.is_online), model: p.model ?? '', task: p.task ?? '', client: '', host: '', starred: crown === key || crown === s.agent_device_id, parent, main: Boolean(p.is_main),
         desk: set.desk ?? 'main', archived: Boolean(set.archived), group: set.group ?? null, position: set.position ?? i, seen: s.last_activity_at ?? 0, connected: s.last_activity_at ?? 0, active: s.last_activity_at ?? 0,
         removed: s.is_active === false,
       }
@@ -133,7 +139,7 @@ export class BoardState {
     const versions = (c.versions ?? []).slice(0, -1).map(v => ({ n: v.object_version, at: v.sent_at, title: v.content?.title ?? '', body: v.content?.body ?? '', options: v.content?.options ?? [], ...(v.content?.sections ? { sections: v.content.sections } : {}), ...(v.content?.html ? { html: v.content.html } : {}), recommended: v.content?.recommended ?? null, multiple: Boolean(v.content?.allows_multiple), attachments: atts(v.content?.attachments), urgency: v.urgency, note: v.content?.change_note ?? '' }))
     const current = c.versions?.at(-1)
     const card = {
-      id: c.object_id, object_id: c.object_id, agent: this.devToAgent.get(c.agent_device_id) ?? c.agent_device_id.slice(0, SESSION_ID_LEN), number,
+      id: c.object_id, object_id: c.object_id, agent: this.devToAgent.get(keyOf(c)) ?? keyOf(c).slice(0, SESSION_ID_LEN), number,
       kind: c.card_type === 'info' ? 'info' : 'decision', status, urgency: c.urgency ?? 'normal', urgency_reason: c.urgency_reason ?? '',
       title: c.title ?? '', body: c.body ?? '', options: c.options ?? [], attachments: atts(c.attachments), version: c.object_version ?? 1,
       multiple: Boolean(c.allows_multiple), choice: a?.choices?.[0] ?? null, choices: a?.choices ?? [], note: a?.note ?? '', summary: c.close_summary || c.withdraw_reason || '',
@@ -163,7 +169,7 @@ export class BoardState {
   permissionCard(p, number) {
     const status = p.permission_state === 'pending' && !(p.expires_at && p.expires_at < Date.now()) ? 'open' : 'done'
     return {
-      id: p.object_id, object_id: p.object_id, agent: this.devToAgent.get(p.agent_device_id) ?? p.agent_device_id.slice(0, SESSION_ID_LEN), number, kind: 'permission', status, urgency: 'critical', urgency_reason: '',
+      id: p.object_id, object_id: p.object_id, agent: this.devToAgent.get(keyOf(p)) ?? keyOf(p).slice(0, SESSION_ID_LEN), number, kind: 'permission', status, urgency: 'critical', urgency_reason: '',
       request_id: p.object_id, title: `Approval: ${p.tool_name}`, body: `${p.description ?? ''}\n\n${p.input_preview ?? ''}`,
       options: [{ key: 'allow', label: 'Allow', detail: '' }, { key: 'deny', label: 'Deny', detail: '' }], attachments: [], version: 1, multiple: false,
       choice: p.verdict ? (p.verdict.allow ? 'allow' : 'deny') : null, choices: p.verdict ? [p.verdict.allow ? 'allow' : 'deny'] : [], note: '',

@@ -2,7 +2,7 @@
 // server/turbo.mjs and server/views/*), done with the client core's human actions (client/core/README.md).
 // Every action shows at once (the core's optimistic echo) and is sealed, signed and sent by the core.
 
-import { agentIdOf } from './board-state.mjs'
+import { agentIdOf, sessionKey, addressOf } from './board-state.mjs'
 import { memoStore } from './memo-store.mjs'
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
@@ -18,7 +18,7 @@ function nextMorning(now = Date.now()) {
 export function hubFacade(client, board) {
   const m = () => client.model
   const card = id => { const c = board.state.cards.find(x => x.id === id); if (!c) throw fail(404, 'unknown card'); return c }
-  const dev = agentId => board.agentToDev.get(agentId) ?? [...m().sessions.values()].find(s => agentIdOf(s) === agentId)?.agent_device_id
+  const dev = agentId => board.agentToDev.get(agentId) ?? sessionKey([...m().sessions.values()].find(s => agentIdOf(s) === agentId) ?? {})
   // Files from a form (File objects) become encrypted attachments; returns the README references.
   const upload = async (files = [], object_id) => Promise.all(files.map(async f => {
     const meta = { file_name: f.name || 'file', media_type: f.type || 'application/octet-stream', object_id }
@@ -83,14 +83,14 @@ export function hubFacade(client, board) {
     async takeBack(cardId) {
       const c = card(cardId)
       if (c.status !== 'open' || c.with_agent == null) throw fail(409, 'this card is not with the agent')
-      await client.sendMessage({ agent_device_id: dev(c.agent), object_id: cardId, text: 'The human took the card back; no need to rework or explain it.', present_card: true })
+      await client.sendMessage({ ...addressOf(m(), dev(c.agent)), object_id: cardId, text: 'The human took the card back; no need to rework or explain it.', present_card: true })
     },
     async message({ agent, text = '', card_id, handback, explain, attachments = [], marks, cards }) {
-      const agent_device_id = dev(agent)
-      if (!agent_device_id) throw fail(404, 'unknown session')
+      const key = dev(agent)
+      if (!key) throw fail(404, 'unknown session')
       const files = attachments.filter(f => f instanceof Blob)
       await client.sendMessage({
-        agent_device_id, object_id: card_id ?? undefined, text,
+        ...addressOf(m(), key), object_id: card_id ?? undefined, text,
         ...(handback ? { hand_back: true } : {}), ...(explain ? { explain: true } : {}),
         ...(files.length ? { attachments: await upload(files, card_id) } : {}),
         ...(marks?.length ? { marks } : {}), ...(cards?.length ? { copied_cards: cards } : {}),
@@ -129,7 +129,7 @@ export function hubFacade(client, board) {
     async starSession({ agent, starred }) {
       const a = board.state.agents.find(x => x.id === agent)
       if (!a) throw fail(404, 'unknown session')
-      await client.setCrown(starred ? { agent_device_id: a.device_id } : null)
+      await client.setCrown(starred ? { session_id: a.session_id ?? undefined, agent_device_id: a.agent_device_id } : null)
     },
     // Desks: the human register desk/<id>.
     async desk({ id, name, remove }) {

@@ -14,6 +14,7 @@
 //
 //   boardMemos(model, devToAgent)    the board state's memos (views/model.mjs shape), from the core's model
 //   memoStore(client, board)         -> act(body): POST /memo of the old hub, as { code, text }
+import { addressOf } from './board-state.mjs'
 import { rememberRef } from './att.mjs'
 
 const HOLD_MS = 3000
@@ -54,7 +55,7 @@ export function memoStore(client, board) {
     const n = current(id)
     if (!n?.held) return
     const text = String(n.text ?? '').trim()
-    await client.sendMessage({ agent_device_id: n.held.to, text, ...(n.attachments?.length ? { attachments: n.attachments } : {}) })
+    await client.sendMessage({ ...addressOf(m(), n.held.to), text, ...(n.attachments?.length ? { attachments: n.attachments } : {}) })
     went.set(id, n.held.to)
     if (went.size > 200) went.delete(went.keys().next().value)
     await remove(id)
@@ -106,7 +107,7 @@ export function memoStore(client, board) {
       catch (err) { return answer(422, { error: `not attached: ${err.message}` }) }
     }
     if (body.send) {
-      const to = fields.to ?? fields.session ?? n.session ?? n.to ?? m().human.crown?.agent_device_id ?? null
+      const to = fields.to ?? fields.session ?? n.session ?? n.to ?? m().human.crown?.session_id ?? m().human.crown?.agent_device_id ?? null
       if (!to || !m().sessions.has(to)) return answer(409, { error: 'this memo has no session to go to', code: 'no-session' })
       const text = fields.text ?? n.text ?? '', files = fields.attachments ?? n.attachments ?? []
       if (!text.trim() && !files.length) return answer(400, { error: 'empty message' })
