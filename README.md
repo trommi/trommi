@@ -13,7 +13,7 @@ open http://127.0.0.1:8900/?mock=1      # the mock room: fixture cards of every 
 open http://127.0.0.1:8900/?mock=crazy  # a very big mock room (performance)
 ```
 
-The hub: `?hub=<url>` (remembered in localStorage `trommi-hub`), default `https://hub.trommi.com`, on localhost `http://127.0.0.1:8890` (the dev hub: `node hub/server.mjs` in trommi-hub).
+The hub: `?hub=<url>` (remembered in localStorage `trommi-hub`), default `https://hub.trommi.com`, on localhost `http://127.0.0.1:8890` (the dev hub: `HUB_PORT=8890 node hub/server.mjs` in trommi-hub, whose default port is 8790).
 
 Tests (headless Chromium, `CHROMIUM` env or `chromium` on the path):
 
@@ -87,9 +87,9 @@ Several people (and agents) work on the app at once. Each area owns its files; t
 
 | Area | Files |
 | --- | --- |
-| **Integrator** (shell, router, store glue, render core) | `public/index.html`, `public/sw.js`, `public/_headers`, `wrangler.jsonc`, `public/js/app/{boot,router,board,board-state,hub-facade,layout,turbo,stimulus,application,att,desk-window}.mjs`, `public/js/app/node-stubs/*`, `public/js/views/{html,model,text,sidebar,menu,keys,toast}.mjs`, `public/css/{tokens,app,turbo,logo,back,crowns,keys}.css`, `public/t/controllers/{keys,menu,rail,copy,fixtures}_controller.js`, `public/t/lib/{keys,toast}.js`, `public/js/pen.js`, `dev/*`, `README.md` |
+| **Integrator** (shell, router, store glue, render core) | `public/index.html`, `public/sw.js`, `public/_headers`, `wrangler.jsonc`, `public/js/app/{boot,router,board,board-state,hub-facade,layout,turbo,stimulus,application,att,desk-window}.mjs`, `public/js/app/node-stubs/*`, `public/js/views/{html,model,text,sidebar,menu,keys,toast}.mjs`, `public/css/{tokens,app,turbo,logo,back,crowns,keys}.css`, `public/t/controllers/{keys,menu,rail,copy}_controller.js`, `public/t/lib/{keys,toast}.js`, `public/js/pen.js`, `dev/*`, `README.md` |
 | **Desk, stacks, Next line** | `public/js/views/{desk,stacks,nextplease,gutter-hover}.mjs`, `public/css/{piles,stamps,slip}.css`, `public/t/controllers/{desk,stack_search,pointto}_controller.js` |
-| **Card page** (every decision flow: options, sections, pictures with marks, hand back, What??, Whatever, Shred, versions, info, permission) | `public/js/views/{card,picture}.mjs`, `public/css/{cardpage,cardclip,richhtml}.css`, `public/t/controllers/{card,circles,clip,pops,advice,richhtml}_controller.js`, `public/t/islands/richhtml.js`, `public/js/{focus-marks,richhtml,ui}.js`; the card routes in `board.mjs` (`registerCards`, `WAYS`) with the integrator |
+| **Card page** (every decision flow: options, sections, pictures with marks, hand back, What??, Whatever, Shred, versions, info, permission) | `public/js/views/{card,picture}.mjs`, `public/css/{cardpage,cardclip,richhtml}.css`, `public/t/controllers/{card,circles,clip,pops,advice,richhtml}_controller.js`, `public/js/{focus-marks,richhtml,ui}.js`; the card routes in `board.mjs` (`registerCards`, `WAYS`) with the integrator |
 | **Session, chat, files, assets, Ledger** | `public/js/views/{session,session-edit,agents}.mjs`, `public/css/{session,beside,ledger,links,speech,asset}.css`, `public/t/controllers/{composer,files,log,lean,say,share,assetthumb,title}_controller.js` |
 | **Scratchpad, canvas, Desk paper** (E2E strokes + snapshots) | `public/pad/*`, `public/t/lib/{paper,clear}.js`, `public/t/controllers/paper_controller.js`, `public/css/{deskpad,scribble,clear,padlink}.css` |
 | **Memos** | `public/js/views/memo.mjs`, `public/t/lib/memo.js`, `public/t/controllers/{memo,memos}_controller.js`, `public/css/quicksend.css` |
