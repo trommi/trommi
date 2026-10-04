@@ -14,7 +14,10 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | `zcrypto.mjs` | `export * from '../../crypto/zcrypto.mjs'` (in the app: the real file, copied) |
 | `transport.mjs` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
 | `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
-| `sync.mjs` | the sync engine: one cursor, verify every header, decrypt heads, lazy timelines, outbox |
+| `client.mjs` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
+| `escrow.mjs` | password escrow v2 (and v1 read) |
+| `snapshot.mjs` | room snapshots (fast first start) |
+| `session-grants.mjs` | re-export of `crypto/session-grants.mjs` (in the app: the real file) |
 | `codec.mjs` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
 | `model.mjs` | the board model reducer and the projections |
 | `agent.mjs` | what an agent does: objects, messages, status, permission requests, `authoriseCommand` |
@@ -43,7 +46,9 @@ join.check_code        // Promise<'123456'>: resolves when the inviter revealed;
 const client = await join.client                      // resolves when the inviter added this device
 
 // 4. Recover with the code: removes every human device, keeps the agents. A NEW code comes back once.
-const { client, recovery_code } = await recoverRoom({ hub_url, room_id, code, device_name, storage })
+const { client, recovery_code } = await recoverRoom({ hub_url, room_id, code, device_name, storage, on_recovery_code })
+//    on_recovery_code(code) is called BEFORE the recovery entry is posted: show it there. After the entry is in, nothing loses it:
+//    sessions it could not re-key are re-keyed at the next start of any human device (stale grants, README R6).
 
 await client.start()        // sign in, catch up (storage + delta), open the live stream
 client.stop()               // close the stream; state stays in storage
@@ -153,7 +158,7 @@ Answer = {
 **Rules the reducer applies, identically on every client** (so humans and agents agree):
 
 - R1: a new object's `object_id` must be H("trommi/v1/object-id", creator ‖ `sender_sequence` of version 1) (first 16 bytes); version 1 names no predecessor (`previous_version_hash` zeros). Timeline items follow the authority table of the README (a session's chat: the agent or a human addressing it; a card's chat: its creator or a human addressing the creator; desk canvas: humans). Refusals are `Alert`s and change nothing.
-- R2: registers and memo versions are settled by signed causal order (`seen` frontiers carried forward per sender; concurrent: later `sent_at`, then `sender_device_id`), never by hub order. A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
+- R2: registers and memo versions are settled by one total order from signed data, (`lamport`, `sent_at`, `sender_device_id`, `sender_sequence`), never by hub order. A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
 - A card version counts only from the card's creator (the sender of version 1), with `object_version` = previous + 1 and `previous_version_hash` = the current `version_hash`. Anything else becomes an `Alert` and is ignored.
 - An answer counts only from an active human device, addressed to the owning agent, while the card is open, bound to the **current** `version_hash`, and (for `answer_action: 'answer'` without `trusted`) with every choice an option key. An answer to an older version is ignored (alert `answer-stale`): the agent refuses it too, the card stays open.
 - `decide_again` counts only if it names the answer in force; it reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
@@ -227,7 +232,7 @@ Invite = { invite_id, device_role, link, label, expires_at,
   newcomer: null | { device_id, device_name },   // after the request arrived
   error: null | code }
 Alert = { alert_id, code, message, envelope_number, sender_device_id, at, source: 'local' | 'agent' }
-OutboxItem = { local_id, envelope_kind, object_id, timeline_key, recipient_device_id, content, outbox_state: 'sending' | 'failed', error }
+OutboxItem = { local_id, envelope_kind, object_id, timeline_key, recipient_device_id, content, outbox_state: 'sending' | 'blocked' | 'failed', error }
 ```
 
 ### The stack (projection)
@@ -284,25 +289,16 @@ await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail a
 roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for passphrase sign-in or recovery
 ```
 
-Password escrow (optional, `escrow.mjs`; trade-off: the hub or a thief of its database can guess passphrases offline, PBKDF2 is not memory-hard, so 1,000,000 iterations plus the length rule; the paper code stays the root):
+Password escrow (optional, `escrow.mjs`, v2): the blob is addressed by an id derived from the passphrase (PBKDF2-SHA-256, 2,000,000 iterations -> key + id), so the room id alone fetches nothing and every guess costs a slow derivation plus a rate-limited request. Whoever holds the hub's database can still guess offline (PBKDF2 is not memory-hard; WebCrypto has no Argon2), so offer the generated passphrase; the paper code stays the root:
 
 ```js
-passphraseProblem(text)                                // null if acceptable, else the reason: >= 14 characters AND (>= 4 words or >= 20 characters), not repetitive
-await client.setPassphrase(passphrase, { recovery_code })   // the code once (founding screen, or typed in settings); 'weak-passphrase', 'bad-recovery-code'
+generatePassphrase()                                   // 'k7m2-x9qp-…' six groups of four (120 bits): offer this, show it once
+passphraseProblem(text)                                // null if acceptable (a generated one always), else the reason: an own passphrase needs >= 6 words of >= 3 letters
+await client.setPassphrase(passphrase, { recovery_code })   // the code once; writes escrow v2; 'weak-passphrase', 'bad-recovery-code'
 await client.removePassphrase()
-await client.checkPassphrase()                         // -> model.room.has_passphrase (true | false; null = not asked); counts against the hub's 10 reads/hour
-const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; 'wrong-passphrase'
-```
-
-Membership (human devices only):
-
-```js
-const invite = await client.createInvite({ device_role: 'human' | 'agent', app_url: 'https://app.trommi.com/join', label })  // -> Invite (model.invites)
-                                                       // label (agents, R8): written to session/<agent_device_id>.name once joined; it wins over device/<id>.device_name
-await client.confirmInvite(invite_id, typed_code)      // human role: the code the human typed; wrong code burns the invite
-                                                       // agent role: added automatically once its request arrives (no code)
-await client.removeDevices([device_id, ...])           // one entry, one new epoch, sealed for everyone who stays
-
+await client.checkPassphrase()                         // -> model.room.has_passphrase: a v1 escrow is visible to anyone, a v2 one only as this device set it
+const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; tries v2, then v1; 'wrong-passphrase'
+// every human device gets the alert 'recovery-add' when the recovery key adds a device (passphrase sign-in or someone with the code)
 ```
 
 ## Sessions and keys (R6, v1.1)
@@ -313,8 +309,8 @@ Agents hold no room key; everything an agent sends is under a session key. Human
 // human side
 const session_id = await client.createSession({ agent_device_id })                    // first grant: a new session for an agent
 await client.assignSession({ session_id, agent_device_id, with_history })             // hand over / add an agent
-        // with_history true: the current key is re-sealed with its history key (the agent reads the whole session)
-        // false: a new session key epoch first ("Darf er den bisherigen Verlauf lesen?" — nein): it reads from now on
+        // always a new session key epoch when an agent leaves (handover); with_history true: the agents NEW in this call get the
+        // history key and read back through the back links; agents already there never get it this way (per agent, review 2)
 const invite = await client.createInvite({ device_role: 'agent', label, session_id?, with_history? })
         // once the agent joined, the core posts the grant itself: a new session, or the handover of session_id
 client.sessionOfAgent(agent_device_id)                // the session an agent is assigned to now
@@ -356,7 +352,7 @@ command = {
   content,                 // the decoded body
   choices, previous_choices, allow,   // as fitting
   late,                    // the human had not seen the agent's newest envelope
-  history,                 // R4: sent before this process started, and this storage never delivered anything from that sender: context, not a prompt
+  history,                 // R4: sent before the history boundary (first start without sync state, persisted): context, not a prompt
   envelope_hash, sender_sequence, sent_at,
   card,                    // answer / decide_again / message on a card: the card as it is now (model shape)
   permission,              // verdict: the request
@@ -394,6 +390,13 @@ Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` dele
 
 A human device writes a snapshot every 5000 envelopes (counted from the newest anyone wrote): the model records (no timeline items), the chain head per sender and the cursor, gzipped, as an encrypted attachment; the human register `room_snapshot` = `{ attachment, encoding, envelope_number, log_seq, log_hash, written_at }` points at it. A new human device scans the newest pages for that register (signature and sender checked, from a human device), checks the log entry it names, loads it and verifies only the tail with full chain checks. Stated trust, like canvas snapshots: the snapshot's content cannot be checked without replaying. Thread items from before it are checked by their signature when opened. `client.options.snapshot = false` (before `start()`) disables reading and writing; `client.writeSnapshot()` writes one now; `client.stats.snapshot` says whether a start used one. Measured (Node, local hub): 20,000 envelopes, first start 29 ms with the snapshot (65 KiB) vs 1,039 ms full replay.
 
-## Keys (R6 prepared)
+## Review-2 behaviour (4 October 2026)
 
-`client.keyFor({ kind, object, timeline, recipient })` is the only place that chooses the key an envelope is sealed with (today: the room key of the current epoch); `client.openKeys` is its opening side. Per-session keys (README R6: session scope for a session's cards, chat, canvas and agent registers; room scope for desks, memos, human registers, device labels) plug in there once `crypto/zcrypto.mjs` has key scopes and session grants. Until then sessions are keyed by the agent's `device_id`; the switch to `session_id` will be announced to app and channel first.
+- **Sending never re-signs a number.** A hub refusal with `voided: true` (the hub kept a void record) marks the item `failed` and sending goes on; any other final refusal sets `model.room.outbox_blocked = { local_id, code, message }`, alerts `chain-halted`, makes `settle()` throw `chain-halted`, and retries the same bytes every 60 s. Status bodies over 4 KiB throw `too-large` before signing.
+- **Write-ahead.** `storage.setMany(entries, { durable: true })` (IndexedDB: strict durability) holds the outbox and the own chain head before a post; `fileStorage` fsyncs file and directory on every write. A failed write stops sending (`storage-failed`).
+- **Registers and memos** carry a signed `lamport` (`compareWrites` in `model.mjs`): one total order on every device.
+- **Removal/recovery** re-key every stale session in one atomic `POST session_grants`; `_healStaleSessions` runs at start, on member entries and after a removal; nobody seals under a stale session key (agents wait up to a minute for the re-key).
+- **Agent history boundary** `sync.history_before`: every command sent before the first start without sync state is `history: true`. Commands are held (not dropped) while the member list cannot be refreshed or the log forked; `resumeCommands()` delivers them.
+- **Ids** that reach URLs are checked hex (`checkId`); a body whose attachment ids are not hex or not in the header's blob list counts as undecryptable. Bodies with bad UTF-8 or a BOM are refused. A trusted answer's choices must be the card's recommendation.
+- **Snapshots** only from human devices still members, not from before the newest removal/recovery, tail read from an overlap window (see README R2).
+- Not in yet: the client-side live epoch cutoff (B03) was reverted after it broke answers to a fresh agent on prod; it comes back with a regression test.
