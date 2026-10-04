@@ -437,6 +437,8 @@ export function answerRefusal(model, rec) {
   if (!card) return 'card-mismatch'
   if (rec.recipient_device_id !== card.agent_device_id) return 'not-for-owner'
   const b = rec.bind
+  // F9: retention pruned it (no body, no bind): the signed header still says the card was answered or closed.
+  if (!b && !rec.content && (rec.content_state === 'pruned' || rec.content_state === 'header')) return card.object_state === 'open' ? null : 'card-closed'
   if (!b || b.cardId !== card.object_id) return 'card-mismatch'
   if (card.object_state !== 'open') return 'card-closed'
   if ((b.versionHash ?? b.cardHash) !== card.version_hash) return 'answer-stale'
@@ -468,7 +470,7 @@ function applyAnswer(model, rec, change) {
   const c = rec.content ?? {}
   const answer = {
     answer_action: c.answer_action ?? 'answer', choices: c.choices ?? [], note: c.note ?? null, option_notes: c.option_notes ?? {}, attachments: c.attachments ?? [],
-    marks: c.marks ?? [], trusted: !!c.trusted, bound_version_hash: rec.bind.cardHash, bound_object_version: card.object_version,
+    marks: c.marks ?? [], trusted: !!c.trusted, bound_version_hash: rec.bind?.cardHash ?? null, bound_object_version: card.object_version,
     envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, by_device_id: rec.sender_device_id, answered_at: rec.object.answered_at || rec.sent_at,
     taken_back_at: null, pending: false,
   }
@@ -753,7 +755,8 @@ const objToMap = o => new Map(Object.entries(o ?? {}))
 export function serialiseSession(s) { return { ...s, registers: [...s.registers] } }
 export function deserialiseSession(o) { return { ...o, registers: new Map(o.registers ?? []) } }
 export function serialiseTimelineMeta(t) { const { items, ...rest } = t; return { ...rest, loaded_down_to: Number.isFinite(t.loaded_down_to) ? t.loaded_down_to : null, window_open: false } }
-export function deserialiseTimelineMeta(o) { return { ...o, items: new Map(), loaded_down_to: o.loaded_down_to ?? Infinity, window_open: false } }
+// F8: the window is empty after a restart, so paging starts again from the newest item (a persisted low mark would skip it).
+export function deserialiseTimelineMeta(o) { return { ...o, items: new Map(), loaded_down_to: Infinity, window_open: false } }
 export function serialiseHuman(h) {
   return { raw: [...h.raw] }
 }

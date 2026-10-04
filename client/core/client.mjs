@@ -622,7 +622,7 @@ export class Client {
           if (rec) {
             const cmd = this.model.room.my_role === 'agent' ? this._preAuthorise(rec) : null
             const result = M.applyRecord(this.model, rec, change)
-            if (rec.kind === codec.KIND.timeline_item) tl.push(rec)
+            if (rec.kind === codec.KIND.timeline_item && result.applied !== false) tl.push(rec)   // F7: a refused item is not kept for the window
             if (cmd) commands.push({ ...cmd, applied: result.applied, refused: cmd.refused ?? (rec.is_head && !result.applied ? result.refused : null) })
           }
         } catch (e) {
@@ -1618,7 +1618,12 @@ export class Client {
         let accepted
         try { accepted = await z.acceptJoinRequest({ invite: inv, request: unb64u(q), inviter: this.device }) }
         catch (e) { if (e.code === 'invite-expired') { this._setInvite(invite_id, { invite_state: 'expired', error: e.code }); return } continue }
-        await this.hub.postReveal(invite_id, b64u(accepted.reveal))
+        try { await this.hub.postReveal(invite_id, b64u(accepted.reveal)) }
+        catch (e) {
+          // F4: a network failure here must not wedge the invite: answer the same request again at the next look.
+          if (isTransient(e)) { inv.used = false; inv.claimed = false; inv.request = null }
+          throw e
+        }
         inv.code = accepted.code
         if (accepted.requestHash) inv.requestHash = accepted.requestHash
         const choices = [accepted.code]
@@ -1650,10 +1655,13 @@ export class Client {
     return this.serial(async () => {
       const inv = this.invitesPrivate.get(invite_id)
       try {
+        // F4: a retry after a lost answer finds the newcomer already added: go on with the steps after the post.
+        await this._refreshMembers()
+        const already = z.memberAt(this.state, unhex(inv.public.newcomer.device_id))
         const secret = this.secrets.get(this.state.epoch)
-        const added = await z.finalizeInvite({ invite: inv, state: this.state, inviter: this.device, secret, ...(inv.requestHash ? { requestHash: inv.requestHash } : {}), ...opts })
+        const added = already ? null : await z.finalizeInvite({ invite: inv, state: this.state, inviter: this.device, secret, ...(inv.requestHash ? { requestHash: inv.requestHash } : {}), ...opts })
         const newId = inv.public.newcomer.device_id
-        await this.hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: added.wrap ? [{ device_id: newId, key_sealed: b64u(added.wrap) }] : [] })
+        if (added) await this.hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: added.wrap ? [{ device_id: newId, key_sealed: b64u(added.wrap) }] : [] })
         clearInterval(inv._timer); inv._timer = null
         await this._refreshMembers()
         if (inv.role === ROLE.AGENT) {
@@ -1672,6 +1680,12 @@ export class Client {
         }
         this._setInvite(invite_id, { invite_state: 'joined' })
       } catch (e) {
+        // F4: a network failure is retried (a few times, 2 s apart) instead of failing the invite for good.
+        if (isTransient(e) && (inv._finalizeTries = (inv._finalizeTries ?? 0) + 1) <= 5) {
+          inv.finalized = false                              // the entry may not have landed; the retry looks first
+          setTimeout(() => this._finalizeInvite(invite_id, opts).catch(() => {}), 2000).unref?.()
+          throw e
+        }
         this._setInvite(invite_id, { invite_state: 'failed', error: e.code ?? 'failed' })
         throw e
       }
