@@ -122,6 +122,7 @@ export async function start(client, { fresh = false } = {}) {
   })
   await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
   window.trommi.firstPaintMs = performance.now() - T0
+  window.trommi.openMs = typeof OPEN_MS === 'number' ? OPEN_MS : null
   document.documentElement.dataset.ready = ''
   client.start().catch(err => {
     // One sealing client per device and room (a Web Lock): the room is open in another tab of this browser.
@@ -134,6 +135,7 @@ export async function start(client, { fresh = false } = {}) {
 }
 
 const client = await openClient().catch(err => { console.error('open', err); return null })
+const OPEN_MS = performance.now() - T0   // the room from storage (or the mock's fixture) in memory
 if (client) await start(client)
 else await roomScreen({ start, hub: hubUrl() })
 

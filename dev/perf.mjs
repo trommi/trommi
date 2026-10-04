@@ -23,6 +23,7 @@ async function profile(name, { width, height, throttle }) {
     await page.send('Page.navigate', { url: `${APP}/?mock=${MOCK}` })
     for (let i = 0; i < 200; i++) { if (await js("return document.documentElement.hasAttribute('data-ready')").catch(() => false)) break; await sleep(50) }
     add('first paint (boot -> Desk painted, incl. mock generation)', await js('return trommi.firstPaintMs'))
+    add('  of it: render + paint after the room is in memory', await js('return trommi.firstPaintMs - (trommi.openMs ?? 0)'))
     await sleep(300)
     // Visit timings: from the call to the painted page (one frame after).
     const visit = path => js(`const t = performance.now(); await trommi.router.visit(${JSON.stringify(path)}); await new Promise(r => requestAnimationFrame(() => setTimeout(r))); return performance.now() - t`)
