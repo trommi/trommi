@@ -9,6 +9,7 @@ import { arrowStrokes } from '/js/pen.js'
 
 const NS = 'http://www.w3.org/2000/svg'
 const wide = () => matchMedia('(min-width: 861px)').matches
+const HOSTS = '#desk-list .inbox-row[data-from], #agents .agent-row[data-unit]'
 const css = (id) => (window.CSS?.escape ? CSS.escape(id) : id)
 
 export default class extends Controller {
@@ -21,7 +22,8 @@ export default class extends Controller {
 
   over(event) {
     if (!wide() || event.pointerType === 'touch') return
-    const host = event.target.closest?.('#desk-list .inbox-row[data-from], #agents .agent-row[data-unit]')
+    this.at = [event.clientX, event.clientY]
+    const host = event.target.closest?.(HOSTS)
     if (!host || host === this.from) return
     this.from = host
     this.turn++
@@ -33,8 +35,15 @@ export default class extends Controller {
   }
   redraw() {
     if (!this.from) return
-    if (!this.from.isConnected) this.from = this.from.id ? document.getElementById(this.from.id) : null   // a stream replaced it
+    if (!this.from.isConnected) this.from = (this.from.id && document.getElementById(this.from.id)) || this.under()   // a stream replaced it, or took it away
     if (this.from) this.draw(false); else this.remove()
+  }
+  /** The row now under the pointer where it last was (an answered row left, the next one moved up under it). */
+  under() {
+    if (!this.at) return null
+    const host = document.elementFromPoint(...this.at)?.closest(HOSTS)
+    if (host) this.turn++
+    return host ?? null
   }
   /** A stream is about to change the page: draw again once it has. */
   later() { if (this.from) requestAnimationFrame(() => requestAnimationFrame(() => this.redraw())) }
