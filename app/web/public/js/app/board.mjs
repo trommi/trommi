@@ -16,6 +16,7 @@ import { register as memoPage } from '../views/memo.mjs'
 import { register as jumpPage } from '../views/menu.mjs'
 import { register as agentsPage } from '../views/agents.mjs'
 import { register as stacksPage } from '../views/stacks.mjs'
+import { register as galleryPage, galleryShelf } from '../views/gallery.mjs'
 
 export const BASE = ''
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
@@ -171,7 +172,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
       return redirect(res, `${BASE}/`)
     })
     t.live('desk', {
-      take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), stacks: deskStacks(m, BASE) }),
+      take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), shelf: galleryShelf(m, BASE), stacks: deskStacks(m, BASE) }),
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
@@ -182,8 +183,9 @@ export function createBoard({ hub, model, extraPages = [] }) {
         else {
           for (const id of was.order) if (!now.rows.has(id)) out.push(stream('remove', `row-${id}`))
           for (const id of kept) if (was.rows.get(id) !== now.rows.get(id) && t.differs(was.rows.get(id), now.rows.get(id))) out.push(stream('replace', `row-${id}`, now.rows.get(id)))
-          for (const id of added) { const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (sender) out.push(stream('before', 'desk-stacks', runSection(sender, now.rows.get(id), 1))) }
+          for (const id of added) { const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (sender) out.push(stream('before', 'desk-shelf', runSection(sender, now.rows.get(id), 1))) }
         }
+        if (sameOrder && t.differs(was.shelf, now.shelf)) out.push(stream('replace', 'desk-shelf', now.shelf))
         if (t.differs(was.stacks, now.stacks)) out.push(stream('replace', 'desk-stacks', now.stacks))
         return out.join('')
       },
@@ -251,7 +253,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })
 
-  for (const register of [...extraPages, registerDesk, registerCards, agentsPage, jumpPage, memoPage, sessionPage, stacksPage]) register(t)
+  for (const register of [...extraPages, registerDesk, registerCards, agentsPage, jumpPage, memoPage, sessionPage, stacksPage, galleryPage]) register(t)
 
   /** One request of this page: a navigation (GET) or a form (POST). */
   async function request({ method = 'GET', path, form = null, headers = {} }) {
