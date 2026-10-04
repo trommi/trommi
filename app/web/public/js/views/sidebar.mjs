@@ -20,7 +20,7 @@ export const markArt = agent => raw(doodleSvg(agent.mark) + (agent.starred ? cro
 export const smallMark = agent => html`<span class="inbox-from-mark" style="--hue:${agent.hue}">${markArt(agent)}</span>`
 
 // The badge at the end of a row: the ring with the number of open questions; the raised red hand when the session is
-// really stopped (blocked: disconnected while working, an error, waiting for permission, silent too long; server/blocked.mjs).
+// really stopped (blocked: disconnected while working, an error, waiting for permission; being quiet is no stop, blocked.mjs quietOf).
 // The hand can stand without any question. That one of its questions knocks (is urgent) is told on the Desk, not here.
 // A link into that session. That the session works is told by its drawing (avatar working), not here:
 // a session that works and has no open question has no badge.

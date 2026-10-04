@@ -461,6 +461,8 @@ a.inbox-index-tab:hover { color: var(--fg); background: var(--surface); }
    heading, the Agents line. */
 .agent-badge[data-state="blocked"], .agent-badge[data-state="blocked"][data-offline], .desk-blocked, .t-blocked { color: var(--urg-critical); }
 .agent-badge[data-state="blocked"] .hand-loop, .desk-blocked .hand-loop, .t-blocked .hand-loop { fill: var(--urg-critical); stroke: var(--urg-critical); }
+/* Quiet (not a stop): a grey hint, no hand. */
+.t-quiet { color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
 .agent-badge[data-state="blocked"] .hand-pen, .desk-blocked .hand-pen, .t-blocked .hand-pen { stroke: var(--surface); stroke-width: 1.7; }
 .desk-blocked { flex: none; display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px; margin-right: 2px; border-radius: 50%; text-decoration: none; }
 .desk-blocked { position: relative; }
