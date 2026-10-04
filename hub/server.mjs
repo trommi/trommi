@@ -465,7 +465,7 @@ export async function startHub({
     if (req.method === 'OPTIONS') {
       if (allowedOrigin(req.headers.origin)) {
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE')
-        res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, range, x-found-token, last-event-id')
+        res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, range, last-event-id, x-found-token, x-test-token, x-lease-generation, trommi-client, trommi-protocol')
         res.setHeader('Access-Control-Max-Age', '86400')
       }
       res.writeHead(204).end()

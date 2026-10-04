@@ -32,6 +32,8 @@ import { INSTRUCTIONS, TOOLS } from './channel-tools.mjs'
 import { createBridge } from './channel-bridge.mjs'
 
 const log = (...a) => console.error('[trommi]', ...a)
+// Sent by client/core as Trommi-Client on every request; the hub answers 426 client-too-old when it is too old.
+export const CLIENT = 'channel/0.1.0'
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
 
 export function channelConfig(env = process.env) {
@@ -109,7 +111,7 @@ export function pickSlot(cfg, room_id) {
  * The member side of the channel: opens or joins the room and keeps it running.
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
-export async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {} } = {}) {
+export async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {} } = {}) {
   const core = await import('../client/core/index.mjs')
   const { fileStorage } = await import('../client/core/storage-file.mjs')
   const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
@@ -145,6 +147,12 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
         me.error = 'another process took over this key; this one stops'
         log(me.error)
         return onLeaseLost(me)
+      }
+      if (err?.code === 'client-too-old' || err?.code === 'upgrade_required') {
+        me.phase = 'too-old'
+        me.error = `The Trommi hub needs a newer channel than ${CLIENT}: update the repository (git pull in ${path.dirname(path.dirname(new URL(import.meta.url).pathname))}) and restart the session. Nothing is sent or acted on until then.`
+        log(me.error)
+        return onTooOld(me)
       }
       if (err?.code === 'log-fork') {
         me.phase = 'halted'
@@ -186,7 +194,7 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
       if (me.paths.busy.length) me.error = `another Claude session in this folder already uses ${me.paths.busy.length === 1 ? 'the key' : 'every key'} of this room; this session needs an invite of its own (two sessions are two members)`
       return me
     }
-    const client = await core.openRoom({ storage })
+    const client = await core.openRoom({ storage, client: CLIENT })
     if (!client) { me.phase = 'needs-invite'; return me }
     await run(client)
     return me
@@ -201,7 +209,7 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
       const storage = await storageFor(room_id)
       if (me.paths.has_key) throw new Error(`this session already has a key for room ${room_id} (${me.paths.key_file}); restart the session to use it`)
       me.phase = 'joining'
-      const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage })
+      const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage, client: CLIENT })
       j.check_code.then(code => log(`invite answered (check code ${code}); waiting for the app to add this session`)).catch(() => {})
       const client = await j.client
       me.paths.has_key = true
@@ -247,6 +255,7 @@ export async function main() {
   const channel = await createChannel({
     cfg,
     onLeaseLost: async () => { await channel.stop(); process.exit(0) },
+    onTooOld: async me => { await channel.stop(); notify('notifications/claude/channel', { content: me.error, meta: { kind: 'chat', upgrade_required: '1' } }) },
     onCommand: cmd => bridge?.command(cmd),
     onReady: async me => {
       const storage = me.storage
@@ -259,7 +268,7 @@ export async function main() {
   const text = t => ({ content: [{ type: 'text', text: t }] })
   const notReady = () => {
     const me = channel.me
-    if (me.phase === 'conflict' || me.phase === 'halted' || me.phase === 'lease-lost') return me.error
+    if (['conflict', 'halted', 'lease-lost', 'too-old'].includes(me.phase)) return me.error
     if (me.phase === 'joining') return 'Joining the Trommi room: waiting for the human to confirm this session in the Trommi app. Try again in a moment.'
     if (me.phase === 'starting') return 'Connecting to the Trommi hub; try again in a moment.'
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. Ask the human for an agent invite link (Trommi app: invite an agent) and call join with it, or start Claude Code with TROMMI_INVITE set.`
@@ -293,7 +302,8 @@ export async function main() {
   // Events reach Claude Code only after the handshake: open the room once it is done.
   mcp.oninitialized = () => {
     channel.open().then(me => { if (me.phase === 'needs-invite') log(notReady()) }).catch(err => {
-      if (channel.me.phase !== 'conflict') channel.me.phase = 'needs-invite'
+      if (err.code === 'client-too-old') channel.me.phase = 'too-old'
+      else if (channel.me.phase !== 'conflict') channel.me.phase = 'needs-invite'
       channel.me.error = err.message
       log(`not connected: ${err.message}`)
     })
