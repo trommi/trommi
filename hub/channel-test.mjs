@@ -244,6 +244,26 @@ await test('history and late commands are marked; strokes are never chat', async
   assert.equal(events.length, 1)
 })
 
+await test('review 2 PoC: a human cannot write outside the cache through attachment_id or file_name', async () => {
+  const { client, bridge, events } = bridgeWith()
+  const outside = path.join(tmp, 'outside')
+  fs.mkdirSync(outside, { recursive: true })
+  let fetched = 0
+  client.fetchAttachment = async () => { fetched++; return new TextEncoder().encode('pwned') }
+  const up = '../'.repeat(12)
+  await bridge.command({ command: 'message', content: { content_type: 'message', text: 'look', attachments: [
+    { attachment_id: `${'a'.repeat(32)}?x=/${up}${outside.slice(1)}/evil`, file_name: 'rc' },
+    { attachment_id: `${'b'.repeat(32)}/../../../evil`, file_name: 'rc' },
+    { attachment_id: 'c'.repeat(32), file_name: `${up}${outside.slice(1)}/evil` },
+    { attachment_id: 'd'.repeat(32), file_name: '..' },
+  ] } })
+  assert.equal(fs.readdirSync(outside).length, 0, 'a file was written outside the cache')
+  assert.equal(fetched, 2, 'a malformed attachment id reached the hub')
+  const files = events.at(-1).meta.files.split(',')
+  for (const f of files) assert.equal(path.dirname(f), path.join(tmp, 'files'))
+  assert.deepEqual(files.map(f => path.basename(f)), [`${'c'.repeat(32)}-evil`, `${'d'.repeat(32)}-file`])
+})
+
 await test('permission relay: request -> object, verdict -> notifications/claude/channel/permission', async () => {
   const { client, bridge, events, state } = bridgeWith()
   const params = { request_id: 'abcde', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"npm test"}' }
