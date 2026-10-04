@@ -4,7 +4,7 @@
 //   ops.handle(req, res, url)   first thing for every request: metrics, version gate (426), write admission
 //                               (503), and the routes below; true when it answered
 //   ops.send(s, chunk)          every chunk for a live stream (bounded buffer)    ops.track(s, req)  a new stream
-//   ops.unlimited(req, roomId)  rate limits lifted (x-test-token, or a test room)
+//   ops.unlimited(req, roomId)  rate limits lifted (a signed test request, or a test room)
 //   ops.testRooms.wanted/mark   founding with test_room: true                      ops.quota.check/make  uploads
 //
 // Routes: GET /v1/version · DELETE /v1/rooms/:room_id (test rooms) · GET /v1/rooms/:room_id/usage ·
@@ -28,13 +28,13 @@ const HOUR = 3600000
 export async function createOps({ db, dataDir, files, room, closeRoom, announce, bearer, ipOf, now = Date.now, log = () => {}, env = process.env }) {
   const versions = clientVersions({ env, log, now })
   const flow = flowControl({ maxWrites: envNumber(env, 'HUB_WRITE_QUEUE', 512), streamBufferBytes: envNumber(env, 'HUB_STREAM_BUFFER_BYTES', 4 << 20) })
-  const tests = testRooms({ db, dataDir, token: env.HUB_TEST_TOKEN || '', closeRoom, now, log })
+  const tests = testRooms({ db, dataDir, publicKey: env.HUB_TEST_PUBLIC_KEY || undefined, closeRoom, now, log })
   const quota = attachmentQuota({ db, files, quotaBytes: envNumber(env, 'ROOM_ATTACHMENT_QUOTA_BYTES', 1 << 30), announce, log })
   const escrow = passwordEscrow({ db, now })
   const escrowReads = windowLimit(envNumber(env, 'HUB_LIMIT_ESCROW_READS_PER_HOUR', 10), HOUR, now)
   const wal = walKeeper({ db, dataDir, truncateBytes: envNumber(env, 'HUB_WAL_TRUNCATE_BYTES', 64 << 20) })
   const metrics = hubMetrics({ dataDir, flow, wal, now })
-  const unlimited = (req, roomId) => tests.hasToken(req) || (!!roomId && tests.isTestRoom(roomId))
+  const unlimited = (req, roomId) => tests.isTestRequest(req) || (!!roomId && tests.isTestRoom(roomId))
 
   const guard = fn => () => { try { const p = fn(); p?.catch?.(err => log(`ops: ${err.message}`)) } catch (err) { log(`ops: ${err.message}`) } }
   const timers = [setInterval(guard(() => wal.checkpoint()), 10000), setInterval(guard(() => tests.expire()), 600000)]

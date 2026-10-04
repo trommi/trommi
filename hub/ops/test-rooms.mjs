@@ -1,23 +1,44 @@
-// test-rooms.mjs: rooms for load tests. Founding with `test_room: true` needs header x-test-token
-// (= HUB_TEST_TOKEN); such a room expires after 24 hours and can be deleted at once with the same token.
-// The token also lifts rate limits for the requests that carry it; envelopes of a test room skip them too.
+// test-rooms.mjs: rooms for load tests, opened by a signed test request. The load harness holds the private
+// half of HUB_TEST_PUBLIC_KEY (default: the key below; a public key is not a secret) and signs
+//   x-test-signature: v1.<timestamp ms>.<nonce>.<sig>, sig = base64url Ed25519 signature of
+//   "trommi-test-request/v1\n<METHOD>\n<path?query>\n<timestamp>\n<nonce>" (nonce: 16 random base64url characters).
+// Valid for 60 s and once. Such a request may found a room with `test_room: true`, may DELETE a test room,
+// and skips the rate limits; envelopes of a test room skip them too. A test room expires after 24 hours.
 import crypto from 'node:crypto'
 import fs from 'node:fs'
 import path from 'node:path'
 import { refuse } from './http.mjs'
 
-const DAY = 86400000
+export const DEFAULT_TEST_PUBLIC_KEY = 'etF-f9k4ZWZpX3iTdR4BujGesFXSgXxp18UzLbiVDec'
+const DAY = 86400000, FRESH_MS = 60000, LABEL = 'trommi-test-request/v1'
 
-export function testRooms({ db, dataDir, token = '', closeRoom = async () => {}, now = Date.now, log = () => {}, lifetimeMs = DAY }) {
+const message = (method, pathAndQuery, at, nonce) => Buffer.from(`${LABEL}\n${method}\n${pathAndQuery}\n${at}\n${nonce}`)
+
+/** The header value for one request (the harness side). `privateKey`: PEM or KeyObject. */
+export function signTestRequest(privateKey, method, pathAndQuery, at = Date.now()) {
+  const nonce = crypto.randomBytes(12).toString('base64url')
+  return `v1.${at}.${nonce}.${crypto.sign(null, message(method, pathAndQuery, at, nonce), privateKey).toString('base64url')}`
+}
+
+export function testRooms({ db, dataDir, publicKey = DEFAULT_TEST_PUBLIC_KEY, closeRoom = async () => {}, now = Date.now, log = () => {}, lifetimeMs = DAY }) {
   db.exec('CREATE TABLE IF NOT EXISTS test_rooms (room_id TEXT PRIMARY KEY, expires_at INTEGER NOT NULL) WITHOUT ROWID')
   const ids = new Set(db.prepare('SELECT room_id FROM test_rooms').all().map(r => r.room_id))
-  const expected = token ? crypto.createHash('sha256').update(token).digest() : null
+  const key = crypto.createPublicKey({ key: { kty: 'OKP', crv: 'Ed25519', x: publicKey }, format: 'jwk' })
+  const used = new Map()             // nonce -> expiry: each signed request works once
+  const verdicts = new WeakMap()     // req -> boolean, so one request can be asked several times
 
-  /** True if the request carries the right x-test-token (constant time). */
-  const hasToken = req => {
-    const given = req.headers['x-test-token']
-    return !!expected && typeof given === 'string' && crypto.timingSafeEqual(expected, crypto.createHash('sha256').update(given).digest())
+  function verify(req) {
+    const m = /^v1\.(\d{13})\.([A-Za-z0-9_-]{16})\.([A-Za-z0-9_-]{86})$/.exec(req.headers['x-test-signature'] ?? '')
+    if (!m) return false
+    const at = Number(m[1]), t = now()
+    if (Math.abs(t - at) > FRESH_MS || used.has(m[2])) return false
+    if (!crypto.verify(null, message(req.method, req.url, at, m[2]), key, Buffer.from(m[3], 'base64url'))) return false
+    for (const [s, exp] of used) { if (exp > t) break; used.delete(s) }       // oldest first: insertion order
+    used.set(m[2], t + 2 * FRESH_MS)
+    return true
   }
+  /** True if the request carries a valid, fresh, unused test signature. */
+  const isTestRequest = req => { let v = verdicts.get(req); if (v === undefined) verdicts.set(req, v = verify(req)); return v }
 
   /** Every table with a room_id column, read from the schema, so new tables are covered without a change here. */
   const roomTables = () => db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(t => t.name)
@@ -32,21 +53,21 @@ export function testRooms({ db, dataDir, token = '', closeRoom = async () => {},
   }
 
   return {
-    hasToken,
+    isTestRequest,
     isTestRoom: roomId => ids.has(roomId),
     /** Before founding: is this a test room, and may it be one? */
     wanted(req, body) {
       if (body.test_room !== true) return false
-      if (!hasToken(req)) refuse(403, 'forbidden', 'a test room needs header x-test-token')
+      if (!isTestRequest(req)) refuse(403, 'forbidden', 'a test room needs a signed test request (x-test-signature)')
       return true
     },
     mark(roomId) {
       db.q('INSERT OR REPLACE INTO test_rooms (room_id, expires_at) VALUES (?, ?)').run(roomId, now() + lifetimeMs)
       ids.add(roomId)
     },
-    /** DELETE /v1/rooms/:room_id with the token; only test rooms. */
+    /** DELETE /v1/rooms/:room_id, signed; only test rooms. */
     async delete(req, roomId) {
-      if (!hasToken(req)) refuse(403, 'forbidden', 'deleting a room needs header x-test-token')
+      if (!isTestRequest(req)) refuse(403, 'forbidden', 'deleting a room needs a signed test request (x-test-signature)')
       if (!ids.has(roomId)) refuse(404, 'not-found', 'no such test room; only test rooms can be deleted')
       await remove(roomId)
     },

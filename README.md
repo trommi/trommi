@@ -25,7 +25,7 @@ Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehr
 ### Transport
 
 - HTTPS, JSON bodies. Base path `/v1`. `GET /healthz` → `{ ok, commit, protocol_version: 1 }` without sign-in.
-- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>`, `http://127.0.0.1:<any port>` and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range, last-event-id, x-found-token, x-test-token, x-lease-generation, trommi-client, trommi-protocol`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
+- **CORS:** `Access-Control-Allow-Origin` echoes `https://app.trommi.com`, `http://localhost:<any port>`, `http://127.0.0.1:<any port>` and the origins in `HUB_ORIGINS` (comma list); methods `GET, POST, PUT, DELETE`; request headers `authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, trommi-client, trommi-protocol`; exposed `content-range, content-length, retry-after`; no cookies; preflight cached 86400 s.
 - **Sign-in:** `Authorization: Bearer <access_token>`. An access token comes from a signed challenge, is bound to one device and lasts 10 minutes. A client signs in again on `401 unauthorised` or a minute before `expires_at`. Writes need nothing more: member entries and envelopes are signed themselves.
 - **Client version:** every request carries `Trommi-Client: <app|channel|ios>/<semver>` and `Trommi-Protocol: 1` (below, "Versions and upgrades").
 - Ids: `room_id` and `device_id` 64 hex characters (32 bytes), `invite_id`, `object_id`, `attachment_id` 32 hex characters (16 bytes). Times are milliseconds since 1970 (`…_at`).
@@ -72,7 +72,7 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 
 | Route | Who | Request | Answer |
 | --- | --- | --- | --- |
-| `POST /v1/rooms` | anyone, rate-limited (if `HUB_FOUND_TOKEN` is set, also header `x-found-token`) | `{ signed_entry, sealed_room_keys: [{ device_id, key_sealed }] }`: the founding entry, the room key sealed for the first device and for the recovery key; `test_room: true` with header `x-test-token` for a load-test room (Limits) | `201 { room_id, entry_number: 0, entry_hash, key_epoch: 1 }` |
+| `POST /v1/rooms` | anyone, rate-limited (if `HUB_FOUND_TOKEN` is set, also header `x-found-token`) | `{ signed_entry, sealed_room_keys: [{ device_id, key_sealed }] }`: the founding entry, the room key sealed for the first device and for the recovery key; `test_room: true` in a signed test request for a load-test room (Limits) | `201 { room_id, entry_number: 0, entry_hash, key_epoch: 1 }` |
 | `POST /v1/rooms/:room_id/challenge` | anyone | | `{ challenge }` (32 bytes, 2 minutes, one use) |
 | `POST /v1/rooms/:room_id/access_tokens` | a device or the recovery key | `{ signed_challenge }` (`signHubAuth` for this room and `HUB_URL`) | `{ access_token, device_id, signer: device \| recovery, device_role, expires_at }` |
 | `GET /v1/rooms/:room_id/members?after_entry_number=-1` | member, recovery, or `invite_id=` of an open invite | | `{ room_id, last_entry_number, signed_entries: [b64u] }` |
@@ -100,7 +100,7 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 | `PUT /v1/rooms/:room_id/escrow` | human | `{ escrow_version, key_escrow }`: the password escrow, opaque (format: `client/core`), ≤ 4 KiB, `escrow_version` 1…255 | `{ escrow_version, updated_at }`; replaces the previous one |
 | `GET /v1/rooms/:room_id/escrow` | anyone with the room id; 10 per hour per room and per address | | `{ escrow_version, key_escrow, updated_at }` or `404 not-found` |
 | `DELETE /v1/rooms/:room_id/escrow` | human | | `{ ok }` |
-| `DELETE /v1/rooms/:room_id` | header `x-test-token`, test rooms only | | `{ ok }`: every row of the room and its attachments are gone |
+| `DELETE /v1/rooms/:room_id` | a signed test request, test rooms only | | `{ ok }`: every row of the room and its attachments are gone |
 
 ### The stream
 
@@ -165,7 +165,7 @@ Every rate limit of the table is configurable: `HUB_LIMIT_<NAME>` for each key o
 
 **Attachment quota.** The bytes of a room's attachments are summed from `attachments.total_size`. An upload that would pass the quota first evicts, oldest first: attachments of answered or closed objects (cards, published pages no longer released), and attachments only thread items name. Never evicted: attachments of open objects (a released published page is open), anything a `status` envelope names (canvas snapshot pointers), and attachments no envelope names yet (an upload whose envelope is still to come). Evictions are announced on the stream as `attachment_evicted`. If even that is not enough: `413 { error: "quota-exceeded", used, quota }` (before the upload when `content-length` is given). Honest gap: an old canvas snapshot that a newer one replaced is kept too, because the hub cannot tell registers apart.
 
-**Test rooms.** Founding with `test_room: true` needs header `x-test-token` = `HUB_TEST_TOKEN`; the room expires after 24 hours and `DELETE /v1/rooms/:room_id` with the token removes it at once (rows of every table with a `room_id`, its attachment folder). Requests that carry the token, and every envelope of a test room, skip the rate limits; the token also stands in for `x-found-token`.
+**Test rooms.** A load harness signs its requests with the private half of `HUB_TEST_PUBLIC_KEY` (Ed25519; the default public key is in `hub/ops/test-rooms.mjs`, the private key never leaves the harness): header `x-test-signature: v1.<timestamp>.<nonce>.<signature>` over `trommi-test-request/v1`, method, path with query, timestamp and nonce; valid for 60 s and once (`signTestRequest()` in the same file). Such a request may found a room with `test_room: true`, may `DELETE /v1/rooms/:room_id` a test room (rows of every table with a `room_id`, its attachment folder), stands in for `x-found-token` and skips the rate limits; every envelope of a test room skips them too. A test room expires after 24 hours.
 
 **Metrics** are never served on the public port. With `METRICS_PORT` set (server: 8792, mapped to the host's 127.0.0.1 only; `METRICS_HOST` 0.0.0.0 inside the container), `GET /metrics` gives Prometheus text: requests and latency histograms per route, envelopes ingested, write queue depth and refusals, open streams, bytes waiting per stream (sum and fullest), dropped streams, SQLite and WAL size and checkpoint lag, heap, RSS, event-loop lag, GC pauses, open files, host load, memory and data-disk space (`/proc/loadavg`, `/proc/meminfo`, `statfs`); `GET /metrics/history` the last hour in 10-second samples, for the admin page. The WAL is checkpointed every 10 s (passive; truncating above `HUB_WAL_TRUNCATE_BYTES`, 64 MiB).
 
