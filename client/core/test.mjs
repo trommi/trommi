@@ -841,6 +841,31 @@ await test('S2 a removal re-keys every session in ONE atomic post (session_grant
   eq(after, before, 'nothing of it was stored')
 })
 
+await test('S2 hub restart mid-session: an answer posted around the restart reaches the agent quickly (no loss, no long backoff)', async () => {
+  const dir = path.join(scratch, 'restart-hub')
+  const port = await freePort()
+  let h = await startHub({ port, host: '127.0.0.1', dataDir: dir, log: () => {}, pingMs: 2000 })
+  const url = h.hubUrl
+  const { client: phone } = await foundRoom({ hub_url: url, storage: memoryStorage({ extractable_keys: false }), device_name: 'Phone' })
+  track(phone); await phone.start()
+  const agent = await addAgent(phone, 'Restart')
+  const id = await agent.sendCard({ title: 'restart', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'card')
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  // the hub goes away for a few seconds (a deploy), the human answers meanwhile, the hub comes back with empty memory
+  await h.close()
+  const answered = phone.answer({ object_id: id, choices: ['b'] })
+  await sleep(4000)
+  h = await startHub({ port, host: '127.0.0.1', dataDir: dir, log: () => {}, pingMs: 2000 })
+  await answered
+  const t0 = Date.now()
+  await until(() => cmds.some(c => c.command === 'answer' && c.choices[0] === 'b'), 'the agent gets the answer', 4_000)
+  console.log(`     answer at the agent ${Date.now() - t0} ms after the hub came back`)
+  await phone.stop(); await agent.stop(); await h.close()
+})
+
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
   const N = BENCH ? 20000 : 6000
   const { phone, agents: [agent] } = await room({ agents: 1 })
