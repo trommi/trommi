@@ -2,7 +2,7 @@
 // (Later, Memos, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, crownOf, stream } from './app.mjs'
-import { Controller, LATER_TAG, PLUS, WORDS, act, curlHTML, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, ringSvg, runSection, sk, sketchSvg, smallMark } from './ui.mjs'
+import { Controller, LATER_TAG, PLUS, WORDS, act, curlHTML, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg, smallMark } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -24,11 +24,11 @@ function deskCards(model) {
   }
   return byUrgency(out)
 }
-/** The Desk is clear (sessions there, no question waiting): "Clear", and the sessions at work as a pill with the ring. */
+/** The Desk is clear (sessions there, no question and no info waiting): "Clear". */
 const isClear = model => !model.fresh.length && !(model.reads ?? []).length && model.units.length > 0
-function clearHead(model) {
-  const n = model.working
-  return html`<header class="news-clear"><h2>${sk('tick', 'news-clear-tick')}Clear</h2>${n ? html`<a class="news-working" href="#desk-ip" title="${n === 1 ? '1 session is' : `${n} sessions are`} at work: show what">${raw(ringSvg({ drop: true }))}${n} working ↓</a>` : ''}</header>`
+function clearHead() {
+  // (who is at work stands in "With the agents" below; his word, 4 October)
+  return html`<header class="news-clear"><h2>${sk('tick', 'news-clear-tick')}Clear</h2></header>`
 }
 /** The heading: "Next, please" with the number of what waits, the way into the walk; or that the Desk is clear. */
 function deskHead(model, base) {
@@ -36,7 +36,7 @@ function deskHead(model, base) {
   if (n) return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="inbox-title">${nextPlease(model, base)}</div></header>`
   if (!model.units.length) return deskInvite()
   if (!isClear(model)) return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0" hidden></header>`
-  return html`<header class="inbox-head is-clear" id="desk-head" data-controller="title" data-title-count-value="0">${clearHead(model)}</header>`
+  return html`<header class="inbox-head is-clear" id="desk-head" data-controller="title" data-title-count-value="0">${clearHead()}</header>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends

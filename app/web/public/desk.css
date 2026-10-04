@@ -864,9 +864,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .news-clear { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
 .news-clear h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; color: var(--fg); }
 .news-clear-tick { width: 24px; height: 24px; color: var(--accent); }
-.news-working { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; border-radius: var(--r-pill); background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); color: var(--muted); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
-.news-working .agent-ring { position: static; flex: none; width: 20px; height: 20px; color: var(--accent); }
-.news-working .ring-loop { opacity: .38; }
 
 @media (max-width: 860px) { .news-clear h2 { font-size: 1.35rem; } }
 /* narrow (a phone): Notes and Media share the first row, "Off the desk" takes the next one whole */
@@ -887,8 +884,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .ipb-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 4px; font: 700 var(--t-xs)/1 var(--font); letter-spacing: .2em; text-transform: uppercase; color: var(--stamp-ink-works); }
 .ipb-word { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .ipb-rule { flex: 1; height: 0; border-top: 1.5px dashed color-mix(in srgb, var(--stamp-ink-works) 35%, transparent); }
-a.news-working { text-decoration: none; }
-a.news-working:hover { color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong); }
 
 /* ---- The foot of the Desk as one piece (his word, 4 October: "aus einem Guss"): Notes, Off the desk and Media in three
    equal columns on the card column's edges; one heading style, one slip (height, corner, border, step, turn) for all
