@@ -1,7 +1,7 @@
 # Deploys the thin hub (hub/server.mjs, image hub/Dockerfile) to trommi-hub on every push to main:
 # test -> build on GitHub -> Tailscale (tag:trommi-ci) -> docker load on the server ->
 # stop, back up /srv/trommi/data, start -> https://hub.trommi.com/healthz reports this commit.
-name: Deploy
+name: Hub deploy
 
 on:
   push:
@@ -22,7 +22,7 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     environment:
-      name: production
+      name: hub
       url: https://hub.trommi.com
     permissions:
       contents: read
