@@ -4,9 +4,9 @@
 import { refuse } from './http.mjs'
 
 const WRITES = new Set(['POST', 'PUT', 'DELETE'])
-// Membership and key operations (removals, session grants) may also use a small reserved pool, so a full general
+// Membership and key operations (removals, session grants, the batch re-key after a removal) may also use a small reserved pool, so a full general
 // queue never blocks a removal.
-const MEMBERSHIP = /^\/v1\/rooms\/[0-9a-f]{64}\/(?:members|sessions\/[^/]+\/grants)$/
+const MEMBERSHIP = /^\/v1\/rooms\/[0-9a-f]{64}\/(?:members|session_grants|sessions\/[^/]+\/grants)$/
 
 export const isMembershipWrite = req => req.method === 'POST' && MEMBERSHIP.test(String(req.url).split('?')[0])
 

@@ -828,6 +828,9 @@ test('review 2 C03: half-sent bodies cannot hold the write slots: a per-address 
   const r = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.laptop.device.id], previous: w.phone.secrets.get(1) })
   const out = await ok(w, 'POST', `${R(w)}/members`, { headers: { 'cf-connecting-ip': freshIp() }, body: { signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r.backLink) } })
   assert.equal(out.entry_action, 'devices_removed')
+  // The re-key after that removal (the batch grant route) also gets a reserved slot: refused for its body, never for load.
+  const batch = await api({ ...w, ip: freshIp() }, 'POST', `${R(w)}/session_grants`, { body: { grants: [] } })
+  assert.notEqual(batch.status, 503, 'the batch session_grants route is in the reserved pool (review 3)')
   // The deadline frees every slot: the half-sent sockets are closed.
   await new Promise(ok => setTimeout(ok, 1800))
   assert.equal(w.hub.ops.flow.writeQueueDepth, 0, 'every half-sent request was cut off; no slot is held')
