@@ -34,6 +34,13 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {} 
     let anchor = body.firstChild
     for (const { key, html } of list) {
       let part = parts.get(key)
+      if (part && key === 'says') {
+        // Toasts stay across pages (data-turbo-permanent); one the new page brings (?said=…) joins them on top.
+        const t = document.createElement('template')
+        t.innerHTML = html
+        const fresh = t.content.firstElementChild, host = document.getElementById('says-host')
+        if (fresh?.childNodes.length && host) host.prepend(...fresh.childNodes)
+      }
       if (part && (key === 'says' || part.html === html)) {
         // Kept (toasts always stay across pages, like data-turbo-permanent): moved into place if needed.
         if (part.start !== anchor) for (const n of between(part)) body.insertBefore(n, anchor)
