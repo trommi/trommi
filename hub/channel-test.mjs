@@ -203,6 +203,7 @@ await test('list_cards, publish_asset, list_assets, revoke_asset; the unported t
   await bridge.callTool('share_asset', { id })
   await bridge.callTool('revoke_asset', { id })
   assert.deepEqual(client.calls.slice(-2).map(c => c[0]), ['unshare', 'unpublish'])
+  assert.deepEqual(JSON.parse(await bridge.callTool('list_assets', {})), [], 'a revoked asset is gone from the list')
   await assert.rejects(bridge.callTool('create_voiceover', { text: 'x' }), /not available/)
   await assert.rejects(bridge.callTool('adopt_session', { id: 'x' }), /introduce with parent/)
 })
@@ -271,10 +272,23 @@ await test('a halted chain stops every tool with a clear error, nothing is sent'
   assert.equal(client.calls.length, 0)
 })
 
+await test('parity: take back is handback_withdrawn; an info read and taken back stays quiet', async () => {
+  const { client, bridge, events } = bridgeWith()
+  const q = (await bridge.callTool('create_decision', TOOL_EXAMPLES.create_decision)).split(' ')[1]
+  await bridge.command({ command: 'message', object_id: q, content: { content_type: 'message', text: 'took it back', present_card: true } })
+  assert.deepEqual(events.at(-1).meta, { kind: 'handback_withdrawn', card_id: q })
+  assert.match(events.at(-1).content, /no need to rework or explain it/)
+  const i = (await bridge.callTool('create_info', { title: 'Read me', body: 'x' })).split(' ')[1]
+  client.model.cards.get(i).answers = [{ answer_action: 'read', taken_back_at: 12 }]
+  const n = events.length
+  await bridge.command({ command: 'decide_again', object_id: i, content: {} })
+  assert.equal(events.length, n)
+})
+
 await test('permission relay: request -> object, verdict -> notifications/claude/channel/permission', async () => {
   const { client, bridge, events, state } = bridgeWith()
   const params = { request_id: 'abcde', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"npm test"}' }
-  const id = await bridge.permissionRequest(params)
+  const [id] = await Promise.all([bridge.permissionRequest(params), bridge.permissionRequest(params)])   // back to back, the second while the first is sealed
   await bridge.permissionRequest(params)
   assert.equal(client.calls.filter(c => c[0] === 'requestPermission').length, 1)
   assert.equal(state.permissions[id], 'abcde')

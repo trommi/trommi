@@ -459,7 +459,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         return `published as ${id}: "${title}" is shown in your conversation on the board, end-to-end encrypted; members open it in the Trommi app. For someone outside the board: share_asset.`
       }
       case 'list_assets':
-        return JSON.stringify([...model().published.values()].filter(p => p.agent_device_id === me()).map(p => ({
+        return JSON.stringify([...model().published.values()].filter(p => p.agent_device_id === me() && p.object_state !== 'closed').map(p => ({
           id: p.object_id, title: p.title, note: p.note ?? '', state: p.object_state,
           type: p.attachments?.[0]?.asset_type ?? assetTypeOf(p.attachments?.[0]?.media_type ?? ''), size: p.attachments?.[0]?.total_size ?? null,
           released_until: Math.max(0, ...(state.shares[p.object_id] ?? []).map(x => x.expires_at)) || null,
@@ -496,14 +496,18 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
   }
 
   // ---- Claude Code asks for approval: a permission request object -----------------------------------
+  const asking = new Set()   // request ids on their way to the hub: a repeat while the first is sealed is the same request
   async function permissionRequest(params) {
-    if (Object.values(state.permissions).includes(params.request_id)) return
-    const id = await client.requestPermission({
-      tool_name: String(params.tool_name), description: String(params.description ?? ''), input_preview: String(params.input_preview ?? ''), expires_in_ms: 10 * 60 * 1000,
-    })
-    state.permissions[id] = params.request_id
-    saveState()
-    return id
+    if (asking.has(params.request_id) || Object.values(state.permissions).includes(params.request_id)) return
+    asking.add(params.request_id)
+    try {
+      const id = await client.requestPermission({
+        tool_name: String(params.tool_name), description: String(params.description ?? ''), input_preview: String(params.input_preview ?? ''), expires_in_ms: 10 * 60 * 1000,
+      })
+      state.permissions[id] = params.request_id
+      saveState()
+      return id
+    } finally { asking.delete(params.request_id) }
   }
 
   // ---- a human's command (already verified and authorised by the core) -> a channel event ------------
@@ -519,6 +523,8 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       case 'message': {
         // Only a message counts as chat; strokes and other timeline items are never commands (README R1/R4).
         if (c.content_type && c.content_type !== 'message') return log(`timeline item ${c.content_type} not relayed`)
+        // A human's present_card on a card it had handed back is "take back": the agent need not rework it (as today's board).
+        if (c.present_card && card?.agent_device_id === me()) return send(`The human took "${title}" back; there is no need to rework or explain it.`, { kind: 'handback_withdrawn', card_id: card.object_id })
         const got = await download(c.attachments)
         const about = card && card.agent_device_id === me() && card.object_state === 'open' ? { card_id: card.object_id } : {}
         const copied = listArg(c.copied_cards, 'copied_cards')
@@ -572,6 +578,8 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       }
       case 'decide_again': {
         const was = card?.answers?.findLast(a => a.taken_back_at != null) ?? null
+        // An info read and then taken back lies unread again; the agent has nothing to undo and is not told (as today's board).
+        if (card?.card_type === 'info' && was?.answer_action === 'read') return
         const previous = cmd.previous_choices ?? was?.choices ?? []
         if (was?.answer_action === 'shred') {
           return send(`The human took "${title}" back out of the shredder; it is open again${card?.card_type === 'info' ? '' : ' and they may answer it after all'}.`, { kind: 'decision_reopened', card_id: cmd.object_id, previous_choice: '', shredded: '1' })
