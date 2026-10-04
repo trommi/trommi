@@ -6,6 +6,7 @@
 //   - after every change of the core only the elements that changed are replaced (board.live → <turbo-stream>);
 //   - fetch() calls of the controllers to the hub's old JSON routes (/memo, /desk, a card's draft) are answered here.
 import { bodyParts, CSS } from './layout.mjs'
+import { useSheets } from './sheets.mjs'
 import { setVisitor, setRefresher, renderStreamMessage } from './turbo.mjs'
 
 const STREAM_ACCEPT = 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml'
@@ -18,11 +19,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
 
   // ---- painting a page ----
   function enableCss(name) {
-    const want = new Set([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'push', 'trommi', 'room'])
-    for (const link of document.querySelectorAll('link[rel="stylesheet"][data-sheet]')) {
-      const on = want.has(link.dataset.sheet)
-      if (link.disabled === on) link.disabled = !on
-    }
+    useSheets([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'push', 'trommi', 'room'])
   }
   // Each part stands between two comments (<!--p:key--> … <!--/p:key-->), so what a stream put in its place
   // still belongs to it.

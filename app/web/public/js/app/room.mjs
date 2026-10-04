@@ -8,6 +8,7 @@
 import { html, raw } from '../views/html.mjs'
 import { sketchSvg, doodleSvg } from '../pen.js'
 import { BELL } from './layout.mjs'
+import { useSheets } from './sheets.mjs'
 import { CLIENT } from './version.mjs'
 import { qrSvg } from './qr.mjs'
 
@@ -334,7 +335,7 @@ const accountError = err => ({
 // ---- before a room: a screen of its own, before the board exists ----
 export async function roomScreen({ start, hub }) {
   document.title = 'Trommi'
-  for (const link of document.querySelectorAll('link[data-sheet]')) link.disabled = !['tokens', 'app', 'back', 'logo', 'links', 'keys', 'turbo', 'fonts', 'trommi', 'room'].includes(link.dataset.sheet)
+  useSheets(['tokens', 'app', 'back', 'logo', 'links', 'keys', 'turbo', 'fonts', 'trommi', 'room'])
   const root = document.createElement('div')
   root.id = 'room-screen'
   document.body.replaceChildren(root)
