@@ -12,7 +12,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { createBridge } from './channel-bridge.mjs'
-import { TOOLS, TOOL_EXAMPLES } from './channel-tools.mjs'
+import { TOOLS, TOOL_EXAMPLES, INSTRUCTIONS } from './channel-tools.mjs'
 
 let passed = 0, failed = 0
 const results = []
@@ -344,6 +344,16 @@ await test('slot lock: of processes starting together, exactly one gets the slot
 })
 
 // ---- part 2: real hub, real core, the channel as an MCP child --------------------------------------------
+
+await test('instructions: the info-after-push rule stands within the first 2048 characters', () => {
+  const i = INSTRUCTIONS.indexOf('After every git push')
+  assert.ok(i >= 0 && i < 1700, `rule at ${i}`)
+  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('create_info) in the session the work belongs to'))
+  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('commit hash + subject'))
+  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('live/deployed'))
+  assert.ok(INSTRUCTIONS.slice(0, 2048).includes('https://github.com/<org>/<repo>/commit/<hash>'))
+  assert.ok(INSTRUCTIONS.indexOf('live URL') < 2048)
+})
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const haveCore = fs.existsSync(path.join(here, '../core/index.mjs')) && fs.existsSync(path.join(here, '../core/agent.mjs'))
