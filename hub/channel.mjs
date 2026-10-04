@@ -50,33 +50,75 @@ const roomOfLink = async link => {
   return { room_id: zc.hex(roomId), hub }
 }
 
-/** The room this folder belongs to: from the invite link, TROMMI_ROOM, or the only key file of this folder. */
+const KEY_RE = base => new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}-(\\d+)\\.key$`)
+const slotsIn = (cfg, dir) => { try { return fs.readdirSync(dir).map(f => KEY_RE(cfg.base).exec(f)).filter(Boolean).map(m => Number(m[1])).sort((a, b) => a - b) } catch { return [] } }
+
+/** The room this folder belongs to: from the invite link, TROMMI_ROOM, or the only room with a key of this folder. */
 export async function resolveRoom(cfg) {
   if (cfg.room) return cfg.room
   if (cfg.invite) return (await roomOfLink(cfg.invite)).room_id
   let rooms = []
-  try { rooms = fs.readdirSync(cfg.keys_dir).filter(r => fs.existsSync(path.join(cfg.keys_dir, r, `${cfg.base}.key`))) } catch {}
+  try { rooms = fs.readdirSync(cfg.keys_dir).filter(r => slotsIn(cfg, path.join(cfg.keys_dir, r)).length) } catch {}
   if (rooms.length > 1) throw Object.assign(new Error(`this folder has keys for ${rooms.length} rooms (${rooms.join(', ')}); set TROMMI_ROOM`), { code: 'ambiguous-room' })
   return rooms[0] ?? null
 }
 
-export const pathsOf = (cfg, room_id) => {
+/** Paths of one key slot: <host>-<folder>-<slot>.key, with its state, lock and file cache beside it (R4). */
+export const pathsOf = (cfg, room_id, slot = 1) => {
   const dir = path.join(cfg.keys_dir, room_id)
-  return { dir, key_file: path.join(dir, `${cfg.base}.key`), prefix: `${cfg.base}.`, cache: path.join(dir, `${cfg.base}.files`) }
+  const name = `${cfg.base}-${slot}`
+  return { dir, slot, key_file: path.join(dir, `${name}.key`), lock_file: path.join(dir, `${name}.lock`), prefix: `${name}.`, cache: path.join(dir, `${name}.files`) }
+}
+
+// One process per key slot. Node has no flock, so: a lock file holding the owner's pid, taken with O_EXCL;
+// a lock whose pid is gone is stale and taken over.
+const alive = pid => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
+export function lockSlot(p) {
+  fs.mkdirSync(p.dir, { recursive: true, mode: 0o700 })
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      fs.writeFileSync(p.lock_file, String(process.pid), { flag: 'wx', mode: 0o600 })
+      return true
+    } catch (e) {
+      if (e.code !== 'EEXIST') throw e
+      const pid = Number(fs.readFileSync(p.lock_file, 'utf8')) || 0
+      if (pid === process.pid) return true
+      if (pid && alive(pid)) return false
+      try { fs.unlinkSync(p.lock_file) } catch {}
+    }
+  }
+  return false
+}
+export function unlockSlot(p) {
+  try { if (Number(fs.readFileSync(p.lock_file, 'utf8')) === process.pid) fs.unlinkSync(p.lock_file) } catch {}
+}
+
+/** The slot this process uses in a room: the first slot with a key that no other process holds, else the first free one. */
+export function pickSlot(cfg, room_id) {
+  const dir = path.join(cfg.keys_dir, room_id)
+  const keyed = slotsIn(cfg, dir)
+  for (const n of keyed) { const p = pathsOf(cfg, room_id, n); if (lockSlot(p)) return { ...p, has_key: true, busy: keyed.filter(k => k < n) } }
+  for (let n = 1; ; n++) {
+    if (keyed.includes(n)) continue
+    const p = pathsOf(cfg, room_id, n)
+    if (lockSlot(p)) return { ...p, has_key: false, busy: keyed }
+  }
 }
 
 /**
  * The member side of the channel: opens or joins the room and keeps it running.
- * Returns { status(), join(link), client, stop() }; `onCommand(cmd)` gets every authorised command.
+ * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
-export async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {} } = {}) {
+export async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {} } = {}) {
   const core = await import('../client/core/index.mjs')
   const { fileStorage } = await import('../client/core/storage-file.mjs')
-  const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null }
+  const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
   const process_instance = crypto.randomBytes(8).toString('hex')
+  const device_info = { device_name: `${cfg.host} · ${cfg.shown}`, platform: 'claude-code', folder: cfg.shown, host: cfg.host }
 
   async function storageFor(room_id) {
-    const p = pathsOf(cfg, room_id)
+    if (me.paths && me.room_id !== room_id) { unlockSlot(me.paths); me.paths = null }
+    const p = me.paths ?? pickSlot(cfg, room_id)
     me.room_id = room_id
     me.paths = p
     me.storage = await fileStorage({ dir: p.dir, key_file: p.key_file, prefix: p.prefix })
@@ -85,38 +127,58 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
 
   async function run(client) {
     me.client = client
-    let chain = Promise.resolve()
-    client.on('command', cmd => { chain = chain.then(() => onCommand(cmd)).catch(err => log(`command not relayed: ${err.message}`)) })
-    client.on('error', err => log(`client: ${err.message ?? err}`))
+    // Commands that arrive during catch-up wait until the bridge is set up (onReady), then go out in order.
+    let opened
+    let chain = new Promise(resolve => { opened = resolve })
+    client.on('command', cmd => {
+      if (me.phase === 'halted') return log(`command ${cmd.envelope_number} held back: the member list forked`)
+      chain = chain.then(() => onCommand(cmd)).catch(err => log(`command not relayed: ${err.message}`))
+    })
+    client.on('error', err => {
+      if (err?.code === 'lease-lost') {
+        me.phase = 'lease-lost'
+        me.error = 'another process took over this key; this one stops'
+        log(me.error)
+        return onLeaseLost(me)
+      }
+      if (err?.code === 'log-fork') {
+        me.phase = 'halted'
+        me.error = 'The hub shows a different member list than before (log-fork). Commands are held back until a human looks at the room in the Trommi app.'
+      }
+      log(`client: ${err?.message ?? err}`)
+    })
     await client.start()
     try {
-      me.session = await client.claimSession({ agent_name: '', process_instance })
+      const claim = client.claimLease ?? client.claimSession
+      me.session = await claim.call(client, { agent_name: '', process_instance })
     } catch (err) {
-      if (err.code === 'instance-conflict' || err.status === 409) {
+      if (err.code === 'instance-conflict' || err.code === 'lease-lost') {
         me.phase = 'conflict'
-        me.error = `Another Claude session already runs with this folder's Trommi key (${me.paths.key_file}). Only one process per key: close the other session, or start this one from another folder.`
-        client.stop()
-        throw Object.assign(new Error(me.error), { code: 'instance-conflict' })
+        me.error = `Another process runs with this Trommi key (${me.paths.key_file}). Only one process per key.`
+        await client.stop()
+        throw Object.assign(new Error(me.error), { code: err.code })
       }
       throw err
     }
-    // The name the board shows; the hub never sees it (README: device/<device_id>).
+    // The name the board shows lives in the encrypted register device/<id>; the core writes it from device_info
+    // after joining. Rewrite it when the folder or machine label changed.
     const id = client.model.room.my_device_id
-    const label = { device_name: `${cfg.host} · ${cfg.shown}`, platform: 'claude-code', folder: cfg.shown, host: cfg.host }
-    const had = client.model.sessions?.get(id)?.registers?.get(`device/${id}`)?.value
-    if (JSON.stringify(had) !== JSON.stringify(label)) await client.setStatus({ [`device/${id}`]: label })
+    const had = client.model._device_registers?.get(id)
+    if (had && JSON.stringify(had) !== JSON.stringify(device_info)) await client.setStatus({ [`device/${id}`]: device_info }).catch(err => log(`label not written: ${err.message}`))
     me.phase = 'ready'
     me.error = null
     await onReady(me)
+    opened()
   }
 
   async function open() {
     const room_id = await resolveRoom(cfg)
     if (!room_id) { me.phase = 'needs-invite'; return me }
     const storage = await storageFor(room_id)
-    if (!fs.existsSync(me.paths.key_file)) {
+    if (!me.paths.has_key) {
       if (cfg.invite) return join(cfg.invite)
       me.phase = 'needs-invite'
+      if (me.paths.busy.length) me.error = `another Claude session in this folder already uses ${me.paths.busy.length === 1 ? 'the key' : 'every key'} of this room; this session needs an invite of its own (two sessions are two members)`
       return me
     }
     const client = await core.openRoom({ storage })
@@ -131,26 +193,29 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
     if (me.joining) return me.joining
     me.joining = (async () => {
       const { room_id } = await roomOfLink(link)
-      if (fs.existsSync(pathsOf(cfg, room_id).key_file)) throw new Error(`this folder already has a key for room ${room_id}; restart the session to use it`)
       const storage = await storageFor(room_id)
+      if (me.paths.has_key) throw new Error(`this session already has a key for room ${room_id} (${me.paths.key_file}); restart the session to use it`)
       me.phase = 'joining'
-      const j = await core.joinRoom({ link: String(link).trim(), device_name: '', storage })
-      Promise.resolve(j.check_code).then(code => log(`invite answered (check code ${code}); waiting for the app to add this session`)).catch(() => {})
+      const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage })
+      j.check_code.then(code => log(`invite answered (check code ${code}); waiting for the app to add this session`)).catch(() => {})
       const client = await j.client
+      me.paths.has_key = true
       await run(client)
       return me
     })()
     try { return await me.joining } catch (err) {
-      me.phase = me.phase === 'conflict' ? 'conflict' : 'needs-invite'
+      if (me.phase === 'joining') me.phase = 'needs-invite'
       me.error = err.message
       throw err
     } finally { me.joining = null }
   }
 
   async function stop() {
-    try { me.client?.stop() } catch {}
+    try { await me.client?.stop() } catch {}
     await me.storage?.flush?.()
+    if (me.paths) unlockSlot(me.paths)
   }
+  process.on('exit', () => { if (me.paths) unlockSlot(me.paths) })
 
   return { me, open, join, stop, cfg }
 }
@@ -176,6 +241,7 @@ export async function main() {
   let bridge = null
   const channel = await createChannel({
     cfg,
+    onLeaseLost: async () => { await channel.stop(); process.exit(0) },
     onCommand: cmd => bridge?.command(cmd),
     onReady: async me => {
       const storage = me.storage
@@ -188,7 +254,7 @@ export async function main() {
   const text = t => ({ content: [{ type: 'text', text: t }] })
   const notReady = () => {
     const me = channel.me
-    if (me.phase === 'conflict') return me.error
+    if (me.phase === 'conflict' || me.phase === 'halted' || me.phase === 'lease-lost') return me.error
     if (me.phase === 'joining') return 'Joining the Trommi room: waiting for the human to confirm this session in the Trommi app. Try again in a moment.'
     if (me.phase === 'starting') return 'Connecting to the Trommi hub; try again in a moment.'
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. Ask the human for an agent invite link (Trommi app: invite an agent) and call join with it, or start Claude Code with TROMMI_INVITE set.`
@@ -201,7 +267,7 @@ export async function main() {
         await channel.join(args.link)
         return text(`joined: this session is now a member of room ${channel.me.room_id}; its key is kept in ${channel.me.paths.key_file}`)
       }
-      if (!bridge || channel.me.phase !== 'ready') return { ...text(notReady()), isError: true }
+      if (!bridge || !['ready', 'halted'].includes(channel.me.phase)) return { ...text(notReady()), isError: true }
       return text(await bridge.callTool(req.params.name, args))
     } catch (err) {
       return { ...text(`error: ${err.message}`), isError: true }
