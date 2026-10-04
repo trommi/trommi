@@ -3,6 +3,7 @@
 import { html, raw } from './html.mjs'
 import { knocksText } from './text.mjs'
 import { doodleSvg, crownSvg, ringSvg, handSvg, sketchSvg, edgeQuirk } from '../pen.js'
+import { whiteboardRow } from './whiteboard.mjs'
 
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 const questions = n => (n === 1 ? '1 question' : `${n} questions`)
@@ -57,10 +58,10 @@ ${badge(u, shown, base)}
 export const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M12.3 5.2C11.9 9.7 12 14.2 12.1 18.9"/><path d="M5.3 12.4C9.8 11.8 14.3 11.9 18.8 12.2"/></svg>')
 export const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New agent</span></button></form>`
 
-/** The rows of #agents. current: the session in view, if any. */
+/** The rows of #agents: the Whiteboard first (a place, not a session), then the sessions. current: the session in view, if any. */
 export function sidebarRows(model, base, current = null) {
   const { here, away } = sidebarParts(model, base, current)
-  return html`${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}`
+  return html`${whiteboardRow(base)}${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}`
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
  *  shape says their order, so that a change within one row replaces that row only (turbo.mjs). */

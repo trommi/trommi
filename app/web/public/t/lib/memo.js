@@ -4,15 +4,14 @@
 //   - a sent note tears off and flies away; Escape puts a note away (an empty one is gone): it then hangs off the
 //     round button, which shows how many wait there and lists them on a click;
 //   - what is typed is kept a moment later (POST /memo, as the old client did), on leaving the page at once;
-//   - a note is carried by its top strip; dropped on the Desk's bare paper it lies on the paper and scrolls with it;
+//   - a note is carried by its top strip, anywhere over the page (the Desk has no paper under it any more: the
+//     drawing is the Whiteboard's, js/views/whiteboard.mjs);
 //   - pictures and files: the paperclip, a paste, a drop on the note;
 //   - a phone: a note is a sheet at the bottom, one at a time, only the one he opened on this page;
 //   - a stream that brings a note which is already here changes it in place: the field with the keyboard in it,
 //     a note in the hand and a note that is flying away are left alone.
 // controllers/memo_controller.js is one note; controllers/memos_controller.js is the round button, its list and
 // what concerns all notes of the page.
-import { paperLayer, paperPoint, onPaper } from '/t/lib/paper.js'
-
 const STREAM = 'text/vnd.turbo-stream.html'
 const W = 340   // a note's width on a wide screen (css/quicksend.css)
 export const sheet = matchMedia('(max-width: 860px)')
@@ -84,34 +83,29 @@ export function fit(note) {
   const button = note.querySelector('button.memo-send')
   if (button) button.disabled = !holds(note)
 }
-/** Put the note where its place says: on the Desk's paper (once that is laid), else over the page. */
+/** Put the note where its place says: over the page. */
 export function stand(note) {
   if (note.classList.contains('is-carried') || note.dataset.state === 'sending') return
-  const layer = note.dataset.place === 'paper' ? paperLayer() : null
-  const home = layer ?? host()
+  const home = host()
   if (home && note.parentNode !== home) {
     const had = note.contains(document.activeElement) ? document.activeElement : null
     home.append(note)
     had?.focus?.({ preventScroll: true })
   }
-  note.classList.toggle('is-paper', Boolean(layer))
   const x = Number(note.dataset.x) || 0, y = Number(note.dataset.y) || 0
-  if (layer) { note.style.left = `${Math.max(0, x)}px`; note.style.top = `${Math.max(0, y)}px` }
-  else if (note.dataset.place === 'float' && !note.hasAttribute('data-unplaced')) { note.style.left = `clamp(4px, ${x}px, calc(100vw - ${W + 4}px))`; note.style.top = `clamp(4px, ${y}px, calc(100vh - 120px))` }
+  if (note.dataset.place === 'float' && !note.hasAttribute('data-unplaced')) { note.style.left = `clamp(4px, ${x}px, calc(100vw - ${W + 4}px))`; note.style.top = `clamp(4px, ${y}px, calc(100vh - 120px))` }
   else { note.style.left = note.style.top = '' }
   note.toggleAttribute('data-sheet', note.dataset.id === sheetId)
 }
 function paintOpener() {
-  document.body.toggleAttribute('data-memo-open', sheet.matches && notes().some(n => n.hasAttribute('data-sheet') && !n.classList.contains('is-paper')))
+  document.body.toggleAttribute('data-memo-open', sheet.matches && notes().some(n => n.hasAttribute('data-sheet')))
 }
 export function standAll() {
   for (const note of notes()) { stand(note); fit(note) }
   paintOpener()
 }
-/** The paper is taken down: what lies on it goes back into the page (unseen until the next paper is laid). */
-export function offPaper() { for (const note of notes()) if (note.classList.contains('is-paper')) { note.classList.remove('is-paper'); host()?.append(note) } }
 /** The note that was touched last lies on top of the others. */
-export function front(note) { for (const other of notes()) other.style.zIndex = other === note && !note.classList.contains('is-paper') ? '2601' : '' }
+export function front(note) { for (const other of notes()) other.style.zIndex = other === note ? '2601' : '' }
 /** Where a note appears that has no place of its own yet: above the button at the lower right; each further one a
  *  step up and to the left. On a card's page it must not lie on what one answers with. */
 function spot() {
@@ -354,32 +348,13 @@ export function unclip(note, chip) {
   keep(note.dataset.id, { attachments: left })
 }
 
-// ---- carried by its head: anywhere over the page, or onto the Desk's paper ----
+// ---- carried by its head: anywhere over the page ----
 export function carry(e, note, head) {
   if (e.button) return
   const id = note.dataset.id
   const done = (move, up) => { for (const type of ['pointermove', 'pointerup', 'pointercancel']) head.removeEventListener(type, type === 'pointermove' ? move : up) }
   const listen = (move, up) => { try { head.setPointerCapture(e.pointerId) } catch {} head.addEventListener('pointermove', move); head.addEventListener('pointerup', up); head.addEventListener('pointercancel', up) }
-  if (sheet.matches) {
-    // A phone: the sheet is not carried; a note that lies on the paper is moved about on the paper.
-    if (!note.classList.contains('is-paper')) return
-    const start = paperPoint(e.clientX, e.clientY)
-    if (!start) return
-    const x0 = Number(note.dataset.x) || 0, y0 = Number(note.dataset.y) || 0
-    let to = null
-    const move = ev => {
-      const p = paperPoint(ev.clientX, ev.clientY)
-      if (!p) return
-      to = { x: Math.max(0, x0 + p.x - start.x), y: Math.max(0, y0 + p.y - start.y) }
-      note.classList.add('is-carried'); note.style.left = `${to.x}px`; note.style.top = `${to.y}px`
-    }
-    const up = () => {
-      done(move, up)
-      note.classList.remove('is-carried')
-      if (to) { Object.assign(note.dataset, to); keep(id, to) }
-    }
-    return listen(move, up)
-  }
+  if (sheet.matches) return   // a phone: the sheet is not carried
   const r = note.getBoundingClientRect()
   const dx = e.clientX - r.left, dy = e.clientY - r.top
   let moved = false
@@ -388,8 +363,7 @@ export function carry(e, note, head) {
     if (!moved && Math.hypot(ev.clientX - e.clientX, ev.clientY - e.clientY) < 4) return
     if (!moved) {
       moved = true
-      // Lifted: it floats over everything while it is carried (off the paper, should it lie there).
-      note.classList.remove('is-paper')
+      // Lifted: it floats over everything while it is carried.
       note.classList.add('is-carried')
       note.removeAttribute('data-unplaced')
       if (note.parentNode !== host()) { host().append(note); try { head.setPointerCapture(e.pointerId) } catch {} }
@@ -397,16 +371,13 @@ export function carry(e, note, head) {
     const [x, y] = at(ev)
     note.style.left = `${x}px`
     note.style.top = `${y}px`
-    note.classList.toggle('over-paper', onPaper(ev.clientX, ev.clientY, note))
   }
   const up = ev => {
     done(move, up)
-    note.classList.remove('is-carried', 'over-paper')
+    note.classList.remove('is-carried')
     if (!moved) return
     const [x, y] = at(ev)
-    // On the paper it lies in the paper's own pixels and scrolls with it.
-    const on = ev.type === 'pointerup' && onPaper(ev.clientX, ev.clientY, note) ? paperPoint(x, y) : null
-    const to = on ? { place: 'paper', x: on.x, y: on.y } : { place: 'float', x: Math.round(x), y: Math.round(y) }
+    const to = { place: 'float', x: Math.round(x), y: Math.round(y) }
     Object.assign(note.dataset, to)
     stand(note)
     keep(id, to)
@@ -417,7 +388,7 @@ export function carry(e, note, head) {
 export function beside(e) {
   if (!sheet.matches || !sheetId || !(e.target instanceof Element) || e.target.closest('.memo, #memo-new, .says')) return
   const note = sheetNote()
-  if (!note || note.classList.contains('is-paper')) return
+  if (!note) return
   putAway(note)
   // That tap only put the note away: it does not also press what lay beside the sheet.
   const swallow = ev => { ev.stopPropagation(); ev.preventDefault() }

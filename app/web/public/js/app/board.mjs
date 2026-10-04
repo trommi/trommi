@@ -17,6 +17,7 @@ import { register as jumpPage } from '../views/menu.mjs'
 import { register as agentsPage } from '../views/agents.mjs'
 import { register as stacksPage, STACKS } from '../views/stacks.mjs'
 import { register as galleryPage, galleryShelf } from '../views/gallery.mjs'
+import { register as whiteboardPage } from '../views/whiteboard.mjs'
 
 export const BASE = ''
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
@@ -254,7 +255,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })
 
-  for (const register of [...extraPages, registerDesk, registerCards, agentsPage, jumpPage, memoPage, sessionPage, stacksPage, galleryPage]) register(t)
+  for (const register of [...extraPages, registerDesk, registerCards, agentsPage, jumpPage, memoPage, sessionPage, stacksPage, galleryPage, whiteboardPage]) register(t)
 
   /** One request of this page: a navigation (GET) or a form (POST). */
   async function request({ method = 'GET', path, form = null, headers = {} }) {

@@ -1,10 +1,9 @@
-// Memos: the yellow notes the human writes to the crowned session (or to the session whose page it is), and the
-// mount point of the Desk's paper. The notes are end-to-end memo objects (js/app/memo-store.mjs: every human device
+// Memos: the yellow notes the human writes to the crowned session (or to the session whose page it is). The notes are end-to-end memo objects (js/app/memo-store.mjs: every human device
 // writes versions, a sent note is held 3 s for Undo); the forms reach it through hub.memo, the route POST /memo of
 // the old hub. The markup is the one css/quicksend.css styles.
 //
 //   memoLayer(model, base, view, scope)   for the layout: the round button with the notes that were put away hanging
-//                                  off it, every note that is out, the paper's element. scope: the session whose page
+//                                  off it, every note that is out. scope: the session whose page
 //                                  this is (its notes only, sent to it), or null (the Desk's notes, sent to the crown)
 //   register(t)                    the forms (create, open, stack, bin, send) and what the live stream sends
 //
@@ -15,7 +14,7 @@
 // A note belongs where it was written: on a session's page to that session (shown there only, sent to it, its
 // envelope sealed with the session's drawing); anywhere else to the Desk (sent to the crown, sealed with the crown).
 import { html, raw } from './html.mjs'
-import { avatar, markArt } from './sidebar.mjs'
+import { avatar } from './sidebar.mjs'
 import { sketchSvg, crownSvg } from '../pen.js'
 import { toast } from './toast.mjs'
 
@@ -38,13 +37,13 @@ function sendButton(memo, model, base) {
   return html`<button class="quick-send memo-send" type="submit" data-action="click->memo#send" name="to" value="${to.id}" data-name="${to.name}" title="Send to ${to.name} (Enter)" aria-label="Send to ${to.name}" aria-keyshortcuts="Enter"${holds(memo) ? '' : raw(' disabled')}${memo.session ? raw(' data-seal="session"') : ''}>${memo.session ? avatar(to, { crown: false }) : raw(crownSvg())}</button>`
 }
 
-/** One note that is out (floating over the page, or lying on the Desk's paper). */
+/** One note that is out (floating over the page). */
 export function memoNote(memo, model, base) {
   const one = receiverOf(memo, model)
   const x = Math.round(Number(memo.x) || 0), y = Math.round(Number(memo.y) || 0)
   const unplaced = memo.place === 'float' && !x && !y
-  // A floating note stays inside the window whatever its size; a note on the paper lies in the paper's pixels.
-  const at = memo.place === 'paper' ? `left:${Math.max(0, x)}px;top:${Math.max(0, y)}px` : unplaced ? '' : `left:clamp(4px, ${x}px, calc(100vw - 344px));top:clamp(4px, ${y}px, calc(100vh - 120px))`
+  // A floating note stays inside the window whatever its size.
+  const at = unplaced ? '' : `left:clamp(4px, ${x}px, calc(100vw - 344px));top:clamp(4px, ${y}px, calc(100vh - 120px))`
   const act = what => `${base}/memos/${memo.id}/${what}`
   return html`<div class="memo" id="memo-${memo.id}" data-controller="memo" data-action="pointerdown->memo#front focusin->memo#front paste->memo#paste dragover->memo#over dragleave->memo#out drop->memo#drop turbo:submit-start->memo#settle" data-id="${memo.id}" data-place="${memo.place}" data-x="${x}" data-y="${y}"${unplaced ? raw(' data-unplaced') : ''}${at ? html` style="${at}"` : ''}>
 <form class="memo-slip" method="post" action="${act('send')}" role="dialog" aria-label="${one ? `Memo to ${one.name}` : 'Memo'}">
@@ -81,16 +80,9 @@ export function memoOpener(model, base, scope = null) {
 <div class="memo-away" id="memo-away" role="menu" aria-label="Memos that were put away" data-action="turbo:submit-start->memos#shut" hidden><form method="post" action="${base}/memos">${here}<button class="memo-away-line memo-away-new" type="submit" role="menuitem" data-action="click->memos#write">${STICKY}<span>New memo</span></button></form>${put.map(m => line(m, false))}${out(model, scope).filter(m => m.place === 'float').map(m => line(m, true))}</div></div>`
 }
 
-/** What the Desk's paper needs to know (the pad's chooser of sessions): read by the controller paper (client/web/t/lib/paper.js). */
-export function paperIsland(model) {
-  const sessions = model.agents.map(a => ({ id: a.id, name: a.name, online: Boolean(a.online), hue: a.hue, mark: String(markArt({ ...a, starred: false })) }))
-  return html`<div id="paper-island" data-controller="paper" hidden data-sessions="${JSON.stringify(sessions)}"></div>`
-}
-
-/** For the layout, once per page: the button, the notes, and on the Desk the paper's element. */
+/** For the layout, once per page: the button and the notes. */
 export const memoLayer = (model, base, view, scope = null) => html`<div id="memo-layer" data-controller="memos">${memoOpener(model, base, scope)}
-<div id="memos">${out(model, scope).map(m => memoNote(m, model, base))}</div></div>
-${view === 'desk' ? paperIsland(model) : ''}`
+<div id="memos">${out(model, scope).map(m => memoNote(m, model, base))}</div></div>`
 
 
 /** The memo's forms and its part of the live stream (docs/turbo.md "Registering a page"). Needs hub.memo(body):
@@ -107,7 +99,7 @@ export function register(t) {
   const num = v => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : undefined)
   const WAYS = {
     async create(_, f) {
-      const place = ['float', 'stack', 'paper'].includes(f.get('place')) ? f.get('place') : 'float'
+      const place = ['float', 'stack'].includes(f.get('place')) ? f.get('place') : 'float'
       const made = await call({ text: String(f.get('text') ?? ''), place, x: num(f.get('x')) ?? 0, y: num(f.get('y')) ?? 0, ...(f.get('session') ? { session: String(f.get('session')) } : {}) })
       return { fresh: made.memo.id, memo: made.memo }
     },
@@ -165,13 +157,12 @@ export function register(t) {
     ].join(''))
   })
 
-  // Every page with a stream: the notes that came, changed and went; the button; the paper's sessions.
+  // Every page with a stream: the notes that came, changed and went; the button.
   t.live('*', {
     // Every note with its scope; the button once per scope that a page shows (the Desk's, a session's).
     take: (m, clients = []) => ({
       notes: new Map(out(m).map(n => [n.id, { scope: scopeOf(n), text: String(memoNote(n, m, base)) }])),
       opener: new Map([...new Set([null, ...clients.map(scopeOfClient)])].map(sc => [sc, String(memoOpener(m, base, sc))])),
-      paper: String(paperIsland(m)),
     }),
     diff(was, now, client) {
       const acts = [], sc = scopeOfClient(client)
@@ -184,7 +175,6 @@ export function register(t) {
       }
       const o = now.opener.get(sc)
       if (o != null && was.opener.get(sc) !== o) acts.push(t.stream('replace', 'memo-new', raw(o)))
-      if (client.view === 'desk' && was.paper !== now.paper) acts.push(t.stream('replace', 'paper-island', raw(now.paper)))
       return acts.join('')
     },
   })

@@ -302,16 +302,14 @@ a.files-where:hover span { text-decoration: underline; }
 }
 @media (prefers-reduced-motion: reduce) { #session .is-jumped { animation-duration: .01s; box-shadow: 0 0 0 3px var(--accent); } }
 
-/* Memos and the Desk's paper (views/memo.mjs, t/controllers/memo*, t/lib/memo.js, t/lib/paper.js): what the old sheets
-   (quicksend.css, deskpad.css) do not have. The round button is a form; a note without a place of its own stands
-   above it; a note of the paper waits unseen until the paper is laid; on a phone only the note he opened on
-   this page is out, as the sheet. */
+/* Memos (views/memo.mjs, t/controllers/memo*, t/lib/memo.js): what the old sheet (quicksend.css) does not have.
+   The round button is a form; a note without a place of its own stands above it; on a phone only the note he opened
+   on this page is out, as the sheet. */
 .memo-new { display: contents; }
-@media (min-width: 861px) { .memo[data-unplaced]:not(.is-paper) { left: auto; top: auto; right: var(--s-4); bottom: calc(var(--s-4) + 64px); } }
-.memo[data-place="paper"]:not(.is-paper) { display: none; }
+@media (min-width: 861px) { .memo[data-unplaced] { left: auto; top: auto; right: var(--s-4); bottom: calc(var(--s-4) + 64px); } }
 a.memo-send { text-decoration: none; box-sizing: border-box; }
 .memo-gap { flex: 1; }   /* the room between the tools and the crown (the note's look is chosen elsewhere) */
-@media (max-width: 860px) { .memo:not(.is-paper):not([data-sheet]) { display: none; } }
+@media (max-width: 860px) { .memo:not([data-sheet]) { display: none; } }
 .session-past { grid-template-columns: minmax(0, 1fr); }
 .session-cards > .hist-heading { margin-top: var(--s-8); }
 /* The notes that were put away hang off the round button: their number on it, the list above it on a click. */

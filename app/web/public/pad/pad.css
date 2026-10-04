@@ -48,6 +48,8 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
 .pad-title { padding-right: var(--s-4); gap: 2px; }
 .pad-title strong { font: 600 var(--t-lg)/1 var(--display); letter-spacing: -.01em; }
 .pad-title span { margin-left: var(--s-2); padding: 3px 8px; border-radius: var(--r-pill); background: var(--accent-soft); color: var(--accent); font: 600 var(--t-xs)/1.2 var(--font); letter-spacing: .06em; text-transform: uppercase; }
+/* The Whiteboard (?place): the sidebar names the place and leads away, so no title pill (no close, no canvas name). */
+[data-place] .pad-title { visibility: hidden; }
 .pad-zoom { height: 44px; min-width: 58px; padding: 0 8px !important; border-radius: var(--r-pill); font: 600 var(--t-xs)/1 var(--font) !important; letter-spacing: .04em; font-variant-numeric: tabular-nums; color: var(--muted) !important; white-space: nowrap; position: relative; }
 .pad-zoom:hover { background: var(--sunken); color: var(--fg) !important; }
 

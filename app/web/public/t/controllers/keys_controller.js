@@ -9,7 +9,7 @@
 //   - Enter and Space on a button or link stay that control's own
 //   - a key held down repeats only where that is harmless (moving), never an answer
 //
-// The paper on the Desk is its own module's: P and W only say so on the document ("trommi:pen", "trommi:cards").
+// P leads to the Whiteboard with the pen in hand (its page's controller "whiteboard" hears "trommi:pen").
 import { Controller } from '/js/app/stimulus.mjs'
 import { LAYOUT, scopesOf, capOf } from '/t/lib/keys.js'
 
@@ -146,7 +146,6 @@ function start(signal) {
     'list.shred': () => inRow('.inbox-shred'),
     'list.takeback': () => (current()?.matches('.inbox-done') ? inRow('.inbox-takeback') : backNote()),
     'list.leave': () => { if (!current()) return false; setMark(null); document.activeElement?.blur?.() },
-    'pad.cards': () => { document.dispatchEvent(new CustomEvent('trommi:cards')) },
 
     'card.send': () => press($('.tc-answer .tc-send-many')),
     'card.later': () => press($('.tc-more-item[formaction$="/snooze"]')),
@@ -195,7 +194,7 @@ function start(signal) {
     'go.session': n => { press(sessions()[n - 1]) },
     'session.next': () => sessionStep(1),
     'session.prev': () => sessionStep(-1),
-    'pen': () => { document.dispatchEvent(new CustomEvent('trommi:pen')) },
+    'pen': () => (document.getElementById('whiteboard-frame') ? document.dispatchEvent(new CustomEvent('trommi:pen')) : go(`${base()}/whiteboard`)),
     'rail': () => (matchMedia('(min-width: 861px)').matches ? press($('.rail-fold')) : false),   // the sidebar's "|<" (rail_controller.js)
     'back': () => backNote(),
     'theme': () => {

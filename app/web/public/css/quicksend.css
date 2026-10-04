@@ -1,5 +1,5 @@
 /* The memo (js/quicksend.js, js/memos.js): a yellow sticky note to a session. It floats over the page where
-   it was put, or lies on the Desk's paper. The controls are plain; the note itself is the one hand-made
+   it was put. The controls are plain; the note itself is the one hand-made
    thing: yellow paper, a ruled field, a dashed tear line that ends in the paper plane. Where the round button stands (bottom right beside the
    Scratchpad's control; small at the top right in a session) is laid down in app.css together with
    the pad's control: `.quick-open, .topbar .padlink-open`. */
@@ -62,15 +62,9 @@ body:not([data-scope="all"]):not([data-page]) .memo-sticky { width: 23px; height
 .memo-slip.is-drop { box-shadow: 0 0 0 2px var(--accent); }
 .memo[data-state="open"] .memo-slip { animation: memo-in var(--d-med) var(--ease-out) both; }
 @keyframes memo-in { from { opacity: 0; transform: translateY(8px) scale(.98); } }
-/* carried: lifted off the page; over the Desk's paper it says that it would lie there */
+/* carried: lifted off the page */
 .memo.is-carried { z-index: 2700; }
 .memo.is-carried .memo-slip { rotate: -1.5deg; animation: none; }
-.memo.is-carried.over-paper .memo-slip { box-shadow: 0 0 0 2px var(--fg), 0 12px 16px -10px rgb(0 0 0 / .4); }
-/* on the Desk's paper: part of the page, it scrolls with the paper and lies under whatever floats */
-.memo.is-paper { position: absolute; z-index: 2; }
-.memo.is-paper.is-carried { z-index: 3; }
-.memo.is-paper .memo-head { cursor: grab; touch-action: none; }
-.memo.is-paper .memo-slip { animation: none; }
 
 /* the head: the binding band the note sticks by (drawn by .memo-slip). Nothing stands on it; the note is carried by it. */
 .memo-head { height: 22px; margin: 0 -14px 4px; border-radius: 0; background: none; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
@@ -185,10 +179,10 @@ body:not([data-scope="all"]):not([data-page]) .quick-note { bottom: auto; top: 5
 /* ---- a phone: a sheet at the bottom of the page, one note at a time ---- */
 @media (max-width: 860px) {
   body:not([data-scope="all"]):not([data-page]) .quick-open { right: 56px; top: 6px; }
-  .memo:not(.is-paper) { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-width: none; }
+  .memo { left: 0 !important; right: 0; top: auto !important; bottom: 0; width: auto; max-width: none; }
   /* no veil over the page: a line and a shadow at the sheet's upper edge */
-  .memo:not(.is-paper) .memo-slip { rotate: none; padding: 0 max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); border-radius: 0; transform-origin: 50% 100%; box-shadow: 0 -8px 16px -12px rgb(0 0 0 / .4); }
-  .memo[data-state="open"]:not(.is-paper) .memo-slip { animation-name: memo-up; }
+  .memo .memo-slip { rotate: none; padding: 0 max(16px, env(safe-area-inset-right, 0px)) calc(12px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); border-radius: 0; transform-origin: 50% 100%; box-shadow: 0 -8px 16px -12px rgb(0 0 0 / .4); }
+  .memo[data-state="open"] .memo-slip { animation-name: memo-up; }
   .memo-head { cursor: default; height: 24px; margin: 0 calc(-1 * max(16px, env(safe-area-inset-right, 0px))) 6px calc(-1 * max(16px, env(safe-area-inset-left, 0px))); background: none; }
   .memo-field { font-size: 16px; }
   .memo-foot { margin-inline: 0; }

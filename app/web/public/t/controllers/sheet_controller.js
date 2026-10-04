@@ -81,7 +81,7 @@ export default class extends Controller {
     const link = row.querySelector('a.inbox-text')
     if (link) s.querySelector('.rowmenu-open').href = link.href
     this.back = document.activeElement
-    // a frame on the page (the Desk paper) would take a tap beside the sheet for itself: frames take none while it is open
+    // a frame on the page (the Whiteboard's pad) would take a tap beside the sheet for itself: frames take none while it is open
     this.frames = [...document.querySelectorAll('iframe')].filter(f => f.style.pointerEvents !== 'none')
     for (const f of this.frames) f.style.pointerEvents = 'none'
     s.show()
