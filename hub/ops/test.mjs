@@ -193,7 +193,7 @@ test('test rooms: founding needs a signed request; DELETE removes rows and attac
   const testRoom = w.roomId
   assert.ok(w.hub.ops.testRooms.isTestRoom(testRoom))
   await expect(w, 'PUT', `${R(w)}/attachments/${aid(1)}`, { token: w.phone.token, raw: new Uint8Array(100) }, 201)
-  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 1, key_escrow: b64u(new Uint8Array(32)) } }, 200)
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: 'ab'.repeat(16), key_escrow: b64u(new Uint8Array(32)), replaces: 0 } }, 200)
   assert.ok(fs.existsSync(path.join(w.dir, 'attachments', testRoom)))
   await expect(w, 'DELETE', R(w), {}, 403, 'forbidden')
   await expect(w, 'DELETE', R(w), { headers: signed('DELETE', R(w)) }, 200)
@@ -353,9 +353,9 @@ test('escrow v2: stored under a passphrase-derived escrow_id; served only for th
   await foundRoom(w)
   const blob = b64u(crypto.getRandomValues(new Uint8Array(80)))
   const eid = 'ab'.repeat(16)
-  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, key_escrow: blob } }, 400, 'bad-argument')
-  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: 'AB'.repeat(16), key_escrow: blob } }, 400, 'bad-argument')
-  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob } }, 200)
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, key_escrow: blob, replaces: 0 } }, 400, 'bad-argument')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: 'AB'.repeat(16), key_escrow: blob, replaces: 0 } }, 400, 'bad-argument')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 0 } }, 200)
   assert.equal((await expect(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': freshIp() } }, 200)).json.key_escrow, blob)
   await expect(w, 'GET', `${R(w)}/escrow/${'cd'.repeat(16)}`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')
   await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')     // v1 route never serves v2
@@ -364,26 +364,49 @@ test('escrow v2: stored under a passphrase-derived escrow_id; served only for th
   await w.hub.close()
 })
 
-test('escrow: put by a human, read by anyone with the room id (10 per hour per room and per address), 4 KiB, delete', async () => {
+test('escrow (review 3): v1 PUT refused, v1 blobs only to a signed-in human, compare-and-swap, 4 KiB, no owner lock-out by anonymous reads', async () => {
   const w = await newHub()
   await foundRoom(w)
   const blob = b64u(crypto.getRandomValues(new Uint8Array(200)))
+  const eid = 'ef'.repeat(16)
   await expect(w, 'GET', `${R(w)}/escrow`, {}, 404, 'not-found')
-  await expect(w, 'PUT', `${R(w)}/escrow`, { body: { escrow_version: 1, key_escrow: blob } }, 401, 'unauthorised')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 0 } }, 401, 'unauthorised')
   await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 0, key_escrow: blob } }, 400, 'bad-argument')
-  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 1, key_escrow: b64u(new Uint8Array(4097)) } }, 413, 'too-large')
-  const put = (await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 1, key_escrow: blob } }, 200)).json
-  assert.equal(put.escrow_version, 1)
-  const got = (await expect(w, 'GET', `${R(w)}/escrow`, {}, 200)).json
-  assert.deepEqual(got, { escrow_version: 1, key_escrow: blob, updated_at: put.updated_at })
-  for (let i = 0; i < 8; i++) await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 200)
-  // 10 reads of this room in the hour (the first answered 404 and counts too): the room is closed for reads from anywhere.
-  const r = await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 429, 'rate-limited')
+  // v1 is retired: a new v1 escrow is refused (before: accepted and served by room id, one GET = unlimited offline guessing).
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 1, key_escrow: blob } }, 400, 'escrow-v1-retired')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: b64u(new Uint8Array(4097)), replaces: 0 } }, 413, 'too-large')
+  // Compare-and-swap: replaces is required and must name the current revision.
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob } }, 400, 'bad-argument')
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 3 } }, 409, 'escrow-changed')
+  const put = (await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 0 } }, 200)).json
+  assert.equal(put.revision, 1)
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 0 } }, 409, 'escrow-changed')
+  const st = (await expect(w, 'GET', `${R(w)}/escrow`, { token: w.phone.token }, 200)).json
+  assert.deepEqual([st.has_escrow, st.revision, st.escrow_version, st.key_escrow], [true, 1, 2, undefined], 'status for a member: no v2 blob')
+  await expect(w, 'DELETE', `${R(w)}/escrow`, { token: w.phone.token }, 409, 'escrow-changed')
+  await expect(w, 'DELETE', `${R(w)}/escrow?revision=0`, { token: w.phone.token }, 409, 'escrow-changed')
+  // Owner lock-out (H6): misses from many addresses burn the room's budget, the right id still goes through.
+  for (let i = 0; i < 12; i++) await api(w, 'GET', `${R(w)}/escrow/${'0'.repeat(31)}${(i % 10)}`, { headers: { 'cf-connecting-ip': freshIp() } })
+  await expect(w, 'GET', `${R(w)}/escrow/${'1'.repeat(32)}`, { headers: { 'cf-connecting-ip': freshIp() } }, 429, 'rate-limited')
+  assert.equal((await expect(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': freshIp() } }, 200)).json.key_escrow, blob, 'the owner is never locked out')
+  // One address: 10 reads in the hour, then 429 (a test signature lifts nothing).
+  const one = freshIp()
+  for (let i = 0; i < 10; i++) await expect(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': one } }, 200)
+  const r = await expect(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': one } }, 429, 'rate-limited')
   assert.ok(Number(r.headers.get('retry-after')) > 3000)
-  await expect(w, 'GET', `${R(w)}/escrow`, { headers: signed('GET', `${R(w)}/escrow`) }, 429, 'rate-limited')       // a test signature lifts nothing
+  await expect(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { ...signed('GET', `${R(w)}/escrow/${eid}`), 'cf-connecting-ip': one } }, 429, 'rate-limited')
   // "No room" and "no escrow" are one answer.
-  await expect(w, 'GET', `/v1/rooms/${'c'.repeat(64)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')
-  await expect(w, 'DELETE', `${R(w)}/escrow`, { token: w.phone.token }, 200)
+  await expect(w, 'GET', `/v1/rooms/${'c'.repeat(64)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': freshIp() } }, 404, 'not-found')
+  assert.equal((await expect(w, 'DELETE', `${R(w)}/escrow?revision=1`, { token: w.phone.token }, 200)).json.revision, 2)
+  assert.notEqual((await api(w, 'GET', `${R(w)}/escrow/${eid}`, { headers: { 'cf-connecting-ip': freshIp() } })).status, 200, 'deleted')
+  // The revision survives the delete (a tombstone): an old writer cannot put back what was removed.
+  await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 2, escrow_id: eid, key_escrow: blob, replaces: 1 } }, 409, 'escrow-changed')
+  assert.equal((await expect(w, 'GET', `${R(w)}/escrow`, { token: w.phone.token }, 200)).json.has_escrow, false)
+  // A v1 blob stored before the cut-over: never served anonymously, only to a signed-in human (to migrate it).
+  w.hub.db.prepare('UPDATE escrows SET escrow_version = 1, key_escrow = ?, escrow_id = NULL WHERE room_id = ?').run(Buffer.from(blob, 'base64url'), w.roomId)
+  assert.notEqual((await api(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } })).status, 200, 'no v1 blob by room id')
+  const v1 = (await expect(w, 'GET', `${R(w)}/escrow`, { token: w.phone.token }, 200)).json
+  assert.deepEqual([v1.escrow_version, v1.key_escrow], [1, blob])
   await w.hub.close()
 })
 

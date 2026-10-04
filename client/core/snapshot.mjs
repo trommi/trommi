@@ -124,8 +124,9 @@ export async function bootFromSnapshot(client) {
     for (const t of snap.model.timelines) m.timelines.set(t.timeline_key, M.deserialiseTimelineMeta(t))
     M.deserialiseHuman(m, { raw: snap.model.human })
     // R2: this device's lamport counter starts above every write in the snapshot.
-    for (const [, v] of snap.model.human) client.lamport = Math.max(client.lamport ?? 0, v?.causal?.lamport ?? 0)
-    for (const x of snap.model.memos) client.lamport = Math.max(client.lamport ?? 0, x?.causal?.lamport ?? 0)
+    // Review 3: only sane lamports (an inflated one in a snapshot is not adopted either).
+    for (const [, v] of snap.model.human) client.lamport = Math.max(client.lamport ?? 0, M.lamportOf(v?.causal))
+    for (const x of snap.model.memos) client.lamport = Math.max(client.lamport ?? 0, M.lamportOf(x?.causal))
     m._device_registers = new Map(snap.model.device_registers)
     for (const [id, reg] of m._device_registers) { const mem = m.members.get(id); if (mem) Object.assign(mem, { device_name: reg?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null }) }
     // D6: the hub's numbers are retrieval hints, not proof. The tail is read from an overlap window before the snapshot's

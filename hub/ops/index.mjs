@@ -8,7 +8,7 @@
 //   ops.testRooms.wanted/mark   founding with test_room: true                      ops.quota.check/make  uploads
 //
 // Routes: GET /v1/version · DELETE /v1/rooms/:room_id (test rooms) · GET /v1/rooms/:room_id/usage ·
-// PUT|GET|DELETE /v1/rooms/:room_id/escrow. Metrics: METRICS_PORT (+ METRICS_HOST, default 127.0.0.1) only.
+// PUT|GET|DELETE /v1/rooms/:room_id/escrow (GET with a human token: status; GET /escrow/:escrow_id anonymous). Metrics: METRICS_PORT (+ METRICS_HOST, default 127.0.0.1) only.
 import http from 'node:http'
 import { envNumber } from './env.mjs'
 import { sendJson, readJson, windowLimit, refuse } from './http.mjs'
@@ -65,13 +65,24 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
       return sendJson(res, 200, { attachment_bytes: quota.used(roomId), quota_bytes: quota.quotaBytes })
     }
     if (sub === 'escrow') {
+      if (m === 'GET' && escrowId == null && req.headers.authorization) {
+        // A signed-in human member: status and revision (for PUT/DELETE); a v1 blob only here, to migrate it.
+        const r = await room(roomId)
+        r.hub.authorise(bearer(req), { human: true })
+        return sendJson(res, 200, escrow.status(roomId))
+      }
       if (m === 'GET') {
         // Anonymous, never unlimited. The address budget is charged first, so one address cannot spend the room's.
-        // "No room" and "no escrow" are one answer.
-        const wait = escrowReads.take(`ip:${ipOf(req)}`) || escrowReads.take(`room:${roomId}`)
-        if (wait) { res.setHeader('retry-after', String(wait)); return sendJson(res, 429, { error: 'rate-limited', message: 'too many escrow reads; try again later' }) }
-        if (!db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(roomId)) return sendJson(res, 404, { error: 'not-found', message: 'this room has no password escrow' })
-        return sendJson(res, 200, escrow.get(roomId, escrowId ?? null))
+        // The room's budget counts only misses (review 3): reads with the right escrow id always go through, so
+        // nobody can lock the owner out by burning the room's reads from many addresses. "No room", "no escrow" and
+        // the retired room-id route are one answer.
+        const wait = escrowReads.take(`ip:${ipOf(req)}`)
+        const tooMany = w => { res.setHeader('retry-after', String(w)); return sendJson(res, 429, { error: 'rate-limited', message: 'too many escrow reads; try again later' }) }
+        if (wait) return tooMany(wait)
+        if (escrowId != null && db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(roomId) && escrow.exists(roomId, escrowId)) return sendJson(res, 200, escrow.get(roomId, escrowId))
+        const missWait = escrowReads.take(`room:${roomId}`)
+        if (missWait) return tooMany(missWait)
+        return sendJson(res, 404, { error: 'not-found', message: 'this room has no password escrow' })
       }
       const r = await room(roomId)
       const me = r.hub.authorise(bearer(req), { human: true })
@@ -79,10 +90,15 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
         const body = await readJson(req, 8192)
         r.hub.authorise(bearer(req), { human: true })        // C04: still a member once the body is in
         const out = escrow.put(roomId, me.id, body)
-        announce(roomId, 'escrow_changed', { escrow_version: out.escrow_version, updater_device_id: me.id })
+        announce(roomId, 'escrow_changed', { escrow_version: out.escrow_version, revision: out.revision, updater_device_id: me.id })
         return sendJson(res, 200, out)
       }
-      if (m === 'DELETE') { escrow.delete(roomId); return sendJson(res, 200, { ok: true }) }
+      if (m === 'DELETE') {
+        const rev = new URL(req.url, 'http://x').searchParams.get('revision')
+        const out = escrow.delete(roomId, me.id, rev != null && /^\d{1,15}$/.test(rev) ? Number(rev) : undefined)
+        announce(roomId, 'escrow_changed', { escrow_version: null, revision: out.revision, updater_device_id: me.id })
+        return sendJson(res, 200, { ok: true, revision: out.revision })
+      }
     }
     return false
   }

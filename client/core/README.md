@@ -15,7 +15,7 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | `transport.mjs` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
 | `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
 | `client.mjs` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
-| `escrow.mjs` | password escrow v2 (and v1 read) |
+| `escrow.mjs` | password escrow v2 (v1 read only for the migration) |
 | `snapshot.mjs` | room snapshots (fast first start) |
 | `session-grants.mjs` | re-export of `crypto/session-grants.mjs` (in the app: the real file) |
 | `codec.mjs` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
@@ -158,7 +158,7 @@ Answer = {
 **Rules the reducer applies, identically on every client** (so humans and agents agree):
 
 - R1: a new object's `object_id` must be H("trommi/v1/object-id", creator ‖ `sender_sequence` of version 1) (first 16 bytes); version 1 names no predecessor (`previous_version_hash` zeros). Timeline items follow the authority table of the README (a session's chat: the agent or a human addressing it; a card's chat: its creator or a human addressing the creator; desk canvas: humans). Refusals are `Alert`s and change nothing.
-- R2: registers and memo versions are settled by one total order from signed data, (`lamport`, `sent_at`, `sender_device_id`, `sender_sequence`), never by hub order. A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
+- R2: registers and memo versions are settled by one total order from signed data, (`lamport`, `sender_device_id`, `sender_sequence`), never by hub order; inflated lamports are refused (`lamport-inflated`). A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
 - A card version counts only from the card's creator (the sender of version 1), with `object_version` = previous + 1 and `previous_version_hash` = the current `version_hash`. Anything else becomes an `Alert` and is ignored.
 - An answer counts only from an active human device, addressed to the owning agent, while the card is open, bound to the **current** `version_hash`, and (for `answer_action: 'answer'` without `trusted`) with every choice an option key. An answer to an older version is ignored (alert `answer-stale`): the agent refuses it too, the card stays open.
 - `decide_again` counts only if it names the answer in force; it reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
@@ -289,15 +289,16 @@ await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail a
 roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for passphrase sign-in or recovery
 ```
 
-Password escrow (optional, `escrow.mjs`, v2): the blob is addressed by an id derived from the passphrase (PBKDF2-SHA-256, 2,000,000 iterations -> key + id), so the room id alone fetches nothing and every guess costs a slow derivation plus a rate-limited request. Whoever holds the hub's database can still guess offline (PBKDF2 is not memory-hard; WebCrypto has no Argon2), so offer the generated passphrase; the paper code stays the root:
+Password escrow (optional, `escrow.mjs`, v2): the blob is addressed by an id derived from the passphrase (PBKDF2-SHA-256, 2,000,000 iterations -> key + id), so the room id alone fetches nothing and every guess costs a slow derivation plus a rate-limited request. Whoever holds the hub's database can still guess offline (PBKDF2 is not memory-hard; WebCrypto has no Argon2), so only a generated passphrase is accepted (review 3); the paper code stays the root. Replacing or removing the escrow is compare-and-swap on the hub's revision; a v1 escrow from before is never served by room id and is migrated by a member:
 
 ```js
 generatePassphrase()                                   // 'k7m2-x9qp-…' six groups of four (120 bits): offer this, show it once
-passphraseProblem(text)                                // null if acceptable (a generated one always), else the reason: an own passphrase needs >= 6 words of >= 3 letters
-await client.setPassphrase(passphrase, { recovery_code })   // the code once; writes escrow v2; 'weak-passphrase', 'bad-recovery-code'
+passphraseProblem(text)                                // null for a generated passphrase, else 'only a generated passphrase'
+await client.setPassphrase(passphrase, { recovery_code })   // the code once; writes escrow v2; 'weak-passphrase', 'bad-recovery-code', 'escrow-changed'
 await client.removePassphrase()
-await client.checkPassphrase()                         // -> model.room.has_passphrase: a v1 escrow is visible to anyone, a v2 one only as this device set it
-const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; tries v2, then v1; 'wrong-passphrase'
+await client.checkPassphrase()                         // -> model.room.has_passphrase (asked as a signed-in human); model.room.escrow_v1 if an old v1 escrow waits
+const fresh = await client.migratePassphrase(old)      // v1 -> v2 under a NEW generated passphrase (show it once); the v1 blob is gone
+const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; v2 only; 'wrong-passphrase'
 // every human device gets the alert 'recovery-add' when the recovery key adds a device (passphrase sign-in or someone with the code)
 ```
 
