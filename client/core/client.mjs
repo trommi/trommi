@@ -158,6 +158,7 @@ export class Client {
 
   async start({ stream = true } = {}) {
     if (this._started) return
+    await this._takeLock()
     this._started = true
     this._setConnection('connecting')
     await this.hub.signIn()
@@ -177,7 +178,25 @@ export class Client {
     else this._setConnection('live')
   }
 
+  /**
+   * R4: one sealing client per device and room. In browsers a Web Lock held for the client's lifetime: a second tab
+   * gets ZError 'tab-conflict' (the app says "Trommi is open in another tab"). Node processes lock their key file (channel).
+   */
+  async _takeLock() {
+    const locks = globalThis.navigator?.locks
+    if (!locks || this._lockRelease) return
+    const name = `trommi-room-${this.model.room.room_id}-${this.my_device_id}`
+    await new Promise((resolve, reject) => {
+      locks.request(name, { ifAvailable: true }, lock => {
+        if (!lock) { reject(new ZError('tab-conflict', 'this room is open in another tab or window')); return }
+        resolve()
+        return new Promise(release => { this._lockRelease = release })
+      }).catch(reject)
+    })
+  }
+
   async stop() {
+    this._lockRelease?.(); this._lockRelease = null
     this._started = false
     this._stream?.close()
     this._stream = null

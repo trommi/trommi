@@ -123,8 +123,11 @@ try {
     const page = await client.loadTimeline(key, { limit: 50 })
     const pageMs = performance.now() - t2
     const items = [...client.model.timelines.get(key).items.values()].sort((a, b) => a.envelope_number - b.envelope_number)
+    const second = await core.openRoom({ storage: core.idbStorage({ name: 'trommi-test', prefix: 'r1/' }) })
+    const conflict = await second.start().then(() => 'started', e => e.code)
     await client.stop()
-    return { openMs, startMs, pageMs, cursor, card, delta: client.stats.verified, last: items.at(-1)?.content?.text, loaded: page.loaded }`)
+    return { openMs, startMs, pageMs, cursor, card, delta: client.stats.verified, last: items.at(-1)?.content?.text, loaded: page.loaded, conflict }`)
+  out(warm.conflict === 'tab-conflict', 'a second tab on the same room is refused (Web Lock)')
   out(warm.card === 'answered' && warm.delta <= 2 && warm.cursor > N, 'warm start from IndexedDB: model and cursor restored, only the delta verified', `open ${warm.openMs.toFixed(0)} ms, start ${warm.startMs.toFixed(0)} ms, delta ${warm.delta}`)
   out(warm.last === 'while away' && warm.loaded === 50, 'newest timeline page fetched and decrypted on open', `${warm.pageMs.toFixed(0)} ms for 50`)
   await agent.stop()
