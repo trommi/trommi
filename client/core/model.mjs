@@ -22,7 +22,7 @@ export function causallyAfter(x, y) {
 
 export function emptyModel() {
   return {
-    room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null },
+    room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, has_passphrase: null },
     members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), memos: new Map(), published: new Map(),
     timelines: new Map(), human: emptyHuman(), invites: new Map(), alerts: [], outbox: [],
     stack: [], open_permission_ids: [],
@@ -218,8 +218,10 @@ function applyTimelineItem(model, rec, change) {
     const card = model.cards.get(p.scope_id)
     if (card) {
       const c = rec.content
-      if (rec.sender_role === 'human' && c && (c.hand_back || c.explain)) card.in_revision = { by: c.hand_back ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
-      if (rec.sender_role === 'agent' && rec.sender_device_id === card.agent_device_id && c?.present_card) card.in_revision = null
+      // README: in revision until the agent's next version or a message with present_card (the agent presents it again,
+      // or a human takes the hand-back back).
+      if (c?.present_card) card.in_revision = null
+      else if (rec.sender_role === 'human' && c && (c.hand_back || c.explain)) card.in_revision = { by: c.hand_back ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
       change.cards.add(card.object_id)
       if (card.agent_device_id) change.sessions.add(card.agent_device_id)
     }
