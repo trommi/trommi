@@ -18,7 +18,7 @@ export const TIMELINE_KIND_NAME = Object.freeze({ 1: 'chat', 2: 'canvas' })
 /** Body fields per kind (besides schema_version), exactly the README names. Unknown fields are dropped on encode, kept on decode. */
 export const FIELDS = Object.freeze({
   message: ['content_type', 'text', 'details', 'html', 'attachments', 'hand_back', 'explain', 'present_card', 'copied_cards', 'marks'],
-  strokes: ['content_type', 'strokes'],
+  strokes: ['content_type', 'strokes', 'attachments'],
   erase: ['content_type', 'stroke_ids', 'offset'],
   move: ['content_type', 'stroke_ids', 'offset'],
   send_away: ['content_type', 'stroke_ids', 'offset'],

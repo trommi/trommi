@@ -127,3 +127,17 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
 }
 
 export { secretToJson }
+
+/** The link a fresh device types or scans to sign in with a passphrase or to recover: `<app>#r1.<b64u hub>.<b64u room>`. Not secret. */
+export function roomLink(hub_url, room_id, app = 'https://app.trommi.com/login') {
+  return `${app}#r1.${b64u(new TextEncoder().encode(normaliseHubUrl(hub_url)))}.${b64u(unhex(room_id))}`
+}
+export function parseRoomLink(text) {
+  const s = String(text).trim()
+  const frag = s.includes('#') ? s.slice(s.indexOf('#') + 1) : s
+  const parts = frag.split('.')
+  if (parts[0] !== 'r1' || parts.length !== 3) throw new ZError('bad-format', 'not a room link')
+  const room = unb64u(parts[2])
+  if (room.length !== 32) throw new ZError('bad-format', 'room id')
+  return { hub_url: normaliseHubUrl(new TextDecoder('utf-8', { fatal: true }).decode(unb64u(parts[1]))), room_id: hex(room) }
+}
