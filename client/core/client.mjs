@@ -1099,6 +1099,7 @@ export class Client {
     if (String(typed_code).replace(/\s/g, '') !== inv.code) {
       inv.finalized = true
       this._setInvite(invite_id, { invite_state: 'failed', error: 'code-mismatch' })
+      this.hub.deleteInvite(invite_id).catch(() => {})     // the hub tells the newcomer at once (status 410 invite-burned)
       throw new ZError('code-mismatch', 'the code does not match: nobody was added, the invite is spent')
     }
     this._setInvite(invite_id, { invite_state: 'adding' })
