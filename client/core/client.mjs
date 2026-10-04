@@ -5,6 +5,7 @@ import * as z from './zcrypto.mjs'
 import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
+import { sealEscrow, ESCROW_VERSION } from './escrow.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
 const CHAIN_HASHES_KEPT = 256
@@ -255,7 +256,7 @@ export class Client {
       let rev = null
       for (const it of items) {
         if (it.envelope_number <= card.envelope_number || !it.content) continue
-        if (it.sender_device_id === card.agent_device_id && it.content.present_card) rev = null
+        if (it.content.present_card) rev = null
         else if (this.model.members.get(it.sender_device_id)?.device_role === 'human' && (it.content.hand_back || it.content.explain)) rev = { by: it.content.hand_back ? 'hand_back' : 'explain', envelope_number: it.envelope_number }
       }
       if (rev) { card.in_revision = rev; change.cards.add(card.object_id); change.sessions.add(card.agent_device_id) }
@@ -1140,6 +1141,31 @@ export class Client {
       return { key_epoch: r.secret.epoch }
     })
   }
+
+  // ---- password escrow (optional; escrow.mjs) ----------------------------------------------------
+
+  /** Seal the recovery code under a passphrase and store it on the hub. The code is needed once (the device never keeps it). */
+  async setPassphrase(passphrase, { recovery_code, iterations } = {}) {
+    this._needHuman()
+    if (!recovery_code) throw new ZError('bad-argument', 'setting a passphrase needs the recovery code once')
+    const rec = await z.recoveryDevice(recovery_code)
+    if (!z.bytesEqual(rec.id, this.state.recovery.id)) throw new ZError('bad-recovery-code', 'this code does not belong to the room')
+    const key_escrow = await sealEscrow({ room_id: this.model.room.room_id, recovery_code, passphrase, iterations })
+    await this.hub.putEscrow({ escrow_version: ESCROW_VERSION, key_escrow })
+    this._setRoom({ has_passphrase: true })
+  }
+  async removePassphrase() {
+    this._needHuman()
+    await this.hub.deleteEscrow()
+    this._setRoom({ has_passphrase: false })
+  }
+  /** Ask the hub whether this room has an escrow (counts against the hub's read limit: call it on the settings page, not on every start). */
+  async checkPassphrase() {
+    try { await this.hub.getEscrow(); this._setRoom({ has_passphrase: true }) }
+    catch (e) { if (e.code === 'not-found') this._setRoom({ has_passphrase: false }); else throw e }
+    return this.model.room.has_passphrase
+  }
+  _setRoom(fields) { Object.assign(this.model.room, fields); const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
 
   async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
 }

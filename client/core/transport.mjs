@@ -112,6 +112,9 @@ export class Hub {
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${attachment_id}`), { raw: bytes }) }
   getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${attachment_id}`), { binary: true }) }
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
+  getEscrow() { return this.request('GET', this.roomPath('/escrow'), { auth: false }) }
+  putEscrow({ escrow_version, key_escrow }) { return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, key_escrow } }) }
+  deleteEscrow() { return this.request('DELETE', this.roomPath('/escrow')) }
   pushKey() { return this.request('GET', '/push_key', { auth: false }) }
 
   /**

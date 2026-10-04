@@ -275,6 +275,16 @@ await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail a
 roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for passphrase sign-in or recovery
 ```
 
+Password escrow (optional, `escrow.mjs`; trade-off: the hub or a thief of its database can guess passphrases offline, PBKDF2 is not memory-hard, so 1,000,000 iterations plus the length rule; the paper code stays the root):
+
+```js
+passphraseProblem(text)                                // null if acceptable, else the reason: >= 14 characters AND (>= 4 words or >= 20 characters), not repetitive
+await client.setPassphrase(passphrase, { recovery_code })   // the code once (founding screen, or typed in settings); 'weak-passphrase', 'bad-recovery-code'
+await client.removePassphrase()
+await client.checkPassphrase()                         // -> model.room.has_passphrase (true | false; null = not asked); counts against the hub's 10 reads/hour
+const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; 'wrong-passphrase'
+```
+
 Membership (human devices only):
 
 ```js

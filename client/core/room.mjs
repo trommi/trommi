@@ -4,6 +4,7 @@ import * as z from './zcrypto.mjs'
 import { Hub, normaliseHubUrl } from './transport.mjs'
 import { Client, secretToJson, secretFromJson } from './client.mjs'
 import './agent.mjs'
+import { openEscrow } from './escrow.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -140,4 +141,39 @@ export function parseRoomLink(text) {
   const room = unb64u(parts[2])
   if (room.length !== 32) throw new ZError('bad-format', 'room id')
   return { hub_url: normaliseHubUrl(new TextDecoder('utf-8', { fatal: true }).decode(unb64u(parts[1]))), room_id: hex(room) }
+}
+
+/**
+ * "Mit Passwort anmelden": a fresh device with the room link and the passphrase. Opens the escrow, signs in as the
+ * recovery key, adds ITSELF as a human device (entry signed by the recovery key; nobody is removed), seals the room
+ * key for itself. Returns { client }.
+ */
+export async function loginWithPassphrase({ room_link, passphrase, storage, client: client_name = null, device_name = '', device_info = null, fetch = null }) {
+  const { hub_url, room_id } = parseRoomLink(room_link)
+  if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
+  const pub = new Hub({ hub_url, room_id, fetch, client: client_name })
+  const { key_escrow } = await pub.getEscrow()
+  const code = await openEscrow({ room_id, key_escrow, passphrase })
+  const rec = await z.recoveryDevice(code)
+  const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
+  await hub.signIn()
+  const m = await hub.members({ after_entry_number: -1 })
+  const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
+  if (!z.bytesEqual(rec.id, state.recovery.id)) throw new ZError('bad-recovery-code', 'the escrow holds an old recovery code (a recovery happened since)')
+  const keys = await hub.sealedRoomKeys(0)
+  const wrap = keys.sealed_room_keys.find(k => k.key_epoch === state.epoch)
+  if (!wrap) throw new ZError('no-key', 'the hub holds no sealed room key for the recovery key')
+  const secret = await z.unwrapEpochKey(state, rec, unb64u(wrap.key_sealed), state.epoch)
+  const device = await newDevice(storage)
+  const added = await z.addMember(state, rec, { member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub } })
+  const sealed = await z.wrapEpochKey(added.state, secret, device.id)
+  await hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: [{ device_id: hex(device.id), key_sealed: b64u(sealed) }] })
+  await storage.saveDevice(device, { room_id })
+  const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
+  const client = await makeClient({ storage, device, state: added.state, secrets: [secret], roomRecord, fetch, client: client_name })
+  await client.hub.signIn()
+  await client._walkBackLinks().catch(() => {})
+  await client._saveRoom()
+  client.model.room.has_passphrase = true
+  return { client }
 }
