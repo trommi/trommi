@@ -58,6 +58,7 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - README protocol and krypto-konzept brought in line with the code.
   - Proposals for hub/crypto/core (duplicated HTTP helpers, session-grants copying zcrypto internals, FORMAT.md §6/§9 stale) were handed to S1/S2/C.
   - Left on purpose: channel-bridge question parsing and hub/push.mjs copy old-board code until the old board retires.
+- 04:50 the account usage limit killed every stream mid-step. Resumed 04:55 at a reduced pace: security fixers D, S1, S2 and integrator C first; parity fixer, Superkind, F and fuzz triage paused until the security fixes land. Half-done work found only in S1's worktree (session-grants, ops flow/test-rooms), handed back to S1.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
