@@ -72,6 +72,12 @@ export async function start(client, { fresh = false } = {}) {
     const words = { live: ['online', 'Connected'], catching_up: ['connecting', 'Catching up'], connecting: ['connecting', 'Connecting'], offline: ['offline', 'No connection'] }[state] ?? ['connecting', 'Connecting']
     if (el) el.dataset.state = words[0]
     if (text) text.textContent = words[1]
+    // The hub refused one of this device's envelopes without voiding it: sending stops until it goes through (the core
+    // retries the same bytes every minute). Said once, calmly; gone when sending runs again.
+    const blocked = client.model.room.outbox_blocked
+    const said = document.querySelector('.room-notice[data-why="blocked"]')
+    if (blocked && !said) notice('Sending is paused: the hub refused a message. Trommi tries again every minute.', `${blocked.code}: ${blocked.message}`, false, 'blocked')
+    else if (!blocked && said) said.remove()
   }
   // update: the board state takes the pending change (at once, wherever the state is read: model() does it, so an
   // action's own answer never reads the state from before it). patch: the open page gets its streams; that waits for
@@ -154,10 +160,11 @@ if (client) await start(client)
 else if (!sharing) await roomScreen({ start, hub: hubUrl() })
 
 /** A calm full-width line at the foot (styled by css/room.css), with "Reload". update: fetch the new build first. */
-function notice(text, detail, update) {
+function notice(text, detail, update, why = '') {
   if (document.querySelector('.room-notice')) return
   const box = document.createElement('div')
   box.className = 'room-notice'
+  if (why) box.dataset.why = why
   box.setAttribute('role', 'status')
   const words = document.createElement('span')
   words.textContent = text
