@@ -441,9 +441,11 @@ test('agent lease: one process per key; a new process takes over, the old one ge
   const a = await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })
   assert.ok(a.lease_generation > 0); assert.ok(a.expires_at > Date.now())
   // Review 3: a stream, an upload and an ephemeral post of an agent need the generation too.
-  await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token }, 409, 'lease-lost')
-  await refused(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10) }, 409, 'lease-lost')
-  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: 'x' } }, 409, 'lease-lost')
+  // (a current core sends 'none' before it holds a lease; cores before review 3 send no header and keep the old rule)
+  const none = { 'x-lease-generation': 'none' }
+  await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token, headers: none }, 409, 'lease-lost')
+  await refused(w, 'PUT', `${R(w)}/attachments/${'ab'.repeat(16)}`, { token: w.agent.token, raw: new Uint8Array(10), headers: none }, 409, 'lease-lost')
+  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: 'x' }, headers: none }, 409, 'lease-lost')
   const s = await openStream(w, w.agent, 0, w.agent.token, { 'x-lease-generation': String(a.lease_generation) })
   assert.equal((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })).lease_generation, a.lease_generation, 'the same process renews')
   await refused(w, 'POST', `${R(w)}/agent_lease`, { token: w.phone.token, body: { process_instance: 'p1' } }, 403, 'forbidden')
