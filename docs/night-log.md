@@ -58,6 +58,12 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 
 ## Open issues / requests for the morning
 
+- Second security review (Codex, code at 691ecc4+): 9 HIGH findings, several reproduced (scratchpad/review2-codex.md). Fixes are running:
+  - S1 hub/crypto: grants from removed humans, slot exhaustion, attachment hijack, ephemeral verification, forwarded-IP trust, FORMAT.md
+  - S2 core: handover always rotates, atomic re-keying, transitive register order, no chain rewind, fsync write-ahead, history after state loss, epoch/assignment checks, snapshot trust
+  - D: required lease fencing + lease renewal bug
+  The Claude round-2 review is still running. **Not ready for real users until both reviews' HIGH items are fixed and verified.**
+
 - Hub ops live (A2, 1b12490/e03907e/4034cd6/8dcf20f). Version endpoint + 426; signed test rooms (Ed25519 key, private key at ~/.local/share/trommi/hub-test-key); 512-write queue with 503; 4 MiB per-stream buffer with drop + resume; WAL checkpoints; quota 1 GiB with eviction; escrow route; metrics on METRICS_PORT only. Local: 4,220 env/s, 36 µs SQLite per envelope, ~1.4 KB per envelope. **Needs server clearance (refused for agents):** compose METRICS_PORT=8792 + METRICS_HOST=0.0.0.0 + ports 127.0.0.1:8792:8792, and HUB_MIN_* version minimums.
 
 - Cleanup plan ready (docs/cleanup-plan.md, dev/cleanup.sh, c4bba9e): 1,581 files / 166 MiB to delete after the switch, dry run by default. A history rewrite would take .git from 164.7 to 7.2 MiB (bulk only). Blockers before --apply: channel-bridge imports server/richhtml.mjs; dev/session.mjs (board status for subagents) needs an E2E replacement; test.yml still runs server tests. Owner decisions are listed in the plan.
