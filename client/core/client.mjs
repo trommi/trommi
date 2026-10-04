@@ -88,7 +88,16 @@ export class Client {
     this.hub = new Hub({ hub_url, room_id, fetch, client, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
     this.hub.onForbidden = () => { this.serial(() => this._refreshMembers()).catch(() => {}) }
     this.hub.onTooOld = e => { if (this._tooOld) return; this._tooOld = true; this.emit('error', e); this.stop().catch(() => {}) }
-    this.hub.onLeaseLost = e => { if (this._leaseLost) return; this._leaseLost = true; clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {}) }
+    // lease-lost: first ask for the lease again (renew: a restarted hub that knows no live lease gives it back with a new
+    // generation); only if ANOTHER live process holds it does this process stop (R4 fencing).
+    this.hub.onLeaseLost = e => {
+      if (this._leaseLost) return
+      const attempt = this._leaseRecoveryFailed ? Promise.resolve(false) : this._recoverLease()
+      attempt.then(ok => {
+        if (ok) { if (this._started) { this._stream?.close(); this._openStream() } this._pumpOutbox(); return }
+        this._leaseLost = true; clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {})
+      })
+    }
     this.model = M.emptyModel()
     Object.assign(this.model.room, { room_id, hub_url: this.hub.hub_url, my_device_id: hex(device.id), my_role, key_epoch: state.epoch, last_entry_number: state.head.seq })
     this.listeners = new Map()
@@ -119,6 +128,17 @@ export class Client {
   }
 
   get my_device_id() { return this.model.room.my_device_id }
+
+  /** R4: renew the lease after a lease-lost; true if this process holds it again (at most once every 5 s). */
+  async _recoverLease() {
+    if (!this._leaseInstance) return false
+    // one attempt serves every caller of the next 5 s (the stream and the outbox both see the same restart)
+    if (this._leaseRecovery && Date.now() - this._leaseRecovery.at < 5000) return this._leaseRecovery.promise
+    const promise = this.hub.agentLease({ process_instance: this._leaseInstance, renew: true })
+      .then(r => { this.hub.lease_generation = r.lease_generation; return true }, () => false)
+    this._leaseRecovery = { at: Date.now(), promise }
+    return promise
+  }
 
   /**
    * THE key choice (R6), in one place: which secret seals an envelope, given what it is about. Today every envelope
@@ -897,20 +917,21 @@ export class Client {
     if (this._pump) return this._pump
     this._pump = (async () => {
       await null
-      let backoff = 300
+      let backoff = 300, leaseRetried = false
       while (this.outbox.length) {
         const item = this.outbox[0]
         try {
           if (!this.is_human && this.hub.lease_generation == null) await this.claimSession()   // agents post under their lease (R4)
           const r = await this.hub.postEnvelope(item.bytes)
           item.envelope_number = r.envelope_number
+          leaseRetried = false
           if (this.model.room.outbox_blocked) { this.model.room.outbox_blocked = null; const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
           this._acked(item)
           backoff = 300
         } catch (e) {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[core] post', e.code, e.message)
           if (e.code === 'replay') { this._acked(item); continue }
-          if (e.code === 'lease-lost') { this.hub.onLeaseLost(e); break }
+          if (e.code === 'lease-lost') { if (!leaseRetried && await this._recoverLease()) { leaseRetried = true; continue } this._leaseRecovery = null; this._leaseRecoveryFailed = true; this.hub.onLeaseLost(e); break }
           if (e.code === 'gap') {
             for (const old of this.recentSent) { try { await this.hub.postEnvelope(old.bytes) } catch {} }
             await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)

@@ -86,7 +86,9 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
   const challenges = new Map()           // b64u(challenge) -> expiry
   const sessions = new Map()             // token -> { id, kind, role, expiresAt }
   const live = new Map()                 // (old board) agent session id -> instance
-  const leases = new Map()               // agent device id -> { instance, generation, expiresAt }
+  const leases = new Map()               // agent device id -> { instance, generation, expiresAt } (a cache over storage)
+  const leaseGet = id => { let l = leases.get(id); if (!l && storage.getLease) { l = storage.getLease(id); if (l) leases.set(id, l) } return l ?? null }
+  const leaseDrop = id => { leases.delete(id); storage.deleteLease?.(id) }
   const epochSince = new Map()           // room key epoch -> when the entry that started it arrived (R3)
   const sessionCache = new Map()         // session id -> { state, since: Map(epoch -> arrival) }
 
@@ -195,7 +197,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     for (const [token, s] of sessions) {
       if (s.kind === 'recovery' ? !bytesEqual(s.idBytes, state.recovery.id) : !z.memberAt(state, s.idBytes)) { sessions.delete(token); signedOut.push(s.id) }
     }
-    for (const d of removedIds) { live.delete(storage.sessionOf?.(d)); leases.delete(d) }
+    for (const d of removedIds) { live.delete(storage.sessionOf?.(d)); leaseDrop(d) }
     sessionCache.clear()
     return { seq: e.seq, hash: id(state.head.hash), epoch: state.epoch, type: e.type, signedOut, removed: removedIds }
   }
@@ -560,7 +562,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
       if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device posts its own envelopes only')
       // R4 fencing: an agent posts only under the lease it holds; no lease, no generation or an older one is lease-lost.
-      if (s.role === ROLE.AGENT && leases.get(s.id)?.generation !== leaseGeneration) fail('lease-lost', 'this process does not hold the lease of this agent key: take it with agent_lease and post with its generation')
+      if (s.role === ROLE.AGENT && leaseGet(s.id)?.generation !== leaseGeneration) fail('lease-lost', 'this process does not hold the lease of this agent key: take it with agent_lease and post with its generation')
       const v = await z.verifyEnvelope(bytes, { state: room(), chains, commit: false })
       const h = v.header
       let pushAllowed
@@ -648,17 +650,20 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       const s = session(token, { member: true })
       if (s.role !== ROLE.AGENT) fail('forbidden', 'only agents hold a lease')
       if (typeof instance !== 'string' || !instance) fail('bad-argument', 'process_instance')
-      const old = leases.get(s.id)
-      if (old && old.instance === instance && now() <= old.expiresAt) { old.expiresAt = now() + LEASE_MS; return { generation: old.generation, expiresAt: old.expiresAt, previousInstance: null } }
+      const old = leaseGet(s.id)
+      // The same process (also after a hub restart: leases are stored): keep its generation.
+      if (old && old.instance === instance) { old.expiresAt = now() + LEASE_MS; storage.putLease?.(s.id, old); return { generation: old.generation, expiresAt: old.expiresAt, previousInstance: null } }
+      // lease-lost only when ANOTHER live process holds it; with no live lease a renewal takes it (new, higher generation).
       if (renew && old && now() <= old.expiresAt) fail('lease-lost', 'another process took over this agent key')
       const generation = Math.max((old?.generation ?? 0) + 1, now())
       const l = { instance, generation, expiresAt: now() + LEASE_MS }
       leases.set(s.id, l)
+      storage.putLease?.(s.id, l)
       return { generation, expiresAt: l.expiresAt, previousInstance: old && old.instance !== instance ? old.instance : null }
     },
     /** Keep a lease alive while its process has a stream open; end it when the last stream closed. */
-    touchLease(deviceId) { const l = leases.get(deviceId); if (l) l.expiresAt = now() + LEASE_MS },
-    leaseOf: deviceId => leases.get(deviceId) ?? null,
+    touchLease(deviceId) { const l = leaseGet(deviceId); if (l) l.expiresAt = now() + LEASE_MS },
+    leaseOf: deviceId => leaseGet(deviceId),
 
     // ---- the old board's agent ids (server/pairing.mjs) ---------------------------------
 
@@ -679,7 +684,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       return { sessionId, device: s.id }
     },
     releaseSession(sessionId, instance) { if (live.get(sessionId) === instance) live.delete(sessionId) },
-    releaseDevice(deviceId) { const sid = storage.sessionOf?.(deviceId); if (sid) live.delete(sid); leases.delete(deviceId) },
+    releaseDevice(deviceId) { const sid = storage.sessionOf?.(deviceId); if (sid) live.delete(sid); leaseDrop(deviceId) },
   }
 }
 
