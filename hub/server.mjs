@@ -137,7 +137,9 @@ export async function startHub({
 
   // ---- HTTP helpers ------------------------------------------------------------------
 
-  const allowedOrigin = o => !!o && (o === 'https://app.trommi.com' || /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o) || origins.includes(o))
+  // H11: localhost origins only outside production (or listed in HUB_ORIGINS).
+  const devOrigins = process.env.NODE_ENV !== 'production'
+  const allowedOrigin = o => !!o && (o === 'https://app.trommi.com' || (devOrigins && /^http:\/\/(localhost|127\.0\.0\.1)(:\d+)?$/.test(o)) || origins.includes(o))
   function cors(req, res) {
     const o = req.headers.origin
     if (allowedOrigin(o)) {
@@ -690,15 +692,18 @@ export async function startHub({
       WHERE o.object_state != 1 AND e.received_at < ?`).all(cutoff)
     let envelopes = 0, attachments = 0
     for (const o of due) {
+      const gone = []
       db.tx(() => {
         envelopes += Number(db.q(`UPDATE envelopes SET encrypted_body = NULL WHERE room_id = ? AND encrypted_body IS NOT NULL
           AND (object_id = ? OR (timeline_kind = 1 AND timeline_id = ?))`).run(o.room_id, o.object_id, `card/${o.object_id}`).changes)
         for (const a of db.q('SELECT attachment_id FROM attachments WHERE room_id = ? AND object_id = ?').all(o.room_id, o.object_id)) {
-          files.delete(o.room_id, a.attachment_id)
           db.q('DELETE FROM attachments WHERE room_id = ? AND attachment_id = ?').run(o.room_id, a.attachment_id)
-          attachments++
+          gone.push(a.attachment_id)
         }
       })
+      // Files go after the commit (H10): a rolled-back transaction never leaves rows without files.
+      for (const id of gone) files.delete(o.room_id, id)
+      attachments += gone.length
     }
     if (envelopes || attachments) log(`retention: pruned ${envelopes} envelopes, deleted ${attachments} attachments`)
     return { objects: due.length, envelopes, attachments }
