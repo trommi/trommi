@@ -1542,6 +1542,33 @@ async function buildVectors() {
   return v
 }
 
+group('review leftovers')
+test('C24: a key-exchange key with bit 255 flipped is the same key: refused as a second member; recovery halves are checked too', async () => {
+  const phone = await z.generateDevice()
+  const recovery = await z.recoveryDevice(z.generateRecoveryCode())
+  const room = await z.createRoom({ device: phone, recovery })
+  const twin = await z.generateDevice()
+  const flipped = phone.kexPub.slice(); flipped[31] ^= 0x80
+  await assert.rejects(z.addMember(room.state, phone, { member: { role: ROLE.HUMAN, signPub: twin.signPub, kexPub: flipped } }), e => e.code === 'bad-entry')
+  // A member may not reuse half of the recovery key either.
+  await assert.rejects(z.addMember(room.state, phone, { member: { role: ROLE.HUMAN, signPub: twin.signPub, kexPub: recovery.kexPub } }), e => e.code === 'bad-entry')
+  await assert.rejects(z.addMember(room.state, phone, { member: { role: ROLE.HUMAN, signPub: recovery.signPub, kexPub: twin.kexPub } }), e => e.code === 'bad-entry')
+})
+test('C23: a secret changed in place never reuses the cached sender key', async () => {
+  const w = await makeWorld()
+  // A session key (the room key is checked against the log's commitment on every seal, so it cannot drift).
+  const secret = { epoch: 1, key: crypto.getRandomValues(new Uint8Array(32)), hist: null }
+  const seal = () => z.sealEnvelope({ device: w.phone.device, state: w.phone.state, chains: z.newChains(), kind: KIND.CHAT, payload: utf8('x'), time: T0, keyScope: 1, sessionId: SESSION_ID, secret, timelineKind: 1, timelineId: `session/${hex(SESSION_ID)}`, recipient: w.agent.device.id })
+  const a = await seal()
+  const old = secret.key
+  secret.key = crypto.getRandomValues(new Uint8Array(32))           // mutated in place
+  const b = await seal()
+  const open = async (env, key) => (await z.openEnvelope(env.bytes, { state: w.laptop.state, chains: z.newChains(), secrets: () => ({ epoch: 1, key, hist: null }), self: w.laptop.device.id })).quarantined
+  assert.equal(await open(a, old), null)
+  assert.ok(await open(b, old), 'b was sealed under the new key, not the cached old one')
+  assert.equal(await open(b, secret.key), null)
+})
+
 group('vectors')
 let vectorsBuilt = null
 test('vectors.json regenerates byte for byte', async () => {

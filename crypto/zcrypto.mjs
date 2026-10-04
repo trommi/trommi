@@ -494,6 +494,11 @@ async function signEntry(fields, signer) {
 }
 
 const idKey = b64u
+/** C24: X25519 ignores bit 255, so two encodings that differ there are one key; compare with that bit cleared. */
+const kexCanon = k => { const c = k.slice(); c[31] &= 0x7f; return c }
+const sameKex = (a, b) => bytesEqual(kexCanon(a), kexCanon(b))
+/** Two key sets that share a signing key or (canonically) a key-exchange key. */
+const keysClash = (a, b) => bytesEqual(a.signPub, b.signPub) || sameKex(a.kexPub, b.kexPub)
 
 function cloneState(s) {
   return {
@@ -527,7 +532,7 @@ export async function applyEntry(state, entryBytes) {
     if (e.epoch !== 1) bad('the first epoch is 1')
     await checkSig(e.member.signPub)
     const recovery = { ...e.recovery, id: await deviceId(e.recovery.signPub, e.recovery.kexPub) }
-    if (bytesEqual(recovery.id, id)) bad('recovery key equals the device key')
+    if (bytesEqual(recovery.id, id) || keysClash(recovery, e.member)) bad('recovery key equals the device key')
     return {
       roomId: entryHash,
       head: { seq: 0, hash: entryHash },
@@ -567,9 +572,9 @@ export async function applyEntry(state, entryBytes) {
   const addMember = async (member) => {
     const id = await deviceId(member.signPub, member.kexPub)
     if (next.members.has(idKey(id))) bad('this device was already a member (removed devices cannot return)')
-    if (bytesEqual(id, state.recovery.id)) bad('the recovery key cannot be a member')
+    if (bytesEqual(id, state.recovery.id) || keysClash(state.recovery, member)) bad('the recovery key cannot be a member')
     for (const m of next.members.values()) {
-      if (bytesEqual(m.signPub, member.signPub) || bytesEqual(m.kexPub, member.kexPub)) bad('key already in use by another member')
+      if (keysClash(m, member)) bad('key already in use by another member')
     }
     next.members.set(idKey(id), { id, ...member, addedSeq: e.seq, removedSeq: null })
   }
@@ -607,7 +612,7 @@ export async function applyEntry(state, entryBytes) {
       newEpoch()
       const id = await deviceId(e.recovery.signPub, e.recovery.kexPub)
       if (bytesEqual(id, state.recovery.id)) bad('recovery must install a new recovery key')
-      if (next.members.has(idKey(id))) bad('recovery key equals a device key')
+      if (next.members.has(idKey(id)) || [...next.members.values()].some(m => keysClash(m, e.recovery))) bad('recovery key equals a device key')
       next.recovery = { ...e.recovery, id }
       next.lastRecoverSeq = e.seq
       break
@@ -1200,11 +1205,12 @@ const scopeCtx = (keyScope, sessionId) => (keyScope === KEY_SCOPE.SESSION ? conc
 export async function deriveSenderKey(roomId, secret, senderId, { keyScope = KEY_SCOPE.ROOM, sessionId = null } = {}) {
   return hkdf(secret.key, roomId, LABEL.senderKey, concat(scopeCtx(keyScope, sessionId), epochCtx(secret.epoch), need(senderId, 32, 'sender id')), 32)
 }
-const senderKeyCache = new WeakMap()   // secret object -> Map(scope+room+sender -> CryptoKey)
+const senderKeyCache = new WeakMap()   // secret object -> Map(epoch+key+scope+room+sender -> CryptoKey)
 async function senderKey(roomId, secret, senderId, scope) {
   let cache = senderKeyCache.get(secret)
   if (!cache) senderKeyCache.set(secret, cache = new Map())
-  const k = `${scope.keyScope}${scope.sessionId ? b64u(scope.sessionId) : ''}${b64u(roomId)}${b64u(senderId)}`
+  // C23: the epoch and the key bytes are part of the cache key, so a secret changed in place never reuses an old key.
+  const k = `${secret.epoch}.${b64u(secret.key)}.${scope.keyScope}${scope.sessionId ? b64u(scope.sessionId) : ''}${b64u(roomId)}${b64u(senderId)}`
   let key = cache.get(k)
   if (!key) cache.set(k, key = await aesKey(await deriveSenderKey(roomId, secret, senderId, scope)))
   return key

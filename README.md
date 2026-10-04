@@ -299,6 +299,8 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 - **Reconnecting** with the same device identity changes nothing.
 - A **recovery** (signed by the recovery key) may also remove agents; the recovery screen lists them with when and by whom they were added and unticks those added since the last trusted point. Push subscriptions of a removed device are deleted in the same transaction. Invite endpoints stop answering 15 minutes after use.
 - Freeze: with this, the v1 bytes are frozen (FORMAT.md §9 and vectors).
+- Checks without new bytes (v1.1.1, review 1 C23/C24): a key-exchange key counts with bit 255 cleared, so a second encoding of a member's key is refused, and no member shares a signing or key-exchange key with the recovery key; the sender-key cache is keyed by epoch and key bytes.
+- **Still open (v1.1.1):** attachment lengths are not padded to buckets (C22: the hub sees an attachment's exact size; padding needs a format change in the encrypted reference); a leaked recovery code can only be revoked by a full recovery, there is no cheaper `recovery_key_changed` entry (M6); the password escrow is addressed by the room id and protected by PBKDF2 and rate limits only (a passphrase-derived escrow id and a memory-hard KDF are planned with the client).
 
 **R7. Binds.** `answer` binds object id, the hash of the version answered and the full list of choices (each must be an option). `decide_again` binds the answer taken back **and** the current version's hash. `verdict`: request id = `object_id`. `trusted` widens nothing: the agent picks its own recommendation and says so.
 
