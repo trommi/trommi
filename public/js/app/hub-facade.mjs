@@ -4,6 +4,7 @@
 
 import { agentIdOf, sessionKey, addressOf } from './board-state.mjs'
 import { memoStore } from './memo-store.mjs'
+import { uploadFile } from './att.mjs'
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
 const STALE = 'this question was revised while you were answering; read it again and answer the version that stands now'
@@ -20,11 +21,7 @@ export function hubFacade(client, board) {
   const card = id => { const c = board.state.cards.find(x => x.id === id); if (!c) throw fail(404, 'unknown card'); return c }
   const dev = agentId => board.agentToDev.get(agentId) ?? sessionKey([...m().sessions.values()].find(s => agentIdOf(s) === agentId) ?? {})
   // Files from a form (File objects) become encrypted attachments; returns the README references.
-  const upload = async (files = [], object_id) => Promise.all(files.map(async f => {
-    const meta = { file_name: f.name || 'file', media_type: f.type || 'application/octet-stream', object_id }
-    if (f.type?.startsWith('image/')) { try { const b = await createImageBitmap(f); meta.width = b.width; meta.height = b.height; b.close() } catch {} }
-    return client.uploadAttachment(new Uint8Array(await f.arrayBuffer()), meta)
-  }))
+  const upload = async (files = [], object_id) => Promise.all(files.map(f => uploadFile(client, f, { file_name: f.name || 'file', media_type: f.type || 'application/octet-stream', object_id })))
   // A timeline key ('chat:session/<dev>'), or a session's board id (its chat).
   const timelineOf = ref => (String(ref).includes(':') ? ref : `chat:session/${dev(ref)}`)
   const draftOff = id => client.setDraft(id, null).catch(() => {})

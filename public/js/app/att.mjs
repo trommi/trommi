@@ -7,6 +7,12 @@ const blobs = new Map()      // attachment_id -> Promise<Blob>, kept while the p
 let client = null
 export function rememberRef(ref) { if (ref?.attachment_id && !ref.url) refs.set(ref.attachment_id, ref) }
 export function attachTo(c) { client = c }
+/** A Blob (or File) as an encrypted attachment of the room; pictures carry their size. Returns the README reference. */
+export async function uploadFile(c, blob, { file_name, media_type, object_id }) {
+  const meta = { file_name, media_type, object_id }
+  if (media_type.startsWith('image/')) { try { const b = await createImageBitmap(blob); meta.width = b.width; meta.height = b.height; b.close() } catch {} }
+  return c.uploadAttachment(new Uint8Array(await blob.arrayBuffer()), meta)
+}
 const blobOf = id => {
   if (!blobs.has(id)) {
     const ref = refs.get(id)

@@ -15,7 +15,7 @@
 //   boardMemos(model, devToAgent)    the board state's memos (views/model.mjs shape), from the core's model
 //   memoStore(client, board)         -> act(body): POST /memo of the old hub, as { code, text }
 import { addressOf } from './board-state.mjs'
-import { rememberRef } from './att.mjs'
+import { rememberRef, uploadFile } from './att.mjs'
 
 const HOLD_MS = 3000
 const PLACES = ['float', 'stack', 'paper']
@@ -75,10 +75,7 @@ export function memoStore(client, board) {
   // { name, data: base64 data URL } of t/lib/memo.js -> an uploaded, encrypted attachment reference.
   async function upload({ name, data }, object_id) {
     const [, type = 'application/octet-stream', b64 = ''] = /^data:([^;,]*)(?:;[^,]*)?,(.*)$/s.exec(String(data)) ?? []
-    const bytes = Uint8Array.from(atob(b64), c => c.charCodeAt(0))
-    const meta = { file_name: String(name || 'file'), media_type: type, object_id }
-    if (type.startsWith('image/')) { try { const b = await createImageBitmap(new Blob([bytes], { type })); meta.width = b.width; meta.height = b.height; b.close() } catch {} }
-    return client.uploadAttachment(bytes, meta)
+    return uploadFile(client, new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type }), { file_name: String(name || 'file'), media_type: type, object_id })
   }
 
   const answer = (code, data) => ({ code, text: JSON.stringify(code < 400 ? { ok: true, ...data } : data) })

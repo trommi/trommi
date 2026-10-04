@@ -9,10 +9,8 @@ import { srcOf } from './picture.mjs'   // a stored picture at the size it is sh
 import { deskStacks, stackCounts } from './stacks.mjs'   // the four places at the foot of the Desk
 import { nextPlease } from './nextplease.mjs'   // the heading as index cards (card Nr. 166)
 import { gutterHoverClass, pointerHost } from './gutter-hover.mjs'   // an arrow from the sidebar to the card under the pointer (card Nr. 208)
-import { sketchSvg, circleSvg, ringSvg, tallySvg, paperSvg } from '../pen.js'
+import { sketchSvg } from '../pen.js'
 
-const FAN_MAX = 8      // a fanned stack shows so many of the newest sheets, then "N more"
-const TALLY_MAX = 15
 const sk = (name, cls) => raw(sketchSvg(name, cls))
 export const cardPath = (card, base) => `${base}/q/${encodeURIComponent(card.number ?? card.id)}`
 const COPY_ICON = raw('<svg viewBox="0 0 24 24" class="sketch cardclip-ico" aria-hidden="true"><path d="M9.2 8.6C12.6 8.3 16 8.4 19.3 8.7C19.7 12.2 19.6 15.8 19.4 19.4C16 19.8 12.6 19.7 9.1 19.5C8.7 16 8.8 12.4 9 9"/><path d="M15 5.6C14.8 4.9 14.3 4.5 13.6 4.5C10.9 4.3 8.2 4.4 5.4 4.6C4.8 4.7 4.5 5.1 4.5 5.7C4.3 8.4 4.3 11.2 4.6 14C4.7 14.6 5.1 14.9 5.8 15"/></svg>')
