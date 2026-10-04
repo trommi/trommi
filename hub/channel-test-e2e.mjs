@@ -168,6 +168,24 @@ export async function integration({ test, tmp }) {
       assert.equal(new TextDecoder().decode(bytes), '<h1>Report</h1>')
     })
 
+    await test('e2e: share_asset gives outsiders a link; release: false and revoke_asset end it', async () => {
+      const id = (await channel.call('publish_asset', { content: '<h1>For outsiders</h1>', title: 'Outside' })).match(/published as ([0-9a-f]{32})/)[1]
+      const link = (await channel.call('share_asset', { id, expires_hours: 1 })).match(/Link for the recipient: (\S+)/)[1]
+      // What the viewer page does, with nothing but the link: no sign-in, no membership.
+      const viewer = new core.Hub({ hub_url: hub.hub_url })
+      const open = l => core.openShared(viewer, l)
+      assert.equal(new TextDecoder().decode(await open(link)), '<h1>For outsiders</h1>')
+      const { share_secret } = core.parseShareLink(link)
+      await assert.rejects(open(link.replace(share_secret, core.z.b64u(new Uint8Array(32)))))
+      assert.match(await channel.call('share_asset', { id, release: false }), /release taken back/)
+      await assert.rejects(open(link))
+      const again = (await channel.call('share_asset', { id })).match(/Link for the recipient: (\S+)/)[1]
+      assert.ok(await open(again))
+      await channel.call('revoke_asset', { id })
+      await assert.rejects(open(again))
+      await until('unpublished', () => human.model.published.get(id)?.object_state === 'closed')
+    })
+
     await test('e2e: permission round trip', async () => {
       await channel.client.notification({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'req1', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"ls"}' } })
       const pid = await until('permission at the human', () => [...human.model.permissions.values()].find(p => p.tool_name === 'Bash')?.object_id)
