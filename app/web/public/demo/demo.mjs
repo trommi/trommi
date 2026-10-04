@@ -281,11 +281,96 @@ function putAway(f) {
   return f
 }
 
+// More to play with (his wish, 4 October): simple yes/no questions, some with advice, a few with a line of context or
+// pictures, spread over the sessions, mostly not urgent; and a few infos. Demo data only.
+function filler(f) {
+  const now = Date.now(), MIN = 60e3, [zu, ui, docs, cr] = f.sessions.map(s => s.agent_device_id)
+  // (the demo's desk has a real name, his word 4 October: "Web App 3")
+  // (one note in the sidebar: the demo keeps the newest of its notes)
+  { const kept = (f.memos ?? []).filter(m => m.place === 'stack').sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))[0]; if (kept) f.memos = f.memos.filter(m => m.place !== 'stack' || m === kept) }
+  for (const d of Object.values(f.human?.desks ?? {})) if (d.name === 'Desk') d.name = 'Web App 3'
+  // (two knocks and one blocking card in the test room, his word: the migration waits calmly)
+  // Teasers: what the agent says on the Desk in two lines (the card's own field, core FIELDS.card.teaser).
+  const TEASE = {
+    'Produktion steht: jetzt zurückrollen?': 'Seit 12:04 gibt die API 502 zurück. Zurückrollen dauert zwei Minuten, der alte Build ist noch warm.',
+    'Wie soll das Board auf dem Handy starten?': 'Auf dem Handy passt nur eine Ansicht. Ich würde mit dem Desk starten, nicht mit dem Gespräch.',
+    'Zertifikat läuft in 2 Tagen ab. Jetzt erneuern?': 'Danach warnt jeder Browser. Die Erneuerung läuft automatisch, braucht nur dein Ja.',
+    'Welches Standard-Theme?': 'Beide Themes sind fertig. Ich brauche nur den Standard für neue Nutzer.',
+    'Migration auf der Produktions-Datenbank ausführen?': 'Fügt eine Spalte hinzu und füllt 48.210 Zeilen nach, etwa 40 Sekunden ohne Ausfall.',
+    'Was baue ich als Nächstes?': 'Drei Wege liegen bereit: Suche, Teilen, oder die Handy-Ansicht fertig machen.',
+  }
+  for (const c of f.cards) if (TEASE[c.title]) { c.teaser = TEASE[c.title]; for (const v of c.versions ?? []) if (v.content) v.content.teaser = TEASE[c.title] }
+  for (const c of f.cards) if (c.title?.startsWith('Migration auf der Produktions-Datenbank')) { c.urgency = 'normal'; for (const v of c.versions ?? []) v.urgency = 'normal' }
+  let env = 9500
+  const pic = name => ({ attachment_id: hex(32), file_key: '', sha256: '', file_name: name, media_type: name.endsWith('.webm') ? 'video/webm' : 'image/png', total_size: 0, url: `/demo/files/${name}` })
+  const YN = [{ key: 'ja', label: 'Ja', detail: '' }, { key: 'nein', label: 'Nein', detail: '' }]
+  const mk = (title, agent, ago, { body = '', teaser = null, type = 'decision', options = YN, recommended = null, urgency = 'normal', files = [] } = {}) => {
+    const id = hex(32), at = now - ago * MIN, n = ++env, version_hash = hex(64)
+    const content = { card_type: type, title, teaser, body, options: type === 'info' ? [] : options, sections: null, html: null, allows_multiple: false, recommended, urgency_reason: '', attachments: files.map(pic), change_note: '', close_summary: null, withdraw_reason: null, merged_into_object_id: null, merged_from_object_ids: null }
+    const card = { object_id: id, agent_device_id: agent, first_envelope_number: n, created_at: at, answers: [], answer: null, closed_how: null, in_revision: null, timeline_key: `chat:card/${id}`, content_state: 'ok', object_version: 1, version_hash, envelope_number: n, updated_at: at, urgency, object_state: 'open', ...content,
+      versions: [{ object_version: 1, version_hash, previous_version_hash: null, envelope_number: n, sent_at: at, object_state: 'open', urgency, content }] }
+    f.cards.push(card)
+    return card
+  }
+  mk('Kaffee vor dem nächsten Deploy?', zu, 3, { recommended: 'ja', teaser: 'Der Deploy dauert zwölf Minuten. Genug Zeit für einen Espresso.' })
+  mk('Darf ich die Tests parallel laufen lassen?', zu, 7, { body: 'Halbiert die Laufzeit, braucht aber doppelt so viel Speicher.', recommended: 'ja' })
+  mk('Dunkles Theme als Standard?', ui, 9, { files: ['thema-dunkel.png', 'thema-hell.png'] })
+  mk('Runde Ecken an den Knöpfen?', ui, 12, { recommended: 'nein', teaser: 'Eckig passt besser zum Papier-Look. Ich würde es lassen.' })
+  mk('Emoji in Commit-Nachrichten erlauben?', docs, 15, { teaser: 'Zwei Helfer schreiben schon welche. Einheitlich wäre schöner.' })
+  mk('README auf Englisch umstellen?', docs, 21, { body: 'Die Hilfe-Seite ist schon englisch.', recommended: 'ja' })
+  mk('Schlüssel alle 90 Tage tauschen?', cr, 26, { recommended: 'ja', teaser: 'Läuft im Hintergrund, kein Gerät merkt etwas davon.' })
+  mk('Alte Sitzungen nach 30 Tagen archivieren?', zu, 33, { teaser: 'Die Seitenleiste hat inzwischen 14 Einträge. Archiviert heißt: weg, aber findbar.' })
+  mk('So sieht das Handy jetzt aus. Passt das?', ui, 41, { files: ['phone-entscheidungen.png', 'phone-gespraech.png', 'clip.webm'], recommended: 'ja' })
+  mk('Logo etwas größer?', ui, 48, { teaser: 'Auf dem Handy wirkt die Glocke etwas verloren.', options: [{ key: 'ja', label: 'Ja, größer', detail: '' }, { key: 'nein', label: 'Lassen', detail: '' }] })
+  mk('Darf ich den Linter strenger stellen?', zu, 57, { body: 'Ein paar alte Dateien würden dann rot.' })
+  mk('Wöchentlicher Bericht am Freitag?', docs, 66, { recommended: 'ja', teaser: 'Eine Seite: was fertig wurde, was hängt, was als Nächstes kommt.' })
+  mk('Passwort-Länge auf 14 Zeichen anheben?', cr, 74, { urgency: 'low' })
+  mk('Neue Schrift für die Überschriften?', ui, 88, { files: ['board-desktop.png'], teaser: 'Bricolage ist lebendig, aber bei langen Titeln unruhig. Vorschlag im Bild.' })
+  mk('Gepusht: Suche findet jetzt auch Notizen', zu, 5, { type: 'info', body: 'Live.' })
+  mk('Bericht: alle 214 Tests grün', zu, 19, { type: 'info' })
+  mk('Notiz: Hilfe-Seite hat ein Inhaltsverzeichnis', docs, 38, { type: 'info' })
+  mk('Gepusht: Prüfcode beim Koppeln sechsstellig', cr, 62, { type: 'info' })
+  // Sub-sessions (his wish, 4 October: the sidebar trees and the Desk lived-in): three under crypto, three under trommi,
+  // each with its drawing, a status line, and a card or two (some answered while the session is still at it).
+  const me = f.room.my_device_id
+  const sub = (id, name, icon, parent, task, online, line) => {
+    const dev = hex(64)
+    f.sessions.push({ agent_device_id: dev, agent_session_id: id, device_name: name, is_active: true, is_online: online,
+      profile: { model: 'claude-opus-5-5', task, icon, agent_name: name, parent_session: parent, is_main: false },
+      status_lines: line ? [{ id: `${id}-1`, label: line[0], state: line[2] ?? 'working', detail: line[1], object_id: null, updated_at: now - (line[3] ?? 2) * MIN }] : [],
+      settings: { name: '', desk: 'main', archived: false, group: null, icon: null } })
+    return dev
+  }
+  const answered = (card, key = 'ja', ago = 3) => {
+    const v = card.versions[0]
+    card.answer = { answer_action: 'answer', choices: [key], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: v.version_hash, bound_object_version: 1, envelope_number: ++env, envelope_hash: hex(64), by_device_id: me, answered_at: now - ago * MIN, taken_back_at: null }
+    card.answers = [card.answer]; card.object_state = 'answered'; card.closed_how = 'answered'
+  }
+  const keys = sub('crypto-keys', 'Schlüssel', 'draw:lock', 'crypto', 'Schlüsselwechsel', true, ['Rotation', 'Alte Schlüssel werden abgelöst (3/5)'])
+  const pair = sub('crypto-pair', 'Pairing', 'draw:phone', 'crypto', 'Geräte koppeln', true, ['QR-Code', 'Prüfcode-Anzeige fertig', 'done', 20])
+  const audit = sub('crypto-audit', 'Audit', 'draw:eye', 'crypto', 'Sicherheits-Review', false, ['Review', 'Liest den Core, Kapitel Envelopes', 'working', 40])
+  const hub = sub('trommi-hub', 'Hub', 'draw:database', 'trommi', 'Server und Speicher', true, ['Backup', 'Nächtliches Backup getestet'])
+  const conn = sub('trommi-conn', 'Connector', 'draw:anchor', 'trommi', 'Claude-Code-Plugin', true, ['Release', 'Version 0.9 baut'])
+  const tests = sub('trommi-tests', 'Tests', 'draw:flask', 'trommi', 'E2E und Fuzz', true, ['E2E', '118 von 140 grün', 'working', 1])
+  mk('Alte Schlüssel nach 7 Tagen löschen?', keys, 11, { recommended: 'ja', teaser: 'Sieben Tage reichen, damit jedes Gerät einmal online war.' })
+  answered(mk('Rotation jetzt auf allen Geräten starten?', keys, 25), 'ja', 4)
+  mk('Prüfcode sechsstellig statt vierstellig?', pair, 16, { recommended: 'ja' })
+  mk('Bericht: Pairing auf 3 Geräten getestet', pair, 30, { type: 'info' })
+  mk('Darf das Audit auch den Connector lesen?', audit, 45)
+  mk('Speicher-Limit pro Raum auf 1 GB?', hub, 13, { recommended: 'ja', teaser: 'Der größte Raum liegt bei 180 MB. 1 GB lässt viel Luft.' })
+  answered(mk('Backup nach Hetzner Storage Box?', hub, 50), 'ja', 2)
+  mk('Plugin-Version im Marketplace veröffentlichen?', conn, 8, { files: ['board-desktop.png'], teaser: 'Version 0.9 baut sauber, alle Tests grün. Sichtbar für alle ab Montag.' })
+  mk('Gepusht: Connector lädt sich selbst neu', conn, 22, { type: 'info' })
+  answered(mk('Fuzz-Tests nachts laufen lassen?', tests, 35), 'ja', 1)
+  mk('Flaky Test „pairing-qr“ vorerst überspringen?', tests, 6, { recommended: 'nein' })
+  return f
+}
+
 let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
-  return putAway(structuredClone(fixtureCache))
+  return filler(putAway(structuredClone(fixtureCache)))
 }
 export async function openRoom({ mock = '1' } = {}) { return new MockClient(await loadFixture(mock)) }
 
