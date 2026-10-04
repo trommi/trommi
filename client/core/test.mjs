@@ -882,7 +882,8 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   const after = await agent.sendCard({ title: 'after the snapshot', options: [{ key: 'a', label: 'A' }] })
   await settleAll(agent, phone)
   const inv = await phone.createInvite({ device_role: 'human' })
-  const j = joinRoom({ link: inv.link, storage: memoryStorage(), poll_ms: 50 })
+  const freshStorage = memoryStorage()
+  const j = joinRoom({ link: inv.link, storage: freshStorage, poll_ms: 50 })
   const code = await j.check_code
   await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'confirm')
   await phone.confirmInvite(inv.invite_id, code)
@@ -901,6 +902,17 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   const p2 = await fresh.loadTimeline(key, { limit: 50 })
   const older = [...fresh.model.timelines.get(key).items.values()].sort((a, b) => a.envelope_number - b.envelope_number)
   assert(p2.loaded === 50 && older[0].content?.text?.startsWith('m'), 'items from before the snapshot load by signature')
+  // F: after a restart of that device the history before the snapshot still loads (session chat and a card thread)
+  await fresh.stop()
+  const again = track(await openRoom({ storage: freshStorage }))
+  await again.start()
+  const w = await again.timelineWindow(key, { before_envelope_number: snap.envelope_number - 2000, limit: 30 })
+  assert(w.length === 30 && w.every(i => i.content?.text?.startsWith('m')), `old session chat after a restart (${w.length})`)
+  await phone.sendMessage({ object_id: cards[1], text: 'on the old card' })
+  await settleAll(phone, agent)
+  const ck = `chat:card/${cards[1]}`
+  const cw = await again.timelineWindow(ck, { limit: 10 })
+  assert(cw.some(i => i.content?.text === 'on the old card'), 'card thread')
   // the same device without the snapshot, for comparison
   const inv2 = await phone.createInvite({ device_role: 'human' })
   const j2 = joinRoom({ link: inv2.link, storage: memoryStorage(), poll_ms: 50 })

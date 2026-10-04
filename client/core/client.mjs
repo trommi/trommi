@@ -192,6 +192,8 @@ export class Client {
       this.delivered = new Map(Object.entries(sync.delivered ?? {}))
       this.frontiers = new Map(Object.entries(sync.frontiers ?? {}).map(([k, v]) => [k, new Map(Object.entries(v))]))
       this.lamport = sync.lamport ?? 0
+      // A device that booted from a room snapshot reads items older than it by signature (lazy threads): keep that across restarts.
+      if (sync.snapshot_cursor) { this.snapshotCursor = sync.snapshot_cursor; this._snapshotChains = new Map(Object.entries(sync.snapshot_chains ?? {})) }
     }
     // R4: the history boundary. A process that starts without sync state treats every command sent before it started as
     // history, not as a prompt, and keeps that boundary across restarts (a hub replaying old commands later gains nothing).
@@ -800,6 +802,7 @@ export class Client {
 
   _syncRecord() {
     return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null, lamport: this.lamport ?? 0,
+      ...(this.snapshotCursor ? { snapshot_cursor: this.snapshotCursor, snapshot_chains: Object.fromEntries(this._snapshotChains ?? []) } : {}),
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
   }
 
