@@ -595,6 +595,44 @@ test('attachments: written once, served whole and in ranges, members only, 64 Mi
   await w.hub.close()
 })
 
+test('share links: the uploader shares an attachment with a secret; anyone with it reads the bytes (Range), until expiry or revocation', async () => {
+  const w = await world()
+  const asset = await z.encryptAsset(crypto.randomBytes(100000))
+  const aid = hex(asset.blobId)
+  assert.equal((await fetch(`${w.base}${R(w)}/attachments/${aid}`, { method: 'PUT', headers: { authorization: `Bearer ${w.agent.token}` }, body: asset.blob })).status, 201)
+  const secret = crypto.randomBytes(32), shareId = crypto.randomBytes(16).toString('hex')
+  const share = { share_id: shareId, share_secret_hash: b64u(crypto.createHash('sha256').update(secret).digest()), expires_at: Date.now() + 3600000 }
+  await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.phone.token, body: share }, 403, 'forbidden')
+  await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.agent.token, body: { ...share, expires_at: Date.now() + 40 * 86400000 } }, 400, 'bad-argument')
+  assert.deepEqual(await ok(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.agent.token, body: share }), { share_id: shareId, expires_at: share.expires_at })
+  await refused(w, 'POST', `${R(w)}/attachments/${aid}/shares`, { token: w.agent.token, body: share }, 409, 'replay')
+  // An outsider: no token, the secret in a header.
+  const get = (headers = {}) => fetch(`${w.base}/v1/shares/${shareId}`, { headers: { 'cf-connecting-ip': freshIp(), ...headers } })
+  const whole = await get({ 'x-share-secret': b64u(secret) })
+  assert.equal(whole.status, 200); assert.equal(whole.headers.get('cache-control'), 'private, no-store')
+  assert.deepEqual(await z.decryptAsset(new Uint8Array(await whole.arrayBuffer()), asset.key, asset.sha256), await z.decryptAsset(asset.blob, asset.key, asset.sha256))
+  const part = await get({ 'x-share-secret': b64u(secret), range: 'bytes=0-21' })
+  assert.equal(part.status, 206); assert.deepEqual(new Uint8Array(await part.arrayBuffer()), asset.blob.slice(0, 22))
+  for (const h of [{}, { 'x-share-secret': b64u(crypto.randomBytes(32)) }, { 'x-share-secret': 'short' }]) assert.equal((await get(h)).status, 404)
+  assert.equal((await fetch(`${w.base}/v1/shares/${'5'.repeat(32)}`, { headers: { 'x-share-secret': b64u(secret) } })).status, 404)
+  // Rate-limited per address.
+  const ip = freshIp(); let limited = false
+  for (let i = 0; i < 70 && !limited; i++) limited = (await fetch(`${w.base}/v1/shares/${shareId}`, { headers: { 'cf-connecting-ip': ip } })).status === 429
+  assert.ok(limited, 'share reads are rate-limited per address')
+  // Expired: gone, the same answer as for a wrong secret.
+  w.hub.db.prepare('UPDATE shares SET expires_at = ? WHERE share_id = ?').run(Date.now() - 1, shareId)
+  assert.equal((await get({ 'x-share-secret': b64u(secret) })).status, 404)
+  w.hub.db.prepare('UPDATE shares SET expires_at = ? WHERE share_id = ?').run(share.expires_at, shareId)
+  // Revoked by the creator or a human device; then gone.
+  await refused(w, 'DELETE', `${R(w)}/attachments/${aid}/shares/${'6'.repeat(32)}`, { token: w.agent.token }, 404, 'not-found')
+  assert.deepEqual(await ok(w, 'DELETE', `${R(w)}/attachments/${aid}/shares/${shareId}`, { token: w.laptop.token }), { ok: true })
+  assert.equal((await get({ 'x-share-secret': b64u(secret) })).status, 404)
+  // CORS for the viewer page.
+  const pre = await fetch(`${w.base}/v1/shares/${shareId}`, { method: 'OPTIONS', headers: { origin: 'https://app.trommi.com', 'access-control-request-headers': 'x-share-secret, range' } })
+  assert.match(pre.headers.get('access-control-allow-headers'), /x-share-secret/)
+  await w.hub.close()
+})
+
 test('limits: JSON size, envelope rate, founding per address, open requests', async () => {
   const w = await world()
   const huge = 'x'.repeat(LIMITS.json + 10)

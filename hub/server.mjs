@@ -7,6 +7,7 @@
 // devices sign; https://hub.trommi.com in prod), COMMIT, HUB_ORIGINS, HUB_FOUND_TOKEN, HUB_MAX_ROOMS (1000),
 // HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT.
 import http from 'node:http'
+import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as z from '../crypto/zcrypto.mjs'
@@ -318,9 +319,66 @@ export async function startHub({
   function getAttachment(r, req, res, attachmentId) {
     r.hub.authorise(bearer(req), { member: true })
     hexParam(attachmentId, HEX32, 'attachment_id')
-    const size = db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(r.id, attachmentId) ? files.size(r.id, attachmentId) : null
+    serveFile(req, res, r.id, attachmentId)
+  }
+
+  // ---- links for people outside the room (share_asset) ---------------------------------------------
+  // The uploader registers a share: { share_id, share_secret_hash = b64u(SHA-256(secret)), expires_at }. Whoever
+  // holds the secret (it travels in the link's #, never to a server but this hub, in a header) gets the encrypted
+  // bytes; the key to open them is in the # as well and never reaches the hub.
+  const SHARE_MAX_MS = 30 * DAY
+  db.exec(`CREATE TABLE IF NOT EXISTS shares (share_id TEXT PRIMARY KEY, room_id TEXT NOT NULL, attachment_id TEXT NOT NULL, share_secret_hash BLOB NOT NULL,
+    expires_at INTEGER NOT NULL, created_by_device_id TEXT NOT NULL, created_at INTEGER NOT NULL) WITHOUT ROWID`)
+  const shareLimit = buckets(60 / 60, 60, now)
+  async function postShare(r, req, res, attachmentId) {
+    const me = r.hub.authorise(bearer(req), { member: true })
+    hexParam(attachmentId, HEX32, 'attachment_id')
+    const a = db.q('SELECT uploader_device_id FROM attachments WHERE room_id = ? AND attachment_id = ?').get(r.id, attachmentId)
+    if (!a) fail('not-found', 'no such attachment')
+    if (a.uploader_device_id !== me.id) fail('forbidden', 'only the uploader shares an attachment')
+    const body = await readJson(req)
+    const shareId = hexParam(body.share_id, HEX32, 'share_id')
+    const hash = b64(body.share_secret_hash, 'share_secret_hash')
+    if (hash.length !== 32) fail('bad-argument', 'share_secret_hash is a SHA-256 (32 bytes)')
+    const expiresAt = body.expires_at
+    if (!Number.isSafeInteger(expiresAt) || expiresAt <= now() || expiresAt > now() + SHARE_MAX_MS) fail('bad-argument', 'expires_at: in the future, at most 30 days')
+    if (db.q('SELECT 1 FROM shares WHERE share_id = ?').get(shareId)) fail('replay', 'this share id is taken')
+    if (db.q('SELECT COUNT(*) AS n FROM shares WHERE room_id = ? AND expires_at > ?').get(r.id, now()).n >= 1000) fail('too-many', 'too many open shares in this room')
+    db.q('INSERT INTO shares (share_id, room_id, attachment_id, share_secret_hash, expires_at, created_by_device_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(shareId, r.id, attachmentId, hash, expiresAt, me.id, now())
+    send(res, 201, { share_id: shareId, expires_at: expiresAt })
+  }
+  function deleteShare(r, req, res, attachmentId, shareId) {
+    const me = r.hub.authorise(bearer(req), { member: true })
+    hexParam(shareId, HEX32, 'share_id')
+    const sh = db.q('SELECT created_by_device_id FROM shares WHERE share_id = ? AND room_id = ? AND attachment_id = ?').get(shareId, r.id, attachmentId)
+    if (!sh) fail('not-found', 'no such share')
+    if (sh.created_by_device_id !== me.id && me.role !== 'human') fail('forbidden', 'the creator or a human device revokes a share')
+    db.q('DELETE FROM shares WHERE share_id = ?').run(shareId)
+    send(res, 200, { ok: true })
+  }
+  function getShare(req, res, shareId) {
+    const wait = shareLimit.take(ipOf(req))
+    if (wait) fail('rate-limited', 'too many share requests from this address', { retryAfter: wait })
+    hexParam(shareId, HEX32, 'share_id')
+    const secret = req.headers['x-share-secret']
+    const sh = db.q('SELECT room_id, attachment_id, share_secret_hash, expires_at FROM shares WHERE share_id = ?').get(shareId)
+    // One answer for "no such share", "wrong secret" and "expired": nothing to learn by guessing.
+    let okSecret = false
+    if (sh && typeof secret === 'string' && /^[A-Za-z0-9_-]{43}$/.test(secret)) {
+      const h = crypto.createHash('sha256').update(Buffer.from(secret, 'base64url')).digest()
+      okSecret = h.length === sh.share_secret_hash.length && crypto.timingSafeEqual(h, Buffer.from(sh.share_secret_hash))
+    }
+    if (!okSecret || sh.expires_at <= now()) fail('not-found', 'no such share, or it ran out')
+    res.setHeader('cache-control', 'private, no-store')
+    serveFile(req, res, sh.room_id, sh.attachment_id, { cacheable: false })
+  }
+
+  function serveFile(req, res, roomId, attachmentId, { cacheable = true } = {}) {
+    const size = db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(roomId, attachmentId) ? files.size(roomId, attachmentId) : null
     if (size == null) fail('not-found', 'no such attachment')
-    const headers = { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'cache-control': 'private, max-age=31536000, immutable' }
+    const r = { id: roomId }
+    const headers = { 'content-type': 'application/octet-stream', 'accept-ranges': 'bytes', 'cache-control': cacheable ? 'private, max-age=31536000, immutable' : 'private, no-store' }
     const range = req.headers.range
     if (range) {
       const m = /^bytes=(\d*)-(\d*)$/.exec(range.trim())
@@ -511,6 +569,10 @@ export async function startHub({
       if (m === 'PUT') return putAttachment(r, req, res, b)
       if (m === 'GET' || m === 'HEAD') return getAttachment(r, req, res, b)
     }
+    if (a === 'attachments' && b && c === 'shares') {
+      if (m === 'POST' && !parts[3]) return postShare(r, req, res, b)
+      if (m === 'DELETE' && parts[3] && !parts[4]) return deleteShare(r, req, res, b, parts[3])
+    }
     if (m === 'POST' && a === 'push_subscriptions' && !b) {
       const me = hub.authorise(bearer(req), { human: true })
       const body = await readJson(req)
@@ -534,7 +596,7 @@ export async function startHub({
     if (req.method === 'OPTIONS') {
       if (allowedOrigin(req.headers.origin)) {
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE')
-        res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, trommi-client, trommi-protocol')
+        res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, x-share-secret, trommi-client, trommi-protocol')
         res.setHeader('Access-Control-Max-Age', '86400')
       }
       res.writeHead(204).end()
@@ -543,6 +605,8 @@ export async function startHub({
     if (await ops.handle(req, res, url)) return
     if (url.pathname === '/healthz' && req.method === 'GET') return send(res, 200, { ok: true, commit, protocol_version: PROTOCOL_VERSION })
     if (url.pathname === '/v1/push_key' && req.method === 'GET') return send(res, 200, { vapid_public_key: push.publicKey })
+    const share = /^\/v1\/shares\/([^/]+)$/.exec(url.pathname)
+    if (share && (req.method === 'GET' || req.method === 'HEAD')) return getShare(req, res, share[1])
     if (url.pathname === '/v1/rooms' && req.method === 'POST') return found(req, res)
     const m = /^\/v1\/rooms\/([^/]+)(\/.*)?$/.exec(url.pathname)
     if (m) return roomRoute(req, res, url, m[1], m[2] ?? '')
