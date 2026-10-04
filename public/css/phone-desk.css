@@ -57,7 +57,8 @@
 /* ---- the sheet a long press brings up ---- */
 dialog.rowmenu {
   --ink: var(--tone-pen);
-  position: fixed; inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
+  /* opened with show(), not in the top layer (sheet_controller.js): above the round buttons and the memo */
+  position: fixed; z-index: 2800; inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
   border-radius: 20px 20px 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain;
   animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
 }
