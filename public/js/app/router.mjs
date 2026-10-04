@@ -157,7 +157,11 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
     if (url.pathname === location.pathname && url.search === location.search && url.hash) return   // a jump within the page
     e.preventDefault()
     const frame = frameOf(a, url)
-    if (frame) return frameVisit(frame, url.pathname + url.search)
+    if (frame) {
+      // A frame link with data-turbo-action also moves the address (a picture switched in place: ?pic=n survives a reload).
+      const promote = a.getAttribute('data-turbo-action')
+      return frameVisit(frame, url.pathname + url.search).then(() => { if (promote) { saveScroll(); history[promote === 'advance' ? 'pushState' : 'replaceState']({ trommi: true, scroll: window.scrollY }, '', url.pathname + url.search); if (page) page.path = url.pathname + url.search } })
+    }
     visit(url.pathname + url.search + url.hash, { action: a.getAttribute('data-turbo-action') === 'replace' ? 'replace' : 'advance' })
   })
 

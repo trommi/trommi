@@ -94,7 +94,17 @@ export class BoardState {
     rememberRef(a)
     const type = String(a.media_type ?? '')
     const kind = type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : type.startsWith('audio/') ? 'audio' : 'file'
-    return { name: a.file_name ?? 'file', url: a.url ?? `/att/${a.attachment_id}`, image: kind === 'image', kind, type, size: a.total_size, width: a.width, height: a.height, caption: a.caption, page: a.page, marks: a.marks, ref: a }
+    // The page a picture was made from: another attachment of the same list ('attachment:<id>') or an address.
+    const p = typeof a.page === 'string' ? a.page : a.page?.url ?? null
+    const page = p ? { url: p.startsWith('attachment:') ? `/att/${p.slice(11)}` : p, kind: p.startsWith('attachment:') ? 'file' : 'link' } : null
+    return { name: a.file_name ?? 'file', url: a.url ?? `/att/${a.attachment_id}`, image: kind === 'image', kind, type, size: a.total_size, width: a.width, height: a.height, caption: a.caption, title: a.caption ?? a.title, page, marks: a.marks, ref: a }
+  }
+  /** A list of attachment references as the views want them; a page that belongs to a picture is not a file of its own. */
+  atts(list) {
+    if (!list?.length) return []
+    for (const a of list) rememberRef(a)
+    const pages = new Set(list.map(a => (typeof a.page === 'string' && a.page.startsWith('attachment:') ? a.page.slice(11) : null)).filter(Boolean))
+    return list.filter(a => !pages.has(a.attachment_id)).map(a => this.att(a)).filter(Boolean)
   }
 
   boardCard(c, number) {
@@ -104,7 +114,7 @@ export class BoardState {
         : c.closed_how === 'answered' && c.object_state === 'answered' ? 'decided' : 'done'
     const snooze = h.snoozes.get(c.object_id)
     const draft = h.drafts.get(c.object_id)
-    const atts = list => (list ?? []).map(x => this.att(x)).filter(Boolean)
+    const atts = list => this.atts(list)
     const versions = (c.versions ?? []).slice(0, -1).map(v => ({ n: v.object_version, at: v.sent_at, title: v.content?.title ?? '', body: v.content?.body ?? '', options: v.content?.options ?? [], ...(v.content?.sections ? { sections: v.content.sections } : {}), ...(v.content?.html ? { html: v.content.html } : {}), recommended: v.content?.recommended ?? null, multiple: Boolean(v.content?.allows_multiple), attachments: atts(v.content?.attachments), urgency: v.urgency, note: v.content?.change_note ?? '' }))
     const current = c.versions?.at(-1)
     const card = {
@@ -191,7 +201,7 @@ export class BoardState {
       const msg = {
         id: i.envelope_number != null ? `e${i.envelope_number}` : i.local_id, seq: i.envelope_number ?? Number.MAX_SAFE_INTEGER, agent, from: human ? 'user' : 'agent',
         text: i.item_state === 'loaded' || !i.item_state ? (c.text ?? '') : i.item_state === 'pruned' ? '(removed after 30 days)' : i.item_state === 'newer_schema' ? '(needs a newer app)' : '',
-        attachments: (c.attachments ?? []).map(x => this.att(x)).filter(Boolean), ts: i.sent_at ?? 0,
+        attachments: this.atts(c.attachments), ts: i.sent_at ?? 0,
       }
       // A selection of the Scratchpad sent to the session: shown as the board's Scribble card.
       if (kind === 'selection_sent') msg.attachments = msg.attachments.map(x => ({ ...x, kind: 'scribble' }))
@@ -200,6 +210,7 @@ export class BoardState {
       if (c.html) msg.html = c.html
       if (c.hand_back) msg.handback = true
       if (c.explain) msg.explain = true
+      if (c.present_card) msg.present = true
       if (c.marks?.length) msg.marks = c.marks
       if (c.copied_cards?.length) msg.cards = c.copied_cards.map(id => { const b = this.cardCache.get(id); return b ? { id, number: b.number, title: b.title, agent: b.agent, choice_label: null } : { id, number: null, title: id, agent } })
       if (i.pending) msg.pending = true
