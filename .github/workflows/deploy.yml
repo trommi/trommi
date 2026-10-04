@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
     # Only what goes into the image restarts the hub (a restart drops every open stream).
-    paths: ['hub/**', 'crypto/**', 'deploy/**', '.github/workflows/deploy.yml']
+    paths: ['hub/**', 'crypto/**', '.github/workflows/deploy.yml']
   workflow_dispatch:
 
 concurrency:
@@ -60,7 +60,7 @@ jobs:
 
       - name: Back up data (online SQLite copy) and restart hub
         run: |
-          ssh -o StrictHostKeyChecking=no "$HOST" 'bash -s' < deploy/backup.sh
+          ssh -o StrictHostKeyChecking=no "$HOST" 'bash -s' < hub/deploy-backup.sh
           ssh -o StrictHostKeyChecking=no "$HOST" "set -e
             cd /srv/trommi
             docker tag $IMAGE trommi-hub:current
