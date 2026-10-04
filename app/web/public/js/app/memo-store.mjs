@@ -55,7 +55,8 @@ export function memoStore(client, board) {
     const n = current(id)
     if (!n?.held) return
     const text = String(n.text ?? '').trim()
-    await client.sendMessage({ ...addressOf(m(), n.held.to), text, ...(n.attachments?.length ? { attachments: n.attachments } : {}) })
+    // (memo: that it was a note, so the conversation shows it taped on: README "message", core/codec.mjs memoRefValid.)
+    await client.sendMessage({ ...addressOf(m(), n.held.to), text, ...(n.attachments?.length ? { attachments: n.attachments } : {}), memo: { object_id: id, written_at: Number.isSafeInteger(n.created_at) && n.created_at >= 0 ? n.created_at : null } })
     went.set(id, n.held.to)
     if (went.size > 200) went.delete(went.keys().next().value)
     await remove(id)

@@ -47,7 +47,7 @@
   --gold: #c39a1f; --gold-pen: #a8820f;
 
   /* the inks of the stamps on the stacks (css/stamps.css): stamp blue, violet, green */
-  --stamp-ink-later: #2b3f9e; --stamp-ink-works: #5c3aa0; --stamp-ink-done: #1b6a57;
+  --stamp-ink-later: #2b3f9e; --stamp-ink-works: #5c3aa0; --stamp-ink-done: #1b6a57; --stamp-ink-notes: #8a5f0c;
   --crown-wash: #f2c94c; --crown-jewel: #cf3a2b;
 
   /* status strip traffic light: decision waits on the human, working is in progress, done is finished */
@@ -100,7 +100,7 @@
   --tone-mid-l: .62;  --tone-mid-c: .075;
   --tone-pen-l: .8;   --tone-pen-c: .095;
   --gold: #d2ab3c; --gold-pen: #dcb84e;
-  --stamp-ink-later: #9aacf2; --stamp-ink-works: #bda2f0; --stamp-ink-done: #6fd0b5;
+  --stamp-ink-later: #9aacf2; --stamp-ink-works: #bda2f0; --stamp-ink-done: #6fd0b5; --stamp-ink-notes: #e2bd5c;
   --crown-jewel: #ff6f5c;
   --st-decision: #ff8a80; --st-decision-soft: #41191a;
   --st-working: #f2c14e; --st-working-soft: #3a2f10;

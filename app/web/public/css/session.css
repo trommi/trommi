@@ -112,3 +112,19 @@
 #session .pane-who .t-session-edit > .t-pick-name { flex: 0 1 auto; min-width: 0; }
 #session .pane-who .t-blocked { flex: none; max-width: 45%; }
 #session .pane-who .t-blocked > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---- A note he sent (views/session.mjs, msg.memo): in the flow on his side, at the time it was sent, as the slip of
+   memo paper it was, held by one strip of tape at the top (the tape of the memos and the sidebar slip). Restrained:
+   no bubble, a slight turn, no shadow beyond a hairline, the words in the conversation's own type. ---- */
+.msg-note-at { margin-top: var(--s-3); }
+.msg-note { position: relative; box-sizing: border-box; width: min(100%, 22rem); margin: 0; padding: 14px 16px 12px; rotate: -1deg;
+  background: #fbe7a1; color: #3b300d; border: 1px solid color-mix(in srgb, #8a6d14 35%, transparent); border-radius: 1px; box-shadow: 0 1px 0 rgb(0 0 0 / .06); text-align: left; }
+.msg-note p { margin: 0; white-space: pre-wrap; font: 400 var(--t-md)/1.45 var(--font); }
+.msg-note-tape { position: absolute; left: calc(50% - 34px); top: -10px; width: 68px; height: 20px; rotate: -5deg; background: color-mix(in srgb, #e6d27a 62%, transparent); box-shadow: 0 0 0 .5px rgb(0 0 0 / .08); clip-path: polygon(3% 0, 100% 0, 97% 25%, 100% 50%, 97% 75%, 100% 100%, 0 100%, 3% 75%, 0 50%, 3% 25%); }
+.msg-note-cap { display: flex; align-items: center; gap: 5px; margin: 0 0 4px; color: #6a5d24; font: 700 .66rem/1 var(--font); letter-spacing: .14em; text-transform: uppercase; }
+.msg-note-cap .sketch { width: 14px; height: 14px; }
+.msg-note-at .msg-time { margin-top: 6px; }
+:root[data-theme="dark"] .msg-note { background: #d9c35f; color: #231c06; border-color: #a58c2c; }
+:root[data-theme="dark"] .msg-note-cap { color: #4d4214; }
+:root[data-theme="dark"] .msg-note-tape { background: color-mix(in srgb, #fff2b8 58%, transparent); }
+.msg-note-when { margin-left: auto; font-weight: 500; letter-spacing: .04em; text-transform: none; font-size: var(--t-xs); }

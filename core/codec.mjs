@@ -17,7 +17,7 @@ export const TIMELINE_KIND_NAME = Object.freeze({ 1: 'chat', 2: 'canvas' })
 
 /** Body fields per kind (besides schema_version), exactly the README names. Unknown fields are dropped on encode, kept on decode. */
 export const FIELDS = Object.freeze({
-  message: ['content_type', 'text', 'details', 'html', 'attachments', 'hand_back', 'explain', 'present_card', 'copied_cards', 'marks', 'published_object_id'],
+  message: ['content_type', 'text', 'details', 'html', 'attachments', 'hand_back', 'explain', 'present_card', 'copied_cards', 'marks', 'published_object_id', 'memo'],
   strokes: ['content_type', 'strokes', 'attachments'],
   erase: ['content_type', 'stroke_ids', 'offset'],
   move: ['content_type', 'stroke_ids', 'offset'],
@@ -64,7 +64,17 @@ export function fieldsFor(kind, content) {
   }
 }
 
+/** A message's `memo`: the note of the human it was sent from (README "message"): { object_id: 32 hex, written_at: ms }.
+ *  Nothing else in it, written_at a whole number of ms within 0..2^53 (or null). */
+export function memoRefValid(m) {
+  if (!m || typeof m !== 'object' || Array.isArray(m)) return false
+  if (Object.keys(m).some(k => k !== 'object_id' && k !== 'written_at')) return false
+  if (!(typeof m.object_id === 'string' && HEX32.test(m.object_id))) return false
+  return m.written_at == null || (Number.isSafeInteger(m.written_at) && m.written_at >= 0)
+}
+
 export function encodePayload(kind, content) {
+  if (kind === KIND.timeline_item && content?.content_type === 'message' && content.memo !== undefined && !memoRefValid(content.memo)) throw new z.ZError('bad-argument', 'memo must be { object_id: 32 hex, written_at?: ms }')
   return te.encode(JSON.stringify(pick(content, fieldsFor(kind, content))))
 }
 
@@ -75,6 +85,7 @@ export function decodePayload(bytes) {
   if (!content || typeof content !== 'object' || Array.isArray(content)) return { content: null, content_state: 'undecryptable' }
   if (!attachmentIdsValid(content)) return { content: null, content_state: 'undecryptable' }   // a ref id is not hex: refuse the body
   if (content.schema_version > SCHEMA_VERSION) return { content, content_state: 'newer_schema' }
+  if (content.content_type === 'message' && content.memo !== undefined && !memoRefValid(content.memo)) delete content.memo   // a bad note mark: the message stays, plain
   return { content, content_state: 'ok' }
 }
 

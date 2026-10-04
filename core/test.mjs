@@ -822,6 +822,27 @@ await test('S2 ids: no raw ids in URLs; a body naming a non-hex or unlisted atta
   assert(!cmds.some(c => c.content?.text === 'evil'), 'the unlisted-attachment body never reaches the agent')
 })
 
+await test('message memo: a note sent to a session carries { object_id, written_at } end to end; a bad one is refused on seal, dropped on open', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  const memo = { object_id: 'ef'.repeat(16), written_at: 1791075000000 }
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'from a note', memo })
+  await settleAll(phone, agent)
+  await until(() => cmds.some(c => c.content.text === 'from a note'), 'the note arrives')
+  eq(cmds.find(c => c.content.text === 'from a note').content.memo, memo, 'the agent sees the memo mark')
+  const t = phone.model.timelines.get(`chat:session/${agent.session_id}`)
+  const mine = [...t.items.values()].find(i => i.content?.text === 'from a note')
+  eq(mine?.content?.memo, memo, 'the sender keeps it on its own copy')
+  for (const bad of [{ object_id: 'xyz' }, { object_id: 'ab'.repeat(16), written_at: -1 }, { object_id: 'ab'.repeat(16), extra: 1 }, 'note', { object_id: 'ab'.repeat(16), written_at: 1.5 }]) {
+    let err = null
+    try { codec.encodePayload(codec.KIND.timeline_item, { content_type: 'message', text: 'x', memo: bad }) } catch (e) { err = e }
+    eq(err?.code, 'bad-argument', `encode refuses memo ${JSON.stringify(bad)}`)
+    const opened = codec.decodePayload(new TextEncoder().encode(JSON.stringify({ schema_version: 1, content_type: 'message', text: 'x', memo: bad })))
+    eq([opened.content_state, opened.content.text, 'memo' in opened.content], ['ok', 'x', false], `decode drops memo ${JSON.stringify(bad)}`)
+  }
+})
+
 await test('S2 write-ahead: a crash right after the hub accepted a post reuses no sequence number', async () => {
   const dir = path.join(scratch, 'agent-crash')
   const { phone } = await room()
