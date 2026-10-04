@@ -30,7 +30,9 @@ const mock = sessionStorage.getItem('trommi-mock')
 async function openClient() {
   if (mock) return (await import('./mock-room.mjs')).openRoom({ mock })
   const core = await import('/vendor/index.mjs')
-  return core.openRoom({ storage: core.idbStorage({ name: 'trommi', prefix: 'room/' }), client: CLIENT })
+  const storage = core.idbStorage({ name: 'trommi', prefix: 'room/' })
+  try { return await core.openRoom({ storage, client: CLIENT }) }
+  catch (err) { await storage.close().catch(() => {}); throw err }   // a Log out from the error screen deletes the database
 }
 
 export async function start(client, { fresh = false } = {}) {
@@ -154,10 +156,16 @@ export async function start(client, { fresh = false } = {}) {
 // A link for someone outside the room (/a/<share_id>#…): its own small page, no room needed.
 const sharing = /^\/a\/[0-9a-f]{32}$/.test(location.pathname)
 if (sharing) (await import('./share-view.mjs')).showShare()
-const client = sharing ? null : await openClient().catch(err => { console.error('open', err); return null })
+// A room that is stored but does not open is never shown as "not logged in": the start page would offer Log in, which
+// this storage refuses (it holds a room). The room screen says what failed and offers Retry and Log out of this device.
+let openError = null
+const client = sharing ? null : await openClient().catch(err => { console.error('open', err); openError = err; return null })
 const OPEN_MS = performance.now() - T0   // the room from storage (or the mock's fixture) in memory
-if (client) await start(client)
-else if (!sharing) await roomScreen({ start, hub: hubUrl() })
+if (client) { keepStorage(); await start(client) }
+else if (!sharing) await roomScreen({ start: (c, o) => { keepStorage(); return start(c, o) }, hub: hubUrl(), openError })
+
+/** Ask the browser to keep this origin's storage (no eviction under storage pressure; Safari weighs it too). */
+function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
 
 /** A calm full-width line at the foot (styled by css/room.css), with "Reload". update: fetch the new build first. */
 function notice(text, detail, update, why = '') {
