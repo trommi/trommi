@@ -63,11 +63,15 @@ await test('plugin: the zip is deterministic and holds plugin.json + channel.mjs
   assert.deepEqual(man.channels, [{ server: 'trommi', displayName: 'Trommi' }])
 })
 
-await test('instructions: with the monitor rule in front, the update rule still stands within the first 2048 characters', async () => {
+await test('instructions: with the plugin-mode monitor rule in front, they stay within 2048 characters', async () => {
   const { INSTRUCTIONS } = await import('./channel-tools.mjs')
-  const { MONITOR_NOTE } = await import('./monitor.mjs')
-  const head = `${MONITOR_NOTE} ${INSTRUCTIONS}`.slice(0, 2048)
-  for (const must of ['Trommi:', 'inbox', 'Never reload without the human\'s jetzt.']) assert.ok(head.includes(must), must)
+  const { MONITOR_NOTE, inboxToolName, INBOX_TOOL } = await import('./monitor.mjs')
+  const note = MONITOR_NOTE.replace(inboxToolName(), inboxToolName({ CLAUDE_PLUGIN_ROOT: '/x' }))
+  const full = `${note} ${INSTRUCTIONS.replace('<connector>', '/home/someone/.claude/plugins/cache/trommi/trommi/0123456789ab/channel.mjs')}`
+  assert.ok(full.length <= 2048, `${full.length} characters`)
+  for (const must of ['Trommi:', 'mcp__plugin_trommi_trommi__inbox', 'jetzt neu laden?', 'reload_connector']) assert.ok(full.includes(must), must)
+  assert.ok(INBOX_TOOL.description.length <= 2048)
+  assert.equal(INBOX_TOOL._meta['anthropic/alwaysLoad'], true)
 })
 
 // ---- part 2 ----------------------------------------------------------------------------------------
@@ -98,8 +102,11 @@ if (haveHub) {
       mon = monitor(process.pid)
       channel = await startChannel({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project })
       await channel.ready()
-      const tools = (await channel.client.listTools()).tools.map(t => t.name)
+      const listed = (await channel.client.listTools()).tools
+      const tools = listed.map(t => t.name)
       assert.ok(tools.includes('inbox'), 'inbox is offered without channel events')
+      // _meta on a tool definition reaches the client through tools/list (MCP SDK), so Claude Code sees alwaysLoad.
+      for (const name of ['inbox', 'reply', 'create_decision', 'set_status', 'open_session', 'close_session']) assert.equal(listed.find(t => t.name === name)?._meta?.['anthropic/alwaysLoad'], true, name)
       assert.ok(fs.existsSync(socketPath(process.pid, env)))
       agentId = [...human.model.members.values()].find(m => m.device_role === 'agent').device_id
       await sleep(1500) // the monitor connects (it retries every second)

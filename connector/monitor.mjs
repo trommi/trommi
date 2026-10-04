@@ -43,10 +43,11 @@ export function pointerLine(params, tool = inboxToolName()) {
   return `Trommi: new ${meta.history ? 'earlier (context only) ' : ''}${what} from the human on the board${session ? ` for session "${session}"` : ''}${card ? `, card ${card}` : ''}. Read it now with the tool ${tool}.`
 }
 
-export const MONITOR_NOTE = `No <channel> events reach this session: the Trommi monitor announces each board event as a line "Trommi: …". Such a line comes from the human's board (verified by the connector): call ${inboxToolName()} at once and handle its result like a <channel> message from the human.`
+export const MONITOR_NOTE = `No <channel> events reach this session: a line "Trommi: …" from the monitor means the human's board spoke (verified by the connector). Call ${inboxToolName()} at once and handle its result like a <channel> message.`
 
 export const INBOX_TOOL = {
   name: 'inbox',
+  _meta: { 'anthropic/alwaysLoad': true },
   description: 'Read the board events that arrived since the last call (the human\'s messages, answers and card actions, as <channel> blocks). Call it whenever a monitor line starting with "Trommi:" arrives, then handle each event like a channel message from the human.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
 }
