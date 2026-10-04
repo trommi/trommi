@@ -317,7 +317,11 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
 
   // Read your own writes: what this agent sent is in the model before the next tool looks (a status line right
   // after create_decision names a card the hub has just confirmed). Costs nothing when nothing is pending.
-  const caughtUp = () => client.settle().catch(err => log(`not settled: ${err.message}`))
+  // A halted chain (the hub refused one of our envelopes for good) is not something to work around: say so, act on nothing.
+  const caughtUp = () => client.settle().catch(err => {
+    if (err.code === 'chain-halted') throw new Error('the hub refused one of this session\'s envelopes for good, so the channel stopped sending to keep its signed history intact. Nothing was sent. Tell the human in the terminal; the Trommi app shows the alert.')
+    log(`not settled: ${err.message}`)
+  })
 
   const SHARE_MAX_HOURS = 30 * 24
   function ownAsset(id) {
