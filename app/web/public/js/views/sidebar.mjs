@@ -52,10 +52,10 @@ ${badge(u, shown, base)}
 </div>`
 }
 
-// A small drawn "+" under the connected sessions: invite an agent. The same form the Devices page sends (POST /pair,
+// A quiet row "+ New agent" under the connected sessions (green while there is none): invite an agent. The same form the Devices page sends (POST /pair,
 // role agent, room.mjs), so it leads to the same invite page with the link for the Claude Code session.
 export const PLUS = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M12.3 5.2C11.9 9.7 12 14.2 12.1 18.9"/><path d="M5.3 12.4C9.8 11.8 14.3 11.9 18.8 12.2"/></svg>')
-export const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}</button></form>`
+export const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New agent</span></button></form>`
 
 /** The rows of #agents. current: the session in view, if any. */
 export function sidebarRows(model, base, current = null) {
