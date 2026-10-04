@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# dev/sync-app.sh: copy the client core into the app repo, so the app imports the very same files.
+#   crypto/zcrypto.mjs  -> <app>/public/vendor/zcrypto.mjs   (replaces client/core/zcrypto.mjs, the re-export shim)
+#   client/core/*.mjs   -> <app>/public/vendor/              (without tests, the Node-only file adapter)
+# Usage: dev/sync-app.sh [app repo dir]   (default: $TROMMI_APP or the night scratchpad clone)
+set -euo pipefail
+here="$(cd "$(dirname "$0")/.." && pwd)"
+app="${1:-${TROMMI_APP:-/tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5f64-4577-b571-c16d3f7faa2e/scratchpad/trommi-main}}"
+dest="$app/public/vendor"
+[ -d "$app/public" ] || { echo "no app repo at $app (expected public/)" >&2; exit 1; }
+mkdir -p "$dest"
+for f in "$here"/client/core/*.mjs; do
+  name="$(basename "$f")"
+  case "$name" in test*.mjs|storage-file.mjs|zcrypto.mjs) continue ;; esac
+  cp "$f" "$dest/$name"
+done
+cp "$here/crypto/zcrypto.mjs" "$dest/zcrypto.mjs"
+commit="$(git -C "$here" rev-parse --short HEAD)"
+printf '// Copied from trommi-hub %s by dev/sync-app.sh. Do not edit here: edit client/core/ and crypto/ in trommi-hub.\nexport const CORE_COMMIT = %s\n' "$commit" "'$commit'" > "$dest/core-version.mjs"
+echo "synced client/core + zcrypto ($commit) into $dest"
+ls "$dest"

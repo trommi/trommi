@@ -1,0 +1,427 @@
+// test.mjs: client/core against the real hub (hub/server.mjs, in-process on a free port 8891-8899, throwaway data dir).
+//   node client/core/test.mjs            all tests
+//   node client/core/test.mjs --bench    plus the verify/decrypt throughput run (larger)
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import net from 'node:net'
+import { fileURLToPath } from 'node:url'
+import { startHub, LIMITS } from '../../hub/server.mjs'
+import { foundRoom, openRoom, joinRoom, recoverRoom, memoryStorage, timelineEvents, z } from './index.mjs'
+import { fileStorage } from './storage-file.mjs'
+import * as codec from './codec.mjs'
+
+const HERE = path.dirname(fileURLToPath(import.meta.url))
+const BENCH = process.argv.includes('--bench')
+const ONLY = process.argv.find(a => a.startsWith('--only='))?.slice(7)
+const results = []
+let failed = 0
+const sleep = ms => new Promise(r => setTimeout(r, ms))
+
+function assert(cond, msg) { if (!cond) throw new Error(`assertion failed: ${msg}`) }
+function eq(a, b, msg) { if (JSON.stringify(a) !== JSON.stringify(b)) throw new Error(`${msg}: expected ${JSON.stringify(b)}, got ${JSON.stringify(a)}`) }
+async function until(fn, msg, ms = 5000) {
+  const end = Date.now() + ms
+  for (;;) {
+    const v = await fn()
+    if (v) return v
+    if (Date.now() > end) throw new Error(`timeout: ${msg}`)
+    await sleep(15)
+  }
+}
+async function test(name, fn) {
+  if (ONLY && !name.includes(ONLY)) return
+  const t = performance.now()
+  try { await fn(); results.push([name, 'ok', performance.now() - t]); console.log(`ok   ${name} (${(performance.now() - t).toFixed(0)} ms)`) }
+  catch (e) { failed++; results.push([name, 'FAIL', 0]); console.log(`FAIL ${name}\n     ${e.stack}`) }
+}
+
+async function freePort() {
+  for (let p = 8891; p <= 8899; p++) {
+    const ok = await new Promise(res => { const s = net.createServer().once('error', () => res(false)).listen(p, '127.0.0.1', () => s.close(() => res(true))) })
+    if (ok) return p
+  }
+  throw new Error('no free port in 8891-8899')
+}
+
+LIMITS.foundPerIpHour = 10_000
+const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-test-'))
+const hub = await startHub({ port: await freePort(), host: '127.0.0.1', dataDir: path.join(scratch, 'hub'), log: () => {}, pingMs: 2000 })
+const HUB = hub.hubUrl
+const clients = []
+const track = c => { clients.push(c); return c }
+
+/** A room with a phone (human), and on request a laptop (human, by check code) and agents. */
+async function room({ laptop = false, agents = 0 } = {}) {
+  const { client: phone, recovery_code } = await foundRoom({ hub_url: HUB, storage: memoryStorage({ extractable_keys: false }), device_name: 'Phone' })
+  track(phone)
+  await phone.start()
+  const out = { phone, recovery_code, agents: [] }
+  if (laptop) out.laptop = await addHuman(phone, 'Laptop')
+  for (let i = 0; i < agents; i++) out.agents.push(await addAgent(phone, `Agent ${i}`))
+  return out
+}
+async function addHuman(inviter, name, storage = memoryStorage({ extractable_keys: false })) {
+  const inv = await inviter.createInvite({ device_role: 'human' })
+  const j = joinRoom({ link: inv.link, storage, device_name: name, poll_ms: 50 })
+  const code = await j.check_code
+  await until(() => inviter.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'inviter waits for code')
+  await inviter.confirmInvite(inv.invite_id, code)
+  const c = track(await j.client)
+  await c.start()
+  return c
+}
+async function addAgent(inviter, name, storage = memoryStorage()) {
+  const inv = await inviter.createInvite({ device_role: 'agent' })
+  const j = joinRoom({ link: inv.link, storage, device_name: name, device_info: { device_name: name, platform: 'node', folder: '~/git/x', host: 'pc' }, poll_ms: 50 })
+  const c = track(await j.client)
+  await c.start()
+  return c
+}
+const settleAll = async (...cs) => { for (const c of cs) await c.settle(); for (const c of cs) await c.catchUp() }
+
+// ---------------------------------------------------------------------------------------------
+
+await test('found: room, recovery code, device register, warm model', async () => {
+  const { phone, recovery_code } = await room()
+  assert(/^[0-9A-Z]{4}(-[0-9A-Z]{4}){12}$/.test(recovery_code), 'recovery code format')
+  eq(phone.model.room.my_role, 'human', 'role')
+  eq(phone.model.room.key_epoch, 1, 'epoch')
+  await phone.settle()
+  eq(phone.model.members.get(phone.my_device_id).device_name, 'Phone', 'name from the encrypted device register')
+  eq(phone.model.room.connection, 'live', 'stream live')
+})
+
+await test('two humans + agent: invite with check code, agent without, roles and names', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  await settleAll(phone, laptop, agent)
+  await until(() => laptop.model.members.size === 3 && phone.model.members.get(agent.my_device_id)?.device_name === 'Agent 0', 'members everywhere')
+  eq(laptop.model.room.my_role, 'human', 'laptop role')
+  eq(agent.model.room.my_role, 'agent', 'agent role')
+  assert(phone.model.sessions.has(agent.my_device_id), 'session for the agent')
+  eq(phone.model.sessions.get(agent.my_device_id).device_name, 'Agent 0', 'session name')
+})
+
+await test('wrong check code burns the invite and adds nobody', async () => {
+  const { phone } = await room()
+  const inv = await phone.createInvite({ device_role: 'human' })
+  const j = joinRoom({ link: inv.link, storage: memoryStorage(), poll_ms: 50 })
+  const code = await j.check_code
+  await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'confirm state')
+  const wrong = String((Number(code) + 1) % 1000000).padStart(6, '0')
+  let err = null
+  try { await phone.confirmInvite(inv.invite_id, wrong) } catch (e) { err = e }
+  eq(err?.code, 'code-mismatch', 'refused')
+  eq(phone.model.invites.get(inv.invite_id).invite_state, 'failed', 'burnt')
+  j.cancel()
+  await j.client.catch(() => {})
+  eq(phone.model.members.size, 1, 'nobody added')
+})
+
+await test('cards round trip: create, revise, answer, decide again, hand back, close; both humans agree', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  const commands = []
+  agent.on('command', c => commands.push(c))
+  const id = await agent.sendCard({ title: 'Export?', body: 'Too slow', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }], urgency: 'high', recommended: 'b' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id) && laptop.model.cards.get(id), 'card everywhere')
+  const c1 = phone.model.cards.get(id)
+  eq([c1.title, c1.urgency, c1.object_state, c1.object_version], ['Export?', 'high', 'open', 1], 'v1')
+  eq(phone.model.stack, [id], 'stack')
+
+  await agent.revise(id, { title: 'Export now?', change_note: 'clearer' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id).object_version === 2, 'v2 on phone')
+  eq(phone.model.cards.get(id).versions.map(v => v.object_version), [1, 2], 'versions')
+  eq(phone.model.cards.get(id).body, 'Too slow', 'unchanged fields kept')
+
+  // hand back from the laptop: in revision until the agent's next version
+  await laptop.sendMessage({ object_id: id, text: 'unclear, please explain B', hand_back: true })
+  await settleAll(laptop)
+  await until(() => phone.model.cards.get(id).in_revision?.by === 'hand_back', 'in revision on phone')
+  await until(() => commands.some(c => c.command === 'message' && c.content.hand_back), 'agent got hand back')
+  await agent.revise(id, { body: 'Too slow. B = in the background.' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id).object_version === 3 && !phone.model.cards.get(id).in_revision, 'revision ends it')
+
+  // answer to the current version
+  await phone.answer({ object_id: id, choices: ['b'], note: 'go' })
+  eq(phone.model.cards.get(id).answer?.pending, true, 'optimistic echo')
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'answer'), 'agent answer command')
+  const ans = commands.find(c => c.command === 'answer')
+  eq(ans.choices, ['b'], 'choices')
+  eq(ans.card.title, 'Export now?', 'command carries the card')
+  await until(() => laptop.model.cards.get(id).object_state === 'answered', 'laptop sees answered')
+  eq(laptop.model.stack, [], 'stack empty')
+
+  // decide again from the laptop, then answer a
+  await laptop.decideAgain({ object_id: id })
+  await settleAll(laptop)
+  await until(() => commands.some(c => c.command === 'decide_again'), 'decide again command')
+  eq(commands.find(c => c.command === 'decide_again').previous_choices, ['b'], 'previous choices')
+  await until(() => phone.model.cards.get(id).object_state === 'open', 'reopened on phone')
+  await phone.answer({ object_id: id, choices: ['a'] })
+  await settleAll(phone)
+  await until(() => agent.model.cards.get(id).answer?.choices[0] === 'a', 'agent sees a')
+  await agent.close(id, 'done: A')
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id).object_state === 'closed' && laptop.model.cards.get(id).close_summary === 'done: A', 'closed everywhere')
+  eq(phone.model.cards.get(id).answers.length, 2, 'two answers, one taken back')
+  const evs = timelineEvents(phone.model, phone.model.cards.get(id).timeline_key).map(e => e.event)
+  assert(evs.includes('card_created') && evs.includes('decide_again'), 'timeline events')
+})
+
+await test('stale answer (to an old version) is refused by the agent and ignored by every client', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const alerts = []
+  agent.on('alert', a => alerts.push(a))
+  const id = await agent.sendCard({ title: 'Q', options: [{ key: 'x', label: 'X' }, { key: 'y', label: 'Y' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id), 'card')
+  // the phone answers v1 while the agent already revised: hold back the phone's view of v2
+  const stale = phone.model.cards.get(id).version_hash
+  await agent.revise(id, { options: [{ key: 'x', label: 'X' }, { key: 'z', label: 'Z' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id).object_version === 2, 'v2')
+  const bind = z.encodeAnswerBind({ cardId: z.unhex(id), cardHash: z.unhex(stale), choice: 'y' })
+  await phone._send({ kind: codec.KIND.answer, content: { answer_action: 'answer', choices: ['y'] }, bind, recipient: agent.my_device_id, object: { object_id: id, object_state: 'answered', urgency: 'normal', answered_at: Date.now() } })
+  await settleAll(phone, agent)
+  await until(() => alerts.some(a => a.code === 'card-changed' || a.code === 'answer-stale'), 'agent alert')
+  eq(phone.model.cards.get(id).object_state, 'open', 'still open on the phone')
+  eq(agent.model.cards.get(id).object_state, 'open', 'still open on the agent')
+  await until(() => phone.model.sessions.get(agent.my_device_id).agent_alerts.length > 0, 'alert register reaches the board')
+})
+
+await test('permission request and verdict', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const commands = []
+  agent.on('command', c => commands.push(c))
+  const pid = await agent.requestPermission({ tool_name: 'Bash', description: 'rm -rf build', input_preview: 'rm -rf build' })
+  await settleAll(agent)
+  await until(() => phone.model.open_permission_ids.includes(pid), 'pending on phone')
+  await phone.verdict({ object_id: pid, allow: true })
+  await settleAll(phone)
+  await until(() => commands.some(c => c.command === 'verdict' && c.allow === true), 'agent got verdict')
+  await until(() => phone.model.permissions.get(pid).permission_state === 'allowed', 'allowed')
+  eq(phone.model.open_permission_ids, [], 'none pending')
+})
+
+await test('registers: status lines, profile, human keys shared between humans, ignored by agents', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  await agent.setStatus({ 'status_line/tests': { label: 'Tests', state: 'working', detail: '12/40' }, profile: { model: 'opus', task: 'crypto' } })
+  await settleAll(agent)
+  await until(() => phone.model.sessions.get(agent.my_device_id)?.status_lines.length === 1, 'status line')
+  eq(phone.model.sessions.get(agent.my_device_id).profile.task, 'crypto', 'profile')
+  const id = await agent.sendCard({ title: 'Q', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent)
+  await until(() => laptop.model.cards.get(id), 'card on laptop')
+  await phone.setDraft(id, { keys: ['a'], note: 'maybe' })
+  eq(phone.model.human.drafts.get(id)?.note, 'maybe', 'draft echo at once')
+  await phone.snooze(id, Date.now() + 3600_000)
+  await settleAll(phone)
+  await until(() => laptop.model.human.drafts.get(id)?.note === 'maybe', 'draft on laptop')
+  await until(() => !laptop.model.stack.includes(id), 'snoozed out of the stack')
+  eq(agent.model.human.drafts.size, 0, 'agent ignores human keys')
+  await agent.setStatus({ 'status_line/tests': null })
+  await settleAll(agent)
+  await until(() => phone.model.sessions.get(agent.my_device_id).status_lines.length === 0, 'status line removed')
+  let err = null
+  try { await agent.setStatus({ 'draft/x': 1 }) } catch (e) { err = e }
+  eq(err?.code, 'forbidden', 'agent may not write human keys')
+})
+
+await test('timelines: lazy, newest first, paged; live items decrypted at once', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  phone.stop()
+  for (let i = 0; i < 120; i++) await agent.sendMessage({ text: `m${i}` })
+  await agent.settle()
+  const fresh = phone
+  await fresh.start()
+  const key = `chat:session/${agent.my_device_id}`
+  const t = fresh.model.timelines.get(key)
+  eq(t.item_count, 120, 'all headers counted')
+  eq(t.items.size, 0, 'no bodies fetched at sync')
+  const p1 = await fresh.loadTimeline(key, { limit: 50 })
+  eq(p1.loaded, 50, 'first page')
+  const texts = [...t.items.values()].sort((a, b) => a.envelope_number - b.envelope_number).map(i => i.content.text)
+  eq(texts[49], 'm119', 'newest first')
+  eq(texts[0], 'm70', 'page boundary')
+  assert(p1.has_more, 'has more')
+  await fresh.loadTimeline(key, { limit: 50 })
+  const p3 = await fresh.loadTimeline(key, { limit: 50 })
+  eq(t.items.size, 120, 'all loaded')
+  assert(!p3.has_more, 'no more')
+  await agent.sendMessage({ text: 'live one' })
+  await until(() => [...t.items.values()].some(i => i.content?.text === 'live one'), 'live item with body')
+  const win = await fresh.timelineWindow(key, { before_envelope_number: [...t.items.keys()].sort((a, b) => a - b)[10], limit: 5 })
+  eq(win.map(i => i.content.text), ['m5', 'm6', 'm7', 'm8', 'm9'], 'windowed read')
+  eq(fresh.model.sessions.get(agent.my_device_id).unread_count, 121, 'unread')
+  await fresh.markReadUpTo(agent.my_device_id, fresh.model.room.last_envelope_number)
+  eq(fresh.model.sessions.get(agent.my_device_id).unread_count, 0, 'read')
+})
+
+await test('attachments: encrypt, PUT, lazy GET, decrypt, sha256 bound', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const bytes = new Uint8Array(200_000).map((_, i) => i * 7)
+  const ref = await agent.uploadAttachment(bytes, { file_name: 'plan.png', media_type: 'image/png', width: 10, height: 10 })
+  eq(Object.keys(ref).sort(), ['attachment_id', 'file_key', 'file_name', 'height', 'media_type', 'sha256', 'total_size', 'width'].sort(), 'reference fields')
+  const id = await agent.sendCard({ title: 'Pick', options: [{ key: 'a', label: 'A' }], attachments: [ref] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id), 'card')
+  const got = await phone.fetchAttachment(phone.model.cards.get(id).attachments[0])
+  assert(z.bytesEqual(got, bytes), 'same bytes')
+  let err = null
+  try { await phone.fetchAttachment({ ...ref, sha256: z.b64u(new Uint8Array(32)) }) ; phone.attachmentCache.clear() } catch (e) { err = e }
+  phone.attachmentCache.clear()
+  try { await phone.fetchAttachment({ ...ref, sha256: z.b64u(new Uint8Array(32)) }) } catch (e) { err = e }
+  eq(err?.code, 'decrypt-failed', 'wrong hash refused')
+})
+
+await test('removal and rotation: one entry, new epoch, removed device opens nothing new', async () => {
+  const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
+  await settleAll(phone, laptop, a1, a2)
+  const r = await phone.removeDevices([laptop.my_device_id, a2.my_device_id])
+  eq(r.key_epoch, 2, 'epoch 2')
+  await until(() => a1.model.room.key_epoch === 2, 'agent switched')
+  const id = await a1.sendCard({ title: 'after removal', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a1)
+  await until(() => phone.model.cards.get(id)?.title === 'after removal', 'phone reads new epoch')
+  // the removed laptop: hub refuses it; even with the bytes it cannot decrypt epoch 2
+  let err = null
+  try { await laptop.hub.signIn() } catch (e) { err = e }
+  assert(err && (err.code === 'not-member' || err.status === 403), `removed device refused (${err?.code})`)
+  const env = (await phone.hub.envelopes({ after_envelope_number: 0 })).envelopes.at(-1)
+  assert(!laptop.secrets.has(2), 'laptop holds no epoch-2 key')
+  let derr = null
+  try { await z.openVerifiedEnvelope(z.unb64u(env.envelope), { state: laptop.state, secrets: laptop.secrets, envelopeHash: z.peekEnvelope(z.unb64u(env.envelope)).header.prev }) } catch (e) { derr = e }
+  assert(derr, 'laptop cannot open the new envelope')
+  await until(() => laptop.model.room.connection === 'removed' || laptop.model.room.connection === 'connecting', 'laptop cut off')
+})
+
+await test('warm start from file storage: model, cursor, chains; then the delta', async () => {
+  const dir = path.join(scratch, 'agent-warm')
+  const { phone } = await room()
+  const agent = await addAgent(phone, 'Warm', await fileStorage({ dir, write_delay_ms: 5 }))
+  const id = await agent.sendCard({ title: 'warm', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'card')
+  await agent.stop()
+  const st = fs.statSync(dir); eq((st.mode & 0o777).toString(8), '700', 'dir mode')
+  const keyf = fs.readdirSync(dir).find(f => f.endsWith('.key'))
+  eq((fs.statSync(path.join(dir, keyf)).mode & 0o777).toString(8), '600', 'key file mode')
+  await phone.answer({ object_id: id, choices: ['a'] })
+  await phone.settle()
+  const t0 = performance.now()
+  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  const loadMs = performance.now() - t0
+  eq(again.model.cards.get(id)?.title, 'warm', 'card from storage before any network')
+  const cmds = []
+  again.on('command', c => cmds.push(c))
+  await again.start()
+  await until(() => cmds.some(c => c.command === 'answer'), 'answer that came while offline is delivered once')
+  eq(again.model.cards.get(id).object_state, 'answered', 'delta applied')
+  await again.sendMessage({ text: 'still the same device' })
+  await settleAll(again)
+  eq(cmds.filter(c => c.command === 'answer').length, 1, 'once')
+  console.log(`     warm open from file storage: ${loadMs.toFixed(1)} ms`)
+})
+
+await test('recovery: new device by code, humans out, agents kept, new code', async () => {
+  const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'before', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  await phone.stop()
+  const { client: tablet, recovery_code: next } = await recoverRoom({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage: memoryStorage(), device_name: 'Tablet' })
+  track(tablet)
+  assert(next !== recovery_code, 'new code')
+  await tablet.start()
+  await until(() => tablet.model.cards.get(id)?.title === 'before', 'history readable via back link')
+  await until(() => agent.model.room.key_epoch === 2, 'agent on the new epoch')
+  const id2 = await agent.sendCard({ title: 'after', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent)
+  await until(() => tablet.model.cards.get(id2), 'tablet reads the agent')
+  await tablet.answer({ object_id: id2, choices: ['a'] })
+  await settleAll(tablet)
+  await until(() => agent.model.cards.get(id2).object_state === 'answered', 'agent obeys the tablet')
+})
+
+await test('tamper detection: a changed byte, a forged sender, a replay', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'T', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(agent, phone)
+  const recs = (await phone.hub.envelopes({ after_envelope_number: 0 })).envelopes
+  const last = recs.find(r => z.peekEnvelope(z.unb64u(r.envelope)).header.isHead && z.hex(z.peekEnvelope(z.unb64u(r.envelope)).header.sender) === agent.my_device_id)
+  const bytes = z.unb64u(last.envelope)
+  // a client fed a modified copy reports it and does not apply it
+  const { client: other } = await (async () => ({ client: phone }))()
+  const flipped = bytes.slice(); flipped[flipped.length - 70] ^= 1
+  const alertsBefore = other.model.alerts.length
+  const saved = other.model.room.last_envelope_number
+  other.model.room.last_envelope_number = last.envelope_number - 1
+  const chainsBefore = new Map([...other.chains].map(([k, c]) => [k, { ...c, hashes: new Map(c.hashes) }]))
+  // rewind the agent's chain so the record is "next"
+  const ak = z.b64u(z.unhex(agent.my_device_id))
+  const h = z.peekEnvelope(bytes).header
+  other.chains.set(ak, { seq: h.seq - 1, hash: h.prev, hashes: new Map([[h.seq - 1, h.prev]]) })
+  await other.processRecords([{ envelope_number: last.envelope_number, envelope: z.b64u(flipped) }])
+  assert(other.model.alerts.length > alertsBefore, 'alert raised')
+  assert(['bad-signature', 'decrypt-failed'].includes(other.model.alerts.at(-1).code), `code ${other.model.alerts.at(-1).code}`)
+  // replay of the true one after the chain moved on: ignored silently, model unchanged
+  for (const [k, c] of chainsBefore) other.chains.set(k, c)
+  other.model.room.last_envelope_number = last.envelope_number - 1
+  await other.processRecords([{ envelope_number: last.envelope_number, envelope: last.envelope }])
+  eq(other.model.cards.get(id).object_version, 1, 'replay changes nothing')
+  other.model.room.last_envelope_number = saved
+  // the hub refuses an envelope in another device's name
+  let err = null
+  try { await phone.hub.postEnvelope(last.envelope) } catch (e) { err = e }
+  assert(err && ['wrong-sender', 'replay', 'forbidden'].includes(err.code), `hub refuses foreign envelope (${err?.code})`)
+})
+
+await test('agent: merge, withdraw, set urgency, publish and unpublish', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const a = await agent.sendCard({ title: 'A', options: [{ key: 'y', label: 'Y' }], urgency: 'low' })
+  const b = await agent.sendCard({ title: 'B', options: [{ key: 'y', label: 'Y' }], urgency: 'high' })
+  const c = await agent.sendCard({ title: 'C', options: [{ key: 'y', label: 'Y' }] })
+  await agent.setUrgency(c, 'critical', 'blocked')
+  const m = await agent.merge([a, b], { title: 'A+B', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }], allows_multiple: true })
+  await agent.withdraw(c, 'not needed')
+  const pub = await agent.publish({ attachments: [], title: 'Report' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(m) && phone.model.cards.get(c)?.object_state === 'closed' && phone.model.published.get(pub), 'all on phone')
+  eq(phone.model.cards.get(m).urgency, 'high', 'merge takes the highest urgency')
+  eq(phone.model.cards.get(a).closed_how, 'merged', 'merged')
+  eq(phone.model.cards.get(c).closed_how, 'withdrawn', 'withdrawn')
+  eq(phone.model.stack, [m], 'stack')
+  await agent.unpublish(pub)
+  await settleAll(agent)
+  await until(() => phone.model.published.get(pub).object_state === 'closed', 'unpublished')
+})
+
+if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', async () => {
+  const N = BENCH ? 5000 : 1000
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await phone.stop()
+  const t0 = performance.now()
+  for (let i = 0; i < N; i++) {
+    if (i % 5 === 0) await agent.setStatus({ [`status_line/s${i % 20}`]: { label: `s${i}`, state: 'working' } })
+    else await agent.sendMessage({ text: `message ${i} `.repeat(4) })
+  }
+  await agent.settle({ timeout_ms: 120_000 })
+  const sendMs = performance.now() - t0
+  phone.stats.verified = 0; phone.stats.decrypted = 0; phone.stats.verify_ms = 0
+  const t1 = performance.now()
+  await phone.catchUp()
+  const ms = performance.now() - t1
+  const st = phone.stats
+  console.log(`     ${N} envelopes sent+posted in ${sendMs.toFixed(0)} ms (${(N / sendMs * 1000).toFixed(0)}/s, one by one)`)
+  console.log(`     catch-up: ${st.verified} verified (${st.decrypted} decrypted heads) in ${ms.toFixed(0)} ms total incl. HTTP = ${(st.verified / ms * 1000).toFixed(0)} envelopes/s; processing only ${st.verify_ms.toFixed(0)} ms = ${(st.verified / st.verify_ms * 1000).toFixed(0)}/s`)
+  assert(st.verified >= N, 'all verified')
+})
+
+for (const c of clients) await c.stop().catch(() => {})
+await hub.close()
+fs.rmSync(scratch, { recursive: true, force: true })
+console.log(`\n${results.filter(r => r[1] === 'ok').length} ok, ${failed} failed`)
+process.exit(failed ? 1 : 0)
