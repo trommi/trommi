@@ -516,6 +516,39 @@ test('ephemeral: relayed to the other open streams only, never stored; own envel
   await w.hub.close()
 })
 
+test('stream buffers: catch-up in slices, a global cap drops the fattest non-reading streams; freed pages go back', async () => {
+  process.env.HUB_STREAM_BUFFER_TOTAL_BYTES = String(2 << 20)
+  const w = await world()
+  delete process.env.HUB_STREAM_BUFFER_TOTAL_BYTES
+  const big = new Uint8Array(60000).fill(65)
+  for (let i = 0; i < 40; i++) await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: await z.objectIdOf(w.agent.device.id, i + 1), state: 1, urgency: 1 }, payload: big })
+  // Three streams that never read: each catches up 40 x ~80 KB of heads.
+  const stuck = []
+  for (let i = 0; i < 3; i++) {
+    const res = await new Promise((resolve, reject) => {
+      const req = http.request(`${w.base}${R(w)}/stream?after_envelope_number=0`, { headers: { authorization: `Bearer ${w.laptop.token}` } }, resolve)
+      req.on('error', reject); req.end()
+    })
+    res.pause(); res.on('error', () => {}); stuck.push(res)
+  }
+  await sleep(300)
+  const dropped = w.hub.capStreams()
+  assert.ok(dropped >= 1, 'over the cap, the fattest streams are dropped')
+  // A reading client catches up completely in slices.
+  const s = await openStream(w, w.phone)
+  await s.until(e => e.event === 'envelope' && e.data.envelope_number === 40, 'catch-up of 40 heads', 10000)
+  s.close(); for (const r of stuck) r.destroy()
+  // Incremental vacuum: deleted rows give pages back in small steps.
+  w.hub.db.exec('DELETE FROM envelopes')
+  const free = w.hub.db.prepare('PRAGMA freelist_count').get().freelist_count
+  assert.ok(free > 0)
+  const { vacuumStep } = await import('./store.mjs')
+  vacuumStep(w.hub.db, 100000)
+  assert.equal(w.hub.db.prepare('PRAGMA freelist_count').get().freelist_count, 0)
+  assert.equal(w.hub.db.prepare('PRAGMA auto_vacuum').get().auto_vacuum, 2)
+  await w.hub.close()
+})
+
 test('attachments: written once, served whole and in ranges, members only, 64 MiB', async () => {
   const w = await world()
   const file = crypto.randomBytes(200000)

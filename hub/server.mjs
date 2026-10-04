@@ -11,7 +11,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import * as z from '../crypto/zcrypto.mjs'
 import { createHub } from '../crypto/hub.mjs'
-import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived } from './store.mjs'
+import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived, vacuumStep } from './store.mjs'
 import { fileStore } from './attachments.mjs'
 import { pusher } from './push.mjs'
 import { createOps, limitsFromEnv } from './ops/index.mjs'
@@ -38,6 +38,8 @@ const STATUS = {
   replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'instance-conflict': 409, 'wrong-epoch': 409, 'lease-lost': 409, 'invite-burned': 410,
   'invite-expired': 410, 'too-large': 413, 'too-many': 429, 'rate-limited': 429, internal: 500,
 }
+const CATCH_UP_SLICE = 64
+const CATCH_UP_HIGH_WATER = 256 << 10
 const TIMELINE_NAMES = { chat: z.TIMELINE.CHAT, canvas: z.TIMELINE.CANVAS }
 const HEX64 = /^[0-9a-f]{64}$/, HEX32 = /^[0-9a-f]{32}$/
 
@@ -280,12 +282,15 @@ export async function startHub({
     res.write(': trommi hub\n\n')
     // Catch-up first (the depth rule of GET envelopes), then whatever arrived meanwhile, then live.
     let sent = after
+    // In small slices: read a few rows, write them, and wait until the socket took them before reading more,
+    // so a thousand slow clients catching up from 0 hold kilobytes each, not megabytes.
     while (!res.writableEnded) {
-      const rows = envelopeRows(r.id, sent, 500)
+      const rows = envelopeRows(r.id, sent, CATCH_UP_SLICE)
       for (const row of rows) if (!res.writableEnded) res.write(sse('envelope', record(row), row.envelope_number))
       if (rows.length) sent = rows.at(-1).envelope_number
-      if (rows.length < 500) break
-      if (res.writableNeedDrain) await new Promise(ok => res.once('drain', ok).once('close', ok))
+      if (rows.length < CATCH_UP_SLICE) break
+      if (res.writableLength > CATCH_UP_HIGH_WATER) await new Promise(ok => res.once('drain', ok).once('close', ok))
+      else await new Promise(ok => setImmediate(ok))      // let live traffic and other streams in between slices
     }
     if (res.writableEnded) return
     for (const c of s.pending) if (c.n == null || c.n > sent) res.write(c.text)
@@ -584,7 +589,24 @@ export async function startHub({
     if (envelopes || attachments) log(`retention: pruned ${envelopes} envelopes, deleted ${attachments} attachments`)
     return { objects: due.length, envelopes, attachments }
   }
+  // A global bound on what all streams together hold in send buffers: over it, the fattest are dropped and
+  // resume by cursor (HUB_STREAM_BUFFER_TOTAL_BYTES, default 256 MiB).
+  const streamTotalCap = Number(process.env.HUB_STREAM_BUFFER_TOTAL_BYTES || 256 << 20)
+  function capStreams() {
+    const all = [...ops.flow.streams].map(x => ({ x, b: x.res.writableLength + (x.catchingUp ? (x.pendingBytes ?? 0) : 0) }))
+    let total = all.reduce((t, e) => t + e.b, 0)
+    if (total <= streamTotalCap) return 0
+    let dropped = 0
+    for (const e of all.sort((p, q) => q.b - p.b)) {
+      if (total <= streamTotalCap * 0.8) break
+      e.x.res.destroy(); total -= e.b; dropped++
+    }
+    log(`stream buffers over ${streamTotalCap >> 20} MiB: dropped ${dropped} stream(s); they resume by cursor`)
+    return dropped
+  }
   const timers = [
+    setInterval(() => { try { capStreams() } catch (err) { log(`stream cap: ${err.message}`) } }, 1000),
+    setInterval(() => { try { vacuumStep(db) } catch (err) { log(`vacuum: ${err.message}`) } }, 30000),
     setInterval(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, retentionEveryMs),
     setInterval(() => {
       envelopeLimit.sweep(); openLimit.sweep(); pushLimit.sweep()
@@ -601,7 +623,7 @@ export async function startHub({
   const startupMs = performance.now() - t0
   log(`listening on ${host}:${address.port} as ${hubUrl}, commit ${commit}, ready in ${startupMs.toFixed(1)} ms`)
   return {
-    server, port: address.port, hubUrl, db, startupMs, stats, prune, ops, rebuildDerived: () => rebuildDerived(db),
+    server, port: address.port, hubUrl, db, startupMs, stats, prune, ops, capStreams, rebuildDerived: () => rebuildDerived(db),
     async close() {
       for (const t of timers) clearInterval(t)
       await ops.close()
