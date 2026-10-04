@@ -604,7 +604,7 @@ test('review 2 #1/#3: after a removal, session posts wait for the re-key; a remo
   w.tick(1000)
   // The session key is one the removed laptop holds: nobody sends under it until a human re-keys.
   const old = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: w.agent.chains, kind: KIND.CHAT, payload: utf8('retry'), time: w.now(), keyScope: 1, sessionId: SID, secret: w.agent.session, timelineKind: 1, timelineId: `session/${hex(SID)}` })
-  await rejects(() => w.hub.postEnvelope(w.agent.token, old.bytes), 'stale-session-key')
+  await rejects(() => postAs(w, w.agent.token, old.bytes), 'stale-session-key')
   // The removed laptop rotates on its old view (the B02 PoC): refused, even though it names a log entry from before its removal.
   const forged = await createSessionGrant({ state: laptopView, signer: w.laptop.device, sessionState: w.session.sessionState, agentIds: [w.agent.device.id], rotate: true, time: w.now() })
   await rejects(() => w.hub.postGrant({ sessionId: hex(SID), grant: forged.grant, wraps: forged.wraps, backLink: forged.backLink }), 'stale-grant')
@@ -613,7 +613,7 @@ test('review 2 #1/#3: after a removal, session posts wait for the re-key; a remo
   // The phone re-keys; from then on the agent posts under the new key. The same retried bytes of the old epoch land within the grace.
   const g = await createSessionGrant({ state: w.phone.state, signer: w.phone.device, sessionState: w.session.sessionState, current: w.session.secret, agentIds: [w.agent.device.id], rotate: true, time: w.now() })
   await w.hub.postGrant({ sessionId: hex(SID), grant: g.grant, wraps: g.wraps, backLink: g.backLink })
-  await w.hub.postEnvelope(w.agent.token, old.bytes)
+  await postAs(w, w.agent.token, old.bytes)
   w.agent.session = g.secret
   await post(w, w.agent)
 })
