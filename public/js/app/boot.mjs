@@ -125,6 +125,8 @@ export async function start(client, { fresh = false } = {}) {
     const s = /^\/s\/([^/+]+)/.exec(path), q = /^\/(?:s\/[^/]+\/)?[qc]\/([\w-]+)/.exec(path)
     if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) key = `chat:card/${card.id}` }
     else if (s) { const dev = board.agentToDev.get(decodeURIComponent(s[1])); if (dev) key = `chat:session/${dev}` }
+    // The Desk's Working stack says each card's last word: the newest few items of the cards with their session.
+    if (path === '/') for (const c of model().revising ?? []) { const k = `chat:card/${c.id}`; if (!opened.has(k)) { opened.add(k); client.loadTimeline(k, { limit: 5 }).catch(() => {}) } }
     const before = new URLSearchParams(location.search).get('before')
     if (key && (!opened.has(key) || before)) { opened.add(key); client.loadTimeline(key, { limit: 50 }).catch(err => console.warn('timeline', err)) }
     // A session's page shows what was said about its questions too: the newest page of its recent cards' threads.
