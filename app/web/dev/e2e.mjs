@@ -265,8 +265,17 @@ try {
     for (const d of dbs) { const db = await new Promise((ok, no) => { const r = indexedDB.open(d.name); r.onsuccess = () => ok(r.result); r.onerror = () => no(r.error) }); for (const n of db.objectStoreNames) keys += await new Promise(ok => { const r = db.transaction(n).objectStore(n).count(); r.onsuccess = () => ok(r.result) }); db.close() }
     return { dbs: dbs.length, keys, local: localStorage.length, caches: (await caches.keys()).filter(n => !n.startsWith('shell-')).length }`)   // the worker fills its shell cache again (app files only)
   check(left.keys === 0 && left.local === 0 && left.caches === 0, `nothing local left after log out but the app shell (${JSON.stringify(left)})`)
+  // A hears of it live (member_entry on the stream); the signed list says so either way.
   t0 = Date.now()
-  await A.until(`trommi.client.model.members.get('${oldC}')?.is_active === false`, 'A sees C removed', 20000).then(() => { check(true, 'the logged-out device is removed in the signed member list (seen on A)'); timing('log out on C -> removed on A', Date.now() - t0) }, async e => check(false, `${e.message} ${JSON.stringify(await A.js("const c = trommi.client; const q = await Promise.race([c.serial(async () => 'free'), new Promise(r => setTimeout(() => r('busy'), 3000))]); let direct = null; try { await c._refreshMembers(); direct = c.model.room.last_entry_number } catch (e) { direct = e.message } return { conn: c.model.room.connection, entry: c.model.room.last_entry_number, queue: q, direct }").catch(x => x.message))}`))
+  const heard = await A.until(`trommi.client.model.members.get('${oldC}')?.is_active === false`, 'A sees C removed', 15000).then(() => true, () => false)
+  if (heard) timing('log out on C -> removed on A (live)', Date.now() - t0)
+  else {
+    const probe = await agent.sendCard({ title: 'stream probe', card_type: 'info' })
+    const live = await A.until(`document.getElementById('row-${probe}')`, 'probe', 8000).then(() => true, () => false)
+    check(false, `A's live stream after the warm reload: ${live ? 'envelopes arrive, but no member_entry' : 'silent (no member_entry, no envelope), though the connection says live'}`)
+    await A.js('await trommi.client.serial(() => trommi.client._refreshMembers())')
+  }
+  check(await A.js(`return trommi.client.model.members.get('${oldC}')?.is_active === false`), 'the logged-out device is removed in the signed member list (seen on A)')
   // and in again with email + password (D set a new one with the kit)
   await C.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)
   await C.until("document.querySelector('#way-login')", 'welcome on C again')
