@@ -10,6 +10,7 @@ ENV COMMIT=$COMMIT \
 WORKDIR /app
 COPY crypto/zcrypto.mjs crypto/hub.mjs crypto/
 COPY hub/server.mjs hub/store.mjs hub/attachments.mjs hub/push.mjs hub/
+COPY hub/ops hub/ops
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME /data

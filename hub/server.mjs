@@ -14,10 +14,11 @@ import { createHub } from '../crypto/hub.mjs'
 import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived } from './store.mjs'
 import { fileStore } from './attachments.mjs'
 import { pusher } from './push.mjs'
+import { createOps, limitsFromEnv } from './ops/index.mjs'
 
 export const PROTOCOL_VERSION = 1
 const DAY = 86400000
-export const LIMITS = {
+export const LIMITS = limitsFromEnv({
   json: 1 << 20,
   ciphertext: 65536 + 16,
   attachment: 64 << 20,
@@ -27,7 +28,7 @@ export const LIMITS = {
   openRequestsPerIpMinute: 600,
   pushSubscriptionsPerDevice: 10,
   retentionDays: 30,
-}
+})
 const STATUS = {
   'bad-format': 400, 'bad-argument': 400, 'bad-version': 400, 'bad-entry': 400, 'bad-signature': 400, 'bad-invite': 400, 'wrong-room': 400,
   'wrong-epoch': 400, incomplete: 400, 'chain-break': 400, 'log-behind': 400, 'log-fork': 400,
@@ -97,11 +98,18 @@ export async function startHub({
     return p
   }
 
+  async function closeRoom(id) {
+    const p = rooms.get(id)
+    rooms.delete(id)
+    const r = await p?.catch(() => null)
+    if (r) for (const s of r.streams) s.res.end()
+  }
+
   // ---- the live stream -------------------------------------------------------------
 
   const sse = (event, data, id) => `${id != null ? `id: ${id}\n` : ''}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`
   function deliver(r, chunk, filter = () => true) {
-    for (const s of r.streams) if (!s.res.writableEnded && filter(s)) s.catchingUp ? s.pending.push(chunk) : s.res.write(chunk.text)
+    for (const s of r.streams) if (!s.res.writableEnded && filter(s)) ops.send(s, chunk)
   }
   const deviceStreams = (r, deviceId) => [...r.streams].filter(s => s.deviceId === deviceId)
   function closeStreams(r, ids) {
@@ -156,7 +164,7 @@ export async function startHub({
     return n
   }
   const hexParam = (v, re, what) => { if (typeof v !== 'string' || !re.test(v)) fail('bad-argument', `${what} must be lowercase hex`); return v }
-  const openRoute = req => { const wait = openLimit.take(ipOf(req)); if (wait) fail('rate-limited', 'too many requests from this address', { retryAfter: wait }) }
+  const openRoute = req => { if (ops.unlimited(req)) return; const wait = openLimit.take(ipOf(req)); if (wait) fail('rate-limited', 'too many requests from this address', { retryAfter: wait }) }
 
   /** The envelope rows of a room after a number, with the depth rule: body only for heads not pruned. */
   const envelopeRows = (roomId, after, limit) => db.q(`SELECT envelope_number, envelope_header, envelope_nonce, envelope_signature, encrypted_body_hash,
@@ -166,11 +174,12 @@ export async function startHub({
   // ---- routes ------------------------------------------------------------------------
 
   async function found(req, res) {
-    if (foundToken && req.headers['x-found-token'] !== foundToken) fail('forbidden', 'founding a room on this hub needs x-found-token')
+    if (foundToken && req.headers['x-found-token'] !== foundToken && !ops.unlimited(req)) fail('forbidden', 'founding a room on this hub needs x-found-token')
     const ip = ipOf(req)
     const recent = (founded.get(ip) ?? []).filter(t => now() - t < 3600000)
-    if (recent.length >= LIMITS.foundPerIpHour) fail('rate-limited', 'too many rooms founded from this address in the last hour', { retryAfter: Math.ceil((recent[0] + 3600000 - now()) / 1000) })
+    if (recent.length >= LIMITS.foundPerIpHour && !ops.unlimited(req)) fail('rate-limited', 'too many rooms founded from this address in the last hour', { retryAfter: Math.ceil((recent[0] + 3600000 - now()) / 1000) })
     const body = await readJson(req)
+    const testRoom = ops.testRooms.wanted(req, body)
     const entry = b64(body.signed_entry, 'signed_entry')
     if (!Array.isArray(body.sealed_room_keys)) fail('bad-argument', 'sealed_room_keys must be a list')
     const wraps = body.sealed_room_keys.map(w => ({ id: z.unhex(hexParam(w?.device_id, HEX64, 'device_id')), sealed: b64(w?.key_sealed, 'key_sealed') }))
@@ -189,6 +198,7 @@ export async function startHub({
     let out
     try { out = await p } catch (err) { rooms.delete(id); throw err }
     recent.push(now()); founded.set(ip, recent)
+    if (testRoom) ops.testRooms.mark(id)
     log(`room ${id.slice(0, 8)} founded`)
     send(res, 201, { room_id: id, entry_number: 0, entry_hash: out.r.hash, key_epoch: 1 })
   }
@@ -214,7 +224,7 @@ export async function startHub({
   async function postEnvelope(r, req, res) {
     const token = bearer(req)
     const me = r.hub.authorise(token, { member: true })
-    const wait = envelopeLimit.take(`${r.id}:${me.id}`)
+    const wait = ops.unlimited(req, r.id) ? 0 : envelopeLimit.take(`${r.id}:${me.id}`)
     if (wait) fail('rate-limited', 'too many envelopes from this device', { retryAfter: wait })
     const body = await readJson(req)
     const bytes = b64(body.envelope, 'envelope')
@@ -248,6 +258,7 @@ export async function startHub({
     req.socket.setNoDelay(true)
     const s = { deviceId: me.id, res, catchingUp: true, pending: [] }
     r.streams.add(s)
+    ops.track(s, req)
     res.on('error', () => {})
     const ping = setInterval(() => { if (!res.writableEnded) res.write(sse('ping', {})) }, pingMs)
     const done = () => {
@@ -276,12 +287,14 @@ export async function startHub({
     const me = r.hub.authorise(bearer(req), { member: true })
     hexParam(attachmentId, HEX32, 'attachment_id')
     if (Number(req.headers['content-length'] || 0) > LIMITS.attachment) fail('too-large', 'an attachment is at most 64 MiB')
+    ops.quota.check(r.id, Number(req.headers['content-length'] || 0))
     if (db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(r.id, attachmentId)) fail('replay', 'this attachment is already stored; attachments are immutable')
     let size
     try { size = await files.put(r.id, attachmentId, req, LIMITS.attachment) } catch (err) {
       if (err.code === 'too-large' || err.code === 'replay') fail(err.code, err.message)
       throw err
     }
+    try { ops.quota.make(r.id, size) } catch (err) { files.delete(r.id, attachmentId); throw err }
     db.q('INSERT INTO attachments (room_id, attachment_id, object_id, uploader_device_id, total_size, chunk_count, stored_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
       .run(r.id, attachmentId, me.id, size, chunkCount(size), now())
     send(res, 201, { attachment_id: attachmentId, total_size: size })
@@ -471,6 +484,7 @@ export async function startHub({
       res.writeHead(204).end()
       return
     }
+    if (await ops.handle(req, res, url)) return
     if (url.pathname === '/healthz' && req.method === 'GET') return send(res, 200, { ok: true, commit, protocol_version: PROTOCOL_VERSION })
     if (url.pathname === '/v1/push_key' && req.method === 'GET') return send(res, 200, { vapid_public_key: push.publicKey })
     if (url.pathname === '/v1/rooms' && req.method === 'POST') return found(req, res)
@@ -481,6 +495,7 @@ export async function startHub({
 
   const server = http.createServer((req, res) => {
     handle(req, res).catch(err => {
+      if (err?.reply) return send(res, err.reply.status, err.reply.body)
       let code = err?.code, message = err?.message
       if (!(err instanceof z.ZError || err instanceof HubError) || !STATUS[code]) {
         // A ZError with a code the table does not list is still a refusal of the request, not our failure.
@@ -525,15 +540,17 @@ export async function startHub({
   for (const t of timers) t.unref()
   setTimeout(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, 60000).unref()
 
+  const ops = await createOps({ db, dataDir, files, room, bearer, ipOf, now, log, closeRoom, announce: (id, event, data) => rooms.get(id)?.then(r => deliver(r, { text: sse(event, data) }), () => {}) })
   await new Promise((ok, bad) => { server.once('error', bad); server.listen(port, host, ok) })
   const address = server.address()
   if (!hubUrl) hubUrl = `http://127.0.0.1:${address.port}`
   const startupMs = performance.now() - t0
   log(`listening on ${host}:${address.port} as ${hubUrl}, commit ${commit}, ready in ${startupMs.toFixed(1)} ms`)
   return {
-    server, port: address.port, hubUrl, db, startupMs, stats, prune, rebuildDerived: () => rebuildDerived(db),
+    server, port: address.port, hubUrl, db, startupMs, stats, prune, ops, rebuildDerived: () => rebuildDerived(db),
     async close() {
       for (const t of timers) clearInterval(t)
+      await ops.close()
       for (const p of rooms.values()) { const r = await p.catch(() => null); if (r) for (const s of r.streams) if (!s.res.writableEnded) s.res.end() }
       await new Promise(ok => { server.close(ok); server.closeAllConnections() })
       db.close()
