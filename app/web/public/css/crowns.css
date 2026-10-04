@@ -30,7 +30,8 @@ body.is-pairing .crown-fold { visibility: hidden; }
 .crown-edges::after { content: ""; position: absolute; inset: 0 0 -5px; }
 /* an edge: its drawing (agents.js, edgeQuirk) stretched to the row, the pen as wide as everywhere; it lies a little crooked (--tilt, --dx: its own) */
 .crown-edges { --fx: 1.6px; --fy: .7px; --fr: .5deg; --tk: 1; }
-.crown-edges i { position: absolute; top: calc(var(--i) * 4px - 7px); left: calc(5px + var(--i) * 2.5px); right: calc(5px + var(--i) * 2.5px); height: 15px; z-index: calc(20 - var(--i)); transform-origin: 16% 0; translate: var(--dx, 0px) 0; rotate: calc(var(--tilt, 0deg) * var(--tk)); transition: translate 190ms cubic-bezier(.3, 1.8, .5, 1), rotate 190ms cubic-bezier(.3, 1.8, .5, 1), transform-origin 190ms ease-out; transition-delay: calc(var(--i) * 9ms); }
+/* the fan spreads the same in total for any count: --p is the sheet's share (1 for the last), the full spread is six steps (one sheet moves all of it) */
+.crown-edges i { --p: calc((var(--i) + 1) / var(--n, 6)); position: absolute; top: calc(var(--i) * 4px - 7px); left: calc(5px + var(--i) * 2.5px); right: calc(5px + var(--i) * 2.5px); height: 15px; z-index: calc(20 - var(--i)); transform-origin: 16% 0; translate: var(--dx, 0px) 0; rotate: calc(var(--tilt, 0deg) * var(--tk)); transition: translate 190ms cubic-bezier(.3, 1.8, .5, 1), rotate 190ms cubic-bezier(.3, 1.8, .5, 1), transform-origin 190ms ease-out; transition-delay: calc(var(--i) * 9ms); }
 .crown-edges svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .crown-edges path { fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.3; stroke-linecap: round; stroke-linejoin: round; vector-effect: non-scaling-stroke; }
 .crown-edges .e-n { display: none; }
@@ -41,7 +42,7 @@ body.is-pairing .crown-fold { visibility: hidden; }
    They lean to the side the mouse is on (lean_controller.js sets --lean -1 … 1 on the row, --lean-abs its size): over
    the middle straight down, at the right tilted right, at the left the mirror. Without it (the keys, the old client) they lean right. */
 @media (hover: hover) {
-  .crown-edges:hover i, .agent-row:has(> .crown-fold:is(:hover, :focus-visible)) > .crown-edges i { transform-origin: calc(50% - 34% * var(--lean, 1)) 0; translate: calc(var(--dx, 0px) * var(--lean-abs, 1) + var(--i) * var(--fx) * var(--lean, 1)) calc(1px + var(--i) * (var(--fy) + (1 - var(--lean-abs, 1)) * 1.6px)); rotate: calc(var(--tilt, 0deg) * var(--tk) * 2.2 * var(--lean-abs, 1) + (var(--i) + .5) * var(--fr) * var(--lean, 1)); }
+  .crown-edges:hover i, .agent-row:has(> .crown-fold:is(:hover, :focus-visible)) > .crown-edges i { transform-origin: calc(50% - 34% * var(--lean, 1)) 0; translate: calc(var(--dx, 0px) * var(--lean-abs, 1) + var(--p) * 6 * var(--fx) * var(--lean, 1)) calc(1px + var(--p) * 6 * (var(--fy) + (1 - var(--lean-abs, 1)) * 1.6px)); rotate: calc(var(--tilt, 0deg) * var(--tk) * 2.2 * var(--lean-abs, 1) + var(--p) * 6 * var(--fr) * var(--lean, 1)); }
 }
 
 /* ---- unfolded: the subs under the main, the bracket beside them ---- */
