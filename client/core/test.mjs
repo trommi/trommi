@@ -721,6 +721,83 @@ if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets 
   await until(() => errors.includes('lease-lost'), 'old process told')
 })
 
+if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (a post queued at start, the channel claims after start)', async () => {
+  const { phone } = await room()
+  // Like hub/channel.mjs: join, then start({ process_instance }) and claim with the same instance. The session is assigned
+  // before the start, so start() queues the device register before it takes the lease.
+  const instances = []
+  let delayed = false
+  const hooked = async (url, init) => {
+    if (String(url).endsWith('/agent_lease')) {
+      const body = JSON.parse(init.body)
+      instances.push(body.process_instance)
+      const res = await fetch(url, init)
+      // the channel's own claim answers late: the queued post meets the hub's new generation first
+      if (body.process_instance === 'P' && !body.renew && !delayed) { delayed = true; await sleep(400) }
+      return res
+    }
+    return fetch(url, init)
+  }
+  const inv = await phone.createInvite({ device_role: 'agent' })
+  const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Channel', device_info: { device_name: 'Channel', platform: 'claude-code', folder: '~/git/x', host: 'pc' }, poll_ms: 50, fetch: hooked })
+  const agent = track(await j.client)
+  await until(async () => { await agent._refreshSessions(); return agent.session_id }, 'session assigned before the start')
+  const errors = []
+  agent.on('error', e => errors.push(e.code))
+  await agent.start({ process_instance: 'P' })
+  await agent.claimSession({ process_instance: 'P' })
+  await agent.sendMessage({ text: 'after the start' })
+  await agent.settle()
+  await sleep(1500)
+  assert(!errors.includes('lease-lost'), `no lease-lost (${errors.join(',')})`)
+  eq([...new Set(instances)], ['P'], 'every lease request names the process instance')
+  await until(async () => (await phone.timelineWindow(`chat:session/${agent.session_id}`, { limit: 10 })).some(i => i.content?.text === 'after the start'), 'posted')
+})
+
+if (z.KEY_SCOPE) await test('lease: lease-lost renews first on every path (upload, post, stream); a failed renewal is no verdict', async () => {
+  const dir = path.join(scratch, 'lease-paths')
+  const port = await freePort()
+  let h = await startHub({ port, host: '127.0.0.1', dataDir: dir, log: () => {}, pingMs: 2000 })
+  let renewDown = false
+  const hooked = async (url, init) => {
+    if (renewDown && String(url).endsWith('/agent_lease') && JSON.parse(init.body).renew) throw new TypeError('fetch failed')
+    return fetch(url, init)
+  }
+  const { client: phone } = await foundRoom({ hub_url: h.hubUrl, storage: memoryStorage({ extractable_keys: false }), device_name: 'Phone' })
+  track(phone); await phone.start()
+  const inv = await phone.createInvite({ device_role: 'agent' })
+  const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Paths', poll_ms: 50, fetch: hooked })
+  const agent = track(await j.client)
+  await agent.start({ process_instance: 'paths-1' })
+  await agent.whenSession()
+  const errors = []
+  agent.on('error', e => errors.push(e.code))
+  // the hub restarts and has lost the lease (no live holder): the first write of each kind meets lease-lost
+  const lostLease = async () => { await h.close(); h = await startHub({ port, host: '127.0.0.1', dataDir: dir, log: () => {}, pingMs: 2000 }); h.db.exec('DELETE FROM agent_leases') }
+  await lostLease()
+  const ref = await agent.uploadAttachment(new Uint8Array(1000).fill(7), { file_name: 'x.bin', media_type: 'application/octet-stream' })
+  assert(ref?.attachment_id, 'the upload went through after a renewal')
+  // a renewal that fails for want of the network is asked again, not taken for another process
+  await lostLease()
+  renewDown = true
+  const sent = agent.sendMessage({ text: 'renewal comes back' })
+  await sleep(1500)
+  renewDown = false
+  await sent
+  await settleAll(agent)
+  await until(async () => (await phone.timelineWindow(`chat:session/${agent.session_id}`, { limit: 10 })).some(i => i.content?.text === 'renewal comes back'), 'posted once the renewal got through', 8000)
+  await until(() => agent.model.room.connection === 'live', 'the stream is live again', 8000)
+  assert(!errors.includes('lease-lost'), `no lease-lost (${errors.join(',')})`)
+  // a real takeover: the upload gets lease-lost and the process stops
+  const other = new (agent.hub.constructor)({ hub_url: agent.hub.hub_url, room_id: agent.model.room.room_id, signer: agent.hub.signer })
+  await other.agentLease({ process_instance: 'paths-2' })
+  let err = null
+  await agent.uploadAttachment(new Uint8Array(10), { file_name: 'y.bin', media_type: 'application/octet-stream' }).catch(e => { err = e })
+  eq(err?.code, 'lease-lost', 'the old process cannot upload')
+  await until(() => errors.includes('lease-lost'), 'the old process stops', 10_000)
+  await phone.stop(); await agent.stop(); await h.close()
+})
+
 await test('S2 ids: no raw ids in URLs; a body naming a non-hex or unlisted attachment is refused', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   let err = null

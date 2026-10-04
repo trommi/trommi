@@ -91,14 +91,23 @@ export class Client {
     this.hub.onTooOld = e => { if (this._tooOld) return; this._tooOld = true; this.emit('error', e); this.stop().catch(() => {}) }
     // lease-lost: first ask for the lease again (renew: a restarted hub that knows no live lease gives it back with a new
     // generation); only if ANOTHER live process holds it does this process stop (R4 fencing).
+    // A renewal that fails for another reason (the hub restarting, offline) is no verdict: it is asked again.
     this.hub.onLeaseLost = e => {
-      if (this._leaseLost) return
-      const attempt = this._leaseRecoveryFailed ? Promise.resolve(false) : this._recoverLease()
-      attempt.then(ok => {
+      if (this._leaseLost || this._leaseRecovering) return
+      this._leaseRecovering = true
+      ;(async () => {
+        if (this._leaseRecoveryFailed) return false
+        for (;;) {
+          try { return await this._recoverLease() } catch { if (!this._started) return null; await sleep(2000) }
+        }
+      })().then(ok => {
+        this._leaseRecovering = false
+        if (ok === null) return
         if (ok) { if (this._started) { this._stream?.close(); this._openStream() } this._pumpOutbox(); return }
         this._leaseLost = true; clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {})
       })
     }
+    this.hub.recoverLease = () => this._recoverLease()
     this.model = M.emptyModel()
     Object.assign(this.model.room, { room_id, hub_url: this.hub.hub_url, my_device_id: hex(device.id), my_role, key_epoch: state.epoch, last_entry_number: state.head.seq })
     this.listeners = new Map()
@@ -130,15 +139,25 @@ export class Client {
 
   get my_device_id() { return this.model.room.my_device_id }
 
-  /** R4: renew the lease after a lease-lost; true if this process holds it again (at most once every 5 s). */
+  /**
+   * R4: renew the lease after a lease-lost; true if this process holds it again, false only if the hub says another
+   * live process holds it (lease-lost). Any other failure (offline, a restarting hub) throws: it is no verdict.
+   * One renewal in flight serves every caller (the stream and the outbox both see the same restart); renewals are at
+   * least a second apart. A renewal that is over is never reused: a lease-lost after it asks the hub again.
+   */
   async _recoverLease() {
     if (!this._leaseInstance) return false
-    // one attempt serves every caller of the next 5 s (the stream and the outbox both see the same restart)
-    if (this._leaseRecovery && Date.now() - this._leaseRecovery.at < 5000) return this._leaseRecovery.promise
-    const promise = this.hub.agentLease({ process_instance: this._leaseInstance, renew: true })
-      .then(r => { this.hub.lease_generation = r.lease_generation; return true }, () => false)
-    this._leaseRecovery = { at: Date.now(), promise }
-    return promise
+    if (this._leaseRecovery?.pending) return this._leaseRecovery.promise
+    const wait = 1000 - (Date.now() - (this._leaseRecovery?.at ?? 0))
+    const rec = { at: Date.now() + Math.max(0, wait), pending: true, promise: null }
+    rec.promise = (async () => {
+      if (wait > 0) await sleep(wait)
+      try { const r = await this.hub.agentLease({ process_instance: this._leaseInstance, renew: true }); this.hub.lease_generation = r.lease_generation; return true }
+      catch (e) { if (e.code === 'lease-lost') return false; throw e }
+      finally { rec.pending = false }
+    })()
+    this._leaseRecovery = rec
+    return rec.promise
   }
 
   /**
@@ -280,6 +299,7 @@ export class Client {
     if (this._started) return
     await this._takeLock()
     this._started = true
+    if (process_instance) this._processInstance = process_instance   // R4: every lease claim of this process names it
     this._setConnection('connecting')
     await this.hub.signIn()
     if (this._freshStorage && this.historyBeforeNumber == null && !this.is_human) {
@@ -1079,11 +1099,12 @@ export class Client {
     if (this._pump) return this._pump
     this._pump = (async () => {
       await null
-      let backoff = 300, leaseRetried = false
+      let backoff = 300, leaseRetried = false, generation = null
       while (this.outbox.length) {
         const item = this.outbox[0]
         try {
           if (!this.is_human && this.hub.lease_generation == null) await this.claimSession()   // agents post under their lease (R4)
+          generation = this.hub.lease_generation
           const r = await this.hub.postEnvelope(item.bytes)
           item.envelope_number = r.envelope_number
           leaseRetried = false
@@ -1093,7 +1114,15 @@ export class Client {
         } catch (e) {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[core] post', e.code, e.message)
           if (e.code === 'replay') { this._acked(item); continue }
-          if (e.code === 'lease-lost') { if (!leaseRetried && await this._recoverLease()) { leaseRetried = true; continue } this._leaseRecovery = null; this._leaseRecoveryFailed = true; this.hub.onLeaseLost(e); break }
+          if (e.code === 'lease-lost') {
+            // Posted under a generation this process has since replaced (its own newer claim): post again.
+            if (this.hub.lease_generation !== generation) continue
+            let held
+            try { held = !leaseRetried && await this._recoverLease() }
+            catch { await sleep(backoff); backoff = Math.min(backoff * 2, 2_000); continue }   // no verdict: ask again
+            if (held) { leaseRetried = true; continue }
+            this._leaseRecoveryFailed = true; this.hub.onLeaseLost(e); break
+          }
           if (e.code === 'gap') {
             for (const old of this.recentSent) { try { await this.hub.postEnvelope(old.bytes) } catch {} }
             await sleep(backoff); backoff = Math.min(backoff * 2, 10_000)
