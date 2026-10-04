@@ -668,6 +668,23 @@ if (z.KEY_SCOPE) await test('R6 session keys: agent A cannot read session B; han
   await until(async () => { await a4.catchUp(); return a4.model.cards.get(c2)?.title === 'history of session 2' }, 'a4 reads the history of session 2')
 })
 
+if (z.KEY_SCOPE) await test('review 3: an agent given the history keeps it across later rotations, on every human device', async () => {
+  const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
+  const sid = a1.session_id
+  const c = await a1.sendCard({ title: 'old history', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a1, phone, laptop)
+  const a4 = await addAgent(phone, 'Agent 4')
+  await phone.assignSession({ session_id: sid, agent_device_ids: [a4.my_device_id], with_history: true })
+  await until(() => a4.session_ids.includes(sid), 'a4 assigned')
+  await until(() => laptop.model.human.raw.get(`session_history/${sid}`)?.value?.agents?.includes(a4.my_device_id), 'the other human device knows a4 holds the history')
+  // A later rotation by the OTHER human device (a removal re-keys every session): a4 still gets the history key.
+  await laptop.removeDevices([a2.my_device_id])
+  const epoch = laptop.sessionKeys.get(sid).state.epoch
+  await until(async () => { await a4._refreshSessions(); return a4.sessionKeys.get(sid)?.secrets.has(epoch) }, 'a4 holds the new epoch')
+  assert(a4.sessionKeys.get(sid).secrets.get(epoch).hist, 'with the history key (it can walk back after losing its storage)')
+  await until(async () => { await a4.catchUp(); return a4.model.cards.get(c)?.title === 'old history' }, 'a4 reads the old history')
+})
+
 if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets lease-lost and stops', async () => {
   const { agents: [agent] } = await room({ agents: 1 })
   const r = await agent.claimSession({ process_instance: 'first' })
@@ -970,20 +987,79 @@ await test('S2 live epoch cutoff on clients (B03): an unassigned agent writing u
   const { phone, agents: [a1] } = await room({ agents: 1 })
   await settleAll(phone, a1)
   const sid = a1.session_id
+  const oldSecret = a1.sessionKeys.get(sid).secrets.get(a1.sessionKeys.get(sid).state.epoch)
   const a3 = await addAgent(phone, 'Next')
   await phone.assignSession({ session_id: sid, agent_device_ids: [a3.my_device_id], with_history: false })
   await settleAll(phone)
-  const old = a1.sessionKeys.get(sid)
   // a1 still holds the old epoch's key; a hostile hub would pass its envelope on (the honest hub voids it)
-  const forge = async text => {
+  const forge = async (text, opts = {}) => {
     const payload = codec.encodePayload(codec.KIND.status, { values: { 'status_line/x': { label: text } }, lamport: 1e6 })
-    const sealed = await z.sealEnvelope({ device: a1.device, state: a1.state, secret: old.secrets.get(old.state.epoch), chains: a1.chains, keyScope: 1, sessionId: z.unhex(sid), kind: codec.KIND.status, payload })
-    await phone.processRecords([{ envelope_number: phone.model.room.last_envelope_number + 1, envelope: z.b64u(sealed.bytes) }])
+    const sealed = await z.sealEnvelope({ device: a1.device, state: a1.state, secret: oldSecret, chains: a1.chains, keyScope: 1, sessionId: z.unhex(sid), kind: codec.KIND.status, payload, ...opts })
+    await phone.processRecords([{ envelope_number: phone.model.room.last_envelope_number + 1, envelope: z.b64u(sealed.bytes) }], { live: true })
   }
   phone.sessionKeys.get(sid).since = Date.now() - 3 * 60_000           // the re-key was three minutes ago
+  phone._liveFrom = Date.now() - 4 * 60_000                             // and the phone has been live all along
   await forge('stale')
   assert(!phone.model.sessions.get(sid).status_lines.some(l => l.label === 'stale'), 'the stale write is not shown')
   assert(phone.model.alerts.some(a => a.code === 'wrong-epoch'), 'alert wrong-epoch')
+  // Not live (after sleep, in a resync, history): by signed times. Signed 6 minutes after the re-key: refused too.
+  phone._liveFrom = null
+  await forge('signed-late', { time: Date.now() + 6 * 60_000 })
+  assert(!phone.model.sessions.get(sid).status_lines.some(l => l.label === 'signed-late'), 'refused by signed time')
+})
+
+await test('review 3 B03: a forced gap and resync no longer apply a stale envelope; a device that slept accepts what the hub accepted in its grace', async () => {
+  const { phone, laptop, agents: [a1] } = await room({ laptop: true, agents: 1 })
+  await settleAll(phone, laptop, a1)
+  const sid = a1.session_id
+  const oldK = laptop.sessionKeys.get(sid), e0 = oldK.state.epoch, oldSecret = oldK.secrets.get(e0)
+  const a3 = await addAgent(phone, 'Next')
+  await phone.assignSession({ session_id: sid, agent_device_ids: [a3.my_device_id], with_history: false })   // drops a1: rotates
+  await settleAll(phone, laptop)
+  // The laptop seals two statuses in the OLD session epoch; the hub accepts them (inside its own grace).
+  const post = async label => {
+    const payload = codec.encodePayload(codec.KIND.status, { values: { [`note/${label}`]: { label } }, lamport: 1 })
+    const sealed = await laptop.serial(() => z.sealEnvelope({ device: laptop.device, state: laptop.state, secret: oldSecret, chains: laptop.chains, keyScope: 1, sessionId: z.unhex(sid), kind: codec.KIND.status, payload }))
+    return (await laptop.hub.postEnvelope(z.b64u(sealed.bytes))).envelope_number
+  }
+  const shows = (c, label) => c.model.human.raw.get(`note/${label}`)?.value?.label === label
+  // (1) epoch-late.mjs: the phone saw the change, then slept for 3 minutes; it processes them late (not live). Before,
+  // it refused them by its own clock and the sender's next envelope hit a gap; now the signed times decide.
+  phone.sessionKeys.get(sid).since -= 3 * 60_000
+  phone._liveFrom = null
+  phone._lastGapResync = Date.now()
+  const n1 = await post('late-ok')
+  await laptop.sendMessage({ agent_device_id: a3.my_device_id, text: 'after the late one' }); await settleAll(laptop)
+  await phone.catchUp()
+  await until(() => shows(phone, 'late-ok'), 'the late but valid status is applied')
+  assert(!phone.model.alerts.some(a => a.code === 'gap'), 'no gap after it')
+  assert(n1 > 0)
+  // (2) the bypass: a live device refuses two stale envelopes; a resync (any gap forces one) must not apply them.
+  phone._liveFrom = Date.now() - 10 * 60_000
+  const before = phone.model.room.last_envelope_number
+  await post('stale-1'); await post('stale-2')
+  const got = (await phone.hub.envelopes({ after_envelope_number: before, limit: 10 })).envelopes
+  await phone.processRecords(got, { live: true })
+  assert(!shows(phone, 'stale-1') && !shows(phone, 'stale-2'), 'refused live')
+  assert(!phone.model.alerts.some(a => a.code === 'gap'), 'the chain moved on: no gap, no forced resync')
+  await phone.serial(() => phone._resync())
+  assert(!shows(phone, 'stale-1') && !shows(phone, 'stale-2'), 'still refused after a resync')
+  assert(shows(phone, 'late-ok'), 'the valid late one stays')
+})
+
+await test('review 3 void records: a void from another sender with no reason this device can re-check is shown, not dropped silently', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'deploy?', options: [{ key: 'a', label: 'yes' }] }); await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'phone has card')
+  await agent.stop()                                     // agent offline: the hostile hub decides how it sees the next envelope
+  await phone.answer({ object_id: id, choices: ['a'] }); await settleAll(phone)
+  const r = await phone.hub.envelopes({ after_envelope_number: 0, limit: 1000 })
+  const last = r.envelopes.at(-1)
+  const pruned = await z.pruneEnvelope(z.unb64u(last.envelope))
+  const before = agent.model.room.last_envelope_number
+  await agent.processRecords(r.envelopes.filter(e => e.envelope_number > before && e.envelope_number < last.envelope_number))
+  await agent.processRecords([{ envelope_number: last.envelope_number, envelope: z.b64u(pruned), void: true, void_code: 'forbidden' }])
+  assert(agent.model.alerts.some(a => a.code === 'hub-voided-other'), 'the agent shows the withheld answer')
 })
 
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
