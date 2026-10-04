@@ -189,7 +189,7 @@ TimelineItem = {
   envelope_hash, sender_device_id, recipient_device_id, sent_at,
   item_state: 'header' | 'loading' | 'loaded' | 'pruned' | 'undecryptable' | 'newer_schema',
   content_type,                            // when loaded: 'message' | 'strokes' | 'erase' | 'move' | 'send_away' | 'selection_sent'
-  content,                                 // the decoded body (README fields: text, details, html, attachments, hand_back, explain, present_card, copied_cards, marks, strokes, stroke_ids, offset)
+  content,                                 // the decoded body (README fields: text, details, html, attachments, hand_back, explain, present_card, copied_cards, marks, published_object_id, strokes, stroke_ids, offset)
 }
 ```
 
