@@ -25,6 +25,11 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - area send → agent 35–39 ms
   - 20k strokes: snapshot 119–134 ms (257 KB); fresh reload 0.31 s (0.97 s at 4x CPU, longest task 108 ms)
   - Not yet run against production; no real touch test. Sessions still addressed by agent device id until R6. Info card Nr. 217.
+- Card page (trommi/trommi b5a77df…a49f163): 17/17 card flows in the flow test (all decision flows, comments paged newest first, drafts, pen marks, versions, permission, info).
+  - Crazy room: open card 15–20 ms desktop / 45–65 ms phone 4x; own comment 13 / 50 ms.
+  - Open: answer → Desk repaint 240–280 ms on phone 4x (the Desk render path, with C).
+- Phone (618d89e, dda34ca): parity at 390/360 light/dark; PWA update flow; long-press sheet 18–24 ms.
+  - Phone 4x crazy room: first paint 573 ms, open session 127 ms, back to Desk 197 ms, longest task 444 ms (over budget, C on the Desk render path).
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
