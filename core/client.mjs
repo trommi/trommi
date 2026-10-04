@@ -575,21 +575,33 @@ export class Client {
     for (const card of this.model.cards.values()) {
       if (card.object_state !== 'open') continue
       const t = this.model.timelines.get(card.timeline_key)
-      const cutoff = M.revisionCutoff(card)
-      if (!t || t.newest_human_envelope_number <= cutoff || card.in_revision) continue
+      if (!t) continue
+      // what the device knows already: the card's last change of openness, and the hand-back it shows
+      const base = Math.max(M.revisionCutoff(card), card.in_revision?.envelope_number ?? 0)
+      const newestMsg = Math.max(t.newest_human_envelope_number ?? 0, t.newest_agent_envelope_number ?? 0)
+      if (newestMsg <= base) continue
       // each conversation state is read once (a plain message newer than the card would be fetched on every catch-up)
       const checked = (this._revChecked ??= new Map())
-      const mark = `${t.newest_human_envelope_number}/${cutoff}`
+      const mark = `${newestMsg}/${base}`
       if (checked.get(card.object_id) === mark) continue
-      const items = await this._readTimeline(card.timeline_key, { before: this.model.room.last_envelope_number + 1, limit: 20 })
-      checked.set(card.object_id, mark)
-      let rev = null
-      for (const it of items) {
-        if (it.envelope_number <= cutoff || !it.content) continue
-        if (it.content.present_card) rev = null
-        else if (this.model.members.get(it.sender_device_id)?.device_role === 'human' && (it.content.hand_back || it.content.explain)) rev = { by: it.content.hand_back ? 'hand_back' : 'explain', envelope_number: it.envelope_number }
+      const newest = () => Math.max(t.newest_human_envelope_number ?? 0, t.newest_agent_envelope_number ?? 0, card.envelope_number, M.revisionCutoff(card), card.in_revision?.envelope_number ?? 0)
+      let items = null
+      for (let k = 0; k < 3 && !items; k++) {            // live records went on while the page was read: read it again
+        const at = newest()
+        const got = await this._readTimeline(card.timeline_key, { before: this.model.room.last_envelope_number + 1, limit: 20 })
+        if (newest() === at) items = got
       }
-      if (rev) { card.in_revision = rev; change.cards.add(card.object_id); change.sessions.add(card.agent_device_id) }
+      if (!items || card.object_state !== 'open') continue
+      checked.set(card.object_id, mark)
+      // newest wins: a human's hand_back / explain puts the card in revision, the agent's present_card takes it back.
+      // Only what is newer than `base` counts; a page that does not reach back to it keeps the state where it has no word.
+      let rev = card.in_revision ?? null, said = false
+      for (const it of [...items].sort((a, b) => a.envelope_number - b.envelope_number)) {
+        if (it.envelope_number <= base || !it.content) continue
+        if (it.content.present_card) { rev = null; said = true }
+        else if (this.model.members.get(it.sender_device_id)?.device_role === 'human' && (it.content.hand_back || it.content.explain)) { rev = { by: it.content.hand_back ? 'hand_back' : 'explain', envelope_number: it.envelope_number }; said = true }
+      }
+      if (said && JSON.stringify(rev) !== JSON.stringify(card.in_revision ?? null)) { card.in_revision = rev; change.cards.add(card.object_id); change.sessions.add(card.agent_device_id) }
     }
     if (change.cards.size) { this._markDirty(change, []); this._emitChange(change) }
   }
@@ -762,7 +774,9 @@ export class Client {
           // L10: a gap would silence that sender on this device for good: replay the room once (at most every 10 minutes).
           // H1: with a backoff from 2 s doubling to 10 minutes (reset after a resync without gaps), so a hub that withheld
           // or reordered envelopes and turned honest again is caught up with soon, not after ten minutes.
-          if (e.code === 'gap') { if (this._resyncing) this._gapInResync = true; else this._gapSeen() }
+          // H1: an envelope that failed its checks on the way (bit flips, a stale member list) is lost for this device unless
+          // the room is read again: the same backoff as a gap; the honest copy is read then.
+          if (e.code === 'gap' || REREAD_ON.has(e.code)) { if (this._resyncing) this._gapInResync = true; else this._gapSeen() }
         }
         this.model.room.last_envelope_number = r.envelope_number
         if (performance.now() - t0 > YIELD_MS) { await yieldNow(); t0 = performance.now() }
@@ -847,6 +861,10 @@ export class Client {
     } finally {
       this._resyncing = false
       if (!this._gapInResync) this._gapBackoff = 2000
+      else if (!this._gapTimer) {          // H1: still not whole: read the room again after the (doubled) backoff
+        this._gapTimer = setTimeout(() => { this._gapTimer = null; if (!this._started) return; this._lastGapResync = Date.now(); this._gapBackoff = Math.min((this._gapBackoff ?? 2000) * 2, 10 * 60_000); this.serial(() => this._resync()).catch(e => this._localAlert('resync', e)) }, this._gapBackoff ?? 2000)
+        this._gapTimer.unref?.()
+      }
       if (own) this.chains.set(me, own)
       this._dirty.chains.add(me)
     }
@@ -1561,6 +1579,9 @@ export class Client {
     this._needHuman()
     const card = this._card(object_id)
     if (card.object_state !== 'open') throw new ZError('card-closed', 'the card is not open')
+    // fuzz F9 again: retention removed the card's content on this device (options unknown), e.g. a pruned card decided
+    // again: an answer from here cannot be checked by this device itself; another device that holds the card answers it.
+    if (card.content_state && card.content_state !== 'ok') throw new ZError('card-pruned', 'this device holds only the header of this card (retention); answer it on a device that shows it')
     const content = { answer_action, choices, note, option_notes, attachments, marks, trusted }
     const bind = z.encodeAnswerBind({ objectId: unhex(object_id), versionHash: unhex(card.version_hash), choices, cardId: unhex(object_id), cardHash: unhex(card.version_hash), choice: choices[0] ?? '' })
     const state = answer_action === 'answer' ? 'answered' : 'closed'
@@ -2199,6 +2220,8 @@ function epochStartTime(k, epoch) {
   return k._start.get(epoch) ?? null
 }
 /** F12: failures of the network or the hub, not of the record (retry the record later; never skip it). */
+/** Refusals that a hub (or anything on the way) can cause by altering an envelope: worth one more read later (H1). */
+const REREAD_ON = new Set(['bad-signature', 'bad-format', 'bad-version', 'chain-break', 'hash-mismatch', 'decrypt-failed', 'not-member', 'log-fork', 'wrong-room'])
 function isTransient(e) {
   return e?.code === 'offline' || e?.code === 'rate-limited' || e?.code === 'timeout' || e?.status === 0 || (e?.status >= 500) || /^http-5/.test(e?.code ?? '')
 }

@@ -9,12 +9,12 @@
     {
       "name": "trommi",
       "displayName": "Trommi",
-      "version": "47a08caaca94",
+      "version": "a1b62a97442d",
       "description": "Connects this Claude Code session to your Trommi board: chat, decision cards and live board events, end-to-end encrypted.",
       "source": {
         "source": "archive",
-        "url": "https://app.trommi.com/plugins/trommi-47a08caaca94.zip",
-        "sha256": "e56ab1649764ac83fbd13cbdb61a6fced75d18fd35cbd9b27499eae90a149cd2"
+        "url": "https://app.trommi.com/plugins/trommi-a1b62a97442d.zip",
+        "sha256": "8372e78d346fcf4c674aedd9d7ffd58660e47e9310c9676c96785fbb1366b3dd"
       }
     }
   ]

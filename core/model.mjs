@@ -452,6 +452,9 @@ export function answerRefusal(model, rec) {
   const c = rec.content
   if (!c) return null   // pruned: the hub kept the header only; it counted when it was sent
   if (!['answer', 'read', 'shred'].includes(c.answer_action)) return 'bad-answer'
+  // F24: this device holds only the card's header (retention; e.g. decided again after a prune): it cannot check the
+  // choices against options it never saw. The bind names this version; the owner agent, which holds the card, checks the rest.
+  if (card.content_state && card.content_state !== 'ok') return null
   const choices = c.choices ?? []
   // R7: the bind carries the whole list of choices (v1: only the first).
   const bound = b.choices ?? (b.choice ? [b.choice] : [])
