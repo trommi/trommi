@@ -96,7 +96,9 @@ try {
   const j = joinRoom({ link, storage: memoryStorage(), device_name: 'night-agent', device_info: { device_name: 'night-agent', platform: 'node', folder: '~/git/test', host: 'e2e' }, poll_ms: 100 })
   agent = await j.client
   agent.on('error', e => results.push(`note agent error: ${e?.code} ${e?.message}`))
-  await agent.start()
+  // One lease per process (R4): start() takes it under this process instance; a second claim under another instance
+  // was a takeover of the agent's own stream (lease-lost on the stream, the answer never arrived).
+  await agent.start({ process_instance: 'e2e' })
   // v1.1: an agent holds no room key; the app's core grants it a session once it joined.
   if (agent.whenSession) await Promise.race([agent.whenSession(), sleep(15000)])
   await agent.claimSession?.({ process_instance: 'e2e', agent_name: 'night-agent' }).catch(e => results.push(`note claimSession: ${e.message}`))
