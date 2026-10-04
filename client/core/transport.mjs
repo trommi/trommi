@@ -7,6 +7,14 @@ const REFRESH_BEFORE_MS = 60_000
 
 export const normaliseHubUrl = url => String(url).replace(/\/+$/, '')
 
+/** Every id that goes into a URL path is lowercase hex of its exact length (never raw text from a body or the hub). */
+const HEX = { room_id: 64, attachment_id: 32, invite_id: 32, session_id: 32, share_id: 32 }
+export function checkId(what, v) {
+  const n = HEX[what]
+  if (typeof v !== 'string' || v.length !== n || !/^[0-9a-f]+$/.test(v)) throw new ZError('bad-argument', `${what} must be ${n} lowercase hex characters`)
+  return v
+}
+
 export class Hub {
   /**
    * hub_url: 'https://hub.trommi.com'. room_id: hex. signer: async (challengeBytes) -> signed challenge bytes
@@ -28,7 +36,7 @@ export class Hub {
   }
 
   url(path) { return `${this.hub_url}/v1${path}` }
-  roomPath(path = '') { return `/rooms/${this.room_id}${path}` }
+  roomPath(path = '') { return `/rooms/${checkId('room_id', this.room_id)}${path}` }
 
   async signIn() {
     if (this._signing) return this._signing
@@ -99,12 +107,12 @@ export class Hub {
   sealedRoomKeys(after_key_epoch = 0) { return this.request('GET', this.roomPath('/sealed_room_keys'), { query: { after_key_epoch } }) }
   keyBackLinks() { return this.request('GET', this.roomPath('/key_back_links')) }
   postInvite(signed_offer) { return this.request('POST', this.roomPath('/invites'), { body: { signed_offer } }) }
-  getInvite(invite_id) { return this.request('GET', this.roomPath(`/invites/${invite_id}`), { auth: false }) }
-  postRequest(invite_id, signed_request) { return this.request('POST', this.roomPath(`/invites/${invite_id}/requests`), { auth: false, body: { signed_request } }) }
-  getRequests(invite_id) { return this.request('GET', this.roomPath(`/invites/${invite_id}/requests`)) }
-  deleteInvite(invite_id) { return this.request('DELETE', this.roomPath(`/invites/${invite_id}`)) }
-  postReveal(invite_id, signed_reveal) { return this.request('POST', this.roomPath(`/invites/${invite_id}/reveal`), { body: { signed_reveal } }) }
-  joinStatus(invite_id, request_hash) { return this.request('GET', this.roomPath(`/invites/${invite_id}/status`), { auth: false, query: { request_hash } }) }
+  getInvite(invite_id) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}`), { auth: false }) }
+  postRequest(invite_id, signed_request) { return this.request('POST', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/requests`), { auth: false, body: { signed_request } }) }
+  getRequests(invite_id) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/requests`)) }
+  deleteInvite(invite_id) { return this.request('DELETE', this.roomPath(`/invites/${checkId('invite_id', invite_id)}`)) }
+  postReveal(invite_id, signed_reveal) { return this.request('POST', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/reveal`), { body: { signed_reveal } }) }
+  joinStatus(invite_id, request_hash) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/status`), { auth: false, query: { request_hash } }) }
   postEnvelope(envelope) {
     return this.request('POST', this.roomPath('/envelopes'), { body: { envelope }, headers: this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} })
   }
@@ -114,19 +122,19 @@ export class Hub {
   }
   agentLease({ process_instance, renew = false }) { return this.request('POST', this.roomPath('/agent_lease'), { body: { process_instance, ...(renew ? { renew: true } : {}) } }) }
   sessions() { return this.request('GET', this.roomPath('/sessions')) }
-  sessionGrants(session_id, after_grant_number = -1) { return this.request('GET', this.roomPath(`/sessions/${session_id}/grants`), { query: { after_grant_number } }) }
+  sessionGrants(session_id, after_grant_number = -1) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/grants`), { query: { after_grant_number } }) }
   postSessionGrant(session_id, { signed_grant, sealed_session_keys, key_back_link }) {
-    return this.request('POST', this.roomPath(`/sessions/${session_id}/grants`), { auth: false, body: { signed_grant, sealed_session_keys, key_back_link } })
+    return this.request('POST', this.roomPath(`/sessions/${checkId('session_id', session_id)}/grants`), { auth: false, body: { signed_grant, sealed_session_keys, key_back_link } })
   }
-  sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${session_id}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
-  sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${session_id}/key_back_links`)) }
+  sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
+  sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/key_back_links`)) }
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope } }) }
-  putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${attachment_id}`), { raw: bytes }) }
-  postShare(attachment_id, { share_id, share_secret_hash, expires_at }) { return this.request('POST', this.roomPath(`/attachments/${attachment_id}/shares`), { body: { share_id, share_secret_hash, expires_at } }) }
-  deleteShare(attachment_id, share_id) { return this.request('DELETE', this.roomPath(`/attachments/${attachment_id}/shares/${share_id}`)) }
+  putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes }) }
+  postShare(attachment_id, { share_id, share_secret_hash, expires_at }) { return this.request('POST', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares`), { body: { share_id, share_secret_hash, expires_at } }) }
+  deleteShare(attachment_id, share_id) { return this.request('DELETE', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares/${checkId('share_id', share_id)}`)) }
   /** For the outsider's viewer page: the ciphertext of a shared attachment, no sign-in. */
-  getShared(share_id, share_secret) { return this.request('GET', `/shares/${share_id}`, { auth: false, binary: true, headers: { 'x-share-secret': share_secret } }) }
-  getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${attachment_id}`), { binary: true }) }
+  getShared(share_id, share_secret) { return this.request('GET', `/shares/${checkId('share_id', share_id)}`, { auth: false, binary: true, headers: { 'x-share-secret': share_secret } }) }
+  getAttachment(attachment_id) { return this.request('GET', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { binary: true }) }
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
   getEscrow() { return this.request('GET', this.roomPath('/escrow'), { auth: false }) }
   putEscrow({ escrow_version, key_escrow }) { return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, key_escrow } }) }

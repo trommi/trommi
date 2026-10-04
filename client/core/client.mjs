@@ -237,6 +237,7 @@ export class Client {
     const change = M.emptyChange()
     const before = new Set(this.session_ids)
     for (const { session_id } of list) {
+      if (!/^[0-9a-f]{32}$/.test(session_id ?? '')) continue          // not a session id: never into a URL
       const known = this.sessionKeys.get(session_id)
       const r = await this.hub.sessionGrants(session_id, known ? known.state.grantNumber : -1)
       if (!r.signed_grants.length && known) continue
@@ -684,7 +685,7 @@ export class Client {
     const frontier = this._advanceFrontier(sender, h)
     let content = null, bind = null
     if (opened) {
-      const d = codec.decodePayload(opened.payload)
+      const d = decodeOpened(opened, h)
       content = d.content; content_state = d.content_state
       try { bind = codec.decodeBindFor(opened.kind, opened.bind) } catch { bind = null }
     }
@@ -1006,7 +1007,7 @@ export class Client {
         if (r.c) { byN.set(envelope_number, r); continue }
         try {
           const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.openKeys, envelopeHash: unhex(r.h), self: this.device.id })
-          const d = codec.decodePayload(o.payload)
+          const d = decodeOpened(o)
           r = { ...r, c: d.content, cs: d.content_state }
           this.stats.decrypted++
         } catch (e) {
@@ -1245,7 +1246,7 @@ export class Client {
           let stored = r
           if (!r.c) {
             const o = await z.openVerifiedEnvelope(unb64u(envelope), { state: this.state, secrets: this.openKeys, envelopeHash: unhex(r.h), self: this.device.id })
-            const d = codec.decodePayload(o.payload)
+            const d = decodeOpened(o)
             stored = { ...r, c: d.content, cs: d.content_state }
             writes.push([prefix + pad(envelope_number), stored])
           }
@@ -1504,6 +1505,14 @@ function everAgents(k) {
   for (const g of k.grants) for (const id of G.decodeGrant(unb64u(g)).agentIds) set.add(hex(id))
   k._ever = [...set]; k._everN = k.grants.length
   return k._ever
+}
+
+/** Decode an opened body. Every attachment it references must be in the signed header's blob list (quota, retention, and
+ *  no id the hub never saw); attachment ids are hex (codec). Otherwise the body counts as undecryptable. */
+function decodeOpened(o, header = o.header) {
+  const d = codec.decodePayload(o.payload)
+  if (d.content && header && codec.attachmentIdsOf(d.content).some(id => !header.blobs.some(b => hex(b) === id))) return { content: null, content_state: 'undecryptable' }
+  return d
 }
 
 function itemFromStored(r) {

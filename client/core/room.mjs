@@ -13,6 +13,7 @@ async function sessionsAsRecovery(hub, state, rec) {
   let list = []
   try { list = (await hub.sessions()).sessions } catch (e) { if (e.status === 404) return out; throw e }
   for (const { session_id } of list) {
+    if (!/^[0-9a-f]{32}$/.test(session_id ?? "")) continue
     const r = await hub.sessionGrants(session_id, -1)
     const sstate = await G.verifyGrants(r.signed_grants.map(unb64u), state)
     const wraps = (await hub.sealedSessionKeys(session_id, 0)).sealed_session_keys

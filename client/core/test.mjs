@@ -611,6 +611,30 @@ if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets 
   await until(() => errors.includes('lease-lost'), 'old process told')
 })
 
+await test('S2 ids: no raw ids in URLs; a body naming a non-hex or unlisted attachment is refused', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  let err = null
+  try { await agent.hub.getAttachment('ab'.repeat(16) + '?x=/../../../evil') } catch (e) { err = e }
+  eq(err?.code, 'bad-argument', 'transport refuses a non-hex attachment id')
+  err = null
+  try { await agent.fetchAttachment({ attachment_id: '../x', file_key: 'a', sha256: 'b' }) } catch (e) { err = e }
+  eq(err?.code, 'bad-argument', 'fetchAttachment too')
+  eq(codec.decodePayload(new TextEncoder().encode(JSON.stringify({ content_type: 'message', attachments: [{ attachment_id: 'ab'.repeat(16) + '?x=/../../a' }] }))).content_state, 'undecryptable', 'codec refuses a non-hex ref')
+  // A human seals a message whose body names an attachment that is not in the signed header's blob list.
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  const sid = agent.session_id
+  const { secret, scope } = phone.keyFor({ session_id: sid })
+  const payload = codec.encodePayload(codec.KIND.timeline_item, { content_type: 'message', text: 'evil', attachments: [{ attachment_id: 'cd'.repeat(16), file_key: 'x', sha256: 'y', file_name: 'rc' }] })
+  const sealed = await z.sealEnvelope({ device: phone.device, state: phone.state, secret, chains: phone.chains, ...scope, kind: codec.KIND.timeline_item, payload, recipient: z.unhex(agent.my_device_id), blobs: [],
+    timelineKind: codec.TIMELINE_KIND.chat, timelineId: `session/${sid}` })
+  await phone.hub.postEnvelope(z.b64u(sealed.bytes))
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'fine' })
+  await settleAll(phone, agent)
+  await until(() => cmds.some(c => c.content.text === 'fine'), 'the next message arrives')
+  assert(!cmds.some(c => c.content?.text === 'evil'), 'the unlisted-attachment body never reaches the agent')
+})
+
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
   const N = BENCH ? 20000 : 6000
   const { phone, agents: [agent] } = await room({ agents: 1 })

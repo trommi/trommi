@@ -73,8 +73,22 @@ export function decodePayload(bytes) {
   let content
   try { content = JSON.parse(td.decode(bytes)) } catch { return { content: null, content_state: 'undecryptable' } }
   if (!content || typeof content !== 'object' || Array.isArray(content)) return { content: null, content_state: 'undecryptable' }
+  if (!attachmentIdsValid(content)) return { content: null, content_state: 'undecryptable' }   // a ref id is not hex: refuse the body
   if (content.schema_version > SCHEMA_VERSION) return { content, content_state: 'newer_schema' }
   return { content, content_state: 'ok' }
+}
+
+const HEX32 = /^[0-9a-f]{32}$/
+/** Every attachment_id / poster_attachment_id anywhere in a body is 32 lowercase hex (they reach URLs and file names). */
+export function attachmentIdsValid(content, depth = 0) {
+  if (depth > 32) return false
+  if (Array.isArray(content)) return content.every(v => attachmentIdsValid(v, depth + 1))
+  if (!content || typeof content !== 'object') return true
+  for (const [k, v] of Object.entries(content)) {
+    if ((k === 'attachment_id' || k === 'poster_attachment_id') && v != null && !(typeof v === 'string' && HEX32.test(v))) return false
+    if (v && typeof v === 'object' && !attachmentIdsValid(v, depth + 1)) return false
+  }
+  return true
 }
 
 /** The attachment ids a body references (they go into the header's blob list). */
