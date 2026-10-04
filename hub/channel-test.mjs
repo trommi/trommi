@@ -62,6 +62,9 @@ function fakeClient() {
     async publish(p) { calls.push(['publish', p]); const i = id(); model.published.set(i, { object_id: i, agent_device_id: me, object_state: 'open', ...p }); return i },
     async uploadAttachment(bytes, meta) { calls.push(['upload', bytes.length, meta]); const i = id(); return { attachment_id: i, file_key: 'k', sha256: 's', total_size: bytes.length, ...meta } },
     async settle() {},
+    async unpublish(i) { calls.push(['unpublish', i]); model.published.get(i).object_state = 'closed' },
+    async shareAttachment(ref, o) { calls.push(['share', ref.attachment_id, o]); const share_id = id(); return { share_id, expires_at: o.expires_at, link: `https://app.trommi.com/a/${share_id}#s.k.h` } },
+    async revokeShare(sid) { calls.push(['unshare', sid]) },
     async fetchAttachment(ref) { return new TextEncoder().encode(`bytes of ${ref.file_name}`) },
   }
 }
@@ -189,9 +192,17 @@ await test('list_cards, publish_asset, list_assets, revoke_asset; the unported t
   const told = client.calls.find(c => c[0] === 'sendMessage')[1]
   assert.equal(told.text, '**Report**'); assert.equal(told.published_object_id, id); assert.equal(told.attachments[0].media_type, 'text/html')
   assert.equal(JSON.parse(await bridge.callTool('list_assets', {}))[0].id, id)
+  const shared = await bridge.callTool('share_asset', { id, expires_hours: 2 })
+  assert.match(shared, /Link for the recipient: https:\/\/app\.trommi\.com\/a\/[0-9a-f]{32}#/)
+  const share = client.calls.find(c => c[0] === 'share')
+  assert.ok(Math.abs(share[2].expires_at - Date.now() - 2 * 3600000) < 5000)
+  assert.ok(JSON.parse(await bridge.callTool('list_assets', {}))[0].released_until)
+  await assert.rejects(bridge.callTool('share_asset', { id, expires_hours: 24 * 31 }), /at most 30 days/)
+  assert.match(await bridge.callTool('share_asset', { id, release: false }), /release taken back/)
+  assert.equal(client.calls.filter(c => c[0] === 'unshare').length, 1)
+  await bridge.callTool('share_asset', { id })
   await bridge.callTool('revoke_asset', { id })
-  assert.deepEqual(client.calls.at(-1), ['close', id, 'revoked'])
-  await assert.rejects(bridge.callTool('share_asset', { id }), /not available/)
+  assert.deepEqual(client.calls.slice(-2).map(c => c[0]), ['unshare', 'unpublish'])
   await assert.rejects(bridge.callTool('create_voiceover', { text: 'x' }), /not available/)
   await assert.rejects(bridge.callTool('adopt_session', { id: 'x' }), /introduce with parent/)
 })

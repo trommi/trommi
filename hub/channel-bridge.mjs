@@ -180,6 +180,7 @@ const markOf = m => {
  */
 export function createBridge({ client, notify, cacheDir, state = {}, saveState = () => {}, log = () => {} }) {
   state.permissions ??= {}
+  state.shares ??= {}   // published object_id -> [{ share_id, expires_at }]: outsider links this agent made
   const model = () => client.model
   const me = () => model().room.my_device_id
   // This agent's session on the board: its session_id once sessions have their own keys (R6), its device id before.
@@ -312,6 +313,21 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
   // after create_decision names a card the hub has just confirmed). Costs nothing when nothing is pending.
   const caughtUp = () => client.settle().catch(err => log(`not settled: ${err.message}`))
 
+  const SHARE_MAX_HOURS = 30 * 24
+  function ownAsset(id) {
+    const asset = [...model().published.values()].find(p => p.agent_device_id === me() && p.object_id === String(id ?? ''))
+    if (!asset) throw new Error(`no asset ${id}; list_assets shows yours`)
+    return asset
+  }
+  /** Ends every outsider link of an asset; returns how many were open. */
+  async function unshare(object_id) {
+    const open = (state.shares[object_id] ?? []).filter(s => s.expires_at > Date.now())
+    for (const s of open) await client.revokeShare(s.share_id).catch(err => { if (err.code !== 'not-found') throw err })
+    delete state.shares[object_id]
+    saveState()
+    return open.length
+  }
+
   async function callTool(name, args) {
     if (!args || typeof args !== 'object') args = {}
     await caughtUp()
@@ -430,21 +446,37 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const id = await client.publish({ attachments: [asset], title, ...(note ? { note } : {}) })
         // Announced in the session's conversation, as today's board did: a message carrying the published object.
         await client.sendMessage({ text: [`**${title}**`, note].filter(Boolean).join('\n\n'), attachments: [asset], published_object_id: id })
-        return `published as ${id}: "${title}" is shown in your conversation on the board, end-to-end encrypted; members open it in the Trommi app. Links for people outside the board are not available on the new hub yet.`
+        return `published as ${id}: "${title}" is shown in your conversation on the board, end-to-end encrypted; members open it in the Trommi app. For someone outside the board: share_asset.`
       }
       case 'list_assets':
         return JSON.stringify([...model().published.values()].filter(p => p.agent_device_id === me()).map(p => ({
           id: p.object_id, title: p.title, note: p.note ?? '', state: p.object_state,
           type: p.attachments?.[0]?.asset_type ?? assetTypeOf(p.attachments?.[0]?.media_type ?? ''), size: p.attachments?.[0]?.total_size ?? null,
+          released_until: Math.max(0, ...(state.shares[p.object_id] ?? []).map(x => x.expires_at)) || null,
         })), null, 2)
       case 'revoke_asset': {
-        const asset = [...model().published.values()].find(p => p.agent_device_id === me() && p.object_id === String(args.id))
-        if (!asset) throw new Error(`no asset ${args.id}`)
-        await (client.unpublish ? client.unpublish(asset.object_id) : client.close(asset.object_id, 'revoked'))
+        const asset = ownAsset(args.id)
+        await unshare(asset.object_id)
+        await client.unpublish(asset.object_id)
         return 'revoked: the asset is taken off the board'
       }
-      case 'share_asset':
-        throw new Error('share_asset is not available on the new hub yet: links for people outside the board need a share route the hub does not have. The asset stays visible to the members of the board.')
+      case 'share_asset': {
+        const asset = ownAsset(args.id)
+        if (args.release === false) {
+          const n = await unshare(asset.object_id)
+          return n ? 'release taken back: the link for outsiders no longer opens anything. The asset itself is still there.' : 'it was not released'
+        }
+        const hours = Number(args.expires_hours) > 0 ? Number(args.expires_hours) : SHARE_MAX_HOURS
+        if (hours > SHARE_MAX_HOURS) throw new Error(`a release lasts at most ${SHARE_MAX_HOURS / 24} days; expires_hours ${hours} is too long`)
+        const { share_id, link, expires_at } = await client.shareAttachment(asset.attachments[0], { expires_at: Date.now() + hours * 3600000 })
+        ;(state.shares[asset.object_id] ??= []).push({ share_id, expires_at })
+        saveState()
+        return [
+          `asset ${asset.object_id} is released until ${new Date(expires_at).toISOString()}.`,
+          `Link for the recipient: ${link}`,
+          'It opens a plain viewer without the board; the key is after the #, the hub never sees it. share_asset with release: false or revoke_asset ends it.',
+        ].join('\n')
+      }
       case 'adopt_session':
         throw new Error('adopt_session is not available on the new hub: a session\'s profile is signed by that session alone. Ask the helper to call introduce with parent set to your session id.')
       case 'create_voiceover':
