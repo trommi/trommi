@@ -127,6 +127,16 @@ try {
   await A.js(`trommi.router.visit('/q/${nr}')`)
   await A.until("location.pathname.startsWith('/q/') && document.querySelector('#cardpage') && document.body.textContent.includes('B ist sicherer')", 'explanation in the card thread', 15000).then(() => check(true, 'agent reply shows in the card thread'), e => check(false, e.message))
 
+  // ---- a file from the session's composer reaches the agent whole (encrypted, uploaded, decrypted there) ----
+  const sid = await A.js("return trommi.model().agents[0]?.id")
+  await A.js(`trommi.router.visit('/s/${sid}')`)
+  await A.until("document.querySelector('form.composer input[type=file]')", 'composer')
+  await A.js(`const f = document.querySelector('form.composer'); const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(4096).fill(7)], 'notiz.bin', { type: 'application/octet-stream' })); f.querySelector('input[type=file]').files = dt.files; f.querySelector('textarea').value = 'Mit Datei'; f.requestSubmit(f.querySelector('button[type=submit]'))`)
+  const tf = Date.now(); let fileCmd = null
+  while (!fileCmd && Date.now() - tf < 15000) { fileCmd = commands.find(c => c.command === 'message' && c.content?.attachments?.length); await sleep(50) }
+  const bytes = fileCmd ? await agent.fetchAttachment(fileCmd.content.attachments[0]).catch(() => null) : null
+  check(bytes?.length === 4096 && bytes[0] === 7, `a composer file reaches the agent whole (${bytes?.length ?? 'none'} bytes)`)
+
   // ---- a second human device joins ----
   await A.js("trommi.router.visit('/devices')")
   await A.until("document.querySelector('form[action=\"/pair\"] input[value=human]')", 'devices')
