@@ -697,9 +697,14 @@ export async function startHub({
     fail('not-found', 'no such route')
   }
 
+  // F14: requests in flight are counted; close() refuses new ones and waits for these before the database closes.
+  let closing = false, inFlight = 0, drained = null
   const server = http.createServer((req, res) => {
     req.setTimeout(IDLE_MS, () => req.destroy())       // C03: no bytes moving for 30 s -> closed (the stream turns this off)
-    handle(req, res).catch(err => {
+    if (closing) { res.setHeader('retry-after', '1'); return send(res, 503, { error: 'overloaded', message: 'the hub is restarting; try again in a second' }) }
+    inFlight++
+    const done = () => { inFlight--; if (closing && inFlight === 0) drained?.() }
+    handle(req, res).finally(done).catch(err => {
       if (err?.reply) return send(res, err.reply.status, err.reply.body)
       let code = err?.code, message = err?.message
       if (!(err instanceof z.ZError || err instanceof HubError) || !STATUS[code]) {
@@ -777,7 +782,8 @@ export async function startHub({
     }, 600000),
   ]
   for (const t of timers) t.unref()
-  setTimeout(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, 60000).unref()
+  const firstPrune = setTimeout(() => { if (closing) return; try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, 60000)
+  firstPrune.unref()
 
   const ops = await createOps({ db, dataDir, files, room, bearer, ipOf, now, log, closeRoom, announce: (id, event, data) => rooms.get(id)?.then(r => deliver(r, { text: sse(event, data) }), () => {}) })
   const accounts = createAccounts({ db, room, bearer, ipOf, mailer: createMailer({ log }), now, log })
@@ -789,10 +795,14 @@ export async function startHub({
   return {
     server, port: address.port, hubUrl, db, startupMs, stats, prune, sweepPending, ops, accounts, capStreams, rebuildDerived: () => rebuildDerived(db),
     async close() {
+      closing = true
+      clearTimeout(firstPrune)
       for (const t of timers) clearInterval(t)
       await ops.close()
       accounts.close()
       for (const p of rooms.values()) { const r = await p.catch(() => null); if (r) for (const s of r.streams) if (!s.res.writableEnded) s.res.end() }
+      // Streams never finish on their own: they were ended above. Wait (at most 5 s) for the other requests.
+      if (inFlight > 0) await Promise.race([new Promise(ok => { drained = ok }), new Promise(ok => setTimeout(ok, 5000).unref())])
       await new Promise(ok => { server.close(ok); server.closeAllConnections() })
       db.close()
     },

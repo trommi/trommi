@@ -217,6 +217,8 @@ export class Client {
       // A device that booted from a room snapshot reads items older than it by signature (lazy threads): keep that across restarts.
       if (sync.snapshot_cursor) { this.snapshotCursor = sync.snapshot_cursor; this._snapshotChains = new Map(Object.entries(sync.snapshot_chains ?? {})) }
     }
+    // Commands handed out (F6): written at once by the agent, merged with the sync record's copy (the larger wins).
+    for (const [k, v] of Object.entries((await st.get('delivered')) ?? {})) if (Number.isSafeInteger(v) && v > (this.delivered.get(k) ?? 0)) this.delivered.set(k, v)
     // The lamport counter is also written with every send, before the post (review 3): the larger of the two.
     const sentLamport = (await st.get('lamport')) ?? 0
     if (Number.isSafeInteger(sentLamport) && sentLamport > (this.lamport ?? 0)) this.lamport = sentLamport
@@ -414,7 +416,7 @@ export class Client {
     for (const inv of this.invitesPrivate.values()) { clearInterval(inv._timer); inv._timer = null }   // a restart watches them again
     clearInterval(this._devicesTimer); clearInterval(this._beatTimer)
     this._liveFrom = null
-    clearTimeout(this._dirty.timer)
+    clearTimeout(this._dirty.timer); clearTimeout(this._catchUpTimer); this._catchUpTimer = null; clearTimeout(this._gapTimer); this._gapTimer = null
     await this.flush()
     this._setConnection('offline')
   }
@@ -430,7 +432,12 @@ export class Client {
     this._stream = this.hub.stream({
       after_envelope_number: () => this.model.room.last_envelope_number,
       onState: (s, err) => {
-        if (s === 'open') { this._liveFrom ??= Date.now(); this._setConnection('live'); this._refreshDevices().catch(() => {}) }   // presence after every (re)connect
+        if (s === 'open') {
+          this._liveFrom ??= Date.now(); this._setConnection('live'); this._refreshDevices().catch(() => {})   // presence after every (re)connect
+          // F11: a grant announced while the stream was down is fetched now.
+          if (this._streamOpenedBefore) this.serial(async () => { await this._refreshSessions(); if (this._needResync) await this._resync() }).catch(e => this._localAlert('sessions', e))
+          this._streamOpenedBefore = true
+        }
         else if (s === 'closed') { this._liveFrom = null; this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
       },
       onEvent: ev => this._onStreamEvent(ev),
@@ -617,9 +624,17 @@ export class Client {
           }
         } catch (e) {
           if (globalThis.process?.env?.CORE_DEBUG) console.error('[rec]', e.stack.split('\n').slice(0, 5).join(' | '))
+          // F12: a network failure while handling a record (a member or grant fetch it needed) says nothing about the
+          // record: stop here without moving the cursor past it, and read on from it a little later.
+          if (isTransient(e)) {
+            this._scheduleCatchUp()
+            break
+          }
           M.pushAlert(this.model, change, { code: e.code ?? 'internal', message: e.message, envelope_number: r.envelope_number })
           // L10: a gap would silence that sender on this device for good: replay the room once (at most every 10 minutes).
-          if (e.code === 'gap' && !this._resyncing && Date.now() - (this._lastGapResync ?? 0) > 10 * 60_000) { this._lastGapResync = Date.now(); this._needResync = true }
+          // H1: with a backoff from 2 s doubling to 10 minutes (reset after a resync without gaps), so a hub that withheld
+          // or reordered envelopes and turned honest again is caught up with soon, not after ten minutes.
+          if (e.code === 'gap') { if (this._resyncing) this._gapInResync = true; else this._gapSeen() }
         }
         this.model.room.last_envelope_number = r.envelope_number
         if (performance.now() - t0 > YIELD_MS) { await yieldNow(); t0 = performance.now() }
@@ -633,6 +648,21 @@ export class Client {
       if (commands.length) await this._deliverCommands(commands)
       if (live) this._maybeSnapshot()
     }
+  }
+
+  _gapSeen() {
+    const wait = this._gapBackoff ?? 2000
+    const since = Date.now() - (this._lastGapResync ?? 0)
+    const go = () => { this._lastGapResync = Date.now(); this._gapBackoff = Math.min(wait * 2, 10 * 60_000) }
+    if (since >= wait) { go(); this._needResync = true; return }
+    if (this._gapTimer) return
+    this._gapTimer = setTimeout(() => { this._gapTimer = null; if (!this._started) return; go(); this.serial(() => this._resync()).catch(e => this._localAlert('resync', e)) }, wait - since)
+    this._gapTimer.unref?.()
+  }
+  _scheduleCatchUp(ms = 1500) {
+    if (this._catchUpTimer) return
+    this._catchUpTimer = setTimeout(() => { this._catchUpTimer = null; if (this._started) this.catchUp().catch(() => this._scheduleCatchUp(5000)) }, ms)
+    this._catchUpTimer.unref?.()
   }
 
   /** Human devices write a room snapshot every SNAPSHOT_EVERY envelopes (counted from the newest one anyone wrote). */
@@ -663,6 +693,7 @@ export class Client {
     this.chains = new Map()
     this.frontiers = new Map()
     this._missingKeys = new Set()
+    this._gapInResync = false
     this._resyncing = true
     try {
       for (;;) {
@@ -673,6 +704,7 @@ export class Client {
       }
     } finally {
       this._resyncing = false
+      if (!this._gapInResync) this._gapBackoff = 2000
       if (own) this.chains.set(me, own)
       this._dirty.chains.add(me)
     }
@@ -809,6 +841,19 @@ export class Client {
     }
     const v = pre.v
     const hash = v.hash
+    // F11: a session envelope in an epoch, or from an agent, that the grants this device knows do not cover yet: the grant
+    // was missed (a stream dropped around it). Fetch the grants first (once per session, epoch and grant count), before the
+    // chain moves, so a network failure here leaves the record to be read again.
+    if (h.keyScope === 1 && h.sessionId) {
+      const sid = hex(h.sessionId), k = this.sessionKeys.get(sid)
+      const role = this.state.members.get(key)?.role
+      const covered = k?.state && h.epoch <= k.state.epoch && (role !== z.ROLE.AGENT || epochAgents(k)?.[h.epoch]?.includes(sender))
+      const mark = `${sid}:${h.epoch}:${k?.grants?.length ?? 0}`
+      if (!covered && !(this._grantTried ??= new Set()).has(mark)) {
+        await this._refreshSessions()
+        this._grantTried.add(mark)
+      }
+    }
     const chain = this.chains.get(key)
     if (!chain) {
       if (h.seq !== 1) throw new ZError('gap', `first envelope seen from this sender has number ${h.seq}`, { have: 0, got: h.seq })
@@ -1109,7 +1154,9 @@ export class Client {
     this.byHash.delete(hex(hashBytes))
     const undo = this.echoes.get(local_id)
     this.echoes.delete(local_id)
-    if (undo) undo({ confirmed: true })
+    // F18: what the undo touched is projected again (a refused hub copy would otherwise leave the stack stale).
+    const ch = undo ? undo({ confirmed: true }) : null
+    if (ch) { M.project(this.model, ch); this._emitChange(ch) }
     return {}
   }
   _rollbackEcho(local_id) {
@@ -1164,13 +1211,20 @@ export class Client {
       const card = this.model.cards.get(object_id)
       if (!card) return null
       const saved = { answer: card.answer, object_state: card.object_state, closed_how: card.closed_how }
+      const echoedVersion = card.version_hash
       card.answer = { ...answer, pending: true, local_id }
       card.object_state = state
       const ch = M.emptyChange(); ch.cards.add(object_id); ch.sessions.add(card.agent_device_id)
       M.project(this.model, ch)
       this._emitChange(ch)
-      // The real answer is judged against the card as it was: undo first in either case.
-      return () => { Object.assign(card, saved); const c = M.emptyChange(); c.cards.add(object_id); return c }
+      // The real answer is judged against the card as it was: undo first in either case. F17: only what the echo itself
+      // set; a newer state that arrived meanwhile (the agent closed or revised the card) stays.
+      return () => {
+        const cur = this.model.cards.get(object_id) ?? card
+        if (cur.answer?.local_id === local_id) cur.answer = saved.answer
+        if (cur.object_state === state && cur.version_hash === echoedVersion) { cur.object_state = saved.object_state; cur.closed_how = saved.closed_how }
+        const c = M.emptyChange(); c.cards.add(object_id); c.sessions.add(cur.agent_device_id); return c
+      }
     }
   }
 
@@ -1904,6 +1958,10 @@ function epochStartTime(k, epoch) {
     k._startN = k.grants.length
   }
   return k._start.get(epoch) ?? null
+}
+/** F12: failures of the network or the hub, not of the record (retry the record later; never skip it). */
+function isTransient(e) {
+  return e?.code === 'offline' || e?.code === 'rate-limited' || e?.code === 'timeout' || e?.status === 0 || (e?.status >= 500) || /^http-5/.test(e?.code ?? '')
 }
 function everAgents(k) {
   if (!k?.grants) return []

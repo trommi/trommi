@@ -53,12 +53,16 @@ export class RoomOracle {
   /** A human's answer. Returns true if it counts. */
   answer(ref, { action, choices, trusted = false, staleHash = false }) {
     const c = this.cards.get(ref)
-    if (!c || c.state !== 'open' || staleHash) return false
-    if (action === 'answer' && c.card_type === 'info') return false
+    if (!c || c.state !== 'open') return false
+    // F15: the owner agent refuses an invalid answer to its open card and sends the card again (one version more), so the
+    // hub does not keep it as closed.
+    const refused = () => { c.v++; return false }
+    if (staleHash) return refused()
+    if (action === 'answer' && c.card_type === 'info') return refused()
     if (action === 'answer' && !trusted) {
-      if (c.card_type === 'info' || !choices.length || choices.some(k => !c.options.includes(k)) || (choices.length > 1 && !c.allows_multiple)) return false
+      if (c.card_type === 'info' || !choices.length || choices.some(k => !c.options.includes(k)) || (choices.length > 1 && !c.allows_multiple)) return refused()
     }
-    if (action === 'read' && c.card_type !== 'info') return false
+    if (action === 'read' && c.card_type !== 'info') return refused()
     c.answer = { action, choices }
     c.state = action === 'answer' ? 'answered' : 'closed'
     c.closed_how = action === 'read' ? 'read' : action === 'shred' ? 'shredded' : 'answered'
