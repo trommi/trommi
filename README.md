@@ -65,6 +65,8 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 | 500 | `internal` |
 | 503 | `overloaded` (with `retry-after`: the write queue is full) |
 
+**Void records (v1.1.1, review 2 #5).** When the hub refuses a posted envelope for good (`forbidden`, `wrong-epoch`, `too-large`, `bad-format` from the write rules) **after** it verified the signature, the sender and that it is exactly the sender's next `sender_sequence` with the right `previous_envelope_hash`, it keeps it as a void record: the pruned form (header, nonce, `encrypted_body_hash`, signature; no body) takes the next `envelope_number` and the sender's chain moves on. The refusal then carries `voided: true, envelope_number`. `GET envelopes` and the stream serve it like a pruned envelope with `"void": true, "void_code": "<refusal>"`; `GET threads` never; it binds no object, timeline or attachment. A client never signs a second envelope under a number it used: on `voided` it marks the item failed and keeps its chain; receivers verify the header chain and apply nothing. Retryable refusals (`unauthorised`, `gap`, `stale-session-key`, `lease-lost`, `rate-limited`, 5xx) take no number.
+
 Any other `ZError` code is a 400.
 
 `409 gap` on posting an envelope means the hub holds fewer of the sender's envelopes than the sender thinks (a lost write): the client posts the missing ones again, from its own outbox.

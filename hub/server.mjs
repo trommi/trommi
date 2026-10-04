@@ -196,9 +196,9 @@ export async function startHub({
   const openRoute = (req, roomId) => { if (ops.unlimited(req, roomId)) return; const wait = openLimit.take(ipOf(req)); if (wait) fail('rate-limited', 'too many requests from this address', { retryAfter: wait }) }
 
   /** The envelope rows of a room after a number, with the depth rule: body only for heads not pruned. */
-  const envelopeRows = (roomId, after, limit) => db.q(`SELECT envelope_number, envelope_header, envelope_nonce, envelope_signature, encrypted_body_hash,
+  const envelopeRows = (roomId, after, limit) => db.q(`SELECT envelope_number, envelope_header, envelope_nonce, envelope_signature, encrypted_body_hash, void_code,
       CASE WHEN envelope_kind != 1 THEN encrypted_body END AS encrypted_body FROM envelopes WHERE room_id = ? AND envelope_number > ? ORDER BY envelope_number LIMIT ?`).all(roomId, after, limit)
-  const record = r => ({ envelope_number: r.envelope_number, envelope: z.b64u(envelopeBytes(r, true)) })
+  const record = r => ({ envelope_number: r.envelope_number, envelope: z.b64u(envelopeBytes(r, true)), ...(r.void_code ? { void: true, void_code: r.void_code } : {}) })
 
   // ---- routes ------------------------------------------------------------------------
 
@@ -263,7 +263,15 @@ export async function startHub({
     if (peek.ciphertext && peek.ciphertext.length > LIMITS.ciphertext) fail('too-large', 'an envelope body is at most 64 KiB padded; put more into an attachment')
     const lease = req.headers['x-lease-generation']
     if (lease != null && !/^\d{1,16}$/.test(lease)) fail('bad-argument', 'x-lease-generation')
-    const out = await r.hub.postEnvelope(token, bytes, { leaseGeneration: lease != null ? Number(lease) : null })
+    let out
+    try { out = await r.hub.postEnvelope(token, bytes, { leaseGeneration: lease != null ? Number(lease) : null }) } catch (err) {
+      // A void record (review 2 #5) took the number: everyone sees it in order, and the sender learns its number.
+      if (err.voided) {
+        const rec = { envelope_number: err.envelopeNumber, envelope: z.b64u(err.voidBytes), void: true, void_code: err.code }
+        deliver(r, { n: err.envelopeNumber, text: sse('envelope', rec, err.envelopeNumber) })
+      }
+      throw err
+    }
     deliver(r, { n: out.n, text: sse('envelope', { envelope_number: out.n, envelope: body.envelope }, out.n) })
     send(res, 200, { envelope_number: out.n })
     // send_push is honoured only on an object's own versions and requests (crypto/hub.mjs), and rate-limited per sender.
@@ -666,7 +674,7 @@ export async function startHub({
         code = 'internal'; message = 'internal error'
       }
       if (err.retryAfter) res.setHeader('retry-after', String(err.retryAfter))
-      send(res, STATUS[code], { error: code, message })
+      send(res, STATUS[code], { error: code, message, ...(err.voided ? { voided: true, envelope_number: err.envelopeNumber } : {}) })
     })
   })
   server.requestTimeout = 0          // streams and big uploads: their own idle timeout and deadline (above); headers time out
