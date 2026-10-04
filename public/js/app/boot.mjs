@@ -136,7 +136,7 @@ export async function start(client, { fresh = false } = {}) {
     if (path === '/') for (const c of model().revising ?? []) load(`chat:card/${c.id}`, 5)
   })
 
-  await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
+  await router.visit((location.pathname.replace(/^\/t(?=\/|$)/, '') || '/') + location.search + location.hash, { action: 'replace' })   // old /t/… addresses of the board
   window.trommi.firstPaintMs = performance.now() - T0
   window.trommi.openMs = typeof OPEN_MS === 'number' ? OPEN_MS : null
   window.trommi.readyAt = performance.now()   // since navigation start: cold or warm load to the painted page

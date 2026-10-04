@@ -164,6 +164,7 @@ export class BoardState {
     if (c.in_revision && status === 'open') card.with_agent = this.timeOf(c.timeline_key, c.in_revision.envelope_number) ?? c.updated_at ?? Date.now()
     if (draft && status === 'open') card.draft = { keys: draft.keys ?? [], note: draft.note ?? '', notes: draft.notes ?? {}, ...(draft.marks?.length ? { marks: draft.marks } : {}), ts: draft.ts ?? 0 }
     if (snooze?.until > Date.now() && status === 'open') { card.snoozed_until = snooze.until; card.snoozed_at = snooze.at ?? 0 }
+    else if (snooze?.until && status === 'open') card.unsnoozed = snooze.until   // woken by hand or by the clock: "Back from snooze"
     if (c.merged_into_object_id) card.merged_into = c.merged_into_object_id
     if (c.merged_from_object_ids?.length) card.merged_from = c.merged_from_object_ids.map(id => ({ id, number: this.numberOf?.get(id), title: m.cards.get(id)?.title ?? '' }))
     return card
@@ -247,7 +248,7 @@ export class BoardState {
       if (cardId) msg.card_id = cardId
       if (c.details) msg.details = c.details
       if (c.html) msg.html = c.html
-      if (c.published_object_id) msg.published = c.published_object_id
+      if (c.published_object_id) { if (this.model.published.get(c.published_object_id)?.object_state === 'closed') continue; msg.published = c.published_object_id }   // a revoked asset leaves the conversation
       if (c.hand_back) msg.handback = true
       if (c.explain) msg.explain = true
       if (c.present_card) msg.present = true

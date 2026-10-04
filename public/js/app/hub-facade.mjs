@@ -65,11 +65,11 @@ export function hubFacade(client, board) {
     async snooze(cardId, { clear = false } = {}) {
       const c = card(cardId)
       if (c.kind === 'permission') throw new Error('an approval cannot be put off')
-      await client.snooze(cardId, clear ? null : nextMorning())
+      await client.snooze(cardId, clear ? Date.now() : nextMorning())   // woken: a past until, so the row says "Back from snooze"
     },
     async reopen(cardId) {
       const c = card(cardId)
-      if (c.status === 'open' && c.snoozed_until) return client.snooze(cardId, null)
+      if (c.status === 'open' && c.snoozed_until) return client.snooze(cardId, Date.now())
       const was = { keys: c.choices ?? [], note: c.note ?? '', notes: c.option_notes ?? {} }
       await client.decideAgain({ object_id: cardId })
       // What was taken back becomes the draft again: ticks and notes are where they were (README "decide again").
