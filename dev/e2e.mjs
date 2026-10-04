@@ -7,8 +7,12 @@ import { launchChromium } from './cdp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { joinRoom, memoryStorage } from '../public/vendor/index.mjs'
+import { execSync } from 'node:child_process'
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }
+// --hub-down 'cmd' / --hub-up 'cmd': stop and start the (local) hub around the first answer, to prove that an answer
+// given while the hub is away reaches the agent once it is back (the outbox retries; nothing is lost).
+const HUB_DOWN = arg('--hub-down', null), HUB_UP = arg('--hub-up', null)
 const APP = arg('--app', 'http://127.0.0.1:8900'), HUB = arg('--hub', 'http://127.0.0.1:8890'), SHOTS = arg('--shots', null), RESOLVE = arg('--resolve', null)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 const results = []
@@ -67,6 +71,7 @@ try {
   check(link.startsWith(`${APP}/join#v1.`) || link.includes('/join#v1.'), 'agent invite link with the secret after #')
   const j = joinRoom({ link, storage: memoryStorage(), device_name: 'night-agent', device_info: { device_name: 'night-agent', platform: 'node', folder: '~/git/test', host: 'e2e' }, poll_ms: 100 })
   agent = await j.client
+  agent.on('error', e => results.push(`note agent error: ${e?.code} ${e?.message}`))
   await agent.start()
   // v1.1: an agent holds no room key; the app's core grants it a session once it joined.
   if (agent.whenSession) await Promise.race([agent.whenSession(), sleep(15000)])
@@ -96,10 +101,12 @@ try {
   await A.until(`[...document.querySelectorAll('#row-${picCard} img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on the Desk'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
 
   // ---- A answers with the row's tile; the agent gets the command ----
+  if (HUB_DOWN) { execSync(HUB_DOWN, { stdio: 'ignore' }); await sleep(500) }
   t0 = Date.now()
   await A.js(`document.querySelector('#row-${cardId} form[action$="/decide"] button[value="b"], #row-${cardId} button[name=key][value=b]')?.click()`)
   await A.until(`!document.getElementById('row-${cardId}')`, 'row leaves after answering')
   timing('answer click -> row gone (local echo)', Date.now() - t0)
+  if (HUB_UP) { await sleep(3000); execSync(HUB_UP, { stdio: 'ignore' }); t0 = Date.now(); results.push('note hub was down for the answer; timing below counts from the hub coming back') }
   const tc = Date.now()
   while (!commands.some(c => c.command === 'answer') && Date.now() - tc < 15000) await sleep(30)
   timing('answer click -> command at the agent', Date.now() - t0)
@@ -196,6 +203,11 @@ try {
   await A.shot('e2e-fail-A.png').catch(() => {})
   await B?.shot('e2e-fail-B.png').catch(() => {})
 } finally {
+  if (failed) {
+    const st = c => c && { connection: c.model.room.connection, outbox: c.model.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: c.model.room.outbox_blocked, alerts: c.model.alerts.slice(-6).map(a => [a.code, a.message?.slice(0, 120)]) }
+    results.push('diag agent: ' + JSON.stringify(st(agent)))
+    results.push('diag A: ' + JSON.stringify(await A.js("const c = trommi.client; return { connection: c.model.room.connection, outbox: c.model.outbox.map(o => [o.envelope_kind, o.outbox_state, o.error]), blocked: c.model.room.outbox_blocked, alerts: c.model.alerts.slice(-6).map(a => [a.code, a.message?.slice(0, 120)]) }").catch(e => e.message)))
+  }
   for (const e of [...A.errors, ...(B?.errors ?? [])]) results.push(`err  ${e}`)
   agent?.stop?.()
   await A.close(); await B?.close()
