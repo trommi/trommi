@@ -662,21 +662,6 @@ a.agent-badge { text-decoration: none; }
   html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 28px; height: 28px; }
 }
 
-/* ---- Test ?subcards=1 (his word, 4 October): a main's subs as small cards like the main's, each outlined in its own
-   colour (the coloured edges of the folded stack), a little indented and overlapping like a deck spread out; no
-   bracket line. The deck spreads when it unfolds. Wide screens only. ---- */
-@media (min-width: 861px) {
-  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-main[data-fold="open"] .crown-bracket { display: none; }
-  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub { position: relative; margin: -6px 6px 0 18px !important; z-index: calc(20 - var(--i, 0)); }
-  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-main[data-fold="open"] + .agent-row.is-sub { margin-top: -4px !important; }
-  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub .agent-entry { min-height: 40px; background: var(--surface); border-radius: 10px; box-shadow: 0 0 0 1.4px hsl(var(--hue) 45% 55%), 0 2px 4px -2px rgb(20 30 25 / .25); rotate: calc((var(--i, 0) - 1) * .5deg); }
-  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub .agent-entry:hover { background: color-mix(in srgb, var(--surface) 70%, var(--sunken)); }
-  :root[data-subcards]:not([data-rail="folded"]) .agent-row.is-sub.is-last { margin-bottom: 10px !important; }
-  :root[data-subcards] .agent-row.is-sub.is-unfolding { animation: subcard-in 320ms cubic-bezier(.2, .8, .3, 1) backwards; animation-delay: calc(var(--i, 0) * 40ms); }
-}
-@keyframes subcard-in { from { opacity: 0; translate: 0 calc(-24px - var(--i, 0) * 30px); rotate: 0deg; } }
-@media (prefers-reduced-motion: reduce) { :root[data-subcards] .agent-row.is-sub.is-unfolding { animation: none; } }
-
 /* ---- The note in the sidebar (sidebar.mjs sideNotes): one yellow sticky pinned at the sidebar's foot, above the fold button; folded its first line,
    unfolded a field that grows, the bin and the crown ---- */
 .side-notes { margin: auto 0 0; padding: 12px 0 52px; position: sticky; bottom: 0; background: var(--bg); }

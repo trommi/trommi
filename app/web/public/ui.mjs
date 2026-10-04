@@ -1289,13 +1289,6 @@ controller('curl', class extends Controller {
 
 /** Wires the page (app.mjs boot): the controllers, times that keep themselves current, the tile that was tapped. */
 export function startUi() {
-  // A test (his word, 4 October): ?subcards=1 shows a main's subs as small cards, fanned like the stack they fold into;
-  // kept for the tab, ?subcards=0 ends it.
-  try {
-    const q = new URLSearchParams(location.search).get('subcards')
-    if (q !== null) { if (q === '1') sessionStorage.setItem('trommi-subcards', '1'); else sessionStorage.removeItem('trommi-subcards') }
-    if (sessionStorage.getItem('trommi-subcards') === '1') document.documentElement.dataset.subcards = '1'
-  } catch {}
   stimulus.start()
   setInterval(() => { for (const n of document.querySelectorAll('[data-ts]')) n.textContent = ago(Number(n.dataset.ts)) }, 30000)
   document.addEventListener('turbo:submit-start', e => { e.detail.formSubmission.submitter?.classList.add('is-picked') })
