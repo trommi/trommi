@@ -190,3 +190,92 @@
   .inbox-stacks .note-line .note-open-form { flex-basis: 100%; }
   .inbox-stacks .note-line .inbox-revising-tail { margin-right: auto; }
 }
+
+/* ---- Off the desk (views/stacks.mjs offPile; his pick A of three, 4 October): ONE pile for every card that left the
+   open rows, beside the Notes tab. Folded: its label and the newest five sheets fanned, each with the sign of its place
+   (css/stamps.css), its title and when. Unfolded (.is-open, the controller "piles"): the label as a tab with "Fold up",
+   and below the row a box with the filter chips (radio buttons: CSS shows the lines of the checked one), the search,
+   the newest ten lines and "N more". ---- */
+.inbox-groups > .inbox-stacks.stack-tabs { align-items: flex-start; column-gap: 24px; row-gap: 12px; margin-bottom: 56px; }
+.inbox-stacks.stack-tabs .inbox-stack-title { align-self: flex-start; }
+.inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex: 0 1 380px; min-width: 0; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: 10px; width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; rotate: 0deg; translate: none; color: var(--fg); text-align: left; cursor: pointer; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head:disabled { cursor: default; }
+.off-label { display: flex; align-items: center; gap: 8px; min-height: 18px; white-space: nowrap; font: 700 .72rem/1 var(--font); letter-spacing: .16em; text-transform: uppercase; }
+.off-label > .off-count { font: 700 .86rem/1 var(--mono); letter-spacing: 0; }
+.off-fold { display: none; margin-left: auto; align-items: center; gap: 4px; color: var(--accent); letter-spacing: .06em; }
+.off-fold .sketch { width: 14px; height: 14px; transform: rotate(180deg); }
+.off-fan { position: relative; display: block; height: calc(34px + (var(--n) - 1) * 25px); }
+.off-sheet { position: absolute; left: calc(var(--i) * 3px); right: calc(var(--i) * -2px); top: calc(var(--i) * 25px); z-index: calc(10 - var(--i)); box-sizing: border-box; height: 34px; display: flex; align-items: flex-end; gap: 9px; padding: 0 12px 7px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: calc(-.8deg + var(--i) * .45deg); transition: translate 140ms ease-out; }
+.off-sheet:first-child { align-items: center; padding-bottom: 0; }
+.off-sheet:nth-child(2n) { rotate: calc(.6deg - var(--i) * .2deg); }
+.off-sheet.is-blank { border-style: dashed; border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; color: var(--faint); }
+.off-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-sm)/1.2 var(--font); }
+.off-sheet .ago { flex: none; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+@media (any-hover: hover) { .off-head:not(:disabled):hover .off-sheet { translate: 0 -2px; } }
+.off-pile.is-empty .off-label { opacity: .5; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open .inbox-stack-head.off-head { padding: 9px 12px; border: 2px solid var(--fg); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); }
+.off-pile.is-open .off-fan { display: none; }
+.off-pile.is-open .off-fold { display: inline-flex; }
+
+/* the sign of a place, small, in its stamp's ink; the basket for Trash */
+.off-pile .stack-stamp.off-sign[data-stamp], .off-pile .off-sign { position: static; inset: auto; aspect-ratio: auto; rotate: 0deg; transform: none; flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; margin: 0; -webkit-mask: none; mask: none; color: var(--ink, var(--fg)); }
+.off-pile .off-sign .stack-stamp-sign { width: 17px; height: 17px; }
+.off-pile .off-sign[data-g="works"] .stack-stamp-sign { animation: stack-stamp-turn 7s linear infinite; }
+.off-pile .off-sign[data-g="trash"] svg { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+@media (prefers-reduced-motion: reduce) { .off-pile .off-sign .stack-stamp-sign { animation: none; } }
+
+/* the unfolded pile: one box under the row */
+.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open > .off-body { display: block; margin-top: 4px; padding: 10px 6px 6px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
+.off-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
+.off-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; cursor: pointer; }
+.off-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.off-chip b { font: 700 var(--t-xs)/1 var(--mono); color: var(--muted); }
+.off-pile .off-chip .off-sign { width: 15px; height: 15px; }
+.off-pile .off-chip .off-sign .stack-stamp-sign { width: 14px; height: 14px; }
+.off-pile .off-chip .off-sign[data-g="trash"] svg { width: 15px; height: 15px; }
+.off-chip:has(input:checked) { border-color: var(--fg); background: var(--fg); color: var(--surface); }
+.off-chip:has(input:checked) b { color: var(--surface); }
+.off-pile .off-chip:has(input:checked) .off-sign { --ink: var(--surface); }
+.off-pile .off-chip:has(input:checked) .off-sign[data-g="trash"] svg { stroke: var(--surface); }
+.off-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
+.inbox-stacks .off-search { margin: 0 4px 2px; }
+.inbox-stacks .off-search label { max-width: none; }
+
+/* a line: sign, title and its grey line, sender and time, the way back */
+.inbox-stacks .off-list .inbox-done.off-line { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 0; padding: 6px 8px; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
+.off-open { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
+.off-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-md)/1.3 var(--font); }
+.off-said { flex: 0 10 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--t-sm); }
+.off-open:hover strong, .off-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
+.off-tail { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+.off-tail .inbox-from-mark, .off-tail .inbox-from-mark svg { width: 18px; height: 18px; }
+.off-who { color: var(--tone-pen, var(--muted)); font-weight: 600; }
+.off-way { margin: 0; min-width: 76px; text-align: right; }
+.inbox-stacks .off-line .inbox-takeback { min-height: 28px; padding: 0 6px; font-weight: 600; }
+.inbox-stacks .off-line[data-later] .inbox-takeback { color: var(--stamp-ink-later); }
+.off-more { display: block; padding: 8px 8px 4px; border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
+.off-more input { position: absolute; opacity: 0; pointer-events: none; }
+.off-more:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
+.off-more:not(:has(input:checked)) .off-more-shut, .off-more:has(input:checked) .off-more-open { display: none; }
+.inbox-stacks .off-none { display: none; }
+/* the filter: All shows the newest ten and "N more"; a place shows all of its lines */
+.off-pile:has([data-off-filter][value="all"]:checked):not(:has([data-off-more]:checked)) .off-line.is-rest { display: none; }
+.off-pile:not(:has([data-off-filter][value="all"]:checked)) .off-more { display: none; }
+.off-pile:has([data-off-filter][value="later"]:checked) .off-line:not([data-g="later"]),
+.off-pile:has([data-off-filter][value="works"]:checked) .off-line:not([data-g="works"]),
+.off-pile:has([data-off-filter][value="done"]:checked) .off-line:not([data-g="done"]),
+.off-pile:has([data-off-filter][value="trash"]:checked) .off-line:not([data-g="trash"]) { display: none; }
+.off-pile:has([data-off-filter][value="later"]:checked) .off-list:not(:has(.off-line[data-g="later"])) .off-none[data-g="later"],
+.off-pile:has([data-off-filter][value="works"]:checked) .off-list:not(:has(.off-line[data-g="works"])) .off-none[data-g="works"],
+.off-pile:has([data-off-filter][value="done"]:checked) .off-list:not(:has(.off-line[data-g="done"])) .off-none[data-g="done"],
+.off-pile:has([data-off-filter][value="trash"]:checked) .off-list:not(:has(.off-line[data-g="trash"])) .off-none[data-g="trash"] { display: block; }
+
+/* a narrow list (the phone): the pile under the Notes tab, across the width; a line in two rows */
+@container rows (max-width: 600px) {
+  .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex-basis: 100%; }
+  .off-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px 4px; }
+  .off-line > .off-sign { grid-area: s; } .off-line > .off-open { grid-area: o; } .off-line > .off-tail { grid-area: t; } .off-line > .off-way { grid-area: w; min-width: 0; }
+  .off-said { display: none; }
+}

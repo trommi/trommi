@@ -254,11 +254,38 @@ class MockClient {
   }
 }
 
+// Cards he put away, so the pile "Off the desk" holds a card of every place (views/stacks.mjs): two snoozed, one
+// handed back, one answered a moment ago (its session is still at it), one shredded. Times relative to now.
+function putAway(f) {
+  const now = Date.now(), MIN = 60e3, [zu, ui, , cr] = f.sessions.map(s => s.agent_device_id)
+  const me = f.room.my_device_id
+  let env = 9000
+  const mk = (title, agent, ago, how) => {
+    const id = hex(32), at = now - ago * MIN, n = ++env, version_hash = hex(64)
+    const content = { card_type: 'decision', title, body: '', options: [{ key: 'a', label: 'Ja', detail: '' }, { key: 'b', label: 'Nein', detail: '' }], sections: null, html: null, allows_multiple: false, recommended: null, urgency_reason: '', attachments: [], change_note: '', close_summary: null, withdraw_reason: null, merged_into_object_id: null, merged_from_object_ids: null }
+    const c = { object_id: id, agent_device_id: agent, first_envelope_number: n, created_at: at - 30 * MIN, answers: [], answer: null, closed_how: null, in_revision: null, timeline_key: `chat:card/${id}`, content_state: 'ok', object_version: 1, version_hash, envelope_number: n, updated_at: at, urgency: 'normal', object_state: 'open', ...content,
+      versions: [{ object_version: 1, version_hash, previous_version_hash: null, envelope_number: n, sent_at: at - 30 * MIN, object_state: 'open', urgency: 'normal', content }] }
+    const answer = action => ({ answer_action: action, choices: action === 'answer' ? ['a'] : [], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: version_hash, bound_object_version: 1, envelope_number: n, envelope_hash: hex(64), by_device_id: me, answered_at: at, taken_back_at: null })
+    if (how === 'snooze') (f.human.snoozes ??= {})[id] = { until: now + 4 * 60 * MIN, at }
+    else if (how === 'revise') c.in_revision = { by: 'hand_back', envelope_number: n }
+    else if (how === 'answer') Object.assign(c, { answer: answer('answer'), object_state: 'answered', closed_how: 'answered' })
+    else if (how === 'shred') Object.assign(c, { answer: answer('shred'), object_state: 'closed', closed_how: 'shredded' })
+    if (c.answer) c.answers = [c.answer]
+    f.cards.push(c)
+  }
+  mk('Tab-Leiste unten oder oben?', ui, 4, 'answer')
+  mk('Release-Notes heute schreiben?', zu, 18, 'snooze')
+  mk('Alte Testdaten löschen?', cr, 35, 'shred')
+  mk('Icon-Set: eigene Striche oder Lucide?', ui, 52, 'revise')
+  mk('Backup um 3 Uhr nachts?', zu, 95, 'snooze')
+  return f
+}
+
 let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return (await import('./mock-crazy.mjs')).crazyFixture()
   fixtureCache ??= await (await fetch('/mock/fixture.json')).json()
-  return structuredClone(fixtureCache)
+  return putAway(structuredClone(fixtureCache))
 }
 export async function openRoom({ mock = '1' } = {}) { return new MockClient(await loadFixture(mock)) }
 export async function foundRoom({ device_name = 'Laptop' } = {}) {

@@ -15,7 +15,7 @@ import { register as sessionPage } from '../views/session.mjs'
 import { register as memoPage } from '../views/memo.mjs'
 import { register as jumpPage } from '../views/menu.mjs'
 import { register as agentsPage } from '../views/agents.mjs'
-import { register as stacksPage } from '../views/stacks.mjs'
+import { register as stacksPage, STACKS } from '../views/stacks.mjs'
 import { register as galleryPage, galleryShelf } from '../views/gallery.mjs'
 
 export const BASE = ''
@@ -151,7 +151,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
   function registerDesk() {
     t.get(/^\/$/, ({ req, res, url }) => {
       const m = model()
-      const pile = ['later', 'works', 'done', 'trash'].includes(url.searchParams.get('pile')) ? url.searchParams.get('pile') : null
+      const pile = STACKS.includes(url.searchParams.get('pile')) ? url.searchParams.get('pile') : null
       const [saidId, saidWhat] = String(url.searchParams.get('said') ?? '').split(':')
       const n = m.fresh.length
       t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, BASE, { pile, rowOf: windowed(m) }), says: says(m.byCard.get(saidId), saidWhat) })

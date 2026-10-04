@@ -215,6 +215,58 @@ try {
   check(await A.js("return !trommi.model().state.memos.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the Notes stack')
   await A.shot('e2e-note-taped.png')
 
+  // ---- the pile "Off the desk": one pile for every card that left the open rows (snoozed, in the works, done, trash);
+  //      folded it shows the newest five with their signs; unfolded: filter chips with counts, and every way back ----
+  const pile = {}
+  for (const [k, title] of [['snooze', 'Stapel: später'], ['shred', 'Stapel: weg'], ['revise', 'Stapel: erklären'], ['done', 'Stapel: erledigt'], ['acting', 'Stapel: beantwortet']]) pile[k] = await agent.sendCard({ title, options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  await A.js("trommi.router.visit('/')")
+  await A.until(Object.values(pile).map(id => `document.getElementById('row-${id}')`).join(' && '), 'four pile cards on the Desk')
+  // snoozed from its row; the toast's Undo fetches it back; snoozed again
+  await A.js(`const f = document.querySelector('#row-${pile.snooze} form[action$="/snooze"]'); f.requestSubmit()`)
+  await A.until(`!document.getElementById('row-${pile.snooze}')`, 'snoozed row leaves')
+  await A.until("document.querySelector('#says-host .says-back')", 'toast with Undo after Snooze')
+  await A.js("document.querySelector('#says-host .says-back').click()")
+  await A.until(`document.getElementById('row-${pile.snooze}')`, 'row back after Undo of Snooze').then(() => check(true, 'Undo of Snooze puts the card back'), e => check(false, e.message))
+  await A.js(`const f = document.querySelector('#row-${pile.snooze} form[action$="/snooze"]'); f.requestSubmit()`)
+  await A.until(`!document.getElementById('row-${pile.snooze}')`, 'snoozed row leaves again')
+  // answered, then closed by its session: Done
+  await A.js(`document.querySelector('#row-${pile.done} form[action$="/decide"] button[value="a"], #row-${pile.done} button[name=key][value=a]')?.click()`)
+  await A.until(`!document.getElementById('row-${pile.done}')`, 'answered row leaves')
+  const td = Date.now(); while (!commands.some(c => c.command === 'answer' && c.object_id === pile.done) && Date.now() - td < 10000) await sleep(30)
+  await agent.close(pile.done, 'erledigt')
+  // answered, its session still at it: Working
+  await A.js(`document.querySelector('#row-${pile.acting} form[action$="/decide"] button[value="a"], #row-${pile.acting} button[name=key][value=a]')?.click()`)
+  await A.until(`!document.getElementById('row-${pile.acting}')`, 'answered row leaves')
+  // shredded and handed back from the card page
+  for (const [k, way] of [['shred', 'shred'], ['revise', 'what']]) {
+    const n = await A.js(`return trommi.model().byCard.get('${pile[k]}').number`)
+    await A.js(`trommi.router.visit('/q/${n}')`)
+    await A.until(`document.querySelector('#cardpage button[formaction$="/${way}"]')`, `card page with ${way}`)
+    await A.js(`document.querySelector('#cardpage button[formaction$="/${way}"]').click()`)
+    await A.until("location.pathname === '/'", `back on the Desk after ${way}`).catch(() => A.js("trommi.router.visit('/')"))
+  }
+  await A.until(`document.querySelector('#desk-stacks [data-pile=off]') && ['${pile.snooze}', '${pile.shred}', '${pile.revise}'].every(id => document.querySelector('#desk-stacks .off-line[data-id="' + id + '"]')) && document.querySelector('#desk-stacks .off-line[data-id="${pile.done}"][data-g=done]')`, 'all four in the pile', 20000)
+    .then(() => check(true, 'snoozed, shredded, asked (What??) and done cards all lie in the one pile'), e => check(false, e.message))
+  check(await A.js("return !document.querySelector('#desk-stacks [data-stack=later], #desk-stacks [data-stack=works], #desk-stacks [data-stack=done], #desk-stacks [data-stack=trash]')"), 'no separate Snooze / Working / Done / Trash stacks any more')
+  check(await A.js("const s = [...document.querySelectorAll('.off-fan .off-sheet')]; return s.length >= 4 && s.length <= 5 && s.every(x => x.querySelector('.off-sign'))"), 'the folded pile shows the newest sheets, each with its sign')
+  const g = await A.js(`return Object.fromEntries(['${pile.snooze}', '${pile.shred}', '${pile.revise}', '${pile.done}'].map(id => [id, document.querySelector('.off-line[data-id="' + id + '"]')?.dataset.g]))`)
+  check(g[pile.snooze] === 'later' && g[pile.shred] === 'trash' && g[pile.revise] === 'works' && g[pile.done] === 'done', `each card in its place (${Object.values(g).join(', ')})`)
+  await A.js("document.querySelector('.off-head').click()")
+  await A.until("document.querySelector('.off-pile.is-open .off-chips')", 'pile unfolded')
+  const counts = await A.js("return Object.fromEntries([...document.querySelectorAll('.off-chip')].map(c => [c.dataset.g, Number(c.querySelector('b').textContent)]))")
+  check(counts.all === counts.later + counts.works + counts.done + counts.trash && counts.later >= 1 && counts.works >= 1 && counts.done >= 1 && counts.trash >= 1, `filter chips count every place (${JSON.stringify(counts)})`)
+  await A.js("document.querySelector('.off-chip[data-g=trash] input').click()")
+  check(await A.js("const shown = [...document.querySelectorAll('.off-list .off-line')].filter(l => l.getClientRects().length); return shown.length > 0 && shown.every(l => l.dataset.g === 'trash')"), 'the Trash chip shows only the trash')
+  // every way back: restore from Trash, Wake up, Take back (asked), Take back (answered). (A card its session closed
+  // lies on Done; its Take back is a decide-again the core does not count, as before the pile.)
+  for (const [k, what] of [['shred', 'restored from Trash'], ['snooze', 'woken up'], ['revise', 'taken back from What?? (in the works)'], ['acting', 'taken back after answering (in the works)']]) {
+    await A.until(`document.querySelector('.off-pile.is-open')`, 'pile still open').catch(() => A.js("document.querySelector('.off-head').click()"))
+    await A.js(`const f = document.querySelector('.off-line[data-id="${pile[k]}"] form'); f.requestSubmit(f.querySelector('button'))`)
+    await A.until(`document.getElementById('row-${pile[k]}') && !document.querySelector('.off-line[data-id="${pile[k]}"]')`, what, 15000).then(() => check(true, `pile: ${what}, back on the Desk`), e => check(false, e.message))
+  }
+  check(await A.js("return document.querySelector('.off-pile.is-open') && document.querySelector('.off-chip[data-g=trash] input').checked"), 'the pile stays open with its filter while cards move')
+  await A.shot('e2e-pile.png')
+
   // ---- a second human device joins ----
   await A.js("trommi.router.visit('/devices')")
   await A.until("document.querySelector('form[action=\"/pair\"] input[value=human]')", 'devices')
