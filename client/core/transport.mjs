@@ -101,6 +101,7 @@ export class Hub {
   getInvite(invite_id) { return this.request('GET', this.roomPath(`/invites/${invite_id}`), { auth: false }) }
   postRequest(invite_id, signed_request) { return this.request('POST', this.roomPath(`/invites/${invite_id}/requests`), { auth: false, body: { signed_request } }) }
   getRequests(invite_id) { return this.request('GET', this.roomPath(`/invites/${invite_id}/requests`)) }
+  deleteInvite(invite_id) { return this.request('DELETE', this.roomPath(`/invites/${invite_id}`)) }
   postReveal(invite_id, signed_reveal) { return this.request('POST', this.roomPath(`/invites/${invite_id}/reveal`), { body: { signed_reveal } }) }
   joinStatus(invite_id, request_hash) { return this.request('GET', this.roomPath(`/invites/${invite_id}/status`), { auth: false, query: { request_hash } }) }
   postEnvelope(envelope) { return this.request('POST', this.roomPath('/envelopes'), { body: { envelope } }) }
