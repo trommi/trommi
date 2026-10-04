@@ -1,6 +1,6 @@
 # zcrypto
 
-The cryptographic core of Trommi as one standalone ES module. It implements `docs/krypto-konzept.md`: device keys, a signed membership log, invites with a check code, one room key per epoch, signed and chained message envelopes, command authorisation for agents, asset keys and the recovery code.
+The cryptographic core of Trommi as one standalone ES module. It implements the design in the README ("Cryptography in one page", Security rules): device keys, a signed membership log, invites with a check code, one room key per epoch, signed and chained message envelopes, command authorisation for agents, asset keys and the recovery code.
 
 **Status:** tested library, not wired into the product, not audited. Wire formats: [FORMAT.md](FORMAT.md).
 
@@ -8,7 +8,7 @@ The cryptographic core of Trommi as one standalone ES module. It implements `doc
 | --- | --- |
 | `zcrypto.mjs` | the library; no dependencies, WebCrypto only |
 | `test.mjs` | tests, hostile-hub simulation, micro-benchmark: `node core/crypto-test.mjs` |
-| `hub.mjs` | the hub's side of pairing and keys, without HTTP and without a database: member list, sign-in, invites, sealed keys, envelopes. Not wired into the server. Protocol: `docs/pairing.md` |
+| `hub.mjs` | the hub's side of pairing and keys, without HTTP and without a database: member list, sign-in, invites, sealed keys, envelopes. Protocol: README, "Founding and joining" |
 | `hub-test.mjs` | real clients against the hub module, and everything a hub must refuse: `node core/hub-crypto-test.mjs` |
 | `vectors.json` | deterministic vectors for other implementations; `test.mjs` regenerates and compares them (`--write-vectors` rewrites) |
 | `FORMAT.md` | exact bytes, labels, key schedule, deviations from the concept |

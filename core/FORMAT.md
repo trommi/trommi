@@ -1,6 +1,6 @@
 # zcrypto format, version 1
 
-The exact bytes that `zcrypto.mjs` and `session-grants.mjs` read and write, and what `hub.mjs` refuses, so that a Swift (CryptoKit) and a native Linux client can be built against `vectors.json`. Design and threat model: `docs/krypto-konzept.md`; how hub and clients speak during pairing: `docs/pairing.md`; routes and JSON: README, "Hub v1: the wire protocol". Deviations from the concept are listed in section 14, the decisions of 2 October 2026 in section 16, session keys in section 19, the hub's checks in section 20.
+The exact bytes that `zcrypto.mjs` and `session-grants.mjs` read and write, and what `hub.mjs` refuses, so that a Swift (CryptoKit) and a native Linux client can be built against `vectors.json`. Design, threat model and pairing: README ("Cryptography in one page", "Security rules", "Founding and joining"); routes and JSON: "Hub v1: the wire protocol". Design choices are listed in section 14, the decisions of 2 October 2026 in section 16, session keys in section 19, the hub's checks in section 20.
 
 This text describes format version 1 as amended by the security rules v1.1 and v1.1.1 (README, "Security rules"). If this file and the code disagree, the code is right and this file is a bug.
 
@@ -254,7 +254,7 @@ The request carries no name (v1.1, R8). The hashes and the check code cover the 
 
 Order: the inviter publishes the offer (which commits to the nonce) and hands over the link. The new device verifies the log against the room id in the link, verifies the offer against the log (signed by a human member, not expired, and its `logSeq`/`logHash` present in the served log), and sends the request. The inviter accepts the **first request with a valid MAC**, marks the invite used, and only then reveals the nonce. The new device checks the reveal against commitment and request hash. Both show the code. After the human confirmed it, the inviter writes the add entry (with `inviteId`) and, **for a human only**, seals the current epoch secret to the new device. An agent gets no room key; its session keys come with a session grant (section 19). The new device checks that the add entry that enrolled it names this invite and was signed by the inviter.
 
-Enforced by the inviter's device, not the hub: expiry (`expiresAt`, ten minutes by default) at the time the request arrives; single use; five minutes between accepting the request and the confirmation; the confirmation is bound to the request whose code was shown. **The check code is mandatory for the human role;** the library offers no way around it. An agent that joins by a link has nobody to read a code, so the inviter passes `skipCheckCode` for the agent role (reasons and risk: `docs/pairing.md`). The code is still computed and can be shown.
+Enforced by the inviter's device, not the hub: expiry (`expiresAt`, ten minutes by default) at the time the request arrives; single use; five minutes between accepting the request and the confirmation; the confirmation is bound to the request whose code was shown. **The check code is mandatory for the human role;** the library offers no way around it. An agent that joins by a link has nobody to read a code, so the inviter passes `skipCheckCode` for the agent role (reasons and risk: README, "Founding and joining"). The code is still computed and can be shown.
 
 ## 9. Envelope
 
@@ -404,9 +404,9 @@ session S, epoch m:  key_m (random) ──KDF──▶ keyCommit (in the grant)
 asset:    assetKey (random) ──▶ AES-256-GCM over 64 KiB chunks, counter nonce
 ```
 
-## 14. Deviations from `docs/krypto-konzept.md`, and choices where it was open
+## 14. Design choices
 
-Deviations:
+Choices (relative to the first concept, which is gone from the repository):
 
 1. **A history key beside each scope key.** The concept lets each new room key encrypt its predecessor and relies on the hub not handing that chain to the wrong members. Here the back link is encrypted under a second key that only its intended holders receive.
 2. **Key commitments in signed structures.** A sealed box does not name its sender, so the hub could seal a key of its own to a member. Each room epoch entry and each session grant therefore commits to its keys and receivers check.

@@ -9,7 +9,7 @@
 //   - an epoch change that does not bring a sealed key for everyone who stays,
 //   - an envelope its sender may not write (R1, R6): another member's object, a timeline that is not its own,
 //     a session it is not assigned to, an old key epoch two minutes after the change (R3).
-// Clients check all of this again; the hub's checks keep junk out and metadata in. See docs/pairing.md.
+// Clients check all of this again; the hub's checks keep junk out and metadata in. See the README, "Founding and joining".
 //
 // `memoryStorage()` is the reference storage; hub/store.mjs is the SQLite one with the same methods.
 
