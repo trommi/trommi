@@ -5,7 +5,7 @@
 // with full chain checks from the frontier on. Threads stay lazy; items from before the snapshot are checked by
 // their signature when opened.
 //
-//   register room_snapshot = { attachment: <README reference>, envelope_number, log_seq, log_hash, frontier: { <sender>: [seq, hash] }, written_at }
+//   register room_snapshot = { attachment: <README reference>, encoding, envelope_number, log_seq, log_hash, written_at }  (the frontier is inside the attachment)
 //   attachment = gzip(JSON { schema: 1, room_id, envelope_number, log_seq, log_hash, chains, frontiers, model })
 import * as z from './zcrypto.mjs'
 import * as M from './model.mjs'
@@ -51,7 +51,8 @@ export async function writeSnapshot(client) {
   const { bytes, encoding } = await gzip(new TextEncoder().encode(JSON.stringify(snap)))
   const ref = await client.uploadAttachment(bytes, { file_name: 'room-snapshot.json' + (encoding === 'gzip' ? '.gz' : ''), media_type: encoding === 'gzip' ? 'application/gzip' : 'application/json' })
   client.attachmentCache.delete(ref.attachment_id)
-  const value = { attachment: ref, encoding, envelope_number: snap.envelope_number, log_seq: snap.log_seq, log_hash: snap.log_hash, frontier: snap.chains, written_at: Date.now() }
+  // The frontier lives in the attachment: status bodies stay under 4 KiB (R5) whatever the number of senders.
+  const value = { attachment: ref, encoding, envelope_number: snap.envelope_number, log_seq: snap.log_seq, log_hash: snap.log_hash, written_at: Date.now() }
   await client.setRegisters({ room_snapshot: value })
   client._lastSnapshotAt = snap.envelope_number
   return value
