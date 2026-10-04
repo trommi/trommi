@@ -40,6 +40,14 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 - Room snapshot (B): first start of a 20k room 29 ms vs 1,039 ms full replay. Browser catch-up without snapshot ~13k envelopes/s, 0 long tasks.
 - Session area (trommi/trommi 32eaf3a…035ca79): own message visible 2.4 ms desktop / 13 ms phone 4x; open session 45 / 145 ms; Earlier 6 / 25–35 ms.
 - Superkind live pass (pre-cutover): 45/46 round trips green; agent→app 44–64 ms, click→agent ~103 ms, phone join incl. code 4.4 s.
+- ~04:05 **app v1.1 live** (trommi/trommi 8748d6c). Prod e2e (app.trommi.com + hub.trommi.com) green 19/19, twice:
+  - card 98 ms
+  - encrypted picture 179 ms
+  - answer/Undo/What?? at the agent 66–229 ms
+  - phone pairs by tapping 1 of 4 codes
+  - read on A → gone on B 269 ms
+  - warm Desk 63 ms
+  Prod v1.1 smoke by A: POST→SSE p50 29 ms.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
