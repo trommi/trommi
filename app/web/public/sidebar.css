@@ -717,3 +717,17 @@ html body .quick-open.memo-open-free, html[data-curl] body .quick-open.memo-open
   :root:not([data-rail="folded"]) #agents > .side-notes { margin-bottom: 0; padding: 8px 0 12px 40px; }
   :root:not([data-rail="folded"]) #agents > .side-notes .side-note-head { padding-left: 8px; }
 }
+/* the note's attachments: thumbnails and file names under the words, the paperclip beside the bin */
+.side-note-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.side-note-files:empty { display: none; }
+.side-note-file { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-height: 28px; padding: 2px 22px 2px 8px; border: 0; border-radius: 4px; background: rgb(255 255 255 / .55); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3); color: #3b300d; font: 500 var(--t-xs)/1.2 var(--font); cursor: pointer; }
+.side-note-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.side-note-file.is-pic { padding: 3px; }
+.side-note-file.is-pic img { display: block; width: 56px; height: 42px; object-fit: cover; border-radius: 2px; }
+.side-note-file > i { position: absolute; top: 1px; right: 4px; font-style: normal; opacity: .55; }
+.side-note-file:hover > i { opacity: 1; }
+.side-note-clip { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
+.side-note-clip .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.side-note-clip:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
+.side-notes.is-drop .side-note-body { box-shadow: inset 0 0 0 2px #8a6d14, 0 2px 6px rgb(20 30 25 / .18); }
+.side-note-err { font-size: var(--t-xs); color: var(--urg-critical); }

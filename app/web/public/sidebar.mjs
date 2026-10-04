@@ -31,15 +31,19 @@ const inviteAgentButton = () => html`<form method="post" action="/pair" class="a
 // phone: a chip that opens it as a sheet.
 const NOTE_ICON = raw('<svg viewBox="0 0 52 52" class="side-note-ico" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
 const BIN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5 7.2 Q12 6.8 19 7.3"/><path d="M9.6 6.9 Q9.8 4.8 12 4.7 Q14.3 4.8 14.4 6.9"/><path d="M6.6 7.6 Q7.4 14 8.2 20.2 Q12 20.6 15.8 20.2 Q16.6 14 17.4 7.6"/></svg>')
+const isPic = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.name ?? '')
+/** The note's attachments: a picture as a small thumbnail, a file by its name; a click takes it off. */
+const noteFiles = atts => (atts ?? []).map(a => `<button type="button" class="side-note-file${isPic(a) ? ' is-pic' : ''}" data-url="${String(a.url).replace(/"/g, '&quot;')}" data-action="side-note#unclip" title="${String(a.name).replace(/"/g, '&quot;')}: click to take it off">${isPic(a) ? `<img src="${String(a.url).replace(/"/g, '&quot;')}" alt="" loading="lazy">` : `<span>${String(a.name).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'))}</span>`}<i>×</i></button>`).join('')
+const CLIP = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M15.6 7.2 Q11 12 8.4 14.8 Q7 16.6 8.6 17.8 Q10.2 18.8 11.6 17.2 Q15.6 12.8 18.2 9.8 Q20.4 7 18.2 5 Q16 3.4 13.8 5.6 Q9.4 10.4 6.4 13.8 Q3.8 17 6.4 19.6 Q9 21.8 12 19"/></svg>')
 const deskNotesOf = model => (model.state.memos ?? []).filter(m => m.place === 'stack' && !m.held && !m.session && (!m.desk || !model.desk || m.desk === model.desk)).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
 function sideNotes(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
-  const text = note?.text ?? ''
+  const text = note?.text ?? '', files = note?.attachments ?? []
   const first = text.split('\n')[0].trim()
-  return html`<section class="side-notes${text ? ' has-words' : ''}" id="side-notes" aria-label="Your note" data-controller="side-note" data-side-note-id-value="${note?.id ?? ''}" data-side-note-base-value="${base}">
-<button type="button" class="side-note-head" data-action="side-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="side-note-first">${first || 'New note'}</span></button>
-<div class="side-note-body" hidden><textarea class="side-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->side-note#typed keydown->side-note#key">${text}</textarea>
-<footer class="side-note-foot"><button type="button" class="side-note-bin" data-action="side-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="quick-send memo-send side-note-send" data-action="side-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="side-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
+  return html`<section class="side-notes${text || files.length ? ' has-words' : ''}" id="side-notes" aria-label="Your note" data-controller="side-note" data-side-note-id-value="${note?.id ?? ''}" data-side-note-base-value="${base}">
+<button type="button" class="side-note-head" data-action="side-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="side-note-first">${first || (files.length ? `${files.length} attached` : 'New note')}</span></button>
+<div class="side-note-body" hidden data-action="paste->side-note#paste dragover->side-note#over dragleave->side-note#out drop->side-note#drop"><textarea class="side-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->side-note#typed keydown->side-note#key">${text}</textarea><div class="side-note-files">${raw(noteFiles(files))}</div>
+<footer class="side-note-foot"><button type="button" class="side-note-clip" data-action="side-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="side-note-bin" data-action="side-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="quick-send memo-send side-note-send" data-action="side-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="side-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
 controller('side-note', class extends Controller {
@@ -71,9 +75,9 @@ controller('side-note', class extends Controller {
     this.element.classList.remove('is-open')
     this.element.querySelector('.side-note-head').setAttribute('aria-expanded', 'false')
     this.element.querySelector('.side-note-body').hidden = true
-    const first = this.field.value.trim().split('\n')[0].trim()
-    this.element.querySelector('.side-note-first').textContent = first || 'New note'
-    this.element.classList.toggle('has-words', Boolean(first))
+    const first = this.field.value.trim().split('\n')[0].trim(), n = this.files().length
+    this.element.querySelector('.side-note-first').textContent = first || (n ? `${n} attached` : 'New note')
+    this.element.classList.toggle('has-words', Boolean(first || n))
     this.save(true)
   }
   fit() { this.field.style.height = 'auto'; this.field.style.height = `${Math.min(this.field.scrollHeight + 2, 320)}px` }
@@ -98,18 +102,59 @@ controller('side-note', class extends Controller {
       if (!text.trim()) this.idValue = ''
     } finally { this.saving = false; if (this.again) { this.again = false; this.save() } }
   }
+  // ---- attachments, as the memo had them: POST /memo with { id, attachments: [kept refs..., { name, data }] } ----
+  files() { return [...this.element.querySelectorAll('.side-note-file')].map(c => ({ url: c.dataset.url })) }
+  async attach(list) {
+    const got = [...list].filter(f => f instanceof File)
+    if (!got.length) return
+    if (!this.idValue) {
+      await this.post('/memos', { place: 'stack', text: this.field.value })
+      const made = deskNotesOf(window.trommi?.model?.() ?? { state: {} })[0]
+      if (!made) return
+      this.idValue = made.id
+    }
+    const read = f => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve({ name: f.name || `pasted-${Date.now()}.png`, data: r.result }); r.onerror = () => reject(r.error); r.readAsDataURL(f) })
+    try {
+      const fresh = await Promise.all(got.map(read))
+      const res = await fetch('/memo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...this.files(), ...fresh] }) })
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
+      this.paintFiles()
+    } catch (err) { console.warn('note', err); this.element.querySelector('.side-note-files').insertAdjacentHTML('beforeend', '<em class="side-note-err">Not attached</em>') }
+  }
+  paintFiles() {
+    const m = (window.trommi?.model?.().state.memos ?? []).find(n => n.id === this.idValue)
+    this.element.querySelector('.side-note-files').innerHTML = noteFiles(m?.attachments ?? [])
+  }
+  pick() {
+    let input = this.element.querySelector('input[type=file]')
+    if (!input) {
+      input = Object.assign(document.createElement('input'), { type: 'file', multiple: true, hidden: true, tabIndex: -1 })
+      input.addEventListener('change', async () => { await this.attach(input.files); input.value = ''; this.field.focus() })
+      this.element.append(input)
+    }
+    input.click()
+  }
+  async unclip(e) {
+    const chip = e.currentTarget, left = this.files().filter(f => f.url !== chip.dataset.url)
+    chip.remove()
+    if (this.idValue) await fetch('/memo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: left }) })
+  }
+  paste(e) { if (e.clipboardData?.files?.length) { e.preventDefault(); this.attach(e.clipboardData.files) } }
+  over(e) { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); this.element.classList.add('is-drop') } }
+  out() { this.element.classList.remove('is-drop') }
+  drop(e) { this.out(); if (e.dataTransfer?.files?.length) { e.preventDefault(); this.attach(e.dataTransfer.files) } }
   async send() {
     const text = this.field.value
-    if (!text.trim()) return this.field.focus()
+    if (!text.trim() && !this.files().length) return this.field.focus()
     if (!this.idValue) { await this.save(); if (!this.idValue) return }
     const id = this.idValue
-    this.idValue = ''; this.field.value = ''
+    this.idValue = ''; this.field.value = ''; this.element.querySelector('.side-note-files').innerHTML = ''
     this.close()
     await this.post(`/memos/${id}/send`, { text })
   }
   async bin() {
     const id = this.idValue, text = this.field.value
-    this.idValue = ''; this.field.value = ''
+    this.idValue = ''; this.field.value = ''; this.element.querySelector('.side-note-files').innerHTML = ''
     this.close()
     if (id) await this.post(`/memos/${id}/bin`, { text })
   }
