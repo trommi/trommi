@@ -312,7 +312,12 @@ function applyMemo(model, rec, change) {
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
   if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'memo previous_version_hash names no known version')
-  if (old && !causallyAfter(rec.causal, old.causal)) { old.version_hashes.push(rec.envelope_hash); return { applied: false } }
+  if (old && !causallyAfter(rec.causal, old.causal)) {
+    old.version_hashes.push(rec.envelope_hash)
+    // Our own echo lost to a concurrent version: show the winner.
+    if (cur?.pending && rec.local_id && rec.local_id === cur.local_id) { model.memos.set(object_id, old); change.memos.add(object_id) }
+    return { applied: false }
+  }
   // Our own newer echo stays in front until its version comes back; it keeps the confirmed memo as its base.
   if (cur?.pending && rec.local_id !== cur.local_id) {
     cur._base = { ...memoOf(object_id, rec, c, old) }
