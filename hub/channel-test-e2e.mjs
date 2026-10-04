@@ -288,7 +288,7 @@ export async function integration({ test, tmp }) {
       await new Promise(r => setTimeout(r, 300))
       const after = human.chains.get(core.z.b64u(core.z.unhex(agentId)))?.seq
       assert.equal(after, before, 'the channel posted after losing the lease')
-      assert.ok(!fs.existsSync(path.join(room, `${prefix}lock`)), 'the lock of the slot is left behind')
+      assert.deepEqual(fs.readdirSync(room).filter(f => f.startsWith(`${prefix}lock.`)), [], 'the claim of the slot is left behind')
     })
   } finally {
     try { await channel?.close() } catch {}
