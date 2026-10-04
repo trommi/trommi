@@ -26,7 +26,7 @@ export default class extends Controller {
     // A refresh of the page (the live stream's "refresh" morphs it) must not shut the menu, the desk line or Dev under the hand.
     this.keep = e => {
       const t = e.target, name = e.detail?.attributeName
-      if ((t === this.element && name === 'hidden') || (t.id === 'brand-menu' && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden')) e.preventDefault()
+      if ((t === this.element && name === 'hidden') || ((t.id === 'brand-menu' || t.id === 'desk-switch') && name === 'aria-expanded') || (t.id === 'desk-new' && name === 'hidden')) e.preventDefault()
     }
     document.addEventListener('turbo:before-morph-attribute', this.keep)
     this.away = e => { if (!this.element.hidden && e.target instanceof Element && !e.target.closest('.brand')) this.close() }
@@ -48,6 +48,8 @@ export default class extends Controller {
   close() {
     this.element.hidden = true
     this.opener?.setAttribute('aria-expanded', 'false')
+    document.getElementById('desk-switch')?.setAttribute('aria-expanded', 'false')
+    delete this.element.dataset.from
   }
 
   /** Where the keyboard starts: the desk in view (its lamp on), else the first entry. */

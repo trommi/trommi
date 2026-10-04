@@ -117,6 +117,14 @@ try {
   timing('card sent by agent -> row visible on A', Date.now() - t0)
   check(await A.js("return !!document.querySelector('#agents .agent-row')"), 'session in the sidebar')
   check(await A.js("return !document.querySelector('#desk-invite') && !!document.querySelector('#agents #sidebar-invite')"), 'Invite your first agent gone once a session is there; the + stays')
+
+  // ---- the desk switcher: the desk drawing (lamp on) opens the Trommi menu at its desk list, on the desk in view ----
+  check(await A.js("return document.querySelector('.desk-go .desk-name')?.textContent === 'Desk' && !!document.querySelector('#desk-switch .lamp-light')"), 'Desk box: the desk name, the drawing with its lamp on')
+  await A.js("document.getElementById('desk-switch').click()")
+  await A.until("!document.getElementById('brand-doors').hidden && document.activeElement?.matches('#brand-doors .menu-desk[aria-checked=\"true\"]')", 'switcher opens the desk list', 3000).then(() => check(true, 'clicking the desk drawing opens the switcher on the desk in view'), e => check(false, e.message))
+  check(await A.js("return document.getElementById('desk-switch').getAttribute('aria-expanded') === 'true' && document.getElementById('brand-doors').dataset.from === 'desk'"), 'switcher: expanded, the menu under the drawing')
+  await A.js("document.getElementById('desk-switch').click()")
+  check(await A.js("return document.getElementById('brand-doors').hidden && document.getElementById('desk-switch').getAttribute('aria-expanded') === 'false'"), 'a second click on the drawing closes it')
   await A.shot('e2e-4-desk-card.png')
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----

@@ -16,7 +16,7 @@ html[data-slip][data-theme="dark"] { --slip-paper: color-mix(in srgb, var(--surf
   html[data-slip] #inbox #desk-head .inbox-title { display: none; }
   html[data-slip] #inbox #desk-head { margin-bottom: 0; }
   html[data-slip] .topbar { width: 0; height: 0; background: none; box-shadow: none !important; }
-  html[data-slip] .topbar .desk-go, html[data-slip] .rail-fold { display: none; }
+  html[data-slip] .topbar .desk-go, html[data-slip] .topbar .desk-switch, html[data-slip] .rail-fold { display: none; }
 
   /* ---- the slip: fixed, from under the top edge to above the switches at the foot; one strip of tape ---- */
   html[data-slip] .slip { display: block; position: fixed; z-index: 5; left: var(--slip-x); top: var(--slip-y); width: var(--slip-w); height: calc(100dvh - var(--slip-y) - var(--slip-foot)); box-sizing: border-box; border-radius: 2px; background: repeating-linear-gradient(transparent 0 27px, var(--slip-rule) 27px 28px) 0 12px, var(--slip-paper); box-shadow: 0 0 0 1px var(--line), 0 6px 18px -8px rgb(0 0 0 / .28); }

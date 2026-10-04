@@ -1823,3 +1823,42 @@ button.inbox-index-tab:hover { color: var(--fg); background: var(--surface); }
   .inbox-index > .inbox-index-tab:nth-of-type(n + 2) { display: none; }
   .inbox-index > .inbox-index-tab.inbox-index-more { display: flex; }
 }
+
+/* ---- The desk switcher (his pick e of five, "Zeichnung als Umschalter"): the Desk box shows the desk's own name in the
+   big type; the desk drawing before it, its lamp on (views/menu.mjs deskMark, trommi.css), is a button with a caret and the desk's number key under the lamp:
+   it opens the Trommi menu at its desk list (layout.mjs deskSwitch, application.mjs). The counts stand in the flow at
+   the right, the name takes what is left: a longer name steps down, a long one takes two lines. ---- */
+.desk-switch { flex: none; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 3px 3px 2px; border: 0; border-radius: 9px; background: none; color: inherit; cursor: pointer; box-shadow: inset 0 0 0 1px var(--line); }
+.desk-switch:hover, .desk-switch[aria-expanded="true"] { background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line-strong); }
+.desk-switch > .sketch { display: block; width: 24px; height: 24px; margin: 0; stroke-width: 1.6; overflow: visible; }
+.desk-switch-hint { display: flex; align-items: center; gap: 1px; margin-top: -1px; color: var(--muted); }
+.desk-switch .desk-caret { width: 12px; height: 12px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.desk-switch kbd { min-width: 11px; height: 12px; display: grid; place-items: center; padding: 0 2px; border-radius: 3px; font: 600 .55rem/1 var(--font); letter-spacing: 0; color: var(--muted); box-shadow: inset 0 0 0 1px var(--line-strong), inset 0 -1px 0 var(--line-strong); }
+html body .topbar .deskpill .desk-go > .sketch { display: none; }
+.topbar .deskpill .desk-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-switch { margin: 2px 9px 0 10px; }
+  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-go { padding-left: 0; padding-right: 0; }
+  :root:not([data-rail="folded"]) .topbar .deskpill > .desk-state { position: static; translate: none; flex: none; margin: 0 9px 0 4px; }
+  .topbar .desk-name[data-size="m"] { font-size: 1.3rem; }
+  .topbar .desk-name[data-size="l"] { font-size: .86rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.03em; }
+  /* the rail: the drawing alone again, the way to the Desk */
+  [data-rail="folded"] .topbar .deskpill > .desk-switch { display: none; }
+  html[data-rail="folded"] body .topbar .deskpill .desk-go > .sketch { display: block; }
+}
+@media (max-width: 860px) {
+  /* the drawing is the tap target (44px); the bell leaves the Desk box (it stands in the menu's pill) */
+  .topbar .deskpill > .desk-switch { width: 44px; height: 44px; margin: 0 6px 0 -6px; padding: 2px 0 1px; box-shadow: none; }
+  .topbar .desk-switch > .sketch { width: 24px; height: 24px; }
+  html body .topbar .deskpill .desk-go .brand-mark { display: none; }
+  /* the name before the counts, which give way first (they leave whole, as before); the box ends 90px from the right */
+  .topbar .brand { max-width: calc(100% - 90px); }
+  .topbar .deskpill > .desk-go { flex: 0 1 auto; }
+  .topbar .deskpill > .desk-state { flex: 0 1000 auto; min-width: 30px; }
+  .topbar .deskpill .desk-name { flex: 0 1 auto; text-align: left; }
+  .topbar .desk-name[data-size="l"] { max-width: 6.6rem; font-size: .84rem; line-height: 1.04; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; letter-spacing: -.02em; }
+}
+/* opened from the drawing, the menu stands under it (the same menu as the pill's) */
+@media (min-width: 861px) {
+  html .topbar #brand-doors[data-from="desk"] { left: 8px; right: auto; top: 70px; margin-inline: 0; }
+}
