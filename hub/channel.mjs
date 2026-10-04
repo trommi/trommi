@@ -33,10 +33,10 @@ import { createBridge } from './channel-bridge.mjs'
 
 const log = (...a) => console.error('[trommi]', ...a)
 // Sent by client/core as Trommi-Client on every request; the hub answers 426 client-too-old when it is too old.
-export const CLIENT = 'channel/0.1.0'
+const CLIENT = 'channel/0.1.0'
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
 
-export function channelConfig(env = process.env) {
+function channelConfig(env = process.env) {
   const keys_dir = path.resolve(env.TROMMI_KEYS_DIR || path.join(os.homedir(), '.local/share/trommi/keys'))
   const folder = path.resolve(env.TROMMI_FOLDER || process.cwd())
   const home = os.homedir()
@@ -56,7 +56,7 @@ const KEY_RE = base => new RegExp(`^${base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'
 const slotsIn = (cfg, dir) => { try { return fs.readdirSync(dir).map(f => KEY_RE(cfg.base).exec(f)).filter(Boolean).map(m => Number(m[1])).sort((a, b) => a - b) } catch { return [] } }
 
 /** The room this folder belongs to: from the invite link, TROMMI_ROOM, or the only room with a key of this folder. */
-export async function resolveRoom(cfg) {
+async function resolveRoom(cfg) {
   if (cfg.room) return cfg.room
   if (cfg.invite) return (await roomOfLink(cfg.invite)).room_id
   let rooms = []
@@ -66,7 +66,7 @@ export async function resolveRoom(cfg) {
 }
 
 /** Paths of one key slot: <host>-<folder>-<slot>.key, with its state, lock and file cache beside it (R4). */
-export const pathsOf = (cfg, room_id, slot = 1) => {
+const pathsOf = (cfg, room_id, slot = 1) => {
   const dir = path.join(cfg.keys_dir, room_id)
   const name = `${cfg.base}-${slot}`
   return { dir, slot, key_file: path.join(dir, `${name}.key`), lock_file: path.join(dir, `${name}.lock`), prefix: `${name}.`, cache: path.join(dir, `${name}.files`) }
@@ -75,7 +75,7 @@ export const pathsOf = (cfg, room_id, slot = 1) => {
 // One process per key slot. Node has no flock, so: a lock file holding the owner's pid, taken with O_EXCL;
 // a lock whose pid is gone is stale and taken over.
 const alive = pid => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
-export function lockSlot(p) {
+function lockSlot(p) {
   fs.mkdirSync(p.dir, { recursive: true, mode: 0o700 })
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
@@ -91,12 +91,12 @@ export function lockSlot(p) {
   }
   return false
 }
-export function unlockSlot(p) {
+function unlockSlot(p) {
   try { if (Number(fs.readFileSync(p.lock_file, 'utf8')) === process.pid) fs.unlinkSync(p.lock_file) } catch {}
 }
 
 /** The slot this process uses in a room: the first slot with a key that no other process holds, else the first free one. */
-export function pickSlot(cfg, room_id) {
+function pickSlot(cfg, room_id) {
   const dir = path.join(cfg.keys_dir, room_id)
   const keyed = slotsIn(cfg, dir)
   for (const n of keyed) { const p = pathsOf(cfg, room_id, n); if (lockSlot(p)) return { ...p, has_key: true, busy: keyed.filter(k => k < n) } }
@@ -111,7 +111,7 @@ export function pickSlot(cfg, room_id) {
  * The member side of the channel: opens or joins the room and keeps it running.
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
-export async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {} } = {}) {
+async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {} } = {}) {
   const core = await import('../client/core/index.mjs')
   const { fileStorage } = await import('../client/core/storage-file.mjs')
   const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
@@ -248,7 +248,7 @@ const JOIN_TOOL = {
   inputSchema: { type: 'object', properties: { link: { type: 'string', description: 'The invite link, https://app.trommi.com/join#v1....' } }, required: ['link'] },
 }
 
-export async function main() {
+async function main() {
   const cfg = channelConfig()
   const mcp = new Server(
     { name: 'trommi', version: '0.1.0' },
