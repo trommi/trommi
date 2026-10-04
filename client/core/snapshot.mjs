@@ -116,6 +116,9 @@ export async function bootFromSnapshot(client) {
     for (const s of snap.model.sessions) m.sessions.set(s.session_id ?? s.agent_device_id, { ...M.deserialiseSession(s), ...pick(m.sessions.get(s.session_id), ['agent_device_ids', 'agent_device_id', 'session_key_epoch', 'with_history']) })
     for (const t of snap.model.timelines) m.timelines.set(t.timeline_key, M.deserialiseTimelineMeta(t))
     M.deserialiseHuman(m, { raw: snap.model.human })
+    // R2: this device's lamport counter starts above every write in the snapshot.
+    for (const [, v] of snap.model.human) client.lamport = Math.max(client.lamport ?? 0, v?.causal?.lamport ?? 0)
+    for (const x of snap.model.memos) client.lamport = Math.max(client.lamport ?? 0, x?.causal?.lamport ?? 0)
     m._device_registers = new Map(snap.model.device_registers)
     for (const [id, reg] of m._device_registers) { const mem = m.members.get(id); if (mem) Object.assign(mem, { device_name: reg?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null }) }
     m.room.last_envelope_number = snap.envelope_number

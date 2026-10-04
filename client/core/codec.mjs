@@ -30,7 +30,7 @@ export const FIELDS = Object.freeze({
   answer: ['answer_action', 'choices', 'note', 'option_notes', 'attachments', 'marks', 'trusted'],
   permission_request: ['tool_name', 'description', 'input_preview'],
   verdict: [],
-  status: ['values'],
+  status: ['values', 'lamport'],
   decide_again: [],
 })
 export const CARD_CONTENT_FIELDS = FIELDS.card.slice(3)

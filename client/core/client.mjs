@@ -151,6 +151,7 @@ export class Client {
       this.model.room.last_envelope_number = sync.cursor
       this.delivered = new Map(Object.entries(sync.delivered ?? {}))
       this.frontiers = new Map(Object.entries(sync.frontiers ?? {}).map(([k, v]) => [k, new Map(Object.entries(v))]))
+      this.lamport = sync.lamport ?? 0
     }
     // R4: the history boundary. A process that starts without sync state treats every command sent before it started as
     // history, not as a prompt, and keeps that boundary across restarts (a hub replaying old commands later gains nothing).
@@ -699,6 +700,8 @@ export class Client {
       content = d.content; content_state = d.content_state
       try { bind = codec.decodeBindFor(opened.kind, opened.bind) } catch { bind = null }
     }
+    const lamport = M.lamportOf(content)
+    if (lamport > (this.lamport ?? 0)) this.lamport = lamport
     const member = this.state.members.get(b64u(h.sender))
     return {
       envelope_number, envelope_hash: hex(v.hash), sender_device_id: sender, sender_role: member ? roleName(member.role) : 'unknown',
@@ -707,7 +710,7 @@ export class Client {
       timeline_kind: h.timelineKind ? (codec.TIMELINE_KIND_NAME[h.timelineKind] ?? String(h.timelineKind)) : null, timeline_id: h.timelineId,
       session_id: h.keyScope === 1 && h.sessionId ? hex(h.sessionId) : null,
       attachment_ids: h.blobs.map(hex), content, content_state, bind, local_id: local_id ?? null,
-      causal: { sender_device_id: sender, sender_sequence: h.seq, sent_at: h.time, frontier: h.kind === codec.KIND.status || h.kind === codec.KIND.object_version ? Object.fromEntries(frontier) : null },
+      causal: { sender_device_id: sender, sender_sequence: h.seq, sent_at: h.time, lamport: M.lamportOf(content) },
       sender_sequence: h.seq,
       _header: h, _bind: opened?.bind ?? null, _epoch: h.epoch,
       object_id_ok: v.object_id_ok ?? null,
@@ -738,7 +741,7 @@ export class Client {
   }
 
   _syncRecord() {
-    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null,
+    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null, lamport: this.lamport ?? 0,
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
   }
 
@@ -782,6 +785,8 @@ export class Client {
       try {
         if (this._storageFailed) throw new ZError('storage-failed', 'storage failed earlier: restart before sending')
         if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind; session_id = built.session_id ?? session_id }
+        // R2: registers and memos carry a lamport one above every one this device has seen (compareWrites).
+        if (kind === codec.KIND.status || (kind === codec.KIND.object_version && content?.object_type === 'memo')) { this.lamport = (this.lamport ?? 0) + 1; content = { ...content, lamport: this.lamport } }
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         if (kind === codec.KIND.status && payload.length + (bind?.length ?? 0) + 16 > 4096) throw new ZError('too-large', 'a status body is at most 4 KiB')
@@ -1513,7 +1518,7 @@ export class Client {
   async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
 }
 
-const MEMO_META = new Set(['object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
+const MEMO_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
 function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
 
 const fields_session = f => f.session_id ?? null

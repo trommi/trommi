@@ -11,6 +11,7 @@ import { startTestHub } from './test-hub.mjs'
 import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, memoryStorage, timelineEvents, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
+import * as M from './model.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BENCH = process.argv.includes('--bench')
@@ -724,6 +725,48 @@ await test('S2 no rewind (D2): a refused envelope is voided or halts the chain; 
   eq(err?.code, 'chain-halted', 'settle says so')
   assert(agent.model.alerts.some(a => a.code === 'chain-halted'), 'alert')
   agent.hub.postEnvelope = post
+})
+
+await test('S2 register order (D1): every delivery order of the same writes gives the same winners', async () => {
+  // The review's counterexample: A (t=30), B (t=10, saw A), C (t=20, concurrent).
+  const A = { sender_device_id: 'a', sender_sequence: 1, sent_at: 30, lamport: 1 }
+  const B = { sender_device_id: 'b', sender_sequence: 1, sent_at: 10, lamport: 2 }
+  const C = { sender_device_id: 'c', sender_sequence: 1, sent_at: 20, lamport: 1 }
+  const run = order => order.reduce((w, x) => (!w || M.causallyAfter(x[1], w[1])) ? x : w, null)[0]
+  eq(run([['A', A], ['B', B], ['C', C]]), run([['C', C], ['A', A], ['B', B]]), 'A,B,C and C,A,B agree')
+  // Random histories: devices write registers (and deletes) after seeing random subsets; every permutation of
+  // delivery that respects each sender's own order converges, for human and agent registers (memos use the same comparator).
+  let seed = 7
+  const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n }
+  for (let round = 0; round < 40; round++) {
+    const devs = ['d1', 'd2', 'd3', 'd4']
+    const seq = { d1: 0, d2: 0, d3: 0, d4: 0 }, lam = { d1: 0, d2: 0, d3: 0, d4: 0 }
+    const writes = []
+    for (let i = 0; i < 30; i++) {
+      const d = devs[rnd(4)]
+      for (const w of writes) if (rnd(3) === 0) lam[d] = Math.max(lam[d], w.causal.lamport)   // saw some earlier writes
+      lam[d]++
+      const key = ['crown', 'snooze/x', 'desk/y'][rnd(3)]
+      writes.push({ key, value: rnd(4) === 0 ? null : `${d}-${i}`, causal: { sender_device_id: d, sender_sequence: ++seq[d], sent_at: rnd(5), lamport: lam[d] } })
+    }
+    const finals = new Set()
+    for (let p = 0; p < 12; p++) {
+      // a random interleaving that keeps each sender's order
+      const queues = devs.map(d => writes.filter(w => w.causal.sender_device_id === d))
+      const order = []
+      while (queues.some(q => q.length)) { const q = queues.filter(x => x.length)[rnd(queues.filter(x => x.length).length)]; order.push(q.shift()) }
+      const m = M.emptyModel(); m.room.my_role = 'human'
+      M.sessionOf(m, 's1').ever_agent_ids = [...devs]
+      const ch = M.emptyChange()
+      for (const [n, w] of order.entries()) {
+        M.setHumanRegister(m, w.key, w.value, { envelope_number: n + 1, sender_device_id: w.causal.sender_device_id, causal: w.causal }, ch)
+        M.applyRecord(m, { kind: codec.KIND.status, session_id: 's1', sender_role: 'agent', sender_device_id: w.causal.sender_device_id, sender_sequence: w.causal.sender_sequence, sent_at: w.causal.sent_at, envelope_number: n + 1, causal: w.causal, content: { values: { [`status_line/${w.key}`]: w.value } }, content_state: 'ok' }, ch)
+      }
+      assert(m.sessions.get('s1').registers.size > 0 && m.human.raw.size > 0, 'both kinds applied')
+      finals.add(JSON.stringify([[...m.human.raw].map(([k, v]) => [k, v.value]).sort(), [...(m.sessions.get('s1')?.registers ?? [])].map(([k, v]) => [k, v.value]).sort()]))
+    }
+    eq(finals.size, 1, `round ${round}: one outcome`)
+  }
 })
 
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
