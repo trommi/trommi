@@ -49,9 +49,8 @@ jobs:
           node hub/accounts-test.mjs
           node hub/admin-test.mjs
 
-      # Reports open fuzz findings without blocking the deploy until they are fixed (fuzz/FINDINGS.md).
+      # Blocks the deploy on any fuzz failure not listed in fuzz/known-open.json (fuzz/FINDINGS.md).
       - name: Fuzz (quick)
-        continue-on-error: true
         run: node fuzz/run.mjs --quick
 
       # PREVIEW_ORIGINS: the design preview served from the developer desktop over tailscale serve (tailnet only),
