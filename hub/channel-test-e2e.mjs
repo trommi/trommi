@@ -156,8 +156,7 @@ export async function integration({ test, tmp }) {
       const id = (await channel.call('publish_asset', { content: '<h1>Report</h1>', title: 'Report', note: 'for you' })).match(/published as ([0-9a-f]{32})/)[1]
       await until('published object', () => human.model.published.get(id)?.title === 'Report')
       const timeline = `chat:session/${agentId}`
-      const shown = human.model.published.get(id).attachments[0].attachment_id
-      const said = await until('announcement', () => [...(human.model.timelines.get(timeline)?.items.values() ?? [])].find(i => i.content?.attachments?.[0]?.attachment_id === shown))
+      const said = await until('announcement', () => [...(human.model.timelines.get(timeline)?.items.values() ?? [])].find(i => i.content?.published_object_id === id))
       assert.equal(said.content.text, '**Report**\n\nfor you')
       const bytes = await human.fetchAttachment(said.content.attachments[0])
       assert.equal(new TextDecoder().decode(bytes), '<h1>Report</h1>')
