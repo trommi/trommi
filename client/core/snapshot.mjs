@@ -120,7 +120,7 @@ export async function bootFromSnapshot(client) {
     for (const p of snap.model.permissions) m.permissions.set(p.object_id, p)
     for (const x of snap.model.memos) m.memos.set(x.object_id, x)
     for (const x of snap.model.published) m.published.set(x.object_id, x)
-    for (const s of snap.model.sessions) m.sessions.set(s.session_id ?? s.agent_device_id, { ...M.deserialiseSession(s), ...pick(m.sessions.get(s.session_id), ['agent_device_ids', 'agent_device_id', 'session_key_epoch', 'with_history']) })
+    for (const s of snap.model.sessions) m.sessions.set(s.session_id ?? s.agent_device_id, { ...M.deserialiseSession(s), ...pick(m.sessions.get(s.session_id), ['agent_device_ids', 'agent_device_id', 'session_key_epoch', 'with_history', 'epoch_agent_ids', 'ever_agent_ids']) })
     for (const t of snap.model.timelines) m.timelines.set(t.timeline_key, M.deserialiseTimelineMeta(t))
     M.deserialiseHuman(m, { raw: snap.model.human })
     // R2: this device's lamport counter starts above every write in the snapshot.

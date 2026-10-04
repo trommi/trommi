@@ -96,7 +96,7 @@ export function applyDevices(model, devices, change) {
 export function sessionOf(model, session_id) {
   let s = model.sessions.get(session_id)
   if (!s) {
-    s = { session_id, agent_device_ids: [], ever_agent_ids: [], agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false,
+    s = { session_id, agent_device_ids: [], ever_agent_ids: [], epoch_agent_ids: {}, agent_device_id: null, agent_session_id: null, device_name: '', is_active: true, is_online: false,
       session_key_epoch: 0, with_history: false, profile: null, status_lines: [], agent_alerts: [], registers: new Map(),
       settings: null, read_up_to: 0, card_ids: [], open_card_ids: [], timeline_key: timelineKey('chat', `session/${session_id}`), unread_count: 0, unread_numbers: [], last_activity_at: 0 }
     model.sessions.set(session_id, s)
@@ -112,8 +112,9 @@ function touchAgent(model, agent_device_id, change) {
   for (const s of model.sessions.values()) if (s.agent_device_ids.includes(agent_device_id) || s.agent_device_id === agent_device_id) { syncSessionAgent(model, s); change.sessions.add(s.session_id) }
 }
 /** A verified grant chain state (crypto/session-grants.mjs) for one session. */
-export function applySessionGrant(model, sessionState, change, everAgentIds = []) {
+export function applySessionGrant(model, sessionState, change, everAgentIds = [], epochAgentIds = null) {
   const s = sessionOf(model, sessionState.sessionId)
+  if (epochAgentIds) s.epoch_agent_ids = epochAgentIds
   s.agent_device_ids = [...sessionState.agentIds]
   for (const a of everAgentIds) if (!s.ever_agent_ids.includes(a)) s.ever_agent_ids.push(a)
   for (const a of s.agent_device_ids) if (!s.ever_agent_ids.includes(a)) s.ever_agent_ids.push(a)
@@ -126,6 +127,17 @@ export function applySessionGrant(model, sessionState, change, everAgentIds = []
   return s
 }
 const everAgent = (model, sid, device) => !!sid && (model.sessions.get(sid)?.ever_agent_ids.includes(device) ?? false)
+/**
+ * B03/A7: may this agent write into session `sid` with this record? It must be among the agents the grants gave the
+ * session key epoch the record was sealed in (rec._epoch). Dropping an agent always starts a new epoch, so this is
+ * "assigned when it wrote", the same for history and live. Records without a known epoch fall back to "ever assigned".
+ */
+const agentAt = (model, sid, device, rec) => {
+  const s = sid ? model.sessions.get(sid) : null
+  if (!s) return false
+  const at = rec?.session_id === sid && rec._epoch != null ? s.epoch_agent_ids?.[rec._epoch] : null
+  return at ? at.includes(device) : s.ever_agent_ids.includes(device)
+}
 
 // ---- alerts ---------------------------------------------------------------------------------
 
@@ -200,7 +212,7 @@ export function timelineRefusal(model, rec) {
   if (p.timeline_kind === 'chat') {
     if (p.scope === 'session') {
       if (rec.session_id && rec.session_id !== p.scope_id) return 'not-allowed'
-      return everAgent(model, p.scope_id, rec.sender_device_id) || (human && everAgent(model, p.scope_id, rec.recipient_device_id)) ? null : 'not-allowed'
+      return agentAt(model, p.scope_id, rec.sender_device_id, rec) || (human && everAgent(model, p.scope_id, rec.recipient_device_id)) ? null : 'not-allowed'
     }
     if (p.scope === 'card') {
       const card = model.cards.get(p.scope_id)
@@ -211,7 +223,7 @@ export function timelineRefusal(model, rec) {
   }
   if (p.timeline_kind === 'canvas') {
     if (p.scope === 'desk') return human ? null : 'not-allowed'
-    if (p.scope === 'session') return human || everAgent(model, p.scope_id, rec.sender_device_id) ? null : 'not-allowed'
+    if (p.scope === 'session') return human || agentAt(model, p.scope_id, rec.sender_device_id, rec) ? null : 'not-allowed'
     if (p.scope === 'card') return human || rec.sender_device_id === model.cards.get(p.scope_id)?.agent_device_id ? null : 'not-allowed'
     return 'not-allowed'
   }
@@ -281,7 +293,7 @@ function applyObjectVersion(model, rec, change) {
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'cards come from agents')
   const fresh = !card
   if (card && card.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a card version from someone else than its creator')
-  if (rec.session_id && !everAgent(model, rec.session_id, rec.sender_device_id)) return refuse(model, change, rec, 'not-allowed', 'a card in a session this agent was never assigned to')
+  if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a card in a session this agent is not assigned to')
   if (card && card.session_id !== (rec.session_id ?? null)) return refuse(model, change, rec, 'not-allowed', 'a card version in another session')
   if (fresh && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   if (c) {
@@ -371,6 +383,8 @@ function memoOf(object_id, rec, c, old) {
 function applyPublished(model, rec, change) {
   const object_id = rec.object.object_id
   const old = model.published.get(object_id)
+  if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'published objects come from agents')
+  if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a published object in a session this agent is not assigned to')
   if (old && old.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a published object from someone else than its creator')
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   const c = rec.content ?? {}
@@ -476,6 +490,7 @@ function applyDecideAgain(model, rec, change) {
 function applyPermissionRequest(model, rec, change) {
   const object_id = rec.object?.object_id
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'permission requests come from agents')
+  if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a permission request in a session this agent is not assigned to')
   if (!object_id || model.permissions.has(object_id)) return refuse(model, change, rec, 'bad-object', 'permission request without a new object id')
   if (rec.bind && rec.bind.requestId !== object_id) return refuse(model, change, rec, 'bad-object', 'request id differs from object id')
   if (rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence)')
@@ -538,12 +553,12 @@ function applyStatus(model, rec, change) {
       if (model.room.my_role === 'agent') continue   // agents ignore human keys
       setHumanRegister(model, key, value, rec, change)
     } else if (rec.sender_role === 'agent' && isAgentKey(key)) {
-      if (!rec.session_id || !everAgent(model, rec.session_id, rec.sender_device_id)) { refuse(model, change, rec, 'not-allowed', `${key} outside the agent's session`); continue }
+      if (!rec.session_id || !agentAt(model, rec.session_id, rec.sender_device_id, rec)) { refuse(model, change, rec, 'not-allowed', `${key} outside the agent's session`); continue }
       setAgentRegister(model, rec.session_id, key, value, rec, change)
     } else if (rec.sender_role === 'agent' && isHumanKey(key) || rec.sender_role === 'human' && isAgentKey(key)) {
       refuse(model, change, rec, 'foreign-key', `${key} is not a ${rec.sender_role} key`)
     } else if (rec.sender_role === 'agent') {
-      if (rec.session_id && everAgent(model, rec.session_id, rec.sender_device_id)) setAgentRegister(model, rec.session_id, key, value, rec, change)    // unknown agent keys are kept raw
+      if (rec.session_id && agentAt(model, rec.session_id, rec.sender_device_id, rec)) setAgentRegister(model, rec.session_id, key, value, rec, change)    // unknown agent keys are kept raw
     } else if (model.room.my_role !== 'agent') {
       setHumanRegister(model, key, value, rec, change)                           // unknown human keys are kept raw
     }
