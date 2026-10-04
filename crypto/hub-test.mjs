@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict'
 import * as z from './zcrypto.mjs'
 import { createSessionGrant } from './session-grants.mjs'
-import { createHub, memoryStorage, SESSION_TTL_MS, CHALLENGE_TTL_MS, MAX_REQUESTS_PER_INVITE } from './hub.mjs'
+import { createHub, memoryStorage, SESSION_TTL_MS, CHALLENGE_TTL_MS, MAX_REQUESTS_PER_INVITE, MAX_AGENT_SESSIONS } from './hub.mjs'
 
 const { ROLE, KIND, hex, utf8, concat } = z
 const HUB = 'https://hub.example'
@@ -635,6 +635,41 @@ test('review 2 #5: a final refusal of a verified envelope is a void record that 
   const gap = await z.sealEnvelope({ device: w.phone.device, state: w.phone.state, chains: z.newChains(), kind: KIND.CHAT, payload: utf8('x'), time: w.now(), keyScope: 1, sessionId: SID, secret: w.phone.session, timelineKind: 1, timelineId: `session/${hex(SID)}`, recipient: w.agent.device.id })
   const e2 = await rejects(() => w.hub.postEnvelope(w.phone.token, gap.bytes), ['equivocation', 'replay', 'chain-break'])
   assert.ok(!e2.voided)
+})
+
+test('agent child session: an agent opens a session of its own, posts in it; another agent cannot; limits and authority', async () => {
+  const w = await makeWorld()
+  const CHILD = new Uint8Array(16).fill(0x5c)
+  const g = await createSessionGrant({ state: w.agent.state, signer: w.agent.device, sessionId: CHILD, agentIds: [w.agent.device.id], time: w.now() })
+  // sealed for both humans, the recovery key and the agent itself: the hub insists on exactly that set
+  await rejects(() => w.hub.postGrant({ sessionId: hex(CHILD), grant: g.grant, wraps: g.wraps.slice(1) }), 'incomplete')
+  const out = await w.hub.postGrant({ sessionId: hex(CHILD), grant: g.grant, wraps: g.wraps })
+  assert.deepEqual(out.agentIds, [hex(w.agent.device.id)])
+  assert.equal(g.wraps.length, 4)
+  // the agent writes in it under its key
+  const env = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: w.agent.chains, kind: KIND.CHAT, payload: utf8('child'), time: w.now(), keyScope: 1, sessionId: CHILD, secret: g.secret, timelineKind: 1, timelineId: `session/${hex(CHILD)}` })
+  await postAs(w, w.agent.token, env.bytes)
+  // another agent: not assigned, gets no key, and the hub refuses its writes there
+  const bot = await join(w, w.phone, await z.generateDevice(), ROLE.AGENT, 'Bot')
+  await sync(w, w.agent)
+  assert.equal(w.hub.sessionWraps(bot.token, hex(CHILD)).length, 0)
+  const forged = await z.sealEnvelope({ device: bot.device, state: bot.state, chains: bot.chains, kind: KIND.CHAT, payload: utf8('x'), time: w.now(), keyScope: 1, sessionId: CHILD, secret: g.secret, timelineKind: 1, timelineId: `session/${hex(CHILD)}` })
+  await rejects(() => postAs(w, bot.token, forged.bytes), 'forbidden')
+  // an agent cannot open a session for another agent, nor sign a later grant of its own session
+  const other = new Uint8Array(16).fill(0x5d)
+  await rejects(() => createSessionGrant({ state: w.agent.state, signer: w.agent.device, sessionId: other, agentIds: [bot.device.id], time: w.now() }), 'not-human')
+  await rejects(() => createSessionGrant({ state: w.agent.state, signer: w.agent.device, sessionState: g.sessionState, current: g.secret, agentIds: [w.agent.device.id], rotate: true, time: w.now() }), 'not-human')
+  // a human re-keys it like any session (a new human device, a removal)
+  const h = await createSessionGrant({ state: w.phone.state, signer: w.phone.device, sessionState: g.sessionState, current: g.secret, agentIds: [w.agent.device.id], rotate: true, time: w.now() })
+  await w.hub.postGrant({ sessionId: hex(CHILD), grant: h.grant, wraps: h.wraps, backLink: h.backLink })
+  // at most MAX_AGENT_SESSIONS of its own
+  for (let i = 1; i < MAX_AGENT_SESSIONS; i++) {
+    const sid = new Uint8Array(16).fill(i); sid[0] = 0xa0
+    const x = await createSessionGrant({ state: w.agent.state, signer: w.agent.device, sessionId: sid, agentIds: [w.agent.device.id], time: w.now() })
+    await w.hub.postGrant({ sessionId: hex(sid), grant: x.grant, wraps: x.wraps })
+  }
+  const last = await createSessionGrant({ state: w.agent.state, signer: w.agent.device, sessionId: new Uint8Array(16).fill(0xee), agentIds: [w.agent.device.id], time: w.now() })
+  await rejects(() => w.hub.postGrant({ sessionId: 'ee'.repeat(16), grant: last.grant, wraps: last.wraps }), 'rate-limited')
 })
 
 let failed = 0

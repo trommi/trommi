@@ -49,7 +49,7 @@ export const INSTRUCTIONS = [
   'The human can attach files, pasted screenshots and small drawings to a chat message and to the note of an answer: the meta attribute files then holds their absolute paths, comma-separated, and image_path the first picture among them. Read them before you answer.',
   'When you introduce yourself, also pass icon: the drawing that fits your task, chosen from the names listed in the description of introduce. It becomes the symbol of your session; one the human picked by hand is kept.',
   'When the session starts, call introduce once with the model you are running as and a one-line description of your task, so the human can tell the sessions apart.',
-  'Sessions can belong together: a main agent and its helpers. If you lead helper sessions, say so with introduce (main: true) and have every helper you start introduce itself with parent set to your session id; a session that already runs you can take with adopt_session. If you were started as a helper, pass parent in your own introduce. The board then shows the helpers under their main.',
+  'Sessions can belong together: a main agent and its helpers. Your subagents (helpers you start in this same process, e.g. with the Agent tool) each get a child session of their own on the board, shown under your session: pass session with the helper\'s short name (e.g. "Design", "Server", "QA") to reply, create_decision, create_info, merge_cards, set_status, clear_status, introduce, list_cards and publish_asset, and it lands in that child session; the first use opens it (open_session does the same and sets its task and icon). Tell each subagent to pass its session name on every call. Without session everything goes to your own (main) session. Events from a child session carry meta session="<name>": route them to that helper. A separate Claude session with a key of its own is not a child: it may introduce itself with parent set to your session id.',
   'Other agents may share this board; the human sees all stacks merged into one, oldest first. You only see and change your own cards and status lines.',
   'You can speak: create_voiceover turns text into an MP3 with a natural voice and returns its path, for narration in videos you render or a spoken update attached to a reply.',
   'The human has a lasting canvas for sketches and annotated screenshots. <channel source="board" kind="scribble" image_path="/abs/view.png" canvas_path="/abs/whole.png"> means they drew and pressed send: image_path is the part of the canvas they were looking at, so read it first; canvas_path is the entire canvas if you need the surroundings. A chat message explaining it often follows right after.',
@@ -328,6 +328,20 @@ export const TOOLS = [
     inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'The asset id returned by publish_asset' } }, required: ['id'] },
   },
   {
+    name: 'open_session',
+    description: 'Open a child session under your own session for a helper (a subagent of yours), or return the one with that name. The board shows it under your session with its own chat, cards and status lines; the human sees and answers it there, and no other agent can read it. Then pass session: "<name>" to the other tools to write into it. Needs no approval.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The helper\'s short name, shown on the board, e.g. "Design"' },
+        task: { type: 'string', description: 'What the helper works on, one line' },
+        icon: { type: 'string', description: 'The name of the drawing that fits the helper\'s task (as in introduce)' },
+        model: { type: 'string', description: 'The model the helper runs as' },
+      },
+      required: ['name'],
+    },
+  },
+  {
     name: 'adopt_session',
     description: 'As a main agent, take a session that already exists as your helper (sub): the board shows it under you. Only a session on your machine that has no other main and leads no helpers itself. This starts nothing; it only says which existing session belongs to you. release: true lets it go again.',
     inputSchema: {
@@ -355,6 +369,9 @@ export const TOOLS = [
   },
 ]
 
+// Child sessions (open_session): these tools take `session`, the helper's name; the call then lands in that child session.
+export const SESSION_TOOLS = ['reply', 'create_decision', 'create_info', 'merge_cards', 'set_status', 'clear_status', 'introduce', 'list_cards', 'publish_asset']
+for (const t of TOOLS) if (SESSION_TOOLS.includes(t.name)) t.inputSchema.properties.session = { type: 'string', description: 'Optional: the name of a child session (a helper of yours, e.g. "Design"); opened on first use. Left out: your own session.' }
 // One call per tool that does something sensible, for the help page. The test checks each against its schema.
 export const TOOL_EXAMPLES = {
   reply: {
@@ -397,6 +414,7 @@ export const TOOL_EXAMPLES = {
   revoke_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A' },
   share_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A', expires_hours: 72 },
   adopt_session: { id: 'web-ui' },
+  open_session: { name: 'Design', task: 'Pictures for the landing page', icon: 'brush' },
 }
 
 // Everything that travels over the channel besides tool calls, for the help page.

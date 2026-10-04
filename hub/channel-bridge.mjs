@@ -184,10 +184,55 @@ const markOf = m => {
 export function createBridge({ client, notify, cacheDir, state = {}, saveState = () => {}, log = () => {} }) {
   state.permissions ??= {}
   state.shares ??= {}   // published object_id -> [{ share_id, expires_at }]: outsider links this agent made
+  state.children ??= {} // child sessions this agent opened for its helpers: lowercase name -> { session_id, name }
   const model = () => client.model
   const me = () => model().room.my_device_id
   // This agent's session on the board: its session_id once sessions have their own keys (R6), its device id before.
-  const mySession = () => model().sessions.get(client.session_id ?? me())
+  // With a child session id: that one (a helper's session, open_session).
+  const mySession = (sid = null) => model().sessions.get(sid ?? client.session_id ?? me())
+
+  // ---- child sessions: one per helper (a subagent of this Claude session), named by the helper ------------
+  const opening = new Map()
+  const holds = sid => (client.session_ids ?? []).includes(sid)
+  function findChild(name) {
+    const key = name.toLowerCase()
+    const known = state.children[key]
+    if (known && holds(known.session_id)) return known.session_id
+    // The state file was lost: find it by the name this agent wrote into the child's profile.
+    for (const sid of client.childSessionIds?.() ?? []) {
+      if (String(model().sessions.get(sid)?.profile?.agent_name ?? '').toLowerCase() !== key) continue
+      state.children[key] = { session_id: sid, name }
+      saveState()
+      return sid
+    }
+    return null
+  }
+  const childName = sid => {
+    if (!sid || sid === client.session_id) return null
+    const hit = Object.values(state.children).find(c => c.session_id === sid)
+    return hit?.name ?? model().sessions.get(sid)?.profile?.agent_name ?? sid.slice(0, 12)
+  }
+  /** The session a tool call writes into: null for the main session, else the named child (opened on first use). */
+  async function sessionOf(args, profile = {}) {
+    const name = args.session == null ? '' : String(args.session).trim()
+    if (!name) return null
+    if (name.length > 40 || /[\n\r]/.test(name)) throw new Error('session is a helper\'s short name, at most 40 characters')
+    const found = findChild(name)
+    if (found) return found
+    if (!client.openChildSession) throw new Error('this hub connection cannot open child sessions')
+    const key = name.toLowerCase()
+    if (!opening.has(key)) {
+      const model_ = mySession()?.profile?.model
+      opening.set(key, client.openChildSession({ profile: { agent_name: name, ...(model_ ? { model: model_ } : {}), ...profile } }).then(sid => {
+        state.children[key] = { session_id: sid, name }
+        saveState()
+        log(`child session "${name}" opened: ${sid}`)
+        return sid
+      }).finally(() => opening.delete(key)))
+    }
+    return opening.get(key)
+  }
+  const into = sid => (sid ? { session_id: sid } : {})
   const myCards = () => [...model().cards.values()].filter(c => c.agent_device_id === me()).sort((a, b) => a.first_envelope_number - b.first_envelope_number)
 
   function findCard(ref) {
@@ -363,7 +408,8 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         // asked (present: true) or as the answer to "Explain".
         const turn = card?.in_revision ?? null
         const present = Boolean(turn) && (args.present === true || (turn.by === 'explain' && args.present !== false))
-        await client.sendMessage({
+        const sid = card ? null : await sessionOf(args)
+        await client.sendMessage({ ...into(sid),
           text, ...(html ? { html } : {}), ...(args.details ? { details: cleanFences(String(args.details), 'details') } : {}),
           attachments: await uploadAll(args.attachments), ...(card ? { object_id: card.object_id } : {}), ...(present ? { present_card: true } : {}),
         })
@@ -371,15 +417,17 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       }
       case 'create_decision': {
         const fields = questionFields(args, namesOf(args.attachments))
+        const sid = await sessionOf(args)
         const attachments = await uploadAll(args.attachments)
-        const id = await client.sendCard({ ...fields, attachments })
+        const id = await client.sendCard({ ...fields, attachments, ...into(sid) })
         await caughtUp()
         return `card ${id} created, ${placeOf({ object_id: id })}; the choice will arrive as a channel event${strippedHint()}`
       }
       case 'create_info': {
         const fields = infoFields(args, namesOf(args.attachments))
+        const sid = await sessionOf(args)
         const attachments = await uploadAll(args.attachments)
-        const id = await client.sendCard({ ...fields, attachments })
+        const id = await client.sendCard({ ...fields, attachments, ...into(sid) })
         return `info ${id} put on the board; when the human has read and closed it, info_read arrives, which needs no answer${strippedHint()}`
       }
       case 'revise_card':
@@ -395,8 +443,9 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         }
         const top = old.reduce((a, b) => (URGENCIES.indexOf(b.urgency) > URGENCIES.indexOf(a.urgency) ? b : a))
         const fields = questionFields({ ...args, urgency: args.urgency ?? top.urgency, urgency_reason: args.urgency_reason ?? (args.urgency == null ? top.urgency_reason : '') }, namesOf(args.attachments))
+        const sid = await sessionOf(args)
         const attachments = await uploadAll(args.attachments)
-        const id = await client.merge(old.map(c => c.object_id), { ...fields, attachments })
+        const id = await client.merge(old.map(c => c.object_id), { ...fields, attachments, ...into(sid) })
         return `card ${id} created, replacing ${old.map(c => c.object_id).join(', ')}; answers to the replaced cards will no longer arrive, the choice on this one will arrive as a channel event${strippedHint()}`
       }
       case 'set_urgency': {
@@ -423,34 +472,52 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const id = String(args.id ?? '').trim()
         if (!id) throw new Error('id is required')
         if (!STATUSES.includes(args.state)) throw new Error(`state must be one of ${STATUSES.join(', ')}; got "${args.state}"`)
-        const before = mySession()?.status_lines?.find(s => s.id === id)
+        const sid = await sessionOf(args)
+        const before = mySession(sid)?.status_lines?.find(s => s.id === id)
         if (!before && !args.label) throw new Error(`label is required for the new status line "${id}"`)
         const card = args.card_id ? findCard(args.card_id) : null
         await client.setStatus({ [`status_line/${id}`]: {
           label: String(args.label ?? before.label), state: args.state, detail: args.detail != null ? String(args.detail) : before?.detail ?? '',
           object_id: args.state === 'decision' ? card?.object_id ?? before?.object_id ?? null : null,
-        } })
+        } }, ...(sid ? [{ session_id: sid }] : []))
         return `status "${id}" is ${args.state}`
       }
       case 'clear_status': {
-        const lines = mySession()?.status_lines ?? []
+        const sid = await sessionOf(args)
+        const lines = mySession(sid)?.status_lines ?? []
         const gone = args.id ? [String(args.id)] : lines.map(s => s.id)
-        if (gone.length) await client.setStatus(Object.fromEntries(gone.map(id => [`status_line/${id}`, null])))
+        if (gone.length) await client.setStatus(Object.fromEntries(gone.map(id => [`status_line/${id}`, null])), ...(sid ? [{ session_id: sid }] : []))
         return 'cleared'
       }
       case 'introduce': {
         if (!args.model) throw new Error('model is required')
-        const was = mySession()?.profile ?? {}
+        const sid = await sessionOf(args)
+        const was = mySession(sid)?.profile ?? {}
         await client.setStatus({ profile: {
           ...was, model: String(args.model), task: args.task != null ? String(args.task) : was.task ?? '',
           ...(args.icon != null ? { icon: String(args.icon) } : {}),
           ...(args.parent !== undefined ? { parent_session: args.parent ? String(args.parent) : null } : {}),
           ...(args.main !== undefined ? { is_main: args.main === true } : {}),
-        } })
+        } }, ...(sid ? [{ session_id: sid }] : []))
         return 'noted'
       }
-      case 'list_cards':
-        return JSON.stringify(myCards().map(cardLine), null, 2)
+      case 'list_cards': {
+        const sid = args.session == null || args.session === '' ? undefined : findChild(String(args.session).trim())
+        if (sid === null) throw new Error(`no child session "${args.session}"; open_session opens one`)
+        return JSON.stringify(myCards().filter(c => sid === undefined || c.session_id === sid).map(c => {
+          const line = cardLine(c), child = childName(c.session_id)
+          return child ? { ...line, session: child } : line
+        }), null, 2)
+      }
+      case 'open_session': {
+        const name = String(args.name ?? '').trim()
+        if (!name) throw new Error('name is required: the helper\'s short name, e.g. "Design"')
+        const profile = { ...(args.task != null ? { task: String(args.task) } : {}), ...(args.icon != null ? { icon: String(args.icon) } : {}), ...(args.model != null ? { model: String(args.model) } : {}) }
+        const existed = findChild(name)
+        const sid = existed ?? await sessionOf({ session: name }, profile)
+        if (existed && Object.keys(profile).length) await client.setStatus({ profile: { ...(mySession(sid)?.profile ?? {}), ...profile } }, { session_id: sid })
+        return `${existed ? 'child session already open' : 'child session opened'}: "${name}" (${sid}), under your session on the board. Pass session: "${name}" to reply, create_decision, create_info, merge_cards, set_status, clear_status, introduce, list_cards and publish_asset to write into it; the human's messages and answers there arrive with meta session="${name}".`
+      }
       case 'publish_asset': {
         if (args.silent === true) throw new Error('silent assets are not available on the new hub yet: publish it without silent, or attach the file to a reply')
         if (args.path == null && args.content == null) throw new Error('give path or content')
@@ -466,9 +533,10 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const title = String(args.title || ref.file_name)
         const asset = { ...ref, asset_type: args.type ?? assetTypeOf(ref.media_type) }
         const note = args.note ? String(args.note) : null
-        const id = await client.publish({ attachments: [asset], title, ...(note ? { note } : {}) })
+        const sid = await sessionOf(args)
+        const id = await client.publish({ attachments: [asset], title, ...(note ? { note } : {}), ...into(sid) })
         // Announced in the session's conversation, as today's board did: a message carrying the published object.
-        await client.sendMessage({ text: [`**${title}**`, note].filter(Boolean).join('\n\n'), attachments: [asset], published_object_id: id })
+        await client.sendMessage({ ...into(sid), text: [`**${title}**`, note].filter(Boolean).join('\n\n'), attachments: [asset], published_object_id: id })
         return `published as ${id}: "${title}" is shown in your conversation on the board, end-to-end encrypted; members open it in the Trommi app. For someone outside the board: share_asset.`
       }
       case 'list_assets':
@@ -530,7 +598,9 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     const title = card?.title ?? cmd.object_id ?? ''
     // late: the human had not seen this agent's newest envelope; history: older than what this process had
     // delivered before it lost its state, context only, never a new prompt (README R4).
-    const flags = { ...(cmd.late ? { late: '1' } : {}), ...(cmd.history ? { history: '1' } : {}) }
+    // A command in a child session (a helper's) names it, so the main agent hands it to that helper.
+    const child = childName(cmd.session_id ?? card?.session_id ?? null)
+    const flags = { ...(cmd.late ? { late: '1' } : {}), ...(cmd.history ? { history: '1' } : {}), ...(child ? { session: child } : {}) }
     const send = (content, meta) => notify('notifications/claude/channel', { content: cmd.history ? `(Earlier message, for context only; not a new request.)\n${content}` : content, meta: { ...meta, ...flags } })
     switch (cmd.command) {
       case 'message': {

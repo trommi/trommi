@@ -133,10 +133,24 @@ export function applySessionGrant(model, sessionState, change, everAgentIds = []
   s.agent_device_id = s.agent_device_ids[0] ?? s.agent_device_id
   s.session_key_epoch = sessionState.epoch
   s.with_history = !!sessionState.withHistory
+  // A child session an agent opened itself (its first grant signed by that agent): its parent must be a session of the same agent.
+  s.created_by_agent = !!sessionState.createdByAgent
+  s.creator_device_id = sessionState.creatorId ?? null
   syncSessionAgent(model, s)
   change.sessions.add(s.session_id)
   change.stack = true
   return s
+}
+/**
+ * The parent a session names in its profile (parent_session: a session id, or an older board id), if it may: a child
+ * session an agent opened itself counts only under a session that agent is assigned to; others as before (display only).
+ */
+export function parentSessionOf(model, s) {
+  const want = s?.profile?.parent_session
+  if (!want || typeof want !== 'string') return null
+  const parent = model.sessions.get(want) ?? null
+  if (s.created_by_agent) return parent && parent !== s && parent.agent_device_ids.includes(s.creator_device_id) ? parent.session_id : null
+  return parent ? parent.session_id : want
 }
 const everAgent = (model, sid, device) => !!sid && (model.sessions.get(sid)?.ever_agent_ids.includes(device) ?? false)
 /**

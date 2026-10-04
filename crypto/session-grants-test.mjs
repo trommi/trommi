@@ -131,5 +131,38 @@ await t('per-agent history (PoC p4): adding agent 2 with history does not hand t
   assert(z.bytesEqual(prev.key, p2.secret.key), 'agent 2 reads back')
 })
 
+// An agent's own (child) session, 4 October 2026: the agent signs the first grant, assigning itself alone, no history.
+const resign = async (grant, dev) => { const body = grant.slice(0, grant.length - 64); body.set(dev.id, body.length - 32); return z.concat(body, await z.sign(dev, g.LABEL.grantSig, body)) }
+await t('agent child session: an agent creates a session of its own; humans and the recovery key get the key, no other agent', async () => {
+  const r = await g.createSessionGrant({ state, signer: a1, agentIds: [a1.id] })
+  assert(r.sessionState.createdByAgent && r.sessionState.creatorId === z.hex(a1.id), 'created by the agent')
+  assert(r.wraps.length === 3 && !r.wraps.some(w => z.bytesEqual(w.id, a2.id)), 'phone, recovery key, agent 1; never agent 2')
+  const v = await g.verifyGrants([r.grant], state)
+  assert(v.agentIds.length === 1 && v.agentIds[0] === z.hex(a1.id) && v.createdByAgent, 'verifies')
+  const kp = await g.unwrapSessionKey({ roomId: state.roomId, sessionState: v, device: phone, sealed: wrapFor(r.wraps, phone), epoch: 1 })
+  assert(z.bytesEqual(kp.key, r.secret.key) && kp.hist, 'the human reads it, with the history key')
+  // a human may re-key it later like any session (a removal), and the agent cannot sign that
+  const h = await g.createSessionGrant({ state, signer: phone, sessionState: v, current: kp, agentIds: [a1.id], rotate: true })
+  assert(h.sessionState.createdByAgent && h.sessionState.creatorId === z.hex(a1.id) && h.sessionState.epoch === 2, 'a human rotates it; the creator is kept')
+})
+await t('agent child session: the agent may not assign another agent, add history, or sign a later grant', async () => {
+  await throwsCode(() => g.createSessionGrant({ state, signer: a1, agentIds: [a2.id] }), 'not-human')
+  await throwsCode(() => g.createSessionGrant({ state, signer: a1, agentIds: [a1.id, a2.id] }), 'not-human')
+  await throwsCode(() => g.createSessionGrant({ state, signer: a1, agentIds: [a1.id], withHistory: true }), 'not-human')
+  // forged bytes: a human's grant shape re-signed by the agent
+  const both = await g.createSessionGrant({ state, signer: phone, agentIds: [a1.id, a2.id] })
+  await throwsCode(async () => g.applyGrant(null, await resign(both.grant, a1), state), 'bad-grant')
+  const other = await g.createSessionGrant({ state, signer: phone, agentIds: [a2.id] })
+  await throwsCode(async () => g.applyGrant(null, await resign(other.grant, a1), state), 'bad-grant')
+  const own = await g.createSessionGrant({ state, signer: a1, agentIds: [a1.id] })
+  const kp = await g.unwrapSessionKey({ roomId: state.roomId, sessionState: own.sessionState, device: phone, sealed: wrapFor(own.wraps, phone), epoch: 1 })
+  const next = await g.createSessionGrant({ state, signer: phone, sessionState: own.sessionState, current: kp, agentIds: [a1.id] })
+  await throwsCode(async () => g.applyGrant(own.sessionState, await resign(next.grant, a1), state), 'bad-grant')
+  const hist = await g.createSessionGrant({ state, signer: phone, agentIds: [a1.id], withHistory: true })
+  await throwsCode(async () => g.applyGrant(null, await resign(hist.grant, a1), state), 'bad-grant')
+  const ok = await resign((await g.createSessionGrant({ state, signer: phone, agentIds: [a1.id] })).grant, a1)
+  assert((await g.applyGrant(null, ok, state)).createdByAgent, 'the same shape signed by the agent itself is fine')
+})
+
 console.log(`\n${passed} ok, ${failed} failed`)
 process.exit(failed ? 1 : 0)

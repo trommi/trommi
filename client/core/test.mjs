@@ -951,6 +951,55 @@ if (!useTestHub) await test('fuzz F15: an answer the agent refuses does not leav
   eq(phone.model.cards.get(id).object_state, 'open', 'open on the phone')
 })
 
+if (z.KEY_SCOPE) await test('agent child session: the agent opens one without approval; the human sees it under the parent; another agent cannot read it; it survives a restart', async () => {
+  const dir = path.join(scratch, 'agent-child')
+  const { phone, agents: [bot] } = await room({ laptop: true, agents: 1 })
+  const agent = await addAgent(phone, 'Main', await fileStorage({ dir, write_delay_ms: 5 }))
+  const main = agent.session_id
+  const child = await agent.openChildSession({ profile: { agent_name: 'Design', model: 'test', task: 'pictures' } })
+  assert(child && child !== main, 'a new session')
+  eq(agent.session_id, main, 'the main session stays the default')
+  eq(agent.childSessionIds().join(), child, 'the child is listed')
+  await agent.sendMessage({ text: 'hello from Design', session_id: child })
+  const card = await agent.sendCard({ title: 'design?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }], session_id: child })
+  await settleAll(agent)
+  // the human: the session, its parent, its card and chat, readable
+  await until(() => phone.model.sessions.get(child)?.profile?.parent_session === main, 'the phone sees the child with its parent')
+  eq(phone.model.sessions.get(child).agent_device_ids.join(), agent.my_device_id, 'assigned to the main agent')
+  eq(M.parentSessionOf(phone.model, phone.model.sessions.get(child)), main, 'shown under its main')
+  // a child cannot hang itself under another agent's session
+  await agent.setStatus({ profile: { agent_name: 'Design', parent_session: bot.session_id } }, { session_id: child })
+  await settleAll(agent)
+  await until(() => phone.model.sessions.get(child)?.profile?.parent_session === bot.session_id, 'the forged claim arrives')
+  eq(M.parentSessionOf(phone.model, phone.model.sessions.get(child)), null, 'and is not honoured')
+  await agent.setStatus({ profile: { agent_name: 'Design', parent_session: main } }, { session_id: child })
+  await until(() => phone.model.cards.get(card)?.session_id === child, 'the card is in the child session')
+  eq(phone.model.cards.get(card).title, 'design?', 'decrypted on the phone')
+  await phone.loadTimeline(`chat:session/${child}`)
+  assert([...phone.model.timelines.get(`chat:session/${child}`).items.values()].some(i => i.content?.text === 'hello from Design'), 'chat readable')
+  // another agent: no key, so nothing of it
+  await settleAll(bot)
+  assert(!bot.sessionKeys.get(child)?.secrets.size, 'the other agent holds no key of the child')
+  assert(!bot.model.cards.get(card)?.title, 'the other agent cannot read the card')
+  // the human answers in the child; the agent gets the command with the child's session id
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  await phone.answer({ object_id: card, choices: ['b'] })
+  await until(() => cmds.find(c => c.command === 'answer' && c.session_id === child), 'answer from the child session')
+  // a restart of the agent process: same main, same child, still writes there
+  await agent.stop()
+  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  await again.start()
+  eq(again.session_id, main, 'main session after the restart')
+  eq(again.childSessionIds().join(), child, 'child after the restart')
+  await again.sendMessage({ text: 'Design is back', session_id: child })
+  await settleAll(again, phone)
+  await until(() => [...(phone.model.timelines.get(`chat:session/${child}`)?.items.values() ?? [])].some(i => i.content?.text === 'Design is back'), 'the phone gets it')
+  // a human re-keys the child like any session: a new human device gets its key too
+  const late = await addHuman(phone, 'Tablet')
+  await until(() => late.sessionKeys.get(child)?.secrets.size, 'the new human device holds the child key')
+})
+
 await test('S2 no rewind (D2): a refused envelope is voided or halts the chain; no sequence number is signed twice', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   await settleAll(agent)

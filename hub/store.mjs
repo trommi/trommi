@@ -231,6 +231,7 @@ export function roomStorage(db, roomId) {
         .run(roomId, sessionId, g.grantNumber, g.previousGrantHash, g.grantHash, g.epoch, g.signer, g.bytes, g.receivedAt)
     },
     grants: sessionId => q('SELECT signed_grant, received_at FROM session_grants WHERE room_id = ? AND session_id = ? ORDER BY grant_number').all(roomId, sessionId).map(r => ({ bytes: bytes(r.signed_grant), receivedAt: r.received_at })),
+    sessionsCreatedBy: signer => q('SELECT COUNT(*) AS n FROM session_grants WHERE room_id = ? AND grant_number = 0 AND signer_device_id = ?').get(roomId, signer).n,
     sessions: () => q('SELECT session_id, MAX(grant_number) AS last_grant_number, MAX(session_key_epoch) AS session_key_epoch FROM session_grants WHERE room_id = ? GROUP BY session_id ORDER BY session_id').all(roomId),
     putSessionWrap(sessionId, epoch, id, sealed) { q('INSERT OR IGNORE INTO sealed_session_keys (room_id, session_id, session_key_epoch, device_id, key_sealed) VALUES (?, ?, ?, ?, ?)').run(roomId, sessionId, epoch, id, sealed) },
     sessionWraps: (sessionId, id, afterEpoch = 0) => q('SELECT session_key_epoch, key_sealed FROM sealed_session_keys WHERE room_id = ? AND session_id = ? AND device_id = ? AND session_key_epoch > ? ORDER BY session_key_epoch')
