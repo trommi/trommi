@@ -342,7 +342,22 @@ Start: `claude --dangerously-load-development-channels server:board server:tromm
 
 ### Performance
 
-Measured numbers (load test with ~100,000 envelopes against hub.trommi.com, rotation with 20+ members, first and warm load of the app, live latency) are filled in by the night's tests; see `docs/perf-night.md` until they are copied here.
+Measured on 4 October 2026 with real E2E members (`dev/e2e/`, method and all tables in `docs/perf-night.md`). "local" is the real hub code on the PC with server metrics. "live" is hub.trommi.com measured from outside: its metrics port and test key are not enabled yet.
+
+| What | Number |
+| --- | --- |
+| Ingest, local hub, 25 members | 2,826 envelopes/s at the maximum; 1,762/s sustained up to 1.19M envelopes |
+| Delivery (seal → another member's stream), local | p50 2 ms, p99 5-24 ms up to 900/s; p99 621 ms sustained at 1,762/s; a user beside the load (probe) p99 38 ms (hub-v11). On current main, on a shared PC: p99 about 1.1 s above about 800/s |
+| Delivery, live | p50 43-46 ms (the Cloudflare round trip), p99 61-114 ms under light load |
+| Hub memory over 0 → 1.19M envelopes | RSS 160-220 MB, flat (after the leak fix; it was 1.6 GB and rising) |
+| 1,000 stalled streams | RSS 177 → 212 MB, probe p99 89 ms (sliced catch-up, global stream-buffer cap) |
+| Storage | 1.6 KB per envelope in hub.db, indexes included |
+| Fresh device catching up 1.19M envelopes | 141 s (8,400/s incl. HTTP, 17,000/s processing) |
+| Open a chat next to 10,000 strokes | one covering-index search, chat items only, 1 ms at the hub |
+| Removing a member (27 members, 24 sessions) | crypto 3-14 ms; the whole v1.1 removal 1.7-2.3 s (one grant per session) |
+| App, crazy room, desktop | v1.1 with the room snapshot (45k envelopes): first load 2.4 s, interactions p95 24-126 ms, own message visible 8 ms (p95). v1.0 (113k): first load 29 s, all p95 < 100 ms |
+| App, same room, phone (CPU 4×) | v1.1: first load 3.4 s; opening a session, switching sessions, card threads, answers p95 290-580 ms (over budget); own message visible 44 ms (p95) |
+| Open gaps | after a snapshot join no chat history is shown; local p99 about 1.1 s from about 800/s on current main (backpressure) |
 
 ## Starten
 
