@@ -145,10 +145,13 @@ export async function start(client, { fresh = false } = {}) {
   return router
 }
 
-const client = await openClient().catch(err => { console.error('open', err); return null })
+// A link for someone outside the room (/a/<share_id>#…): its own small page, no room needed.
+const sharing = /^\/a\/[0-9a-f]{32}$/.test(location.pathname)
+if (sharing) (await import('./share-view.mjs')).showShare()
+const client = sharing ? null : await openClient().catch(err => { console.error('open', err); return null })
 const OPEN_MS = performance.now() - T0   // the room from storage (or the mock's fixture) in memory
 if (client) await start(client)
-else await roomScreen({ start, hub: hubUrl() })
+else if (!sharing) await roomScreen({ start, hub: hubUrl() })
 
 /** A calm full-width line at the foot (styled by css/room.css), with "Neu laden". update: fetch the new build first. */
 function notice(text, detail, update) {
