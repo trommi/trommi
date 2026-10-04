@@ -14,6 +14,12 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - encrypted picture shown 217 ms
   - answer/Undo/What?? reach the agent in 63–177 ms
   - second browser pairs by 6-digit code; read→gone on the other device 306 ms
+- ~03:00 app areas (trommi/trommi):
+  - Memo E2E (0551a5a): 19/20 checks; the gap is concurrent edits in the core, sent to B.
+  - Pairing/devices/settings (2f3f0bf, 0c88861): QR (own encoder, zbarimg-verified), tap 1 of 4 codes, founding/recovery with the code shown once, device list with fingerprints, agent invite; e2e 18/18; QR in 48 ms, tap→joined 46 ms.
+  - Password login and session handover are built but hidden until A's zcrypto v1.1 (branch hub-v11, 38ff44b) lands on main.
+- Superkind first pass (a990b62, docs/parity.md): 42 states × 4 profiles; 37/39 decision round trips green through the real channel; app steps 27–75 ms locally. Turbo baseline: Desk cold 58 ms desktop / 128 ms phone 4x.
+- Leak fixed (eb1ef81): heap flat over 20k envelopes.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
