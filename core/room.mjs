@@ -7,22 +7,37 @@ import './agent.mjs'
 import { escrowKeyAndId, openEscrowV2 } from './escrow.mjs'
 import * as G from './session-grants.mjs'
 
-/** As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6). */
-async function sessionsAsRecovery(hub, state, rec) {
+/**
+ * As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6).
+ * raw: the answer of GET session_grants (fetched alongside the member list), or null: fetched here; a hub without
+ * that route is asked per session.
+ */
+async function sessionsAsRecovery(hub, state, rec, raw = null) {
   const out = new Map()
-  let list = []
-  try { list = (await hub.sessions()).sessions } catch (e) { if (e.status === 404) return out; throw e }
-  for (const { session_id } of list) {
-    if (!/^[0-9a-f]{32}$/.test(session_id ?? "")) continue
-    const r = await hub.sessionGrants(session_id, -1)
-    const sstate = await G.verifyGrants(r.signed_grants.map(unb64u), state)
-    const wraps = (await hub.sealedSessionKeys(session_id, 0)).sealed_session_keys
-    const w = wraps.find(x => x.session_key_epoch === sstate.epoch)
+  let bundle = raw ?? await fetchSessionBundle(hub)
+  if (!bundle) {
+    let list = []
+    try { list = (await hub.sessions()).sessions } catch (e) { if (e.status === 404) return out; throw e }
+    bundle = []
+    for (const { session_id } of list) {
+      if (!/^[0-9a-f]{32}$/.test(session_id ?? "")) continue
+      bundle.push({ session_id, signed_grants: (await hub.sessionGrants(session_id, -1)).signed_grants, sealed_session_keys: (await hub.sealedSessionKeys(session_id, 0)).sealed_session_keys })
+    }
+  }
+  for (const { session_id, signed_grants, sealed_session_keys } of bundle) {
+    if (!/^[0-9a-f]{32}$/.test(session_id ?? "") || !signed_grants?.length) continue
+    const sstate = await G.verifyGrants(signed_grants.map(unb64u), state)
+    const w = (sealed_session_keys ?? []).find(x => x.session_key_epoch === sstate.epoch)
     const secrets = new Map()
     if (w) secrets.set(sstate.epoch, await G.unwrapSessionKey({ roomId: state.roomId, sessionState: sstate, device: rec, sealed: unb64u(w.key_sealed), epoch: sstate.epoch }))
-    out.set(session_id, { state: sstate, grants: r.signed_grants, secrets, since: null })
+    out.set(session_id, { state: sstate, grants: signed_grants, secrets, since: null })
   }
   return out
+}
+/** GET session_grants for the whole room: [{ session_id, signed_grants, sealed_session_keys }], or null (no such route). */
+async function fetchSessionBundle(hub) {
+  try { return (await hub.sessionBundle(null)).sessions }
+  catch (e) { if (e.status === 404 || e.status === 405) return null; throw e }
 }
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
@@ -219,14 +234,14 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const rec = await z.recoveryDevice(code)
   const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
   await hub.signIn()
-  const m = await hub.members({ after_entry_number: -1 })
+  // The member list, the sealed room keys and every session's grants and keys: three requests side by side.
+  const [m, keys, bundle] = await Promise.all([hub.members({ after_entry_number: -1 }), hub.sealedRoomKeys(0), fetchSessionBundle(hub)])
   const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
   if (!z.bytesEqual(rec.id, state.recovery.id)) throw new ZError('bad-recovery-code', 'an old recovery code (a recovery happened since)')
-  const keys = await hub.sealedRoomKeys(0)
   const wrap = keys.sealed_room_keys.find(k => k.key_epoch === state.epoch)
   if (!wrap) throw new ZError('no-key', 'the hub holds no sealed room key for the recovery key')
   const secret = await z.unwrapEpochKey(state, rec, unb64u(wrap.key_sealed), state.epoch)
-  const sessions = await sessionsAsRecovery(hub, state, rec)
+  const sessions = await sessionsAsRecovery(hub, state, rec, bundle)
   const device = await newDevice(storage)
   const added = await z.addMember(state, rec, { member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub } })
   const sealed = await z.wrapEpochKey(added.state, secret, device.id)
@@ -236,11 +251,10 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const client = await makeClient({ storage, device, state: added.state, secrets: [secret], roomRecord, fetch, client: client_name })
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
-  // The new device is a human member now: re-seal every session key for everyone who holds it (itself included).
-  for (const [sid, k] of sessions) {
-    client.sessionKeys.set(sid, k)
-    if (k.secrets.has(k.state.epoch)) await client._grantLocked(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })
-  }
+  // The new device is a human member now: re-seal every session key for everyone who holds it (itself included), all
+  // sessions in one atomic post (POST session_grants), not one request per session.
+  for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
+  await client._resealSessions([...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid))
   await client._saveRoom()
   return { client }
 }

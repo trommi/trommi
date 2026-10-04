@@ -350,21 +350,32 @@ export class Client {
   /**
    * R6: fetch the grant chains of every session (new grants only), verify them against the member list, open this
    * device's session keys (humans also walk the back links). Emits 'session' on an agent when a session is assigned to it.
+   * The session list names each session's newest grant number: only sessions with a grant this device has not seen are
+   * fetched, all of them in one request (GET session_grants), so a reconnect costs one request, not one per session.
    */
   async _refreshSessions() {
     let list
     try { list = (await this.hub.sessions()).sessions } catch (e) { if (e.status === 404) return; throw e }
     const change = M.emptyChange()
     const before = new Set(this.session_ids)
-    for (const { session_id } of list) {
+    const todo = []
+    for (const { session_id, last_grant_number } of list) {
       if (!/^[0-9a-f]{32}$/.test(session_id ?? '')) continue          // not a session id: never into a URL
       const known = this.sessionKeys.get(session_id)
-      const r = await this.hub.sessionGrants(session_id, known ? known.state.grantNumber : -1)
-      if (!r.signed_grants.length && known) continue
+      if (known && Number.isInteger(last_grant_number) && last_grant_number <= known.state.grantNumber) continue
+      todo.push(session_id)
+    }
+    const bundle = await this._sessionBundle(todo, todo.length === list.length)
+    for (const session_id of todo) {
+      const known = this.sessionKeys.get(session_id)
+      const b = bundle?.get(session_id)
+      const fresh = bundle ? (b?.signed_grants ?? []).slice(known ? known.state.grantNumber + 1 : 0)
+        : (await this.hub.sessionGrants(session_id, known ? known.state.grantNumber : -1)).signed_grants
+      if (!fresh.length && known) continue
       let state = known?.state ?? null
       const grants = [...(known?.grants ?? [])]
       try {
-        for (const g of r.signed_grants) {
+        for (const g of fresh) {
           try { state = await G.applyGrant(state, unb64u(g), this.state) }
           catch (e) { if (e.code !== 'log-behind') throw e; await this._refreshMembers(); state = await G.applyGrant(state, unb64u(g), this.state) }
           grants.push(g)
@@ -377,7 +388,7 @@ export class Client {
       this.sessionKeys.set(session_id, k)
       const holds = this.is_human || state.agentIds.includes(this.my_device_id)
       if (holds && !k.secrets.has(state.epoch)) {
-        const wraps = await this.hub.sealedSessionKeys(session_id, 0)
+        const wraps = b ? { sealed_session_keys: b.sealed_session_keys ?? [] } : await this.hub.sealedSessionKeys(session_id, 0)
         for (const w of wraps.sealed_session_keys) {
           if (k.secrets.has(w.session_key_epoch)) continue
           try {
@@ -386,7 +397,7 @@ export class Client {
           }
           catch (e) { M.pushAlert(this.model, change, { code: e.code ?? 'bad-key', message: `session key ${session_id.slice(0, 8)}/${w.session_key_epoch}: ${e.message}` }) }
         }
-        await this._walkSessionBackLinks(session_id).catch(() => {})
+        await this._walkSessionBackLinks(session_id, b?.key_back_links).catch(() => {})
       }
       M.applySessionGrant(this.model, state, change, everAgents(this.sessionKeys.get(session_id)), epochAgents(this.sessionKeys.get(session_id)))
     }
@@ -400,11 +411,27 @@ export class Client {
     }
   }
 
-  async _walkSessionBackLinks(session_id) {
+  /**
+   * Grants, own sealed keys and back links of these sessions (all: the whole room), in requests of 64 sessions that run
+   * side by side. -> Map(session_id -> { signed_grants, sealed_session_keys, key_back_links? }), or null from a hub
+   * without the route (the caller then asks per session).
+   */
+  async _sessionBundle(session_ids, all = false) {
+    if (!session_ids.length) return new Map()
+    const parts = []
+    if (all) parts.push(null)
+    else for (let i = 0; i < session_ids.length; i += 64) parts.push(session_ids.slice(i, i + 64))
+    try {
+      const answers = await Promise.all(parts.map(p => this.hub.sessionBundle(p)))
+      return new Map(answers.flatMap(a => a.sessions ?? []).map(x => [x.session_id, x]))
+    } catch (e) { if (e.status === 404 || e.status === 405) return null; throw e }
+  }
+
+  async _walkSessionBackLinks(session_id, prefetched = null) {
     const k = this.sessionKeys.get(session_id)
     let low = Math.min(...k.secrets.keys())
     if (!(low > 1) || !k.secrets.get(low)?.hist) return
-    const r = await this.hub.sessionBackLinks(session_id)
+    const r = prefetched ? { key_back_links: prefetched } : await this.hub.sessionBackLinks(session_id)
     const links = new Map(r.key_back_links.map(l => [l.session_key_epoch, unb64u(l.key_back_link)]))
     while (low > 1 && links.has(low) && k.secrets.get(low)?.hist) {
       const prev = await G.openSessionBackLink({ roomId: this.state.roomId, sessionState: k.state, secret: k.secrets.get(low), link: links.get(low) })
@@ -1846,7 +1873,17 @@ export class Client {
   /** Re-seal every session's current key for everyone who holds it now (a new human device). */
   async _resealSessionsLocked() {
     await this._refreshSessions()
-    for (const [sid, k] of this.sessionKeys) await this._grantLocked(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })
+    await this._resealSessions([...this.sessionKeys.keys()])
+  }
+  /** The same grant as _grantLocked(rotate: false) for each of these sessions, posted together (POST session_grants). */
+  async _resealSessions(session_ids) {
+    const items = []
+    for (const sid of session_ids) {
+      const k = this.sessionKeys.get(sid)
+      items.push({ sid, ...(await this._makeGrant(sid, { agent_device_ids: k.state.agentIds, with_history: !!k.state.withHistory, rotate: false })) })
+    }
+    await this._postGrants(items)
+    for (const { sid, r, historyAgentIds } of items) this._noteHistoryAgents(sid, r.sessionState.agentIds, historyAgentIds)
   }
   /**
    * A1: humans re-key every session whose newest grant predates a removal or recovery (G.grantIsStale), dropping agents

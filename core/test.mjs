@@ -8,7 +8,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
-import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, z } from './index.mjs'
+import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, joinWithRecoveryCode, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
@@ -1530,6 +1530,67 @@ await test('warm reload: a member entry posted while the stream opens is not los
   const id = await agent.sendCard({ title: 'after the reload', options: [{ key: 'a', label: 'A' }] })
   await until(() => again.model.cards.get(id)?.title === 'after the reload', 'a card posted after the reload arrives live', 2000)
   console.log(`     card after the reload at the reloaded device in ${Date.now() - t0} ms`)
+})
+
+// Performance budget of a new device's login (email + password -> live), measured live on 4 October 2026 at 10.6 s
+// desktop and 29 s on a phone line with 27 sessions: ~320 requests, one by one, most of them per session. The login is
+// network-bound (round trips), so the budget is in requests and in round trips: every request here waits RTT_MS.
+await test('perf budget: a new device with 27 sessions logs in and goes live in few requests (no per-session routes)', async () => {
+  const RTT_MS = 40, MAX_REQUESTS = 24, MAX_MS = 18 * RTT_MS + 1500
+  const { phone, recovery_code, agents } = await room({ agents: 2 })
+  for (let i = 0; i < 25; i++) await phone.createSession()
+  for (const a of agents) { await a.sendMessage({ text: 'before the login' }); await a.settle() }
+  await settleAll(phone, ...agents)
+  eq(phone.sessionKeys.size, 27, '27 sessions')
+  const seen = []
+  const slow = async (url, init) => { seen.push(`${init?.method ?? 'GET'} ${new URL(url).pathname.replace(/[0-9a-f]{32,64}/g, ':id')}`); await sleep(RTT_MS); return fetch(url, init) }
+  const t0 = performance.now()
+  const fresh = track((await joinWithRecoveryCode({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage: memoryStorage(), device_name: 'Fresh', fetch: slow })).client)
+  await fresh.start()
+  await until(() => fresh.model.room.connection === 'live', 'live', 10_000)
+  await sleep(4 * RTT_MS)                                   // the refresh after the stream opened
+  const ms = performance.now() - t0
+  const perSession = seen.filter(u => /\/sessions\/:id\//.test(u))
+  console.log(`     ${seen.length} requests, ${ms.toFixed(0)} ms at ${RTT_MS} ms per request (budget ${MAX_REQUESTS} requests, ${MAX_MS} ms)`)
+  eq(perSession, [], 'no per-session route on the way in')
+  assert(seen.length <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${seen.length}: ${JSON.stringify(seen)}`)
+  assert(ms <= MAX_MS, `at most ${MAX_MS} ms, took ${ms.toFixed(0)}`)
+  eq(fresh.sessionKeys.size, 27, 'the new device knows every session')
+  for (const k of fresh.sessionKeys.values()) assert(k.secrets.has(k.state.epoch), 'and holds its current key')
+  // live: an agent's message reaches the new device, and a reconnect costs no request per session either
+  const n = seen.length
+  await agents[0].sendMessage({ text: 'after the login' })
+  await until(() => [...fresh.model.timelines.values()].some(t => (t.items ?? []).some?.(i => i.content?.text === 'after the login')) || fresh.model.room.last_envelope_number >= agents[0].model.room.last_envelope_number, 'live message arrives')
+  fresh._stream.close(); fresh._openStream()
+  await until(() => fresh.model.room.connection === 'live', 'live again')
+  await sleep(4 * RTT_MS)
+  const again = seen.slice(n).filter(u => !u.endsWith('/envelopes'))
+  assert(again.length <= 5, `a reconnect asks little: ${JSON.stringify(again)}`)
+  // the batch route: humans get back links, agents not (they ask the single route, which checks "with history")
+  const hb = await phone.hub.sessionBundle([agents[0].session_id])
+  assert(Array.isArray(hb.sessions[0].key_back_links), 'human: back links')
+  const ab = await agents[0].hub.sessionBundle([agents[0].session_id, agents[1].session_id])
+  assert(ab.sessions.every(x => !('key_back_links' in x)), 'agent: no back links')
+  assert(ab.sessions.find(x => x.session_id === agents[1].session_id).sealed_session_keys.length === 0, 'agent: no keys of a session not its own')
+})
+
+await test('no endless wait: a request that hangs fails after its deadline; a GET is tried again', async () => {
+  const { phone } = await room()
+  let hang = 1, calls = 0
+  const flaky = (url, init) => { calls++; if (hang-- > 0) return new Promise(() => {}); return fetch(url, init) }
+  const h = new Hub({ hub_url: HUB, room_id: phone.model.room.room_id, fetch: flaky, signer: phone.hub.signer })
+  h.token = phone.hub.token; h.token_expires_at = phone.hub.token_expires_at
+  h.timeout_ms = 300
+  const t0 = performance.now()
+  const r = await h.sessions()
+  assert(Array.isArray(r.sessions) && calls === 2, `the GET was tried again (${calls} calls)`)
+  assert(performance.now() - t0 < 2000, 'within the deadline plus the backoff')
+  hang = 99
+  let err = null
+  const t1 = performance.now()
+  try { await h.request('POST', h.roomPath('/challenge'), { auth: false }) } catch (e) { err = e }
+  eq(err?.code, 'offline', 'a hanging write fails as offline (transient)')
+  assert(performance.now() - t1 < 1000, 'after its deadline, once (writes are not repeated here)')
 })
 
 if (BENCH || !ONLY) await test('throughput: verify headers and decrypt heads', async () => {

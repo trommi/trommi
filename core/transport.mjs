@@ -4,6 +4,9 @@ import * as z from './zcrypto.mjs'
 
 const { ZError, b64u, unb64u } = z
 const REFRESH_BEFORE_MS = 60_000
+const REQUEST_TIMEOUT_MS = 30_000          // a JSON route (a page of 1000 envelopes takes about a second on a phone line)
+const ATTACHMENT_TIMEOUT_MS = 120_000      // attachment bytes up and down on a slow phone line
+const GET_RETRIES = [300, 1000]            // backoff before the 2nd and 3rd try of a GET
 
 /**
  * R9: the canonical hub address, `https://` + lowercase host [+ `:port`], no path. Plain http only for a local or private
@@ -45,6 +48,7 @@ export class Hub {
     this.signer = signer
     this.fetch = f ?? ((...a) => globalThis.fetch(...a))
     this.found_token = found_token
+    this.timeout_ms = REQUEST_TIMEOUT_MS         // deadline of one request (attachments: ATTACHMENT_TIMEOUT_MS)
     this.token = null
     this.token_expires_at = 0
     this.signed_in_as = null
@@ -74,10 +78,28 @@ export class Hub {
     return `Bearer ${this.token}`
   }
 
-  /** One request. Throws ZError(code) with .status (and .retry_after) for every refusal. */
+  /** The version headers every request carries. */
   baseHeaders() { return this.client_name ? { 'trommi-client': this.client_name, 'trommi-protocol': '1' } : { 'trommi-protocol': '1' } }
 
-  async request(method, path, { body, auth = true, raw = null, headers = {}, query = null, binary = false, retried = false, lease = false, leaseRetried = false } = {}) {
+  /**
+   * One request. Throws ZError(code) with .status (and .retry_after) for every refusal. Never an endless wait: every
+   * request has a deadline (timeout_ms; longer for attachment bytes) for the answer and its body. A GET that met a
+   * network failure, the deadline or a 502/503/504 is tried twice more after a short backoff (a GET changes nothing);
+   * writes are not repeated here, their callers know whether the same bytes may go again.
+   */
+  async request(method, path, opts = {}) {
+    const idempotent = method === 'GET' || method === 'HEAD'
+    for (let attempt = 0; ; attempt++) {
+      try { return await this._requestOnce(method, path, opts) }
+      catch (e) {
+        if (!idempotent || attempt >= GET_RETRIES.length || !(e.status === 0 || e.status === 502 || e.status === 503 || e.status === 504)) throw e
+        const wait = Math.min(5000, (e.retry_after ?? 0) * 1000 || GET_RETRIES[attempt]) + Math.random() * 200
+        await new Promise(r => { const t = setTimeout(r, wait); t.unref?.() })
+      }
+    }
+  }
+
+  async _requestOnce(method, path, { body, auth = true, raw = null, headers = {}, query = null, binary = false, retried = false, lease = false, leaseRetried = false, timeout_ms = null } = {}) {
     const h = { ...this.baseHeaders(), ...headers, ...(lease ? this.leaseHeaders() : {}) }
     const generation = this.lease_generation
     if (auth) h.authorization = await this.authHeader()
@@ -91,33 +113,47 @@ export class Hub {
       const s = q.toString()
       if (s) url += `?${s}`
     }
-    let res
-    try { res = await this.fetch(url, { method, headers: h, body: payload }) }
-    catch (e) { this._unreachable = true; throw new ZError('offline', `hub not reachable: ${e.message}`, { status: 0 }) }
-    if (res.status >= 500) this._unreachable = true
-    else if (this._unreachable) { this._unreachable = false; this.wake() }   // the hub is back: reconnect streams now
-    if (res.status === 401 && auth && !retried) {
-      this.token = null
-      return this.request(method, path, { body, auth, raw, headers, query, binary, retried: true, lease, leaseRetried })
-    }
-    if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); throw e }
-    if (!res.ok) {
-      let err = {}
-      try { err = await res.json() } catch {}
-      const e = new ZError(err.error ?? `http-${res.status}`, err.message ?? res.statusText, { status: res.status, retry_after: Number(res.headers.get('retry-after')) || null, body: err })
-      // R4 on uploads and ephemeral posts: sent under a generation this process has since replaced, or the lease ran out
-      // while this process lives (a renewal gives it back): once more. Only a renewal refused by the hub (another live
-      // process holds the key) is lease-lost for good, and then the process stops (onLeaseLost).
-      if (e.code === 'lease-lost' && lease && !leaseRetried) {
-        let again = this.lease_generation !== generation
-        if (!again && this.recoverLease) { try { again = await this.recoverLease() } catch { throw e } if (!again) this.onLeaseLost?.(e) }
-        if (again) return this.request(method, path, { body, auth, raw, headers, query, binary, retried, lease, leaseRetried: true })
+    const limit = timeout_ms ?? (raw || binary ? ATTACHMENT_TIMEOUT_MS : this.timeout_ms)
+    const ac = new AbortController()
+    let timer = null
+    const deadline = new Promise((_, reject) => {
+      timer = setTimeout(() => { ac.abort(); reject(new ZError('offline', `the hub did not answer within ${Math.round(limit / 1000)} s`, { status: 0 })) }, limit)
+      timer.unref?.()
+    })
+    deadline.catch(() => {})
+    const within = p => Promise.race([p, deadline])
+    try {
+      let res
+      try { res = await within(this.fetch(url, { method, headers: h, body: payload, signal: ac.signal })) }
+      catch (e) { this._unreachable = true; throw e instanceof ZError ? e : new ZError('offline', `hub not reachable: ${e.message}`, { status: 0 }) }
+      if (res.status >= 500) this._unreachable = true
+      else if (this._unreachable) { this._unreachable = false; this.wake() }   // the hub is back: reconnect streams now
+      if (res.status === 401 && auth && !retried) {
+        this.token = null
+        return this._requestOnce(method, path, { body, auth, raw, headers, query, binary, retried: true, lease, leaseRetried, timeout_ms })
       }
-      throw e
-    }
-    if (binary) return new Uint8Array(await res.arrayBuffer())
-    const text = await res.text()
-    return text ? JSON.parse(text) : {}
+      if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); throw e }
+      if (!res.ok) {
+        let err = {}
+        try { err = await within(res.json()) } catch {}
+        const e = new ZError(err.error ?? `http-${res.status}`, err.message ?? res.statusText, { status: res.status, retry_after: Number(res.headers.get('retry-after')) || null, body: err })
+        // R4 on uploads and ephemeral posts: sent under a generation this process has since replaced, or the lease ran out
+        // while this process lives (a renewal gives it back): once more. Only a renewal refused by the hub (another live
+        // process holds the key) is lease-lost for good, and then the process stops (onLeaseLost).
+        if (e.code === 'lease-lost' && lease && !leaseRetried) {
+          let again = this.lease_generation !== generation
+          if (!again && this.recoverLease) { try { again = await this.recoverLease() } catch { throw e } if (!again) this.onLeaseLost?.(e) }
+          if (again) return this._requestOnce(method, path, { body, auth, raw, headers, query, binary, retried, lease, leaseRetried: true, timeout_ms })
+        }
+        throw e
+      }
+      let text
+      try {
+        if (binary) return new Uint8Array(await within(res.arrayBuffer()))
+        text = await within(res.text())
+      } catch (e) { throw e instanceof ZError ? e : new ZError('offline', `the answer broke off: ${e.message}`, { status: 0 }) }
+      return text ? JSON.parse(text) : {}
+    } finally { clearTimeout(timer) }
   }
 
   // ---- routes (README table), thin ------------------------------------------------
@@ -158,6 +194,14 @@ export class Hub {
   postSessionGrants(grants) {
     for (const g of grants) checkId('session_id', g.session_id)
     return this.request('POST', this.roomPath('/session_grants'), { auth: false, body: { grants } })
+  }
+  /**
+   * Many sessions in one request: { sessions: [{ session_id, signed_grants, sealed_session_keys (own), key_back_links? }] }.
+   * session_ids null: every session of the room. A hub without the route answers 404 (the caller asks per session).
+   */
+  sessionBundle(session_ids = null) {
+    if (session_ids) for (const id of session_ids) checkId('session_id', id)
+    return this.request('GET', this.roomPath('/session_grants'), { query: session_ids ? { session_ids: session_ids.join(',') } : null })
   }
   sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
   sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/key_back_links`)) }
