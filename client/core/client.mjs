@@ -1441,7 +1441,10 @@ export class Client {
     // Whoever loses access loses the key: any agent dropped from the set means a new session key epoch (R6). A handover
     // "with history" rotates too; the new holder reads back through the back links.
     if (k.state.agentIds.some(a => !active.includes(a))) rotate = true
-    const r = await G.createSessionGrant({ state: this.state, signer: this.device, sessionState: k.state, current, agentIds: active, withHistory: with_history, rotate: rotate || !current })
+    // Per-agent history (PoC p4): only the agents newly assigned in this call with with_history get the history key;
+    // agents already on the session keep what they had (their stored older keys), and get the new key without history.
+    const historyAgentIds = with_history ? active.filter(a => !k.state.agentIds.includes(a)) : []
+    const r = await G.createSessionGrant({ state: this.state, signer: this.device, sessionState: k.state, current, agentIds: active, withHistory: historyAgentIds.length > 0, historyAgentIds, rotate: rotate || !current })
     await this._postGrant(r, current)
     return r.sessionState
   }

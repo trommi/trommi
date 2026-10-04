@@ -118,5 +118,18 @@ await t('recovery: grants signed by the recovery key are checked against the key
   assert(!s1.sessionState.stale, 're-keyed by the new device')
 })
 
+await t('per-agent history (PoC p4): adding agent 2 with history does not hand the history key to agent 1', async () => {
+  const p1 = await g.createSessionGrant({ state, signer: phone, agentIds: [] })
+  const p2 = await g.createSessionGrant({ state, signer: phone, sessionState: p1.sessionState, current: p1.secret, agentIds: [a1.id], rotate: true })
+  const p3 = await g.createSessionGrant({ state, signer: phone, sessionState: p2.sessionState, current: p2.secret, agentIds: [a1.id, a2.id], historyAgentIds: [a2.id], rotate: true })
+  assert(p3.sessionState.withHistory, 'flag: some agent got history')
+  const kA = await g.unwrapSessionKey({ roomId: state.roomId, sessionState: p3.sessionState, device: a1, sealed: wrapFor(p3.wraps, a1), epoch: 3 })
+  assert(kA.hist === null, 'agent 1 gets the key only')
+  await throwsCode(() => g.openSessionBackLink({ roomId: state.roomId, sessionState: p3.sessionState, secret: kA, link: p3.backLink }), 'no-key')
+  const kB = await g.unwrapSessionKey({ roomId: state.roomId, sessionState: p3.sessionState, device: a2, sealed: wrapFor(p3.wraps, a2), epoch: 3 })
+  const prev = await g.openSessionBackLink({ roomId: state.roomId, sessionState: p3.sessionState, secret: kB, link: p3.backLink })
+  assert(z.bytesEqual(prev.key, p2.secret.key), 'agent 2 reads back')
+})
+
 console.log(`\n${passed} ok, ${failed} failed`)
 process.exit(failed ? 1 : 0)
