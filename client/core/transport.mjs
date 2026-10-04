@@ -153,7 +153,7 @@ export class Hub {
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, headers: this.leaseHeaders() }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, headers: this.leaseHeaders() }) }
   /** R4: an agent names its lease generation on every write and stream (none for humans). */
-  leaseHeaders() { return this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} }
+  leaseHeaders() { return this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : { 'x-lease-generation': 'none' } }
   postShare(attachment_id, { share_id, share_secret_hash, expires_at }) { return this.request('POST', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares`), { body: { share_id, share_secret_hash, expires_at } }) }
   deleteShare(attachment_id, share_id) { return this.request('DELETE', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares/${checkId('share_id', share_id)}`)) }
   /** For the outsider's viewer page: the ciphertext of a shared attachment, no sign-in. */
@@ -190,7 +190,7 @@ export class Hub {
         let healthy = false
         try {
           const res = await this.fetch(this.url(this.roomPath('/stream')) + `?after_envelope_number=${getCursor()}`, {
-            headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream', ...(this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {}) }, signal: controller.signal,
+            headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream', ...this.leaseHeaders() }, signal: controller.signal,
           })
           if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); closed = true; throw e }
           if (res.status === 401) { this.token = null; reauth++; if (reauth <= 2) { onState('closed'); continue } throw new ZError('unauthorised', 'stream sign-in') }   // a restarted hub forgot the token: sign in again at once
