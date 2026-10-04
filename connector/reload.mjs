@@ -8,7 +8,8 @@
 //           tool list is swapped and Claude Code is told (notifications/tools/list_changed).
 //
 // Detection: the hashes of both parts on disk are compared with the loaded ones (fs.watch on the folders, and every
-// TROMMI_UPDATE_POLL_MS, default 60 s); the hub's GET /v1/version names a recommended channel version (hourly).
+// TROMMI_UPDATE_POLL_MS, default 60 s); the hub's GET /v1/version names a recommended channel version (hourly,
+// TROMMI_VERSION_CHECK_MS); a hub that refuses this client (426 client-too-old, stream event upgrade_required) stops it.
 //
 // The single-file connector (connector/bundle.mjs -> app/web/public/connector.mjs, installed by the connect script as
 // ~/.local/share/trommi/connector/channel.mjs) has no sibling files: code and shell are one file there, so any new
@@ -76,7 +77,7 @@ const newer = (a, b) => {
  * Watches for updates. `onUpdate({ version, restart, reason })` is called once per new state on disk (or new
  * recommended version at the hub). `loaded()` returns the hashes in use. Returns { check(), stop() }.
  */
-export function watchUpdates({ loaded, onUpdate, hubUrl, clientVersion, log = () => {}, pollMs = Number(process.env.TROMMI_UPDATE_POLL_MS || 60000), versionMs = 3600000 }) {
+export function watchUpdates({ loaded, onUpdate, hubUrl, clientVersion, log = () => {}, pollMs = Number(process.env.TROMMI_UPDATE_POLL_MS || 60000), versionMs = Number(process.env.TROMMI_VERSION_CHECK_MS || 3600000) }) {
   let told = null, toldHub = null, timer = null
   const check = () => {
     const disk = diskVersion(), now = loaded()
@@ -103,6 +104,6 @@ export function watchUpdates({ loaded, onUpdate, hubUrl, clientVersion, log = ()
   }
   timer = setInterval(check, pollMs); timer.unref?.()
   const hubTimer = setInterval(checkHub, versionMs); hubTimer.unref?.()
-  if (hubUrl) setTimeout(checkHub, 5000).unref?.()
+  if (hubUrl) setTimeout(checkHub, Math.min(5000, versionMs)).unref?.()
   return { check, checkHub, stop: () => { clearInterval(timer); clearInterval(hubTimer); clearTimeout(debounce); for (const w of watchers) w.close() } }
 }
