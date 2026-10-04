@@ -1,7 +1,7 @@
 // index.mjs: the client core in one import. Browsers and Node alike; Node adds `./storage-file.mjs` itself
 // (it needs node:fs and is not re-exported here). Contract: client/core/README.md.
 export { foundRoom, openRoom, joinRoom, recoverRoom, roomLink, parseRoomLink, loginWithPassphrase } from './room.mjs'
-export { passphraseProblem, generatePassphrase, sealEscrow, openEscrow, sealEscrowV2, openEscrowV2, escrowKeyAndId, ESCROW_ITERATIONS, ESCROW_V2_ITERATIONS } from './escrow.mjs'
+export { passphraseProblem, generatePassphrase, openEscrow, sealEscrowV2, openEscrowV2, escrowKeyAndId, ESCROW_ITERATIONS, ESCROW_V2_ITERATIONS } from './escrow.mjs'
 export { Client, shareLink, parseShareLink, openShared, membersOf, isHumanRegisterKey, isAgentRegisterKey } from './client.mjs'
 export { agentMethods } from './agent.mjs'
 export { Hub, normaliseHubUrl } from './transport.mjs'

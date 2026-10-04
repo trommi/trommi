@@ -8,7 +8,7 @@ import net from 'node:net'
 import { fileURLToPath } from 'node:url'
 import { startHub, LIMITS } from '../../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
-import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, generatePassphrase, memoryStorage, timelineEvents, z } from './index.mjs'
+import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
@@ -544,18 +544,22 @@ await test('password escrow v2: generated passphrase, blob addressed by a passph
   const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
   const pass = generatePassphrase()
   assert(/^([a-z2-9]{4}-){5}[a-z2-9]{4}$/.test(pass) && !passphraseProblem(pass), 'generated passphrase passes')
-  assert(passphraseProblem('pferd batterie heftklammer korrekt') && passphraseProblem('kurz') && !passphraseProblem('pferd batterie heftklammer korrekt sonne mond'), 'own passphrases need six words')
+  // Review 3: only generated passphrases; a self-chosen one (a lyric passes any word count) falls offline to the hub's DB.
+  for (const own of ['pferd batterie heftklammer korrekt', 'kurz', 'pferd batterie heftklammer korrekt sonne mond', 'never gonna give you up never gonna let you down'])
+    assert(passphraseProblem(own), `own passphrase refused: ${own}`)
   let err = null
-  try { await phone.setPassphrase('zu kurz', { recovery_code }) } catch (e) { err = e }
-  eq(err?.code, 'weak-passphrase', 'weak refused')
+  try { await phone.setPassphrase('never gonna give you up never gonna let you down', { recovery_code }) } catch (e) { err = e }
+  eq(err?.code, 'weak-passphrase', 'self-chosen refused')
   const t0 = performance.now()
   await phone.setPassphrase(pass, { recovery_code })
   const sealMs = performance.now() - t0
   eq(phone.model.room.has_passphrase, true, 'flag')
   // the room id alone fetches nothing any more
+  const anon = new Hub({ hub_url: HUB, room_id: phone.model.room.room_id })
   err = null
-  try { await phone.hub.getEscrow() } catch (e) { err = e }
+  try { await anon.request('GET', anon.roomPath('/escrow'), { auth: false }) } catch (e) { err = e }
   eq(err?.code, 'not-found', 'no blob by room id')
+  eq(await phone.checkPassphrase(), true, 'a member sees that there is one')
   const link = roomLink(HUB, phone.model.room.room_id)
   err = null
   try { await loginWithPassphrase({ room_link: link, passphrase: generatePassphrase(), storage: memoryStorage() }) } catch (e) { err = e }
@@ -569,6 +573,49 @@ await test('password escrow v2: generated passphrase, blob addressed by a passph
   await until(() => phone.model.alerts.some(a => a.code === 'recovery-add'), 'every human device is told')
   assert(phone.model.members.get(phone.my_device_id).is_active, 'phone stays')
   console.log(`     PBKDF2 2M seal ${sealMs.toFixed(0)} ms`)
+})
+
+/** A v1 escrow blob as clients wrote them before review 3 (the core no longer can): for the migration test. */
+async function sealEscrowV1({ room_id, recovery_code, passphrase, iterations = 1_000_000 }) {
+  const te = new TextEncoder(), u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b }
+  const roomId = z.unhex(room_id), salt = crypto.getRandomValues(new Uint8Array(16)), nonce = crypto.getRandomValues(new Uint8Array(12))
+  const base = await crypto.subtle.importKey('raw', te.encode(passphrase.normalize('NFC')), 'PBKDF2', false, ['deriveKey'])
+  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: z.concat(salt, roomId), iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt'])
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: z.concat(te.encode('trommi/v1/escrow'), Uint8Array.of(0), roomId, u32(iterations)) }, key, z.parseRecoveryCode(recovery_code)))
+  return z.concat(Uint8Array.of(1), u32(iterations), salt, nonce, ct)
+}
+
+if (!useTestHub) await test('escrow review 3: compare-and-swap between two devices, escrow-changed alert, v1 only through the authenticated migration', async () => {
+  const { phone, laptop, recovery_code } = await room({ laptop: true })
+  await phone.setPassphrase(generatePassphrase(), { recovery_code })
+  await until(() => laptop.model.alerts.some(a => a.code === 'escrow-changed'), 'the other human device is told')
+  assert(!phone.model.alerts.some(a => a.code === 'escrow-changed'), 'not the writer itself')
+  // A stale writer (it read revision 0 before the phone wrote) is refused instead of overwriting silently.
+  const sealed = await sealEscrowV2({ room_id: phone.model.room.room_id, recovery_code, passphrase: generatePassphrase() })
+  let err = null
+  try { await laptop.hub.putEscrow({ ...sealed, replaces: 0 }) } catch (e) { err = e }
+  eq(err?.code, 'escrow-changed', 'stale replace refused')
+  err = null
+  try { await laptop.hub.deleteEscrow(0) } catch (e) { err = e }
+  eq(err?.code, 'escrow-changed', 'stale delete refused')
+  err = null
+  try { await laptop.hub.putEscrow({ escrow_version: 1, key_escrow: z.b64u(new Uint8Array(80)), replaces: 1 }) } catch (e) { err = e }
+  eq(err?.code, 'escrow-v1-retired', 'no new v1 escrow')
+  // A v1 blob from before the cut-over: invisible to anonymous readers, migrated by a member with the old passphrase.
+  const old = 'pferd batterie heftklammer korrekt sonne mond'
+  hub.db.prepare('UPDATE escrows SET escrow_version = 1, key_escrow = ?, escrow_id = NULL WHERE room_id = ?').run(await sealEscrowV1({ room_id: phone.model.room.room_id, recovery_code, passphrase: old }), phone.model.room.room_id)
+  const anon = new Hub({ hub_url: HUB, room_id: phone.model.room.room_id })
+  err = null
+  try { await anon.request('GET', anon.roomPath('/escrow'), { auth: false }) } catch (e) { err = e }
+  eq(err?.code, 'not-found', 'v1 not served by room id')
+  err = null
+  try { await loginWithPassphrase({ room_link: roomLink(HUB, phone.model.room.room_id), passphrase: old, storage: memoryStorage() }) } catch (e) { err = e }
+  eq(err?.code, 'wrong-passphrase', 'no anonymous v1 login')
+  const fresh = await laptop.migratePassphrase(old)
+  assert(!passphraseProblem(fresh), 'a generated passphrase')
+  eq((await laptop.hub.escrowStatus()).escrow_version, 2, 'the v1 blob is gone, replaced by v2')
+  const c = track((await loginWithPassphrase({ room_link: roomLink(HUB, phone.model.room.room_id), passphrase: fresh, storage: memoryStorage(), device_name: 'Fresh' })).client)
+  await c.start()
 })
 
 if (z.KEY_SCOPE) await test('R6 session keys: agent A cannot read session B; handover with and without history', async () => {
@@ -781,16 +828,47 @@ await test('S2 register order (D1): every delivery order of the same writes give
   }
 })
 
+await test('review 3 lamport: a strict total order (no cycle at an equal lamport), inflation refused, counter persisted with the send', async () => {
+  // d1c: two writes of one sender at one lamport and a write of another sender: no cycle any more.
+  const W = { a1: { sender_device_id: 'a', sender_sequence: 1, sent_at: 30, lamport: 5 }, a2: { sender_device_id: 'a', sender_sequence: 2, sent_at: 10, lamport: 5 }, b: { sender_device_id: 'b', sender_sequence: 1, sent_at: 20, lamport: 5 } }
+  const perms = [['a1', 'a2', 'b'], ['a1', 'b', 'a2'], ['a2', 'a1', 'b'], ['a2', 'b', 'a1'], ['b', 'a1', 'a2'], ['b', 'a2', 'a1']]
+  const win = o => o.reduce((w, x) => (!w || M.compareWrites(W[x], W[w]) > 0) ? x : w, null)
+  eq([...new Set(perms.map(win))], ['b'], 'one winner in every order')
+  // lamport.mjs: one signed write with lamport 2^53-1 pinned a register and split the devices' views.
+  const { phone, laptop } = await room({ laptop: true })
+  const tablet = await addHuman(phone, 'Tablet')
+  await phone.setRegisters({ crown: { by: 'phone-1' } }); await settleAll(phone, laptop, tablet)
+  laptop.lamport = Number.MAX_SAFE_INTEGER - 1               // a malicious client: its next write carries 2^53-1
+  await laptop.setRegisters({ crown: { by: 'evil' } }); await settleAll(phone, laptop, tablet)
+  assert(phone.lamport < 2 ** 30 && tablet.lamport < 2 ** 30, `the counter is not adopted (${phone.lamport})`)
+  await until(() => phone.model.alerts.some(a => a.code === 'lamport-inflated'), 'shown')
+  laptop.lamport = 1000 + 2 ** 24 + 5                        // just above the bound: refused as well
+  await laptop.setRegisters({ crown: { by: 'evil-2' } }); await settleAll(phone, laptop, tablet)
+  for (let i = 2; i <= 3; i++) { await phone.setRegisters({ crown: { by: `phone-${i}` } }); await settleAll(phone, tablet) }
+  await until(() => tablet.model.human.crown?.by === 'phone-3', `tablet shows the honest write (${JSON.stringify(tablet.model.human.crown)})`)
+  await tablet.setRegisters({ crown: { by: 'tablet' } }); await settleAll(phone, tablet)
+  await until(() => phone.model.human.crown?.by === 'tablet' && tablet.model.human.crown?.by === 'tablet', 'both agree on the newest write')
+  // The counter reaches storage with the send itself (not only with the delayed sync record).
+  const before = phone.lamport
+  await phone.setRegisters({ crown: { by: 'phone-4' } })
+  eq(await phone.storage.get('lamport'), before + 1, 'persisted with the send')
+})
+
 await test('S2 removal re-keys every session even when the remover fails half-way (A1)', async () => {
   const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
   await settleAll(phone, laptop, a1, a2)
   const sid = a1.session_id
   const epoch = phone.sessionKeys.get(sid).state.epoch
   // the phone posts the removal entry, then every grant post fails (crash, network, hostile hub)
-  const realPost = phone.hub.postSessionGrant.bind(phone.hub)
-  phone.hub.postSessionGrant = async () => { throw new z.ZError('offline', 'simulated', { status: 0 }) }
+  // (both grant routes: removal re-keys through the batch post, review 3 found the old stub never fired)
+  const realPost = phone.hub.postSessionGrant.bind(phone.hub), realBatch = phone.hub.postSessionGrants.bind(phone.hub)
+  let failedPosts = 0
+  phone.hub.postSessionGrant = phone.hub.postSessionGrants = async () => { failedPosts++; throw new z.ZError('offline', 'simulated', { status: 0 }) }
   await phone.removeDevices([a2.my_device_id]).catch(() => {})
-  phone.hub.postSessionGrant = realPost
+  phone._healStaleSessions = async () => {}      // the phone does not heal later in this test: another device must
+  phone.hub.postSessionGrant = realPost; phone.hub.postSessionGrants = realBatch
+  assert(failedPosts > 0, 'the failure path was exercised')
+  eq((await phone.hub.sealedSessionKeys(sid, 0)).sealed_session_keys.some(w => w.session_key_epoch > epoch), false, 'nothing was re-keyed by the phone')
   // the other human device sees the removal and finishes the re-key (the pending work is the stale grant itself)
   await until(async () => { await laptop._refreshSessions(); const k = laptop.sessionKeys.get(sid); return k.state.epoch > epoch && !G.grantIsStale(k.state, laptop.state) }, 'laptop re-keyed the session', 10_000)
   // the agent sends under the new key and humans read it

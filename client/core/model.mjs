@@ -9,14 +9,16 @@ const isZeroHash = h => /^0*$/.test(h)
 
 /**
  * R2: the one order of writes to a register or memo, the same on every device whatever the hub's delivery order (a
- * total order, so the winner does not depend on the order of comparisons): (lamport, sent_at, sender_device_id,
- * sender_sequence). `lamport` is signed inside the body: the writer's counter, one above every lamport it had seen,
- * so a write made after seeing another always sorts after it. Writes without one (older clients) count as lamport 0.
+ * strict total order, lexicographic, so the winner does not depend on the order of comparisons and there are no
+ * cycles): (lamport, sender_device_id, sender_sequence). `lamport` is signed inside the body: the writer's counter,
+ * one above every lamport it had seen, so a write made after seeing another always sorts after it. Writes without one
+ * (older clients) count as lamport 0. The sender-chosen `sent_at` takes no part (review 3: with it, two writes of one
+ * sender at an equal lamport made a cycle a2 > a1 > b > a2).
  * causal = { sender_device_id, sender_sequence, sent_at, lamport }.
  */
 export function compareWrites(x, y) {
-  return ((x.lamport ?? 0) - (y.lamport ?? 0)) || (x.sender_device_id === y.sender_device_id ? x.sender_sequence - y.sender_sequence : 0) ||
-    (x.sent_at - y.sent_at) || (x.sender_device_id < y.sender_device_id ? -1 : x.sender_device_id > y.sender_device_id ? 1 : 0) || (x.sender_sequence - y.sender_sequence)
+  return ((x.lamport ?? 0) - (y.lamport ?? 0)) || (x.sender_device_id < y.sender_device_id ? -1 : x.sender_device_id > y.sender_device_id ? 1 : 0) ||
+    (x.sender_sequence - y.sender_sequence)
 }
 /** Does write X win over write Y (compareWrites)? */
 export function causallyAfter(x, y) {
@@ -24,8 +26,18 @@ export function causallyAfter(x, y) {
   if (!x) return false
   return compareWrites(x, y) > 0
 }
-/** A body's lamport, if it is a sane integer. */
-export const lamportOf = c => (Number.isSafeInteger(c?.lamport) && c.lamport > 0 ? c.lamport : 0)
+/** A body's lamport, if it is a sane integer (at most LAMPORT_MAX). */
+export const LAMPORT_MAX = 2 ** 48
+export const lamportOf = c => (Number.isSafeInteger(c?.lamport) && c.lamport > 0 && c.lamport <= LAMPORT_MAX ? c.lamport : 0)
+/**
+ * Review 3 (lamport inflation): an honest writer's lamport is one above the largest it has seen, and everything it saw
+ * the hub ordered before its write, so a reader that applies in hub order has seen nearly as much. A lamport more than
+ * LAMPORT_STEP above the largest this device has seen is refused (counts as 0, is not adopted, alert): one signed write
+ * can no longer jump the counter to 2^53 and pin a register for good. The bound leaves room for writes this device
+ * cannot read (other sessions' statuses).
+ */
+export const LAMPORT_STEP = 2 ** 24
+export const lamportAccepted = (lamport, seen) => lamport > 0 && lamport <= (seen ?? 0) + LAMPORT_STEP
 
 export function emptyModel() {
   return {

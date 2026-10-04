@@ -5,7 +5,7 @@ import * as z from './zcrypto.mjs'
 import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import { sealEscrowV2 } from './escrow.mjs'
+import { sealEscrowV2, openEscrow, generatePassphrase } from './escrow.mjs'
 import * as G from './session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
@@ -215,6 +215,9 @@ export class Client {
       // A device that booted from a room snapshot reads items older than it by signature (lazy threads): keep that across restarts.
       if (sync.snapshot_cursor) { this.snapshotCursor = sync.snapshot_cursor; this._snapshotChains = new Map(Object.entries(sync.snapshot_chains ?? {})) }
     }
+    // The lamport counter is also written with every send, before the post (review 3): the larger of the two.
+    const sentLamport = (await st.get('lamport')) ?? 0
+    if (Number.isSafeInteger(sentLamport) && sentLamport > (this.lamport ?? 0)) this.lamport = sentLamport
     // R4: the history boundary. A process that starts without sync state treats every command sent before it started as
     // history, not as a prompt, and keeps that boundary across restarts (a hub replaying old commands later gains nothing).
     this.historyBefore = sync ? (sync.history_before ?? null) : this.startedAt
@@ -428,6 +431,8 @@ export class Client {
       await this.serial(async () => { await this._refreshSessions(); if (this._needResync) await this._resync() })
     } else if (event === 'join_request') {
       if (data.invite_id) this._checkInvite(data.invite_id).catch(e => this._localAlert('invite', e))
+    } else if (event === 'escrow_changed') {
+      if (this.is_human) this._onEscrowChanged(data)
     }
   }
 
@@ -794,7 +799,15 @@ export class Client {
       content = d.content; content_state = d.content_state
       try { bind = codec.decodeBindFor(opened.kind, opened.bind) } catch { bind = null }
     }
-    const lamport = M.lamportOf(content)
+    let lamport = M.lamportOf(content)
+    const claimed = typeof content?.lamport === 'number' && content.lamport > 0 ? content.lamport : 0
+    if (claimed && !(lamport && M.lamportAccepted(lamport, this.lamport))) {
+      // Review 3: inflated far beyond anything this device has seen: refused (counts as 0, not adopted).
+      const ch = M.emptyChange()
+      M.pushAlert(this.model, ch, { code: 'lamport-inflated', message: `a write claims lamport ${claimed}, far above ${this.lamport ?? 0}: ignored`, envelope_number, sender_device_id: sender })
+      this._emitChange(ch)
+      lamport = 0
+    }
     if (lamport > (this.lamport ?? 0)) this.lamport = lamport
     const member = this.state.members.get(b64u(h.sender))
     return {
@@ -804,7 +817,7 @@ export class Client {
       timeline_kind: h.timelineKind ? (codec.TIMELINE_KIND_NAME[h.timelineKind] ?? String(h.timelineKind)) : null, timeline_id: h.timelineId,
       session_id: h.keyScope === 1 && h.sessionId ? hex(h.sessionId) : null,
       attachment_ids: h.blobs.map(hex), content, content_state, bind, local_id: local_id ?? null,
-      causal: { sender_device_id: sender, sender_sequence: h.seq, sent_at: h.time, lamport: M.lamportOf(content) },
+      causal: { sender_device_id: sender, sender_sequence: h.seq, sent_at: h.time, lamport },
       sender_sequence: h.seq,
       _header: h, _bind: opened?.bind ?? null, _epoch: h.epoch,
       object_id_ok: v.object_id_ok ?? null,
@@ -909,7 +922,8 @@ export class Client {
         this.model.outbox.push(pub)
         // The own chain and the outbox reach storage before the hub sees the envelope: a crash must not reuse a number.
         const me = b64u(this.device.id)
-        try { await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(this.chains.get(me))]], { durable: true }) }
+        // The lamport counter goes with it (review 3): a crash must not hand out one lamport twice.
+        try { await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(this.chains.get(me))], ['lamport', this.lamport ?? 0]], { durable: true }) }
         catch (e) {
           // Not on disk: never post it (a crash would reuse its number). This device stops sending until restarted.
           this.outbox.splice(this.outbox.indexOf(item), 1); this.model.outbox.splice(this.model.outbox.indexOf(pub), 1)
@@ -1651,31 +1665,64 @@ export class Client {
 
   /**
    * Seal the recovery code under a passphrase (escrow v2) and store it on the hub. The code is needed once (the device
-   * never keeps it). Offer generatePassphrase() (escrow.mjs) as the passphrase; one of the human's own must pass
-   * passphraseProblem. Replaces any earlier escrow of the room.
+   * never keeps it). Only a generated passphrase (generatePassphrase, escrow.mjs) is accepted. Replaces any earlier
+   * escrow of the room by compare-and-swap: if another device changed it in between, ZError 'escrow-changed'.
    */
   async setPassphrase(passphrase, { recovery_code } = {}) {
     this._needHuman()
     if (!recovery_code) throw new ZError('bad-argument', 'setting a passphrase needs the recovery code once')
     const rec = await z.recoveryDevice(recovery_code)
     if (!z.bytesEqual(rec.id, this.state.recovery.id)) throw new ZError('bad-recovery-code', 'this code does not belong to the room')
-    await this.hub.putEscrow(await sealEscrowV2({ room_id: this.model.room.room_id, recovery_code, passphrase }))
+    const sealed = await sealEscrowV2({ room_id: this.model.room.room_id, recovery_code, passphrase })
+    const { revision } = await this.hub.escrowStatus()
+    const out = await this.hub.putEscrow({ ...sealed, replaces: revision })
     this.roomRecord.has_passphrase = true
+    this.roomRecord.escrow_revision = out.revision
     await this._saveRoom()
     this._setRoom({ has_passphrase: true })
   }
   async removePassphrase() {
     this._needHuman()
-    await this.hub.deleteEscrow()
+    const { revision } = await this.hub.escrowStatus()
+    const out = await this.hub.deleteEscrow(revision)
     this.roomRecord.has_passphrase = false
+    this.roomRecord.escrow_revision = out.revision
     await this._saveRoom()
     this._setRoom({ has_passphrase: false })
   }
-  /** Whether this room has an escrow: a v1 escrow is visible to anyone; a v2 escrow (addressed by the passphrase) only as this device knows it. */
+  /** Whether this room has an escrow (asked as a signed-in human; anonymous reads never tell). */
   async checkPassphrase() {
-    try { await this.hub.getEscrow(); this._setRoom({ has_passphrase: true }) }
-    catch (e) { if (e.code === 'not-found') this._setRoom({ has_passphrase: !!this.roomRecord.has_passphrase }); else throw e }
+    if (!this.is_human) return this.model.room.has_passphrase
+    const st = await this.hub.escrowStatus()
+    this._setRoom({ has_passphrase: !!st.has_escrow, escrow_v1: st.escrow_version === 1 })
     return this.model.room.has_passphrase
+  }
+  /**
+   * Migrate a retired v1 escrow (review 3): the hub hands its blob only to a signed-in human. Opens it with the old
+   * passphrase, seals the recovery code again under a NEW generated passphrase (v2), and replaces the v1 blob, which
+   * the hub then no longer holds. Returns the new passphrase (show it once).
+   */
+  async migratePassphrase(old_passphrase) {
+    this._needHuman()
+    const st = await this.hub.escrowStatus()
+    if (st.escrow_version !== 1 || !st.key_escrow) throw new ZError('not-found', 'this room has no v1 escrow to migrate')
+    const recovery_code = await openEscrow({ room_id: this.model.room.room_id, key_escrow: st.key_escrow, passphrase: old_passphrase })
+    const passphrase = generatePassphrase()
+    await this.setPassphrase(passphrase, { recovery_code })
+    this._setRoom({ escrow_v1: false })
+    return passphrase
+  }
+  /** escrow_changed from the hub: another human device set or removed the escrow. Shown, so nobody swaps it silently. */
+  _onEscrowChanged(data) {
+    if (data?.revision != null && data.revision === this.roomRecord.escrow_revision) return
+    this.roomRecord.escrow_revision = data?.revision ?? null
+    if (data?.updater_device_id === this.my_device_id) return
+    const ch = M.emptyChange()
+    M.pushAlert(this.model, ch, { code: 'escrow-changed', sender_device_id: data?.updater_device_id ?? null, message: data?.escrow_version ? 'another device set a new sign-in passphrase' : 'another device turned the sign-in passphrase off' })
+    this.model.room.has_passphrase = !!data?.escrow_version
+    ch.room = true
+    this._emitChange(ch)
+    this._saveRoom().catch(() => {})
   }
   _setRoom(fields) { Object.assign(this.model.room, fields); const ch = M.emptyChange(); ch.room = true; this._emitChange(ch) }
 
