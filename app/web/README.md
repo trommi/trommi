@@ -24,7 +24,7 @@ node dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot,
 
 ### The build
 
-`dev/build.mjs` (no dependencies) makes one stylesheet of the ~25 `<link data-sheet>` lines of `public/index.html`, in their order, as `public/css/bundle.<hash>.css` (cached for good, `_headers`), and points `index.html` and the shell list of `sw.js` at it. The sheets in `public/css` stay the files to edit; the bundle is never committed. Cloudflare's build runs it on its checkout before the deploy (`WORKERS_CI=1` writes; elsewhere `node dev/build.mjs --write`, plain `node dev/build.mjs` only checks). `dev/serve.mjs` serves the same build from memory, so local runs and the e2e see what is deployed. Without the build the source shell works as it is.
+`dev/build.mjs` (no dependencies) makes one stylesheet of the ~25 `<link data-sheet>` lines of `public/index.html`, in their order, as `public/gen/bundle.<hash>.css` (cached for good, `_headers`), and points `index.html` and the shell list of `sw.js` at it. The sheets in `public/css` stay the files to edit; the bundle is never committed. Cloudflare's build runs it on its checkout before the deploy (`WORKERS_CI=1` writes; elsewhere `node dev/build.mjs --write`, plain `node dev/build.mjs` only checks). `dev/serve.mjs` serves the same build from memory, so local runs and the e2e see what is deployed. Without the build the source shell works as it is.
 
 Views switch sheets on and off (`layout.mjs` CSS, `js/app/sheets.mjs`): the hub linked only a page's own sheets, and some rules of one view's sheet would change another view. In the bundle each sheet a view may switch off is wrapped as `@supports (--sheet: name) { @media all { … } }`; `sheets.mjs` sets that `@media` to `not all`, which takes its rules out at the same place in the cascade, like a disabled `<link>`. A sheet that does not parse on its own (unbalanced braces, an unclosed comment or string) stops the build: in a bundle it would spill into the next sheet. Further build steps go into `build()` of `dev/build.mjs`.
 
@@ -50,7 +50,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 - **Create account:** email, a password of their own (at least 12 characters, the only rule) or one from **Generate**
   (five words of the EFF list, ≈64 bits, with Copy), the device's name. This device founds the room; the password is
-  stretched with Argon2id in the browser (`vendor/account.mjs`, 64 MiB, ≈0.15 s desktop, ≈0.5–1.5 s phone) and never
+  stretched with Argon2id in the browser (`gen/vendor/account.mjs`, 64 MiB, ≈0.15 s desktop, ≈0.5–1.5 s phone) and never
   leaves it. One sentence, calm: "If you lose your password and your Emergency Kit, nobody (not even Trommi) can
   recover your data."
 - **Emergency Kit:** offered once right after: twelve words to Download (a text file) or Print (only the kit prints).
@@ -84,7 +84,10 @@ public/
   css/  js/pen.js …      the board's look (taken over from the old board, now the app's own source)
   js/views/*.mjs         the board's view modules (trommi-hub server/views), synced, running in the page
   t/controllers t/lib    the board's Stimulus controllers, synced, running on js/app/stimulus.mjs
-  vendor/                the client core: copied from the repository's core/ by dev/build.mjs (Cloudflare's build; dev/serve.mjs serves it from core/), not committed
+  gen/                   generated, never edited by hand: vendor/ (the client core, copied from the repository's core/ by
+                         dev/build.mjs in Cloudflare's build; dev/serve.mjs serves it from core/), the stylesheet bundle,
+                         build.txt (not committed); connector.mjs(.sha256) and plugins/ (connector/bundle.mjs, committed,
+                         CI checks them), served at /connector.mjs, /connector.mjs.sha256, /plugins/… (worker.js)
   mock/                  fixture of the mock room (dev/make-fixture.mjs) and its pictures
   pad/                   the pad: the Whiteboard's page (?embed&place, in /whiteboard) and the Scratchpad on its own
   js/app/

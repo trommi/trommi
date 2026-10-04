@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trommi-app",
-  "main": "src/index.js",
+  "main": "worker.js",
   "compatibility_date": "2026-10-01",
   // The build step (dev/build.mjs): the stylesheets into one bundle. It writes only in Cloudflare's build (WORKERS_CI=1).
   "build": { "command": "node dev/build.mjs" },

@@ -35,7 +35,7 @@ export async function connectRoom(embedded) {
     const mock = sessionStorage.getItem('trommi-mock')
     if (mock) room = await (await import('/js/app/mock-room.mjs')).openRoom({ mock })
     else {
-      const core = await import('/vendor/index.mjs')
+      const core = await import('/gen/vendor/index.mjs')
       room = await core.openRoom({ storage: core.idbStorage({ name: 'trommi', prefix: 'room/' }) })
       room.start().catch(err => console.warn('pad: room', err))
     }

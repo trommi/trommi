@@ -10,7 +10,7 @@
 /index.html
   Cache-Control: no-cache
 # The stylesheet bundle of dev/build.mjs: its name changes with its content.
-/css/bundle.*
+/gen/bundle.*
   Cache-Control: public, max-age=31536000, immutable
 # The sandboxed viewer for published pages (scripts of an agent's page run here, never in the app's origin).
 # (Cloudflare answers /a/frame.html with a redirect to /a/frame: the rule must name both.)
@@ -20,16 +20,17 @@
 /a/frame.html
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts
-# The connector for Claude Code (connector/bundle.mjs) and its checksum: always the newest (the connect script fetches both).
-/connector.mjs
+# The connector for Claude Code (connector/bundle.mjs) and its checksum: always the newest (the connect script fetches both,
+# at /connector.mjs and /connector.mjs.sha256: worker.js assetPath).
+/gen/connector.mjs
   Cache-Control: no-cache
-/connector.mjs.sha256
+/gen/connector.mjs.sha256
   Cache-Control: no-cache
   Content-Type: text/plain; charset=utf-8
 # The Trommi plugin's marketplace for Claude Code (connector/plugin.mjs): the listing always the newest; the archives
-# are named by version.
-/plugins/marketplace.json
+# are named by version. Public address /plugins/… (worker.js assetPath).
+/gen/plugins/marketplace.json
   Cache-Control: no-cache
   Content-Type: application/json; charset=utf-8
-/plugins/*.zip
+/gen/plugins/*.zip
   Cache-Control: public, max-age=31536000, immutable

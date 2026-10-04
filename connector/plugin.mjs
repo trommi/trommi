@@ -8,7 +8,7 @@
 // channels plugin:trommi@trommi still gets live <channel> events), and a monitor (`node channel.mjs monitor`,
 // connector/monitor.mjs) that wakes a plain `claude` for every verified board event.
 //
-// bundle.mjs writes app/web/public/plugins/marketplace.json and trommi-<version>.zip (a zip archive source with its
+// bundle.mjs writes app/web/public/gen/plugins/marketplace.json and trommi-<version>.zip (a zip archive source with its
 // sha256; deterministic, so --check can compare it). The version is the connector's sha256 prefix: a new connector is
 // a new plugin version, and `claude plugin update trommi@trommi` (or the auto-update of the marketplace) fetches it.
 import fs from 'node:fs'
@@ -83,7 +83,7 @@ export function marketplace(source, version) {
   }
 }
 
-/** Everything bundle.mjs writes under app/web/public/plugins/: { file name: Buffer }. */
+/** Everything bundle.mjs writes under app/web/public/gen/plugins/: { file name: Buffer }. */
 export function marketplaceFiles(connectorText, app = 'https://app.trommi.com') {
   const version = sha256(connectorText).slice(0, 12)
   const archive = zip(pluginFiles(connectorText, version))

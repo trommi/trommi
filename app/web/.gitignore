@@ -1,4 +1,6 @@
 .wrangler/
 node_modules/
 dist/
-public/vendor/
+public/gen/vendor/
+public/gen/bundle.*.css
+public/gen/build.txt

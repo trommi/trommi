@@ -4,7 +4,7 @@ name: Test
 
 on:
   push:
-    paths: ['core/**', 'hub/**', 'connector/**', 'fuzz/**', 'app/web/public/connector.mjs', 'app/web/public/connector.mjs.sha256', 'app/web/public/connect.sh', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
+    paths: ['core/**', 'hub/**', 'connector/**', 'fuzz/**', 'app/web/public/gen/**', 'app/web/public/connect.sh', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
   pull_request:
   workflow_dispatch:
 
@@ -47,6 +47,6 @@ jobs:
       - run: node core/test.mjs
       - run: node connector/channel-test.mjs
       - run: node connector/monitor-test.mjs
-      # app/web/public/connector.mjs is generated (connector/bundle.mjs) and committed: it must match the sources.
+      # app/web/public/gen/connector.mjs (and gen/plugins/) is generated (connector/bundle.mjs) and committed: it must match the sources.
       - run: node connector/bundle.mjs --check
       - run: node connector/connect-test.mjs

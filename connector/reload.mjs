@@ -11,7 +11,7 @@
 // TROMMI_UPDATE_POLL_MS, default 60 s); the hub's GET /v1/version names a recommended channel version (hourly,
 // TROMMI_VERSION_CHECK_MS); a hub that refuses this client (426 client-too-old, stream event upgrade_required) stops it.
 //
-// The single-file connector (connector/bundle.mjs -> app/web/public/connector.mjs, installed by the connect script as
+// The single-file connector (connector/bundle.mjs -> app/web/public/gen/connector.mjs, installed by the connect script as
 // ~/.local/share/trommi/connector/channel.mjs) has no sibling files: code and shell are one file there, so any new
 // version of it needs the restart, and loadCode is never used.
 import fs from 'node:fs'

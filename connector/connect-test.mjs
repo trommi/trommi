@@ -24,6 +24,7 @@ import path from 'node:path'
 import http from 'node:http'
 import { spawn, execFileSync } from 'node:child_process'
 import { startHub, startChannel } from './channel-test-e2e.mjs'
+import { assetPath } from '../app/web/worker.js'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const pub = path.join(here, '../app/web/public')
@@ -53,10 +54,10 @@ fs.writeFileSync(f, JSON.stringify(cfg, null, 2) + '\\n')
 // An earlier install's .mcp.json entry: the plugin install takes it away (two connectors would be two members).
 fs.writeFileSync(path.join(project, '.mcp.json'), JSON.stringify({ mcpServers: { trommi: { type: 'stdio', command: 'node', args: ['/old/channel.mjs'], env: {} } } }))
 
-// The app's three files, as app/web/src/index.js serves them.
+// The app's three files, at the addresses app/web/worker.js serves them.
 const app = http.createServer((req, res) => {
   const p = new URL(req.url, 'http://x').pathname
-  const file = { '/connect': 'connect.sh', '/connector.mjs': 'connector.mjs', '/connector.mjs.sha256': 'connector.mjs.sha256' }[p]
+  const file = p === '/connect' ? 'connect.sh' : ['/connector.mjs', '/connector.mjs.sha256'].includes(p) ? assetPath(p) : null
   if (!file) { res.writeHead(404); return res.end() }
   res.writeHead(200, { 'content-type': 'text/plain' }); res.end(fs.readFileSync(path.join(pub, file)))
 })
@@ -101,7 +102,7 @@ try {
   }
   const installed = path.join(home, '.local/share/trommi/connector/channel.mjs')
   assert.ok(fs.existsSync(installed), 'the connector is installed')
-  assert.equal(fs.readFileSync(`${installed}.sha256`, 'utf8').split(' ')[0], fs.readFileSync(path.join(pub, 'connector.mjs.sha256'), 'utf8').trim())
+  assert.equal(fs.readFileSync(`${installed}.sha256`, 'utf8').split(' ')[0], fs.readFileSync(path.join(pub, 'gen/connector.mjs.sha256'), 'utf8').trim())
   if (NOPLUGIN) {
     const mcp = JSON.parse(fs.readFileSync(path.join(project, '.mcp.json'), 'utf8')).mcpServers.trommi
     assert.deepEqual([mcp.command, ...mcp.args], ['node', installed], '.mcp.json in the project runs the installed connector')

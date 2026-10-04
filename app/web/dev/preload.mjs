@@ -5,7 +5,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 const pub = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
-const seen = new Set(), queue = ['/js/app/boot.mjs', '/vendor/index.mjs']
+const seen = new Set(), queue = ['/js/app/boot.mjs', '/gen/vendor/index.mjs']
 while (queue.length) {
   const f = queue.shift()
   if (seen.has(f) || !fs.existsSync(path.join(pub, f))) continue

@@ -1,6 +1,6 @@
 // The help page: the key list from the app's own key table (t/lib/keys.js SHORT), the key beside each way, and the
 // part "For agents": the picture of the channel and the reference of tools and events, read from the channel's own
-// tables (connector/channel-tools.mjs, copied into vendor/ by trommi-hub's dev/sync-app.sh), so it cannot drift from them.
+// tables (connector/channel-tools.mjs, copied into gen/vendor/ by dev/build.mjs), so it cannot drift from them.
 import { SHORT, capOf } from '/t/lib/keys.js'
 
 const $ = id => document.getElementById(id)
@@ -210,7 +210,7 @@ function eventEntry(event) {
 
 try {
   globalThis.process ??= { env: {} } // channel-tools.mjs reads one Node setting (richhtml.mjs HTML_MAX); none here
-  const ref = await import('/vendor/channel-tools.mjs')
+  const ref = await import('/gen/vendor/channel-tools.mjs')
   $('tool-list').replaceChildren(...ref.TOOLS.map(t => toolEntry(t, ref.TOOL_EXAMPLES ?? {})))
   $('event-list').replaceChildren(...ref.CHANNEL_EVENTS?.map(eventEntry) ?? [el('p', 'hp-wait', 'The list of events comes with the next channel release.')])
   $('tool-count').textContent = `${ref.TOOLS.length} tools`
