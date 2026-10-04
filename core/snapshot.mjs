@@ -6,14 +6,14 @@
 // their signature when opened.
 //
 //   register room_snapshot = { attachment: <README reference>, encoding, envelope_number, log_seq, log_hash, written_at }  (the frontier is inside the attachment)
-//   attachment = gzip(JSON { schema: 1, room_id, envelope_number, log_seq, log_hash, chains, frontiers, model })
+//   attachment = gzip(JSON { schema: 2, room_id, envelope_number, log_seq, log_hash, chains, frontiers, model })
 import * as z from './zcrypto.mjs'
 import * as M from './model.mjs'
 import * as codec from './codec.mjs'
 import * as G from './session-grants.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError } = z
-export const SNAPSHOT_SCHEMA = 1
+export const SNAPSHOT_SCHEMA = 2
 export const SNAPSHOT_EVERY = 5000          // envelopes between two snapshots of one device
 const SCAN_PAGES = 12                       // pages of 1000 scanned back for the newest pointer
 const OVERLAP = 1000                        // envelopes before the snapshot's cursor read again after a boot (D6)
@@ -38,7 +38,7 @@ export function snapshotOf(client) {
     log_seq: client.state.head.seq, log_hash: hex(client.state.head.hash),
     chains, frontiers: Object.fromEntries([...client.frontiers].map(([k, f]) => [k, Object.fromEntries(f)])),
     model: {
-      cards: [...m.cards.values()], permissions: [...m.permissions.values()], memos: [...m.memos.values()], published: [...m.published.values()],
+      cards: [...m.cards.values()], permissions: [...m.permissions.values()], notes: [...m.notes.values()], published: [...m.published.values()],
       sessions: [...m.sessions.values()].map(M.serialiseSession), timelines: [...m.timelines.values()].map(M.serialiseTimelineMeta),
       human: [...m.human.raw], device_registers: [...(m._device_registers ?? [])],
     },
@@ -146,7 +146,7 @@ export async function bootFromSnapshot(client) {
     for (const c of snap.model.cards) m.cards.set(c.object_id, c)
     m._proj = null                                    // project builds its sorted lists again
     for (const p of snap.model.permissions) m.permissions.set(p.object_id, p)
-    for (const x of snap.model.memos) m.memos.set(x.object_id, x)
+    for (const x of snap.model.notes) m.notes.set(x.object_id, x)
     for (const x of snap.model.published) m.published.set(x.object_id, x)
     for (const s of snap.model.sessions) m.sessions.set(s.session_id ?? s.agent_device_id, { ...M.deserialiseSession(s), ...pick(m.sessions.get(s.session_id), ['agent_device_ids', 'agent_device_id', 'session_key_epoch', 'with_history', 'epoch_agent_ids', 'ever_agent_ids']) })
     for (const t of snap.model.timelines) m.timelines.set(t.timeline_key, M.deserialiseTimelineMeta(t))
@@ -154,7 +154,7 @@ export async function bootFromSnapshot(client) {
     // R2: this device's lamport counter starts above every write in the snapshot.
     // Review 3: only sane lamports (an inflated one in a snapshot is not adopted either).
     for (const [, v] of snap.model.human) client.lamport = Math.max(client.lamport ?? 0, M.lamportOf(v?.causal))
-    for (const x of snap.model.memos) client.lamport = Math.max(client.lamport ?? 0, M.lamportOf(x?.causal))
+    for (const x of snap.model.notes) client.lamport = Math.max(client.lamport ?? 0, M.lamportOf(x?.causal))
     m._device_registers = new Map(snap.model.device_registers)
     for (const [id, reg] of m._device_registers) { const mem = m.members.get(id); if (mem) Object.assign(mem, { device_name: reg?.device_name ?? '', platform: reg?.platform ?? null, folder: reg?.folder ?? null, host: reg?.host ?? null }) }
     // D6: the hub's numbers are retrieval hints, not proof. The tail is read from an overlap window before the snapshot's
@@ -164,7 +164,7 @@ export async function bootFromSnapshot(client) {
     client.snapshotCursor = snap.envelope_number
     client._scan = contiguous(found.scanned)          // the catch-up that follows reads these pages from memory
     const ch = M.emptyChange()
-    for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines']) for (const id of m[k].keys()) ch[k].add(id)
+    for (const k of ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines']) for (const id of m[k].keys()) ch[k].add(id)
     ch.members = ch.stack = ch.room = true
     M.project(m, ch)
     client._markDirty(ch, [])

@@ -5,7 +5,7 @@ import * as z from './zcrypto.mjs'
 import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import { sealEscrowV2, openEscrow, generatePassphrase } from './escrow.mjs'
+import { sealEscrowV2 } from './escrow.mjs'
 import * as G from './session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
@@ -60,9 +60,7 @@ export async function verifiedHeads(hub, state, ids) {
   const chains = new Map()
   let after = 0
   for (;;) {
-    let r
-    try { r = await hub.envelopes({ after_envelope_number: after, limit: 1000 }) }
-    catch (e) { if (e.code === 'forbidden') return null; throw e }      // an older hub: the recovery key reads no envelopes
+    const r = await hub.envelopes({ after_envelope_number: after, limit: 1000 })
     for (const { envelope_number, envelope } of r.envelopes) {
       after = Math.max(after, envelope_number)
       try {
@@ -271,7 +269,7 @@ export class Client {
     for (const [, v] of await st.range('session/')) m.sessions.set(v.session_id ?? v.agent_device_id, M.deserialiseSession(v))
     for (const [, v] of await st.range('card/')) m.cards.set(v.object_id, v)
     for (const [, v] of await st.range('perm/')) m.permissions.set(v.object_id, v)
-    for (const [, v] of await st.range('memo/')) m.memos.set(v.object_id, v)
+    for (const [, v] of await st.range('note/')) m.notes.set(v.object_id, v)
     for (const [, v] of await st.range('pub/')) m.published.set(v.object_id, v)
     for (const [, v] of await st.range('tlmeta/')) m.timelines.set(v.timeline_key, M.deserialiseTimelineMeta(v))
     const regs = await st.range('reg/')
@@ -870,7 +868,7 @@ export class Client {
     }
     M.project(this.model, M.emptyChange())
     const ch = M.emptyChange()
-    for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines']) for (const id of this.model[k].keys()) ch[k].add(id)
+    for (const k of ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines']) for (const id of this.model[k].keys()) ch[k].add(id)
     ch.members = ch.stack = ch.room = true
     this._markDirty(ch, [])
     await this.flush()
@@ -1131,7 +1129,7 @@ export class Client {
     for (const id of change.cards) { const c = m.cards.get(id); if (c) d.set(`card/${id}`, c) }
     for (const id of change.sessions) { const s = m.sessions.get(id); if (s) d.set(`session/${id}`, M.serialiseSession(s)) }
     for (const id of change.permissions) { const p = m.permissions.get(id); if (p) d.set(`perm/${id}`, p) }
-    for (const id of change.memos) { const x = m.memos.get(id); if (x) d.set(`memo/${id}`, x) }
+    for (const id of change.notes) { const x = m.notes.get(id); if (x) d.set(`note/${id}`, x) }
     for (const id of change.published) { const x = m.published.get(id); if (x) d.set(`pub/${id}`, x) }
     for (const key of change.timelines) { const t = m.timelines.get(key); if (t) d.set(`tlmeta/${key}`, M.serialiseTimelineMeta(t)) }
     for (const key of change.registers) {
@@ -1194,8 +1192,8 @@ export class Client {
       try {
         if (this._storageFailed) throw new ZError('storage-failed', 'storage failed earlier: restart before sending')
         if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind; session_id = built.session_id ?? session_id }
-        // R2: registers and memos carry a lamport one above every one this device has seen (compareWrites).
-        if (kind === codec.KIND.status || (kind === codec.KIND.object_version && content?.object_type === 'memo')) { this.lamport = (this.lamport ?? 0) + 1; content = { ...content, lamport: this.lamport } }
+        // R2: registers and notes carry a lamport one above every one this device has seen (compareWrites).
+        if (kind === codec.KIND.status || (kind === codec.KIND.object_version && content?.object_type === 'note')) { this.lamport = (this.lamport ?? 0) + 1; content = { ...content, lamport: this.lamport } }
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
         if (kind === codec.KIND.status && payload.length + (bind?.length ?? 0) + 16 > 4096) throw new ZError('too-large', 'a status body is at most 4 KiB')
@@ -1631,20 +1629,20 @@ export class Client {
   markReadUpTo(agent_device_id, envelope_number) { return this.setRegisters({ [`read_up_to/${agent_device_id}`]: envelope_number }) }
   setDeviceInfo(info) { return this.setRegisters({ [`device/${this.my_device_id}`]: info }) }
 
-  /** A memo's newest version as THIS client sealed it (may be ahead of the model while versions are in flight). */
-  _memoHead(object_id) {
+  /** A note's newest version as THIS client sealed it (may be ahead of the model while versions are in flight). */
+  _noteHead(object_id) {
     const local = this.localHeads.get(object_id)
-    const m = this.model.memos.get(object_id)
+    const m = this.model.notes.get(object_id)
     const base = m?.pending ? m._base : m
     if (local && (!base || local.object_version >= base.object_version)) return local
-    return base ? { object_version: base.object_version, version_hash: base.version_hash, content: memoFields(base) } : null
+    return base ? { object_version: base.object_version, version_hash: base.version_hash, content: noteFields(base) } : null
   }
 
   /**
-   * New memo or a new version. Optimistic: the memo is in model.memos at once (pending: true; a new one first under its
+   * New note or a new version. Optimistic: the note is in model.notes at once (pending: true; a new one first under its
    * local_id, then under its object_id once sealed). Versions chain on what this client sealed last. Resolves to the object_id.
    */
-  async saveMemo({ object_id = null, ...fields }) {
+  async saveNote({ object_id = null, ...fields }) {
     this._needHuman()
     let id = object_id
     let echoKey = object_id
@@ -1652,59 +1650,59 @@ export class Client {
       kind: codec.KIND.object_version,
       echo: local_id => {
         echoKey = object_id ?? local_id
-        const prev = this.model.memos.get(echoKey)
+        const prev = this.model.notes.get(echoKey)
         const base = prev?.pending ? prev._base : prev ?? null
-        this.model.memos.set(echoKey, { ...(base ?? {}), ...fields, object_id: echoKey, local_id, pending: true, _base: base, object_state: 'open', by_device_id: this.my_device_id })
-        const ch = M.emptyChange(); ch.memos.add(echoKey); this._emitChange(ch)
+        this.model.notes.set(echoKey, { ...(base ?? {}), ...fields, object_id: echoKey, local_id, pending: true, _base: base, object_state: 'open', by_device_id: this.my_device_id })
+        const ch = M.emptyChange(); ch.notes.add(echoKey); this._emitChange(ch)
         return ({ confirmed }) => {
           if (confirmed) return
-          const cur = this.model.memos.get(id ?? echoKey)
+          const cur = this.model.notes.get(id ?? echoKey)
           const c = M.emptyChange()
-          if (cur?.pending) { if (cur._base) this.model.memos.set(cur.object_id, cur._base); else this.model.memos.delete(cur.object_id); c.memos.add(cur.object_id) }
+          if (cur?.pending) { if (cur._base) this.model.notes.set(cur.object_id, cur._base); else this.model.notes.delete(cur.object_id); c.notes.add(cur.object_id) }
           return c
         }
       },
       content: async () => {
         if (!id) id = await objectIdOf(this.my_device_id, (this.chains.get(b64u(this.device.id))?.seq ?? 0) + 1)
-        const head = object_id ? this._memoHead(object_id) : null
-        const content = { ...(head?.content ?? {}), ...fields, object_type: 'memo', object_version: (head?.object_version ?? 0) + 1, previous_version_hash: head?.version_hash ?? ZERO_HASH }
+        const head = object_id ? this._noteHead(object_id) : null
+        const content = { ...(head?.content ?? {}), ...fields, object_type: 'note', object_version: (head?.object_version ?? 0) + 1, previous_version_hash: head?.version_hash ?? ZERO_HASH }
         for (const k of Object.keys(content)) if (content[k] === undefined) delete content[k]
         return { content, object: { object_id: id, object_state: fields.object_state === 'closed' ? 'closed' : 'open', urgency: 'normal' } }
       },
       after: (sealed, content) => {
-        this.localHeads.set(id, { object_version: content.object_version, version_hash: hex(sealed.hash), content: memoFields(content) })
-        if (echoKey !== id) {                     // a new memo: move the echo from its local id to its object id
-          const e = this.model.memos.get(echoKey)
-          this.model.memos.delete(echoKey)
-          if (e) this.model.memos.set(id, { ...e, object_id: id })
-          const ch = M.emptyChange(); ch.memos.add(echoKey); ch.memos.add(id); this._emitChange(ch)
+        this.localHeads.set(id, { object_version: content.object_version, version_hash: hex(sealed.hash), content: noteFields(content) })
+        if (echoKey !== id) {                     // a new note: move the echo from its local id to its object id
+          const e = this.model.notes.get(echoKey)
+          this.model.notes.delete(echoKey)
+          if (e) this.model.notes.set(id, { ...e, object_id: id })
+          const ch = M.emptyChange(); ch.notes.add(echoKey); ch.notes.add(id); this._emitChange(ch)
         }
       },
     })
     return id
   }
-  async deleteMemo(object_id) {
-    if (!this._memoHead(object_id)) throw new ZError('not-found', 'no such memo')
+  async deleteNote(object_id) {
+    if (!this._noteHead(object_id)) throw new ZError('not-found', 'no such note')
     this._needHuman()
     let echoed = null
     return this._send({
       kind: codec.KIND.object_version,
       echo: local_id => {
-        const prev = this.model.memos.get(object_id)
+        const prev = this.model.notes.get(object_id)
         const base = prev?.pending ? prev._base : prev
-        this.model.memos.set(object_id, { ...prev, object_state: 'closed', pending: true, local_id, _base: base })
+        this.model.notes.set(object_id, { ...prev, object_state: 'closed', pending: true, local_id, _base: base })
         echoed = base
-        const ch = M.emptyChange(); ch.memos.add(object_id); this._emitChange(ch)
+        const ch = M.emptyChange(); ch.notes.add(object_id); this._emitChange(ch)
         return ({ confirmed }) => {
           if (confirmed) return
-          const c = M.emptyChange(); if (echoed) this.model.memos.set(object_id, echoed); c.memos.add(object_id); return c
+          const c = M.emptyChange(); if (echoed) this.model.notes.set(object_id, echoed); c.notes.add(object_id); return c
         }
       },
       content: () => {
-        const head = this._memoHead(object_id)
-        return { content: { ...head.content, object_type: 'memo', object_version: head.object_version + 1, previous_version_hash: head.version_hash }, object: { object_id, object_state: 'closed', urgency: 'normal' } }
+        const head = this._noteHead(object_id)
+        return { content: { ...head.content, object_type: 'note', object_version: head.object_version + 1, previous_version_hash: head.version_hash }, object: { object_id, object_state: 'closed', urgency: 'normal' } }
       },
-      after: (sealed, content) => this.localHeads.set(object_id, { object_version: content.object_version, version_hash: hex(sealed.hash), content: memoFields(content) }),
+      after: (sealed, content) => this.localHeads.set(object_id, { object_version: content.object_version, version_hash: hex(sealed.hash), content: noteFields(content) }),
     })
   }
 
@@ -1908,7 +1906,7 @@ export class Client {
       const cuts = {}
       for (const id of device_ids) { const c = this.chains.get(b64u(unhex(id))); if (c) cuts[id] = { seq: c.seq, hash: c.hash } }
       const unknown = device_ids.filter(id => !cuts[id])
-      if (unknown.length) Object.assign(cuts, (await verifiedHeads(this.hub, this.state, unknown)) ?? {})   // never a blind cut at 0
+      if (unknown.length) Object.assign(cuts, await verifiedHeads(this.hub, this.state, unknown))   // never a blind cut at 0
       const r = await z.removeMembers(this.state, this.device, { ids: device_ids.map(unhex), cuts, previous })
       await this.hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
       this.secrets.set(r.secret.epoch, r.secret)
@@ -1937,7 +1935,7 @@ export class Client {
         const me = this.my_device_id
         const previous = this.secrets.get(this.state.epoch)
         const own = this.chains.get(b64u(unhex(me)))
-        const cuts = own ? { [me]: { seq: own.seq, hash: own.hash } } : ((await verifiedHeads(this.hub, this.state, [me])) ?? {})
+        const cuts = own ? { [me]: { seq: own.seq, hash: own.hash } } : await verifiedHeads(this.hub, this.state, [me])
         const r = await z.removeMembers(this.state, this.device, { ids: [unhex(me)], cuts, previous })
         await this.hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
         const humans_left = [...this.model.members.values()].filter(d => d.is_active && d.device_role === 'human' && d.device_id !== me).length
@@ -2145,23 +2143,8 @@ export class Client {
   async checkPassphrase() {
     if (!this.is_human) return this.model.room.has_passphrase
     const st = await this.hub.escrowStatus()
-    this._setRoom({ has_passphrase: !!st.has_escrow, escrow_v1: st.escrow_version === 1 })
+    this._setRoom({ has_passphrase: !!st.has_escrow })
     return this.model.room.has_passphrase
-  }
-  /**
-   * Migrate a retired v1 escrow (review 3): the hub hands its blob only to a signed-in human. Opens it with the old
-   * passphrase, seals the recovery code again under a NEW generated passphrase (v2), and replaces the v1 blob, which
-   * the hub then no longer holds. Returns the new passphrase (show it once).
-   */
-  async migratePassphrase(old_passphrase) {
-    this._needHuman()
-    const st = await this.hub.escrowStatus()
-    if (st.escrow_version !== 1 || !st.key_escrow) throw new ZError('not-found', 'this room has no v1 escrow to migrate')
-    const recovery_code = await openEscrow({ room_id: this.model.room.room_id, key_escrow: st.key_escrow, passphrase: old_passphrase })
-    const passphrase = generatePassphrase()
-    await this.setPassphrase(passphrase, { recovery_code })
-    this._setRoom({ escrow_v1: false })
-    return passphrase
   }
   /** escrow_changed from the hub: another human device set or removed the escrow. Shown, so nobody swaps it silently. */
   _onEscrowChanged(data) {
@@ -2180,8 +2163,8 @@ export class Client {
   async pushSubscribe(subscription, remove = false) { return this.hub.pushSubscription(subscription, remove) }
 }
 
-const MEMO_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
-function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
+const NOTE_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_version', 'version_hash', 'version_hashes', 'causal', 'envelope_number', 'object_state', 'pending', 'local_id', '_base', 'schema_version', 'object_type', 'previous_version_hash'])
+function noteFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!NOTE_META.has(k)) out[k] = v; return out }
 
 const fields_session = f => f.session_id ?? null
 const fwdInfo = item => ({ local_id: item.local_id, envelope_hash: item.hash, seq: item.seq, object_id: item.public?.object_id ?? null })

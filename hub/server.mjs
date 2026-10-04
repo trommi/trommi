@@ -323,11 +323,8 @@ export async function startHub({
   function fenced(r, req, me) {
     if (me.role !== 'agent') return null
     const raw = req.headers['x-lease-generation']
-    // Cores before review 3 send no header here at all (they opened the stream before taking the lease, and never named
-    // it on uploads): they keep the old rule until every app has the new core. A current core always sends the header
-    // ('none' before it holds a lease), so for it the fencing is strict.
-    if (raw == null) return null
-    if (!/^\d{1,16}$/.test(raw)) fail('lease-lost', 'an agent names its lease generation (x-lease-generation): take the lease with agent_lease first')
+    // Strict: no header, or one that is not a generation, is lease-lost.
+    if (raw == null || !/^\d{1,16}$/.test(raw)) fail('lease-lost', 'an agent names its lease generation (x-lease-generation): take the lease with agent_lease first')
     const held = r.hub.leaseOf(me.id)
     if (!held || held.generation !== Number(raw)) fail('lease-lost', 'another process took over this agent key')
     return Number(raw)

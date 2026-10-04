@@ -26,8 +26,8 @@ const inviteAgentButton = () => html`<form method="post" action="/pair" class="a
 // ---- the note in the sidebar (his word, 4 October: "nur EINE Notiz") ----
 // At the sidebar's foot, a fixed anchor (his word, 4 October: "immer unten links"): one yellow sticky. Folded it shows the note's first line, or "New note" when empty; a click
 // unfolds it upward into a field that grows with the words (Enter: a new line, Ctrl/Cmd+Enter sends), with the crown
-// (send straight to the crown, as the memo did) and the bin. Sent or thrown away, it is "New note" again. It is the
-// desk's newest unsent note (place "stack", no session). Folded rail: the sticky with a dot when it holds words. A
+// (send straight to the crown) and the bin. Sent or thrown away, it is "New note" again. It is the
+// newest unsent note (place "stack", no session). Folded rail: the sticky with a dot when it holds words. A
 // phone: a chip that opens it as a sheet.
 const NOTE_ICON = raw('<svg viewBox="0 0 52 52" class="side-note-ico" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
 const BIN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5 7.2 Q12 6.8 19 7.3"/><path d="M9.6 6.9 Q9.8 4.8 12 4.7 Q14.3 4.8 14.4 6.9"/><path d="M6.6 7.6 Q7.4 14 8.2 20.2 Q12 20.6 15.8 20.2 Q16.6 14 17.4 7.6"/></svg>')
@@ -35,7 +35,7 @@ const isPic = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)
 /** The note's attachments: a picture as a small thumbnail, a file by its name; a click takes it off. */
 const noteFiles = atts => (atts ?? []).map(a => `<button type="button" class="side-note-file${isPic(a) ? ' is-pic' : ''}" data-url="${String(a.url).replace(/"/g, '&quot;')}" data-action="side-note#unclip" title="${String(a.name).replace(/"/g, '&quot;')}: click to take it off">${isPic(a) ? `<img src="${String(a.url).replace(/"/g, '&quot;')}" alt="" loading="lazy">` : `<span>${String(a.name).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'))}</span>`}<i>×</i></button>`).join('')
 const CLIP = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M15.6 7.2 Q11 12 8.4 14.8 Q7 16.6 8.6 17.8 Q10.2 18.8 11.6 17.2 Q15.6 12.8 18.2 9.8 Q20.4 7 18.2 5 Q16 3.4 13.8 5.6 Q9.4 10.4 6.4 13.8 Q3.8 17 6.4 19.6 Q9 21.8 12 19"/></svg>')
-const deskNotesOf = model => (model.state.memos ?? []).filter(m => m.place === 'stack' && !m.held && !m.session && (!m.desk || !model.desk || m.desk === model.desk)).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
+const deskNotesOf = model => (model.state.notes ?? []).filter(m => m.place === 'stack' && !m.held && !m.session).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
 function sideNotes(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
   const text = note?.text ?? '', files = note?.attachments ?? []
@@ -53,9 +53,9 @@ controller('side-note', class extends Controller {
     this.guard = e => { if (e.target?.getAttribute?.('target') === 'side-notes' && this.element.classList.contains('is-open')) e.preventDefault() }
     document.addEventListener('turbo:before-stream-render', this.guard)
     this.write = () => this.open()
-    document.addEventListener('trommi:memo', this.write)
+    document.addEventListener('trommi:note', this.write)
   }
-  disconnect() { document.removeEventListener('turbo:before-stream-render', this.guard); document.removeEventListener('trommi:memo', this.write); clearTimeout(this.timer) }
+  disconnect() { document.removeEventListener('turbo:before-stream-render', this.guard); document.removeEventListener('trommi:note', this.write); clearTimeout(this.timer) }
   async post(path, fields = {}) {
     const res = await fetch(`${this.baseValue}${path}`, { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html', 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(fields) })
     const text = await res.text()
@@ -95,20 +95,20 @@ controller('side-note', class extends Controller {
     try {
       if (!this.idValue) {
         if (!text.trim()) return
-        await this.post('/memos', { place: 'stack', text })
+        await this.post('/notes', { place: 'stack', text })
         const made = deskNotesOf(window.trommi?.model?.() ?? { state: {} })[0]
         if (made) this.idValue = made.id
-      } else await this.post(`/memos/${this.idValue}/stack`, { text })
+      } else await this.post(`/notes/${this.idValue}/stack`, { text })
       if (!text.trim()) this.idValue = ''
     } finally { this.saving = false; if (this.again) { this.again = false; this.save() } }
   }
-  // ---- attachments, as the memo had them: POST /memo with { id, attachments: [kept refs..., { name, data }] } ----
+  // ---- attachments, as the note had them: POST /note with { id, attachments: [kept refs..., { name, data }] } ----
   files() { return [...this.element.querySelectorAll('.side-note-file')].map(c => ({ url: c.dataset.url })) }
   async attach(list) {
     const got = [...list].filter(f => f instanceof File)
     if (!got.length) return
     if (!this.idValue) {
-      await this.post('/memos', { place: 'stack', text: this.field.value })
+      await this.post('/notes', { place: 'stack', text: this.field.value })
       const made = deskNotesOf(window.trommi?.model?.() ?? { state: {} })[0]
       if (!made) return
       this.idValue = made.id
@@ -116,13 +116,13 @@ controller('side-note', class extends Controller {
     const read = f => new Promise((resolve, reject) => { const r = new FileReader(); r.onload = () => resolve({ name: f.name || `pasted-${Date.now()}.png`, data: r.result }); r.onerror = () => reject(r.error); r.readAsDataURL(f) })
     try {
       const fresh = await Promise.all(got.map(read))
-      const res = await fetch('/memo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...this.files(), ...fresh] }) })
+      const res = await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...this.files(), ...fresh] }) })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
       this.paintFiles()
     } catch (err) { console.warn('note', err); this.element.querySelector('.side-note-files').insertAdjacentHTML('beforeend', '<em class="side-note-err">Not attached</em>') }
   }
   paintFiles() {
-    const m = (window.trommi?.model?.().state.memos ?? []).find(n => n.id === this.idValue)
+    const m = (window.trommi?.model?.().state.notes ?? []).find(n => n.id === this.idValue)
     this.element.querySelector('.side-note-files').innerHTML = noteFiles(m?.attachments ?? [])
   }
   pick() {
@@ -137,7 +137,7 @@ controller('side-note', class extends Controller {
   async unclip(e) {
     const chip = e.currentTarget, left = this.files().filter(f => f.url !== chip.dataset.url)
     chip.remove()
-    if (this.idValue) await fetch('/memo', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: left }) })
+    if (this.idValue) await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: left }) })
   }
   paste(e) { if (e.clipboardData?.files?.length) { e.preventDefault(); this.attach(e.clipboardData.files) } }
   over(e) { if (e.dataTransfer?.types?.includes('Files')) { e.preventDefault(); this.element.classList.add('is-drop') } }
@@ -150,13 +150,13 @@ controller('side-note', class extends Controller {
     const id = this.idValue
     this.idValue = ''; this.field.value = ''; this.element.querySelector('.side-note-files').innerHTML = ''
     this.close()
-    await this.post(`/memos/${id}/send`, { text })
+    await this.post(`/notes/${id}/send`, { text })
   }
   async bin() {
     const id = this.idValue, text = this.field.value
     this.idValue = ''; this.field.value = ''; this.element.querySelector('.side-note-files').innerHTML = ''
     this.close()
-    if (id) await this.post(`/memos/${id}/bin`, { text })
+    if (id) await this.post(`/notes/${id}/bin`, { text })
   }
 })
 

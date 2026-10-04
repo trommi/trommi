@@ -8,7 +8,7 @@ const URGENCY_RANK = { critical: 3, high: 2, normal: 1, low: 0 }
 const isZeroHash = h => /^0*$/.test(h)
 
 /**
- * R2: the one order of writes to a register or memo, the same on every device whatever the hub's delivery order (a
+ * R2: the one order of writes to a register or note, the same on every device whatever the hub's delivery order (a
  * strict total order, lexicographic, so the winner does not depend on the order of comparisons and there are no
  * cycles): (lamport, sender_device_id, sender_sequence). `lamport` is signed inside the body: the writer's counter,
  * one above every lamport it had seen, so a write made after seeing another always sorts after it. Writes without one
@@ -42,7 +42,7 @@ export const lamportAccepted = (lamport, seen) => lamport > 0 && lamport <= (see
 export function emptyModel() {
   return {
     room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, has_passphrase: null, outbox_blocked: null },
-    members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), memos: new Map(), published: new Map(),
+    members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), notes: new Map(), published: new Map(),
     timelines: new Map(), human: emptyHuman(), invites: new Map(), alerts: [], outbox: [],
     stack: [], open_permission_ids: [],
   }
@@ -53,16 +53,16 @@ function emptyHuman() {
 
 /** A change record: what a batch touched. Every field always present. */
 export function emptyChange() {
-  return { cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(),
+  return { cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(),
     members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false, items: new Map() }
 }
 /** change.items: Map<timeline_key, TimelineItem[]> added or replaced in this batch. */
 export function addItem(change, key, item) { let l = change.items.get(key); if (!l) change.items.set(key, l = []); l.push(item) }
 export function changeIsEmpty(c) {
-  return c.items.size === 0 && !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines', 'registers', 'invites'].every(k => c[k].size === 0)
+  return c.items.size === 0 && !c.members && !c.alerts && !c.outbox && !c.stack && !c.room && ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites'].every(k => c[k].size === 0)
 }
 export function mergeChange(into, c) {
-  for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines', 'registers', 'invites']) for (const v of c[k]) into[k].add(v)
+  for (const k of ['cards', 'sessions', 'permissions', 'notes', 'published', 'timelines', 'registers', 'invites']) for (const v of c[k]) into[k].add(v)
   for (const k of ['members', 'alerts', 'outbox', 'stack', 'room']) into[k] ||= c[k]
   for (const [k, l] of c.items) for (const it of l) addItem(into, k, it)
   return into
@@ -317,9 +317,9 @@ function applyObjectVersion(model, rec, change) {
   const object_id = rec.object?.object_id
   if (!object_id) return refuse(model, change, rec, 'bad-object', 'object version without object id')
   const c = rec.content
-  const type = c?.object_type ?? (model.memos.has(object_id) || rec.sender_role === 'human' ? 'memo' : model.published.has(object_id) ? 'published' : 'card')
+  const type = c?.object_type ?? (model.notes.has(object_id) || rec.sender_role === 'human' ? 'note' : model.published.has(object_id) ? 'published' : 'card')
   if (!c && rec.content_state === 'undecryptable' && model.room.my_role === 'agent' && rec.sender_role === 'human') return { applied: false }   // room scope: not for agents
-  if (type === 'memo') return applyMemo(model, rec, change)
+  if (type === 'note') return applyNote(model, rec, change)
   if (type === 'published') return applyPublished(model, rec, change)
   if (type !== 'card') return refuse(model, change, rec, 'unknown-object-type', `object_type ${type}`)
   let card = model.cards.get(object_id)
@@ -381,35 +381,35 @@ function defaultOf(f) {
   return null
 }
 
-function applyMemo(model, rec, change) {
+function applyNote(model, rec, change) {
   const object_id = rec.object.object_id
-  if (rec.sender_role !== 'human') return refuse(model, change, rec, 'not-creator', 'memos come from human devices')
+  if (rec.sender_role !== 'human') return refuse(model, change, rec, 'not-creator', 'notes come from human devices')
   const c = rec.content ?? {}
-  const cur = model.memos.get(object_id)
+  const cur = model.notes.get(object_id)
   const old = cur?.pending ? cur._base : cur          // an own optimistic echo is not a version
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
-  if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'memo previous_version_hash names no known version')
+  if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'note previous_version_hash names no known version')
   if (old && !causallyAfter(rec.causal, old.causal)) {
     old.version_hashes.push(rec.envelope_hash)
     // Our own echo lost to a concurrent version: show the winner.
-    if (cur?.pending && rec.local_id && rec.local_id === cur.local_id) { model.memos.set(object_id, old); change.memos.add(object_id) }
+    if (cur?.pending && rec.local_id && rec.local_id === cur.local_id) { model.notes.set(object_id, old); change.notes.add(object_id) }
     return { applied: false }
   }
-  // Our own newer echo stays in front until its version comes back; it keeps the confirmed memo as its base.
+  // Our own newer echo stays in front until its version comes back; it keeps the confirmed note as its base.
   if (cur?.pending && rec.local_id !== cur.local_id) {
-    cur._base = { ...memoOf(object_id, rec, c, old) }
-    change.memos.add(object_id)
+    cur._base = { ...noteOf(object_id, rec, c, old) }
+    change.notes.add(object_id)
     return { applied: true }
   }
-  model.memos.set(object_id, memoOf(object_id, rec, c, old))
-  change.memos.add(object_id)
+  model.notes.set(object_id, noteOf(object_id, rec, c, old))
+  change.notes.add(object_id)
   return { applied: true }
 }
-function memoOf(object_id, rec, c, old) {
+function noteOf(object_id, rec, c, old) {
   const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, lamport: _l, ...extra } = c
-  return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
-    desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
+  return { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '',
+    object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
     version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state, pending: false }
 }
 

@@ -91,7 +91,9 @@ export async function startTestHub({ port = 0, host = '127.0.0.1' } = {}) {
         return send(200, { envelope_number: r.n })
       }
       if (M === 'GET' && route === 'envelopes') {
-        const list = hub.envelopes(token, { after: Number(q('after_envelope_number') ?? 0), limit: Number(q('limit') ?? 1000) })
+        // Members; also the recovery key (as hub/server.mjs serves it: the headers for the cuts of a recovery).
+        const after = Number(q('after_envelope_number') ?? 0), limit = Number(q('limit') ?? 1000)
+        const list = hub.authorise(token).kind === 'recovery' ? storage.envelopes(after, limit) : hub.envelopes(token, { after, limit })
         const all = storage.envelopes(0, Infinity)
         return send(200, { last_envelope_number: all.at(-1)?.n ?? 0, envelopes: await Promise.all(list.map(async e => ({ envelope_number: e.n, envelope: b64u(await pruneThread(e)) }))) })
       }
@@ -139,7 +141,7 @@ export async function startTestHub({ port = 0, host = '127.0.0.1' } = {}) {
         // Stand-in for hub/ops/escrow.mjs: v2 only, compare-and-swap by revision, status for a signed-in human.
         room.escrowRevision ??= 0
         const swap = r => { if (r !== room.escrowRevision) throw Object.assign(new Error('escrow changed'), { code: 'escrow-changed' }) }
-        if (M === 'PUT') { hub.authorise(token, { human: true }); if (body.escrow_version !== 2) return send(400, { error: 'escrow-v1-retired' }); swap(body.replaces); room.escrow = { escrow_version: 2, escrow_id: body.escrow_id, key_escrow: body.key_escrow, updated_at: Date.now() }; return send(200, { escrow_version: 2, updated_at: room.escrow.updated_at, revision: ++room.escrowRevision }) }
+        if (M === 'PUT') { hub.authorise(token, { human: true }); if (body.escrow_version !== 2) return send(400, { error: 'bad-argument' }); swap(body.replaces); room.escrow = { escrow_version: 2, escrow_id: body.escrow_id, key_escrow: body.key_escrow, updated_at: Date.now() }; return send(200, { escrow_version: 2, updated_at: room.escrow.updated_at, revision: ++room.escrowRevision }) }
         if (M === 'GET' && parts[4]) return room.escrow?.escrow_id === parts[4] ? send(200, room.escrow) : send(404, { error: 'not-found' })
         if (M === 'GET' && token) { hub.authorise(token, { human: true }); return send(200, { has_escrow: !!room.escrow, revision: room.escrowRevision, escrow_version: room.escrow?.escrow_version ?? null }) }
         if (M === 'GET') return send(404, { error: 'not-found' })

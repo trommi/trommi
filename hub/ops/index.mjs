@@ -66,7 +66,7 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
     }
     if (sub === 'escrow') {
       if (m === 'GET' && escrowId == null && req.headers.authorization) {
-        // A signed-in human member: status and revision (for PUT/DELETE); a v1 blob only here, to migrate it.
+        // A signed-in human member: status and revision (for PUT/DELETE).
         const r = await room(roomId)
         r.hub.authorise(bearer(req), { human: true })
         return sendJson(res, 200, escrow.status(roomId))

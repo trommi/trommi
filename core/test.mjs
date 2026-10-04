@@ -503,31 +503,31 @@ await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registe
   eq(phone.model.cards.get(id).title, 'mine', 'card untouched')
   assert(!phone.model.cards.has(fake), 'fake id not created')
   eq(phone.model.timelines.get(`chat:card/${id}`)?.item_count ?? 0, 0, 'foreign item not counted')
-  // memos: app-defined fields pass through
-  const mid = await phone.saveMemo({ text: 'call Anna', x: 1, y: 2, place: 'desk', session: 'abc', to: 'laptop' })
+  // notes: app-defined fields pass through
+  const mid = await phone.saveNote({ text: 'call Anna', place: 'desk', session: 'abc', to: 'laptop' })
   await settleAll(phone)
-  await until(() => laptop.model.memos.get(mid)?.place === 'desk' && laptop.model.memos.get(mid)?.to === 'laptop', 'memo extra fields')
-  await laptop.saveMemo({ object_id: mid, text: 'call Anna at 5', place: 'desk', session: 'abc', to: 'laptop' })
+  await until(() => laptop.model.notes.get(mid)?.place === 'desk' && laptop.model.notes.get(mid)?.to === 'laptop', 'note extra fields')
+  await laptop.saveNote({ object_id: mid, text: 'call Anna at 5', place: 'desk', session: 'abc', to: 'laptop' })
   await settleAll(laptop)
-  await until(() => phone.model.memos.get(mid)?.text === 'call Anna at 5' && phone.model.memos.get(mid).object_version === 2, 'memo v2 by another human')
-  // memos: optimistic at once, quick edits chain on the last sealed version (no forks)
-  const quick = phone.saveMemo({ text: 'q1', place: 'float' })
-  assert([...phone.model.memos.values()].some(m => m.pending && m.text === 'q1'), 'memo echo before sealing')
+  await until(() => phone.model.notes.get(mid)?.text === 'call Anna at 5' && phone.model.notes.get(mid).object_version === 2, 'note v2 by another human')
+  // notes: optimistic at once, quick edits chain on the last sealed version (no forks)
+  const quick = phone.saveNote({ text: 'q1', place: 'float' })
+  assert([...phone.model.notes.values()].some(m => m.pending && m.text === 'q1'), 'note echo before sealing')
   const qid = await quick
-  for (let i = 2; i <= 5; i++) phone.saveMemo({ object_id: qid, text: `q${i}`, place: 'float' })
+  for (let i = 2; i <= 5; i++) phone.saveNote({ object_id: qid, text: `q${i}`, place: 'float' })
   await settleAll(phone)
-  await until(() => laptop.model.memos.get(qid)?.text === 'q5' && laptop.model.memos.get(qid).object_version === 5, 'five chained versions')
-  eq(phone.model.memos.get(qid).pending, false, 'echo replaced')
-  await phone.deleteMemo(qid)
+  await until(() => laptop.model.notes.get(qid)?.text === 'q5' && laptop.model.notes.get(qid).object_version === 5, 'five chained versions')
+  eq(phone.model.notes.get(qid).pending, false, 'echo replaced')
+  await phone.deleteNote(qid)
   await settleAll(phone)
-  await until(() => laptop.model.memos.get(qid)?.object_state === 'closed', 'memo deleted')
-  // concurrent memo edits from two devices converge (the losing echo gives way)
-  const cm = await phone.saveMemo({ text: 'base' })
+  await until(() => laptop.model.notes.get(qid)?.object_state === 'closed', 'note deleted')
+  // concurrent note edits from two devices converge (the losing echo gives way)
+  const cm = await phone.saveNote({ text: 'base' })
   await settleAll(phone, laptop)
-  await until(() => laptop.model.memos.get(cm), 'memo on laptop')
-  await Promise.all([phone.saveMemo({ object_id: cm, text: 'von A' }), laptop.saveMemo({ object_id: cm, text: 'von B' })])
+  await until(() => laptop.model.notes.get(cm), 'note on laptop')
+  await Promise.all([phone.saveNote({ object_id: cm, text: 'von A' }), laptop.saveNote({ object_id: cm, text: 'von B' })])
   await settleAll(phone, laptop)
-  await until(() => phone.model.memos.get(cm).text === laptop.model.memos.get(cm).text && !phone.model.memos.get(cm).pending && !laptop.model.memos.get(cm).pending, 'memos converge')
+  await until(() => phone.model.notes.get(cm).text === laptop.model.notes.get(cm).text && !phone.model.notes.get(cm).pending && !laptop.model.notes.get(cm).pending, 'notes converge')
   // registers: the laptop writes after having seen the phone's write -> the laptop wins on every client
   await phone.setCrown({ who: 'phone' })
   await settleAll(phone, laptop)
@@ -599,17 +599,7 @@ await test('password escrow v2: generated passphrase, blob addressed by a passph
   console.log(`     PBKDF2 2M seal ${sealMs.toFixed(0)} ms`)
 })
 
-/** A v1 escrow blob as clients wrote them before review 3 (the core no longer can): for the migration test. */
-async function sealEscrowV1({ room_id, recovery_code, passphrase, iterations = 1_000_000 }) {
-  const te = new TextEncoder(), u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b }
-  const roomId = z.unhex(room_id), salt = crypto.getRandomValues(new Uint8Array(16)), nonce = crypto.getRandomValues(new Uint8Array(12))
-  const base = await crypto.subtle.importKey('raw', te.encode(passphrase.normalize('NFC')), 'PBKDF2', false, ['deriveKey'])
-  const key = await crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: z.concat(salt, roomId), iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt'])
-  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: nonce, additionalData: z.concat(te.encode('trommi/v1/escrow'), Uint8Array.of(0), roomId, u32(iterations)) }, key, z.parseRecoveryCode(recovery_code)))
-  return z.concat(Uint8Array.of(1), u32(iterations), salt, nonce, ct)
-}
-
-if (!useTestHub) await test('escrow review 3: compare-and-swap between two devices, escrow-changed alert, v1 only through the authenticated migration', async () => {
+if (!useTestHub) await test('escrow review 3: compare-and-swap between two devices, escrow-changed alert, version 2 only', async () => {
   const { phone, laptop, recovery_code } = await room({ laptop: true })
   await phone.setPassphrase(generatePassphrase(), { recovery_code })
   await until(() => laptop.model.alerts.some(a => a.code === 'escrow-changed'), 'the other human device is told')
@@ -623,23 +613,12 @@ if (!useTestHub) await test('escrow review 3: compare-and-swap between two devic
   try { await laptop.hub.deleteEscrow(0) } catch (e) { err = e }
   eq(err?.code, 'escrow-changed', 'stale delete refused')
   err = null
-  try { await laptop.hub.putEscrow({ escrow_version: 1, key_escrow: z.b64u(new Uint8Array(80)), replaces: 1 }) } catch (e) { err = e }
-  eq(err?.code, 'escrow-v1-retired', 'no new v1 escrow')
-  // A v1 blob from before the cut-over: invisible to anonymous readers, migrated by a member with the old passphrase.
-  const old = 'pferd batterie heftklammer korrekt sonne mond'
-  hub.db.prepare('UPDATE escrows SET escrow_version = 1, key_escrow = ?, escrow_id = NULL WHERE room_id = ?').run(await sealEscrowV1({ room_id: phone.model.room.room_id, recovery_code, passphrase: old }), phone.model.room.room_id)
+  try { await laptop.hub.putEscrow({ escrow_version: 1, escrow_id: sealed.escrow_id, key_escrow: z.b64u(new Uint8Array(80)), replaces: 1 }) } catch (e) { err = e }
+  eq(err?.code, 'bad-argument', 'only escrow version 2')
+  err = null
   const anon = new Hub({ hub_url: HUB, room_id: phone.model.room.room_id })
-  err = null
   try { await anon.request('GET', anon.roomPath('/escrow'), { auth: false }) } catch (e) { err = e }
-  eq(err?.code, 'not-found', 'v1 not served by room id')
-  err = null
-  try { await loginWithPassphrase({ room_link: roomLink(HUB, phone.model.room.room_id), passphrase: old, storage: memoryStorage() }) } catch (e) { err = e }
-  eq(err?.code, 'wrong-passphrase', 'no anonymous v1 login')
-  const fresh = await laptop.migratePassphrase(old)
-  assert(!passphraseProblem(fresh), 'a generated passphrase')
-  eq((await laptop.hub.escrowStatus()).escrow_version, 2, 'the v1 blob is gone, replaced by v2')
-  const c = track((await loginWithPassphrase({ room_link: roomLink(HUB, phone.model.room.room_id), passphrase: fresh, storage: memoryStorage(), device_name: 'Fresh' })).client)
-  await c.start()
+  eq(err?.code, 'not-found', 'nothing served by room id')
 })
 
 if (z.KEY_SCOPE) await test('R6 session keys: agent A cannot read session B; handover with and without history', async () => {
@@ -822,24 +801,24 @@ await test('S2 ids: no raw ids in URLs; a body naming a non-hex or unlisted atta
   assert(!cmds.some(c => c.content?.text === 'evil'), 'the unlisted-attachment body never reaches the agent')
 })
 
-await test('message memo: a note sent to a session carries { object_id, written_at } end to end; a bad one is refused on seal, dropped on open', async () => {
+await test('message note: a note sent to a session carries { object_id, written_at } end to end; a bad one is refused on seal, dropped on open', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const cmds = []
   agent.on('command', c => cmds.push(c))
-  const memo = { object_id: 'ef'.repeat(16), written_at: 1791075000000 }
-  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'from a note', memo })
+  const note = { object_id: 'ef'.repeat(16), written_at: 1791075000000 }
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'from a note', note })
   await settleAll(phone, agent)
   await until(() => cmds.some(c => c.content.text === 'from a note'), 'the note arrives')
-  eq(cmds.find(c => c.content.text === 'from a note').content.memo, memo, 'the agent sees the memo mark')
+  eq(cmds.find(c => c.content.text === 'from a note').content.note, note, 'the agent sees the note mark')
   const t = phone.model.timelines.get(`chat:session/${agent.session_id}`)
   const mine = [...t.items.values()].find(i => i.content?.text === 'from a note')
-  eq(mine?.content?.memo, memo, 'the sender keeps it on its own copy')
+  eq(mine?.content?.note, note, 'the sender keeps it on its own copy')
   for (const bad of [{ object_id: 'xyz' }, { object_id: 'ab'.repeat(16), written_at: -1 }, { object_id: 'ab'.repeat(16), extra: 1 }, 'note', { object_id: 'ab'.repeat(16), written_at: 1.5 }]) {
     let err = null
-    try { codec.encodePayload(codec.KIND.timeline_item, { content_type: 'message', text: 'x', memo: bad }) } catch (e) { err = e }
-    eq(err?.code, 'bad-argument', `encode refuses memo ${JSON.stringify(bad)}`)
-    const opened = codec.decodePayload(new TextEncoder().encode(JSON.stringify({ schema_version: 1, content_type: 'message', text: 'x', memo: bad })))
-    eq([opened.content_state, opened.content.text, 'memo' in opened.content], ['ok', 'x', false], `decode drops memo ${JSON.stringify(bad)}`)
+    try { codec.encodePayload(codec.KIND.timeline_item, { content_type: 'message', text: 'x', note: bad }) } catch (e) { err = e }
+    eq(err?.code, 'bad-argument', `encode refuses note ${JSON.stringify(bad)}`)
+    const opened = codec.decodePayload(new TextEncoder().encode(JSON.stringify({ schema_version: 1, content_type: 'message', text: 'x', note: bad })))
+    eq([opened.content_state, opened.content.text, 'note' in opened.content], ['ok', 'x', false], `decode drops note ${JSON.stringify(bad)}`)
   }
 })
 
@@ -1397,7 +1376,7 @@ await test('S2 register order (D1): every delivery order of the same writes give
   const run = order => order.reduce((w, x) => (!w || M.causallyAfter(x[1], w[1])) ? x : w, null)[0]
   eq(run([['A', A], ['B', B], ['C', C]]), run([['C', C], ['A', A], ['B', B]]), 'A,B,C and C,A,B agree')
   // Random histories: devices write registers (and deletes) after seeing random subsets; every permutation of
-  // delivery that respects each sender's own order converges, for human and agent registers (memos use the same comparator).
+  // delivery that respects each sender's own order converges, for human and agent registers (notes use the same comparator).
   let seed = 7
   const rnd = n => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed % n }
   for (let round = 0; round < 40; round++) {

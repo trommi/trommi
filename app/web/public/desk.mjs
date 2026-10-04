@@ -1,5 +1,5 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
-// (Later, Memos, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
+// (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, crownOf, stream } from './app.mjs'
 import { Controller, LATER_TAG, PLUS, WORDS, act, curlHTML, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg, smallMark } from './ui.mjs'

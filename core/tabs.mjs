@@ -21,8 +21,8 @@ const { ZError, hex } = z
 
 /** The Client's write actions: in a follower they run in the leader tab. */
 export const FORWARDED = ['sendMessage', 'answer', 'trust', 'markRead', 'shred', 'decideAgain', 'verdict', 'setRegisters', 'setDraft', 'snooze',
-  'duck', 'setCrown', 'setDesk', 'setSessionSettings', 'markReadUpTo', 'setDeviceInfo', 'saveMemo', 'deleteMemo', 'sendStrokes', 'createInvite',
-  'confirmInvite', 'removeDevices', 'createSession', 'assignSession', 'setPassphrase', 'removePassphrase', 'migratePassphrase', 'leaveRoom', 'writeSnapshot']
+  'duck', 'setCrown', 'setDesk', 'setSessionSettings', 'markReadUpTo', 'setDeviceInfo', 'saveNote', 'deleteNote', 'sendStrokes', 'createInvite',
+  'confirmInvite', 'removeDevices', 'createSession', 'assignSession', 'setPassphrase', 'removePassphrase', 'leaveRoom', 'writeSnapshot']
 
 const RETRY_MS = 2500           // a forwarded call not answered by then is sent again (same id)
 const GIVE_UP_MS = 120_000      // ... until it is given up
@@ -115,7 +115,7 @@ async function tabs({ storage, makeStorage, client_name, fetch, locks, Channel, 
   const execute = (id, method, args) => {
     if (inflight.has(id)) return inflight.get(id)
     const done = cur.fwdResult?.(id)
-    if (done) return Promise.resolve(method === 'saveMemo' ? done.object_id : done)
+    if (done) return Promise.resolve(method === 'saveNote' ? done.object_id : done)
     let p
     cur._fwdId = id                    // _send takes it synchronously (every forwarded action calls it before its first await)
     try { p = Promise.resolve(cur[method](...args)) } catch (e) { p = Promise.reject(e) } finally { cur._fwdId = null }
