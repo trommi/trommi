@@ -1,5 +1,0 @@
-build/
-tmp/
-*.pro.user
-.qmake.stash
-Makefile

@@ -1,7 +1,0 @@
-/* "Push on this device" in the menu behind the logo (js/push.js): the switch, what it may say, and one line of help. */
-.push-row::after { content: "Off"; margin-left: auto; font: 500 var(--t-xs, 12px)/1 var(--font, inherit); color: var(--muted, #777); }
-.push-row[aria-checked="true"]::after { content: "On"; color: var(--accent, #1b6a57); }
-.push-row[aria-busy="true"]::after { content: "…"; }
-.push-sub { padding-left: 34px !important; font-weight: 400 !important; }
-.push-note { margin: 2px 12px 6px; font: 400 var(--t-xs, 12px)/1.4 var(--font, inherit); color: var(--muted, #777); max-width: 34ch; }
-.push-note:empty { display: none; }

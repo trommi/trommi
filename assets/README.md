@@ -1,5 +1,7 @@
 # Trommi assets
 
+> **4 October 2026:** `build.mjs`, `screens.mjs` and `screens/` were removed with the old board they read from (`client/web/`). The files here are their last generated state and are kept as brand sources; the sections below describe the old build (history: `trommi-hub-legacy-2026-10-04.bundle`).
+
 Everything Trommi draws, as files. Open `index.html` to see all of it with names and
 sizes, in light and dark; a click on a name copies it. The board shows the same page at
 `/designs/assets.html`.

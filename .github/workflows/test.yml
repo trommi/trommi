@@ -1,12 +1,10 @@
-# The hub's end-to-end suite: node server/test.mjs starts hubs and sessions on a free
-# port with throwaway data directories, and runs the Turbo tests it imports. About a
-# minute. Needs Node with node:sqlite and tar; no browser. The browser tests in dev/
-# (Chromium over CDP) stay local.
+# The suites of the hub, the crypto library, the client core and the agent channel. Each starts its own hubs on
+# free ports with throwaway data directories. Needs Node with node:sqlite; no browser (the browser tests stay local).
 name: Test
 
 on:
   push:
-    paths: ['server/**', 'client/web/**', 'crypto/**', 'hub/**', 'deploy/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
+    paths: ['crypto/**', 'hub/**', 'client/**', 'fuzz/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
   pull_request:
   workflow_dispatch:
 
@@ -18,19 +16,6 @@ permissions:
   contents: read
 
 jobs:
-  server:
-    name: Server suite
-    runs-on: ubuntu-24.04
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 26
-          cache: npm
-      - run: npm ci
-      - run: node server/test.mjs
-
   hub:
     name: Hub and crypto suite
     runs-on: ubuntu-24.04
@@ -45,3 +30,19 @@ jobs:
       - run: node hub/test.mjs
       - run: node hub/ops/test.mjs
       - run: node hub/accounts-test.mjs
+      - run: node hub/admin-test.mjs
+      - run: node crypto/session-grants-test.mjs
+
+  core:
+    name: Client core and agent channel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 26
+          cache: npm
+      - run: npm ci
+      - run: node client/core/test.mjs
+      - run: node hub/channel-test.mjs
