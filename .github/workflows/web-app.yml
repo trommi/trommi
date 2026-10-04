@@ -1,5 +1,5 @@
 # Records the web app deployment: Cloudflare builds app/web on every push to main (watch path app/web/*).
-# This job waits until https://app.trommi.com serves the pushed sw.js and index.html, so the
+# This job waits until https://app.trommi.com serves the pushed sw.js and app code (HTML is left out: Cloudflare may rewrite it), so the
 # "web-app" environment on GitHub shows which commit is live.
 name: Web app deploy
 
@@ -29,12 +29,12 @@ jobs:
       - name: Wait until app.trommi.com serves this commit
         run: |
           want_sw=$(sha256sum app/web/public/sw.js | cut -d' ' -f1)
-          want_index=$(sha256sum app/web/public/index.html | cut -d' ' -f1)
+          want_app=$(sha256sum app/web/public/js/app/room.mjs | cut -d' ' -f1)
           for i in $(seq 1 60); do
             got_sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sha256sum | cut -d' ' -f1 || true)
-            got_index=$(curl -fsS --max-time 10 "https://app.trommi.com/index.html?ci=$i" | sha256sum | cut -d' ' -f1 || true)
-            echo "attempt $i: sw $([ "$got_sw" = "$want_sw" ] && echo ok || echo old), index $([ "$got_index" = "$want_index" ] && echo ok || echo old)"
-            [ "$got_sw" = "$want_sw" ] && [ "$got_index" = "$want_index" ] && exit 0
+            got_app=$(curl -fsS --max-time 10 "https://app.trommi.com/js/app/room.mjs?ci=$i" | sha256sum | cut -d' ' -f1 || true)
+            echo "attempt $i: sw $([ "$got_sw" = "$want_sw" ] && echo ok || echo old), app $([ "$got_app" = "$want_app" ] && echo ok || echo old)"
+            [ "$got_sw" = "$want_sw" ] && [ "$got_app" = "$want_app" ] && exit 0
             sleep 10
           done
           echo "app.trommi.com did not serve this commit within 10 minutes (check the Cloudflare build of trommi-app)"
