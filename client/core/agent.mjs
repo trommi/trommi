@@ -4,7 +4,7 @@
 import * as z from './zcrypto.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import { Client, randomHex } from './client.mjs'
+import { Client, randomHex, objectIdOf, ZERO_HASH } from './client.mjs'
 
 const { unhex, hex, ZError } = z
 const URGENCY_ORDER = ['low', 'normal', 'high', 'critical']
@@ -37,26 +37,31 @@ const agentMethods = {
   },
 
   /** One new version of an own object. `make(head)` returns { fields, object_state, urgency }. */
-  _version(object_id, make, { push = false } = {}) {
-    return this._send({
-      kind: codec.KIND.object_version, push,
-      content: () => {
-        const head = this._head(object_id)
-        const { fields, object_state, urgency } = make(head)
-        const content = { ...(head?.content ?? {}), ...fields, object_version: (head?.object_version ?? 0) + 1, previous_version_hash: head?.version_hash ?? null }
+  /** One new version of an own object. `make(head)` returns { fields, object_state, urgency }. object_id null: a new object (R1 id). */
+  async _version(object_id, make, { push = false, kind = codec.KIND.object_version, bind = null } = {}) {
+    let id = object_id
+    const r = await this._send({
+      kind, push,
+      content: async () => {
+        if (!id) id = await objectIdOf(this.my_device_id, (this.chains.get(z.b64u(this.device.id))?.seq ?? 0) + 1)
+        const head = id === object_id ? this._head(id) : null
+        const { fields, object_state, urgency } = make(head, id)
+        const content = kind === codec.KIND.object_version
+          ? { ...(head?.content ?? {}), ...fields, object_version: (head?.object_version ?? 0) + 1, previous_version_hash: head?.version_hash ?? ZERO_HASH }
+          : fields
         for (const k of Object.keys(content)) if (content[k] === undefined) delete content[k]
-        return { content, object: { object_id, object_state, urgency } }
+        return { content, object: { object_id: id, object_state, urgency }, bind: bind ? bind(id) : null }
       },
-      after: (sealed, content) => this.localHeads.set(object_id, { object_version: content.object_version, version_hash: hex(sealed.hash), content, object_state: codec.OBJECT_STATE_NAME[sealed.header.card.state], urgency: codec.URGENCY_NAME[sealed.header.card.urgency] }),
+      after: (sealed, content) => kind === codec.KIND.object_version && this.localHeads.set(id, { object_version: content.object_version, version_hash: hex(sealed.hash), content, object_state: codec.OBJECT_STATE_NAME[sealed.header.card.state], urgency: codec.URGENCY_NAME[sealed.header.card.urgency] }),
     })
+    return { ...r, object_id: id }
   },
 
   async sendCard({ card_type = 'decision', urgency = 'normal', ...fields }) {
     this._needAgent()
     if (card_type === 'decision' && !(fields.options?.length >= 1)) throw new ZError('bad-argument', 'a decision needs options')
-    const object_id = randomHex(16)
-    await this._version(object_id, () => ({ fields: { object_type: 'card', card_type, ...fields }, object_state: 'open', urgency }), { push: true })
-    return object_id
+    const r = await this._version(null, () => ({ fields: { object_type: 'card', card_type, ...fields }, object_state: 'open', urgency }), { push: true })
+    return r.object_id
   },
 
   _ownOpen(object_id) {
@@ -107,29 +112,28 @@ const agentMethods = {
 
   async publish({ attachments, title, note, released_until }) {
     this._needAgent()
-    const object_id = randomHex(16)
-    await this._version(object_id, () => ({ fields: { object_type: 'published', attachments, title, note, released_until }, object_state: 'open', urgency: 'normal' }))
-    return object_id
+    const r = await this._version(null, () => ({ fields: { object_type: 'published', attachments, title, note, released_until }, object_state: 'open', urgency: 'normal' }))
+    return r.object_id
   },
 
   setStatus(values) { this._needAgent(); return this.setRegisters(values) },
 
   async requestPermission({ tool_name, description = '', input_preview = '', expires_in_ms = 10 * 60_000 }) {
     this._needAgent()
-    const object_id = randomHex(16)
     const expiresAt = Date.now() + expires_in_ms
-    await this._send({ kind: codec.KIND.permission_request, push: true, content: { tool_name, description, input_preview },
-      bind: z.encodeRequestBind({ requestId: unhex(object_id), expiresAt }), object: { object_id, object_state: 'open', urgency: 'critical' } })
-    return object_id
+    const r = await this._version(null, () => ({ fields: { tool_name, description, input_preview }, object_state: 'open', urgency: 'critical' }),
+      { kind: codec.KIND.permission_request, push: true, bind: id => z.encodeRequestBind({ requestId: unhex(id), expiresAt }) })
+    return r.object_id
   },
 
   // ---- the gate ---------------------------------------------------------------------------
 
   /** Called by the sync engine BEFORE the reducer applies the record: judge it against the board as it is. */
   _preAuthorise(rec) {
-    if (rec.recipient_device_id !== this.my_device_id || rec.envelope_number <= this.commandsDelivered) return null
+    if (rec.recipient_device_id !== this.my_device_id) return null
+    if (rec.sender_sequence <= (this.delivered.get(rec.sender_device_id) ?? 0)) return null
     if (![codec.KIND.timeline_item, codec.KIND.answer, codec.KIND.verdict, codec.KIND.decide_again].includes(rec.kind)) return null
-    const base = { envelope_number: rec.envelope_number, sender_device_id: rec.sender_device_id, object_id: rec.object?.object_id ?? null,
+    const base = { envelope_number: rec.envelope_number, envelope_hash: rec.envelope_hash, sender_sequence: rec.sender_sequence, sent_at: rec.sent_at, sender_device_id: rec.sender_device_id, object_id: rec.object?.object_id ?? null,
       timeline_key: rec.timeline_id ? M.timelineKey(rec.timeline_kind, rec.timeline_id) : null, rec }
     if (rec.is_head && !rec.content) return { ...base, refused: 'undecryptable' }
     const ctx = { state: this.state, agentId: this.device.id, now: Date.now(), epochChangedAt: this.epochChangedAt, ownSeq: this.chains.get(z.b64u(this.device.id))?.seq ?? 0 }
@@ -153,10 +157,23 @@ const agentMethods = {
     }
   },
 
-  /** After a batch: fetch bodies of thread items that came pruned, then hand out commands in order. Refusals become alert/<n>. */
+  /**
+   * After a batch: refresh the member list before any answer/verdict/decide-again (R3), fetch bodies of thread items
+   * that came pruned, then hand out commands in order, once per (sender, sequence) (R4). Refusals become alert/<envelope_hash>.
+   */
   async _deliverCommands(commands) {
+    if (commands.some(c => !c.refused && c.rec.is_head)) {
+      const err = await this._refreshMembers({ throwOnFork: true }).then(() => null, e => e)
+      if (err?.code === 'log-fork' || err?.code === 'log-rollback') {
+        this.commandsHalted = err.code
+        this.emit('error', new ZError(err.code, 'the member list forked: commands halted until a human acts'))
+      }
+    }
+    if (this.commandsHalted) return     // nothing is delivered (and nothing marked delivered) while halted
     for (const c of commands) {
       if (c.refused) continue
+      const sender = z.memberAt(this.state, unhex(c.sender_device_id))
+      if (!sender || sender.role !== z.ROLE.HUMAN) { c.refused = 'removed-sender'; c.message = 'the sender was removed meanwhile'; continue }
       if (c.rec.kind === codec.KIND.timeline_item && !c.rec.content && c.timeline_key) {
         const items = await this._readTimeline(c.timeline_key, { before: c.envelope_number + 1, limit: 50 }).catch(() => [])
         const it = items.find(i => i.envelope_number === c.envelope_number)
@@ -166,24 +183,31 @@ const agentMethods = {
     }
     const alerts = {}
     for (const c of commands) {
-      this.commandsDelivered = Math.max(this.commandsDelivered, c.envelope_number)
+      const known = this.delivered.has(c.sender_device_id)
+      if ((this.delivered.get(c.sender_device_id) ?? 0) < c.sender_sequence) this.delivered.set(c.sender_device_id, c.sender_sequence)
       if (c.refused) {
-        alerts[`alert/${c.envelope_number}`] = { code: c.refused, message: c.message ?? '', sender_device_id: c.sender_device_id }
+        alerts[`alert/${c.envelope_hash}`] = { code: c.refused, message: c.message ?? '', sender_device_id: c.sender_device_id, envelope_number: c.envelope_number }
         this.emit('alert', { code: c.refused, message: c.message ?? '', envelope_number: c.envelope_number, sender_device_id: c.sender_device_id, source: 'local' })
         continue
       }
+      // R4: a process without a delivered-up-to for this sender treats what was sent before it started as history, not as a prompt.
+      c.history = !known && c.sent_at < this.startedAt && this._freshStorage
       this.emit('command', commandOf(this.model, c))
     }
     if (Object.keys(alerts).length) this.setRegisters(alerts).catch(e => this.emit('error', e))   // not awaited: we are inside the sync queue
-    this._dirty.records.set('sync', { cursor: this.model.room.last_envelope_number, commands_delivered: this.commandsDelivered })
+    this._dirty.records.set('sync', this._syncRecord())
   },
+
+  /** A human resolved a fork (or the channel decides to go on): deliver commands again. */
+  resumeCommands() { this.commandsHalted = null },
 }
 
 function commandOf(model, c) {
   const { rec } = c
   const content = rec.content ?? {}
   const card = c.object_id ? model.cards.get(c.object_id) ?? null : null
-  const out = { envelope_number: c.envelope_number, sender_device_id: c.sender_device_id, object_id: c.object_id, timeline_key: c.timeline_key, content, late: !!c.late, card }
+  const out = { envelope_number: c.envelope_number, envelope_hash: c.envelope_hash, sender_device_id: c.sender_device_id, sender_sequence: c.sender_sequence, sent_at: c.sent_at,
+    object_id: c.object_id, timeline_key: c.timeline_key, content, late: !!c.late, history: !!c.history, card }
   switch (rec.kind) {
     case codec.KIND.timeline_item: {
       const ct = content.content_type
