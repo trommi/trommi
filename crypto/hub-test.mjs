@@ -105,7 +105,14 @@ async function post(w, from, opts = {}) {
     ...(z.isThreadKind(kind) && human && !room ? { recipient: w.agent.device.id } : {}),
     ...opts,
   })
-  return { env, res: await w.hub.postEnvelope(from.token, env.bytes, opts.lease ?? {}) }
+  // Agents post under their lease (R4); the test process holds it as instance 'test' unless a test says otherwise.
+  return { env, res: await (opts.lease ? w.hub.postEnvelope(from.token, env.bytes, opts.lease) : postAs(w, from.token, env.bytes)) }
+}
+/** Post as whoever the token belongs to; an agent posts under its lease (R4), held by the test process as instance 'test'. */
+function postAs(w, token, bytes) {
+  let lease = {}
+  try { lease = { leaseGeneration: w.hub.takeLease(token, { instance: 'test' }).generation } } catch {}
+  return w.hub.postEnvelope(token, bytes, lease)
 }
 async function remove(w, signer, ids) {
   const r = await z.removeMembers(signer.state, signer.device, { ids, previous: signer.secrets.get(signer.state.epoch), time: w.now() })
@@ -231,10 +238,10 @@ test('refuses a removed member: its entries, its sign-in, its token, its envelop
   const { res } = await remove(w, w.phone, [w.laptop.device.id])
   assert.deepEqual(res.signedOut, [hex(w.laptop.device.id)])
   await rejects(async () => w.hub.wraps(stale), 'unauthorised')                       // the token died with the removal
-  await rejects(() => w.hub.postEnvelope(stale, late.bytes), 'unauthorised')
+  await rejects(() => postAs(w, stale, late.bytes), 'unauthorised')
   await rejects(() => signIn(w, w.laptop), 'not-member')
   // Even through another member's session its envelope is refused.
-  await rejects(() => w.hub.postEnvelope(w.phone.token, late.bytes), 'wrong-sender')
+  await rejects(() => postAs(w, w.phone.token, late.bytes), 'wrong-sender')
   // It signs a member-list entry on the state it still has.
   const back = await z.addMember(w.laptop.state, w.laptop.device, { member: { role: ROLE.HUMAN, ...z.publicDevice(await z.generateDevice()) }, time: w.now() })
   await rejects(() => w.hub.postEntry({ entry: back.entry, wraps: [] }), 'bad-entry')
@@ -343,19 +350,19 @@ test('envelopes: the hub reads card id, status and urgency, nothing else; refuse
   const cardId = await z.objectIdOf(w.agent.device.id, 1)
   const { env, res } = await post(w, w.agent, { kind: KIND.CARD, payload: utf8('{"title":"Deploy?"}'), card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.HIGH }, push: true })
   assert.deepEqual(res, { n: 1, push: true, card: { id: hex(cardId), state: 1, urgency: 2, answeredAt: 0 }, isHead: true, kind: KIND.CARD, recipient: null })
-  await rejects(() => w.hub.postEnvelope(w.agent.token, env.bytes), 'replay')
-  await rejects(() => w.hub.postEnvelope(w.phone.token, env.bytes), 'wrong-sender')
-  await rejects(() => w.hub.postEnvelope(w.agent.token, flip(env.bytes, env.bytes.length - 1)), ['bad-signature', 'replay'])
-  await rejects(async () => w.hub.postEnvelope(w.agent.token, await z.pruneEnvelope(env.bytes)), 'bad-format')
+  await rejects(() => postAs(w, w.agent.token, env.bytes), 'replay')
+  await rejects(() => postAs(w, w.phone.token, env.bytes), 'wrong-sender')
+  await rejects(() => postAs(w, w.agent.token, flip(env.bytes, env.bytes.length - 1)), ['bad-signature', 'replay'])
+  await rejects(async () => postAs(w, w.agent.token, await z.pruneEnvelope(env.bytes)), 'bad-format')
   // A second history under number 1 (the device lost its state), and a jump ahead.
   const sess = { keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.CHAT, timelineKind: 1, timelineId: `session/${hex(SID)}` }
   const twin = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), ...sess, payload: utf8('other'), time: w.now() })
-  await rejects(() => w.hub.postEnvelope(w.agent.token, twin.bytes), 'equivocation')
+  await rejects(() => postAs(w, w.agent.token, twin.bytes), 'equivocation')
   const skipped = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: w.agent.chains, ...sess, time: w.now() })
   const third = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: w.agent.chains, ...sess, time: w.now() })
-  await rejects(() => w.hub.postEnvelope(w.agent.token, third.bytes), 'gap')
-  await w.hub.postEnvelope(w.agent.token, skipped.bytes)
-  await w.hub.postEnvelope(w.agent.token, third.bytes)
+  await rejects(() => postAs(w, w.agent.token, third.bytes), 'gap')
+  await postAs(w, w.agent.token, skipped.bytes)
+  await postAs(w, w.agent.token, third.bytes)
   // The phone fetches and opens; the recovery key and outsiders do not fetch.
   const got = w.hub.envelopes(w.phone.token)
   assert.equal(got.length, 3)
@@ -393,9 +400,10 @@ test('answered cards lose their ciphertext 30 days after the answer; open cards 
   const again = await createHub({ hubUrl: HUB, storage: w.storage, now: w.now })
   assert.equal(again.roomId, hex(w.roomId))
   const t = (await again.signIn(await z.signHubAuth({ device: w.agent.device, roomId: w.roomId, hub: HUB, challenge: again.challenge() }))).token
-  await rejects(() => again.postEnvelope(t, card.env.bytes), 'replay')
+  const lease = { leaseGeneration: again.takeLease(t, { instance: 'after-restart' }).generation }
+  await rejects(() => again.postEnvelope(t, card.env.bytes, lease), 'replay')
   const next = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, keyScope: 1, sessionId: SID, secret: w.agent.session, chains: w.agent.chains, kind: KIND.CHAT, timelineKind: 1, timelineId: `session/${hex(SID)}`, time: w.now() })
-  assert.equal((await again.postEnvelope(t, next.bytes)).n, 5)
+  assert.equal((await again.postEnvelope(t, next.bytes, lease)).n, 5)
 })
 
 // ---- recovery ------------------------------------------------------------------
@@ -474,9 +482,9 @@ test('PoC1: another agent cannot close, and so prune, an agent\'s open card', as
   await w.hub.postGrant({ sessionId: '77'.repeat(16), grant: g.grant, wraps: g.wraps })
   // Under its own session key, and under the victim's session key (it is not assigned there): both refused.
   const forged = z.sealEnvelope({ device: bot.device, state: bot.state, chains: bot.chains, keyScope: 1, sessionId: new Uint8Array(16).fill(0x77), secret: g.secret, kind: KIND.CARD, card: { id: victim, state: 3, urgency: 3, answeredAt: 1 }, push: true, time: w.now() })
-  await rejects(async () => w.hub.postEnvelope(bot.token, (await forged).bytes), 'forbidden')
+  await rejects(async () => postAs(w, bot.token, (await forged).bytes), 'forbidden')
   bot.chains = z.newChains()
-  await rejects(async () => w.hub.postEnvelope(bot.token, (await z.sealEnvelope({ device: bot.device, state: bot.state, chains: bot.chains, keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.CARD, card: { id: victim, state: 3, urgency: 3, answeredAt: 1 }, time: w.now() })).bytes), 'forbidden')
+  await rejects(async () => postAs(w, bot.token, (await z.sealEnvelope({ device: bot.device, state: bot.state, chains: bot.chains, keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.CARD, card: { id: victim, state: 3, urgency: 3, answeredAt: 1 }, time: w.now() })).bytes), 'forbidden')
   w.tick(31 * DAY)
   assert.deepEqual(await w.hub.prune(), { pruned: 0 })
 })
@@ -493,6 +501,8 @@ test('PoC2: a crashed agent comes back: a new process takes the lease over, the 
   w.agent.chains = z.newChains()                              // the refused envelope was never stored
   assert.equal((await post(w, w.agent, { lease: { leaseGeneration: b.generation } })).res.n, 1)
   await rejects(async () => w.hub.takeLease(w.phone.token, { instance: 'p3' }), 'forbidden')
+  // Fencing is required, not optional (review 2 #8): a post without a generation is lease-lost too.
+  await rejects(() => post(w, w.agent, { lease: {} }), 'lease-lost')
 })
 test('PoC3: a sender that never saw a removal is refused in the old epoch two minutes after it, by the hub too', async () => {
   const w = await makeWorld()
@@ -502,10 +512,10 @@ test('PoC3: a sender that never saw a removal is refused in the old epoch two mi
   const staleState = w.laptop.state
   await remove(w, w.phone, [tablet.device.id])
   const sealOld = () => z.sealEnvelope({ device: w.laptop.device, state: staleState, secret: w.laptop.secrets.get(1), chains: w.laptop.chains, kind: KIND.TIMELINE_ITEM, timelineKind: 2, timelineId: `desk/${'0d'.repeat(16)}`, time: w.now() })
-  assert.ok((await w.hub.postEnvelope(w.laptop.token, (await sealOld()).bytes)).n, 'within the grace it still goes through')
+  assert.ok((await postAs(w, w.laptop.token, (await sealOld()).bytes)).n, 'within the grace it still goes through')
   w.tick(2 * 60 * 1000 + 1)
   await signIn(w, w.laptop)
-  await rejects(async () => w.hub.postEnvelope(w.laptop.token, (await sealOld()).bytes), 'wrong-epoch')
+  await rejects(async () => postAs(w, w.laptop.token, (await sealOld()).bytes), 'wrong-epoch')
 })
 test('PoC4: an object id belongs to its creator; nobody squats on another agent\'s card', async () => {
   const w = await makeWorld()
@@ -548,7 +558,7 @@ test('session grants: the wrap set must match, removed signers and agents are re
   await w.hub.postGrant({ sessionId: hex(other), grant: g.grant, wraps: g.wraps })
   // The agent is not assigned to this session: it cannot speak in it.
   const s2 = { keyScope: 1, sessionId: other, secret: g.secret, kind: KIND.CHAT, timelineKind: 1, timelineId: `session/${hex(other)}` }
-  await rejects(async () => w.hub.postEnvelope(w.agent.token, (await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), ...s2, time: w.now() })).bytes), 'forbidden')
+  await rejects(async () => postAs(w, w.agent.token, (await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), ...s2, time: w.now() })).bytes), 'forbidden')
   // Unassigning the agent from its session: a new session key epoch without it; it can no longer speak there.
   const un = await createSessionGrant({ state: w.phone.state, signer: w.phone.device, sessionState: w.session.sessionState, rotate: true, current: w.session.secret, agentIds: [], time: w.now() })
   await rejects(() => w.hub.postGrant({ sessionId: hex(SID), grant: un.grant, wraps: un.wraps }), 'incomplete')   // no back link
