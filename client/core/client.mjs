@@ -6,7 +6,7 @@ import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
 import { sealEscrow, ESCROW_VERSION } from './escrow.mjs'
-import * as G from '../../crypto/session-grants.mjs'
+import * as G from './session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z

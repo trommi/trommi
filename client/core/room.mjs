@@ -5,7 +5,7 @@ import { Hub, normaliseHubUrl } from './transport.mjs'
 import { Client, secretToJson, secretFromJson } from './client.mjs'
 import './agent.mjs'
 import { openEscrow } from './escrow.mjs'
-import * as G from '../../crypto/session-grants.mjs'
+import * as G from './session-grants.mjs'
 
 /** As the recovery key: every session's grant chain and its current key (the recovery key holds every session key, R6). */
 async function sessionsAsRecovery(hub, state, rec) {
