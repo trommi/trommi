@@ -1,6 +1,6 @@
 // actions.mjs: the action generator (a pure function of the seed: it never looks at what the system did) and the
 // executor (real client/core calls) that also feeds the oracle. Actions name devices ('r0:H1', 'r0:A2'), cards
-// ('#c3'), memos ('#m1'), permission requests ('#p1'), attachments ('#f1'); the executor resolves them, and a name
+// ('#c3'), notes ('#m1'), permission requests ('#p1'), attachments ('#f1'); the executor resolves them, and a name
 // that does not resolve (the creating action was shrunk away) makes the action a skip.
 import { RoomOracle } from './oracle.mjs'
 import { Dev, Finding, sleep } from './world.mjs'
@@ -15,8 +15,8 @@ const OPTS = ['a', 'b', 'c', 'd']
 export class Gen {
   constructor(rng, { rooms = 1, profile = 'strict', remote = false } = {}) {
     this.rng = rng; this.profile = profile; this.remote = remote
-    this.R = Array.from({ length: rooms }, (_, i) => ({ i, humans: [`r${i}:H0`], agents: [], dead: new Set(), cards: [], perms: [], memos: [], strokes: [], desks: [hexOf(rng, 32), hexOf(rng, 32)], files: [], nH: 1, nA: 0, crashed: new Set(), removedAgents: new Set() }))
-    this.c = { card: 0, perm: 0, memo: 0, stroke: 0, file: 0, text: 0 }
+    this.R = Array.from({ length: rooms }, (_, i) => ({ i, humans: [`r${i}:H0`], agents: [], dead: new Set(), cards: [], perms: [], notes: [], strokes: [], desks: [hexOf(rng, 32), hexOf(rng, 32)], files: [], nH: 1, nA: 0, crashed: new Set(), removedAgents: new Set() }))
+    this.c = { card: 0, perm: 0, note: 0, stroke: 0, file: 0, text: 0 }
   }
   text(label = 't') { return `FZMARK-${label}${this.c.text++} ${this.rng.word()}` }
   /** Next action. */
@@ -68,8 +68,8 @@ export class Gen {
       if (r.perms.length) add(6, () => ({ t: 'verdict', dev: H(), ref: rng.pick(r.perms).ref, allow: rng.chance(0.5) }))
       add(5, () => ({ t: 'reg_h', dev: H(), key: rng.pick(['crown', `desk/${rng.pick(r.desks)}`, `desk/${rng.pick(r.desks)}`]), value: rng.chance(0.2) ? null : { name: this.text('n'), n: rng.int(1000) } }))
       if (liveA.length) add(3, () => { const a = A(); return { t: 'reg_h', dev: H(), key: rng.pick([`session/@${a}`, `read_up_to/@${a}`]), value: rng.chance(0.2) ? null : rng.chance(0.5) ? { name: this.text('sn'), archived: rng.chance(0.3) } : rng.int(100) } })
-      add(4, () => { const ref = r.memos.length && rng.chance(0.5) ? rng.pick(r.memos) : `#m${this.c.memo++}`; if (!r.memos.includes(ref)) r.memos.push(ref); return { t: 'memo', dev: H(), ref, text: this.text('memo'), x: rng.int(900), y: rng.int(900), desk: rng.pick(r.desks) } })
-      if (r.memos.length) add(1, () => ({ t: 'memo_del', dev: H(), ref: rng.pick(r.memos) }))
+      add(4, () => { const ref = r.notes.length && rng.chance(0.5) ? rng.pick(r.notes) : `#m${this.c.note++}`; if (!r.notes.includes(ref)) r.notes.push(ref); return { t: 'note', dev: H(), ref, text: this.text('note') } })
+      if (r.notes.length) add(1, () => ({ t: 'note_del', dev: H(), ref: rng.pick(r.notes) }))
       add(8, () => ({ t: 'stroke', dev: H(), tl: `desk/${rng.pick(r.desks)}`, n: rng.range(1, 4), sid: `S${this.c.stroke++}` }))
       if (r.strokes.length) add(3, () => { const s = rng.pick(r.strokes); return { t: rng.pick(['erase', 'move', 'send_away']), dev: H(), tl: s.tl, ids: [s.id] } })
       add(1, () => ({ t: 'snapshot', dev: H(), tl: `desk/${rng.pick(r.desks)}` }))
@@ -108,7 +108,7 @@ export class Gen {
     return { t: 'noop' }
   }
 }
-export const FORGERIES = ['foreign_version', 'foreign_close', 'foreign_register', 'foreign_timeline', 'foreign_answer', 'bitflip', 'garbage', 'bom', 'oversize', 'steal_envelope', 'foreign_memo', 'agent_desk']
+export const FORGERIES = ['foreign_version', 'foreign_close', 'foreign_register', 'foreign_timeline', 'foreign_answer', 'bitflip', 'garbage', 'bom', 'oversize', 'steal_envelope', 'foreign_note', 'agent_desk']
 
 // ---------------------------------------------------------------------------------------------------------
 // executor
@@ -483,7 +483,7 @@ export class Runner {
     return 'ok'
   }
 
-  // ---- registers, memos ----
+  // ---- registers, notes ----
   async do_reg_h(a) {
     const d = this.dev(a.dev); if (!d || !d.isHuman) return 'skip'
     const key = this.res(a.key)
@@ -498,23 +498,23 @@ export class Runner {
     this.oracle(d.room.idx).setAgentReg(a.agent, a.key, a.value)
     return 'ok'
   }
-  async do_memo(a) {
+  async do_note(a) {
     const d = this.dev(a.dev); if (!d || !d.isHuman) return 'skip'
     const O = this.oracle(d.room.idx)
     const existing = this.refs.get(a.ref)
-    if (existing && !d.client.model.memos.has(existing)) return 'skip'
+    if (existing && !d.client.model.notes.has(existing)) return 'skip'
     const text = this.txt(a.text)
-    const id = await d.client.saveMemo({ object_id: existing ?? null, text, x: a.x, y: a.y, color: '#fc0', desk_id: a.desk })
+    const id = await d.client.saveNote({ object_id: existing ?? null, text })
     this.refs.set(a.ref, id)
-    const m = O.memos.get(a.ref)
-    O.memos.set(a.ref, { text, x: a.x, y: a.y, state: 'open', v: (m?.v ?? 0) + 1 })
-    ;(O.memoTexts.get(a.ref) ?? O.memoTexts.set(a.ref, new Set()).get(a.ref)).add(text)
+    const m = O.notes.get(a.ref)
+    O.notes.set(a.ref, { text, state: 'open', v: (m?.v ?? 0) + 1 })
+    ;(O.noteTexts.get(a.ref) ?? O.noteTexts.set(a.ref, new Set()).get(a.ref)).add(text)
     return 'ok'
   }
-  async do_memo_del(a) {
-    const d = this.dev(a.dev), id = this.refs.get(a.ref); if (!d || !d.isHuman || !id || !d.client.model.memos.has(id)) return 'skip'
-    await d.client.deleteMemo(id)
-    const m = this.oracle(d.room.idx).memos.get(a.ref); if (m) { m.state = 'closed'; m.v++ }
+  async do_note_del(a) {
+    const d = this.dev(a.dev), id = this.refs.get(a.ref); if (!d || !d.isHuman || !id || !d.client.model.notes.has(id)) return 'skip'
+    await d.client.deleteNote(id)
+    const m = this.oracle(d.room.idx).notes.get(a.ref); if (m) { m.state = 'closed'; m.v++ }
     return 'ok'
   }
 

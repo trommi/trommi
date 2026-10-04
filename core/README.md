@@ -15,7 +15,7 @@ The wire contract is the README section "Hub v1: the wire protocol" of this repo
 | `transport.mjs` | `Hub`: every route, sign-in and token refresh, SSE reader with resume and backoff |
 | `room.mjs` | `foundRoom`, `openRoom`, `joinRoom`, `recoverRoom`; invites, removal |
 | `client.mjs` | the `Client`: sync engine (one cursor, verify every header, decrypt heads, lazy timelines), outbox, membership, sessions, human actions |
-| `escrow.mjs` | password escrow v2 (v1 read only for the migration) |
+| `escrow.mjs` | password escrow (version 2) |
 | `snapshot.mjs` | room snapshots (fast first start) |
 | `session-grants.mjs` | re-export of `core/session-grants.mjs` (in the app: the real file) |
 | `codec.mjs` | body payloads (`schema_version` 1) for the seven kinds, attachment references |
@@ -81,7 +81,7 @@ model = {
   sessions: Map<session_id, Session>,            // R6: one per session (32 hex, random, made by a human device's first grant)
   cards: Map<object_id, Card>,
   permissions: Map<object_id, PermissionRequest>,
-  memos: Map<object_id, Memo>,
+  notes: Map<object_id, Note>,
   published: Map<object_id, Published>,
   timelines: Map<timeline_key, Timeline>,          // timeline_key = `${timeline_kind}:${timeline_id}`, e.g. 'chat:card/<object_id>'
   human: HumanRegisters,                           // shared by all human devices; empty on agents
@@ -158,21 +158,21 @@ Answer = {
 **Rules the reducer applies, identically on every client** (so humans and agents agree):
 
 - R1: a new object's `object_id` must be H("trommi/v1/object-id", creator ‖ `sender_sequence` of version 1) (first 16 bytes); version 1 names no predecessor (`previous_version_hash` zeros). Timeline items follow the authority table of the README (a session's chat: the agent or a human addressing it; a card's chat: its creator or a human addressing the creator; desk canvas: humans). Refusals are `Alert`s and change nothing.
-- R2: registers and memo versions are settled by one total order from signed data, (`lamport`, `sender_device_id`, `sender_sequence`), never by hub order; inflated lamports are refused (`lamport-inflated`). A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
+- R2: registers and note versions are settled by one total order from signed data, (`lamport`, `sender_device_id`, `sender_sequence`), never by hub order; inflated lamports are refused (`lamport-inflated`). A deleted register stays in `human.raw` as `value: null` (tombstone). The stack is ordered by `created_at` (`sent_at` of version 1), not by `envelope_number`.
 - A card version counts only from the card's creator (the sender of version 1), with `object_version` = previous + 1 and `previous_version_hash` = the current `version_hash`. Anything else becomes an `Alert` and is ignored.
 - An answer counts only from an active human device, addressed to the owning agent, while the card is open, bound to the **current** `version_hash`, and (for `answer_action: 'answer'` without `trusted`) with every choice an option key. An answer to an older version is ignored (alert `answer-stale`): the agent refuses it too, the card stays open.
 - `decide_again` counts only if it names the answer in force; it reopens the card (`answer` → null, `taken_back_at` set). On the human side the taken-back choices become the draft (the app writes `draft/<object_id>`, the core does not).
 - `object_state` and `urgency` come from the newest counted head of that object.
 - `closed_how`: `answered` (answer), `read`/`shredded` (answer actions), `withdrawn` (`withdraw_reason`), `merged` (`merged_into_object_id`), `closed` (`close_summary` or a closed state otherwise).
 
-### Permission request, memo, published
+### Permission request, note, published
 
 ```js
 PermissionRequest = { object_id, agent_device_id, tool_name, description, input_preview, expires_at,
   version_hash, envelope_number, sent_at,
   permission_state: 'pending' | 'allowed' | 'denied' | 'expired',   // expired is computed against the local clock when the model is read via isExpired()
   verdict: null | { allow, by_device_id, envelope_number } }
-Memo = { object_id, by_device_id, text, x, y, color, desk_id, object_version, version_hash, envelope_number, object_state }   // any human device may write a new version
+Note = { object_id, by_device_id, text, object_version, version_hash, envelope_number, object_state }   // any human device may write a new version
 Published = { object_id, agent_device_id, attachments, title, note, released_until, object_version, version_hash, envelope_number, object_state }
 ```
 
@@ -199,7 +199,7 @@ TimelineItem = {
   envelope_hash, sender_device_id, recipient_device_id, sent_at,
   item_state: 'header' | 'loading' | 'loaded' | 'pruned' | 'undecryptable' | 'newer_schema',
   content_type,                            // when loaded: 'message' | 'strokes' | 'erase' | 'move' | 'send_away' | 'selection_sent'
-  content,                                 // the decoded body (README fields: text, details, html, attachments, hand_back, explain, present_card, copied_cards, marks, published_object_id, memo, strokes, stroke_ids, offset)
+  content,                                 // the decoded body (README fields: text, details, html, attachments, hand_back, explain, present_card, copied_cards, marks, published_object_id, note, strokes, stroke_ids, offset)
 }
 ```
 
@@ -245,7 +245,7 @@ OutboxItem = { local_id, envelope_kind, object_id, timeline_key, recipient_devic
 client.on('change', change => { ... })
 change = {
   cards: Set<object_id>, sessions: Set<agent_device_id>, permissions: Set<object_id>,
-  memos: Set<object_id>, published: Set<object_id>,
+  notes: Set<object_id>, published: Set<object_id>,
   timelines: Set<timeline_key>,            // items added, bodies loaded
   items: Map<timeline_key, [TimelineItem]>,// exactly the items added or replaced in this batch (echo, confirmed, loaded)
   registers: Set<key>,                     // human and agent register keys that changed
@@ -272,10 +272,10 @@ await client.verdict({ object_id, allow })            // to a permission request
 await client.setRegisters({ 'draft/<object_id>': { keys, note, notes, marks } | null, ... })   // human keys only
 // shorthands: setDraft(object_id, draft|null), snooze(object_id, until|null), duck(object_id, value|null), setCrown(value),
 //             setDesk(desk_id, value|null), setSessionSettings(agent_device_id, value|null), markReadUpTo(agent_device_id, envelope_number)
-const memo_id = await client.saveMemo({ object_id?, text, x, y, color, desk_id, ...app fields (place, session, to, attachments, held, …) })
-        // new memo or new version; optimistic (model.memos at once, pending: true; a new memo first under its local_id, then its object_id);
+const note_id = await client.saveNote({ object_id?, text, ...app fields (place, session, to, attachments, held, …) })
+        // new note or new version; optimistic (model.notes at once, pending: true; a new note first under its local_id, then its object_id);
         // quick edits chain on the version THIS client sealed last
-await client.deleteMemo(object_id)                     // a closed version (object_state 'closed'), optimistic too
+await client.deleteNote(object_id)                     // a closed version (object_state 'closed'), optimistic too
 await client.sendStrokes({ timeline_id, content_type, strokes?, stroke_ids?, offset?, text?, attachments? })  // canvas items
 const ref = await client.uploadAttachment(bytes, { file_name, media_type, width?, height?, caption?, page?, object_id? })  // encryptAsset + PUT; returns the README reference
 const bytes = await client.fetchAttachment(ref)        // GET + decrypt + sha256 check; cached in memory
@@ -289,15 +289,14 @@ await client.loadTimelineAfter(timeline_key, envelope_number)   // canvas tail a
 roomLink(hub_url, room_id) / parseRoomLink(text)       // '<app>#r1.<b64u hub>.<b64u room>': what a fresh device needs for passphrase sign-in or recovery
 ```
 
-Password escrow (optional, `escrow.mjs`, v2): the blob is addressed by an id derived from the passphrase (PBKDF2-SHA-256, 2,000,000 iterations -> key + id), so the room id alone fetches nothing and every guess costs a slow derivation plus a rate-limited request. Whoever holds the hub's database can still guess offline (PBKDF2 is not memory-hard; WebCrypto has no Argon2), so only a generated passphrase is accepted (review 3); the paper code stays the root. Replacing or removing the escrow is compare-and-swap on the hub's revision; a v1 escrow from before is never served by room id and is migrated by a member:
+Password escrow (optional, `escrow.mjs`, v2): the blob is addressed by an id derived from the passphrase (PBKDF2-SHA-256, 2,000,000 iterations -> key + id), so the room id alone fetches nothing and every guess costs a slow derivation plus a rate-limited request. Whoever holds the hub's database can still guess offline (PBKDF2 is not memory-hard; WebCrypto has no Argon2), so only a generated passphrase is accepted (review 3); the paper code stays the root. Replacing or removing the escrow is compare-and-swap on the hub's revision:
 
 ```js
 generatePassphrase()                                   // 'k7m2-x9qp-…' six groups of four (120 bits): offer this, show it once
 passphraseProblem(text)                                // null for a generated passphrase, else 'only a generated passphrase'
 await client.setPassphrase(passphrase, { recovery_code })   // the code once; writes escrow v2; 'weak-passphrase', 'bad-recovery-code', 'escrow-changed'
 await client.removePassphrase()
-await client.checkPassphrase()                         // -> model.room.has_passphrase (asked as a signed-in human); model.room.escrow_v1 if an old v1 escrow waits
-const fresh = await client.migratePassphrase(old)      // v1 -> v2 under a NEW generated passphrase (show it once); the v1 blob is gone
+await client.checkPassphrase()                         // -> model.room.has_passphrase (asked as a signed-in human)
 const { client } = await loginWithPassphrase({ room_link, passphrase, storage, device_name, client: 'app/x' })   // fresh device; v2 only; 'wrong-passphrase'
 // every human device gets the alert 'recovery-add' when the recovery key adds a device (passphrase sign-in or someone with the code)
 ```
@@ -384,7 +383,7 @@ storage = {
 
 Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` deletes) and `range(prefix, { after?, before?, limit?, reverse? })` (ordered by key) for windowed reads.
 
-**Incremental persistence, no whole-model rewrite.** The reducer marks what it touched; after each batch (debounced ~200 ms, one `setMany` transaction) the core writes only those records: `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `memo/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number zero-padded>` (item header + decoded body when loaded), plus `sync` (cursor + chains of the senders touched, written in the same transaction, so cursor and records never disagree) and `room` (hub, room id, log entries, pin, epoch secrets; on membership changes only). `outbox` is written before an envelope is posted. A warm start reads the records (not the timelines' items; those are windowed reads) and catches up from the cursor. Epoch secrets are sensitive: in the browser they sit in IndexedDB next to the non-extractable device keys; in Node in a file of mode 0600.
+**Incremental persistence, no whole-model rewrite.** The reducer marks what it touched; after each batch (debounced ~200 ms, one `setMany` transaction) the core writes only those records: `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `note/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number zero-padded>` (item header + decoded body when loaded), plus `sync` (cursor + chains of the senders touched, written in the same transaction, so cursor and records never disagree) and `room` (hub, room id, log entries, pin, epoch secrets; on membership changes only). `outbox` is written before an envelope is posted. A warm start reads the records (not the timelines' items; those are windowed reads) and catches up from the cursor. Epoch secrets are sensitive: in the browser they sit in IndexedDB next to the non-extractable device keys; in Node in a file of mode 0600.
 
 ## Performance design
 
@@ -401,7 +400,7 @@ A human device writes a snapshot every 5000 envelopes (counted from the newest a
 
 - **Sending never re-signs a number.** A hub refusal with `voided: true` (the hub kept a void record) marks the item `failed` and sending goes on; any other final refusal sets `model.room.outbox_blocked = { local_id, code, message }`, alerts `chain-halted`, makes `settle()` throw `chain-halted`, and retries the same bytes every 60 s. Status bodies over 4 KiB throw `too-large` before signing.
 - **Write-ahead.** `storage.setMany(entries, { durable: true })` (IndexedDB: strict durability) holds the outbox and the own chain head before a post; `fileStorage` fsyncs file and directory on every write. A failed write stops sending (`storage-failed`).
-- **Registers and memos** carry a signed `lamport` (`compareWrites` in `model.mjs`): one total order on every device.
+- **Registers and notes** carry a signed `lamport` (`compareWrites` in `model.mjs`): one total order on every device.
 - **Removal/recovery** re-key every stale session in one atomic `POST session_grants`; `_healStaleSessions` runs at start, on member entries and after a removal; nobody seals under a stale session key (agents wait up to a minute for the re-key).
 - **Agent history boundary** `sync.history_before`: every command sent before the first start without sync state is `history: true`. Commands are held (not dropped) while the member list cannot be refreshed or the log forked; `resumeCommands()` delivers them.
 - **Ids** that reach URLs are checked hex (`checkId`); a body whose attachment ids are not hex or not in the header's blob list counts as undecryptable. Bodies with bad UTF-8 or a BOM are refused. A trusted answer's choices must be the card's recommendation.

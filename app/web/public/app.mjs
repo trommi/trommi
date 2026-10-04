@@ -13,7 +13,7 @@ import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
 import { RAIL_FOLD, sidebarRows, topbar } from './sidebar.mjs'
 import { WORDS, calm, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
-import { boardMemos, memoLayer, memoStore } from './notes.mjs'
+import { boardNotes, noteLayer, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
 import { rowSheet } from './desk.mjs'
 import { showShare } from './media.mjs'
@@ -169,7 +169,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   }
 }
 
-/** Who receives a memo: the crowned session of the desk. One crown per desk: the starred session. */
+/** Who receives a note: the crowned session of the desk. One crown per desk: the starred session. */
 export const crownOf = model => model.agents.find(a => !a.other_desk && a.starred) ?? null
 
 // ---- att ----
@@ -234,7 +234,7 @@ document.addEventListener('click', async e => {
 // ---- board state ----
 // The seam between the client core's model (core/README.md) and the views of today's board (public/js/views,
 // synced from trommi-hub server/views): boardState(client.model) returns the board's state in the shape the views were
-// written for ({ cards, queue, agents, tasks, messages, desks, memos, assets }), so the app renders the same markup.
+// written for ({ cards, queue, agents, tasks, messages, desks, notes, assets }), so the app renders the same markup.
 //
 // Incremental: a card's board form is kept per object_id and made again only when a change names it (or a register
 // that it shows: its draft, its snooze). The messages are built on first read (only a session's page and a card's
@@ -321,14 +321,14 @@ export class BoardState {
     const tasks = []
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
-    const memos = boardMemos(m, devToAgent)
+    const notes = boardNotes(m, devToAgent)
     // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
     const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
     const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(keyOf(p)), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
     const self = this
     let messages = null
     const state = {
-      cards, queue, agents, tasks, desks, memos, assets, pending: [], hub: {}, speech: false,
+      cards, queue, agents, tasks, desks, notes, assets, pending: [], hub: {}, speech: false,
       get messages() { return (messages ??= self.messages(cards)) },
       messagesOf: agent => self.messagesOf(agent),
       messagesOfCard: id => self.messagesOfCard(id),
@@ -506,8 +506,8 @@ export class BoardState {
       if (c.details) msg.details = c.details
       if (c.html) msg.html = c.html
       if (c.published_object_id) { if (this.model.published.get(c.published_object_id)?.object_state === 'closed') continue; msg.published = c.published_object_id }   // a revoked asset leaves the conversation
-      // (A note of his sent to the session (content.memo): it stands in the conversation as the note, taped on.)
-      if (c.memo) msg.memo = { written: c.memo.written_at ?? null }
+      // (A note of his sent to the session (content.note): it stands in the conversation as the note, taped on.)
+      if (c.note) msg.note = { written: c.note.written_at ?? null }
       if (c.hand_back) msg.handback = true
       if (c.explain) msg.explain = true
       if (c.present_card) msg.present = true
@@ -672,8 +672,8 @@ function hubFacade(client, board) {
       await client.setDesk(made, { name: String(name ?? '').trim().slice(0, 40) || 'Desk', created_at: Date.now() })
       return { ok: true, desk: { id: made, name } }
     },
-    // Memos (objects of type memo; the old POST /memo): memo-store.mjs. Returns { code, text } like the hub's memoAct.
-    memo: memoStore(client, board),
+    // Notes (objects of type note; POST /note): noteStore in notes.mjs. Returns { code, text }.
+    note: noteStore(client, board),
   }
   return hub
 }
@@ -896,7 +896,7 @@ function createBoard({ hub, model, views }) {
 
 // ---- layout ----
 // The frame around every view: the floating Desk with the Trommi menu, the sidebar, the place for toasts, the key
-// sheet, the memos. A port of trommi-hub app.mjs: the same markup, without the hub's <head>, the
+// sheet, the notes. A port of trommi-hub app.mjs: the same markup, without the hub's <head>, the
 // import map and the live stream (the router keeps the head and patches the body).
 
 /** The body's parts for a page: [{ key, html }] in order (the router keeps a part whose markup did not change). */
@@ -910,7 +910,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   parts.push({ key: 'main', html: String(main) })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
   parts.push({ key: 'sheets', html: String(html`${keySheet()}${view === 'desk' ? rowSheet(base) : ''}`) })
-  if (stream !== null && model) parts.push({ key: 'memos', html: String(memoLayer(model, base, view, view === 'session' ? current : null)) })
+  if (stream !== null && model) parts.push({ key: 'memos', html: String(noteLayer(model, base, view, view === 'session' ? current : null)) })
   return parts
 }
 
@@ -921,7 +921,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
 //   - the page's body is patched by parts (topbar, sidebar, main, …): a part whose markup did not change stays;
 //   - a form is answered by the board's handlers (public/app.mjs): stream actions, a redirect, or a page;
 //   - after every change of the core only the elements that changed are replaced (board.live → <turbo-stream>);
-//   - fetch() calls of the controllers to the hub's old JSON routes (/memo, /desk, a card's draft) are answered here.
+//   - fetch() calls of the controllers to the hub's old JSON routes (/note, /desk, a card's draft) are answered here.
 
 const STREAM_ACCEPT = 'text/vnd.turbo-stream.html, text/html, application/xhtml+xml'
 const fire = (target, name, detail = {}, cancelable = false) => { const e = new CustomEvent(name, { bubbles: true, cancelable, detail }); target.dispatchEvent(e); return e }
@@ -1124,9 +1124,9 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, location.href)
     const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     if (url.origin !== location.origin || method !== 'POST' || !isAppPath(url.pathname)) return realFetch(input, init)
-    if (url.pathname === '/memo' || url.pathname === '/desk') {
+    if (url.pathname === '/note' || url.pathname === '/desk') {
       const body = JSON.parse(String(init.body ?? '{}'))
-      const out = url.pathname === '/memo' ? await board.t.hub.memo(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: err.message }) }))
+      const out = url.pathname === '/note' ? await board.t.hub.note(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: err.message }) }))
       return new Response(out.text, { status: out.code, headers: { 'Content-Type': 'application/json' } })
     }
     let form
@@ -1354,7 +1354,7 @@ async function start(client, { fresh = false } = {}) {
     conn()
   }
   client.on('change', change => {
-    if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
+    if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
     else merge(pending, change)
     if (catchingUp()) { if (!wasCatchingUp) { wasCatchingUp = true; conn() } catchUpTimer ||= setTimeout(renderWhole, CATCH_UP_MS); return }
     if (wasCatchingUp) { wasCatchingUp = false; clearTimeout(catchUpTimer); renderWhole(); return }

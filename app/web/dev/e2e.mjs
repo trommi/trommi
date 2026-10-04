@@ -230,7 +230,7 @@ try {
   // ---- the note: it waits at the sidebar's foot; sent from there (to the crown) it reaches the agent marked as a note and stands in
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
-  await A.js(`const now = Date.now(); await trommi.client.saveMemo({ text: '${noteText}', x: 0, y: 0, place: 'stack', desk_id: trommi.board.desk ?? 'main', created_at: now, updated_at: now })`)
+  await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', place: 'stack', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
   await A.until(`document.querySelector('#side-notes .side-note-first')?.textContent.startsWith('Notiz e2e')`, 'the note at the sidebar foot').then(() => check(true, 'the note waits at the sidebar foot, its first line shown'), e => check(false, e.message))
   check(await A.js("return !document.querySelector('#memo-open:not([hidden])') || getComputedStyle(document.getElementById('memo-open')).display === 'none'"), 'no floating memo button')
@@ -241,11 +241,11 @@ try {
   await A.js(`trommi.router.visit('/s/${crownId ?? sid}')`)
   const tn = Date.now(); let noteCmd = null
   while (!noteCmd && Date.now() - tn < 15000) { noteCmd = commands.find(c => c.command === 'message' && c.content?.text === noteText); await sleep(50) }
-  check(/^[0-9a-f]{32}$/.test(noteCmd?.content?.memo?.object_id ?? '') && Number.isSafeInteger(noteCmd?.content?.memo?.written_at), 'a sent note reaches the agent with memo { object_id, written_at }')
+  check(/^[0-9a-f]{32}$/.test(noteCmd?.content?.note?.object_id ?? '') && Number.isSafeInteger(noteCmd?.content?.note?.written_at), 'a sent note reaches the agent with note { object_id, written_at }')
   await A.until(`[...document.querySelectorAll('.msg-note p')].some(p => p.textContent.includes('${noteText}'))`, 'taped note in the chat').then(() => check(true, 'the sent note stands taped in the session chat'), e => check(false, e.message))
   await sleep(1500)
   check(await A.js(`return !window.__bubbled && [...document.querySelectorAll('.msg-note p')].some(p => p.textContent.includes('${noteText}'))`), 'the taped note never turns into a bubble (echo -> hub copy)')
-  check(await A.js("return !trommi.model().state.memos.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the sidebar')
+  check(await A.js("return !trommi.model().state.notes.some(m => m.text.startsWith('Notiz e2e'))"), 'the sent note left the sidebar')
   await A.shot('e2e-note-taped.png')
 
   // ---- the pile "Off the desk": one pile for every card that left the open rows (snoozed, in the works, done, trash);

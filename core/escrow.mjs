@@ -15,17 +15,12 @@
 // GENERATED passphrase is accepted (generatePassphrase: 24 characters, 120 bits): offline guessing is hopeless. A
 // passphrase of the human's own (a lyric, a quote) would fall offline to whoever holds the hub's database, and it
 // unlocks the whole room, so passphraseProblem refuses it (review 3).
-//
-// escrow_version 1 (retired: never written; the hub refuses it and hands a stored one only to a signed-in human, to migrate): 0x01 || iterations u32 || salt(16) || nonce(12) || GCM(...),
-//   key = PBKDF2(passphrase, salt || room_id, iterations), aad = "trommi/v1/escrow" 0x00 || room_id || iterations u32.
 import * as z from './zcrypto.mjs'
 
 const { ZError, b64u, unb64u, concat, hex, unhex } = z
 export const ESCROW_VERSION = 2
-export const ESCROW_ITERATIONS = 1_000_000          // v1 (read only)
 export const ESCROW_V2_ITERATIONS = 2_000_000
 const te = new TextEncoder()
-const u32 = v => { const b = new Uint8Array(4); new DataView(b.buffer).setUint32(0, v); return b }
 
 const ALPHABET = 'abcdefghijkmnpqrstuvwxyz23456789'      // 32 letters and digits, no 0/o/1/l
 const GENERATED = /^([a-km-np-z2-9]{4}-){5}[a-km-np-z2-9]{4}$/
@@ -71,27 +66,6 @@ export async function openEscrowV2({ room_id, key_escrow, key, escrow_id }) {
   if (b.length !== 1 + 12 + 32 + 16 || b[0] !== 2) throw new ZError('bad-format', 'escrow blob')
   let raw
   try { raw = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: b.slice(1, 13), additionalData: aadV2(unhex(room_id), escrow_id) }, key, b.slice(13))) }
-  catch { throw new ZError('wrong-passphrase', 'this passphrase does not open the escrow') }
-  return z.formatRecoveryCode(raw)
-}
-
-async function deriveKey(passphrase, salt, roomId, iterations) {
-  const base = await crypto.subtle.importKey('raw', te.encode(String(passphrase).normalize('NFC')), 'PBKDF2', false, ['deriveKey'])
-  return crypto.subtle.deriveKey({ name: 'PBKDF2', hash: 'SHA-256', salt: concat(salt, roomId), iterations }, base, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt'])
-}
-const aadOf = (roomId, iterations) => concat(te.encode('trommi/v1/escrow'), Uint8Array.of(0), roomId, u32(iterations))
-
-/** v1, migration only: open the blob with the passphrase: the recovery code (text form). Wrong passphrase: ZError 'wrong-passphrase'. */
-export async function openEscrow({ room_id, key_escrow, passphrase }) {
-  const b = unb64u(key_escrow)
-  if (b.length < 1 + 4 + 16 + 12 + 16 || b[0] !== 1) throw new ZError('bad-format', 'escrow blob')
-  const iterations = new DataView(b.buffer, b.byteOffset + 1, 4).getUint32(0)
-  if (iterations < 1_000_000 || iterations > 50_000_000) throw new ZError('bad-format', 'escrow iterations out of range')
-  const salt = b.slice(5, 21), nonce = b.slice(21, 33), ct = b.slice(33)
-  const roomId = unhex(room_id)
-  const key = await deriveKey(passphrase, salt, roomId, iterations)
-  let raw
-  try { raw = new Uint8Array(await crypto.subtle.decrypt({ name: 'AES-GCM', iv: nonce, additionalData: aadOf(roomId, iterations) }, key, ct)) }
   catch { throw new ZError('wrong-passphrase', 'this passphrase does not open the escrow') }
   return z.formatRecoveryCode(raw)
 }

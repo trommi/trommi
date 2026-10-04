@@ -19,7 +19,7 @@ export async function forge(R, a) {
   const send = async opts => { try { await d.client._send(opts); return 'ok' } catch (e) { return `refused:${refusal(e)}` } }
 
   switch (a.what) {
-    case 'foreign_version': case 'foreign_close': case 'foreign_memo': {
+    case 'foreign_version': case 'foreign_close': case 'foreign_note': {
       // a card version (or a closing one) for an object that belongs to somebody else
       const victim = pick(d.isHuman ? agents : agents)
       if (!victim) return 'skip'

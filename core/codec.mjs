@@ -17,7 +17,7 @@ export const TIMELINE_KIND_NAME = Object.freeze({ 1: 'chat', 2: 'canvas' })
 
 /** Body fields per kind (besides schema_version), exactly the README names. Unknown fields are dropped on encode, kept on decode. */
 export const FIELDS = Object.freeze({
-  message: ['content_type', 'text', 'details', 'html', 'attachments', 'hand_back', 'explain', 'present_card', 'copied_cards', 'marks', 'published_object_id', 'memo'],
+  message: ['content_type', 'text', 'details', 'html', 'attachments', 'hand_back', 'explain', 'present_card', 'copied_cards', 'marks', 'published_object_id', 'note'],
   strokes: ['content_type', 'strokes', 'attachments'],
   erase: ['content_type', 'stroke_ids', 'offset'],
   move: ['content_type', 'stroke_ids', 'offset'],
@@ -25,7 +25,7 @@ export const FIELDS = Object.freeze({
   selection_sent: ['content_type', 'text', 'attachments', 'stroke_ids'],
   card: ['object_type', 'object_version', 'previous_version_hash', 'card_type', 'title', 'teaser', 'body', 'options', 'sections', 'html', 'allows_multiple',
     'recommended', 'urgency_reason', 'attachments', 'change_note', 'close_summary', 'withdraw_reason', 'merged_into_object_id', 'merged_from_object_ids'],
-  memo: ['object_type', 'object_version', 'previous_version_hash', 'text', 'x', 'y', 'color', 'desk_id'],
+  note: ['object_type', 'object_version', 'previous_version_hash', 'text'],
   published: ['object_type', 'object_version', 'previous_version_hash', 'attachments', 'title', 'note', 'released_until'],
   answer: ['answer_action', 'choices', 'note', 'option_notes', 'attachments', 'marks', 'trusted'],
   permission_request: ['tool_name', 'description', 'input_preview'],
@@ -50,7 +50,7 @@ function pick(src, fields) {
   for (const f of fields) if (src[f] !== undefined) out[f] = src[f]
   return out
 }
-/** Memos carry whatever the app puts on them (place, session, to, …): their fields are app-defined. */
+/** Notes carry whatever the app puts on them (place, session, to, …): their fields are app-defined. */
 export const PASS_THROUGH = Symbol('pass-through')
 
 /** The field list for a body: by kind, and for timeline items and objects by content_type / object_type. */
@@ -62,7 +62,7 @@ export function fieldsFor(kind, content) {
       return f
     }
     case KIND.object_version: {
-      if (content.object_type === 'memo') return PASS_THROUGH
+      if (content.object_type === 'note') return PASS_THROUGH
       const f = FIELDS[content.object_type]
       if (!f) throw new z.ZError('bad-argument', `unknown object_type ${content.object_type}`)
       return f
@@ -71,9 +71,9 @@ export function fieldsFor(kind, content) {
   }
 }
 
-/** A message's `memo`: the note of the human it was sent from (README "message"): { object_id: 32 hex, written_at: ms }.
+/** A message's `note`: the note of the human it was sent from (README "message"): { object_id: 32 hex, written_at: ms }.
  *  Nothing else in it, written_at a whole number of ms within 0..2^53 (or null). */
-export function memoRefValid(m) {
+export function noteRefValid(m) {
   if (!m || typeof m !== 'object' || Array.isArray(m)) return false
   if (Object.keys(m).some(k => k !== 'object_id' && k !== 'written_at')) return false
   if (!(typeof m.object_id === 'string' && HEX32.test(m.object_id))) return false
@@ -81,7 +81,7 @@ export function memoRefValid(m) {
 }
 
 export function encodePayload(kind, content) {
-  if (kind === KIND.timeline_item && content?.content_type === 'message' && content.memo !== undefined && !memoRefValid(content.memo)) throw new z.ZError('bad-argument', 'memo must be { object_id: 32 hex, written_at?: ms }')
+  if (kind === KIND.timeline_item && content?.content_type === 'message' && content.note !== undefined && !noteRefValid(content.note)) throw new z.ZError('bad-argument', 'note must be { object_id: 32 hex, written_at?: ms }')
   if (kind === KIND.object_version && content?.object_type === 'card' && content.teaser != null && !teaserValid(content.teaser)) throw new z.ZError('bad-argument', `teaser must be plain one-paragraph text, trimmed, at most ${TEASER_MAX} characters`)
   return te.encode(JSON.stringify(pick(content, fieldsFor(kind, content))))
 }
@@ -93,7 +93,7 @@ export function decodePayload(bytes) {
   if (!content || typeof content !== 'object' || Array.isArray(content)) return { content: null, content_state: 'undecryptable' }
   if (!attachmentIdsValid(content)) return { content: null, content_state: 'undecryptable' }   // a ref id is not hex: refuse the body
   if (content.schema_version > SCHEMA_VERSION) return { content, content_state: 'newer_schema' }
-  if (content.content_type === 'message' && content.memo !== undefined && !memoRefValid(content.memo)) delete content.memo   // a bad note mark: the message stays, plain
+  if (content.content_type === 'message' && content.note !== undefined && !noteRefValid(content.note)) delete content.note   // a bad note mark: the message stays, plain
   if (content.object_type === 'card' && content.teaser != null && !teaserValid(content.teaser)) delete content.teaser   // a bad teaser: the Desk falls back to the body
   return { content, content_state: 'ok' }
 }

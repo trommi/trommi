@@ -163,7 +163,7 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   // R3: real cuts for every device the recovery removes (its last verified envelope), never an empty cut that would
   // refuse all its history on every device that verifies the room later.
   const removed = [...state.members.values()].filter(m => m.removedSeq === null && (m.role === ROLE.HUMAN || remove_agents.includes(hex(m.id)))).map(m => hex(m.id))
-  const cuts = (await verifiedHeads(hub, state, removed)) ?? {}
+  const cuts = await verifiedHeads(hub, state, removed)
   if (!Object.keys(cuts).length && removed.length) console.warn('[core] recovery: the hub let the recovery key read no envelopes; cuts are empty')
   // A12: the new code reaches the human before the entry that makes it valid is posted (show it, never store it).
   if (on_recovery_code) await on_recovery_code(newCode)
@@ -224,8 +224,7 @@ export async function loginWithPassphrase({ room_link, passphrase, storage, clie
   const { hub_url, room_id } = parseRoomLink(room_link)
   if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
   const pub = new Hub({ hub_url, room_id, fetch, client: client_name })
-  // v2 only: the escrow id comes from the passphrase (a wrong passphrase finds nothing). A retired v1 blob is never
-  // served anonymously; a member device migrates it (client.migratePassphrase).
+  // The escrow id comes from the passphrase (a wrong passphrase finds nothing).
   const { key, escrow_id } = await escrowKeyAndId(passphrase, room_id)
   let code
   try { code = await openEscrowV2({ room_id, key_escrow: (await pub.getEscrow(escrow_id)).key_escrow, key, escrow_id }) }

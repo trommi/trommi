@@ -9,7 +9,7 @@ export class RoomOracle {
     this.members = new Map()       // name -> { role, active }
     this.cards = new Map()         // ref -> card
     this.perms = new Map()         // ref -> { agent, state }
-    this.memos = new Map()         // ref -> { text, x, y, state, v }
+    this.notes = new Map()         // ref -> { text, state, v }
     this.regs = new Map()          // human register key template -> value
     this.agentRegs = new Map()     // agent name -> Map(key -> value)
     this.chat = new Map()          // timeline template ('card/#c1', 'session/@A0') -> [{ id, from, to, text, certain }]
@@ -17,7 +17,7 @@ export class RoomOracle {
     this.refusedForged = 0
     this.order = 0                 // creation order of cards
     this.attempts = new Set()      // cards a human tried to answer / read / shred (valid or not)
-    this.memoTexts = new Map()     // memo ref -> Set of texts ever saved
+    this.noteTexts = new Map()     // note ref -> Set of texts ever saved
     this.sentTexts = new Set()     // every chat text a member really sent
   }
   active(role) { return [...this.members].filter(([, m]) => m.active && (!role || m.role === role)).map(([n]) => n) }

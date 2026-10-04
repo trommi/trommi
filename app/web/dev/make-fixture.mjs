@@ -3,7 +3,7 @@
 // the client core's model (core/README.md in trommi-hub). Pictures are copied to public/demo/files/.
 //   node dev/make-fixture.mjs <state-export.json> <board-data-dir>
 // Adds what the export lacks so every part of the board shows: a crowned main session with two subs and status
-// lines, an online agent, a pending permission request, a memo.
+// lines, an online agent, a pending permission request, a note.
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -118,7 +118,7 @@ const human = {
 }
 for (const x of sessions) if (x.settings.desk === '0defcecc') x.settings.desk = 'test'
 for (const c of s.cards) if (c.snoozed_until) human.snoozes[oid(c.id)] = { until: now + 6 * 3600e3, at: now - 600000 }
-const memos = [{ object_id: oid('memo-1'), by_device_id: dev('laptop'), text: 'Morgen: Pairing auf dem Handy testen', x: 0, y: 0, color: null, desk_id: 'main', place: 'stack', object_version: 1, version_hash: hex('memo', 64), envelope_number: ++n, object_state: 'open' }]
+const notes = [{ object_id: oid('note-1'), by_device_id: dev('laptop'), text: 'Morgen: Pairing auf dem Handy testen', place: 'stack', object_version: 1, version_hash: hex('note', 64), envelope_number: ++n, object_state: 'open' }]
 const members = [
   { device_id: dev('laptop'), device_role: 'human', device_name: 'Laptop', is_active: true, added_entry_number: 0, removed_entry_number: null, is_me: true, is_online: true },
   { device_id: dev('phone'), device_role: 'human', device_name: 'Phone', is_active: true, added_entry_number: 1, removed_entry_number: null, is_me: false, is_online: false },
@@ -126,7 +126,7 @@ const members = [
 ]
 const fixture = {
   made_at: now, room: { room_id: hex('room', 64), hub_url: 'mock:', my_device_id: dev('laptop'), my_role: 'human', key_epoch: 1, last_entry_number: members.length - 1, last_envelope_number: n, connection: 'live' },
-  members, sessions, cards: [...cards.values()], permissions: [perm], memos, published, timelines, human,
+  members, sessions, cards: [...cards.values()], permissions: [perm], notes, published, timelines, human,
 }
 fs.writeFileSync(path.join(out, 'fixture.json'), JSON.stringify(fixture))
 console.log(`fixture: ${cards.size} cards, ${sessions.length} sessions, ${Object.values(timelines).flat().length} timeline items, ${fs.readdirSync(path.join(out, 'files')).length} files`)

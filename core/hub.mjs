@@ -361,8 +361,8 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
         } else {
           if (scopeOf(info) !== myScope) fail('forbidden', 'an object stays under the key it was created with')
           if (info.firstKind !== h.kind) fail('forbidden', 'an object keeps its kind')
-          const memo = room().members.get(b64u(unhex(info.owner)))?.role === ROLE.HUMAN   // memos: any human device
-          if (info.owner !== sender && !(memo && human)) fail('forbidden', 'only its creator writes new versions of an object')
+          const note = room().members.get(b64u(unhex(info.owner)))?.role === ROLE.HUMAN   // notes: any human device
+          if (info.owner !== sender && !(note && human)) fail('forbidden', 'only its creator writes new versions of an object')
         }
         pushAllowed = h.push
         break

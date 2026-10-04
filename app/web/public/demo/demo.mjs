@@ -3,7 +3,7 @@
 // ?mock=1 for UI work and the screen-by-screen comparison with today's board; the real core is the default.
 // Agents are simulated: they reply to messages, rework a card that was handed back, explain on "What??".
 
-const ZERO = () => ({ cards: new Set(), sessions: new Set(), permissions: new Set(), memos: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false })
+const ZERO = () => ({ cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), members: false, invites: new Set(), alerts: false, outbox: false, stack: false, room: false })
 const URG = { critical: 0, high: 1, normal: 2, low: 3 }
 const hex = n => [...crypto.getRandomValues(new Uint8Array(n / 2))].map(b => b.toString(16).padStart(2, '0')).join('')
 const toMap = obj => new Map(Object.entries(obj ?? {}))
@@ -21,7 +21,7 @@ class MockClient {
       sessions,
       cards: new Map(f.cards.map(c => [c.object_id, c])),
       permissions: new Map((f.permissions ?? []).map(p => [p.object_id, p])),
-      memos: new Map((f.memos ?? []).map(m => [m.object_id, m])),
+      notes: new Map((f.notes ?? []).map(m => [m.object_id, m])),
       published: new Map((f.published ?? []).map(p => [p.object_id, p])),
       timelines: new Map(),
       human: {
@@ -167,10 +167,10 @@ class MockClient {
   setDesk(id, v) { return this.setRegisters({ [`desk/${id}`]: v }) }
   setSessionSettings(id, v) { return this.setRegisters({ [`session/${id}`]: v }) }
   markReadUpTo(id, n) { return this.setRegisters({ [`read_up_to/${id}`]: n }) }
-  async saveMemo({ object_id = hex(32), ...fields }) {
-    const had = this.model.memos.get(object_id)
-    const memo = { object_id, by_device_id: this.model.room.my_device_id, text: '', x: 0, y: 0, color: null, desk_id: 'main', ...had, ...fields, object_version: (had?.object_version ?? 0) + 1, version_hash: hex(64), envelope_number: this.next(), object_state: fields.object_state ?? had?.object_state ?? 'open' }
-    this.changed(c => { this.model.memos.set(object_id, memo); c.memos.add(object_id) })
+  async saveNote({ object_id = hex(32), ...fields }) {
+    const had = this.model.notes.get(object_id)
+    const note = { object_id, by_device_id: this.model.room.my_device_id, text: '', ...had, ...fields, object_version: (had?.object_version ?? 0) + 1, version_hash: hex(64), envelope_number: this.next(), object_state: fields.object_state ?? had?.object_state ?? 'open' }
+    this.changed(c => { this.model.notes.set(object_id, note); c.notes.add(object_id) })
     return object_id
   }
   async uploadAttachment(bytes, meta) {
@@ -287,7 +287,7 @@ function filler(f) {
   const now = Date.now(), MIN = 60e3, [zu, ui, docs, cr] = f.sessions.map(s => s.agent_device_id)
   // (the demo's desk has a real name, his word 4 October: "Web App 3")
   // (one note in the sidebar: the demo keeps the newest of its notes)
-  { const kept = (f.memos ?? []).filter(m => m.place === 'stack').sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))[0]; if (kept) f.memos = f.memos.filter(m => m.place !== 'stack' || m === kept) }
+  { const kept = (f.notes ?? []).filter(m => m.place === 'stack').sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))[0]; if (kept) f.notes = f.notes.filter(m => m.place !== 'stack' || m === kept) }
   for (const d of Object.values(f.human?.desks ?? {})) if (d.name === 'Desk') d.name = 'Web App 3'
   // (two knocks and one blocking card in the test room, his word: the migration waits calmly)
   // Teasers: what the agent says on the Desk in two lines (the card's own field, core FIELDS.card.teaser).
@@ -422,7 +422,7 @@ function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 5
   const members = [{ device_id: me, device_role: 'human', device_name: 'Laptop', is_active: true, added_entry_number: 0, removed_entry_number: null, is_me: true, is_online: true }, ...ss.map((s, i) => ({ device_id: s.agent_device_id, device_role: 'agent', device_name: s.device_name, is_active: true, added_entry_number: i + 1, removed_entry_number: null, is_me: false, is_online: s.is_online, agent_session_id: s.agent_session_id }))]
   return {
     made_at: now, room: { room_id: hex(64, 2), hub_url: 'mock:', my_device_id: me, my_role: 'human', key_epoch: 1, last_entry_number: members.length - 1, last_envelope_number: n, connection: 'live' },
-    members, sessions: ss, cards, permissions: [], memos: [], published: [], timelines,
+    members, sessions: ss, cards, permissions: [], notes: [], published: [], timelines,
     human: { drafts: {}, snoozes: {}, ducks: {}, crown: { agent_device_id: ss[0].agent_device_id }, desks: {}, session_settings: Object.fromEntries(ss.map(s => [s.agent_device_id, s.settings])), read_up_to: {} },
   }
 }

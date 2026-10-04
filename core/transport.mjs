@@ -194,7 +194,7 @@ export class Hub {
   postReveal(invite_id, signed_reveal) { if (this.readOnly) return this._refused(); return this.request('POST', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/reveal`), { body: { signed_reveal } }) }
   joinStatus(invite_id, request_hash) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/status`), { auth: false, query: { request_hash } }) }
   postEnvelope(envelope) { if (this.readOnly) return this._refused();
-    return this.request('POST', this.roomPath('/envelopes'), { body: { envelope }, headers: this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} })
+    return this.request('POST', this.roomPath('/envelopes'), { body: { envelope }, headers: this.leaseHeaders() })
   }
   /** newest: the newest `limit` envelopes after the cursor (a hub without it answers from the cursor on: check the numbers). */
   envelopes({ after_envelope_number = 0, limit = 1000, newest = false } = {}) { return this.request('GET', this.roomPath('/envelopes'), { query: { after_envelope_number, limit, newest: newest ? 1 : undefined } }) }
@@ -227,7 +227,7 @@ export class Hub {
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, lease: true }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, lease: true }) }
   /** R4: an agent names its lease generation on every write and stream (none for humans). */
-  leaseHeaders() { return this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : { 'x-lease-generation': 'none' } }
+  leaseHeaders() { return this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} }
   postShare(attachment_id, { share_id, share_secret_hash, expires_at }) { return this.request('POST', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares`), { body: { share_id, share_secret_hash, expires_at } }) }
   deleteShare(attachment_id, share_id) { return this.request('DELETE', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}/shares/${checkId('share_id', share_id)}`)) }
   /** For the outsider's viewer page: the ciphertext of a shared attachment, no sign-in. */
@@ -236,7 +236,7 @@ export class Hub {
   pushSubscription(subscription, remove = false) { return this.request('POST', this.roomPath('/push_subscriptions'), { body: remove ? { subscription, remove: true } : { subscription } }) }
   /** Anonymous: GET /escrow/:escrow_id (the id comes from the passphrase). The room-id route serves nothing any more. */
   getEscrow(escrow_id) { return this.request('GET', this.roomPath(`/escrow/${checkId('escrow_id', escrow_id)}`), { auth: false }) }
-  /** A signed-in human: { has_escrow, revision, escrow_version, ... } and a v1 blob (only to migrate it). */
+  /** A signed-in human: { has_escrow, revision, escrow_version, ... } (never the blob). */
   escrowStatus() { return this.request('GET', this.roomPath('/escrow')) }
   /** Compare-and-swap: `replaces` is the revision from escrowStatus (0 when there is none); 409 escrow-changed otherwise. */
   putEscrow({ escrow_version, escrow_id, key_escrow, replaces }) { if (this.readOnly) return this._refused(); return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, escrow_id, key_escrow, replaces } }) }

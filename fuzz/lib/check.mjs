@@ -22,7 +22,7 @@ export function snapOf(client, m, { agentView = false, mask = null } = {}) {
   const mod = client.model
   const nm = id => m.devToName.get(id) ?? `?${String(id).slice(0, 8)}`
   const rf = id => m.idToRef.get(id) ?? `?${String(id).slice(0, 8)}`
-  const s = { members: {}, cards: {}, stack: [], perms: {}, memos: {}, regs: {}, agentRegs: {}, tl: {} }
+  const s = { members: {}, cards: {}, stack: [], perms: {}, notes: {}, regs: {}, agentRegs: {}, tl: {} }
   for (const [id, mem] of mod.members) s.members[nm(id)] = `${mem.device_role}:${mem.is_active ? 'active' : 'removed'}`
   for (const [id, c] of mod.cards) {
     if (agentView && c.agent_device_id !== client.my_device_id) continue
@@ -33,7 +33,7 @@ export function snapOf(client, m, { agentView = false, mask = null } = {}) {
   s.stack = mod.stack.map(rf).filter(r => !(mask && mask.has(r)))
   for (const [id, p] of mod.permissions) { if (agentView && p.agent_device_id !== client.my_device_id) continue; s.perms[rf(id)] = { agent: nm(p.agent_device_id), state: p.permission_state } }
   if (mask) for (const r of mask) if (s.perms[r]) s.perms[r] = { agent: s.perms[r].agent, masked: true }
-  if (!agentView) for (const [id, x] of mod.memos) if (x.object_state !== 'closed') s.memos[rf(id)] = { text: x.text, state: x.object_state, v: x.object_version }
+  if (!agentView) for (const [id, x] of mod.notes) if (x.object_state !== 'closed') s.notes[rf(id)] = { text: x.text, state: x.object_state, v: x.object_version }
   if (!agentView) {
     for (const [k, v] of mod.human.raw) if (!v.pending && v.value !== null && v.value !== undefined) s.regs[keyBack(k, m)] = v.value
   }
@@ -51,7 +51,7 @@ export function snapOf(client, m, { agentView = false, mask = null } = {}) {
 /** Expected snapshot from the oracle for a human (or agent) member. */
 export function expectedSnap(runner, roomIdx, m, { agentName = null, mask = null } = {}) {
   const O = runner.O.get(roomIdx)
-  const s = { members: {}, cards: {}, stack: [], perms: {}, memos: {}, regs: {}, agentRegs: {}, tl: {} }
+  const s = { members: {}, cards: {}, stack: [], perms: {}, notes: {}, regs: {}, agentRegs: {}, tl: {} }
   for (const [n, mem] of O.members) s.members[n] = `${mem.role}:${mem.active ? 'active' : 'removed'}`
   for (const [ref, c] of O.cards) {
     if (agentName && c.agent !== agentName) continue
@@ -59,7 +59,7 @@ export function expectedSnap(runner, roomIdx, m, { agentName = null, mask = null
   }
   for (const [ref, p] of O.perms) { if (agentName && p.agent !== agentName) continue; s.perms[ref] = { agent: p.agent, state: p.state } }
   if (mask) { for (const r of mask) { if (s.perms[r]) s.perms[r] = { agent: s.perms[r].agent, masked: true } } }
-  if (!agentName) for (const [ref, x] of O.memos) if (x.state !== 'closed') s.memos[ref] = { text: x.text, state: x.state, v: x.v }
+  if (!agentName) for (const [ref, x] of O.notes) if (x.state !== 'closed') s.notes[ref] = { text: x.text, state: x.state, v: x.v }
   if (!agentName) {
     for (const [k, v] of O.regs) if (v !== null) s.regs[k] = v
     const now = Date.now()
@@ -357,7 +357,7 @@ export async function checkSafety(runner, { deep = false } = {}) {
         if (c.answer && !O.attempts.has(ref)) out.push(`${d.name}: card ${ref} shows an answer nobody gave`)
       }
       for (const [id, p] of d.client.model.permissions) { const ref = rf(id); if (!ref || !O.perms.has(ref)) out.push(`${d.name}: permission request nobody made`); else if (p.verdict && !O.perms.get(ref)) out.push('x') }
-      for (const [id, x] of d.client.model.memos) { const ref = rf(id); const texts = ref && O.memoTexts.get(ref); if (x.text && (!texts || !texts.has(x.text))) out.push(`${d.name}: memo ${ref ?? id.slice(0, 8)} shows text nobody saved: ${String(x.text).slice(0, 40)}`) }
+      for (const [id, x] of d.client.model.notes) { const ref = rf(id); const texts = ref && O.noteTexts.get(ref); if (x.text && (!texts || !texts.has(x.text))) out.push(`${d.name}: note ${ref ?? id.slice(0, 8)} shows text nobody saved: ${String(x.text).slice(0, 40)}`) }
       if (d.role === 'agent') for (const c of d.commands) {
         const t = c.content?.text
         if (c.command === 'message' && t && !O.sentTexts.has(t) && !/FZFORGED bom/.test(t) && !/FZFORGED forged/.test(t)) out.push(`${d.name} executed a message nobody sent: ${String(t).slice(0, 50)}`)
@@ -387,7 +387,7 @@ export function checkIsolation(runner) {
     const mod = d.client.model
     for (const [id, c] of mod.cards) if (c.agent_device_id !== d.id && (c.title || c.answer)) out.push(`${d.name} reads a card of another agent's session: ${String(c.title).slice(0, 40)}`)
     for (const [id, p] of mod.permissions) if (p.agent_device_id !== d.id && p.tool_name) out.push(`${d.name} reads another agent's permission request`)
-    for (const [id, x] of mod.memos) if (x.text) out.push(`${d.name} reads a memo (room scope): ${String(x.text).slice(0, 40)}`)
+    for (const [id, x] of mod.notes) if (x.text) out.push(`${d.name} reads a note (room scope): ${String(x.text).slice(0, 40)}`)
     for (const [k, v] of mod.human.raw) if (v.value !== null && v.value !== undefined) out.push(`${d.name} holds the human register ${k.slice(0, 30)}`)
     for (const [key, t] of mod.timelines) for (const it of t.items.values()) if (it.content?.text && !(key.includes(`session/${d.client.session_id}`) || key.startsWith('chat:card/'))) out.push(`${d.name} reads an item of timeline ${key.slice(0, 40)}`)
     for (const s of strings(mod)) for (const mm of s.matchAll(/FZMARK b(\d+) /g)) if (Number(mm[1]) < d.joinedBatch && !d.handoverWithHistory) { out.push(`${d.name} (joined in batch ${d.joinedBatch}) holds content of batch ${mm[1]}: ${s.slice(0, 60)}`); break }

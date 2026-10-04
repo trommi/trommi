@@ -802,9 +802,9 @@ export function thumb(file) {
 export const srcOf = file => attrs({ src: thumb(file).src })
 
 // ---- toast ----
-// The toast: one quiet line at the top right that says what just happened ("Answered: <title>", "Memo sent to
+// The toast: one quiet line at the top right that says what just happened ("Answered: <title>", "Note sent to
 // <name>") and, when it can be taken back, an Undo button. The same on every page and on the phone. It goes by
-// itself (about five seconds, a held memo's own hold), stays while the pointer rests on it, and stacks: three at
+// itself (about five seconds, a held note's own hold), stays while the pointer rests on it, and stacks: three at
 // most, the newest on top. U presses the newest Undo (controller "keys").
 //
 //   toast({ head, line?, undo?: { action, label?, fields? }, role?, ms? })   the markup (html)
@@ -812,7 +812,7 @@ export const srcOf = file => attrs({ src: thumb(file).src })
 //                 t.says(card, way) the toast of a card's answer
 //
 // The Undo is a form that posts to the route that takes the action back (a card's /reopen, /wake, /takeback; a
-// memo's /unsend; a session's /edit with archived=0), with stay=1 (answer with a stream) and quiet=1 (no new toast
+// note's /unsend; a session's /edit with archived=0), with stay=1 (answer with a stream) and quiet=1 (no new toast
 // for taking it back). The behaviour (time, pause, the stack, gone once Undo is pressed) is the controller "says"
 // in ui.mjs; the look is the block "toast" in app.css.
 
@@ -1233,7 +1233,7 @@ controller('curl', class extends Controller {
     this.box = { left: r.left, top, width: w, height: h, right, bottom: top + h }
     Object.assign(this.element.style, { left: `${r.left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` })
     this.svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
-    // the memo note keeps its place beside or above the corner, also when a scroll bar takes the window's edge
+    // the note button keeps its place beside or above the corner, also when a scroll bar takes the window's edge
     document.documentElement.style.setProperty('--curl-edge', `${Math.max(0, vw - right)}px`)
     this.render()
   }
@@ -2084,7 +2084,7 @@ const LAYOUT = [
   ] },
   { scope: 'app', title: 'Anywhere', keys: [
     { id: 'help', keys: ['?'], does: 'this list' },
-    { id: 'memo.new', keys: ['n'], does: 'a new note (memo)' },
+    { id: 'note.new', keys: ['n'], does: 'a new note' },
     { id: 'go.desk', keys: ['g d', 'g i'], does: 'Desk', verb: 'go to the Desk' },
     { id: 'go.agents', keys: ['g a'], does: 'Agents', verb: 'go to the Agents page' },
     { id: 'go.jump', keys: ['Mod+k', 'g j'], does: 'menu', verb: 'open the Trommi menu: desks and places' },
@@ -2109,7 +2109,7 @@ export const SHORT = [
   { id: 'move', keys: ['ArrowUp', 'ArrowDown'], does: 'move: the next or the previous question (on a card: ← →)' },
   { id: 'open', keys: ['Enter'], does: 'open' },
   { id: 'back', keys: ['Escape'], does: 'back: leave a field, close, back to the Desk' },
-  { id: 'memo.new', keys: ['n'], does: 'a new note (memo)' },
+  { id: 'note.new', keys: ['n'], does: 'a new note' },
   { id: 'later', keys: ['l'], does: 'later (snooze)' },
   { id: 'help', keys: ['?'], does: 'this list' },
 ]
@@ -2334,7 +2334,7 @@ function start(signal) {
     'pic.leave': () => press($('.t-picture-back')),
 
     'help': () => toggleSheet(),
-    'memo.new': () => document.dispatchEvent(new CustomEvent('trommi:memo')),
+    'note.new': () => document.dispatchEvent(new CustomEvent('trommi:note')),
     'go.desk': () => go(`${base()}/`),
     'go.agents': () => go(`${base()}/agents`),
     'go.walk': () => go(`${base()}/walk`),
@@ -2432,7 +2432,7 @@ function start(signal) {
     // The open menu's Escape closes the menu (t/boot.js), and nothing else.
     if (name === 'Escape' && menuOpen()) return
     if (typing) {
-      // A field's own Escape comes first (a memo note, the jump field, a picker): the table's Escape (leave the field,
+      // A field's own Escape comes first (a note, the jump field, a picker): the table's Escape (leave the field,
       // then the page) acts only if the event comes back up to the document untouched.
       if (name === 'Escape') document.addEventListener('keydown', ev => { if (ev === e && !e.defaultPrevented && run(name, e, { typing: true })) e.preventDefault() }, { once: true, signal })
       return
