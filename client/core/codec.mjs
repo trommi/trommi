@@ -4,7 +4,7 @@ import * as z from './zcrypto.mjs'
 
 export const SCHEMA_VERSION = 1
 const te = new TextEncoder()
-const td = new TextDecoder()
+const td = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })   // R5: bad UTF-8 or a BOM is refused, never repaired
 
 export const KIND = Object.freeze({ timeline_item: 1, object_version: 2, answer: 3, permission_request: 4, verdict: 5, status: 6, decide_again: 7 })
 export const KIND_NAME = Object.freeze({ 1: 'timeline_item', 2: 'object_version', 3: 'answer', 4: 'permission_request', 5: 'verdict', 6: 'status', 7: 'decide_again', 8: 'scribble' })
@@ -71,7 +71,7 @@ export function encodePayload(kind, content) {
 /** -> { content, content_state: 'ok' | 'newer_schema' | 'undecryptable' } */
 export function decodePayload(bytes) {
   let content
-  try { content = JSON.parse(td.decode(bytes)) } catch { return { content: null, content_state: 'undecryptable' } }
+  try { const text = td.decode(bytes); if (text.charCodeAt(0) === 0xfeff) throw new Error('bom'); content = JSON.parse(text) } catch { return { content: null, content_state: 'undecryptable' } }
   if (!content || typeof content !== 'object' || Array.isArray(content)) return { content: null, content_state: 'undecryptable' }
   if (!attachmentIdsValid(content)) return { content: null, content_state: 'undecryptable' }   // a ref id is not hex: refuse the body
   if (content.schema_version > SCHEMA_VERSION) return { content, content_state: 'newer_schema' }

@@ -159,8 +159,11 @@ const agentMethods = {
     const card = rec.object ? this.model.cards.get(rec.object.object_id) : null
     if (rec.kind === codec.KIND.answer || rec.kind === codec.KIND.decide_again) {
       if (card) {
-        const strict = rec.kind === codec.KIND.answer && rec.content?.answer_action === 'answer' && !rec.content?.trusted
-        ctx.card = { id: unhex(card.object_id), hash: unhex(card.version_hash), open: card.object_state === 'open', options: strict ? (card.options ?? []).map(o => o.key) : null }
+        // R7: every answer's choices are options; a trusted answer's choices also the agent's own recommendation.
+        const answering = rec.kind === codec.KIND.answer && rec.content?.answer_action === 'answer'
+        const recd = card.recommended == null ? [] : Array.isArray(card.recommended) ? card.recommended : [card.recommended]
+        const options = (card.options ?? []).map(o => o.key)
+        ctx.card = { id: unhex(card.object_id), hash: unhex(card.version_hash), open: card.object_state === 'open', options: answering ? (rec.content?.trusted ? options.filter(k => recd.includes(k)) : options) : null }
         if (card.answer?.envelope_hash) ctx.decision = { hash: unhex(card.answer.envelope_hash) }
         base.previous_choices = card.answer?.choices ?? null
       }
@@ -181,14 +184,23 @@ const agentMethods = {
    * that came pruned, then hand out commands in order, once per (sender, sequence) (R4). Refusals become alert/<envelope_hash>.
    */
   async _deliverCommands(commands) {
-    if (commands.some(c => !c.refused && c.rec.is_head)) {
+    // Held commands go first, in order (MEDIUM-6: a halt holds commands back, it never drops them).
+    if (this._heldCommands?.length && !this.commandsHalted) { commands = [...this._heldCommands, ...commands]; this._heldCommands = [] }
+    if (!this.commandsHalted && commands.some(c => !c.refused && c.rec.is_head)) {
       const err = await this._refreshMembers({ throwOnFork: true }).then(() => null, e => e)
       if (err?.code === 'log-fork' || err?.code === 'log-rollback') {
         this.commandsHalted = err.code
         this.emit('error', new ZError(err.code, 'the member list forked: commands halted until a human acts'))
+      } else if (err) {
+        // R3 fails closed: no answer, verdict or decide-again without a fresh member list. Hold and try again soon.
+        ;(this._heldCommands ??= []).push(...commands)
+        clearTimeout(this._heldTimer)
+        this._heldTimer = setTimeout(() => this.serial(() => this._deliverCommands([])).catch(e => this.emit('error', e)), 3000)
+        this._heldTimer.unref?.()
+        return
       }
     }
-    if (this.commandsHalted) return     // nothing is delivered (and nothing marked delivered) while halted
+    if (this.commandsHalted) { (this._heldCommands ??= []).push(...commands); return }   // held, not marked delivered
     for (const c of commands) {
       if (c.refused) continue
       const sender = z.memberAt(this.state, unhex(c.sender_device_id))
@@ -216,8 +228,8 @@ const agentMethods = {
     this._dirty.records.set('sync', this._syncRecord())
   },
 
-  /** A human resolved a fork (or the channel decides to go on): deliver commands again. */
-  resumeCommands() { this.commandsHalted = null },
+  /** A human resolved a fork (or the channel decides to go on): deliver commands again, the held ones first. */
+  resumeCommands() { this.commandsHalted = null; return this.serial(() => this._deliverCommands([])) },
 }
 
 function commandOf(model, c) {

@@ -799,6 +799,24 @@ await test('S2 removal re-keys every session even when the remover fails half-wa
   await until(async () => (await laptop.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the re-key'), 'readable')
 })
 
+await test('S2 commands fail closed (R3, MEDIUM-6): a failed member refresh holds an answer back, it is delivered once the refresh works', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'hold', options: [{ key: 'a', label: 'A' }], recommended: 'a' })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'card')
+  const cmds = []
+  agent.on('command', c => cmds.push(c))
+  const members = agent.hub.members.bind(agent.hub)
+  let fail = 1
+  agent.hub.members = async (...a) => { if (fail-- > 0) throw new z.ZError('offline', 'simulated', { status: 0 }); return members(...a) }
+  await phone.answer({ object_id: id, choices: ['a'] })
+  await settleAll(phone)
+  await sleep(300)
+  eq(cmds.length, 0, 'held while the member list could not be refreshed')
+  await until(() => cmds.some(c => c.command === 'answer'), 'delivered after the retry', 8000)
+  eq(cmds.filter(c => c.command === 'answer').length, 1, 'once')
+})
+
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
   const N = BENCH ? 20000 : 6000
   const { phone, agents: [agent] } = await room({ agents: 1 })
