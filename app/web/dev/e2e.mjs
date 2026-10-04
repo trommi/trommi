@@ -128,8 +128,9 @@ try {
   await A.shot('e2e-4-desk-card.png')
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----
-  const png = fs.readFileSync(new URL('../public/mock/files/' + fs.readdirSync(new URL('../public/mock/files/', import.meta.url)).find(f => f.endsWith('.png')), import.meta.url))
-  const ref = await agent.uploadAttachment(png, { file_name: 'entwurf.png', media_type: 'image/png', width: 1440, height: 900 })
+  // (a tall one, 1440x2160: the picture's large view must scroll)
+  const png = fs.readFileSync(new URL('../public/mock/files/tall-sheet.png', import.meta.url))
+  const ref = await agent.uploadAttachment(png, { file_name: 'entwurf.png', media_type: 'image/png', width: 1440, height: 2160 })
   t0 = Date.now()
   const picCard = await agent.sendCard({ title: 'Welcher Entwurf?', body: 'Bild anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }, { key: 'z', label: 'Später' }], attachments: [ref] })
   await A.until(`document.getElementById('row-${picCard}')`, 'picture card row')
@@ -184,6 +185,20 @@ try {
   await agent.sendMessage({ object_id: cardId, text: 'Erklärung: A ist schneller, B ist sicherer.' })
   await A.js(`trommi.router.visit('/q/${nr}')`)
   await A.until("location.pathname.startsWith('/q/') && document.querySelector('#cardpage') && document.body.textContent.includes('B ist sicherer')", 'explanation in the card thread', 15000).then(() => check(true, 'agent reply shows in the card thread'), e => check(false, e.message))
+
+  // ---- the picture, large: a tall one scrolls, and the card's answer stands beside it; a tap there decides ----
+  const pn = await A.js(`return trommi.model().byCard.get('${picCard}').number`)
+  await A.js(`trommi.router.visit('/q/${pn}/p/1')`)
+  await A.until("[...document.querySelectorAll('.t-picture-view img')].some(i => i.complete && i.naturalWidth > 0)", 'large picture shown', 15000).catch(e => check(false, e.message))
+  const big = await A.js("const v = document.querySelector('.t-picture-view'), at = v.scrollTop; v.scrollBy(0, 300); await new Promise(r => setTimeout(r, 150)); return { sh: v.scrollHeight, ch: v.clientHeight, moved: v.scrollTop - at }")
+  check(big.sh > big.ch && big.moved > 0, `a tall picture scrolls in its large view (${big.sh} > ${big.ch}, moved ${big.moved})`)
+  const tiles = await A.js("return [...document.querySelectorAll('.t-picture-answer .tc-opt[name=key]')].filter(b => { const r = b.getBoundingClientRect(); return r.width > 0 && r.top >= 0 && r.bottom <= innerHeight && document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest('.tc-opt') === b }).length")
+  check(tiles === 3, `the card's options stand in sight beside the large picture (${tiles} of 3)`)
+  await A.shot('e2e-4b-picture.png')
+  await A.js("document.querySelector('.t-picture-answer .tc-opt[value=y]').click()")
+  const tp = Date.now(); while (!commands.some(c => c.command === 'answer' && (c.choices ?? c.content?.choices ?? []).includes('y')) && Date.now() - tp < 15000) await sleep(30)
+  check(commands.some(c => c.command === 'answer' && (c.choices ?? c.content?.choices ?? []).includes('y')), 'an option tapped in the large picture view answers the card ("y" at the agent)')
+  check(await A.until("location.pathname === '/'", 'back on the Desk after answering from the picture').then(() => true, () => false), 'answering from the picture goes back to the Desk')
 
   // ---- a file from the session's composer reaches the agent whole (encrypted, uploaded, decrypted there) ----
   const sid = await A.js("return trommi.model().agents[0]?.id")
