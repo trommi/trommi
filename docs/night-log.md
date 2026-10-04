@@ -62,7 +62,7 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - S1 hub/crypto: grants from removed humans, slot exhaustion, attachment hijack, ephemeral verification, forwarded-IP trust, FORMAT.md
   - S2 core: handover always rotates, atomic re-keying, transitive register order, no chain rewind, fsync write-ahead, history after state loss, epoch/assignment checks, snapshot trust
   - D: required lease fencing + lease renewal bug
-  The Claude round-2 review is still running. **Not ready for real users until both reviews' HIGH items are fixed and verified.**
+  The Claude round-2 review is also in (scratchpad/review2-claude.md). It adds a CRITICAL path traversal: a human member could write files on the agent's machine via attachment_id. Fixed first by D + S2. Also: per-agent with_history, recovery cuts, slot-lock race, escrow redesign, quota TTL, challenge flood, join made a human/CLI action, invites default to no history, test key off by default. A third short verification pass by both reviewers follows the fixes. **Not ready for real users until both reviews' HIGH items are fixed and verified.**
 
 - Hub ops live (A2, 1b12490/e03907e/4034cd6/8dcf20f). Version endpoint + 426; signed test rooms (Ed25519 key, private key at ~/.local/share/trommi/hub-test-key); 512-write queue with 503; 4 MiB per-stream buffer with drop + resume; WAL checkpoints; quota 1 GiB with eviction; escrow route; metrics on METRICS_PORT only. Local: 4,220 env/s, 36 µs SQLite per envelope, ~1.4 KB per envelope. **Needs server clearance (refused for agents):** compose METRICS_PORT=8792 + METRICS_HOST=0.0.0.0 + ports 127.0.0.1:8792:8792, and HUB_MIN_* version minimums.
 
