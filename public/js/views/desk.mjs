@@ -125,7 +125,7 @@ ${model.open.length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon
 /** The Desk's <main>. */
 // (Controller "desk": a card that arrives out of sight is said quietly, "1 new ↓"; a knock out of sight has a strip at
 //  the list's edge that leads to it.)
-export const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="Desk" data-controller="desk" data-action="scroll->desk#look scroll@window->desk#look resize@window->desk#look turbo:before-stream-render@document->desk#changing">
+export const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="Desk" data-controller="desk" data-action="turbo:before-stream-render@document->desk#changing">
 ${pointerHost()}${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>

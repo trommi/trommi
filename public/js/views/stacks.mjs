@@ -30,6 +30,7 @@ import { deskMain } from './desk.mjs'   // (the search's page without script: th
 import { sketchSvg, ringSvg } from '../pen.js'
 
 const FAN_MAX = 8      // a fanned stack shows so many of the newest sheets, then "N more"
+const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
 export const STACKS = ['later', 'works', 'done', 'trash']
 const STRAIGHT = true    // the tabs without any tilt (css/piles.css .is-straight); decided "gerade" on card 205
 export const STAMPS = { later: 'Snooze', works: 'Working', done: 'Done', trash: 'Trash' }   // line 1 of each stack's stamp; line 2 is its sign (css/stamps.css: three Z, gear, tick) and the number
@@ -119,8 +120,10 @@ const basketSvg = n => sketchSvg(n ? 'basket-full' : 'basket', 'inbox-bin-drawin
  *  eight and "N more", or, while words are searched for, every sheet that has them, or one quiet line. */
 function stackFan(pile, base, q, hits, cap) {
   const n = pile.lines.length, frame = `stack-list-${pile.kind}`
-  const list = hits ? (hits.length ? hits.map(l => l()) : html`<p class="stack-search-none">Nothing here has these words.</p>`)
-    : html`${pile.lines.slice(0, cap).map(l => l())}${n > cap ? html`<a class="inbox-pile-item inbox-stack-more" data-nav href="${base}/?pile=${pile.kind}" title="Show all of them">${n - cap} more</a>` : ''}`
+  // (Beyond OPEN_MAX a line says how many more there are: the search above finds every one of them.)
+  const rest = k => html`<p class="stack-search-none">${k.toLocaleString('en-GB')} more: search to find them.</p>`
+  const list = hits ? (hits.length ? html`${hits.slice(0, OPEN_MAX).map(l => l())}${hits.length > OPEN_MAX ? rest(hits.length - OPEN_MAX) : ''}` : html`<p class="stack-search-none">Nothing here has these words.</p>`)
+    : html`${pile.lines.slice(0, cap).map(l => l())}${n > cap ? (cap < OPEN_MAX ? html`<a class="inbox-pile-item inbox-stack-more" data-nav href="${base}/?pile=${pile.kind}" title="Show all of them">${n - cap} more</a>` : rest(n - cap)) : ''}`
   return html`<div class="inbox-pile-sheets">${n ? html`<form class="stack-search" method="get" action="${base}/stacks/${pile.kind}" role="search" data-turbo-frame="${frame}" data-controller="stack-search" data-stack-search-kind-value="${pile.kind}" data-action="input->stack-search#typed keydown.esc->stack-search#clear"><label>${sk('search')}<input type="search" name="q" value="${q}" placeholder="Search ${pile.bin ? 'the basket' : `“${pile.word}”`}" aria-label="Search ${pile.word}" autocomplete="off" spellcheck="false" data-stack-search-target="field"></label></form>` : ''}<turbo-frame id="${frame}" class="stack-list" data-stack-search-frame="${pile.kind}">${list}</turbo-frame></div>`
 }
 
@@ -131,25 +134,33 @@ export function deskStacks(model, base, open = null, q = '') {
   const { state } = model
   const cards = stackCards(model)
   const ctx = { now: Date.now(), online: id => Boolean(model.byAgent.get(id)?.online) }
-  const lastWord = c => { const last = [...state.messages].reverse().find(m => m.card_id === c.id && m.from !== 'event' && m.text); return last ? plain(`${last.from === 'user' ? 'You: ' : ''}${last.text}`, state.assets).slice(0, 220) : '' }
+  // (The last word of each card, from one pass over the messages, made only when a line in the works is drawn.)
+  let words = null
+  const lastWord = c => {
+    if (!words) { words = new Map(); for (const m of state.messages) if (m.card_id && m.from !== 'event' && m.text) words.set(m.card_id, m) }
+    const last = words.get(c.id)
+    return last ? plain(`${last.from === 'user' ? 'You: ' : ''}${last.text}`, state.assets).slice(0, 220) : ''
+  }
   const until = c => (c.snoozed_until ? `Until ${new Date(c.snoozed_until).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : '')
   const answerOf = c => { if (c.kind === 'info') return 'Read'; if (c.trusted) return `${WORDS.trust}${advisedLabels(c) ? `: ${advisedLabels(c)}` : ''}`; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
   // A sheet: the card, why it lies there, its grey line. (An info he read he closed himself: only "Read".)
-  const answered = c => ({ card: c, kind: 'answered', said: `${answerOf(c)}${c.status === 'done' && c.kind !== 'info' ? ' · done by the agent' : c.status === 'decided' && stackOf(c, ctx) === 'done' ? ' · not closed by the agent' : ''}` })
-  const thrown = c => (c.status === 'shredded' ? { card: c, kind: 'shredded', said: 'Shredded' } : { card: c, kind: 'withdrawn', said: `Withdrawn${c.summary ? `: ${plain(c.summary, state.assets).slice(0, 220)}` : ''}` })
+  // A sheet's grey line is worked out only when the sheet is drawn or searched (a Done stack can hold thousands).
+  const sheet = (card, kind, say) => { let said = null; return { card, kind, get said() { return (said ??= say()) } } }
+  const answered = c => sheet(c, 'answered', () => `${answerOf(c)}${c.status === 'done' && c.kind !== 'info' ? ' · done by the agent' : c.status === 'decided' && stackOf(c, ctx) === 'done' ? ' · not closed by the agent' : ''}`)
+  const thrown = c => (c.status === 'shredded' ? sheet(c, 'shredded', () => 'Shredded') : sheet(c, 'withdrawn', () => `Withdrawn${c.summary ? `: ${plain(c.summary, state.assets).slice(0, 220)}` : ''}`))
   const piles = [
-    { kind: 'later', word: 'Later', sheets: cards.later.map(c => ({ card: c, kind: 'later', said: until(c) })) },
-    { kind: 'works', word: 'In the works', sheets: [...cards.revising.map(c => ({ card: c, kind: 'asked', said: lastWord(c) })), ...cards.acting.map(answered)] },
+    { kind: 'later', word: 'Later', sheets: cards.later.map(c => sheet(c, 'later', () => until(c))) },
+    { kind: 'works', word: 'In the works', sheets: [...cards.revising.map(c => sheet(c, 'asked', () => lastWord(c))), ...cards.acting.map(answered)] },
     { kind: 'done', also: 'answered', word: 'Done', sheets: cards.done.map(answered) },
     { kind: 'trash', word: 'Trash', bin: true, sheets: cards.trash.map(thrown) },
   ]
-  const words = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
-  const found = sheet => { const text = `${sheet.card.title} ${model.byAgent.get(sheet.card.agent)?.name ?? ''} ${sheet.said}`.toLowerCase(); return words.every(w => text.includes(w)) }
+  const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
+  const found = sheet => { const text = `${sheet.card.title} ${model.byAgent.get(sheet.card.agent)?.name ?? ''} ${sheet.said}`.toLowerCase(); return terms.every(w => text.includes(w)) }
   return html`<div class="inbox-stacks stack-tabs${STRAIGHT ? ' is-straight' : ''}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut">${piles.map((pile, at) => {
     pile.lines = pile.sheets.map(sheet => () => line(sheet.card, sheet.kind, sheet.said, model, base))
     const n = pile.lines.length, names = [pile.kind, ...(pile.also ? [pile.also] : [])]
     const stands = n > 0 && open === pile.kind
-    const cap = stands ? n : FAN_MAX
+    const cap = stands ? OPEN_MAX : FAN_MAX
     const cls = `${n ? `inbox-stack inbox-group inbox-pile ${names.map(k => `inbox-group-${k}`).join(' ')}${stands ? ' is-open' : ''}` : 'inbox-stack is-empty'}${pile.bin ? ' inbox-bin' : ''}`
     const title = pile.bin ? `${pile.word}: show what is in it` : 'Fan the stack out'
     // On a stack the stamp carries the count; the basket has it as a small number.
@@ -158,7 +169,7 @@ export function deskStacks(model, base, open = null, q = '') {
     const name = `${pile.word}, ${n === 1 ? '1 card' : `${n} cards`}`
     return html`<section class="${cls}" data-stack="${pile.kind}"${n ? html` data-pile="${pile.kind}" data-piles-target="pile"` : html` data-pile-empty="${pile.kind}"`} style="--at:${at}">
 <h3 class="inbox-stack-title"><button class="${n ? `inbox-stack-head inbox-pile-head ${names.map(k => `inbox-${k}-toggle`).join(' ')}` : 'inbox-stack-head'}" type="button" aria-label="${name}"${n ? html` aria-expanded="${String(stands)}" title="${title}" data-action="click->piles#toggle"` : raw(' disabled')}>${tab}</button></h3>
-${stackFan(pile, base, stands ? q : '', stands && words.length ? pile.sheets.filter(found).map(sheet => () => line(sheet.card, sheet.kind, sheet.said, model, base)) : null, cap)}
+${stackFan(pile, base, stands ? q : '', stands && terms.length ? pile.sheets.filter(found).map(sheet => () => line(sheet.card, sheet.kind, sheet.said, model, base)) : null, cap)}
 </section>`
   })}</div>`
 }
