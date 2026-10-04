@@ -69,13 +69,6 @@ export function stackCards(model) {
   }
 }
 
-/** How many cards lie in each place: { later, works, done, trash }. Every place that counts them uses this (the tabs,
- *  the Desk's heading "Desk is clear. 7 working · 2 snoozed"), so the numbers agree. */
-export function stackCounts(model) {
-  const c = stackCards(model)
-  return { later: c.later.length, works: c.revising.length + c.acting.length, done: c.done.length, trash: c.trash.length }
-}
-
 // ---- a line on one of the places: one sheet of a fan ----
 // kind: why it lies there: 'later' | 'asked' (in revision) | 'answered' | 'shredded' | 'withdrawn'.
 function line(card, kind, said, model, base) {

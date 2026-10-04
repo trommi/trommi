@@ -175,8 +175,8 @@ dark variant looks different on purpose.
 |---|---|---|---|---|
 | desk | `/?desk=main` → `/` | sidebar with sessions, Desk pill with count, "Next N →", rows grouped by sender, tiles, stamped stack tabs | load | `#desk-list .inbox-row` |
 | desk-test | `/?desk=<testDesk>` → `/` | fixture rows of Test Alpha/Beta (thumbs, Choose, info, knocks) | testDesk id from the menu's `.menu-desk[data-desk]` or fixtures JSON `desk` | `#desk-list .inbox-row` |
-| desk-empty | `/` on a board with no open card | "Desk is clear." + drawing + "As soon as an agent has a question…" | board without fixtures/agents, or answer every open card | `#desk-head h2`, `.inbox-empty` |
-| desk-clear-below | `/` with only snoozed/with-agent cards | "Desk is clear." + "N working · N snoozed" | snooze the last open card | `#desk-head p` |
+| desk-empty | `/` on a board with no open card | "✓ Clear" (+ "N working" pill) + drawing + "As soon as an agent has a question…" | board without fixtures/agents, or answer every open card | `#desk-news .news-clear h2`, `.inbox-empty` |
+| desk-clear-below | `/` with only snoozed/with-agent cards | "✓ Clear" + "N working" pill (sessions at work) | snooze the last open card | `#desk-news .news-working` |
 | desk-pile-later | `/?desk=<testDesk>` then `/?pile=later` | Snooze tab open, line "Until <day hh:mm>", Wake up | two loads (finding 1) | `[data-pile="later"].is-open .inbox-pile-sheets` |
 | desk-pile-works | `/?pile=works` | Working tab open (gear), handback fixture "In revision" line with Take back | testDesk cookie | `[data-pile="works"].is-open` |
 | desk-pile-done | `/?pile=done` | Done list: "Ja · not closed by the agent"/"· done by the agent", Take back | testDesk cookie | `[data-pile="done"].is-open` |
