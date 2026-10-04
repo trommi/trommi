@@ -151,6 +151,9 @@ export class Client {
       this.delivered = new Map(Object.entries(sync.delivered ?? {}))
       this.frontiers = new Map(Object.entries(sync.frontiers ?? {}).map(([k, v]) => [k, new Map(Object.entries(v))]))
     }
+    // R4: the history boundary. A process that starts without sync state treats every command sent before it started as
+    // history, not as a prompt, and keeps that boundary across restarts (a hub replaying old commands later gains nothing).
+    this.historyBefore = sync ? (sync.history_before ?? null) : this.startedAt
     this.ledgerSet = new Set((await st.get('ledger')) ?? [])
     const m = this.model
     for (const [sid, rec] of Object.entries(this.roomRecord.sessions ?? {})) {
@@ -728,7 +731,7 @@ export class Client {
   }
 
   _syncRecord() {
-    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered),
+    return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null,
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
   }
 
@@ -770,6 +773,7 @@ export class Client {
     }
     return this.serial(async () => {
       try {
+        if (this._storageFailed) throw new ZError('storage-failed', 'storage failed earlier: restart before sending')
         if (typeof content === 'function') { const built = await content(); content = built.content; object = built.object ?? object; bind = built.bind ?? bind; session_id = built.session_id ?? session_id }
         const payload = codec.encodePayload(kind, content)
         if (payload.length > 60_000) throw new ZError('too-large', 'body over 60 KB: put it into an attachment')
@@ -796,7 +800,14 @@ export class Client {
         this.model.outbox.push(pub)
         // The own chain and the outbox reach storage before the hub sees the envelope: a crash must not reuse a number.
         const me = b64u(this.device.id)
-        await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(this.chains.get(me))]])
+        try { await this.storage.setMany([['outbox', this.outbox], [`chain/${me}`, chainToJson(this.chains.get(me))]], { durable: true }) }
+        catch (e) {
+          // Not on disk: never post it (a crash would reuse its number). This device stops sending until restarted.
+          this.outbox.splice(this.outbox.indexOf(item), 1); this.model.outbox.splice(this.model.outbox.indexOf(pub), 1)
+          this._storageFailed = e
+          this.emit('error', new ZError('storage-failed', `could not save before sending: ${e.message}`))
+          throw new ZError('storage-failed', `could not save before sending: ${e.message}`)
+        }
         const ch = M.emptyChange(); ch.outbox = true; this._emitChange(ch)
         this._pumpOutbox()
         return { local_id, envelope_hash: hashHex, seq: sealed.seq }
@@ -1427,6 +1438,9 @@ export class Client {
     if (!k) throw new ZError('not-found', `no session ${session_id}`)
     const current = k.secrets.get(k.state.epoch)
     const active = agent_device_ids.filter(a => z.memberAt(this.state, unhex(a))?.role === ROLE.AGENT)
+    // Whoever loses access loses the key: any agent dropped from the set means a new session key epoch (R6). A handover
+    // "with history" rotates too; the new holder reads back through the back links.
+    if (k.state.agentIds.some(a => !active.includes(a))) rotate = true
     const r = await G.createSessionGrant({ state: this.state, signer: this.device, sessionState: k.state, current, agentIds: active, withHistory: with_history, rotate: rotate || !current })
     await this._postGrant(r, current)
     return r.sessionState
