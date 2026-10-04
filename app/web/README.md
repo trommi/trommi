@@ -70,19 +70,29 @@ from memory. `node dev/build.mjs` checks only; `--write` writes into `public/` (
 The service worker: a new deploy takes over at once and the page reloads (a field with unsent words: a quiet "Reload"
 instead); files come network first, the cache only offline. On the dev server (`VERSION "dev"`) there is none.
 
-## The Whiteboard
+## The Desk
 
-The Desk is cards on plain paper. Drawing has a place of its own: **Whiteboard**, the first row of the sidebar (on a
-phone the first chip of the sessions' line), the page `/whiteboard` (`P` leads there with the pen in hand; the old
-address `/pad` too). The page is the pad (`whiteboard.mjs` mountPad, on the page itself) as large as the main area; select or
-frame something and **Send to…** a session, as before. Memos stay what they are: the round button on every page and
-the NOTES stack on the Desk.
+- **Rows:** every open card is one row in the hub's order, blocking first, then knocks; infos stand among them (What?? and
+  ✓ instead of answers). A row: the session's drawing (a click selects it; Shift: a range), the urgency sign, the title,
+  two lines of teaser (`card.teaser`, else the body), the pictures as a small fan, square answer tiles. A row that
+  leaves glides out while the rows below move up (`app.mjs` `flipOut`, transform only).
+- **Selection bar:** while rows are selected, Later (the pull-tag: the rows go down into Off the desk), Egal, Read (with
+  infos), Shred; one POST `/cards/batch`, one toast with Undo.
+- **With the agents:** answered cards whose session is still at it, one line each, below the open ones.
+- **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
+  are) and Media (a pile of the newest pictures; the gallery at `/assets`).
+- **Note:** one yellow note at the sidebar's foot; it unfolds to write, sends to the crown (`sidebar.mjs` `sideNotes`).
+- Trial switches, kept for the tab: `?group=1` (cards grouped by main session), `?subcards=1` (a main's subs as cards).
 
-What is drawn is the desk's canvas timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the core's `canvas.mjs`: a desk id that is
-not 32 hex, such as `main`, is folded into 16 bytes, the same on every device). The Desk's paper before it wrote to
-`desk/<desk_id>` with the plain id, which the core refuses since protocol v1.1 (`parseTimelineId`): none of its strokes
-reached the hub, so there was nothing to carry over. A memo that lay on the paper (place `paper`) is read as put away
-and waits on the NOTES stack (`notes.mjs`); nothing is rewritten.
+## The Scribble Board
+
+Drawing is the back of the Desk: its bottom-right corner is lifted; a tap, a pull or `P` turns the page to the
+**Scribble Board** (`/scribble-board`; the same corner, Esc or `P` turns back; `ui.mjs` controller `curl`). The page is
+the pad (`whiteboard.mjs` mountPad) as large as the main area; select or frame something and **Send to…** a session.
+One drawing on it is a scribble.
+
+What is drawn is the desk's canvas timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the
+core's `canvas.mjs`: a desk id that is not 32 hex, such as `main`, is folded into 16 bytes, the same on every device).
 
 ## The account (what a person sees)
 
@@ -125,7 +135,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 ### Addresses
 
-`/` the Desk · `/desk/:id` switch desk · `/walk` Next · `/q/:nr` or `/c/:nr` a card (`?v=n` an older version, `/p/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/q/:nr` a card from its session · `/agents` the Ledger · `/devices` the room's devices · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
+`/` the Desk · `/desk/:id` switch desk · `/walk` Rapid fire · `/scribble-board` the Scribble Board · `/q/:nr` or `/c/:nr` a card (`?v=n` an older version, `/p/:n` a picture) · `/s/:session` a session (`/files`, `/files/:n`) · `/s/:session/q/:nr` a card from its session · `/agents` the Ledger · `/devices` the room's devices · `/pair/:invite_id` an invite · `/join#v1.<hub>.<room>.<secret>` joining (the secret never reaches a server and leaves the address bar once read).
 
 ### IndexedDB
 

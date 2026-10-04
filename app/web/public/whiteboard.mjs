@@ -9,7 +9,7 @@
 // ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
 // from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's canvas.mjs).
-import { Controller, controller, html, markArt, raw, sketchSvg } from './ui.mjs'
+import { Controller, controller, curlHTML, html, markArt, raw, sketchSvg } from './ui.mjs'
 import { canvasWire } from './app.mjs'
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
@@ -31,10 +31,10 @@ function whiteboardSessions(model) {
   return html`<div id="whiteboard-sessions" hidden data-sessions="${JSON.stringify(sessions)}"></div>`
 }
 
-const whiteboardMain = model => raw(`<main id="whiteboard" aria-label="Whiteboard" data-controller="whiteboard" data-whiteboard-canvas-value="${canvasOf(model)}">
+const whiteboardMain = model => raw(`<main id="whiteboard" aria-label="Scribble Board" data-controller="whiteboard" data-whiteboard-canvas-value="${canvasOf(model)}">
 ${whiteboardSessions(model)}
 <div class="pad" id="pad" data-tool="pen" data-place data-owns-keys>
-  <canvas class="pad-canvas" id="canvas" role="img" aria-label="Whiteboard: an endless surface for notes, drawings and pictures"></canvas>
+  <canvas class="pad-canvas" id="canvas" role="img" aria-label="Scribble Board: an endless surface for notes, drawings and pictures"></canvas>
 
   <p class="pad-hint" id="hint"><b>Click anywhere</b> and type. <b>Drag</b> to draw.</p>
 
@@ -46,7 +46,7 @@ ${whiteboardSessions(model)}
 
   <div class="pad-top">
     <div class="pad-pill pad-title">
-            <strong id="pad-word">Whiteboard</strong>
+            <strong id="pad-word">Scribble Board</strong>
     </div>
     <span class="pad-gap"></span>
     <div class="pad-pill">
@@ -185,14 +185,14 @@ ${whiteboardSessions(model)}
     </section>
   </div>
 </dialog>
+${curlHTML('pad', '/')}
 </main>`)
 
 export function register(t) {
-  // The Scratchpad's old address.
-  t.get(/^\/pad$/, ({ res }) => { t.redirect(res, '/whiteboard') })
-  t.get(/^\/whiteboard$/, ({ req, res }) => {
+  // The Scribble Board (one drawing on it is a scribble).
+  t.get(/^\/scribble-board$/, ({ req, res }) => {
     const m = t.model()
-    t.page(req, res, { model: m, title: `Whiteboard · Trommi`, view: 'whiteboard', bodyAttrs: ' data-page="whiteboard"', main: whiteboardMain(m) })
+    t.page(req, res, { model: m, title: `Scribble Board · Trommi`, view: 'whiteboard', bodyAttrs: ' data-page="whiteboard"', main: whiteboardMain(m) })
   })
   t.live('whiteboard', {
     take: m => ({ sessions: String(whiteboardSessions(m)), canvas: canvasOf(m) }),
@@ -227,7 +227,7 @@ controller('whiteboard', class extends Controller {
 // Pad elements: the record, its geometry, how it is painted and how it is hit.
 // No DOM state in here, so the same code paints the screen and the PNG an agent gets.
 //
-// One element is one record (see docs/pad.md):
+// One element is one record:
 //   { id, pad, type, x, y, w, h, rotation, z, group, author, created, updated, rev,
 //     blob, data, sent: [{ session, at, message_id, rev }] }
 // blob is the id of the element's bytes in the blob store (the picture of an image,
@@ -855,7 +855,7 @@ function dataUrlBytes(url) {
 // ---- fly ----
 // The swoosh: a cut-out piece of the paper lifts off, flies in an arc to a session's mark and is
 // swallowed there. Used by the pad itself (to a row of its chooser) and by the board around it
-// (js/padlink.js, to a strip of session marks at the edge), so both look the same.
+// (to a strip of session marks at the edge), so both look the same.
 //
 //   await flySheet(layer, { png, rect: { x, y, w, h }, target: node })
 //
@@ -2047,7 +2047,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   })
   $('send-other').addEventListener('click', () => ($('send-menu').hidden ? openSendMenu() : closeSendMenu()))
 
-  /** What a session receives for a selection (docs/pad.md, "Sending a selection"). */
+  /** What a session receives for a selection. */
   async function buildPayload(session, list) {
     await Promise.all(list.filter(e => e.type === 'image' && e.blob).map(e => picture(e.blob).ready))
     const shot = renderPNG(list, env())
@@ -2201,7 +2201,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   function markOf(s) {
     const mark = Object.assign(document.createElement('span'), { className: 'pad-mark' })
     if (s.hue != null) mark.style.setProperty('--hue', s.hue)
-    // The scribble comes from the board's own page (js/padlink.js), not from anyone's input.
+    // The scribble comes from the board's own page, not from anyone's input.
     if (s.mark) mark.innerHTML = s.mark
     else mark.textContent = (s.name || '?').trim().charAt(0).toUpperCase()
     return mark

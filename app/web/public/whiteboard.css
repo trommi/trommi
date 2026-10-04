@@ -1,11 +1,25 @@
-/* The Whiteboard (whiteboard.mjs): its row at the top of the sidebar and its page, the pad as large as the
-   main area. The Desk itself is cards on plain paper. */
+/* The Sketchpad (whiteboard.mjs; called Whiteboard until 4 October): its card under the Desk box and its page, the pad
+   as large as the main area. The Desk itself is cards on plain paper. */
 
-/* ---- the row: the pen in the avatar's place, marked while its page is in view ---- */
+/* ---- the drawer: a second card taped under the Desk box, pulled out of the desk (his pick, reference wb2-2) ---- */
 .whiteboard-mark svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; }
 .whiteboard-mark { color: var(--fg); }
+.whiteboard-sub { display: none; }
 body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { background: var(--surface); box-shadow: var(--shadow-sm); }
 .whiteboard-row { margin-bottom: var(--s-2); }
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) .whiteboard-row { position: sticky; top: 58px; z-index: 4; margin: -16px 6px var(--s-4); }
+  :root:not([data-rail="folded"]) .whiteboard-row .agent-entry { min-height: 66px; gap: 12px; padding: 10px 14px 10px 12px; border-top: 1px dashed var(--line-strong); border-radius: 0 0 14px 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); rotate: -.4deg; transition: translate 140ms ease-out, box-shadow 140ms; }
+  :root:not([data-rail="folded"]) .whiteboard-row .agent-entry:hover { translate: 0 2px; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+  :root:not([data-rail="folded"]) body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { box-shadow: 0 0 0 2px var(--fg), var(--shadow-sm); }
+  :root:not([data-rail="folded"]) .whiteboard-row .agent-avatar.whiteboard-mark { width: 42px; height: 42px; background: none; box-shadow: none; display: grid; place-items: center; }
+  :root:not([data-rail="folded"]) .whiteboard-mark svg { width: 38px; height: 38px; stroke-width: 1.7; }
+  :root:not([data-rail="folded"]) .whiteboard-row .agent-text strong { font: 800 1.3rem/1.05 var(--display); letter-spacing: -.02em; }
+  :root:not([data-rail="folded"]) .whiteboard-sub { display: block; margin-top: 3px; font: 500 var(--t-xs)/1.2 var(--font); color: var(--muted); white-space: nowrap; }
+  /* the tape that holds it to the Desk box: a strip of translucent paper over the seam */
+  :root:not([data-rail="folded"]) .whiteboard-row::before { content: ""; position: absolute; z-index: 1; left: 58%; top: -7px; width: 46px; height: 16px; rotate: 3deg; background: color-mix(in srgb, #e9dfb8 70%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, #b9a970 35%, transparent); pointer-events: none; }
+  :root[data-theme="dark"]:not([data-rail="folded"]) .whiteboard-row::before { background: color-mix(in srgb, #8a7d52 55%, transparent); }
+}
 
 /* ---- the page ---- */
 #whiteboard { display: none; }
