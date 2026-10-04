@@ -683,7 +683,7 @@ export class Client {
     const r = prefetched ?? await this.hub.devices()
     const change = M.emptyChange()
     M.applyDevices(this.model, r.devices, change)
-    await this.storage.set('devices', r.devices.map(d => ({ device_id: d.device_id, is_online: d.is_online, agent_session_id: d.agent_session_id ?? null })))
+    await this.storage.set('devices', r.devices.map(d => ({ device_id: d.device_id, is_online: d.is_online, offline_since: d.offline_since ?? null, agent_session_id: d.agent_session_id ?? null })))
     this._emitChange(change)
   }
 

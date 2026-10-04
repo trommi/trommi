@@ -222,6 +222,8 @@ export class Hub {
   }
   sealedSessionKeys(session_id, after_session_key_epoch = 0) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/sealed_session_keys`), { query: { after_session_key_epoch } }) }
   sessionBackLinks(session_id) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/key_back_links`)) }
+  /** Loss detection: an agent says whether it has running work (one push to the humans if it then drops away). */
+  agentWatch(working) { return this.request('POST', this.roomPath('/agent_watch'), { body: { working: Boolean(working) }, lease: true }) }
   postEphemeral(envelope) { return this.request('POST', this.roomPath('/ephemeral'), { body: { envelope }, lease: true }) }
   putAttachment(attachment_id, bytes) { return this.request('PUT', this.roomPath(`/attachments/${checkId('attachment_id', attachment_id)}`), { raw: bytes, lease: true }) }
   /** R4: an agent names its lease generation on every write and stream (none for humans). */

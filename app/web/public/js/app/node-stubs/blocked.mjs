@@ -19,14 +19,22 @@ export const OFFLINE_GRACE_MS = 60000
 // When this hub started: every session is away until it links again, and that is no stop either.
 const STARTED = Date.now()
 const minutes = ms => Math.max(1, Math.round(ms / 60000))
+const two = n => String(n).padStart(2, '0')
+/** 14:05 today, else "3 Oct 14:05". */
+const clock = (t, now) => {
+  const d = new Date(t), today = new Date(now).toDateString() === d.toDateString()
+  return `${today ? '' : `${d.getDate()} ${d.toLocaleString('en', { month: 'short' })} `}${two(d.getHours())}:${two(d.getMinutes())}`
+}
 
 /** agent: a record of state.agents (online kept by the hub's commit). Returns null, or { why, text } where text is
- *  the plain words for a tooltip ("Disconnected while working", "Error: …", "Waiting for permission", "Silent for 14 min"). */
+ *  the plain words for a tooltip ("Connection lost since 14:05", "Error: …", "Waiting for permission", "Silent for 14 min"). */
 export function blockedOf(agent, state, now = Date.now()) {
   if (!agent || agent.archived) return null
   const working = (state.tasks ?? []).filter(t => t.agent === agent.id && t.state === 'working')
   if (!agent.online) {
-    if (working.length && now - Math.max(agent.seen ?? 0, STARTED) >= OFFLINE_GRACE_MS) return { why: 'offline', text: 'Disconnected while working' }
+    // offline_since: when the hub saw its last stream close (hub /devices); older hubs only give the last activity.
+    const since = agent.offline_since ?? null
+    if (working.length && now - Math.max(since ?? agent.seen ?? 0, STARTED) >= OFFLINE_GRACE_MS) return { why: 'offline', text: since ? `Connection lost since ${clock(since, now)}` : 'Disconnected while working', since }
     return null
   }
   if (agent.error) return { why: 'error', text: `Error: ${String(agent.error).slice(0, 160)}` }

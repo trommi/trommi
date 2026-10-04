@@ -762,6 +762,48 @@ test('push: a send_push envelope reaches every other human device as { room_id, 
   fake.close()
 })
 
+test('loss watch: an agent with running work whose stream stays gone gets ONE push to the humans; offline_since; a disarm or a return pushes nothing', async () => {
+  const received = []
+  const fake = http.createServer((req, res) => { req.on('data', () => {}); req.on('end', () => { received.push(req.url); res.writeHead(201).end() }) })
+  await new Promise(ok2 => fake.listen(0, '127.0.0.1', ok2))
+  const pushHost = `127.0.0.1:${fake.address().port}`
+  const w = await world({ pushHosts: [pushHost], lossMs: 300 })
+  const sub = () => { const e = crypto.createECDH('prime256v1'); return { p256dh: e.generateKeys().toString('base64url'), auth: crypto.randomBytes(16).toString('base64url') } }
+  await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.phone.token, body: { subscription: { endpoint: `http://${pushHost}/push/phone`, keys: sub() } } })
+  const lease = await leaseHeader(w, w.agent)
+  await refused(w, 'POST', `${R(w)}/agent_watch`, { token: w.phone.token, body: { working: true } }, 403, 'forbidden')
+  await refused(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: 'yes' }, headers: lease }, 400, 'bad-argument')
+  await refused(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working: true }, headers: { 'x-lease-generation': '999' } }, 409, 'lease-lost')
+  const arm = working => ok(w, 'POST', `${R(w)}/agent_watch`, { token: w.agent.token, body: { working }, headers: lease })
+  const agentRow = async () => (await ok(w, 'GET', `${R(w)}/devices`, { token: w.phone.token })).devices.find(d => d.device_role === 'agent')
+  // Not armed: a drop pushes nothing.
+  let s = await openStream(w, w.agent)
+  s.close(); await sleep(600)
+  assert.equal(received.length, 0)
+  const row = await agentRow()
+  assert.equal(row.is_online, false); assert.ok(row.offline_since > Date.now() - 5000, 'offline_since')
+  // Armed, the stream drops and comes back within the time: nothing.
+  await arm(true)
+  s = await openStream(w, w.agent)
+  assert.equal((await agentRow()).offline_since, undefined, 'online: no offline_since')
+  s.close(); await sleep(100)
+  s = await openStream(w, w.agent)
+  await sleep(500)
+  assert.equal(received.length, 0)
+  // Armed and gone for good: one push, to the human, and only once.
+  s.close()
+  for (let i = 0; i < 50 && !received.length; i++) await sleep(20)
+  assert.deepEqual(received, ['/push/phone'])
+  s = await openStream(w, w.agent); s.close(); await sleep(600)
+  assert.equal(received.length, 1, 'one push until armed again')
+  // Disarmed (a clean stop): nothing.
+  await arm(true); await arm(false)
+  s = await openStream(w, w.agent); s.close(); await sleep(600)
+  assert.equal(received.length, 1)
+  await w.hub.close()
+  fake.close()
+})
+
 test('retention: an answered card and its chat lose their bodies 30 days after the hub received the answer, its attachments go; open ones stay; derived tables rebuild', async () => {
   let clock = Date.now()
   const w = await world({ now: () => clock })

@@ -88,7 +88,7 @@ export async function startHub({
   origins = `${process.env.HUB_ORIGINS || ''},${process.env.HUB_PREVIEW_ORIGINS || ''}`.split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
   trustCloudflare = process.env.HUB_TRUST_CF === '1', appUrl = process.env.HUB_APP_URL || 'https://app.trommi.com', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
-  pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT,
+  pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS, adminPort = process.env.ADMIN_PORT, lossMs = Number(process.env.HUB_LOSS_MS || 60000),
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
@@ -111,7 +111,7 @@ export async function startHub({
     if (!p) {
       if (!roomExists(id)) fail('no-room', 'no such room on this hub')
       const t = performance.now()
-      p = makeHub(id).then(hub => { stats.roomLoads.push({ room_id: id, ms: performance.now() - t }); return { id, hub, streams: new Set() } })
+      p = makeHub(id).then(hub => { stats.roomLoads.push({ room_id: id, ms: performance.now() - t }); return { id, hub, streams: new Set(), offlineSince: new Map(), watch: new Map() } })
       p.catch(err => { rooms.delete(id); log(`room ${id.slice(0, 8)} failed to load: ${err.message}`) })
       rooms.set(id, p)
     }
@@ -226,7 +226,7 @@ export async function startHub({
     const p = (async () => {
       const hub = await makeHub(id)
       const r = await hub.found({ entry, wraps })
-      return { r, room: { id, hub, streams: new Set() } }
+      return { r, room: { id, hub, streams: new Set(), offlineSince: new Map(), watch: new Map() } }
     })()
     const roomPromise = p.then(x => x.room)
     roomPromise.catch(() => {})
@@ -282,6 +282,32 @@ export async function startHub({
     if (out.push && !pushLimit.take(`${r.id}:${me.id}`)) sendPushes(r, me.id, out).catch(err => log(`push: ${err.message}`))
   }
 
+  /**
+   * Loss detection: an agent that said it has running work (POST agent_watch { working: true }) and whose last stream
+   * stays closed for lossMs gets one push to the room's human devices. A clean stop says working: false first; the
+   * next push needs a new working: true. (The hub learns one bit, "this agent has running work", and nothing else.)
+   */
+  function lostWhileWorking(r, deviceId) {
+    const w = r.watch.get(deviceId)
+    if (!w?.working) return
+    clearTimeout(w.timer)
+    w.timer = setTimeout(() => {
+      if (deviceStreams(r, deviceId).length || !r.watch.get(deviceId)?.working) return
+      r.watch.delete(deviceId)
+      sendLossPush(r, deviceId).catch(err => log(`push: ${err.message}`))
+    }, lossMs)
+    w.timer.unref?.()
+  }
+  async function sendLossPush(r, deviceId) {
+    const subs = db.q(`SELECT p.device_id, p.endpoint, p.subscription FROM push_subscriptions p JOIN devices d ON d.room_id = p.room_id AND d.device_id = p.device_id
+      WHERE p.room_id = ? AND d.device_role = 'human' AND d.removed_entry_number IS NULL`).all(r.id)
+    const message = { room_id: r.id, kind: 'agent-lost', device_id: deviceId, since: r.offlineSince.get(deviceId) ?? null }
+    await Promise.all(subs.map(async s => {
+      const status = await push.send(JSON.parse(s.subscription), message, { urgency: 'high' })
+      if (status === 404 || status === 410) db.q('DELETE FROM push_subscriptions WHERE room_id = ? AND device_id = ? AND endpoint = ?').run(r.id, s.device_id, s.endpoint)
+    }))
+  }
+
   async function sendPushes(r, senderId, out) {
     const urgency = out.card?.urgency ?? null
     const subs = db.q(`SELECT p.device_id, p.endpoint, p.subscription FROM push_subscriptions p JOIN devices d ON d.room_id = p.room_id AND d.device_id = p.device_id
@@ -327,10 +353,15 @@ export async function startHub({
     // An agent's lease lives while it has a stream open, and 60 s after the last one closed.
     const lease = me.role === 'agent' ? setInterval(() => r.hub.touchLease(me.id), 20000) : null
     if (lease) r.hub.touchLease(me.id)
+    r.offlineSince.delete(me.id)
+    clearTimeout(r.watch.get(me.id)?.timer)
     const done = () => {
       clearInterval(ping); if (lease) clearInterval(lease)
       if (!r.streams.delete(s)) return
       if (me.role === 'agent') r.hub.touchLease(me.id)
+      if (deviceStreams(r, me.id).length) return
+      r.offlineSince.set(me.id, now())
+      lostWhileWorking(r, me.id)
     }
     res.on('close', done)
     res.write(': trommi hub\n\n')
@@ -486,7 +517,7 @@ export async function startHub({
       hub.authorise(bearer(req), { member: true })
       const online = new Set([...r.streams].map(s => s.deviceId))
       const devices = db.q('SELECT device_id, device_role, removed_entry_number FROM devices WHERE room_id = ? ORDER BY added_entry_number, device_id').all(r.id)
-        .map(d => ({ device_id: d.device_id, device_role: d.device_role, is_active: d.removed_entry_number == null, is_online: online.has(d.device_id) }))
+        .map(d => ({ device_id: d.device_id, device_role: d.device_role, is_active: d.removed_entry_number == null, is_online: online.has(d.device_id), ...(!online.has(d.device_id) && r.offlineSince.has(d.device_id) ? { offline_since: r.offlineSince.get(d.device_id) } : {}) }))
       return send(res, 200, { last_entry_number: hub.state.head.seq, devices })
     }
     if (m === 'GET' && a === 'sealed_room_keys' && !b) {
@@ -588,6 +619,18 @@ export async function startHub({
       // The new process reconnects naming it; the old one reconnects naming its own and gets lease-lost, as its posts do.
       if (out.previousInstance) closeStreams(r, [me.id], s => s.leaseGeneration !== out.generation)
       return send(res, 200, { lease_generation: out.generation, expires_at: out.expiresAt })
+    }
+    if (m === 'POST' && a === 'agent_watch' && !b) {
+      // Loss detection (lostWhileWorking): the agent says whether it has running work, under its lease.
+      const me = hub.authorise(bearer(req), { member: true })
+      if (me.role !== 'agent') fail('forbidden', 'only an agent arms the loss watch')
+      fenced(r, req, me)
+      const body = await readJson(req)
+      if (typeof body.working !== 'boolean') fail('bad-argument', 'working')
+      const w = r.watch.get(me.id)
+      if (body.working) { if (!w) r.watch.set(me.id, { working: true, timer: null }) }
+      else if (w) { clearTimeout(w.timer); r.watch.delete(me.id) }
+      return send(res, 200, { ok: true })
     }
     if (m === 'POST' && a === 'ephemeral' && !b) {
       // Typing, cursors, a pen preview: a sealed envelope relayed to the open streams only, never stored.

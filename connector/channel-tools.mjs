@@ -13,6 +13,7 @@ export const STATUSES = ['decision', 'working', 'done']
 
 export const INSTRUCTIONS = [
   'You are connected to Trommi, a web page with a chat and a stack of decision cards. The human is on that page, often on a phone, and cannot see this terminal.',
+  'If trommi tools fail or report "not in a room", tell the human through `node <connector> say \'…\' --urgent` via Bash (it reaches the phone without this MCP connection).',
   'Messages from the human arrive as <channel source="board" kind="chat">. Nothing you write in the terminal reaches them: every answer, question, and progress update for the human MUST be sent with the reply tool. After handling a channel message, always call reply at least once, even if only to confirm.',
   // Claude Code keeps only the first 2048 characters of these instructions: what must never be missed stands here, early.
   'When you start a subagent, call open_session for it first (name = short task name, e.g. "Design") and have it write with session: <name> on every tool call; when it finishes, post its result there (reply with session: <name>) and call close_session with that name. The board then shows each helper as its own session under yours and archives it when it is done.',

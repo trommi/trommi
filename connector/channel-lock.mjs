@@ -16,6 +16,9 @@
 // taken over: two Claude sessions in one folder stay two slots.
 import fs from 'node:fs'
 import path from 'node:path'
+import os from 'node:os'
+import net from 'node:net'
+import crypto from 'node:crypto'
 import { execFileSync } from 'node:child_process'
 
 export const alive = pid => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
@@ -72,3 +75,57 @@ export async function claimSlot(p, { session = '', wait_ms = 4000 } = {}) {
 
 /** Give the slot back. */
 export function unlockSlot(p) { fs.rmSync(claimFile(p), { force: true }) }
+
+// ---- the slot's door: a local socket of the process that holds a keyed slot ----------------------------------
+//
+// `channel.mjs say` (the emergency side channel) must not open a key that a running connector holds: two processes
+// sealing with one key would sign the same sender sequence twice. So it asks the holder instead, over a Unix socket
+// in a directory only this user can enter ($XDG_RUNTIME_DIR or the temp dir, /trommi-<uid>, mode 0700). The socket is
+// named by a hash of the key file (a socket path has at most ~100 characters). One JSON line in, one JSON line out.
+function doorDir() {
+  const uid = process.getuid?.() ?? 0
+  const dir = path.join(process.env.XDG_RUNTIME_DIR || os.tmpdir(), `trommi-${uid}`)
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 })
+  const st = fs.lstatSync(dir)
+  if (!st.isDirectory() || (process.getuid && st.uid !== uid) || (st.mode & 0o077)) throw new Error(`${dir} is not a private directory of this user`)
+  return dir
+}
+export const doorOf = p => path.join(doorDir(), `${crypto.createHash('sha256').update(path.resolve(p.key_file)).digest('hex').slice(0, 20)}.sock`)
+
+/** Open the door of a slot this process holds: handler(request) -> answer object. Returns close(). */
+export function openDoor(p, handler, log = () => {}) {
+  const file = doorOf(p)
+  fs.rmSync(file, { force: true })   // this process holds the slot, so a socket file there is a dead holder's
+  const server = net.createServer(sock => {
+    let buf = ''
+    sock.setEncoding('utf8')
+    sock.on('error', () => {})
+    sock.on('data', async d => {
+      buf += d
+      if (buf.length > 64 * 1024) return sock.destroy()
+      const nl = buf.indexOf('\n')
+      if (nl < 0) return
+      let answer
+      try { answer = await handler(JSON.parse(buf.slice(0, nl))) } catch (err) { answer = { ok: false, error: err.message } }
+      sock.end(JSON.stringify(answer) + '\n')
+    })
+  })
+  server.on('error', err => log(`door not open: ${err.message}`))
+  server.listen(file, () => { try { fs.chmodSync(file, 0o600) } catch {} })
+  server.unref()
+  return () => { server.close(); fs.rmSync(file, { force: true }) }
+}
+
+/** Knock at a slot's door: resolves the holder's answer, or rejects (no door, no answer within timeout_ms). */
+export function knock(p, request, timeout_ms = 30000) {
+  return new Promise((resolve, reject) => {
+    const sock = net.connect(doorOf(p))
+    let buf = ''
+    const timer = setTimeout(() => { sock.destroy(); reject(new Error('the connector holding the key did not answer')) }, timeout_ms)
+    sock.setEncoding('utf8')
+    sock.on('connect', () => sock.write(JSON.stringify(request) + '\n'))
+    sock.on('data', d => { buf += d })
+    sock.on('end', () => { clearTimeout(timer); try { resolve(JSON.parse(buf)) } catch { reject(new Error('the connector holding the key gave no answer')) } })
+    sock.on('error', err => { clearTimeout(timer); reject(err) })
+  })
+}
