@@ -194,7 +194,7 @@ export class Runner {
     const storage = w.newStorage(role)
     const d = await this.newDevFrom(a.name, room, role, storage)
     d.joinedBatch = w.batch
-    if (this.flags.pruned) { this.known('F9-pruned-answers-leave-cards-open', 'after retention pruned an answer, a device that joins later shows the answered card as open with a blank title: pruned answers have no body and no bind, so the reducer refuses them (bad-answer) instead of taking the state from the signed header'); this.stopCompare = true }
+    // F9 (fixed: a pruned answer counts from its signed header): a device that joins after a prune is compared as usual (masked content).
     inviter.faults = { delay: 0, lose_response: 0, offline: 0 }   // invites under faults wedge (known F4) and leave half-joined devices the oracle cannot judge
     const inv = await inviter.client.createInvite({ device_role: role })
     const j = this.w.t.core.joinRoom({ link: inv.link, storage, device_name: `FZ ${a.name}`, device_info: { device_name: `FZ ${a.name}`, platform: 'fuzz', folder: '~/fuzz', host: 'fz' }, fetch: w.makeFetch(d), poll_ms: 40 })
@@ -333,7 +333,9 @@ export class Runner {
     catch (e) { if (e.code === 'card-closed' && c && c.state !== 'open') return 'refused:card-closed'; throw e }
     if (this.strict && c && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) {
       // KNOWN F1: Client.revise checks the state it LAST SENT (open), not the answered state the humans put on the card: the revision reopens it and drops the answer.
-      this.known('F1-revise-after-answer', 'agent.revise() on an answered card is accepted: the new version is sent as open, which silently discards the human answer (check uses localHeads state, not the model)')
+      // F1 (fixed in core): an agent must not revise a card a human answered, read or shredded. Through a hostile hub
+      // it may not have seen the answer (withheld): then the revision counts, as for the agent.
+      if (!this.w.attack) throw new Finding('invariant', `F1 again: agent could revise ${a.ref} which the oracle holds as ${c.state}${c.closed_how ? '/' + c.closed_how : ''}`, { action: a })
       c.v++; c.title = this.txt(a.title); c.titles.add(c.title); if (a.urgency) c.urgency = a.urgency; c.state = 'open'; c.answer = null; c.closed_how = null; c.revision = null
       return 'ok'
     }
@@ -345,7 +347,7 @@ export class Runner {
     const d = this.dev(a.agent), id = this.card(a); if (!d || !id) return 'skip'
     const O = this.oracle(d.room.idx), c = O.cards.get(a.ref)
     try { await d.client.withdraw(id, 'no longer needed') } catch (e) { if (e.code === 'card-closed' && c.state !== 'open') return 'refused:card-closed'; throw e }
-    if (this.strict && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) { this.known('F1-revise-after-answer', 'agent.revise()/withdraw() on an answered card is accepted (state check uses the last SENT state, not the answered state): revise reopens it and drops the answer'); c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
+    if (this.strict && (c.state === 'answered' || (c.state === 'closed' && (c.closed_how === 'read' || c.closed_how === 'shredded')))) { if (!this.w.attack) throw new Finding('invariant', `F1 again: agent could withdraw ${a.ref} which the oracle holds as ${c.state}${c.closed_how ? '/' + c.closed_how : ''}`, { action: a }); c.v++; c.state = 'closed'; c.closed_how = 'withdrawn'; c.revision = null; return 'ok' }
     if (!this.strict) return 'ok'
     if (!O.withdraw(a.ref)) throw new Finding('invariant', `agent could withdraw ${a.ref} held as ${c.state}`, { action: a })
     return 'ok'
@@ -369,6 +371,8 @@ export class Runner {
   }
   /** The card's owner agent was removed: it re-asserts nothing (F15) any more. */
   ownerGone(c) { const ag = c ? this.w.devs.get(c.agent) : null; return !ag || !!ag.removed }
+  /** The owner agent is crashed (not running): it meets the refused answer only when it starts again. */
+  ownerDown(c) { const ag = c ? this.w.devs.get(c.agent) : null; return !!ag && !ag.removed && (ag.dead || !ag.client) }
   async do_answer(a) {
     const d = this.dev(a.dev), id = this.card(a); if (!d || !d.isHuman || !id) return 'skip'
     const O = this.oracle(d.room.idx), c = O.cards.get(a.ref)
@@ -387,7 +391,7 @@ export class Runner {
     O.attempts.add(a.ref)
     const trusted = !!a.trust
     const rec = trusted ? (cm.recommended == null ? [] : [].concat(cm.recommended)) : choices
-    O.answer(a.ref, { action, choices: rec, trusted, ownerGone: this.ownerGone(c) })
+    O.answer(a.ref, { action, choices: rec, trusted, ownerGone: this.ownerGone(c), ownerDown: this.ownerDown(c) })
     this.sent.human.set(`${a.ref}`, (this.sent.human.get(`${a.ref}`) ?? 0) + 1)
     return 'ok'
   }
@@ -396,7 +400,7 @@ export class Runner {
     const O = this.oracle(d.room.idx)
     O.attempts.add(a.ref)
     try { await d.client.markRead({ object_id: id }) } catch (e) { if (e.code === 'card-closed') return 'refused:card-closed'; throw e }
-    O.answer(a.ref, { action: 'read', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)) })
+    O.answer(a.ref, { action: 'read', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)), ownerDown: this.ownerDown(O.cards.get(a.ref)) })
     return 'ok'
   }
   async do_shred(a) {
@@ -404,7 +408,7 @@ export class Runner {
     const O = this.oracle(d.room.idx)
     O.attempts.add(a.ref)
     try { await d.client.shred({ object_id: id }) } catch (e) { if (e.code === 'card-closed') return 'refused:card-closed'; throw e }
-    O.answer(a.ref, { action: 'shred', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)) })
+    O.answer(a.ref, { action: 'shred', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)), ownerDown: this.ownerDown(O.cards.get(a.ref)) })
     return 'ok'
   }
   async do_decide_again(a) {
@@ -424,7 +428,7 @@ export class Runner {
     const bind = z.encodeAnswerBind({ cardId: z.unhex(id), cardHash: z.unhex(old.version_hash), choice: cm.options?.[0]?.key ?? 'a' })
     await d.client._send({ kind: this.w.t.codec.KIND.answer, content: { answer_action: 'answer', choices: [cm.options?.[0]?.key ?? 'a'] }, bind, recipient: cm.agent_device_id,
       object: { object_id: id, object_state: 'answered', urgency: cm.urgency, answered_at: Date.now() } })
-    return 'ok'      // oracle: no effect
+    return 'ok'      // oracle: no effect (the hub refuses it: not sealed under the object's key)
   }
 
   // ---- messages ----

@@ -120,7 +120,7 @@ export async function checkOracle(runner, { final = false } = {}) {
       }
       const exp = expectedSnap(runner, room.idx, m, { agentName: agentView ? d.name : null, mask })
       if (!agentView) exp.stack = []
-      if (mask) for (const r of mask) { const oc = exp.cards[r]; if (oc && oc.state !== 'open' && got._maskedOpen.includes(r)) runner.known('F9-pruned-answers-leave-cards-open', 'after retention pruned an answer, a device that joins later shows the answered/closed card as OPEN (blank title) in its stack: the pruned answer has no body and no bind, so the reducer refuses it instead of taking the state from the signed header'); if (oc) exp.cards[r] = { agent: oc.agent, masked: true } }
+      if (mask) for (const r of mask) { const oc = exp.cards[r]; if (oc && oc.state !== 'open' && got._maskedOpen.includes(r)) out.push(`${d.name}: F9 again: ${r} is ${oc.state} but shows open after retention pruned it`); if (oc) exp.cards[r] = { agent: oc.agent, masked: true } }
       const tlG = got.tl; delete got.tl
       const tlE = exp.tl; delete exp.tl
       if (agentView) { got.members = exp.members = {}; got.agentRegs = exp.agentRegs = {}; got.stack = exp.stack = [] }

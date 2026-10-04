@@ -187,6 +187,9 @@ export function pushAlert(model, change, { code, message = '', envelope_number =
  * Returns { applied: boolean, refused?: code } so the agent side can tell what counted.
  */
 export function applyRecord(model, rec, change) {
+  // R6: an agent holds only its own sessions. Records of another session (the hub serves their headers, e.g. pruned
+  // after retention) build nothing on an agent: not even a header-only card or answer (fuzz isolation finding).
+  if (rec.session_id && model.room.my_role === 'agent' && rec.sender_device_id !== model.room.my_device_id && !everAgent(model, rec.session_id, model.room.my_device_id)) return { applied: false }
   if (rec.session_id) {
     const s = sessionOf(model, rec.session_id)
     s.last_activity_at = Math.max(s.last_activity_at, rec.sent_at)

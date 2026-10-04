@@ -1071,6 +1071,59 @@ await test('fuzz F4: an agent invite whose finalize hits a network failure once 
   eq(phone.model.invites.get(inv.invite_id).invite_state, 'joined', 'the invite says joined')
 })
 
+if (!useTestHub) await test('fuzz isolation (trace smutm8tbj-w1-9): a pruned answer in another session builds no card on a later agent', async () => {
+  // trace: found, invite A0, A0 card, merge, H0 answers, prune, invite A1 -> A1 showed A0's card with its answer
+  const { phone, agents: [a0] } = await room({ agents: 1 })
+  const id = await a0.sendCard({ title: 'mine', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a0, phone)
+  const merged = await a0.merge([id], { title: 'merged', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a0, phone)
+  await until(() => phone.model.cards.get(merged), 'phone has the merged card')
+  await phone.answer({ object_id: merged, choices: ['a'] })
+  await settleAll(phone, a0)
+  hub.prune({ days: -1 })
+  const a1 = await addAgent(phone, 'Later')
+  await settleAll(phone, a1)
+  await a1.catchUp()
+  eq([...a1.model.cards.values()].filter(c => c.agent_device_id !== a1.my_device_id).length, 0, 'no card of another session on the later agent')
+})
+
+if (z.KEY_SCOPE) await test('fuzz recovery (trace smutmabez-w2-2): a second recovery reads the session cards of the first epoch (session back links)', async () => {
+  // trace: found, invite A0, A0 info card, recover H2, recover H3 -> H3 showed the card with an empty title
+  const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ card_type: 'info', title: 'first epoch' })
+  await settleAll(agent, phone)
+  await phone.stop()
+  const { client: t1, recovery_code: code2 } = await recoverRoom({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage: memoryStorage(), device_name: 'T1' })
+  track(t1)
+  await t1.start()
+  await until(() => t1.model.cards.get(id)?.title === 'first epoch', 'first recovery reads it')
+  await settleAll(t1, agent)
+  await t1.stop()
+  const { client: t2 } = await recoverRoom({ hub_url: HUB, room_id: phone.model.room.room_id, code: code2, storage: memoryStorage(), device_name: 'T2' })
+  track(t2)
+  await t2.start()
+  await until(() => t2.model.cards.get(id)?.title === 'first epoch', 'second recovery reads it through the session back links')
+})
+
+if (!useTestHub) await test('fuzz F15 with the owner down (trace smutm8tbj-w2-7): an agent that was not running re-sends the card when it starts again', async () => {
+  // trace: found, invite A0, A0 card, A0 crashes, H0 answers with a bad choice -> the card stays closed at the hub until A0 is back
+  const dir = path.join(scratch, 'f15-down')
+  const { phone } = await room()
+  const agent = await addAgent(phone, 'Down', await fileStorage({ dir, write_delay_ms: 5 }))
+  const id = await agent.sendCard({ title: 'pick', options: [{ key: 'a', label: 'A' }], allows_multiple: true })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'phone has it')
+  await agent.stop()
+  await phone.answer({ object_id: id, choices: ['zzz'] }).catch(() => {})
+  await settleAll(phone)
+  const again = track(await openRoom({ storage: await fileStorage({ dir, write_delay_ms: 5 }) }))
+  await again.start()
+  await again.claimSession({ process_instance: 'again' })
+  await settleAll(again, phone)
+  await until(() => phone.model.cards.get(id)?.object_version === 2 && phone.model.cards.get(id)?.object_state === 'open', 're-sent open after the restart')
+})
+
 if (z.KEY_SCOPE) await test('agent child session: the agent opens one without approval; the human sees it under the parent; another agent cannot read it; it survives a restart', async () => {
   const dir = path.join(scratch, 'agent-child')
   const { phone, agents: [bot] } = await room({ laptop: true, agents: 1 })

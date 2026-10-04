@@ -51,12 +51,13 @@ export class RoomOracle {
     return true
   }
   /** A human's answer. Returns true if it counts. */
-  answer(ref, { action, choices, trusted = false, staleHash = false, ownerGone = false }) {
+  answer(ref, { action, choices, trusted = false, staleHash = false, ownerGone = false, ownerDown = false }) {
     const c = this.cards.get(ref)
     if (!c || c.state !== 'open') return false
     // F15: the owner agent refuses an invalid answer to its open card and sends the card again (one version more), so the
-    // hub does not keep it as closed. A removed owner sends nothing any more.
-    const refused = () => { if (!ownerGone) c.v++; return false }
+    // hub does not keep it as closed. A removed owner sends nothing any more; a crashed one does it when it starts again
+    // (all refusals it meets in one catch-up give one new version: see reassertOnBoot).
+    const refused = () => { if (ownerDown && !ownerGone) (this.reassertLater ??= new Set()).add(ref); else if (!ownerGone) c.v++; return false }
     if (staleHash) return refused()
     if (action === 'answer' && c.card_type === 'info') return refused()
     if (action === 'answer' && !trusted) {
@@ -68,6 +69,15 @@ export class RoomOracle {
     c.closed_how = action === 'read' ? 'read' : action === 'shred' ? 'shredded' : 'answered'
     c.revision = null
     return true
+  }
+  /** The owner agent `name` started again: it re-sends each open card whose invalid answer it met while it was down. */
+  reassertOnBoot(name) {
+    for (const ref of [...(this.reassertLater ?? [])]) {
+      const c = this.cards.get(ref)
+      if (!c || c.agent !== name) continue
+      this.reassertLater.delete(ref)
+      if (c.state === 'open') c.v++
+    }
   }
   decideAgain(ref) {
     const c = this.cards.get(ref)
