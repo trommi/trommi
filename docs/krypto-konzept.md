@@ -1,6 +1,6 @@
 # Trommi Krypto-Konzept
 
-Zero Trust: Der Hub ist ein feindlicher Briefkasten. Stand 2. Oktober 2026: Die offenen Fragen sind entschieden (letzter Abschnitt), der Text ist darauf angepasst. Die Bibliothek liegt in `crypto/`, das Protokoll fürs Einschreiben in `docs/pairing.md`. Im Produkt ist noch nichts davon verdrahtet.
+Zero Trust: Der Hub ist ein feindlicher Briefkasten. Stand 2. Oktober 2026: Die offenen Fragen sind entschieden (letzter Abschnitt), der Text ist darauf angepasst. Die Bibliothek liegt in `crypto/`, das Protokoll fürs Einschreiben in `docs/pairing.md`. Seit 4. Oktober 2026 im Produkt (`hub/`, `client/core/`, App, Channel). **Wo dieser Text und das README („Hub v1“, Sicherheitsregeln R1–R9 aus v1.1) sich widersprechen, gilt das README**; vor allem: Agenten bekommen keinen Raumschlüssel, nur die Schlüssel ihrer Sitzungen (R6), und Mitglieder tragen keine Namen (R8).
 
 > **Kern.** Jedes Gerät und jeder Agent hat eigene Schlüssel. Wer dazugehört, steht in einer signierten Mitgliederliste, die der Server weder fälschen noch unbemerkt zurückdrehen kann. Ein einziger Raumschlüssel verschlüsselt die Inhalte, ohne Ratchet; er wird nur erneuert, wenn ein Mitglied entfernt wird. Jede Nachricht ist vom Absendergerät signiert und verkettet. Ein Agent führt nur aus, was nachweislich von einem zugelassenen Gerät eines Menschen stammt. Der Server sieht Chiffretext und genau die Metadaten, die er zum Zustellen und zum Löschen nach 30 Tagen braucht.
 
@@ -57,6 +57,8 @@ sequenceDiagram
 
 ## 4. Der eine Raumschlüssel
 
+> Seit v1.1 für Agenten ersetzt: Agenten bekommen den Raumschlüssel nicht, sondern je Sitzung einen eigenen Schlüssel (README R6).
+
 - **Entstehen:** Das erste Gerät würfelt den Schlüssel der Epoche 1.
 - **Verpacken:** Für jedes Mitglied eine versiegelte Kopie, wie `Vault.seal` in säckel: flüchtiger X25519-Schlüssel, HKDF-SHA-256 über das gemeinsame Geheimnis mit beiden öffentlichen Schlüsseln als Salt, AES-256-GCM. Das ist das Muster von HPKE (RFC 9180). Raum-ID, Epoche und Empfänger sind als zusätzliche Daten gebunden.
 - **Erneuern:** nur beim Entfernen eines Mitglieds (und bei der Wiederherstellung, die Geräte entfernt), dann sofort. Nicht nach Zeitplan. Das entfernende Gerät würfelt den neuen Schlüssel, versiegelt ihn für alle Verbleibenden, auch für die Agenten, und trägt Entfernen und neue Epoche in einem Eintrag in die Liste ein. Abwesende Geräte holen ihre Kopie später. Anders als in säckel wird nichts neu verschlüsselt: Das Protokoll wird nur fortgeschrieben.
@@ -100,6 +102,8 @@ Der Channel-Prozess neben dem Agenten prüft jeden Umschlag, bevor Claude Code e
 Karten, Statuszeilen und Antworten eines Agenten nimmt ein Client nur von diesem Agenten an. Heute prüft das der Hub, künftig die Signatur.
 
 ## 7. Was der Server sieht
+
+> Seit v1.1: Gerätenamen sind nicht mehr sichtbar, sie stehen verschlüsselt im Register `device/<device_id>` (README R8).
 
 | Verborgen | Bewusst im Klartext, signiert | Unvermeidbar sichtbar |
 | --- | --- | --- |
