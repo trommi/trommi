@@ -22,7 +22,7 @@ items below. Screenshots: 42 states × 4 profiles, Turbo vs app mock and a real 
 | `dev/verify/perf.mjs --target …` | cold load, warm load, navigation Desk→session→card→back, live update latency; desktop, desktop 4x CPU, phone 4x CPU |
 | `dev/verify/app-room.mjs` | a real E2E room for shooting: hub + app (kept Chromium profile) + three channel sessions filing the fixtures; then `VERIFY_APP_MODE=room shoot.mjs --target app` |
 | `dev/verify/keys.mjs --target …` | the short keys, same expectation on both targets |
-| `dev/verify/rounds.mjs` | every decision round trip: `hub/channel.mjs` (MCP stdio, as Claude Code starts it) ↔ the app's UI in Chromium, over a real hub (`hub/server.mjs`, port 8891-8899); human acts only through clicks and forms |
+| `dev/verify/rounds.mjs` | every decision round trip: `connector/channel.mjs` (MCP stdio, as Claude Code starts it) ↔ the app's UI in Chromium, over a real hub (`hub/server.mjs`, port 8891-8899); human acts only through clicks and forms |
 
 ```bash
 node dev/verify/turbo-board.mjs --port 8910 --data $V/turbo-data &        # writes $V/turbo-board.json
@@ -73,7 +73,7 @@ Times: local dev hub (desktop) / **live** (app.trommi.com + hub.trommi.com, 4 Oc
 
 | round | result | times local / live |
 |---|---|---|
-| found room in the app → agent invite → `hub/channel.mjs` joins | ok | channel start → in the room 963 ms |
+| found room in the app → agent invite → `connector/channel.mjs` joins | ok | channel start → in the room 963 ms |
 | create_decision (recommended) → answer → `decision` → close_card summary on the card | ok | tool → app 66 / 48 ms; click → event 30 / 104 ms |
 | answer → toast Undo → `decision_reopened previous_choice`; answered card "decide again" button | ok | 27 / 103 ms |
 | multiple choice → `choices=perf,plan` | ok | 28 / 103 ms |

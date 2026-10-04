@@ -3,7 +3,7 @@
 //   const storage = await fileStorage({ dir, key_file?, prefix? })
 //
 // dir: created with mode 0700. State lives in memory and is written as one JSON file `<prefix>state.json`
-// (durable before a write resolves: temp file + fsync + rename + directory fsync, mode 0600). The device key is a 66-byte key file (crypto/FORMAT.md §4),
+// (durable before a write resolves: temp file + fsync + rename + directory fsync, mode 0600). The device key is a 66-byte key file (core/FORMAT.md §4),
 // mode 0600: `key_file` is a path or a function (room_id hex) -> path; default `<dir>/<prefix>device.key`.
 // Several sessions of one room may share `dir` with different prefixes.
 import fs from 'node:fs/promises'

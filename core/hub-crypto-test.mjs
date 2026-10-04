@@ -1,4 +1,4 @@
-// Tests for hub.mjs. Run: node crypto/hub-test.mjs
+// Tests for hub.mjs. Run: node core/hub-crypto-test.mjs
 // Real clients (zcrypto.mjs) talk to the hub module the way docs/pairing.md describes; then everything a hub must refuse.
 import assert from 'node:assert/strict'
 import * as z from './zcrypto.mjs'

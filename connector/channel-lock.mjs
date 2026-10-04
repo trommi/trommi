@@ -1,4 +1,4 @@
-// channel-lock.mjs: one process per agent key slot (README R4), for hub/channel.mjs.
+// channel-lock.mjs: one process per agent key slot (README R4), for connector/channel.mjs.
 //
 // Node has no flock. Each process that wants a slot writes a claim file of its own, `<lock>.<pid>`. Nobody else
 // ever writes or renames it. Then it looks at all claims of the slot:

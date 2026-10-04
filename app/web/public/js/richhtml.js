@@ -9,7 +9,7 @@
 // content is, takes the theme when it changes, and hands a clicked link to this page, which opens
 // it in a new tab (a link never moves the frame itself). No forms, no popups, no way to move the
 // page around it.
-// The agent's channel has already cleaned what it sent (trommi-hub hub/richhtml.mjs); here it is parsed and
+// The agent's channel has already cleaned what it sent (trommi-hub connector/richhtml.mjs); here it is parsed and
 // cleaned once more by the browser's own parser, so that old state and other senders hold too.
 //
 // The richhtml controller calls htmlBlock() for each block js/views/text.mjs marks; richMark() names a card's extras.

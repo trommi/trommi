@@ -61,7 +61,7 @@ send as picture plus strokes, eraser takes pictures (uncommitted `scribble.js`, 
 |---|---|---|---|---|
 | Card Nr. 33 "log" (10:01) | Message log with running number, fetch what was missed | missing | no `seq`/`since` in `server.mjs`; `server/store/` not wired | Add `seq` to messages and `since` on `/events` |
 | Card Nr. 80 (10:10): stable agent ids | An id the hub makes once | missing | `server.mjs:326-336` still the slug of the name | Hub-made id, name as label |
-| Card Nr. 80 "pairing" | Pairing and keys in the hub | missing | `crypto/hub.mjs` exists, not imported by `server.mjs` | Wire in behind a flag |
+| Card Nr. 80 "pairing" | Pairing and keys in the hub | missing | `core/hub.mjs` exists, not imported by `server.mjs` | Wire in behind a flag |
 | "Hey, propagiere Subagenten… oder der Agent als Erstentscheidung anbietet" (11:30) + card Nr. 123 "allow" | Agent opens helper sessions and proposes a team on first connect | missing, blocked | no `open_session` in `server.mjs`; TODO.md: needs his release in the Claude prompt | Ask him for the release sentence in the prompt, then build |
 | "Der Server muss ggf. Push-Einstellungen berücksichtigen" (board, 09:47) | Push to the phone when a knock lands | missing | nothing in `server.mjs`; TODO.md "Benachrichtigungen" | Later (Ops) |
 | Workspace/desks (see Web UI) | Desks as a server notion | missing | — | Model desks before the switcher |

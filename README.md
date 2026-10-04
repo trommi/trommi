@@ -1,15 +1,48 @@
 # Trommi
 
-Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted. The app (`app/web`, https://app.trommi.com) runs on every device of the person; agents join through the connector (`hub/channel.mjs`); the hub (`hub/`, https://hub.trommi.com) is a thin mailbox that only sees sealed envelopes. Formerly "Trommi".
+Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted. The app
+(https://app.trommi.com) runs on every device of the person; each Claude Code session joins through the connector, an
+MCP server with its own device key; the hub (https://hub.trommi.com) is a thin mailbox that stores and forwards sealed
+envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICENSE.md`).
+
+## Repository
+
+| Path | What | Deployed |
+| --- | --- | --- |
+| `core/` | the one client core and crypto library: `zcrypto.mjs` (bytes: `FORMAT.md`, design: `CRYPTO.md`), `hub.mjs` (the hub's checks), room model, sync, storage (`README.md`) | imported by the hub and the connector; copied into the app by its build |
+| `app/web/` | the app, static, no framework (`app/web/README.md`); `dev/build.mjs` copies `core/` into `public/vendor/` and bundles the stylesheets | Cloudflare Workers Builds on every push to `main` (watch paths `app/web/*`, `core/*`, `connector/*`) |
+| `connector/` | the agent connector `channel.mjs` (MCP stdio server `trommi`), its tools (`channel-tools.mjs`), bridge, slot lock, hot reload (`reload.mjs`), tests | runs on the agent's machine from this checkout |
+| `hub/` | the hub server (`server.mjs`, `store.mjs`, `accounts.mjs`, `ops/`, `Dockerfile`) | GitHub Action "Hub deploy" on every push to `main` touching `hub/**` or the hub's three `core/` files |
+| `fuzz/` | model-based fuzzing of hub and clients (`fuzz/README.md`); the quick run blocks the hub deploy | |
+| `dev/` | `cdp.mjs` (headless Chromium), `e2e/` (load generator with real members) | |
+| `assets/` | brand sources (logo, bell marks, fonts, palette, icons) | |
+| `docs/` | the crypto concept, pairing, performance notes, open wishes | |
+
+The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
+and docs) was removed on 4 October 2026; its history is in git and in
+`~/Nextcloud/Christopher/Backups/trommi-hub-legacy-2026-10-04.bundle`.
+
+## Tests
+
+```bash
+node core/crypto-test.mjs --no-bench && node core/hub-crypto-test.mjs && node core/session-grants-test.mjs
+node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs
+node core/test.mjs && node connector/channel-test.mjs
+node fuzz/run.mjs --quick
+(cd app/web && node dev/serve.mjs 8900)     # the app as deployed (build in memory); e2e: app/web/README.md
+```
+
+Each suite starts its own hubs on free ports with throwaway data directories. A local hub for the app:
+`HUB_PORT=8890 HUB_DATA=/tmp/trommi-dev node hub/server.mjs`.
 
 ## Hub v1: the wire protocol (hub.trommi.com)
 
-> **The hub** (`hub/`, deployed to `https://hub.trommi.com`) is a thin, hostile mailbox: it stores what members signed and sealed and serves no UI. The app is a static site (`app/web`, `https://app.trommi.com`); agents join through the channel process (`hub/channel.mjs`). This section is the contract between the three. Crypto design: `docs/krypto-konzept.md`; exact bytes: `crypto/FORMAT.md`; pairing: `docs/pairing.md`.
+> **The hub** (`hub/`, deployed to `https://hub.trommi.com`) is a thin, hostile mailbox: it stores what members signed and sealed and serves no UI. The app is a static site (`app/web`, `https://app.trommi.com`); agents join through the channel process (`connector/channel.mjs`). This section is the contract between the three. Crypto design: `docs/krypto-konzept.md`; exact bytes: `core/FORMAT.md`; pairing: `docs/pairing.md`.
 
 ### Principles
 
 1. **Everyone is a member.** A phone, a laptop, a Claude Code session: each has its own Ed25519 + X25519 keys and an entry in the room's signed member list. There are no client-specific routes; an agent uses exactly the routes a browser uses.
-2. **One envelope format** (`crypto/FORMAT.md` §9) for everything said in a room: messages, cards, answers, status lines, shared board state. Signed by the sender, chained per sender, encrypted with the sender's key of the key epoch.
+2. **One envelope format** (`core/FORMAT.md` §9) for everything said in a room: messages, cards, answers, status lines, shared board state. Signed by the sender, chained per sender, encrypted with the sender's key of the key epoch.
 3. **One sync mechanism, two depths.** Every client keeps one number: the `envelope_number` (the hub's arrival number) of the last envelope it processed. `GET envelopes?after_envelope_number=` and `GET stream?after_envelope_number=` deliver the same records in the same order to every client, app and agent alike. Every record carries the **signed header in full** (small; every client verifies every sender's whole chain) and the **encrypted body only for heads**. Threads are fetched when opened, newest first, in pages. Clients build all state locally; the hub never sends "state".
 4. **Heads and threads.** The signed `envelope_kind` says whether an envelope belongs to the overview (every kind except `timeline_item` is a head: object versions, answers, registers). Messages and strokes are thread items: each carries a signed plaintext `timeline_kind` (`chat`, `canvas`; later `media` …) and `timeline_id` (`card/<object_id>`, `session/<session_id>`, `desk/<desk_id>`), so the hub pages one timeline with one index hit and never mixes chat with strokes. New timeline kinds need no hub change. The `envelope_kind` is in the signed header and is checked before anything else. A revision is a new object version that names the previous one; no envelope ever holds a whole conversation. Long text, HTML pages and pictures are attachments, fetched only when shown.
 5. **The hub reads the signed header only.** It never parses a body. The body carries its own `schema_version`; new app features need no hub change.
@@ -36,7 +69,7 @@ Three version numbers, independent of each other:
 | What | Where | Who reads it |
 | --- | --- | --- |
 | Protocol (`Trommi-Protocol: 1`) | request header; routes and JSON of this section | the hub |
-| Format version byte | first byte of every signed structure (`crypto/FORMAT.md`) | every client (the hub checks headers only) |
+| Format version byte | first byte of every signed structure (`core/FORMAT.md`) | every client (the hub checks headers only) |
 | `schema_version` | inside the encrypted body | app and channel only |
 
 - `GET /v1/version` (public) → `{ protocol_versions_supported: [1], minimum_client_versions: { app?, channel?, ios? }, recommended_client_versions: { … }, message? }`, from `HUB_MIN_APP`, `HUB_MIN_CHANNEL`, `HUB_MIN_IOS`, `HUB_RECOMMENDED_APP|CHANNEL|IOS`, `HUB_UPGRADE_MESSAGE`. A kind without a minimum is not checked.
@@ -126,10 +159,10 @@ Any other `ZError` code is a 400.
 
 A person signs up with an email and a password of their own (at least 12 characters; the app offers a generated
 five-word one). The first device founds the room as before; the account only maps the email to that room and keeps,
-opaque to the hub, what lets a new device in. Format and code: `client/core/account.mjs`; hub: `hub/accounts.mjs`.
+opaque to the hub, what lets a new device in. Format and code: `core/account.mjs`; hub: `hub/accounts.mjs`.
 
 - **In the browser:** `salt = SHA-256("trommi/v1/account-salt" 0 ‖ email)`, `master = Argon2id(password, salt, 64 MiB, t = 3, p = 1)`
-  (hash-wasm, vendored as `client/core/argon2.mjs`, checked against `node:crypto` and RFC 9106 in `hub/accounts-test.mjs`;
+  (hash-wasm, vendored as `core/argon2.mjs`, checked against `node:crypto` and RFC 9106 in `hub/accounts-test.mjs`;
   ≈ 0.15 s on a desktop, ≈ 0.5–1.5 s on a phone). HKDF gives an **auth key** (sent at login) and a **wrap key** (never leaves
   the device) that seals the room's recovery code (`key_wrapped`).
 - **Log in on a new device:** email + password → `POST /v1/accounts/login` → the device opens `key_wrapped`, signs in as the
@@ -265,13 +298,13 @@ There is no kind 8: the hub refuses it (`bad-format`); drawings are timeline ite
 
 - **Every device's own key** counts only from that device: `device/<device_id>` (`device_name`, `platform`, `folder`, `host`), written right after joining, e.g. `device_name` "valiido", `folder` "~/git/valiido", `host` "desktop". The hub never sees a name.
 - **An agent's keys** count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `object_id`), `alert/<envelope_hash>` (a command the agent refused: `code`, `message`, `sender_device_id`, `envelope_number`).
-- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `read_up_to/<session_id>`, `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `client/core/snapshot.mjs`).
+- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `read_up_to/<session_id>`, `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `core/snapshot.mjs`).
 
 **Canvases.** Strokes are an append-only set: concurrent edits from two devices merge without conflict (set semantics, ordered by `envelope_number`; erase and move are tombstones referencing `stroke_ids`). Every few hundred strokes or when idle, one device writes the whole canvas as an encrypted snapshot attachment and points `canvas_snapshot/<timeline_id>` at it; a fresh client loads snapshot + `GET threads?timeline_kind=canvas&timeline_id=…&after_envelope_number=` instead of replaying everything. Live strokes from others render from the stream as they arrive.
 
 **Projections, computed on the client:** a card's place in the stack (oldest first by `sent_at` of version 1, R2), "in revision" (a human message with `hand_back` or `explain` newer than the card's newest version, until the agent's next version or a message with `present_card`), the Desk and stacks, crowns, the Next line, unread counts.
 
-### Cryptography in one page (bytes: `crypto/FORMAT.md`, library: `crypto/zcrypto.mjs`)
+### Cryptography in one page (bytes: `core/FORMAT.md`, library: `core/zcrypto.mjs`)
 
 | Piece | How |
 | --- | --- |
@@ -315,7 +348,7 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 - Retention starts at the hub's own `received_at` of an allowed final head (the creator closes or withdraws, or a human answers the creator); a reopen cancels it. A sender's `answered_at` is display only.
 - Stroke ids are (`device_id`, `sender_sequence`, index), so nobody can collide with another member's strokes. Agents change only their own strokes.
 
-**R2. Order from signed data, never from hub order.** `envelope_number` is for paging only. Writes to a register or memo are ordered by one total order that every device computes alike (v1.1.1, review 2 D1: the earlier pairwise rule was not transitive, so the hub's delivery order could pick the winner): (`lamport`, `sender_device_id`, `sender_sequence`), strictly lexicographic (review 3: the sender-chosen `sent_at` is no longer part of it; with it two writes of one sender at an equal lamport made a cycle), where `lamport` is an integer in the encrypted `status` and memo body, one above every `lamport` the writer had seen (a write made after seeing another sorts after it; bodies without one count 0). A lamport above 2^48, or more than 2^24 above the largest this device has seen, is refused (counts 0, is not adopted, alert `lamport-inflated`): one signed write cannot pin a register for good. The writer saves its counter in the same durable write as the envelope, before the post. Deletes stay as tombstones (value null). Human registers, agent registers and memo versions use it; the stack is sorted by urgency, then `sent_at` of version 1, then creator and object id. A canvas snapshot register carries a signed **frontier** `{ sender_device_id: [sender_sequence, envelope_hash] }`; clients apply every item of the timeline not covered by it, whatever numbers the hub shows, and accept a new snapshot only if its frontier dominates the applied one. Snapshot writers: humans for `desk/*`, humans and the assigned agent for `session/<S>`; a fresh client trusts the newest snapshot from an allowed writer (stated trust: a snapshot cannot be checked without replaying). **Room snapshots** (`room_snapshot`, `client/core/snapshot.mjs`, v1.1.1 review 2 D5/D6): taken only from a human device that is still a member, never from one written before the newest removal or recovery; the tail after it is read from an overlap window before its cursor and classified by signed (`sender_device_id`, `sender_sequence`), so hub numbers cannot hide envelopes beyond the snapshot's frontier; items older than the snapshot must name the requested timeline as thread items, pass the R1 rules, lie within the frontier, and count once per (sender, sequence). Remaining trust, plainly: the snapshot's content itself (cards, answers, registers) comes from one human device and is not re-verified; a hub that withholds every newer envelope of a sender is not noticed until one arrives.
+**R2. Order from signed data, never from hub order.** `envelope_number` is for paging only. Writes to a register or memo are ordered by one total order that every device computes alike (v1.1.1, review 2 D1: the earlier pairwise rule was not transitive, so the hub's delivery order could pick the winner): (`lamport`, `sender_device_id`, `sender_sequence`), strictly lexicographic (review 3: the sender-chosen `sent_at` is no longer part of it; with it two writes of one sender at an equal lamport made a cycle), where `lamport` is an integer in the encrypted `status` and memo body, one above every `lamport` the writer had seen (a write made after seeing another sorts after it; bodies without one count 0). A lamport above 2^48, or more than 2^24 above the largest this device has seen, is refused (counts 0, is not adopted, alert `lamport-inflated`): one signed write cannot pin a register for good. The writer saves its counter in the same durable write as the envelope, before the post. Deletes stay as tombstones (value null). Human registers, agent registers and memo versions use it; the stack is sorted by urgency, then `sent_at` of version 1, then creator and object id. A canvas snapshot register carries a signed **frontier** `{ sender_device_id: [sender_sequence, envelope_hash] }`; clients apply every item of the timeline not covered by it, whatever numbers the hub shows, and accept a new snapshot only if its frontier dominates the applied one. Snapshot writers: humans for `desk/*`, humans and the assigned agent for `session/<S>`; a fresh client trusts the newest snapshot from an allowed writer (stated trust: a snapshot cannot be checked without replaying). **Room snapshots** (`room_snapshot`, `core/snapshot.mjs`, v1.1.1 review 2 D5/D6): taken only from a human device that is still a member, never from one written before the newest removal or recovery; the tail after it is read from an overlap window before its cursor and classified by signed (`sender_device_id`, `sender_sequence`), so hub numbers cannot hide envelopes beyond the snapshot's frontier; items older than the snapshot must name the requested timeline as thread items, pass the R1 rules, lie within the frontier, and count once per (sender, sequence). Remaining trust, plainly: the snapshot's content itself (cards, answers, registers) comes from one human device and is not re-verified; a hub that withholds every newer envelope of a sender is not noticed until one arrives.
 
 **R3. Revocation on the receive path.** `devices_removed` and `recovery` entries carry, per removed device, the **cut** (`sender_sequence`, `envelope_hash`) of its last envelope the remover had seen; hub and clients refuse anything beyond it. A remover that holds no chain of the device (a recovery, a fresh device) first verifies the hub's envelope headers of that device and cuts at the last verified one, never at 0 (v1.1.1, review 2: an empty cut refused all history of the removed humans); the hub lets the recovery key read envelopes for this. Old `key_epoch` is accepted for 2 minutes after the epoch-changing entry arrived (the arrival time is stored), then refused by the hub (`409 wrong-epoch`, which tells a stale sender to fetch the log) and shown by clients as "sender on an old member list". The channel process refreshes the member list before executing any answer, verdict or decide-again and halts all commands on `log-fork` until a human acts. Residual, honestly: a hub that withholds a removal forever from one member keeps that member on the old key; it shows as soon as any envelope crosses.
 
@@ -353,23 +386,25 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 
 **R9. Format fixes.** `wrapAssetKey` uses a random nonce. Invite hashes and the check code cover the signed body (request: body ‖ MAC), not the Ed25519 signature, so vectors are reproducible on every platform. The hub address is canonical: `https://` + lowercase host [+ `:port`], no path, no trailing slash, copied verbatim from the link. Stroke points: base64url of int16 big-endian deltas in 1/8 px, first point absolute; style `{ tool, color, size }`.
 
-**Adopted from the research** (`docs/` research notes, 10 systems): ephemeral events that are never stored (typing, cursors, a pen preview) go over `POST /v1/rooms/:room_id/ephemeral` as sealed envelopes relayed to open streams only (`event: ephemeral`); attachments may have a separate small poster/thumbnail attachment with its own key and a tiny placeholder in the body; room snapshots from a human device for faster first loads (`client/core/snapshot.mjs`, trust in R2).
+**Adopted from the research** (`docs/` research notes, 10 systems): ephemeral events that are never stored (typing, cursors, a pen preview) go over `POST /v1/rooms/:room_id/ephemeral` as sealed envelopes relayed to open streams only (`event: ephemeral`); attachments may have a separate small poster/thumbnail attachment with its own key and a tiny placeholder in the body; room snapshots from a human device for faster first loads (`core/snapshot.mjs`, trust in R2).
 
 ### What an agent's channel process checks
 
 Before Claude Code sees anything (concept §6): the envelope verifies; the sender is an active human device; it is addressed to this agent; for answer, verdict and decide again the bind matches the current card or request (`authoriseCommand`). Anything else is dropped and reported on the board as the status register `alert/<envelope_hash>`.
 
-### The agent channel (`hub/channel.mjs`)
+### The agent channel (`connector/channel.mjs`)
 
-An MCP stdio server with today's tools and today's `<channel source="board" kind=…>` events (copied in `hub/channel-tools.mjs`; tool → envelope and command → event in `hub/channel-bridge.mjs`; all protocol work in `client/core`). It runs as server `trommi` in the project's `.mcp.json`:
+An MCP stdio server with today's tools and today's `<channel source="board" kind=…>` events (copied in `connector/channel-tools.mjs`; tool → envelope and command → event in `connector/channel-bridge.mjs`; all protocol work in `client/core`). It runs as server `trommi` in the project's `.mcp.json`:
 
 ```json
 { "mcpServers": {
-  "trommi": { "command": "node", "args": ["/home/christopher/git/trommi-hub/hub/channel.mjs"] }
+  "trommi": { "command": "node", "args": ["/home/christopher/git/trommi/connector/channel.mjs"] }
 } }
 ```
 
-Start: `claude --dangerously-load-development-channels server:trommi`. First time per room, machine and folder: in the Trommi app "invite an agent", then run `node /home/christopher/git/trommi/hub/channel.mjs join '<link>'` in the project folder, or start Claude with `TROMMI_INVITE='<link>'`. Joining is the human's act only: there is no model-callable `join` tool, so a link smuggled into a prompt cannot make the agent join a room (review 2). Agent invites default to "without history". The app adds the agent without a check code and then assigns it to a session (R6: a new session, or the handover of an existing one, with or without its history); until then the tools answer "not yet assigned to a session". The agent holds no room key, only the keys of its sessions. Afterwards every session in that folder reconnects by itself: key slot `~/.local/share/trommi/keys/<room_id>/<host>-<folder>-<slot>.key` (0600; the `<host>-<folder>` part is written once to `<folder>/.trommi/slot-base` and read from there, so a renamed or moved folder keeps its identity), with `<…>-<slot>.state.json` (cursor, chains, delivered commands), `<…>-<slot>.lock` (pid of the process holding the slot, `hub/channel-lock.mjs`: Node has no `flock`, so every process writes a claim of its own, `<…>.lock.<pid>`, then looks: claims of dead pids are deleted, and if another live claim is there it withdraws; whoever looks second sees the first, so at most one wins, and nothing is ever taken over) and `<…>-<slot>.files/` (the human's attachments, decrypted) beside it. A second session in the same folder takes the next slot and needs an invite of its own (two sessions are two members). Commands that arrive during catch-up wait until the bridge is up; `late`/`history` come as meta `late="1"`/`history="1"`; only `content_type: message` is chat; on `log-fork` commands are held back, on `lease-lost` the process exits. Environment: `TROMMI_HUB` (default `https://hub.trommi.com`; an invite names its hub), `TROMMI_ROOM` (when a folder has keys for several rooms), `TROMMI_KEYS_DIR`, `TROMMI_FOLDER`. `node hub/channel.mjs whoami` shows room and key file. `publish_asset` puts a `published` object on the board and announces it in the session's conversation (a message with the same attachment). `share_asset` releases a published asset for outsiders (link `https://app.trommi.com/a/<share_id>#<secret>.<file_key>.<sha256>`, at most 30 days; `release: false` and `revoke_asset` end it). **Child sessions for subagents:** `open_session { name, task?, icon?, model? }` opens (or finds) a child session under this agent's session; `reply`, `create_decision`, `create_info`, `merge_cards`, `set_status`, `clear_status`, `introduce`, `list_cards` and `publish_asset` take an optional `session` (the helper's name, case-insensitive; opened on first use). Card tools (`revise_card`, `close_card`, …) follow the card's own session. Events from a child carry meta `session="<name>"`. The names are kept in the slot's state (`channel.children`) and found again from the child's profile, so a restart writes into the same child. Not ported yet: `create_voiceover`, `adopt_session` (a separate helper process names its main with `introduce` `parent`), silent `publish_asset`. Tests: `node hub/channel-test.mjs`.
+(`hub/channel.mjs` is kept as a forwarder for older entries.) Start: `claude --dangerously-load-development-channels server:trommi`. First time per room, machine and folder: in the Trommi app "invite an agent", then run `node /home/christopher/git/trommi/connector/channel.mjs join '<link>'` in the project folder, or start Claude with `TROMMI_INVITE='<link>'`. Joining is the human's act only: there is no model-callable `join` tool, so a link smuggled into a prompt cannot make the agent join a room (review 2). Agent invites default to "without history". The app adds the agent without a check code and then assigns it to a session (R6: a new session, or the handover of an existing one, with or without its history); until then the tools answer "not yet assigned to a session". The agent holds no room key, only the keys of its sessions. Afterwards every session in that folder reconnects by itself: key slot `~/.local/share/trommi/keys/<room_id>/<host>-<folder>-<slot>.key` (0600; the `<host>-<folder>` part is written once to `<folder>/.trommi/slot-base` and read from there, so a renamed or moved folder keeps its identity), with `<…>-<slot>.state.json` (cursor, chains, delivered commands), `<…>-<slot>.lock` (pid of the process holding the slot, `connector/channel-lock.mjs`: Node has no `flock`, so every process writes a claim of its own, `<…>.lock.<pid>`, then looks: claims of dead pids are deleted, and if another live claim is there it withdraws; whoever looks second sees the first, so at most one wins, and nothing is ever taken over) and `<…>-<slot>.files/` (the human's attachments, decrypted) beside it. A second session in the same folder takes the next slot and needs an invite of its own (two sessions are two members). Commands that arrive during catch-up wait until the bridge is up; `late`/`history` come as meta `late="1"`/`history="1"`; only `content_type: message` is chat; on `log-fork` commands are held back, on `lease-lost` the process exits. Environment: `TROMMI_HUB` (default `https://hub.trommi.com`; an invite names its hub), `TROMMI_ROOM` (when a folder has keys for several rooms), `TROMMI_KEYS_DIR`, `TROMMI_FOLDER`. `node connector/channel.mjs whoami` shows room and key file. `publish_asset` puts a `published` object on the board and announces it in the session's conversation (a message with the same attachment). `share_asset` releases a published asset for outsiders (link `https://app.trommi.com/a/<share_id>#<secret>.<file_key>.<sha256>`, at most 30 days; `release: false` and `revoke_asset` end it). **Child sessions for subagents:** `open_session { name, task?, icon?, model? }` opens (or finds) a child session under this agent's session; `reply`, `create_decision`, `create_info`, `merge_cards`, `set_status`, `clear_status`, `introduce`, `list_cards` and `publish_asset` take an optional `session` (the helper's name, case-insensitive; opened on first use). Card tools (`revise_card`, `close_card`, …) follow the card's own session. Events from a child carry meta `session="<name>"`. The names are kept in the slot's state (`channel.children`) and found again from the child's profile, so a restart writes into the same child. Not ported yet: `create_voiceover`, `adopt_session` (a separate helper process names its main with `introduce` `parent`), silent `publish_asset`. Tests: `node connector/channel-test.mjs`.
+
+**Connector updates.** The connector is a shell (`channel.mjs`, `channel-lock.mjs`, `reload.mjs` and `core/`: stdio, MCP server, key, lease, stream) and code (`channel-tools.mjs`, `channel-bridge.mjs`, `richhtml.mjs`: tools, instructions, bridge). It compares the hashes of both parts on disk with the loaded ones (`fs.watch` and every 60 s, `TROMMI_UPDATE_POLL_MS`) and asks the hub's `GET /v1/version` hourly for `recommended_client_versions.channel`; a `426` stays `upgrade_required`. A new version reaches Claude as `<channel kind="update" update_available="1" version="…" restart_required="0|1">` and once more as a hint under the next tool result. The instructions tell Claude to file a decision card "Neue Connector-Version … – jetzt neu laden?" (jetzt / später). On "jetzt" Claude calls `reload_connector`: the code part is imported again as `./<file>?v=<hash>` (a resolve hook carries the version to its siblings), the bridge is rebuilt on the same client and state, and `notifications/tools/list_changed` goes out (`tools: { listChanged: true }`); session, key, lease and stream stay. A change of the shell needs a real restart, and the card says so: in the terminal `/mcp` → trommi → Reconnect. Tests: `connector/channel-test.mjs` ("update: …").
 
 **Links for people outside the room (`share_asset`).** The agent draws a 32-byte `share_secret` and registers `POST /v1/rooms/:room_id/attachments/:attachment_id/shares { share_id (32 hex, random), share_secret_hash (b64u SHA-256 of the secret), expires_at (≤ 30 days) }` → `201 { share_id, expires_at }` (uploader only). The link is `https://app.trommi.com/a/<share_id>#<share_secret>.<file_key>.<sha256>`; everything after `#` stays in the browser. The viewer page calls `GET /v1/shares/:share_id` with header `x-share-secret: <b64u secret>` (no sign-in, 60 per minute per address, `Range` supported, `cache-control: private, no-store`); a missing share, a wrong secret and an expired share all answer `404 not-found`. The page decrypts with `decryptAsset` and shows it sandboxed. Revoke: `DELETE /v1/rooms/:room_id/attachments/:attachment_id/shares/:share_id` (the creator or a human device) → `{ ok }`. Table `shares`: `share_id`, `room_id`, `attachment_id`, `share_secret_hash`, `expires_at`, `created_by_device_id`, `created_at`. The hub never holds the file key.
 
@@ -399,32 +434,3 @@ Measured on 4 October 2026 with real E2E members (`dev/e2e/`, method and all tab
 | App, crazy room, desktop | v1.1 with the room snapshot (45k envelopes): first load 2.4 s, interactions p95 24-126 ms, own message visible 8 ms (p95). v1.0 (113k): first load 29 s, all p95 < 100 ms |
 | App, same room, phone (CPU 4×) | v1.1: first load 3.4 s; opening a session, switching sessions, card threads, answers p95 290-580 ms (over budget); own message visible 44 ms (p95) |
 | Open gaps | after a snapshot join no chat history is shown; local p99 about 1.1 s from about 800/s on current main (backpressure) |
-
-## Repository
-
-| Path | What |
-| --- | --- |
-| `hub/server.mjs`, `hub/store.mjs`, `hub/ops/`, `hub/accounts.mjs`, `hub/Dockerfile` | the hub (hub.trommi.com); push to `main` deploys it (`.github/workflows/deploy.yml`) |
-| `hub/channel*.mjs` | the agent connector (MCP stdio server `trommi`) |
-| `crypto/` | the crypto library (`zcrypto.mjs`, `FORMAT.md`) |
-| `client/core/` | the client core: room model, sync, storage; used by the app and the connector |
-| `app/web/` | the app (app.trommi.com), static; Cloudflare deploys it on every push to `main` (`app/web/README.md`) |
-| `fuzz/` | model-based fuzzing of hub and clients (`fuzz/README.md`) |
-| `dev/` | `cdp.mjs` (headless Chromium), `e2e/` (load generator with real members), `sync-app.sh` (copies the core into `app/web/public/vendor`) |
-| `assets/` | brand sources (logo, bell marks, fonts, palette, icons) |
-
-The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
-and docs) was removed on 4 October 2026; its full history is in git and in the bundle
-`~/Nextcloud/Christopher/Backups/trommi-hub-legacy-2026-10-04.bundle`.
-
-## Tests
-
-```bash
-node crypto/test.mjs --no-bench && node crypto/hub-test.mjs && node crypto/session-grants-test.mjs
-node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs
-node client/core/test.mjs && node hub/channel-test.mjs
-node fuzz/run.mjs --quick
-```
-
-Each suite starts its own hubs on free ports with throwaway data directories. A local hub for the app:
-`HUB_PORT=8890 HUB_DATA=/tmp/trommi-dev node hub/server.mjs`.

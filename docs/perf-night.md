@@ -1,6 +1,6 @@
 # Performance, night of 3 to 4 October 2026
 
-Load, speed and memory of the thin hub (`hub/`), the client core (`client/core/`) and the app (`trommi/trommi`), measured with real members: every simulated agent and human is a client/core client with its own device keys, joined by a real invite (humans with the six-digit check code), sending sealed, chained envelopes over HTTP. Nothing is mocked except the people.
+Load, speed and memory of the thin hub (`hub/`), the client core (`core/`) and the app (`trommi/trommi`), measured with real members: every simulated agent and human is a client/core client with its own device keys, joined by a real invite (humans with the six-digit check code), sending sealed, chained envelopes over HTTP. Nothing is mocked except the people.
 
 **Local or live?** Every table says where it ran.
 
@@ -96,7 +96,7 @@ Charts (run "final"): ![ingest](perf/ingest.svg) ![latency](perf/latency.svg)
 
 ### What the load test found, and what was fixed tonight
 
-1. **Hub memory leak**, fixed in eb1ef81 (A). `crypto/hub.mjs` kept every envelope hash of every sender that joined after the room was loaded, in a plain `Map`. Locally the heap grew from 29 MB at 4k envelopes to 429 MB at 319k, and RSS reached 1.6 GB at 1M, still growing. After the fix: RSS stays at 160-220 MB from 0 to 1.18M.
+1. **Hub memory leak**, fixed in eb1ef81 (A). `core/hub.mjs` kept every envelope hash of every sender that joined after the room was loaded, in a plain `Map`. Locally the heap grew from 29 MB at 4k envelopes to 429 MB at 319k, and RSS reached 1.6 GB at 1M, still growing. After the fix: RSS stays at 160-220 MB from 0 to 1.18M.
 
    ![memory](perf/hub-memory.svg)
 2. **Stalled streams**, fixed in 06169e6 (A): sliced catch-up, plus a global cap on stream buffers that drops the fattest streams. Before the fix, 1,000 streams that each started a catch-up of the 1M room and read nothing took the hub to 5 GB RSS: 2.7 GB array buffers and 0.9 GB queued in sockets. The event loop stopped for minutes and the probe saw p50 2.7 s; on the 8 GB server that would be an OOM. After the fix: RSS 177 → 212 MB during the stall, the probe p99 89 ms, and the dropped streams resume by cursor.

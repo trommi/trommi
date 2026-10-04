@@ -61,6 +61,6 @@ marks, states and the logo carry the colours of the light theme; the dark values
 ## Licences
 
 The drawings, the logo and the screenshots are part of Trommi and under the licence of this
-repository (`LICENSE`). The fonts are under the SIL Open Font License 1.1; the texts are in
+repository (`LICENSE.md`). The fonts are under the SIL Open Font License 1.1; the texts are in
 `fonts/`. `logo/trommi-logo.svg` and `logo/trommi-logo-dark.svg` embed Bricolage Grotesque
 and are covered by that licence for the embedded font.

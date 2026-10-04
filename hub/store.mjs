@@ -1,7 +1,7 @@
 // store.mjs: the hub's SQLite database (hub.db). Table and column names are the README's ("What the hub
 // stores"). Truth: envelopes and member_entries. Derived and rebuildable: objects, timelines.
 //
-// roomStorage(db, roomId) is the storage crypto/hub.mjs asks for (the methods of its memoryStorage), plus
+// roomStorage(db, roomId) is the storage core/hub.mjs asks for (the methods of its memoryStorage), plus
 // chainHeads/envelopeHash (so a room loads without re-verifying every envelope) and transaction.
 //
 // Ids and hashes in the hot envelopes table are BLOBs (32 bytes instead of 64 hex characters); room_id,
@@ -9,7 +9,7 @@
 import { DatabaseSync } from 'node:sqlite'
 import fs from 'node:fs'
 import path from 'node:path'
-import * as z from '../crypto/zcrypto.mjs'
+import * as z from '../core/zcrypto.mjs'
 
 const { hex, unhex } = z
 export const SCHEMA_VERSION = 2
@@ -185,7 +185,7 @@ export function rebuildDerived(db) {
   })
 }
 
-// ---- one room, as crypto/hub.mjs sees it -----------------------------------------------
+// ---- one room, as core/hub.mjs sees it -----------------------------------------------
 
 export function roomStorage(db, roomId) {
   const q = db.q
@@ -249,7 +249,7 @@ export function roomStorage(db, roomId) {
       })
     },
     invite: id => inviteOf(q('SELECT * FROM invites WHERE room_id = ? AND invite_id = ?').get(roomId, id)),
-    // Only the open ones: crypto/hub.mjs counts these against the limit of open invites.
+    // Only the open ones: core/hub.mjs counts these against the limit of open invites.
     invites: () => q('SELECT * FROM invites WHERE room_id = ? AND used_at IS NULL AND burned_at IS NULL AND expires_at >= ?').all(roomId, Date.now() - 60000).map(inviteOf),
     appendEnvelope(envelope, m) {
       return db.tx(() => {

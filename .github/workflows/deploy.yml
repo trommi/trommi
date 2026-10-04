@@ -7,7 +7,7 @@ on:
   push:
     branches: [main]
     # Only what goes into the image restarts the hub (a restart drops every open stream).
-    paths: ['hub/**', 'crypto/**', '.github/workflows/deploy.yml']
+    paths: ['hub/**', 'core/zcrypto.mjs', 'core/hub.mjs', 'core/session-grants.mjs', '.github/workflows/deploy.yml']
   workflow_dispatch:
 
 concurrency:
@@ -39,8 +39,8 @@ jobs:
 
       - name: Test crypto and hub
         run: |
-          node crypto/test.mjs --no-bench
-          node crypto/hub-test.mjs
+          node core/crypto-test.mjs --no-bench
+          node core/hub-crypto-test.mjs
           node hub/test.mjs
           node hub/ops/test.mjs
           node hub/accounts-test.mjs

@@ -7,7 +7,7 @@
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { z } from '../../client/core/index.mjs'
+import { z } from '../../core/index.mjs'
 import { arg, until, pct, found, addAgent, addHuman, startLocalHub, useTestKey, deleteTestRoom, writeJson } from './lib.mjs'
 
 const HUB = arg('hub', 'local')

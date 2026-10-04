@@ -24,7 +24,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { fork } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { memoryStorage, joinRoom, z } from '../../client/core/index.mjs'
+import { memoryStorage, joinRoom, z } from '../../core/index.mjs'
 import { HERE, NET, useTestKey, deleteTestRoom, arg, flag, sleep, until, pct, found, addAgent, addHuman, reopen, leanSender, trimWindows, startLocalHub, writeJson, readJsonl, text, rngOf, stroke, hex16 } from './lib.mjs'
 
 

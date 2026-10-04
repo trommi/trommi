@@ -1,4 +1,4 @@
-// node crypto/session-grants-test.mjs: per-session keys (R6) on top of zcrypto.
+// node core/session-grants-test.mjs: per-session keys (R6) on top of zcrypto.
 import * as z from './zcrypto.mjs'
 import * as g from './session-grants.mjs'
 

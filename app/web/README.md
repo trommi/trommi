@@ -70,7 +70,7 @@ public/
   css/  js/pen.js …      the board's look (taken over from the old board, now the app's own source)
   js/views/*.mjs         the board's view modules (trommi-hub server/views), synced, running in the page
   t/controllers t/lib    the board's Stimulus controllers, synced, running on js/app/stimulus.mjs
-  vendor/                the client core (trommi-hub client/core + crypto/zcrypto.mjs), written by its dev/sync-app.sh
+  vendor/                the client core: copied from the repository's core/ by dev/build.mjs (Cloudflare's build; dev/serve.mjs serves it from core/), not committed
   mock/                  fixture of the mock room (dev/make-fixture.mjs) and its pictures
   pad/                   the Scratchpad (Desk paper)
   js/app/
@@ -102,7 +102,7 @@ public/
 
 ### IndexedDB
 
-The core owns the schema (trommi-hub `client/core/README.md`, "Storage adapter"): database `trommi`, keys prefixed `room/`; device keys as non-extractable CryptoKeys; records `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `memo/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number>`, `sync` (cursor + chains, same transaction), `room`, `outbox`, `invite/<id>`; written incrementally (~200 ms batches). The app keeps only per-browser conveniences in localStorage: theme (`agent-board-theme`), rail (`trommi-rail`), open crowns (`trommi-crowns-open`), the desk in view (`trommi-desk`), the dev hub override is sessionStorage only. The mock room keeps nothing.
+The core owns the schema (trommi-hub `core/README.md`, "Storage adapter"): database `trommi`, keys prefixed `room/`; device keys as non-extractable CryptoKeys; records `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `memo/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number>`, `sync` (cursor + chains, same transaction), `room`, `outbox`, `invite/<id>`; written incrementally (~200 ms batches). The app keeps only per-browser conveniences in localStorage: theme (`agent-board-theme`), rail (`trommi-rail`), open crowns (`trommi-crowns-open`), the desk in view (`trommi-desk`), the dev hub override is sessionStorage only. The mock room keeps nothing.
 
 ### Render strategy (performance)
 

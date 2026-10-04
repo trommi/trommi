@@ -1,6 +1,6 @@
 # Pairing: how devices and agents join a room
 
-How the hub and the clients speak when a room is created, a device or an agent joins, a member is removed, and the room is recovered. This is the next step after `docs/krypto-konzept.md` (the design and the decisions of 2 October 2026) and `crypto/FORMAT.md` (the exact bytes). The hub's side exists as a tested module, `crypto/hub.mjs`; it is not wired into `server/server.mjs` yet.
+How the hub and the clients speak when a room is created, a device or an agent joins, a member is removed, and the room is recovered. This is the next step after `docs/krypto-konzept.md` (the design and the decisions of 2 October 2026) and `core/FORMAT.md` (the exact bytes). The hub's side exists as a tested module, `core/hub.mjs`; it is not wired into `server/server.mjs` yet.
 
 > **In short.** A room is a signed member list. Joining means: a device of the human signs a new line into that list and seals the room key for the newcomer. The hub carries the messages and stores the list and the sealed keys. It cannot add anyone, cannot open any key, and refuses what no member signed. A human compares a six-digit code; an agent joins by a link in its prompt without one.
 
@@ -48,7 +48,7 @@ A link works for one newcomer and for ten minutes. Both limits are enforced by t
 
 ## 4. The messages
 
-All of them are byte strings from `crypto/FORMAT.md`; the transport (JSON over HTTPS) carries them as base64url. The names in the right column are the functions of `crypto/hub.mjs` that the server routes will call.
+All of them are byte strings from `core/FORMAT.md`; the transport (JSON over HTTPS) carries them as base64url. The names in the right column are the functions of `core/hub.mjs` that the server routes will call.
 
 | # | From → to | Message | Signed by | The hub checks | Hub function |
 | --- | --- | --- | --- | --- | --- |
@@ -99,7 +99,7 @@ Today an agent has a readable id (the slug of its name: `crypto`, `crypto-2`) an
 
 | | Is | Lives |
 | --- | --- | --- |
-| **Member key** | The agent's identity: an Ed25519 and an X25519 key pair. Its hash is the device id in the member list | Key file in the channel process's data folder, mode 0600, one per room: `keys/<room id>.key` (66 bytes, `crypto/FORMAT.md` section 4) |
+| **Member key** | The agent's identity: an Ed25519 and an X25519 key pair. Its hash is the device id in the member list | Key file in the channel process's data folder, mode 0600, one per room: `keys/<room id>.key` (66 bytes, `core/FORMAT.md` section 4) |
 | **Stable id** (`crypto`) | The board's name for that member, used in addresses and by the other clients. The hub binds it to the member key the first time the agent signs in, and gives **the same id to the same key** ever after, whatever name the process gives | Hub: a row device → session id |
 | **Instance** | One running process. It no longer proves identity. It only tells two processes with the same key file apart | Process memory |
 
@@ -252,6 +252,6 @@ The agents are not invited again. The old devices are out even if one turns up l
 
 - **A new agent can read back to the last removal.** The room key changes only on removal, so an epoch can be months long, and a joining agent gets that epoch's key. If new agents should not read earlier messages, adding an agent would have to start a new room key as well. That is a choice for the human.
 - **Device names are readable by the hub** (they are in the member list). If they should be hidden, the list would carry only keys and the names would travel as encrypted content.
-- **The store's member tables** (`server/store/store.mjs`: `member_log`, `devices`, `wrapped_keys`, `invites`) predate the decisions: `member_log.kind` knows `epoch` but not `recover`; an entry changes one device, while a remove or recover entry changes several; there are no methods for invites, back links or the device → session binding. `crypto/hub.mjs` therefore runs on `memoryStorage()`, whose fifteen methods are the list of what the store has to offer.
-- **Routes.** `crypto/hub.mjs` has no HTTP. The functions in section 4 map one to one onto routes; the SSE stream needs the token in a header (`fetch`, not `EventSource`).
+- **The store's member tables** (`server/store/store.mjs`: `member_log`, `devices`, `wrapped_keys`, `invites`) predate the decisions: `member_log.kind` knows `epoch` but not `recover`; an entry changes one device, while a remove or recover entry changes several; there are no methods for invites, back links or the device → session binding. `core/hub.mjs` therefore runs on `memoryStorage()`, whose fifteen methods are the list of what the store has to offer.
+- **Routes.** `core/hub.mjs` has no HTTP. The functions in section 4 map one to one onto routes; the SSE stream needs the token in a header (`fetch`, not `EventSource`).
 - **Not verified:** whether Safari keeps a non-extractable X25519 key in IndexedDB reliably (concept, section 13).

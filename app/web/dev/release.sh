@@ -3,6 +3,7 @@
 # the service worker keeps exactly this release and drops the previous one. No build: the files stay as they are.
 #   dev/release.sh
 set -euo pipefail
+node "$(dirname "$0")/build.mjs" --vendor   # public/vendor (git-ignored) from the repository's core/, for the preload list
 node "$(dirname "$0")/preload.mjs"
 cd "$(dirname "$0")/../public"
 # Only what git tracks (what is deployed); a missing file would make the worker's install fail.

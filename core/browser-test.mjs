@@ -1,14 +1,14 @@
 // browser-test.mjs: the SAME client/core files in headless Chromium (IndexedDB storage, non-extractable keys),
 // against the real hub in-process, with a Node agent on the other side. Needs Chromium outside the command sandbox.
-//   node client/core/browser-test.mjs [--n=2000]
+//   node core/browser-test.mjs [--n=2000]
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
 import { fileURLToPath } from 'node:url'
-import { startHub, LIMITS } from '../../hub/server.mjs'
-import { launchChromium } from '../../dev/cdp.mjs'
+import { startHub, LIMITS } from '../hub/server.mjs'
+import { launchChromium } from '../dev/cdp.mjs'
 import { joinRoom, memoryStorage } from './index.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
@@ -54,7 +54,7 @@ try {
     return r.result.value
   }
   await nav()
-  const imp = `const core = await import('${ORIGIN}/client/core/index.mjs');`
+  const imp = `const core = await import('${ORIGIN}/core/index.mjs');`
   // 1. found in the browser
   const founded = await run(`${imp}
     const storage = core.idbStorage({ name: 'trommi-test', prefix: 'r1/' })

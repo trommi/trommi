@@ -5,7 +5,7 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { bundle } from './build.mjs'
+import { bundle, vendorFiles, withVendor } from './build.mjs'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
 const RAW = process.argv.includes('--raw')
@@ -22,6 +22,14 @@ http.createServer((req, res) => {
   // Like Cloudflare's html_handling: /a/frame serves /a/frame.html.
   if (!fs.existsSync(file) && fs.existsSync(`${file}.html`)) file = `${file}.html`
   const isBundle = !RAW && /^\/css\/bundle\.\w+\.css$/.test(url.pathname)
+  // The core comes from the repository's core/ (as Cloudflare's build copies it), read on every request.
+  const vendorName = /^\/vendor\/([\w.-]+\.mjs)$/.exec(url.pathname)?.[1]
+  if (vendorName) {
+    const v = vendorFiles()[vendorName]
+    if (v == null) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found') }
+    res.writeHead(200, { 'Content-Type': 'text/javascript', 'Cache-Control': 'no-cache' })
+    return res.end(v)
+  }
   if (!fs.existsSync(file) && !isBundle) {
     // Like Cloudflare's single-page-application handling: navigations get the app, anything else a 404.
     if (req.headers['sec-fetch-mode'] !== 'navigate' && /\.\w+$/.test(url.pathname)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found') }
@@ -33,7 +41,9 @@ http.createServer((req, res) => {
   if (h['Content-Security-Policy'] && !h['Content-Security-Policy'].includes('sandbox')) h['Content-Security-Policy'] = h['Content-Security-Policy'].replace('connect-src ', 'connect-src http://127.0.0.1:* http://localhost:* ')
   res.writeHead(200, h)
   // The built shell: index.html, sw.js and the bundle come from the build, everything else from public/.
-  const built = !RAW && (file === path.join(root, 'index.html') || file === path.join(root, 'sw.js') || isBundle) && bundle(root)
+  const sw = file === path.join(root, 'sw.js') ? withVendor(fs.readFileSync(file, 'utf8'), vendorFiles()) : null
+  const built = !RAW && (file === path.join(root, 'index.html') || sw || isBundle) && bundle(root, sw)
   if (built) return res.end(file.endsWith('index.html') ? built.html : file.endsWith('sw.js') ? built.sw : built.css)
+  if (sw) return res.end(sw)
   fs.createReadStream(file).pipe(res)
 }).listen(port, '127.0.0.1', () => console.log(`app on http://127.0.0.1:${port}`))

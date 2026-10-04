@@ -1,4 +1,4 @@
-// model.mjs: the board model and its reducer (client/core/README.md "The model" is the contract).
+// model.mjs: the board model and its reducer (core/README.md "The model" is the contract).
 // Pure JavaScript: no crypto, no I/O. The sync engine hands in verified, decoded records in hub order;
 // every client (human or agent) applies the same rules and so arrives at the same board.
 import { OBJECT_STATE_NAME, URGENCY_NAME, URGENCY, KIND, CARD_CONTENT_FIELDS } from './codec.mjs'
@@ -123,7 +123,7 @@ function syncSessionAgent(model, s) {
 function touchAgent(model, agent_device_id, change) {
   for (const s of model.sessions.values()) if (s.agent_device_ids.includes(agent_device_id) || s.agent_device_id === agent_device_id) { syncSessionAgent(model, s); change.sessions.add(s.session_id) }
 }
-/** A verified grant chain state (crypto/session-grants.mjs) for one session. */
+/** A verified grant chain state (core/session-grants.mjs) for one session. */
 export function applySessionGrant(model, sessionState, change, everAgentIds = [], epochAgentIds = null) {
   const s = sessionOf(model, sessionState.sessionId)
   if (epochAgentIds) s.epoch_agent_ids = epochAgentIds

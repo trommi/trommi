@@ -1,6 +1,6 @@
 # Trommi Krypto-Konzept
 
-Zero Trust: Der Hub ist ein feindlicher Briefkasten. Stand 2. Oktober 2026: Die offenen Fragen sind entschieden (letzter Abschnitt), der Text ist darauf angepasst. Die Bibliothek liegt in `crypto/`, das Protokoll fürs Einschreiben in `docs/pairing.md`. Seit 4. Oktober 2026 im Produkt (`hub/`, `client/core/`, App, Channel). **Wo dieser Text und das README („Hub v1“, Sicherheitsregeln R1–R9 aus v1.1) sich widersprechen, gilt das README**; vor allem: Agenten bekommen keinen Raumschlüssel, nur die Schlüssel ihrer Sitzungen (R6), und Mitglieder tragen keine Namen (R8).
+Zero Trust: Der Hub ist ein feindlicher Briefkasten. Stand 2. Oktober 2026: Die offenen Fragen sind entschieden (letzter Abschnitt), der Text ist darauf angepasst. Die Bibliothek liegt in `crypto/`, das Protokoll fürs Einschreiben in `docs/pairing.md`. Seit 4. Oktober 2026 im Produkt (`hub/`, `core/`, App, Channel). **Wo dieser Text und das README („Hub v1“, Sicherheitsregeln R1–R9 aus v1.1) sich widersprechen, gilt das README**; vor allem: Agenten bekommen keinen Raumschlüssel, nur die Schlüssel ihrer Sitzungen (R6), und Mitglieder tragen keine Namen (R8).
 
 > **Kern.** Jedes Gerät und jeder Agent hat eigene Schlüssel. Wer dazugehört, steht in einer signierten Mitgliederliste, die der Server weder fälschen noch unbemerkt zurückdrehen kann. Ein einziger Raumschlüssel verschlüsselt die Inhalte, ohne Ratchet; er wird nur erneuert, wenn ein Mitglied entfernt wird. Jede Nachricht ist vom Absendergerät signiert und verkettet. Ein Agent führt nur aus, was nachweislich von einem zugelassenen Gerät eines Menschen stammt. Der Server sieht Chiffretext und genau die Metadaten, die er zum Zustellen und zum Löschen nach 30 Tagen braucht.
 
@@ -214,10 +214,10 @@ Aus `docs/gelernt.md` eingelöst: versionierte, einmalige, kurzlebige Einladunge
 - **Dringlichkeit bleibt für den Hub lesbar**, weil er danach über Push-Mitteilungen entscheidet. Ebenso der Status einer Karte (offen oder beantwortet, ID, Antwortzeit); die Inhalte sind Chiffretext. Beantwortete Karten löscht der Hub nach 30 Tagen.
 - **Sprache läuft über den Hub.** Direkt vom Browser zu Tinfoil ist verworfen: der API-Schlüssel läge im Browser. Die iOS-App darf später einen eigenen Tinfoil-Schlüssel aus dem Schlüsselbund nutzen.
 
-**Was daraus folgt, und wo es steht.** Bibliothek und Testvektoren sind angepasst (`crypto/FORMAT.md`, Abschnitt 16): Den Eintrag „neue Epoche nach Zeitplan“ gibt es nicht mehr; eine Wiederherstellung, die einen Agenten entfernt oder ein Menschengerät übrig lässt, ist ungültig; die Dringlichkeit steht im signierten Kopf. Zwei Folgen, die man kennen sollte:
+**Was daraus folgt, und wo es steht.** Bibliothek und Testvektoren sind angepasst (`core/FORMAT.md`, Abschnitt 16): Den Eintrag „neue Epoche nach Zeitplan“ gibt es nicht mehr; eine Wiederherstellung, die einen Agenten entfernt oder ein Menschengerät übrig lässt, ist ungültig; die Dringlichkeit steht im signierten Kopf. Zwei Folgen, die man kennen sollte:
 
 - **Lange Epochen.** Ein Raumschlüssel gilt jetzt, bis jemand entfernt wird. Ein neuer Agent kann bis zum letzten Entfernen zurücklesen, wenn der Hub ihm die alten Umschläge gibt (Abschnitt 4).
 - **Sprache ist nicht Ende-zu-Ende verschlüsselt.** Was du diktierst oder dir vorlesen lässt, sieht der Hub (Abschnitt 7).
 
-Als Nächstes am Server gewählt: Einschreiben und Schlüssel, und stabile Agenten-IDs. Das Protokoll dafür steht in `docs/pairing.md`, die Hub-Seite als getestetes Modul in `crypto/hub.mjs`.
+Als Nächstes am Server gewählt: Einschreiben und Schlüssel, und stabile Agenten-IDs. Das Protokoll dafür steht in `docs/pairing.md`, die Hub-Seite als getestetes Modul in `core/hub.mjs`.
 - **Ein neuer Agent darf ältere Nachrichten lesen.** Kein neuer Raumschlüssel pro neuem Agenten; der Schlüssel wechselt nur beim Entfernen und bei der Wiederherstellung.

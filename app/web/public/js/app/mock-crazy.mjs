@@ -1,6 +1,6 @@
 // A very big mock room for performance work (?mock=crazy): 30+ sessions with status lines, 5,000 answered cards
 // with revisions, hundreds of open cards on the Desk, 50,000 chat messages (one session thread over 2,000).
-// Same shape as public/mock/fixture.json (core model, client/core/README.md).
+// Same shape as public/mock/fixture.json (core model, core/README.md).
 export function crazyFixture({ sessions = 32, answered = 5000, open = 300, messages = 50000 } = {}) {
   const hex = (n, seed) => { let h = ''; let x = seed * 2654435761 >>> 0; while (h.length < n) { x = (x ^ (x << 13)) >>> 0; x = (x ^ (x >>> 17)) >>> 0; x = (x ^ (x << 5)) >>> 0; h += x.toString(16).padStart(8, '0') } return h.slice(0, n) }
   const now = Date.now()

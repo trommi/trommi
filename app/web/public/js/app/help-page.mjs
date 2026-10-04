@@ -1,6 +1,6 @@
 // The help page: the key list from the app's own key table (t/lib/keys.js SHORT), the key beside each way, and the
 // part "For agents": the picture of the channel and the reference of tools and events, read from the channel's own
-// tables (hub/channel-tools.mjs, copied into vendor/ by trommi-hub's dev/sync-app.sh), so it cannot drift from them.
+// tables (connector/channel-tools.mjs, copied into vendor/ by trommi-hub's dev/sync-app.sh), so it cannot drift from them.
 import { SHORT, capOf } from '/t/lib/keys.js'
 
 const $ = id => document.getElementById(id)
@@ -38,7 +38,7 @@ addEventListener('keydown', e => {
 
 const LANES = [
   { name: 'Claude Code', sub: 'the session: model and terminal' },
-  { name: 'Channel', sub: 'hub/channel.mjs, its own device keys' },
+  { name: 'Channel', sub: 'connector/channel.mjs, its own device keys' },
   { name: 'Hub', sub: 'stores sealed envelopes, reads none' },
   { name: 'Trommi app', short: 'App', sub: 'you: opens them on your device', human: true },
 ]
@@ -218,5 +218,5 @@ try {
   // The page may have been opened at an entry that was not drawn yet.
   if (location.hash.startsWith('#tool-')) $(location.hash.slice(1))?.scrollIntoView()
 } catch {
-  for (const id of ['tool-list', 'event-list']) $(id)?.replaceChildren(el('p', 'hp-wait', 'The reference could not be read. The agent still sees every tool; ask it with list_cards or look at hub/channel-tools.mjs.'))
+  for (const id of ['tool-list', 'event-list']) $(id)?.replaceChildren(el('p', 'hp-wait', 'The reference could not be read. The agent still sees every tool; ask it with list_cards or look at connector/channel-tools.mjs.'))
 }

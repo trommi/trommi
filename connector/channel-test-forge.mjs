@@ -1,4 +1,4 @@
-// channel-test-forge.mjs: forged commands against the channel (part of hub/channel-test-e2e.mjs).
+// channel-test-forge.mjs: forged commands against the channel (part of connector/channel-test-e2e.mjs).
 // Each forgery is sealed with the core's own sealing (Client._send, a test-only use of an internal), so the
 // envelope is well-formed and signed; only its authority or its bind is wrong. Expected: the channel emits
 // nothing to Claude Code and reports alert/... on the board, or the hub already refuses it.
@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileStorage } from '../client/core/storage-file.mjs'
+import { fileStorage } from '../core/storage-file.mjs'
 
 export async function run({ core, human, agentId, channel, until, keys }) {
   const { z, codec } = core
