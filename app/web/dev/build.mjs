@@ -63,7 +63,7 @@ function checkSheet(css, file) {
 }
 
 // ---- the shell: every file the app serves (the service worker keeps them) ----
-const NOT_SHELL = /^(gen\/|mock\/|sw\.js$|index\.html$|_headers$|connect\.sh$)|\.md$|(^|\/)\./
+const NOT_SHELL = /^(gen\/|demo\/|sw\.js$|index\.html$|_headers$|connect\.sh$)|\.md$|(^|\/)\./
 function walk(dir, base = dir) {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap(e => {
     const p = path.join(dir, e.name)
@@ -101,7 +101,7 @@ export function generate({ pub = PUBLIC, repo = REPO } = {}) {
   const content = f => out[f] ?? fs.readFileSync(path.join(pub, f))
   const version = sha(Buffer.concat([...files.flatMap(f => [Buffer.from(f), Buffer.from(content(f))]), Buffer.from(html)]))
   const read = f => { const rel = f.replace(/^\//, ''); return rel in out ? out[rel] : fs.existsSync(path.join(pub, rel)) ? fs.readFileSync(path.join(pub, rel), 'utf8') : null }
-  const block = [`<!-- preload ${version} -->`, ...preloads(read, ['/js/app/boot.mjs', '/gen/vendor/index.mjs']).map(f => `<link rel="modulepreload" href="${f}">`), '<!-- /preload -->'].join('\n')
+  const block = [`<!-- preload ${version} -->`, ...preloads(read, ['/app.mjs', '/gen/vendor/index.mjs']).map(f => `<link rel="modulepreload" href="${f}">`), '<!-- /preload -->'].join('\n')
   out['index.html'] = html.replace(/<!-- preload[^>]*-->[\s\S]*?<!-- \/preload -->/, block).replace('data-build="dev"', `data-build="${version}"`)
   if (!out['index.html'].includes(block)) throw new Error('index.html: the <!-- preload --> block is missing')
 

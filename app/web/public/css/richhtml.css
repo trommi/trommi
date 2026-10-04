@@ -32,16 +32,12 @@
 .rh.is-capped, .rh.is-wide { padding-bottom: 34px; }
 .rh.is-capped .rh-open, .rh.is-wide .rh-open { top: auto; bottom: 0; }
 
-/* The big view. */
-/* The big view is a page of its own (large.html): a thin bar, and the frame fills the rest. */
-.rh-page { margin: 0; height: 100dvh; display: flex; flex-direction: column; background: var(--surface); color: var(--fg); font: 400 15px/1.5 var(--font); }
-.rh-large-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-4); border-bottom: 1px solid var(--line); }
+/* The big view: over the whole window, a thin bar with Close, the frame fills the rest. */
+.rh-large { position: fixed; inset: 0; z-index: 1000; display: flex; flex-direction: column; background: var(--surface); color: var(--fg); }
+.rh-large-bar { flex: none; display: flex; align-items: center; justify-content: space-between; gap: var(--s-3); padding: var(--s-2) var(--s-4); padding-top: max(var(--s-2), env(safe-area-inset-top)); border-bottom: 1px solid var(--line); }
 .rh-large-name { font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--muted); }
-.rh-large-bar a { color: var(--muted); font-size: var(--t-sm); text-underline-offset: 3px; }
-.rh-large-stage { flex: 1; min-height: 0; }
-.rh-large-stage .rh-frame { height: 100%; max-height: none; }
-.rh-large-stage p { margin: var(--s-6) var(--s-4); color: var(--muted); }
-a.rh-open { text-decoration: none; display: inline-flex; align-items: center; }
+.rh-large-close { min-height: 32px; padding: 0 12px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
+.rh-large .rh-frame { flex: 1; height: auto; max-height: none; }
 
 /* Phone polish (docs/qa-phone-design.md): a table that is too wide scrolls sideways in its frame; its words stay
    whole (the text around it breaks anywhere, and a narrow column then stood one syllable per line). */
