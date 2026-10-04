@@ -27,7 +27,10 @@ export default class extends Controller {
     if (!w || !h) return this.layer.replaceChildren()
     Object.assign(this.layer.style, { left: `${img.offsetLeft}px`, top: `${img.offsetTop}px`, width: `${w}px`, height: `${h}px` })
     const nodes = []
-    this.marksValue.forEach((m, n) => {
+    this.marksValue.forEach((given, n) => {
+      // (The client core carries a region as width/height (the channel's ref); the board wrote w/h.)
+      const m = { ...given, w: Number(given.w ?? given.width), h: Number(given.h ?? given.height) }
+      if (![m.x, m.y, m.w, m.h].every(Number.isFinite)) return
       const cx = (m.x + m.w / 2) * w, cy = (m.y + m.h / 2) * h
       const rx = Math.max(12, m.w * w / 2 * 1.16 + 5), ry = Math.max(12, m.h * h / 2 * 1.16 + 5)
       // one stroke of the pen, a little more than once round, never quite closing where it began
