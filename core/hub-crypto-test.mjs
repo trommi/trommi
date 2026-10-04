@@ -1,5 +1,5 @@
 // Tests for hub.mjs. Run: node core/hub-crypto-test.mjs
-// Real clients (zcrypto.mjs) talk to the hub module the way docs/pairing.md describes; then everything a hub must refuse.
+// Real clients (zcrypto.mjs) talk to the hub module the way the README ("Founding and joining") describes; then everything a hub must refuse.
 import assert from 'node:assert/strict'
 import * as z from './zcrypto.mjs'
 import { createSessionGrant } from './session-grants.mjs'
@@ -22,7 +22,7 @@ async function rejects(fn, code) {
 const flip = (bytes, at) => { const out = bytes.slice(); out[at] ^= 1; return out }
 const txt = b => new TextDecoder().decode(b)
 
-// ---- clients, as docs/pairing.md has them speak --------------------------------
+// ---- clients, as the README has them speak --------------------------------
 
 const LABELS = new Map()
 const client = (device, name) => { LABELS.set(hex(device.id), name); return { name, device, state: null, pin: null, secrets: new Map(), chains: z.newChains(), token: null, cursor: 0 } }

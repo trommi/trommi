@@ -16,7 +16,7 @@ envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICEN
 | `fuzz/` | model-based fuzzing of hub and clients (`fuzz/README.md`); the quick run blocks the hub deploy | |
 | `dev/` | `cdp.mjs` (headless Chromium), `e2e/` (load generator with real members) | |
 | `assets/` | brand sources (logo, bell marks, fonts, palette, icons) | |
-| `docs/` | the crypto concept, pairing, performance notes, open wishes | |
+| `docs/` | `marketing.md`, `open-source.md`: product notes, not protocol | |
 
 The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
 and docs) was removed on 4 October 2026; its history is in git and in
@@ -40,7 +40,7 @@ Each suite starts its own hubs on free ports with throwaway data directories. A 
 
 ## Hub v1: the wire protocol (hub.trommi.com)
 
-> **The hub** (`hub/`, deployed to `https://hub.trommi.com`) is a thin, hostile mailbox: it stores what members signed and sealed and serves no UI. The app is a static site (`app/web`, `https://app.trommi.com`); agents join through the channel process (`connector/channel.mjs`). This section is the contract between the three. Crypto design: `docs/krypto-konzept.md`; exact bytes: `core/FORMAT.md`; pairing: `docs/pairing.md`.
+> **The hub** (`hub/`, deployed to `https://hub.trommi.com`) is a thin, hostile mailbox: it stores what members signed and sealed and serves no UI. The app is a static site (`app/web`, `https://app.trommi.com`); agents join through the channel process (`connector/channel.mjs`). This section is the contract between the three. Crypto design and pairing: the sections below; exact bytes: `core/FORMAT.md`.
 
 ### Principles
 
@@ -396,7 +396,7 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 
 **R9. Format fixes.** `wrapAssetKey` uses a random nonce. Invite hashes and the check code cover the signed body (request: body ‖ MAC), not the Ed25519 signature, so vectors are reproducible on every platform. The hub address is canonical: `https://` + lowercase host [+ `:port`], no path, no trailing slash, copied verbatim from the link. Stroke points: base64url of int16 big-endian deltas in 1/8 px, first point absolute; style `{ tool, color, size }`.
 
-**Adopted from the research** (`docs/` research notes, 10 systems): ephemeral events that are never stored (typing, cursors, a pen preview) go over `POST /v1/rooms/:room_id/ephemeral` as sealed envelopes relayed to open streams only (`event: ephemeral`); attachments may have a separate small poster/thumbnail attachment with its own key and a tiny placeholder in the body; room snapshots from a human device for faster first loads (`core/snapshot.mjs`, trust in R2).
+**Adopted from the research** (research of 10 systems): ephemeral events that are never stored (typing, cursors, a pen preview) go over `POST /v1/rooms/:room_id/ephemeral` as sealed envelopes relayed to open streams only (`event: ephemeral`); attachments may have a separate small poster/thumbnail attachment with its own key and a tiny placeholder in the body; room snapshots from a human device for faster first loads (`core/snapshot.mjs`, trust in R2).
 
 ### What an agent's channel process checks
 
@@ -442,9 +442,38 @@ The single file is made by `node connector/bundle.mjs` (esbuild, pinned devDepen
 4. **Remove:** any human device: `removeMembers` → `POST members` with the new key epoch sealed for everyone who stays, and the back link. The hub cuts the removed device off.
 5. **Recover:** with the code: sign in as the recovery key → `GET members`, `GET sealed_room_keys` → `recoverRoom` → `POST members`.
 
+**What each side verifies, whatever the hub did.** *Newcomer, before it sends anything:* the member list hashes to the room id in the link; the offer is signed by a human member of that list and belongs to this link's `invite_id`. *Inviter, on the request:* the MAC (only a holder of the link can make it); room, invite, role, hub address and offer hash match; the invite is unused and not expired. It answers the first request with a valid MAC and no other, so junk without a MAC does not spend the invite. *Newcomer, on the reveal:* signed by the inviter, answers *this* request (otherwise someone else used the link: stop and say so), the number matches the commitment in the offer. *Newcomer, at the end:* the list, verified again up to the room id, names its own key in the invited role; the sealed key opens and matches the commitment in the list.
+
+**The check code** is six decimal digits of H("trommi/v1/invite-code", offer ‖ request ‖ hidden number). It covers everything that crossed the hub (inviter, room, role, the newcomer's keys); the inviter fixed its number in the offer before it saw the request, so nobody can try keys until a code fits. Six digits are one chance in a million per attempt, and each attempt spends an invite. The human reads the digits on the **new** device and **types** them on the inviting one (a tap on "matches" would be given without looking); a mismatch adds nobody and spends the invite; the human has five minutes after the request is accepted. For humans it is mandatory: the library produces no add entry for a human role without `codeConfirmed`. An agent invite needs no code unless the invite says `confirm_code`. What an agent link risks, plainly: whoever sees the link within its ten minutes and is faster than the agent joins as that agent. The link passes through Claude Code's transcript and so to the model provider, and a shared terminal, a pasted log or a clipboard manager can leak it. Such a stranger holds no room key and no session key until a human assigns it to a session; it cannot give commands, add or remove anyone, and is gone when removed. If two devices answer one agent link nobody is added (`invite-contested`). The inviting device shows who joined, with Remove beside it.
+
+**The hub's view of a room.** It stores the signed member list (who, role, both public keys, when, who signed), sealed room and session keys per member and epoch (it sees recipient, epoch and, from the length, whether a history key is inside; it cannot open them), back links (handed to human devices and the recovery key only), open invites (the signed offer, up to four requests, the reveal; invite id, role, expiry; never the secret after `#`, so it can make no valid request), sealed envelopes, and session tokens. Of an envelope it reads sender, recipient, numbers, hashes, time and padded size; for cards also card id, status, urgency and answer time, plus attachment ids and the push bit. It cannot read text, options, the chosen option, status lines or file names, and cannot change what it reads: the header is signed. Speech (dictation, reading aloud) goes through the hub and is not end-to-end encrypted; the Tinfoil key stays on the hub. An agent's stable id is bound by the hub to its member key the first time it signs in and given back to the same key ever after; a second process on the same key is refused (`instance-conflict`, `lease-lost`, R4), a removed agent's id is never reused (a new agent of the same name becomes `crypto-2`), and a lost key file means a new invite and a new identity (the old member stays until a human removes it).
+
+**When joining or keys go wrong.**
+
+| What happens | Code | The human sees |
+| --- | --- | --- |
+| The link is opened after ten minutes, or the code is typed after five | `invite-expired` | "This invite has run out." |
+| A second device uses the same link | `invite-used`, `invite-contested` | on the late device: already used; remove the first one if it was not yours |
+| The request's keys were swapped (hub or anyone without the link) | `bad-mac` | nothing joins, the invite stays usable |
+| The hub serves another member list than the link names | `wrong-room`, `bad-entry` | "This hub shows a different room than the link." |
+| The digits differ | `code-not-confirmed` | the inviting device adds nobody |
+| The sealed key is not the one the list commits to | `key-mismatch` | "The room key does not match the member list." |
+| An entry no current human member signed; a removed member signs in or posts | `bad-entry`, `bad-signature`, `not-member`, `removed-sender` | refused at the hub; a client that gets one anyway stops and reports |
+| An old entry or envelope is sent again | `replay` | refused |
+| A removal without a sealed key for someone who stays | `incomplete` | refused: nobody is locked out by accident |
+| The hub rolls the list back or shows two devices different lists | `log-rollback`, `log-fork` | "The hub shows an older or a different member list." |
+| A wrong recovery code is typed | `bad-recovery-code` | "This code does not belong to the room." |
+| The inviting device goes offline before the add entry | status `waiting`, then `invite-expired` | the newcomer waits, indistinguishable from a hub that withholds the entry |
+
+All devices lost with the code at hand: recovery. All devices and the code lost: the room is lost, a new room, agents invited again. Open points: a device's name in the room is a register (R8), so the hub never sees names; whether Safari keeps a non-extractable X25519 key in IndexedDB reliably is unverified.
+
+### Card content (what an agent files, what the app renders)
+
+All additive: a client that knows none of this still has `body`, `options`, `recommended`. `sections` is an ordered list of blocks; a block with `key` is an option (`label`, `text`, `recommended`, optional `picture`: an index into the card's attachments), a block without is plain context. The flagged blocks in order are exactly `options` (at least two, unique keys), and `body` holds the same text for old clients (flagged blocks as `**Label**: text`). The connector accepts the same as one `text` string: paragraphs split by a blank line, `[key] Label: text` flags one (without a colon the first line is the label), `[key*]` or `(recommended)` marks the advice, a last line `picture: file-or-index` ties an attachment (`connector/channel-bridge.mjs`). `revise_card` may replace, drop or add the blocks; re-render when the card changes. The app shows each flagged paragraph under its label tied to its option tile (hover highlights both, a tap answers like the tile does, the advice mark shows on both). An answer can carry a note on any option, chosen or not (`option_notes`, the agent hears `option_notes="a,b"`), a general `note`, `marks` (notes and drawings pinned to places on the card's pictures) and `attachments`. **Trust** ("Whatever") is an `answer` with `trusted: true` and no choices: the agent picks its own recommendation, says so in a `reply` with the card id and closes the card; not offered on permission requests or info cards; taking it back is `decide_again`. **Shred** is `answer_action: shred`: the card is closed unanswered. **Snooze** ("Later") is the human register `snooze/<object_id>`, capped at the next 07:00 local time; a snoozed card stays open but leaves the queue, answering or closing it ends the snooze, and the agent is never told. At most one session wears the **crown** (register `crown`). Agents offer two or three options they are about 80 % sure of.
+
 ### Performance
 
-Measured on 4 October 2026 with real E2E members (`dev/e2e/`, method and all tables in `docs/perf-night.md`). "local" is the real hub code on the PC with server metrics. "live" is hub.trommi.com measured from outside: its metrics port and test key are not enabled yet.
+Measured on 4 October 2026 with real E2E members (`dev/e2e/`). "local" is the real hub code on the PC with server metrics. "live" is hub.trommi.com measured from outside: its metrics port and test key are not enabled yet.
 
 | What | Number |
 | --- | --- |
