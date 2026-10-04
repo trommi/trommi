@@ -27,6 +27,8 @@ export const INVITE_AFTER_USE_MS = 15 * 60 * 1000
 export const LEASE_MS = 60 * 1000
 export const RETENTION_DAYS = 30
 const DAY = 86400000
+/** Refusals that are final for a verified envelope at the sender's next number: kept as a void record (review 2 #5). */
+export const VOIDABLE = new Set(['forbidden', 'wrong-epoch', 'too-large', 'bad-format'])
 const WRAP_AGENT = 2 + 32 + 33 + 16      // sealed box around 0x01 || key
 const WRAP_HUMAN = 2 + 32 + 65 + 16      // sealed box around 0x02 || key || hist
 const BACK_LINK = 2 + 4 + 64 + 16
@@ -51,10 +53,10 @@ export function memoryStorage() {
     appendEnvelope(bytes, meta) {
       s.envelopes.push({ n: s.envelopes.length + 1, bytes, ...meta })
       const h = meta.header
-      if (h?.card && !s.objects.has(hex(h.card.id))) s.objects.set(hex(h.card.id), { owner: meta.sender, firstKind: h.kind, keyScope: h.keyScope, sessionId: h.sessionId ? hex(h.sessionId) : null })
+      if (!meta.voidCode && h?.card && !s.objects.has(hex(h.card.id))) s.objects.set(hex(h.card.id), { owner: meta.sender, firstKind: h.kind, keyScope: h.keyScope, sessionId: h.sessionId ? hex(h.sessionId) : null })
       return s.envelopes.length
     },
-    envelopes: (after = 0, limit = 200) => s.envelopes.filter(e => e.n > after).slice(0, limit),
+    envelopes: (after = 0, limit = 200) => s.envelopes.filter(e => e.n > after).slice(0, limit).map(e => (e.voidCode ? { ...e, pruned: true } : e)),
     replaceEnvelope(n, bytes) { s.envelopes[n - 1] = { ...s.envelopes[n - 1], bytes, pruned: true } },
     objectInfo: id => s.objects.get(id) ?? null,
     putGrant(sessionId, g) { const list = s.grants.get(sessionId) ?? []; list.push(g); s.grants.set(sessionId, list) },
@@ -265,6 +267,15 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
     if (!prev || rose) c.since.set(next.epoch, at)
     c.state = next
     return { grantNumber: next.grantNumber, grantHash: id(next.grantHash), sessionKeyEpoch: next.epoch, agentIds: next.agentIds }
+  }
+
+  // The chain advances only once the envelope is stored: a failed write must not leave the hub a number ahead (C15).
+  // With a store that can look hashes up, memory holds only a small window per chain (no growth per envelope).
+  function advance(h, v) {
+    const k = b64u(h.sender)
+    const c = chains.get(k) ?? { seq: 0, hash: null, hashes: storage.envelopeHash ? lazyHashes(storage, id(h.sender)) : new Map() }
+    c.seq = h.seq; c.hash = v.hash; c.hashes.set(h.seq, v.hash)
+    chains.set(k, c)
   }
 
   // ---- who may write what (R1, R6), the hub's second line --------------------------
@@ -526,24 +537,35 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       const head = z.peekEnvelope(bytes)
       if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
       if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device posts its own envelopes only')
-      // R5: status bodies are small (padded 4 KiB at most); registers are not a file store.
-      if (head.header.kind === KIND.STATUS && head.ciphertext.length - 16 > 4096) fail('too-large', 'a status body is at most 4 KiB')
       // R4 fencing: an agent posts only under the lease it holds; no lease, no generation or an older one is lease-lost.
       if (s.role === ROLE.AGENT && leases.get(s.id)?.generation !== leaseGeneration) fail('lease-lost', 'this process does not hold the lease of this agent key: take it with agent_lease and post with its generation')
       const v = await z.verifyEnvelope(bytes, { state: room(), chains, commit: false })
       const h = v.header
-      const { pushAllowed } = await authoriseEnvelope(h, s.role)
+      let pushAllowed
+      try {
+        // R5: status bodies are small (padded 4 KiB at most); registers are not a file store.
+        if (h.kind === KIND.STATUS && v._split.ct.length - 16 > 4096) fail('too-large', 'a status body is at most 4 KiB')
+        ;({ pushAllowed } = await authoriseEnvelope(h, s.role))
+      } catch (err) {
+        // D2 (review 2 #5): a signed envelope at exactly the sender's next number that the hub refuses for good is kept as
+        // a VOID record (pruned: header, nonce, body hash, signature) that takes the number, so the sender's chain moves on
+        // and the device never has to sign a second envelope under that number. Retryable refusals are not voided.
+        if (!(err instanceof ZError) || !VOIDABLE.has(err.code)) throw err
+        const voidBytes = await z.pruneEnvelope(bytes)
+        const n = storage.appendEnvelope(voidBytes, {
+          sender: s.id, seq: h.seq, epoch: h.epoch, recipient: null, push: false, card: null, time: now(), pruned: true, voidCode: err.code,
+          header: h, hash: v.hash, ciphertextHash: v.ciphertextHash, headerBytes: v._split.headerBytes, nonce: v._split.nonce, ciphertext: null, signature: v._split.signature,
+        })
+        advance(h, v)
+        err.voided = true; err.envelopeNumber = n; err.voidBytes = voidBytes
+        throw err
+      }
       const card = h.card ? { id: id(h.card.id), state: h.card.state, urgency: h.card.urgency, answeredAt: h.card.answeredAt } : null
       const n = storage.appendEnvelope(bytes, {
         sender: s.id, seq: h.seq, epoch: h.epoch, recipient: isZeroId(h.recipient) ? null : id(h.recipient), push: pushAllowed, card, time: now(), pruned: false,
         header: h, hash: v.hash, ciphertextHash: v.ciphertextHash, headerBytes: v._split.headerBytes, nonce: v._split.nonce, ciphertext: v._split.ct, signature: v._split.signature,
       })
-      // The chain advances only once the envelope is stored: a failed write must not leave the hub a number ahead (C15).
-      const k = b64u(h.sender)
-      // With a store that can look hashes up, memory holds only a small window per chain (no growth per envelope).
-      const c = chains.get(k) ?? { seq: 0, hash: null, hashes: storage.envelopeHash ? lazyHashes(storage, id(h.sender)) : new Map() }
-      c.seq = h.seq; c.hash = v.hash; c.hashes.set(h.seq, v.hash)
-      chains.set(k, c)
+      advance(h, v)
       return { n, push: pushAllowed, card, isHead: h.isHead, kind: h.kind, recipient: isZeroId(h.recipient) ? null : id(h.recipient) }
     }),
 
@@ -564,7 +586,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
 
     envelopes(token, { after = 0, limit = 200 } = {}) {
       session(token, { member: true })
-      return storage.envelopes(after, limit).map(e => ({ n: e.n, bytes: e.bytes, pruned: e.pruned }))
+      return storage.envelopes(after, limit).map(e => ({ n: e.n, bytes: e.bytes, pruned: e.pruned, ...(e.voidCode ? { voidCode: e.voidCode } : {}) }))
     },
     cards() {
       const out = new Map()

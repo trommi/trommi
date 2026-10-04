@@ -126,6 +126,8 @@ export function openDb(dir, { log = () => {} } = {}) {
     db.exec('ALTER TABLE attachments ADD COLUMN referenced_at INTEGER')
     db.exec('UPDATE attachments SET referenced_at = stored_at')
   }
+  // Void records (review 2 #5): a refused envelope kept pruned so the sender's chain moves on; void_code is the refusal.
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('envelopes') WHERE name = 'void_code'").get()) db.exec('ALTER TABLE envelopes ADD COLUMN void_code TEXT')
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   const cache = new Map()
   db.q = sql => { let s = cache.get(sql); if (!s) cache.set(sql, s = db.prepare(sql)); return s }
@@ -244,17 +246,19 @@ export function roomStorage(db, roomId) {
       return db.tx(() => {
         const n = q('SELECT last_envelope_number FROM rooms WHERE room_id = ?').get(roomId).last_envelope_number + 1
         const h = m.header
+        const isVoid = !!m.voidCode                   // a void record names no object, timeline or attachment
         const row = {
-          room_id: roomId, envelope_number: n, sender: m.sender, object_id: h.card ? hex(h.card.id) : null, object_state: h.card?.state ?? null,
-          urgency: h.card?.urgency ?? null, answered_at: h.card?.answeredAt ?? null, timeline_kind: h.timelineKind, timeline_id: h.timelineId,
+          room_id: roomId, envelope_number: n, sender: m.sender, object_id: h.card && !isVoid ? hex(h.card.id) : null, object_state: isVoid ? null : h.card?.state ?? null,
+          urgency: isVoid ? null : h.card?.urgency ?? null, answered_at: isVoid ? null : h.card?.answeredAt ?? null, timeline_kind: isVoid ? null : h.timelineKind, timeline_id: isVoid ? null : h.timelineId,
         }
         q(`INSERT INTO envelopes (room_id, envelope_number, sender_device_id, sender_sequence, previous_envelope_hash, envelope_hash, key_epoch, recipient_device_id,
           object_id, object_state, urgency, answered_at, envelope_kind, timeline_kind, timeline_id, send_push, attachment_ids, padded_size, sent_at, received_at,
-          envelope_header, envelope_nonce, encrypted_body, encrypted_body_hash, envelope_signature) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+          envelope_header, envelope_nonce, encrypted_body, encrypted_body_hash, envelope_signature, void_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
           .run(roomId, n, h.sender, h.seq, h.prev, m.hash, h.epoch, m.recipient ? h.recipient : null, row.object_id, row.object_state, row.urgency, row.answered_at,
-            h.kind, h.timelineKind, h.timelineId, m.push ? 1 : 0, h.blobs.length ? h.blobs.map(hex).join(',') : null, m.ciphertext.length - 16, h.time, m.time,
-            m.headerBytes, m.nonce, m.ciphertext, m.ciphertextHash, m.signature)
+            h.kind, row.timeline_kind, row.timeline_id, m.push ? 1 : 0, h.blobs.length && !isVoid ? h.blobs.map(hex).join(',') : null, m.ciphertext ? m.ciphertext.length - 16 : 0, h.time, m.time,
+            m.headerBytes, m.nonce, m.ciphertext ?? null, m.ciphertextHash, m.signature, m.voidCode ?? null)
         q('UPDATE rooms SET last_envelope_number = ? WHERE room_id = ?').run(n, roomId)
+        if (isVoid) return n
         deriveRow(db, row)
         // Attachments named in the header belong to the object (or to the card whose chat this is): deleted with it.
         const owner = row.object_id ?? (h.timelineKind === z.TIMELINE.CHAT && /^card\/[0-9a-f]{32}$/.test(h.timelineId ?? '') ? h.timelineId.slice(5) : null)
@@ -265,7 +269,7 @@ export function roomStorage(db, roomId) {
       })
     },
     envelopes: (after = 0, limit = 200) => q('SELECT * FROM envelopes WHERE room_id = ? AND envelope_number > ? ORDER BY envelope_number LIMIT ?').all(roomId, after, Number.isFinite(limit) ? limit : -1)
-      .map(r => ({ n: r.envelope_number, bytes: envelopeBytes(r, true), pruned: r.encrypted_body == null, card: r.object_id ? { id: r.object_id, state: r.object_state, urgency: r.urgency, answeredAt: r.answered_at } : null, time: r.received_at })),
+      .map(r => ({ n: r.envelope_number, bytes: envelopeBytes(r, true), pruned: r.encrypted_body == null, voidCode: r.void_code ?? undefined, card: r.object_id ? { id: r.object_id, state: r.object_state, urgency: r.urgency, answeredAt: r.answered_at } : null, time: r.received_at })),
     replaceEnvelope(n) { q('UPDATE envelopes SET encrypted_body = NULL WHERE room_id = ? AND envelope_number = ?').run(roomId, n) },
     /** What the hub needs to judge a write to an object: its creator, the kind and key scope of its first envelope. */
     objectInfo(objectId) {

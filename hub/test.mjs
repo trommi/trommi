@@ -908,6 +908,22 @@ test('review 2 (h): a removed device\'s push subscriptions are deleted with its 
   await w.hub.close()
 })
 
+test('review 2 #5 over HTTP: a void record answers voided + envelope_number and is served pruned with void, void_code; never in threads', async () => {
+  const w = await world()
+  // The phone writes a chat item in the session to nobody (a human's message there goes to its agent): forbidden, voided.
+  const { res } = await post(w, w.phone, { recipient: null })
+  assert.equal(res.status, 403); assert.equal(res.json.voided, true); assert.ok(Number.isSafeInteger(res.json.envelope_number))
+  const list = await ok(w, 'GET', `${R(w)}/envelopes?after_envelope_number=0`, { token: w.laptop.token })
+  const rec = list.envelopes.find(e => e.envelope_number === res.json.envelope_number)
+  assert.equal(rec.void, true); assert.equal(rec.void_code, 'forbidden')
+  assert.ok(z.peekEnvelope(unb64u(rec.envelope)).pruned)
+  const th = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=chat&timeline_id=session/${hex(SID)}`, { token: w.laptop.token })
+  assert.ok(!th.envelopes.some(e => e.envelope_number === res.json.envelope_number))
+  // The phone's chain moved on: its next envelope lands.
+  await posted(w, w.phone, {})
+  await w.hub.close()
+})
+
 let failed = 0
 const t0 = performance.now()
 const notes = []

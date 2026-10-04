@@ -483,7 +483,6 @@ test('PoC1: another agent cannot close, and so prune, an agent\'s open card', as
   // Under its own session key, and under the victim's session key (it is not assigned there): both refused.
   const forged = z.sealEnvelope({ device: bot.device, state: bot.state, chains: bot.chains, keyScope: 1, sessionId: new Uint8Array(16).fill(0x77), secret: g.secret, kind: KIND.CARD, card: { id: victim, state: 3, urgency: 3, answeredAt: 1 }, push: true, time: w.now() })
   await rejects(async () => postAs(w, bot.token, (await forged).bytes), 'forbidden')
-  bot.chains = z.newChains()
   await rejects(async () => postAs(w, bot.token, (await z.sealEnvelope({ device: bot.device, state: bot.state, chains: bot.chains, keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.CARD, card: { id: victim, state: 3, urgency: 3, answeredAt: 1 }, time: w.now() })).bytes), 'forbidden')
   w.tick(31 * DAY)
   assert.deepEqual(await w.hub.prune(), { pruned: 0 })
@@ -523,7 +522,6 @@ test('PoC4: an object id belongs to its creator; nobody squats on another agent\
   await post(w, w.agent, { kind: KIND.CARD, card: { id: mine, state: 1, urgency: 1 } })
   // The phone posts a "version" of the agent's card, and a new object under an id that is not its own.
   await rejects(() => post(w, w.phone, { kind: KIND.CARD, card: { id: mine, state: 2, urgency: 3 } }), 'forbidden')
-  w.phone.chains = z.newChains()
   await rejects(() => post(w, w.phone, { kind: KIND.CARD, card: { id: new Uint8Array(16).fill(9), state: 1, urgency: 3 } }), 'forbidden')
   assert.deepEqual(w.hub.cards().map(c => [c.id, c.state]), [[hex(mine), 1]])
 })
@@ -533,17 +531,14 @@ test('who may write what: answers go to the creator, chat on a card from its cre
   await post(w, w.agent, { kind: KIND.CARD, card: { id: card, state: 1, urgency: 1 } })
   // An answer addressed to the laptop instead of the card's creator.
   await rejects(() => post(w, w.phone, { kind: KIND.ANSWER, card: { id: card, state: 2 }, recipient: w.laptop.device.id }), 'forbidden')
-  w.phone.chains = z.newChains()
   await post(w, w.phone, { kind: KIND.ANSWER, card: { id: card, state: 2 }, recipient: w.agent.device.id })
   // An agent answers nothing; a verdict needs a permission request.
   await rejects(() => post(w, w.agent, { kind: KIND.ANSWER, card: { id: card, state: 2 }, recipient: w.agent.device.id }), 'forbidden')
   await rejects(() => post(w, w.laptop, { kind: KIND.VERDICT, card: { id: card, state: 3 }, recipient: w.agent.device.id }), 'forbidden')
-  w.laptop.chains = z.newChains()
   // Chat on the card: the creator, or a human to the creator.
   await post(w, w.laptop, { timelineId: `card/${hex(card)}`, recipient: w.agent.device.id })
   await rejects(() => post(w, w.laptop, { timelineId: `card/${hex(card)}`, recipient: null }), 'forbidden')
   // A human's message in the session goes to its agent.
-  w.laptop.chains = z.newChains(); w.laptop.chains.set(z.b64u(w.laptop.device.id), { seq: 1, hash: (await z.verifyEnvelope(w.storage.envelopes(0, 9).at(-1).bytes, { state: w.laptop.state, chains: z.newChains(), allowChainStart: true })).hash, hashes: new Map() })
   await rejects(() => post(w, w.laptop, { recipient: null }), 'forbidden')
   // Desks are for humans; agents cannot even seal under the room key.
   await rejects(() => post(w, w.agent, { keyScope: 0, secret: w.phone.secrets.get(1) }), 'forbidden')
@@ -558,7 +553,7 @@ test('session grants: the wrap set must match, removed signers and agents are re
   await w.hub.postGrant({ sessionId: hex(other), grant: g.grant, wraps: g.wraps })
   // The agent is not assigned to this session: it cannot speak in it.
   const s2 = { keyScope: 1, sessionId: other, secret: g.secret, kind: KIND.CHAT, timelineKind: 1, timelineId: `session/${hex(other)}` }
-  await rejects(async () => postAs(w, w.agent.token, (await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), ...s2, time: w.now() })).bytes), 'forbidden')
+  await rejects(async () => postAs(w, w.agent.token, (await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: w.agent.chains, ...s2, time: w.now() })).bytes), 'forbidden')
   // Unassigning the agent from its session: a new session key epoch without it; it can no longer speak there.
   const un = await createSessionGrant({ state: w.phone.state, signer: w.phone.device, sessionState: w.session.sessionState, rotate: true, current: w.session.secret, agentIds: [], time: w.now() })
   await rejects(() => w.hub.postGrant({ sessionId: hex(SID), grant: un.grant, wraps: un.wraps }), 'incomplete')   // no back link
@@ -572,8 +567,7 @@ test('session grants: the wrap set must match, removed signers and agents are re
 test('R5: a status body is at most 4 KiB padded', async () => {
   const w = await makeWorld()
   await rejects(() => post(w, w.agent, { kind: KIND.STATUS, payload: new Uint8Array(5000) }), 'too-large')
-  w.agent.chains = z.newChains()
-  assert.equal((await post(w, w.agent, { kind: KIND.STATUS, payload: new Uint8Array(3000) })).res.n, 1)
+  assert.equal((await post(w, w.agent, { kind: KIND.STATUS, payload: new Uint8Array(3000) })).res.n, 2)     // number 1 is the void record
 })
 test('C16: a recovery code that was replaced cannot keep reading', async () => {
   const w = await makeWorld()
@@ -623,6 +617,24 @@ test('review 2 (f): a flood of anonymous challenges does not lock members out of
   for (let i = 0; i < 10050; i++) w.hub.challenge()
   await signIn(w, w.phone)                                  // a fresh challenge still works
   assert.ok(w.phone.token)
+})
+
+test('review 2 #5: a final refusal of a verified envelope is a void record that takes its number; the chain moves on', async () => {
+  const w = await makeWorld()
+  const card = await z.objectIdOf(w.agent.device.id, 1)
+  await post(w, w.agent, { kind: KIND.CARD, card: { id: card, state: 1, urgency: 1 } })
+  const err = await rejects(() => post(w, w.phone, { kind: KIND.ANSWER, card: { id: card, state: 2 }, recipient: w.laptop.device.id }), 'forbidden')
+  assert.equal(err.voided, true); assert.equal(err.envelopeNumber, 2)
+  const all = w.hub.envelopes(w.phone.token)
+  assert.equal(all.at(-1).voidCode, 'forbidden'); assert.equal(all.at(-1).pruned, true)
+  assert.ok(z.peekEnvelope(all.at(-1).bytes).pruned, 'kept without its body')
+  // The phone's next envelope (number 2 of its chain) lands; a retry of the voided bytes is a replay.
+  await post(w, w.phone, { kind: KIND.ANSWER, card: { id: card, state: 2 }, recipient: w.agent.device.id })
+  assert.deepEqual(w.hub.cards().map(c => c.state), [2], 'the void record changed no object')
+  // Retryable refusals take no number: a gap is a gap.
+  const gap = await z.sealEnvelope({ device: w.phone.device, state: w.phone.state, chains: z.newChains(), kind: KIND.CHAT, payload: utf8('x'), time: w.now(), keyScope: 1, sessionId: SID, secret: w.phone.session, timelineKind: 1, timelineId: `session/${hex(SID)}`, recipient: w.agent.device.id })
+  const e2 = await rejects(() => w.hub.postEnvelope(w.phone.token, gap.bytes), ['equivocation', 'replay', 'chain-break'])
+  assert.ok(!e2.voided)
 })
 
 let failed = 0
