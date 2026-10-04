@@ -664,7 +664,7 @@ a.agent-badge { text-decoration: none; }
 
 /* ---- The note in the sidebar (sidebar.mjs sideNotes): one yellow sticky pinned at the sidebar's foot, above the fold button; folded its first line,
    unfolded a field that grows, the bin and the crown ---- */
-.side-notes { margin: auto 0 0; padding: 12px 0 52px; position: sticky; bottom: 0; background: var(--bg); }
+@media (min-width: 861px) { .side-notes { margin: auto 0 0; padding: 12px 0 52px; position: sticky; bottom: 0; background: var(--bg); } }
 .side-note-head { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: 40px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: 500 var(--t-md)/1.2 var(--font); text-align: left; cursor: pointer; }
 .side-note-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); color: var(--fg); }
 .side-note-first { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
