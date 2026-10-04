@@ -1,6 +1,8 @@
 // Local static server for the app with the SPA fallback Cloudflare gives (assets.not_found_handling) and the headers
 // of public/_headers, and the build of dev/build.mjs made in memory on every request of the shell (as deployed).
-//   node dev/serve.mjs [port=8900] [--raw]   (--raw: the source shell, each stylesheet its own <link>)
+//   node dev/serve.mjs [port=8900] [--raw] [--preview]   (--raw: the source shell, each stylesheet its own <link>)
+//   --preview: the design preview behind tailscale serve (a tailnet https origin, so the app talks to hub.trommi.com):
+//   sw.js gets VERSION "dev", so its shell cache stays off and every reload shows the working tree.
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -9,6 +11,8 @@ import { bundle, vendorFiles, withVendor } from './build.mjs'
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
 const port = Number(process.argv.slice(2).find(a => /^\d+$/.test(a)) || 8900)
 const RAW = process.argv.includes('--raw')
+const PREVIEW = process.argv.includes('--preview')
+const devSw = js => PREVIEW ? js.replace(/^const VERSION = "[^"]*"$/m, 'const VERSION = "dev"') : js
 const TYPES = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.png': 'image/png', '.svg': 'image/svg+xml', '.woff2': 'font/woff2', '.webmanifest': 'application/manifest+json', '.csv': 'text/csv', '.log': 'text/plain', '.txt': 'text/plain', '.sh': 'text/plain; charset=utf-8', '.sha256': 'text/plain' }
 // Read on every request: a dev server left running must not serve an old CSP (it once blocked the Argon2 WASM).
 const readHeaders = () => { const headers = {}
@@ -45,7 +49,7 @@ http.createServer((req, res) => {
   // The built shell: index.html, sw.js and the bundle come from the build, everything else from public/.
   const sw = file === path.join(root, 'sw.js') ? withVendor(fs.readFileSync(file, 'utf8'), vendorFiles()) : null
   const built = !RAW && (file === path.join(root, 'index.html') || sw || isBundle) && bundle(root, sw)
-  if (built) return res.end(file.endsWith('index.html') ? built.html : file.endsWith('sw.js') ? built.sw : built.css)
-  if (sw) return res.end(sw)
+  if (built) return res.end(file.endsWith('index.html') ? built.html : file.endsWith('sw.js') ? devSw(built.sw) : built.css)
+  if (sw) return res.end(devSw(sw))
   fs.createReadStream(file).pipe(res)
 }).listen(port, '127.0.0.1', () => console.log(`app on http://127.0.0.1:${port}`))
