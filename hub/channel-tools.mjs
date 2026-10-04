@@ -4,7 +4,7 @@
 // E2E hub. Keep the two in step by hand until today's board retires; do not import server/server.mjs (it
 // starts the old board on import).
 
-export const HTML_MAX = Number(process.env.BOARD_MAX_HTML_KB || 200) * 1024
+import { HTML_MAX } from './richhtml.mjs'
 export const MAX_ASSET = 64 * 1024 * 1024
 export const ASSET_TYPES = ['html', 'image', 'video', 'audio', 'file']
 export const RETENTION_DAYS = 30

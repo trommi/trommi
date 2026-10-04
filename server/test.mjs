@@ -2548,7 +2548,7 @@ assert.equal(fs.readFileSync(in4('token'), 'utf8'), fresh4)
 
 // ---- rich content: html beside a message or a question, and ```html fenced inside a text ----
 {
-  const { cleanHtml, HTML_MAX } = await import('./richhtml.mjs')
+  const { cleanHtml, HTML_MAX } = await import('../hub/richhtml.mjs')
   const textOf = res => res.content?.[0]?.text ?? ''
   const fails = async (name, args, pattern) => {
     const res = await say(neu, name, args).catch(err => ({ isError: true, content: [{ text: err.message }] }))

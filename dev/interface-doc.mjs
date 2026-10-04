@@ -10,7 +10,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { HTML_MAX } from '../server/richhtml.mjs'
+import { HTML_MAX } from '../hub/richhtml.mjs'
 import { ASSET_TYPES } from '../server/asset-envelope.mjs'
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
