@@ -10,6 +10,7 @@ import { createRouter } from './router.mjs'
 import { boardModel } from '../views/model.mjs'
 import { roomPages, roomScreen, hubUrl } from './room.mjs'
 import { attachTo } from './att.mjs'
+import { startDeskWindow } from './desk-window.mjs'
 
 // The service worker: the app shell offline, attachments decrypted on demand, push (public/sw.js).
 if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(err => console.warn('service worker', err.message))
@@ -50,6 +51,7 @@ export async function start(client, { fresh = false } = {}) {
   }
   const b = createBoard({ hub, model, extraPages: [deskPages, roomPages(client)] })
   const router = createRouter({ board: b })
+  startDeskWindow(b)
   window.trommi = { client, board, router, model, mock: Boolean(mock) }
 
   // Changes come in batches; one frame patches the page for all that came meanwhile.

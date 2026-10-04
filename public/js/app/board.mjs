@@ -9,7 +9,7 @@ import { html, raw } from '../views/html.mjs'
 import { deskMain, deskRow, deskHead, deskStacks, deskList, runSection, cardPath } from '../views/desk.mjs'
 import { sidebarRows, sidebarParts, deskState, slipCount } from '../views/sidebar.mjs'
 import { cardPage, cardLead, cardAnswer, cardThread, picturePage, imagesOf, versionOf } from '../views/card.mjs'
-import { WORDS, EXPLAIN_TEXT } from '../views/text.mjs'
+import { WORDS, EXPLAIN_TEXT, isKnock } from '../views/text.mjs'
 import { toast } from '../views/toast.mjs'
 import { register as sessionPage, sessionOf, composer } from '../views/session.mjs'
 import { register as memoPage } from '../views/memo.mjs'
@@ -128,29 +128,34 @@ export function createBoard({ hub, model, extraPages = [] }) {
   }
 
   // ---- the Desk ----
+  // The row cache: a row is rendered again only when its card (a new object after any change of it), its session or
+  // the desk's frame changed. Keeps a change on a Desk of hundreds of cards to the rows it touched.
+  const rowCache = new WeakMap()
+  const rowOf = (c, m) => {
+    const a = m.byAgent.get(c.agent), key = `${a?.name}|${a?.hue}|${a?.mark}|${a?.starred}|${a?.online}|${m.desk}`
+    const hit = rowCache.get(c)
+    if (hit && hit.key === key) return hit.row
+    const row = deskRow(c, m, BASE)
+    rowCache.set(c, { key, row })
+    return row
+  }
+  // Windowed: the first WINDOW rows are whole; the rest stand as empty rows of the same id (and knock mark), filled in
+  // when they come near the viewport (desk-window.mjs asks board.row(id)). A long Desk costs what is in view.
+  const WINDOW = 40
+  const later = c => raw(`<article class="inbox-row" id="row-${c.id}" data-later data-id="${c.id}"${isKnock(c) ? ' data-knock' : ''}></article>`)
+  const windowed = m => { const first = new Set(m.fresh.slice(0, WINDOW).map(c => c.id)); return c => (first.has(c.id) ? rowOf(c, m) : later(c)) }
   function registerDesk() {
     t.get(/^\/$/, ({ req, res, url }) => {
       const m = model()
       const pile = ['later', 'works', 'done', 'trash'].includes(url.searchParams.get('pile')) ? url.searchParams.get('pile') : null
       const [saidId, saidWhat] = String(url.searchParams.get('said') ?? '').split(':')
       const n = m.fresh.length
-      t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, BASE, { pile }), says: says(m.byCard.get(saidId), saidWhat) })
+      t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, BASE, { pile, rowOf: windowed(m) }), says: says(m.byCard.get(saidId), saidWhat) })
     })
     t.get(/^\/walk$/, ({ res, url }) => {
       const next = model().fresh[0], said = url.searchParams.get('said')
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
-    // The row cache: a row is rendered again only when its card (a new object after any change of it), its session or
-    // the desk's frame changed. Keeps a change on a Desk of hundreds of cards to the rows it touched.
-    const rowCache = new WeakMap()
-    const rowOf = (c, m) => {
-      const a = m.byAgent.get(c.agent), key = `${a?.name}|${a?.hue}|${a?.mark}|${a?.starred}|${a?.online}|${m.desk}|${(m.fresh.indexOf(c) < 0)}`
-      const hit = rowCache.get(c)
-      if (hit && hit.key === key) return hit.row
-      const row = deskRow(c, m, BASE)
-      rowCache.set(c, { key, row })
-      return row
-    }
     t.live('desk', {
       take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), stacks: deskStacks(m, BASE) }),
       diff(was, now, client, m) {
@@ -158,7 +163,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
         const kept = was.order.filter(id => now.rows.has(id)), added = now.order.filter(id => !was.rows.has(id))
         const sameOrder = kept.every((id, i) => now.order[i] === id)
-        if (!sameOrder) out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => now.rows.get(c.id) })))
+        if (!sameOrder) { const w = windowed(m); out.push(stream('update', 'desk-list', deskList(m, BASE, { rowOf: c => (w(c) === now.rows.get(c.id) ? now.rows.get(c.id) : w(c)) }))) }
         else {
           for (const id of was.order) if (!now.rows.has(id)) out.push(stream('remove', `row-${id}`))
           for (const id of kept) if (was.rows.get(id) !== now.rows.get(id) && t.differs(was.rows.get(id), now.rows.get(id))) out.push(stream('replace', `row-${id}`, now.rows.get(id)))
@@ -284,5 +289,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
     for (const [view, l] of lives) if (!views.includes(view)) l.snap = null
     return out
   }
-  return { request, live, says, t }
+  /** A Desk row's whole markup (for a row that stood empty until it came near). */
+  const row = id => { const m = model(), c = m.byCard.get(id); return c && m.fresh.includes(c) ? String(rowOf(c, m)) : '' }
+  return { request, live, says, t, row }
 }

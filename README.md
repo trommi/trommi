@@ -2,7 +2,7 @@
 
 The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`, repo `trommi/trommi-hub`) only in sealed envelopes. No build step, no framework: plain ES modules and CSS, served as they are. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`).
 
-It looks and works like today's board on the PC (the server-rendered Turbo board in trommi-hub): the same markup, the same CSS, the same pen drawings, the same controllers. They are not copied by hand: `dev/sync-board.sh` takes them from trommi-hub, and the app renders the board's own view modules in the page.
+It looks and works like today's board on the PC (the server-rendered Turbo board in trommi-hub): the same markup, the same CSS, the same pen drawings, the same controllers. They were taken over with `dev/sync-board.sh` (trommi-hub commit f6b89b8, 4 Oct 2026) and the app renders the board's own view modules in the page. **Since then the copies in this repo are the app's own source**: edit them here. `dev/sync-board.sh` overwrites them; run it only to pull a later change of the PC board in on purpose, and review the diff before committing.
 
 ## Running it
 
@@ -80,3 +80,20 @@ The core owns the schema (trommi-hub `client/core/README.md`, "Storage adapter")
 ### The mock room
 
 `?mock=1` runs the same app on `mock-room.mjs`: the core's API and model shape (change sets naming ids, optimistic echo with `local_id`/`pending`, windowed timeline reads), fed from `public/mock/fixture.json` (made by `dev/make-fixture.mjs` from a state export of today's board with its test cards), and agents that reply, rework a handed-back card and explain on What??. It is what the screen-by-screen comparison with the Turbo board uses.
+
+## Working on the app: areas and their files
+
+Several people (and agents) work on the app at once. Each area owns its files; the **integrator** owns the shell and the render core. Touch another area's file only after asking its owner; small fixes to a shared file go through the integrator. Every change: try it in the mock room (`?mock=1`) and against a hub, `node dev/e2e.mjs` must stay green, `node dev/look.mjs` at 1440x900 light and dark and 390x844 shows no console error; commit only your files, `git pull --rebase`, push when green (push = deploy).
+
+| Area | Files |
+| --- | --- |
+| **Integrator** (shell, router, store glue, render core) | `public/index.html`, `public/sw.js`, `public/_headers`, `wrangler.jsonc`, `public/js/app/{boot,router,board,board-state,hub-facade,layout,turbo,stimulus,application,att,desk-window}.mjs`, `public/js/app/node-stubs/*`, `public/js/views/{html,model,text,sidebar,menu,keys,toast}.mjs`, `public/css/{tokens,app,turbo,logo,back,crowns,keys}.css`, `public/t/controllers/{keys,menu,rail,copy,fixtures}_controller.js`, `public/t/lib/{keys,toast}.js`, `public/js/pen.js`, `dev/*`, `README.md` |
+| **Desk, stacks, Next line** | `public/js/views/{desk,stacks,nextplease,gutter-hover}.mjs`, `public/css/{piles,stamps,slip}.css`, `public/t/controllers/{desk,stack_search,pointto}_controller.js` |
+| **Card page** (every decision flow: options, sections, pictures with marks, hand back, What??, Whatever, Shred, versions, info, permission) | `public/js/views/{card,picture}.mjs`, `public/css/{cardpage,cardclip,richhtml}.css`, `public/t/controllers/{card,circles,clip,pops,advice,richhtml}_controller.js`, `public/t/islands/richhtml.js`, `public/js/{focus-marks,richhtml,ui}.js`; the card routes in `board.mjs` (`registerCards`, `WAYS`) with the integrator |
+| **Session, chat, files, assets, Ledger** | `public/js/views/{session,session-edit,agents}.mjs`, `public/css/{session,beside,ledger,links,speech,asset}.css`, `public/t/controllers/{composer,files,log,lean,say,share,assetthumb,title}_controller.js` |
+| **Scratchpad, canvas, Desk paper** (E2E strokes + snapshots) | `public/pad/*`, `public/t/lib/{paper,clear}.js`, `public/t/controllers/paper_controller.js`, `public/css/{deskpad,scribble,clear,padlink}.css` |
+| **Memos** | `public/js/views/memo.mjs`, `public/t/lib/memo.js`, `public/t/controllers/{memo,memos}_controller.js`, `public/css/quicksend.css` |
+| **Pairing, devices, settings** (QR "Gerät koppeln", "Mit Passwort anmelden", device list, storage usage) | `public/js/app/room.mjs`, the `.room*` rules in `public/css/trommi.css` (split into `public/css/room.css` when it grows) |
+| **Phone layout** | `public/css/phone-desk.css`, `public/t/controllers/sheet_controller.js`, the `@media (max-width: …)` blocks of the area files in agreement with their owners |
+
+The model the views get is `board-state.mjs` (core model → board state) and `views/model.mjs`; an area that needs a field the core has but the board state lacks asks the integrator. Hub actions go through `hub-facade.mjs` (integrator).
