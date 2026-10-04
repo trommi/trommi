@@ -1537,18 +1537,40 @@ await test('warm reload: a member entry posted while the stream opens is not los
   console.log(`     card after the reload at the reloaded device in ${Date.now() - t0} ms`)
 })
 
+/**
+ * A fetch that waits rttMs before each request and records it with its round-trip depth: 1 + the deepest request that
+ * had answered before this one started. Requests side by side share a depth, so the depth counts the round trips one
+ * after another from the dependency chain: deterministic, unlike wall time on a slow CI runner (CPU between requests
+ * delays a request, it does not deepen it).
+ */
+function roundTripFetch(rttMs, { extra = () => 0 } = {}) {
+  const seen = []
+  const done = []
+  const f = async (url, init) => {
+    const u = new URL(url)
+    const depth = 1 + Math.max(0, ...done)
+    seen.push({ what: `${init?.method ?? 'GET'} ${u.pathname.replace(/[0-9a-f]{32,64}/g, ':id')}`, search: u.search, depth })
+    await sleep(rttMs + extra(init?.method ?? 'GET', u))
+    const res = await fetch(url, init)
+    done.push(depth)
+    return res
+  }
+  return { fetch: f, seen, depth: (from = 0) => Math.max(0, ...seen.slice(from).map(r => r.depth)) - (from ? Math.min(...seen.slice(from).map(r => r.depth)) - 1 : 0) }
+}
+
 // Performance budget of a new device's login (email + password -> live), measured live on 4 October 2026 at 10.6 s
 // desktop and 29 s on a phone line with 27 sessions: ~320 requests, one by one, most of them per session. The login is
 // network-bound (round trips), so the budget is in requests and in round trips: every request here waits RTT_MS.
 await test('perf budget: a new device with 27 sessions logs in and goes live in few requests (no per-session routes)', async () => {
-  const RTT_MS = 40, MAX_REQUESTS = 20, MAX_MS = 16 * RTT_MS + 1200      // 4 Oct, after: 17 requests, about 13 round trips
+  const RTT_MS = 40, MAX_REQUESTS = 20, MAX_DEPTH = 14      // 4 Oct, after: 17 requests
   const { phone, recovery_code, agents } = await room({ agents: 2 })
   for (let i = 0; i < 25; i++) await phone.createSession()
   for (const a of agents) { await a.sendMessage({ text: 'before the login' }); await a.settle() }
   await settleAll(phone, ...agents)
   eq(phone.sessionKeys.size, 27, '27 sessions')
-  const seen = []
-  const slow = async (url, init) => { seen.push(`${init?.method ?? 'GET'} ${new URL(url).pathname.replace(/[0-9a-f]{32,64}/g, ':id')}`); await sleep(RTT_MS); return fetch(url, init) }
+  const rt = roundTripFetch(RTT_MS)
+  const slow = rt.fetch
+  const seen = { get length() { return rt.seen.length }, filter: fn => rt.seen.map(r => r.what).filter(fn), slice: n => rt.seen.slice(n).map(r => r.what) }
   const t0 = performance.now()
   const fresh = track((await joinWithRecoveryCode({ hub_url: HUB, room_id: phone.model.room.room_id, code: recovery_code, storage: memoryStorage(), device_name: 'Fresh', fetch: slow })).client)
   await fresh.start()
@@ -1556,10 +1578,11 @@ await test('perf budget: a new device with 27 sessions logs in and goes live in 
   await sleep(4 * RTT_MS)                                   // the refresh after the stream opened
   const ms = performance.now() - t0
   const perSession = seen.filter(u => /\/sessions\/:id\//.test(u))
-  console.log(`     ${seen.length} requests, ${ms.toFixed(0)} ms at ${RTT_MS} ms per request (budget ${MAX_REQUESTS} requests, ${MAX_MS} ms)`)
+  const depth = rt.depth()
+  console.log(`     ${seen.length} requests, ${depth} round trips deep, ${ms.toFixed(0)} ms at ${RTT_MS} ms per request (budget ${MAX_REQUESTS} requests, ${MAX_DEPTH} round trips)`)
   eq(perSession, [], 'no per-session route on the way in')
-  assert(seen.length <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${seen.length}: ${JSON.stringify(seen)}`)
-  assert(ms <= MAX_MS, `at most ${MAX_MS} ms, took ${ms.toFixed(0)}`)
+  assert(seen.length <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${seen.length}: ${JSON.stringify(rt.seen)}`)
+  assert(depth <= MAX_DEPTH, `at most ${MAX_DEPTH} round trips deep, got ${depth}: ${JSON.stringify(rt.seen)}`)
   eq(fresh.sessionKeys.size, 27, 'the new device knows every session')
   for (const k of fresh.sessionKeys.values()) assert(k.secrets.has(k.state.epoch), 'and holds its current key')
   // live: an agent's message reaches the new device, and a reconnect costs no request per session either
@@ -1585,7 +1608,7 @@ await test('perf budget: a new device with 27 sessions logs in and goes live in 
 // RTT_MS, requests side by side overlap, so the time counts the round trips one after another.
 await test('perf budget: email + password login with a snapshot boot: few requests, few round trips, the re-seal in the background', async () => {
   const { addAccount, loginWithPassword } = await import('./account.mjs')
-  const RTT_MS = 60, MAX_REQUESTS = 22, MAX_ROUND_TRIPS = 12, RESEAL_UPLOAD_MS = 1500
+  const RTT_MS = 60, MAX_REQUESTS = 22, MAX_ROUND_TRIPS = 10, RESEAL_UPLOAD_MS = 3000
   const { phone, recovery_code, agents: [agent] } = await room({ agents: 1 })
   phone.options.snapshot = false
   for (let i = 0; i < 26; i++) await phone.createSession()
@@ -1600,31 +1623,26 @@ await test('perf budget: email + password login with a snapshot boot: few reques
   const email = `perf-${Date.now()}@example.org`, password = 'perf budget horse battery staple'
   await addAccount(phone, { email, password, recovery_code })
   eq(phone.sessionKeys.size, 27, '27 sessions')
-  const seen = []
-  let tFirst = null
-  const slow = async (url, init) => {
-    tFirst ??= performance.now()                            // from the login request on (Argon2 is CPU, not network)
-    const u = new URL(url)
-    seen.push(`${init?.method ?? 'GET'} ${u.pathname.replace(/[0-9a-f]{32,64}/g, ':id')}${u.search.includes('limit=1&') || u.search.endsWith('limit=1') ? ' (head)' : ''}`)
-    await sleep(RTT_MS)
-    if (init?.method === 'POST' && u.pathname.endsWith('/session_grants')) await sleep(RESEAL_UPLOAD_MS)   // a phone uploads it for a second
-    return fetch(url, init)
-  }
+  // the re-seal's upload is slow, as on a phone (about a second for a room with many devices)
+  const rt = roundTripFetch(RTT_MS, { extra: (method, u) => method === 'POST' && u.pathname.endsWith('/session_grants') ? RESEAL_UPLOAD_MS : 0 })
+  const slow = rt.fetch
+  const seen = { get length() { return rt.seen.length }, indexOf: x => rt.seen.findIndex(r => r.what === x), filter: fn => rt.seen.map(r => r.what + (/[?&]limit=1(&|$)/.test(r.search) ? ' (head)' : '')).filter(fn), slice: (a, b) => rt.seen.slice(a, b).map(r => r.what) }
   const t0 = performance.now()
   const fresh = track((await loginWithPassword({ hub_url: HUB, email, password, storage: memoryStorage(), device_name: 'Fresh', fetch: slow })).client)
   const tJoined = performance.now() - t0
   await fresh.start()
-  const ms = performance.now() - tFirst
+  const ms = performance.now() - t0
   const n = seen.length
-  const trips = ms / RTT_MS
-  console.log(`     ${n} requests to the first paint, ${ms.toFixed(0)} ms at ${RTT_MS} ms per round trip = ${trips.toFixed(1)} round trips incl. CPU (Argon2 and join ${tJoined.toFixed(0)} ms); budget ${MAX_REQUESTS} requests, ${MAX_ROUND_TRIPS} round trips`)
+  // the first paint's round trips: the deepest request start() waited for (the re-seal runs behind it, not counted)
+  const trips = Math.max(...rt.seen.filter(r => !(r.what === 'POST /v1/rooms/:id/session_grants')).map(r => r.depth))
+  console.log(`     ${n} requests to the first paint, ${trips} round trips deep (${ms.toFixed(0)} ms wall incl. Argon2 and CPU, join ${tJoined.toFixed(0)} ms; report only); budget ${MAX_REQUESTS} requests, ${MAX_ROUND_TRIPS} round trips`)
   assert(fresh.stats.snapshot, 'booted from the snapshot')
   eq(fresh.model.cards.size, phone.model.cards.size, 'every card')
   eq(seen.filter(u => /\/sessions\/:id\//.test(u)), [], 'no per-session route')
   eq(seen.filter(u => u.endsWith('(head)')), [], 'no extra head request: the newest page names the head (newest=1)')
   assert(seen.indexOf('POST /v1/rooms/:id/access_tokens') < (seen.indexOf('POST /v1/rooms/:id/challenge') + 1 || Infinity), `the first sign-in uses the login answer's challenge: ${JSON.stringify(seen.slice(0, 4))}`)
-  assert(n <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${n}: ${JSON.stringify(seen)}`)
-  assert(trips <= MAX_ROUND_TRIPS, `at most ${MAX_ROUND_TRIPS} round trips to the first paint, took ${trips.toFixed(1)}: ${JSON.stringify(seen)}`)
+  assert(n <= MAX_REQUESTS, `at most ${MAX_REQUESTS} requests, got ${n}: ${JSON.stringify(rt.seen)}`)
+  assert(trips <= MAX_ROUND_TRIPS, `at most ${MAX_ROUND_TRIPS} round trips to the first paint, got ${trips}: ${JSON.stringify(rt.seen)}`)
   // live at once, while the re-seal is still uploading: a message is not held back behind it
   assert(fresh._resealing, 'the re-seal is still on its way at the first paint')
   await until(() => fresh.model.room.connection === 'live', 'live', 10_000)
@@ -1638,7 +1656,7 @@ await test('perf budget: email + password login with a snapshot boot: few reques
   }
   const during = await live('during the re-seal')
   // the re-seal finishes behind the paint: every session sealed for the new device, nothing pending
-  const nSessions = () => seen.filter(u => u === 'GET /v1/rooms/:id/sessions').length
+  const nSessions = () => rt.seen.filter(r => r.what === 'GET /v1/rooms/:id/sessions').length
   const before = nSessions()
   await until(() => !fresh._resealing && !fresh.roomRecord.reseal_pending, 're-seal done', 10_000)
   const after = await live('after the re-seal')
