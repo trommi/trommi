@@ -10,6 +10,6 @@
 /* An attachment the hub no longer has (retention, quota). */
 .att-gone { display: inline-flex; align-items: center; min-height: 48px; padding: 8px 12px; border: 1px dashed var(--line, #d8d6cf); border-radius: 10px; color: var(--muted, #6b6b66); font-size: 13px; }
 /* The page for people outside the room (/a/<share_id>): the shared page in a sandboxed frame, or the picture. */
-.share { position: fixed; inset: 0; max-width: none; padding: 16px; overflow: auto; background: var(--bg, #fff); }
+#share.share { margin: 0; position: fixed; inset: 0; max-width: none; padding: 16px; overflow: auto; background: var(--bg, #fff); }
 .share-frame { display: block; width: 100%; height: calc(100vh - 32px); border: 1px solid var(--line, #d8d6cf); border-radius: 12px; background: #fff; }
 .share-picture { display: block; max-width: 100%; max-height: calc(100vh - 32px); margin: 0 auto; border-radius: 8px; }
