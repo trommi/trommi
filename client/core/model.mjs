@@ -22,7 +22,7 @@ export function causallyAfter(x, y) {
 
 export function emptyModel() {
   return {
-    room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, has_passphrase: null },
+    room: { room_id: null, hub_url: null, my_device_id: null, my_role: null, key_epoch: 0, last_entry_number: -1, last_envelope_number: 0, connection: 'offline', agent_session_id: null, has_passphrase: null, outbox_blocked: null },
     members: new Map(), sessions: new Map(), cards: new Map(), permissions: new Map(), memos: new Map(), published: new Map(),
     timelines: new Map(), human: emptyHuman(), invites: new Map(), alerts: [], outbox: [],
     stack: [], open_permission_ids: [],

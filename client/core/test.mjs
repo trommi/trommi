@@ -446,23 +446,23 @@ await test('agent: merge, withdraw, set urgency, publish and unpublish', async (
 })
 
 await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registers by causal order, not hub order', async () => {
-  const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
+  const { phone, laptop, agents: [a1, a2, a3, a4] } = await room({ laptop: true, agents: 4 })
   const id = await a1.sendCard({ title: 'mine', options: [{ key: 'a', label: 'A' }] })
   await settleAll(a1)
   await until(() => phone.model.cards.get(id), 'card')
   // a2 tries to write a version of a1's card, a card under an id it did not derive, and into a1's card conversation.
   // The hub may refuse them already (its second line); whatever reaches a client is refused there.
-  const sid2 = a2.session_id ?? undefined
+  // One try per agent: a refused envelope halts its sender's chain (D2: no number is signed twice).
   const tries = [
-    a2._send({ kind: codec.KIND.object_version, session_id: sid2, content: { object_type: 'card', object_version: 2, previous_version_hash: phone.model.cards.get(id).version_hash, card_type: 'decision', title: 'hijack', options: [{ key: 'a', label: 'A' }] }, object: { object_id: id, object_state: 'open', urgency: 'normal' } }),
-    a2._send({ kind: codec.KIND.object_version, session_id: sid2, content: { object_type: 'card', object_version: 1, previous_version_hash: '0'.repeat(64), card_type: 'decision', title: 'fake id', options: [{ key: 'a', label: 'A' }] }, object: { object_id: 'ab'.repeat(16), object_state: 'open', urgency: 'normal' } }),
-    a2._send({ kind: codec.KIND.timeline_item, session_id: sid2, content: { content_type: 'message', text: 'psst' }, timeline: { timeline_kind: 'chat', timeline_id: `card/${id}` } }),
+    a2._send({ kind: codec.KIND.object_version, session_id: a2.session_id, content: { object_type: 'card', object_version: 2, previous_version_hash: phone.model.cards.get(id).version_hash, card_type: 'decision', title: 'hijack', options: [{ key: 'a', label: 'A' }] }, object: { object_id: id, object_state: 'open', urgency: 'normal' } }),
+    a3._send({ kind: codec.KIND.object_version, session_id: a3.session_id, content: { object_type: 'card', object_version: 1, previous_version_hash: '0'.repeat(64), card_type: 'decision', title: 'fake id', options: [{ key: 'a', label: 'A' }] }, object: { object_id: 'ab'.repeat(16), object_state: 'open', urgency: 'normal' } }),
+    a4._send({ kind: codec.KIND.timeline_item, session_id: a4.session_id, content: { content_type: 'message', text: 'psst' }, timeline: { timeline_kind: 'chat', timeline_id: `card/${id}` } }),
   ]
   for (const t of tries) await t.catch(() => {})
-  await a2.settle().catch(() => {})
+  for (const a of [a2, a3, a4]) await a.settle().catch(() => {})
   await settleAll(phone)
   const fake = 'ab'.repeat(16)
-  const refused = () => a2.model.alerts.filter(a => /refused an envelope/.test(a.message)).length + phone.model.alerts.filter(a => ['not-creator', 'bad-object-id', 'not-allowed'].includes(a.code)).length
+  const refused = () => [a2, a3, a4].reduce((n, a) => n + a.model.alerts.filter(x => /refused an envelope/.test(x.message)).length, 0) + phone.model.alerts.filter(a => ['not-creator', 'bad-object-id', 'not-allowed'].includes(a.code)).length
   await until(async () => { await settleAll(phone); return refused() >= 3 }, `all three refused (${refused()})`)
   eq(phone.model.cards.get(id).title, 'mine', 'card untouched')
   assert(!phone.model.cards.has(fake), 'fake id not created')
@@ -690,6 +690,40 @@ await test('S2 history after state loss: every old command of a sender is histor
   await again.stop()
   const third = track(await openRoom({ storage: await fileStorage({ dir }) }))
   eq(third.historyBefore, again.historyBefore, 'boundary persisted')
+})
+
+await test('S2 no rewind (D2): a refused envelope is voided or halts the chain; no sequence number is signed twice', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(agent)
+  const me = z.b64u(z.unhex(agent.my_device_id))
+  const before = agent.chains.get(me).seq
+  let big = null
+  try { await agent.setStatus({ 'status_line/big': { label: 'x'.repeat(5000) } }) } catch (e) { big = e }
+  eq(big?.code, 'too-large', 'an over-size status is refused before it is signed')
+  eq(agent.chains.get(me).seq, before, 'nothing signed for it')
+  // 1. an object id the agent did not derive: the hub refuses it and keeps a void record; the chain goes on behind it
+  await agent._send({ kind: codec.KIND.object_version, session_id: agent.session_id, content: { object_type: 'card', object_version: 1, previous_version_hash: '0'.repeat(64), card_type: 'decision', title: 'fake id', options: [{ key: 'a', label: 'A' }] }, object: { object_id: 'ab'.repeat(16), object_state: 'open', urgency: 'normal' } })
+  await agent.sendMessage({ text: 'after the void' })
+  await settleAll(agent, phone)
+  eq(agent.chains.get(me).seq, before + 2, 'not wound back')
+  assert(agent.model.alerts.some(a => /refused an envelope/.test(a.message)), 'the refusal is told')
+  const sid = agent.session_id
+  await until(async () => (await phone.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the void'), 'the next envelope verifies behind the void record')
+  assert(!phone.model.cards.has('ab'.repeat(16)), 'the void record applies nothing')
+  assert(!phone.model.alerts.some(a => ['gap', 'chain-break'].includes(a.code)), 'no gap on the receiver')
+  // 2. a refusal without a void record (simulated): sending halts, the same bytes are kept, nothing is re-signed
+  const post = agent.hub.postEnvelope.bind(agent.hub)
+  let refuse = true
+  agent.hub.postEnvelope = async b => { if (refuse) throw new z.ZError('forbidden', 'simulated', { status: 400, body: { error: 'forbidden' } }); return post(b) }
+  await agent.sendMessage({ text: 'one' })
+  await until(() => agent.model.room.outbox_blocked, 'sending halted')
+  await agent.sendMessage({ text: 'two' })
+  eq(agent.outbox.map(o => o.seq), [before + 3, before + 4], 'two envelopes, two numbers')
+  let err = null
+  try { await agent.settle({ timeout_ms: 2000 }) } catch (e) { err = e }
+  eq(err?.code, 'chain-halted', 'settle says so')
+  assert(agent.model.alerts.some(a => a.code === 'chain-halted'), 'alert')
+  agent.hub.postEnvelope = post
 })
 
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
