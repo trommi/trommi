@@ -459,6 +459,13 @@ await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registe
   await phone.deleteMemo(qid)
   await settleAll(phone)
   await until(() => laptop.model.memos.get(qid)?.object_state === 'closed', 'memo deleted')
+  // concurrent memo edits from two devices converge (the losing echo gives way)
+  const cm = await phone.saveMemo({ text: 'base' })
+  await settleAll(phone, laptop)
+  await until(() => laptop.model.memos.get(cm), 'memo on laptop')
+  await Promise.all([phone.saveMemo({ object_id: cm, text: 'von A' }), laptop.saveMemo({ object_id: cm, text: 'von B' })])
+  await settleAll(phone, laptop)
+  await until(() => phone.model.memos.get(cm).text === laptop.model.memos.get(cm).text && !phone.model.memos.get(cm).pending && !laptop.model.memos.get(cm).pending, 'memos converge')
   // registers: the laptop writes after having seen the phone's write -> the laptop wins on every client
   await phone.setCrown({ who: 'phone' })
   await settleAll(phone, laptop)
