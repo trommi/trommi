@@ -116,7 +116,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 
 .tc-ask { flex: none; display: grid; gap: 6px; padding: 8px; border-radius: var(--r-md); background: var(--surface); box-shadow: inset 0 0 0 1px var(--line-strong); }
 .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
-.tc-field { width: 100%; min-height: 44px; max-height: 160px; resize: none; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1.45 var(--font); outline: none; padding: 2px 4px; }
+.tc-field { width: 100%; min-height: 44px; max-height: 160px; field-sizing: content; resize: none; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1.45 var(--font); outline: none; padding: 2px 4px; }
 .tc-ask-row { display: flex; align-items: center; gap: 6px; }
 .tc-clip { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; color: var(--muted); cursor: pointer; }
 .tc-clip:hover { background: var(--sunken); color: var(--fg); }

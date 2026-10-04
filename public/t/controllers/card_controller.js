@@ -8,6 +8,7 @@ import { arrowStrokes } from '/js/pen.js'
 const NS = 'http://www.w3.org/2000/svg'
 const clamp = (n, lo, hi) => Math.min(Math.max(n, lo), hi)
 let turn = 0
+const GROWS = globalThis.CSS?.supports?.('field-sizing', 'content') ?? false
 
 export default class extends Controller {
   static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'revise', 'reviseField', 'reviseMarks']
@@ -118,7 +119,8 @@ export default class extends Controller {
 
   // ---- the field ----
   typed() { this.grow(); this.keep() }
-  grow() { const f = this.hasFieldTarget ? this.fieldTarget : null; if (f) { f.style.height = 'auto'; f.style.height = `${Math.min(f.scrollHeight, 220)}px` } }
+  // (Where the browser sizes a field to its content itself (field-sizing, cardpage.css), no measuring: it cost a forced layout per page.)
+  grow() { if (GROWS) return; const f = this.hasFieldTarget ? this.fieldTarget : null; if (f) { f.style.height = 'auto'; f.style.height = `${Math.min(f.scrollHeight, 220)}px` } }
   // Enter sends, Shift+Enter is a new line.
   keys(event) {
     if (event.key !== 'Enter' || event.shiftKey || event.isComposing || (!this.fieldTarget.value.trim() && !this.filesTarget.files.length)) return
@@ -143,6 +145,15 @@ export default class extends Controller {
   }
   // (an answer is on its way: a save that is still waiting must not come after it)
   sent() { clearTimeout(this.timer) }
+  // A message sent with Send stays on the page (the comment comes in live under the card): the field, the files and
+  // the marks that went along are emptied here. (Ticks and notes on options stay: they belong to the answer.)
+  done(event) {
+    const { formSubmission, success } = event.detail ?? {}
+    if (!success || !formSubmission?.submitter?.classList.contains('tc-send')) return
+    if (this.hasFieldTarget) { this.fieldTarget.value = ''; this.grow() }
+    if (this.hasFilesTarget) { this.filesTarget.value = ''; this.files() }
+    if (this.marksUi && this.hasMarksTarget) { this.marksUi.set([]); this.marksTarget.value = '[]' }
+  }
 
   // ---- files: chosen, pasted or dropped ----
   files() {
