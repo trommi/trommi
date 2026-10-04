@@ -301,7 +301,9 @@ export class Client {
     this._started = true
     if (process_instance) this._processInstance = process_instance   // R4: every lease claim of this process names it
     this._setConnection('connecting')
-    await this.hub.signIn()
+    await this.hub.authHeader()                       // signs in unless a fresh token is at hand (a login just signed in)
+    // The device list (presence) is asked now, side by side with the member and session refresh, and applied after them.
+    const devices = this.hub.devices().catch(() => null)
     if (this._freshStorage && this.historyBeforeNumber == null && !this.is_human) {
       const head = await this.hub.envelopes({ after_envelope_number: Number.MAX_SAFE_INTEGER, limit: 1 }).catch(() => null)
       if (Number.isSafeInteger(head?.last_envelope_number)) { this.historyBeforeNumber = head.last_envelope_number; this._dirty.records.set('sync', this._syncRecord()) }
@@ -310,7 +312,7 @@ export class Client {
     if (this.roomRecord.recovery_pending) { delete this.roomRecord.recovery_pending; await this._saveRoom() }   // the hub has the recovery entry
     await this.serial(() => this._refreshSessions())
     await this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
-    await this._refreshDevices().catch(() => {})
+    await this._refreshDevices(await devices).catch(() => {})
     this._pumpOutbox()
     await this._sendDeviceRegister()
     this._setConnection('catching_up')
@@ -546,8 +548,17 @@ export class Client {
 
   /** Page through GET envelopes from the cursor to the hub's end. */
   async catchUp() {
+    // Pages a snapshot boot already read (snapshot.mjs) are used once instead of being fetched again.
+    const scan = this._scan
+    this._scan = null
     for (;;) {
-      const r = await this.hub.envelopes({ after_envelope_number: this.model.room.last_envelope_number, limit: PAGE })
+      const cur = this.model.room.last_envelope_number
+      let r
+      if (scan?.envelopes.length && scan.envelopes.at(-1).envelope_number > cur) {
+        const first = scan.envelopes[0].envelope_number
+        if (first <= cur + 1) { r = { envelopes: scan.envelopes.filter(e => e.envelope_number > cur), last_envelope_number: scan.last_envelope_number }; scan.envelopes = [] }
+        else r = await this.hub.envelopes({ after_envelope_number: cur, limit: Math.min(PAGE, first - cur - 1) })
+      } else r = await this.hub.envelopes({ after_envelope_number: cur, limit: PAGE })
       if (!r.envelopes.length) break
       await this.processRecords(r.envelopes)
       if (this.model.room.last_envelope_number >= r.last_envelope_number) break
@@ -627,8 +638,8 @@ export class Client {
     }
   }
 
-  async _refreshDevices() {
-    const r = await this.hub.devices()
+  async _refreshDevices(prefetched = null) {
+    const r = prefetched ?? await this.hub.devices()
     const change = M.emptyChange()
     M.applyDevices(this.model, r.devices, change)
     await this.storage.set('devices', r.devices.map(d => ({ device_id: d.device_id, is_online: d.is_online, agent_session_id: d.agent_session_id ?? null })))

@@ -1454,10 +1454,15 @@ await test('room snapshot: a new device loads the newest snapshot and syncs only
   await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'confirm')
   await phone.confirmInvite(inv.invite_id, code)
   const fresh = track(await j.client)
+  const pages = []
+  const env = fresh.hub.envelopes.bind(fresh.hub)
+  fresh.hub.envelopes = async q => { const r = await env(q); pages.push(r.envelopes.map(e => e.envelope_number)); return r }
   const t0 = performance.now()
   await fresh.start()
   const ms = performance.now() - t0
   assert(fresh.stats.snapshot, 'booted from the snapshot')
+  const read = pages.flat()
+  eq(read.length, new Set(read).size, 'the catch-up after the boot reads no envelope the snapshot scan already read')
   assert(fresh.stats.verified < 400, `only the tail verified (${fresh.stats.verified})`)
   eq(fresh.model.cards.size, phone.model.cards.size, 'same cards')
   eq(fresh.model.cards.get(cards[3]).title, 'card 300', 'old card from the snapshot')
