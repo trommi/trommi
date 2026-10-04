@@ -968,6 +968,25 @@ await test('S2 removal re-keys every session even when the remover fails half-wa
   await until(async () => (await laptop.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the re-key'), 'readable')
 })
 
+await test('log out (leaveRoom): a human device removes itself; the others see it removed, the sessions are re-keyed, the agent writes on', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  await settleAll(phone, laptop, agent)
+  const sid = agent.session_id, epoch = phone.sessionKeys.get(sid).state.epoch
+  const gone = laptop.my_device_id
+  const out = await laptop.leaveRoom()
+  eq(out.humans_left, 1, 'the phone stays')
+  eq(laptop.model.room.connection, 'offline', 'stopped')
+  await until(async () => { await phone._refreshMembers(); return phone.model.members.get(gone)?.is_active === false }, 'the phone sees the laptop removed')
+  // the phone (a human that stays) re-keys the sessions without the laptop
+  await until(async () => { await phone._healStaleSessions(); await phone._refreshSessions(); const k = phone.sessionKeys.get(sid); return k.state.epoch > epoch && !G.grantIsStale(k.state, phone.state) }, 'phone re-keyed the session', 10_000)
+  await agent.sendMessage({ text: 'after the logout' })
+  await settleAll(agent, phone)
+  await until(async () => (await phone.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the logout'), 'readable')
+  let err = null
+  try { await laptop.hub.members() } catch (e) { err = e }
+  assert(err, 'the hub refuses the device that left')
+})
+
 await test('S2 commands fail closed (R3, MEDIUM-6): a failed member refresh holds an answer back, it is delivered once the refresh works', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const id = await agent.sendCard({ title: 'hold', options: [{ key: 'a', label: 'A' }], recommended: 'a' })

@@ -1646,6 +1646,32 @@ export class Client {
     })
   }
 
+  /**
+   * Log out: this device removes itself. One member entry signed by this device (any active human may sign a removal,
+   * its own included), the cut at its own last envelope, a new room key for the humans who stay and the recovery key
+   * (so email + password or the Emergency Kit still open the room when no human device is left). From then on the hub
+   * refuses this device: no member refresh and no session re-key here; the next start of a human device that stays (or
+   * the next login) re-keys the sessions (_healStaleSessions, A1). The client is stopped afterwards, whatever happened.
+   * Returns { key_epoch, humans_left }. The caller wipes the local storage.
+   */
+  async leaveRoom() {
+    this._needHuman()
+    await this.settle({ timeout_ms: 3000 }).catch(() => {})   // what is still in the outbox goes out before the cut, if it can
+    try {
+      return await this.serial(async () => {
+        await this._refreshMembers()
+        const me = this.my_device_id
+        const previous = this.secrets.get(this.state.epoch)
+        const own = this.chains.get(b64u(unhex(me)))
+        const cuts = own ? { [me]: { seq: own.seq, hash: own.hash } } : ((await verifiedHeads(this.hub, this.state, [me])) ?? {})
+        const r = await z.removeMembers(this.state, this.device, { ids: [unhex(me)], cuts, previous })
+        await this.hub.postMember({ signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
+        const humans_left = [...this.model.members.values()].filter(d => d.is_active && d.device_role === 'human' && d.device_id !== me).length
+        return { key_epoch: r.secret.epoch, humans_left }
+      })
+    } finally { await this.stop().catch(() => {}) }
+  }
+
   // ---- sessions (R6): created, assigned and re-keyed by human devices ----------------------------
 
   /** A new session for an agent (or none yet). Returns its session_id. */
