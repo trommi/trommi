@@ -2,6 +2,7 @@
 // Real HTTP against hub/server.mjs on a free port with a throwaway data directory; the quota order and the
 // stream buffer are also tested as units. Run: node hub/ops/test.mjs [name filter]
 import assert from 'node:assert/strict'
+import crypto from 'node:crypto'
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -12,11 +13,14 @@ import { attachmentQuota } from './quota.mjs'
 import { flowControl } from './flow.mjs'
 import { compareVersions, parseClient } from './versions.mjs'
 import { limitsFromEnv } from './env.mjs'
+import { signTestRequest } from './test-rooms.mjs'
 import { routeLabel } from './metrics.mjs'
 
-const TOKEN = 'test-token-for-the-ops-suite-0123456789'
+const testKey = crypto.generateKeyPairSync('ed25519')
+/** Headers of a signed test request (each signature works once). */
+const signed = (method, p, at) => ({ 'x-test-signature': signTestRequest(testKey.privateKey, method, p, at) })
 // Read when server.mjs is imported (LIMITS) and when a hub starts (ops): set before both.
-Object.assign(process.env, { HUB_TEST_TOKEN: TOKEN, HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE: '6', HUB_MIN_APP: '1.2.0', HUB_RECOMMENDED_APP: '1.4.0', METRICS_PORT: '0' })
+Object.assign(process.env, { HUB_TEST_PUBLIC_KEY: testKey.publicKey.export({ format: 'jwk' }).x, HUB_LIMIT_OPEN_REQUESTS_PER_IP_MINUTE: '6', HUB_MIN_APP: '1.2.0', HUB_RECOMMENDED_APP: '1.4.0', METRICS_PORT: '0' })
 const { startHub, LIMITS } = await import('../server.mjs')
 
 const { hex, b64u, unb64u } = z
@@ -154,42 +158,49 @@ test('versions: an open stream of a client that is now too old gets upgrade_requ
 
 // ---- test rooms and limits -------------------------------------------------------------------
 
-test('limits from the environment; the test token lifts them', async () => {
+test('limits from the environment; a signed test request lifts them (right key, path, fresh, once)', async () => {
   assert.deepEqual(limitsFromEnv({ envelopesPerSecond: 50, json: 10 }, { HUB_LIMIT_ENVELOPES_PER_SECOND: '5000', HUB_LIMIT_JSON: 'x' }), { envelopesPerSecond: 5000, json: 10 })
   assert.equal(LIMITS.openRequestsPerIpMinute, 6)
   const w = await newHub()
   await foundRoom(w)                       // 2 open requests (challenge, access_tokens)
   for (let i = 0; i < 4; i++) await expect(w, 'POST', `${R(w)}/challenge`, {}, 200)
   await expect(w, 'POST', `${R(w)}/challenge`, {}, 429, 'rate-limited')
-  await expect(w, 'POST', `${R(w)}/challenge`, { headers: { 'x-test-token': 'wrong' } }, 429, 'rate-limited')
-  for (let i = 0; i < 10; i++) await expect(w, 'POST', `${R(w)}/challenge`, { headers: { 'x-test-token': TOKEN } }, 200)
+  const other = crypto.generateKeyPairSync('ed25519').privateKey
+  const p = `${R(w)}/challenge`
+  await expect(w, 'POST', p, { headers: { 'x-test-signature': signTestRequest(other, 'POST', p) } }, 429, 'rate-limited')          // someone else's key
+  await expect(w, 'POST', p, { headers: signed('POST', `${R(w)}/devices`) }, 429, 'rate-limited')                                 // another path
+  await expect(w, 'POST', p, { headers: signed('POST', p, Date.now() - 61000) }, 429, 'rate-limited')                             // stale
+  for (let i = 0; i < 10; i++) await expect(w, 'POST', p, { headers: signed('POST', p) }, 200)
+  const once = signed('POST', p)
+  await expect(w, 'POST', p, { headers: once }, 200)
+  await expect(w, 'POST', p, { headers: once }, 429, 'rate-limited')                                                              // replayed
   await w.hub.close()
 })
 
-test('test rooms: founding needs the token; DELETE removes rows and attachments; others cannot be deleted; expiry after 24 h', async () => {
+test('test rooms: founding needs a signed request; DELETE removes rows and attachments; others cannot be deleted; expiry after 24 h', async () => {
   let clock = Date.now()
   const w = await newHub({ now: () => clock })
   const flagged = { extra: { test_room: true } }
   await expect(w, 'POST', '/v1/rooms', { body: { test_room: true } }, 403, 'forbidden')
-  assert.equal((await foundRoom(w, { ...flagged, headers: { 'x-test-token': TOKEN } })).status, 201)
+  assert.equal((await foundRoom(w, { ...flagged, headers: signed('POST', '/v1/rooms') })).status, 201)
   const testRoom = w.roomId
   assert.ok(w.hub.ops.testRooms.isTestRoom(testRoom))
   await expect(w, 'PUT', `${R(w)}/attachments/${aid(1)}`, { token: w.phone.token, raw: new Uint8Array(100) }, 201)
   await expect(w, 'PUT', `${R(w)}/escrow`, { token: w.phone.token, body: { escrow_version: 1, key_escrow: b64u(new Uint8Array(32)) } }, 200)
   assert.ok(fs.existsSync(path.join(w.dir, 'attachments', testRoom)))
   await expect(w, 'DELETE', R(w), {}, 403, 'forbidden')
-  await expect(w, 'DELETE', R(w), { headers: { 'x-test-token': TOKEN } }, 200)
+  await expect(w, 'DELETE', R(w), { headers: signed('DELETE', R(w)) }, 200)
   await expect(w, 'GET', `${R(w)}/devices`, { token: w.phone.token }, 404, 'no-room')
   assert.ok(!fs.existsSync(path.join(w.dir, 'attachments', testRoom)))
   for (const t of w.hub.db.prepare("SELECT name FROM sqlite_master WHERE type = 'table'").all().map(x => x.name)) {
     if (w.hub.db.prepare('SELECT 1 FROM pragma_table_info(?) WHERE name = \'room_id\'').get(t)) assert.equal(w.hub.db.prepare(`SELECT COUNT(*) AS n FROM "${t}" WHERE room_id = ?`).get(testRoom).n, 0, t)
   }
   // An ordinary room is not deletable, not even with the token.
-  await foundRoom(w, { headers: { 'x-test-token': TOKEN } })
+  await foundRoom(w, { headers: signed('POST', '/v1/rooms') })
   const normal = w.roomId
-  await expect(w, 'DELETE', R(w), { headers: { 'x-test-token': TOKEN } }, 404, 'not-found')
+  await expect(w, 'DELETE', R(w), { headers: signed('DELETE', R(w)) }, 404, 'not-found')
   // Expiry.
-  await foundRoom(w, { ...flagged, headers: { 'x-test-token': TOKEN } })
+  await foundRoom(w, { ...flagged, headers: signed('POST', '/v1/rooms') })
   const expiring = w.roomId
   clock += 23 * 3600000; await w.hub.ops.testRooms.expire()
   assert.ok(w.hub.ops.testRooms.isTestRoom(expiring))
@@ -345,10 +356,10 @@ test('escrow: put by a human, read by anyone with the room id (10 per hour per r
   // 10 reads of this room in the hour (the first answered 404 and counts too): the room is closed for reads from anywhere.
   const r = await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'cf-connecting-ip': freshIp() } }, 429, 'rate-limited')
   assert.ok(Number(r.headers.get('retry-after')) > 3000)
-  await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'x-test-token': TOKEN } }, 200)
+  await expect(w, 'GET', `${R(w)}/escrow`, { headers: signed('GET', `${R(w)}/escrow`) }, 200)
   await expect(w, 'GET', `/v1/rooms/${'c'.repeat(64)}/escrow`, {}, 404, 'no-room')
   await expect(w, 'DELETE', `${R(w)}/escrow`, { token: w.phone.token }, 200)
-  await expect(w, 'GET', `${R(w)}/escrow`, { headers: { 'x-test-token': TOKEN } }, 404, 'not-found')
+  await expect(w, 'GET', `${R(w)}/escrow`, { headers: signed('GET', `${R(w)}/escrow`) }, 404, 'not-found')
   await w.hub.close()
 })
 
