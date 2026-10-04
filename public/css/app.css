@@ -1426,7 +1426,7 @@ body:not([data-scope="all"]):not([data-page]) .topbar .padlink-open { right: cal
   .rail-fold { position: fixed; z-index: 7; left: 8px; bottom: 14px; width: 36px; height: 36px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 10px; background: none; color: var(--faint); }
   .rail-fold:hover, .rail-fold:focus-visible { color: var(--fg); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
   .rail-fold svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; transition: rotate var(--d-fast); }
-  body:has(.focus:not([hidden]):not(.is-inline)) .rail-fold { display: none; }
+  /* (The old client's full-screen focus view hid the rail button; the app has no such view: no :has() over the whole page.) */
   #agents { padding-bottom: 60px; }
   [data-rail="folded"] body { grid-template-columns: 76px minmax(0, 1fr); }
   [data-rail="folded"] .rail-fold { left: 20px; }

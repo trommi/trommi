@@ -215,4 +215,4 @@ body:not([data-scope="all"]):not([data-page]) .quick-note { bottom: auto; top: 5
 html body .quick-open.memo-open-free { top: auto !important; bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)) !important; right: calc(var(--s-4) + env(safe-area-inset-right, 0px)) !important; left: auto !important; width: 44px !important; height: 44px !important; display: grid !important; }
 /* a session's page on a phone has its message field and its filter button across the foot, and the "open" jump just
    above them at the right: the button stands above those */
-@media (max-width: 860px) { html body:has(form.composer) .quick-open.memo-open-free { bottom: calc(var(--s-4) + 136px + env(safe-area-inset-bottom, 0px)) !important; } }
+@media (max-width: 860px) { html body[data-t-view="session"] .quick-open.memo-open-free { bottom: calc(var(--s-4) + 136px + env(safe-area-inset-bottom, 0px)) !important; } }

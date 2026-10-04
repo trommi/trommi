@@ -75,6 +75,7 @@ export class BoardState {
       cards, queue, agents, tasks, desks, memos, assets, pending: [], hub: {}, speech: false,
       get messages() { return (messages ??= self.messages(cards)) },
       messagesOf: agent => self.messagesOf(agent),
+      messagesOfCard: id => self.messagesOfCard(id),
     }
     this.state = state
     this.version++
@@ -199,6 +200,22 @@ export class BoardState {
     this.itemsOf(m.timelines.get(`chat:session/${dev}`), agent, null, out)
     out.sort((x, y) => x.seq - y.seq || x.ts - y.ts)
     cached.set(agent, out)
+    return out
+  }
+  /** One card's conversation: its events and its chat window, in hub order. Built once per state and card. */
+  messagesOfCard(id) {
+    const st = this.state, cached = st.__byCard ??= new Map()
+    if (cached.has(id)) return cached.get(id)
+    const card = this.byId.get(id), out = []
+    if (card && card.kind !== 'permission') {
+      if (!this.humans) { this.humans = new Set(); for (const x of this.model.members.values()) if (x.device_role === 'human') this.humans.add(x.device_id) }
+      let ev = this.eventCache.get(id)
+      if (!ev) { ev = this.eventsOf(this.model.cards.get(id), card); this.eventCache.set(id, ev) }
+      out.push(...ev)
+      this.itemsOf(this.model.timelines.get(`chat:card/${id}`), card.agent, id, out)
+      out.sort((x, y) => x.seq - y.seq || x.ts - y.ts)
+    }
+    cached.set(id, out)
     return out
   }
   itemsOf(t, agent, cardId, out) {
