@@ -45,9 +45,12 @@ export async function startHub(tmp, extraEnv = {}) {
 }
 
 /** connector/channel.mjs as Claude Code starts it; collects every notification. */
-export async function startChannel({ env, cwd, script = path.join(here, 'channel.mjs') }) {
+// Every channel the tests start is its own Claude Code session (TROMMI_SESSION_KEY), although all share this process
+// as parent; session: null leaves the default (the parent pid), as a Claude Code session has it.
+export async function startChannel({ env, cwd, script = path.join(here, 'channel.mjs'), session = `test-${Math.random().toString(36).slice(2)}` }) {
   const events = [], said = []
-  const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...process.env, ...env }, cwd, stderr: 'pipe' })
+  const { TROMMI_SESSION_KEY: _, ...base } = process.env
+  const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...base, ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
   let err = ''
   const client = new Client({ name: 'channel-test', version: '1' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { events.push(n) }
@@ -64,7 +67,7 @@ export async function startChannel({ env, cwd, script = path.join(here, 'channel
   }
   const ready = () => until('the channel to be in the room', async () => { try { await call('list_cards'); return true } catch { return false } }, 20000)
   const next = (pred, what = 'a channel event') => until(what, () => events.find(e => !e.seen && pred(e)) && Object.assign(events.find(e => !e.seen && pred(e)), { seen: true }))
-  return Object.assign(handle, { client, events, said, call, ready, next, stderr: () => err, close: () => client.close() })
+  return Object.assign(handle, { pid: transport.pid, client, events, said, call, ready, next, stderr: () => err, close: () => client.close() })
 }
 
 export async function integration({ test, tmp }) {
@@ -216,6 +219,37 @@ export async function integration({ test, tmp }) {
         const again = await startChannel({ env, cwd: project })
         await again.ready().finally(() => again.close())
       } finally { await second.close().catch(() => {}) }
+    })
+
+    await test('e2e: reconnect (/mcp -> Reconnect): the new connector of the same session takes the key over, the old one exits', async () => {
+      await channel.close()
+      const old = await startChannel({ env, cwd: project, session: null })   // both have this process as parent
+      await old.ready()
+      const t0 = Date.now()
+      const next = await startChannel({ env, cwd: project, session: null })   // the old one keeps running, stdin open
+      try {
+        await until('the new one in the room', async () => { try { await next.call('list_cards'); return true } catch { return false } }, 15000)
+        assert.ok(Date.now() - t0 < 10000, `took ${Date.now() - t0} ms`)
+        await until('the old one gone', () => old.exited, 5000)
+        const room = path.join(keys, human.model.room.room_id)
+        assert.deepEqual(fs.readdirSync(room).filter(f => /-1\.lock\.\d+$/.test(f)).map(f => Number(f.split('.').pop())), [next.pid], 'slot 1 is held by the new process')
+        assert.match(next.stderr(), /slot 1 taken over/)
+        channel = next
+      } catch (e) { await next.close().catch(() => {}); throw new Error(`${e.message}\nnew: ${next.stderr().slice(-800)}\nold: ${old.stderr().slice(-800)}`) } finally { await old.close().catch(() => {}) }
+    })
+
+    await test('e2e: a session left without a key (the key was busy) takes it on the next tool call once it is free; the error names the pid and the fix', async () => {
+      const second = await startChannel({ env, cwd: project })   // the second member (slot 2) runs too
+      await second.ready()
+      const keyless = await startChannel({ env: { ...env, TROMMI_RETRY_MS: '600000' }, cwd: project })   // another session: no take-over
+      try {
+        const err = await until('busy', async () => { try { await keyless.call('list_cards'); return false } catch (e) { return /is held by/.test(e.message) && e.message } })
+        assert.match(err, new RegExp(`pid ${channel.pid}`))
+        assert.match(err, new RegExp(`kill ${channel.pid}`))
+        await channel.close()
+        await until('the key taken on a tool call', async () => { try { await keyless.call('list_cards'); return true } catch { return false } }, 15000)
+      } catch (e) { await keyless.close().catch(() => {}); throw e } finally { await second.close().catch(() => {}) }
+      channel = keyless
     })
 
     let child
