@@ -3,6 +3,7 @@
 // Every action shows at once (the core's optimistic echo) and is sealed, signed and sent by the core.
 
 import { agentIdOf } from './board-state.mjs'
+import { memoStore } from './memo-store.mjs'
 
 const fail = (status, message) => Object.assign(new Error(message), { status })
 const STALE = 'this question was revised while you were answering; read it again and answer the version that stands now'
@@ -139,30 +140,8 @@ export function hubFacade(client, board) {
       await client.setDesk(made, { name: String(name ?? '').trim().slice(0, 40) || 'Desk', created_at: Date.now() })
       return { ok: true, desk: { id: made, name } }
     },
-    // Memos (objects of type memo; the old POST /memo). Returns { code, text } like the hub's memoAct.
-    async memo(body) {
-      const ok = data => ({ code: 200, text: JSON.stringify({ ok: true, ...data }) })
-      const no = (code, error) => ({ code, text: JSON.stringify({ error }) })
-      const memos = m().memos
-      const had = body.id ? memos.get(body.id) : null
-      if (body.id && !had && !body.unsend) return no(404, 'this note is gone')
-      if (body.remove) { await client.saveMemo({ ...had, object_id: body.id, object_state: 'closed', removed: true }); return ok({}) }
-      if (body.send) {
-        const to = dev(body.to ?? had.to)
-        if (!to) return no(422, 'no session to send to')
-        await client.sendMessage({ agent_device_id: to, text: had.text ?? '' })
-        await client.saveMemo({ ...had, object_id: body.id, object_state: 'closed', removed: true })
-        return ok({})
-      }
-      if (body.unsend) return no(409, 'already sent')
-      const fields = {}
-      for (const k of ['text', 'x', 'y', 'place', 'session', 'to']) if (k in body) fields[k] = body[k]
-      if (!had) { fields.desk_id = board.desk ?? 'main'; fields.created_at = Date.now() }
-      fields.updated_at = Date.now()
-      const object_id = await client.saveMemo({ ...(had ?? {}), ...(had ? { object_id: body.id } : {}), ...fields })
-      const memo = board.state.memos.find(n => n.id === object_id) ?? { id: object_id, ...fields }
-      return ok({ memo })
-    },
+    // Memos (objects of type memo; the old POST /memo): memo-store.mjs. Returns { code, text } like the hub's memoAct.
+    memo: memoStore(client, board),
   }
   return hub
 }

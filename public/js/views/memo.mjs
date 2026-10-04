@@ -1,6 +1,7 @@
-// Memos on the server-rendered board: the yellow notes the human writes to the crowned session, and the mount
-// point of the Desk's paper. The notes are the hub's (state.memos, the same store POST /memo keeps for the old
-// client); the markup is the one css/quicksend.css styles (the old client built it in js/quicksend.js).
+// Memos: the yellow notes the human writes to the crowned session (or to the session whose page it is), and the
+// mount point of the Desk's paper. The notes are end-to-end memo objects (js/app/memo-store.mjs: every human device
+// writes versions, a sent note is held 3 s for Undo); the forms reach it through hub.memo, the route POST /memo of
+// the old hub. The markup is the one css/quicksend.css styles.
 //
 //   memoLayer(model, base, view, scope)   for the layout: the round button with the notes that were put away hanging
 //                                  off it, every note that is out, the paper's element. scope: the session whose page
@@ -106,13 +107,13 @@ export function register(t) {
     async create(_, f) {
       const place = ['float', 'stack', 'paper'].includes(f.get('place')) ? f.get('place') : 'float'
       const made = await call({ text: String(f.get('text') ?? ''), place, x: num(f.get('x')) ?? 0, y: num(f.get('y')) ?? 0, ...(f.get('session') ? { session: String(f.get('session')) } : {}) })
-      return { fresh: made.memo.id }
+      return { fresh: made.memo.id, memo: made.memo }
     },
-    async open(memo) { await call({ id: memo.id, place: 'float' }); return { fresh: memo.id } },
+    async open(memo) { const made = await call({ id: memo.id, place: 'float' }); return { fresh: memo.id, memo: made.memo } },
     async stack(memo, f) {
-      if (f.has('text')) await call({ id: memo.id, text: String(f.get('text')) })
-      // Put away, a note hangs off the memo button (place "stack" in the hub's store); an empty one is simply gone.
-      await call(holds(memo) ? { id: memo.id, place: 'stack' } : { id: memo.id, remove: true })
+      // Put away, a note hangs off the memo button (place "stack"), with the words as they stand; an empty one is simply gone.
+      const text = f.has('text') ? String(f.get('text')) : memo.text
+      await call(holds({ ...memo, text }) ? { id: memo.id, place: 'stack', text } : { id: memo.id, remove: true })
       return {}
     },
     async bin(memo, f) {
@@ -125,13 +126,12 @@ export function register(t) {
       const to = receiverOf(memo, m)
       if (!to) throw new Error('no crown on this desk yet: give a session the crown on the Agents page')
       // The note goes as it stands in the form: to its session (a note of a session's page), else to the crown.
-      await call({ id: memo.id, to: to.id, ...(f.has('text') ? { text: String(f.get('text')) } : {}) })
-      const sent = await call({ id: memo.id, send: true })
+      const sent = await call({ id: memo.id, to: to.id, send: true, ...(f.has('text') ? { text: String(f.get('text')) } : {}) })
       // The hub holds it for a moment (sent.held.ms): until then the toast's Undo brings the note back as it was.
       return { says: toast({ head: `Memo sent to ${to.name}`, ...(sent.held ? { undo: { action: `${base}/memos/${memo.id}/unsend` }, ms: Math.max(1200, sent.held.ms) } : {}) }) }
     },
     // Undo of a send, while the hub still holds the memo: the note is out again (memo may be null: it went already).
-    async unsend(memo, f, m, id) { await call({ id, unsend: true }); return { fresh: id, back: true } },
+    async unsend(memo, f, m, id) { const made = await call({ id, unsend: true }); return { fresh: id, back: true, memo: made.memo } },
   }
   t.post(/^\/memos(?:\/([\w-]+)\/(open|stack|bin|send|unsend))?$/, async ({ req, res, match, form }) => {
     const id = match[1] ?? null, what = match[2] ?? 'create'
@@ -152,7 +152,8 @@ export function register(t) {
     // The live stream brings the change to every page; this answer adds what belongs to the one who acted: the
     // note at once (data-fresh: the island puts the keyboard into it), the note gone, the passing line.
     const now = t.model()
-    const note = done.fresh && (now.state.memos ?? []).find(n => n.id === done.fresh)
+    // (the note as the model has it, else as it was just written: the hub's copy of a new version comes a moment later)
+    const note = done.fresh && ((now.state.memos ?? []).find(n => n.id === done.fresh && !n.held) ?? done.memo)
     return t.sendStream(req, res, [
       note && note.place !== 'stack' ? t.stream('append', 'memos', raw(String(memoNote(note, now, base)).replace('<div class="memo"', `<div class="memo" data-fresh${done.back ? ' data-back' : ''}`))) : '',
       ['stack', 'bin', 'send'].includes(what) ? t.stream('remove', `memo-${id}`) : '',

@@ -8,6 +8,7 @@
 // (asked, revised, answered, read, shredded, closed).
 
 import { rememberRef } from './att.mjs'
+import { boardMemos } from './memo-store.mjs'
 
 const SESSION_ID_LEN = 12
 export const agentIdOf = s => s.agent_session_id || s.agent_device_id.slice(0, SESSION_ID_LEN)
@@ -56,7 +57,7 @@ export class BoardState {
     const tasks = []
     for (const s of m.sessions.values()) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(s.agent_device_id), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
-    const memos = [...m.memos.values()].filter(n => n.object_state !== 'closed' && !n.removed).map(n => ({ id: n.object_id, text: n.text ?? '', to: n.to ?? null, session: n.session ?? null, place: n.place ?? 'float', x: n.x ?? 0, y: n.y ?? 0, desk: n.desk_id, attachments: n.attachments ?? [], created: n.created_at ?? 0, updated: n.updated_at ?? 0 }))
+    const memos = boardMemos(m, devToAgent)
     const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => ({ id: p.object_id, agent: devToAgent.get(p.agent_device_id), type: p.attachments?.[0]?.media_type?.startsWith('image/') ? 'image' : 'html', title: p.title, size: p.attachments?.[0]?.total_size ?? 0, created: p.sent_at ?? 0 }))
     const self = this
     let messages = null
