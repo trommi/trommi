@@ -6,6 +6,8 @@ name: Deploy
 on:
   push:
     branches: [main]
+    # Only what goes into the image restarts the hub (a restart drops every open stream).
+    paths: ['hub/**', 'crypto/**', '.github/workflows/deploy.yml']
   workflow_dispatch:
 
 concurrency:
