@@ -15,11 +15,12 @@ Prototyp: Chat und Entscheidungskarten im Browser, verbunden mit einer oder mehr
 3. **One sync mechanism, two depths.** Every client keeps one number: the `envelope_number` (the hub's arrival number) of the last envelope it processed. `GET envelopes?after_envelope_number=` and `GET stream?after_envelope_number=` deliver the same records in the same order to every client, app and agent alike. Every record carries the **signed header in full** (small; every client verifies every sender's whole chain) and the **encrypted body only for heads**. Threads are fetched when opened, newest first, in pages. Clients build all state locally; the hub never sends "state".
 4. **Heads and threads.** The signed `envelope_kind` says whether an envelope belongs to the overview (every kind except `timeline_item` is a head: object versions, answers, registers). Messages and strokes are thread items: each carries a signed plaintext `timeline_kind` (`chat`, `canvas`; later `media` …) and `timeline_id` (`card/<object_id>`, `session/<session_id>`, `desk/<desk_id>`), so the hub pages one timeline with one index hit and never mixes chat with strokes. New timeline kinds need no hub change. The `envelope_kind` is in the signed header and is checked before anything else. A revision is a new object version that names the previous one; no envelope ever holds a whole conversation. Long text, HTML pages and pictures are attachments, fetched only when shown.
 5. **The hub reads the signed header only.** It never parses a body. The body carries its own `schema_version`; new app features need no hub change.
-6. **Plaintext is what the concept allows and nothing more** (concept §7): room, key epoch, sender, recipient, numbers, hashes, time, padded size; for objects id, state, urgency, answer time; attachment ids; `send_push`; `envelope_kind`; for thread items `timeline_kind` and `timeline_id`. Device roles (human, agent) in the member list; device names are not plaintext (decided 4 October 2026: the name field of member entries, offers and join requests is always empty and the hub refuses anything else; names live in the encrypted register `device/<device_id>`). (Also decided 4 October 2026: the kind and the timeline are visible to the hub so it can page timelines and keep chat apart from strokes; the hub learned most of it from the object state anyway.)
-7. **Clear names, one scheme.** The same snake_case names in SQLite columns, JSON fields and this text, no abbreviations. Bytes travel as base64url without padding, ids as lowercase hex. Three families, told apart by their names:
+6. **Plaintext is what the concept allows and nothing more** (concept §7): room, key epoch, sender, recipient, numbers, hashes, time, padded size; for objects id, state, urgency, answer time; attachment ids; `send_push`; `envelope_kind`; for thread items `timeline_kind` and `timeline_id`. Device roles (human, agent) in the member list; device names are not plaintext (decided 4 October 2026: member entries, offers and join requests carry no name field, R8; names live in the encrypted register `device/<device_id>`). (Also decided 4 October 2026: the kind and the timeline are visible to the hub so it can page timelines and keep chat apart from strokes; the hub learned most of it from the object state anyway.)
+7. **Clear names, one scheme.** The same snake_case names in SQLite columns, JSON fields and this text, no abbreviations. Bytes travel as base64url without padding, ids as lowercase hex. Families, told apart by their names:
    - **Key material and key bookkeeping** start with `key_`: `key_epoch`, `key_sealed`, `key_back_link`, `key_signing_public`, `key_exchange_public`.
    - **Proofs** end in `_signature` or `_hash`, or start with `signed_`: `envelope_signature`, `entry_hash`, `previous_envelope_hash`, `signed_entry`, `signed_offer`.
    - **Routing metadata** is plain: `room_id`, `device_id`, `object_id`, `object_state`, `urgency`, `envelope_kind`, `timeline_kind`, `timeline_id`, `send_push`, `recipient_device_id`, `sender_sequence`.
+   - **Lists of sealed keys** are `sealed_<scope>_keys`: `sealed_room_keys`, `sealed_session_keys`.
    - **Content** is only ever `encrypted_body` (and encrypted attachment bytes).
 
 ### Transport
@@ -56,13 +57,15 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 | 401 | `unauthorised`, `bad-challenge` |
 | 403 | `forbidden`, `not-member`, `removed-sender`, `wrong-sender` |
 | 404 | `not-found`, `no-room` |
-| 409 | `replay`, `gap`, `equivocation`, `room-exists`, `invite-used`, `wrong-epoch` (an old key epoch after the 2-minute grace: fetch the member list or the grants), `lease-lost` |
+| 409 | `replay`, `gap`, `equivocation`, `room-exists`, `invite-used`, `instance-conflict`, `wrong-epoch` (an old key epoch after the 2-minute grace: fetch the member list or the grants), `lease-lost` |
 | 410 | `invite-expired` (also 15 minutes after an invite was used), `invite-burned` |
 | 413 | `too-large`, `quota-exceeded` (with `used`, `quota`) |
 | 426 | `client-too-old` (with `minimum_version`) |
 | 429 | `too-many`, `rate-limited` (with `retry-after`) |
 | 500 | `internal` |
 | 503 | `overloaded` (with `retry-after`: the write queue is full) |
+
+Any other `ZError` code is a 400.
 
 `409 gap` on posting an envelope means the hub holds fewer of the sender's envelopes than the sender thinks (a lost write): the client posts the missing ones again, from its own outbox.
 
@@ -210,23 +213,23 @@ A **session** on the board is an agent member. A human's envelope for a session 
 | --- | --- | --- | --- |
 | `timeline_item` (1), thread | anyone | `timeline_kind`, `timeline_id` | `content_type`: `message` (`text`, `details?`, `html?`, `attachments?`, `hand_back?`, `explain?`, `present_card?`, `copied_cards?`, `marks?`, `published_object_id?`), `strokes` (`strokes: [{ stroke_id, points (quantised, delta-encoded), style }]`, sent every ~150 ms while drawing), `erase` / `move` / `send_away` (`stroke_ids`, `offset?`), `selection_sent` (`text?`, `attachments`: the picture of the selection, `stroke_ids`) |
 | `object_version` (2), head | creator | `object_id`, `object_state`, `urgency` | `object_type`: `card` (`card_type` `decision` \| `info`, `title`, `body?`, `options?`, `sections?`, `html?`, `allows_multiple?`, `recommended?`, `urgency_reason?`, `attachments?`, `change_note?`, `close_summary?`, `withdraw_reason?`, `merged_into_object_id?`, `merged_from_object_ids?`), `memo` (`text`, `x`, `y`, `color`, `desk_id`), `published` (`attachments`, `title`, `note?`, `released_until?`); always `object_version` (1, 2, …) and `previous_version_hash` |
-| `answer` (3), head | human → owning agent | `object_id`, `object_state` answered (closed for read and shred), `answered_at` | `answer_action` (`answer`, `read`, `shred`), `choices?`, `note?`, `option_notes?`, `attachments?`, `marks?`, `trusted?`; signed bind: object id, hash of the version answered, first choice |
+| `answer` (3), head | human → owning agent | `object_id`, `object_state` answered (closed for read and shred), `answered_at` | `answer_action` (`answer`, `read`, `shred`), `choices?`, `note?`, `option_notes?`, `attachments?`, `marks?`, `trusted?`; signed bind: object id, hash of the version answered, every choice (R7) |
 | `permission_request` (4), head | agent | `object_id`, `send_push` | `tool_name`, `description`, `input_preview`; bind: request id, expiry |
 | `verdict` (5), head | human → agent | `object_id` | bind: request id, request hash, expiry, allow or deny |
 | `status` (6), head | anyone | | `values: { "<key>": value \| null }` |
 | `decide_again` (7), head | human → owning agent | `object_id`, `object_state` open | bind: object id, hash of the answer taken back |
 
-Crypto `KIND` 8 (scribble) is not used: drawings are timeline items.
+There is no kind 8: the hub refuses it (`bad-format`); drawings are timeline items.
 
 **Registers.** A key's value is the one from the latest `status` envelope that set it in **signed causal order** (see Security rules, R2), never hub order; `null` deletes. Keys are scoped by the sender:
 
 - **Every device's own key** counts only from that device: `device/<device_id>` (`device_name`, `platform`, `folder`, `host`), written right after joining, e.g. `device_name` "valiido", `folder` "~/git/valiido", `host` "desktop". The hub never sees a name.
-- **An agent's keys** count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `object_id`).
-- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `read_up_to/<session_id>`, `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2).
+- **An agent's keys** count only from that agent: `profile` (`model`, `task`, `icon`, `agent_name`, `parent_session`, `is_main`), `status_line/<id>` (`label`, `state`, `detail`, `object_id`), `alert/<envelope_hash>` (a command the agent refused: `code`, `message`, `sender_device_id`, `envelope_number`).
+- **Human keys** are shared by every human device and ignored by agents: `draft/<object_id>`, `snooze/<object_id>`, `duck/<object_id>`, `crown`, `desk/<desk_id>`, `session/<session_id>` (name, desk, archived, group, icon), `read_up_to/<session_id>`, `canvas_snapshot/<timeline_id>` (for `timeline_kind` canvas; `attachment` reference + the signed sender **frontier** it includes, R2), `room_snapshot` (a whole-room snapshot for a fresh device's first load: `client/core/snapshot.mjs`).
 
 **Canvases.** Strokes are an append-only set: concurrent edits from two devices merge without conflict (set semantics, ordered by `envelope_number`; erase and move are tombstones referencing `stroke_ids`). Every few hundred strokes or when idle, one device writes the whole canvas as an encrypted snapshot attachment and points `canvas_snapshot/<timeline_id>` at it; a fresh client loads snapshot + `GET threads?timeline_kind=canvas&timeline_id=…&after_envelope_number=` instead of replaying everything. Live strokes from others render from the stream as they arrive.
 
-**Projections, computed on the client:** a card's place in the stack (oldest first, by the `envelope_number` of its first version), "in revision" (a human message with `hand_back` or `explain` newer than the card's newest version, until the agent's next version or a message with `present_card`), the Desk and stacks, crowns, the Next line, unread counts.
+**Projections, computed on the client:** a card's place in the stack (oldest first by `sent_at` of version 1, R2), "in revision" (a human message with `hand_back` or `explain` newer than the card's newest version, until the agent's next version or a message with `present_card`), the Desk and stacks, crowns, the Next line, unread counts.
 
 ### Cryptography in one page (bytes: `crypto/FORMAT.md`, library: `crypto/zcrypto.mjs`)
 
@@ -242,7 +245,7 @@ Crypto `KIND` 8 (scribble) is not used: drawings are timeline items.
 | Commands | An agent acts only on envelopes from an active human device addressed to it, current epoch (previous for 2 minutes), and for answers/verdicts bound to the current card or request hash |
 | Attachments | Random key per file, 64 KiB STREAM chunks (chunk index and last-chunk flag in the nonce); key, hash, name and type inside the referencing body; only the `attachment_id` in the header |
 | Removal and re-adding | Any human device, at any time: one `devices_removed` entry carries the new `key_epoch` sealed for everyone who stays (agents included) and the back link. The hub at once closes the removed device's streams, revokes its access tokens and refuses its sign-in and envelopes; the others switch to the new epoch on the `member_entry` event without interruption (the previous epoch is still accepted for 2 minutes after the entry, then refused by hub and clients, R3). The removed device keeps what it already decrypted and can open nothing sent in the new epoch. A removed `device_id` can never come back: re-adding a phone means new device keys and a new invite. A re-added human device gets the history key and back links, so it reads the whole history again; a re-added agent reads from its join on (R6) |
-| Reconnecting is not joining | A crashed or restarted Claude session finds its key file (`~/.local/share/trommi/keys/<room_id>/<machine>-<folder>-<slot>.key`, mode 0600) and comes back as the same device: sign in, take the lease, catch up from its cursor (R4). No member entry, no new epoch. Only a new folder or machine joins by invite |
+| Reconnecting is not joining | A crashed or restarted Claude session finds its key file (`~/.local/share/trommi/keys/<room_id>/<host>-<folder>-<slot>.key`, mode 0600) and comes back as the same device: sign in, take the lease, catch up from its cursor (R4). No member entry, no new epoch. Only a new folder or machine joins by invite |
 | Cost of a removal | Never re-encrypts anything: one member entry plus a fresh 32-byte key sealed once per remaining member (milliseconds, measured with 20+ members in "Performance"). Several devices removed at once are one entry and one new epoch. Removal and the new key stay one entry on purpose: a lazy rotation would let the removed device read what is sent before the next rotation. Agents idle for `agent_idle_days` (a human setting, default off) are removed by the next human device that opens the room, batched into one entry |
 | Recovery | 256-bit code (Crockford base32) derives a key pair; a `recovery` entry adds the new device, removes every human device, keeps the agents, starts a new epoch and a new code |
 
