@@ -118,26 +118,18 @@ export async function start(client, { fresh = false } = {}) {
   })
   document.addEventListener('turbo:load', conn)
   // The timeline of the page in view is fetched when it is opened (newest page first; "Earlier" loads more).
+  // The card page's thread is fetched when it is opened (newest page first; "Earlier comments" loads more). A session's
+  // page loads its own (views/session.mjs, before its first render). The Desk's Working stack says each card's last
+  // word: the newest few items of the cards with their session.
   const opened = new Set()
+  const load = (key, limit) => { if (opened.has(key)) return; opened.add(key); client.loadTimeline(key, { limit }).catch(err => console.warn('timeline', err)) }
   document.addEventListener('turbo:load', () => {
     const path = location.pathname
-    let key = null
-    const s = /^\/s\/([^/+]+)/.exec(path), q = /^\/(?:s\/[^/]+\/)?[qc]\/([\w-]+)/.exec(path)
-    if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) key = `chat:card/${card.id}` }
-    else if (s) { const dev = board.agentToDev.get(decodeURIComponent(s[1])); if (dev) key = `chat:session/${dev}` }
-    // The Desk's Working stack says each card's last word: the newest few items of the cards with their session.
-    if (path === '/') for (const c of model().revising ?? []) { const k = `chat:card/${c.id}`; if (!opened.has(k)) { opened.add(k); client.loadTimeline(k, { limit: 5 }).catch(() => {}) } }
-    const before = new URLSearchParams(location.search).get('before')
-    if (key && (!opened.has(key) || before)) { opened.add(key); client.loadTimeline(key, { limit: 50 }).catch(err => console.warn('timeline', err)) }
-    // A session's page shows what was said about its questions too: the newest page of its recent cards' threads.
-    if (s && !q) {
-      const dev = board.agentToDev.get(decodeURIComponent(s[1])), sess = dev && client.model.sessions.get(dev)
-      for (const id of (sess?.card_ids ?? []).slice(-20)) {
-        const k = `chat:card/${id}`, t = client.model.timelines.get(k)
-        if (!opened.has(k) && t?.item_count) { opened.add(k); client.loadTimeline(k, { limit: 50 }).catch(() => {}) }
-      }
-    }
+    const q = /^\/(?:s\/[^/]+\/)?[qc]\/([\w-]+)/.exec(path)
+    if (q) { const card = model().cardByRef(decodeURIComponent(q[1])); if (card) load(`chat:card/${card.id}`, 50) }
+    if (path === '/') for (const c of model().revising ?? []) load(`chat:card/${c.id}`, 5)
   })
+
   await router.visit(location.pathname + location.search + location.hash, { action: 'replace' })
   window.trommi.firstPaintMs = performance.now() - T0
   window.trommi.openMs = typeof OPEN_MS === 'number' ? OPEN_MS : null
