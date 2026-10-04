@@ -9,13 +9,16 @@ app="${1:-${TROMMI_APP:-/tmp/claude-1000/-home-christopher-git-trommi/c56893b6-5
 dest="$app/public/vendor"
 [ -d "$app/public" ] || { echo "no app repo at $app (expected public/)" >&2; exit 1; }
 mkdir -p "$dest"
-for f in "$here"/client/core/*.mjs; do
+# From the committed tree (HEAD), never from the working tree: other streams edit files there in place.
+ref="${SYNC_REF:-HEAD}"
+for f in $(git -C "$here" ls-tree --name-only "$ref" client/core/); do
   name="$(basename "$f")"
-  case "$name" in test*.mjs|storage-file.mjs|zcrypto.mjs) continue ;; esac
-  cp "$f" "$dest/$name"
+  case "$name" in *.mjs) ;; *) continue ;; esac
+  case "$name" in test*.mjs|*-test.mjs|storage-file.mjs|zcrypto.mjs) continue ;; esac
+  git -C "$here" show "$ref:$f" > "$dest/$name"
 done
-cp "$here/crypto/zcrypto.mjs" "$dest/zcrypto.mjs"
-commit="$(git -C "$here" rev-parse --short HEAD)"
+git -C "$here" show "$ref:crypto/zcrypto.mjs" > "$dest/zcrypto.mjs"
+commit="$(git -C "$here" rev-parse --short "$ref")"
 printf '// Copied from trommi-hub %s by dev/sync-app.sh. Do not edit here: edit client/core/ and crypto/ in trommi-hub.\nexport const CORE_COMMIT = %s\n' "$commit" "'$commit'" > "$dest/core-version.mjs"
 echo "synced client/core + zcrypto ($commit) into $dest"
 ls "$dest"
