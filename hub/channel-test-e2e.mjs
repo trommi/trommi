@@ -8,6 +8,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { fileStorage } from '../client/core/storage-file.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -87,8 +88,8 @@ export async function integration({ test, tmp }) {
     await test('e2e: introduce + set_status reach the human as registers; device label is encrypted', async () => {
       await channel.call('introduce', { model: 'Claude Opus 5.5', task: 'night test', icon: 'database' })
       await channel.call('set_status', { id: 'tests', label: 'Tests', state: 'working', detail: 'running' })
-      await until('profile', () => human.model.sessions.get(agentId)?.profile?.model === 'Claude Opus 5.5')
-      await until('status line', () => human.model.sessions.get(agentId)?.status_lines?.find(l => l.id === 'tests'))
+      await until('profile', () => human.model.sessions.get(human.sessionOfAgent(agentId))?.profile?.model === 'Claude Opus 5.5')
+      await until('status line', () => human.model.sessions.get(human.sessionOfAgent(agentId))?.status_lines?.find(l => l.id === 'tests'))
     })
 
     await test('e2e: own sends are visible at once: set_status names a card filed a moment earlier', async () => {
@@ -155,7 +156,7 @@ export async function integration({ test, tmp }) {
     await test('e2e: publish_asset puts a published object on the board and announces it in the conversation', async () => {
       const id = (await channel.call('publish_asset', { content: '<h1>Report</h1>', title: 'Report', note: 'for you' })).match(/published as ([0-9a-f]{32})/)[1]
       await until('published object', () => human.model.published.get(id)?.title === 'Report')
-      const timeline = `chat:session/${agentId}`
+      const timeline = `chat:session/${human.sessionOfAgent(agentId)}`
       const said = await until('announcement', () => [...(human.model.timelines.get(timeline)?.items.values() ?? [])].find(i => i.content?.published_object_id === id))
       assert.equal(said.content.text, '**Report**\n\nfor you')
       const bytes = await human.fetchAttachment(said.content.attachments[0])
@@ -200,6 +201,39 @@ export async function integration({ test, tmp }) {
       const forge = await import('./channel-test-forge.mjs').catch(() => null)
       if (!forge) throw new Error('forging helpers missing')
       const how = await forge.run({ core, human, agentId, channel, until, keys }); console.error('forgeries:', JSON.stringify(how))
+    })
+
+    // R6 handover: a crashed session is replaced by a new agent in another folder; the human decides whether it
+    // may read the earlier conversation. What the new agent can open is read back from its own key slot.
+    let session_id
+    const seenHeirs = new Set()
+    const handover = async (folder, with_history) => {
+      session_id ??= human.sessionOfAgent(agentId)
+      const old = [...human.model.cards.values()].find(c => c.session_id === session_id && c.title)
+      const dir = path.join(tmp, folder)
+      fs.mkdirSync(dir, { recursive: true })
+      const invite = await human.createInvite({ device_role: 'agent', session_id, with_history })
+      const next = await startChannel({ env: { ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: invite.link }, cwd: dir })
+      await next.ready().catch(e => { throw new Error(`${e.message}\n${next.stderr()}`) })
+      const heir = await until('the grant', () => human.model.sessions.get(session_id)?.agent_device_ids?.find(id => human.model.members.get(id)?.is_active && id !== agentId && !seenHeirs.has(id)))
+      seenHeirs.add(heir)
+      await human.sendMessage({ agent_device_id: heir, text: `after the handover (${folder})` })
+      const ev = await next.next(chEvent('chat'))
+      assert.equal(ev.params.content, `after the handover (${folder})`)
+      await next.close()
+      const room = path.join(keys, human.model.room.room_id)
+      const base = fs.readdirSync(room).find(f => f.includes(path.basename(dir)) && f.endsWith('.key'))
+      const storage = await fileStorage({ dir: room, key_file: path.join(room, base), prefix: base.replace(/key$/, '') })
+      const peek = await core.openRoom({ storage })
+      return { old, card: peek.model.cards.get(old.object_id) }
+    }
+    await test('e2e: handover with history: the new agent reads the earlier conversation', async () => {
+      const { old, card } = await handover('heir-with', true)
+      assert.equal(card?.title, old.title)
+    })
+    await test('e2e: handover without history: the new agent reads from now on, not before', async () => {
+      const { card } = await handover('heir-without', false)
+      assert.ok(!card?.title, 'the earlier card was readable without history')
     })
   } finally {
     try { await channel?.close() } catch {}
