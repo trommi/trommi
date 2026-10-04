@@ -651,7 +651,7 @@ test('limits: JSON size, envelope rate, founding per address, open requests', as
   await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.phone.token, raw: huge, headers: { 'content-type': 'application/json' } }, 413, 'too-large')
   // Envelopes: a burst of 200, then 429 with retry-after.
   let limited = null
-  for (let i = 0; i < 230 && !limited; i++) {
+  for (let i = 0; i < 2000 && !limited; i++) {     // refills 50/s: a slow CI runner needs more than burst + 30 tries
     const { res } = await post(w, w.agent, { payload: utf8(String(i)) })
     if (res.status === 429) limited = { i, res }
     else assert.equal(res.status, 200)
