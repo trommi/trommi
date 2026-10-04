@@ -21,7 +21,7 @@ const CASES = [
   { id: 'list.open (c)', at: DESK, ready: ROW, keys: ['j', 'c'], expect: view('card') },
   { id: 'list.leave (Esc)', at: DESK, ready: ROW, keys: ['j', 'Escape'], expect: `!document.querySelector('#desk-list .inbox-row.is-current')` },
   { id: 'go.agents (g a)', at: DESK, ready: ROW, keys: ['g', 'a'], expect: view('agents') },
-  { id: 'go.walk (g f)', at: DESK, ready: ROW, keys: ['g', 'f'], expect: `location.pathname === '/walk'` },
+  { id: 'go.walk (g f)', at: DESK, ready: ROW, keys: ['g', 'f'], expect: `/walk=1/.test(location.search) && document.body.dataset.tView === 'card'` },
   { id: 'go.jump (g j)', at: DESK, ready: ROW, keys: ['g', 'j'], expect: `!!document.querySelector('#brand-doors:not([hidden])') && document.activeElement?.id === 'jump-field'` },
   { id: 'go.jump (Ctrl+K)', at: DESK, ready: ROW, keys: [['k', { ctrl: true }]], expect: `document.activeElement?.id === 'jump-field'` },
   { id: 'go.desk (g i)', at: '/agents', ready: 'body[data-t-view="agents"]', keys: ['g', 'i'], expect: view('desk') },
