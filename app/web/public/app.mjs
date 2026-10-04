@@ -738,10 +738,12 @@ let leaving = 0
  *  ghost: false when the caller flies its own copies (the pull-down of Later). Reduced motion: gone at once. */
 export function flipOut(rows, { ghost = true } = {}) {
   rows = rows.filter(r => r?.isConnected)
-  if (!rows.length) return
-  if (calm()) { for (const r of rows) boxOf(r).remove(); return }
-  const list = rows[0].closest('#desk-list') ?? rows[0].parentElement
+  if (!rows.length) return []
   const boxes = [...new Set(rows.map(boxOf))]
+  // (where each stood, so a row whose answer failed can come back: putBack)
+  const places = boxes.map(box => ({ box, parent: box.parentElement, next: box.nextSibling }))
+  if (calm()) { for (const b of boxes) b.remove(); return places }
+  const list = rows[0].closest('#desk-list') ?? rows[0].parentElement
   // what may move: the rows after a leaving row in its own section, and the list's own children after it
   const moving = new Set()
   for (const box of boxes) {
@@ -768,6 +770,11 @@ export function flipOut(rows, { ghost = true } = {}) {
     el.style.willChange = 'transform'
     el.animate([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 250, delay: n0 * 45, easing: 'cubic-bezier(.3, .6, .3, 1)' }).finished.finally(() => { el.style.willChange = '' })
   }
+  return places
+}
+/** Rows whose answer did not go through stand where they stood again. */
+function putBack(places) {
+  for (const { box, parent, next } of places) if (!box.isConnected && parent?.isConnected) parent.insertBefore(box, next?.parentNode === parent ? next : null)
 }
 /** A row alone in its section takes the section with it. */
 function boxOf(row) {
@@ -1082,11 +1089,20 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     }
     const formSubmission = { formElement: form, submitter, method, location: action }
     fire(form, 'turbo:submit-start', { formSubmission })
+    // A Desk row that is answered (or put off, thrown away, asked about) moves at once: the motion starts in this frame,
+    // the answer's work (core, re-render) comes when the motion is done (his word, 4 October: start on the tap). If it
+    // does not go through, the row comes back with what went wrong.
+    const row = form.closest?.('#desk-list .inbox-row[data-id]')
+    const leaves = row && form.hasAttribute('data-turbo-frame') === false && /\/(decide|trust|close|what|shred|snooze|revise)$/.test(action.pathname)
+    const chosenRows = form.id === 'sel-bar' && data.get('way') !== 'later' ? String(data.get('ids') ?? '').split(',').filter(Boolean).map(id => document.getElementById(`row-${id}`)).filter(Boolean) : []
+    const gone = leaves ? flipOut([row]) : chosenRows.length ? flipOut(chosenRows) : null
+    if (gone?.length) await new Promise(r => setTimeout(r, calm() ? 0 : 260 + (chosenRows.length > 1 ? (chosenRows.length - 1) * 45 : 0)))
     let res, error = null
     try { res = await board.request({ method: 'POST', path: action.pathname + action.search, form: data, headers: { accept: STREAM_ACCEPT, referer: location.href } }) }
     catch (err) { error = err; console.error('form', err) }
     const success = !error && res && res.code < 400
     flush()
+    if (gone?.length && (!success || (res?.kind === 'stream' && [row, ...chosenRows].some(r => r?.id && res.body.includes(`action="replace" target="${r.id}"`))))) putBack(gone)
     if (res?.kind === 'stream') { forget(res.body); renderStreamMessage(res.body) }
     else if (res?.kind === 'redirect') await visit(res.to)
     else if (res?.kind === 'page') { history.replaceState({ trommi: true }, '', location.href); paint(location.pathname + location.search, res.opts, { scroll: window.scrollY }) }
