@@ -16,7 +16,6 @@ envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICEN
 | `fuzz/` | model-based fuzzing of hub and clients (`fuzz/README.md`); the quick run blocks the hub deploy | |
 | `dev/` | `cdp.mjs` (headless Chromium), `e2e/` (load generator with real members) | |
 | `assets/` | brand sources (logo, bell marks, fonts, palette, icons) | |
-| `docs/` | `marketing.md`, `open-source.md`: product notes, not protocol | |
 
 The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
 and docs) was removed on 4 October 2026; its history is in git and in
