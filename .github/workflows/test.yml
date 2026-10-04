@@ -43,3 +43,4 @@ jobs:
       - run: node crypto/test.mjs --no-bench
       - run: node crypto/hub-test.mjs
       - run: node hub/test.mjs
+      - run: node hub/ops/test.mjs
