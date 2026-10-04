@@ -319,9 +319,25 @@ const ROUNDS = {
     const out = await ch.call('publish_asset', { path: file, title: 'Nachtbericht' }).catch(err => `ERR ${err.message}`)
     say(`note publish_asset: ${out.slice(0, 200)}`)
     await sleep(1500)
-    check(/https?:\/\//.test(out), 'publish_asset returns a share link (Turbo: <base>/a/<id>#<key> for people outside)', out.slice(0, 120))
-    await h.ev(`trommi.router.visit(location.pathname); return 1`); await sleep(1200)
-    check(await h.ev(`return document.body.textContent.includes('Nachtbericht')`), 'published asset announced in the session')
+    const asset = /published as ([0-9a-f]{32})/.exec(out)?.[1]
+    const shared = asset ? await ch.call('share_asset', { id: asset }).catch(err => `ERR ${err.message}`) : 'no asset id'
+    const link = /https?:\/\/\S+/.exec(shared)?.[0]?.replace(/[).,]+$/, '')
+    check(Boolean(link), 'share_asset gives a link for people outside the room', shared.slice(0, 160))
+    if (link) {
+      const O = await openPage({ profile: 'desktop-light', base: APP, hostRules: arg('hosts') ?? '' })
+      try {
+        await O.go(link.replace(/^https?:\/\/[^/]+/, APP)); await sleep(2500)
+        const seen = await O.waitFor(`return [document, ...[...document.querySelectorAll('iframe')].map(f => { try { return f.contentDocument } catch { return null } })].some(d => d?.body?.textContent?.includes('Alles grün'))`, 15000)
+        check(Boolean(seen), 'an outsider (fresh browser, no room) opens the shared page and sees its content')
+        await O.shot(path.join(OUT, 'rounds', 'r15-outsider.png'))
+      } finally { await O.close() }
+      const off = await ch.call('share_asset', { id: asset, release: false }).catch(err => `ERR ${err.message}`)
+      check(!off.startsWith('ERR'), 'share_asset release:false takes the link back', off.slice(0, 120))
+    }
+    const sp = await h.ev(`return [...document.querySelectorAll('a[href^="/s/"]')].map(a => a.getAttribute('href').split('/').slice(0, 3).join('/'))[0] ?? null`)
+    if (sp) await visit(sp)
+    const announced = await h.waitFor(`return document.body.textContent.includes('Nachtbericht')`, 8000)
+    check(Boolean(announced), 'published asset announced in the session')
     await shot('r15-publish')
   },
   async r16_second_device() {
