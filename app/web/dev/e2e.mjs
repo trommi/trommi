@@ -270,11 +270,12 @@ try {
   await A.until(`document.getElementById('read-${card2}')`, 'info on A')
   await A.js(`document.querySelector('#read-${card2} form[action$="/close"]').requestSubmit()`)
   await B.until(`!document.getElementById('read-${card2}')`, 'info gone on B after A read it').then(() => timing('read on A -> gone on B', Date.now() - t0), e => check(false, e.message))
-  // "All read" puts every info of the strip away at once.
+  // The news are bare lines: a box to tick and the title; no header, count, sender, time or "All read". Each box reads its info.
   const reads = [await agent.sendCard({ title: 'Info eins', card_type: 'info' }), await agent.sendCard({ title: 'Info zwei', card_type: 'info' })]
-  await A.until(reads.map(id => `document.getElementById('read-${id}')`).join(' && '), 'two infos in the strip on A')
-  await A.js("document.querySelector('#desk-news .news-all').requestSubmit()")
-  await B.until(`document.getElementById('desk-news')?.hidden && ${reads.map(id => `trommi.model().byCard.get('${id}')?.read`).join(' && ')}`, 'All read: strip gone on B, both read').then(() => check(true, 'All read closes every info'), e => check(false, e.message))
+  await A.until(reads.map(id => `document.getElementById('read-${id}')`).join(' && '), 'two infos as lines on A')
+  check(await A.js("return !document.querySelector('#desk-news :is(h3, .news-head, .news-all, .news-who, .news-ago, [data-ts])')"), 'the news lines carry no header, count, sender, time or All read')
+  for (const id of reads) await A.js(`document.querySelector('#read-${id} form[action$="/close"]').requestSubmit()`)
+  await B.until(`${reads.map(id => `!document.getElementById('read-${id}') && trommi.model().byCard.get('${id}')?.read`).join(' && ')}`, 'both ticked: lines gone on B, both read').then(() => check(true, 'ticking a line reads its info'), e => check(false, e.message))
 
   // ---- warm reload: the Desk paints from IndexedDB before the hub answers ----
   for (let i = 0; i < 30; i++) await agent.sendCard({ title: `Frage ${i}`, options: [{ key: 'a', label: 'Ja' }, { key: 'b', label: 'Nein' }] })

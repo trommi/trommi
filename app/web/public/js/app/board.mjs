@@ -160,17 +160,6 @@ export function createBoard({ hub, model, extraPages = [] }) {
       const next = model().fresh[0], said = url.searchParams.get('said')
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
-    // "All read" in the news strip: every info of this desk closed as read (each tells its session, as its own tick does).
-    t.post(/^\/reads\/close$/, async ({ req, res, form }) => {
-      const cards = model().reads ?? []
-      const done = await Promise.allSettled(cards.map(c => hub.closeInfo(c.id)))
-      const failed = done.filter(d => d.status === 'rejected').length, n = cards.length - failed
-      if (form.has('stay') && t.wantsStream(req)) {
-        const m = model()
-        return t.sendStream(req, res, html`${stream('replace', 'desk-news', newsStrip(m, BASE))}${stream('prepend', 'says-host', toast(failed ? { head: 'Not all saved', line: `${failed} of ${cards.length} could not be put away`, role: 'alert' } : { head: 'Read', line: n === 1 ? '1 info put away' : `${n} infos put away` }))}`)
-      }
-      return redirect(res, `${BASE}/`)
-    })
     t.live('desk', {
       take: m => ({ order: m.fresh.map(c => c.id), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), shelf: galleryShelf(m, BASE), stacks: deskStacks(m, BASE) }),
       diff(was, now, client, m) {

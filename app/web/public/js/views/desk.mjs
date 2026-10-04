@@ -6,9 +6,9 @@ import { html, raw } from './html.mjs'
 import { WORDS, isKnock, knockWord, cardNr, cardNote, kindOf, plain, carries, quick, labelSize, BARE, shortOf, advisedKeys, advisedLabels, ago, agoSpan } from './text.mjs'
 import { smallMark, markArt, PLUS } from './sidebar.mjs'
 import { srcOf } from './picture.mjs'   // a stored picture at the size it is shown (thumbs.mjs)
-import { deskStacks, stackCounts } from './stacks.mjs'   // the four places at the foot of the Desk
+import { deskStacks } from './stacks.mjs'   // the four places at the foot of the Desk
 import { nextPlease } from './nextplease.mjs'   // the heading as index cards (card Nr. 166)
-import { sketchSvg } from '../pen.js'
+import { sketchSvg, ringSvg } from '../pen.js'
 import { galleryShelf } from './gallery.mjs'   // what the agents sent lately, under the cards
 
 const sk = (name, cls) => raw(sketchSvg(name, cls))
@@ -87,25 +87,31 @@ ${tiles(card, base)}
 </article>`
 }
 
-// ---- the news strip: the infos (reports, notes; nothing to decide), above the Desk, out of the stack ----
-// (Christopher's pick "C" of five, 4 October: a slim box over "Next", one line per info with a tick, three lines and
-// "N more" that unfolds, "All read". Empty, it is gone. Its id stays for the live stream: #desk-news.)
+// ---- the news: the infos (reports, notes; nothing to decide), out of the stack of questions ----
+// (Christopher's pick "6" of ten, 4 October: bare lines, a box to tick on the left and the info's title, nothing else:
+// no title over them, no count, no sender, no time, no "All read". Three lines, then "N more" that unfolds. With
+// questions waiting they stand right above "Next"; on a clear Desk under the small "Clear" heading, which this block
+// carries itself, so the order holds when the live stream replaces it. Its id stays for the stream: #desk-news.)
 const NEWS_SHOWN = 3
-function newsLine(card, model, base) {
-  const from = model.byAgent.get(card.agent), knock = isKnock(card)
-  return html`<article class="news-line" id="read-${card.id}" data-id="${card.id}"${knock ? raw(' data-knock') : ''}${from ? html` style="--hue:${from.hue}"` : ''}>
-<a class="news-open" data-nav href="${cardPath(card, base)}" title="${cardNr(card)}: open it">${from ? smallMark(from) : ''}<strong>${card.title}</strong>${knock ? html`<span class="news-knock">${sk('knock')}${knockWord(card)}</span>` : ''}</a>
-<span class="news-tail">${from ? html`<span class="news-who">${from.name}</span>` : ''}${agoSpan(card.created, 'news-ago')}</span>
+function newsLine(card, base) {
+  const knock = isKnock(card)
+  return html`<li class="news-line" id="read-${card.id}" data-id="${card.id}"${knock ? raw(' data-knock') : ''}>
 <form class="news-act" method="post" action="${act(card, base, 'close')}"><input type="hidden" name="stay" value="1"><button class="news-tick" type="submit" title="Read: put it away" aria-label="Read: ${card.title}">${sk('tick')}</button></form>
-</article>`
+<a class="news-open" data-nav href="${cardPath(card, base)}" title="${cardNr(card)}: open it">${card.title}</a>
+</li>`
+}
+/** The Desk is clear (sessions there, no question waiting): "Clear", and the sessions at work as a pill with the ring. */
+const isClear = model => !model.fresh.length && model.units.length > 0
+function clearHead(model) {
+  const n = model.working
+  return html`<header class="news-clear"><h2>${sk('tick', 'news-clear-tick')}Clear</h2>${n ? html`<span class="news-working" title="${n === 1 ? '1 session is' : `${n} sessions are`} at work">${raw(ringSvg({ drop: true }))}${n} working</span>` : ''}</header>`
 }
 export function newsStrip(model, base) {
-  const r = model.reads ?? []
-  if (!r.length) return html`<div id="desk-news" class="news-at" hidden></div>`
+  const r = model.reads ?? [], clear = isClear(model)
+  if (!r.length && !clear) return html`<div id="desk-news" class="news-at" hidden></div>`
   const shown = r.slice(0, NEWS_SHOWN), rest = r.slice(NEWS_SHOWN)
-  return html`<div id="desk-news" class="news-at"><section class="news-strip" aria-label="News: ${r.length === 1 ? '1 info' : `${r.length} infos`}, nothing to decide">
-<header class="news-head">${sk('page')}<h3>News</h3><span class="news-n">${r.length}</span><span class="news-say">nothing to decide</span><form class="news-all" method="post" action="${base}/reads/close"><input type="hidden" name="stay" value="1"><button type="submit" title="Put every info here away as read">${sk('tick')}<span>All read</span></button></form></header>
-${shown.map(c => newsLine(c, model, base))}${rest.length ? html`<details class="news-more"><summary><span class="news-more-open">${rest.length} more</span><span class="news-more-shut">Less</span></summary>${rest.map(c => newsLine(c, model, base))}</details>` : ''}</section></div>`
+  return html`<div id="desk-news" class="news-at${clear ? ' is-clear' : ''}">${clear ? clearHead(model) : ''}${r.length ? html`<ul class="news-list" aria-label="News: ${r.length === 1 ? '1 info' : `${r.length} infos`}, nothing to decide">
+${shown.map(c => newsLine(c, base))}${rest.length ? html`<li class="news-rest"><details class="news-more"><summary><span class="news-more-open">${rest.length} more</span><span class="news-more-shut">Less</span></summary><ul class="news-list">${rest.map(c => newsLine(c, base))}</ul></details></li>` : ''}</ul>` : ''}</div>`
 }
 
 // ---- the stacks at the foot: Later, In the works, Done and the small basket (views/stacks.mjs) ----
@@ -116,10 +122,8 @@ export function deskHead(model, base) {
   const n = model.fresh.length
   if (n) return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="inbox-title">${nextPlease(model, base)}</div></header>`
   if (!model.units.length) return deskInvite()
-  // (Counted as the tabs at the foot count them, views/stacks.mjs: the same words, the same numbers.)
-  const n2 = stackCounts(model)
-  const below = [n2.works ? `${n2.works} working` : '', n2.later ? `${n2.later} snoozed` : ''].filter(Boolean).join(' · ')
-  return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0"><div class="inbox-title"><h2>${WORDS.desk} is clear.</h2>${below ? html`<p>${below}</p>` : ''}</div></header>`
+  // (Clear: the heading "Clear" with the sessions at work stands in #desk-news, above the news: newsStrip.)
+  return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0" hidden></header>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends
