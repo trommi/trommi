@@ -4,6 +4,7 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 
 ## Shipped
 
+- 03:15 Stream A: load-test leak fixed on prod (eb1ef81; heap flat over 20k envelopes, `hub/heap-test.mjs`). Local numbers after the fix: 80k envelopes at 800/s, POST→SSE delivery p50 0.6 / p95 1.3 / p99 2.0 ms, event loop max 11.7 ms (10 ms monitor resolution), heap 12–19 MB; hub.db 113 MB (1.4 KB/envelope incl. 256 B padded body); hub start 7.6 ms, lazy load of the 80k room 24 ms. Deploy now only on hub/, crypto/, workflow changes (db30474). Protocol v1.1 (review R1–R9, R6 session keys, BLOB columns, schema move-aside) is green on branch `hub-v11` and waits for the coordinated cutover; v1.1 dev hub on :8893, v1 dev hub on :8890.
 - 02:15 **M1 live: thin hub on https://hub.trommi.com** (stream A, commit 528fa73; crypto header 3c6a0f3). `hub/server.mjs` (node:http + node:sqlite, no deps) replaces the hello stand-in; deploy runs crypto + hub tests, builds `hub/Dockerfile`, stops/backs up/starts. Live smoke from the PC: found, sign-in, post, read back (openVerifiedEnvelope), stream catch-up + live; POST→SSE latency p50 20.5 ms (17.9–40.3, 10 samples), SSE not buffered by the tunnel. Tests: hub 12/12, crypto 70/70, hub-test 16/16, server green. Server: `chown 1000:1000 /srv/trommi/data` (was root 700) so the container user can write; compose.yaml untouched. A throwaway smoke room (ae49694b…) stays on prod until a delete route exists. Dev hub for the streams: 127.0.0.1:8890 (scratchpad/hub-dev-data, pid scratchpad/hub-dev.pid). `deploy/hello` removed.
 - 01:35–02:40 Protocol v1 → v1.1 in README (commits 39160d0 … 811725e): objects/timelines/registers/projections, seven kinds, timeline_kind+timeline_id, no plaintext names, derived tables, then the security rules R1–R9 from the two reviews (Claude, Codex). Info cards Nr. 214 (reviews) and 215 (research) on the PC board.
 - 02:05 M1 live: https://hub.trommi.com runs hub/server.mjs (528fa73). healthz shows the commit; live smoke passed (found, sign-in, post, read, stream). POST→SSE p50 ~20 ms (17.9–40.3 ms over 10 envelopes), so no buffering by the tunnel. Tests: hub 12/12, crypto 70/70, hub-test 16/16.
@@ -30,6 +31,11 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - Open: answer → Desk repaint 240–280 ms on phone 4x (the Desk render path, with C).
 - Phone (618d89e, dda34ca): parity at 390/360 light/dark; PWA update flow; long-press sheet 18–24 ms.
   - Phone 4x crazy room: first paint 573 ms, open session 127 ms, back to Desk 197 ms, longest task 444 ms (over budget, C on the Desk render path).
+- Desk (trommi/trommi 33afa40, dbc49fc, c5bd7a3): 165/165 Desk checks at 1440 and 390.
+  - Crazy room (300 open), desktop / phone 4x: answer 28 / 63 ms, Next 28 / 94 ms, patch 3.6 / 12.5 ms, longest task on phone 93 ms.
+  - Open: whole-page switches on phone 4x take 95–150 ms (over the 100 ms budget).
+- First load of the crazy room (113k envelopes) on a new device: 367 s → 31 s (C, cc891d3). The rest is core catch-up; a room snapshot (B) targets < 10 s.
+- v1.1 (A crypto + hub, B core 20/20 incl. R6 isolation + handover, lease, cut, escrow login) is green on branch hub-v11. Coordinated cutover pending C (app) + D (channel).
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
