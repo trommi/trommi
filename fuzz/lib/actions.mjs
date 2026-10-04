@@ -428,7 +428,11 @@ export class Runner {
     const bind = z.encodeAnswerBind({ cardId: z.unhex(id), cardHash: z.unhex(old.version_hash), choice: cm.options?.[0]?.key ?? 'a' })
     await d.client._send({ kind: this.w.t.codec.KIND.answer, content: { answer_action: 'answer', choices: [cm.options?.[0]?.key ?? 'a'] }, bind, recipient: cm.agent_device_id,
       object: { object_id: id, object_state: 'answered', urgency: cm.urgency, answered_at: Date.now() } })
-    return 'ok'      // oracle: no effect (the hub refuses it: not sealed under the object's key)
+    // oracle: no effect (refused by every member). A human did sign it, though: a hostile hub that serves it header-only
+    // (as retention would) makes it count as a content-less answer (FINDINGS H2), so it is an attempt for the safety check.
+    const ref = [...this.refs].find(([, v]) => v === id)?.[0]
+    if (ref) this.oracle(d.room.idx).attempts.add(ref)
+    return 'ok'
   }
 
   // ---- messages ----
