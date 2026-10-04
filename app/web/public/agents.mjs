@@ -1,5 +1,5 @@
 // The Agents page (<base>/agents): the ledger of all sessions, one line each, and the forms that change a
-// session (docs/turbo.md). The markup is the one agents.css styles (the old client built it in js/ledger.js).
+// session. The markup is the one agents.css styles.
 //   - a line: mark (opens the drawings; the crown at its corner gives or takes the desk's one crown), name (renames), state,
 //     what it asks (a link to the card's own page) or does, model, machine, last seen, and what can be done with it
 //   - a main stands with its subs under it; disconnected sessions and the archive are groups of their own

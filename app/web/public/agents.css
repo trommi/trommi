@@ -13,7 +13,7 @@ body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: no
 /* A button centres its words by itself; a link of a set height does it this way. */
 a.ledger-more { display: inline-flex; align-items: center; justify-content: center; }
 /* The Agents page: the answers of a line keep their place now that the question before them is a link. */
-.ledger-does > a ~ .ledger-ans:first-of-type { margin-left: 0; }/* The Ledger (js/ledger.js): the overview of the sessions at /agents, one line per session.
+.ledger-does > a ~ .ledger-ans:first-of-type { margin-left: 0; }/* The Ledger: the overview of the sessions at /agents, one line per session.
    Plain lines and plain controls; by hand are only the marks, the crown, the hand, the small drawings. */
 
 #ledger { display: none; }

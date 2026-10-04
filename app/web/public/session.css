@@ -270,7 +270,7 @@ body[data-filter] .jump { display: none; }
 
 /* ---- a question inside the conversation: the same row as in the inbox, where it was asked ---- */
 .ask { margin-top: var(--s-4); }
-/* A session on its own: the question is the Desk's row itself, answerable in the stream (js/chat.js). */
+/* A session on its own: the question is the Desk's row itself, answerable in the stream. */
 .ask-card { container: rows / inline-size; margin-block: var(--s-6) var(--s-3); }
 .ask > .event { margin-left: -6px; }
 .ask > .event[aria-expanded="true"] .event-about { color: var(--fg); }
@@ -391,10 +391,10 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
      title below. It keeps its look; an unseen 40px area takes the tap. */
   .log .inbox-when .inbox-tab-act { overflow: visible; }
   .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; translate: -50% -50%; }
-}/* A session's title on a wide window, and the view of sessions laid together (js/beside.js).
-   One session is one stream (js/chat.js): its questions stand in its conversation. Here is only the
+}/* A session's title on a wide window, and the view of sessions laid together.
+   One session is one stream: its questions stand in its conversation. Here is only the
    head of its page on a wide window: a large mark, the name, a line with what it is at.
-   Sessions laid together: one list of the questions of all of them (js/beside.js mounts it) in a wide
+   Sessions laid together: one list of the questions of all of them in a wide
    column, their conversations narrow beside it, one above the other; below 1200px that list stands
    above the conversations. */
 
