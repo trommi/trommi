@@ -48,35 +48,9 @@ ${sk('heads', 'desk-invite-art')}<h2 id="desk-invite-title">Invite your first ag
 <form method="post" action="/pair"><input type="hidden" name="role" value="agent"><button type="submit" class="desk-invite-go" id="desk-invite-go">${PLUS}<span>Invite an agent</span></button></form>
 </section></header>`
 
-// ---- who asked, two ways to try (his ask, 4 October: "Die Symbole sind zu viel"), ?group=0|1, kept for the tab ----
-//   0 (default): no drawings beside the cards; a tiny muted drawing of the session in the row, its name on hover
-//   1: the cards grouped by main session (a sub's cards with its main's): a small heading with the main's drawing and
-//      name, then its cards, knocks first; the groups ordered by their most urgent, then newest card
-function grouped() {
-  try {
-    const q = new URLSearchParams(location.search).get('group')
-    if (q !== null) { if (q === '1') sessionStorage.setItem('trommi-group', '1'); else sessionStorage.removeItem('trommi-group') }
-    return sessionStorage.getItem('trommi-group') === '1'
-  } catch { return false }
-}
-const mainOf = (model, a) => (a?.parent && model.byAgent.get(a.parent)) || a
-/** The rows as runs: cards of one session that follow each other stand in one section (grouped: one section per main
- *  session). Returns [{ sender, cards }]. */
+/** The rows as runs: cards of one session that follow each other stand in one section. Returns [{ sender, cards }]. */
 function runs(model) {
   const groups = []
-  if (grouped()) {
-    const by = new Map()
-    for (const card of deskCards(model)) {
-      const main = mainOf(model, model.byAgent.get(card.agent))
-      if (!main) continue
-      if (!by.has(main)) { by.set(main, { sender: main, cards: [], main: true }); groups.push(by.get(main)) }
-      by.get(main).cards.push(card)
-    }
-    const rank = urgRank
-    for (const g of groups) g.cards.sort((x, y) => rank(y) - rank(x))   // (stable: the stack's order within a rank)
-    const top = g => [Math.max(...g.cards.map(rank)), Math.max(...g.cards.map(c => c.created ?? 0))]
-    return groups.sort((x, y) => { const [a1, a2] = top(x), [b1, b2] = top(y); return b1 - a1 || b2 - a2 })
-  }
   for (const card of deskCards(model)) {
     const sender = model.byAgent.get(card.agent)
     if (!sender) continue
@@ -85,13 +59,10 @@ function runs(model) {
   }
   return groups
 }
-/** A main session's group (?group=1): the heading, then its cards. */
-const mainSection = (main, rows, n) => html`<section class="inbox-group is-main-group" data-sender="${main.id}" data-run="${n > 1 ? 'many' : 'single'}" aria-label="${main.name}: ${n === 1 ? '1 card' : `${n} cards`}" style="--hue:${main.hue}"><h3 class="group-head">${smallMark(main)}<span>${main.name}</span><b>${n}</b></h3>${rows}</section>`
-const section = (g, rows) => (g.main ? mainSection(g.sender, rows, g.cards.length) : runSection(g.sender, rows, g.cards.length))
 
 /** Everything inside .inbox-groups (#desk-list). rowOf(card): the row's markup (the stream keeps what it rendered). */
 function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base) } = {}) {
-  return html`${runs(model).map(g => section(g, g.cards.map(rowOf)))}
+  return html`${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
 ${withAgents(model, base)}${deskStacks(model, base, pile, q)}
 ${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}`
 }
@@ -768,12 +739,12 @@ export function register(t) {
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
     t.live('desk', {
-      take: m => { const all = grouped() ? runs(m).flatMap(g => g.cards) : deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
+      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
         const kept = was.order.filter(id => now.rows.has(id)), added = now.order.filter(id => !was.rows.has(id))
-        const sameOrder = !grouped() && kept.every((id, i) => now.order[i] === id)   // (grouped: the whole list, so the groups stay whole)
+        const sameOrder = kept.every((id, i) => now.order[i] === id)
         // A run is one section with the session's drawing on its first card only. A removal that brings two runs of
         // one session together (the card between them went) is drawn again whole, so they become one run.
         const runsOf = (ids, agentOf) => ids.filter((id, i) => i === 0 || agentOf(ids[i - 1]) !== agentOf(id)).length

@@ -82,7 +82,6 @@ instead); files come network first, the cache only offline. On the dev server (`
 - **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
   are) and Media (a pile of the newest pictures; the gallery at `/assets`).
 - **Note:** one yellow note at the sidebar's foot; it unfolds to write, sends to the crown (`sidebar.mjs` `sideNotes`).
-- Trial switches, kept for the tab: `?group=1` (cards grouped by main session), `?subcards=1` (a main's subs as cards).
 
 ## The Scribble Board
 
