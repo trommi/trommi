@@ -36,7 +36,7 @@ async function openClient() {
 export async function start(client, { fresh = false } = {}) {
   attachTo(client)
   // The hub says this app is too old (426, or upgrade_required on the stream): a calm notice, reload takes the new build.
-  client.on('error', err => { if (err?.code === 'client-too-old') notice('Bitte neu laden: eine neue Version der App ist nötig.', err.message, true) })
+  client.on('error', err => { if (err?.code === 'client-too-old') notice('Please reload: this app needs a newer version.', err.message, true) })
   const board = new BoardState(client)
   board.update()
   let desk = read('trommi-desk')
@@ -137,7 +137,7 @@ export async function start(client, { fresh = false } = {}) {
   document.documentElement.dataset.ready = ''
   client.start().catch(err => {
     // One sealing client per device and room (a Web Lock): the room is open in another tab of this browser.
-    if (err?.code === 'tab-conflict') notice('Trommi ist in einem anderen Tab offen. Dort weiterarbeiten, oder ihn schließen und hier neu laden.', err.message, false)
+    if (err?.code === 'tab-conflict') notice('Trommi is open in another tab. Work there, or close it and reload here.', err.message, false)
     else console.error('start', err)
     conn()
   })
@@ -153,7 +153,7 @@ const OPEN_MS = performance.now() - T0   // the room from storage (or the mock's
 if (client) await start(client)
 else if (!sharing) await roomScreen({ start, hub: hubUrl() })
 
-/** A calm full-width line at the foot (styled by css/room.css), with "Neu laden". update: fetch the new build first. */
+/** A calm full-width line at the foot (styled by css/room.css), with "Reload". update: fetch the new build first. */
 function notice(text, detail, update) {
   if (document.querySelector('.room-notice')) return
   const box = document.createElement('div')
@@ -165,7 +165,7 @@ function notice(text, detail, update) {
   const go = document.createElement('button')
   go.type = 'button'
   go.className = 'room-notice-go'
-  go.textContent = 'Neu laden'
+  go.textContent = 'Reload'
   go.addEventListener('click', async () => {
     go.disabled = true
     if (update) { try { const reg = await navigator.serviceWorker?.getRegistration(); await reg?.update() } catch {} }

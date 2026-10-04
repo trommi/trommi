@@ -29,9 +29,9 @@ if (sw) {
     box.setAttribute('role', 'status')
     const go = document.createElement('button')
     go.type = 'button'
-    go.textContent = 'Neu laden'
+    go.textContent = 'Reload'
     go.addEventListener('click', () => location.reload())
-    box.append('Eine neue Version ist da.', go)
+    box.append('A new version is ready.', go)
     document.body.append(box)
   }
   const arrived = () => {

@@ -208,7 +208,6 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
     const url = new URL(typeof input === 'string' || input instanceof URL ? String(input) : input.url, location.href)
     const method = (init.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
     if (url.origin !== location.origin || method !== 'POST' || !isAppPath(url.pathname)) return realFetch(input, init)
-    const type = String(new Headers(init.headers ?? {}).get('content-type') ?? '')
     if (url.pathname === '/memo' || url.pathname === '/desk') {
       const body = JSON.parse(String(init.body ?? '{}'))
       const out = url.pathname === '/memo' ? await board.t.hub.memo(body) : await board.t.hub.desk(body).then(d => ({ code: 200, text: JSON.stringify(d) }), err => ({ code: err.status ?? 400, text: JSON.stringify({ error: err.message }) }))
@@ -217,7 +216,6 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
     let form
     if (init.body instanceof FormData) form = init.body
     else { form = new FormData(); for (const [k, v] of new URLSearchParams(typeof init.body === 'string' || init.body instanceof URLSearchParams ? init.body : '')) form.append(k, v) }
-    void type
     const res = await board.request({ method: 'POST', path: url.pathname + url.search, form, headers: { accept: String(new Headers(init.headers ?? {}).get('accept') ?? STREAM_ACCEPT) } })
     if (res.kind === 'missing') return new Response('not found', { status: 404 })
     return new Response(res.code === 204 ? null : res.body ?? '', { status: res.code, headers: { 'Content-Type': res.kind === 'stream' ? 'text/vnd.turbo-stream.html' : 'text/html' } })

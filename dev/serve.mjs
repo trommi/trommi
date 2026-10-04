@@ -14,13 +14,15 @@ http.createServer((req, res) => {
   let file = path.join(root, decodeURIComponent(url.pathname))
   if (!file.startsWith(root)) { res.writeHead(403); return res.end() }
   if (fs.existsSync(file) && fs.statSync(file).isDirectory()) file = path.join(file, 'index.html')
+  // Like Cloudflare's html_handling: /a/frame serves /a/frame.html.
+  if (!fs.existsSync(file) && fs.existsSync(`${file}.html`)) file = `${file}.html`
   if (!fs.existsSync(file)) {
     // Like Cloudflare's single-page-application handling: navigations get the app, anything else a 404.
     if (req.headers['sec-fetch-mode'] !== 'navigate' && /\.\w+$/.test(url.pathname)) { res.writeHead(404, { 'Content-Type': 'text/plain' }); return res.end('not found') }
     file = path.join(root, 'index.html')
   }
   const h = { 'Content-Type': TYPES[path.extname(file)] ?? 'application/octet-stream', 'Cache-Control': 'no-cache' }
-  for (const [pat, hs] of Object.entries(headers)) { const re = new RegExp(`^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`); if (re.test(url.pathname)) for (const [k, v] of Object.entries(hs)) { if (v === null) delete h[k]; else h[k] = v } }
+  for (const [pat, hs] of Object.entries(headers)) { const re = new RegExp(`^${pat.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*')}$`); if (re.test(url.pathname) || re.test(url.pathname + '.html')) for (const [k, v] of Object.entries(hs)) { if (v === null) delete h[k]; else h[k] = v } }
   // Local hubs for development (the deployed CSP names only https://hub.trommi.com).
   if (h['Content-Security-Policy'] && !h['Content-Security-Policy'].includes('sandbox')) h['Content-Security-Policy'] = h['Content-Security-Policy'].replace('connect-src ', 'connect-src http://127.0.0.1:* http://localhost:* ')
   res.writeHead(200, h)

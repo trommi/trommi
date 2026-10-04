@@ -56,7 +56,7 @@ export default class extends Controller {
       this.fit.observe(this.element)
       scale()
     }
-    frame.src = '/a/frame.html'
+    frame.src = '/a/frame'
     this.element.prepend(frame)
   }
 }

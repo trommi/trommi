@@ -16,6 +16,8 @@ const SESSION_ID_LEN = 12
 // the address. A readable one, as the mock room has, is kept.)
 // A session's key in the core's model: its session_id (v1.1, R6), or the agent's device id (the mock room, v1).
 export const sessionKey = s => s.session_id ?? s.agent_device_id
+// The sessions as the board shows them: one per key (a stored copy filed under an older key is not a second session).
+const sessionsOf = m => [...m.sessions].filter(([k, s]) => k === sessionKey(s)).map(([, s]) => s)
 // What belongs to a session (a card, a request, a published object) names it by session_id or by its agent.
 const keyOf = o => o.session_id ?? o.agent_device_id
 /** How the core addresses a session for a send: { session_id } (v1.1) or { agent_device_id } (the mock, v1). */
@@ -48,7 +50,7 @@ export class BoardState {
     // Agents (sessions) and their ids on the board. A card's board form names its agent: only when that naming
     // changes (a session came, went or was renamed) are all cards made again; a status line changes nothing here.
     const devToAgent = new Map(), agentToDev = new Map()
-    for (const s of m.sessions.values()) { const id = agentIdOf(s), key = sessionKey(s); devToAgent.set(key, id); agentToDev.set(id, key) }
+    for (const s of sessionsOf(m)) { const id = agentIdOf(s), key = sessionKey(s); devToAgent.set(key, id); agentToDev.set(id, key) }
     const naming = [...devToAgent].join()
     if (naming !== this.naming) { this.naming = naming; this.cardCache.clear(); this.eventCache.clear() }
     this.devToAgent = devToAgent; this.agentToDev = agentToDev
@@ -72,7 +74,7 @@ export class BoardState {
     const shelved = new Set(agents.filter(a => a.archived).map(a => a.id))
     const queue = cards.filter(c => c.status === 'open' && !shelved.has(c.agent) && !c.snoozed_until).sort((a, b) => a.created - b.created || a.number - b.number).map(c => c.id)
     const tasks = []
-    for (const s of m.sessions.values()) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
+    for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
     const memos = boardMemos(m, devToAgent)
     // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
@@ -93,7 +95,7 @@ export class BoardState {
 
   agents() {
     const m = this.model, crown = m.human.crown?.session_id ?? m.human.crown?.agent_device_id ?? null
-    const list = [...m.sessions.values()].filter(s => s.is_active !== false || s.card_ids?.length)
+    const list = sessionsOf(m).filter(s => s.is_active !== false || s.card_ids?.length)
     const out = list.map((s, i) => {
       const key = sessionKey(s), set = m.human.session_settings.get(key) ?? s.settings ?? {}
       const p = s.profile ?? {}
@@ -193,7 +195,7 @@ export class BoardState {
   messagesOf(agent) {
     const st = this.state, cached = st.__byAgent ??= new Map()
     if (cached.has(agent)) return cached.get(agent)
-    const m = this.model, dev = this.agentToDev.get(agent), me = m.room.my_device_id
+    const m = this.model, dev = this.agentToDev.get(agent)
     const humans = this.humans ??= new Set()
     humans.clear(); for (const x of m.members.values()) if (x.device_role === 'human') humans.add(x.device_id)
     const out = []

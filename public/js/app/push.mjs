@@ -1,14 +1,14 @@
 // "Push on this device": the menu's bell (#push-toggle). On: asks for the permission (only a click may), subscribes
 // with the hub's VAPID key and hands the subscription to the hub through the core. The hub pushes only
-// { room_id, envelope_number, urgency }; the service worker shows "Es klopft" or "Neue Frage" (public/sw.js).
+// { room_id, envelope_number, urgency }; the service worker shows a short line (public/sw.js).
 const bytes = text => Uint8Array.from(atob(text.replace(/-/g, '+').replace(/_/g, '/')), ch => ch.charCodeAt(0))
 const apple = /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1)
 const installed = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches
 const obstacle = () => {
-  if (!window.isSecureContext) return 'Push braucht die https-Adresse der App.'
-  if (apple && !installed()) return 'Auf dem iPhone zuerst zum Home-Bildschirm hinzufügen und von dort öffnen.'
-  if (!('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window)) return 'Dieser Browser kann kein Push.'
-  if (Notification.permission === 'denied') return 'Mitteilungen sind für die App blockiert (Browser-Einstellungen).'
+  if (!window.isSecureContext) return 'Push needs the app at its https address.'
+  if (apple && !installed()) return 'On the iPhone, add the app to the Home Screen first and open it from there.'
+  if (!('serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window)) return 'This browser has no push.'
+  if (Notification.permission === 'denied') return 'Notifications are blocked for the app (browser settings).'
   return ''
 }
 const subscription = async () => (await navigator.serviceWorker?.getRegistration('/'))?.pushManager.getSubscription() ?? null
@@ -36,10 +36,10 @@ export function startPush(client) {
           await had.unsubscribe()
           paint(null)
         } else {
-          if (!client.hub?.pushKey) throw new Error('Im Testraum gibt es kein Push.')
+          if (!client.hub?.pushKey) throw new Error('The mock room has no push.')
           const why = obstacle()
           if (why) throw new Error(why)
-          if ((await Notification.requestPermission()) !== 'granted') throw new Error('Mitteilungen wurden nicht erlaubt.')
+          if ((await Notification.requestPermission()) !== 'granted') throw new Error('Notifications were not allowed.')
           const reg = await navigator.serviceWorker.register('/sw.js')
           await navigator.serviceWorker.ready
           const { vapid_public_key } = await client.hub.pushKey()

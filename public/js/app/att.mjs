@@ -33,7 +33,7 @@ document.addEventListener('error', async e => {
   // Gone from the hub (after 30 days, or evicted for the room's quota): said in place of the picture.
   const gone = document.createElement('span')
   gone.className = 'att-gone'
-  gone.textContent = 'Anhang nicht mehr verfügbar'
+  gone.textContent = 'Attachment no longer available'
   el.replaceWith(gone)
 }, true)
 document.addEventListener('click', async e => {
@@ -43,5 +43,5 @@ document.addEventListener('click', async e => {
   const id = a.getAttribute('href').slice(5)
   const blob = await blobOf(id)
   if (blob) window.open(URL.createObjectURL(blob), '_blank', 'noopener')
-  else a.replaceWith(Object.assign(document.createElement('span'), { className: 'att-gone', textContent: 'Anhang nicht mehr verfügbar' }))
+  else a.replaceWith(Object.assign(document.createElement('span'), { className: 'att-gone', textContent: 'Attachment no longer available' }))
 }, true)
