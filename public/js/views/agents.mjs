@@ -225,7 +225,7 @@ export function register(t) {
       if (form.has('desk')) body.desk = form.get('desk')
       if (form.has('parent')) body.parent = form.get('parent') || null
       if (form.has('archived')) body.archived = form.get('archived') === '1'
-      hub.editSession(body)
+      return hub.editSession(body)
     },
     /** One place up or down among its own kind: the mains and lone sessions of its part (connected or not), or the subs of its main. */
     move(id, form, m) {
@@ -236,27 +236,27 @@ export function register(t) {
       const at = among.indexOf(u), down = form.get('dir') === 'down'
       if (down ? at >= among.length - 1 : at <= 0) return
       // (The hub's own order: directly before another session, or last.)
-      hub.editSession({ agent: id, before: down ? among[at + 2]?.id ?? null : among[at - 1].id })
+      return hub.editSession({ agent: id, before: down ? among[at + 2]?.id ?? null : among[at - 1].id })
     },
     star: (id, form) => hub.starSession({ agent: id, starred: form.get('starred') === '1' }),
     /** Lay this session together with another (or with the group the other is in). */
-    pair(id, form) {
+    async pair(id, form) {
       const agents = hub.state().agents, a = agents.find(x => x.id === id), b = agents.find(x => x.id === form.get('with'))
       if (!a || !b) throw new Error('no such session')
       if (a === b || (a.group && a.group === b.group)) return
       // Whoever the session leaves behind alone is on its own again.
       const left = groupOf(agents, a).filter(x => x !== a)
-      if (left.length === 1) hub.editSession({ agent: left[0].id, group: null })
+      if (left.length === 1) await hub.editSession({ agent: left[0].id, group: null })
       const group = (groupOf(agents, b).length > 1 && b.group) || `g${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`
-      hub.editSession({ agent: b.id, group })
-      hub.editSession({ agent: a.id, group })
+      await hub.editSession({ agent: b.id, group })
+      await hub.editSession({ agent: a.id, group })
     },
     /** Take this session out of its group; a group of two is none any more. */
     unpair(id) {
       const agents = hub.state().agents, a = agents.find(x => x.id === id)
       if (!a) throw new Error(`no agent ${id}`)
       const group = groupOf(agents, a)
-      for (const x of group.length <= 2 ? group : [a]) hub.editSession({ agent: x.id, group: null })
+      return Promise.all((group.length <= 2 ? group : [a]).map(x => hub.editSession({ agent: x.id, group: null })))
     },
   }
   const nameOf = (m, id) => m.byAgent.get(id)?.name ?? m.everyone?.find(a => a.id === id)?.name ?? id   // (an archived session is among everyone only)
