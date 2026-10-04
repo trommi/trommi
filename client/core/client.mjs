@@ -815,6 +815,7 @@ export class Client {
       while (this.outbox.length) {
         const item = this.outbox[0]
         try {
+          if (!this.is_human && this.hub.lease_generation == null) await this.claimSession()   // agents post under their lease (R4)
           const r = await this.hub.postEnvelope(item.bytes)
           item.envelope_number = r.envelope_number
           this._acked(item)

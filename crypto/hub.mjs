@@ -511,10 +511,8 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device posts its own envelopes only')
       // R5: status bodies are small (padded 4 KiB at most); registers are not a file store.
       if (head.header.kind === KIND.STATUS && head.ciphertext.length - 16 > 4096) fail('too-large', 'a status body is at most 4 KiB')
-      if (leaseGeneration != null) {
-        const l = leases.get(s.id)
-        if (l && l.generation !== leaseGeneration) fail('lease-lost', 'another process took over this agent key')
-      }
+      // R4 fencing: an agent posts only under the lease it holds; no lease, no generation or an older one is lease-lost.
+      if (s.role === ROLE.AGENT && leases.get(s.id)?.generation !== leaseGeneration) fail('lease-lost', 'this process does not hold the lease of this agent key: take it with agent_lease and post with its generation')
       const v = await z.verifyEnvelope(bytes, { state: room(), chains, commit: false })
       const h = v.header
       const { pushAllowed } = await authoriseEnvelope(h, s.role)

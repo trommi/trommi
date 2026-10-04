@@ -163,9 +163,14 @@ async function seal(c, opts = {}) {
     ...opts,
   })
 }
+/** Agents post under their lease (R4): the test process holds it as instance 'test' (renewing is idempotent; a restarted hub forgot it). */
+async function leaseHeader(w, c) {
+  return { 'x-lease-generation': String((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: c.token, body: { process_instance: 'test' } })).lease_generation) }
+}
 async function post(w, c, opts) {
   const env = await seal(c, opts)
-  const res = await api(w, 'POST', `${R(w)}/envelopes`, { token: c.token, body: { envelope: b64u(env.bytes) } })
+  const agent = z.memberAt(c.state, c.device.id)?.role !== ROLE.HUMAN
+  const res = await api(w, 'POST', `${R(w)}/envelopes`, { token: c.token, body: { envelope: b64u(env.bytes) }, ...(agent ? { headers: await leaseHeader(w, c) } : {}) })
   return { env, res }
 }
 async function posted(w, c, opts) {
@@ -376,17 +381,17 @@ test('envelopes: heads in full, thread items pruned; threads paged newest first 
   await refused(w, 'GET', `${R(w)}/threads?timeline_kind=video&timeline_id=x`, { token: w.agent.token }, 400, 'bad-argument')
   await refused(w, 'GET', `${R(w)}/threads?timeline_kind=chat`, { token: w.agent.token }, 400, 'bad-argument')
   // What a hub must refuse.
-  const again = await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(card.env.bytes) } })
+  const again = await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(card.env.bytes) }, headers: await leaseHeader(w, w.agent) })
   assert.equal(again.status, 409); assert.equal(again.json.error, 'replay')
   await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.phone.token, body: { envelope: b64u(status.env.bytes) } }, 403, 'wrong-sender')
   const skipped = await seal(w.agent); const third = await seal(w.agent)
   void skipped
-  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(third.bytes) } }, 409, 'gap')
+  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(third.bytes) }, headers: await leaseHeader(w, w.agent) }, 409, 'gap')
   const tampered = skipped.bytes.slice(); tampered[tampered.length - 1] ^= 1
-  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(tampered) } }, 400, 'bad-signature')
-  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(await z.pruneEnvelope(skipped.bytes)) } }, 400, 'bad-format')
-  assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(skipped.bytes) } })).status, 200, 'the lost one, posted again from the outbox')
-  assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(third.bytes) } })).status, 200)
+  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(tampered) }, headers: await leaseHeader(w, w.agent) }, 400, 'bad-signature')
+  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(await z.pruneEnvelope(skipped.bytes)) }, headers: await leaseHeader(w, w.agent) }, 400, 'bad-format')
+  assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(skipped.bytes) }, headers: await leaseHeader(w, w.agent) })).status, 200, 'the lost one, posted again from the outbox')
+  assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(third.bytes) }, headers: await leaseHeader(w, w.agent) })).status, 200)
   // A body over 64 KiB padded belongs in an attachment.
   const big = await seal(w.phone, { payload: new Uint8Array(70000) })
   const r = await api(w, 'POST', `${R(w)}/envelopes`, { token: w.phone.token, body: { envelope: b64u(big.bytes) } })
@@ -448,6 +453,8 @@ test('agent lease: one process per key; a new process takes over, the old one ge
   const old = await seal(w.agent)
   await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(old.bytes) }, headers: { 'x-lease-generation': String(a.lease_generation) } }, 409, 'lease-lost')
   assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(old.bytes) }, headers: { 'x-lease-generation': String(b.lease_generation) } })).status, 200)
+  // Fencing is required (review 2 #8): an agent post without x-lease-generation is lease-lost, never accepted.
+  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u((await seal(w.agent)).bytes) } }, 409, 'lease-lost')
   await w.hub.close()
 })
 
@@ -777,7 +784,7 @@ test('restart: everything persists; rooms load lazily; a client resumes where it
   assert.equal(next.res.status, 200); assert.equal(next.res.json.envelope_number, 6)
   const old = unb64u(before.envelopes[1].envelope)
   void old
-  const replay = await api(w2, 'POST', `${R(w2)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(next.env.bytes) } })
+  const replay = await api(w2, 'POST', `${R(w2)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(next.env.bytes) }, headers: await leaseHeader(w2, w.agent) })
   assert.equal(replay.status, 409)
   // Joins keep working after the restart.
   await signIn(w2, w.laptop)
