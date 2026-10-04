@@ -7,6 +7,7 @@ import * as codec from './codec.mjs'
 import * as M from './model.mjs'
 import { sealEscrow, ESCROW_VERSION } from './escrow.mjs'
 import * as G from '../../crypto/session-grants.mjs'
+import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
 const CHAIN_HASHES_KEPT = 256
@@ -72,6 +73,7 @@ export class Client {
     this.startedAt = Date.now()
     this.sessionKeys = new Map()        // session_id -> { state (grant chain), secrets: Map(epoch -> secret), grants: [b64u], since: epoch change time } (R6)
     this.leaseGeneration = null
+    this.options = {}                   // { snapshot: false, snapshot_every }
     this.attachmentCache = new Map()
     this._echoItems = new Map()         // local_id -> pending TimelineItem (gets sender_sequence once sealed)
     this.sentContent = new Map()        // own envelope hash -> content (until it comes back), for own pruned copies
@@ -204,7 +206,11 @@ export class Client {
     this._pumpOutbox()
     await this._sendDeviceRegister()
     this._setConnection('catching_up')
+    if (this.model.room.last_envelope_number === 0 && this.is_human && this.options?.snapshot !== false) {
+      await bootFromSnapshot(this).catch(e => this._localAlert('snapshot', e))
+    }
     await this.catchUp()
+    this._maybeSnapshot()
     this._resolveRevisions().catch(e => this._localAlert('revisions', e))
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
     if (stream) this._openStream()
@@ -513,8 +519,19 @@ export class Client {
       this._markDirty(change, tl)
       this._emitChange(change)
       if (commands.length) await this._deliverCommands(commands)
+      if (live) this._maybeSnapshot()
     }
   }
+
+  /** Human devices write a room snapshot every SNAPSHOT_EVERY envelopes (counted from the newest one anyone wrote). */
+  _maybeSnapshot() {
+    if (!this.is_human || this._snapshotting || this._resyncing || this.options?.snapshot === false) return
+    const latest = Math.max(this.model.human.raw.get('room_snapshot')?.value?.envelope_number ?? 0, this._lastSnapshotAt ?? 0, this.snapshotCursor ?? 0)
+    if (this.model.room.last_envelope_number - latest < (this.options?.snapshot_every ?? SNAPSHOT_EVERY)) return
+    this._snapshotting = true
+    setTimeout(() => writeSnapshot(this).catch(e => this._localAlert('snapshot', e)).finally(() => { this._snapshotting = false }), 50 + Math.random() * 2000)
+  }
+  writeSnapshot() { return writeSnapshot(this) }
 
   /**
    * Keys arrived for epochs this device already saw envelopes of without being able to open them (a grant with
@@ -977,6 +994,13 @@ export class Client {
       const writes = []
       for (const { envelope_number, envelope } of res.envelopes) {
         let r = byN.get(envelope_number) ?? (await this.storage.get(prefix + pad(envelope_number)))
+        if (!r && this.snapshotCursor && envelope_number <= this.snapshotCursor) {
+          // Before the snapshot this device never saw the header: check the sender's signature and membership on its own.
+          try {
+            const v = await z.verifyEnvelope(unb64u(envelope), { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false })
+            r = { n: envelope_number, h: hex(v.hash), s: hex(v.header.sender), q: v.header.seq, r: v.header.recipient.every(b => b === 0) ? null : hex(v.header.recipient), t: v.header.time, c: null, cs: 'header' }
+          } catch { continue }
+        }
         if (!r) continue                                   // not verified by sync yet: the stream brings it
         if (r.c) { byN.set(envelope_number, r); continue }
         try {
@@ -1449,7 +1473,7 @@ function itemFromStored(r) {
     item_state: r.c ? (r.cs === 'ok' ? 'loaded' : r.cs) : (r.cs === 'pruned' || r.cs === 'undecryptable' ? r.cs : 'header'), content_type: r.c?.content_type ?? null, content: r.c ?? null }
 }
 
-const HUMAN_KEY = /^(crown$|draft\/|snooze\/|duck\/|desk\/|session\/|read_up_to\/|canvas_snapshot\/)/
+const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|read_up_to\/|canvas_snapshot\/)/
 const AGENT_KEY = /^(profile$|status_line\/|alert\/)/
 export const isHumanRegisterKey = k => HUMAN_KEY.test(k)
 export const isAgentRegisterKey = k => AGENT_KEY.test(k)
