@@ -285,6 +285,19 @@ await test('parity: take back is handback_withdrawn; an info read and taken back
   assert.equal(events.length, n)
 })
 
+await test('parity: pinned notes name what they are pinned to, as today\'s board words it', async () => {
+  const { bridge, events } = bridgeWith()
+  const q = (await bridge.callTool('create_decision', { title: 'Which?', text: 'Some context that is longer than fifty characters, to be cut.\n\n[a] Option A: first\n\n[b] Option B: second' })).split(' ')[1]
+  await bridge.command({ command: 'answer', object_id: q, choices: ['a'], content: { marks: [
+    { anchor: { kind: 'option', key: 'b' }, text: 'not this' },
+    { anchor: { kind: 'section', index: 2 }, text: 'on b too' },
+    { anchor: { kind: 'section', index: 0 }, text: 'unclear' },
+    { anchor: { kind: 'text', quote: 'longer' }, strokes: [{}] },
+  ] } })
+  assert.match(events.at(-1).content, /Notes pinned to the card:\n- on option "Option B" \[b\]: not this\n- on option "Option B" \[b\]: on b too\n- on the paragraph "Some context that is longer than fifty characters…": unclear\n- on the text "longer": \(drawn; see the picture\)$/)
+  assert.equal(events.at(-1).meta.marks, '4')
+})
+
 await test('permission relay: request -> object, verdict -> notifications/claude/channel/permission', async () => {
   const { client, bridge, events, state } = bridgeWith()
   const params = { request_id: 'abcde', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"npm test"}' }

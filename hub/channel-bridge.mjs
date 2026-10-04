@@ -262,9 +262,22 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
   }
   const fileMeta = got => (got.paths.length ? { files: got.paths.join(','), ...(got.image ? { image_path: got.image } : {}) } : {})
   const uploadLine = got => `The human sent ${got.names.length === 1 ? 'a file' : `${got.names.length} files`}: ${got.names.join(', ')}. The meta attribute files holds ${got.names.length === 1 ? 'its path' : 'their paths'}.`
-  const marksBlock = marks => {
-    const said = listArg(marks, 'marks').filter(m => m?.text || m?.label || m?.note)
-    return said.length ? ['', 'Notes pinned to the card:', ...said.map(m => `- ${m.anchor?.key ? `[${m.anchor.key}] ` : ''}${String(m.text ?? m.label ?? m.note).replace(/\s*\n\s*/g, ' ')}`)] : []
+  // The marks as the agent reads them: one line each, saying what it is pinned to (wording of today's board).
+  const brief = (said, max = 80) => { const line = String(said).replace(/\s+/g, ' '); return line.length > max ? `${line.slice(0, max - 1)}…` : line }
+  const marksBlock = (card, marks) => {
+    const lines = listArg(marks, 'marks').filter(m => m && (m.text || m.strokes)).map(m => {
+      const a = m.anchor ?? {}
+      const option = a.key == null ? null : card?.options?.find(o => o.key === a.key)
+      const section = a.kind === 'section' ? card?.sections?.[a.index] : null
+      const where = a.kind === 'option' ? `on option "${option?.label ?? a.key}" [${a.key}]`
+        : a.kind === 'section' ? (section?.key ? `on option "${section.label}" [${section.key}]` : `on the paragraph "${brief(section?.text ?? '', 50)}"`)
+        : a.kind === 'picture' ? `on the picture ${card?.attachments?.[a.index]?.file_name ?? (a.index ?? 0) + 1}`
+        : a.kind === 'text' ? `on the text "${brief(a.quote ?? '', 80)}"`
+        : 'general'
+      const drawn = m.strokes ? (m.text ? ' (also drawn; see the picture)' : '(drawn; see the picture)') : ''
+      return `- ${where}: ${String(m.text ?? '').replace(/\s*\n\s*/g, ' ')}${drawn}`
+    })
+    return lines.length ? ['', 'Notes pinned to the card:', ...lines] : []
   }
 
   // The card as an agent reads it, for list_cards.
@@ -532,7 +545,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const text = String(c.text ?? '').trim()
         return send([
           text || (got.names.length ? uploadLine(got) : copied.length ? `The human passes ${copied.length === 1 ? 'a card' : `${copied.length} cards`} on to you.` : 'The human pinned notes to the card.'),
-          ...marksBlock(marks),
+          ...marksBlock(card, marks),
           ...copied.flatMap(k => ['', typeof k === 'string' ? k : k.text ?? JSON.stringify(k)]),
         ].join('\n'), {
           kind: 'chat', ...about, ...(about.card_id && c.hand_back ? { handback: '1' } : {}), ...(about.card_id && c.explain ? { explain: '1' } : {}),
@@ -558,7 +571,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         return send([
           c.note || `Decision on "${title}": ${choices.join(', ')}`,
           ...(remarked.length ? ['', 'Notes on options:', ...remarked.map(o => `- ${o.label} [${o.key}], ${choices.includes(o.key) ? 'chosen' : 'not chosen'}: ${String(notes[o.key]).replace(/\s*\n\s*/g, ' ')}`)] : []),
-          ...marksBlock(marks),
+          ...marksBlock(card, marks),
         ].join('\n'), {
           kind: 'decision', card_id: cmd.object_id, choice: choices[0] ?? '', ...(card?.allows_multiple ? { choices: choices.join(',') } : {}),
           ...(remarked.length ? { option_notes: remarked.map(o => o.key).join(',') } : {}), ...(marks.length ? { marks: String(marks.length) } : {}), ...fileMeta(got),
@@ -573,7 +586,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
           card?.card_type === 'info' ? `The human threw "${title}" away unread. Do not send it again.`
             : `The human threw the question "${title}" away unanswered. That is neither a yes nor a no. Do not ask it again, in these or other words; carry on without an answer, using your own judgement, or drop the matter.`,
           ...(c.note ? ['', `Their note: ${c.note}`] : []),
-          ...marksBlock(marks),
+          ...marksBlock(card, marks),
         ].join('\n'), { kind: 'shredded', card_id: cmd.object_id, ...(marks.length ? { marks: String(marks.length) } : {}), ...fileMeta(got) })
       }
       case 'decide_again': {
