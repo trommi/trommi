@@ -293,7 +293,12 @@ function applyObjectVersion(model, rec, change) {
   if (fresh) {
     card = newCard(object_id, rec.sender_device_id, rec)
     model.cards.set(object_id, card)
-    if (rec.session_id) sessionOf(model, rec.session_id).card_ids.push(object_id)
+    if (rec.session_id) {     // kept sorted by created_at (project no longer sorts it)
+      const l = sessionOf(model, rec.session_id).card_ids
+      let at = l.length
+      while (at > 0 && (model.cards.get(l[at - 1])?.created_at ?? 0) > card.created_at) at--
+      l.splice(at, 0, object_id)
+    }
   }
   const st = stateOf(rec)
   const wasOpen = card.object_state === 'open'
@@ -607,23 +612,67 @@ function setAgentRegister(model, session_id, key, value, rec, change) {
 
 // ---- projections ----------------------------------------------------------------------------
 
-/** Recompute stack, per-session card lists and unread counts. Cheap: one pass over cards and sessions. */
+const cmpStr = (a, b) => (a < b ? -1 : a > b ? 1 : 0)
+const stackKey = c => [URGENCY_RANK[c.urgency] ?? 1, c.created_at, c.agent_device_id ?? '', c.object_id]
+const cmpKey = (x, y) => (y[0] - x[0]) || (x[1] - y[1]) || cmpStr(x[2], y[2]) || cmpStr(x[3], y[3])
+function bisect(arr, key, keyOf) { let lo = 0, hi = arr.length; while (lo < hi) { const mid = (lo + hi) >> 1; if (cmpKey(keyOf(arr[mid]), key) < 0) lo = mid + 1; else hi = mid } return lo }
+const byCreated = model => (a, b) => (model.cards.get(a)?.created_at ?? 0) - (model.cards.get(b)?.created_at ?? 0) || cmpStr(a, b)
+
+/**
+ * Stack, per-session card lists, open permissions. Incremental (perf, 4 Oct): the open cards are kept sorted
+ * (model._proj.sorted, with each card's sort key), and only the cards and sessions a change touched are looked at;
+ * the first call after a bulk load (model._proj unset) builds everything once. The stack then filters snoozed cards
+ * and archived sessions out of the sorted list: O(open cards), no sorting, per call.
+ */
 export function project(model, change, now = Date.now()) {
-  const before = model.stack.join(',') + '|' + model.open_permission_ids.join(',')
-  const snoozed = id => { const v = model.human.snoozes.get(id); return v && (v.until == null || v.until > now) }
-  const archived = agent => !!model.sessions.get(agent)?.settings?.archived
-  const open = []
-  for (const s of model.sessions.values()) { s.open_card_ids = []; s.card_ids.sort((a, b) => (model.cards.get(a)?.created_at ?? 0) - (model.cards.get(b)?.created_at ?? 0)) }
-  for (const c of model.cards.values()) {
-    if (c.object_state !== 'open') continue
-    if (c.session_id) sessionOf(model, c.session_id).open_card_ids.push(c.object_id)
-    if (!snoozed(c.object_id) && !archived(c.session_id)) open.push(c)
+  const before = model.stack, beforePerm = model.open_permission_ids
+  let P = model._proj
+  const touchedSessions = new Set()
+  if (!P) {
+    P = model._proj = { keys: new Map(), sorted: [], nextPermExpiry: Infinity }
+    for (const s of model.sessions.values()) { s.card_ids.sort(byCreated(model)); touchedSessions.add(s.session_id) }
+    for (const c of model.cards.values()) if (c.object_state === 'open') P.keys.set(c.object_id, stackKey(c))
+    P.sorted = [...P.keys.keys()].sort((x, y) => cmpKey(P.keys.get(x), P.keys.get(y)))
+    P.permsDirty = true
+  } else {
+    for (const id of change.cards) {
+      const c = model.cards.get(id)
+      const old = P.keys.get(id)
+      // the card's session list of open cards, by edit (sorted by created_at like card_ids)
+      const s = c?.session_id ? model.sessions.get(c.session_id) : null
+      if (s) {
+        const at = s.open_card_ids.indexOf(id)
+        const open = c.object_state === 'open'
+        if (open && at < 0) { let i = s.open_card_ids.length; while (i > 0 && (model.cards.get(s.open_card_ids[i - 1])?.created_at ?? 0) > c.created_at) i--; s.open_card_ids.splice(i, 0, id) }
+        else if (!open && at >= 0) s.open_card_ids.splice(at, 1)
+      }
+      if (old) { const at = bisect(P.sorted, old, k => P.keys.get(k)); if (P.sorted[at] === id) P.sorted.splice(at, 1); else P.sorted.splice(P.sorted.indexOf(id), 1); P.keys.delete(id) }
+      if (c && c.object_state === 'open') { const key = stackKey(c); P.sorted.splice(bisect(P.sorted, key, k => P.keys.get(k)), 0, id); P.keys.set(id, key) }
+    }
+    if (change.permissions.size || now > P.nextPermExpiry) P.permsDirty = true
   }
-  open.sort((a, b) => URGENCY_RANK[b.urgency] - URGENCY_RANK[a.urgency] || a.created_at - b.created_at || (a.agent_device_id < b.agent_device_id ? -1 : a.agent_device_id > b.agent_device_id ? 1 : 0))
-  model.stack = open.map(c => c.object_id)
-  for (const s of model.sessions.values()) s.open_card_ids.sort((a, b) => model.cards.get(a).created_at - model.cards.get(b).created_at)
-  model.open_permission_ids = [...model.permissions.values()].filter(p => p.permission_state === 'pending' && now <= p.expires_at).sort((a, b) => a.envelope_number - b.envelope_number).map(p => p.object_id)
-  if (before !== model.stack.join(',') + '|' + model.open_permission_ids.join(',')) change.stack = true
+  for (const sid of touchedSessions) {
+    const s = model.sessions.get(sid)
+    if (s) s.open_card_ids = s.card_ids.filter(id => model.cards.get(id)?.object_state === 'open')
+  }
+  const snoozes = model.human.snoozes
+  const archived = new Set()
+  for (const s of model.sessions.values()) if (s.settings?.archived) archived.add(s.session_id)
+  const stack = []
+  for (const id of P.sorted) {
+    if (snoozes.size) { const v = snoozes.get(id); if (v && (v.until == null || v.until > now)) continue }
+    if (archived.size && archived.has(model.cards.get(id)?.session_id)) continue
+    stack.push(id)
+  }
+  model.stack = stack
+  if (P.permsDirty) {
+    P.permsDirty = false
+    const pending = [...model.permissions.values()].filter(p => p.permission_state === 'pending' && now <= p.expires_at)
+    P.nextPermExpiry = Math.min(Infinity, ...pending.map(p => p.expires_at))
+    model.open_permission_ids = pending.sort((a, b) => a.envelope_number - b.envelope_number).map(p => p.object_id)
+  }
+  const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i])
+  if (!same(before, model.stack) || !same(beforePerm, model.open_permission_ids)) change.stack = true
 }
 
 /** Unread items: from the agent, in its session timeline and its cards' timelines, newer than read_up_to. Needs the unread index kept by the sync engine. */
