@@ -120,9 +120,9 @@ export async function startHub({
     for (const s of r.streams) if (!s.res.writableEnded && filter(s)) ops.send(s, chunk)
   }
   const deviceStreams = (r, deviceId) => [...r.streams].filter(s => s.deviceId === deviceId)
-  function closeStreams(r, ids) {
+  function closeStreams(r, ids, which = () => true) {
     const gone = new Set(ids)
-    for (const s of r.streams) if (gone.has(s.deviceId) && !s.res.writableEnded) s.res.end()
+    for (const s of r.streams) if (gone.has(s.deviceId) && which(s) && !s.res.writableEnded) s.res.end()
   }
 
   // ---- HTTP helpers ------------------------------------------------------------------
@@ -260,13 +260,17 @@ export async function startHub({
   async function stream(r, req, res, url) {
     const me = r.hub.authorise(bearer(req), { member: true })
     if (deviceStreams(r, me.id).length >= LIMITS.streamsPerDevice) fail('too-many', `at most ${LIMITS.streamsPerDevice} streams per device`)
+    // A stream that names an older lease generation belongs to a process that was taken over (R4).
+    const leaseGeneration = me.role === 'agent' && req.headers['x-lease-generation'] ? Number(req.headers['x-lease-generation']) : null
+    const held = leaseGeneration != null ? r.hub.leaseOf(me.id) : null
+    if (held && held.generation !== leaseGeneration) fail('lease-lost', 'another process took over this agent key')
     let after = intParam(url, 'after_envelope_number', 0, 0, Number.MAX_SAFE_INTEGER)
     const last = Number(req.headers['last-event-id'])
     if (!url.searchParams.has('after_envelope_number') && Number.isSafeInteger(last) && last > 0) after = last
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no', connection: 'keep-alive' })
     res.flushHeaders()
     req.socket.setNoDelay(true)
-    const s = { deviceId: me.id, res, catchingUp: true, pending: [] }
+    const s = { deviceId: me.id, leaseGeneration, res, catchingUp: true, pending: [] }
     r.streams.add(s)
     ops.track(s, req)
     res.on('error', () => {})
@@ -516,9 +520,10 @@ export async function startHub({
       const instance = body.process_instance
       if (typeof instance !== 'string' || !instance || instance.length > 200) fail('bad-argument', 'process_instance')
       const me = hub.authorise(token, { member: true })
-      const out = hub.takeLease(token, { instance })
-      // A new process took the key over: the old one's streams end now; its posts get lease-lost.
-      if (out.previousInstance) closeStreams(r, [me.id])
+      const out = hub.takeLease(token, { instance, renew: body.renew === true })
+      // A new process took the key over: every stream of this key that does not name the new generation ends now.
+      // The new process reconnects naming it; the old one reconnects naming its own and gets lease-lost, as its posts do.
+      if (out.previousInstance) closeStreams(r, [me.id], s => s.leaseGeneration !== out.generation)
       return send(res, 200, { lease_generation: out.generation, expires_at: out.expiresAt })
     }
     if (m === 'POST' && a === 'ephemeral' && !b) {

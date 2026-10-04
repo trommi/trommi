@@ -486,6 +486,9 @@ test('PoC2: a crashed agent comes back: a new process takes the lease over, the 
   assert.equal(w.hub.takeLease(w.agent.token, { instance: 'p1' }).generation, a.generation, 'the same process renews')
   const b = w.hub.takeLease(w.agent.token, { instance: 'p2' })
   assert.ok(b.generation > a.generation); assert.equal(b.previousInstance, 'p1')
+  // The old process's renewal does not take it back (no ping-pong): lease-lost; the holder still renews.
+  await rejects(async () => w.hub.takeLease(w.agent.token, { instance: 'p1', renew: true }), 'lease-lost')
+  assert.equal(w.hub.takeLease(w.agent.token, { instance: 'p2', renew: true }).generation, b.generation)
   await rejects(() => post(w, w.agent, { lease: { leaseGeneration: a.generation } }), 'lease-lost')
   w.agent.chains = z.newChains()                              // the refused envelope was never stored
   assert.equal((await post(w, w.agent, { lease: { leaseGeneration: b.generation } })).res.n, 1)

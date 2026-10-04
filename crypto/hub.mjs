@@ -563,16 +563,19 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
 
     /**
      * One running process per agent key. A new process instance takes the lease over (the caller closes the old
-     * process's streams); posts name the generation they hold, an older one gets lease-lost. The generation only
-     * grows, also across hub restarts (it starts from the clock). The board id of an agent is hex(device_id)[0..16].
+     * process's streams); posts and streams name the generation they hold, an older one gets lease-lost. A renewal
+     * (renew: true) never takes over: from an instance that no longer holds a live lease it is lease-lost, so two
+     * processes cannot trade the lease back and forth. The generation only grows, also across hub restarts (it
+     * starts from the clock). The board id of an agent is hex(device_id)[0..16].
      * Returns { generation, expiresAt, previousInstance }.
      */
-    takeLease(token, { instance }) {
+    takeLease(token, { instance, renew = false }) {
       const s = session(token, { member: true })
       if (s.role !== ROLE.AGENT) fail('forbidden', 'only agents hold a lease')
       if (typeof instance !== 'string' || !instance) fail('bad-argument', 'process_instance')
       const old = leases.get(s.id)
       if (old && old.instance === instance && now() <= old.expiresAt) { old.expiresAt = now() + LEASE_MS; return { generation: old.generation, expiresAt: old.expiresAt, previousInstance: null } }
+      if (renew && old && now() <= old.expiresAt) fail('lease-lost', 'another process took over this agent key')
       const generation = Math.max((old?.generation ?? 0) + 1, now())
       const l = { instance, generation, expiresAt: now() + LEASE_MS }
       leases.set(s.id, l)

@@ -15,6 +15,7 @@ export class Hub {
   constructor({ hub_url, room_id = null, signer = null, fetch: f = null, found_token = null, client = null }) {
     this.client_name = client                   // 'app/1.2.3' | 'channel/0.1.0': sent as Trommi-Client on every request
     this.onTooOld = null
+    this.onLeaseLost = null
     this.hub_url = normaliseHubUrl(hub_url)
     this.room_id = room_id
     this.signer = signer
@@ -111,8 +112,7 @@ export class Hub {
   threads({ timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit = 50 }) {
     return this.request('GET', this.roomPath('/threads'), { query: { timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit } })
   }
-  agentSession({ agent_name, process_instance }) { return this.request('POST', this.roomPath('/agent_sessions'), { body: { agent_name, process_instance } }) }
-  agentLease({ process_instance }) { return this.request('POST', this.roomPath('/agent_lease'), { body: { process_instance } }) }
+  agentLease({ process_instance, renew = false }) { return this.request('POST', this.roomPath('/agent_lease'), { body: { process_instance, ...(renew ? { renew: true } : {}) } }) }
   sessions() { return this.request('GET', this.roomPath('/sessions')) }
   sessionGrants(session_id, after_grant_number = -1) { return this.request('GET', this.roomPath(`/sessions/${session_id}/grants`), { query: { after_grant_number } }) }
   postSessionGrant(session_id, { signed_grant, sealed_session_keys, key_back_link }) {
@@ -151,14 +151,17 @@ export class Hub {
         let healthy = false
         try {
           const res = await this.fetch(this.url(this.roomPath('/stream')) + `?after_envelope_number=${getCursor()}`, {
-            headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream' }, signal: controller.signal,
+            headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream', ...(this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {}) }, signal: controller.signal,
           })
           if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); closed = true; throw e }
           if (res.status === 401) { this.token = null; throw new ZError('unauthorised', 'stream sign-in') }
           if (!res.ok) {
             let err = {}
             try { err = await res.json() } catch {}
-            throw new ZError(err.error ?? `http-${res.status}`, err.message ?? 'stream refused', { status: res.status })
+            const e = new ZError(err.error ?? `http-${res.status}`, err.message ?? 'stream refused', { status: res.status })
+            // Another process took this agent key over (R4): no reconnect, the client stops.
+            if (e.code === 'lease-lost') { closed = true; this.onLeaseLost?.(e) }
+            throw e
           }
           onState('open')
           kick()

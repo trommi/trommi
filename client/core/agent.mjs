@@ -12,29 +12,23 @@ const URGENCY_ORDER = ['low', 'normal', 'high', 'critical']
 const agentMethods = {
   _needAgent() { if (this.is_human) throw new ZError('forbidden', 'only an agent does this') },
 
-  /** POST agent_sessions: the stable board id. A second process with the same key: ZError 'instance-conflict'. */
   /**
-   * The lease (v1.1): one running process per agent key. A new process takes over, the old one's posts get 409
-   * lease-lost (client 'error' code 'lease-lost', then it stops). Falls back to the v1 agent_sessions route.
+   * The lease (v1.1): one running process per agent key. A new process takes over; the hub ends the old one's
+   * stream, whose reconnect (naming the old lease generation) and posts get 409 lease-lost: client 'error' code
+   * 'lease-lost', then it stops, before it posts anything. Renewals never take over (renew: true).
    * Returns { agent_session_id, lease_generation, expires_at }; agent_session_id = hex(device_id).slice(0, 16).
    */
   async claimSession({ process_instance } = {}) {
     this._needAgent()
     const instance = process_instance ?? randomHex(8)
-    let r
-    try {
-      r = await this.hub.agentLease({ process_instance: instance })
-      this.hub.lease_generation = r.lease_generation
-      clearInterval(this._leaseTimer)
-      const every = Math.max(30_000, Math.min(5 * 60_000, ((r.expires_at ?? Date.now() + 600_000) - Date.now()) / 2))
-      this._leaseTimer = setInterval(() => this.hub.agentLease({ process_instance: instance }).then(x => { this.hub.lease_generation = x.lease_generation }).catch(e => {
-        if (e.code === 'lease-lost' || e.code === 'instance-conflict') { clearInterval(this._leaseTimer); this.emit('error', e); this.stop().catch(() => {}) }
-      }), every)
-      this._leaseTimer.unref?.()
-    } catch (e) {
-      if (e.status !== 404) throw e
-      r = await this.hub.agentSession({ process_instance: instance })
-    }
+    const r = await this.hub.agentLease({ process_instance: instance })
+    this.hub.lease_generation = r.lease_generation
+    clearInterval(this._leaseTimer)
+    const every = Math.max(30_000, Math.min(5 * 60_000, ((r.expires_at ?? Date.now() + 600_000) - Date.now()) / 2))
+    this._leaseTimer = setInterval(() => this.hub.agentLease({ process_instance: instance, renew: true }).then(x => { this.hub.lease_generation = x.lease_generation }).catch(e => {
+      if (e.code === 'lease-lost') this.hub.onLeaseLost(e)
+    }), every)
+    this._leaseTimer.unref?.()
     const agent_session_id = r.agent_session_id ?? this.my_device_id.slice(0, 16)
     this.model.room.agent_session_id = agent_session_id
     const ch = M.emptyChange(); ch.room = true; this._emitChange(ch)
@@ -56,7 +50,6 @@ const agentMethods = {
     return null
   },
 
-  /** One new version of an own object. `make(head)` returns { fields, object_state, urgency }. */
   /** One new version of an own object. `make(head)` returns { fields, object_state, urgency }. object_id null: a new object (R1 id). */
   async _version(object_id, make, { push = false, kind = codec.KIND.object_version, bind = null, session_id = null } = {}) {
     let id = object_id

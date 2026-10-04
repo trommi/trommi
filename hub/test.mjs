@@ -440,6 +440,11 @@ test('agent lease: one process per key; a new process takes over, the old one ge
   const b = await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p2' } })
   assert.ok(b.lease_generation > a.lease_generation)
   assert.ok(await s.closedWithin(2000), "the old process's stream ends")
+  // The old process cannot take it back by renewing, nor reconnect its stream under the old generation.
+  await refused(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1', renew: true } }, 409, 'lease-lost')
+  await refused(w, 'GET', `${R(w)}/stream`, { token: w.agent.token, headers: { 'x-lease-generation': String(a.lease_generation) } }, 409, 'lease-lost')
+  // The holder still renews.
+  assert.equal((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p2', renew: true } })).lease_generation, b.lease_generation)
   const old = await seal(w.agent)
   await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(old.bytes) }, headers: { 'x-lease-generation': String(a.lease_generation) } }, 409, 'lease-lost')
   assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(old.bytes) }, headers: { 'x-lease-generation': String(b.lease_generation) } })).status, 200)

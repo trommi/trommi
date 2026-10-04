@@ -51,6 +51,8 @@ export async function startChannel({ env, cwd }) {
   const client = new Client({ name: 'channel-test', version: '1' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { events.push(n) }
   await client.connect(transport)
+  const handle = { exited: false }
+  transport.onclose = () => { handle.exited = true }
   transport.stderr?.on('data', d => { err += d })
   const call = async (name, args = {}) => {
     const r = await client.callTool({ name, arguments: args })
@@ -60,7 +62,7 @@ export async function startChannel({ env, cwd }) {
   }
   const ready = () => until('the channel to be in the room', async () => { try { await call('list_cards'); return true } catch { return false } }, 20000)
   const next = (pred, what = 'a channel event') => until(what, () => events.find(e => !e.seen && pred(e)) && Object.assign(events.find(e => !e.seen && pred(e)), { seen: true }))
-  return { client, events, call, ready, next, stderr: () => err, close: () => client.close() }
+  return Object.assign(handle, { client, events, call, ready, next, stderr: () => err, close: () => client.close() })
 }
 
 export async function integration({ test, tmp }) {
@@ -257,6 +259,28 @@ export async function integration({ test, tmp }) {
     await test('e2e: handover without history: the new agent reads from now on, not before', async () => {
       const { card } = await handover('heir-without', false)
       assert.ok(!card?.title, 'the earlier card was readable without history')
+    })
+
+    await test('e2e: lease-lost: another process takes over the key; the channel exits without posting', async () => {
+      const room = path.join(keys, human.model.room.room_id)
+      const slot = fs.readdirSync(room).find(f => /-1\.key$/.test(f) && !f.includes('heir'))
+      const prefix = slot.replace(/key$/, '')
+      // The other process: the same key, its own copy of the state (as a second Claude would have after a copy of the folder).
+      const twin = fs.mkdtempSync(path.join(tmp, 'twin-'))
+      fs.copyFileSync(path.join(room, `${prefix}state.json`), path.join(twin, `${prefix}state.json`))
+      const before = human.chains.get(core.z.b64u(core.z.unhex(agentId)))?.seq
+      assert.ok(before > 0, 'the human knows the agent\'s chain')
+      const other = await core.openRoom({ storage: await fileStorage({ dir: twin, key_file: path.join(room, slot), prefix }) })
+      await other.start({ stream: false })
+      await other.claimSession({ process_instance: 'twin' })
+      const exited = await until('the channel to exit', () => channel.exited ? true : false, 15000).catch(() => false)
+      await other.stop()
+      assert.ok(exited, `the channel kept running after losing the lease\n${channel.stderr().slice(-400)}`)
+      assert.match(channel.stderr(), /another process took over this key/)
+      await new Promise(r => setTimeout(r, 300))
+      const after = human.chains.get(core.z.b64u(core.z.unhex(agentId)))?.seq
+      assert.equal(after, before, 'the channel posted after losing the lease')
+      assert.ok(!fs.existsSync(path.join(room, `${prefix}lock`)), 'the lock of the slot is left behind')
     })
   } finally {
     try { await channel?.close() } catch {}
