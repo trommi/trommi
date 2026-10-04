@@ -2,7 +2,7 @@
 // (it needs node:fs and is not re-exported here). Contract: client/core/README.md.
 export { foundRoom, openRoom, joinRoom, recoverRoom, roomLink, parseRoomLink, loginWithPassphrase } from './room.mjs'
 export { passphraseProblem, sealEscrow, openEscrow, ESCROW_ITERATIONS } from './escrow.mjs'
-export { Client, membersOf, isHumanRegisterKey, isAgentRegisterKey } from './client.mjs'
+export { Client, shareLink, parseShareLink, openShared, membersOf, isHumanRegisterKey, isAgentRegisterKey } from './client.mjs'
 export { agentMethods } from './agent.mjs'
 export { Hub, normaliseHubUrl } from './transport.mjs'
 export * as codec from './codec.mjs'

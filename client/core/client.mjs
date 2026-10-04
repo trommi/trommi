@@ -1039,6 +1039,30 @@ export class Client {
     this.attachmentCache.set(ref.attachment_id, bytes)
     return bytes
   }
+  /**
+   * A link for someone outside the room (the uploader shares its own attachment): `<app>/a/<share_id>#<secret>.<file_key>.<sha256>`.
+   * The hub stores only SHA-256(secret); everything after # stays in the browser. expires_at: ms, at most 30 days ahead.
+   */
+  async shareAttachment(ref, { expires_at = Date.now() + 30 * 86400_000 - 60_000, app_url = 'https://app.trommi.com' } = {}) {
+    const secret = globalThis.crypto.getRandomValues(new Uint8Array(32))
+    const share_id = randomHex(16)
+    const r = await this.hub.postShare(ref.attachment_id, { share_id, share_secret_hash: b64u(await z.sha256(secret)), expires_at })
+    const shares = (await this.storage.get('shares')) ?? {}
+    shares[share_id] = { attachment_id: ref.attachment_id, expires_at: r.expires_at ?? expires_at }
+    for (const [id, x] of Object.entries(shares)) if (x.expires_at < Date.now()) delete shares[id]
+    await this.storage.set('shares', shares)
+    return { share_id, link: shareLink(app_url, share_id, secret, ref), expires_at: r.expires_at ?? expires_at }
+  }
+  /** End a share link. attachment_id is looked up from this device's own shares (pass it when another device made the share). */
+  async revokeShare(share_id, { attachment_id = null } = {}) {
+    const shares = (await this.storage.get('shares')) ?? {}
+    const att = attachment_id ?? shares[share_id]?.attachment_id
+    if (!att) throw new ZError('not-found', 'unknown share: pass its attachment_id')
+    await this.hub.deleteShare(att, share_id)
+    delete shares[share_id]
+    await this.storage.set('shares', shares)
+  }
+
   async attachmentBlob(ref) { return new Blob([await this.fetchAttachment(ref)], { type: ref.media_type ?? 'application/octet-stream' }) }
 
   // ---- human actions -----------------------------------------------------------------------------
@@ -1458,6 +1482,19 @@ const MEMO_META = new Set(['object_id', 'by_device_id', 'object_version', 'versi
 function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
 
 const fields_session = f => f.session_id ?? null
+export const shareLink = (app_url, share_id, secret, ref) => `${String(app_url).replace(/\/+$/, '')}/a/${share_id}#${b64u(secret)}.${ref.file_key}.${ref.sha256}`
+/** Viewer page: parse a share link. -> { share_id, share_secret, file_key, sha256 } */
+export function parseShareLink(link) {
+  const m = /\/a\/([0-9a-f]{32})#([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})\.([A-Za-z0-9_-]{43})$/.exec(String(link))
+  if (!m) throw new ZError('bad-format', 'not a share link')
+  return { share_id: m[1], share_secret: m[2], file_key: m[3], sha256: m[4] }
+}
+/** Viewer page: fetch and decrypt a shared file with a Hub client for the hub address (no room, no sign-in). */
+export async function openShared(hub, link) {
+  const p = parseShareLink(link)
+  const blob = await hub.getShared(p.share_id, p.share_secret)
+  return z.decryptAsset(blob, unb64u(p.file_key), unb64u(p.sha256))
+}
 /** Every agent a session was ever assigned to (its history stays theirs to have written). */
 function everAgents(k) {
   if (!k?.grants) return []
