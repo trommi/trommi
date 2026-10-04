@@ -262,6 +262,10 @@ export class Client {
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
     if (stream) this._openStream()
     else this._setConnection('live')
+    // Presence (is_online) goes stale otherwise: refresh the device list every minute while running.
+    clearInterval(this._devicesTimer)
+    this._devicesTimer = setInterval(() => { if (this._started) this._refreshDevices().catch(() => {}) }, 60_000)
+    this._devicesTimer.unref?.()
   }
 
   /** device/<id> right after joining; agents only once a session is assigned (they hold no room key). */
@@ -363,6 +367,7 @@ export class Client {
     this._stream?.close()
     this._stream = null
     for (const inv of this.invitesPrivate.values()) clearInterval(inv._timer)
+    clearInterval(this._devicesTimer)
     clearTimeout(this._dirty.timer)
     await this.flush()
     this._setConnection('offline')
@@ -379,7 +384,7 @@ export class Client {
     this._stream = this.hub.stream({
       after_envelope_number: () => this.model.room.last_envelope_number,
       onState: (s, err) => {
-        if (s === 'open') this._setConnection('live')
+        if (s === 'open') { this._setConnection('live'); this._refreshDevices().catch(() => {}) }   // presence after every (re)connect
         else if (s === 'closed') { this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
       },
       onEvent: ev => this._onStreamEvent(ev),
