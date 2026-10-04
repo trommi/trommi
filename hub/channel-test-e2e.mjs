@@ -89,6 +89,11 @@ export async function integration({ test, tmp }) {
       await channel.call('introduce', { model: 'Claude Opus 5.5', task: 'night test', icon: 'database' })
       await channel.call('set_status', { id: 'tests', label: 'Tests', state: 'working', detail: 'running' })
       await until('profile', () => human.model.sessions.get(human.sessionOfAgent(agentId))?.profile?.model === 'Claude Opus 5.5')
+      // The sidebar name is the folder's name; host and full folder travel beside it (all encrypted).
+      const label = await until('device label', () => human.model.members.get(agentId)?.device_name && human.model.members.get(agentId))
+      assert.equal(label.device_name, 'project')
+      assert.match(label.folder, /project$/)
+      assert.ok(label.host)
       await until('status line', () => human.model.sessions.get(human.sessionOfAgent(agentId))?.status_lines?.find(l => l.id === 'tests'))
     })
 
