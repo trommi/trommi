@@ -371,6 +371,8 @@ function applyPublished(model, rec, change) {
   const c = rec.content ?? {}
   const expected = (old?.object_version ?? 0) + 1
   if (rec.content && c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `published version ${c.object_version}, expected ${expected}`)
+  // N4: a later version names its predecessor (as cards do).
+  if (rec.content && old && c.previous_version_hash && c.previous_version_hash !== old.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
   model.published.set(object_id, { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? old?.session_id ?? null, attachments: c.attachments ?? old?.attachments ?? [], title: c.title ?? old?.title ?? '',
     note: c.note ?? null, released_until: c.released_until ?? null, object_version: expected, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
   change.published.add(object_id)
@@ -400,10 +402,14 @@ export function answerRefusal(model, rec) {
   // R7: the bind carries the whole list of choices (v1: only the first).
   const bound = b.choices ?? (b.choice ? [b.choice] : [])
   if (JSON.stringify(bound) !== JSON.stringify(b.choices ? choices : choices.slice(0, 1))) return 'bad-answer'
-  if (c.answer_action === 'answer' && !c.trusted) {
+  if (c.answer_action === 'answer') {
     const keys = new Set((card.options ?? []).map(o => o.key))
     if (card.card_type === 'info') return 'bad-answer'
-    if (!choices.length || choices.some(k => !keys.has(k))) return 'bad-choice'
+    // R7 / L2: "trusted" widens nothing: its choices are the agent's own recommendation, each one an option.
+    if (c.trusted) {
+      const rec = card.recommended == null ? [] : Array.isArray(card.recommended) ? card.recommended : [card.recommended]
+      if (choices.some(k => !keys.has(k) || !rec.includes(k))) return 'bad-choice'
+    } else if (!choices.length || choices.some(k => !keys.has(k))) return 'bad-choice'
     if (choices.length > 1 && !card.allows_multiple) return 'bad-choice'
   }
   if (c.answer_action === 'read' && card.card_type !== 'info') return 'bad-answer'
