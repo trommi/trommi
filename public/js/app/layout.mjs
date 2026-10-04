@@ -18,6 +18,7 @@ export const CSS = {
   session: ['tokens', 'app', 'crowns', 'back', 'beside', 'cardclip', 'phone-desk', 'piles', 'logo', 'links', 'quicksend', 'keys', 'richhtml', 'session', 'speech'],
   card: ['tokens', 'app', 'crowns', 'back', 'cardclip', 'phone-desk', 'piles', 'stamps', 'logo', 'links', 'quicksend', 'keys', 'richhtml', 'cardpage', 'speech'],
   picture: ['tokens', 'app', 'back', 'logo', 'links', 'cardpage'],
+  asset: ['tokens', 'app', 'back', 'logo', 'links', 'cardpage', 'asset'],   // a published page or picture, in the app's viewer
   room: ['tokens', 'app', 'back', 'logo', 'links', 'keys'],
 }
 
