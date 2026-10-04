@@ -798,6 +798,26 @@ await test('S2 removal re-keys every session even when the remover fails half-wa
   await until(async () => (await laptop.timelineWindow(`chat:session/${sid}`, { limit: 10 })).some(i => i.content?.text === 'after the re-key'), 'readable')
 })
 
+await test('S2 live epoch cutoff on clients (B03): an unassigned agent writing under its old session key is refused after the grace', async () => {
+  const { phone, agents: [a1] } = await room({ agents: 1 })
+  await settleAll(phone, a1)
+  const sid = a1.session_id
+  const a3 = await addAgent(phone, 'Next')
+  await phone.assignSession({ session_id: sid, agent_device_ids: [a3.my_device_id], with_history: false })
+  await settleAll(phone)
+  const old = a1.sessionKeys.get(sid)
+  // a1 still holds the old epoch's key; a hostile hub would pass its envelope on (the honest hub voids it)
+  const forge = async text => {
+    const payload = codec.encodePayload(codec.KIND.status, { values: { 'status_line/x': { label: text } }, lamport: 1e6 })
+    const sealed = await z.sealEnvelope({ device: a1.device, state: a1.state, secret: old.secrets.get(old.state.epoch), chains: a1.chains, keyScope: 1, sessionId: z.unhex(sid), kind: codec.KIND.status, payload })
+    await phone.processRecords([{ envelope_number: phone.model.room.last_envelope_number + 1, envelope: z.b64u(sealed.bytes) }])
+  }
+  phone.sessionKeys.get(sid).since = Date.now() - 3 * 60_000           // the re-key was three minutes ago
+  await forge('stale')
+  assert(!phone.model.sessions.get(sid).status_lines.some(l => l.label === 'stale'), 'the stale write is not shown')
+  assert(phone.model.alerts.some(a => a.code === 'wrong-epoch'), 'alert wrong-epoch')
+})
+
 await test('room snapshot: a new device loads the newest snapshot and syncs only the tail', async () => {
   const N = BENCH ? 20000 : 6000
   const { phone, agents: [agent] } = await room({ agents: 1 })
