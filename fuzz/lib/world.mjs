@@ -160,6 +160,7 @@ export class World {
     this.attach(dev, client)
     await client.start()
     if (client.session_id) dev.sessionId = client.session_id
+    if (dev.role === 'agent') this.runner?.oracle(dev.room.idx).reassertOnBoot(dev.name)
     if (dev.role === 'agent' && claim) { try { await client.claimSession({ process_instance: `pi-${dev.name}-${dev.incarnation}-${Math.random().toString(36).slice(2)}` }) } catch (e) { dev.errors.push(`claim: ${e.code ?? e.message}`) } }
     return client
   }

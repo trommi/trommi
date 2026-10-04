@@ -35,6 +35,11 @@ async function sessionsAsRecovery(hub, state, rec, raw = null) {
   }
   return out
 }
+/** Open the back links of every session the recovery key holds a current key for (older epochs: history). */
+async function walkSessionLinks(client, sessions, bundle) {
+  const links = new Map((bundle ?? []).map(b => [b.session_id, b.key_back_links]))
+  await Promise.all([...sessions.keys()].map(sid => client._walkSessionBackLinks(sid, links.get(sid) ?? null).catch(() => {})))
+}
 /** GET session_grants for the whole room: [{ session_id, signed_grants, sealed_session_keys }], or null (no such route). */
 async function fetchSessionBundle(hub) {
   try { return (await hub.sessionBundle(null)).sessions }
@@ -153,7 +158,8 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   if (!wrap) throw new ZError('no-key', 'the hub holds no sealed key of the current epoch for the recovery key')
   const device = await newDevice(storage)
   const newCode = z.generateRecoveryCode()
-  const sessions = await sessionsAsRecovery(hub, state, rec)
+  const bundle = await fetchSessionBundle(hub)
+  const sessions = await sessionsAsRecovery(hub, state, rec, bundle)
   // R3: real cuts for every device the recovery removes (its last verified envelope), never an empty cut that would
   // refuse all its history on every device that verifies the room later.
   const removed = [...state.members.values()].filter(m => m.removedSeq === null && (m.role === ROLE.HUMAN || remove_agents.includes(hex(m.id)))).map(m => hex(m.id))
@@ -183,6 +189,9 @@ export async function recoverRoom({ hub_url, room_id, code, storage, client: cli
   await client._saveRoom().catch(e => client._localAlert('storage', e))
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
+  // Fuzz: the recovery key holds only each session's current key; its back links open the older epochs (a second
+  // recovery after a re-key could not read the cards of the first epoch any more).
+  await walkSessionLinks(client, sessions, bundle)
   // Every session gets a new key: the old human devices held them (R6). Agents that stay keep their sessions.
   // The entry is in: from here on nothing may lose the new code. A failed re-key is finished at the next start (stale grants).
   await client._healStaleSessions().catch(e => client._localAlert('rekey', e))
@@ -274,7 +283,8 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const resealing = signedIn.catch(() => {}).then(() => reseal.length ? client._startReseal(reseal) : null)
   resealing.catch(() => {})
   await signedIn
-  await client._walkBackLinks().catch(() => {})
+  // Fuzz F21: the recovery key holds each session's current key only; the back links open the older epochs.
+  await Promise.all([client._walkBackLinks().catch(() => {}), walkSessionLinks(client, sessions, bundle)])
   await client._saveRoom()
   client._joinedAt = Date.now()                       // start() trusts the member list and keys it was just handed
   return { client }
