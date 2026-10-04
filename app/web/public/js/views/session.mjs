@@ -201,6 +201,7 @@ const words = (text, opts) => raw(String(rich(text, opts)).replaceAll('<pre><cod
 // new message objects after every change); only what can change (pending, the words once loaded) and what depends
 // on something else (a question's state, a published link that was withdrawn, the card a message is about) is in the key.
 const kept = new Map()
+const OUTCOME = new Set(['decided', 'done', 'shredded'])
 function message(m, prev, s, base) {
   if (m.from === 'event' && m.kind === 'asked') {
     // A question's line or row: made again only when its card changed (the board state keeps a card's object until then).
@@ -224,7 +225,8 @@ function message(m, prev, s, base) {
 }
 function build(m, cont, about, s, base) {
   const assets = s.model.state.assets
-  if (m.from === 'event') return eventLine(m, about, base, { cont, echo: m.kind === 'decided' && s.askAt.has(m.card_id) })
+  // What became of a question (answered, done, shredded) is said by its line where it was asked: the event is an echo.
+  if (m.from === 'event') return eventLine(m, about, base, { cont, echo: OUTCOME.has(m.kind) && s.askAt.has(m.card_id) })
   const aboutNode = about ? html`<a class="msg-about" data-nav href="${questionPath(about, base)}"><span class="caps">About</span><span>${about.title}</span></a>` : ''
   if (m.from === 'user') {
     const list = m.attachments ?? []

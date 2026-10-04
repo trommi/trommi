@@ -210,6 +210,18 @@ try {
   await C.until(`document.getElementById('row-${cardId}')`, 'C sees the card', 15000).then(() => check(true, 'C (email + password) sees the same open card'), e => check(false, e.message))
   await C.shot('e2e-9b-password-login.png')
 
+  // ---- the agent closes the question (close_card, twice): its conversation says "Done" once, never "Question revised" ----
+  await agent.close(cardId, 'Erledigt mit B')
+  await agent.close(cardId, 'Erledigt mit B')
+  await A.until(`trommi.client.model.cards.get('${cardId}')?.versions.length >= 3`, 'both closing versions on A', 15000)
+  await A.js(`trommi.router.visit('/q/${nr}')`); await A.js(`trommi.router.visit('/s/${sid}')`)
+  await A.until(`location.pathname === '/s/${sid}' && document.querySelector('.ask a[href$="/q/${nr}"]')`, 'session page after the close')
+  const said = await A.js(`const mine = [...document.querySelectorAll('.event')].filter(e => e.getAttribute('href')?.endsWith('/q/${nr}') && e.offsetParent); return { done: mine.filter(e => e.querySelector('.event-kind')?.textContent === 'Done').length, revised: mine.filter(e => e.classList.contains('event-revised')).length }`)
+  check(said.done === 1 && said.revised === 0, `a closed question shows "Done" once and no "Question revised" (${said.done} done, ${said.revised} revised)`)
+  await A.js(`trommi.router.visit('/q/${nr}')`)
+  await A.until("document.querySelector('#cardpage')", 'card page after the close')
+  check(await A.js("return !document.querySelector('#cardpage .tc-turn[data-version]:not([data-version=\"1\"])')"), 'a closing version is no "Version n" on the card page')
+
   // ---- D: forgot password, with the Emergency Kit ----
   D = await browser('D', 390, 844)
   await D.go(`${APP}/?hub=${encodeURIComponent(HUB)}`)

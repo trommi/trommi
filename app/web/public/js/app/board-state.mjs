@@ -20,6 +20,10 @@ export const sessionKey = s => s.session_id ?? s.agent_device_id
 const sessionsOf = m => [...m.sessions].filter(([k, s]) => k === sessionKey(s)).map(([, s]) => s)
 // What belongs to a session (a card, a request, a published object) names it by session_id or by its agent.
 const keyOf = o => o.session_id ?? o.agent_device_id
+// The versions a human reads as the question: the first, and every later one that leaves it open. A version that
+// closes the card (close_card, withdraw, merge; also a second close) ends it and is no revision: the card's "Done"
+// line says what became of it, so it never shows as "Question revised" or as a new "Version n".
+export const revisionsOf = c => (c?.versions ?? []).filter(v => v.object_version === 1 || v.object_state === 'open')
 /** How the core addresses a session for a send: { session_id } (v1.1) or { agent_device_id } (the mock, v1). */
 export const addressOf = (model, key) => (model.sessions.get(key)?.session_id ? { session_id: key } : { agent_device_id: key })
 // The parent a session names (profile.parent_session), as core model.parentSessionOf rules: a child session an agent
@@ -152,8 +156,9 @@ export class BoardState {
     const snooze = h.snoozes.get(c.object_id)
     const draft = h.drafts.get(c.object_id)
     const atts = list => this.atts(list)
-    const versions = (c.versions ?? []).slice(0, -1).map(v => ({ n: v.object_version, at: v.sent_at, title: v.content?.title ?? '', body: v.content?.body ?? '', options: v.content?.options ?? [], ...(v.content?.sections ? { sections: v.content.sections } : {}), ...(v.content?.html ? { html: v.content.html } : {}), recommended: v.content?.recommended ?? null, multiple: Boolean(v.content?.allows_multiple), attachments: atts(v.content?.attachments), urgency: v.urgency, note: v.content?.change_note ?? '' }))
-    const current = c.versions?.at(-1)
+    const turns = revisionsOf(c)
+    const versions = turns.slice(0, -1).map(v => ({ n: v.object_version, at: v.sent_at, title: v.content?.title ?? '', body: v.content?.body ?? '', options: v.content?.options ?? [], ...(v.content?.sections ? { sections: v.content.sections } : {}), ...(v.content?.html ? { html: v.content.html } : {}), recommended: v.content?.recommended ?? null, multiple: Boolean(v.content?.allows_multiple), attachments: atts(v.content?.attachments), urgency: v.urgency, note: v.content?.change_note ?? '' }))
+    const current = turns.at(-1)
     const card = {
       id: c.object_id, object_id: c.object_id, agent: this.devToAgent.get(keyOf(c)) ?? keyOf(c).slice(0, SESSION_ID_LEN), number,
       kind: c.card_type === 'info' ? 'info' : 'decision', status, urgency: c.urgency ?? 'normal', urgency_reason: c.urgency_reason ?? '',
@@ -276,7 +281,7 @@ export class BoardState {
     if (!c) return []
     const ev = (n, kind, text, ts, extra = {}) => ({ id: `v${n}${kind[0]}`, seq: n, agent: card.agent, from: 'event', kind, card_id: card.id, text, ts, ...extra })
     const out = []
-    for (const v of c.versions ?? []) {
+    for (const v of revisionsOf(c)) {
       if (v.object_version === 1) out.push(ev(v.envelope_number, card.kind === 'info' ? 'info' : 'asked', v.content?.title ?? card.title, v.sent_at))
       else out.push(ev(v.envelope_number, 'revised', v.content?.change_note || v.content?.title || card.title, v.sent_at, { version: v.object_version }))
     }
