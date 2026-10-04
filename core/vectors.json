@@ -1,5 +1,5 @@
 {
-  "about": "Deterministic test vectors for zcrypto.mjs format version 1. All byte strings are lower-case hex. Regenerate with: node crypto/test.mjs --write-vectors",
+  "about": "Deterministic test vectors for zcrypto.mjs format version 1. All byte strings are lower-case hex. Regenerate with: node core/crypto-test.mjs --write-vectors",
   "rng": "Test-only randomness: call number c (from 0) of a generator with seed s returns n bytes, byte j = (s + 17c + j) mod 256. Each section names its seed.",
   "encoding": {
     "bytes": "00fbff10",

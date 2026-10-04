@@ -1,4 +1,4 @@
-// The seam between the client core's model (client/core/README.md) and the views of today's board (public/js/views,
+// The seam between the client core's model (core/README.md) and the views of today's board (public/js/views,
 // synced from trommi-hub server/views): boardState(client.model) returns the board's state in the shape the views were
 // written for ({ cards, queue, agents, tasks, messages, desks, memos, assets }), so the app renders the same markup.
 //

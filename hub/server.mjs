@@ -11,8 +11,8 @@ import http from 'node:http'
 import crypto from 'node:crypto'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
-import * as z from '../crypto/zcrypto.mjs'
-import { createHub } from '../crypto/hub.mjs'
+import * as z from '../core/zcrypto.mjs'
+import { createHub } from '../core/hub.mjs'
 import { openDb, roomStorage, envelopeBytes, chunkCount, rebuildDerived, vacuumStep } from './store.mjs'
 import { fileStore } from './attachments.mjs'
 import { pusher } from './push.mjs'
@@ -278,7 +278,7 @@ export async function startHub({
     }
     deliver(r, { n: out.n, text: sse('envelope', { envelope_number: out.n, envelope: body.envelope }, out.n) })
     send(res, 200, { envelope_number: out.n })
-    // send_push is honoured only on an object's own versions and requests (crypto/hub.mjs), and rate-limited per sender.
+    // send_push is honoured only on an object's own versions and requests (core/hub.mjs), and rate-limited per sender.
     if (out.push && !pushLimit.take(`${r.id}:${me.id}`)) sendPushes(r, me.id, out).catch(err => log(`push: ${err.message}`))
   }
 

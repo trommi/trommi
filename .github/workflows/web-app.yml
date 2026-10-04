@@ -1,4 +1,5 @@
-# Records the web app deployment: Cloudflare builds app/web on every push to main (watch path app/web/*).
+# Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, core/*,
+# connector/*), its build step (app/web/dev/build.mjs) copies core/ into public/vendor and bundles the stylesheets.
 # This job waits until https://app.trommi.com serves the pushed sw.js and app code (HTML is left out: Cloudflare may rewrite it), so the
 # "web-app" environment on GitHub shows which commit is live.
 name: Web app deploy
@@ -6,7 +7,7 @@ name: Web app deploy
 on:
   push:
     branches: [main]
-    paths: ['app/web/**', '.github/workflows/web-app.yml']
+    paths: ['app/web/**', 'core/**', 'connector/channel-tools.mjs', 'connector/richhtml.mjs', '.github/workflows/web-app.yml']
   workflow_dispatch:
 
 concurrency:
@@ -38,9 +39,9 @@ jobs:
             got_sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sha256sum | cut -d' ' -f1 || true)
             got_app=$(curl -fsS --max-time 10 "https://app.trommi.com/js/app/room.mjs?ci=$i" | sha256sum | cut -d' ' -f1 || true)
             echo "attempt $i: sw $([ "$got_sw" = "$want_sw" ] && echo ok || { [ "$got_sw" = "$src_sw" ] && echo unbuilt || echo old; }), app $([ "$got_app" = "$want_app" ] && echo ok || echo old)"
-            if [ "$got_sw" = "$src_sw" ] && [ "$got_app" = "$want_app" ] && [ "$src_sw" != "$want_sw" ]; then
-              echo "::warning::app.trommi.com serves this commit without the build step (no stylesheet bundle): Cloudflare did not run 'node dev/build.mjs'"
-              exit 0
+            if [ "$got_sw" = "$src_sw" ] && [ "$got_app" = "$want_app" ]; then
+              echo "::error::app.trommi.com serves this commit without the build step: Cloudflare did not run 'node dev/build.mjs' (the core in public/vendor is missing)"
+              exit 1
             fi
             [ "$got_sw" = "$want_sw" ] && [ "$got_app" = "$want_app" ] && exit 0
             sleep 10

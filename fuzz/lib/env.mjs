@@ -13,10 +13,10 @@ export async function loadTarget(root = REPO_ROOT) {
   if (cache.has(root)) return cache.get(root)
   const imp = rel => import(pathToFileURL(path.join(root, rel)).href)
   const [hubMod, core, mem, file, zc, zh, store] = await Promise.all([
-    imp('hub/server.mjs'), imp('client/core/index.mjs'), imp('client/core/storage-memory.mjs'),
-    imp('client/core/storage-file.mjs').catch(() => null), imp('crypto/zcrypto.mjs'), imp('crypto/hub.mjs'), imp('hub/store.mjs'),
+    imp('hub/server.mjs'), imp('core/index.mjs'), imp('core/storage-memory.mjs'),
+    imp('core/storage-file.mjs').catch(() => null), imp('core/zcrypto.mjs'), imp('core/hub.mjs'), imp('hub/store.mjs'),
   ])
-  const codec = await imp('client/core/codec.mjs')
+  const codec = await imp('core/codec.mjs')
   const t = { root, startHub: hubMod.startHub, LIMITS: hubMod.LIMITS, core, memoryStorage: mem.memoryStorage, fileStorage: file?.fileStorage, z: zc, hubLib: zh, store, codec,
     commit: (() => { try { return execSync('git rev-parse --short HEAD', { cwd: root, stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() } catch { return 'unknown' } })(),
     // features of the target that may land during the night

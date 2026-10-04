@@ -1,7 +1,7 @@
 // load.mjs: a load generator driven by the real client core (for stream F, dev/e2e). Every envelope is sealed,
 // signed, posted, delivered and verified exactly as in the app and the channel; nothing is faked.
 //
-//   import { createLoadRoom, runMix } from '../../client/core/load.mjs'
+//   import { createLoadRoom, runMix } from './load.mjs'
 //   const room = await createLoadRoom({ hub_url, humans: 2, agents: 20, fetch })        // fetch: inject test-room headers
 //   const stats = await runMix(room, { total: 100_000, rate: 200 /* per second, paced; omit = as fast as possible */, mix: { message: 50, card: 10, revise: 5, answer: 8, status: 20, stroke: 5, attachment: 2 } })
 //   await room.close()

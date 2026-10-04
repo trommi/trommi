@@ -1,9 +1,9 @@
-// channel-bridge.mjs: tool calls -> envelopes, commands -> channel events, for hub/channel.mjs.
+// channel-bridge.mjs: tool calls -> envelopes, commands -> channel events, for connector/channel.mjs.
 //
 // No protocol code lives here. Everything that touches the hub, the keys or the envelopes goes through the
 // client of client/core (README there: "Agent API"); this module only translates between what Claude Code
-// knows (the tools and events of today's board, hub/channel-tools.mjs) and that client. Tested with a real
-// client in hub/channel-test.mjs.
+// knows (the tools and events of today's board, connector/channel-tools.mjs) and that client. Tested with a real
+// client in connector/channel-test.mjs.
 
 import fs from 'node:fs'
 import path from 'node:path'

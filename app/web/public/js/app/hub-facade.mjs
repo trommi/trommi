@@ -1,5 +1,5 @@
 // What the views' form handlers call "the hub" (hub.decide, hub.message, hub.editSession, … in trommi-hub
-// server/turbo.mjs and server/views/*), done with the client core's human actions (client/core/README.md).
+// server/turbo.mjs and server/views/*), done with the client core's human actions (core/README.md).
 // Every action shows at once (the core's optimistic echo) and is sealed, signed and sent by the core.
 
 import { agentIdOf, sessionKey, addressOf } from './board-state.mjs'

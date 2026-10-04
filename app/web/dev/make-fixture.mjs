@@ -1,6 +1,6 @@
 // Turns a state export of today's board (node server/board-store.mjs export <data> out.json, with the demo state and
 // the test cards: dev/demo-state.mjs + dev/fixtures.mjs in trommi-hub) into the mock room's fixture, in the shape of
-// the client core's model (client/core/README.md in trommi-hub). Pictures are copied to public/mock/files/.
+// the client core's model (core/README.md in trommi-hub). Pictures are copied to public/mock/files/.
 //   node dev/make-fixture.mjs <state-export.json> <board-data-dir>
 // Adds what the export lacks so every part of the board shows: a crowned main session with two subs and status
 // lines, an online agent, a pending permission request, a memo.

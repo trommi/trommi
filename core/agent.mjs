@@ -1,6 +1,6 @@
 // agent.mjs: what an agent's client does (the channel drives it): objects (cards, permission requests, published),
 // messages, status registers, and the gate on everything a human sends it (authoriseCommand) before it becomes a
-// `command`. Mixed into Client (see index.mjs). Contract: client/core/README.md "Agent API".
+// `command`. Mixed into Client (see index.mjs). Contract: core/README.md "Agent API".
 import * as z from './zcrypto.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
@@ -147,7 +147,7 @@ const agentMethods = {
   /**
    * A child session (4 October 2026): the agent opens a session of its own under its main session, without a human's
    * approval, for a helper ("Design", "Server"). It draws the session key, seals it to itself, every active human device
-   * and the recovery key (never to another agent), signs the first grant (crypto/session-grants.mjs: itself alone, no
+   * and the recovery key (never to another agent), signs the first grant (core/session-grants.mjs: itself alone, no
    * history) and writes its profile there with parent_session = its main session. Humans re-key it like any session.
    * Returns the new session_id.
    */

@@ -1,12 +1,12 @@
 // test.mjs: client/core against the real hub (hub/server.mjs, in-process on a free port 8891-8899, throwaway data dir).
-//   node client/core/test.mjs            all tests
-//   node client/core/test.mjs --bench    plus the verify/decrypt throughput run (larger)
+//   node core/test.mjs            all tests
+//   node core/test.mjs --bench    plus the verify/decrypt throughput run (larger)
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import net from 'node:net'
 import { fileURLToPath } from 'node:url'
-import { startHub, LIMITS } from '../../hub/server.mjs'
+import { startHub, LIMITS } from '../hub/server.mjs'
 import { startTestHub } from './test-hub.mjs'
 import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithPassphrase, roomLink, passphraseProblem, generatePassphrase, sealEscrowV2, memoryStorage, timelineEvents, z } from './index.mjs'
 import { fileStorage } from './storage-file.mjs'
@@ -51,11 +51,11 @@ LIMITS.foundPerIpHour = 10_000
 LIMITS.openRequestsPerIpMinute = 100_000       // every test signs in and joins from 127.0.0.1
 LIMITS.envelopesPerSecond = 100_000; LIMITS.envelopeBurst = 100_000
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-test-'))
-// hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on crypto/hub.mjs.
-const serverHasSessions = fs.readFileSync(path.join(HERE, '../../hub/server.mjs'), 'utf8').includes('sealed_session_keys')
+// hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on core/hub.mjs.
+const serverHasSessions = fs.readFileSync(path.join(HERE, '../hub/server.mjs'), 'utf8').includes('sealed_session_keys')
 const useTestHub = process.env.CORE_HUB === 'test' || (!serverHasSessions && !!z.KEY_SCOPE)
 const hub = useTestHub ? await startTestHub({ port: await freePort() }) : await startHub({ port: await freePort(), host: '127.0.0.1', dataDir: path.join(scratch, 'hub'), log: () => {}, pingMs: 2000 })
-console.log(`hub: ${useTestHub ? 'test-hub.mjs (crypto/hub.mjs)' : 'hub/server.mjs'}`)
+console.log(`hub: ${useTestHub ? 'test-hub.mjs (core/hub.mjs)' : 'hub/server.mjs'}`)
 const HUB = hub.hubUrl
 const clients = []
 const track = c => { clients.push(c); return c }
@@ -723,7 +723,7 @@ if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets 
 
 if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (a post queued at start, the channel claims after start)', async () => {
   const { phone } = await room()
-  // Like hub/channel.mjs: join, then start({ process_instance }) and claim with the same instance. The session is assigned
+  // Like connector/channel.mjs: join, then start({ process_instance }) and claim with the same instance. The session is assigned
   // before the start, so start() queues the device register before it takes the lease.
   const instances = []
   let delayed = false

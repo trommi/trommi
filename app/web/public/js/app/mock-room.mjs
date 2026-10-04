@@ -1,4 +1,4 @@
-// The mock room: the client core's API and model shape (client/core/README.md in trommi-hub), without a hub and
+// The mock room: the client core's API and model shape (core/README.md in trommi-hub), without a hub and
 // without crypto, fed from public/mock/fixture.json (dev/make-fixture.mjs) or generated big (?mock=crazy). Used with
 // ?mock=1 for UI work and the screen-by-screen comparison with today's board; the real core is the default.
 // Agents are simulated: they reply to messages, rework a card that was handed back, explain on "What??".

@@ -1,4 +1,9 @@
 data
 node_modules
-client
+app
+connector
+fuzz
+docs
+assets
+dev
 **/.git

@@ -1,5 +1,5 @@
-// channel-test-e2e.mjs: part 2 of hub/channel-test.mjs. A real hub (hub/server.mjs on a free port 8891-8899,
-// throwaway data dir), a scripted human device from client/core, and hub/channel.mjs as a real MCP stdio child.
+// channel-test-e2e.mjs: part 2 of connector/channel-test.mjs. A real hub (hub/server.mjs on a free port 8891-8899,
+// throwaway data dir), a scripted human device from client/core, and connector/channel.mjs as a real MCP stdio child.
 
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -8,7 +8,7 @@ import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { fileStorage } from '../client/core/storage-file.mjs'
+import { fileStorage } from '../core/storage-file.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -34,7 +34,7 @@ export async function startHub(tmp) {
   const port = await freePort()
   const data = fs.mkdtempSync(path.join(tmp, 'hub-'))
   const hub_url = `http://127.0.0.1:${port}`
-  const child = spawn(process.execPath, [path.join(here, 'server.mjs')], {
+  const child = spawn(process.execPath, [path.join(here, '../hub/server.mjs')], {
     env: { ...process.env, HUB_PORT: String(port), PORT: String(port), HUB_HOST: '127.0.0.1', HUB_DATA: data, DATA_DIR: data, HUB_URL: hub_url, HUB_DB: path.join(data, 'hub.db') },
     stdio: ['ignore', 'ignore', 'pipe'],
   })
@@ -44,10 +44,10 @@ export async function startHub(tmp) {
   return { hub_url, stop: () => child.kill(), stderr: () => err }
 }
 
-/** hub/channel.mjs as Claude Code starts it; collects every notification. */
-export async function startChannel({ env, cwd }) {
+/** connector/channel.mjs as Claude Code starts it; collects every notification. */
+export async function startChannel({ env, cwd, script = path.join(here, 'channel.mjs') }) {
   const events = []
-  const transport = new StdioClientTransport({ command: process.execPath, args: [path.join(here, 'channel.mjs')], env: { ...process.env, ...env }, cwd, stderr: 'pipe' })
+  const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...process.env, ...env }, cwd, stderr: 'pipe' })
   let err = ''
   const client = new Client({ name: 'channel-test', version: '1' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { events.push(n) }
@@ -67,7 +67,7 @@ export async function startChannel({ env, cwd }) {
 }
 
 export async function integration({ test, tmp }) {
-  const core = await import('../client/core/index.mjs')
+  const core = await import('../core/index.mjs')
   const hub = await startHub(tmp)
   const keys = path.join(tmp, 'keys')
   const project = path.join(tmp, 'project')
@@ -354,4 +354,41 @@ export async function integration({ test, tmp }) {
     try { human?.stop() } catch {}
     hub.stop()
   }
+}
+
+/** Connector updates: a changed code file is hot-reloaded on reload_connector; a changed shell file asks for a restart. */
+export async function updates({ test, tmp }) {
+  // A copy of connector/ and core/ beside node_modules, so the test can change files without touching the repository.
+  const repo = path.join(tmp, 'update-repo')
+  for (const d of ['connector', 'core']) fs.cpSync(path.join(here, '..', d), path.join(repo, d), { recursive: true })
+  fs.symlinkSync(path.join(here, '../node_modules'), path.join(repo, 'node_modules'))
+  const project = path.join(tmp, 'update-project')
+  fs.mkdirSync(project, { recursive: true })
+  const env = { TROMMI_KEYS_DIR: path.join(tmp, 'update-keys'), TROMMI_FOLDER: project, TROMMI_HUB: 'http://127.0.0.1:9', TROMMI_UPDATE_POLL_MS: '300' }
+  const ch = await startChannel({ env, cwd: project, script: path.join(repo, 'connector/channel.mjs') })
+  const update = e => e.method === 'notifications/claude/channel' && e.params.meta?.kind === 'update'
+  try {
+    await test('update: a changed tool file is announced, and reload_connector loads it without a restart (tool list changed)', async () => {
+      const before = (await ch.client.listTools()).tools
+      assert.ok(before.some(t => t.name === 'reload_connector'))
+      const file = path.join(repo, 'connector/channel-tools.mjs')
+      fs.writeFileSync(file, fs.readFileSync(file, 'utf8').replace("name: 'list_cards',", "name: 'list_cards_v2',"))
+      const ev = await ch.next(update, 'the update event')
+      assert.equal(ev.params.meta.update_available, '1')
+      assert.equal(ev.params.meta.restart_required, '0')
+      assert.match(ev.params.content, /Neue Connector-Version .* jetzt neu laden\?/)
+      assert.match(await ch.call('reload_connector'), /^Reloaded: connector version/)
+      await ch.next(e => e.method === 'notifications/tools/list_changed', 'tools/list_changed')
+      const after = (await ch.client.listTools()).tools.map(t => t.name)
+      assert.ok(after.includes('list_cards_v2') && !after.includes('list_cards'), after.join(','))
+      assert.ok(after.includes('reload_connector'))
+      assert.match(await ch.call('reload_connector'), /is current/)
+    })
+    await test('update: a changed core file (shell) is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
+      fs.appendFileSync(path.join(repo, 'core/transport.mjs'), '\n// changed by the update test\n')
+      const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1', 'the restart event')
+      assert.match(ev.params.content, /\/mcp/)
+      assert.match(await ch.call('reload_connector'), /\/mcp, then trommi, then Reconnect/)
+    })
+  } finally { await ch.close() }
 }

@@ -5,8 +5,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { foundRoom, openRoom, joinRoom, z } from '../../client/core/index.mjs'
-import { fileStorage } from '../../client/core/storage-file.mjs'
+import { foundRoom, openRoom, joinRoom, z } from '../../core/index.mjs'
+import { fileStorage } from '../../core/storage-file.mjs'
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.resolve(HERE, '../..')

@@ -1,4 +1,4 @@
-// channel-tools.mjs: the MCP face of the Trommi channel (hub/channel.mjs): instructions, tool schemas,
+// channel-tools.mjs: the MCP face of the Trommi channel (connector/channel.mjs): instructions, tool schemas,
 // one example per tool and the list of channel events (the app's help page imports it). Copied from server/server.mjs (today's board), so a
 // Claude Code session sees the same tools and the same <channel source="board" kind=...> events on the new
 // E2E hub. Keep the two in step by hand until today's board retires; do not import server/server.mjs (it
@@ -57,6 +57,7 @@ export const INSTRUCTIONS = [
   'The human answers with one tap and can take an answer back: <channel source="board" kind="decision_reopened" card_id="..." previous_choice="KEY"> means the card is open again. Stop acting on the old choice, undo what you safely can, tell them briefly via reply what you rolled back, and wait for the new choice.',
   'To hand the human, or anyone they choose, a page or a file as a link, call publish_asset: a self-contained HTML page (inline CSS and scripts, images as data: URLs; nothing is loaded from the network), an image, a video, an audio file or any other file. It is encrypted before it leaves this process and the key is part of the link. The link opens for the human, signed in to the board; it opens for nobody else. For someone outside the board, release the asset with share_asset and pass on the second link it returns (/r/<id>#<key>), only when the human asked for that. revoke_asset ends a link.',
   'Keep the status strip current with set_status: one line per work stream or subagent, a traffic light the human reads at a glance. decision (red) = waiting on the human, pass the card_id of the question; working (yellow) = in progress; done (green) = finished. Update a line the moment its state changes and clear the strip with clear_status when a new piece of work starts.',
+  'Connector updates: an event <channel source="board" kind="update" update_available="1" version="…" restart_required="0|1"> says a new version of this connector is ready. Then file one decision card for the human, titled "Neue Connector-Version <version> – jetzt neu laden?", with the options jetzt and später (keys jetzt, spaeter). With restart_required="1" the card says that a real restart is needed: "im Terminal /mcp → trommi → Reconnect"; then do not call reload_connector. With restart_required="0" and the answer jetzt, call reload_connector and reply with what it said. Do not reload on your own without the human\'s jetzt.',
 ].join(' ')
 
 const SECTION_TEXT_EXAMPLE = [
@@ -420,6 +421,11 @@ export const TOOL_EXAMPLES = {
 // Everything that travels over the channel besides tool calls, for the help page.
 // to_agent: what this process sends Claude Code. from_client: what Claude Code sends this process.
 export const CHANNEL_EVENTS = [
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'update', when: 'A new version of the connector is on disk (or the hub recommends one).',
+    content: 'a sentence naming the version and what to do: file the update card (jetzt / später)', meta: { kind: 'update', update_available: '1', version: 'the new version (a hash of the connector code, or the hub\'s recommended version)', restart_required: '"1" when only a restart loads it (/mcp → trommi → Reconnect), "0" when reload_connector can' },
+    example: '<channel source="board" kind="update" update_available="1" version="3f2a9c1d0b7e" restart_required="0">A new version of the Trommi connector is available …</channel>',
+  },
   {
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
     content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', cards: 'ids of cards the human copied into this message, comma-separated, often another session\'s: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw', cards_json: 'the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices}', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },

@@ -1,9 +1,9 @@
-// channel-test.mjs: node hub/channel-test.mjs
+// channel-test.mjs: node connector/channel-test.mjs
 //
 // Part 1 (always): the bridge between tools/events and client/core, against a recording stand-in for the
 //   client: tool -> core call mapping, command -> channel event mapping, permission relay, files.
-// Part 2 (when client/core/index.mjs and hub/server.mjs exist): the real thing. A hub on a free port
-//   8891-8899, a scripted human from client/core, and hub/channel.mjs spawned as a real MCP stdio child:
+// Part 2 (when core/index.mjs and hub/server.mjs exist): the real thing. A hub on a free port
+//   8891-8899, a scripted human from client/core, and connector/channel.mjs spawned as a real MCP stdio child:
 //   join via agent invite, introduce, decision round trips, hand back, explain, decide again, shred, info read,
 //   permission round trip, forged commands rejected, restart reuses the identity.
 
@@ -346,13 +346,14 @@ await test('slot lock: of processes starting together, exactly one gets the slot
 // ---- part 2: real hub, real core, the channel as an MCP child --------------------------------------------
 
 const here = path.dirname(new URL(import.meta.url).pathname)
-const haveCore = fs.existsSync(path.join(here, '../client/core/index.mjs')) && fs.existsSync(path.join(here, '../client/core/agent.mjs'))
-const haveHub = fs.existsSync(path.join(here, 'server.mjs'))
+const haveCore = fs.existsSync(path.join(here, '../core/index.mjs')) && fs.existsSync(path.join(here, '../core/agent.mjs'))
+const haveHub = fs.existsSync(path.join(here, '../hub/server.mjs'))
 if (haveCore && haveHub) {
-  const { integration } = await import('./channel-test-e2e.mjs')
+  const { integration, updates } = await import('./channel-test-e2e.mjs')
   await integration({ test, tmp })
+  await updates({ test, tmp })
 } else {
-  results.push(`skip part 2 (end to end): ${[!haveCore && 'client/core is not complete yet', !haveHub && 'hub/server.mjs does not exist yet'].filter(Boolean).join(', ')}`)
+  results.push(`skip part 2 (end to end): ${[!haveCore && 'core/ is not complete yet', !haveHub && 'hub/server.mjs does not exist yet'].filter(Boolean).join(', ')}`)
 }
 
 console.log(results.join('\n'))

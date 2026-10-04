@@ -12,13 +12,66 @@
 // rules, at the same place in the cascade — the same as link.disabled. The sheets that are on in every view
 // (ALWAYS) are not wrapped: fonts.css holds @font-face rules, and richhtml.js reads tokens.css's :root rules.
 //
-// More build steps (e.g. copying a shared folder into public/) go into build() below, each a function of its own.
+// The client core (../../core) and the connector's tool reference are copied into public/vendor/ (vendor()): the one
+// original lives in the repository's core/, nothing is committed under public/vendor. sw.js gets the vendor files in
+// its shell list and their hash in its version. A missing source fails the build (Cloudflare then keeps the last
+// deployment) instead of shipping an app without its core.
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { execFileSync } from 'node:child_process'
 
 export const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
+const REPO = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..')
+
+// ---- the core into public/vendor ----------------------------------------------------------------------------------
+const NOT_VENDORED = /(^test|-test\.mjs$|^test-|^load\.mjs$|^storage-file\.mjs$|^hub\.mjs$)/   // tests, Node-only, the hub's side
+/** Where each file of public/vendor comes from: { name: absolute source path }. Throws when the core is missing. */
+export function vendorSources(repo = REPO) {
+  const core = path.join(repo, 'core')
+  if (!fs.existsSync(path.join(core, 'index.mjs'))) throw new Error(`build: the core is missing (${core}/index.mjs)`)
+  const map = {}
+  for (const f of fs.readdirSync(core).sort()) if (f.endsWith('.mjs') && !NOT_VENDORED.test(f)) map[f] = path.join(core, f)
+  // The agent tool and event reference for the help page, and the HTML cleaner the agent's side uses (browser-safe).
+  for (const f of ['channel-tools.mjs', 'richhtml.mjs']) map[f] = path.join(repo, 'connector', f)
+  for (const [f, src] of Object.entries(map)) if (!fs.existsSync(src)) throw new Error(`build: ${src} is missing`)
+  return map
+}
+const commitOf = repo => {
+  const env = process.env.WORKERS_CI_COMMIT_SHA || process.env.GITHUB_SHA
+  if (env) return env.slice(0, 7)
+  try { return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().slice(0, 7) } catch { return 'dev' }
+}
+/** The files of public/vendor: { name: content }, core-version.mjs included. */
+export function vendorFiles(repo = REPO) {
+  const out = {}
+  for (const [f, src] of Object.entries(vendorSources(repo))) out[f] = fs.readFileSync(src, 'utf8')
+  const commit = commitOf(repo)
+  out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's core/. Do not edit: edit core/.\nexport const CORE_COMMIT = ${JSON.stringify(commit)}\n`
+  return out
+}
+/** sw.js with the vendor files in its shell list and their hash in its version. */
+export function withVendor(sw, files) {
+  const names = Object.keys(files).sort().map(f => `/vendor/${f}`)
+  const hash = crypto.createHash('sha256').update(Object.keys(files).sort().map(f => f + files[f]).join('')).digest('hex').slice(0, 8)
+  if (sw.includes(`-v${hash}`)) return sw
+  // A second run (another core) replaces the vendor part of the version instead of adding one.
+  const out = sw.replace(/^const VERSION = "([^"]*)"$/m, (_, v) => `const VERSION = ${JSON.stringify(/-v[0-9a-f]{8}/.test(v) ? v.replace(/-v[0-9a-f]{8}/, `-v${hash}`) : `${v}-v${hash}`)}`)
+    .replace(/^const SHELL = (\[.*\])$/m, (_, list) => `const SHELL = ${JSON.stringify([...JSON.parse(list).filter(f => !f.startsWith('/vendor/')), ...names])}`)
+  if (!out.includes(`-v${hash}`)) throw new Error('sw.js: SHELL or VERSION line not found')
+  return out
+}
+export function vendor({ write = false, pub = PUBLIC, repo = REPO } = {}) {
+  const files = vendorFiles(repo)
+  console.log(`build: ${Object.keys(files).length} core files -> public/vendor/${write ? '' : ' (check only, nothing written)'}`)
+  if (!write) return files
+  const dir = path.join(pub, 'vendor')
+  fs.rmSync(dir, { recursive: true, force: true })
+  fs.mkdirSync(dir, { recursive: true })
+  for (const [f, c] of Object.entries(files)) fs.writeFileSync(path.join(dir, f), c)
+  return files
+}
 const ALWAYS = new Set(['fonts', 'tokens', 'app', 'trommi', 'room'])
 const SHEET_LINK = /^<link rel="stylesheet" href="(\/[^"]+\.css)" data-sheet="([\w-]+)">\n/gm
 const FONT_PRELOAD = /^<link rel="preload" href="\/fonts\/fonts\.css" as="style">\n/m
@@ -38,7 +91,7 @@ function checkBalance(css, file) {
 }
 
 /** The bundle for the shell in public/: { name, css, html, sw } or null when the shell has no sheet links (written). */
-export function bundle(pub = PUBLIC) {
+export function bundle(pub = PUBLIC, swText = null) {
   const html = fs.readFileSync(path.join(pub, 'index.html'), 'utf8')
   const links = [...html.matchAll(SHEET_LINK)]
   if (!links.length) return null
@@ -57,7 +110,7 @@ export function bundle(pub = PUBLIC) {
   let first = true
   const out = html.replace(FONT_PRELOAD, '').replace(SHEET_LINK, () => { if (!first) return ''; first = false; return `<link rel="stylesheet" href="${name}" data-bundle>\n` })
   // The service worker keeps the bundle with the shell; its cache name changes with the bundle.
-  let sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
+  let sw = swText ?? fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
   sw = sw.replace(/^const VERSION = "([^"]*)"$/m, (_, v) => `const VERSION = ${JSON.stringify(`${v}-${hash}`)}`)
     .replace(/^const SHELL = (\[.*\])$/m, (_, list) => `const SHELL = ${JSON.stringify([...JSON.parse(list), name])}`)
   if (!sw.includes(name)) throw new Error('sw.js: SHELL or VERSION line not found')
@@ -65,6 +118,8 @@ export function bundle(pub = PUBLIC) {
 }
 
 export function build({ write = false, pub = PUBLIC } = {}) {
+  const files = vendor({ write, pub })
+  if (write) fs.writeFileSync(path.join(pub, 'sw.js'), withVendor(fs.readFileSync(path.join(pub, 'sw.js'), 'utf8'), files))
   const b = bundle(pub)
   if (!b) { console.log('build: the shell has its bundle already'); return }
   console.log(`build: ${b.sheets} sheets -> ${b.name} (${(b.css.length / 1024).toFixed(0)} KiB)${write ? '' : ' (check only, nothing written)'}`)
@@ -75,5 +130,6 @@ export function build({ write = false, pub = PUBLIC } = {}) {
 }
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
-  build({ write: process.argv.includes('--write') || process.env.WORKERS_CI === '1' })
+  if (process.argv.includes('--vendor')) vendor({ write: true })     // dev/release.sh: public/vendor for the preload list
+  else build({ write: process.argv.includes('--write') || process.env.WORKERS_CI === '1' })
 }
