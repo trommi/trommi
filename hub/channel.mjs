@@ -116,7 +116,8 @@ export async function createChannel({ cfg = channelConfig(), onCommand = () => {
   const { fileStorage } = await import('../client/core/storage-file.mjs')
   const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
   const process_instance = crypto.randomBytes(8).toString('hex')
-  const device_info = { device_name: `${cfg.host} · ${cfg.shown}`, platform: 'claude-code', folder: cfg.shown, host: cfg.host }
+  // The sidebar shows the folder's name, as today's board does ("trommi"); host and full folder are for the details view.
+  const device_info = { device_name: path.basename(cfg.folder) || cfg.shown, platform: 'claude-code', folder: cfg.shown, host: cfg.host }
 
   async function storageFor(room_id) {
     if (me.paths && me.room_id !== room_id) { unlockSlot(me.paths); me.paths = null }
