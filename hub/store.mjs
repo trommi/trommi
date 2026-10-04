@@ -120,6 +120,12 @@ export function openDb(dir, { log = () => {} } = {}) {
   if (db.prepare("SELECT COUNT(*) AS n FROM sqlite_master").get().n === 0) db.exec('PRAGMA auto_vacuum = INCREMENTAL')
   db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 5000; PRAGMA temp_store = MEMORY;')
   db.exec(SCHEMA)
+  // Added without a schema bump: when an envelope of the uploader first named an attachment (null: pending upload,
+  // deleted after an hour). Rows from before are counted as referenced.
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('attachments') WHERE name = 'referenced_at'").get()) {
+    db.exec('ALTER TABLE attachments ADD COLUMN referenced_at INTEGER')
+    db.exec('UPDATE attachments SET referenced_at = stored_at')
+  }
   db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`)
   const cache = new Map()
   db.q = sql => { let s = cache.get(sql); if (!s) cache.set(sql, s = db.prepare(sql)); return s }
@@ -252,7 +258,9 @@ export function roomStorage(db, roomId) {
         deriveRow(db, row)
         // Attachments named in the header belong to the object (or to the card whose chat this is): deleted with it.
         const owner = row.object_id ?? (h.timelineKind === z.TIMELINE.CHAT && /^card\/[0-9a-f]{32}$/.test(h.timelineId ?? '') ? h.timelineId.slice(5) : null)
-        if (owner) for (const b of h.blobs) q('UPDATE attachments SET object_id = ? WHERE room_id = ? AND attachment_id = ? AND object_id IS NULL').run(owner, roomId, hex(b))
+        // C02: only the sender's own uploads; naming someone else's attachment binds (and so deletes) nothing.
+        if (owner) for (const b of h.blobs) q('UPDATE attachments SET object_id = ? WHERE room_id = ? AND attachment_id = ? AND object_id IS NULL AND uploader_device_id = ?').run(owner, roomId, hex(b), m.sender)
+        for (const b of h.blobs) q('UPDATE attachments SET referenced_at = ? WHERE room_id = ? AND attachment_id = ? AND uploader_device_id = ? AND referenced_at IS NULL').run(m.time, roomId, hex(b), m.sender)
         return n
       })
     },

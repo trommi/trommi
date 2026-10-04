@@ -618,6 +618,13 @@ test('review 2 #1/#3: after a removal, session posts wait for the re-key; a remo
   await post(w, w.agent)
 })
 
+test('review 2 (f): a flood of anonymous challenges does not lock members out of sign-in', async () => {
+  const w = await makeWorld()
+  for (let i = 0; i < 10050; i++) w.hub.challenge()
+  await signIn(w, w.phone)                                  // a fresh challenge still works
+  assert.ok(w.phone.token)
+})
+
 let failed = 0
 const started = performance.now()
 for (const t of tests) {

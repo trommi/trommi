@@ -5,7 +5,8 @@
 //
 // Run: node hub/server.mjs    env: HUB_PORT (8790), HUB_HOST (0.0.0.0), HUB_DATA (/data), HUB_URL (the address
 // devices sign; https://hub.trommi.com in prod), COMMIT, HUB_ORIGINS, HUB_FOUND_TOKEN, HUB_MAX_ROOMS (1000),
-// HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT.
+// HUB_PUSH_HOSTS, HUB_PUSH_SUBJECT, HUB_TRUST_CF (1: trust cf-connecting-ip, only from a loopback or private peer,
+// i.e. cloudflared on this machine or through Docker's port proxy; off by default).
 import http from 'node:http'
 import crypto from 'node:crypto'
 import path from 'node:path'
@@ -43,6 +44,15 @@ const CATCH_UP_SLICE = 64
 const CATCH_UP_HIGH_WATER = 256 << 10
 const TIMELINE_NAMES = { chat: z.TIMELINE.CHAT, canvas: z.TIMELINE.CANVAS }
 const HEX64 = /^[0-9a-f]{64}$/, HEX32 = /^[0-9a-f]{32}$/
+const JSON_BODY_MS = 15000           // a JSON body arrives whole within this
+const IDLE_MS = 30000                // a request with no bytes moving for this long is closed (streams ping every 25 s)
+const UPLOAD_MIN_BYTES_PER_S = 16384 // an upload may take 60 s + size / this, then it is cut off
+/** Loopback or a private (RFC 1918 / ULA) peer: a proxy on this machine. Not the tailnet's 100.64/10, not public. */
+export function trustedPeer(ip) {
+  const v4 = /^(?:::ffff:)?(\d+)\.(\d+)\.\d+\.\d+$/.exec(ip)
+  if (v4) { const [a, b] = [Number(v4[1]), Number(v4[2])]; return a === 127 || a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168) }
+  return ip === '::1' || /^f[cd][0-9a-f]{2}:/i.test(ip)
+}
 
 class HubError extends Error {
   constructor(code, message, extra) { super(message); this.code = code; Object.assign(this, extra) }
@@ -75,8 +85,8 @@ export async function startHub({
   dataDir = process.env.HUB_DATA || '/data', hubUrl = process.env.HUB_URL, commit = process.env.COMMIT || 'dev',
   origins = (process.env.HUB_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean),
   foundToken = process.env.HUB_FOUND_TOKEN || '', maxRooms = Number(process.env.HUB_MAX_ROOMS || 1000),
-  trustCloudflare = process.env.HUB_TRUST_CF !== '0', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
-  pingMs = 25000, retentionEveryMs = DAY,
+  trustCloudflare = process.env.HUB_TRUST_CF === '1', pushHosts, now = Date.now, log = msg => console.log(`[hub] ${msg}`),
+  pingMs = 25000, retentionEveryMs = DAY, bodyTimeoutMs = JSON_BODY_MS,
 } = {}) {
   const t0 = performance.now()
   const db = openDb(dataDir, { log })
@@ -136,7 +146,13 @@ export async function startHub({
       res.setHeader('Access-Control-Expose-Headers', 'content-range, content-length, retry-after')
     }
   }
-  const ipOf = req => (trustCloudflare && req.headers['cf-connecting-ip']) || req.socket.remoteAddress || 'unknown'
+  // C06: cf-connecting-ip only when enabled AND the socket peer is this machine or a private address (cloudflared on
+  // the host, seen through Docker's port proxy as the bridge gateway). Never from the tailnet (100.64/10) or the internet.
+  const ipOf = req => {
+    const peer = req.socket.remoteAddress || 'unknown'
+    const h = req.headers['cf-connecting-ip']
+    return trustCloudflare && typeof h === 'string' && h.length <= 64 && trustedPeer(peer) ? h : peer
+  }
   function send(res, status, body) {
     if (res.headersSent) { res.end(); return }
     const text = JSON.stringify(body)
@@ -147,11 +163,16 @@ export async function startHub({
     if (Number(req.headers['content-length'] || 0) > LIMITS.json) fail('too-large', `a JSON request is at most ${LIMITS.json} bytes`)
     const parts = []
     let size = 0
-    for await (const c of req) {
-      size += c.length
-      if (size > LIMITS.json) fail('too-large', `a JSON request is at most ${LIMITS.json} bytes`)
-      parts.push(c)
-    }
+    // C03: a JSON body arrives whole within JSON_BODY_MS, or the connection goes (a half-sent body must not hold a write slot).
+    const deadline = setTimeout(() => req.destroy(), bodyTimeoutMs)
+    try {
+      for await (const c of req) {
+        size += c.length
+        if (size > LIMITS.json) fail('too-large', `a JSON request is at most ${LIMITS.json} bytes`)
+        parts.push(c)
+      }
+    } finally { clearTimeout(deadline) }
+    if (req.destroyed && !req.complete) fail('bad-format', 'the request body did not arrive in time')
     try { const v = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); if (v && typeof v === 'object' && !Array.isArray(v)) return v } catch {}
     fail('bad-format', 'the request body is not a JSON object')
   }
@@ -172,7 +193,7 @@ export async function startHub({
     return n
   }
   const hexParam = (v, re, what) => { if (typeof v !== 'string' || !re.test(v)) fail('bad-argument', `${what} must be lowercase hex`); return v }
-  const openRoute = req => { if (ops.unlimited(req)) return; const wait = openLimit.take(ipOf(req)); if (wait) fail('rate-limited', 'too many requests from this address', { retryAfter: wait }) }
+  const openRoute = (req, roomId) => { if (ops.unlimited(req, roomId)) return; const wait = openLimit.take(ipOf(req)); if (wait) fail('rate-limited', 'too many requests from this address', { retryAfter: wait }) }
 
   /** The envelope rows of a room after a number, with the depth rule: body only for heads not pruned. */
   const envelopeRows = (roomId, after, limit) => db.q(`SELECT envelope_number, envelope_header, envelope_nonce, envelope_signature, encrypted_body_hash,
@@ -182,12 +203,15 @@ export async function startHub({
   // ---- routes ------------------------------------------------------------------------
 
   async function found(req, res) {
-    if (foundToken && req.headers['x-found-token'] !== foundToken && !ops.unlimited(req)) fail('forbidden', 'founding a room on this hub needs x-found-token')
+    // A signed test request founds a test room (and only that) without the token and the per-address limit.
+    const signedTest = ops.testRooms.isTestRequest(req)
+    if (foundToken && req.headers['x-found-token'] !== foundToken && !signedTest) fail('forbidden', 'founding a room on this hub needs x-found-token')
     const ip = ipOf(req)
     const recent = (founded.get(ip) ?? []).filter(t => now() - t < 3600000)
-    if (recent.length >= LIMITS.foundPerIpHour && !ops.unlimited(req)) fail('rate-limited', 'too many rooms founded from this address in the last hour', { retryAfter: Math.ceil((recent[0] + 3600000 - now()) / 1000) })
+    if (recent.length >= LIMITS.foundPerIpHour && !signedTest) fail('rate-limited', 'too many rooms founded from this address in the last hour', { retryAfter: Math.ceil((recent[0] + 3600000 - now()) / 1000) })
     const body = await readJson(req)
     const testRoom = ops.testRooms.wanted(req, body)
+    if (signedTest && !testRoom) fail('forbidden', 'a signed test request founds test rooms only (test_room: true)')
     const entry = b64(body.signed_entry, 'signed_entry')
     if (!Array.isArray(body.sealed_room_keys)) fail('bad-argument', 'sealed_room_keys must be a list')
     const wraps = body.sealed_room_keys.map(w => ({ id: z.unhex(hexParam(w?.device_id, HEX64, 'device_id')), sealed: b64(w?.key_sealed, 'key_sealed') }))
@@ -269,6 +293,7 @@ export async function startHub({
     if (!url.searchParams.has('after_envelope_number') && Number.isSafeInteger(last) && last > 0) after = last
     res.writeHead(200, { 'content-type': 'text/event-stream; charset=utf-8', 'cache-control': 'no-cache, no-transform', 'x-accel-buffering': 'no', connection: 'keep-alive' })
     res.flushHeaders()
+    req.setTimeout(0)                                  // a stream lives on its pings, not on the request idle timeout
     req.socket.setNoDelay(true)
     const s = { deviceId: me.id, leaseGeneration, res, catchingUp: true, pending: [] }
     r.streams.add(s)
@@ -310,10 +335,14 @@ export async function startHub({
     ops.quota.check(r.id, Number(req.headers['content-length'] || 0))
     if (db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(r.id, attachmentId)) fail('replay', 'this attachment is already stored; attachments are immutable')
     let size
+    // C03: an upload gets 60 s plus a minimum rate, then the connection goes.
+    const deadline = setTimeout(() => req.destroy(), 60000 + Math.ceil(Number(req.headers['content-length'] || LIMITS.attachment) / UPLOAD_MIN_BYTES_PER_S) * 1000)
     try { size = await files.put(r.id, attachmentId, req, LIMITS.attachment) } catch (err) {
       if (err.code === 'too-large' || err.code === 'replay') fail(err.code, err.message)
       throw err
-    }
+    } finally { clearTimeout(deadline) }
+    // C04: removed while uploading -> nothing stored.
+    try { r.hub.authorise(bearer(req), { member: true }) } catch (err) { files.delete(r.id, attachmentId); throw err }
     try { ops.quota.make(r.id, size) } catch (err) { files.delete(r.id, attachmentId); throw err }
     db.q('INSERT INTO attachments (room_id, attachment_id, object_id, uploader_device_id, total_size, chunk_count, stored_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
       .run(r.id, attachmentId, me.id, size, chunkCount(size), now())
@@ -341,6 +370,7 @@ export async function startHub({
     if (!a) fail('not-found', 'no such attachment')
     if (a.uploader_device_id !== me.id) fail('forbidden', 'only the uploader shares an attachment')
     const body = await readJson(req)
+    r.hub.authorise(bearer(req), { member: true })          // C04: still a member once the body is in
     const shareId = hexParam(body.share_id, HEX32, 'share_id')
     const hash = b64(body.share_secret_hash, 'share_secret_hash')
     if (hash.length !== 32) fail('bad-argument', 'share_secret_hash is a SHA-256 (32 bytes)')
@@ -410,9 +440,9 @@ export async function startHub({
     const hub = r.hub
     const parts = rest.split('/').filter(Boolean)
     const [a, b, c] = parts
-    if (m === 'POST' && a === 'challenge' && !b) { openRoute(req); return send(res, 200, { challenge: z.b64u(hub.challenge()) }) }
+    if (m === 'POST' && a === 'challenge' && !b) { openRoute(req, r.id); return send(res, 200, { challenge: z.b64u(hub.challenge()) }) }
     if (m === 'POST' && a === 'access_tokens' && !b) {
-      openRoute(req)
+      openRoute(req, r.id)
       const body = await readJson(req)
       const t = await hub.signIn(b64(body.signed_challenge, 'signed_challenge'))
       return send(res, 200, { access_token: t.token, device_id: t.id, signer: t.kind === 'recovery' ? 'recovery' : 'device', device_role: t.kind === 'recovery' ? null : t.role, expires_at: t.expiresAt })
@@ -421,7 +451,7 @@ export async function startHub({
       if (m === 'GET') {
         const after = intParam(url, 'after_entry_number', -1, -1, 2 ** 32)
         const inviteId = url.searchParams.get('invite_id')
-        if (inviteId != null) { openRoute(req); hexParam(inviteId, HEX32, 'invite_id') }
+        if (inviteId != null) { openRoute(req, r.id); hexParam(inviteId, HEX32, 'invite_id') }
         const out = hub.log(inviteId != null ? { inviteId, after } : { token: bearer(req), after })
         return send(res, 200, { room_id: out.roomId, last_entry_number: out.head, signed_entries: out.entries.map(z.b64u) })
       }
@@ -444,6 +474,7 @@ export async function startHub({
     if (a === 'invites') {
       if (m === 'POST' && !b) {
         const token = bearer(req)
+        hub.authorise(token, { human: true })                // before the body: a bad token holds no write slot
         const body = await readJson(req)
         const out = await hub.postInvite(token, b64(body.signed_offer, 'signed_offer'))
         return send(res, 200, { invite_id: out.inviteId, device_role: out.role, expires_at: out.expiresAt })
@@ -451,13 +482,13 @@ export async function startHub({
       if (b) hexParam(b, HEX32, 'invite_id')
       if (m === 'DELETE' && b && !c) return send(res, 200, await hub.burnInvite(bearer(req), b))
       if (m === 'GET' && b && !c) {
-        openRoute(req)
+        openRoute(req, r.id)
         const inv = hub.invite(b)
         return send(res, 200, { signed_offer: z.b64u(inv.offer), device_role: inv.role, expires_at: inv.expiresAt, room_id: inv.roomId, signed_entries: inv.entries.map(z.b64u) })
       }
       if (b && c === 'requests' && !parts[3]) {
         if (m === 'POST') {
-          openRoute(req)
+          openRoute(req, r.id)
           const body = await readJson(req)
           const out = await hub.postRequest(b, b64(body.signed_request, 'signed_request'))
           if (!out.repeated) deliver(r, { text: sse('join_request', { invite_id: b }) }, s => s.deviceId === out.inviter)
@@ -467,12 +498,13 @@ export async function startHub({
       }
       if (m === 'POST' && b && c === 'reveal' && !parts[3]) {
         const token = bearer(req)
+        hub.authorise(token, { human: true })
         const body = await readJson(req)
         const out = await hub.postReveal(token, b, b64(body.signed_reveal, 'signed_reveal'))
         return send(res, 200, { request_hash: out.requestHash })
       }
       if (m === 'GET' && b && c === 'status' && !parts[3]) {
-        openRoute(req)
+        openRoute(req, r.id)
         const requestHash = hexParam(url.searchParams.get('request_hash'), HEX64, 'request_hash')
         const st = hub.joinStatus(b, requestHash)
         return send(res, 200, {
@@ -516,6 +548,7 @@ export async function startHub({
     if (m === 'GET' && a === 'stream' && !b) return stream(r, req, res, url)
     if (m === 'POST' && a === 'agent_lease' && !b) {
       const token = bearer(req)
+      hub.authorise(token, { member: true })
       const body = await readJson(req)
       const instance = body.process_instance
       if (typeof instance !== 'string' || !instance || instance.length > 200) fail('bad-argument', 'process_instance')
@@ -534,10 +567,11 @@ export async function startHub({
       const body = await readJson(req)
       const bytes = b64(body.envelope, 'envelope')
       if (bytes.length > 16384) fail('too-large', 'an ephemeral envelope is at most 16 KiB')
-      const p = z.peekEnvelope(bytes)
-      if (z.hex(p.header.sender) !== me.id) fail('wrong-sender', 'a device sends its own envelopes only')
-      if (!z.bytesEqual(p.header.roomId, z.unhex(r.id))) fail('wrong-room', 'envelope of another room')
-      deliver(r, { text: sse('ephemeral', { device_id: me.id, envelope: body.envelope }) }, s => s.deviceId !== me.id)
+      // C05 + C04: signed, own, from a device that is still a member, under a key it may use now; only to who holds that key.
+      const aud = await hub.checkEphemeral(bearer(req), bytes)
+      const humans = new Set(db.q("SELECT device_id FROM devices WHERE room_id = ? AND device_role = 'human' AND removed_entry_number IS NULL").all(r.id).map(d => d.device_id))
+      const agents = new Set(aud.agents)
+      deliver(r, { text: sse('ephemeral', { device_id: me.id, envelope: body.envelope }) }, s => s.deviceId !== me.id && (humans.has(s.deviceId) || agents.has(s.deviceId)))
       return send(res, 200, { ok: true })
     }
     if (a === 'sessions') {
@@ -570,6 +604,8 @@ export async function startHub({
         return send(res, 200, { key_back_links: (await hub.sessionBackLinks(bearer(req), b)).map(l => ({ session_key_epoch: l.epoch, key_back_link: z.b64u(l.bytes) })) })
       }
     }
+    if (a === 'attachments' && b) hexParam(b, HEX32, 'attachment_id')
+    if (a === 'attachments' && b && c === 'shares' && parts[3]) hexParam(parts[3], HEX32, 'share_id')
     if (a === 'attachments' && b && !c) {
       if (m === 'PUT') return putAttachment(r, req, res, b)
       if (m === 'GET' || m === 'HEAD') return getAttachment(r, req, res, b)
@@ -619,6 +655,7 @@ export async function startHub({
   }
 
   const server = http.createServer((req, res) => {
+    req.setTimeout(IDLE_MS, () => req.destroy())       // C03: no bytes moving for 30 s -> closed (the stream turns this off)
     handle(req, res).catch(err => {
       if (err?.reply) return send(res, err.reply.status, err.reply.body)
       let code = err?.code, message = err?.message
@@ -632,7 +669,7 @@ export async function startHub({
       send(res, STATUS[code], { error: code, message })
     })
   })
-  server.requestTimeout = 0          // streams and big uploads; headers still time out
+  server.requestTimeout = 0          // streams and big uploads: their own idle timeout and deadline (above); headers time out
   server.headersTimeout = 30000
   server.keepAliveTimeout = 65000
 
@@ -658,6 +695,16 @@ export async function startHub({
     if (envelopes || attachments) log(`retention: pruned ${envelopes} envelopes, deleted ${attachments} attachments`)
     return { objects: due.length, envelopes, attachments }
   }
+  /** H3: an upload no envelope of its uploader named within an hour is deleted (it would pin the quota forever). */
+  function sweepPending({ olderThanMs = 3600000 } = {}) {
+    const due = db.q('SELECT room_id, attachment_id FROM attachments WHERE referenced_at IS NULL AND stored_at < ?').all(now() - olderThanMs)
+    for (const a of due) {
+      db.q('DELETE FROM attachments WHERE room_id = ? AND attachment_id = ? AND referenced_at IS NULL').run(a.room_id, a.attachment_id)
+      files.delete(a.room_id, a.attachment_id)
+    }
+    if (due.length) log(`deleted ${due.length} upload(s) no envelope named within an hour`)
+    return due.length
+  }
   // A global bound on what all streams together hold in send buffers: over it, the fattest are dropped and
   // resume by cursor (HUB_STREAM_BUFFER_TOTAL_BYTES, default 256 MiB).
   const streamTotalCap = Number(process.env.HUB_STREAM_BUFFER_TOTAL_BYTES || 256 << 20)
@@ -677,6 +724,7 @@ export async function startHub({
     setInterval(() => { try { capStreams() } catch (err) { log(`stream cap: ${err.message}`) } }, 1000),
     setInterval(() => { try { vacuumStep(db) } catch (err) { log(`vacuum: ${err.message}`) } }, 30000),
     setInterval(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, retentionEveryMs),
+    setInterval(() => { try { sweepPending() } catch (err) { log(`pending uploads: ${err.message}`) } }, 600000),
     setInterval(() => {
       envelopeLimit.sweep(); openLimit.sweep(); pushLimit.sweep()
       for (const [ip, times] of founded) { const keep = times.filter(t => now() - t < 3600000); if (keep.length) founded.set(ip, keep); else founded.delete(ip) }
@@ -692,7 +740,7 @@ export async function startHub({
   const startupMs = performance.now() - t0
   log(`listening on ${host}:${address.port} as ${hubUrl}, commit ${commit}, ready in ${startupMs.toFixed(1)} ms`)
   return {
-    server, port: address.port, hubUrl, db, startupMs, stats, prune, ops, capStreams, rebuildDerived: () => rebuildDerived(db),
+    server, port: address.port, hubUrl, db, startupMs, stats, prune, sweepPending, ops, capStreams, rebuildDerived: () => rebuildDerived(db),
     async close() {
       for (const t of timers) clearInterval(t)
       await ops.close()

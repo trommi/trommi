@@ -26,7 +26,7 @@ async function newHub({ dir, port, ...opts } = {}) {
   if (!tmpDirs.includes(dir)) tmpDirs.push(dir)
   port ??= await freePort()
   const hubUrl = `http://127.0.0.1:${port}`
-  const hub = await startHub({ port, host: '127.0.0.1', dataDir: dir, hubUrl, commit: 'test', log: () => {}, ...opts })
+  const hub = await startHub({ port, host: '127.0.0.1', dataDir: dir, hubUrl, commit: 'test', log: () => {}, trustCloudflare: true, ...opts })
   return { hub, dir, port, base: hubUrl, hubUrl }
 }
 
@@ -797,6 +797,117 @@ test('restart: everything persists; rooms load lazily; a client resumes where it
 // ---- run -------------------------------------------------------------------------------
 
 const only = process.argv[2]
+// ---- review 2 (hub layer) -------------------------------------------------------------
+
+/** A raw socket that sends headers and part of a JSON body, then nothing (C03). */
+function halfSent(w, p, ip) {
+  return new Promise((ok, bad) => {
+    const sock = net.connect(w.port, '127.0.0.1', () => {
+      sock.write(`POST ${p} HTTP/1.1\r\nhost: 127.0.0.1\r\ncontent-type: application/json\r\ncontent-length: 1000\r\ncf-connecting-ip: ${ip}\r\n\r\n{"signed_entry":"`)
+      setTimeout(() => ok(sock), 50)
+    })
+    sock.on('error', () => {})
+    sock.on('close', () => { sock.closedAt = Date.now() })
+    sock.once('error', bad)
+  })
+}
+
+test('review 2 C03: half-sent bodies cannot hold the write slots: a per-address cap, a body deadline, a reserved pool for removals', async () => {
+  const saved = { ...process.env }
+  Object.assign(process.env, { HUB_WRITE_QUEUE: '8', HUB_WRITE_PER_IP: '4', HUB_WRITE_QUEUE_MEMBERSHIP: '4' })
+  let w
+  try { w = await world({ bodyTimeoutMs: 1500 }) } finally { process.env = saved }
+  const attacker = freshIp()
+  const socks = []
+  for (let i = 0; i < 4; i++) socks.push(await halfSent(w, '/v1/rooms', attacker))
+  // The fifth from that address: refused at once.
+  await refused(w, 'POST', '/v1/rooms', { headers: { 'cf-connecting-ip': attacker }, body: {} }, 503, 'overloaded')
+  // Many addresses fill the general queue; a removal still goes through the reserved pool.
+  for (let i = 0; i < 2; i++) for (let j = 0; j < 4; j++) socks.push(await halfSent(w, '/v1/rooms', freshIp()))
+  await refused(w, 'POST', `${R(w)}/challenge`, { headers: { 'cf-connecting-ip': freshIp() } }, 503, 'overloaded')
+  const r = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.laptop.device.id], previous: w.phone.secrets.get(1) })
+  const out = await ok(w, 'POST', `${R(w)}/members`, { headers: { 'cf-connecting-ip': freshIp() }, body: { signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r.backLink) } })
+  assert.equal(out.entry_action, 'devices_removed')
+  // The deadline frees every slot: the half-sent sockets are closed.
+  await new Promise(ok => setTimeout(ok, 1800))
+  assert.equal(w.hub.ops.flow.writeQueueDepth, 0, 'every half-sent request was cut off; no slot is held')
+  for (const x of socks) x.destroy()
+  await ok(w, 'POST', `${R(w)}/challenge`, { headers: { 'cf-connecting-ip': freshIp() } })
+  await w.hub.close()
+})
+
+test('review 2 C06: cf-connecting-ip only when enabled, and only from a loopback or private peer', async () => {
+  const { trustedPeer } = await import('./server.mjs')
+  for (const ip of ['127.0.0.1', '::1', '::ffff:127.0.0.1', '172.18.0.1', '10.1.2.3', '192.168.1.1', 'fd12:3456::1']) assert.ok(trustedPeer(ip), ip)
+  for (const ip of ['100.101.102.103', '8.8.8.8', '2a01:4f8::1', '172.32.0.1', '::ffff:1.2.3.4']) assert.ok(!trustedPeer(ip), ip)
+  // Off by default: a rotating header does not dodge the founding limit.
+  const w = await newHub({ trustCloudflare: false })
+  let limited = false
+  for (let i = 0; i < 12 && !limited; i++) {
+    const room = await z.createRoom({ device: await z.generateDevice(), recovery: await z.recoveryDevice(z.generateRecoveryCode()) })
+    const res = await api({ ...w, ip: freshIp() }, 'POST', '/v1/rooms', { body: { signed_entry: b64u(room.entry), sealed_room_keys: room.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })) } })
+    if (res.status === 429) limited = i
+  }
+  assert.equal(limited, LIMITS.foundPerIpHour, 'the header is ignored: the socket address is limited')
+  await w.hub.close()
+})
+
+test('review 2 C02/C04/C05/H3, ids: no attachment hijack, removed devices finish nothing, ephemeral verified, pending uploads expire, ids strict', async () => {
+  let clock = Date.now()
+  const w = await world({ now: () => clock })
+  const put = (c, id, body) => fetch(`${w.base}${R(w)}/attachments/${id}`, { method: 'PUT', headers: { authorization: `Bearer ${c.token}` }, body })
+  // C02: the phone's attachment, named by the agent's card, stays the phone's (not bound to the agent's object).
+  const asset = await z.encryptAsset(utf8('desk picture'))
+  assert.equal((await put(w.phone, hex(asset.blobId), asset.blob)).status, 201)
+  await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: await z.objectIdOf(w.agent.device.id, 1), state: z.CARD_STATE.CLOSED, urgency: 1 }, blobs: [asset.blobId] })
+  const row = w.hub.db.prepare('SELECT object_id, referenced_at FROM attachments WHERE attachment_id = ?').get(hex(asset.blobId))
+  assert.equal(row.object_id, null, 'not bound to the agent\'s object'); assert.equal(row.referenced_at, null, 'not referenced by its uploader')
+  // H3: the phone names it in a desk message (room scope): referenced, kept; an upload nobody named is deleted after an hour.
+  await posted(w, w.phone, { keyScope: 0, blobs: [asset.blobId] })
+  const junk = await z.encryptAsset(utf8('junk'))
+  assert.equal((await put(w.agent, hex(junk.blobId), junk.blob)).status, 201)
+  clock += 3600001
+  assert.equal(w.hub.sweepPending(), 1)
+  assert.equal(w.hub.db.prepare('SELECT COUNT(*) AS n FROM attachments WHERE room_id = ?').get(w.roomId).n, 1)
+  for (const c of [w.phone, w.laptop, w.agent]) await signIn(w, c)          // an hour later: fresh tokens
+  // ids: lowercase hex of the exact length, else 400.
+  await refused(w, 'GET', `${R(w)}/attachments/${'A'.repeat(32)}`, { token: w.phone.token }, 400, 'bad-argument')
+  await refused(w, 'DELETE', `${R(w)}/attachments/${hex(asset.blobId)}/shares/xyz`, { token: w.phone.token }, 400, 'bad-argument')
+  await refused(w, 'GET', `${R(w)}/sessions/${'0'.repeat(31)}/grants`, { token: w.phone.token }, 400, 'bad-argument')
+  await refused(w, 'GET', `${R(w)}/invites/${'g'.repeat(32)}`, {}, 400, 'bad-argument')
+  // C05: an ephemeral envelope with a broken signature is refused, not relayed; a good one is relayed.
+  const eph = await seal(w.phone, { keyScope: 0 })
+  const broken = eph.bytes.slice(); broken[broken.length - 1] ^= 1
+  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(broken) } }, 400, 'bad-signature')
+  assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(eph.bytes) } }), { ok: true })
+  // An agent cannot relay under the room key (it holds none).
+  const agentEph = await seal(w.agent, { keyScope: 0, secret: w.phone.secrets.get(1) }).catch(() => null)
+  if (agentEph) await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(agentEph.bytes) } }, 403)
+  // C04: the laptop starts an upload, is removed while it runs, and the upload stores nothing.
+  const big = await z.encryptAsset(new Uint8Array(200000))
+  const req = http.request(`${w.base}${R(w)}/attachments/${hex(big.blobId)}`, { method: 'PUT', headers: { authorization: `Bearer ${w.laptop.token}`, 'content-length': big.blob.length } })
+  const answer = new Promise(ok => req.on('response', res => { let b = ''; res.on('data', c => { b += c }); res.on('end', () => ok({ status: res.statusCode, body: b })) }))
+  req.write(big.blob.slice(0, 1000))
+  await new Promise(ok => setTimeout(ok, 100))
+  const r = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.laptop.device.id], previous: w.phone.secrets.get(1) })
+  await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r.backLink) } })
+  req.end(big.blob.slice(1000))
+  const a = await answer
+  assert.ok([401, 403].includes(a.status), a.body)
+  assert.equal(w.hub.db.prepare('SELECT COUNT(*) AS n FROM attachments WHERE attachment_id = ?').get(hex(big.blobId)).n, 0)
+  assert.ok(!fs.existsSync(path.join(w.dir, 'attachments', w.roomId, hex(big.blobId))))
+  await w.hub.close()
+})
+
+test('review 2 (h): a removed device\'s push subscriptions are deleted with its removal', async () => {
+  const w = await world()
+  w.hub.db.prepare('INSERT INTO push_subscriptions (room_id, device_id, endpoint, subscription, created_at) VALUES (?, ?, ?, ?, ?)').run(w.roomId, hex(w.laptop.device.id), 'https://push.example/x', '{}', Date.now())
+  const r = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.laptop.device.id], previous: w.phone.secrets.get(1) })
+  await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r.backLink) } })
+  assert.equal(w.hub.db.prepare('SELECT COUNT(*) AS n FROM push_subscriptions WHERE room_id = ?').get(w.roomId).n, 0)
+  await w.hub.close()
+})
+
 let failed = 0
 const t0 = performance.now()
 const notes = []

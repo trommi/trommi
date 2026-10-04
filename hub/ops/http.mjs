@@ -12,14 +12,17 @@ export function sendJson(res, status, body) {
 }
 
 /** The request body as a JSON object, at most `max` bytes. */
-export async function readJson(req, max) {
+export async function readJson(req, max, deadlineMs = 15000) {
   const parts = []
   let size = 0
-  for await (const c of req) {
-    size += c.length
-    if (size > max) refuse(413, 'too-large', `this request is at most ${max} bytes`)
-    parts.push(c)
-  }
+  const deadline = setTimeout(() => req.destroy(), deadlineMs)     // a half-sent body does not hold a write slot
+  try {
+    for await (const c of req) {
+      size += c.length
+      if (size > max) refuse(413, 'too-large', `this request is at most ${max} bytes`)
+      parts.push(c)
+    }
+  } finally { clearTimeout(deadline) }
   try { const v = JSON.parse(Buffer.concat(parts).toString('utf8') || '{}'); if (v && typeof v === 'object' && !Array.isArray(v)) return v } catch {}
   refuse(400, 'bad-format', 'the request body is not a JSON object')
 }
