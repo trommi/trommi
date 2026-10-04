@@ -79,6 +79,12 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 - **Superkind final (fb6e35c, docs/parity.md):** 232 ok, 10 gap, 4 n/a, 105 todo of 351 rows. Live round trips through the real channel with CLI join: **48/48 green** (every decision flow, allow/deny, second device with check code, outsider share link). Live agent → visible 41–65 ms, click → agent 52–105 ms.
   - Perf vs Turbo (desktop / 4x / phone 4x): cold Desk 116/244/257 vs 58/80/128 ms (app ~2x slower cold); warm 77/179/182 vs 34/57/83 ms; navigation faster (desk→session 105/158/170 vs 192/391/281 ms); longest task 62/140/111 ms.
   - Open gaps: presence shown disconnected (C); 4 channel P3 items (D); 5 small P3 items (fixer). By design: no voiceover/read-aloud.
+- **Parity final (677f51b):** 247 ok, 2 gap, 4 n/a, 98 todo of 351 rows.
+  - Gaps: presence takes ~57 s after a new join (C fixing); no voiceover / read-aloud (no speech service on the new hub, by design for now).
+  - The 98 todo rows (memo/pad details, phone layout details, agents-page actions, push/PWA, admin) were not checked.
+  - All P3 channel items fixed (47b4da0, e37528e).
+  - Live presence fixed (df15ada).
+  - Batched session grants on removal (eef3452).
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
