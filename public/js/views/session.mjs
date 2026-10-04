@@ -490,9 +490,11 @@ export function register(t) {
     if (unread(timeline(agent))) wait.push(older(id))
     for (const cid of (model.sessions.get(agent.device_id)?.card_ids ?? []).slice(-RECENT_THREADS)) {
       const key = `chat:card/${cid}`
-      if (unread(model.timelines.get(key))) wait.push(older(key))
+      // (Its questions' threads come in the background: the live log puts late items at their places.)
+      if (unread(model.timelines.get(key))) older(key).catch?.(() => {})
     }
-    if (wait.length) await Promise.race([Promise.all(wait), new Promise(r => setTimeout(r, 300))])
+    // Only the session's own chat is waited for, and not long (a phone switching sessions must stay under ~100 ms).
+    if (wait.length) await Promise.race([Promise.all(wait), new Promise(r => setTimeout(r, 120))])
   }
   // "Earlier" asked for what is before `before`: when memory holds nothing older above the floor, the next page.
   async function reach(s, before) {
