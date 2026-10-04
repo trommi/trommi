@@ -116,6 +116,7 @@ export async function bootFromSnapshot(client) {
     client._snapshotChains = new Map(Object.entries(snap.chains).map(([k, [seq]]) => [hex(unb64u(k)), seq]))
     client.frontiers = new Map(Object.entries(snap.frontiers).map(([k, f]) => [k, new Map(Object.entries(f))]))
     for (const c of snap.model.cards) m.cards.set(c.object_id, c)
+    m._proj = null                                    // project builds its sorted lists again
     for (const p of snap.model.permissions) m.permissions.set(p.object_id, p)
     for (const x of snap.model.memos) m.memos.set(x.object_id, x)
     for (const x of snap.model.published) m.published.set(x.object_id, x)

@@ -224,6 +224,7 @@ export class Client {
     for (const o of outbox) this.byHash.set(o.hash, o.local_id)
     m.outbox = outbox.map(o => o.public)
     for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k))
+    m._proj = null
     M.project(m, M.emptyChange())
   }
 
