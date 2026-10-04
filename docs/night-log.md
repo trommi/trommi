@@ -125,3 +125,23 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
 - Admin auth confirmed by the owner (Tailscale login + extra password); stream G was blocked once by the permission classifier before that confirmation.
 
 ## Numbers
+
+
+## Morning: steps for Christopher
+
+1. **App:** open https://app.trommi.com on the PC. If the name does not resolve, the PC still caches the old NXDOMAIN: run `resolvectl flush-caches`. Choose "Found a new room" and write the recovery code down; it is shown once.
+2. **Phone:** in the app go to Devices → "Pair a device". A QR code appears. Scan it with the phone (or open the link there). The phone shows six digits; tap the same code among the four on the PC.
+3. **This Claude session on the new board:**
+   - Add to `~/git/trommi/.mcp.json`: `"trommi": { "command": "node", "args": ["/home/christopher/git/trommi/hub/channel.mjs"] }`. Keep `board` while the old board is still in use.
+   - In the app go to Devices → "Invite an agent", leave history off, and copy the command.
+   - In the project folder run `node /home/christopher/git/trommi/hub/channel.mjs join '<link>'`.
+   - Restart Claude with `claude --dangerously-load-development-channels server:board server:trommi`.
+   - In the app, assign the new agent to a session.
+4. **Decisions needed** (none can be done by agents; each was refused by the permission system or is the owner's call):
+   - Admin view (hub/admin.mjs + tests ready, uncommitted): clear the wiring, compose port 127.0.0.1:8791 and the password generation.
+   - Server compose: METRICS_PORT 8792 mapping; HUB_TEST_PUBLIC_KEY only for load tests (off before launch).
+   - One wipe of prod test rooms before real use (rooms from tonight's tests cannot be deleted otherwise).
+   - CSS concatenation per release for faster cold load (a small build step).
+   - Password sign-in on a fresh browser is hidden behind `?pwlogin` until you decide. Escrow still uses PBKDF2, not a memory-hard KDF.
+   - Cleanup of legacy code: docs/cleanup-plan.md + dev/cleanup.sh (dry run by default), plus an optional history rewrite.
+5. **Not for real data yet:** a third short verification pass of both security reviewers on the round-2 fixes is pending.
