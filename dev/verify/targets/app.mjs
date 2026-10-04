@@ -6,6 +6,8 @@
 //   the browser profile must already hold it; see dev/verify/README section "real room")
 import { FIXTURES } from '../../../server/fixtures.mjs'
 import turbo from './turbo.mjs'
+import fs from 'node:fs'
+import path from 'node:path'
 import { openPage } from '../lib.mjs'
 
 const MODE = process.env.VERIFY_APP_MODE || 'mock'
@@ -13,11 +15,18 @@ const states = Object.fromEntries(Object.entries(turbo.states).map(([k, v]) => [
 // Content of the mock room: sessions trommi (crowned main), trommi-ui (the approval), test-alpha, test-beta.
 states.session.path = c => `/s/${c.sessions.main}`
 states['session-permission'].path = c => `/s/${c.sessions.permission}`
+states['session-questions'].path = c => `/s/${c.sessions.alpha}?only=questions`
+states['session-files'].path = c => `/s/${c.sessions.beta}/files`
+states['session-thread'].path = c => `/s/${c.sessions.beta}`
 
 export default {
   name: 'app',
-  async connect({ base = 'http://127.0.0.1:8900' }) {
-    const h = await openPage({ profile: { width: 1440, height: 900 }, base, hostRules: process.env.VERIFY_HOSTS ?? '' })
+  async connect({ base = 'http://127.0.0.1:8900', verifyDir }) {
+    // room mode: the kept browser profile of dev/verify/app-room.mjs holds the room (IndexedDB, device keys)
+    const room = MODE === 'room' ? JSON.parse(fs.readFileSync(path.join(verifyDir, 'app-room.json'), 'utf8')) : null
+    const userDataDir = room?.userDataDir ?? null
+    if (room) base = room.base
+    const h = await openPage({ profile: { width: 1440, height: 900 }, base, hostRules: process.env.VERIFY_HOSTS ?? '', userDataDir })
     try {
       await h.go(MODE === 'mock' ? '/?mock=1' : '/', 'body[data-t-view]', 20000)
       await h.waitFor('return window.trommi?.board?.state?.cards?.length > 0', 20000)
@@ -30,8 +39,11 @@ export default {
       const perm = found.cards.find(c => c.kind === 'permission')
       nr.permission = perm?.number ?? null
       const testDesk = found.desks.find(d => /test/i.test(d.name))?.id ?? 'test'
-      const sessions = { main: found.cards.find(c => c.agent && !/^test-/.test(c.agent) && c.kind !== 'permission')?.agent ?? 'trommi', permission: perm?.agent ?? 'trommi-ui' }
-      return { base, nr, testDesk, sessions, mode: MODE }
+      const alpha = found.cards.find(c => c.title === FIXTURES[0].args.title)?.agent
+      const beta = found.cards.find(c => c.title === FIXTURES.find(f => f.kind === 'info').args.title)?.agent
+      const sessions = room ? { main: alpha ?? 'test-alpha', permission: perm?.agent ?? 'courier' } : { main: found.cards.find(c => c.agent && !/^test-/.test(c.agent) && c.kind !== 'permission')?.agent ?? 'trommi', permission: perm?.agent ?? 'trommi-ui' }
+      sessions.alpha = alpha ?? 'test-alpha'; sessions.beta = beta ?? 'test-beta'
+      return { base, nr, testDesk, sessions, mode: MODE, userDataDir }
     } finally { await h.close() }
   },
   async prepare(h, ctx, { dark }) {
@@ -45,8 +57,8 @@ export default {
   perf: {
     desk: turbo.perf.desk,
     nav: [
-      { name: 'desk→session', click: 'a[href="/s/trommi"]', ready: 'body[data-t-view="session"] .msg' },
-      { name: 'session→card', click: 'a[href^="/s/trommi/q/"]', ready: 'body[data-t-view="card"] .tc-card' },
+      { name: 'desk→session', click: '#agents a[href^="/s/"], .agent-row a[href^="/s/"], a[href^="/s/"]', ready: 'body[data-t-view="session"] main' },
+      { name: 'session→card', click: 'main a[href*="/q/"]', ready: 'body[data-t-view="card"] .tc-card' },
       { name: 'card→back', click: '.tc-back', ready: 'body:not([data-t-view="card"]) main' },
     ],
     async live() { return [] },   // live latency in the app is measured against a real room (dev/verify/rounds.mjs)
