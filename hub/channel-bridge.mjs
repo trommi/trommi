@@ -7,7 +7,7 @@
 
 import fs from 'node:fs'
 import path from 'node:path'
-import { cleanFences, htmlBeside, strippedHint, fences } from '../server/richhtml.mjs'
+import { cleanFences, htmlBeside, strippedHint, fences } from './richhtml.mjs'
 import { URGENCIES, STATUSES, MAX_ASSET, ASSET_TYPES, shortOf } from './channel-tools.mjs'
 
 const withShort = value => (shortOf(value) ? { short: shortOf(value) } : {})
@@ -306,8 +306,13 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     return `card ${card.object_id} revised, now version ${versionOf(card) + 1}, ${placeOf(card)}${card.in_revision ? '; it is before the human again' : ''}${strippedHint()}`
   }
 
+  // Read your own writes: what this agent sent is in the model before the next tool looks (a status line right
+  // after create_decision names a card the hub has just confirmed). Costs nothing when nothing is pending.
+  const caughtUp = () => client.settle().catch(err => log(`not settled: ${err.message}`))
+
   async function callTool(name, args) {
     if (!args || typeof args !== 'object') args = {}
+    await caughtUp()
     switch (name) {
       case 'reply': {
         const card = args.card_id == null ? null : findCard(args.card_id)
@@ -327,6 +332,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const fields = questionFields(args, namesOf(args.attachments))
         const attachments = await uploadAll(args.attachments)
         const id = await client.sendCard({ ...fields, attachments })
+        await caughtUp()
         return `card ${id} created, ${placeOf({ object_id: id })}; the choice will arrive as a channel event${strippedHint()}`
       }
       case 'create_info': {

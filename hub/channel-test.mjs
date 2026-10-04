@@ -61,6 +61,7 @@ function fakeClient() {
     async requestPermission(p) { calls.push(['requestPermission', p]); return id() },
     async publish(p) { calls.push(['publish', p]); const i = id(); model.published.set(i, { object_id: i, agent_device_id: me, object_state: 'open', ...p }); return i },
     async uploadAttachment(bytes, meta) { calls.push(['upload', bytes.length, meta]); const i = id(); return { attachment_id: i, file_key: 'k', sha256: 's', total_size: bytes.length, ...meta } },
+    async settle() {},
     async fetchAttachment(ref) { return new TextEncoder().encode(`bytes of ${ref.file_name}`) },
   }
 }

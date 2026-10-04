@@ -91,6 +91,16 @@ export async function integration({ test, tmp }) {
       await until('status line', () => human.model.sessions.get(agentId)?.status_lines?.find(l => l.id === 'tests'))
     })
 
+    await test('e2e: own sends are visible at once: set_status names a card filed a moment earlier', async () => {
+      const id = (await channel.call('create_decision', { title: 'Right away?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })).match(/card ([0-9a-f]{32}) created, position \d+ of \d+/)?.[1]
+      assert.ok(id, 'create_decision reports the place in the stack')
+      assert.equal(await channel.call('set_status', { id: 'wait', label: 'Waiting', state: 'decision', card_id: id }), 'status "wait" is decision')
+      assert.ok(JSON.parse(await channel.call('list_cards')).some(c => c.id === id))
+      await channel.call('withdraw_card', { card_id: id, reason: 'test' })
+      assert.equal(JSON.parse(await channel.call('list_cards')).find(c => c.id === id).status, 'done')
+      await channel.call('clear_status', { id: 'wait' })
+    })
+
     let card
     await test('e2e: create_decision -> human answers -> decision event', async () => {
       const out = await channel.call('create_decision', { title: 'Run it tonight?', body: 'Locks orders 40 s.', options: [{ key: 'tonight', label: 'Tonight' }, { key: 'now', label: 'Now' }], recommended: 'tonight' })
