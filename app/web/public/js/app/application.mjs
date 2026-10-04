@@ -94,8 +94,8 @@ application.register('folds', class extends Controller {
 })
 
 // The stacks at the foot of the Desk: a click fans one out, a click gathers it. A stream may replace the stacks;
-// the one that stood open stands open again.
-let openPile
+// the one that stood open stands open again, with the filter and "N more" of the pile "Off the desk" as they were.
+let openPile, offFilter = 'all', offMore = false
 application.register('piles', class extends Controller {
   static targets = ['pile']
   connect() { if (openPile === undefined) openPile = this.pileTargets.find(p => p.classList.contains('is-open'))?.dataset.pile ?? null; this.apply() }
@@ -115,7 +115,14 @@ application.register('piles', class extends Controller {
     event.stopPropagation()
     head?.focus({ preventScroll: true })
   }
+  // A filter chip of "Off the desk" (radio buttons; CSS shows the lines of the checked one), or its "N more".
+  filter({ target }) {
+    if (target.matches('[data-off-filter]')) offFilter = target.value
+    else if (target.matches('[data-off-more]')) offMore = target.checked
+  }
   apply() {
+    for (const box of this.element.querySelectorAll('[data-off-filter]')) box.checked = box.value === offFilter
+    for (const box of this.element.querySelectorAll('[data-off-more]')) box.checked = offMore
     for (const pile of this.pileTargets) {
       const is = pile.dataset.pile === openPile
       pile.classList.toggle('is-open', is)

@@ -13,26 +13,28 @@
 //           of his (its session withdrew it; the hub takes nothing back there, so the line has no way back)
 // A permission card is never listed (the hub closes it by itself). The newest lies on top of each.
 //
-// The look (card Nr. 198, his pick c): no big stacks of paper. The four places are small stamped tabs in one line
-// under the cards (two rows on a phone): the stamp's sign (the basket for the bin), its word and the count, in the
-// stamp's ink; the gear of "Working" turns while it holds something. A click opens that place's list right below the
-// tabs (the controller "piles": one open at a time, Escape closes), with its search and its ways back. Markup per tab:
-//   <section class="inbox-stack inbox-pile …" data-stack="later|works|done|trash" data-pile="…">
-//     <h3 class="inbox-stack-title"><button class="inbox-stack-head inbox-pile-head …" aria-label="Later, 5 cards">
-//       <span class="stack-stamp stack-tab-stamp" data-stamp="later"><span class="stack-stamp-sign"></span>
-//       <span class="stack-stamp-word">Snooze</span><span class="stack-stamp-num">5</span></span></button></h3>
-//     <div class="inbox-pile-sheets"> the search, then the lines in <turbo-frame id="stack-list-later"> </div></section>
-// An empty place is a faint tab that cannot be pressed (.inbox-stack.is-empty). Look: css/piles.css, css/stamps.css.
+// The look (his pick "A, gefächerter Papierstapel", 4 October; it replaced the four tabs of card Nr. 198): Notes is a small
+// stamped tab first in the row (the controller "piles": a click opens its list right below the row, one open at a time,
+// Escape closes). Beside it ONE pile, "Off the desk N", for everything that left the open rows: the newest five sheets
+// lie fanned on top of each other, each with the sign of its place (three Z, the gear, the tick, the basket), its title
+// and when. A click unfolds the pile (the same controller): filter chips with counts (All · Snoozed · Working · Done ·
+// Trash; radio buttons, CSS shows the lines of the checked one), the search, the newest ten lines and "N more". Each
+// line has its way back (Wake up, Take back). Markup:
+//   <section class="inbox-stack inbox-pile off-pile" data-stack="off" data-pile="off">
+//     <h3 class="inbox-stack-title"><button class="inbox-stack-head inbox-pile-head off-head" aria-label="Off the desk, 51 cards">
+//       <span class="off-label">Off the desk <b class="off-count">51</b></span><span class="off-fan"> five .off-sheet </span></button></h3>
+//     <div class="inbox-pile-sheets off-body"> chips, the search, the lines in <turbo-frame id="stack-list-off"> </div></section>
+// An empty pile is a faint label over one dashed sheet that cannot be pressed. Look: css/piles.css, css/stamps.css.
 import { html, raw } from './html.mjs'
 import { WORDS, cardNr, plain, advisedLabels, agoSpan } from './text.mjs'
 import { smallMark } from './sidebar.mjs'
 import { crownOf } from './memo.mjs'
 import { deskMain } from './desk.mjs'   // (the search's page without script: the Desk; a cycle, used only at call time)
-import { sketchSvg, ringSvg } from '../pen.js'
+import { sketchSvg } from '../pen.js'
 
 const FAN_MAX = 8      // a fanned stack shows so many of the newest sheets, then "N more"
 const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
-export const STACKS = ['notes', 'later', 'works', 'done', 'trash']
+export const STACKS = ['notes', 'off']
 const STRAIGHT = true    // the tabs without any tilt (css/piles.css .is-straight); decided "gerade" on card 205
 export const STAMPS = { notes: 'Notes', later: 'Snooze', works: 'Working', done: 'Done', trash: 'Trash' }   // line 1 of each stack's stamp; line 2 is its sign (css/stamps.css: three Z, gear, tick) and the number
 const sk = name => raw(sketchSvg(name))
@@ -69,25 +71,25 @@ export function stackCards(model) {
   }
 }
 
-// ---- a line on one of the places: one sheet of a fan ----
-// kind: why it lies there: 'later' | 'asked' (in revision) | 'answered' | 'shredded' | 'withdrawn'.
-function line(card, kind, said, model, base) {
+// ---- a line of the pile: one card that left the open rows ----
+// kind: why it lies there: 'later' | 'asked' (in revision) | 'answered' | 'shredded' | 'withdrawn'. g: its place (the sign).
+/** The sign of a place, in its stamp's ink (css/stamps.css): three Z, the gear, the tick; the basket for Trash. */
+const signOf = g => (g === 'trash' ? html`<span class="off-sign" data-g="trash" aria-hidden="true">${raw(sketchSvg('basket-full'))}</span>` : html`<span class="stack-stamp off-sign" data-stamp="${g}" data-g="${g}" aria-hidden="true"><span class="stack-stamp-sign"></span></span>`)
+const PLACE = { later: 'Snoozed', works: 'Working', done: 'Done', trash: 'Trash' }
+function line(sheet, model, base, rest = false) {
+  const { card, kind, g } = sheet, said = sheet.said
   const sender = model.byAgent.get(card.agent)
-  const since = kind === 'asked' ? card.with_agent : kind === 'later' ? card.snoozed_at : kind === 'shredded' ? card.shredded : kind === 'withdrawn' ? null : card.decided
+  const since = sheet.at
   const word = kind === 'later' ? WORDS.wake : WORDS.takeBack
   const way = kind === 'asked' ? 'takeback' : kind === 'later' ? 'wake' : 'reopen'
   const tip = kind === 'asked' ? 'Take it back: the session need not rework it' : kind === 'later' ? `${WORDS.wake}: fetch this question back` : 'Take back: the question is open again'
-  const mark = kind === 'asked' ? html`${sk('reverse')}${raw(ringSvg({ drop: true }))}` : sk(kind === 'later' ? 'snooze' : kind === 'shredded' || kind === 'withdrawn' ? 'bin' : 'tick')
-  return html`<div class="inbox-pile-item"><article class="inbox-done inbox-revising-row" tabindex="-1" data-id="${card.id}" data-kind="${kind}"${kind === 'later' ? raw(' data-later') : ''}>
-<a class="inbox-revising-open" data-nav href="${cardPath(card, base)}" title="${cardNr(card)}: open it">${mark}<strong>${card.title}</strong>${said ? html`<span class="inbox-revising-sent">${said}</span>` : ''}</a>
-<span class="inbox-revising-tail">${sender ? html`${smallMark(sender)}<span class="inbox-stack-who">${sender.name}</span>` : ''}${since ? agoSpan(since) : ''}</span>
-${kind === 'withdrawn' ? '' : html`<form method="post" action="${base}/cards/${card.id}/${way}"><input type="hidden" name="stay" value="1"><button class="inbox-takeback inbox-revising-take" type="submit" title="${tip}" aria-label="${word}: ${card.title}">${word}</button></form>`}
-</article></div>`
+  return html`<article class="inbox-done off-line${rest ? ' is-rest' : ''}" tabindex="-1" data-id="${card.id}" data-kind="${kind}" data-g="${g}"${kind === 'later' ? raw(' data-later') : ''}>
+${signOf(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(card, base)}" title="${cardNr(card)} · ${PLACE[g]}: open it"><strong>${card.title}</strong>${said ? html`<span class="off-said">${said}</span>` : ''}</a>
+<span class="off-tail">${sender ? html`${smallMark(sender)}<span class="off-who">${sender.name}</span>` : ''}${since ? agoSpan(since) : ''}</span>
+${kind === 'withdrawn' ? html`<span class="off-way"></span>` : html`<form class="off-way" method="post" action="${base}/cards/${card.id}/${way}"><input type="hidden" name="stay" value="1"><button class="inbox-takeback" type="submit" title="${tip}" aria-label="${word}: ${card.title}">${word}</button></form>`}
+</article>`
 }
 
-// The waste-paper basket: drawn with the pen (sketch 'basket' of the shared module); with something in it a crumpled
-// sheet looks over its rim ('basket-full').
-const basketSvg = n => sketchSvg(n ? 'basket-full' : 'basket', 'inbox-bin-drawing')
 
 // ---- a line on the Notes stack: one of his notes, not sent yet ----
 // The note's words (a click opens it to write on: POST /memos/<id>/open), when it was last written, and its ways:
@@ -140,9 +142,11 @@ export function deskStacks(model, base, open = null, q = '') {
   }
   const until = c => (c.snoozed_until ? `Until ${new Date(c.snoozed_until).toLocaleString('en-GB', { weekday: 'short', hour: '2-digit', minute: '2-digit' })}` : '')
   const answerOf = c => { if (c.kind === 'info') return 'Read'; if (c.trusted) return `${WORDS.trust}${advisedLabels(c) ? `: ${advisedLabels(c)}` : ''}`; const picked = c.choices?.length ? c.choices : [c.choice]; return c.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || String(c.choice) }
+  // When a card went to its place: put off, handed back, answered, thrown away (a withdrawn one: when it came).
+  const atOf = (c, kind) => (kind === 'asked' ? c.with_agent : kind === 'later' ? c.snoozed_at : kind === 'shredded' ? c.shredded : kind === 'withdrawn' ? (c.decided ?? c.created) : c.decided) ?? 0
   // A sheet: the card, why it lies there, its grey line. (An info he read he closed himself: only "Read".)
   // A sheet's grey line is worked out only when the sheet is drawn or searched (a Done stack can hold thousands).
-  const sheet = (card, kind, say) => { let said = null; return { card, kind, get said() { return (said ??= say()) } } }
+  const sheet = (card, kind, say) => { let said = null; return { card, kind, at: atOf(card, kind), get said() { return (said ??= say()) } } }
   const answered = c => sheet(c, 'answered', () => `${answerOf(c)}${c.status === 'done' && c.kind !== 'info' ? ' · done by the agent' : c.status === 'decided' && stackOf(c, ctx) === 'done' ? ' · not closed by the agent' : ''}`)
   const thrown = c => (c.status === 'shredded' ? sheet(c, 'shredded', () => 'Shredded') : sheet(c, 'withdrawn', () => `Withdrawn${c.summary ? `: ${plain(c.summary, state.assets).slice(0, 220)}` : ''}`))
   const piles = [
@@ -154,30 +158,50 @@ export function deskStacks(model, base, open = null, q = '') {
   ]
   const terms = String(q ?? '').toLowerCase().split(/\s+/).filter(Boolean)
   const found = sheet => { const text = `${sheet.card.title} ${model.byAgent.get(sheet.card.agent)?.name ?? ''} ${sheet.said}`.toLowerCase(); return terms.every(w => text.includes(w)) }
-  return html`<div class="inbox-stacks stack-tabs${STRAIGHT ? ' is-straight' : ''}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut">${piles.map((pile, at) => {
-    const draw = sheet => () => (sheet.memo ? noteLine(sheet.memo, model, base) : line(sheet.card, sheet.kind, sheet.said, model, base))
-    pile.lines = pile.sheets.map(draw)
-    const n = pile.lines.length, names = [pile.kind, ...(pile.also ? [pile.also] : [])]
-    const stands = n > 0 && open === pile.kind
-    const cap = stands ? OPEN_MAX : FAN_MAX
-    const cls = `${n ? `inbox-stack inbox-group inbox-pile ${names.map(k => `inbox-group-${k}`).join(' ')}${stands ? ' is-open' : ''}` : 'inbox-stack is-empty'}${pile.bin ? ' inbox-bin' : ''}`
-    const title = pile.bin ? `${pile.word}: show what is in it` : pile.notes ? 'Your notes: open the stack' : 'Fan the stack out'
-    // On a stack the stamp carries the count; the basket has it as a small number.
-    // A small tab, stamped: the sign (the basket for the bin), the word and the count, in the stamp's ink (card Nr. 198: c).
-    const tab = html`<span class="stack-stamp stack-tab-stamp" data-stamp="${pile.kind}">${pile.bin ? html`<span class="stack-tab-bin" aria-hidden="true">${raw(basketSvg(n))}</span>` : raw('<span class="stack-stamp-sign" aria-hidden="true"></span>')}<span class="stack-stamp-word">${STAMPS[pile.kind] ?? pile.word}</span><span class="stack-stamp-num">${n}</span></span>`
-    const unit = pile.notes ? 'note' : 'card'
-    const name = `${pile.word}, ${n === 1 ? `1 ${unit}` : `${n} ${unit}s`}`
-    return html`<section class="${cls}" data-stack="${pile.kind}"${n ? html` data-pile="${pile.kind}" data-piles-target="pile"` : html` data-pile-empty="${pile.kind}"`} style="--at:${at}">
-<h3 class="inbox-stack-title"><button class="${n ? `inbox-stack-head inbox-pile-head ${names.map(k => `inbox-${k}-toggle`).join(' ')}` : 'inbox-stack-head'}" type="button" aria-label="${name}"${n ? html` aria-expanded="${String(stands)}" title="${title}" data-action="click->piles#toggle"` : raw(' disabled')}>${tab}</button></h3>
-${stackFan(pile, base, stands ? q : '', stands && terms.length ? pile.sheets.filter(found).map(draw) : null, cap)}
+  const notes = piles[0]
+  // Notes: the small stamped tab, its list below the row.
+  const notesTab = (pile => {
+    pile.lines = pile.sheets.map(sheet => () => noteLine(sheet.memo, model, base))
+    const n = pile.lines.length, stands = n > 0 && open === 'notes'
+    const cls = n ? `inbox-stack inbox-group inbox-pile inbox-group-notes${stands ? ' is-open' : ''}` : 'inbox-stack is-empty'
+    const tab = html`<span class="stack-stamp stack-tab-stamp" data-stamp="notes"><span class="stack-stamp-sign" aria-hidden="true"></span><span class="stack-stamp-word">${STAMPS.notes}</span><span class="stack-stamp-num">${n}</span></span>`
+    return html`<section class="${cls}" data-stack="notes"${n ? html` data-pile="notes" data-piles-target="pile"` : raw(' data-pile-empty="notes"')} style="--at:0">
+<h3 class="inbox-stack-title"><button class="${n ? 'inbox-stack-head inbox-pile-head inbox-notes-toggle' : 'inbox-stack-head'}" type="button" aria-label="Notes, ${n === 1 ? '1 note' : `${n} notes`}"${n ? html` aria-expanded="${String(stands)}" title="Your notes: open the stack" data-action="click->piles#toggle"` : raw(' disabled')}>${tab}</button></h3>
+${stackFan(pile, base, stands ? q : '', stands && terms.length ? pile.sheets.filter(found).map(sheet => () => noteLine(sheet.memo, model, base)) : null, stands ? OPEN_MAX : FAN_MAX)}
 </section>`
-  })}</div>`
+  })(notes)
+  // Off the desk: every card of the four places in one pile, the newest first.
+  const all = piles.slice(1).flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
+  return html`<div class="inbox-stacks stack-tabs${STRAIGHT ? ' is-straight' : ''}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${notesTab}${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}</div>`
+}
+
+const FAN = 5        // the pile shows so many sheets fanned
+const SHOWN = 10     // the unfolded pile shows so many lines, then "N more"
+const FILTERS = [['all', 'All'], ['later', 'Snoozed'], ['works', 'Working'], ['done', 'Done'], ['trash', 'Trash']]
+/** The one pile "Off the desk" (his pick A). stands: it stands unfolded (?pile=off). hits: the sheets found by q, or null. */
+function offPile(all, model, base, stands, hits, q) {
+  const n = all.length
+  const count = g => (g === 'all' ? n : all.filter(s => s.g === g).length)
+  const name = `Off the desk, ${n === 1 ? '1 card' : `${n} cards`}`
+  const fan = html`<span class="off-fan" style="--n:${Math.max(1, Math.min(FAN, n))}" aria-hidden="true">${n ? all.slice(0, FAN).map((s, i) => html`<span class="off-sheet" style="--i:${i}">${signOf(s.g)}<span class="off-t">${s.card.title}</span>${s.at ? agoSpan(s.at) : ''}</span>`) : html`<span class="off-sheet is-blank" style="--i:0"><span class="off-t">Nothing put away yet</span></span>`}</span>`
+  const head = html`<h3 class="inbox-stack-title"><button class="${n ? 'inbox-stack-head inbox-pile-head off-head' : 'inbox-stack-head off-head'}" type="button" aria-label="${name}"${n ? html` aria-expanded="${String(stands)}" title="Unfold the pile" data-action="click->piles#toggle"` : raw(' disabled')}><span class="off-label">Off the desk <span class="off-count">${n}</span><span class="off-fold">Fold up ${sk('unfold')}</span></span>${fan}</button></h3>`
+  if (!n) return html`<section class="inbox-stack is-empty off-pile" data-stack="off" data-pile-empty="off">${head}</section>`
+  const chips = html`<div class="off-chips" role="radiogroup" aria-label="Show">${FILTERS.map(([g, word]) => html`<label class="off-chip" data-g="${g}"><input type="radio" name="off-filter" value="${g}" data-off-filter${g === 'all' ? raw(' checked') : ''}>${g === 'all' ? '' : signOf(g)}<span>${word}</span><b>${count(g)}</b></label>`)}</div>`
+  const search = html`<form class="stack-search off-search" method="get" action="${base}/stacks/off" role="search" data-turbo-frame="stack-list-off" data-controller="stack-search" data-stack-search-kind-value="off" data-action="input->stack-search#typed keydown.esc->stack-search#clear"><label>${sk('search')}<input type="search" name="q" value="${q}" placeholder="Search everything off the desk" aria-label="Search everything off the desk" autocomplete="off" spellcheck="false" data-stack-search-target="field"></label></form>`
+  const list = hits ? hits : all
+  const shown = list.slice(0, OPEN_MAX)
+  const beyond = list.length - shown.length
+  const rest = hits ? 0 : Math.max(0, shown.length - SHOWN)
+  const lines = hits && !hits.length ? html`<p class="stack-search-none">Nothing here has these words.</p>`
+    : html`${shown.map((s, i) => line(s, model, base, !hits && i >= SHOWN))}${FILTERS.slice(1).map(([g, word]) => html`<p class="stack-search-none off-none" data-g="${g}">Nothing ${word.toLowerCase()}${hits ? ' has these words' : ''}.</p>`)}${rest ? html`<label class="off-more"><input type="checkbox" data-off-more><span class="off-more-open">${rest} more</span><span class="off-more-shut">Less</span></label>` : ''}${beyond > 0 ? html`<p class="stack-search-none">${beyond.toLocaleString('en-GB')} more: search to find them.</p>` : ''}`
+  return html`<section class="inbox-stack inbox-group inbox-pile off-pile${stands ? ' is-open' : ''}" data-stack="off" data-pile="off" data-piles-target="pile">${head}
+<div class="inbox-pile-sheets off-body">${chips}${search}<turbo-frame id="stack-list-off" class="stack-list off-list" data-stack-search-frame="off">${lines}</turbo-frame></div></section>`
 }
 
 /** The search of a stack: GET <base>/stacks/<kind>?q=… The Desk with that stack open and searched (a Turbo Frame takes
  *  only its list from it; without script it is the page). */
 export function register(t) {
-  t.get(/^\/stacks\/(notes|later|works|done|trash)$/, ({ req, res, url, match }) => {
+  t.get(/^\/stacks\/(notes|off)$/, ({ req, res, url, match }) => {
     const m = t.model(), q = String(url.searchParams.get('q') ?? '').trim().slice(0, 120)
     const n = m.fresh.length
     t.page(req, res, { model: m, title: n ? `(${n}) ${m.deskName} · Trommi` : `${m.deskName} · Trommi`, view: 'desk', main: deskMain(m, t.BASE, { pile: match[1], q }) })
