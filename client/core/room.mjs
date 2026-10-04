@@ -30,7 +30,7 @@ const sleep = ms => new Promise(r => setTimeout(r, ms))
 const roleName = r => (r === ROLE.HUMAN ? 'human' : 'agent')
 
 async function newDevice(storage) {
-  return z.generateDevice({ extractable: !!storage.extractable_keys })
+  return z.generateDevice({ extractable: !!(storage.extractable_keys || storage.wraps_keys) })   // a wrapping storage hands back non-extractable keys (storage-idb.mjs)
 }
 
 async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null, save = true }) {
