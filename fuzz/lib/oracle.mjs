@@ -54,6 +54,7 @@ export class RoomOracle {
   answer(ref, { action, choices, trusted = false, staleHash = false }) {
     const c = this.cards.get(ref)
     if (!c || c.state !== 'open' || staleHash) return false
+    if (action === 'answer' && c.card_type === 'info') return false
     if (action === 'answer' && !trusted) {
       if (c.card_type === 'info' || !choices.length || choices.some(k => !c.options.includes(k)) || (choices.length > 1 && !c.allows_multiple)) return false
     }

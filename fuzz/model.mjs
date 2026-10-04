@@ -51,6 +51,7 @@ export async function runActions(actions, { seed = 'x', mode = 'strict', root, r
       for (const [, o] of outs) if (o instanceof Error) throw o
       onStep?.(step)
       // after every step
+      { const top = [...(w.http.hot ?? [])].sort((x, y) => y[1] - x[1])[0]; if (top && top[1] > 40000) throw new Finding('hot-loop', `a client sent ${top[1]} requests in one run: ${top[0]} (busy retry loop without backoff)`) }
       if (hostile) { await sleep(40); await C.checkSafety(R); C.checkHub(w); C.checkCommands(R); onStep?.(step); if (step % deepEvery === 0) await C.checkSafety(R, { deep: true }); continue }
       await w.quiesce({ timeout_ms: 30000 })
       C.checkHub(w); C.checkCommands(R); C.checkNoForeign(R); C.checkRemoved(R); C.checkIsolation(R)
@@ -88,7 +89,7 @@ async function hostileEnd(w, R) {
 
 async function deep(w, R, { strict }) {
   const saved = [...w.devs.values()].map(d => [d, d.faults]); for (const [d] of saved) d.faults = { delay: 0, lose_response: 0, offline: 0 }
-  for (const d of [...w.devs.values()]) if (d.dead && !d.removed && d.client === null && d.storage_base) { try { await w.boot(d) } catch (e) { throw new Finding('exception', `restart of ${d.name} failed: ${e.stack}`) } }
+  for (const d of [...w.devs.values()]) if (d.dead && !d.removed && d.client === null && d.storage_base) { try { await w.boot(d) } catch (e) { if (/simulated:|process killed|fenced:/.test(e?.message ?? '')) { d.faults = { delay: 0, lose_response: 0, offline: 0 }; try { await w.boot(d) } catch (e2) { throw new Finding('exception', `restart of ${d.name} failed: ${e2.stack}`) } } else throw new Finding('exception', `restart of ${d.name} failed: ${e.stack}`) } }
   await w.quiesce({ timeout_ms: 30000 })
   try { await C.checkConvergence(R); await C.checkTimelines(R, { against: strict && !R.stopCompare }) } finally { for (const [d, f] of saved) d.faults = f }
   C.checkDerived(w)
