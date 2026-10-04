@@ -1,6 +1,7 @@
 {
   "name": "Trommi",
   "short_name": "Trommi",
+  "description": "Questions from your agents, answered from any device.",
   "id": "/",
   "start_url": "/",
   "scope": "/",
@@ -10,6 +11,6 @@
   "icons": [
     { "src": "/icons/trommi-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
     { "src": "/icons/trommi-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "/icons/trommi-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "/icons/trommi-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

@@ -76,3 +76,12 @@ dialog.rowmenu::backdrop { background: transparent; }
 .rowmenu-in button svg { flex: none; width: 22px; height: 22px; color: var(--ink); }
 .rowmenu-in button.is-shred, .rowmenu-in button.is-shred svg { color: var(--deny); }
 .rowmenu-in hr { width: auto; margin: 6px 8px; border: 0; border-top: 1px solid var(--line); }
+
+/* ---- a new version of the app took over (js/app/pwa.mjs): one quiet line above the round buttons at the foot ---- */
+.app-update {
+  position: fixed; z-index: 2700; left: 50%; bottom: calc(80px + env(safe-area-inset-bottom, 0px)); translate: -50% 0;
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: calc(100vw - 32px); padding: 6px 6px 6px 16px;
+  border-radius: 999px; background: var(--fg); color: var(--bg); font: 500 var(--t-sm)/1.3 var(--font); box-shadow: var(--shadow-md);
+  animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
+}
+.app-update button { min-height: 40px; padding: 0 14px; border: 0; border-radius: 999px; background: var(--bg); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
