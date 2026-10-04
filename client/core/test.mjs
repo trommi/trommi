@@ -71,8 +71,8 @@ async function addHuman(inviter, name, storage = memoryStorage({ extractable_key
   await c.start()
   return c
 }
-async function addAgent(inviter, name, storage = memoryStorage()) {
-  const inv = await inviter.createInvite({ device_role: 'agent' })
+async function addAgent(inviter, name, storage = memoryStorage(), label = null) {
+  const inv = await inviter.createInvite({ device_role: 'agent', label })
   const j = joinRoom({ link: inv.link, storage, device_name: name, device_info: { device_name: name, platform: 'node', folder: '~/git/x', host: 'pc' }, poll_ms: 50 })
   const c = track(await j.client)
   await c.start()
@@ -100,6 +100,8 @@ await test('two humans + agent: invite with check code, agent without, roles and
   eq(agent.model.room.my_role, 'agent', 'agent role')
   assert(phone.model.sessions.has(agent.my_device_id), 'session for the agent')
   eq(phone.model.sessions.get(agent.my_device_id).device_name, 'Agent 0', 'session name')
+  const labelled = await addAgent(phone, 'calls itself x', memoryStorage(), 'Krypto')
+  await until(() => laptop.model.sessions.get(labelled.my_device_id)?.settings?.name === 'Krypto', 'inviter label in session/<id> (R8)')
 })
 
 await test('wrong check code burns the invite and adds nobody', async () => {
