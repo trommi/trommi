@@ -20,6 +20,11 @@ Running log of the night build (brief: thin hub on hub.trommi.com, static E2E ap
   - Password login and session handover are built but hidden until A's zcrypto v1.1 (branch hub-v11, 38ff44b) lands on main.
 - Superkind first pass (a990b62, docs/parity.md): 42 states × 4 profiles; 37/39 decision round trips green through the real channel; app steps 27–75 ms locally. Turbo baseline: Desk cold 58 ms desktop / 128 ms phone 4x.
 - Leak fixed (eb1ef81): heap flat over 20k envelopes.
+- Pad/Desk paper E2E (trommi/trommi 66bb018, 2dae58d), two devices on a local hub:
+  - pen up → stroke on the other device p50 28 ms; first piece of a live stroke 186–198 ms
+  - area send → agent 35–39 ms
+  - 20k strokes: snapshot 119–134 ms (257 KB); fresh reload 0.31 s (0.97 s at 4x CPU, longest task 108 ms)
+  - Not yet run against production; no real touch test. Sessions still addressed by agent device id until R6. Info card Nr. 217.
 - Streams running: A hub+crypto+deploy, B client core (`client/core/`, API in its README, b15ab91), C app (trommi/trommi), D agent channel, E verifier "Superkind", G admin (Tailscale login + password).
 
 - Protocol v1 drafted in `README.md` ("Hub v1: the wire protocol"), awaiting two independent security reviews before freezing.
