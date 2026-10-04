@@ -410,6 +410,7 @@ function selectWays(root) {
     for (const id of [...chosen]) if (!root.querySelector(`#row-${CSS.escape(id)}`)) chosen.delete(id)
     for (const r of rows()) { const on = chosen.has(r.dataset.id); r.classList.toggle('is-chosen', on); r.querySelector('[data-select]').setAttribute('aria-pressed', String(on)) }
     root.classList.toggle('is-choosing', chosen.size > 0)
+    document.documentElement.classList.toggle('is-choosing', chosen.size > 0)   // (the page's corner steps aside)
     bar.hidden = !chosen.size
     bar.querySelector('.sel-n').textContent = `${chosen.size} selected`
     bar.elements.ids.value = [...chosen].join(',')
