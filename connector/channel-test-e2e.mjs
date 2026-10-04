@@ -321,9 +321,9 @@ export async function integration({ test, tmp }) {
       await human._refreshDevices()
       const since = human.model.members.get(agentId).offline_since
       assert.ok(since > Date.now() - 30000, 'the hub says since when')
-      globalThis.document ??= { addEventListener() {} }
-      const { BoardState } = await import('../app/web/public/js/app/board-state.mjs')
-      const { blockedOf } = await import('../app/web/public/js/app/node-stubs/blocked.mjs')
+
+      const { BoardState } = await import('../app/web/public/app.mjs')
+      const { blockedOf } = await import('../app/web/public/app.mjs')
       const st = new BoardState(human).update(), a = st.agents.find(x => x.session_id === human.sessionOfAgent(agentId))
       assert.equal(a.offline_since, since, 'board state offline_since')
       const stop = blockedOf(a, st, Date.now() + 61000)   // (the module counts from its own load too)
@@ -436,9 +436,9 @@ export async function integration({ test, tmp }) {
     })
 
     await test('e2e: close_session archives a finished helper (lines cleared, readable in the archive); a quiet helper is idle, not stopped; open_session reopens', async () => {
-      globalThis.document ??= { addEventListener() {} }
-      const { BoardState } = await import('../app/web/public/js/app/board-state.mjs')
-      const { blockedOf, quietOf, QUIET_MS } = await import('../app/web/public/js/app/node-stubs/blocked.mjs')
+
+      const { BoardState } = await import('../app/web/public/app.mjs')
+      const { blockedOf, quietOf, QUIET_MS } = await import('../app/web/public/app.mjs')
       const board = new BoardState(human)
       const design = () => board.update().agents.find(a => a.session_id === child)
       await channel.call('set_status', { id: 'draw', label: 'Drawing', state: 'working', session: 'Design' })

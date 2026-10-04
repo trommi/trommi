@@ -133,7 +133,7 @@ await test('attachments by absolute path are uploaded and referenced, with marks
 
 await test('a video attachment goes as video/webm (mp4, mov too), encrypted like any file, and comes back whole', async () => {
   const { client, bridge } = bridgeWith()
-  const clip = new URL('../app/web/public/mock/files/clip.webm', import.meta.url)
+  const clip = new URL('../app/web/public/demo/files/clip.webm', import.meta.url)
   const file = path.join(tmp, 'flow.webm')
   fs.copyFileSync(clip, file)
   await bridge.callTool('create_decision', { title: 'Which flow?', options: [{ key: 'a', label: 'This' }, { key: 'b', label: 'Other' }], attachments: [file] })

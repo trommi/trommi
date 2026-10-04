@@ -64,7 +64,7 @@ self.addEventListener('fetch', event => {
     return
   }
   // (The sandboxed frame keeps its own CSP: it never comes from the shell cache.)
-  if (DEV || url.pathname.startsWith('/mock/') || url.pathname.startsWith('/a/')) return
+  if (DEV || url.pathname.startsWith('/demo/') || url.pathname.startsWith('/a/') || url.pathname === '/frame') return
   // Network first, the cache when offline: a phone that is online never runs yesterday's code. A navigation inside the
   // app gets the shell ("/": the app routes in the page).
   const key = event.request.mode === 'navigate' && !/\.\w+$/.test(url.pathname) && !url.pathname.endsWith('/') ? '/' : url.pathname

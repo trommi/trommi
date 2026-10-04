@@ -1,6 +1,6 @@
 // Turns a state export of today's board (node server/board-store.mjs export <data> out.json, with the demo state and
 // the test cards: dev/demo-state.mjs + dev/fixtures.mjs in trommi-hub) into the mock room's fixture, in the shape of
-// the client core's model (core/README.md in trommi-hub). Pictures are copied to public/mock/files/.
+// the client core's model (core/README.md in trommi-hub). Pictures are copied to public/demo/files/.
 //   node dev/make-fixture.mjs <state-export.json> <board-data-dir>
 // Adds what the export lacks so every part of the board shows: a crowned main session with two subs and status
 // lines, an online agent, a pending permission request, a memo.
@@ -12,7 +12,7 @@ import { fileURLToPath } from 'node:url'
 const [exportFile, dataDir] = process.argv.slice(2)
 if (!exportFile || !dataDir) { console.error('usage: node dev/make-fixture.mjs <state-export.json> <board-data-dir>'); process.exit(2) }
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..')
-const out = path.join(root, 'public', 'mock')
+const out = path.join(root, 'public', 'demo')
 fs.mkdirSync(path.join(out, 'files'), { recursive: true })
 const s = JSON.parse(fs.readFileSync(exportFile, 'utf8'))
 const hex = (text, n) => crypto.createHash('sha256').update(String(text)).digest('hex').slice(0, n)
@@ -48,7 +48,7 @@ const att = a => {
   const src = path.join(dataDir, 'files', name)
   if (a.url?.startsWith('/files/') && fs.existsSync(src)) fs.copyFileSync(src, path.join(out, 'files', name))
   const type = a.type ?? (a.image ? (/\.png$/i.test(name) ? 'image/png' : /\.jpe?g$/i.test(name) ? 'image/jpeg' : /\.svg$/i.test(name) ? 'image/svg+xml' : 'image/png') : /\.html?$/i.test(name) ? 'text/html' : /\.json$/i.test(name) ? 'application/json' : /\.txt|\.log$/i.test(name) ? 'text/plain' : 'application/octet-stream')
-  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: a.name ?? name, media_type: type, total_size: a.size ?? 0, width: a.width, height: a.height, caption: a.caption ?? a.title, page: a.page?.url ?? a.page, marks: a.marks, url: `/mock/files/${name}` }
+  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: a.name ?? name, media_type: type, total_size: a.size ?? 0, width: a.width, height: a.height, caption: a.caption ?? a.title, page: a.page?.url ?? a.page, marks: a.marks, url: `/demo/files/${name}` }
 }
 const content = c => ({
   card_type: c.kind === 'info' ? 'info' : 'decision', title: c.title, body: c.body ?? '', options: c.options ?? [], sections: c.sections ?? null, html: c.html ?? null,
@@ -70,7 +70,7 @@ const assetRef = a => {
   const [rel, type] = ASSET_SOURCE[a.type] ?? ASSET_SOURCE.html
   const src = path.join(process.env.TROMMI_HUB ?? path.join(process.env.HOME, 'git/trommi'), rel), name = `asset-${a.id}${path.extname(rel)}`
   if (fs.existsSync(src)) fs.copyFileSync(src, path.join(out, 'files', name))
-  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: path.basename(rel), media_type: type, total_size: a.size ?? 0, url: `/mock/files/${name}` }
+  return { attachment_id: hex(`att:${name}`, 32), file_key: '', sha256: '', file_name: path.basename(rel), media_type: type, total_size: a.size ?? 0, url: `/demo/files/${name}` }
 }
 const tl = key => (timelines[key] ??= [])
 for (const e of events) {

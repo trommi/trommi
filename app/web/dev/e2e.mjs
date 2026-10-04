@@ -135,7 +135,7 @@ try {
 
   // ---- a card with a picture: uploaded encrypted, decrypted in A's page only when shown ----
   // (a tall one, 1440x2160: the picture's large view must scroll)
-  const png = fs.readFileSync(new URL('../public/mock/files/tall-sheet.png', import.meta.url))
+  const png = fs.readFileSync(new URL('../public/demo/files/tall-sheet.png', import.meta.url))
   const ref = await agent.uploadAttachment(png, { file_name: 'entwurf.png', media_type: 'image/png', width: 1440, height: 2160 })
   t0 = Date.now()
   const picCard = await agent.sendCard({ title: 'Welcher Entwurf?', body: 'Bild anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }, { key: 'z', label: 'Später' }], attachments: [ref] })
@@ -143,7 +143,7 @@ try {
   await A.until(`[...document.querySelectorAll('#row-${picCard} img')].some(i => i.complete && i.naturalWidth > 0)`, 'decrypted picture shown', 15000).then(() => { check(true, 'encrypted picture decrypted and shown on the Desk'); timing('picture card sent -> picture visible', Date.now() - t0) }, e => check(false, e.message))
 
   // ---- a card with a video: uploaded encrypted like a picture; on the card a <video> plays the decrypted blob ----
-  const webm = fs.readFileSync(new URL('../public/mock/files/clip.webm', import.meta.url))
+  const webm = fs.readFileSync(new URL('../public/demo/files/clip.webm', import.meta.url))
   const vref = await agent.uploadAttachment(webm, { file_name: 'ablauf.webm', media_type: 'video/webm' })
   const vidCard = await agent.sendCard({ title: 'Dieser Ablauf?', body: 'Video anbei.', options: [{ key: 'x', label: 'So' }, { key: 'y', label: 'Anders' }], attachments: [vref] })
   await A.until(`document.getElementById('row-${vidCard}')`, 'video card row')
@@ -312,7 +312,7 @@ try {
   check(await A.js("return !document.querySelector('#deskpad, #deskpad-pen, #deskpad-clear, #paper-island, .clear-btn')"), 'the Desk has no paper under it, no pen and no wipe button')
   check(await A.js("return document.querySelector('#agents > .whiteboard-row a')?.getAttribute('href') === '/whiteboard' && document.querySelector('#agents > .agent-row') === document.querySelector('#whiteboard-row')"), 'the Whiteboard row stands first in the sidebar')
   // A stroke on the desk's canvas, sealed through pad/canvas.js before the Whiteboard opens (as another device would).
-  await A.js(`const { openCanvas } = await import('/pad/canvas.js'); const { strokeFromWorld } = await import('/pad/elements.js'); const { deskCanvas } = await import('/js/views/whiteboard.mjs')
+  await A.js(`const { openCanvas } = await import('/pad/canvas.js'); const { strokeFromWorld } = await import('/pad/elements.js'); const { deskCanvas } = await import('/whiteboard.mjs')
     const tl = deskCanvas(trommi.model().desk)
     const c = await openCanvas({ client: trommi.client, timeline_id: tl })
     const k = strokeFromWorld([120, 140, 220, 190, 340, 160], null, { tool: 'pen', color: 'ink', size: 4 })
