@@ -556,6 +556,12 @@ test('session grants: the wrap set must match, removed signers and agents are re
   await rejects(async () => w.hub.sessionBackLinks(w.agent.token, hex(SID)), 'forbidden')
   assert.equal((await w.hub.sessionBackLinks(w.laptop.token, hex(SID))).length, 1)
 })
+test('R5: a status body is at most 4 KiB padded', async () => {
+  const w = await makeWorld()
+  await rejects(() => post(w, w.agent, { kind: KIND.STATUS, payload: new Uint8Array(5000) }), 'too-large')
+  w.agent.chains = z.newChains()
+  assert.equal((await post(w, w.agent, { kind: KIND.STATUS, payload: new Uint8Array(3000) })).res.n, 1)
+})
 test('C16: a recovery code that was replaced cannot keep reading', async () => {
   const w = await makeWorld()
   const rec = await z.recoveryDevice(w.code)

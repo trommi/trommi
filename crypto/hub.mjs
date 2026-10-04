@@ -509,6 +509,8 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       const head = z.peekEnvelope(bytes)
       if (head.pruned) fail('bad-format', 'an envelope is posted with its ciphertext')
       if (id(head.header.sender) !== s.id) fail('wrong-sender', 'a device posts its own envelopes only')
+      // R5: status bodies are small (padded 4 KiB at most); registers are not a file store.
+      if (head.header.kind === KIND.STATUS && head.ciphertext.length - 16 > 4096) fail('too-large', 'a status body is at most 4 KiB')
       if (leaseGeneration != null) {
         const l = leases.get(s.id)
         if (l && l.generation !== leaseGeneration) fail('lease-lost', 'another process took over this agent key')
