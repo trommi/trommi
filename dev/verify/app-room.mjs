@@ -50,6 +50,12 @@ try {
     const out = await who[f.who].call(f.tool, f.args).catch(err => `ERR ${err.message}`)
     filed[f.kind] = out.slice(0, 120)
   }
+  // the two published assets the Turbo fixture "artifact" puts into Test Beta's conversation
+  const ROOT = path.join(path.dirname(new URL(import.meta.url).pathname), '..', '..')
+  for (const [p, title, note] of [[path.join(ROOT, 'demo', 'fixtures', 'artifact.html'), 'Testseite: Zähler', 'Eine Seite als Asset (verschlüsselt, mit Teilen).'], [path.join(ROOT, 'demo', 'design-g2.png'), 'Bild als Asset', 'Ein Bild als Asset.']]) {
+    filed[`asset ${title}`] = (await who.beta.call('publish_asset', { path: p, title, note }).catch(err => `ERR ${err.message}`)).slice(0, 120)
+  }
+  await who.beta.call('set_status', { id: 'fixtures', label: 'Testkarten', state: 'done', detail: 'fertig' }).catch(() => {})
   const c = channels.courier
   await c.call('reply', { text: 'Ich bin **Courier**, die Sitzung des Prüfers. Gleich kommt eine Freigabe.' })
   await c.client.notification({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'verify1', tool_name: 'Bash', description: 'Run the test suite', input_preview: '{"command":"npm test -- --coverage"}' } })
