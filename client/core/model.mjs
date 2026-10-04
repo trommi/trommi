@@ -538,7 +538,7 @@ export const isExpired = (p, now = Date.now()) => p.permission_state === 'pendin
 
 // ---- registers ------------------------------------------------------------------------------
 
-const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'read_up_to/', 'canvas_snapshot/']
+const HUMAN_PREFIXES = ['draft/', 'snooze/', 'duck/', 'desk/', 'session/', 'session_history/', 'read_up_to/', 'canvas_snapshot/']
 const isHumanKey = k => k === 'crown' || k === 'room_snapshot' || HUMAN_PREFIXES.some(p => k.startsWith(p))
 const isAgentKey = k => k === 'profile' || k.startsWith('status_line/') || k.startsWith('alert/')
 

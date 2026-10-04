@@ -15,6 +15,7 @@ const PAGE = 1000
 const YIELD_MS = 12
 const PERSIST_DELAY_MS = 150
 const BLOCKED_RETRY_MS = 60_000
+const SIGNED_SKEW_MS = 3 * 60_000      // B03: clock skew allowed between the signer of an epoch change and a sender
 const pad = n => String(n).padStart(12, '0')
 const roleName = r => (r === ROLE.HUMAN ? 'human' : 'agent')
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -212,6 +213,7 @@ export class Client {
       this.delivered = new Map(Object.entries(sync.delivered ?? {}))
       this.frontiers = new Map(Object.entries(sync.frontiers ?? {}).map(([k, v]) => [k, new Map(Object.entries(v))]))
       this.lamport = sync.lamport ?? 0
+      if (sync.stale_hashes) this._staleHashes = new Set(sync.stale_hashes)
       // A device that booted from a room snapshot reads items older than it by signature (lazy threads): keep that across restarts.
       if (sync.snapshot_cursor) { this.snapshotCursor = sync.snapshot_cursor; this._snapshotChains = new Map(Object.entries(sync.snapshot_chains ?? {})) }
     }
@@ -293,6 +295,12 @@ export class Client {
     clearInterval(this._devicesTimer)
     this._devicesTimer = setInterval(() => { if (this._started) this._refreshDevices().catch(() => {}) }, 60_000)
     this._devicesTimer.unref?.()
+    // B03: a device that slept (timers late by > 20 s) was not live; until its stream opens again it judges old-epoch
+    // envelopes by signed times, not by its own wall clock.
+    clearInterval(this._beatTimer)
+    this._beat = Date.now()
+    this._beatTimer = setInterval(() => { const n = Date.now(); if (n - this._beat > 20_000) this._liveFrom = null; this._beat = n }, 5_000)
+    this._beatTimer.unref?.()
   }
 
   /** device/<id> right after joining; agents only once a session is assigned (they hold no room key). */
@@ -394,7 +402,8 @@ export class Client {
     this._stream?.close()
     this._stream = null
     for (const inv of this.invitesPrivate.values()) clearInterval(inv._timer)
-    clearInterval(this._devicesTimer)
+    clearInterval(this._devicesTimer); clearInterval(this._beatTimer)
+    this._liveFrom = null
     clearTimeout(this._dirty.timer)
     await this.flush()
     this._setConnection('offline')
@@ -411,8 +420,8 @@ export class Client {
     this._stream = this.hub.stream({
       after_envelope_number: () => this.model.room.last_envelope_number,
       onState: (s, err) => {
-        if (s === 'open') { this._setConnection('live'); this._refreshDevices().catch(() => {}) }   // presence after every (re)connect
-        else if (s === 'closed') { this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
+        if (s === 'open') { this._liveFrom ??= Date.now(); this._setConnection('live'); this._refreshDevices().catch(() => {}) }   // presence after every (re)connect
+        else if (s === 'closed') { this._liveFrom = null; this._setConnection('connecting'); if (err && err.status >= 400 && err.status !== 401) this._localAlert('stream', err) }
       },
       onEvent: ev => this._onStreamEvent(ev),
     })
@@ -564,6 +573,7 @@ export class Client {
     })
   }
   async _processBatch(records, { live = false } = {}) {
+    this._liveBatch = live && !this._resyncing
     {
       const change = M.emptyChange()
       const tl = []                      // timeline item records to persist
@@ -670,14 +680,17 @@ export class Client {
    * Phase 1, run for many records at once (signatures and decryption run in parallel inside WebCrypto):
    * everything that does not depend on the sender's chain. Uses an empty chain map, so no chain advances here.
    */
-  async _precheck({ envelope_number, envelope, void: isVoid = false }) {
+  async _precheck({ envelope_number, envelope, void: isVoid = false, void_code = null }) {
     const bytes = unb64u(envelope)
-    const pre = { envelope_number, bytes, peek: null, v: null, opened: null, content_state: 'ok', error: null, void: !!isVoid }
+    const pre = { envelope_number, bytes, peek: null, v: null, opened: null, content_state: 'ok', error: null, void: !!isVoid, void_code: isVoid ? void_code : null, stale: false }
     try {
       const peek = pre.peek = z.peekEnvelope(bytes)
       const h = peek.header
       if (hex(h.sender) === this.my_device_id && !this._resyncing) return pre          // own envelopes: checked against our own chain in phase 2
-      const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false, freshness: pre.void ? null : this._freshnessFor(h) }
+      // B03: the epoch cutoff is decided here (_isStale), not inside verify: a stale envelope is still verified and moves
+      // its sender's chain on (no gap, so no resync that would apply it after all), but it is never applied.
+      if (!pre.void) pre.stale = this._isStale(h)
+      const opts = { state: this.state, chains: new Map(), allowChainStart: true, allowRemovedSender: true, commit: false, freshness: null }
       if (!peek.pruned) {
         try {
           pre.opened = await z.openEnvelope(bytes, { ...opts, secrets: this.openKeys, self: this.device.id })
@@ -699,17 +712,51 @@ export class Client {
   }
 
   /**
-   * R3 on clients (B03/A7): live, an envelope in an older key epoch counts only within EPOCH_GRACE_MS after this device
-   * saw the epoch change (room: epochChangedAt; session: since). Not while replaying (resync) and not for epochs whose
-   * change this device never saw happen (a fresh device reading history).
+   * R3 on clients (B03/A7, completed in review 3): is this envelope in an older key epoch of its scope past the grace?
+   * - Live, on a device whose stream has been open since before it learned of the change (`since`): by its own clock,
+   *   EPOCH_GRACE_MS after `since` (what the hub does; a late delivery by a hostile hub is refused).
+   * - Otherwise (catch-up after sleep or offline, a resync, a fresh device reading history): by signed times, so a
+   *   device that slept refuses nothing the honest hub accepted: the sender's signed `time` must lie within
+   *   EPOCH_GRACE_MS + SIGNED_SKEW_MS of the signed time of the entry or grant that started the next epoch.
+   * - An envelope refused as stale once stays refused (its hash is kept), also in a resync.
    */
-  _freshnessFor(h) {
-    if (this._resyncing || !this._started) return null
+  _isStale(h, hashHex = null) {
+    if (hashHex && this._staleHashes?.has(hashHex)) return true
+    const info = this._epochInfo(h)
+    if (!info || h.epoch >= info.current) return false
+    if (this._liveBatch && this._started && !this._resyncing && info.since != null && this._liveFrom != null && this._liveFrom <= info.since)
+      return Date.now() - info.since > z.EPOCH_GRACE_MS
+    const changedAt = info.signedAt(h.epoch + 1)
+    if (changedAt == null) return false
+    return h.time - changedAt > z.EPOCH_GRACE_MS + SIGNED_SKEW_MS
+  }
+  /** The scope's current epoch, when this device learned of it, and the signed start time of an epoch. */
+  _epochInfo(h) {
     if (h.keyScope === 1) {
       const k = h.sessionId ? this.sessionKeys.get(hex(h.sessionId)) : null
-      return k?.since ? { now: Date.now(), currentEpoch: k.state.epoch, currentSince: k.since } : null
+      if (!k?.state) return null
+      return { current: k.state.epoch, since: k.since ?? null, signedAt: e => epochStartTime(k, e) }
     }
-    return this.epochChangedAt ? { now: Date.now(), currentEpoch: this.state.epoch, currentSince: this.epochChangedAt } : null
+    const state = this.state
+    return { current: state.epoch, since: this.epochChangedAt ?? null, signedAt: e => { const at = state.epochs.get(e); return at ? (state.entries.find(x => x.seq === at.seq)?.time ?? null) : null } }
+  }
+  /** A void record from another sender: is the hub's reason one this device can re-check from the signed header? */
+  _voidPlausible(h, code) {
+    if (code === 'wrong-epoch') { const info = this._epochInfo(h); return !!info && h.epoch !== info.current }
+    if (code === 'forbidden') {
+      const role = this.state.members.get(b64u(h.sender))?.role
+      if (role !== z.ROLE.AGENT) return false
+      if (h.keyScope !== 1) return true                                    // agents hold no room key
+      const k = h.sessionId ? this.sessionKeys.get(hex(h.sessionId)) : null
+      const at = k ? epochAgents(k)?.[h.epoch] : null
+      return !!at && !at.includes(hex(h.sender))                            // not assigned at that session key epoch
+    }
+    return false
+  }
+  _rememberStale(hashHex) {
+    const s = (this._staleHashes ??= new Set())
+    s.add(hashHex)
+    if (s.size > 4096) s.delete(s.values().next().value)
   }
 
   /**
@@ -775,7 +822,27 @@ export class Client {
     trimChain(c)
     this._dirty.chains.add(key)
     this.stats.verified++
-    if (pre.void) { this._advanceFrontier(sender, h); return null }   // a void record: the chain moves on, nothing applies
+    if (pre.void) {
+      // A void record: the chain moves on, nothing applies. Review 3: the void flag is the hub's word, not the sender's,
+      // so a hub could drop any envelope quietly that way. Only a reason this device can re-check from the signed header
+      // passes silently; any other void from another sender is shown (like the gap it would have been before).
+      this._advanceFrontier(sender, h)
+      if (!this._voidPlausible(h, pre.void_code)) {
+        const ch = M.emptyChange()
+        M.pushAlert(this.model, ch, { code: 'hub-voided-other', message: `the hub withheld envelope #${h.seq} of this sender as void (${pre.void_code ?? 'no reason'})`, envelope_number: pre.envelope_number, sender_device_id: sender })
+        this._emitChange(ch)
+      }
+      return null
+    }
+    if (pre.stale || this._staleHashes?.has(hex(hash))) {
+      // B03: verified and in chain order, but sent in an old key epoch past the grace: the chain moves on, the body never applies.
+      this._rememberStale(hex(hash))
+      this._advanceFrontier(sender, h)
+      const ch = M.emptyChange()
+      M.pushAlert(this.model, ch, { code: 'wrong-epoch', message: `envelope #${h.seq} was sent in an outdated key epoch: ignored`, envelope_number: pre.envelope_number, sender_device_id: sender })
+      this._emitChange(ch)
+      return null
+    }
     if (pre.opened) this.stats.decrypted++
     return this._record(pre.envelope_number, v, pre.opened, pre.content_state, null)
   }
@@ -849,6 +916,7 @@ export class Client {
 
   _syncRecord() {
     return { cursor: this.model.room.last_envelope_number, delivered: Object.fromEntries(this.delivered), history_before: this.historyBefore ?? null, lamport: this.lamport ?? 0,
+      ...(this._staleHashes?.size ? { stale_hashes: [...this._staleHashes] } : {}),
       ...(this.snapshotCursor ? { snapshot_cursor: this.snapshotCursor, snapshot_chains: Object.fromEntries(this._snapshotChains ?? []) } : {}),
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
   }
@@ -1579,8 +1647,9 @@ export class Client {
     return this._grantLocked(session_id, { agent_device_ids, with_history, rotate: true })
   }
   async _grantLocked(session_id, opts) {
-    const { r, current } = await this._makeGrant(session_id, opts)
+    const { r, current, historyAgentIds } = await this._makeGrant(session_id, opts)
     await this._postGrant(r, current)
+    this._noteHistoryAgents(session_id, r.sessionState.agentIds, historyAgentIds)
     return r.sessionState
   }
   async _makeGrant(session_id, { agent_device_ids, with_history = false, rotate = false }) {
@@ -1591,11 +1660,29 @@ export class Client {
     // Whoever loses access loses the key: any agent dropped from the set means a new session key epoch (R6). A handover
     // "with history" rotates too; the new holder reads back through the back links.
     if (k.state.agentIds.some(a => !active.includes(a))) rotate = true
-    // Per-agent history (PoC p4): only the agents newly assigned in this call with with_history get the history key;
-    // agents already on the session keep what they had (their stored older keys), and get the new key without history.
-    const historyAgentIds = with_history ? active.filter(a => !k.state.agentIds.includes(a)) : []
+    // Per-agent history (PoC p4): the agents newly assigned in this call with with_history get the history key, and so
+    // does every agent that was given the history before and is still assigned (review 3: otherwise an agent lost its
+    // history at the next rotation and could not walk back after rebuilding its storage). Who was given it is kept in
+    // the human register session_history/<session> (room scope: humans only), so every human device rotates alike.
+    const entitled = this._historyAgents(session_id)
+    const historyAgentIds = active.filter(a => (with_history && !k.state.agentIds.includes(a)) || entitled.includes(a))
     const r = await G.createSessionGrant({ state: this.state, signer: this.device, sessionState: k.state, current, agentIds: active, withHistory: historyAgentIds.length > 0, historyAgentIds, rotate: rotate || !current })
-    return { r, current }
+    return { r, current, historyAgentIds }
+  }
+  /** The agents of a session that were given its history (and are still on it): the human register, else this device's note. */
+  _historyAgents(session_id) {
+    const reg = this.model.human.raw.get(`session_history/${session_id}`)?.value?.agents
+    const local = this.roomRecord.session_history?.[session_id]
+    return Array.isArray(reg) ? reg : Array.isArray(local) ? local : []
+  }
+  /** After a grant: remember who holds the history (dropped agents lose the entitlement). Written outside the queue. */
+  _noteHistoryAgents(session_id, agentIds, historyAgentIds) {
+    const next = [...new Set(historyAgentIds)].filter(a => agentIds.includes(a)).sort()
+    const was = [...this._historyAgents(session_id)].sort()
+    if (JSON.stringify(next) === JSON.stringify(was)) return
+    ;(this.roomRecord.session_history ??= {})[session_id] = next
+    this._saveRoom().catch(() => {})
+    queueMicrotask(() => this.setRegisters({ [`session_history/${session_id}`]: { agents: next } }).catch(e => this._localAlert('session-history', e)))
   }
   /** Re-seal every session's current key for everyone who holds it now (a new human device). */
   async _resealSessionsLocked() {
@@ -1756,6 +1843,16 @@ function epochAgents(k) {
   for (const g of k.grants) { const d = G.decodeGrant(unb64u(g)); const l = (out[d.epoch] ??= []); for (const id of d.agentIds) if (!l.includes(hex(id))) l.push(hex(id)) }
   k._byEpoch = out; k._byEpochN = k.grants.length
   return out
+}
+/** Session key epoch -> the signed time of the first grant that set it (B03: when that epoch started, by a human's clock). */
+function epochStartTime(k, epoch) {
+  if (!k?.grants) return null
+  if (!k._startN || k._startN !== k.grants.length) {
+    k._start = new Map()
+    for (const g of k.grants) { const d = G.decodeGrant(unb64u(g)); if (!k._start.has(d.epoch)) k._start.set(d.epoch, d.time) }
+    k._startN = k.grants.length
+  }
+  return k._start.get(epoch) ?? null
 }
 function everAgents(k) {
   if (!k?.grants) return []

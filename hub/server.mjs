@@ -342,7 +342,7 @@ export async function startHub({
     const me = r.hub.authorise(bearer(req), { member: true })
     hexParam(attachmentId, HEX32, 'attachment_id')
     if (Number(req.headers['content-length'] || 0) > LIMITS.attachment) fail('too-large', 'an attachment is at most 64 MiB')
-    ops.quota.check(r.id, Number(req.headers['content-length'] || 0))
+    ops.quota.check(r.id, Number(req.headers['content-length'] || 0), me.id)
     if (db.q('SELECT 1 FROM attachments WHERE room_id = ? AND attachment_id = ?').get(r.id, attachmentId)) fail('replay', 'this attachment is already stored; attachments are immutable')
     let size
     // C03: an upload gets 60 s plus a minimum rate, then the connection goes.
@@ -353,7 +353,7 @@ export async function startHub({
     } finally { clearTimeout(deadline) }
     // C04: removed while uploading -> nothing stored.
     try { r.hub.authorise(bearer(req), { member: true }) } catch (err) { files.delete(r.id, attachmentId); throw err }
-    try { ops.quota.make(r.id, size) } catch (err) { files.delete(r.id, attachmentId); throw err }
+    try { ops.quota.make(r.id, size, me.id) } catch (err) { files.delete(r.id, attachmentId); throw err }
     db.q('INSERT INTO attachments (room_id, attachment_id, object_id, uploader_device_id, total_size, chunk_count, stored_at) VALUES (?, ?, NULL, ?, ?, ?, ?)')
       .run(r.id, attachmentId, me.id, size, chunkCount(size), now())
     send(res, 201, { attachment_id: attachmentId, total_size: size })

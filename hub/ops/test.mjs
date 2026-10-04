@@ -103,14 +103,19 @@ async function openStream(w, token, headers = {}) {
 const fakeFiles = () => { const gone = []; return { gone, delete: (room, id) => gone.push(id) } }
 /** A row in envelopes naming attachments, as if a client had posted it (the quota reads only these columns). */
 let fakeNumber = 1000000
-function fakeEnvelope(db, roomId, { kind, attachmentIds, objectId = null }) {
+const HUMAN_ID = 'aa'.repeat(32), AGENT_ID = 'cc'.repeat(32)
+function fakeEnvelope(db, roomId, { kind, attachmentIds, objectId = null, sender = HUMAN_ID, session = null }) {
   const n = ++fakeNumber, b = new Uint8Array(1)
+  const header = new Uint8Array(60); if (session) { header[38] = 1; header.set(Buffer.from(session, 'hex'), 39) }
   db.prepare(`INSERT INTO envelopes (room_id, envelope_number, sender_device_id, sender_sequence, previous_envelope_hash, envelope_hash, key_epoch, object_id,
     envelope_kind, send_push, attachment_ids, padded_size, sent_at, received_at, envelope_header, envelope_nonce, encrypted_body_hash, envelope_signature)
-    VALUES (?, ?, X'00', ?, X'00', X'00', 1, ?, ?, 0, ?, 0, 0, 0, ?, ?, ?, ?)`).run(roomId, n, n, objectId, kind, attachmentIds.join(','), b, b, b, b)
+    VALUES (?, ?, ?, ?, X'00', X'00', 1, ?, ?, 0, ?, 0, 0, 0, ?, ?, ?, ?)`).run(roomId, n, Buffer.from(sender, 'hex'), n, objectId, kind, attachmentIds.join(','), header, b, b, b)
 }
-function fakeAttachment(db, roomId, id, size, storedAt, objectId = null) {
-  db.prepare('INSERT INTO attachments (room_id, attachment_id, object_id, uploader_device_id, total_size, chunk_count, stored_at) VALUES (?, ?, ?, ?, ?, 1, ?)').run(roomId, id, objectId, 'x', size, storedAt)
+function fakeAttachment(db, roomId, id, size, storedAt, objectId = null, uploader = HUMAN_ID) {
+  db.prepare('INSERT INTO attachments (room_id, attachment_id, object_id, uploader_device_id, total_size, chunk_count, stored_at) VALUES (?, ?, ?, ?, ?, 1, ?)').run(roomId, id, objectId, uploader, size, storedAt)
+}
+function fakeDevice(db, roomId, id, role) {
+  db.prepare('INSERT INTO devices (room_id, device_id, device_role, key_signing_public, key_exchange_public, added_entry_number) VALUES (?, ?, ?, X\'00\', X\'00\', 1)').run(roomId, id, role)
 }
 const fakeObject = (db, roomId, objectId, state) => db.prepare(`INSERT INTO objects (room_id, object_id, object_state, urgency, answered_at, owner_device_id, first_envelope_number,
   latest_head_envelope_number) VALUES (?, ?, ?, 1, 0, 'x', 1, 1)`).run(roomId, objectId, state)
@@ -319,13 +324,40 @@ test('quota: eviction order, oldest first, and what is never evicted', async () 
   db.close()
 })
 
+test('quota review 3: an agent evicts only its own attachments, holds at most a quarter, cannot pin with a status, foreign references count for nothing', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-ops-quota3-')); tmpDirs.push(dir)
+  const db = openDb(dir)
+  const room = 'd'.repeat(64), sess = 'ee'.repeat(16)
+  const files = fakeFiles()
+  const quota = attachmentQuota({ db, files, quotaBytes: 1000 })
+  fakeDevice(db, room, HUMAN_ID, 'human'); fakeDevice(db, room, AGENT_ID, 'agent')
+  // The human's desk picture, named by its own room-scope thread item (evictable for a human's upload, not an agent's).
+  fakeAttachment(db, room, aid(1), 500, 10); fakeEnvelope(db, room, { kind: 1, attachmentIds: [aid(1)] })
+  // A human's pending upload that the agent names in ITS thread item: a foreign reference makes it neither evictable nor protected.
+  fakeAttachment(db, room, aid(2), 100, 20); fakeEnvelope(db, room, { kind: 1, attachmentIds: [aid(2)], sender: AGENT_ID, session: sess })
+  // Q1: the agent's upload under quota pressure evicted the human's desk picture. Now: 413, nothing evicted.
+  assert.throws(() => quota.make(room, 450, AGENT_ID), err => err.reply.status === 413)
+  assert.deepEqual(files.gone, [], 'an agent never evicts a human attachment')
+  // The agent's share: a quarter of the quota.
+  fakeAttachment(db, room, aid(3), 200, 30, null, AGENT_ID); fakeEnvelope(db, room, { kind: 6, attachmentIds: [aid(3)], sender: AGENT_ID, session: sess })   // status pin (old)
+  assert.throws(() => quota.check(room, 100, AGENT_ID), err => err.reply.status === 413 && err.reply.body.quota === 250, 'agents hold at most 250')
+  // A newer status of the agent in that session names something else: the old pin is gone, its own upload may evict it.
+  fakeAttachment(db, room, aid(4), 10, 40, null, AGENT_ID); fakeEnvelope(db, room, { kind: 6, attachmentIds: [aid(4)], sender: AGENT_ID, session: sess })
+  quota.make(room, 200, AGENT_ID)
+  assert.deepEqual(files.gone, [aid(3)], 'only the agent\'s own, no longer current status attachment')
+  // A human's upload may still evict the human's evictable attachments (the old rule).
+  quota.make(room, 500, HUMAN_ID)
+  assert.deepEqual(files.gone, [aid(3), aid(1)])
+  db.close()
+})
+
 test('quota over HTTP: usage for members, eviction announced on the stream, 413 quota-exceeded', async () => {
   const w = await newHub({}, { ROOM_ATTACHMENT_QUOTA_BYTES: '1000' })
   await foundRoom(w)
   await expect(w, 'GET', `${R(w)}/usage`, {}, 401, 'unauthorised')
   assert.deepEqual((await expect(w, 'GET', `${R(w)}/usage`, { token: w.phone.token }, 200)).json, { attachment_bytes: 0, quota_bytes: 1000 })
   await expect(w, 'PUT', `${R(w)}/attachments/${aid(1)}`, { token: w.phone.token, raw: new Uint8Array(600) }, 201)
-  fakeEnvelope(w.hub.db, w.roomId, { kind: 1, attachmentIds: [aid(1)] })      // a thread item names it
+  fakeEnvelope(w.hub.db, w.roomId, { kind: 1, attachmentIds: [aid(1)], sender: hex(w.phone.device.id) })      // its uploader's thread item names it
   const s = await openStream(w, w.phone.token)
   await sleep(50)
   await expect(w, 'PUT', `${R(w)}/attachments/${aid(2)}`, { token: w.phone.token, raw: new Uint8Array(600) }, 201)
