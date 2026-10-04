@@ -22,7 +22,7 @@ node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR]   # found, agent invite, 
 node dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot, console errors
 ```
 
-Before a push: `dev/release.sh` (writes the shell's file list and version into `public/sw.js`).
+Before a push: `dev/release.sh` (writes the shell's file list and version into `public/sw.js`). A release without it still reaches every device: the worker revalidates each file it serves (ETag) and, when one changed, fetches the shell again and offers "Neu laden".
 
 ## Architecture
 
@@ -93,7 +93,7 @@ Several people (and agents) work on the app at once. Each area owns its files; t
 | **Session, chat, files, assets, Ledger** | `public/js/views/{session,session-edit,agents}.mjs`, `public/css/{session,beside,ledger,links,speech,asset}.css`, `public/t/controllers/{composer,files,log,lean,say,share,assetthumb,title}_controller.js` |
 | **Scratchpad, canvas, Desk paper** (E2E strokes + snapshots) | `public/pad/*`, `public/t/lib/{paper,clear}.js`, `public/t/controllers/paper_controller.js`, `public/css/{deskpad,scribble,clear,padlink}.css` |
 | **Memos** | `public/js/views/memo.mjs`, `public/t/lib/memo.js`, `public/t/controllers/{memo,memos}_controller.js`, `public/css/quicksend.css` |
-| **Pairing, devices, settings** (QR "Gerät koppeln", "Mit Passwort anmelden", device list, storage usage, the reload notice's look) | `public/js/app/room.mjs`, `public/js/app/qr.mjs`, `public/css/room.css` |
+| **Pairing, devices, settings** (QR "Gerät koppeln", "Mit Passwort anmelden", device list, storage usage, the reload notice's look) | `public/js/app/room.mjs`, `public/js/app/qr.mjs`, `public/css/room.css`, `public/t/controllers/room_controller.js` |
 | **Phone layout** | `public/css/phone-desk.css`, `public/t/controllers/sheet_controller.js`, the `@media (max-width: …)` blocks of the area files in agreement with their owners |
 
 The model the views get is `board-state.mjs` (core model → board state) and `views/model.mjs`; an area that needs a field the core has but the board state lacks asks the integrator. Hub actions go through `hub-facade.mjs` (integrator).

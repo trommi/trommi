@@ -34,12 +34,14 @@ if (sw) {
     box.append('Eine neue Version ist da.', go)
     document.body.append(box)
   }
-  sw.addEventListener('controllerchange', () => {
-    if (!hadController) return
+  const arrived = () => {
     stale = true
     if (document.visibilityState === 'hidden' && !unsent()) location.reload()
     else offer()
-  })
+  }
+  sw.addEventListener('controllerchange', () => { if (hadController) arrived() })
+  // A release without a new sw.js: the worker saw changed files and fetched the shell again (public/sw.js).
+  sw.addEventListener('message', e => { if (e.data?.type === 'trommi-update') arrived() })
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'hidden') return reloadIfQuiet()
     if (Date.now() - checked < CHECK_MS) return
