@@ -106,8 +106,8 @@ let fakeNumber = 1000000
 function fakeEnvelope(db, roomId, { kind, attachmentIds, objectId = null }) {
   const n = ++fakeNumber, b = new Uint8Array(1)
   db.prepare(`INSERT INTO envelopes (room_id, envelope_number, sender_device_id, sender_sequence, previous_envelope_hash, envelope_hash, key_epoch, object_id,
-    envelope_kind, is_head, send_push, attachment_ids, padded_size, sent_at, received_at, envelope_header, envelope_nonce, encrypted_body_hash, envelope_signature)
-    VALUES (?, ?, 'x', ?, '', '', 1, ?, ?, ?, 0, ?, 0, 0, 0, ?, ?, ?, ?)`).run(roomId, n, n, objectId, kind, kind === 1 ? 0 : 1, attachmentIds.join(','), b, b, b, b)
+    envelope_kind, send_push, attachment_ids, padded_size, sent_at, received_at, envelope_header, envelope_nonce, encrypted_body_hash, envelope_signature)
+    VALUES (?, ?, X'00', ?, X'00', X'00', 1, ?, ?, 0, ?, 0, 0, 0, ?, ?, ?, ?)`).run(roomId, n, n, objectId, kind, attachmentIds.join(','), b, b, b, b)
 }
 function fakeAttachment(db, roomId, id, size, storedAt, objectId = null) {
   db.prepare('INSERT INTO attachments (room_id, attachment_id, object_id, uploader_device_id, total_size, chunk_count, stored_at) VALUES (?, ?, ?, ?, ?, 1, ?)').run(roomId, id, objectId, 'x', size, storedAt)

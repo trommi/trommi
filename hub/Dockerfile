@@ -8,7 +8,7 @@ ENV COMMIT=$COMMIT \
     HUB_DATA=/data \
     HUB_URL=https://hub.trommi.com
 WORKDIR /app
-COPY crypto/zcrypto.mjs crypto/hub.mjs crypto/
+COPY crypto/zcrypto.mjs crypto/hub.mjs crypto/session-grants.mjs crypto/
 COPY hub/server.mjs hub/store.mjs hub/attachments.mjs hub/push.mjs hub/
 COPY hub/ops hub/ops
 RUN mkdir -p /data && chown node:node /data

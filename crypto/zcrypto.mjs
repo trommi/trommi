@@ -9,7 +9,8 @@
 
 const subtle = globalThis.crypto?.subtle
 const te = new TextEncoder()
-const tdStrict = new TextDecoder('utf-8', { fatal: true })
+// ignoreBOM keeps a leading U+FEFF in the output, so it is seen and refused instead of silently dropped (C19).
+const tdStrict = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true })
 
 export const VERSION = 1
 
@@ -157,7 +158,10 @@ class R {
   str16(max) {
     const raw = this.var16()
     if (raw.length > max) fail('bad-format', 'string too long')
-    try { return tdStrict.decode(raw) } catch { fail('bad-format', 'string is not UTF-8') }
+    let out
+    try { out = tdStrict.decode(raw) } catch { fail('bad-format', 'string is not UTF-8') }
+    if (out.charCodeAt(0) === 0xfeff) fail('bad-format', 'a string starts with a byte order mark')
+    return out
   }
   end() { if (this.left() !== 0) fail('bad-format', 'trailing bytes') }
 }
@@ -165,6 +169,7 @@ function str16(w, s, max) {
   if (typeof s !== 'string') fail('bad-argument', 'string expected')
   const raw = te.encode(s)
   if (raw.length > max) fail('bad-argument', 'string too long')
+  if (s.charCodeAt(0) === 0xfeff) fail('bad-argument', 'a string starts with a byte order mark')
   // Round trip, so that lone surrogates (which TextEncoder silently replaces) are refused.
   if (tdStrict.decode(raw) !== s) fail('bad-argument', 'string is not well-formed')
   return w.var16(raw)
@@ -204,6 +209,7 @@ export const LABEL = Object.freeze({
   recoverySign: 'trommi/v1/recovery/sign',
   recoveryKex: 'trommi/v1/recovery/kex',
   hubAuth: 'trommi/v1/hub-auth',
+  objectId: 'trommi/v1/object-id',
 })
 const labelBytes = label => concat(te.encode(label), Uint8Array.of(0))
 
@@ -410,33 +416,37 @@ export async function openSealed(device, sealed, aad = EMPTY) {
 // (remove, recover), so an entry of type 4 is refused like any unknown type.
 export const ENTRY = Object.freeze({ GENESIS: 1, ADD: 2, REMOVE: 3, RECOVER: 5 })
 export const SIGNER = Object.freeze({ DEVICE: 1, RECOVERY: 2 })
-const NAME_MAX = 128
-
+// v1.1 (R8): a member carries no name. Names are encrypted registers (`device/<device_id>`).
 function writeMember(w, m) {
   if (m.role !== ROLE.HUMAN && m.role !== ROLE.AGENT) fail('bad-argument', 'role')
   w.u8(m.role).raw(m.signPub, 32, 'signPub').raw(m.kexPub, 32, 'kexPub')
-  str16(w, m.name ?? '', NAME_MAX)
 }
 function readMember(r) {
   const role = r.u8()
   if (role !== ROLE.HUMAN && role !== ROLE.AGENT) fail('bad-format', 'unknown role')
-  return { role, signPub: r.take(32), kexPub: r.take(32), name: r.str16(NAME_MAX) }
+  return { role, signPub: r.take(32), kexPub: r.take(32), name: '' }
 }
-function writeIds(w, ids) {
+/**
+ * The removed devices of a remove or recover entry, each with its cut (R3): the sender sequence and envelope
+ * hash of its last envelope the remover had seen (0 and zeros: none). Ascending by id, no duplicates.
+ */
+function writeRemoved(w, ids, cuts) {
   const sorted = [...ids].sort(compareBytes)
   for (let i = 1; i < sorted.length; i++) if (compareBytes(sorted[i - 1], sorted[i]) === 0) fail('bad-argument', 'duplicate id')
   w.u16(sorted.length)
-  for (const id of sorted) w.raw(id, 32, 'id')
+  const cutOf = id => (cuts instanceof Map ? cuts.get(hex(id)) : cuts?.[hex(id)]) ?? { seq: 0, hash: ZERO32 }
+  for (const id of sorted) { const c = cutOf(id); w.raw(id, 32, 'id').u64(c.seq).raw(c.hash, 32, 'cut hash') }
 }
-function readIds(r) {
+function readRemoved(r) {
   const n = r.u16()
-  const ids = []
+  const out = []
   for (let i = 0; i < n; i++) {
-    const id = r.take(32)
-    if (i && compareBytes(ids[i - 1], id) >= 0) fail('bad-format', 'ids not strictly ascending')
-    ids.push(id)
+    const x = { id: r.take(32), seq: r.u64(), hash: r.take(32) }
+    if (i && compareBytes(out[i - 1].id, x.id) >= 0) fail('bad-format', 'ids not strictly ascending')
+    if (x.seq === 0 && !isZero(x.hash)) fail('bad-format', 'a cut without an envelope has a zero hash')
+    out.push(x)
   }
-  return ids
+  return out
 }
 
 function encodeEntryBody(e) {
@@ -447,9 +457,9 @@ function encodeEntryBody(e) {
       w.raw(e.roomNonce, 16, 'roomNonce'); writeMember(w, e.member)
       w.raw(e.recovery.signPub, 32, 'recovery signPub').raw(e.recovery.kexPub, 32, 'recovery kexPub'); epoch(); break
     case ENTRY.ADD: writeMember(w, e.member); w.raw(e.inviteId, 16, 'inviteId'); break
-    case ENTRY.REMOVE: writeIds(w, e.ids); epoch(); break
+    case ENTRY.REMOVE: writeRemoved(w, e.ids, e.cuts); epoch(); break
     case ENTRY.RECOVER:
-      writeMember(w, e.member); writeIds(w, e.ids); epoch()
+      writeMember(w, e.member); writeRemoved(w, e.ids, e.cuts); epoch()
       w.raw(e.recovery.signPub, 32, 'recovery signPub').raw(e.recovery.kexPub, 32, 'recovery kexPub'); break
     default: fail('bad-argument', 'entry type')
   }
@@ -469,8 +479,8 @@ export function decodeEntry(bytes) {
   switch (e.type) {
     case ENTRY.GENESIS: e.roomNonce = r.take(16); e.member = readMember(r); recovery(); epoch(); break
     case ENTRY.ADD: e.member = readMember(r); e.inviteId = r.take(16); break
-    case ENTRY.REMOVE: e.ids = readIds(r); epoch(); break
-    case ENTRY.RECOVER: e.member = readMember(r); e.ids = readIds(r); epoch(); recovery(); break
+    case ENTRY.REMOVE: e.removed = readRemoved(r); e.ids = e.removed.map(x => x.id); epoch(); break
+    case ENTRY.RECOVER: e.member = readMember(r); e.removed = readRemoved(r); e.ids = e.removed.map(x => x.id); epoch(); recovery(); break
     default: fail('bad-format', 'unknown entry type')
   }
   r.end()
@@ -536,9 +546,14 @@ export async function applyEntry(state, entryBytes) {
   if (e.seq !== state.head.seq + 1) bad(`number ${e.seq} does not follow ${state.head.seq}`)
   if (!bytesEqual(e.prev, state.head.hash)) bad('predecessor hash does not match')
 
-  // Who may sign: ANY active human device (add, remove; there is no main device) or the recovery key (recover only).
+  // Who may sign: ANY active human device (add, remove; there is no main device) or the recovery key: a
+  // recovery, or (v1.1, passphrase sign-in) the add of one human device without an invite.
   if (e.type === ENTRY.RECOVER) {
     if (e.signerKind !== SIGNER.RECOVERY || !bytesEqual(e.signer, state.recovery.id)) bad('only the recovery key may sign a recovery')
+    await checkSig(state.recovery.signPub)
+  } else if (e.signerKind === SIGNER.RECOVERY) {
+    if (e.type !== ENTRY.ADD || e.member.role !== ROLE.HUMAN || !isZero(e.inviteId)) bad('the recovery key signs recoveries and the add of a human device without an invite only')
+    if (!bytesEqual(e.signer, state.recovery.id)) bad('not the recovery key of this room')
     await checkSig(state.recovery.signPub)
   } else {
     if (e.signerKind !== SIGNER.DEVICE) bad('the recovery key signs recovery entries only')
@@ -558,11 +573,12 @@ export async function applyEntry(state, entryBytes) {
     }
     next.members.set(idKey(id), { id, ...member, addedSeq: e.seq, removedSeq: null })
   }
-  const removeMembers = (ids) => {
-    for (const id of ids) {
-      const m = next.members.get(idKey(id))
+  const removeMembers = (removed) => {
+    for (const x of removed) {
+      const m = next.members.get(idKey(x.id))
       if (!m || m.removedSeq !== null) bad('removing someone who is not a member')
       m.removedSeq = e.seq
+      m.cut = { seq: x.seq, hash: x.hash }
     }
   }
   const newEpoch = () => {
@@ -580,13 +596,13 @@ export async function applyEntry(state, entryBytes) {
       break
     case ENTRY.REMOVE:
       if (e.ids.length === 0) bad('nothing to remove')
-      removeMembers(e.ids); newEpoch(); break
+      removeMembers(e.removed); newEpoch(); break
     case ENTRY.RECOVER: {
       if (e.member.role !== ROLE.HUMAN) bad('recovery enrols a human device')
-      // Recovery removes the human's devices, all of them, and keeps every agent.
+      // Recovery removes the human's devices, all of them, and may remove agents too (v1.1, R6: those a thief added).
       const humans = activeMembers(state).filter(m => m.role === ROLE.HUMAN)
-      if (e.ids.length !== humans.length || !humans.every(m => e.ids.some(id => bytesEqual(id, m.id)))) bad('a recovery removes every human device and no agent')
-      removeMembers(e.ids)
+      if (!humans.every(m => e.ids.some(id => bytesEqual(id, m.id)))) bad('a recovery removes every human device')
+      removeMembers(e.removed)
       await addMember(e.member)
       newEpoch()
       const id = await deviceId(e.recovery.signPub, e.recovery.kexPub)
@@ -683,7 +699,7 @@ async function checkCommits(state, secret) {
 
 const wrapAad = (roomId, epoch, recipientId) => concat(labelBytes(LABEL.epochWrap), roomId, epochCtx(epoch), recipientId)
 
-/** Seal an epoch secret to one active member (agents get the key only) or to the recovery key. */
+/** Seal an epoch secret (room key and history key) to one active human device or to the recovery key. Agents hold no room key (R6). */
 export async function wrapEpochKey(state, secret, recipientId, opts) {
   let kexPub, withHist
   if (bytesEqual(recipientId, state.recovery.id)) {
@@ -691,7 +707,8 @@ export async function wrapEpochKey(state, secret, recipientId, opts) {
   } else {
     const m = memberAt(state, recipientId)
     if (!m) fail('not-member', 'cannot wrap a key for someone who is not a member')
-    kexPub = m.kexPub; withHist = m.role === ROLE.HUMAN
+    if (m.role !== ROLE.HUMAN) fail('bad-argument', 'agents hold no room key: they get session keys')
+    kexPub = m.kexPub; withHist = true
   }
   if (withHist && !secret.hist) fail('bad-argument', 'no history key to pass on')
   const plain = withHist ? concat(Uint8Array.of(2), secret.key, secret.hist) : concat(Uint8Array.of(1), secret.key)
@@ -709,10 +726,10 @@ export async function unwrapEpochKey(state, device, sealed, epoch) {
   return secret
 }
 
-/** One wrap per active member and one for the recovery key: [{ id, sealed }]. */
+/** One wrap per active human device and one for the recovery key: [{ id, sealed }]. */
 export async function wrapForAll(state, secret, opts) {
   const out = []
-  for (const m of activeMembers(state)) out.push({ id: m.id, sealed: await wrapEpochKey(state, secret, m.id, opts) })
+  for (const m of activeMembers(state).filter(x => x.role === ROLE.HUMAN)) out.push({ id: m.id, sealed: await wrapEpochKey(state, secret, m.id, opts) })
   out.push({ id: state.recovery.id, sealed: await wrapEpochKey(state, secret, state.recovery.id, opts) })
   return out
 }
@@ -753,23 +770,27 @@ const base = (state, type, signer, signerKind, time) => ({
  * Found a room. Returns { entry, state, roomId, secret, wraps }.
  * `recovery` is the public half of the recovery key (see recoveryDevice).
  */
-export async function createRoom({ device, name = '', recovery, time, _rng }) {
+export async function createRoom({ device, recovery, time, _rng }) {
   if (recovery?.signPub?.length !== 32 || recovery?.kexPub?.length !== 32) fail('recovery-required', 'a room cannot be founded without a recovery code')
   const rng = rngOf({ _rng })
   const roomNonce = rng(16)
   const secret = newEpochSecret(1, { _rng })
   const entry = await signEntry({
     type: ENTRY.GENESIS, seq: 0, prev: ZERO32, time: time ?? Date.now(), signerKind: SIGNER.DEVICE, signer: device.id,
-    roomNonce, member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub, name },
+    roomNonce, member: { role: ROLE.HUMAN, signPub: device.signPub, kexPub: device.kexPub },
     recovery, epoch: 1, ...await epochCommits(secret),
   }, device)
   const state = await applyEntry(null, entry)
   return { entry, state, roomId: state.roomId, secret, wraps: await wrapForAll(state, secret, { _rng }) }
 }
 
-/** Add a member directly (the invite flow calls this). Returns { entry, state }. */
+/**
+ * Add a member directly (the invite flow calls this). Returns { entry, state }. Signed by the recovery key
+ * (`signer` from recoveryDevice), it adds a human device without an invite: the passphrase sign-in.
+ */
 export async function addMember(state, signer, { member, inviteId = ZERO16, time }) {
-  const entry = await signEntry({ ...base(state, ENTRY.ADD, signer, SIGNER.DEVICE, time), member: { name: '', ...member }, inviteId }, signer)
+  const kind = bytesEqual(signer.id, state.recovery.id) ? SIGNER.RECOVERY : SIGNER.DEVICE
+  const entry = await signEntry({ ...base(state, ENTRY.ADD, signer, kind, time), member, inviteId }, signer)
   return { entry, state: await applyEntry(state, entry) }
 }
 
@@ -783,12 +804,14 @@ async function rotated(state, entry, secret, previous, opts) {
 }
 
 /**
- * Remove members and rotate in the same entry: removal without a new epoch cannot be expressed.
- * `previous` is the current epoch secret (for the back link). Returns { entry, state, secret, wraps, backLink }.
+ * Remove members and rotate the room key in the same entry: removal without a new epoch cannot be expressed.
+ * `previous` is the current epoch secret (for the back link). `cuts`: { [hex id]: { seq, hash } }, per removed
+ * device the last envelope of it the remover had seen (R3); missing means none.
+ * Returns { entry, state, secret, wraps, backLink }; wraps go to the human devices who stay and the recovery key.
  */
-export async function removeMembers(state, signer, { ids, previous, time, _rng }) {
+export async function removeMembers(state, signer, { ids, cuts, previous, time, _rng }) {
   const secret = newEpochSecret(state.epoch + 1, { _rng })
-  const entry = await signEntry({ ...base(state, ENTRY.REMOVE, signer, SIGNER.DEVICE, time), ids, epoch: secret.epoch, ...await epochCommits(secret) }, signer)
+  const entry = await signEntry({ ...base(state, ENTRY.REMOVE, signer, SIGNER.DEVICE, time), ids, cuts, epoch: secret.epoch, ...await epochCommits(secret) }, signer)
   return rotated(state, entry, secret, previous, { _rng })
 }
 
@@ -840,16 +863,16 @@ export async function recoveryDevice(code) {
  * key through `wraps`, like after any removal.
  * Returns { entry, state, secret, previous, wraps, backLink }.
  */
-export async function recoverRoom({ state, code, newCode, newDevice, name = '', recoveryWrap, time, _rng }) {
+export async function recoverRoom({ state, code, newCode, newDevice, removeAgents = [], cuts, recoveryWrap, time, _rng }) {
   const rec = await recoveryDevice(code)
   if (!bytesEqual(rec.id, state.recovery.id)) fail('bad-recovery-code', 'this code does not belong to the room')
   const previous = await unwrapEpochKey(state, rec, recoveryWrap, state.epoch)
   const next = await recoveryDevice(newCode)
-  const ids = activeMembers(state).filter(m => m.role === ROLE.HUMAN).map(m => m.id)
+  const ids = [...activeMembers(state).filter(m => m.role === ROLE.HUMAN).map(m => m.id), ...removeAgents]
   const secret = newEpochSecret(state.epoch + 1, { _rng })
   const entry = await signEntry({
     ...base(state, ENTRY.RECOVER, rec, SIGNER.RECOVERY, time),
-    member: { role: ROLE.HUMAN, signPub: newDevice.signPub, kexPub: newDevice.kexPub, name }, ids,
+    member: { role: ROLE.HUMAN, signPub: newDevice.signPub, kexPub: newDevice.kexPub }, ids, cuts,
     epoch: secret.epoch, ...await epochCommits(secret), recovery: { signPub: next.signPub, kexPub: next.kexPub },
   }, rec)
   return { ...await rotated(state, entry, secret, previous, { _rng }), previous }
@@ -868,6 +891,15 @@ async function inviteKeys(secret, roomId) {
   }
 }
 
+/**
+ * The canonical hub address (R9): https:// + lowercase host [+ :port], no path, no trailing slash. Plain
+ * http only for localhost and 127.0.0.1 (development). Anything else is refused, never normalised.
+ */
+export function checkHubAddress(hub) {
+  if (typeof hub !== 'string' || !/^(https:\/\/[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*|http:\/\/(localhost|127\.0\.0\.1))(:[1-9][0-9]{0,4})?$/.test(hub)) fail('bad-argument', 'hub address: https://host[:port], lowercase, no path')
+  return hub
+}
+
 /** `<app>#v1.<hub>.<roomId>.<secret>`, each part base64url; the hub part is the UTF-8 hub address. */
 export function inviteLink(app, hub, roomId, secret) {
   return `${app}#v${VERSION}.${b64u(te.encode(hub))}.${b64u(roomId)}.${b64u(secret)}`
@@ -880,6 +912,7 @@ export function parseInviteLink(link) {
   if (parts.length !== 4) fail('bad-invite', 'malformed link')
   let hub
   try { hub = tdStrict.decode(unb64u(parts[1])) } catch { fail('bad-invite', 'hub address') }
+  try { checkHubAddress(hub) } catch { fail('bad-invite', 'the hub address in the link is not canonical') }
   const roomId = unb64u(parts[2]), secret = unb64u(parts[3])
   if (roomId.length !== 32 || secret.length !== 32) fail('bad-invite', 'malformed link')
   return { hub, roomId, secret }
@@ -894,6 +927,7 @@ export async function createInvite({ state, inviter, hub, role, app = 'https://a
   const me = memberAt(state, inviter.id)
   if (!me || me.role !== ROLE.HUMAN) fail('not-human', 'only a human device can invite')
   if (role !== ROLE.HUMAN && role !== ROLE.AGENT) fail('bad-argument', 'role')
+  checkHubAddress(hub)
   const rng = rngOf({ _rng })
   const secret = rng(32), nonce = rng(32)
   const { inviteId } = await inviteKeys(secret, state.roomId)
@@ -961,13 +995,18 @@ function decodeRequest(bytes) {
   const body = bytes.slice(0, bytes.length - 96)
   const r = new R(body)
   header(r, OBJ.INVITE_REQUEST)
-  const q = { roomId: r.take(32), inviteId: r.take(16), hub: r.str16(HUB_MAX), role: r.u8(), name: r.str16(NAME_MAX), signPub: r.take(32), kexPub: r.take(32), offerHash: r.take(32) }
+  const q = { roomId: r.take(32), inviteId: r.take(16), hub: r.str16(HUB_MAX), role: r.u8(), name: '', signPub: r.take(32), kexPub: r.take(32), offerHash: r.take(32) }
   r.end()
   return { ...q, body, mac: bytes.slice(bytes.length - 96, bytes.length - 64), signature: bytes.slice(bytes.length - 64) }
 }
 
+// Hashes over the signed bodies, not over the Ed25519 signatures (R9): offer body; request body ‖ MAC.
+const offerBodyOf = offer => decodeOffer(offer).body
+const requestSignedOf = request => request.slice(0, request.length - 64)
+export const inviteOfferHash = offer => hash(LABEL.inviteOffer, offerBodyOf(offer))
+export const inviteRequestHash = request => hash(LABEL.inviteRequest, requestSignedOf(request))
 async function inviteCode(offer, request, nonce) {
-  const h = await hash(LABEL.inviteCode, offer, request, nonce)
+  const h = await hash(LABEL.inviteCode, offerBodyOf(offer), requestSignedOf(request), nonce)
   const n = new DataView(h.buffer).getBigUint64(0) % 1000000n
   return n.toString().padStart(6, '0')
 }
@@ -976,16 +1015,18 @@ async function inviteCode(offer, request, nonce) {
  * Step 3, on the joining device. Verifies the log against the room id in the link and the offer
  * against the log, then builds the request. Returns { request, join } (keep `join`).
  */
-export async function createJoinRequest({ link, offer, log, device, name = '', now = Date.now() }) {
+export async function createJoinRequest({ link, offer, log, device, now = Date.now() }) {
   const { hub, roomId, secret } = parseInviteLink(link)
   const state = await verifyLog(log, roomId)
   const { inviteId, macKey } = await inviteKeys(secret, roomId)
   if (!bytesEqual(decodeOffer(offer).inviteId, inviteId)) fail('bad-invite', 'the offer does not belong to this link')
   const o = await verifyInviteOffer(state, offer, now)
-  const offerHash = await hash(LABEL.inviteOffer, offer)
+  // The offer names the log head the inviter knew; it must be in the log served here (C13).
+  if (o.logSeq > state.head.seq || !bytesEqual(state.hashes[o.logSeq], o.logHash)) fail('bad-invite', 'the offer names a member list this hub does not show')
+  const offerHash = await inviteOfferHash(offer)
   const w = new W().u8(VERSION).u8(OBJ.INVITE_REQUEST).raw(roomId, 32).raw(inviteId, 16)
   str16(w, hub, HUB_MAX).u8(o.role)
-  str16(w, name, NAME_MAX).raw(device.signPub, 32).raw(device.kexPub, 32).raw(offerHash, 32)
+  w.raw(device.signPub, 32).raw(device.kexPub, 32).raw(offerHash, 32)
   const body = w.done()
   const mac = new Uint8Array(await subtle.sign('HMAC', macKey, concat(labelBytes(LABEL.inviteMac), body)))
   const request = concat(body, mac, await sign(device, LABEL.inviteRequestSig, concat(body, mac)))
@@ -998,23 +1039,29 @@ export async function createJoinRequest({ link, offer, log, device, name = '', n
  * Only a request with a valid MAC burns the invite, so the hub cannot burn it with junk.
  */
 export async function acceptJoinRequest({ invite, request, inviter, now = Date.now() }) {
-  if (invite.used) fail('invite-used', 'this invite was already answered')
+  // Claimed before the first await, so two requests at once cannot both get a reveal (C20). Junk releases the claim.
+  if (invite.used || invite.claimed) fail('invite-used', 'this invite was already answered')
   if (now > invite.expiresAt) fail('invite-expired', 'this invite has run out')
-  const q = decodeRequest(request)
-  const { macKey } = await inviteKeys(invite.secret, invite.roomId)
-  if (!await subtle.verify('HMAC', macKey, q.mac, concat(labelBytes(LABEL.inviteMac), q.body))) fail('bad-mac', 'the request was not made with this invite link')
-  if (!bytesEqual(q.roomId, invite.roomId) || !bytesEqual(q.inviteId, invite.inviteId) || q.hub !== invite.hub || q.role !== invite.role ||
-      !bytesEqual(q.offerHash, await hash(LABEL.inviteOffer, invite.offer))) fail('bad-invite', 'the request does not match the invite')
-  if (!await verify(q.signPub, LABEL.inviteRequestSig, concat(q.body, q.mac), q.signature)) fail('bad-signature', 'invite request')
+  invite.claimed = true
+  let q
+  try {
+    q = decodeRequest(request)
+    const { macKey } = await inviteKeys(invite.secret, invite.roomId)
+    if (!await subtle.verify('HMAC', macKey, q.mac, concat(labelBytes(LABEL.inviteMac), q.body))) fail('bad-mac', 'the request was not made with this invite link')
+    if (!bytesEqual(q.roomId, invite.roomId) || !bytesEqual(q.inviteId, invite.inviteId) || q.hub !== invite.hub || q.role !== invite.role ||
+        !bytesEqual(q.offerHash, await inviteOfferHash(invite.offer))) fail('bad-invite', 'the request does not match the invite')
+    if (!await verify(q.signPub, LABEL.inviteRequestSig, concat(q.body, q.mac), q.signature)) fail('bad-signature', 'invite request')
+  } catch (err) { invite.claimed = false; throw err }
   invite.used = true
   invite.acceptedAt = now
   invite.request = request
-  const requestHash = await hash(LABEL.inviteRequest, request)
+  const requestHash = await inviteRequestHash(request)
   const body = new W().u8(VERSION).u8(OBJ.INVITE_REVEAL).raw(invite.inviteId, 16).raw(invite.nonce, 32).raw(requestHash, 32).done()
   return {
     reveal: concat(body, await sign(inviter, LABEL.inviteRevealSig, body)),
     code: await inviteCode(invite.offer, request, invite.nonce),
-    member: { id: await deviceId(q.signPub, q.kexPub), role: q.role, name: q.name, signPub: q.signPub, kexPub: q.kexPub },
+    member: { id: await deviceId(q.signPub, q.kexPub), role: q.role, signPub: q.signPub, kexPub: q.kexPub },
+    requestHash,
   }
 }
 
@@ -1023,7 +1070,7 @@ export async function checkReveal({ join, reveal, log }) {
   const state = await verifyLog(log, join.roomId)
   const { inviteId, nonce, requestHash } = await verifyInviteReveal(state, reveal, join.inviterId)
   if (!bytesEqual(inviteId, join.inviteId)) fail('bad-invite', 'reveal for another invite')
-  if (!bytesEqual(requestHash, await hash(LABEL.inviteRequest, join.request))) fail('bad-invite', 'the inviter answered a different request (someone else used this link)')
+  if (!bytesEqual(requestHash, await inviteRequestHash(join.request))) fail('bad-invite', 'the inviter answered a different request (someone else used this link)')
   if (!bytesEqual(join.commit, await hash(LABEL.inviteCommit, inviteId, nonce))) fail('bad-invite', 'the revealed number does not match the commitment')
   return inviteCode(join.offer, join.request, nonce)
 }
@@ -1034,19 +1081,27 @@ export async function checkReveal({ join, reveal, log }) {
  * joins by a link pasted into its prompt has nobody to read a code: pass `skipCheckCode` for it.
  * Returns { entry, state, wrap } where `wrap` is the current epoch secret sealed to the new member.
  */
-export async function finalizeInvite({ invite, state, inviter, secret, codeConfirmed = false, skipCheckCode = false, now = Date.now(), time, _rng }) {
+export async function finalizeInvite({ invite, state, inviter, secret, requestHash = null, codeConfirmed = false, skipCheckCode = false, now = Date.now(), time, _rng }) {
   if (!invite.used || !invite.request) fail('bad-invite', 'no request was accepted for this invite')
-  if (invite.finalized) fail('invite-used', 'this invite already produced a member')
+  if (invite.finalized || invite.finalizing) fail('invite-used', 'this invite already produced a member')
   if (now > invite.acceptedAt + INVITE_CONFIRM_MS) fail('invite-expired', 'the confirmation came too late')
   if (!codeConfirmed && !(skipCheckCode && invite.role === ROLE.AGENT)) fail('code-not-confirmed', 'the check code was not confirmed')
-  if (secret.epoch !== state.epoch) fail('wrong-epoch', 'pass the current epoch secret')
-  const q = decodeRequest(invite.request)
-  const added = await addMember(state, inviter, {
-    member: { role: invite.role, name: q.name, signPub: q.signPub, kexPub: q.kexPub }, inviteId: invite.inviteId, time: time ?? now,
-  })
-  invite.finalized = true
-  const id = await deviceId(q.signPub, q.kexPub)
-  return { ...added, wrap: await wrapEpochKey(added.state, secret, id, { _rng }) }
+  invite.finalizing = true
+  try {
+    // Bound to the request whose code the human confirmed (C20).
+    if (requestHash && !bytesEqual(requestHash, await inviteRequestHash(invite.request))) fail('bad-invite', 'the confirmed request is not the accepted one')
+    const human = invite.role === ROLE.HUMAN
+    if (human && secret?.epoch !== state.epoch) fail('wrong-epoch', 'pass the current epoch secret')
+    const q = decodeRequest(invite.request)
+    const added = await addMember(state, inviter, {
+      member: { role: invite.role, signPub: q.signPub, kexPub: q.kexPub }, inviteId: invite.inviteId, time: time ?? now,
+    })
+    const id = await deviceId(q.signPub, q.kexPub)
+    // A human gets the room key; an agent gets none (R6): its session keys come with a session grant.
+    const wrap = human ? await wrapEpochKey(added.state, secret, id, { _rng }) : null
+    invite.finalized = true
+    return { ...added, wrap }
+  } finally { invite.finalizing = false }
 }
 
 /** On the joining device: verify the log up to the room id, find itself in it, open the room key. */
@@ -1055,7 +1110,11 @@ export async function completeJoin({ join, device, log, wrap }) {
   const me = memberAt(state, device.id)
   if (!me) fail('not-member', 'the log does not list this device')
   if (me.role !== join.role) fail('bad-invite', 'enrolled with a different role than invited')
-  return { state, secret: await unwrapEpochKey(state, device, wrap, state.epoch) }
+  // The entry that added this device names this invite and was signed by the inviter (C13).
+  const added = state.entries[me.addedSeq]
+  if (!bytesEqual(added.inviteId, join.inviteId) || !bytesEqual(added.signer, join.inviterId)) fail('bad-invite', 'this device was added by another invite or another device')
+  if (me.role === ROLE.AGENT) return { state, secret: null }
+  return { state, secret: await unwrapEpochKey(state, device, wrap, epochAt(state, me.addedSeq)) }
 }
 
 // ---- signing in to the hub -----------------------------------------------------
@@ -1065,6 +1124,7 @@ export async function completeJoin({ join, device, log, wrap }) {
 
 /** 0x01 0x0d roomId(32) hub str16 deviceId(32) challenge(32) || signature(64) */
 export async function signHubAuth({ device, roomId, hub, challenge }) {
+  checkHubAddress(hub)
   const w = new W().u8(VERSION).u8(OBJ.HUB_AUTH).raw(roomId, 32, 'roomId')
   const body = str16(w, hub, HUB_MAX).raw(device.id, 32, 'device id').raw(challenge, 32, 'challenge').done()
   return concat(body, await sign(device, LABEL.hubAuth, body))
@@ -1090,17 +1150,34 @@ export async function verifyHubAuth(bytes, { state, hub }) {
 
 export const KIND = Object.freeze({
   TIMELINE_ITEM: 1, OBJECT_VERSION: 2, ANSWER: 3, PERMISSION_REQUEST: 4, VERDICT: 5, STATUS: 6, DECIDE_AGAIN: 7,
-  // Older names of the same numbers. 8 (scribble) is a thread kind kept decodable; drawings are timeline items now.
-  CHAT: 1, CARD: 2, REDECIDE: 7, SCRIBBLE: 8,
+  // Older names of the same numbers.
+  CHAT: 1, CARD: 2, REDECIDE: 7,
 })
-/** Thread items (not heads): they carry a timeline and never an object block. Every other kind is a head. */
-const THREAD_KINDS = new Set([KIND.TIMELINE_ITEM, KIND.SCRIBBLE])
-export const isThreadKind = kind => THREAD_KINDS.has(kind)
-/** timeline_kind values known today; others are accepted (a new timeline kind needs no hub change), 0 is refused. */
+const KIND_MAX = 7
+/** Kinds whose header carries the object block (object id, state, urgency, answer time). */
+const OBJECT_KINDS = new Set([KIND.OBJECT_VERSION, KIND.ANSWER, KIND.PERMISSION_REQUEST, KIND.VERDICT, KIND.DECIDE_AGAIN])
+/** The only thread kind: a timeline item. Every other kind is a head. */
+export const isThreadKind = kind => kind === KIND.TIMELINE_ITEM
+/** timeline_kind values known today; others (1 to 255) are accepted so a new timeline kind needs no hub change. */
 export const TIMELINE = Object.freeze({ CHAT: 1, CANVAS: 2 })
-export const TIMELINE_ID_MAX = 100
-const FLAG_PUSH = 1, FLAG_CARD = 2, FLAG_HEAD = 4
-/** Card fields the hub can read (and nobody can change: they are signed). Urgency is the order of the stack and decides about pushes. */
+/** timeline scope byte and its text prefix: card/<object_id>, session/<session_id>, desk/<desk_id>, each 16 bytes as 32 hex. */
+export const TIMELINE_SCOPE = Object.freeze({ CARD: 1, SESSION: 2, DESK: 3 })
+const SCOPE_NAMES = { 1: 'card', 2: 'session', 3: 'desk' }
+export const TIMELINE_ID_MAX = 40
+/** Key scope: 0 the room key (humans only), 1 a session key (that session's agents and every human). */
+export const KEY_SCOPE = Object.freeze({ ROOM: 0, SESSION: 1 })
+export const SEEN_MAX = 64
+const FLAG_PUSH = 1, FLAG_OBJECT = 2
+
+/** Parse the canonical text form `card/<32 hex>` (also session/, desk/) into { scope, ref }; anything else is refused. */
+export function parseTimelineId(text) {
+  const m = /^(card|session|desk)\/([0-9a-f]{32})$/.exec(typeof text === 'string' ? text : '')
+  if (!m) fail('bad-argument', 'timeline id: card/, session/ or desk/ and 32 lowercase hex characters')
+  return { scope: { card: 1, session: 2, desk: 3 }[m[1]], ref: unhex(m[2]) }
+}
+export const timelineIdOf = (scope, ref) => `${SCOPE_NAMES[scope]}/${hex(ref)}`
+
+/** Card status and urgency the hub can read (and nobody can change: they are signed). */
 export const CARD_STATE = Object.freeze({ OPEN: 1, ANSWERED: 2, CLOSED: 3 })
 export const URGENCY = Object.freeze({ LOW: 0, NORMAL: 1, HIGH: 2, CRITICAL: 3 })
 const cardFields = (c, bad) => {
@@ -1110,30 +1187,51 @@ const cardFields = (c, bad) => {
 }
 const NONCE_LEN = 12
 
-const senderKeyCtx = (epoch, id) => concat(epochCtx(epoch), id)
-/** HKDF(room key, salt = room id, info = label || epoch || device id): the AES-256-GCM key of one sender in one epoch. */
-export async function deriveSenderKey(roomId, secret, senderId) {
-  return hkdf(secret.key, roomId, LABEL.senderKey, senderKeyCtx(secret.epoch, need(senderId, 32, 'sender id')), 32)
+/** object_id = first 16 bytes of H("trommi/v1/object-id", creator device id ‖ sender_sequence of version 1). */
+export async function objectIdOf(creatorId, senderSequence) {
+  return (await hash(LABEL.objectId, need(creatorId, 32, 'creator id'), new W().u64(senderSequence).done())).slice(0, 16)
 }
-const senderKeyCache = new WeakMap()   // epoch secret object -> Map(room+sender -> CryptoKey)
-async function senderKey(roomId, secret, senderId) {
+
+const scopeCtx = (keyScope, sessionId) => (keyScope === KEY_SCOPE.SESSION ? concat(Uint8Array.of(1), need(sessionId, 16, 'session id')) : Uint8Array.of(0))
+/**
+ * HKDF(scope key, salt = room id, info = label ‖ scope ‖ [session id] ‖ epoch ‖ device id): the AES-256-GCM key
+ * of one sender in one key epoch of one scope. The scope key is the room key or a session key.
+ */
+export async function deriveSenderKey(roomId, secret, senderId, { keyScope = KEY_SCOPE.ROOM, sessionId = null } = {}) {
+  return hkdf(secret.key, roomId, LABEL.senderKey, concat(scopeCtx(keyScope, sessionId), epochCtx(secret.epoch), need(senderId, 32, 'sender id')), 32)
+}
+const senderKeyCache = new WeakMap()   // secret object -> Map(scope+room+sender -> CryptoKey)
+async function senderKey(roomId, secret, senderId, scope) {
   let cache = senderKeyCache.get(secret)
   if (!cache) senderKeyCache.set(secret, cache = new Map())
-  const k = b64u(roomId) + b64u(senderId)
+  const k = `${scope.keyScope}${scope.sessionId ? b64u(scope.sessionId) : ''}${b64u(roomId)}${b64u(senderId)}`
   let key = cache.get(k)
-  if (!key) cache.set(k, key = await aesKey(await deriveSenderKey(roomId, secret, senderId)))
+  if (!key) cache.set(k, key = await aesKey(await deriveSenderKey(roomId, secret, senderId, scope)))
   return key
 }
 
-function encodeHeader(h) {
-  if (!Number.isInteger(h.kind) || h.kind < 1 || h.kind > 8) fail('bad-argument', 'envelope kind')
+function checkGrammar(h, bad) {
+  if (!Number.isInteger(h.kind) || h.kind < 1 || h.kind > KIND_MAX) bad(`unknown envelope kind ${h.kind}`)
+  if (h.keyScope !== KEY_SCOPE.ROOM && h.keyScope !== KEY_SCOPE.SESSION) bad('unknown key scope')
   const thread = isThreadKind(h.kind)
-  if (h.isHead === thread) fail('bad-argument', thread ? 'a timeline item is not a head' : 'this kind is a head')
-  if (thread && h.card) fail('bad-argument', 'a thread item carries no object block')
-  if (thread !== (h.timelineKind != null || h.timelineId != null)) fail('bad-argument', thread ? 'a thread item needs timelineKind and timelineId' : 'a head has no timeline')
-  const flags = (h.push ? FLAG_PUSH : 0) | (h.card ? FLAG_CARD : 0) | (h.isHead ? FLAG_HEAD : 0)
-  const w = new W().u8(VERSION).u8(flags).raw(h.roomId, 32, 'roomId').u32(h.epoch).u32(h.keyId).raw(h.sender, 32, 'sender')
-    .u64(h.seq).raw(h.prev, 32, 'prev').u32(h.logSeq).raw(h.logHash, 32, 'logHash').raw(h.recipient, 32, 'recipient').u64(h.time).u8(h.kind)
+  if (OBJECT_KINDS.has(h.kind) !== !!h.card) bad(OBJECT_KINDS.has(h.kind) ? 'this kind needs the object block' : 'this kind has no object block')
+  if (thread !== (h.timelineId != null)) bad(thread ? 'a timeline item needs a timeline' : 'only timeline items have a timeline')
+  if (thread) {
+    if (!Number.isInteger(h.timelineKind) || h.timelineKind < 1 || h.timelineKind > 255) bad('timeline kind')
+    const t = parseTimelineId(h.timelineId)
+    // A session's timelines are under that session's key, a desk's under the room key.
+    if (t.scope === TIMELINE_SCOPE.SESSION && (h.keyScope !== KEY_SCOPE.SESSION || !bytesEqual(t.ref, h.sessionId))) bad("a session's timeline is sent under that session's key")
+    if (t.scope === TIMELINE_SCOPE.DESK && h.keyScope !== KEY_SCOPE.ROOM) bad('a desk is sent under the room key')
+  }
+  if (h.seen.length > SEEN_MAX) bad(`seen lists at most ${SEEN_MAX} senders`)
+}
+
+function encodeHeader(h) {
+  checkGrammar(h, what => fail('bad-argument', what))
+  const flags = (h.push ? FLAG_PUSH : 0) | (h.card ? FLAG_OBJECT : 0)
+  const w = new W().u8(VERSION).u8(flags).raw(h.roomId, 32, 'roomId').u32(h.epoch).u8(h.keyScope)
+  if (h.keyScope === KEY_SCOPE.SESSION) w.raw(h.sessionId, 16, 'session id')
+  w.raw(h.sender, 32, 'sender').u64(h.seq).raw(h.prev, 32, 'prev').u32(h.logSeq).raw(h.logHash, 32, 'logHash').raw(h.recipient, 32, 'recipient').u64(h.time).u8(h.kind)
   const seen = [...h.seen].sort((a, b) => compareBytes(a.sender, b.sender))
   w.u16(seen.length)
   for (let i = 0; i < seen.length; i++) {
@@ -1142,16 +1240,13 @@ function encodeHeader(h) {
   }
   if (h.card) {
     const c = cardFields({ ...h.card, urgency: h.card.urgency ?? URGENCY.NORMAL }, what => fail('bad-argument', what))
-    w.raw(c.id, 16, 'card id').u8(c.state).u8(c.urgency).u64(c.answeredAt ?? 0)
+    w.raw(c.id, 16, 'object id').u8(c.state).u8(c.urgency).u64(c.answeredAt ?? 0)
   }
-  if (thread) {
-    const kind = h.timelineKind, id = h.timelineId
-    if (!Number.isInteger(kind) || kind < 1 || kind > 255) fail('bad-argument', 'timeline kind')
-    if (typeof id !== 'string' || !id) fail('bad-argument', 'timeline id')
-    const raw = te.encode(id)
-    if (raw.length > TIMELINE_ID_MAX || tdStrict.decode(raw) !== id) fail('bad-argument', 'timeline id too long or not well-formed')
-    w.u8(kind).u8(raw.length).raw(raw, raw.length, 'timeline id')
+  if (h.timelineId != null) {
+    const t = parseTimelineId(h.timelineId)
+    w.u8(h.timelineKind).u8(t.scope).raw(t.ref, 16, 'timeline ref')
   }
+  if (h.blobs.length > 255) fail('bad-argument', 'too many attachments')
   w.u8(h.blobs.length)
   for (const b of h.blobs) w.raw(b, 16, 'blob id')
   return w.done()
@@ -1161,36 +1256,31 @@ function decodeHeader(bytes) {
   const v = r.u8()
   if (v !== VERSION) fail('bad-version', `envelope header version ${v}`)
   const flags = r.u8()
-  if (flags & ~(FLAG_PUSH | FLAG_CARD | FLAG_HEAD)) fail('bad-format', 'unknown header flags')
-  const h = {
-    push: !!(flags & FLAG_PUSH), isHead: !!(flags & FLAG_HEAD), roomId: r.take(32), epoch: r.u32(), keyId: r.u32(), sender: r.take(32), seq: r.u64(), prev: r.take(32),
-    logSeq: r.u32(), logHash: r.take(32), recipient: r.take(32), time: r.u64(), kind: r.u8(), seen: [], card: null, timelineKind: null, timelineId: null, blobs: [],
-  }
-  if (h.kind < 1 || h.kind > 8) fail('bad-format', `unknown envelope kind ${h.kind}`)
-  const thread = isThreadKind(h.kind)
-  if (h.isHead === thread) fail('bad-format', 'is_head does not match the envelope kind')
+  if (flags & ~(FLAG_PUSH | FLAG_OBJECT)) fail('bad-format', 'unknown header flags')
+  const h = { push: !!(flags & FLAG_PUSH), roomId: r.take(32), epoch: r.u32(), keyScope: r.u8(), sessionId: null }
+  if (h.keyScope > 1) fail('bad-format', 'unknown key scope')
+  if (h.keyScope === KEY_SCOPE.SESSION) h.sessionId = r.take(16)
+  Object.assign(h, { sender: r.take(32), seq: r.u64(), prev: r.take(32), logSeq: r.u32(), logHash: r.take(32), recipient: r.take(32), time: r.u64(), kind: r.u8(), seen: [], card: null, timelineKind: null, timelineId: null, blobs: [] })
   const n = r.u16()
+  if (n > SEEN_MAX) fail('bad-format', `seen lists at most ${SEEN_MAX} senders`)
   for (let i = 0; i < n; i++) {
     const s = { sender: r.take(32), seq: r.u64(), hash: r.take(32) }
     if (i && compareBytes(h.seen[i - 1].sender, s.sender) >= 0) fail('bad-format', 'seen not strictly ascending')
     h.seen.push(s)
   }
-  if (flags & FLAG_CARD) {
-    if (thread) fail('bad-format', 'a thread item carries no object block')
-    h.card = cardFields({ id: r.take(16), state: r.u8(), urgency: r.u8(), answeredAt: r.u64() }, what => fail('bad-format', `unknown ${what}`))
-  }
-  if (thread) {
-    const kind = r.u8()
-    const n = r.u8()
-    if (kind === 0 || n === 0 || n > TIMELINE_ID_MAX) fail('bad-format', 'timeline')
-    let id
-    try { id = tdStrict.decode(r.take(n)) } catch { fail('bad-format', 'timeline id is not UTF-8') }
-    h.timelineKind = kind; h.timelineId = id
+  if (flags & FLAG_OBJECT) h.card = cardFields({ id: r.take(16), state: r.u8(), urgency: r.u8(), answeredAt: r.u64() }, what => fail('bad-format', `unknown ${what}`))
+  if (isThreadKind(h.kind)) {
+    h.timelineKind = r.u8()
+    const scope = r.u8()
+    if (!SCOPE_NAMES[scope]) fail('bad-format', 'unknown timeline scope')
+    h.timelineId = timelineIdOf(scope, r.take(16))
   }
   const blobs = r.u8()
   for (let i = 0; i < blobs; i++) h.blobs.push(r.take(16))
   r.end()
   if (h.seq < 1) fail('bad-format', 'sequence numbers start at 1')
+  checkGrammar(h, what => fail('bad-format', what))
+  h.isHead = !isThreadKind(h.kind)
   return h
 }
 
@@ -1201,8 +1291,11 @@ export function paddedLength(n) {
   while (size < n) size *= 2
   return size
 }
-function encodeBody(kind, bind, payload) {
-  const raw = new W().u8(VERSION).u8(kind).var16(bind).var32(payload).done()
+const BOM = [0xef, 0xbb, 0xbf]
+// The body has no kind of its own (v1.1): the kind is in the signed header, which is the associated data.
+function encodeBody(bind, payload) {
+  if (payload.length >= 3 && BOM.every((b, i) => payload[i] === b)) fail('bad-argument', 'the payload starts with a byte order mark')
+  const raw = new W().u8(VERSION).var16(bind).var32(payload).done()
   const out = new Uint8Array(paddedLength(raw.length))
   out.set(raw)
   return out
@@ -1211,8 +1304,11 @@ function decodeBody(bytes) {
   const r = new R(bytes)
   const v = r.u8()
   if (v !== VERSION) fail('bad-version', `envelope body version ${v}`)
-  const body = { kind: r.u8(), bind: r.var16(), payload: r.var32() }
+  const body = { bind: r.var16(), payload: r.var32() }
+  const used = bytes.length - r.left()
+  if (paddedLength(used) !== bytes.length) fail('bad-format', 'wrong padding length')
   if (!isZero(r.take(r.left()))) fail('bad-format', 'padding is not zero')
+  if (body.payload.length >= 3 && BOM.every((b, i) => body.payload[i] === b)) fail('bad-format', 'the payload starts with a byte order mark')
   return body
 }
 
@@ -1249,68 +1345,115 @@ export function peekEnvelope(bytes) {
 /** Per-sender chain state of one device: Map(sender id -> { seq, hash, hashes: Map(seq -> hash) }). Includes its own chain. */
 export const newChains = () => new Map()
 
-function seenFrom(chains, selfId) {
-  const out = []
-  for (const [k, c] of chains) if (k !== idKey(selfId)) out.push({ sender: unb64u(k), seq: c.seq, hash: c.hash })
-  return out
+// One seal or open at a time per chain set (C7, C8): both read a chain, await, then write it.
+const chainLocks = new WeakMap()
+function withChains(chains, fn) {
+  const prev = chainLocks.get(chains) ?? Promise.resolve()
+  const run = prev.then(fn, fn)
+  chainLocks.set(chains, run.catch(() => {}))
+  return run
 }
-function advance(chains, sender, seq, hashBytes) {
+
+/**
+ * The bounded `seen` (R5): senders active at the author's log state whose head changed since the
+ * author's own previous envelope, at most SEEN_MAX. Receivers carry earlier values forward.
+ */
+function seenFrom(chains, self, state) {
+  const own = chains.get(idKey(self.id))
+  const told = own?.told ?? new Map()
+  const out = []
+  for (const [k, c] of chains) {
+    if (k === idKey(self.id) || !c.hash) continue
+    const id = unb64u(k)
+    if (!memberAt(state, id)) continue
+    if (told.get(k) === c.seq) continue
+    out.push({ sender: id, seq: c.seq, hash: c.hash })
+  }
+  out.sort((a, b) => compareBytes(a.sender, b.sender))
+  return out.slice(0, SEEN_MAX)
+}
+function advance(chains, sender, seq, hashBytes, told) {
   const k = idKey(sender)
   const c = chains.get(k) ?? { seq: 0, hash: ZERO32, hashes: new Map() }
   c.seq = seq; c.hash = hashBytes; c.hashes.set(seq, hashBytes)
+  if (told) { c.told ??= new Map(); for (const s of told) c.told.set(idKey(s.sender), s.seq) }
   chains.set(k, c)
 }
 
 /**
- * Encrypt and sign one message. Advances the sender's own chain in `chains`.
- * `recipient`: a device id, or null for everyone. `seen` defaults to the latest envelope of every other sender in `chains`.
+ * Encrypt and sign one message. Advances the sender's own chain in `chains`, once the bytes are complete.
+ * keyScope 0 (room, `secret` = the room's epoch secret, humans only) or 1 (session: `sessionId`, `secret` =
+ * that session's key epoch secret { epoch, key, hist }, checked by its grant chain, not by the member list).
+ * `recipient`: a device id, or null for everyone. Thread items (kind 1) name `timelineKind` and `timelineId`.
  * Returns { bytes, hash, seq, header }.
  */
-export async function sealEnvelope({ device, state, secret, chains, kind, bind = EMPTY, payload = EMPTY, recipient = null, time = Date.now(), card = null, timelineKind = null, timelineId = null, blobs = [], push = false, isHead = !isThreadKind(kind), seen, _rng }) {
-  if (!memberAt(state, device.id)) fail('not-member', 'this device is not a member')
-  if (secret.epoch !== state.epoch) fail('wrong-epoch', 'send with the current epoch')
-  await checkCommits(state, { ...secret, hist: null })
+export function sealEnvelope(args) {
+  return withChains(args.chains, () => sealLocked(args))
+}
+async function sealLocked({ device, state, secret, chains, kind, keyScope = KEY_SCOPE.ROOM, sessionId = null, bind = EMPTY, payload = EMPTY, recipient = null, time = Date.now(), card = null, timelineKind = null, timelineId = null, blobs = [], push = false, seen, _rng }) {
+  const me = memberAt(state, device.id)
+  if (!me) fail('not-member', 'this device is not a member')
+  if (keyScope === KEY_SCOPE.ROOM) {
+    if (me.role !== ROLE.HUMAN) fail('forbidden', 'agents hold no room key: they send under a session key')
+    if (secret.epoch !== state.epoch) fail('wrong-epoch', 'send with the current epoch')
+    await checkCommits(state, { ...secret, hist: null })
+  }
   const own = chains.get(idKey(device.id))
+  const told = seen ?? seenFrom(chains, device, state)
   const h = {
-    push, isHead, kind, timelineKind, timelineId, roomId: state.roomId, epoch: secret.epoch, keyId: 0, sender: device.id, seq: (own?.seq ?? 0) + 1, prev: own?.hash ?? ZERO32,
-    logSeq: state.head.seq, logHash: state.head.hash, recipient: recipient ?? ZERO32, time, seen: seen ?? seenFrom(chains, device.id), card, blobs,
+    push, keyScope, sessionId: keyScope === KEY_SCOPE.SESSION ? sessionId : null, roomId: state.roomId, epoch: secret.epoch, sender: device.id,
+    seq: (own?.seq ?? 0) + 1, prev: own?.hash ?? ZERO32, logSeq: state.head.seq, logHash: state.head.hash, recipient: recipient ?? ZERO32, time, kind,
+    seen: told, card, timelineKind: timelineId != null ? timelineKind : null, timelineId, blobs,
   }
   const headerBytes = encodeHeader(h)
   const nonce = rngOf({ _rng })(NONCE_LEN)
-  const ct = await gcmSeal(await senderKey(state.roomId, secret, device.id), nonce, headerBytes, encodeBody(kind, bind, payload))
+  const ct = await gcmSeal(await senderKey(state.roomId, secret, device.id, h), nonce, headerBytes, encodeBody(bind, payload))
   const envHash = await hash(LABEL.envelope, headerBytes, nonce, await sha256(ct))
   const signature = await sign(device, LABEL.envelopeSig, envHash)
-  advance(chains, device.id, h.seq, envHash)
   const bytes = concat(Uint8Array.of(VERSION, OBJ.ENVELOPE), new W().var16(headerBytes).done(), nonce, new W().var32(ct).done(), signature)
+  advance(chains, device.id, h.seq, envHash, told)   // only now: nothing above can fail after the chain moved (C21)
   return { bytes, hash: envHash, seq: h.seq, header: decodeHeader(headerBytes) }
 }
 
 /**
- * Check everything about an envelope that needs no room key: format, room, the sender's view of the
- * membership log, membership, signature, the sender's chain, and what the sender has seen of others.
+ * Check everything about an envelope that needs no key: format and grammar, room, the sender's view of
+ * the member list, membership, signature, the sender's chain, and what the sender has seen of others.
  * Works on full and pruned envelopes. With `commit` (default) the chain in `chains` advances.
+ * `freshness: { now, currentEpoch, currentSince }` (live acceptance, R3): an envelope in an older key epoch
+ * of its scope is refused once `currentSince` (when this device learned of the current epoch) is more
+ * than EPOCH_GRACE_MS ago. A removed sender is refused, or with `allowRemovedSender` (reading history)
+ * accepted up to the cut its removal entry names.
  *
  * Throws: bad-format, bad-version, wrong-room, log-behind, log-fork, not-member, removed-sender,
- * wrong-epoch, bad-signature, replay, equivocation, gap, chain-break.
+ * wrong-epoch, forbidden, bad-signature, replay, equivocation, gap, chain-break.
  */
-export async function verifyEnvelope(bytes, { state, chains, allowChainStart = false, allowRemovedSender = false, commit = true }) {
+export async function verifyEnvelope(bytes, { state, chains, allowChainStart = false, allowRemovedSender = false, commit = true, freshness = null }) {
   const e = splitEnvelope(bytes)
   const h = decodeHeader(e.headerBytes)
   if (!bytesEqual(h.roomId, state.roomId)) fail('wrong-room', 'envelope of another room')
-  if (h.keyId !== 0) fail('bad-format', 'unknown key id')
 
   // The sender names the log head it knows. Same number with another hash means the server showed us different logs.
   if (h.logSeq > state.head.seq) fail('log-behind', `the sender knows log entry ${h.logSeq}, this device only ${state.head.seq}`, { logSeq: h.logSeq })
   if (!bytesEqual(state.hashes[h.logSeq], h.logHash)) fail('log-fork', `the sender has a different log entry ${h.logSeq}`, { logSeq: h.logSeq })
   const member = memberAt(state, h.sender, h.logSeq)
   if (!member) fail('not-member', 'the sender was not a member at the log state it names')
-  if (epochAt(state, h.logSeq) !== h.epoch) fail('wrong-epoch', 'the epoch does not match the log state the sender names')
-  const removedNow = state.members.get(idKey(h.sender)).removedSeq !== null
-  if (removedNow && !allowRemovedSender) fail('removed-sender', 'the sender has been removed since')
+  if (h.keyScope === KEY_SCOPE.ROOM) {
+    if (member.role !== ROLE.HUMAN) fail('forbidden', 'agents hold no room key')
+    if (epochAt(state, h.logSeq) !== h.epoch) fail('wrong-epoch', 'the epoch does not match the log state the sender names')
+  }
+  if (freshness && h.epoch < freshness.currentEpoch && freshness.now - freshness.currentSince > EPOCH_GRACE_MS) fail('wrong-epoch', 'sent in an outdated key epoch: the sender is on an old member list')
+  const now = state.members.get(idKey(h.sender))
+  const removedNow = now.removedSeq !== null
+  if (removedNow) {
+    if (!allowRemovedSender) fail('removed-sender', 'the sender has been removed since')
+    if (now.cut && h.seq > now.cut.seq) fail('removed-sender', 'beyond the cut its removal names')
+  }
+  for (const s of h.seen) if (!memberAt(state, s.sender, h.logSeq)) fail('bad-format', 'seen names a sender that was not active at the named log state')
 
   const ctHash = e.pruned ? e.ctHash : await sha256(e.ct)
   const envHash = await hash(LABEL.envelope, e.headerBytes, e.nonce, ctHash)
   if (!await verify(member.signPub, LABEL.envelopeSig, envHash, e.signature)) fail('bad-signature', 'envelope')
+  if (removedNow && now.cut && h.seq === now.cut.seq && !bytesEqual(now.cut.hash, envHash)) fail('equivocation', 'not the envelope the removal cut names')
 
   const chain = chains.get(idKey(h.sender))
   let chainStart = false
@@ -1340,25 +1483,43 @@ export async function verifyEnvelope(bytes, { state, chains, allowChainStart = f
   }
 
   if (commit) advance(chains, h.sender, h.seq, envHash)
-  return { header: h, hash: envHash, ciphertextHash: ctHash, member, pruned: e.pruned, withheld, chainStart, removedNow, epochCurrent: h.epoch === state.epoch, _split: e }
+  return { header: h, hash: envHash, ciphertextHash: ctHash, member, pruned: e.pruned, withheld, chainStart, removedNow, epochCurrent: h.keyScope === KEY_SCOPE.ROOM ? h.epoch === state.epoch : null, _split: e }
 }
 
+const pickSecret = (secrets, h) => {
+  if (typeof secrets === 'function') return secrets(h.epoch, h)
+  if (!secrets) return null
+  return h.keyScope === KEY_SCOPE.ROOM ? secrets.get(h.epoch) : secrets.get(`${hex(h.sessionId)}:${h.epoch}`)
+}
+const QUARANTINE = new Set(['decrypt-failed', 'bad-format', 'bad-version'])
+
 /**
- * Verify, then decrypt. `secrets` is a Map(epoch -> epoch secret) or a function(epoch).
- * The chain advances only if decryption succeeds (throws 'no-key' or 'decrypt-failed' otherwise).
- * Returns { header, hash, kind, bind, payload, member, withheld, chainStart, removedNow, epochCurrent, forMe }.
+ * Verify, then decrypt. `secrets`: a function (epoch, header) -> secret, or a Map (room scope: epoch ->
+ * secret; session scope: '<session id hex>:<epoch>' -> secret). Throws 'no-key' without advancing.
+ * A body that fails to decrypt or decode under a valid signature and chain is quarantined (R4, C17):
+ * the chain advances and the result carries `quarantined: '<code>'` with no payload. `quarantine: false` throws instead.
+ * Returns { header, hash, kind, bind, payload, member, withheld, chainStart, removedNow, epochCurrent, forMe, quarantined }.
  */
-export async function openEnvelope(bytes, { state, chains, secrets, self = null, ...opts }) {
+export function openEnvelope(bytes, opts) {
+  return withChains(opts.chains, () => openLocked(bytes, opts))
+}
+async function openLocked(bytes, { state, chains, secrets, self = null, quarantine = true, ...opts }) {
   const v = await verifyEnvelope(bytes, { state, chains, ...opts, commit: false })
   if (v.pruned) fail('pruned', 'the ciphertext of this envelope was deleted')
-  const secret = typeof secrets === 'function' ? secrets(v.header.epoch) : secrets?.get(v.header.epoch)
-  if (!secret) fail('no-key', `no key for epoch ${v.header.epoch}`, { epoch: v.header.epoch })
+  const secret = pickSecret(secrets, v.header)
+  if (!secret) fail('no-key', `no key for epoch ${v.header.epoch}`, { epoch: v.header.epoch, keyScope: v.header.keyScope, sessionId: v.header.sessionId })
   const e = v._split
-  const body = decodeBody(await gcmOpen(await senderKey(state.roomId, secret, v.header.sender), e.nonce, e.headerBytes, e.ct))
-  if (body.kind !== v.header.kind) fail('kind-mismatch', 'the kind inside differs from the signed header')
+  let body, quarantined = null
+  try {
+    body = decodeBody(await gcmOpen(await senderKey(state.roomId, secret, v.header.sender, v.header), e.nonce, e.headerBytes, e.ct))
+  } catch (err) {
+    if (!quarantine || !(err instanceof ZError) || !QUARANTINE.has(err.code)) throw err
+    quarantined = err.code
+    body = { bind: null, payload: null }
+  }
   if (opts.commit !== false) advance(chains, v.header.sender, v.header.seq, v.hash)
   const { _split, ...rest } = v
-  return { ...rest, ...body, forMe: isZero(v.header.recipient) || (self !== null && bytesEqual(v.header.recipient, self)) }
+  return { ...rest, kind: v.header.kind, ...body, quarantined, forMe: isZero(v.header.recipient) || (self !== null && bytesEqual(v.header.recipient, self)) }
 }
 
 /**
@@ -1375,18 +1536,16 @@ export async function openVerifiedEnvelope(bytes, { state, secrets, envelopeHash
   if (e.pruned) fail('pruned', 'the ciphertext of this envelope was deleted')
   const h = decodeHeader(e.headerBytes)
   if (!bytesEqual(h.roomId, state.roomId)) fail('wrong-room', 'envelope of another room')
-  if (h.keyId !== 0) fail('bad-format', 'unknown key id')
   const envHash = await hash(LABEL.envelope, e.headerBytes, e.nonce, await sha256(e.ct))
   if (!bytesEqual(envHash, envelopeHash)) fail('hash-mismatch', 'this envelope is not the one the chain verified')
   // The chain check already placed the sender in the log; a sender removed since still signed this one.
   const member = state.members.get(idKey(h.sender))
   if (!member) fail('not-member', 'the sender is not in the member list')
   if (!await verify(member.signPub, LABEL.envelopeSig, envHash, e.signature)) fail('bad-signature', 'envelope')
-  const secret = typeof secrets === 'function' ? secrets(h.epoch) : secrets?.get(h.epoch)
-  if (!secret) fail('no-key', `no key for epoch ${h.epoch}`, { epoch: h.epoch })
-  const body = decodeBody(await gcmOpen(await senderKey(state.roomId, secret, h.sender), e.nonce, e.headerBytes, e.ct))
-  if (body.kind !== h.kind) fail('kind-mismatch', 'the kind inside differs from the signed header')
-  return { header: h, hash: envHash, member, ...body, forMe: isZero(h.recipient) || (self !== null && bytesEqual(h.recipient, self)) }
+  const secret = pickSecret(secrets, h)
+  if (!secret) fail('no-key', `no key for epoch ${h.epoch}`, { epoch: h.epoch, keyScope: h.keyScope, sessionId: h.sessionId })
+  const body = decodeBody(await gcmOpen(await senderKey(state.roomId, secret, h.sender, h), e.nonce, e.headerBytes, e.ct))
+  return { header: h, hash: envHash, member, kind: h.kind, ...body, forMe: isZero(h.recipient) || (self !== null && bytesEqual(h.recipient, self)) }
 }
 
 /** The wire form from its parts (what a hub stores in columns): full with `ciphertext`, pruned with only `ciphertextHash`. */
@@ -1398,19 +1557,24 @@ export function joinEnvelope({ headerBytes, nonce, ciphertext = null, ciphertext
 
 // ---- commands: what an agent may act on ----------------------------------------
 
-/** Answer to a card: card id, hash of the envelope that created or last changed the card, the chosen option key. */
-export function encodeAnswerBind({ cardId, cardHash, choice }) {
-  return str16(new W().u8(VERSION).raw(cardId, 16, 'card id').raw(cardHash, 32, 'card hash'), choice, 256).done()
+/** Answer: object id, hash of the version answered, every choice (each an option key; R7). */
+export function encodeAnswerBind({ objectId, versionHash, choices, cardId, cardHash, choice }) {
+  const list = choices ?? (choice != null ? [choice] : [])
+  if (!Array.isArray(list) || list.length > 64) fail('bad-argument', 'choices')
+  const w = new W().u8(VERSION).raw(objectId ?? cardId, 16, 'object id').raw(versionHash ?? cardHash, 32, 'version hash').u8(list.length)
+  for (const c of list) str16(w, c, 256)
+  return w.done()
 }
-/** Verdict on a permission request: request id, hash of the agent's request envelope, its expiry, allow or deny. */
+/** Verdict on a permission request: request id (= the request's object id), its version hash, its expiry, allow or deny. */
 export function encodeVerdictBind({ requestId, requestHash, expiresAt, allow }) {
   return new W().u8(VERSION).raw(requestId, 16, 'request id').raw(requestHash, 32, 'request hash').u64(expiresAt).u8(allow ? 1 : 2).done()
 }
-/** Decide again: card id, hash of the answer envelope that is taken back, the new option key. */
-export function encodeRedecideBind({ cardId, previousHash, choice }) {
-  return str16(new W().u8(VERSION).raw(cardId, 16, 'card id').raw(previousHash, 32, 'previous hash'), choice, 256).done()
+/** Decide again (take an answer back, the card is open again): object id, the answer taken back, the current version (R7). */
+export function encodeDecideAgainBind({ objectId, previousHash, versionHash, cardId, cardHash }) {
+  return new W().u8(VERSION).raw(objectId ?? cardId, 16, 'object id').raw(previousHash, 32, 'previous hash').raw(versionHash ?? cardHash, 32, 'version hash').done()
 }
-/** What an agent puts into its permission request, so that the envelope hash covers id and expiry. */
+export const encodeRedecideBind = encodeDecideAgainBind
+/** What an agent puts into its permission request, so that the envelope hash covers id and expiry. requestId = object id. */
 export function encodeRequestBind({ requestId, expiresAt }) {
   return new W().u8(VERSION).raw(requestId, 16, 'request id').u64(expiresAt).done()
 }
@@ -1420,8 +1584,14 @@ export function decodeBind(kind, bind) {
   if (v !== VERSION) fail('bad-version', 'bind version')
   let out
   switch (kind) {
-    case KIND.ANSWER: out = { cardId: r.take(16), cardHash: r.take(32), choice: r.str16(256) }; break
-    case KIND.REDECIDE: out = { cardId: r.take(16), previousHash: r.take(32), choice: r.str16(256) }; break
+    case KIND.ANSWER: {
+      out = { objectId: r.take(16), versionHash: r.take(32), choices: [] }
+      const n = r.u8()
+      for (let i = 0; i < n; i++) out.choices.push(r.str16(256))
+      out.cardId = out.objectId; out.cardHash = out.versionHash; out.choice = out.choices[0] ?? null
+      break
+    }
+    case KIND.DECIDE_AGAIN: out = { objectId: r.take(16), previousHash: r.take(32), versionHash: r.take(32) }; out.cardId = out.objectId; break
     case KIND.PERMISSION_REQUEST: out = { requestId: r.take(16), expiresAt: r.u64() }; break
     case KIND.VERDICT: {
       out = { requestId: r.take(16), requestHash: r.take(32), expiresAt: r.u64() }
@@ -1442,11 +1612,13 @@ export const EPOCH_GRACE_MS = 2 * 60 * 1000
  * The agent's gate, after openEnvelope succeeded (which already covers signature, membership at the
  * named log state, and "next number of this sender"). Throws unless the command may be executed.
  *
- * ctx: { state, agentId, now, epochChangedAt, ownSeq, maxAgeMs,
- *        card:     { id, hash, open, options: [keys] }       for ANSWER and REDECIDE
- *        decision: { hash }                                  the answer currently in force, for REDECIDE
+ * ctx: { state, agentId, now, epochChangedAt, ownSeq, maxAgeMs, seenOfMe (carried forward from this sender's earlier envelopes),
+ *        sessionEpoch                                         the session's current key epoch, for session-scope envelopes
+ *        card:     { id, hash, open, options: [keys] }       for ANSWER and DECIDE_AGAIN
+ *        decision: { hash }                                  the answer currently in force, for DECIDE_AGAIN
  *        request:  { id, hash, expiresAt, pending } }        for VERDICT
- * Returns { kind, bind, late }. `late` (chat, scribble): the human had not seen the agent's latest envelope.
+ * Returns { kind, bind, late }. `late` (chat): the human had not seen the agent's latest envelope.
+ * A timeline item counts only on a chat timeline; the caller still checks content_type "message".
  *
  * Throws: not-human, not-for-me, stale-epoch, stale, not-a-command, card-mismatch, card-closed,
  * card-changed, bad-choice, decision-mismatch, request-mismatch, request-not-pending, request-changed, request-expired.
@@ -1454,24 +1626,33 @@ export const EPOCH_GRACE_MS = 2 * 60 * 1000
 export function authoriseCommand(opened, ctx) {
   const { header: h, kind } = opened
   const now = ctx.now ?? Date.now()
+  if (opened.quarantined) fail('not-a-command', 'the body was quarantined')
   const sender = memberAt(ctx.state, h.sender)
   if (!sender || sender.role !== ROLE.HUMAN) fail('not-human', 'commands are accepted from active human devices only')
   if (!bytesEqual(h.recipient, ctx.agentId)) fail('not-for-me', 'the command is addressed to someone else')
-  const current = h.epoch === ctx.state.epoch
-  const grace = h.epoch === ctx.state.epoch - 1 && ctx.epochChangedAt != null && now - ctx.epochChangedAt <= (ctx.graceMs ?? EPOCH_GRACE_MS)
+  const currentEpoch = h.keyScope === KEY_SCOPE.SESSION ? ctx.sessionEpoch : ctx.state.epoch
+  if (currentEpoch == null) fail('stale-epoch', 'the current session key epoch is not known')
+  const current = h.epoch === currentEpoch
+  const grace = h.epoch === currentEpoch - 1 && ctx.epochChangedAt != null && now - ctx.epochChangedAt <= (ctx.graceMs ?? EPOCH_GRACE_MS)
   if (!current && !grace) fail('stale-epoch', 'the command was sent in an outdated epoch')
   if (ctx.maxAgeMs != null && now - h.time > ctx.maxAgeMs) fail('stale', 'the command is older than allowed')
 
-  const seenOfMe = h.seen.find(s => bytesEqual(s.sender, ctx.agentId))?.seq ?? 0
+  // seen is bounded (R5): an absent entry means "unchanged since the sender's previous envelope", so the caller
+  // passes what this sender last said it had seen of the agent (ctx.seenOfMe), carried forward.
+  const seenOfMe = h.seen.find(s => bytesEqual(s.sender, ctx.agentId))?.seq ?? ctx.seenOfMe ?? 0
   const late = ctx.ownSeq != null && seenOfMe < ctx.ownSeq
 
-  if (kind === KIND.CHAT || kind === KIND.SCRIBBLE) return { kind, bind: null, late }
-  if (kind !== KIND.ANSWER && kind !== KIND.VERDICT && kind !== KIND.REDECIDE) fail('not-a-command', 'this kind is not a command')
+  if (kind === KIND.TIMELINE_ITEM) {
+    if (h.timelineKind !== TIMELINE.CHAT) fail('not-a-command', 'only chat items reach the agent as messages')
+    return { kind, bind: null, late }
+  }
+  if (kind !== KIND.ANSWER && kind !== KIND.VERDICT && kind !== KIND.DECIDE_AGAIN) fail('not-a-command', 'this kind is not a command')
   const bind = decodeBind(kind, opened.bind)
 
   if (kind === KIND.VERDICT) {
     const q = ctx.request
     if (!q || !bytesEqual(q.id, bind.requestId)) fail('request-mismatch', 'verdict for another request')
+    if (!h.card || !bytesEqual(h.card.id, bind.requestId)) fail('request-mismatch', 'the request id is the object id in the header')
     if (!q.pending) fail('request-not-pending', 'the request is no longer waiting')
     if (!bytesEqual(q.hash, bind.requestHash) || q.expiresAt !== bind.expiresAt) fail('request-changed', 'the human approved something else than what was asked')
     if (now > q.expiresAt) fail('request-expired', 'the request has run out')
@@ -1479,12 +1660,13 @@ export function authoriseCommand(opened, ctx) {
   }
 
   const card = ctx.card
-  if (!card || !bytesEqual(card.id, bind.cardId)) fail('card-mismatch', 'answer to another card')
-  if (h.card && !bytesEqual(h.card.id, bind.cardId)) fail('card-mismatch', 'header and body name different cards')
-  if (card.options && !card.options.includes(bind.choice)) fail('bad-choice', 'the card has no such option')
+  if (!card || !bytesEqual(card.id, bind.objectId)) fail('card-mismatch', 'answer to another card')
+  if (!h.card || !bytesEqual(h.card.id, bind.objectId)) fail('card-mismatch', 'header and body name different cards')
+  if (!bytesEqual(card.hash, bind.versionHash)) fail('card-changed', 'the human saw a different version of the card')
   if (kind === KIND.ANSWER) {
     if (!card.open) fail('card-closed', 'the card is not open')
-    if (!bytesEqual(card.hash, bind.cardHash)) fail('card-changed', 'the human saw a different version of the card')
+    if (!bind.choices.length && card.options?.length) fail('bad-choice', 'an answer names at least one option')
+    if (card.options && bind.choices.some(c => !card.options.includes(c))) fail('bad-choice', 'the card has no such option')
   } else {
     if (!ctx.decision || !bytesEqual(ctx.decision.hash, bind.previousHash)) fail('decision-mismatch', 'this is not the decision in force')
   }
@@ -1543,26 +1725,24 @@ export async function decryptAsset(blob, key, expectedSha256) {
   return concat(...out)
 }
 
-async function assetWrapKeys(roomId, secret, blobId) {
-  const okm = await hkdf(secret.key, roomId, LABEL.assetWrap, concat(epochCtx(secret.epoch), need(blobId, 16, 'blob id')), 44)
-  return { key: await aesKey(okm.slice(0, 32)), nonce: okm.slice(32) }
+async function assetWrapKey(roomId, secret, blobId) {
+  return aesKey(await hkdf(secret.key, roomId, LABEL.assetWrap, concat(epochCtx(secret.epoch), need(blobId, 16, 'blob id')), 32))
 }
 const assetWrapAad = (roomId, epoch, blobId) => concat(Uint8Array.of(VERSION, OBJ.ASSET_WRAP), roomId, epochCtx(epoch), blobId)
 
-/** 0x01 0x0a epoch(u32) blobId(16) ciphertext(48): an asset key under the room key, for use outside a message (canvas). */
-export async function wrapAssetKey(roomId, secret, blobId, assetKey) {
-  const { key, nonce } = await assetWrapKeys(roomId, secret, blobId)
-  const ct = await gcmSeal(key, nonce, assetWrapAad(roomId, secret.epoch, blobId), need(assetKey, 32, 'asset key'))
-  return concat(Uint8Array.of(VERSION, OBJ.ASSET_WRAP), epochCtx(secret.epoch), blobId, ct)
+/** 0x01 0x0a epoch(u32) blobId(16) nonce(12) ciphertext(48): an asset key under the room key, random nonce (R9, C12). */
+export async function wrapAssetKey(roomId, secret, blobId, assetKey, opts) {
+  const nonce = rngOf(opts)(12)
+  const ct = await gcmSeal(await assetWrapKey(roomId, secret, blobId), nonce, assetWrapAad(roomId, secret.epoch, blobId), need(assetKey, 32, 'asset key'))
+  return concat(Uint8Array.of(VERSION, OBJ.ASSET_WRAP), epochCtx(secret.epoch), blobId, nonce, ct)
 }
 export async function unwrapAssetKey(roomId, secrets, wrapped) {
   const r = new R(wrapped)
   header(r, OBJ.ASSET_WRAP)
-  const epoch = r.u32(), blobId = r.take(16), ct = r.take(r.left())
+  const epoch = r.u32(), blobId = r.take(16), nonce = r.take(12), ct = r.take(r.left())
   const secret = typeof secrets === 'function' ? secrets(epoch) : secrets?.get(epoch)
   if (!secret) fail('no-key', `no key for epoch ${epoch}`, { epoch })
-  const { key, nonce } = await assetWrapKeys(roomId, secret, blobId)
-  return { blobId, epoch, key: await gcmOpen(key, nonce, assetWrapAad(roomId, epoch, blobId), ct) }
+  return { blobId, epoch, key: await gcmOpen(await assetWrapKey(roomId, secret, blobId), nonce, assetWrapAad(roomId, epoch, blobId), ct) }
 }
 
 /** `<url>#a1.<blobId>.<key>`: whoever has the link can read the asset. The fragment never reaches a server. */

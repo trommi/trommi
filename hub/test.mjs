@@ -8,6 +8,7 @@ import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
 import * as z from '../crypto/zcrypto.mjs'
+import { createSessionGrant } from '../crypto/session-grants.mjs'
 import { startHub, LIMITS } from './server.mjs'
 
 const { ROLE, KIND, hex, utf8, b64u, unb64u } = z
@@ -58,7 +59,11 @@ async function refused(w, method, p, opts, status, code) {
 
 // ---- clients that speak the README protocol --------------------------------------------
 
-const client = (device, label) => ({ label, device, state: null, pin: null, secrets: new Map(), chains: z.newChains(), token: null, verified: new Map() })
+const client = (device, label) => ({ label, device, state: null, pin: null, secrets: new Map(), session: null, chains: z.newChains(), token: null, verified: new Map() })
+const SID = crypto.randomBytes(16)
+const DESK = 'de'.repeat(16)
+/** Room-scope secrets for humans, the session key for session-scope envelopes. */
+const secretsOf = c => (epoch, h) => (h.keyScope === 1 ? (c.sessions?.get(epoch) ?? (c.session?.epoch === epoch ? c.session : null)) : c.secrets.get(epoch))
 const R = w => `/v1/rooms/${w.roomId}`
 
 async function signIn(w, c, device = c.device) {
@@ -80,7 +85,7 @@ async function sync(w, c) {
 async function foundRoom(w) {
   w.code = z.generateRecoveryCode()
   const phone = client(await z.generateDevice(), 'phone')
-  const room = await z.createRoom({ device: phone.device, name: '', recovery: await z.recoveryDevice(w.code) })
+  const room = await z.createRoom({ device: phone.device, recovery: await z.recoveryDevice(w.code) })
   const res = await api(w, 'POST', '/v1/rooms', { body: { signed_entry: b64u(room.entry), sealed_room_keys: room.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })) } })
   assert.equal(res.status, 201, JSON.stringify(res.json))
   assert.deepEqual(Object.keys(res.json).sort(), ['entry_hash', 'entry_number', 'key_epoch', 'room_id'])
@@ -92,7 +97,7 @@ async function foundRoom(w) {
   return phone
 }
 /** The whole join over HTTP; a human compares the six digits, an agent joins by the link alone. */
-async function join(w, inviter, device, role, { name = '' } = {}) {
+async function join(w, inviter, device, role) {
   const made = await z.createInvite({ state: inviter.state, inviter: inviter.device, hub: w.hubUrl, role })
   const posted = await ok(w, 'POST', `${R(w)}/invites`, { token: inviter.token, body: { signed_offer: b64u(made.offer) } })
   const link = z.parseInviteLink(made.link)
@@ -102,7 +107,7 @@ async function join(w, inviter, device, role, { name = '' } = {}) {
   const served = await ok(w, 'GET', `${R(w)}/invites/${inviteId}`)
   assert.equal(served.room_id, w.roomId)
   const log = served.signed_entries.map(unb64u)
-  const { request, join: joining } = await z.createJoinRequest({ link: made.link, offer: unb64u(served.signed_offer), log, device, name })
+  const { request, join: joining } = await z.createJoinRequest({ link: made.link, offer: unb64u(served.signed_offer), log, device })
   const posted2 = await api(w, 'POST', `${R(w)}/invites/${inviteId}/requests`, { body: { signed_request: b64u(request) } })
   if (posted2.status !== 200) return { refused: posted2 }
   const { request_hash } = posted2.json
@@ -116,29 +121,47 @@ async function join(w, inviter, device, role, { name = '' } = {}) {
   assert.equal(shown, code, 'both devices show the same six digits')
   const human = role === ROLE.HUMAN
   const done = await z.finalizeInvite({ invite: made.invite, state: inviter.state, inviter: inviter.device, secret: inviter.secrets.get(inviter.state.epoch), codeConfirmed: human, skipCheckCode: !human })
-  const added = await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(done.entry), sealed_room_keys: [{ device_id: hex(device.id), key_sealed: b64u(done.wrap) }] } })
+  const added = await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(done.entry), sealed_room_keys: done.wrap ? [{ device_id: hex(device.id), key_sealed: b64u(done.wrap) }] : [] } })
   assert.equal(added.entry_action, 'device_added')
   const fin = await ok(w, 'GET', `${R(w)}/invites/${inviteId}/status?request_hash=${request_hash}`)
   assert.equal(fin.join_status, 'joined')
-  const joined = await z.completeJoin({ join: joining, device, log: fin.signed_entries.map(unb64u), wrap: unb64u(fin.key_sealed) })
+  const joined = await z.completeJoin({ join: joining, device, log: fin.signed_entries.map(unb64u), wrap: fin.key_sealed ? unb64u(fin.key_sealed) : null })
   const c = client(device, human ? 'human' : 'agent')
-  c.state = joined.state; c.pin = z.pinOf(joined.state); c.secrets.set(joined.secret.epoch, joined.secret)
+  c.state = joined.state; c.pin = z.pinOf(joined.state); if (joined.secret) c.secrets.set(joined.secret.epoch, joined.secret)
   await signIn(w, c)
   await sync(w, inviter)
   return { c, code, inviteId }
 }
 async function world(opts) {
   const w = await newHub(opts)
+  worldAgent = null
   w.ip = freshIp()
   w.phone = await foundRoom(w)
   w.laptop = (await join(w, w.phone, await z.generateDevice(), ROLE.HUMAN)).c
   w.agent = (await join(w, w.phone, await z.generateDevice({ extractable: true }), ROLE.AGENT)).c
   await sync(w, w.laptop)
+  // The agent's session: a grant by the phone, the session key sealed for both humans, the recovery key and the agent.
+  const g = await createSessionGrant({ state: w.phone.state, signer: w.phone.device, sessionId: SID, agentIds: [w.agent.device.id] })
+  const posted = await ok(w, 'POST', `${R(w)}/sessions/${hex(SID)}/grants`, { body: { signed_grant: b64u(g.grant), sealed_session_keys: g.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })) } })
+  assert.deepEqual(posted, { grant_number: 0, grant_hash: hex(g.sessionState.grantHash), session_key_epoch: 1 })
+  w.grant = g
+  for (const c of [w.phone, w.laptop, w.agent]) c.session = g.secret
+  worldAgent = w.agent
   return w
 }
+/** Default: under the session key, a chat item in the session; a human's goes to the agent. `keyScope: 0`: room key, a desk. */
+let worldAgent = null
 async function seal(c, opts = {}) {
   const kind = opts.kind ?? KIND.TIMELINE_ITEM
-  return z.sealEnvelope({ device: c.device, state: c.state, secret: c.secrets.get(c.state.epoch), chains: c.chains, kind, payload: utf8('{"schema_version":1,"text":"hello"}'), ...(z.isThreadKind(kind) && !opts.timelineId ? { timelineKind: z.TIMELINE.CHAT, timelineId: `session/${hex(c.device.id)}` } : {}), ...opts })
+  const room = opts.keyScope === 0
+  const human = z.memberAt(c.state, c.device.id)?.role === ROLE.HUMAN
+  return z.sealEnvelope({
+    device: c.device, state: c.state, chains: c.chains, kind, payload: utf8('{"schema_version":1,"text":"hello"}'),
+    keyScope: room ? 0 : 1, sessionId: room ? null : SID, secret: room ? c.secrets.get(c.state.epoch) : c.session,
+    ...(z.isThreadKind(kind) ? { timelineKind: z.TIMELINE.CHAT, timelineId: room ? `desk/${DESK}` : `session/${hex(SID)}` } : {}),
+    ...(z.isThreadKind(kind) && human && !room && worldAgent ? { recipient: worldAgent.device.id } : {}),
+    ...opts,
+  })
 }
 async function post(w, c, opts) {
   const env = await seal(c, opts)
@@ -206,7 +229,7 @@ async function ingest(c, records) {
       c.verified.set(r.envelope_number, v.hash)
       out.push({ n: r.envelope_number, pruned: true, header: v.header })
     } else {
-      const o = await z.openEnvelope(bytes, { state: c.state, chains: c.chains, secrets: c.secrets, self: c.device.id, allowRemovedSender: true })
+      const o = await z.openEnvelope(bytes, { state: c.state, chains: c.chains, secrets: secretsOf(c), self: c.device.id, allowRemovedSender: true })
       c.verified.set(r.envelope_number, o.hash)
       out.push({ n: r.envelope_number, pruned: false, header: o.header, text: txt(o.payload) })
     }
@@ -253,9 +276,6 @@ test('found, sign in, members; the same room twice, names, a token for another h
   assert.equal(m.room_id, w.roomId); assert.equal(m.last_entry_number, 0); assert.equal(m.signed_entries.length, 1)
   // The same founding entry again.
   await refused(w, 'POST', '/v1/rooms', { body: { signed_entry: b64u(w.room.entry), sealed_room_keys: w.room.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })) } }, 409, 'room-exists')
-  // A name in the member list is refused: the hub never sees device names.
-  const named = await z.createRoom({ device: await z.generateDevice(), name: 'Phone', recovery: await z.recoveryDevice(z.generateRecoveryCode()) })
-  await refused(w, 'POST', '/v1/rooms', { body: { signed_entry: b64u(named.entry), sealed_room_keys: named.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })) } }, 400, 'bad-format')
   // Missing sealed key for the recovery key.
   const half = await z.createRoom({ device: await z.generateDevice(), recovery: await z.recoveryDevice(z.generateRecoveryCode()) })
   await refused(w, 'POST', '/v1/rooms', { body: { signed_entry: b64u(half.entry), sealed_room_keys: half.wraps.slice(0, 1).map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })) } }, 400, 'incomplete')
@@ -298,20 +318,23 @@ test('invite and join: a human with the six-digit code, an agent by the link; de
   await inviterStream.until(e => e.event === 'join_request' && e.data.invite_id === inviteId, 'join_request to the inviter')
   await inviterStream.until(e => e.event === 'member_entry' && e.data.entry_number === 1, 'member_entry')
   const { c: agent } = await join(w, w.phone, await z.generateDevice({ extractable: true }), ROLE.AGENT)
-  assert.deepEqual(agent.secrets.get(1).key, w.phone.secrets.get(1).key)
-  assert.equal(agent.secrets.get(1).hist, null, 'agents get no history key')
+  assert.equal(agent.secrets.size, 0, 'agents get no room key (R6)')
   // The same invite cannot be used twice.
   const { devices, last_entry_number } = await ok(w, 'GET', `${R(w)}/devices`, { token: laptop.token })
   assert.equal(last_entry_number, 2)
   assert.deepEqual(devices.map(d => [d.device_role, d.is_active, d.is_online, 'device_name' in d]), [['human', true, true, false], ['human', true, false, false], ['agent', true, false, false]])
-  // Agents read no back links; humans may.
+  // Agents read no room back links; humans may.
   await refused(w, 'GET', `${R(w)}/key_back_links`, { token: agent.token }, 403, 'forbidden')
   assert.deepEqual((await ok(w, 'GET', `${R(w)}/key_back_links`, { token: laptop.token })).key_back_links, [])
   // Only a human posts invites; a named join request is refused.
   const agentInvite = await z.createInvite({ state: agent.state, inviter: agent.device, hub: w.hubUrl, role: ROLE.AGENT }).catch(e => e)
   if (!(agentInvite instanceof Error)) await refused(w, 'POST', `${R(w)}/invites`, { token: agent.token, body: { signed_offer: b64u(agentInvite.offer) } }, 403, 'forbidden')
-  const named = await join(w, w.phone, await z.generateDevice(), ROLE.HUMAN, { name: 'My phone' })
-  assert.equal(named.refused.status, 400); assert.equal(named.refused.json.error, 'bad-format')
+  // The inviter calls an invite off: it answers 410 invite-burned from then on.
+  const made = await z.createInvite({ state: w.phone.state, inviter: w.phone.device, hub: w.hubUrl, role: ROLE.HUMAN })
+  const { invite_id } = await ok(w, 'POST', `${R(w)}/invites`, { token: w.phone.token, body: { signed_offer: b64u(made.offer) } })
+  await refused(w, 'DELETE', `${R(w)}/invites/${invite_id}`, { token: laptop.token }, 403, 'forbidden')
+  assert.deepEqual(await ok(w, 'DELETE', `${R(w)}/invites/${invite_id}`, { token: w.phone.token }), { ok: true })
+  await refused(w, 'GET', `${R(w)}/invites/${invite_id}`, {}, 410, 'invite-burned')
   await refused(w, 'GET', `${R(w)}/invites/${'1'.repeat(32)}`, {}, 404, 'not-found')
   await refused(w, 'GET', `${R(w)}/invites/zz`, {}, 400, 'bad-argument')
   inviterStream.close()
@@ -320,11 +343,11 @@ test('invite and join: a human with the six-digit code, an agent by the link; de
 
 test('envelopes: heads in full, thread items pruned; threads paged newest first and oldest first; openVerifiedEnvelope', async () => {
   const w = await world()
-  const cardId = crypto.randomBytes(16)
+  const cardId = await z.objectIdOf(w.agent.device.id, 1)
   const card = await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: cardId, state: z.CARD_STATE.OPEN, urgency: z.URGENCY.HIGH }, payload: utf8('{"title":"Deploy?"}') })
   const chat = []
   for (let i = 0; i < 7; i++) chat.push(await posted(w, i % 2 ? w.agent : w.phone, { timelineKind: z.TIMELINE.CHAT, timelineId: `card/${hex(cardId)}`, payload: utf8(`msg ${i}`) }))
-  for (let i = 0; i < 3; i++) await posted(w, w.phone, { timelineKind: z.TIMELINE.CANVAS, timelineId: 'desk/main', payload: utf8(`stroke ${i}`) })
+  for (let i = 0; i < 3; i++) await posted(w, w.phone, { keyScope: 0, timelineKind: z.TIMELINE.CANVAS, timelineId: `desk/${DESK}`, payload: utf8(`stroke ${i}`) })
   const status = await posted(w, w.agent, { kind: KIND.STATUS, payload: utf8('{"values":{"status_line/x":{"label":"Tests"}}}') })
   const all = await ok(w, 'GET', `${R(w)}/envelopes?after_envelope_number=0`, { token: w.laptop.token })
   assert.equal(all.last_envelope_number, 12)
@@ -341,15 +364,15 @@ test('envelopes: heads in full, thread items pruned; threads paged newest first 
   const t2 = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=chat&timeline_id=card/${hex(cardId)}&before_envelope_number=6&limit=10`, { token: w.laptop.token })
   assert.deepEqual(t2.envelopes.map(e => e.envelope_number), [5, 4, 3, 2]); assert.equal(t2.has_more, false)
   for (const e of [...t1.envelopes, ...t2.envelopes]) {
-    const o = await z.openVerifiedEnvelope(unb64u(e.envelope), { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: w.laptop.verified.get(e.envelope_number) })
+    const o = await z.openVerifiedEnvelope(unb64u(e.envelope), { state: w.laptop.state, secrets: secretsOf(w.laptop), envelopeHash: w.laptop.verified.get(e.envelope_number) })
     assert.equal(txt(o.payload), `msg ${e.envelope_number - 2}`)
   }
   // A full envelope served for another number does not open.
-  await assert.rejects(z.openVerifiedEnvelope(unb64u(t1.envelopes[0].envelope), { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: w.laptop.verified.get(7) }), e => e.code === 'hash-mismatch')
+  await assert.rejects(z.openVerifiedEnvelope(unb64u(t1.envelopes[0].envelope), { state: w.laptop.state, secrets: secretsOf(w.laptop), envelopeHash: w.laptop.verified.get(7) }), e => e.code === 'hash-mismatch')
   // The canvas, oldest first after a number; strokes never mix into the chat.
-  const canvas = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=canvas&timeline_id=desk/main&after_envelope_number=9`, { token: w.agent.token })
+  const canvas = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=canvas&timeline_id=desk/${DESK}&after_envelope_number=9`, { token: w.laptop.token })
   assert.deepEqual(canvas.envelopes.map(e => e.envelope_number), [10, 11])
-  assert.equal((await ok(w, 'GET', `${R(w)}/threads?timeline_kind=2&timeline_id=desk/main`, { token: w.agent.token })).envelopes.length, 3)
+  assert.equal((await ok(w, 'GET', `${R(w)}/threads?timeline_kind=2&timeline_id=desk/${DESK}`, { token: w.laptop.token })).envelopes.length, 3)
   await refused(w, 'GET', `${R(w)}/threads?timeline_kind=video&timeline_id=x`, { token: w.agent.token }, 400, 'bad-argument')
   await refused(w, 'GET', `${R(w)}/threads?timeline_kind=chat`, { token: w.agent.token }, 400, 'bad-argument')
   // What a hub must refuse.
@@ -406,26 +429,21 @@ test('the stream: catch-up with the depth rule, then live in full; resume by id;
   return { latency }
 })
 
-test('agent sessions: 16 hex characters bound to the key; one process per key while its stream is open; same id after a restart', async () => {
-  const port = await freePort()
-  const w = await world({ port })
-  const a = await ok(w, 'POST', `${R(w)}/agent_sessions`, { token: w.agent.token, body: { process_instance: 'p1' } })
-  assert.match(a.agent_session_id, /^[0-9a-f]{16}$/); assert.equal(a.device_id, hex(w.agent.device.id))
+test('agent lease: one process per key; a new process takes over, the old one gets lease-lost and its streams end', async () => {
+  const w = await world()
+  const a = await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })
+  assert.ok(a.lease_generation > 0); assert.ok(a.expires_at > Date.now())
   const s = await openStream(w, w.agent)
-  await refused(w, 'POST', `${R(w)}/agent_sessions`, { token: w.agent.token, body: { process_instance: 'p2' } }, 409, 'instance-conflict')
-  assert.equal((await ok(w, 'POST', `${R(w)}/agent_sessions`, { token: w.agent.token, body: { process_instance: 'p1' } })).agent_session_id, a.agent_session_id)
-  await refused(w, 'POST', `${R(w)}/agent_sessions`, { token: w.phone.token, body: { process_instance: 'p1' } }, 403, 'forbidden')
-  // The stream closes (the process died): the next process takes over with the same id.
-  s.close()
-  await sleep(100)
-  assert.equal((await ok(w, 'POST', `${R(w)}/agent_sessions`, { token: w.agent.token, body: { process_instance: 'p2' } })).agent_session_id, a.agent_session_id)
-  const devs = (await ok(w, 'GET', `${R(w)}/devices`, { token: w.phone.token })).devices
-  assert.equal(devs.find(d => d.device_role === 'agent').agent_session_id, a.agent_session_id)
+  assert.equal((await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })).lease_generation, a.lease_generation, 'the same process renews')
+  await refused(w, 'POST', `${R(w)}/agent_lease`, { token: w.phone.token, body: { process_instance: 'p1' } }, 403, 'forbidden')
+  // A crashed process is replaced: the new one takes the lease, the old stream is closed.
+  const b = await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p2' } })
+  assert.ok(b.lease_generation > a.lease_generation)
+  assert.ok(await s.closedWithin(2000), "the old process's stream ends")
+  const old = await seal(w.agent)
+  await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(old.bytes) }, headers: { 'x-lease-generation': String(a.lease_generation) } }, 409, 'lease-lost')
+  assert.equal((await api(w, 'POST', `${R(w)}/envelopes`, { token: w.agent.token, body: { envelope: b64u(old.bytes) }, headers: { 'x-lease-generation': String(b.lease_generation) } })).status, 200)
   await w.hub.close()
-  const w2 = await newHub({ dir: w.dir, port }); w2.ip = w.ip; w2.roomId = w.roomId
-  await signIn(w2, w.agent)
-  assert.equal((await ok(w2, 'POST', `${R(w2)}/agent_sessions`, { token: w.agent.token, body: { process_instance: 'p3' } })).agent_session_id, a.agent_session_id)
-  await w2.hub.close()
 })
 
 test('removal: tokens revoked, streams closed at once, new epoch keys for who stays, the removed device refused everywhere', async () => {
@@ -433,7 +451,7 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   await posted(w, w.laptop, { payload: utf8('before') })
   const laptopStream = await openStream(w, w.laptop)
   const agentStream = await openStream(w, w.agent)
-  await ok(w, 'POST', `${R(w)}/agent_sessions`, { token: w.agent.token, body: { process_instance: 'p1' } })
+  await ok(w, 'POST', `${R(w)}/agent_lease`, { token: w.agent.token, body: { process_instance: 'p1' } })
   // The phone removes the laptop.
   const r = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.laptop.device.id], previous: w.phone.secrets.get(1) })
   const out = await ok(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(r.entry), sealed_room_keys: r.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r.backLink) } })
@@ -442,9 +460,9 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   assert.ok(await laptopStream.closedWithin(2000), "the removed device's stream is closed at once")
   await agentStream.until(e => e.event === 'member_entry' && e.data.key_epoch === 2, 'member_entry to who stays')
   assert.equal(agentStream.closed, false)
-  // Who stays fetches the list and the new key; the agent keeps its session.
+  // Who stays fetches the list; the agent has no room key and keeps its session (the session key rotates by a grant, below).
   await sync(w, w.agent)
-  assert.deepEqual(w.agent.secrets.get(2).key, r.secret.key)
+  assert.equal(w.agent.secrets.size, 0)
   assert.equal((await ok(w, 'GET', `${R(w)}/key_back_links`, { token: w.phone.token })).key_back_links.length, 1)
   // The removed device: token dead, no sign-in, no envelopes, no stream.
   await refused(w, 'GET', `${R(w)}/envelopes`, { token: w.laptop.token }, 401, 'unauthorised')
@@ -454,14 +472,27 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   const late = await seal(w.laptop)
   await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.laptop.token, body: { envelope: b64u(late.bytes) } }, 401, 'unauthorised')
   const s = await openStream(w, w.laptop); assert.equal(s.status, 401)
-  // The others talk in the new epoch; the old one cannot read it.
+  // The phone rotates the session key too (R6: a removed human must not read new session traffic).
+  const g2 = await createSessionGrant({ state: w.phone.state, signer: w.phone.device, sessionState: w.grant.sessionState, rotate: true, current: w.grant.secret, agentIds: [w.agent.device.id] })
+  const sg = await ok(w, 'POST', `${R(w)}/sessions/${hex(SID)}/grants`, { body: { signed_grant: b64u(g2.grant), sealed_session_keys: g2.wraps.map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(g2.backLink) } })
+  assert.equal(sg.session_key_epoch, 2)
+  await agentStream.until(e => e.event === 'session_grant' && e.data.session_key_epoch === 2, 'session_grant to the agent')
+  const mine = await ok(w, 'GET', `${R(w)}/sessions/${hex(SID)}/sealed_session_keys?after_session_key_epoch=1`, { token: w.agent.token })
+  assert.equal(mine.sealed_session_keys.length, 1); assert.equal(mine.sealed_session_keys[0].session_key_epoch, 2)
+  w.phone.session = g2.secret; w.agent.session = g2.secret
+  // The others talk in the new epochs; the removed laptop cannot read them.
   const fresh = await posted(w, w.phone, { payload: utf8('after') })
-  const rec = (await ok(w, 'GET', `${R(w)}/threads?timeline_kind=chat&timeline_id=session/${hex(w.phone.device.id)}`, { token: w.agent.token })).envelopes.find(e => e.envelope_number === fresh.n)
+  const desk = await posted(w, w.phone, { keyScope: 0, payload: utf8('after, on the desk') })
+  const rec = (await ok(w, 'GET', `${R(w)}/threads?timeline_kind=chat&timeline_id=session/${hex(SID)}`, { token: w.agent.token })).envelopes.find(e => e.envelope_number === fresh.n)
   assert.equal(z.peekEnvelope(unb64u(rec.envelope)).header.epoch, 2)
-  await assert.rejects(z.openVerifiedEnvelope(unb64u(rec.envelope), { state: w.laptop.state, secrets: w.laptop.secrets, envelopeHash: fresh.env.hash }), e => e.code === 'no-key')
+  await assert.rejects(z.openVerifiedEnvelope(unb64u(rec.envelope), { state: w.laptop.state, secrets: secretsOf(w.laptop), envelopeHash: fresh.env.hash }), e => e.code === 'no-key')
+  assert.equal(z.peekEnvelope(desk.env.bytes).header.epoch, 2)
+  // A sender in the old session key epoch is refused once the grace is over is tested in crypto/hub-test.mjs (PoC3).
+  assert.deepEqual((await ok(w, 'GET', `${R(w)}/sessions`, { token: w.phone.token })).sessions, [{ session_id: hex(SID), last_grant_number: 1, session_key_epoch: 2 }])
   // A removal without a sealed key for someone who stays is refused.
   const r2 = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.agent.device.id], previous: w.phone.secrets.get(2) })
   await refused(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(r2.entry), sealed_room_keys: r2.wraps.slice(1).map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r2.backLink) } }, 400, 'incomplete')
+  await refused(w, 'POST', `${R(w)}/members`, { body: { signed_entry: b64u(r2.entry), sealed_room_keys: [...r2.wraps, { id: w.agent.device.id, sealed: r2.wraps[0].sealed }].map(x => ({ device_id: hex(x.id), key_sealed: b64u(x.sealed) })), key_back_link: b64u(r2.backLink) } }, 400, 'incomplete')
   const devs = (await ok(w, 'GET', `${R(w)}/devices`, { token: w.phone.token })).devices
   assert.deepEqual(devs.map(d => d.is_active), [true, false, true])
   agentStream.close()
@@ -561,7 +592,7 @@ test('push: a send_push envelope reaches every other human device as { room_id, 
   assert.deepEqual(await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription } }), { ok: true })
   await refused(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.agent.token, body: { subscription } }, 403, 'forbidden')
   await refused(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription: { ...subscription, endpoint: 'https://evil.example/x' } } }, 400, 'bad-argument')
-  const cardId = crypto.randomBytes(16)
+  const cardId = await z.objectIdOf(w.agent.device.id, 1)
   const { n } = await posted(w, w.agent, { kind: KIND.PERMISSION_REQUEST, push: true, card: { id: cardId, state: 1, urgency: 3 } })
   for (let i = 0; i < 50 && !received.length; i++) await sleep(20)
   assert.equal(received.length, 1)
@@ -586,13 +617,19 @@ test('push: a send_push envelope reaches every other human device as { room_id, 
   await posted(w, w.agent, { kind: KIND.STATUS, push: true })
   await sleep(100)
   assert.equal(received.length, 1)
+  // send_push is honoured only on an object's own versions: a status with the bit rings nobody (R1).
+  await ok(w, 'POST', `${R(w)}/push_subscriptions`, { token: w.laptop.token, body: { subscription } })
+  await posted(w, w.agent, { kind: KIND.STATUS, push: true })
+  await sleep(100)
+  assert.equal(received.length, 1)
   await w.hub.close()
   fake.close()
 })
 
-test('retention: an answered card and its chat lose their bodies after 30 days, its attachments go; open ones stay; derived tables rebuild', async () => {
-  const w = await world()
-  const done = crypto.randomBytes(16), open = crypto.randomBytes(16)
+test('retention: an answered card and its chat lose their bodies 30 days after the hub received the answer, its attachments go; open ones stay; derived tables rebuild', async () => {
+  let clock = Date.now()
+  const w = await world({ now: () => clock })
+  const done = await z.objectIdOf(w.agent.device.id, 1), open = await z.objectIdOf(w.agent.device.id, 2)
   await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: done, state: 1, urgency: 1 } })
   await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: open, state: 1, urgency: 2 } })
   const asset = await z.encryptAsset(utf8('the plan'))
@@ -600,7 +637,9 @@ test('retention: an answered card and its chat lose their bodies after 30 days, 
   assert.equal((await fetch(`${w.base}${R(w)}/attachments/${aid}`, { method: 'PUT', headers: { authorization: `Bearer ${w.phone.token}` }, body: asset.blob })).status, 201)
   const msg = await posted(w, w.phone, { timelineKind: 1, timelineId: `card/${hex(done)}`, blobs: [asset.blobId], recipient: w.agent.device.id })
   await posted(w, w.phone, { timelineKind: 1, timelineId: `card/${hex(open)}` })
+  // The answer claims an answer time 31 days ago: a claim; retention counts from the hub's own arrival time (R1).
   const answered = await posted(w, w.phone, { kind: KIND.ANSWER, card: { id: done, state: z.CARD_STATE.ANSWERED, urgency: 1, answeredAt: Date.now() - 31 * 86400000 }, recipient: w.agent.device.id })
+  assert.deepEqual(w.hub.prune(), { objects: 0, envelopes: 0, attachments: 0 })
   const objects = w.hub.db.prepare('SELECT * FROM objects ORDER BY object_id').all()
   assert.deepEqual(objects.map(o => [o.object_id, o.object_state, o.owner_device_id]).sort(), [[hex(done), 2, hex(w.agent.device.id)], [hex(open), 1, hex(w.agent.device.id)]].sort())
   const timelines = w.hub.db.prepare('SELECT * FROM timelines ORDER BY timeline_id').all()
@@ -609,8 +648,10 @@ test('retention: an answered card and its chat lose their bodies after 30 days, 
   assert.deepEqual(w.hub.db.prepare('SELECT * FROM timelines ORDER BY timeline_id').all(), timelines, 'timelines rebuild from envelopes alike')
   const open1 = w.hub.db.prepare("SELECT object_id FROM objects WHERE room_id = ? AND object_state = 1 ORDER BY urgency DESC").all(w.roomId)
   assert.deepEqual(open1.map(o => o.object_id), [hex(open)])
+  clock += 31 * 86400000
   const res = w.hub.prune()
   assert.deepEqual(res, { objects: 1, envelopes: 3, attachments: 1 })
+  for (const c of [w.phone, w.laptop]) await signIn(w, c)
   assert.deepEqual(w.hub.prune(), { objects: 1, envelopes: 0, attachments: 0 }, 'pruning twice changes nothing')
   const t = await ok(w, 'GET', `${R(w)}/threads?timeline_kind=chat&timeline_id=card/${hex(done)}`, { token: w.phone.token })
   assert.equal(z.peekEnvelope(unb64u(t.envelopes[0].envelope)).pruned, true)
@@ -619,7 +660,7 @@ test('retention: an answered card and its chat lose their bodies after 30 days, 
   assert.deepEqual(all.envelopes.map(e => z.peekEnvelope(unb64u(e.envelope)).pruned), [true, false, true, true, true])
   void answered
   // Chains still verify for a fresh client.
-  const fresh = client(w.laptop.device, 'again'); fresh.state = w.laptop.state; fresh.secrets = w.laptop.secrets
+  const fresh = client(w.laptop.device, 'again'); fresh.state = w.laptop.state; fresh.secrets = w.laptop.secrets; fresh.session = w.laptop.session
   await ingest(fresh, all.envelopes)
   await refused(w, 'GET', `${R(w)}/attachments/${aid}`, { token: w.phone.token }, 404, 'not-found')
   assert.equal(fs.existsSync(path.join(w.dir, 'attachments', w.roomId, aid)), false)
