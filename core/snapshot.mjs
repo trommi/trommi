@@ -68,9 +68,11 @@ export async function findSnapshot(client) {
   const head = await client.hub.envelopes({ after_envelope_number: 0, limit: 1 })
   const last = head.last_envelope_number ?? 0
   if (last < 2000) return null                     // small room: replaying is as fast
+  const pages = []
   for (let page = 0, before = last; page < SCAN_PAGES && before > 0; page++) {
     const after = Math.max(0, before - 1000)
     const r = await client.hub.envelopes({ after_envelope_number: after, limit: 1000 })
+    pages.unshift(r.envelopes.filter(e => e.envelope_number > after && e.envelope_number <= before))
     for (const { envelope_number, envelope } of [...r.envelopes].reverse()) {
       if (envelope_number > before) continue
       const bytes = unb64u(envelope)
@@ -84,7 +86,7 @@ export async function findSnapshot(client) {
         if (!member || member.role !== z.ROLE.HUMAN || member.removedSeq !== null) continue
         const d = codec.decodePayload(o.payload)
         const v = d.content?.values?.room_snapshot
-        if (v?.attachment && v.envelope_number <= envelope_number) return { value: v, envelope_number, sender: hex(h.sender) }
+        if (v?.attachment && v.envelope_number <= envelope_number) return { value: v, envelope_number, sender: hex(h.sender), scanned: { envelopes: pages.flat(), last_envelope_number: last } }
       } catch { /* not readable for us: go on */ }
     }
     before = after
@@ -134,6 +136,7 @@ export async function bootFromSnapshot(client) {
     // frontier position is equivocation), everything beyond the frontier is applied whatever number the hub gave it.
     m.room.last_envelope_number = Math.max(0, snap.envelope_number - OVERLAP)
     client.snapshotCursor = snap.envelope_number
+    client._scan = contiguous(found.scanned)          // the catch-up that follows reads these pages from memory
     const ch = M.emptyChange()
     for (const k of ['cards', 'sessions', 'permissions', 'memos', 'published', 'timelines']) for (const id of m[k].keys()) ch[k].add(id)
     ch.members = ch.stack = ch.room = true
@@ -145,5 +148,11 @@ export async function bootFromSnapshot(client) {
   return true
 }
 
+/** The scanned records if they are one gapless run of envelope numbers, else null (then nothing is reused). */
+function contiguous(scan) {
+  const e = scan?.envelopes ?? []
+  for (let i = 1; i < e.length; i++) if (e[i].envelope_number !== e[i - 1].envelope_number + 1) return null
+  return e.length ? scan : null
+}
 function pick(o, keys) { const out = {}; if (o) for (const k of keys) if (o[k] !== undefined) out[k] = o[k]; return out }
 export { unhex }

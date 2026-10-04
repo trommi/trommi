@@ -250,11 +250,13 @@ export async function joinWithRecoveryCode({ hub_url, room_id, code, storage, cl
   const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
   const client = await makeClient({ storage, device, state: added.state, secrets: [secret], roomRecord, fetch, client: client_name })
   await client.hub.signIn()
-  await client._walkBackLinks().catch(() => {})
   // The new device is a human member now: re-seal every session key for everyone who holds it (itself included), all
-  // sessions in one atomic post (POST session_grants), not one request per session.
+  // sessions in one atomic post (POST session_grants), not one request per session; the room's older keys meanwhile.
   for (const [sid, k] of sessions) client.sessionKeys.set(sid, k)
-  await client._resealSessions([...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid))
+  await Promise.all([
+    client._walkBackLinks().catch(() => {}),
+    client._resealSessions([...sessions].filter(([, k]) => k.secrets.has(k.state.epoch)).map(([sid]) => sid)),
+  ])
   await client._saveRoom()
   return { client }
 }
