@@ -643,7 +643,9 @@ controller('composer', class extends Controller {
   connect() {
     this.cards = []
     if (!this.fieldTarget.value) { try { this.fieldTarget.value = localStorage.getItem(this.key) ?? '' } catch {} }
-    this.paint()
+    // (no measuring while the page is built: an empty field keeps its CSS height, a draft is fitted once it is painted)
+    this.paint({ fit: false })
+    if (this.fieldTarget.value) requestAnimationFrame(() => setTimeout(() => { if (this.element.isConnected) this.fit() }, 0))
     if (this.focusValue) { this.fieldTarget.focus(); this.fieldTarget.setSelectionRange(this.fieldTarget.value.length, this.fieldTarget.value.length) }
   }
   // Gone with the page: the previews' object URLs are let go.
@@ -741,7 +743,7 @@ controller('composer', class extends Controller {
   dropOffer() { try { sessionStorage.removeItem(CLIP_KEY) } catch {} this.paint() }
   cardOff({ params: { id } }) { this.cards = this.cards.filter(c => c.id !== id); this.paint() }
 
-  paint() {
+  paint({ fit = true } = {}) {
     this.revoke()
     const chips = [...this.pickerTarget.files].map((file, at) => {
       const chip = el('span', 'composer-file')
@@ -787,7 +789,7 @@ controller('composer', class extends Controller {
     }
     this.chipsTarget.replaceChildren(...chips)
     this.element.toggleAttribute('data-files', this.pickerTarget.files.length > 0 || this.cards.length > 0)
-    this.fit()
+    if (fit) this.fit(); else this.sendTarget.disabled = this.empty
   }
   paste(e) {
     // The line a card's "Copy" wrote: the card itself, as a chip.
@@ -838,12 +840,14 @@ controller('log', class extends Controller {
     this.unread = 0
     localise(this.element)
     if (!this.hasLogTarget) return   // a list is in view (questions, files): only the times
-    this.height = this.logTarget.scrollHeight
+    // (nothing is measured while the page is built: the log's height and the open questions out of sight are read once
+    //  the frame is painted, when the layout is there anyway; reading them here made the browser lay the page out first)
+    this.height = null
     this.seen = new MutationObserver(list => this.arrived(list))
     this.seen.observe(this.logTarget, { childList: true, subtree: true })
     this.sizes = new ResizeObserver(() => this.paint())
     this.sizes.observe(this.logTarget)
-    this.paint()
+    requestAnimationFrame(() => setTimeout(() => { if (!this.hasLogTarget || !this.logTarget.isConnected) return; this.height ??= this.logTarget.scrollHeight; this.paint() }, 0))
   }
   disconnect() { this.seen?.disconnect(); this.sizes?.disconnect(); this.near?.disconnect() }
 
@@ -892,7 +896,7 @@ controller('log', class extends Controller {
         }
       }
     }
-    const grew = log.scrollHeight - this.height
+    const grew = this.height == null ? 0 : log.scrollHeight - this.height
     this.height = log.scrollHeight
     if (this.pinned) log.scrollTop = 0
     else if (fresh) { this.unread += fresh; if (grew > 0) log.scrollTop -= grew }   // reading further up: what is in view stays in view
