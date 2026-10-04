@@ -31,11 +31,11 @@ export const LIMITS = limitsFromEnv({
 })
 const STATUS = {
   'bad-format': 400, 'bad-argument': 400, 'bad-version': 400, 'bad-entry': 400, 'bad-signature': 400, 'bad-invite': 400, 'wrong-room': 400,
-  'wrong-epoch': 400, incomplete: 400, 'chain-break': 400, 'log-behind': 400, 'log-fork': 400,
+  incomplete: 400, 'bad-grant': 400, 'chain-break': 400, 'log-behind': 400, 'log-fork': 400,
   unauthorised: 401, 'bad-challenge': 401,
   forbidden: 403, 'not-member': 403, 'removed-sender': 403, 'wrong-sender': 403,
   'not-found': 404, 'no-room': 404,
-  replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'instance-conflict': 409,
+  replay: 409, gap: 409, equivocation: 409, 'room-exists': 409, 'invite-used': 409, 'instance-conflict': 409, 'wrong-epoch': 409, 'lease-lost': 409, 'invite-burned': 410,
   'invite-expired': 410, 'too-large': 413, 'too-many': 429, 'rate-limited': 429, internal: 500,
 }
 const TIMELINE_NAMES = { chat: z.TIMELINE.CHAT, canvas: z.TIMELINE.CANVAS }
@@ -53,13 +53,17 @@ function buckets(rate, burst, now) {
     take(key) {
       const t = now()
       let b = map.get(key)
-      if (!b) { b = { tokens: burst, at: t }; map.set(key, b) }
+      if (!b) {
+        if (map.size >= 100000) { for (const [k, x] of map) if (t - x.at > 60000) map.delete(k) }   // bounded under a flood
+        b = { tokens: burst, at: t }; map.set(key, b)
+      }
       b.tokens = Math.min(burst, b.tokens + ((t - b.at) / 1000) * rate)
       b.at = t
       if (b.tokens >= 1) { b.tokens -= 1; return 0 }
       return Math.ceil((1 - b.tokens) / rate)
     },
     sweep() { const t = now(); for (const [k, b] of map) if (t - b.at > 3600000) map.delete(k) },
+    get size() { return map.size },
   }
 }
 
@@ -72,19 +76,20 @@ export async function startHub({
   pingMs = 25000, retentionEveryMs = DAY,
 } = {}) {
   const t0 = performance.now()
-  const db = openDb(dataDir)
+  const db = openDb(dataDir, { log })
   const files = fileStore(path.join(dataDir, 'attachments'))
   const push = pusher({ dir: dataDir, ...(pushHosts ? { hosts: pushHosts } : {}), log })
   const rooms = new Map()            // room_id -> Promise<{ hub, streams: Set }>
   const founded = new Map()          // ip -> [times]
   const envelopeLimit = buckets(LIMITS.envelopesPerSecond, LIMITS.envelopeBurst, now)
+  const pushLimit = buckets(10 / 60, 10, now)
   const openLimit = buckets(LIMITS.openRequestsPerIpMinute / 60, LIMITS.openRequestsPerIpMinute, now)
   const stats = { roomLoads: [] }
 
   // ---- rooms, loaded on first use --------------------------------------------------
 
   const roomExists = id => !!db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(id)
-  const makeHub = id => createHub({ hubUrl, storage: roomStorage(db, id), now, emptyNames: true, randomSessionIds: true })
+  const makeHub = id => createHub({ hubUrl, storage: roomStorage(db, id), now })
   function room(id) {
     if (!HEX64.test(id)) fail('bad-argument', 'a room id is 64 hex characters')
     let p = rooms.get(id)
@@ -168,7 +173,7 @@ export async function startHub({
 
   /** The envelope rows of a room after a number, with the depth rule: body only for heads not pruned. */
   const envelopeRows = (roomId, after, limit) => db.q(`SELECT envelope_number, envelope_header, envelope_nonce, envelope_signature, encrypted_body_hash,
-      CASE WHEN is_head = 1 THEN encrypted_body END AS encrypted_body FROM envelopes WHERE room_id = ? AND envelope_number > ? ORDER BY envelope_number LIMIT ?`).all(roomId, after, limit)
+      CASE WHEN envelope_kind != 1 THEN encrypted_body END AS encrypted_body FROM envelopes WHERE room_id = ? AND envelope_number > ? ORDER BY envelope_number LIMIT ?`).all(roomId, after, limit)
   const record = r => ({ envelope_number: r.envelope_number, envelope: z.b64u(envelopeBytes(r, true)) })
 
   // ---- routes ------------------------------------------------------------------------
@@ -213,7 +218,6 @@ export async function startHub({
     // A removal takes effect at once: streams closed (tokens were revoked inside), its agent session freed.
     if (out.removed.length) {
       closeStreams(r, out.removed)
-      for (const d of out.removed) r.hub.releaseDevice(d)
       log(`room ${r.id.slice(0, 8)}: ${out.removed.length} device(s) removed, key epoch ${out.epoch}`)
     }
     deliver(r, { text: sse('member_entry', { entry_number: out.seq, entry_hash: out.hash, key_epoch: out.epoch }) })
@@ -230,10 +234,13 @@ export async function startHub({
     const bytes = b64(body.envelope, 'envelope')
     const peek = z.peekEnvelope(bytes)
     if (peek.ciphertext && peek.ciphertext.length > LIMITS.ciphertext) fail('too-large', 'an envelope body is at most 64 KiB padded; put more into an attachment')
-    const out = await r.hub.postEnvelope(token, bytes)
+    const lease = req.headers['x-lease-generation']
+    if (lease != null && !/^\d{1,16}$/.test(lease)) fail('bad-argument', 'x-lease-generation')
+    const out = await r.hub.postEnvelope(token, bytes, { leaseGeneration: lease != null ? Number(lease) : null })
     deliver(r, { n: out.n, text: sse('envelope', { envelope_number: out.n, envelope: body.envelope }, out.n) })
     send(res, 200, { envelope_number: out.n })
-    if (out.push) sendPushes(r, me.id, out).catch(err => log(`push: ${err.message}`))
+    // send_push is honoured only on an object's own versions and requests (crypto/hub.mjs), and rate-limited per sender.
+    if (out.push && !pushLimit.take(`${r.id}:${me.id}`)) sendPushes(r, me.id, out).catch(err => log(`push: ${err.message}`))
   }
 
   async function sendPushes(r, senderId, out) {
@@ -261,10 +268,13 @@ export async function startHub({
     ops.track(s, req)
     res.on('error', () => {})
     const ping = setInterval(() => { if (!res.writableEnded) res.write(sse('ping', {})) }, pingMs)
+    // An agent's lease lives while it has a stream open, and 60 s after the last one closed.
+    const lease = me.role === 'agent' ? setInterval(() => r.hub.touchLease(me.id), 20000) : null
+    if (lease) r.hub.touchLease(me.id)
     const done = () => {
-      clearInterval(ping)
+      clearInterval(ping); if (lease) clearInterval(lease)
       if (!r.streams.delete(s)) return
-      if (me.role === 'agent' && !deviceStreams(r, me.id).length) r.hub.releaseDevice(me.id)
+      if (me.role === 'agent') r.hub.touchLease(me.id)
     }
     res.on('close', done)
     res.write(': trommi hub\n\n')
@@ -353,8 +363,8 @@ export async function startHub({
     if (m === 'GET' && a === 'devices' && !b) {
       hub.authorise(bearer(req), { member: true })
       const online = new Set([...r.streams].map(s => s.deviceId))
-      const devices = db.q('SELECT device_id, device_role, removed_entry_number, agent_session_id FROM devices WHERE room_id = ? ORDER BY added_entry_number, device_id').all(r.id)
-        .map(d => ({ device_id: d.device_id, device_role: d.device_role, is_active: d.removed_entry_number == null, ...(d.agent_session_id ? { agent_session_id: d.agent_session_id } : {}), is_online: online.has(d.device_id) }))
+      const devices = db.q('SELECT device_id, device_role, removed_entry_number FROM devices WHERE room_id = ? ORDER BY added_entry_number, device_id').all(r.id)
+        .map(d => ({ device_id: d.device_id, device_role: d.device_role, is_active: d.removed_entry_number == null, is_online: online.has(d.device_id) }))
       return send(res, 200, { last_entry_number: hub.state.head.seq, devices })
     }
     if (m === 'GET' && a === 'sealed_room_keys' && !b) {
@@ -372,6 +382,7 @@ export async function startHub({
         return send(res, 200, { invite_id: out.inviteId, device_role: out.role, expires_at: out.expiresAt })
       }
       if (b) hexParam(b, HEX32, 'invite_id')
+      if (m === 'DELETE' && b && !c) return send(res, 200, await hub.burnInvite(bearer(req), b))
       if (m === 'GET' && b && !c) {
         openRoute(req)
         const inv = hub.invite(b)
@@ -436,20 +447,60 @@ export async function startHub({
       return send(res, 200, { envelopes: rows.slice(0, limit).map(record), has_more: hasMore })
     }
     if (m === 'GET' && a === 'stream' && !b) return stream(r, req, res, url)
-    if (m === 'POST' && a === 'agent_sessions' && !b) {
+    if (m === 'POST' && a === 'agent_lease' && !b) {
       const token = bearer(req)
       const body = await readJson(req)
       const instance = body.process_instance
       if (typeof instance !== 'string' || !instance || instance.length > 200) fail('bad-argument', 'process_instance')
-      let out
-      try { out = hub.claimSession(token, { instance }) } catch (err) {
-        // The process holding the key has no open stream any more (crashed between claim and stream): take over.
-        const me = hub.authorise(token, { member: true })
-        if (err.code !== 'instance-conflict' || deviceStreams(r, me.id).length) throw err
-        hub.releaseDevice(me.id)
-        out = hub.claimSession(token, { instance })
+      const me = hub.authorise(token, { member: true })
+      const out = hub.takeLease(token, { instance })
+      // A new process took the key over: the old one's streams end now; its posts get lease-lost.
+      if (out.previousInstance) closeStreams(r, [me.id])
+      return send(res, 200, { lease_generation: out.generation, expires_at: out.expiresAt })
+    }
+    if (m === 'POST' && a === 'ephemeral' && !b) {
+      // Typing, cursors, a pen preview: a sealed envelope relayed to the open streams only, never stored.
+      const me = hub.authorise(bearer(req), { member: true })
+      const wait = ops.unlimited(req, r.id) ? 0 : envelopeLimit.take(`${r.id}:${me.id}`)
+      if (wait) fail('rate-limited', 'too many envelopes from this device', { retryAfter: wait })
+      const body = await readJson(req)
+      const bytes = b64(body.envelope, 'envelope')
+      if (bytes.length > 16384) fail('too-large', 'an ephemeral envelope is at most 16 KiB')
+      const p = z.peekEnvelope(bytes)
+      if (z.hex(p.header.sender) !== me.id) fail('wrong-sender', 'a device sends its own envelopes only')
+      if (!z.bytesEqual(p.header.roomId, z.unhex(r.id))) fail('wrong-room', 'envelope of another room')
+      deliver(r, { text: sse('ephemeral', { device_id: me.id, envelope: body.envelope }) }, s => s.deviceId !== me.id)
+      return send(res, 200, { ok: true })
+    }
+    if (a === 'sessions') {
+      if (m === 'GET' && !b) {
+        hub.authorise(bearer(req))
+        return send(res, 200, { sessions: hub.sessionsList() })
       }
-      return send(res, 200, { agent_session_id: out.sessionId, device_id: out.device })
+      if (b) hexParam(b, HEX32, 'session_id')
+      if (b && c === 'grants' && !parts[3]) {
+        if (m === 'POST') {
+          const body = await readJson(req)
+          const grant = b64(body.signed_grant, 'signed_grant')
+          if (!Array.isArray(body.sealed_session_keys)) fail('bad-argument', 'sealed_session_keys must be a list')
+          const wraps = body.sealed_session_keys.map(w => ({ id: z.unhex(hexParam(w?.device_id, HEX64, 'device_id')), sealed: b64(w?.key_sealed, 'key_sealed') }))
+          const backLink = body.key_back_link != null ? b64(body.key_back_link, 'key_back_link') : undefined
+          const out = await hub.postGrant({ sessionId: b, grant, wraps, backLink })
+          deliver(r, { text: sse('session_grant', { session_id: b, grant_number: out.grantNumber, session_key_epoch: out.sessionKeyEpoch }) })
+          return send(res, 200, { grant_number: out.grantNumber, grant_hash: out.grantHash, session_key_epoch: out.sessionKeyEpoch })
+        }
+        if (m === 'GET') {
+          const after = intParam(url, 'after_grant_number', -1, -1, 2 ** 32)
+          return send(res, 200, { signed_grants: (await hub.grants(bearer(req), b)).slice(after + 1).map(z.b64u) })
+        }
+      }
+      if (m === 'GET' && b && c === 'sealed_session_keys' && !parts[3]) {
+        const afterEpoch = intParam(url, 'after_session_key_epoch', 0, 0, 2 ** 32)
+        return send(res, 200, { sealed_session_keys: hub.sessionWraps(bearer(req), b, { afterEpoch }).map(w => ({ session_key_epoch: w.epoch, key_sealed: z.b64u(w.sealed) })) })
+      }
+      if (m === 'GET' && b && c === 'key_back_links' && !parts[3]) {
+        return send(res, 200, { key_back_links: (await hub.sessionBackLinks(bearer(req), b)).map(l => ({ session_key_epoch: l.epoch, key_back_link: z.b64u(l.bytes) })) })
+      }
     }
     if (a === 'attachments' && b && !c) {
       if (m === 'PUT') return putAttachment(r, req, res, b)
@@ -478,7 +529,7 @@ export async function startHub({
     if (req.method === 'OPTIONS') {
       if (allowedOrigin(req.headers.origin)) {
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE')
-        res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, range, last-event-id, x-found-token, x-test-token, x-lease-generation, trommi-client, trommi-protocol')
+        res.setHeader('Access-Control-Allow-Headers', 'authorization, content-type, range, last-event-id, x-found-token, x-test-signature, x-lease-generation, trommi-client, trommi-protocol')
         res.setHeader('Access-Control-Max-Age', '86400')
       }
       res.writeHead(204).end()
@@ -517,7 +568,7 @@ export async function startHub({
   function prune({ days = LIMITS.retentionDays } = {}) {
     const cutoff = now() - days * DAY
     const due = db.q(`SELECT o.room_id, o.object_id FROM objects o JOIN envelopes e ON e.room_id = o.room_id AND e.envelope_number = o.latest_head_envelope_number
-      WHERE o.object_state != 1 AND COALESCE(NULLIF(o.answered_at, 0), e.received_at) < ?`).all(cutoff)
+      WHERE o.object_state != 1 AND e.received_at < ?`).all(cutoff)
     let envelopes = 0, attachments = 0
     for (const o of due) {
       db.tx(() => {
@@ -535,7 +586,10 @@ export async function startHub({
   }
   const timers = [
     setInterval(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, retentionEveryMs),
-    setInterval(() => { envelopeLimit.sweep(); openLimit.sweep() }, 600000),
+    setInterval(() => {
+      envelopeLimit.sweep(); openLimit.sweep(); pushLimit.sweep()
+      for (const [ip, times] of founded) { const keep = times.filter(t => now() - t < 3600000); if (keep.length) founded.set(ip, keep); else founded.delete(ip) }
+    }, 600000),
   ]
   for (const t of timers) t.unref()
   setTimeout(() => { try { prune() } catch (err) { log(`retention failed: ${err.message}`) } }, 60000).unref()

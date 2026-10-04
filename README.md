@@ -52,12 +52,12 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 
 | Status | Codes |
 | --- | --- |
-| 400 | `bad-format`, `bad-argument`, `bad-version`, `bad-entry`, `bad-signature`, `bad-invite`, `wrong-room`, `wrong-epoch`, `incomplete`, `chain-break`, `log-behind`, `log-fork` |
+| 400 | `bad-format`, `bad-argument`, `bad-version`, `bad-entry`, `bad-signature`, `bad-invite`, `bad-grant`, `wrong-room`, `incomplete`, `chain-break`, `log-behind`, `log-fork` |
 | 401 | `unauthorised`, `bad-challenge` |
 | 403 | `forbidden`, `not-member`, `removed-sender`, `wrong-sender` |
 | 404 | `not-found`, `no-room` |
-| 409 | `replay`, `gap`, `equivocation`, `room-exists`, `invite-used`, `instance-conflict` |
-| 410 | `invite-expired` |
+| 409 | `replay`, `gap`, `equivocation`, `room-exists`, `invite-used`, `wrong-epoch` (an old key epoch after the 2-minute grace: fetch the member list or the grants), `lease-lost` |
+| 410 | `invite-expired` (also 15 minutes after an invite was used), `invite-burned` |
 | 413 | `too-large`, `quota-exceeded` (with `used`, `quota`) |
 | 426 | `client-too-old` (with `minimum_version`) |
 | 429 | `too-many`, `rate-limited` (with `retry-after`) |
@@ -85,7 +85,14 @@ Every refusal is `{ "error": "<code>", "message": "<text for humans>" }`. Codes 
 | `POST /v1/rooms/:room_id/invites/:invite_id/requests` | the newcomer | `{ signed_request }` | `{ request_hash }` |
 | `GET /v1/rooms/:room_id/invites/:invite_id/requests` | inviter | | `{ signed_requests: [b64u] }` |
 | `POST /v1/rooms/:room_id/invites/:invite_id/reveal` | inviter | `{ signed_reveal }` | `{ request_hash }` |
-| `GET /v1/rooms/:room_id/invites/:invite_id/status?request_hash=` | the newcomer | | `{ join_status: waiting \| revealed \| joined \| taken, signed_reveal?, signed_entries?, key_sealed? }` |
+| `GET /v1/rooms/:room_id/invites/:invite_id/status?request_hash=` | the newcomer | | `{ join_status: waiting \| revealed \| joined \| taken, signed_reveal?, signed_entries?, key_sealed? }` (`key_sealed` for a human only: agents get no room key) |
+| `DELETE /v1/rooms/:room_id/invites/:invite_id` | inviter | | `{ ok }`: the invite is called off (a wrong check code was typed); its routes answer `410 invite-burned` from then on |
+| `GET /v1/rooms/:room_id/sessions` | member | | `{ sessions: [{ session_id, last_grant_number, session_key_epoch }] }` |
+| `POST /v1/rooms/:room_id/sessions/:session_id/grants` | signed itself (a human device or the recovery key) | `{ signed_grant, sealed_session_keys: [{ device_id, key_sealed }], key_back_link? }` | `{ grant_number, grant_hash, session_key_epoch }`; the sealed keys must be exactly one per active human device, the recovery key and each assigned agent (manifest hash in the grant); a back link exactly when the session key epoch rises. Every stream of the room gets `event: session_grant` |
+| `GET /v1/rooms/:room_id/sessions/:session_id/grants?after_grant_number=-1` | member | | `{ signed_grants: [b64u] }` |
+| `GET /v1/rooms/:room_id/sessions/:session_id/sealed_session_keys?after_session_key_epoch=0` | member, recovery | | `{ sealed_session_keys: [{ session_key_epoch, key_sealed }] }` (own only) |
+| `GET /v1/rooms/:room_id/sessions/:session_id/key_back_links` | human, recovery; an assigned agent for epochs granted `with_history` | | `{ key_back_links: [{ session_key_epoch, key_back_link }] }` |
+| `POST /v1/rooms/:room_id/ephemeral` | member | `{ envelope }` (≤ 16 KiB, sealed, own) | `{ ok }`: relayed to the room's other open streams as `event: ephemeral { device_id, envelope }`, never stored |
 | `POST /v1/rooms/:room_id/envelopes` | member | `{ envelope }` | `{ envelope_number }` |
 | `GET /v1/rooms/:room_id/envelopes?after_envelope_number=0&limit=1000` | member | | `{ last_envelope_number, envelopes: [{ envelope_number, envelope }] }` in hub order: the full envelope for heads, the pruned form (header, ciphertext hash, signature) for thread items and pruned cards |
 | `GET /v1/rooms/:room_id/threads?timeline_kind=chat&timeline_id=card/<object_id>&before_envelope_number=&limit=50` (newest first) or `&after_envelope_number=` (oldest first, for a canvas tail after a snapshot) | member | | `{ envelopes: [{ envelope_number, envelope }], has_more }`: full items of exactly that timeline (index `room_id, timeline_kind, timeline_id, envelope_number`) |
@@ -110,6 +117,8 @@ One stream per signed-in device. SSE records; the SSE `id` is the `envelope_numb
 event: envelope       data: {"envelope_number":42,"envelope":"<b64u>"}
 event: member_entry   data: {"entry_number":3,"entry_hash":"<hex>","key_epoch":2}   (fetch members, then sealed_room_keys)
 event: join_request   data: {"invite_id":"<hex>"}                                    (to the inviter only)
+event: session_grant  data: {"session_id":"<hex>","grant_number":1,"session_key_epoch":2}   (fetch grants, then sealed_session_keys)
+event: ephemeral      data: {"device_id":"<hex>","envelope":"<b64u>"}                (never stored; typing, cursors, pen preview)
 event: ping           data: {}                                                       (every 25 s)
 event: attachment_evicted  data: {"attachment_ids":["<hex>"]}                        (quota, below)
 event: upgrade_required    data: {"minimum_version":"1.4.0","message":"…"}           (then the stream closes)
@@ -129,9 +138,9 @@ On connect the hub first sends what `GET envelopes` would (same depth rule), the
 | `session_grants` | `room_id`, `session_id`, `grant_number`, `previous_grant_hash`, `grant_hash`, `session_key_epoch`, `signer_device_id`, `signed_grant`, `received_at` |
 | `sealed_session_keys` | `room_id`, `session_id`, `session_key_epoch`, `device_id`, `key_sealed` |
 | `session_key_back_links` | `room_id`, `session_id`, `session_key_epoch`, `key_back_link` |
-| `invites` | `room_id`, `invite_id`, `device_role`, `inviter_device_id`, `signed_offer`, `expires_at`, `signed_reveal`, `answered_request_hash`, `used_at`, `added_device_id` |
+| `invites` | `room_id`, `invite_id`, `device_role`, `inviter_device_id`, `signed_offer`, `expires_at`, `signed_reveal`, `answered_request_hash`, `used_at`, `added_device_id`, `burned_at` |
 | `join_requests` | `room_id`, `invite_id`, `request_hash`, `device_id`, `signed_request`, `received_at` |
-| `envelopes` | `room_id`, `envelope_number`, `sender_device_id`, `sender_sequence`, `previous_envelope_hash`, `envelope_hash`, `key_epoch`, `recipient_device_id`, `object_id`, `object_state`, `urgency`, `answered_at`, `envelope_kind`, `timeline_kind`, `timeline_id`, `send_push`, `attachment_ids`, `padded_size`, `sent_at`, `received_at`, `envelope_header`, `envelope_nonce`, `encrypted_body` (BLOB; NULL once pruned), `encrypted_body_hash`, `envelope_signature` |
+| `envelopes` (schema 2: `sender_device_id`, `previous_envelope_hash`, `envelope_hash`, `recipient_device_id` are 32-byte BLOBs; `PRAGMA user_version` = 2, an older hub.db is moved aside to `hub.db.v1-<date>` on start) | `room_id`, `envelope_number`, `sender_device_id`, `sender_sequence`, `previous_envelope_hash`, `envelope_hash`, `key_epoch`, `recipient_device_id`, `object_id`, `object_state`, `urgency`, `answered_at`, `envelope_kind`, `timeline_kind`, `timeline_id`, `send_push`, `attachment_ids`, `padded_size`, `sent_at`, `received_at`, `envelope_header`, `envelope_nonce`, `encrypted_body` (BLOB; NULL once pruned), `encrypted_body_hash`, `envelope_signature` |
 | `objects` (derived) | `room_id`, `object_id`, `object_state`, `urgency`, `answered_at`, `owner_device_id`, `first_envelope_number`, `latest_head_envelope_number` (cards, memos, permission requests: everything with an `object_id`) |
 | `timelines` (derived) | `room_id`, `timeline_kind`, `timeline_id`, `last_envelope_number`, `item_count` |
 | `attachments` | `room_id`, `attachment_id`, `object_id`, `uploader_device_id`, `total_size`, `chunk_count`, `stored_at` |
@@ -274,7 +283,7 @@ Two independent reviews (Claude, Codex; four findings reproduced) found the prim
 - **Header.** `key_scope` u8 (0 room, 1 session) ‖ for scope session the `session_id` (16 bytes); `key_epoch` is then the session's key epoch. The scope and session are in the sender-key derivation and the associated data. A session's timelines and objects must be under that session's key; room-wide data under the room key (checked by every receiver).
 - **Session grants** (a second small signed chain per session, stored by the hub in `session_grants` and `sealed_session_keys`): a human device signs `{ room_id, session_id, grant_number, previous_grant_hash, session_key_epoch, assigned_agent_ids, key_commitment, wrap manifest hash, logSeq/logHash }` and posts it with the session key sealed for every active human device, the recovery key and the assigned agents, plus a back link to the previous session key epoch. A session is created by its first grant (`session_id` random, chosen by the human device). Route: `POST /v1/rooms/:room_id/sessions/:session_id/grants`, `GET …/grants`, `GET …/sealed_session_keys` (own only), `GET …/key_back_links` (humans; an agent gets them only if the grant says `with_history`).
 - **Assigning an agent to a session, or handing a session over** (a crashed Claude replaced by another): the app asks „Darf er den bisherigen Verlauf lesen?“. Yes: the grant seals the current session key and marks `with_history`, so the agent also gets the session's back links and reads all of that session. No: the grant starts a new `session_key_epoch` first, so the agent reads from now on. Either way it reads nothing of other sessions.
-- **Removing an agent** (or unassigning it) is one new grant with a new `session_key_epoch` for each session it held; the room key does not change (agents never hold it). Removing a **human** device rotates the room key (as before, one member entry) and every session key (one grant per session, posted by the same device right after; until then the removed device is already refused by the hub). New human devices receive all session keys at join, sealed by the inviter.
+- **Removing an agent** (or unassigning it) is one new grant with a new `session_key_epoch` for each session it held. Removing it from the member list is a `devices_removed` entry, and that entry always carries a new room key epoch (the format has no removal without one); harmless, a few milliseconds, although agents never held the room key. Removing a **human** device rotates the room key (as before, one member entry) and every session key (one grant per session, posted by the same device right after; until then the removed device is already refused by the hub). New human devices receive all session keys at join, sealed by the inviter.
 - **Reconnecting** with the same device identity changes nothing.
 - A **recovery** (signed by the recovery key) may also remove agents; the recovery screen lists them with when and by whom they were added and unticks those added since the last trusted point. Push subscriptions of a removed device are deleted in the same transaction. Invite endpoints stop answering 15 minutes after use.
 - Freeze: with this, the v1 bytes are frozen (FORMAT.md §9 and vectors).
