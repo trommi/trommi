@@ -155,7 +155,16 @@ export async function launchChromium({ width = 1440, height = 900, args = [] } =
     return session
   }
 
-  return { pid: proc.pid, port, profile, page, close }
+  /** A new tab of the same profile (same origin storage, Web Locks, BroadcastChannel): { session, id, close() }. */
+  async function tab(url = 'about:blank') {
+    const target = await (await fetch(`http://127.0.0.1:${port}/json/new?${encodeURI(url)}`, { method: 'PUT' })).json()
+    const session = await connect(target.webSocketDebuggerUrl)
+    sessions.push(session)
+    await session.send('Emulation.setFocusEmulationEnabled', { enabled: true }).catch(() => {})
+    return { session, id: target.id, close: () => fetch(`http://127.0.0.1:${port}/json/close/${target.id}`).then(r => r.text()) }
+  }
+
+  return { pid: proc.pid, port, profile, page, tab, close }
 }
 
 // ---- the command ---------------------------------------------------------------

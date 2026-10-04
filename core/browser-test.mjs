@@ -11,7 +11,7 @@ import { startHub, LIMITS } from '../hub/server.mjs'
 import { launchChromium } from '../dev/cdp.mjs'
 import { joinRoom, memoryStorage } from './index.mjs'
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const N = Number(process.argv.find(a => a.startsWith('--n='))?.slice(4) ?? 2000)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
 LIMITS.foundPerIpHour = 10_000

@@ -55,6 +55,8 @@ export class Hub {
     this._signing = null
   }
 
+  /** A follower tab (tabs.mjs) reads only: anything that moves the room's log, keys or invites is refused here. */
+  _refused() { return Promise.reject(new ZError('follower', 'this tab reads only: the writer tab sends')) }
   url(path) { return `${this.hub_url}/v1${path}` }
   roomPath(path = '') { return `/rooms/${checkId('room_id', this.room_id)}${path}` }
 
@@ -178,20 +180,20 @@ export class Hub {
   members({ after_entry_number = -1, invite_id } = {}) {
     return this.request('GET', this.roomPath('/members'), { auth: !invite_id, query: { after_entry_number, invite_id } })
   }
-  postMember({ signed_entry, sealed_room_keys, key_back_link }) {
+  postMember({ signed_entry, sealed_room_keys, key_back_link }) { if (this.readOnly) return this._refused();
     return this.request('POST', this.roomPath('/members'), { auth: false, body: { signed_entry, sealed_room_keys, key_back_link } })
   }
   devices() { return this.request('GET', this.roomPath('/devices')) }
   sealedRoomKeys(after_key_epoch = 0) { return this.request('GET', this.roomPath('/sealed_room_keys'), { query: { after_key_epoch } }) }
   keyBackLinks() { return this.request('GET', this.roomPath('/key_back_links')) }
-  postInvite(signed_offer) { return this.request('POST', this.roomPath('/invites'), { body: { signed_offer } }) }
+  postInvite(signed_offer) { if (this.readOnly) return this._refused(); return this.request('POST', this.roomPath('/invites'), { body: { signed_offer } }) }
   getInvite(invite_id) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}`), { auth: false }) }
   postRequest(invite_id, signed_request) { return this.request('POST', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/requests`), { auth: false, body: { signed_request } }) }
   getRequests(invite_id) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/requests`)) }
-  deleteInvite(invite_id) { return this.request('DELETE', this.roomPath(`/invites/${checkId('invite_id', invite_id)}`)) }
-  postReveal(invite_id, signed_reveal) { return this.request('POST', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/reveal`), { body: { signed_reveal } }) }
+  deleteInvite(invite_id) { if (this.readOnly) return this._refused(); return this.request('DELETE', this.roomPath(`/invites/${checkId('invite_id', invite_id)}`)) }
+  postReveal(invite_id, signed_reveal) { if (this.readOnly) return this._refused(); return this.request('POST', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/reveal`), { body: { signed_reveal } }) }
   joinStatus(invite_id, request_hash) { return this.request('GET', this.roomPath(`/invites/${checkId('invite_id', invite_id)}/status`), { auth: false, query: { request_hash } }) }
-  postEnvelope(envelope) {
+  postEnvelope(envelope) { if (this.readOnly) return this._refused();
     return this.request('POST', this.roomPath('/envelopes'), { body: { envelope }, headers: this.lease_generation != null ? { 'x-lease-generation': String(this.lease_generation) } : {} })
   }
   /** newest: the newest `limit` envelopes after the cursor (a hub without it answers from the cursor on: check the numbers). */
@@ -199,14 +201,14 @@ export class Hub {
   threads({ timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit = 50 }) {
     return this.request('GET', this.roomPath('/threads'), { query: { timeline_kind, timeline_id, before_envelope_number, after_envelope_number, limit } })
   }
-  agentLease({ process_instance, renew = false }) { return this.request('POST', this.roomPath('/agent_lease'), { body: { process_instance, ...(renew ? { renew: true } : {}) } }) }
+  agentLease({ process_instance, renew = false }) { if (this.readOnly) return this._refused(); return this.request('POST', this.roomPath('/agent_lease'), { body: { process_instance, ...(renew ? { renew: true } : {}) } }) }
   sessions() { return this.request('GET', this.roomPath('/sessions')) }
   sessionGrants(session_id, after_grant_number = -1) { return this.request('GET', this.roomPath(`/sessions/${checkId('session_id', session_id)}/grants`), { query: { after_grant_number } }) }
-  postSessionGrant(session_id, { signed_grant, sealed_session_keys, key_back_link }) {
+  postSessionGrant(session_id, { signed_grant, sealed_session_keys, key_back_link }) { if (this.readOnly) return this._refused();
     return this.request('POST', this.roomPath(`/sessions/${checkId('session_id', session_id)}/grants`), { auth: false, body: { signed_grant, sealed_session_keys, key_back_link } })
   }
   /** Several grants in one atomic post: grants = [{ session_id, signed_grant, sealed_session_keys, key_back_link }]. */
-  postSessionGrants(grants) {
+  postSessionGrants(grants) { if (this.readOnly) return this._refused();
     for (const g of grants) checkId('session_id', g.session_id)
     return this.request('POST', this.roomPath('/session_grants'), { auth: false, body: { grants } })
   }
@@ -235,8 +237,8 @@ export class Hub {
   /** A signed-in human: { has_escrow, revision, escrow_version, ... } and a v1 blob (only to migrate it). */
   escrowStatus() { return this.request('GET', this.roomPath('/escrow')) }
   /** Compare-and-swap: `replaces` is the revision from escrowStatus (0 when there is none); 409 escrow-changed otherwise. */
-  putEscrow({ escrow_version, escrow_id, key_escrow, replaces }) { return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, escrow_id, key_escrow, replaces } }) }
-  deleteEscrow(revision) { return this.request('DELETE', this.roomPath('/escrow'), { query: { revision } }) }
+  putEscrow({ escrow_version, escrow_id, key_escrow, replaces }) { if (this.readOnly) return this._refused(); return this.request('PUT', this.roomPath('/escrow'), { body: { escrow_version, escrow_id, key_escrow, replaces } }) }
+  deleteEscrow(revision) { if (this.readOnly) return this._refused(); return this.request('DELETE', this.roomPath('/escrow'), { query: { revision } }) }
   pushKey() { return this.request('GET', '/push_key', { auth: false }) }
 
   /**

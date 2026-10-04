@@ -135,6 +135,12 @@ export class Client {
     this._started = false
     this._pump = null
     this.epochChangedAt = roomRecord.epoch_changed_at ?? null
+    // Browser tabs (tabs.mjs): one tab of a device is the writer and holds the Web Lock itself (externalLock); the other
+    // tabs run a follower: it reads (own stream, verifies everything, keeps its state in memory) and never seals or posts.
+    this.follower = false
+    this.externalLock = false
+    this._fwdId = null                  // the id of a call forwarded by a follower tab, while it runs (taken by _send)
+    this.fwdDone = new Map()            // forwarded call id -> what it sealed, once acked (kept with the outbox: exactly once)
   }
 
   get my_device_id() { return this.model.room.my_device_id }
@@ -274,8 +280,9 @@ export class Client {
       this.invitesPrivate.set(v.invite_id, inviteFromJson(v))
       m.invites.set(v.invite_id, v.public)
     }
-    const outbox = (await st.get('outbox')) ?? []
+    const outbox = this.follower ? [] : (await st.get('outbox')) ?? []   // a follower posts nothing: the writer tab sends it
     this.outbox = outbox
+    this.fwdDone = new Map((await st.get('fwd_done')) ?? [])
     for (const o of outbox) this.byHash.set(o.hash, o.local_id)
     m.outbox = outbox.map(o => o.public)
     for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k), epochAgents(k))
@@ -354,7 +361,7 @@ export class Client {
 
   /** device/<id> right after joining; agents only once a session is assigned (they hold no room key). */
   async _sendDeviceRegister() {
-    if (this.roomRecord.device_register_sent || !this.roomRecord.device_info) return
+    if (this.follower || this.roomRecord.device_register_sent || !this.roomRecord.device_info) return
     if (!this.is_human && !this.session_id) return
     this.roomRecord.device_register_sent = true
     await this._saveRoom()
@@ -462,7 +469,7 @@ export class Client {
    */
   async _takeLock() {
     const locks = globalThis.navigator?.locks
-    if (!locks || this._lockRelease) return
+    if (!locks || this._lockRelease || this.externalLock) return
     const name = `trommi-room-${this.model.room.room_id}-${this.my_device_id}`
     await new Promise((resolve, reject) => {
       locks.request(name, { ifAvailable: true }, lock => {
@@ -770,7 +777,7 @@ export class Client {
 
   /** Human devices write a room snapshot every SNAPSHOT_EVERY envelopes (counted from the newest one anyone wrote). */
   _maybeSnapshot() {
-    if (!this.is_human || this._snapshotting || this._resyncing || this.options?.snapshot === false) return
+    if (this.follower || !this.is_human || this._snapshotting || this._resyncing || this.options?.snapshot === false) return
     const latest = Math.max(this.model.human.raw.get('room_snapshot')?.value?.envelope_number ?? 0, this._lastSnapshotAt ?? 0, this.snapshotCursor ?? 0)
     if (this.model.room.last_envelope_number - latest < (this.options?.snapshot_every ?? SNAPSHOT_EVERY)) return
     this._snapshotting = true
@@ -831,7 +838,7 @@ export class Client {
     try {
       const peek = pre.peek = z.peekEnvelope(bytes)
       const h = peek.header
-      if (hex(h.sender) === this.my_device_id && !this._resyncing) return pre          // own envelopes: checked against our own chain in phase 2
+      if (hex(h.sender) === this.my_device_id && !this._resyncing && !this.follower) return pre          // own envelopes: checked against our own chain in phase 2
       // B03: the epoch cutoff is decided here (_isStale), not inside verify: a stale envelope is still verified and moves
       // its sender's chain on (no gap, so no resync that would apply it after all), but it is never applied.
       if (!pre.void) pre.stale = this._isStale(h)
@@ -915,7 +922,7 @@ export class Client {
     const h = peek.header
     const sender = hex(h.sender)
     const key = b64u(h.sender)
-    if (sender === this.my_device_id && !this._resyncing) {
+    if (sender === this.my_device_id && !this._resyncing && !this.follower) {
       const own = this.chains.get(key)
       const known = own?.hashes.get(h.seq)
       if (!known) throw new ZError('equivocation', `an envelope in this device's name that it did not send (#${h.seq})`)
@@ -956,6 +963,19 @@ export class Client {
         await this._refreshSessions()
         this._grantTried.add(mark)
       }
+    }
+    if (this.follower && sender === this.my_device_id) {
+      // A follower tab: this device's envelopes come from the writer tab. Its stored own chain is the SEALING chain (it
+      // may be ahead of what was applied), so an envelope at or below it is applied, not taken for a replay; the stream
+      // and catch-up never deliver one twice (cursor). Two different envelopes under one number stay a fork.
+      const c = this.chains.get(key) ?? { seq: 0, hash: null, hashes: new Map() }
+      const known = c.hashes.get(h.seq)
+      if (known && !z.bytesEqual(known, hash)) throw new ZError('equivocation', `two different envelopes with number ${h.seq} from this device`)
+      if (h.seq > c.seq) { c.seq = h.seq; c.hash = hash }
+      c.hashes.set(h.seq, hash); this.chains.set(key, c); trimChain(c)
+      this.stats.verified++
+      if (pre.void) { this._advanceFrontier(sender, h); return null }
+      return this._record(pre.envelope_number, v, pre.opened, pre.content_state, null)
     }
     const chain = this.chains.get(key)
     if (!chain) {
@@ -1110,6 +1130,8 @@ export class Client {
    * timeline: { timeline_kind, timeline_id }, push, echo: () => undo }. Returns { local_id, envelope_hash }.
    */
   async _send({ kind, content, bind = null, recipient = null, object = null, timeline = null, push = false, echo = null, after = null, session_id = null }) {
+    if (this.follower) throw new ZError('follower', 'this tab reads only: the writer tab sends (tabs.mjs)')
+    const fwd = this._fwdId
     const local_id = `local-${randomHex(8)}`
     if (echo) {
       const undo = echo(local_id)
@@ -1143,6 +1165,7 @@ export class Client {
           recipient_device_id: recipient, content, outbox_state: 'sending', error: null }
         const item = { local_id, bytes: b64u(sealed.bytes), seq: sealed.seq, hash: hashHex, prev: b64u(sealed.header.prev), public: pub,
           args: { kind, content, bind: bind?.length ? b64u(bind) : null, recipient, object, timeline, push, session_id } }
+        if (fwd) item.fwd = fwd
         this.outbox.push(item)
         this.byHash.set(hashHex, local_id)
         this.model.outbox.push(pub)
@@ -1168,6 +1191,7 @@ export class Client {
   }
 
   _pumpOutbox() {
+    if (this.follower) return null
     if (this._pump) return this._pump
     this._pump = (async () => {
       await null
@@ -1244,8 +1268,18 @@ export class Client {
     if (this.recentSent.length > 32) this.recentSent.shift()
     const at = this.model.outbox.indexOf(item.public)
     if (at >= 0) this.model.outbox.splice(at, 1)
-    this.storage.set('outbox', this.outbox).catch(() => {})
+    if (item.fwd) {
+      // A forwarded call is done for good once acked: its id goes with the outbox in one write (fwdResult finds it in either).
+      this.fwdDone.set(item.fwd, fwdInfo(item))
+      while (this.fwdDone.size > 500) this.fwdDone.delete(this.fwdDone.keys().next().value)
+      this.storage.setMany([['outbox', this.outbox], ['fwd_done', [...this.fwdDone]]]).catch(() => {})
+    } else this.storage.set('outbox', this.outbox).catch(() => {})
     const ch = M.emptyChange(); ch.outbox = true; this._emitChange(ch)
+  }
+  /** What a forwarded call (tabs.mjs) sealed, if it was sealed already: from the outbox or the acked list; else null. */
+  fwdResult(id) {
+    const item = this.outbox.find(o => o.fwd === id)
+    return item ? fwdInfo(item) : this.fwdDone.get(id) ?? null
   }
 
   /** Wait until the outbox is empty and the hub's copies came back through sync. */
@@ -1690,6 +1724,7 @@ export class Client {
 
   /** Poll the invite's requests while it is open (the join_request event triggers a check at once too). */
   _watchInvite(invite_id) {
+    if (this.follower) return
     const inv = this.invitesPrivate.get(invite_id)
     if (!inv || inv._timer) return
     inv._timer = setInterval(() => {
@@ -1710,6 +1745,7 @@ export class Client {
   }
 
   async _checkInvite(invite_id) {
+    if (this.follower) return
     const inv = this.invitesPrivate.get(invite_id)
     if (!inv || inv.used || inv._checking) return
     inv._checking = true
@@ -1963,7 +1999,7 @@ export class Client {
    * by another human device makes the hub refuse ours: refresh and look again.
    */
   async _healStaleSessions() {
-    if (!this.is_human || !G.grantIsStale) return
+    if (this.follower || !this.is_human || !G.grantIsStale) return
     for (let round = 0; round < 3; round++) {
       let stale = [...this.sessionKeys].filter(([, k]) => k.state && G.grantIsStale(k.state, this.state))
       if (!stale.length) return
@@ -2090,6 +2126,7 @@ const MEMO_META = new Set(['lamport', 'object_id', 'by_device_id', 'object_versi
 function memoFields(m) { const out = {}; for (const [k, v] of Object.entries(m)) if (!MEMO_META.has(k)) out[k] = v; return out }
 
 const fields_session = f => f.session_id ?? null
+const fwdInfo = item => ({ local_id: item.local_id, envelope_hash: item.hash, seq: item.seq, object_id: item.public?.object_id ?? null })
 const grantBody = r => ({ signed_grant: b64u(r.grant), sealed_session_keys: r.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })), key_back_link: r.backLink ? b64u(r.backLink) : undefined })
 export const shareLink = (app_url, share_id, secret, ref) => `${String(app_url).replace(/\/+$/, '')}/a/${share_id}#${b64u(secret)}.${ref.file_key}.${ref.sha256}`
 /** Viewer page: parse a share link. -> { share_id, share_secret, file_key, sha256 } */
