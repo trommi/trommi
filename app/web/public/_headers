@@ -20,3 +20,9 @@
 /a/frame.html
   ! Content-Security-Policy
   Content-Security-Policy: default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; media-src data: blob:; font-src data:; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts
+# The connector for Claude Code (connector/bundle.mjs) and its checksum: always the newest (the connect script fetches both).
+/connector.mjs
+  Cache-Control: no-cache
+/connector.mjs.sha256
+  Cache-Control: no-cache
+  Content-Type: text/plain; charset=utf-8

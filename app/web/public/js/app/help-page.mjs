@@ -52,7 +52,7 @@ const BANDS = [
       hop(1, 0, 'notifications/claude/channel/', 'permission', 'request_id, behavior')],
   ] },
   { title: 'Claude Code → channel', rows: [
-    [hop(1, 2, 'POST requests', '~once, by hand in its folder:', '~channel.mjs join <link>'), hop(2, 3, 'GET stream', '~you add it to a session')],
+    [hop(1, 2, 'POST requests', '~once, by hand in its folder:', '~curl …/connect | sh -s <link>'), hop(2, 3, 'GET stream', '~you add it to a session')],
     [hop(0, 1, 'notifications/claude/channel/', 'permission_request', 'request_id, tool_name,', 'description, input_preview'), hop(1, 2, 'POST envelopes'),
       hop(2, 3, 'GET stream', '~a card: Allow or Deny')],
   ] },
