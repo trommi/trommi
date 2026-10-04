@@ -18,7 +18,7 @@ export function createRouter({ board, onPage = () => {}, beforeVisit = () => {},
 
   // ---- painting a page ----
   function enableCss(name) {
-    const want = new Set([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'trommi', 'room'])
+    const want = new Set([...(CSS[name] ?? CSS.base), 'turbo', 'fonts', 'push', 'trommi', 'room'])
     for (const link of document.querySelectorAll('link[rel="stylesheet"][data-sheet]')) {
       const on = want.has(link.dataset.sheet)
       if (link.disabled === on) link.disabled = !on

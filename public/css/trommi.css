@@ -43,7 +43,7 @@
 .menu-devices:hover { background: var(--hover, rgb(0 0 0 / .05)); }
 .menu-devices svg { width: 20px; height: 20px; }
 /* Long Desk lists: rows out of sight are not laid out or painted until they come near. */
-#desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; }
+#desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; overflow-clip-margin: 80px; }
 /* A Desk row that is not filled in yet (beyond the first rows; desk-window.mjs fills it when it comes near). */
 .inbox-row[data-later] { min-height: 172px; visibility: hidden; }
 @media (max-width: 860px) { .inbox-row[data-later] { min-height: 150px; } }
