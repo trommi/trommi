@@ -1193,7 +1193,9 @@ await test('fuzz F4: an agent invite whose finalize hits a network failure once 
   const c = track(await Promise.race([j.client, sleep(15_000).then(() => { j.cancel(); throw new Error('timeout: the agent was never added') })]))
   assert(failed >= 1, 'the failure happened')
   await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'added after the retry')
-  eq(phone.model.invites.get(inv.invite_id).invite_state, 'joined', 'the invite says joined')
+  // The member shows at the refresh right after the post; 'joined' follows once the agent's session is made.
+  await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'joined', 'the invite says joined')
+  assert(phone.model.invites.get(inv.invite_id).session_id, 'the agent got its session')
 })
 
 if (!useTestHub) await test('fuzz isolation (trace smutm8tbj-w1-9): a pruned answer in another session builds no card on a later agent', async () => {
