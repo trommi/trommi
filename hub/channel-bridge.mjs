@@ -139,7 +139,10 @@ const MEDIA = {
   '.html': 'text/html', '.htm': 'text/html', '.txt': 'text/plain', '.md': 'text/markdown', '.json': 'application/json', '.pdf': 'application/pdf',
   '.csv': 'text/csv', '.diff': 'text/x-diff', '.patch': 'text/x-diff', '.zip': 'application/zip',
 }
-const mediaTypeOf = name => MEDIA[path.extname(String(name)).toLowerCase()] ?? 'application/octet-stream'
+const ATTACHMENT_ID = /^[0-9a-f]{32}$/
+/** A file name from someone else, as one harmless path component. */
+export const safeName = name => (path.basename(String(name || 'file')).replace(/[^\w.-]+/g, '_').replace(/^\.+/, '').slice(0, 100) || 'file')
+export const mediaTypeOf = name => MEDIA[path.extname(String(name)).toLowerCase()] ?? 'application/octet-stream'
 const assetTypeOf = media => (media === 'text/html' ? 'html' : /^(image|video|audio)\//.test(media) ? media.split('/')[0] : 'file')
 
 /** Width and height of a PNG or JPEG, or {} (cheap header read; nothing is decoded). */
@@ -241,11 +244,14 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     let image = null
     for (const ref of listArg(refs, 'attachments')) {
       try {
+        // A reference is body text from a human device: the id must be exactly an attachment id before it reaches a
+        // URL or a file name, and the file must land inside the cache (review 2: path traversal).
+        if (!ATTACHMENT_ID.test(String(ref?.attachment_id))) throw new Error('not an attachment id')
+        const file = path.resolve(cacheDir, `${ref.attachment_id}-${safeName(ref.file_name)}`)
+        if (path.dirname(file) !== path.resolve(cacheDir)) throw new Error('outside the cache')
         const bytes = await client.fetchAttachment(ref)
         fs.mkdirSync(cacheDir, { recursive: true, mode: 0o700 })
-        const name = `${ref.attachment_id}-${path.basename(String(ref.file_name || 'file')).replace(/[^\w.-]+/g, '_')}`
-        const file = path.join(cacheDir, name)
-        fs.writeFileSync(file, bytes, { mode: 0o600 })
+        fs.writeFileSync(file, bytes, { mode: 0o600, flag: 'w' })
         paths.push(file)
         if (!image && String(ref.media_type ?? mediaTypeOf(name)).startsWith('image/')) image = file
       } catch (err) {
