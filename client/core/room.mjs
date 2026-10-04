@@ -13,10 +13,10 @@ async function newDevice(storage) {
   return z.generateDevice({ extractable: !!storage.extractable_keys })
 }
 
-async function makeClient({ storage, device, state, secrets, roomRecord, fetch }) {
+async function makeClient({ storage, device, state, secrets, roomRecord, fetch, client: clientName = null }) {
   const me = z.memberAt(state, device.id)
   const client = new Client({ storage, hub_url: roomRecord.hub_url, room_id: roomRecord.room_id, device, state, secrets: new Map(secrets.map(s => [s.epoch, s])),
-    my_role: me ? roleName(me.role) : roomRecord.my_role, roomRecord, fetch })
+    my_role: me ? roleName(me.role) : roomRecord.my_role, roomRecord, fetch, client: clientName })
   await client._saveRoom()
   await client.loadPersisted()
   return client
@@ -26,36 +26,36 @@ async function makeClient({ storage, device, state, secrets, roomRecord, fetch }
  * Found a room on a hub: device keys, recovery code (returned ONCE: show it, never store it), epoch 1.
  * device_info goes into the encrypted register device/<id> on the first start ({ device_name, platform, folder, host }).
  */
-export async function foundRoom({ hub_url, storage, device_name = '', device_info = null, found_token = null, fetch = null }) {
+export async function foundRoom({ hub_url, storage, client: client_name = null, device_name = '', device_info = null, found_token = null, fetch = null }) {
   hub_url = normaliseHubUrl(hub_url)
   if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
   const device = await newDevice(storage)
   const recovery_code = z.generateRecoveryCode()
   const room = await z.createRoom({ device, name: '', recovery: await z.recoveryDevice(recovery_code) })
-  const hub = new Hub({ hub_url, fetch, found_token })
+  const hub = new Hub({ hub_url, fetch, found_token, client: client_name })
   const r = await hub.foundRoom({ signed_entry: b64u(room.entry), sealed_room_keys: room.wraps.map(w => ({ device_id: hex(w.id), key_sealed: b64u(w.sealed) })) })
   if (r.room_id !== hex(room.roomId)) throw new ZError('wrong-room', 'the hub named another room id')
   await storage.saveDevice(device, { room_id: r.room_id })
   const roomRecord = { hub_url, room_id: r.room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false }
-  const client = await makeClient({ storage, device, state: room.state, secrets: [room.secret], roomRecord, fetch })
+  const client = await makeClient({ storage, device, state: room.state, secrets: [room.secret], roomRecord, fetch, client: client_name })
   return { client, recovery_code }
 }
 
 /** Open the room in this storage (warm start): verify the stored member list against the stored room id, load the model. */
-export async function openRoom({ storage, fetch = null }) {
+export async function openRoom({ storage, client: client_name = null, fetch = null }) {
   const roomRecord = await storage.get('room')
   if (!roomRecord) return null
   const device = await storage.loadDevice()
   if (!device) throw new ZError('no-device', 'the room is stored but the device key is missing')
   const state = await z.verifyLog(roomRecord.entries.map(unb64u), unhex(roomRecord.room_id))
-  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch })
+  return makeClient({ storage, device, state, secrets: roomRecord.secrets.map(secretFromJson), roomRecord, fetch, client: client_name })
 }
 
 /**
  * Join with an invite link. Returns { check_code: Promise<string>, client: Promise<Client>, cancel() }.
  * A human shows check_code for the inviter to type; an agent may log it. client resolves once the inviter added this device.
  */
-export function joinRoom({ link, storage, device_name = '', device_info = null, fetch = null, poll_ms = 800, timeout_ms = 15 * 60_000 }) {
+export function joinRoom({ link, storage, client: client_name = null, device_name = '', device_info = null, fetch = null, poll_ms = 800, timeout_ms = 15 * 60_000 }) {
   let cancelled = false, codeResolve, codeReject
   const check_code = new Promise((res, rej) => { codeResolve = res; codeReject = rej })
   check_code.catch(() => {})
@@ -63,7 +63,7 @@ export function joinRoom({ link, storage, device_name = '', device_info = null, 
     if (await storage.get('room')) throw new ZError('room-exists', 'this storage already holds a room')
     const { hub: hub_url, roomId } = z.parseInviteLink(link)
     const room_id = hex(roomId)
-    const hub = new Hub({ hub_url, room_id, fetch })
+    const hub = new Hub({ hub_url, room_id, fetch, client: client_name })
     const { secret } = z.parseInviteLink(link)
     const inviteId = hex(await z.hkdf(secret, roomId, z.LABEL.inviteId, new Uint8Array(0), 16))
     const inv = await hub.getInvite(inviteId)
@@ -85,7 +85,7 @@ export function joinRoom({ link, storage, device_name = '', device_info = null, 
         const done = await z.completeJoin({ join, device, log: entries, wrap: unb64u(s.key_sealed) })
         await storage.saveDevice(device, { room_id })
         const roomRecord = { hub_url: normaliseHubUrl(hub_url), room_id, my_device_id: hex(device.id), my_role: roleName(join.role), device_info: device_info ?? { device_name }, device_register_sent: false }
-        const c = await makeClient({ storage, device, state: done.state, secrets: [done.secret], roomRecord, fetch })
+        const c = await makeClient({ storage, device, state: done.state, secrets: [done.secret], roomRecord, fetch, client: client_name })
         if (c.is_human) { await c.hub.signIn(); await c._walkBackLinks().catch(() => {}); await c._saveRoom() }
         return c
       }
@@ -101,10 +101,10 @@ export function joinRoom({ link, storage, device_name = '', device_info = null, 
  * All devices lost, code at hand: sign in as the recovery key, enrol a new device, remove every human device, keep the agents,
  * new epoch, NEW recovery code (returned once).
  */
-export async function recoverRoom({ hub_url, room_id, code, storage, device_name = '', device_info = null, fetch = null }) {
+export async function recoverRoom({ hub_url, room_id, code, storage, client: client_name = null, device_name = '', device_info = null, fetch = null }) {
   hub_url = normaliseHubUrl(hub_url)
   const rec = await z.recoveryDevice(code)
-  const hub = new Hub({ hub_url, room_id, fetch, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
+  const hub = new Hub({ hub_url, room_id, fetch, client: client_name, signer: challenge => z.signHubAuth({ device: rec, roomId: unhex(room_id), hub: hub_url, challenge }) })
   await hub.signIn()
   const m = await hub.members({ after_entry_number: -1 })
   const state = await z.verifyLog(m.signed_entries.map(unb64u), unhex(room_id))
@@ -119,7 +119,7 @@ export async function recoverRoom({ hub_url, room_id, code, storage, device_name
   // The recovery key held every older epoch through the back links: open them so history stays readable.
   const secrets = [r.secret, r.previous]
   const roomRecord = { hub_url, room_id, my_device_id: hex(device.id), my_role: 'human', device_info: device_info ?? { device_name }, device_register_sent: false, epoch_changed_at: Date.now() }
-  const client = await makeClient({ storage, device, state: r.state, secrets, roomRecord, fetch })
+  const client = await makeClient({ storage, device, state: r.state, secrets, roomRecord, fetch, client: client_name })
   await client.hub.signIn()
   await client._walkBackLinks().catch(() => {})
   await client._saveRoom()

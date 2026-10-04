@@ -12,7 +12,9 @@ export class Hub {
    * hub_url: 'https://hub.trommi.com'. room_id: hex. signer: async (challengeBytes) -> signed challenge bytes
    * (signHubAuth for this room and hub_url), or null for routes without sign-in.
    */
-  constructor({ hub_url, room_id = null, signer = null, fetch: f = null, found_token = null }) {
+  constructor({ hub_url, room_id = null, signer = null, fetch: f = null, found_token = null, client = null }) {
+    this.client_name = client                   // 'app/1.2.3' | 'channel/0.1.0': sent as Trommi-Client on every request
+    this.onTooOld = null
     this.hub_url = normaliseHubUrl(hub_url)
     this.room_id = room_id
     this.signer = signer
@@ -48,8 +50,10 @@ export class Hub {
   }
 
   /** One request. Throws ZError(code) with .status (and .retry_after) for every refusal. */
+  baseHeaders() { return this.client_name ? { 'trommi-client': this.client_name, 'trommi-protocol': '1' } : { 'trommi-protocol': '1' } }
+
   async request(method, path, { body, auth = true, raw = null, headers = {}, query = null, binary = false, retried = false } = {}) {
-    const h = { ...headers }
+    const h = { ...this.baseHeaders(), ...headers }
     if (auth) h.authorization = await this.authHeader()
     let payload
     if (raw) { payload = raw; h['content-type'] = 'application/octet-stream' }
@@ -68,6 +72,7 @@ export class Hub {
       this.token = null
       return this.request(method, path, { body, auth, raw, headers, query, binary, retried: true })
     }
+    if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); throw e }
     if (!res.ok) {
       let err = {}
       try { err = await res.json() } catch {}
@@ -79,7 +84,7 @@ export class Hub {
   }
 
   // ---- routes (README table), thin ------------------------------------------------
-  healthz() { return this.fetch(`${this.hub_url}/healthz`).then(r => r.json()) }
+  healthz() { return this.fetch(`${this.hub_url}/healthz`, { headers: this.baseHeaders() }).then(r => r.json()) }
   foundRoom({ signed_entry, sealed_room_keys }) {
     return this.request('POST', '/rooms', { auth: false, body: { signed_entry, sealed_room_keys }, headers: this.found_token ? { 'x-found-token': this.found_token } : {} })
   }
@@ -127,8 +132,9 @@ export class Hub {
         let healthy = false
         try {
           const res = await this.fetch(this.url(this.roomPath('/stream')) + `?after_envelope_number=${getCursor()}`, {
-            headers: { authorization: await this.authHeader(), accept: 'text/event-stream' }, signal: controller.signal,
+            headers: { ...this.baseHeaders(), authorization: await this.authHeader(), accept: 'text/event-stream' }, signal: controller.signal,
           })
+          if (res.status === 426) { const e = new ZError('client-too-old', 'this client is too old for the hub: update it', { status: 426 }); this.onTooOld?.(e); closed = true; throw e }
           if (res.status === 401) { this.token = null; throw new ZError('unauthorised', 'stream sign-in') }
           if (!res.ok) {
             let err = {}
@@ -164,6 +170,7 @@ export class Hub {
               if (rec.event === 'envelope' && Number.isInteger(data.envelope_number)) cursor = Math.max(cursor, data.envelope_number)
               healthy = true
               backoff = 500
+              if (rec.event === 'upgrade_required') { const e = new ZError('client-too-old', 'the hub asks for a newer client'); this.onTooOld?.(e); closed = true; break }
               await onEvent({ event: rec.event, data, id: rec.id })
               if (closed) break
             }
@@ -174,7 +181,7 @@ export class Hub {
           clearTimeout(watchdog)
           if (closed) break
           onState('closed', e)
-          if (e?.code === 'not-member' || e?.code === 'removed-sender' || e?.status === 403) { closed = true; break }
+          if (e?.code === 'not-member' || e?.code === 'removed-sender' || e?.code === 'client-too-old' || e?.status === 403) { closed = true; break }
         }
         clearTimeout(watchdog)
         if (closed) break

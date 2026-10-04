@@ -306,7 +306,8 @@ function applyMemo(model, rec, change) {
   // Any human device may write a version; two versions naming the same predecessor are settled by causal order (R2).
   if (old && rec.content && !old.version_hashes.includes(c.previous_version_hash)) return refuse(model, change, rec, 'bad-version', 'memo previous_version_hash names no known version')
   if (old && !causallyAfter(rec.causal, old.causal)) { old.version_hashes.push(rec.envelope_hash); return { applied: false } }
-  model.memos.set(object_id, { object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
+  const { schema_version: _sv, object_type: _ot, object_version: _ov, previous_version_hash: _pv, ...extra } = c
+  model.memos.set(object_id, { ...extra, object_id, by_device_id: rec.sender_device_id, text: c.text ?? old?.text ?? '', x: c.x ?? old?.x ?? 0, y: c.y ?? old?.y ?? 0, color: c.color ?? old?.color ?? null,
     desk_id: c.desk_id ?? old?.desk_id ?? null, object_version: c.object_version ?? (old?.object_version ?? 0) + 1, version_hash: rec.envelope_hash,
     version_hashes: [...(old?.version_hashes ?? []), rec.envelope_hash], causal: rec.causal, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
   change.memos.add(object_id)
