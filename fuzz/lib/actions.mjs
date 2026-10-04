@@ -393,7 +393,7 @@ export class Runner {
     let action = 'answer'
     try {
       if (a.trust) await d.client.trust({ object_id: id }); else await d.client.answer({ object_id: id, choices, note: this.txt('note') })
-    } catch (e) { if (['card-closed', 'bad-argument'].includes(e.code)) { return `refused:${e.code}` } throw e }
+    } catch (e) { if (['card-closed', 'bad-argument', 'card-pruned'].includes(e.code)) { return `refused:${e.code}` } throw e }
     O.attempts.add(a.ref)
     const trusted = !!a.trust
     const rec = trusted ? (cm.recommended == null ? [] : [].concat(cm.recommended)) : choices
@@ -405,7 +405,7 @@ export class Runner {
     const d = this.dev(a.dev), id = this.card(a); if (!d || !d.isHuman || !id) return 'skip'
     const O = this.oracle(d.room.idx)
     O.attempts.add(a.ref)
-    try { await d.client.markRead({ object_id: id }) } catch (e) { if (e.code === 'card-closed') return 'refused:card-closed'; throw e }
+    try { await d.client.markRead({ object_id: id }) } catch (e) { if (e.code === 'card-closed' || e.code === 'card-pruned') return `refused:${e.code}`; throw e }
     O.answer(a.ref, { action: 'read', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)), ownerDown: this.ownerDown(O.cards.get(a.ref)) })
     return 'ok'
   }
@@ -413,7 +413,7 @@ export class Runner {
     const d = this.dev(a.dev), id = this.card(a); if (!d || !d.isHuman || !id) return 'skip'
     const O = this.oracle(d.room.idx)
     O.attempts.add(a.ref)
-    try { await d.client.shred({ object_id: id }) } catch (e) { if (e.code === 'card-closed') return 'refused:card-closed'; throw e }
+    try { await d.client.shred({ object_id: id }) } catch (e) { if (e.code === 'card-closed' || e.code === 'card-pruned') return `refused:${e.code}`; throw e }
     O.answer(a.ref, { action: 'shred', choices: [], ownerGone: this.ownerGone(O.cards.get(a.ref)), ownerDown: this.ownerDown(O.cards.get(a.ref)) })
     return 'ok'
   }
@@ -648,6 +648,8 @@ export class Runner {
     for (const O of this.O.values()) { for (const [ref, c] of O.cards) if (c.state !== 'open') this.prunedRefs.add(ref); for (const [ref, p] of O.perms) if (p.state !== 'pending') this.prunedRefs.add(ref) }
     const pm = new Map([...this.refs].filter(([k]) => k.startsWith('#p')).map(([k, id]) => [id, k]))
     for (const r of this.w.hub.db.prepare('SELECT object_id FROM objects WHERE object_state != 1').all()) { const ref = pm.get(r.object_id); if (ref) this.prunedRefs.add(ref) }
+    // objects no action knows by name (a card sent by a process that crashed before the action returned): masked as check.mjs names them
+    for (const r of this.w.hub.db.prepare('SELECT object_id FROM objects WHERE object_state != 1').all()) if (!m.has(r.object_id) && !pm.has(r.object_id)) this.prunedRefs.add(`?${r.object_id.slice(0, 8)}`)
     return 'ok'
   }
   async do_noop() { return 'skip' }

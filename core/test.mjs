@@ -1069,6 +1069,50 @@ await test('fuzz H1 fork (trace smutrv1gi-w2-7): the newest envelope withheld fr
   await until(() => cmds.includes('the newest one'), 'arrives after the gap backoff', 8000)
 })
 
+await test('fuzz H1 bit flip (trace smutsddn0-w0-2): an envelope altered on the way is read again once the hub is honest', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c.content?.text))
+  agent._stream.close(); agent._stream = null
+  const real = agent.hub.envelopes.bind(agent.hub)
+  let flip = null
+  agent.hub.envelopes = async q => {
+    const r = await real(q)
+    return { ...r, envelopes: r.envelopes.map(e => { if (e.envelope_number !== flip) return e; const u = z.unb64u(e.envelope); u[u.length - 3] ^= 1; return { ...e, envelope: z.b64u(u) } }) }
+  }
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'altered on the way' })
+  await settleAll(phone)
+  flip = phone.model.room.last_envelope_number
+  await agent.catchUp()
+  assert(!cmds.includes('altered on the way'), 'refused while altered')
+  assert(agent.model.alerts.length > 0, 'and said so')
+  flip = null
+  await until(() => cmds.includes('altered on the way'), 'the honest copy is read after the gap backoff', 8000)
+})
+
+if (!useTestHub) await test('fuzz F24 (trace smuts9mf9-w2-3): a device that holds only the header of a pruned card does not answer it', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ title: 'old', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  await settleAll(agent, phone)
+  await until(() => phone.model.cards.get(id), 'phone has it')
+  await phone.answer({ object_id: id, choices: ['a'] })
+  await settleAll(phone, agent)
+  hub.prune({ days: -1 })
+  const late = await addHuman(phone, 'Late')
+  await settleAll(late)
+  await until(() => late.model.cards.get(id)?.object_state === 'answered', 'late: answered from the header')
+  await late.decideAgain({ object_id: id })
+  await settleAll(late, phone, agent)
+  await until(() => late.model.cards.get(id)?.object_state === 'open', 'open again')
+  let err = null
+  try { await late.answer({ object_id: id, choices: ['a'] }) } catch (e) { err = e }
+  eq(err?.code, 'card-pruned', 'refused on the device without the card content')
+  await phone.answer({ object_id: id, choices: ['b'] })
+  await settleAll(phone, late, agent)
+  await until(() => late.model.cards.get(id)?.object_state === 'answered' && agent.model.cards.get(id)?.object_state === 'answered', 'answered from the phone, the same everywhere')
+})
+
 if (!useTestHub) await test('fuzz F15: an answer the agent refuses does not leave the card closed at the hub (retention would prune an open card)', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const id = await agent.sendCard({ title: 'which?', options: [{ key: 'a', label: 'A' }] })
