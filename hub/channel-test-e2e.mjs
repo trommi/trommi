@@ -26,7 +26,8 @@ const freePort = async () => {
     const ok = await new Promise(res => { const s = net.createServer().once('error', () => res(false)).listen(p, '127.0.0.1', () => s.close(() => res(true))) })
     if (ok) return p
   }
-  throw new Error('no free port in 8891-8899')
+  // All taken (other suites run at the same time): a port the system hands out.
+  return new Promise(res => { const s = net.createServer().listen(0, '127.0.0.1', () => { const { port } = s.address(); s.close(() => res(port)) }) })
 }
 
 export async function startHub(tmp) {
