@@ -277,6 +277,23 @@ await test('permission relay: request -> object, verdict -> notifications/claude
   assert.equal(events.length, 1)
 })
 
+await test('slot lock: of processes starting together, exactly one gets the slot, also over a stale lock (review 2 PoC)', async () => {
+  const { execFile } = await import('node:child_process')
+  const lockMod = new URL('./channel-lock.mjs', import.meta.url).href
+  const dir = path.join(tmp, 'locks')
+  const child = at => `import { lockSlot } from ${JSON.stringify(lockMod)}; while (Date.now() < ${at}) {}; console.log(lockSlot({ dir: ${JSON.stringify(dir)}, lock_file: ${JSON.stringify(path.join(dir, 's-1.lock'))} }) ? 'GOT' : 'busy'); setTimeout(() => {}, 1500)`   // the winner holds on: a lock left by an exited winner is rightly stale
+  const bad = []
+  for (let run = 0; run < 8; run++) {
+    fs.mkdirSync(dir, { recursive: true })
+    if (run % 2) fs.writeFileSync(path.join(dir, 's-1.lock'), '999999')     // left by a crashed process
+    const at = Date.now() + 700
+    const got = await Promise.all([0, 1, 2, 3].map(() => new Promise(res => execFile(process.execPath, ['--input-type=module', '-e', child(at)], (e, out) => res(String(out).trim())))))
+    if (got.filter(g => g === 'GOT').length !== 1) bad.push(`run ${run}: ${got.join(' ')}`)
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+  assert.equal(bad.join('; '), '')
+})
+
 // ---- part 2: real hub, real core, the channel as an MCP child --------------------------------------------
 
 const here = path.dirname(new URL(import.meta.url).pathname)

@@ -200,12 +200,20 @@ export async function integration({ test, tmp }) {
       const second = await startChannel({ env, cwd: project })
       try {
         await until('needs its own invite', async () => { try { await second.call('list_cards'); return false } catch (e) { return /invite of its own/.test(e.message) } })
+        // Joining is the human's act: the model has no join tool, the human runs the CLI in the folder (review 2).
+        assert.ok(!(await second.client.listTools()).tools.some(t => t.name === 'join'), 'a model-callable join tool exists')
+        assert.match((await second.call('list_cards').catch(e => e.message)), /channel\.mjs join '<link>'/)
+        await second.close()
         const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
-        assert.match(await second.call('join', { link: invite.link }), /joined/)
+        const { execFile } = await import('node:child_process')
+        const out = await new Promise((res, rej) => execFile(process.execPath, [path.join(here, 'channel.mjs'), 'join', invite.link], { env: { ...process.env, ...env }, cwd: project }, (e, so, se) => (e ? rej(new Error(`${e.message}\n${se}`)) : res(so))))
+        assert.match(out, /joined room/)
         await until('two agents', () => [...human.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).length === 2)
         const room = path.join(keys, human.model.room.room_id)
         assert.deepEqual(fs.readdirSync(room).filter(f => f.endsWith('.key')).map(f => f.replace(/^.*-(\d+)\.key$/, '$1')).sort(), ['1', '2'])
-      } finally { await second.close() }
+        const again = await startChannel({ env, cwd: project })
+        await again.ready().finally(() => again.close())
+      } finally { await second.close().catch(() => {}) }
     })
 
     await test('e2e: restart reuses the identity, no new member entry, catches up', async () => {
