@@ -46,14 +46,15 @@ export function membersOf(state) {
 }
 
 export class Client {
-  constructor({ storage, hub_url, room_id, device, state, secrets, my_role, roomRecord, fetch }) {
+  constructor({ storage, hub_url, room_id, device, state, secrets, my_role, roomRecord, fetch, client = null }) {
     this.storage = storage
     this.device = device
     this.state = state
     this.secrets = secrets              // Map epoch -> secret
     this.chains = z.newChains()
     this.roomRecord = roomRecord
-    this.hub = new Hub({ hub_url, room_id, fetch, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
+    this.hub = new Hub({ hub_url, room_id, fetch, client, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
+    this.hub.onTooOld = e => { if (this._tooOld) return; this._tooOld = true; this.emit('error', e); this.stop().catch(() => {}) }
     this.model = M.emptyModel()
     Object.assign(this.model.room, { room_id, hub_url: this.hub.hub_url, my_device_id: hex(device.id), my_role, key_epoch: state.epoch, last_entry_number: state.head.seq })
     this.listeners = new Map()
@@ -900,13 +901,13 @@ export class Client {
   markReadUpTo(agent_device_id, envelope_number) { return this.setRegisters({ [`read_up_to/${agent_device_id}`]: envelope_number }) }
   setDeviceInfo(info) { return this.setRegisters({ [`device/${this.my_device_id}`]: info }) }
 
-  async saveMemo({ object_id = null, text, x = 0, y = 0, color = null, desk_id = null }) {
+  async saveMemo({ object_id = null, text, x = 0, y = 0, color = null, desk_id = null, ...extra }) {
     this._needHuman()
     let id = object_id
     await this._send({ kind: codec.KIND.object_version, content: async () => {
       if (!id) id = await objectIdOf(this.my_device_id, (this.chains.get(b64u(this.device.id))?.seq ?? 0) + 1)
       const old = object_id ? this.model.memos.get(object_id) : null
-      return { content: { object_type: 'memo', object_version: (old?.object_version ?? 0) + 1, previous_version_hash: old?.version_hash ?? ZERO_HASH, text, x, y, color, desk_id },
+      return { content: { ...extra, object_type: 'memo', object_version: (old?.object_version ?? 0) + 1, previous_version_hash: old?.version_hash ?? ZERO_HASH, text, x, y, color, desk_id },
         object: { object_id: id, object_state: 'open', urgency: 'normal' } }
     } })
     return id
@@ -914,7 +915,8 @@ export class Client {
   async deleteMemo(object_id) {
     const old = this.model.memos.get(object_id)
     if (!old) throw new ZError('not-found', 'no such memo')
-    const content = { object_type: 'memo', object_version: old.object_version + 1, previous_version_hash: old.version_hash, text: old.text, x: old.x, y: old.y, color: old.color, desk_id: old.desk_id }
+    const { object_id: _o, by_device_id: _b, object_version: _v, version_hash: _h, version_hashes: _hs, causal: _c, envelope_number: _n, object_state: _s, ...fields } = old
+    const content = { ...fields, object_type: 'memo', object_version: old.object_version + 1, previous_version_hash: old.version_hash }
     return this._send({ kind: codec.KIND.object_version, content, object: { object_id, object_state: 'closed', urgency: 'normal' } })
   }
 

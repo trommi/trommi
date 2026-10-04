@@ -420,6 +420,13 @@ await test('v1.1 R1/R2: forged object ids and foreign timelines refused; registe
   eq(phone.model.cards.get(id).title, 'mine', 'card untouched')
   assert(!phone.model.cards.has(fake), 'fake id not created')
   eq(phone.model.timelines.get(`chat:card/${id}`)?.item_count ?? 0, 0, 'foreign item not counted')
+  // memos: app-defined fields pass through
+  const mid = await phone.saveMemo({ text: 'call Anna', x: 1, y: 2, place: 'desk', session: 'abc', to: 'laptop' })
+  await settleAll(phone)
+  await until(() => laptop.model.memos.get(mid)?.place === 'desk' && laptop.model.memos.get(mid)?.to === 'laptop', 'memo extra fields')
+  await laptop.saveMemo({ object_id: mid, text: 'call Anna at 5', place: 'desk', session: 'abc', to: 'laptop' })
+  await settleAll(laptop)
+  await until(() => phone.model.memos.get(mid)?.text === 'call Anna at 5' && phone.model.memos.get(mid).object_version === 2, 'memo v2 by another human')
   // registers: the laptop writes after having seen the phone's write -> the laptop wins on every client
   await phone.setCrown({ who: 'phone' })
   await settleAll(phone, laptop)

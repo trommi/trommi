@@ -39,9 +39,12 @@ export const ATTACHMENT_FIELDS = ['attachment_id', 'file_key', 'sha256', 'file_n
 
 function pick(src, fields) {
   const out = { schema_version: SCHEMA_VERSION }
+  if (fields === PASS_THROUGH) { for (const [k, v] of Object.entries(src)) if (v !== undefined && k !== 'schema_version') out[k] = v; return out }
   for (const f of fields) if (src[f] !== undefined) out[f] = src[f]
   return out
 }
+/** Memos carry whatever the app puts on them (place, session, to, …): their fields are app-defined. */
+export const PASS_THROUGH = Symbol('pass-through')
 
 /** The field list for a body: by kind, and for timeline items and objects by content_type / object_type. */
 export function fieldsFor(kind, content) {
@@ -52,6 +55,7 @@ export function fieldsFor(kind, content) {
       return f
     }
     case KIND.object_version: {
+      if (content.object_type === 'memo') return PASS_THROUGH
       const f = FIELDS[content.object_type]
       if (!f) throw new z.ZError('bad-argument', `unknown object_type ${content.object_type}`)
       return f
