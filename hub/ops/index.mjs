@@ -34,7 +34,7 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
   const escrow = passwordEscrow({ db, now })
   const escrowReads = windowLimit(envNumber(env, 'HUB_LIMIT_ESCROW_READS_PER_HOUR', 10), HOUR, now)
   const wal = walKeeper({ db, dataDir, truncateBytes: envNumber(env, 'HUB_WAL_TRUNCATE_BYTES', 64 << 20) })
-  const metrics = hubMetrics({ dataDir, flow, wal, now })
+  const metrics = hubMetrics({ dataDir, flow, wal, now, log })
   // Limits are lifted for test rooms only (a signed founding with test_room: true is handled in server.mjs).
   const unlimited = (req, roomId) => !!roomId && tests.isTestRoom(roomId)
 

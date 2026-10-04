@@ -25,12 +25,10 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import os from 'node:os';
 import { DatabaseSync } from 'node:sqlite';
-import { hostStats } from './ops/metrics.mjs';
+import { CSP, renderLoginPage, renderPasswordPage, renderOverview, renderData } from './admin-view.mjs';
 
 const scryptAsync = promisify(crypto.scrypt);
-const PAGE_SIZE = 50;
 const SESSION_MS = 12 * 60 * 60 * 1000;
 const COOKIE = 'trommi_admin';
 const MIN_PASSWORD = 16;
@@ -71,191 +69,9 @@ function headerLogin(headers) {
   return String(Array.isArray(raw) ? raw[0] : raw ?? '').trim().toLowerCase();
 }
 
-// ---------- rendering ----------
+// ---------- rendering: hub/admin-view.mjs ----------
 
-const CSS = `body{font:14px/1.4 system-ui,sans-serif;margin:16px;color:#222;background:#fafaf7}
-h1{font-size:18px;margin:0 0 8px}h2{font-size:15px;margin:16px 0 6px}
-table{border-collapse:collapse;font-size:12px}td,th{border:1px solid #ddd;padding:3px 6px;text-align:left;vertical-align:top;max-width:28em;overflow-wrap:anywhere}
-th{background:#eee}.opaque{color:#666;font-family:ui-monospace,monospace}.null{color:#aaa}.err{color:#b00}
-nav a{margin-right:10px}.wrap{overflow-x:auto}form{margin:8px 0}form.inline{display:inline}label{margin-right:8px}
-@media (prefers-color-scheme:dark){body{background:#1b1b1a;color:#ddd}th{background:#2a2a28}td,th{border-color:#3a3a38}a{color:#9cf}.err{color:#f88}}`;
-const CSS_HASH = crypto.createHash('sha256').update(CSS).digest('base64');
-const CSP = `default-src 'none'; style-src 'sha256-${CSS_HASH}'; form-action 'self'; frame-ancestors 'none'; base-uri 'none'`;
-
-// Columns whose content is ciphertext, signed blobs or secrets: never shown in full.
-// escrow_id: with the room id it fetches the escrow blob and is itself a passphrase-derived verifier (review 3).
-const OPAQUE_COLUMN = /^(encrypted_body|key_sealed|key_back_link|envelope_header|envelope_nonce|envelope_signature|subscription|endpoint|access_token.*|signed_.*|.*_signature|escrow_id|key_escrow|.*_secret.*|.*_hash|.*_salt|.*_wrapped|email)$/;
-
-function esc(value) {
-  return String(value).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-}
-
-function opaqueBytes(value) {
-  if (value instanceof Uint8Array) return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
-  const text = String(value);
-  if (/^[A-Za-z0-9_-]+$/.test(text)) return Buffer.from(text, 'base64url');
-  return Buffer.from(text, 'utf8');
-}
-
-export function renderCell(column, value) {
-  if (value === null || value === undefined) return '<span class="null">NULL</span>';
-  if (value instanceof Uint8Array || OPAQUE_COLUMN.test(column)) {
-    const bytes = opaqueBytes(value);
-    const hex = bytes.subarray(0, 16).toString('hex');
-    return `<span class="opaque">${bytes.length} B · ${hex}${bytes.length > 16 ? '…' : ''}</span>`;
-  }
-  const text = String(value);
-  return esc(text.length > 300 ? `${text.slice(0, 300)}…` : text);
-}
-
-function formatBytes(n) {
-  if (n < 1024) return `${n} B`;
-  const units = ['KiB', 'MiB', 'GiB', 'TiB'];
-  let v = n; let i = -1;
-  do { v /= 1024; i += 1; } while (v >= 1024 && i < units.length - 1);
-  return `${v.toFixed(1)} ${units[i]}`;
-}
-
-function fileSize(file) {
-  try { return fs.statSync(file).size; } catch { return 0; }
-}
-
-function dirSize(dir, budget = { entries: 200_000 }) {
-  let total = 0;
-  let list;
-  try { list = fs.readdirSync(dir, { withFileTypes: true }); } catch { return 0; }
-  for (const entry of list) {
-    if (--budget.entries < 0) break;
-    const full = path.join(dir, entry.name);
-    if (entry.isDirectory()) total += dirSize(full, budget);
-    else if (entry.isFile()) total += fileSize(full);
-  }
-  return total;
-}
-
-const quoteIdent = (name) => `"${String(name).replace(/"/g, '""')}"`;
-
-function tableInfo(db) {
-  const tables = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all().map((r) => r.name);
-  return tables.map((name) => {
-    const columns = db.prepare(`PRAGMA table_info(${quoteIdent(name)})`).all();
-    let count = null;
-    try { count = Number(db.prepare(`SELECT count(*) AS n FROM ${quoteIdent(name)}`).get().n); } catch { /* ignore */ }
-    return { name, columns, count };
-  });
-}
-
-function orderClause(db, table) {
-  // Newest first: rowid if the table has one, else the primary key columns descending.
-  try {
-    db.prepare(`SELECT rowid FROM ${quoteIdent(table.name)} LIMIT 0`).all();
-    return 'ORDER BY rowid DESC';
-  } catch {
-    const pk = table.columns.filter((c) => c.pk > 0).sort((a, b) => a.pk - b.pk);
-    return pk.length ? `ORDER BY ${pk.map((c) => `${quoteIdent(c.name)} DESC`).join(', ')}` : '';
-  }
-}
-
-function link(params) {
-  const search = new URLSearchParams();
-  for (const [k, v] of Object.entries(params)) if (v !== undefined && v !== '' && v !== null) search.set(k, String(v));
-  const s = search.toString();
-  return `/${s ? `?${s}` : ''}`;
-}
-
-const head = (title) => `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(title)}</title><style>${CSS}</style></head><body>`;
-
-function topBar(login, csrf) {
-  return `<p>${esc(login)} · <a href="/">Tabellen</a> · <a href="/password">Passwort ändern</a> · <form class="inline" method="post" action="/logout"><input type="hidden" name="csrf" value="${esc(csrf)}"><button>Abmelden</button></form></p>`;
-}
-
-export function renderLoginPage(login, message = '') {
-  return `${head('Trommi hub admin')}<h1>Trommi hub admin</h1><p>Tailscale login: ${esc(login)}</p>${message ? `<p class="err">${esc(message)}</p>` : ''}
-<form method="post" action="/login"><label>Admin password <input type="password" name="password" autocomplete="current-password" required autofocus></label> <button>Anmelden</button></form></body></html>`;
-}
-
-function renderPasswordPage(login, csrf, message = '') {
-  return `${head('Trommi hub admin')}<h1>Passwort ändern</h1>${topBar(login, csrf)}${message ? `<p class="err">${esc(message)}</p>` : ''}
-<form method="post" action="/password"><input type="hidden" name="csrf" value="${esc(csrf)}">
-<p><label>Current password <input type="password" name="current" autocomplete="current-password" required></label></p>
-<p><label>New password (at least ${MIN_PASSWORD} characters) <input type="password" name="new1" autocomplete="new-password" minlength="${MIN_PASSWORD}" required></label></p>
-<p><label>New password again <input type="password" name="new2" autocomplete="new-password" minlength="${MIN_PASSWORD}" required></label></p>
-<p><button>change</button> (signs out every admin session)</p></form></body></html>`;
-}
-
-function pct(part, whole) { return whole > 0 ? `${Math.round((100 * part) / whole)} %` : '?'; }
-
-/** Host and hub numbers: CPU (load / cores), RAM, free disk; the newest 10 s metrics sample when the hub passes its metrics. */
-export function renderOverview({ dataDir, metrics, startedAt, now = Date.now } = {}) {
-  const h = hostStats(dataDir || '/');
-  const cpus = h.cpus || os.availableParallelism();
-  const used = h.memTotal - h.memAvailable;
-  const rows = [
-    ['CPU', `load ${h.load.map((x) => x.toFixed(2)).join(' / ')} (1/5/15 min) on ${cpus} cores · ${pct(h.load[0], cpus)}`],
-    ['RAM', `${formatBytes(used)} used of ${formatBytes(h.memTotal)} (${pct(used, h.memTotal)}), ${formatBytes(h.memAvailable)} available`],
-    ['Disk (data)', `${formatBytes(h.disk.free)} free of ${formatBytes(h.disk.total)} (${pct(h.disk.free, h.disk.total)} free)`],
-  ];
-  const last = metrics?.history?.().at(-1);
-  if (last) {
-    rows.push(
-      ['Hub', `${last.open_streams} open streams · ${last.requests_per_second.toFixed(1)} req/s · ${last.envelopes_per_second.toFixed(2)} envelopes/s · write queue ${last.write_queue_depth}`],
-      ['Hub process', `RSS ${formatBytes(last.rss_bytes)} · heap ${formatBytes(last.heap_used_bytes)} · event-loop lag p99 ${last.event_loop_lag_p99_ms.toFixed(1)} ms · GC max ${last.gc_max_ms.toFixed(1)} ms`],
-      ['SQLite', `${formatBytes(last.sqlite_bytes)} · WAL ${formatBytes(last.wal_bytes)} · stream buffers ${formatBytes(last.outbound_bytes_total)}`],
-    );
-  } else if (metrics) rows.push(['Hub', 'first metrics sample in under 10 s']);
-  if (startedAt) rows.push(['Uptime', `${Math.floor((now() - startedAt) / 3600000)} h ${Math.floor(((now() - startedAt) % 3600000) / 60000)} min`]);
-  return `<h2>Overview</h2><table><tbody>${rows.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(v)}</td></tr>`).join('')}</tbody></table>`;
-}
-
-export function renderPage(db, { table: tableName, room_id: roomId, page = 0 }, { dbPath, dataDir, login = '', csrf = '', metrics, startedAt } = {}) {
-  const tables = tableInfo(db);
-  const selected = tables.find((t) => t.name === tableName) || tables.find((t) => t.name === 'envelopes') || tables[0];
-  const roomFilter = typeof roomId === 'string' && /^[0-9a-f]{1,64}$/.test(roomId) ? roomId : '';
-  const pageNumber = Math.max(0, Math.min(1_000_000, Number.parseInt(page, 10) || 0));
-  const parts = [];
-  parts.push(`${head('Trommi hub admin')}<h1>Trommi hub admin (read-only)</h1>`);
-  if (login) parts.push(topBar(login, csrf));
-  const dbSize = dbPath ? fileSize(dbPath) + fileSize(`${dbPath}-wal`) : 0;
-  const attachmentsSize = dataDir ? dirSize(path.join(dataDir, 'attachments')) : 0;
-  parts.push(renderOverview({ dataDir, metrics, startedAt }));
-  parts.push(`<p>hub.db: ${formatBytes(dbSize)} · attachments: ${formatBytes(attachmentsSize)}</p><h2>Tables</h2>`);
-  parts.push('<nav>');
-  for (const t of tables) {
-    const label = `${esc(t.name)} (${t.count ?? '?'})`;
-    parts.push(t === selected ? `<b>${label}</b> ` : `<a href="${esc(link({ table: t.name, room_id: roomFilter }))}">${label}</a> `);
-  }
-  parts.push('</nav>');
-  parts.push('<form method="get" action="/"><label>table <select name="table">');
-  for (const t of tables) parts.push(`<option${t === selected ? ' selected' : ''}>${esc(t.name)}</option>`);
-  parts.push(`</select></label> <label>room_id <input name="room_id" size="66" value="${esc(roomFilter)}" pattern="[0-9a-f]{1,64}"></label> <button>show</button></form>`);
-  if (!selected) {
-    parts.push('<p>No tables yet.</p></body></html>');
-    return parts.join('');
-  }
-  const hasRoom = selected.columns.some((c) => c.name === 'room_id');
-  const where = hasRoom && roomFilter ? 'WHERE room_id = ?' : '';
-  const params = where ? [roomFilter] : [];
-  const sql = `SELECT * FROM ${quoteIdent(selected.name)} ${where} ${orderClause(db, selected)} LIMIT ${PAGE_SIZE + 1} OFFSET ${pageNumber * PAGE_SIZE}`;
-  const rows = db.prepare(sql).all(...params);
-  const more = rows.length > PAGE_SIZE;
-  if (more) rows.pop();
-  let filteredCount = selected.count;
-  if (where) filteredCount = Number(db.prepare(`SELECT count(*) AS n FROM ${quoteIdent(selected.name)} ${where}`).get(...params).n);
-  parts.push(`<h2>${esc(selected.name)}: ${filteredCount} rows${where ? ' in this room' : ''}${roomFilter && !hasRoom ? ' (table has no room_id; filter ignored)' : ''}, page ${pageNumber + 1}</h2>`);
-  parts.push('<div class="wrap"><table><thead><tr>');
-  for (const c of selected.columns) parts.push(`<th>${esc(c.name)}</th>`);
-  parts.push('</tr></thead><tbody>');
-  for (const row of rows) {
-    parts.push('<tr>');
-    for (const c of selected.columns) parts.push(`<td>${renderCell(c.name, row[c.name])}</td>`);
-    parts.push('</tr>');
-  }
-  parts.push('</tbody></table></div><p>');
-  if (pageNumber > 0) parts.push(`<a href="${esc(link({ table: selected.name, room_id: roomFilter, page: pageNumber - 1 }))}">newer</a> `);
-  if (more) parts.push(`<a href="${esc(link({ table: selected.name, room_id: roomFilter, page: pageNumber + 1 }))}">older</a>`);
-  parts.push('</p></body></html>');
-  return parts.join('');
-}
+export { renderCell, renderLoginPage, renderOverview, renderData } from './admin-view.mjs';
 
 // ---------- server ----------
 
@@ -405,10 +221,10 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
           const new2 = body.get('new2') || '';
           if (!(await verifyPassword(current, hash))) {
             fail(login);
-            return send(res, 403, renderPasswordPage(login, session.csrf, 'Current password is wrong.'), html);
+            return send(res, 403, renderPasswordPage(login, session.csrf, 'Current password is wrong.', MIN_PASSWORD), html);
           }
-          if (new1 !== new2) return send(res, 400, renderPasswordPage(login, session.csrf, 'The new passwords differ.'), html);
-          if ([...new1].length < MIN_PASSWORD) return send(res, 400, renderPasswordPage(login, session.csrf, `The new password needs at least ${MIN_PASSWORD} characters.`), html);
+          if (new1 !== new2) return send(res, 400, renderPasswordPage(login, session.csrf, 'The new passwords differ.', MIN_PASSWORD), html);
+          if ([...new1].length < MIN_PASSWORD) return send(res, 400, renderPasswordPage(login, session.csrf, `The new password needs at least ${MIN_PASSWORD} characters.`, MIN_PASSWORD), html);
           writeHash(await hashPassword(new1));
           sessions.clear();
           log.warn?.(`admin: password changed by ${login}; all sessions ended`);
@@ -417,11 +233,15 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
         return send(res, 404, 'not found\n');
       }
       if (method !== 'GET' && method !== 'HEAD') return send(res, 405, 'method not allowed\n');
-      if (url.pathname === '/password') return send(res, 200, method === 'HEAD' ? '' : renderPasswordPage(login, session.csrf), html);
-      if (url.pathname !== '/') return send(res, 404, 'not found\n');
+      if (url.pathname === '/password') return send(res, 200, method === 'HEAD' ? '' : renderPasswordPage(login, session.csrf, '', MIN_PASSWORD), html);
+      // /: overview (old links /?table=… still open the data view); /data: the data browser.
+      const wantsData = url.pathname === '/data' || (url.pathname === '/' && url.searchParams.has('table'));
+      if (url.pathname !== '/' && url.pathname !== '/data') return send(res, 404, 'not found\n');
       const database = openDb();
-      if (!database) return send(res, 503, 'hub.db does not exist yet\n');
-      const page = renderPage(database, Object.fromEntries(url.searchParams), { dbPath, dataDir, login, csrf: session.csrf, metrics, startedAt });
+      if (wantsData && !database) return send(res, 503, 'hub.db does not exist yet\n');
+      const page = wantsData
+        ? renderData(database, url.searchParams, { login, csrf: session.csrf })
+        : renderOverview({ db: database, dbPath, dataDir, metrics, startedAt, range: url.searchParams.get('range'), now: now(), login, csrf: session.csrf });
       return send(res, 200, method === 'HEAD' ? '' : page, html);
     } catch (error) {
       if (error?.status === 413) return send(res, 413, 'too large\n');

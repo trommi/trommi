@@ -1,11 +1,14 @@
-// Tests for hub/admin.mjs: Tailscale login + admin password, logout, password change, rate limit, read-only render.
+// Tests for hub/admin.mjs + admin-view.mjs: Tailscale login + admin password, logout, password change, rate limit,
+// read-only render, the data browser (tree, filters, sort, row detail) and the overview graphs.
 // Run: node hub/admin-test.mjs
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import crypto from 'node:crypto';
 import { startAdmin, hashPassword, verifyPassword, renderCell, PASSWORD_FILE } from './admin.mjs';
+import { hubMetrics, openSeries } from './ops/metrics.mjs';
 
 const LOGIN = 'admin@example.com';
 const PASSWORD = 'correct horse battery staple 42';
@@ -29,7 +32,11 @@ const OTHER_ROOM = 'b'.repeat(64);
     CREATE TABLE envelopes (room_id TEXT, envelope_number INTEGER, sender_device_id TEXT, envelope_kind TEXT, timeline_kind TEXT, timeline_id TEXT, is_head INTEGER, envelope_header BLOB, envelope_nonce BLOB, encrypted_body BLOB, encrypted_body_hash TEXT, envelope_signature BLOB, received_at INTEGER, PRIMARY KEY (room_id, envelope_number));
     CREATE TABLE push_subscriptions (room_id TEXT, device_id TEXT, endpoint TEXT, subscription TEXT, created_at INTEGER);
     CREATE TABLE settings (key TEXT, value TEXT);
+    CREATE TABLE accounts (room_id TEXT PRIMARY KEY, email TEXT, auth_hash BLOB, created_at INTEGER) WITHOUT ROWID;
+    CREATE TABLE objects (room_id TEXT, object_id TEXT, object_state INTEGER, urgency INTEGER, owner_device_id TEXT, first_envelope_number INTEGER, PRIMARY KEY (room_id, object_id)) WITHOUT ROWID;
   `);
+  db.prepare('INSERT INTO accounts VALUES (?,?,?,?)').run(ROOM, 'someone@example.com', Buffer.alloc(32, 3), 1791100000000);
+  db.prepare('INSERT INTO objects VALUES (?,?,?,?,?,?)').run(ROOM, 'c'.repeat(32), 2, 2, 'd'.repeat(64), 7);
   db.prepare('INSERT INTO rooms VALUES (?,?,?,?)').run(ROOM, 1, 0, 120);
   db.prepare('INSERT INTO rooms VALUES (?,?,?,?)').run(OTHER_ROOM, 2, 0, 1);
   const ins = db.prepare('INSERT INTO envelopes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)');
@@ -88,12 +95,13 @@ try {
   });
 
   await test('allowed login without password → 403 with the login form, before every page', async () => {
-    for (const p of ['/', '/?table=envelopes', '/password', '/nothing']) {
+    for (const p of ['/', '/?table=envelopes', '/?range=7d', '/data', `/data?room=${ROOM}&t=envelopes&rowid=1`, '/password', '/nothing']) {
       const res = await request(p);
       assert.equal(res.status, 403, p);
       const html = await res.text();
       assert.match(html, /type="password" name="password"/, p);
-      assert.doesNotMatch(html, /envelopes \(/, p);
+      assert.doesNotMatch(html, /class="tree"|class="tiles"|envelopes|100 B/, p);
+      assert.equal((await request(p, { method: 'HEAD' })).status, 403, p);
     }
   });
 
@@ -113,9 +121,16 @@ try {
     const csp = page.headers.get('content-security-policy');
     assert.match(csp, /default-src 'none'/);
     assert.doesNotMatch(csp, /unsafe/);
+    assert.match(csp, /script-src 'sha256-[^']+'/);
     const html = await page.text();
-    assert.match(html, /envelopes \(121\)/);
+    assert.match(html, /<h1>Overview<\/h1>/);
+    assert.match(html, /<span>envelopes<\/span><span class="n">121<\/span>/);
     assert.match(html, /attachments: 2\.9 KiB/);
+    // The inline style and script are exactly the ones the CSP pins.
+    const sha = (t) => crypto.createHash('sha256').update(t).digest('base64');
+    assert.ok(csp.includes(`'sha256-${sha(/<style>([\s\S]*?)<\/style>/.exec(html)[1])}'`), 'style hash');
+    assert.ok(csp.includes(`'sha256-${sha(/<script>([\s\S]*?)<\/script>/.exec(html)[1])}'`), 'script hash');
+    assert.doesNotMatch(html, / style=|<script src|<link /, 'no inline style attributes, no external assets');
     assert.match(html, /Abmelden/);
     assert.match(html, /Passwort ändern/);
     // The session is bound to the Tailscale login.
@@ -137,28 +152,144 @@ try {
   await test('render: ciphertext as size + 16 bytes hex, never plaintext; secrets hidden; escaping; paging', async () => {
     const { cookie } = await signIn();
     const get = async (p) => (await request(p, { cookie })).text();
-    let html = await get('/?table=envelopes');
+    const body = (html) => html.slice(html.indexOf('<section class="pane">'));
+    let html = await get('/?table=envelopes');   // old links still open the data view
+    assert.match(html, /100 B · 78787878787878787878787878787878…/);
+    html = body(await get('/data?t=envelopes'));
     assert.match(html, /100 B · 78787878787878787878787878787878…/);
     assert.ok(html.indexOf('>120<') > 0 && html.indexOf('>120<') < html.indexOf('>72<'), 'newest first');
     assert.doesNotMatch(html, />71</, 'page size 50');
     assert.doesNotMatch(html, /SECRET-PLAINTEXT-MARKER-XYZ/);
-    html = await get(`/?table=envelopes&room_id=${OTHER_ROOM}`);
+    html = body(await get(`/?table=envelopes&room_id=${OTHER_ROOM}`));
     assert.match(html, /1 rows in this room/);
     assert.match(html, /27 B · 5345435245542d504c41494e54455854…/);
     assert.doesNotMatch(html, /SECRET-PLAINTEXT/);
-    html = await get('/?table=envelopes&page=2');
+    html = body(await get('/data?t=envelopes&page=2'));
     assert.match(html, />21</);
     assert.match(html, /newer/);
-    html = await get('/?table=push_subscriptions');
+    html = await get('/data?t=push_subscriptions');
     assert.doesNotMatch(html, /SECRETAUTH|secret-endpoint-token/);
-    html = await get('/?table=settings');
-    assert.doesNotMatch(html, /<script>/);
-    html = await get('/?table=rooms');
-    assert.match(html, /rooms: 2 rows/);
-    html = await get(`/?table=envelopes&room_id=${encodeURIComponent("' OR 1=1 --")}`);
-    assert.match(html, /envelopes: 121 rows/);
+    html = await get('/data?t=settings');
+    assert.doesNotMatch(html, /<script>alert/);
+    html = body(await get('/data?t=rooms'));
+    assert.match(html, /<h2>rooms<\/h2><span class="muted">2 rows/);
+    html = body(await get(`/data?t=envelopes&room=${encodeURIComponent("' OR 1=1 --")}`));
+    assert.match(html, /<h2>envelopes<\/h2><span class="muted">121 rows</);
     assert.equal(renderCell('signed_entry', 'AAEC'), '<span class="opaque">3 B · 000102</span>');
     assert.equal((await request('/', { cookie, method: 'PUT' })).status, 405);
+  });
+
+
+  await test('data browser: tree of rooms with counts, filters, sort, search, no oracle on opaque columns', async () => {
+    const { cookie } = await signIn();
+    const get = async (p) => { const r = await request(p, { cookie }); assert.equal(r.status, 200, p); return r.text(); };
+    const body = (html) => html.slice(html.indexOf('<section class="pane">'));
+    let html = await get(`/data?room=${ROOM}`);
+    assert.match(html, /class="tree"/);
+    assert.match(html, /<div class="grp">Rooms <span class="n">2<\/span>/);
+    assert.match(html, new RegExp(`data-room="${ROOM}"><details open>`), 'selected room is open');
+    assert.match(html, /<li class="lbl">by envelope_kind<\/li>/);
+    assert.match(html, /<span>message<\/span><span class="n">120<\/span>/);
+    assert.match(html, /<span>accounts<\/span><span class="n">1<\/span>/);
+    assert.match(body(html), /120 rows in this room/);
+    assert.doesNotMatch(body(html), /<th><a[^>]*>room_id/, 'room_id column left out inside a room');
+    // filter by a column (as the tree links do), and by an unknown/opaque column: ignored
+    html = body(await get(`/data?room=${OTHER_ROOM}&t=envelopes&f.envelope_kind=card`));
+    assert.match(html, /1 rows in this room/);
+    assert.match(html, /class="chip"/);
+    html = body(await get(`/data?t=envelopes&f.encrypted_body=${'00'.repeat(4)}&f.nope=1`));
+    assert.match(html, /121 rows/);
+    // sort: by envelope_number ascending puts 1 first; an opaque column is never a sort key
+    html = body(await get('/data?t=envelopes&sort=envelope_number&dir=asc'));
+    assert.ok(html.indexOf('>1<') < html.indexOf('>2<'));
+    assert.match(html, /envelope_number ↑/);
+    html = body(await get('/data?t=accounts&sort=email&dir=asc'));
+    assert.doesNotMatch(html, /email ↑/);
+    // search: prefix over plain columns only (sender 'eee…' is one row); the e-mail is neither searched nor filtered nor shown
+    html = body(await get('/data?t=envelopes&q=eeee'));
+    assert.match(html, /1 rows/);
+    html = body(await get('/data?t=accounts&q=someone'));
+    assert.match(html, /0 rows/);
+    html = body(await get(`/data?t=accounts&f.email=${encodeURIComponent('someone@example.com')}`));
+    assert.match(html, /1 rows/, 'filter on an opaque column is ignored');
+    html = body(await get(`/data?t=accounts&f.email=${encodeURIComponent('nobody@example.com')}`));
+    assert.match(html, /1 rows/, 'no oracle: a wrong address gives the same answer');
+    assert.doesNotMatch(html, /someone@example\.com/);
+    // SQL in a filter value is a bound value
+    html = body(await get(`/data?t=envelopes&f.envelope_kind=${encodeURIComponent("x' OR '1'='1")}`));
+    assert.match(html, /0 rows/);
+    // links between rows: object_id → its envelopes, device → its envelopes
+    html = body(await get(`/data?room=${ROOM}&t=objects`));
+    assert.match(html, new RegExp(`href="/data\\?room=${ROOM}&amp;t=envelopes&amp;f.object_id=${'c'.repeat(32)}"`));
+    assert.match(html, new RegExp(`href="/data\\?room=${ROOM}&amp;t=envelopes&amp;f.sender_device_id=${'d'.repeat(64)}"`));
+    assert.match(html, /<span class="tag" title="2">answered<\/span>/);
+  });
+
+  await test('row detail: every column, ciphertext as size + hex, related rows, keys of WITHOUT ROWID tables', async () => {
+    const { cookie } = await signIn();
+    const get = async (p) => (await request(p, { cookie })).text();
+    let html = await get('/data?t=envelopes&rowid=121');
+    assert.match(html, /<aside class="detail"/);
+    assert.match(html, /27 B · 5345435245542d504c41494e54455854…/);
+    assert.doesNotMatch(html, /SECRET-PLAINTEXT/);
+    assert.match(html, /Cleartext header, decoded/);
+    assert.match(html, /does not decode/);   // the fixture's header is not a real one
+    assert.match(html, /sender_device_id: its envelopes/);
+    html = await get(`/data?room=${ROOM}&t=objects&k.room_id=${ROOM}&k.object_id=${'c'.repeat(32)}`);
+    assert.match(html, /all envelopes of this object/);
+    assert.match(html, new RegExp(`f.timeline_id=card%2F${'c'.repeat(32)}`));
+    assert.match(html, /first envelope number/);
+    html = await get(`/data?t=accounts&k.room_id=${ROOM}`);
+    assert.match(html, /<dt>email<\/dt><dd><span class="opaque">/);
+    assert.doesNotMatch(html, /someone@example\.com/);
+    html = await get(`/data?t=accounts&k.email=${encodeURIComponent('someone@example.com')}`);
+    assert.doesNotMatch(html, /<aside class="detail"/, 'opaque columns are no row keys');
+    html = await get('/data?t=envelopes&rowid=99999');
+    assert.match(html, /does not exist/);
+    assert.equal((await request('/data/x', { cookie })).status, 404);
+  });
+
+  await test('overview graphs: tiles, charts from the ring and from the persisted minutes (1 h / 24 h / 7 d)', async () => {
+    const seriesDir = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-admin-series-'));
+    let t = Date.UTC(2026, 9, 4, 10, 0, 5);
+    const flow = { outbound: () => ({ count: 3, max: 0, total: 0 }), writeQueueDepth: 0, counters: {} };
+    const wal = { dbBytes: () => 4096, walBytes: () => 0, last: { log_frames: 0, checkpointed_frames: 0, last_ms: 0 } };
+    const metrics = hubMetrics({ dataDir: seriesDir, flow, wal, now: () => t });
+    try {
+      for (let i = 0; i < 20; i += 1) { metrics.sample(); t += 10000; }   // 200 s: crosses three minute borders
+      const ring = metrics.history();
+      assert.ok(ring.every((x) => x.cpu_percent >= 0 && x.cpu_percent <= 100 && 'request_ms_p95' in x && x.mem_total_bytes > 0));
+      const minutes = metrics.series(t - 3600000, 360);
+      assert.ok(minutes.length >= 3, `persisted minutes: ${minutes.length}`);
+      assert.equal(minutes[0].open_streams, 3);
+      const view = await startAdmin({ dbPath, dataDir: seriesDir, port: 0, host: '127.0.0.1', env, metrics, now: () => t, log: quiet });
+      const server = `http://127.0.0.1:${view.port}`;
+      try {
+        const { cookie } = await signIn(PASSWORD, LOGIN, server);
+        for (const range of ['1h', '24h', '7d']) {
+          const html = await (await request(`/?range=${range}`, { cookie }, server)).text();
+          assert.match(html, new RegExp(`href="/\\?range=${range}" class="on"`), range);
+          for (const k of ['CPU', 'RAM', 'Disk free', 'Open streams', 'Ingest', 'Latency', 'Database']) assert.match(html, new RegExp(`<div class="k">${k}</div>`), `${range} ${k}`);
+          assert.equal((html.match(/<figure class="chart" data-pts=/g) || []).length, 8, `${range}: eight charts with data`);
+          assert.match(html, /<svg class="plot"/);
+        }
+      } finally { await view.close(); }
+      // A standalone admin (no metrics object) reads metrics.db read-only.
+      metrics.close();
+      const alone = await startAdmin({ dbPath, dataDir: seriesDir, port: 0, host: '127.0.0.1', env, now: () => t, log: quiet });
+      try {
+        const server = `http://127.0.0.1:${alone.port}`;
+        const { cookie } = await signIn(PASSWORD, LOGIN, server);
+        const html = await (await request('/?range=24h', { cookie }, server)).text();
+        assert.match(html, /<figure class="chart" data-pts=/);
+      } finally { await alone.close(); }
+      const ro = openSeries(seriesDir, { readOnly: true });
+      assert.throws(() => ro.db.exec('DELETE FROM metrics_minute'), /readonly/);
+      ro.close();
+    } finally {
+      metrics.close();
+      fs.rmSync(seriesDir, { recursive: true, force: true });
+    }
   });
 
   await test('the admin DB connection is read-only', () => {
@@ -244,11 +375,31 @@ try {
       const { cookie } = await signIn(PASSWORD, LOGIN, server);
       const html = await (await request('/', { cookie }, server)).text();
       assert.match(html, /Overview/);
-      assert.match(html, /CPU<\/th><td>load [\d.]+ /);
-      assert.match(html, /RAM<\/th><td>.* used of /);
-      assert.match(html, /Disk \(data\)<\/th><td>.* free of /);
-      assert.match(html, /open streams .* req\/s/);
-      assert.match(html, /envelopes \(/);
+      assert.match(html, /<div class="k">CPU<\/div><div class="v">[\d.,]+<small>%<\/small>/);
+      assert.match(html, /<div class="s">load [\d.]+ /);
+      assert.match(html, /<div class="k">RAM<\/div>/);
+      assert.match(html, /<div class="k">Disk free<\/div>/);
+      assert.match(html, /<h3>Open streams<\/h3>/);
+      assert.match(html, /<span>envelopes<\/span>/);
+      assert.ok(fs.existsSync(path.join(hubDir, 'metrics.db')), 'the hub keeps metrics.db');
+      const data = await (await request('/data', { cookie }, server)).text();
+      assert.match(data, /class="tree"/);
+      // A real room: the founding envelope's cleartext header decodes; its body stays size + hex.
+      const { foundRoom, memoryStorage } = await import('../core/index.mjs');
+      const { client } = await foundRoom({ hub_url: `http://127.0.0.1:${hub.port}`, storage: memoryStorage(), device_name: 'Admin test phone' });
+      await client.start({ stream: false });
+      const roomId = hub.db.prepare('SELECT room_id FROM rooms').get().room_id;
+      const findRow = () => hub.db.prepare('SELECT rowid AS r, encrypted_body FROM envelopes WHERE room_id = ? LIMIT 1').get(roomId);
+      for (let i = 0; i < 100 && !findRow(); i += 1) await new Promise((r) => setTimeout(r, 50));   // the first envelope is posted in the background
+      await client.stop();
+      const row = findRow();
+      assert.ok(row, 'the founding wrote an envelope');
+      const detail = await (await request(`/data?room=${roomId}&t=envelopes&rowid=${row.r}`, { cookie }, server)).text();
+      assert.match(detail, /Cleartext header, decoded/);
+      assert.doesNotMatch(detail, /does not decode/);
+      assert.match(detail, /<dt>sender<\/dt><dd><a class="id"/);
+      assert.match(detail, /<dt>kind<\/dt>/);
+      if (row.encrypted_body) assert.match(detail, new RegExp(`<dt>encrypted_body</dt><dd><span class="opaque">${row.encrypted_body.byteLength} B · ${Buffer.from(row.encrypted_body).subarray(0, 16).toString('hex')}…`));
       assert.match(html, /Passwort ändern/);
       assert.match(html, /Abmelden/);
     } finally {
