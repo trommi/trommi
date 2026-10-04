@@ -7,29 +7,26 @@
 // a plain chat message are not here: they stand in their session's Files drawer (session.mjs looseFiles), which reads
 // that session's conversation; an index of them across sessions would need every conversation loaded.
 import { CLIENT, core, hubUrl } from './app.mjs'
-import { galleryItems, html, mediaPreview, raw, smallMark } from './ui.mjs'
+import { galleryItems, html, mediaPreview, raw, sk, smallMark } from './ui.mjs'
 const KIND = { image: 'Pictures', video: 'Videos', file: 'Files' }   // Files: pages and every other file
 const kindOf2 = i => (i.type === 'image' || i.type === 'video' ? i.type : 'file')
-const two = n => String(n).padStart(2, '0')
-const clock = ts => { const d = new Date(ts); return `${two(d.getHours())}:${two(d.getMinutes())}` }
-
-const dayName = (ts, now = Date.now()) => {
-  const d = new Date(ts), n = new Date(now)
-  const days = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5)
-  return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
+// One tile per decision (his pick B, 4 October): its pictures as a small fanned stack in the paper look of the Desk's
+// piles (up to three sheets, the first on top), the bold title under it and a faint "3 pictures"; no session, no time,
+// no badge. A published asset is one sheet with its kind.
+const NOUN = { image: ['picture', 'pictures'], video: ['video', 'videos'], html: ['page', 'pages'], file: ['file', 'files'] }
+const countOf = i => { const n = i.more ?? 1, [one, many] = NOUN[i.type] ?? NOUN.file; return `${n} ${n === 1 ? one : many}` }
+const tile = i => {
+  const n = Math.min(3, i.more ?? 1)
+  const sheet = k => html`<span class="gal-sheet" data-s="${k}">${k === 0 ? mediaPreview(i) : i.urls?.[k] ? mediaPreview({ ...i, url: i.urls[k] }) : ''}</span>`
+  return html`<a class="gal-tile" data-nav href="${i.href}" title="${i.title} · ${i.agent.name} · ${countOf(i)}"><span class="gal-fan" aria-hidden="true">${[...Array(n).keys()].reverse().map(sheet)}</span><span class="gal-meta"><strong><span class="gal-who" title="${i.agent.name}">${smallMark(i.agent)}</span><span class="gal-t">${i.title}</span></strong></span></a>`
 }
-// When, short: "14:05" today, "Yesterday 14:05", else "2 Oct 14:05".
-const when = ts => { if (!ts) return ''; const d = dayName(ts); return d === 'Today' ? clock(ts) : d === 'Yesterday' ? `Yesterday ${clock(ts)}` : `${new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${clock(ts)}` }
 
-const tile = i => html`<a class="gal-tile" data-nav href="${i.href}" title="${i.title}">${mediaPreview(i, i.more > 1 ? html`<span class="gal-count">${i.more} ${i.type === 'video' ? 'videos' : 'pictures'}</span>` : '')}<span class="gal-meta"><strong>${i.title}</strong><span class="gal-sub">${smallMark(i.agent)}<span class="gal-who">${i.agent.name}</span><span class="gal-dot">·</span><span>${when(i.ts)}</span></span></span></a>`
-
-/** The filters: kind as one segmented row, the sessions as chips with their marks. Links, so the page works without script. */
-function filters(items, { kind, from }, here) {
-  const q = (k, f) => { const p = new URLSearchParams(); if (k) p.set('kind', k); if (f) p.set('from', f); const s = p.toString(); return `${here}${s ? `?${s}` : ''}` }
-  const count = k => items.filter(i => (!k || kindOf2(i) === k) && (!from || i.agent.id === from)).length
-  const senders = [...new Map(items.map(i => [i.agent.id, i.agent])).values()]
-  return html`<div class="gal-filters"><nav class="gal-seg" aria-label="Kind">${[['', 'All'], ['image', 'Pictures'], ['video', 'Videos'], ['file', 'Files']].map(([k, label]) => html`<a data-nav href="${q(k, from)}"${kind === k ? raw(' aria-current="true"') : ''}>${label}<b>${count(k)}</b></a>`)}</nav>
-${senders.length > 1 ? html`<nav class="gal-chips" aria-label="Session"><a class="gal-chip gal-chip-all" data-nav href="${q(kind, '')}"${from ? '' : raw(' aria-current="true"')}><span>All sessions</span></a>${senders.map(a => html`<a class="gal-chip" data-nav href="${q(kind, from === a.id ? '' : a.id)}"${from === a.id ? raw(' aria-current="true"') : ''} style="--hue:${a.hue}">${smallMark(a)}<span>${a.name}</span></a>`)}</nav>` : ''}</div>`
+/** The filter (his word, 4 October): the kind as four small drawn buttons, no words, no counts; no filter by session
+ *  (each tile shows its session's drawing). Links, so the page works without script. */
+const KINDS = [['', 'stack', 'Everything'], ['image', 'picture', 'Pictures'], ['video', 'play', 'Videos'], ['file', 'page', 'Files and pages']]
+function filters(kind, from, here) {
+  const q = k => { const p = new URLSearchParams(); if (k) p.set('kind', k); if (from) p.set('from', from); const s = p.toString(); return `${here}${s ? `?${s}` : ''}` }
+  return html`<nav class="gal-kinds" aria-label="Kind">${KINDS.map(([k, drawing, word]) => html`<a data-nav href="${q(k)}" title="${word}" aria-label="${word}"${kind === k ? raw(' aria-current="true"') : ''}>${sk(drawing)}</a>`)}</nav>`
 }
 
 /** The page /assets: the plain media gallery. */
@@ -37,10 +34,8 @@ function galleryMain(model, base, opts = {}) {
   const all = galleryItems(model, base)
   const kind = opts.kind === 'html' ? 'file' : KIND[opts.kind] ? opts.kind : '', from = opts.from ?? ''
   const items = all.filter(i => (!kind || kindOf2(i) === kind) && (!from || i.agent.id === from))
-  const sessions = new Set(all.map(i => i.agent.id)).size
   return html`<main id="gallery" class="gal-page" aria-label="Media"><div class="gal-column">
-<header class="gal-head"><h2>Media</h2><p>${all.length ? `${all.length === 1 ? '1 thing' : `${all.length} things`} your agents sent, from ${sessions === 1 ? '1 session' : `${sessions} sessions`}. Newest first.` : 'Nothing yet: pictures, videos, pages and files your agents send show up here.'}</p></header>
-${all.length ? filters(all, { kind, from }, `${base}/assets`) : ''}
+<header class="gal-head"><h2>Media</h2>${all.length ? filters(kind, from, `${base}/assets`) : html`<p>Nothing yet: pictures, videos, pages and files your agents send show up here.</p>`}</header>
 ${items.length ? html`<div class="gal-grid">${items.map(tile)}</div>` : all.length ? html`<p class="gal-none">Nothing of this kind${from ? ' from this session' : ''}.</p>` : ''}
 </div></main>`
 }
