@@ -265,19 +265,29 @@ const agentMethods = {
     if (Object.keys(alerts).length) this.setRegisters(alerts).catch(e => this.emit('error', e))   // not awaited: we are inside the sync queue
     // F15: the hub takes an object's state from the signed header alone, so a refused answer (bad choice, stale version,
     // read on a decision) still marks the card closed there, and retention would prune it while it is open everywhere.
-    // The owner says it again: a new version, unchanged and open, becomes the hub's newest head.
-    const reassert = new Set()
-    for (const c of commands) {
-      if (!c.refused || c.rec.kind !== codec.KIND.answer || !c.object_id || c.rec.object?.object_state === codec.OBJECT_STATE.open) continue
-      const card = this.model.cards.get(c.object_id)
-      if (card && card.agent_device_id === this.my_device_id && card.object_state === 'open') reassert.add(c.object_id)
-    }
-    for (const id of reassert) queueMicrotask(() => this._version(id, h => ({ fields: {}, object_state: 'open', urgency: h?.urgency ?? 'normal' })).catch(e => this.emit('error', e)))
+    // The owner says it again: a new version, unchanged and open, becomes the hub's newest head. Taken from the model
+    // (card.refused_head, stored with the card), so a crash between the refusal and the re-send does not lose it.
+    this._reassertRefused()
     this._dirty.records.set('sync', this._syncRecord())
     // F6: what was handed out reaches storage at once (not with the debounced flush), so a crash right after does not
     // hand the same command out again after the restart. Kept apart from the sync record, whose cursor must not run
     // ahead of the model it belongs to.
     if (commands.length) await this.storage.set('delivered', Object.fromEntries(this.delivered)).catch(e => this.emit('error', e))
+  },
+
+  /** F15: re-send every own open card whose newest head at the hub is a refused answer (once per card and head). */
+  _reassertRefused() {
+    if (this.is_human) return
+    const done = (this._reasserted ??= new Map())      // card -> the refused head it was re-sent for (until the version is back)
+    for (const id of M.cardsToReassert(this.model, this.my_device_id)) {
+      const head = this.model.cards.get(id).refused_head
+      if (done.get(id) === head) continue
+      done.set(id, head)
+      // not awaited (we may be inside the sync queue); settle() waits for it
+      const p = new Promise(r => queueMicrotask(r)).then(() => this._version(id, h => ({ fields: {}, object_state: 'open', urgency: h?.urgency ?? 'normal' })))
+        .catch(e => { if (done.get(id) === head) done.delete(id); this.emit('error', e) })
+      const bg = (this._background ??= new Set()); bg.add(p); p.finally(() => bg.delete(p))
+    }
   },
 
   /** A human resolved a fork (or the channel decides to go on): deliver commands again, the held ones first. */

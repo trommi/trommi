@@ -339,8 +339,9 @@ export class Client {
       await bootFromSnapshot(this).catch(e => this._localAlert('snapshot', e))
     }
     await this.catchUp()
+    if (!this.is_human) this._reassertRefused?.()      // F15: a refusal met before a crash, re-sent now
     this._maybeSnapshot()
-    this._resolveRevisions().catch(e => this._localAlert('revisions', e))
+    this._revisions = this._resolveRevisions().catch(e => this._localAlert('revisions', e))
     for (const [id, inv] of this.invitesPrivate) if (!inv.finalized && Date.now() < inv.expiresAt) this._watchInvite(id)
     // R4 (review 3): an agent's stream names its lease generation, so the lease is taken before the stream opens.
     if (stream && !this.is_human && this.hub.lease_generation == null) await this.claimSession({ process_instance: process_instance ?? this._leaseInstance ?? undefined })
@@ -574,11 +575,17 @@ export class Client {
     for (const card of this.model.cards.values()) {
       if (card.object_state !== 'open') continue
       const t = this.model.timelines.get(card.timeline_key)
-      if (!t || t.newest_human_envelope_number <= card.envelope_number || card.in_revision) continue
+      const cutoff = M.revisionCutoff(card)
+      if (!t || t.newest_human_envelope_number <= cutoff || card.in_revision) continue
+      // each conversation state is read once (a plain message newer than the card would be fetched on every catch-up)
+      const checked = (this._revChecked ??= new Map())
+      const mark = `${t.newest_human_envelope_number}/${cutoff}`
+      if (checked.get(card.object_id) === mark) continue
       const items = await this._readTimeline(card.timeline_key, { before: this.model.room.last_envelope_number + 1, limit: 20 })
+      checked.set(card.object_id, mark)
       let rev = null
       for (const it of items) {
-        if (it.envelope_number <= card.envelope_number || !it.content) continue
+        if (it.envelope_number <= cutoff || !it.content) continue
         if (it.content.present_card) rev = null
         else if (this.model.members.get(it.sender_device_id)?.device_role === 'human' && (it.content.hand_back || it.content.explain)) rev = { by: it.content.hand_back ? 'hand_back' : 'explain', envelope_number: it.envelope_number }
       }
@@ -592,6 +599,7 @@ export class Client {
     // Pages a snapshot boot already read (snapshot.mjs) are used once instead of being fetched again.
     const scan = this._scan
     this._scan = null
+    const before = this.model.room.last_envelope_number
     for (;;) {
       const cur = this.model.room.last_envelope_number
       let r
@@ -604,6 +612,8 @@ export class Client {
       await this.processRecords(r.envelopes)
       if (this.model.room.last_envelope_number >= r.last_envelope_number) break
     }
+    // F2: catch-up reads conversations as headers; a hand-back in them is settled from the conversation (settle() waits).
+    if (this.is_human && this.model.room.last_envelope_number > before) this._revisions = this._resolveRevisions().catch(e => this._localAlert('revisions', e))
   }
 
   // ---- membership and keys ----------------------------------------------------------------------
@@ -756,6 +766,7 @@ export class Client {
       this._markDirty(change, tl)
       this._emitChange(change)
       if (commands.length) await this._deliverCommands(commands)
+      if (!this.is_human) this._reassertRefused?.()      // F15, also when the commands were held back
       if (live) this._maybeSnapshot()
     }
   }
@@ -798,6 +809,7 @@ export class Client {
     const m = M.emptyModel()
     Object.assign(m.room, keep.room, { last_envelope_number: 0 })
     m.members = keep.members; m.invites = keep.invites; m.outbox = keep.outbox; m._device_registers = keep._device_registers
+    m.alerts = keep.alerts                // fuzz: a resync must not erase what this device already warned about (e.g. a tampered envelope)
     for (const k of this.sessionKeys.values()) M.applySessionGrant(m, k.state, M.emptyChange(), everAgents(k), epochAgents(k))
     this.model = m
     this.chains = new Map()
@@ -1289,7 +1301,8 @@ export class Client {
       if (this.model.room.outbox_blocked) throw new ZError('chain-halted', `sending is halted: the hub refused an envelope (${this.model.room.outbox_blocked.code})`)
       await this._queue
       if (this._pump) await Promise.race([this._pump, sleep(50)])   // a halted pump waits long: look at outbox_blocked again soon
-      if (!this.outbox.length && this.byHash.size === 0) return
+      if (this._background?.size) { await Promise.all([...this._background]); continue }   // e.g. an agent's F15 re-send
+      if (!this.outbox.length && this.byHash.size === 0) { if (this._revisions) await this._revisions; return }
       if (!this._stream || this.model.room.connection !== 'live') await this.catchUp()
       else await sleep(10)
     }

@@ -288,8 +288,11 @@ function applyTimelineItem(model, rec, change) {
       const c = rec.content
       // README: in revision until the agent's next version or a message with present_card (the agent presents it again,
       // or a human takes the hand-back back).
+      // F2: only an open card goes back to its agent (as the mock room does): a hand-back on an answered or closed card
+      // changes nothing, so a device that settles it later from the conversation (client._resolveRevisions) agrees. An own
+      // answer still in flight (echo) does not count yet: the hub may order it after this message or refuse it.
       if (c?.present_card) card.in_revision = null
-      else if (rec.sender_role === 'human' && c && (c.hand_back || c.explain)) card.in_revision = { by: c.hand_back ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
+      else if (rec.sender_role === 'human' && c && (c.hand_back || c.explain) && (card.object_state === 'open' || card.answer?.pending)) card.in_revision = { by: c.hand_back ? 'hand_back' : 'explain', envelope_number: rec.envelope_number }
       change.cards.add(card.object_id)
       if (card.session_id) change.sessions.add(card.session_id)
     }
@@ -469,7 +472,13 @@ export function answerRefusal(model, rec) {
 
 function applyAnswer(model, rec, change) {
   const why = answerRefusal(model, rec)
-  if (why) return refuse(model, change, rec, why, 'answer not counted')
+  if (why) {
+    // F15: the hub takes the object's state from this refused answer's header (closed) while the card stays open on every
+    // client. Kept on the card (and stored with it), so the owner re-sends the card even after a crash or restart.
+    const card = model.cards.get(rec.object?.object_id)
+    if (card && rec.is_head !== false && stateOf(rec).object_state !== 'open' && rec.envelope_number > (card.refused_head ?? 0) && rec.envelope_number > card.envelope_number) { card.refused_head = rec.envelope_number; change.cards.add(card.object_id) }
+    return refuse(model, change, rec, why, 'answer not counted')
+  }
   const card = model.cards.get(rec.object.object_id)
   const c = rec.content ?? {}
   const answer = {
@@ -489,6 +498,20 @@ function applyAnswer(model, rec, change) {
   card.session_id && change.sessions.add(card.session_id)
   change.stack = true
   return { applied: true }
+}
+
+/** F15: own open cards the hub holds as closed (a refused answer is their newest head): the owner re-sends them. */
+export function cardsToReassert(model, my_device_id) {
+  const out = []
+  for (const c of model.cards.values()) if (c.agent_device_id === my_device_id && c.object_state === 'open' && (c.refused_head ?? 0) > c.envelope_number) out.push(c.object_id)
+  return out
+}
+
+/** F2: the newest envelope that changed whether the card is open (its version, an answer, a decide-again); a hand-back counts only after it. */
+export function revisionCutoff(card) {
+  let n = card.envelope_number
+  for (const a of card.answers ?? []) n = Math.max(n, a.envelope_number ?? 0, a.taken_back_at ?? 0)
+  return n
 }
 
 export function decideAgainRefusal(model, rec) {

@@ -80,11 +80,11 @@ function stackInconsistent(client, m) {
   const own = [...mod.cards.values()].filter(c => c.object_state === 'open').map(c => c.object_id).sort()
   return JSON.stringify(own) !== JSON.stringify([...mod.stack].sort())
 }
-function hasPhantom(d) {
-  const c = d.client; if (!c) return false
-  const seen = new Set()
-  for (const [id, se] of c.model.sessions) { if (!se.registers.size) continue; const a = se.agent_device_id ?? id; if (seen.has(a)) return true; seen.add(a) }
-  return false
+/** F13 (gone with v1.1 sessions): a session keyed by an agent's device id (64 hex) instead of a session id (32 hex). */
+function phantomOf(d) {
+  const c = d.client; if (!c) return null
+  for (const [id, se] of c.model.sessions) if (se.registers.size && /^[0-9a-f]{64}$/.test(id)) return id
+  return null
 }
 export function maskFor(runner, dev) {
   return runner.prunedRefs ?? null
@@ -127,7 +127,7 @@ export async function checkOracle(runner, { final = false } = {}) {
       // agents and humans: pre-prune content differences cannot occur in the model of a live client
       const dd = diff(got, exp)
       if (dd.length && [...room.devs.values()].some(x => x.client?.model.alerts.some(al => al.code === 'card-closed' || (al.code === 'answer-stale' && !runner.staleUsed)))) { runner.known('F17-answer-echo-undo-reopens-card', 'answer echo undo restores the pre-echo card state over a newer closed state'); runner.stopCompare = true; continue }
-      if (dd.length && [...room.devs.values()].some(x => hasPhantom(x))) { runner.known('F13-agent-registers-in-phantom-session', 'agent registers written before a human learned the session grant sit in a phantom session keyed by the agent device id'); runner.stopCompare = true; continue }
+      { const ph = [...room.devs.values()].find(x => phantomOf(x)); if (ph) out.push(`${ph.name}: F13 again: agent registers in a phantom session ${phantomOf(ph).slice(0, 8)}`) }
       if (dd.length && [...room.devs.values()].some(x => x.everFaulty)) { runner.known('F12-network-error-skips-envelope', 'with lost responses / offline faults on a device, records are silently lost for it (alert or not) and never re-fetched; see failures for the shrunk traces'); runner.stopCompare = true; continue }
       if (dd.length) {
         const codes = d.client.model.alerts.map(a => `${a.code}:${a.message}`)
@@ -175,16 +175,16 @@ export async function checkConvergence(runner) {
       if (dd.length) out.push(`${a.name} vs ${humans[0].name} on its own objects:\n  ${dd.join('\n  ')}`)
     }
   }
-  // F2: 'in revision' (hand_back / explain) is computed from message bodies; items that arrive in catch-up are header-only
+  // F2 (fixed): 'in revision' (hand_back / explain) comes from message bodies; catch-up settles it from the conversation
   for (const room of w.rooms) {
     if (!room) continue
     const humans = [...room.devs.values()].filter(d => d.isHuman && d.client && !d.dead && !d.removed)
     const views = humans.map(d => canon([...d.client.model.cards].map(([id, c]) => [id, c.in_revision?.by ?? null]).sort()))
-    if (new Set(views).size > 1) runner.known('F2-in-revision-diverges', 'card.in_revision (hand_back / explain) differs between human devices: it is derived from message bodies, which a catching-up client only has as pruned headers')
+    if (new Set(views).size > 1) out.push(`F2 again: 'in revision' differs between human devices: ${humans.map((d, k) => `${d.name} ${views[k].replace(/[0-9a-f]{24}"/g, '"').slice(0, 120)}`).join(' / ')}`)
   }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.client?.model.alerts.some(al => al.code === 'card-closed' || (al.code === 'answer-stale' && !runner.staleUsed))))) { runner.known('F17-answer-echo-undo-reopens-card', 'a human answers a card that the agent closed a moment ago (the answer is bound to the old version): when the hub copy comes back as answer-stale, the optimistic echo is undone with the card state saved BEFORE the echo (open), which overwrites the newer closed state: that device shows the card open, the agent and other devices closed'); runner.stopCompare = true; return }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.client?.model.alerts.some(al => /^not-allowed/.test(al.code))))) { runner.known('F11-missed-session-grant', 'a device that missed the session grant refuses the session messages as not-allowed and never repairs it'); runner.stopCompare = true; return }
-  if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => hasPhantom(x)))) { runner.known('F13-agent-registers-in-phantom-session', 'an agent register written before the human learned the session grant is stored under a session keyed by the agent device id; devices that were online show a second phantom session while later joiners show one, so the merged agent registers differ between devices'); return }
+  { const ph = w.rooms.flatMap(r => r ? [...r.devs.values()] : []).find(x => phantomOf(x)); if (ph) out.push(`${ph.name}: F13 again: agent registers in a phantom session`) }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.everFaulty))) { runner.known('F12-network-error-skips-envelope', 'with lost responses / offline faults on a device, records are silently lost for it and never re-fetched; see failures for the shrunk traces'); runner.stopCompare = true; return }
   if (out.length) throw new Finding('convergence', out.slice(0, 4).join('\n'))
 }
