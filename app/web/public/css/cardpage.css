@@ -200,6 +200,42 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .t-picture .tc-step.is-prev { left: 14px; }
 .t-picture .tc-step.is-next { right: 14px; }
 
+/* A card's picture, large (picturePage): it fits the width and scrolls; a click shows it at its own size (both ways)
+   and back. The card's answer stands at the right (a phone: a bar at the foot), always in reach. */
+.t-picture.is-deciding { --answer-w: 340px; grid-template-columns: minmax(0, 1fr) var(--answer-w); grid-template-rows: auto minmax(0, 1fr); }
+.t-picture.is-deciding > .t-picture-bar { grid-column: 1 / -1; }
+.t-picture.is-deciding > .t-picture-view { grid-column: 1; grid-row: 2; display: flex; overflow: auto; overscroll-behavior: contain; padding: 0 14px 14px; cursor: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+.t-picture.is-deciding > .t-picture-view:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.t-picture.is-deciding .t-picture-fit { flex: none; margin: auto; max-width: 100%; max-height: none; cursor: zoom-in; }
+.t-picture.is-deciding .t-picture-fit img { width: auto; height: auto; max-width: 100%; max-height: none; object-fit: initial; }
+.t-picture.is-deciding:has(.t-picture-zoom:checked) .t-picture-fit { max-width: none; cursor: zoom-out; }
+.t-picture.is-deciding:has(.t-picture-zoom:checked) .t-picture-fit img { max-width: none; }
+.t-picture.is-deciding .tc-step.is-next { right: calc(var(--answer-w) + 14px); }
+.t-picture-answer { grid-column: 2; grid-row: 2; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: var(--s-4) var(--s-4) calc(var(--s-4) + env(safe-area-inset-bottom)); background: var(--surface); box-shadow: -1px 0 0 var(--line); scrollbar-width: thin; }
+.t-picture-answer .tc-answer { flex: none; overflow: visible; }
+.t-picture-answer .tc-revise-form { top: auto; bottom: calc(100% + 8px); }
+.t-picture-later { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--s-3); }
+.t-picture-later .sketch { width: 18px; height: 18px; }
+@media (max-width: 860px) {
+  .t-picture.is-deciding { grid-template-columns: minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr) auto; }
+  .t-picture.is-deciding > .t-picture-view { padding: 0 8px 8px; }
+  .t-picture.is-deciding .tc-step.is-next { right: 14px; }
+  .t-picture-answer { grid-column: 1; grid-row: 3; max-height: 46dvh; padding: 10px 12px calc(10px + env(safe-area-inset-bottom)); box-shadow: 0 -1px 0 var(--line), 0 -8px 24px rgb(0 0 0 / .06); }
+  .t-picture-answer .tc-answer { gap: 8px; }
+  .t-picture-answer .tc-opts { grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 6px; }
+  .t-picture-answer .tc-opt { min-height: 44px; padding: 8px 30px 8px 12px; }
+  .t-picture-answer .tc-opt-detail { display: none; }
+  .t-picture-answer .tc-opt-note { grid-column: 1 / -1; }
+  .t-picture-answer .tc-or { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: stretch; gap: 6px; }
+  .t-picture-answer .tc-or > i { display: none; }
+  .t-picture-answer .tc-or > .tc-whatever { min-height: 48px; }
+  .t-picture-answer .tc-or-pair { gap: 6px; }
+  .t-picture-answer .tc-or-pair .tc-tile, .t-picture-answer .tc-info-ways .tc-tile { min-height: 48px; }
+  .t-picture-answer .tc-or-pair:has(.tc-revise[open]) { grid-template-rows: auto auto; }
+  .t-picture-answer .tc-revise-form { position: static; grid-column: 1 / -1; }
+  .t-picture-later { margin-top: 8px; min-height: 32px; }
+}
+
 /* "or": the duck and ??? side by side, as tiles (card Nr. 176 and his word on the card page) */
 .tc-or-pair { position: relative; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; width: 100%; }
 .tc-or-pair .tc-tile { min-height: 72px; gap: 2px; }

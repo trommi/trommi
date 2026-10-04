@@ -319,16 +319,25 @@ ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card
 </main>`
 }
 
-/** One picture of a card, large, at its own address: the browser's Back closes it. from: the session it was opened from. */
-export function picturePage(card, base, at, { from = null } = {}) {
+/** One picture of a card, large, at its own address: the browser's Back closes it. from: the session it was opened from.
+ *  The picture fits the width and scrolls (a tall screenshot is read top to bottom); a click on it shows it at its own
+ *  size (scrolls both ways) and back. The card's answer stands beside it (a phone: a bar at the foot), the same buttons
+ *  of the same form as on the card's page, so it can be decided while looking: an answer goes back to the Desk. */
+export function picturePage(card, model, base, at, { from = null } = {}) {
   const images = imagesOf(card)
   const i = Math.min(Math.max(1, at), images.length), a = images[i - 1]
+  const session = from ? model.byAgent.get(from) : null
   const self = from ? `${base}/s/${encodeURIComponent(from)}` : base
   const here = cardPath(card, self)
-  return html`<div class="t-picture">
+  const form = `card-form-${card.id}`, zoom = `t-picture-zoom-${card.id}`
+  const drafting = card.status === 'open' && card.kind === 'decision'
+  return html`<div class="t-picture is-deciding" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}">
 <header class="t-picture-bar"><a class="tc-back t-picture-back" data-nav href="${here}?pic=${i}" aria-label="Back to the question">${icon(ARROW_L)}<span>${card.title}</span></a><span class="t-picture-where"><b>${i} / ${images.length}</b> ${a.title || a.name}</span>${a.page?.url ? html`<a class="focus-page-link" target="_blank" rel="noopener noreferrer" href="${a.page.url}">${sk('page')}<span>Open the page</span></a>` : ''}</header>
-<a class="t-picture-view" data-nav href="${here}?pic=${i}" aria-label="Close the picture"><span class="t-picture-fit"${a.marks?.length ? html` data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks)}"` : ''}><img${srcOf(a, 1600)} alt="${a.name}" decoding="async"></span></a>
+<input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
+<div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width"${a.marks?.length ? html` data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks)}"` : ''}><img${srcOf(a, 1600)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>
 ${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${icon(ARROW_L)}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${icon(ARROW_R)}</a>` : ''}
+<aside class="t-picture-answer" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: i })}${card.status === 'open' && !card.with_agent && card.kind !== 'permission' ? html`<button class="tc-way t-picture-later" type="submit" form="${form}" formaction="${act(card, base, 'snooze')}" title="${WORDS.later}: it waits for you on &quot;Later&quot;">${sk('snooze')}<span>${WORDS.later}</span></button>` : ''}</aside>
+<form id="${form}" method="post" action="${act(card, base, 'message')}" hidden data-card-target="form">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}"><input type="hidden" name="note" value="${card.draft?.note ?? ''}">` : ''}</form>
 </div>`
 }
 export { imagesOf, crownSvg }

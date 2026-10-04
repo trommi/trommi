@@ -217,7 +217,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
       const m = model(), card = m.cardByRef(ref)
       if (!card) return t.notFound(req, res, 'This question is not on the board any more.')
       if (!imagesOf(card).length) return redirect(res, cardPath(card, BASE))
-      t.page(req, res, { model: m, title: `${card.title} · picture ${at}`, view: 'picture', sidebar: false, css: 'picture', stream: null, main: picturePage(card, BASE, Number(at), { from: from ? decodeURIComponent(from) : null }), bodyAttrs: ' data-focus-page="card"' })
+      t.page(req, res, { model: m, title: `${card.title} · picture ${at}`, view: 'picture', sidebar: false, css: 'picture', stream: null, main: picturePage(card, m, BASE, Number(at), { from: from ? decodeURIComponent(from) : null }), bodyAttrs: ' data-focus-page="card"' })
     })
     t.post(/^\/cards\/([0-9a-f]+)\/draft$/, ({ res, match, form }) => {
       const card = model().byCard.get(match[1])
