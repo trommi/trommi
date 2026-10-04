@@ -23,14 +23,15 @@ body[data-page="gallery"] #gallery {
 .gal-chip .inbox-from-mark, .gal-sub .inbox-from-mark { position: static; display: inline-block; width: 22px; height: 22px; flex: none; color: var(--tone-pen); }
 .gal-chip .inbox-from-mark svg, .gal-sub .inbox-from-mark svg { width: 100%; height: 100%; }
 
-.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s-5) var(--s-4); }
-.gal-tile { display: grid; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 48px 32px; }
+.gal-tile { display: grid; gap: 14px; min-width: 0; color: var(--fg); text-decoration: none; }
 .gal-tile .asset-preview { width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 10px; }
 .gal-tile:hover .asset-preview::after { box-shadow: inset 0 0 0 1.5px var(--fg); }
 .gal-file { display: grid; place-items: center; align-content: center; gap: 6px; }
 .gal-ext { font: 700 var(--t-xs)/1 var(--mono); letter-spacing: .06em; color: var(--muted); }
 .gal-meta { display: grid; gap: 3px; min-width: 0; }
-.gal-meta strong { font: 600 var(--t-sm)/1.3 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gal-meta strong { font: 600 15px/1.3 var(--font); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gal-meta small { color: var(--faint); font: 500 var(--t-xs)/1.2 var(--font); }
 .gal-sub { display: flex; align-items: center; gap: 5px; min-width: 0; color: var(--muted); font-size: var(--t-xs); white-space: nowrap; }
 .gal-sub .inbox-from-mark { width: 18px; height: 18px; }
 .gal-who { overflow: hidden; text-overflow: ellipsis; }
@@ -64,3 +65,35 @@ body[data-page="gallery"] #gallery {
 .gal-tile, .gal-meta { text-align: left; justify-items: stretch; }
 .gal-column { grid-template-columns: minmax(0, 1fr); } .gal-filters > * { min-width: 0; }
 .gal-none { color: var(--muted); }
+
+/* the stack of one decision: up to three sheets of paper, the first on top, the others peeking out turned */
+.gal-fan { position: relative; display: block; aspect-ratio: 4 / 3; margin: 6px 10px 8px 6px; }
+.gal-sheet { position: absolute; inset: 0; padding: 5px; background: var(--surface); border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; box-shadow: 0 1px 3px var(--shade); transform-origin: 50% 100%; transition: translate 140ms ease-out; }
+.gal-sheet[data-s="0"] { z-index: 3; rotate: -1deg; }
+.gal-sheet[data-s="1"] { z-index: 2; rotate: 3.5deg; translate: 12px -2px; }
+.gal-sheet[data-s="2"] { z-index: 1; rotate: -3deg; translate: -8px 0; }
+.gal-sheet .asset-preview { position: absolute; inset: 5px; width: auto; height: auto; aspect-ratio: auto; border-radius: 2px; }
+.gal-sheet .asset-preview::after { content: none; }
+.gal-tile:hover .gal-sheet[data-s="0"] { translate: 0 -2px; }
+.gal-tile:hover .gal-sheet[data-s="1"] { translate: 18px -3px; }
+.gal-tile:hover .gal-sheet[data-s="2"] { translate: -12px 0; }
+.gal-sheet .asset-page-label { display: none; }
+@media (max-width: 860px) { .gal-grid { gap: 32px 24px; } .gal-fan { margin: 6px 14px 8px 8px; } .gal-meta strong { font-size: var(--t-sm); } }
+/* the stacks without frames (his word, 4 October): the pictures themselves, rounded, a soft shadow */
+.gal-sheet { padding: 0; border: 0; border-radius: 6px; background: var(--sunken); box-shadow: 0 0 0 1px color-mix(in srgb, var(--surface) 60%, transparent), 0 2px 8px rgb(20 30 25 / .16); overflow: hidden; }
+.gal-sheet .asset-preview { inset: 0; border-radius: 6px; }
+/* ---- Simpler (his word, 4 October): the kind as four drawn buttons beside the heading; each tile's title begins with
+   its session's small drawing; no counts, no session chips ---- */
+.gal-head { align-items: center; }
+.gal-kinds { display: inline-flex; gap: 2px; padding: 3px; border-radius: var(--r-md); background: var(--sunken); }
+.gal-kinds a { display: grid; place-items: center; width: 38px; height: 34px; border-radius: 9px; color: var(--muted); }
+.gal-kinds a .sketch { width: 20px; height: 20px; }
+.gal-kinds a:hover { color: var(--fg); }
+.gal-kinds a[aria-current] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+.gal-meta strong { display: flex; align-items: center; gap: 7px; min-width: 0; }
+.gal-who { flex: none; display: grid; width: 18px; height: 18px; }
+.gal-who .inbox-from-mark { position: static; width: 18px; height: 18px; color: var(--tone-pen); }
+.gal-who .inbox-from-mark svg { width: 100%; height: 100%; }
+.gal-who .crown-mark { display: none; }
+.gal-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.gal-meta small { display: none; }
