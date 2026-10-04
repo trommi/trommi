@@ -1,8 +1,0 @@
-.build/
-*.xcodeproj/
-DerivedData/
-build/
-*.xcresult
-.swiftpm/
-Package.resolved
-swift-test.log

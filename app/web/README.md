@@ -2,7 +2,7 @@
 
 The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`, repo `trommi/trommi-hub`) only in sealed envelopes. No build step, no framework: plain ES modules and CSS, served as they are. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`).
 
-It looks and works like today's board on the PC (the server-rendered Turbo board in trommi-hub): the same markup, the same CSS, the same pen drawings, the same controllers. They were taken over with `dev/sync-board.sh` (trommi-hub commit f6b89b8, 4 Oct 2026) and the app renders the board's own view modules in the page. **Since then the copies in this repo are the app's own source**: edit them here. `dev/sync-board.sh` overwrites them; run it only to pull a later change of the PC board in on purpose, and review the diff before committing.
+Its markup, CSS, pen drawings and controllers came from the old server-rendered Turbo board (taken over on 4 Oct 2026, trommi-hub commit f6b89b8; the old board was removed from the repository the same day). The copies here are the app's own source: edit them here.
 
 ## Running it
 
@@ -61,7 +61,7 @@ public/
   index.html             the shell: all stylesheets (enabled per view), fonts, one module: js/app/boot.mjs
   _headers               CSP and caching (Cloudflare; dev/serve.mjs reads it too)
   sw.js                  service worker: shell cache (versioned), /att/<id> (decrypted attachments), push
-  css/  js/pen.js …      the board's look, synced from trommi-hub (dev/sync-board.sh)
+  css/  js/pen.js …      the board's look (taken over from the old board, now the app's own source)
   js/views/*.mjs         the board's view modules (trommi-hub server/views), synced, running in the page
   t/controllers t/lib    the board's Stimulus controllers, synced, running on js/app/stimulus.mjs
   vendor/                the client core (trommi-hub client/core + crypto/zcrypto.mjs), written by its dev/sync-app.sh

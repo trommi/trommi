@@ -331,7 +331,7 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
       if (!login) return send(res, 403, 'forbidden: missing Tailscale-User-Login (reach this page only via tailscale serve)\n');
       if (!allowed.has(login)) return send(res, 403, 'forbidden: this Tailscale login is not allowed\n');
       const hash = currentHash();
-      if (!hash) return send(res, 403, 'forbidden: no admin password set (run deploy/admin-password.sh)\n');
+      if (!hash) return send(res, 403, 'forbidden: no admin password set (node hub/admin.mjs hash)\n');
 
       const url = new URL(req.url, 'http://admin.invalid');
       const method = req.method;
@@ -410,7 +410,7 @@ export async function startAdmin({ dbPath, db: givenDb, dataDir, port = 8791, ho
   };
 }
 
-// Command line: `node hub/admin.mjs hash` reads a password from stdin and prints its hash (used by deploy/admin-password.sh).
+// Command line: `node hub/admin.mjs hash` reads a password from stdin and prints its hash (to set ADMIN_PASSWORD_HASH).
 if (import.meta.url === `file://${process.argv[1]}` && process.argv[2] === 'hash') {
   const chunks = [];
   for await (const chunk of process.stdin) chunks.push(chunk);
