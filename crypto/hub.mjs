@@ -584,6 +584,7 @@ export async function createHub({ hubUrl, storage = memoryStorage(), now = Date.
       return { agents: sess ? sess.agents : [] }
     }),
 
+    /** Members only here; hub/server.mjs also serves the recovery key, in the pruned form (headers for recovery cuts). */
     envelopes(token, { after = 0, limit = 200 } = {}) {
       session(token, { member: true })
       return storage.envelopes(after, limit).map(e => ({ n: e.n, bytes: e.bytes, pruned: e.pruned, ...(e.voidCode ? { voidCode: e.voidCode } : {}) }))

@@ -301,7 +301,7 @@ test('found, sign in, members; the same room twice, names, a token for another h
   const rt = await signIn(w, rec)
   assert.equal(rt.signer, 'recovery'); assert.equal(rt.device_role, null)
   assert.equal((await ok(w, 'GET', `${R(w)}/sealed_room_keys`, { token: rec.token })).sealed_room_keys.length, 1)
-  await refused(w, 'GET', `${R(w)}/envelopes`, { token: rec.token }, 403, 'forbidden')
+  assert.deepEqual((await ok(w, 'GET', `${R(w)}/envelopes`, { token: rec.token })).envelopes, [])          // the recovery key reads headers (pruned) for recovery cuts
   // Errors in the agreed shape.
   await refused(w, 'GET', '/v1/nothing', {}, 404, 'not-found')
   await refused(w, 'GET', '/v1/rooms/xyz/members', {}, 400, 'bad-argument')
@@ -921,6 +921,18 @@ test('review 2 #5 over HTTP: a void record answers voided + envelope_number and 
   assert.ok(!th.envelopes.some(e => e.envelope_number === res.json.envelope_number))
   // The phone's chain moved on: its next envelope lands.
   await posted(w, w.phone, {})
+  await w.hub.close()
+})
+
+test('the recovery key reads envelopes in the pruned form (for the cuts of a recovery), members in full', async () => {
+  const w = await world()
+  await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: await z.objectIdOf(w.agent.device.id, 1), state: 1, urgency: 1 } })
+  const rec = { device: await z.recoveryDevice(w.code) }
+  await signIn(w, rec)
+  const got = await ok(w, 'GET', `${R(w)}/envelopes?after_envelope_number=0`, { token: rec.token })
+  assert.ok(got.envelopes.length >= 1 && got.envelopes.every(e => z.peekEnvelope(unb64u(e.envelope)).pruned))
+  const full = await ok(w, 'GET', `${R(w)}/envelopes?after_envelope_number=0`, { token: w.phone.token })
+  assert.ok(!z.peekEnvelope(unb64u(full.envelopes.at(-1).envelope)).pruned)
   await w.hub.close()
 })
 

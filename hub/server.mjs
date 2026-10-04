@@ -528,11 +528,14 @@ export async function startHub({
     if (a === 'envelopes' && !b) {
       if (m === 'POST') return postEnvelope(r, req, res)
       if (m === 'GET') {
-        hub.authorise(bearer(req), { member: true })
+        // Members; also the recovery key, in the pruned form only (it signs the removal cuts of a recovery from the heads).
+        const who = hub.authorise(bearer(req))
         const after = intParam(url, 'after_envelope_number', 0, 0, Number.MAX_SAFE_INTEGER)
         const limit = intParam(url, 'limit', 1000, 1, 1000)
         const last = db.q('SELECT last_envelope_number FROM rooms WHERE room_id = ?').get(r.id).last_envelope_number
-        return send(res, 200, { last_envelope_number: last, envelopes: envelopeRows(r.id, after, limit).map(record) })
+        const rows = envelopeRows(r.id, after, limit)
+        const out = who.kind === 'recovery' ? rows.map(x => record({ ...x, encrypted_body: null })) : rows.map(record)
+        return send(res, 200, { last_envelope_number: last, envelopes: out })
       }
     }
     if (m === 'GET' && a === 'threads' && !b) {

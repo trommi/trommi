@@ -11,7 +11,7 @@
 // PUT|GET|DELETE /v1/rooms/:room_id/escrow. Metrics: METRICS_PORT (+ METRICS_HOST, default 127.0.0.1) only.
 import http from 'node:http'
 import { envNumber } from './env.mjs'
-import { sendJson, readJson, windowLimit } from './http.mjs'
+import { sendJson, readJson, windowLimit, refuse } from './http.mjs'
 import { clientVersions, parseClient } from './versions.mjs'
 import { flowControl } from './flow.mjs'
 import { testRooms } from './test-rooms.mjs'
@@ -22,7 +22,7 @@ import { hubMetrics } from './metrics.mjs'
 
 export { limitsFromEnv } from './env.mjs'
 
-const ROOM_ROUTE = /^\/v1\/rooms\/([0-9a-f]{64})(?:\/(usage|escrow))?$/
+const ROOM_ROUTE = /^\/v1\/rooms\/([0-9a-f]{64})(?:\/(usage|escrow)(?:\/([^/]+))?)?$/
 const HOUR = 3600000
 
 export async function createOps({ db, dataDir, files, room, closeRoom, announce, bearer, ipOf, now = Date.now, log = () => {}, env = process.env }) {
@@ -55,7 +55,9 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
     log(`metrics on ${env.METRICS_HOST || '127.0.0.1'}:${metricsServer.address().port}`)
   }
 
-  async function roomRoute(req, res, roomId, sub) {
+  async function roomRoute(req, res, roomId, sub, escrowId) {
+    if (escrowId != null && (sub !== 'escrow' || req.method !== 'GET')) return false
+    if (escrowId != null && !/^[0-9a-f]{32}$/.test(escrowId)) refuse(400, 'bad-argument', 'escrow_id must be 32 lowercase hex')
     const m = req.method
     if (!sub && m === 'DELETE') { await tests.delete(req, roomId); return sendJson(res, 200, { ok: true }) }
     if (sub === 'usage' && m === 'GET') {
@@ -69,7 +71,7 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
         const wait = escrowReads.take(`ip:${ipOf(req)}`) || escrowReads.take(`room:${roomId}`)
         if (wait) { res.setHeader('retry-after', String(wait)); return sendJson(res, 429, { error: 'rate-limited', message: 'too many escrow reads; try again later' }) }
         if (!db.q('SELECT 1 FROM rooms WHERE room_id = ?').get(roomId)) return sendJson(res, 404, { error: 'not-found', message: 'this room has no password escrow' })
-        return sendJson(res, 200, escrow.get(roomId))
+        return sendJson(res, 200, escrow.get(roomId, escrowId ?? null))
       }
       const r = await room(roomId)
       const me = r.hub.authorise(bearer(req), { human: true })
@@ -95,7 +97,7 @@ export async function createOps({ db, dataDir, files, room, closeRoom, announce,
       if (url.pathname === '/v1/version' && req.method === 'GET') { sendJson(res, 200, versions.info()); return true }
       const m = ROOM_ROUTE.exec(url.pathname)
       if (!m) return false
-      return (await roomRoute(req, res, m[1], m[2])) !== false
+      return (await roomRoute(req, res, m[1], m[2], m[3])) !== false
     },
     track(s, req) { flow.track(s, parseClient(req.headers['trommi-client'])) },
     send: (s, chunk) => flow.send(s, chunk),
