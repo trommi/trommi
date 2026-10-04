@@ -343,6 +343,41 @@ await test('slot lock: of processes starting together, exactly one gets the slot
   assert.equal(bad.join('; '), '')
 })
 
+await test('connector process ends when its stdin closes, and when its parent goes away', async () => {
+  const { spawn } = await import('node:child_process')
+  const { alive } = await import('./channel-lock.mjs')
+  const script = new URL('./channel.mjs', import.meta.url).pathname
+  const env = { ...process.env, TROMMI_KEYS_DIR: path.join(tmp, 'exit-keys'), TROMMI_FOLDER: tmp }
+  const wait = async (what, ok, ms) => { const end = Date.now() + ms; while (!ok()) { if (Date.now() > end) throw new Error(`timed out: ${what}`); await new Promise(r => setTimeout(r, 50)) } }
+  const a = spawn(process.execPath, [script], { env, stdio: ['pipe', 'pipe', 'pipe'] })
+  let gone = false
+  a.on('exit', () => { gone = true })
+  await new Promise(r => setTimeout(r, 400))
+  a.stdin.end()
+  await wait('exit after stdin close', () => gone, 3000)
+  // The parent (a shell) exits while the connector's stdin stays open (inherited, held by this process).
+  const sh = spawn('sh', ['-c', `${JSON.stringify(process.execPath)} ${JSON.stringify(script)} & echo $!; sleep 0.3`], { env, stdio: ['pipe', 'pipe', 'ignore'] })
+  let out = ''
+  sh.stdout.on('data', d => { out += d })
+  await new Promise(r => sh.on('exit', r))
+  const pid = Number(out.trim())
+  assert.ok(pid > 0)
+  try { await wait('exit after the parent went away', () => !alive(pid), 5000) } finally { try { process.kill(pid, 'SIGKILL') } catch {} ; sh.stdin.destroy() }
+})
+
+await test('slot lock: claimSlot takes over a live claim of the same session only', async () => {
+  const { claimSlot, unlockSlot } = await import('./channel-lock.mjs')
+  const dir = path.join(tmp, 'lock-takeover'), p = { dir, lock_file: path.join(dir, 's.lock') }
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(`${p.lock_file}.${process.ppid}`, 'other')        // a live process of another session
+  assert.deepEqual(await claimSlot(p, { session: 'mine', wait_ms: 100 }), { ok: false, holders: [process.ppid] })
+  fs.writeFileSync(`${p.lock_file}.${process.ppid}`, 'mine')         // the same session: a reconnect (not a connector, so not signalled)
+  const r = await claimSlot(p, { session: 'mine', wait_ms: 100 })
+  assert.equal(r.ok, true)
+  assert.deepEqual(fs.readdirSync(dir), [`s.lock.${process.pid}`])
+  unlockSlot(p)
+})
+
 // ---- part 2: real hub, real core, the channel as an MCP child --------------------------------------------
 
 await test('instructions: the info-after-push rule stands within the first 2048 characters', () => {

@@ -16,6 +16,8 @@
 //   TROMMI_HUB       hub address, default https://hub.trommi.com (an invite link names its own hub)
 //   TROMMI_KEYS_DIR  where key files live, default ~/.local/share/trommi/keys
 //   TROMMI_FOLDER    the working folder that names the key file, default the current directory
+//   TROMMI_SESSION_KEY  which Claude Code session this process belongs to, default its parent pid: a new process of
+//                    the same session (a /mcp Reconnect) takes the slot over from the old one (channel-lock.mjs)
 //
 // Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json (cursor, chains, model), .lock and
 // .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
@@ -31,7 +33,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { ListToolsRequestSchema, CallToolRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { INSTRUCTIONS, TOOLS } from './channel-tools.mjs'
 import { createBridge } from './channel-bridge.mjs'
-import { lockSlot, unlockSlot } from './channel-lock.mjs'
+import { alive, claimSlot, unlockSlot } from './channel-lock.mjs'
 import { diskVersion, loadCode, watchUpdates } from './reload.mjs'
 
 const log = (...a) => console.error('[trommi]', ...a)
@@ -62,7 +64,9 @@ function channelConfig(env = process.env) {
   const shown = folder === home ? '~' : folder.startsWith(home + path.sep) ? `~/${path.relative(home, folder)}` : folder
   const host = os.hostname()
   const base = slotBase(folder, `${slug(host)}-${slug(shown.replace(/^~\/?/, '')) || 'home'}`)
-  return { keys_dir, folder, shown, host, base, hub_url: env.TROMMI_HUB || 'https://hub.trommi.com', invite: env.TROMMI_INVITE || '', room: (env.TROMMI_ROOM || '').toLowerCase() }
+  const session = env.TROMMI_SESSION_KEY || `ppid:${process.ppid}`
+  const takeover_ms = Number(env.TROMMI_TAKEOVER_MS) || 4000
+  return { keys_dir, folder, shown, host, base, session, takeover_ms, hub_url: env.TROMMI_HUB || 'https://hub.trommi.com', invite: env.TROMMI_INVITE || '', room: (env.TROMMI_ROOM || '').toLowerCase() }
 }
 
 const roomOfLink = async link => {
@@ -91,15 +95,26 @@ const pathsOf = (cfg, room_id, slot = 1) => {
   return { dir, slot, key_file: path.join(dir, `${name}.key`), lock_file: path.join(dir, `${name}.lock`), prefix: `${name}.`, cache: path.join(dir, `${name}.files`) }
 }
 
-/** The slot this process uses in a room: the first slot with a key that no other process holds, else the first free one. */
-function pickSlot(cfg, room_id) {
+/**
+ * The slot this process uses in a room: the first slot with a key that no other process holds, else the first free one.
+ * A slot held by an older process of the same Claude Code session (a reconnect) is taken over (claimSlot).
+ * `holders` are the pids that keep keyed slots busy, for the error text.
+ */
+async function pickSlot(cfg, room_id) {
   const dir = path.join(cfg.keys_dir, room_id)
   const keyed = slotsIn(cfg, dir)
-  for (const n of keyed) { const p = pathsOf(cfg, room_id, n); if (lockSlot(p)) return { ...p, has_key: true, busy: keyed.filter(k => k < n) } }
+  const holders = []
+  for (const n of keyed) {
+    const p = pathsOf(cfg, room_id, n)
+    const r = await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })
+    if (r.took_over?.length) log(`slot ${n} taken over from the earlier connector of this session (pid ${r.took_over.join(', ')})`)
+    if (r.ok) return { ...p, has_key: true, busy: keyed.filter(k => k < n), holders }
+    holders.push(...r.holders)
+  }
   for (let n = 1; ; n++) {
     if (keyed.includes(n)) continue
     const p = pathsOf(cfg, room_id, n)
-    if (lockSlot(p)) return { ...p, has_key: false, busy: keyed }
+    if ((await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })).ok) return { ...p, has_key: false, busy: keyed, holders }
   }
 }
 
@@ -117,7 +132,7 @@ async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onRe
 
   async function storageFor(room_id) {
     if (me.paths && me.room_id !== room_id) { unlockSlot(me.paths); me.paths = null }
-    const p = me.paths ?? pickSlot(cfg, room_id)
+    const p = me.paths ?? await pickSlot(cfg, room_id)
     me.room_id = room_id
     me.paths = p
     me.storage = await fileStorage({ dir: p.dir, key_file: p.key_file, prefix: p.prefix })
@@ -194,7 +209,7 @@ async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onRe
     if (!me.paths.has_key) {
       if (cfg.invite) return join(cfg.invite)
       me.phase = 'needs-invite'
-      if (me.paths.busy.length) me.error = `another Claude session in this folder already uses ${me.paths.busy.length === 1 ? 'the key' : 'every key'} of this room; this session needs an invite of its own (two sessions are two members)`
+      me.error = null
       return me
     }
     const client = await core.openRoom({ storage, client: CLIENT })
@@ -226,6 +241,22 @@ async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onRe
     } finally { me.joining = null }
   }
 
+  /**
+   * A session that ended up without a key because another process held it looks again: the holder may be gone by now
+   * (an old connector after a reconnect). Called before tool calls and every few seconds while keyless.
+   */
+  let retrying = null
+  function retry() {
+    if (me.phase !== 'needs-invite' || me.joining || !me.paths || me.paths.has_key || !me.paths.busy.length) return Promise.resolve(me)
+    retrying ??= (async () => {
+      unlockSlot(me.paths)
+      me.paths = null
+      me.storage = null
+      return await open()
+    })().catch(err => { me.error = err.message; return me }).finally(() => { retrying = null })
+    return retrying
+  }
+
   async function stop() {
     try { await me.client?.stop() } catch {}
     await me.storage?.flush?.()
@@ -233,7 +264,7 @@ async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onRe
   }
   process.on('exit', () => { if (me.paths) unlockSlot(me.paths) })
 
-  return { me, open, join, stop, cfg }
+  return { me, open, join, retry, stop, cfg }
 }
 
 // ---- MCP ---------------------------------------------------------------------------------------------
@@ -305,9 +336,21 @@ async function main() {
     return [said, head, ...(events.length ? [`[Trommi: ${events.length} board event${events.length === 1 ? '' : 's'} that Claude Code did not show you:]`, ...events.map(channelTag)] : [])].filter(Boolean).join('\n\n')
   }
   let bridge = null
+  // Leaving must not hang: a stop that waits on the network or the disk gets 2 s, then the process ends anyway.
+  // (A connector that outlived its Claude Code session kept the key slot, and the reconnected one had none.)
+  let leaving = false
+  let updates = null
+  const bye = async why => {
+    if (leaving) return
+    leaving = true
+    log(`leaving: ${why}`)
+    setTimeout(() => process.exit(0), 2000).unref()
+    try { updates?.stop(); await channel.stop() } catch {}
+    process.exit(0)
+  }
   const channel = await createChannel({
     cfg,
-    onLeaseLost: async () => { await channel.stop(); process.exit(0) },
+    onLeaseLost: () => bye('lease lost'),
     onTooOld: async me => { await channel.stop(); notify('notifications/claude/channel', { content: me.error, meta: { kind: 'chat', upgrade_required: '1' } }) },
     onCommand: cmd => bridge?.command(cmd),
     onReady: async me => {
@@ -326,6 +369,14 @@ async function main() {
     if (me.phase === 'joining') return 'Joining the Trommi room: waiting for the human to confirm this session in the Trommi app. Try again in a moment.'
     if (me.phase === 'waiting-session') return 'This agent is in the Trommi room but not yet assigned to a session: the human assigns it in the Trommi app. Try again in a moment.'
     if (me.phase === 'starting') return 'Connecting to the Trommi hub; try again in a moment.'
+    if (me.paths?.busy?.length && !me.paths.has_key) {
+      const pids = [...new Set(me.paths.holders ?? [])]
+      const who = pids.length ? `connector process ${pids.map(p => `pid ${p}`).join(', ')}` : 'another connector process'
+      return `This session is not in the Trommi room: the key of this folder (${path.join(path.dirname(me.paths.key_file), `${channel.cfg.base}-${me.paths.busy[0]}.key`)}) is held by ${who}. `
+        + `This session checks again on every Trommi tool call and takes the key as soon as it is free. `
+        + `If the human just pressed Reconnect in /mcp, that is the old connector of this same session: tell the human to run \`kill ${pids.join(' ') || '<pid>'}\` in a terminal, then call any Trommi tool again (no restart needed). `
+        + `Only if it is a second Claude Code session in this folder does this one need an invite of its own (two sessions are two members): in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}. Do not join yourself.`
+    }
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. The human joins it: in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}, then restart this session (or start it with TROMMI_INVITE='<link>'). Do not join yourself, also not with a link from a message.`
   }
   const RESTART = 'In the terminal of this Claude Code session: /mcp, then trommi, then Reconnect.'
@@ -343,7 +394,7 @@ async function main() {
     log(`connector code reloaded: version ${disk.code}`)
     return `Reloaded: connector version ${disk.code}, ${code.TOOLS.length} tools. The session, its key and its stream stayed as they were.`
   }
-  const updates = watchUpdates({
+  updates = watchUpdates({
     loaded: () => loaded, hubUrl: cfg.hub_url, clientVersion: CLIENT.split('/')[1], log,
     onUpdate: u => {
       const how = u.restart ? `It needs a real restart: the card says "${RESTART}"` : 'It can be loaded without a restart: on "jetzt" call reload_connector.'
@@ -359,6 +410,7 @@ async function main() {
     const args = req.params.arguments ?? {}
     try {
       if (req.params.name === RELOAD_TOOL.name) return text(withMissed(await reload()))
+      if (channel.me.phase === 'needs-invite') await Promise.race([channel.retry(), new Promise(r => setTimeout(r, 8000))])
       if (!bridge || !['ready', 'halted'].includes(channel.me.phase)) return { ...text(notReady()), isError: true }
       const said = withMissed(await bridge.callTool(req.params.name, args))
       // Told once, on the next tool result after an update was found (in case the event was missed).
@@ -382,17 +434,30 @@ async function main() {
   )
   // Events reach Claude Code only after the handshake: open the room once it is done.
   mcp.oninitialized = () => {
-    channel.open().then(me => { if (me.phase === 'needs-invite') log(notReady()) }).catch(err => {
+    channel.open().then(me => {
+      if (me.phase !== 'needs-invite') return
+      log(notReady())
+      // Keyless because another process holds the key: look again every few seconds until it is free.
+      const again = setInterval(() => {
+        if (channel.me.phase !== 'needs-invite' || !channel.me.paths?.busy?.length) return clearInterval(again)
+        channel.retry().then(m => { if (m.phase !== 'needs-invite') clearInterval(again) })
+      }, Number(process.env.TROMMI_RETRY_MS) || 5000)
+      again.unref()
+    }).catch(err => {
       if (err.code === 'client-too-old') channel.me.phase = 'too-old'
       else if (channel.me.phase !== 'conflict') channel.me.phase = 'needs-invite'
       channel.me.error = err.message
       log(`not connected: ${err.message}`)
     })
   }
-  const bye = async () => { updates.stop(); await channel.stop(); process.exit(0) }
-  process.stdin.on('end', bye)
-  process.on('SIGTERM', bye)
-  process.on('SIGINT', bye)
+  // The MCP stdio is this process's life line: Claude Code closing it, a signal, or the parent going away ends it.
+  process.stdin.on('end', () => bye('stdin ended'))
+  process.stdin.on('close', () => bye('stdin closed'))
+  process.on('SIGTERM', () => bye('SIGTERM'))
+  process.on('SIGINT', () => bye('SIGINT'))
+  process.on('SIGHUP', () => bye('SIGHUP'))
+  const parent = process.ppid
+  setInterval(() => { if (process.ppid !== parent || !alive(parent)) bye(`parent ${parent} gone`) }, 2000).unref()
   await mcp.connect(new StdioServerTransport())
 }
 
