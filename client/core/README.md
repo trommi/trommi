@@ -374,8 +374,11 @@ Every envelope addressed to the agent passes `authoriseCommand` (active human se
 ```js
 storage = {
   get(key) -> Promise<value | undefined>, set(key, value) -> Promise, delete(key) -> Promise, keys(prefix) -> Promise<[key]>,
-  saveDevice(device) -> Promise, loadDevice() -> Promise<device | null>,   // browsers: non-extractable CryptoKeys in IndexedDB; Node: key file 0600
+  saveDevice(device) -> Promise, loadDevice() -> Promise<device | null>,   // browsers: IndexedDB, keys wrapped (see below); Node: key file 0600
   extractable_keys: boolean,
+  wraps_keys?: boolean,   // IndexedDB: the core generates extractable keys, saveDevice wraps them (pkcs8, AES-GCM under a
+                          // non-extractable AES key stored beside them), reads them back and swaps in non-extractable ones;
+                          // WebKit stores an X25519 CryptoKey but reads it back as null, so plain CryptoKeys lost the device
 }
 ```
 
