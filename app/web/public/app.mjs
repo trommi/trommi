@@ -400,7 +400,7 @@ export class BoardState {
     const card = {
       id: c.object_id, object_id: c.object_id, agent: this.devToAgent.get(keyOf(c)) ?? keyOf(c).slice(0, SESSION_ID_LEN), number,
       kind: c.card_type === 'info' ? 'info' : 'decision', status, urgency: c.urgency ?? 'normal', urgency_reason: c.urgency_reason ?? '',
-      title: c.title ?? '', body: c.body ?? '', options: c.options ?? [], attachments: atts(c.attachments), version: c.object_version ?? 1,
+      title: c.title ?? '', teaser: c.teaser ?? '', body: c.body ?? '', options: c.options ?? [], attachments: atts(c.attachments), version: c.object_version ?? 1,
       multiple: Boolean(c.allows_multiple), choice: a?.choices?.[0] ?? null, choices: a?.choices ?? [], note: a?.note ?? '', summary: c.close_summary || c.withdraw_reason || '',
       created: c.created_at ?? 0, decided: a?.answered_at ?? (status === 'done' ? c.updated_at : null), recommended: c.recommended ?? null,
       version_hash: c.version_hash, content_state: c.content_state,
@@ -718,11 +718,9 @@ async function perform(stream) {
   const content = () => stream.templateContent
   switch (action) {
     case 'remove': {
-      // A Desk row that leaves goes with one calm motion; then the list closes up.
-      if (target.matches('.inbox-row') && !calm()) {
-        target.inert = true
-        await target.animate([{ opacity: 1, translate: '0 0' }, { opacity: 0, translate: '24px 0' }], { duration: 160, easing: 'ease-in' }).finished.catch(() => {})
-      }
+      // A Desk row that leaves goes in one continuous motion (his word, 4 October: "smooth, nicht springen"): it slides
+      // and fades while its place closes, so the rows below glide up at the same time; several leave staggered.
+      if (target.matches('.inbox-row')) { flipOut([target]); break }
       target.remove(); break
     }
     case 'replace': target.replaceWith(content()); break
@@ -732,6 +730,49 @@ async function perform(stream) {
     case 'before': target.before(content()); break
     case 'after': target.after(content()); break
   }
+}
+let leaving = 0
+/** Desk rows leave without a jump and without work per frame (his word, 4 October: "ruckelt"): measured once, each row
+ *  is taken out of the layout at once (its section with it when it was the last), a fixed copy slides and fades where
+ *  it stood, and what stood below is moved back by the gap and glides up: only transform and opacity animate.
+ *  ghost: false when the caller flies its own copies (the pull-down of Later). Reduced motion: gone at once. */
+export function flipOut(rows, { ghost = true } = {}) {
+  rows = rows.filter(r => r?.isConnected)
+  if (!rows.length) return
+  if (calm()) { for (const r of rows) boxOf(r).remove(); return }
+  const list = rows[0].closest('#desk-list') ?? rows[0].parentElement
+  const boxes = [...new Set(rows.map(boxOf))]
+  // what may move: the rows after a leaving row in its own section, and the list's own children after it
+  const moving = new Set()
+  for (const box of boxes) {
+    if (box.matches('.inbox-row')) for (let n = box.nextElementSibling; n; n = n.nextElementSibling) moving.add(n)
+    const top = box.matches('.inbox-row') ? box.parentElement : box
+    if (top?.parentElement === list) for (let n = top.nextElementSibling; n; n = n.nextElementSibling) moving.add(n)
+  }
+  for (const b of boxes) moving.delete(b)
+  const before = new Map([...moving].map(el => [el, el.getBoundingClientRect().top]))
+  const n0 = leaving
+  leaving += rows.length
+  setTimeout(() => { leaving = Math.max(0, leaving - rows.length) }, 450)
+  if (ghost) rows.forEach((row, i) => {
+    const r = row.getBoundingClientRect(), copy = row.cloneNode(true)
+    copy.removeAttribute('id'); copy.classList.add('is-ghost'); copy.inert = true
+    Object.assign(copy.style, { position: 'fixed', left: `${r.left}px`, top: `${r.top}px`, width: `${r.width}px`, height: `${r.height}px`, margin: 0, zIndex: 40, pointerEvents: 'none', willChange: 'transform, opacity' })
+    document.body.append(copy)
+    copy.animate([{ opacity: 1, transform: 'none' }, { opacity: 0, transform: 'translateX(28px)' }], { duration: 220, delay: (n0 + i) * 45, easing: 'cubic-bezier(.2, .7, .3, 1)', fill: 'forwards' }).finished.then(() => copy.remove(), () => copy.remove())
+  })
+  for (const b of boxes) b.remove()
+  for (const [el, top] of before) {
+    const d = top - el.getBoundingClientRect().top
+    if (Math.abs(d) < 1) continue
+    el.style.willChange = 'transform'
+    el.animate([{ transform: `translateY(${d}px)` }, { transform: 'none' }], { duration: 250, delay: n0 * 45, easing: 'cubic-bezier(.3, .6, .3, 1)' }).finished.finally(() => { el.style.willChange = '' })
+  }
+}
+/** A row alone in its section takes the section with it. */
+function boxOf(row) {
+  const sec = row.parentElement
+  return sec?.matches('.inbox-group') && ![...sec.children].some(c => c !== row && c.matches('.inbox-row')) ? sec : row
 }
 // As Turbo does: an appended element whose id stands in the target already replaces it.
 function dedupe(target, fragment) {

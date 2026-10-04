@@ -49,7 +49,7 @@ const talkOf = (model, card) => {
 /** The text a card stands for: its body, or the plain blocks of its sections. */
 const textOf = card => (card.sections?.length ? card.sections.filter(s => s.key == null).map(s => s.text).filter(Boolean).join('\n\n') : card.body ?? '')
 
-/** Which picture belongs to which option (js/focus.js pairPictures): picture index -> option key, where that is
+/** Which picture belongs to which option: picture index -> option key, where that is
  *  plain to see: a section names its picture; or every picture names one option in its file name; or there are
  *  as many pictures as options, three or more. Nothing is guessed otherwise. */
 function pictureKeys(card) {
@@ -290,7 +290,7 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
 <a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape"><span>Back to ${session ? session.name : WORDS.desk}</span><kbd>Esc</kbd></a>
 ${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-more-open" aria-label="More for this question">More ${sk('unfold')}</summary><div class="tc-more-list" role="menu">
-${open && card.kind !== 'permission' ? html`${more('', 'snooze', WORDS.later, `${WORDS.later}: it waits for you on "Later"`, act(card, base, 'snooze'))}${more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred'))}` : ''}
+${open && card.kind !== 'permission' ? html`${card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : more('', 'snooze', WORDS.later, `${WORDS.later}: it waits for you on "Later"`, act(card, base, 'snooze'))}${more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred'))}` : ''}
 ${copyButton(card)}
 ${pageLink ? html`<a class="tc-more-item" href="${pageLink}" target="_blank" rel="noopener noreferrer">${sk('page')}<span>Open the page</span></a>` : ''}
 </div></details>
