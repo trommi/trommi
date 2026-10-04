@@ -499,6 +499,23 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   await w.hub.close()
 })
 
+test('ephemeral: relayed to the other open streams only, never stored; own envelopes only', async () => {
+  const w = await world()
+  const phoneStream = await openStream(w, w.phone)
+  const agentStream = await openStream(w, w.agent)
+  // Typing indicator from the agent: a sealed envelope that is relayed, not chained into anything stored.
+  const typing = await z.sealEnvelope({ device: w.agent.device, state: w.agent.state, chains: z.newChains(), keyScope: 1, sessionId: SID, secret: w.agent.session, kind: KIND.STATUS, payload: utf8('{"typing":true}') })
+  assert.deepEqual(await ok(w, 'POST', `${R(w)}/ephemeral`, { token: w.agent.token, body: { envelope: b64u(typing.bytes) } }), { ok: true })
+  const ev = await phoneStream.until(e => e.event === 'ephemeral', 'ephemeral at the phone')
+  assert.equal(ev.data.device_id, hex(w.agent.device.id)); assert.equal(ev.data.envelope, b64u(typing.bytes))
+  await sleep(100)
+  assert.equal(agentStream.events.some(e => e.event === 'ephemeral'), false, 'not echoed to the sender')
+  assert.equal((await ok(w, 'GET', `${R(w)}/envelopes`, { token: w.phone.token })).last_envelope_number, 0, 'nothing stored')
+  await refused(w, 'POST', `${R(w)}/ephemeral`, { token: w.phone.token, body: { envelope: b64u(typing.bytes) } }, 403, 'wrong-sender')
+  phoneStream.close(); agentStream.close()
+  await w.hub.close()
+})
+
 test('attachments: written once, served whole and in ranges, members only, 64 MiB', async () => {
   const w = await world()
   const file = crypto.randomBytes(200000)
