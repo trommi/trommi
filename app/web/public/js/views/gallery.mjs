@@ -1,13 +1,13 @@
-// Everything the agents sent, across sessions: the shelf at the foot of the Desk (what came in lately, small, and
-// "All N →") and the page it leads to (his picks of 4 October: the shelf, but below the cards; the page as its target).
-//   GET /assets          the page: a grid by day, filtered by kind (?kind=image|video|html|file) and session (?from=<id>)
+// Everything the agents sent, across sessions: one fanned pile "Media N" at the foot of the Desk, beside Notes and
+// "Off the desk" (the newest pictures and videos lying fanned like prints), and the plain media gallery it leads to
+// (his word of 4 October: "eine Fächerkarte, und dann kommt man in eine ganz normale Mediengalerie").
+//   GET /assets          the gallery: one grid, newest first, filtered by kind (?kind=image|video|file) and session (?from=<id>)
 // What counts: the assets the sessions published and the questions' own pictures and videos (one tile each per question). Files sent in
 // a plain chat message are not here: they stand in their session's Files drawer (session.mjs looseFiles), which reads
 // that session's conversation; an index of them across sessions would need every conversation loaded.
 import { html, raw } from './html.mjs'
 import { kindOf } from './text.mjs'
 import { smallMark } from './sidebar.mjs'
-import { sketchSvg } from '../pen.js'
 
 const GLYPH = {
   image: ['M4 5h16v14H4z', 'M4 16l5-5 4 4 3-3 4 4', 'M15.5 9.2a1.2 1.2 0 1 0 0-.1'],
@@ -16,7 +16,8 @@ const GLYPH = {
   video: ['M4 5h16v14H4z', 'M10 9.2v5.6l4.6-2.8z'],
 }
 const glyph = type => raw(`<svg viewBox="0 0 24 24" class="asset-glyph" aria-hidden="true">${(GLYPH[type] ?? GLYPH.file).map(d => `<path d="${d}"/>`).join('')}</svg>`)
-const KIND = { image: 'Pictures', video: 'Videos', html: 'Pages', file: 'Files' }
+const KIND = { image: 'Pictures', video: 'Videos', file: 'Files' }   // Files: pages and every other file
+const kindOf2 = i => (i.type === 'image' || i.type === 'video' ? i.type : 'file')
 const ext = name => (/\.([a-z0-9]{1,5})$/i.exec(name ?? '')?.[1] ?? '').toUpperCase()
 const two = n => String(n).padStart(2, '0')
 const clock = ts => { const d = new Date(ts); return `${two(d.getHours())}:${two(d.getMinutes())}` }
@@ -53,57 +54,62 @@ const dayName = (ts, now = Date.now()) => {
   const days = Math.round((new Date(n.getFullYear(), n.getMonth(), n.getDate()) - new Date(d.getFullYear(), d.getMonth(), d.getDate())) / 864e5)
   return days === 0 ? 'Today' : days === 1 ? 'Yesterday' : d.toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long' })
 }
-const byDay = items => { const g = new Map(); for (const i of items) { const k = dayName(i.ts); if (!g.has(k)) g.set(k, []); g.get(k).push(i) } return [...g] }
+// When, short: "14:05" today, "Yesterday 14:05", else "2 Oct 14:05".
+const when = ts => { if (!ts) return ''; const d = dayName(ts); return d === 'Today' ? clock(ts) : d === 'Yesterday' ? `Yesterday ${clock(ts)}` : `${new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })} ${clock(ts)}` }
 
-/** One preview, the app's own .asset-preview (a picture as itself, a page's first screen, a file by its kind). */
+/** One preview, the app's own .asset-preview: a picture as itself, a video by its first frame with a play mark, a page by
+ *  its first screen (controller "assetthumb", the drawn page until then), a file by its kind. Never an empty tile: what
+ *  has no picture shows its drawn kind. */
+const PLAY = raw('<span class="gal-play" aria-hidden="true"><svg viewBox="0 0 24 24"><path d="M8.5 6.2v11.6L18 12z"/></svg></span>')
 const preview = (i, extra = '') => i.type === 'image' && i.url
   ? html`<span class="asset-preview is-shown" data-kind="image"><img src="${i.url}" alt="" loading="lazy" decoding="async">${extra}</span>`
-  : i.type === 'html' && i.url
-    ? html`<span class="asset-preview" data-kind="html" data-controller="assetthumb" data-assetthumb-src-value="${i.url}">${glyph('html')}<span class="asset-page-label">Page</span>${extra}</span>`
-    : i.type === 'video'
-      ? html`<span class="asset-preview gal-file gal-video" data-kind="video">${glyph('video')}<b class="gal-ext">${ext(i.name) || 'VIDEO'}</b>${extra}</span>`
-      : html`<span class="asset-preview gal-file" data-kind="file">${glyph('file')}<b class="gal-ext">${ext(i.name) || 'FILE'}</b>${extra}</span>`
+  : i.type === 'video' && i.url
+    ? html`<span class="asset-preview is-shown gal-video" data-kind="video">${glyph('video')}<video src="${i.url}#t=0.001" muted playsinline preload="metadata" tabindex="-1" aria-hidden="true"></video>${PLAY}${extra}</span>`
+    : i.type === 'html' && i.url
+      ? html`<span class="asset-preview gal-page-thumb" data-kind="html" data-controller="assetthumb" data-assetthumb-src-value="${i.url}">${glyph('html')}<span class="asset-page-label">Page</span>${extra}</span>`
+      : html`<span class="asset-preview gal-file" data-kind="${i.type === 'video' ? 'video' : 'file'}">${glyph(i.type === 'video' ? 'video' : i.type === 'html' ? 'html' : 'file')}<b class="gal-ext">${ext(i.name) || (i.type === 'video' ? 'VIDEO' : i.type === 'html' ? 'PAGE' : 'FILE')}</b>${extra}</span>`
 
-const tile = i => html`<a class="gal-tile" data-nav href="${i.href}" title="${i.title}">${preview(i, i.more > 1 ? html`<span class="gal-count">${i.more} ${i.type === 'video' ? 'videos' : 'pictures'}</span>` : '')}<span class="gal-meta"><strong>${i.title}</strong><span class="gal-sub">${smallMark(i.agent)}<span class="gal-who">${i.agent.name}</span><span class="gal-dot">·</span><span>${i.from === 'published' ? clock(i.ts) : i.from}</span></span></span></a>`
+const tile = i => html`<a class="gal-tile" data-nav href="${i.href}" title="${i.title}">${preview(i, i.more > 1 ? html`<span class="gal-count">${i.more} ${i.type === 'video' ? 'videos' : 'pictures'}</span>` : '')}<span class="gal-meta"><strong>${i.title}</strong><span class="gal-sub">${smallMark(i.agent)}<span class="gal-who">${i.agent.name}</span><span class="gal-dot">·</span><span>${when(i.ts)}</span></span></span></a>`
 
 /** The filters: kind as one segmented row, the sessions as chips with their marks. Links, so the page works without script. */
 function filters(items, { kind, from }, here) {
   const q = (k, f) => { const p = new URLSearchParams(); if (k) p.set('kind', k); if (f) p.set('from', f); const s = p.toString(); return `${here}${s ? `?${s}` : ''}` }
-  const count = k => items.filter(i => (!k || i.type === k) && (!from || i.agent.id === from)).length
+  const count = k => items.filter(i => (!k || kindOf2(i) === k) && (!from || i.agent.id === from)).length
   const senders = [...new Map(items.map(i => [i.agent.id, i.agent])).values()]
-  return html`<div class="gal-filters"><nav class="gal-seg" aria-label="Kind">${[['', 'All'], ['image', 'Pictures'], ['video', 'Videos'], ['html', 'Pages'], ['file', 'Files']].map(([k, label]) => html`<a data-nav href="${q(k, from)}"${kind === k ? raw(' aria-current="true"') : ''}>${label}<b>${count(k)}</b></a>`)}</nav>
-<nav class="gal-chips" aria-label="Session">${senders.map(a => html`<a class="gal-chip" data-nav href="${q(kind, from === a.id ? '' : a.id)}"${from === a.id ? raw(' aria-current="true"') : ''} style="--hue:${a.hue}">${smallMark(a)}<span>${a.name}</span></a>`)}</nav></div>`
+  return html`<div class="gal-filters"><nav class="gal-seg" aria-label="Kind">${[['', 'All'], ['image', 'Pictures'], ['video', 'Videos'], ['file', 'Files']].map(([k, label]) => html`<a data-nav href="${q(k, from)}"${kind === k ? raw(' aria-current="true"') : ''}>${label}<b>${count(k)}</b></a>`)}</nav>
+${senders.length > 1 ? html`<nav class="gal-chips" aria-label="Session"><a class="gal-chip gal-chip-all" data-nav href="${q(kind, '')}"${from ? '' : raw(' aria-current="true"')}><span>All sessions</span></a>${senders.map(a => html`<a class="gal-chip" data-nav href="${q(kind, from === a.id ? '' : a.id)}"${from === a.id ? raw(' aria-current="true"') : ''} style="--hue:${a.hue}">${smallMark(a)}<span>${a.name}</span></a>`)}</nav>` : ''}</div>`
 }
 
-/** The page /assets. */
+/** The page /assets: the plain media gallery. */
 export function galleryMain(model, base, opts = {}) {
   const all = galleryItems(model, base)
-  const kind = KIND[opts.kind] ? opts.kind : '', from = opts.from ?? ''
-  const items = all.filter(i => (!kind || i.type === kind) && (!from || i.agent.id === from))
+  const kind = opts.kind === 'html' ? 'file' : KIND[opts.kind] ? opts.kind : '', from = opts.from ?? ''
+  const items = all.filter(i => (!kind || kindOf2(i) === kind) && (!from || i.agent.id === from))
   const sessions = new Set(all.map(i => i.agent.id)).size
-  return html`<main id="gallery" class="gal-page" aria-label="Assets"><div class="gal-column">
-<header class="gal-head"><h2>Assets</h2><p>${all.length ? `${all.length === 1 ? '1 thing' : `${all.length} things`} your agents sent, from ${sessions === 1 ? '1 session' : `${sessions} sessions`}. Newest first.` : 'Nothing yet: pictures, videos, pages and files your agents send show up here.'}</p></header>
+  return html`<main id="gallery" class="gal-page" aria-label="Media"><div class="gal-column">
+<header class="gal-head"><h2>Media</h2><p>${all.length ? `${all.length === 1 ? '1 thing' : `${all.length} things`} your agents sent, from ${sessions === 1 ? '1 session' : `${sessions} sessions`}. Newest first.` : 'Nothing yet: pictures, videos, pages and files your agents send show up here.'}</p></header>
 ${all.length ? filters(all, { kind, from }, `${base}/assets`) : ''}
-${items.length ? byDay(items).map(([day, list]) => html`<section class="gal-day"><h3>${day}<b>${list.length}</b></h3><div class="gal-grid">${list.map(tile)}</div></section>`) : all.length ? html`<p class="gal-none">Nothing of this kind from this session.</p>` : ''}
+${items.length ? html`<div class="gal-grid">${items.map(tile)}</div>` : all.length ? html`<p class="gal-none">Nothing of this kind${from ? ' from this session' : ''}.</p>` : ''}
 </div></main>`
 }
 
-/** The shelf at the foot of the Desk, under the cards and over the stacks: what came in since yesterday (or the last
- *  few, when nothing did), small with the sender's mark, and "All N →" to the page. Empty, it stands hidden (#desk-shelf
- *  stays for the live stream). */
-const SHELF_MAX = 10, LATELY_MS = 36 * 3600e3
-export function galleryShelf(model, base) {
+/** The pile "Media N" at the foot of the Desk (in #desk-stacks, beside Notes and "Off the desk"; views/stacks.mjs): the
+ *  newest pictures and videos fanned like prints, the newest on top; a click opens the gallery. Without any it is not
+ *  there. (Pages and files only, no picture: their drawn kinds lie fanned instead.) */
+const FAN_MAX = 4
+export function mediaPile(model, base) {
   const all = galleryItems(model, base)
-  if (!all.length) return html`<div id="desk-shelf" class="gal-shelf-at" hidden></div>`
-  const recent = all.filter(i => Date.now() - i.ts < LATELY_MS)
-  const show = (recent.length ? recent : all).slice(0, SHELF_MAX)
-  const word = recent.length ? 'New' : 'Lately'
-  return html`<div id="desk-shelf" class="gal-shelf-at"><section class="gal-shelf" aria-label="Received: ${word.toLowerCase()}"><span class="gal-shelf-word">${raw(sketchSvg('picture'))}<span>${word}<b>${recent.length || show.length}</b></span></span><div class="gal-shelf-row">${show.map(i => html`<a class="gal-shelf-item" data-nav href="${i.href}" title="${i.title} · ${i.agent.name}">${preview(i)}<span class="gal-shelf-who" style="--hue:${i.agent.hue}">${smallMark(i.agent)}</span></a>`)}</div><a class="gal-shelf-all" data-nav href="${base}/assets" title="Everything your agents sent">All ${all.length}<span aria-hidden="true">→</span></a></section></div>`
+  if (!all.length) return ''
+  const media = all.filter(i => (i.type === 'image' || i.type === 'video') && i.url)
+  const fan = (media.length ? media : all).slice(0, FAN_MAX)
+  const pics = all.filter(i => i.type === 'image').length, vids = all.filter(i => i.type === 'video').length
+  const name = `Media, ${all.length === 1 ? '1 thing' : `${all.length} things`}${pics || vids ? ` (${[pics && `${pics} pictures`, vids && `${vids} videos`].filter(Boolean).join(', ')})` : ''}: open the gallery`
+  return html`<a class="media-pile" id="desk-media" data-nav href="${base}/assets" aria-label="${name}" title="All pictures, videos and files your agents sent"><span class="off-label">Media <span class="off-count">${all.length}</span></span><span class="media-fan" style="--n:${fan.length}" aria-hidden="true">${fan.map((i, at) => html`<span class="media-sheet" style="--i:${at}">${preview(i)}</span>`)}</span></a>`
 }
 
 export function register(t) {
   t.get(/^\/assets$/, ({ req, res, url }) => {
     const m = t.model()
-    t.page(req, res, { model: m, title: 'Assets · Trommi', view: 'gallery', stream: null, bodyAttrs: ' data-page="gallery"', main: galleryMain(m, t.BASE, { kind: url.searchParams.get('kind') ?? '', from: url.searchParams.get('from') ?? '' }) })
+    t.page(req, res, { model: m, title: 'Media · Trommi', view: 'gallery', stream: null, bodyAttrs: ' data-page="gallery"', main: galleryMain(m, t.BASE, { kind: url.searchParams.get('kind') ?? '', from: url.searchParams.get('from') ?? '' }) })
   })
 }

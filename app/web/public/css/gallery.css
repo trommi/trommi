@@ -1,5 +1,5 @@
-/* Everything the agents sent (js/views/gallery.mjs): the page /assets and the shelf at the foot of the Desk.
-   Sober like the conversations: plain tiles, the app's .asset-preview; drawn only the shelf's sign. */
+/* Everything the agents sent (js/views/gallery.mjs): the pile "Media N" at the foot of the Desk and the plain media
+   gallery /assets it opens. The pile is paper like its neighbours (css/piles.css .off-pile); the gallery is sober. */
 
 /* ---- the page /assets ---- */
 #gallery { display: none; }
@@ -22,17 +22,14 @@ body[data-page="gallery"] #gallery {
 .gal-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .gal-chip { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px 0 6px; border-radius: var(--r-pill); box-shadow: 0 0 0 1px var(--line); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; background: var(--surface); }
 .gal-chip:hover { box-shadow: 0 0 0 1px var(--line-strong); }
+.gal-chip-all { padding-left: 12px; }
 .gal-chip[aria-current] { background: var(--tone-wash); box-shadow: 0 0 0 1.5px var(--tone-pen); }
 .gal-chip .inbox-from-mark, .gal-sub .inbox-from-mark { position: static; display: inline-block; width: 22px; height: 22px; flex: none; color: var(--tone-pen); }
 .gal-chip .inbox-from-mark svg, .gal-sub .inbox-from-mark svg { width: 100%; height: 100%; }
 
-.gal-day { display: grid; gap: var(--s-3); }
-.gal-day h3 { margin: var(--s-2) 0 0; display: flex; align-items: baseline; gap: 8px; font: 700 var(--t-md)/1.2 var(--font); color: var(--fg); padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-.gal-day h3 b { font: 500 var(--t-xs)/1 var(--font); color: var(--faint); }
-.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(208px, 1fr)); gap: var(--s-5) var(--s-4); }
-.gal-grid.is-small { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-3); }
+.gal-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: var(--s-5) var(--s-4); }
 .gal-tile { display: grid; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
-.gal-tile .asset-preview { width: 100%; height: auto; aspect-ratio: 16 / 10; border-radius: 10px; }
+.gal-tile .asset-preview { width: 100%; height: auto; aspect-ratio: 4 / 3; border-radius: 10px; }
 .gal-tile:hover .asset-preview::after { box-shadow: inset 0 0 0 1.5px var(--fg); }
 .gal-file { display: grid; place-items: center; align-content: center; gap: 6px; }
 .gal-ext { font: 700 var(--t-xs)/1 var(--mono); letter-spacing: .06em; color: var(--muted); }
@@ -54,38 +51,42 @@ body[data-page="gallery"] #gallery {
   .gal-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--s-4) var(--s-3); }
 }
 
-/* ---- the shelf at the foot of the Desk: under the cards, over the stacks ---- */
-.gal-shelf-at[hidden] { display: none; }
-.inbox-groups > .gal-shelf-at { grid-column: 1 / -1; min-width: 0; margin-top: var(--s-4); }
-@media (min-width: 861px) { .inbox-groups > .gal-shelf-at { padding-left: 46px; } }
-.gal-shelf { margin: 0; display: flex; align-items: center; gap: var(--s-3); padding: 8px 8px 8px 14px; border-radius: var(--r-md); background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
-.gal-shelf-word { flex: none; display: flex; align-items: center; gap: 8px; color: var(--fg); font: 600 var(--t-sm)/1.15 var(--font); }
-.gal-shelf-word .sketch { width: 26px; height: 26px; flex: none; }
-.gal-shelf-word b { margin-left: 6px; font: 600 var(--t-xs)/1 var(--font); color: var(--muted); background: var(--sunken); border-radius: var(--r-pill); padding: 3px 7px; }
-.gal-shelf-row { flex: 1; min-width: 0; display: flex; gap: 8px; overflow-x: auto; scrollbar-width: none; }
-.gal-shelf-item { position: relative; flex: none; display: block; }
-.gal-shelf-item .asset-preview { width: 76px; height: 52px; border-radius: 7px; }
-.gal-shelf-item .asset-preview .asset-glyph { width: 22px; height: 22px; }
-.gal-shelf-item .asset-page-label { display: none; }
-.gal-shelf-item .gal-ext { font-size: 9px; }
-.gal-shelf-item .gal-file { gap: 2px; }
-.gal-shelf-who { position: absolute; right: -4px; bottom: -4px; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1px var(--line); }
-.gal-shelf-who .inbox-from-mark { position: static; width: 16px; height: 16px; color: var(--tone-pen); }
-.gal-shelf-who .inbox-from-mark svg { width: 100%; height: 100%; }
-.gal-shelf-all { flex: none; align-self: stretch; display: flex; align-items: center; gap: 4px; padding: 0 12px; border-radius: 9px; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: none; }
-.gal-shelf-all:hover { background: var(--sunken); }
-@media (max-width: 860px) {
-  .gal-shelf { padding: 8px 6px 8px 10px; gap: 8px; }
-  .gal-shelf-word { width: auto; }
-  .gal-shelf-word > span { display: none; }
-  .gal-shelf-item .asset-preview { width: 62px; height: 44px; }
-  .gal-shelf-all { padding: 0 8px; }
+/* ---- the pile "Media N" in #desk-stacks, beside Notes and "Off the desk": prints fanned, the newest on top ---- */
+.inbox-stacks.stack-tabs > .media-pile { --w: 104px; --h: 74px; --step: 27px; flex: none; display: grid; gap: 10px; align-self: flex-start; color: var(--fg); text-decoration: none; }
+.media-fan { position: relative; display: block; width: calc(var(--w) + (var(--n) - 1) * var(--step) + 8px); height: calc(var(--h) + 14px); }
+.media-sheet { position: absolute; top: 6px; left: calc(var(--i) * var(--step)); z-index: calc(10 - var(--i)); box-sizing: border-box; width: var(--w); height: var(--h); padding: 4px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: calc(-3deg + var(--i) * 2.6deg); transform-origin: 50% 100%; transition: translate 140ms ease-out, rotate 140ms ease-out; }
+.media-sheet:nth-child(2) { rotate: 3deg; top: 3px; }
+.media-sheet:nth-child(3) { rotate: -1.5deg; top: 8px; }
+.media-sheet:nth-child(4) { rotate: 5deg; top: 2px; }
+.media-sheet .asset-preview { grid-area: auto; width: 100%; height: 100%; border-radius: 2px; }
+.media-sheet .asset-preview::after { content: none; }
+.media-sheet .asset-preview .asset-glyph { width: 24px; height: 24px; }
+.media-sheet :is(.asset-page-label, .gal-ext) { display: none; }
+.media-sheet .gal-play { width: 26px; height: 26px; }
+.media-sheet .gal-play svg { width: 14px; height: 14px; }
+@media (any-hover: hover) {
+  .media-pile:hover .media-sheet { translate: 0 -2px; }
+  .media-pile:hover .media-sheet:nth-child(2) { translate: 6px -3px; }
+  .media-pile:hover .media-sheet:nth-child(3) { translate: 12px -2px; }
+  .media-pile:hover .media-sheet:nth-child(4) { translate: 18px -3px; }
+}
+.media-pile:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 6px; }
+/* narrow (a phone): Notes and Media share the first row, "Off the desk" takes the next one whole */
+@container rows (max-width: 600px) {
+  .inbox-stacks.stack-tabs > [data-stack="notes"] > .inbox-stack-title { order: -2; }
+  .inbox-stacks.stack-tabs > .media-pile { order: -1; --w: 92px; --h: 64px; --step: 24px; }
 }
 
+/* a video: its first frame (the decrypted blob, muted, never playing here) under a round play mark */
+.asset-preview.gal-video { background: #1d1d1f; color: rgb(255 255 255 / .55); }
+.asset-preview.gal-video > video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; pointer-events: none; }
+.gal-play { position: absolute; z-index: 1; left: 50%; top: 50%; translate: -50% -50%; display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: rgb(0 0 0 / .55); box-shadow: 0 0 0 1.5px rgb(255 255 255 / .85); }
+.gal-play svg { width: 20px; height: 20px; fill: #fff; translate: 1px 0; }
+
 /* fixes: the preview fills its tile (app.css gives it a grid area and a fixed size); the crown stays in the sidebar */
-.gal-tile .asset-preview, .gal-shelf-item .asset-preview { grid-area: auto; }
-:is(.gal-page, .gal-shelf) .crown-mark { display: none; }
-:is(.gal-page, .gal-shelf) .inbox-from-mark { position: relative; overflow: visible; }
+.gal-tile .asset-preview { grid-area: auto; }
+:is(.gal-page, .media-pile) .crown-mark { display: none; }
+.gal-page .inbox-from-mark { position: relative; overflow: visible; }
 .gal-count { position: absolute; z-index: 1; right: 6px; bottom: 6px; padding: 3px 6px; border-radius: 4px; background: var(--surface); color: var(--muted); box-shadow: 0 0 0 1px var(--line); font: 600 10px/1 var(--font); letter-spacing: .04em; text-transform: uppercase; }
 .gal-tile, .gal-meta { text-align: left; justify-items: stretch; }
 .gal-column { grid-template-columns: minmax(0, 1fr); } .gal-filters > * { min-width: 0; }

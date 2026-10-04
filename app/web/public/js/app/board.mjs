@@ -16,7 +16,7 @@ import { register as memoPage } from '../views/memo.mjs'
 import { register as jumpPage } from '../views/menu.mjs'
 import { register as agentsPage } from '../views/agents.mjs'
 import { register as stacksPage, STACKS } from '../views/stacks.mjs'
-import { register as galleryPage, galleryShelf } from '../views/gallery.mjs'
+import { register as galleryPage } from '../views/gallery.mjs'
 import { register as whiteboardPage } from '../views/whiteboard.mjs'
 
 export const BASE = ''
@@ -162,7 +162,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
     t.live('desk', {
-      take: m => ({ order: m.fresh.map(c => c.id), agents: new Map(m.fresh.map(c => [c.id, c.agent])), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), shelf: galleryShelf(m, BASE), stacks: deskStacks(m, BASE) }),
+      take: m => ({ order: m.fresh.map(c => c.id), agents: new Map(m.fresh.map(c => [c.id, c.agent])), rows: new Map(m.fresh.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), news: newsStrip(m, BASE), stacks: deskStacks(m, BASE) }),
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
@@ -184,10 +184,9 @@ export function createBoard({ hub, model, extraPages = [] }) {
             const card = m.byCard.get(id), sender = m.byAgent.get(card.agent); if (!sender) continue
             const prev = now.order[now.order.indexOf(id) - 1]
             if (prev && now.agents.get(prev) === card.agent) out.push(stream('after', `row-${prev}`, now.rows.get(id)))
-            else out.push(stream('before', 'desk-shelf', runSection(sender, now.rows.get(id), 1)))
+            else out.push(stream('before', 'desk-stacks', runSection(sender, now.rows.get(id), 1)))
           }
         }
-        if (sameOrder && t.differs(was.shelf, now.shelf)) out.push(stream('replace', 'desk-shelf', now.shelf))
         if (t.differs(was.stacks, now.stacks)) out.push(stream('replace', 'desk-stacks', now.stacks))
         return out.join('')
       },
