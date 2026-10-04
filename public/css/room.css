@@ -1,4 +1,4 @@
-/* The room screens (found, pair, password, recover, devices, invite, settings) and the reload notice. Owner: pairing
+/* The account screens (create account, log in, Emergency Kit, pair, recover, devices, invite, settings) and the reload notice. Owner: pairing
    area (js/app/room.mjs). Sober: the board's tokens and type; pen drawings only on the two choice buttons. */
 .room { box-sizing: border-box; width: 100%; max-width: 712px; margin: 0 auto; padding: 72px 16px 96px; color: var(--fg); }
 #room-screen { grid-column: 1 / -1; width: 100%; min-height: 100dvh; background: var(--bg); }
@@ -121,4 +121,21 @@
   .room-qr { width: min(260px, 70vw); }
   .room-code { font-size: 44px; }
   .room-remove details[open] { max-width: none; }
+}
+
+/* account: password with Generate, the Emergency Kit */
+.room-pwrow { display: flex; gap: 8px; }
+.room-pwrow input { flex: 1; font-family: var(--mono) !important; }
+.room .room-pwrow .room-gen { padding: 10px 14px; flex: none; }
+.room textarea { font: 16px/1.5 var(--mono); padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 10px; background: var(--surface); color: var(--fg); resize: vertical; }
+.room-sub { font: 600 15px/1.3 var(--display); margin: 22px 0 8px; }
+.room-kit { border: 1px dashed var(--line-strong); border-radius: var(--r-md); background: var(--surface); padding: 18px 20px; margin: 8px 0 12px; }
+.room-kit-title { display: flex; align-items: center; gap: 8px; font: 700 18px/1.2 var(--display); margin: 0 0 6px; }
+.room-kit-title .brand-mark { width: 22px; height: 22px; fill: none; stroke: var(--accent); stroke-width: 1.8; }
+.room-kit .room-meta { margin-top: 8px; }
+.room-kit-words { list-style: decimal; columns: 3 9em; column-gap: 24px; margin: 14px 0 6px; padding-left: 1.6em; font: 500 17px/1.9 var(--mono); }
+@media print {
+  body * { visibility: hidden !important; }
+  .room-kit, .room-kit * { visibility: visible !important; }
+  .room-kit { position: absolute; inset: 0 auto auto 0; width: 100%; border: 1px solid #000; color: #000; background: #fff; }
 }

@@ -8,7 +8,7 @@ It looks and works like today's board on the PC (the server-rendered Turbo board
 
 ```bash
 node dev/serve.mjs 8900                 # static server with the SPA fallback and the CSP of public/_headers
-open http://127.0.0.1:8900/             # no room on this device: found one, or open an invite link
+open http://127.0.0.1:8900/             # not logged in on this device: Create account or Log in
 open http://127.0.0.1:8900/?mock=1      # the mock room: fixture cards of every kind, simulated agents, no hub
 open http://127.0.0.1:8900/?mock=crazy  # a very big mock room (performance)
 ```
@@ -18,11 +18,35 @@ The hub: `?hub=<url>` (remembered in localStorage `trommi-hub`), default `https:
 Tests (headless Chromium, `CHROMIUM` env or `chromium` on the path):
 
 ```bash
-node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR]   # found, agent invite, cards, picture, answer, undo, What??, 2nd device with check code
+node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E]   # create account + kit, agent invite, cards, picture, answer, undo, What??, 2nd device by QR, 3rd by email + password, 4th by Emergency Kit
 node dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot, console errors
 ```
 
 Before a push: `dev/release.sh` (writes the shell's file list and version into `public/sw.js`). A release without it still reaches every device: the worker revalidates each file it serves (ETag) and, when one changed, fetches the shell again and offers "Neu laden".
+
+## The account (what a person sees)
+
+The UI says **account**, never "room" (inside, the core still founds and joins a room; one account = one room).
+
+- **Create account:** email, a password of their own (at least 12 characters, the only rule) or one from **Generate**
+  (five words of the EFF list, ≈64 bits, with Copy), the device's name. This device founds the room; the password is
+  stretched with Argon2id in the browser (`vendor/account.mjs`, 64 MiB, ≈0.15 s desktop, ≈0.5–1.5 s phone) and never
+  leaves it. One sentence, calm: "If you lose your password and your Emergency Kit, nobody (not even Trommi) can
+  recover your data."
+- **Emergency Kit:** offered once right after: twelve words to Download (a text file) or Print (only the kit prints).
+  "Later" stores nothing; Settings → Account says calmly that no kit is made yet and makes one from the password
+  whenever the person likes (a new kit replaces the old).
+- **Log in** on a new device: email + password, or **Scan from a signed-in device** (the QR pairing with the six-digit
+  check code, unchanged). The recovery words are never needed to log in. A wrong password and an unknown email give the
+  same "Email or password is wrong."
+- **Forgot password:** email + the kit's twelve words + a new password; the device logs in and the old password stops
+  working. Without a kit: change the password on a device that is still logged in (Settings → Password).
+- **Settings → Account:** the email (and "Confirm your email" with a six-digit code: the hub has no mail provider yet,
+  the code goes to its log), Emergency Kit, Change password. Accounts from before email + password get "Add login"
+  (needs the old recovery code); their recovery code still works at `/recover` (Forgot password → "An older account
+  with a recovery code?").
+- What the hub learns: the email in plaintext and which room it belongs to; nothing it could open (trommi-hub README,
+  "Accounts").
 
 ## Architecture
 
@@ -47,7 +71,7 @@ public/
     turbo.mjs            <turbo-stream> element (append/prepend/before/after/replace/update/remove/refresh), visit()
     stimulus.mjs         a small Stimulus stand-in (targets, values, actions, params, lazy registration)
     application.mjs      what every page has (toasts, folds, piles, times, menu, theme), from the board
-    room.mjs             found (recovery code once, confirmed), join (/join#…, check code), devices, pairing
+    room.mjs             the account screens: Create account, Log in (email + password or QR), Emergency Kit, Forgot password; devices, pairing, Settings
     att.mjs              attachments: decrypted only when the browser asks for them
     mock-room.mjs        the core's API and model shape without hub or crypto, simulated agents
     mock-crazy.mjs       a generated very big room
@@ -75,7 +99,7 @@ The core owns the schema (trommi-hub `client/core/README.md`, "Storage adapter")
 - **Windowed**: conversations are timelines loaded newest page first (50), older pages on "Earlier"; a session page loads its cards' threads lazily; Desk rows and log messages out of sight are skipped by layout and paint (`content-visibility: auto`).
 - **Lazy decrypt**: attachments are rendered as `/att/<id>` with `loading="lazy"`; the service worker asks the page, which fetches and decrypts only that file, only when it is shown or opened.
 - **No framework, no build**: modules load lazily (controllers on first use), the shell is cached by the service worker per release.
-- **CSP**: `script-src 'self'`, no inline script, fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
+- **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only), no inline script, fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
 
 ### The mock room
 
@@ -93,7 +117,7 @@ Several people (and agents) work on the app at once. Each area owns its files; t
 | **Session, chat, files, assets, Ledger** | `public/js/views/{session,session-edit,agents}.mjs`, `public/css/{session,beside,ledger,links,speech,asset}.css`, `public/t/controllers/{composer,files,log,lean,say,share,assetthumb,title}_controller.js` |
 | **Scratchpad, canvas, Desk paper** (E2E strokes + snapshots) | `public/pad/*`, `public/t/lib/{paper,clear}.js`, `public/t/controllers/paper_controller.js`, `public/css/{deskpad,scribble,clear,padlink}.css` |
 | **Memos** | `public/js/views/memo.mjs`, `public/t/lib/memo.js`, `public/t/controllers/{memo,memos}_controller.js`, `public/css/quicksend.css` |
-| **Pairing, devices, settings** (QR "Gerät koppeln", "Mit Passwort anmelden", device list, storage usage, the reload notice's look) | `public/js/app/room.mjs`, `public/js/app/qr.mjs`, `public/css/room.css`, `public/t/controllers/room_controller.js` |
+| **Account, pairing, devices, settings** (Create account, Log in, Emergency Kit, QR pairing, device list, storage usage, the reload notice's look) | `public/js/app/room.mjs`, `public/js/app/qr.mjs`, `public/css/room.css`, `public/t/controllers/room_controller.js` |
 | **Phone layout** | `public/css/phone-desk.css`, `public/t/controllers/sheet_controller.js`, the `@media (max-width: …)` blocks of the area files in agreement with their owners |
 
 The model the views get is `board-state.mjs` (core model → board state) and `views/model.mjs`; an area that needs a field the core has but the board state lacks asks the integrator. Hub actions go through `hub-facade.mjs` (integrator).

@@ -94,7 +94,7 @@
 
 <header class="hp-part" id="agents">
   <h2>For agents, and for whoever sets them up</h2>
-  <p>An agent is a member of your room like your phone: the channel process beside a Claude Code session has its own device keys and talks to you only in signed, encrypted envelopes. Below: what travels between the session and you, in which direction, and what never makes the trip.</p>
+  <p>An agent is a member of your account like your phone: the channel process beside a Claude Code session has its own device keys and talks to you only in signed, encrypted envelopes. Below: what travels between the session and you, in which direction, and what never makes the trip.</p>
   <nav class="hp-nav" aria-label="The channel">
     <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
   </nav>
@@ -140,8 +140,8 @@
 <section id="assets" aria-labelledby="h-assets">
   <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
   <div class="hp-prose">
-    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only members of the room can open it. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
-    <p><strong>How it is encrypted.</strong> The channel process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside the room, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
+    <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only your devices and agents can open it. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
+    <p><strong>How it is encrypted.</strong> The channel process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside your account, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
   </div>
   <div class="hp-facts">
     <div><dt>Stored on the hub</dt><dd>Ciphertext of the file, its size, the time, the device that uploaded it; for a link, a hash of its secret and when it ends</dd></div>
@@ -150,7 +150,7 @@
   </div>
   <div class="hp-prose">
     <p><strong>One limit on all of this.</strong> Whoever serves this app serves the code that decrypts. Altered code could send keys home. “The hub cannot read it” holds against a hub that stores and looks, not against one that serves altered code. Here they are two servers: the app comes from app.trommi.com, the hub is hub.trommi.com.</p>
-    <p><strong>HTML pages run in a sandbox.</strong> A published page may come from an agent that was misled, so the viewer treats it as hostile: it runs in a frame with no origin of its own, cannot read the key, the room or your devices, cannot open windows, submit forms or load anything from the network. A page must therefore be self-contained: inline CSS and scripts, images as <code>data:</code> URLs. Type nothing secret into a published page.</p>
+    <p><strong>HTML pages run in a sandbox.</strong> A published page may come from an agent that was misled, so the viewer treats it as hostile: it runs in a frame with no origin of its own, cannot read the key, your account or your devices, cannot open windows, submit forms or load anything from the network. A page must therefore be self-contained: inline CSS and scripts, images as <code>data:</code> URLs. Type nothing secret into a published page.</p>
   </div>
 </section>
 

@@ -1,15 +1,15 @@
 // The room's own screens. Inside a room (pages of the board): /devices (who is in the room, the two ways to add a
 // device, inviting an agent, removing), /pair/:id (the QR code, then "Add a new device?" with four codes to tap),
-// /settings (sign-in with a password, storage, recovery, the room address). Before a room (a screen of its own): found a
-// room (recovery code once, confirmed), pair this device (scan or open the link, show the code), sign in with a
-// password, recover with the code. Calm and sober: this is about keys; pen drawings only on the two choice buttons.
+// /settings (the account: email, password, Emergency Kit; storage). Before a room (a screen of its own): Create
+// account (email + password; this device founds the room), Log in (email + password, or scan a signed-in device's
+// code), Forgot password (Emergency Kit), and the old recovery code. The UI says "account", never "room".
+// Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (escrow, usage, session handover) are shown only when the core has them.
 import { html, raw } from '../views/html.mjs'
 import { sketchSvg, doodleSvg } from '../pen.js'
 import { BELL } from './layout.mjs'
 import { CLIENT } from './version.mjs'
 import { qrSvg } from './qr.mjs'
-import { passphraseProblem as corePassphraseProblem, generatePassphrase } from '/vendor/escrow.mjs'
 
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -25,21 +25,6 @@ const ago = ts => { const s = Math.round((Date.now() - ts) / 1000); return s < 6
 const sk = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${name}`) : sketchSvg(name))
 const has = (o, fn) => typeof o?.[fn] === 'function'
 const code6 = c => `${String(c).slice(0, 3)} ${String(c).slice(3)}`
-// The core's passphrase rule; its reasons in the app's words.
-const PROBLEM = { 'at least six words (or take the generated passphrase)': 'At least six words, or take the generated one.', 'too repetitive': 'Too repetitive.' }
-/** null if the passphrase is good enough, else why not. */
-export function passphraseProblem(p) {
-  p = String(p ?? '')
-  const why = corePassphraseProblem(p)
-  return why ? (PROBLEM[why] ?? why) : null
-}
-/** Signing in with a password on a fresh browser waits for the hub and crypto side (A); ?pwlogin shows it early. */
-const PASSWORD_LOGIN = new URLSearchParams(location.search).has('pwlogin')
-// A generated passphrase is offered (visible, to be written down like the recovery code); an own one needs six words.
-const pwFields = () => { const g = generatePassphrase(); return html`<label>Password<input type="text" name="passphrase" value="${g}" autocomplete="off" spellcheck="false" required minlength="24" data-room-target="pass" class="room-mono"><small class="room-hint">Generated for you: write it down, it is shown only here. Or type six words of your own.</small></label>
-<label>Once more<input type="text" name="again" value="${g}" autocomplete="off" spellcheck="false" required data-room-target="again" class="room-mono"></label>
-<p class="room-strength" data-room-target="meter" data-level="2" aria-live="polite">Strong enough.</p>` }
-const TRADE_OFF = 'Convenient, but whoever knows the room address and the password gets in. Take a long sentence only you know.'
 const shell = (title, inner, cls = '') => html`<main id="room" class="room${cls ? ` ${cls}` : ''}" aria-label="${title}"><header class="room-head"><span class="room-bell">${BELL}</span><h2>${title}</h2></header>${inner}</main>`
 const tabs = on => html`<nav class="room-tabs" aria-label="Devices and settings"><a href="/devices" data-nav${on === 'devices' ? raw(' aria-current="page"') : ''}>Devices</a><a href="/settings" data-nav${on === 'settings' ? raw(' aria-current="page"') : ''}>Settings</a></nav>`
 const copyBox = (value, label, cls = '') => html`<div class="room-link${cls ? ` ${cls}` : ''}" data-controller="room"><input readonly value="${value}" aria-label="${label}" data-room-target="field" data-action="focus->room#select"><button type="button" data-action="room#copy" data-room-text-param="${value}"><span data-room-target="label">Copy</span></button></div>`
@@ -66,8 +51,8 @@ export function roomPages(client) {
 <span class="room-device-dot" data-online="${d.is_online ? 'yes' : 'no'}" title="${d.is_online ? 'online' : 'away'}"></span>
 <span class="room-device-name"><b>${name}</b>${me ? html` <em>this device</em>` : ''}<small>${human ? 'Person' : 'Agent'} · <span class="room-fp" title="Key fingerprint from the signed member list">${fp(d)}</span>${d.is_active ? '' : ' · removed'}</small></span>
 ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remove"><input type="hidden" name="device_id" value="${d.device_id}"><details><summary>Remove</summary><p>${human
-        ? html`${name} can open nothing new after this. Everyone else gets a new room key; that takes a moment.`
-        : html`${name} can read nothing new after this. The others get a new room key; the session's history stays.`}</p><button type="submit" class="room-danger">Remove ${name}</button></details></form>` : ''}</li>`
+        ? html`${name} can open nothing new after this. Everyone else gets a new key; that takes a moment.`
+        : html`${name} can read nothing new after this. The others get a new key; the session's history stays.`}</p><button type="submit" class="room-danger">Remove ${name}</button></details></form>` : ''}</li>`
     }
     // The earlier conversation stays closed unless the human opens it (security review: agent invites without history).
     const historyAsk = () => html`<fieldset class="room-history"><legend>May it read the earlier conversation?</legend><label><input type="radio" name="with_history" value="no" checked> No</label><label><input type="radio" name="with_history" value="yes"> Yes</label></fieldset>`
@@ -85,20 +70,18 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
       const gone = all.filter(d => !d.is_active).sort(order)
       return {
         people: String(html`<ul class="room-devices" id="room-people">${people.map(member)}</ul>`),
-        agents: String(agents.length ? html`<ul class="room-devices" id="room-agents">${agents.map(member)}</ul>` : html`<p class="room-meta" id="room-agents">No agent in the room yet.</p>`),
+        agents: String(agents.length ? html`<ul class="room-devices" id="room-agents">${agents.map(member)}</ul>` : html`<p class="room-meta" id="room-agents">No agent yet.</p>`),
         gone: String(gone.length ? html`<details class="room-section room-gone" id="room-gone"><summary>Removed (${gone.length})</summary><ul class="room-devices">${gone.map(member)}</ul></details>` : html`<div id="room-gone" hidden></div>`),
       }
     }
     const devicesMain = (error = '') => {
       const L = lists(), active = [...m().members.values()].filter(d => d.is_active && d.device_role !== 'human')
-      const escrow = has(client, 'setPassphrase') && PASSWORD_LOGIN
-      const pw = m().room.has_passphrase
       return shell('Devices', html`${tabs('devices')}
 ${errorLine(error)}
 ${isHuman() ? html`<section class="room-section" aria-labelledby="add-head"><h3 id="add-head">Add a device</h3>
 <div class="room-ways">
 <form method="post" action="/pair" class="room-way"><input type="hidden" name="role" value="human"><button type="submit" class="room-way-go" id="pair-start">${sk('phone')}<b>Pair a device</b><span>A QR code appears here. The new device scans it, you tap a number. Done.</span></button></form>
-${escrow ? html`<a href="/settings#passwort" data-nav class="room-way room-way-go" id="password-way">${sk('key')}<b>Sign in with a password</b><span>${pw ? 'Set up. On the new device open app.trommi.com and choose "Sign in with a password".' : 'A new browser gets in with the room address and a password. Set it up first.'}</span></a>` : ''}
+<a href="/settings#account" data-nav class="room-way room-way-go" id="password-way">${sk('key')}<b>Log in with email and password</b><span>On the new device open app.trommi.com and choose "Log in".</span></a>
 </div></section>` : ''}
 <section class="room-section" aria-labelledby="people-head"><h3 id="people-head">Your devices</h3>${raw(L.people)}</section>
 <section class="room-section" aria-labelledby="agents-head"><h3 id="agents-head">Agents</h3>${raw(L.agents)}${isHuman() && active.length && has(client, 'assignSession') ? handoverForm(active) : ''}
@@ -156,7 +139,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
       else if (state === 'adding') body = html`<p class="room-wait">Adding ${newcomerName(inv) || (agent ? 'the agent' : 'the device')}…</p>`
       else if (state === 'joined') {
         const h = handovers.get(inv.invite_id)
-        body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in the room now.</p>${h && !h.done ? html`<p class="room-wait">Handing over the session…</p>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}<a href="/devices" data-nav class="room-done">Done</a>`
+        body = html`<p class="room-lead room-ok">✓ ${newcomerName(inv) || (agent ? 'The agent' : 'The new device')} is in now.</p>${h && !h.done ? html`<p class="room-wait">Handing over the session…</p>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}<a href="/devices" data-nav class="room-done">Done</a>`
       } else if (inv.error === 'code-mismatch') body = html`<p class="room-error" role="alert">Wrong number. Nobody was added; the invite is used up.</p>${again(agent)}${back}`
       else body = html`<p class="room-error" role="alert">${state === 'expired' ? 'The invite has expired.' : `That did not work${inv.error ? ` (${inv.error})` : ''}.`}</p>${errorLine(error)}${again(agent)}${back}`
       return shell(agent ? 'Invite an agent' : state === 'confirm_code' ? 'Add a new device?' : 'Pair a device', html`<div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">${body}</div>`)
@@ -186,51 +169,122 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
     })
 
     // ---- /settings ----
-    const settingsMain = (error = '', said = '') => {
+    // The account is read from the hub once per visit (client._setRoom: a change, so the page refreshes when it is in).
+    const loadAccount = () => {
+      if (!client.hub || m().room.account_loading) return
+      client._setRoom({ account_loading: true })
+      import('/vendor/account.mjs').then(A => A.accountStatus(client)).then(st => client._setRoom({ account: st, account_loading: false }), err => client._setRoom({ account_error: err.message, account_loading: false }))
+    }
+    const settingsMain = (error = '', said = '', kit = null) => {
       const room = m().room
+      const st = room.account
       const link = has(core, 'roomLink') && room.hub_url ? core.roomLink(room.hub_url, room.room_id) : null
-      const escrow = has(client, 'setPassphrase'), pw = room.has_passphrase
-      const pwForm = (word) => html`<form method="post" action="/settings/passphrase" class="room-form room-pw" data-controller="room" data-action="input->room#strength">
-<label>Recovery code<input name="recovery_code" required autocomplete="off" spellcheck="false" class="room-mono" placeholder="XXXX-XXXX-…"><small class="room-hint">The password protects an encrypted copy of this code. It is needed only for that and not stored.</small></label>
-${pwFields()}
-<button type="submit" class="room-primary" data-room-target="go" disabled>${word}</button></form>`
+      const form = (action, inner, word, id) => html`<form method="post" action="${action}" class="room-form" data-controller="room" id="${id}">${inner}<button type="submit" class="room-primary">${word}</button></form>`
+      const accountPart = !client.hub ? html`<p class="room-meta">No account in the demo.</p>`
+        : st === undefined ? html`<p class="room-wait">${room.account_error ? `Not reachable: ${room.account_error}` : 'Loading…'}</p>`
+          : st === null ? html`<p class="room-lead">This account was made before email and password. Add a login, so a new device gets in with email and password. You need the recovery code shown when you started.</p>
+${form('/settings/account', html`<label>Email<input type="email" name="email" required autocomplete="username" autocapitalize="off" spellcheck="false"></label>${pwField()}<label>Recovery code<input name="recovery_code" required autocomplete="off" spellcheck="false" class="room-mono" placeholder="XXXX-XXXX-…"></label>`, 'Add login', 'account-add')}`
+            : html`<p class="room-lead">Logged in as <b id="account-email">${st.email}</b>${st.email_verified_at ? html` <span class="room-ok">· confirmed</span>` : ''}</p>
+${st.email_verified_at ? '' : html`<details class="room-more" id="email-confirm"><summary>Confirm your email</summary><p class="room-meta">We send a six-digit code to ${st.email}.</p>
+<form method="post" action="/settings/account/code" class="room-inline"><button type="submit">Send code</button></form>
+${form('/settings/account/verify', html`<label>Code<input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9 ]{6,7}" maxlength="7" required class="room-code-input"></label>`, 'Confirm', 'verify-form')}</details>`}
+<h4 class="room-sub">Emergency Kit</h4>
+${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now. The old kit no longer works.</p>${kitBox(st.email, kit, true)}`
+  : html`<p class="room-lead">${st.has_recovery ? 'Made. With it you can set a new password if you forget yours.' : 'Not made yet. With it you can set a new password if you forget yours. Whenever you like.'}</p>
+<details class="room-more" id="kit-new"><summary>${st.has_recovery ? 'Make a new kit' : 'Make my Emergency Kit'}</summary>${form('/settings/kit', pwField({ label: 'Your password', gen: false, autocomplete: 'current-password' }), 'Make the kit', 'kit-form')}</details>`}
+<h4 class="room-sub">Password</h4>
+<details class="room-more" id="pw-change"><summary>Change password</summary>${form('/settings/password', html`${pwField({ name: 'current', label: 'Current password', gen: false, autocomplete: 'current-password' })}${pwField({ label: 'New password' })}`, 'Change password', 'pw-form')}</details>
+<p class="room-meta">${NO_RECOVERY}</p>`
       return shell('Settings', html`${tabs('settings')}
 ${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
-${escrow && isHuman() ? html`<section class="room-section" id="passwort" aria-labelledby="pw-head"><h3 id="pw-head">Sign in with a password</h3>
-${pw ? html`<p class="room-lead">${PASSWORD_LOGIN ? 'Set up. A new browser gets in with the room address and this password: app.trommi.com → "Sign in with a password".' : 'Set up.'}</p>
-<details class="room-more"><summary>Change the password</summary>${pwForm('Save the new password')}</details>
-<form method="post" action="/settings/passphrase/off" class="room-remove"><details><summary>Turn off</summary><p>A new device then gets in by pairing only.</p><button type="submit" class="room-danger">Turn off password sign-in</button></details></form>`
-        : html`<p class="room-lead">${TRADE_OFF}</p>${pw == null && has(client, 'checkPassphrase') ? html`<p class="room-wait">Checking whether one is set up…</p>` : ''}${pwForm('Set up the password')}`}
-${PASSWORD_LOGIN ? '' : html`<p class="room-meta">Signing in with it on a new browser comes soon; you can set it up already.</p>`}</section>` : ''}
-${link ? html`<section class="room-section" aria-labelledby="addr-head"><h3 id="addr-head">Room address</h3><p class="room-lead">For signing in with a password or the recovery code. On its own it opens nothing.</p>${copyBox(link, 'Room address')}</section>` : ''}
+${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Account</h3>${accountPart}</section>` : ''}
 <section class="room-section" aria-labelledby="store-head"><h3 id="store-head">Storage</h3><dl class="room-usage" data-controller="room" data-room-usage-value="${has(client, 'usage') ? 'hub' : 'local'}"><div><dt>On this device</dt><dd data-room-target="local">…</dd></div>${has(client, 'usage') ? html`<div><dt>On the hub (encrypted)</dt><dd data-room-target="hub">…</dd></div>` : ''}</dl><p class="room-meta">The hub deletes envelopes after 30 days; your devices keep what they decrypted.</p></section>
-<section class="room-section" aria-labelledby="rec-head"><h3 id="rec-head">Recovery code</h3><p class="room-lead">It was shown once, when the room was founded. If every device is gone, it brings you back: app.trommi.com → "Lost every device?". All old devices are then removed; the agents stay.</p></section>
-<p class="room-meta">Room ${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p>`)
+${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
+<p class="room-meta">${room.room_id.slice(0, 16)}… · key epoch ${room.key_epoch} · hub ${room.hub_url}</p></details>` : ''}`)
     }
-    let asked = false
-    const askPassphrase = () => { if (!asked && has(client, 'checkPassphrase') && m().room.has_passphrase == null) { asked = true; client.checkPassphrase().catch(() => {}) } }
-    t.live('settings', { take: () => m().room.has_passphrase, diff: (was, now) => (was !== now ? String(t.stream('refresh')) : '') })
-    t.get(/^\/settings$/, ({ req, res, url }) => { askPassphrase(); page(req, res, 'Settings', settingsMain('', { on: 'Password sign-in set up.', off: 'Password sign-in turned off.' }[url.searchParams.get('pw')] ?? ''), { view: 'settings' }) })
-    t.post(/^\/settings\/passphrase$/, async ({ req, res, form }) => {
-      const p = String(form.get('passphrase') ?? '')
-      const fail = e => page(req, res, 'Settings', settingsMain(e), { view: 'settings' }, 422)
-      if (p !== String(form.get('again') ?? '')) return fail('The two entries differ.')
-      const why = passphraseProblem(p)
-      if (why) return fail(`Too weak. ${why}`)
-      try { await client.setPassphrase(p, { recovery_code: String(form.get('recovery_code') ?? '').trim() }) } catch (err) {
-        return fail(err.code === 'weak-passphrase' ? 'Too weak: at least six words.' : err.code === 'bad-recovery-code' ? 'This recovery code does not belong to this room.' : `Not saved: ${err.message}`)
+    const SAID = { added: 'Login added. A new device now logs in with email and password.', changed: 'Password changed.', sent: 'Code sent.', confirmed: 'Email confirmed.' }
+    t.live('settings', { take: () => JSON.stringify([m().room.account ?? null, m().room.account_error ?? null]), diff: (was, now) => (was !== now ? String(t.stream('refresh')) : '') })
+    t.get(/^\/settings$/, ({ req, res, url }) => { if (m().room.account === undefined) loadAccount(); page(req, res, 'Settings', settingsMain('', SAID[url.searchParams.get('done')] ?? ''), { view: 'settings' }) })
+    const accountPost = (path, fn, done) => t.post(path, async ({ req, res, form }) => {
+      let out
+      try { out = await fn(form, await import('/vendor/account.mjs')) } catch (err) {
+        console.error(err)
+        return page(req, res, 'Settings', settingsMain(accountError(err)), { view: 'settings' }, 422)
       }
-      t.redirect(res, '/settings?pw=on')
+      if (out?.kit) return page(req, res, 'Settings', settingsMain('', 'Your new Emergency Kit:', out.kit), { view: 'settings' })
+      client._setRoom({ account: undefined }); loadAccount()
+      t.redirect(res, `/settings?done=${done}`)
     })
-    t.post(/^\/settings\/passphrase\/off$/, async ({ req, res }) => {
-      try { await client.removePassphrase() } catch (err) { return page(req, res, 'Settings', settingsMain(`Not turned off: ${err.message}`), { view: 'settings' }, 422) }
-      t.redirect(res, '/settings?pw=off')
+    accountPost(/^\/settings\/account$/, (f, A) => A.addAccount(client, { email: String(f.get('email')), password: String(f.get('password')), recovery_code: String(f.get('recovery_code')).trim() }), 'added')
+    accountPost(/^\/settings\/password$/, (f, A) => A.changePassword(client, { current: String(f.get('current')), next: String(f.get('password')) }), 'changed')
+    accountPost(/^\/settings\/kit$/, async (f, A) => {
+      const { words } = await A.makeEmergencyKit(client, { password: String(f.get('password')) })
+      client._setRoom({ account: { ...m().room.account, has_recovery: true } })
+      return { kit: words }
     })
+    accountPost(/^\/settings\/account\/code$/, (f, A) => A.resendEmailCode(client), 'sent')
+    accountPost(/^\/settings\/account\/verify$/, (f, A) => A.verifyEmail(client, String(f.get('code'))), 'confirmed')
 
     // A join link opened on a device that is in a room already.
-    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', shell('Already in a room', html`<p class="room-lead">This device is in a room already. Pair another device under <a href="/devices" data-nav>Devices</a>.</p>`)))
+    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', shell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/devices" data-nav>Devices</a>.</p>`)))
   }
 }
+
+// ---- the account: shared pieces (screens before the board and the Settings page) ----
+const account = () => import('/vendor/account.mjs')
+/** A password field with "Generate" (five words); `gen` false for the current password. */
+const pwField = ({ name = 'password', label = 'Password', gen = true, autocomplete = 'new-password' } = {}) => html`<label>${label}<span class="room-pwrow"><input type="password" name="${name}" required minlength="${gen ? 12 : 1}" autocomplete="${autocomplete}" spellcheck="false" autocapitalize="off">${gen ? html`<button type="button" class="room-gen" data-action="room#generate">Generate</button>` : ''}</span>${gen ? html`<small class="room-hint">At least 12 characters. Or press Generate: five words, easy to type.</small>` : ''}</label>`
+/** "Generate" fills a five-word password and shows it; pressed again it copies it. */
+export async function generateInto(button) {
+  const input = button.closest('.room-pwrow')?.querySelector('input')
+  if (!input) return
+  if (button.dataset.generated === input.value && input.value) {
+    let ok = false
+    try { await navigator.clipboard.writeText(input.value); ok = true } catch {}
+    button.textContent = ok ? 'Copied' : 'Write it down'
+    return
+  }
+  input.value = (await account()).generatePassword()
+  input.type = 'text'
+  button.dataset.generated = input.value
+  button.textContent = 'Copy'
+  const hint = button.closest('label')?.querySelector('.room-hint')
+  if (hint) hint.textContent = 'Generated for you. Put it in your password manager or write it down.'
+  input.addEventListener('input', () => { button.textContent = 'Generate'; delete button.dataset.generated }, { once: true })
+}
+const NO_RECOVERY = 'If you lose your password and your Emergency Kit, nobody (not even Trommi) can recover your data.'
+/** The Emergency Kit as a text file. */
+export const kitText = (email, words) => `Trommi Emergency Kit
+
+Email: ${email}
+Recovery words: ${words}
+
+Forgot your password? Open https://app.trommi.com, choose "Log in", then "Forgot password?".
+Enter your email and these 12 words, then choose a new password.
+
+Keep this kit private and offline: with these words and your email, anyone can get into your account.
+${NO_RECOVERY}
+
+Made ${new Date().toISOString().slice(0, 10)}
+`
+/** Save the kit as a file (a link to a Blob, clicked). */
+export function downloadKit(text) {
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([text], { type: 'text/plain;charset=utf-8' }))
+  a.download = 'Trommi-Emergency-Kit.txt'
+  document.body.append(a); a.click(); a.remove()
+  setTimeout(() => URL.revokeObjectURL(a.href), 10000)
+}
+const kitBox = (email, words, stim = false) => html`<div class="room-kit" id="kit"><p class="room-kit-title">${raw(BELL)} Trommi Emergency Kit</p><p class="room-meta">Email: <b>${email}</b></p>
+<ol class="room-kit-words" id="kit-words">${words.split(' ').map(w => html`<li>${w}</li>`)}</ol>
+<p class="room-meta">Forgot your password? app.trommi.com → Log in → "Forgot password?" → your email and these 12 words.</p></div>
+<div class="room-actions room-kit-actions"${stim ? raw(' data-controller="room"') : ''}><button type="button" id="kit-download"${stim ? raw(' data-action="room#download"') : ''} data-room-text-param="${kitText(email, words)}">Download</button><button type="button" id="kit-print"${stim ? raw(' data-action="room#print"') : ''}>Print</button></div>`
+const accountError = err => ({
+  'wrong-login': 'Email or password is wrong.', 'wrong-recovery': 'Email or recovery words are wrong.', 'bad-recovery-words': `Recovery words: ${err.message}.`,
+  'rate-limited': 'Too many tries. Please wait a few minutes.', 'weak-password': 'The password needs at least 12 characters.', 'bad-email': 'That is not an email address.',
+  offline: 'Trommi is not reachable. Check the connection.', 'room-exists': 'This browser is signed in already.', 'bad-recovery-code': 'This recovery code does not belong to this account.',
+  'account-exists': 'This account has a login already.', 'account-changed': 'Changed on another device meanwhile. Please try again.', 'wrong-code': 'Wrong or expired code.',
+}[err.code] ?? err.message)
 
 // ---- before a room: a screen of its own, before the board exists ----
 export async function roomScreen({ start, hub }) {
@@ -245,6 +299,14 @@ export async function roomScreen({ start, hub }) {
     root.innerHTML = String(markup)
     if (focus) root.querySelector(focus)?.focus({ preventScroll: true })
   }
+  // Buttons that work without Stimulus on this screen: Generate, Download, Print.
+  root.addEventListener('click', e => {
+    const b = e.target.closest('button')
+    if (!b) return
+    if (b.classList.contains('room-gen')) { e.preventDefault(); generateInto(b) }
+    else if (b.id === 'kit-download') downloadKit(b.dataset.roomTextParam)
+    else if (b.id === 'kit-print') window.print()
+  })
   const core = async () => import('/vendor/index.mjs')
   const storage = async () => (await core()).idbStorage({ name: 'trommi', prefix: 'room/' })
   const done = async client => { root.remove(); history.replaceState(null, '', '/'); await start(client, { fresh: true }) }
@@ -253,10 +315,11 @@ export async function roomScreen({ start, hub }) {
   const wireBack = () => on('#room-home', 'click', e => { e.preventDefault(); history.replaceState(null, '', '/'); welcome() })
   const busy = (form, word) => { const b = form.querySelector('button[type="submit"]'); b.disabled = true; b.textContent = word }
   const nameField = html`<label>Name of this device<input name="device_name" value="${deviceGuess()}" maxlength="40" required></label>`
+  const emailField = (value = '') => html`<label>Email<input type="email" name="email" value="${value}" required autocomplete="username" autocapitalize="off" spellcheck="false" inputmode="email"></label>`
   const c = await core().catch(() => ({}))
+  let lastEmail = ''
 
   if (location.pathname === '/join' && location.hash.length > 1) return joinFlow()
-  if (location.pathname === '/login' && location.hash.length > 1 && c.loginWithPassphrase && PASSWORD_LOGIN) return passwordFlow()
   if (location.pathname === '/recover') recoverFlow()
   else welcome()
 
@@ -264,57 +327,94 @@ export async function roomScreen({ start, hub }) {
     show(shell('Trommi', html`<p class="room-lead">Your agents ask, you answer, from any device. End-to-end encrypted: the hub carries sealed envelopes only.</p>
 ${errorLine(error)}
 <div class="room-ways room-ways-first">
-<button type="button" class="room-way room-way-go" id="way-pair">${sk('phone')}<b>Pair this device</b><span>Trommi runs on another device already? Show a QR code there and scan it here.</span></button>
-${c.loginWithPassphrase && PASSWORD_LOGIN ? html`<button type="button" class="room-way room-way-go" id="way-password">${sk('key')}<b>Sign in with a password</b><span>With the room address and the password, if you set one up.</span></button>` : ''}
-<button type="button" class="room-way room-way-go" id="way-found">${sk('house')}<b>Found a new room</b><span>First time here? This device founds your room.</span></button>
-</div>
-<p class="room-meta"><a href="/recover" id="way-recover">Lost every device? Come back with the recovery code</a></p>`, 'room-welcome'), null)
-    on('#way-pair', 'click', () => scanFlow())
-    on('#way-password', 'click', () => passwordFlow())
-    on('#way-found', 'click', () => foundFlow())
-    on('#way-recover', 'click', e => { e.preventDefault(); recoverFlow() })
+<button type="button" class="room-way room-way-go" id="way-create">${sk('house')}<b>Create account</b><span>New to Trommi? Email and a password, and this device is your first.</span></button>
+<button type="button" class="room-way room-way-go" id="way-login">${sk('key')}<b>Log in</b><span>You have an account? Log in with your email and password, or scan a code from a signed-in device.</span></button>
+</div>`, 'room-welcome'), null)
+    on('#way-create', 'click', () => createFlow())
+    on('#way-login', 'click', () => loginFlow())
   }
 
-  function foundFlow(error = '') {
-    show(shell('Found a new room', html`<p class="room-lead">This device makes the room's keys. Then you see your recovery code, once.</p>
-${errorLine(error)}<form id="found-form" class="room-form">${nameField}
-<details class="room-more"><summary>Hub and founding code</summary><label>Hub<input name="hub" value="${hub}"></label><label>Founding code (if the hub asks for one)<input name="found_token" autocomplete="off"></label></details>
-<button type="submit" class="room-primary">Found the room</button></form>${backLink}`), '#found-form button[type=submit]')
+  function createFlow(error = '') {
+    show(shell('Create account', html`${errorLine(error)}<form id="create-form" class="room-form">${emailField(lastEmail)}${pwField()}${nameField}
+<details class="room-more"><summary>Server and access code</summary><label>Hub<input name="hub" value="${hub}"></label><label>Access code (if the hub asks for one)<input name="found_token" autocomplete="off"></label></details>
+<button type="submit" class="room-primary">Create account</button></form>
+<p class="room-meta">Your password never leaves this device. ${NO_RECOVERY}</p>${backLink}`))
     wireBack()
-    on('#found-form', 'submit', async e => {
+    on('#create-form', 'submit', async e => {
       e.preventDefault()
       const f = new FormData(e.target)
-      busy(e.target, 'Making keys…')
+      lastEmail = String(f.get('email') ?? '')
+      const A = await account()
+      const why = A.passwordProblem(String(f.get('password') ?? ''))
+      if (why) return createFlow('The password needs at least 12 characters.')
+      busy(e.target, 'Creating your account…')
       try {
         const hub_url = String(f.get('hub') || hub).replace(/\/+$/, '')
         write('trommi-hub', hub_url)
-        const { client, recovery_code } = await c.foundRoom({ hub_url, device_name: String(f.get('device_name')), storage: await storage(), found_token: String(f.get('found_token') || '') || undefined, client: CLIENT })
-        recovery(client, recovery_code)
-      } catch (err) { console.error(err); foundFlow(`The room was not founded: ${err.message}`) }
+        const { client, recovery_code } = await A.createAccount({ hub_url, email: lastEmail, password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), found_token: String(f.get('found_token') || '') || undefined, client: CLIENT })
+        kitOffer(client, recovery_code, A.normaliseEmail(lastEmail))
+      } catch (err) { console.warn(err); createFlow(`Not created: ${accountError(err)}`) }
     })
   }
 
-  // The recovery code, shown once; the room opens only after the human confirmed keeping it.
-  function recovery(client, code, fresh = true) {
-    show(shell('Your recovery code', html`<p class="room-lead">${fresh ? 'This code brings you back into the room if every device is gone.' : 'The old code no longer works. This is the new one.'} It is shown <b>only now</b>. Write it on paper or put it in your password manager.</p>
-<p class="room-recovery" id="recovery-code">${code}</p>
-<div class="room-actions"><button type="button" id="recovery-copy">Copy</button></div>
-<form id="recovery-form" class="room-form"><label class="room-check"><input type="checkbox" name="kept" required> I have kept the code somewhere safe.</label>
-${has(client, 'setPassphrase') && PASSWORD_LOGIN ? html`<details class="room-more" id="recovery-pw" data-controller="room" data-action="input->room#strength"><summary>Also allow signing in with a password (optional)</summary><p class="room-meta">${TRADE_OFF}</p>${pwFields()}<input type="hidden" data-room-target="go"></details>` : ''}
-<button type="submit" class="room-primary">Open the room</button></form>`), '#recovery-copy')
-    on('#recovery-copy', 'click', async e => { try { await navigator.clipboard.writeText(code); e.target.textContent = 'Copied' } catch { e.target.textContent = 'Please write it down' } })
-    on('#recovery-form', 'submit', async e => {
+  // The Emergency Kit, offered once after creating the account. "Later" stores nothing; Settings reminds calmly.
+  function kitOffer(client, code, email, error = '') {
+    show(shell('Your Emergency Kit', html`<p class="room-lead">Forget your password some day? The Emergency Kit lets you set a new one: twelve words to print or keep as a file.</p>
+<p class="room-lead">${NO_RECOVERY}</p>${errorLine(error)}
+<div class="room-actions"><button type="button" class="room-primary" id="kit-make">Make my Emergency Kit</button><button type="button" id="kit-later">Later</button></div>`), '#kit-make')
+    on('#kit-later', 'click', () => { code = null; done(client) })
+    on('#kit-make', 'click', async e => {
+      e.target.disabled = true; e.target.textContent = 'Making…'
+      try {
+        const { words } = await (await account()).makeEmergencyKit(client, { recovery_code: code })
+        code = null
+        show(shell('Your Emergency Kit', html`<p class="room-lead">Download or print it, and keep it somewhere safe. It is shown only now; you can make a new one in Settings.</p>
+${kitBox(email, words)}<div class="room-actions"><button type="button" class="room-primary" id="kit-done">Done</button></div>`), '#kit-download')
+        on('#kit-done', 'click', () => done(client))
+      } catch (err) { console.warn(err); kitOffer(client, code, email, `Not made: ${accountError(err)}`) }
+    })
+  }
+
+  function loginFlow(error = '') {
+    show(shell('Log in', html`${errorLine(error)}<form id="login-form" class="room-form">${emailField(lastEmail)}${pwField({ gen: false, autocomplete: 'current-password' })}${nameField}
+<button type="submit" class="room-primary">Log in</button></form>
+<p class="room-meta"><a href="/" id="way-forgot">Forgot password?</a></p>
+<div class="room-ways"><button type="button" class="room-way room-way-go" id="way-pair">${sk('phone')}<b>Scan from a signed-in device</b><span>On a device that is logged in: menu → Devices → "Pair a device". Then scan its code here.</span></button></div>${backLink}`))
+    wireBack()
+    on('#way-pair', 'click', () => scanFlow())
+    on('#way-forgot', 'click', e => { e.preventDefault(); forgotFlow() })
+    on('#login-form', 'submit', async e => {
       e.preventDefault()
-      const f = new FormData(e.target), p = String(f.get('passphrase') ?? '')
-      if (p) {
-        const why = passphraseProblem(p) ?? (p !== f.get('again') ? 'The two entries differ.' : null)
-        const out = root.querySelector('.room-strength')
-        if (why) { out.textContent = why; out.dataset.level = '1'; return }
-        busy(e.target, 'Saving the password…')
-        try { await client.setPassphrase(p, { recovery_code: code }) } catch (err) { out.textContent = `Not saved: ${err.message}`; out.dataset.level = '1'; const b = e.target.querySelector('button[type="submit"]'); b.disabled = false; b.textContent = 'Open the room'; return }
-      }
-      code = null
-      done(client)
+      const f = new FormData(e.target)
+      lastEmail = String(f.get('email') ?? '')
+      busy(e.target, 'Logging in…')
+      try {
+        const { client } = await (await account()).loginWithPassword({ hub_url: hub, email: lastEmail, password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT })
+        await done(client)
+      } catch (err) { console.warn(err); loginFlow(accountError(err)) }
+    })
+  }
+
+  function forgotFlow(error = '') {
+    show(shell('Forgot password', html`<p class="room-lead">With your Emergency Kit you set a new password. Your devices stay logged in.</p>
+${errorLine(error)}<form id="forgot-form" class="room-form">${emailField(lastEmail)}
+<label>The 12 words of your Emergency Kit<textarea name="words" rows="3" required autocomplete="off" autocapitalize="off" spellcheck="false" class="room-mono"></textarea></label>
+${pwField({ label: 'New password' })}${nameField}
+<button type="submit" class="room-primary">Set new password</button></form>
+<p class="room-meta">No kit, but another device is logged in? Change the password there under Settings. <a href="/recover" id="way-recover">An older account with a recovery code?</a></p>${backLink}`))
+    wireBack()
+    on('#way-recover', 'click', e => { e.preventDefault(); recoverFlow() })
+    on('#forgot-form', 'submit', async e => {
+      e.preventDefault()
+      const f = new FormData(e.target)
+      lastEmail = String(f.get('email') ?? '')
+      const A = await account()
+      if (A.passwordProblem(String(f.get('password') ?? ''))) return forgotFlow('The new password needs at least 12 characters.')
+      busy(e.target, 'Setting the new password…')
+      try {
+        const { client } = await A.resetPassword({ hub_url: hub, email: lastEmail, words: String(f.get('words')), new_password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT })
+        await done(client)
+      } catch (err) { console.warn(err); forgotFlow(accountError(err)) }
     })
   }
 
@@ -322,10 +422,10 @@ ${has(client, 'setPassphrase') && PASSWORD_LOGIN ? html`<details class="room-mor
   async function scanFlow(error = '') {
     const { canScan, scanQr } = await import('./qr.mjs')
     const camera = await canScan()
-    show(shell('Pair this device', html`<ol class="room-steps"><li>On the device that is in the room: menu → Devices → "Pair a device".</li><li>${camera ? 'Hold its QR code in front of this camera.' : 'Scan its QR code with this device\'s camera app.'}</li></ol>
+    show(shell('Scan from a signed-in device', html`<ol class="room-steps"><li>On the device that is logged in: menu → Devices → "Pair a device".</li><li>${camera ? 'Hold its QR code in front of this camera.' : 'Scan its QR code with this device\'s camera app.'}</li></ol>
 ${camera ? html`<div class="room-scan"><video id="scan-video" muted playsinline aria-label="Camera"></video></div>` : ''}
 ${errorLine(error)}
-<form id="paste-form" class="room-form"><label>Or paste the link here<input name="link" inputmode="url" autocomplete="off" placeholder="https://app.trommi.com/join#v1…" required></label><button type="submit">Next</button></form>${backLink}`), camera ? '#paste-form input' : '#paste-form input')
+<form id="paste-form" class="room-form"><label>Or paste the link here<input name="link" inputmode="url" autocomplete="off" placeholder="https://app.trommi.com/join#v1…" required></label><button type="submit">Next</button></form>${backLink}`), '#paste-form input')
     wireBack()
     const go = text => {
       const at = String(text).indexOf('#v1.')
@@ -340,60 +440,42 @@ ${errorLine(error)}
 
   // Join with the link in the address: name, then show the check code to tap on the other device.
   function joinFlow(error = '') {
-    show(shell('Pair this device', html`<p class="room-lead">This device now makes its own keys. Then it shows a number that you tap on the other device.</p>
+    show(shell('Log in with a signed-in device', html`<p class="room-lead">This device now makes its own keys. Then it shows a number that you tap on the other device.</p>
 ${errorLine(error)}
 <form id="join-form" class="room-form">${nameField}<button type="submit" class="room-primary">Next</button></form>`), '#join-form button')
     on('#join-form', 'submit', async e => {
       e.preventDefault()
       const link = location.href
       const name = String(new FormData(e.target).get('device_name'))
-      show(shell('Pair this device', html`<p class="room-wait">Asking the other device…</p>`))
+      show(shell('Log in with a signed-in device', html`<p class="room-wait">Asking the other device…</p>`))
       try {
         const join = c.joinRoom({ link, device_name: name, storage: await storage(), client: CLIENT })
         history.replaceState(null, '', '/join')   // the secret leaves the address bar
         join.check_code.then(code => {
-          show(shell('Pair this device', html`<p class="room-lead">On the other device, tap this number:</p><p class="room-code" id="check-code">${code6(code)}</p><p class="room-wait">Waiting until it adds this device…</p>
-<p class="room-meta">Tapped the wrong number there? Then the invite is used up. <a href="/" id="join-cancel">Cancel and pair again</a></p>`), null)
+          show(shell('Log in with a signed-in device', html`<p class="room-lead">On the other device, tap this number:</p><p class="room-code" id="check-code">${code6(code)}</p><p class="room-wait">Waiting until it adds this device…</p>
+<p class="room-meta">Tapped the wrong number there? Then the code is used up. <a href="/" id="join-cancel">Cancel and scan again</a></p>`), null)
           on('#join-cancel', 'click', ev => { ev.preventDefault(); join.cancel(); history.replaceState(null, '', '/'); scanFlow() })
         })
         await done(await join.client)
       } catch (err) {
         if (err.code === 'cancelled') return
         console.error(err)
-        const why = { 'invite-used': 'The invite was used already.', 'invite-expired': 'The invite has expired.', 'invite-burned': 'A wrong number was tapped; the invite is used up.' }[err.code] ?? err.message
-        show(shell('Pair this device', html`<p class="room-error" role="alert">Not paired: ${why}</p><p class="room-lead">Show a new code on the other device.</p><button type="button" class="room-primary" id="scan-again">Scan again</button>${backLink}`), '#scan-again')
+        const why = { 'invite-used': 'The code was used already.', 'invite-expired': 'The code has expired.', 'invite-burned': 'A wrong number was tapped; the code is used up.' }[err.code] ?? err.message
+        show(shell('Log in with a signed-in device', html`<p class="room-error" role="alert">Not logged in: ${why}</p><p class="room-lead">Show a new code on the other device.</p><button type="button" class="room-primary" id="scan-again">Scan again</button>${backLink}`), '#scan-again')
         on('#scan-again', 'click', () => scanFlow()); wireBack()
       }
     })
   }
 
-  // The room address from a link in the address bar (/login#r1… or /recover#r1…), if there is one.
+  // Accounts from before email + password: the address (/recover#r1…) and the recovery code shown back then.
   const addressInBar = () => (location.hash.startsWith('#r1.') ? location.href : '')
-  const parseAddress = text => { if (!c.parseRoomLink) throw new Error('this version knows no room addresses'); return c.parseRoomLink(String(text).trim()) }
-
-  function passwordFlow(error = '') {
-    show(shell('Sign in with a password', html`${errorLine(error)}<form id="pw-form" class="room-form">
-<label>Room address<input name="room_link" value="${addressInBar()}" required autocomplete="off" inputmode="url" placeholder="https://app.trommi.com/login#r1…"></label>
-<label>Password<input type="password" name="passphrase" required autocomplete="current-password"></label>${nameField}
-<button type="submit" class="room-primary">Sign in</button></form>
-<p class="room-meta">The room address is under Settings on a device in the room.</p>${backLink}`), addressInBar() ? 'input[name=passphrase]' : 'input')
-    wireBack()
-    on('#pw-form', 'submit', async e => {
-      e.preventDefault()
-      const f = new FormData(e.target)
-      busy(e.target, 'Checking… (a few seconds)')
-      try {
-        const { client } = await c.loginWithPassphrase({ room_link: String(f.get('room_link')).trim(), passphrase: String(f.get('passphrase')), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT })
-        await done(client)
-      } catch (err) { console.error(err); passwordFlow(err.code === 'bad-passphrase' || err.code === 'wrong-passphrase' ? 'Password or room address is wrong.' : `Not signed in: ${err.message}`) }
-    })
-  }
+  const parseAddress = text => { if (!c.parseRoomLink) throw new Error('this version knows no account addresses'); return c.parseRoomLink(String(text).trim()) }
 
   function recoverFlow(error = '') {
     history.replaceState(null, '', `/recover${location.hash.startsWith('#r1.') ? location.hash : ''}`)
-    show(shell('Recover', html`<p class="room-lead">The recovery code brings you back when no device is left in the room. All earlier devices are removed, the agents stay, and you get a new code.</p>
+    show(shell('Recovery code', html`<p class="room-lead">For accounts made before email and password: the recovery code brings you back when no device is left. All earlier devices are removed, the agents stay, and you get a new code.</p>
 ${errorLine(error)}<form id="recover-form" class="room-form">
-<label>Room address<input name="room_link" value="${addressInBar()}" required autocomplete="off" inputmode="url"></label>
+<label>Address (Settings → Advanced on an old device)<input name="room_link" value="${addressInBar()}" required autocomplete="off" inputmode="url"></label>
 <label>Recovery code<input name="code" required autocomplete="off" spellcheck="false" class="room-mono"></label>${nameField}
 <button type="submit" class="room-primary">Recover</button></form>${backLink}`))
     wireBack()
@@ -404,11 +486,22 @@ ${errorLine(error)}<form id="recover-form" class="room-form">
       try {
         const { hub_url, room_id } = parseAddress(f.get('room_link'))
         // The new code comes before the recovery is posted (the core never loses it): it is on screen from then on.
-        const on_recovery_code = fresh => show(shell('Your new recovery code', html`<p class="room-lead">Write this down now. It replaces the old code.</p><p class="room-recovery" id="recovery-code">${fresh}</p><p class="room-wait">Recovering the room…</p>`), null)
+        const on_recovery_code = fresh => show(shell('Your new recovery code', html`<p class="room-lead">Write this down now. It replaces the old code.</p><p class="room-recovery" id="recovery-code">${fresh}</p><p class="room-wait">Recovering…</p>`), null)
         const { client, recovery_code } = await c.recoverRoom({ hub_url, room_id, code: String(f.get('code')).trim(), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT, on_recovery_code })
-        recovery(client, recovery_code, false)
-      } catch (err) { console.error(err); recoverFlow(err.code === 'bad-recovery-code' ? 'This code does not belong to this room.' : `Not recovered: ${err.message}`) }
+        recovery(client, recovery_code)
+      } catch (err) { console.error(err); recoverFlow(err.code === 'bad-recovery-code' ? 'This code does not belong to this account.' : `Not recovered: ${err.message}`) }
     })
+  }
+
+  // The new recovery code after a recovery, shown once; the board opens only after the human confirmed keeping it.
+  function recovery(client, code) {
+    show(shell('Your new recovery code', html`<p class="room-lead">The old code no longer works. This is the new one. It is shown <b>only now</b>. Write it on paper or put it in your password manager.</p>
+<p class="room-recovery" id="recovery-code">${code}</p>
+<div class="room-actions"><button type="button" id="recovery-copy">Copy</button></div>
+<form id="recovery-form" class="room-form"><label class="room-check"><input type="checkbox" name="kept" required> I have kept the code somewhere safe.</label>
+<button type="submit" class="room-primary">Continue</button></form>`), '#recovery-copy')
+    on('#recovery-copy', 'click', async e => { try { await navigator.clipboard.writeText(code); e.target.textContent = 'Copied' } catch { e.target.textContent = 'Please write it down' } })
+    on('#recovery-form', 'submit', e => { e.preventDefault(); code = null; done(client) })
   }
 }
 export { ago, raw }

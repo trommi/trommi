@@ -1,13 +1,13 @@
-// The room pages' small helpers (js/app/room.mjs): copy a link or command (German words), select a read-only field
-// on focus, the password strength line, and the storage numbers (this device: navigator.storage; the hub: client.usage()).
+// The account pages' small helpers (js/app/room.mjs): copy a link or command, select a read-only field on focus,
+// Generate a password, download or print the Emergency Kit, and the storage numbers (navigator.storage; client.usage()).
 import { Controller } from '/js/app/stimulus.mjs'
 import { copyText } from '/t/controllers/copy_controller.js'
-import { passphraseProblem } from '/js/app/room.mjs'
+import { generateInto, downloadKit } from '/js/app/room.mjs'
 
 const size = n => (n == null ? '–' : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} kB` : n < 1e9 ? `${(n / 1e6).toFixed(1).replace('.', ',')} MB` : `${(n / 1e9).toFixed(2).replace('.', ',')} GB`)
 
 export default class extends Controller {
-  static targets = ['field', 'label', 'pass', 'again', 'meter', 'go', 'local', 'hub']
+  static targets = ['field', 'label', 'local', 'hub']
   static values = { usage: String }
 
   connect() { if (this.hasLocalTarget) this.usage() }
@@ -18,22 +18,14 @@ export default class extends Controller {
     const ok = await copyText(e.params.text)
     const label = e.currentTarget.querySelector('[data-room-target="label"]')
     if (!label) return
-    label.textContent = ok ? 'Kopiert' : 'Nicht kopiert'
+    label.textContent = ok ? 'Copied' : 'Not copied'
     clearTimeout(this.timer)
-    this.timer = setTimeout(() => { label.textContent = 'Kopieren' }, 1800)
+    this.timer = setTimeout(() => { label.textContent = 'Copy' }, 1800)
   }
 
-  strength() {
-    const p = this.passTarget.value, again = this.againTarget.value
-    const why = p ? passphraseProblem(p) : null
-    const level = !p ? 0 : why ? 1 : p.length >= 28 ? 3 : 2
-    this.meterTarget.dataset.level = level
-    this.meterTarget.textContent = !p ? 'At least six words.'
-      : why ? `Not yet: ${why}`
-        : again && again !== p ? 'Strong enough. The second entry still differs.'
-          : level === 3 ? 'Very good.' : 'Strong enough.'
-    if (this.hasGoTarget) this.goTarget.disabled = !(p && !why && again === p)
-  }
+  generate(e) { e.preventDefault(); generateInto(e.currentTarget) }
+  download(e) { downloadKit(e.params.text) }
+  print() { window.print() }
 
   async usage() {
     try { const e = await navigator.storage?.estimate?.(); this.localTarget.textContent = e ? size(e.usage) : 'unknown' } catch { this.localTarget.textContent = 'unknown' }
@@ -42,8 +34,8 @@ export default class extends Controller {
       const u = await window.trommi?.client?.usage?.()
       const used = u?.bytes ?? u?.used_bytes ?? u?.total_bytes
       const limit = u?.limit_bytes ?? u?.quota_bytes ?? u?.limit
-      this.hubTarget.textContent = used == null ? 'unbekannt' : limit ? `${size(used)} von ${size(limit)}` : size(used)
+      this.hubTarget.textContent = used == null ? 'unknown' : limit ? `${size(used)} of ${size(limit)}` : size(used)
       if (used != null && limit) { this.hubTarget.style.setProperty('--used', `${Math.min(100, (100 * used) / limit).toFixed(1)}%`); this.hubTarget.classList.add('has-bar') }
-    } catch { this.hubTarget.textContent = 'nicht erreichbar' }
+    } catch { this.hubTarget.textContent = 'not reachable' }
   }
 }

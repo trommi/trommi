@@ -38,7 +38,7 @@ export function menuDoors(model, base) {
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
 <div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents">${sk('heads')}<span>Agents</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <a role="menuitem" href="${base}/devices" data-nav draggable="false" id="menu-devices" class="menu-devices" title="Devices and settings">${raw(doodleSvg('draw:phone'))}<span>Devices</span></a><div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
-<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Mock room</a></div></details>
+<details class="menu-dev" id="menu-dev"><summary role="menuitem" id="dev-open">${DEV}<span>Dev</span></summary><div class="menu-dev-items"><a role="menuitem" href="${base}/?mock=1" data-turbo="false" id="dev-mock">Demo</a></div></details>
 </nav>`
 }
 
