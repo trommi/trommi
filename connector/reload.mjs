@@ -26,7 +26,7 @@ const BUNDLED = typeof __TROMMI_BUNDLE__ !== 'undefined'
 const SELF = fileURLToPath(import.meta.url)
 const CORE = path.join(HERE, '../core')
 export const CODE_FILES = ['channel-tools.mjs', 'channel-bridge.mjs', 'richhtml.mjs']
-const SHELL_FILES = ['channel.mjs', 'channel-lock.mjs', 'reload.mjs']
+const SHELL_FILES = ['channel.mjs', 'channel-lock.mjs', 'reload.mjs', 'monitor.mjs']
 const isTest = f => /(^test|-test|test-)[\w-]*\.mjs$/.test(f) || f === 'load.mjs'
 
 const hashOf = files => {

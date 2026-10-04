@@ -11,7 +11,7 @@ Punkte, die besprochen, aber noch nicht gebaut sind. Reihenfolge ist keine Prior
 - [ ] **TLS:** Die Seite läuft bisher über unverschlüsseltes HTTP und ist nur im privaten Netz (Tailscale) vertretbar.
 - [ ] **Live-Verlauf:** Zeigen, was der Agent gerade tut (Tool-Aufrufe, Fortschritt), über Hooks oder das Agent SDK. Der Channel liefert nur, was der Agent bewusst schickt.
 - [ ] **Agenten per Link einladen:** Ein Link oder QR-Code, der eine Session mit dem Board verbindet, statt `.mcp.json` von Hand.
-- [ ] **Channel ohne Entwickler-Flag:** Als Plugin verpacken, sobald eigene Channels ohne `--dangerously-load-development-channels` laufen.
+- [x] **Channel ohne Entwickler-Flag:** Trommi-Plugin mit Monitor (README "The Trommi plugin"); plain `claude` reicht.
 - [x] **Datei-Upload vom Menschen:** Bilder und Dateien im Gespräch, an einer Antwort und in der schnellen Notiz anhängen (`attachments` an `/message` und `/decide`).
 - [ ] **Benachrichtigungen:** Push aufs Handy, wenn ein Knock auf dem Desk landet.
 - [ ] **Archiv:** Erledigte Karten nach einer Frist ausblenden, Suche über alte Entscheidungen.

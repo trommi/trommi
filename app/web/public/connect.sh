@@ -5,9 +5,14 @@
 #
 # Needs Node 22 or newer and Claude Code (claude). What it does:
 #   1. downloads the Trommi connector (one file) to ~/.local/share/trommi/connector/ and checks its SHA-256,
-#   2. registers it for this folder: claude mcp add trommi --scope project (writes .mcp.json here),
+#   2. installs the Trommi plugin for this folder from Trommi's own marketplace:
+#        claude plugin marketplace add https://app.trommi.com/plugins/marketplace.json
+#        claude plugin install trommi@trommi --scope local     (.claude/settings.local.json here)
+#      The plugin runs the same connector as MCP server and a monitor that wakes Claude for every board message, so a
+#      plain `claude` hears the board. It also allows the plugin's own tools here (they only talk to your board).
+#      A Claude Code without plugin support gets the connector as before: claude mcp add trommi --scope project.
 #   3. joins your account with the invite link (the link is passed by environment, never printed),
-#   4. tells you how to start Claude Code so that Trommi's messages reach it.
+#   4. tells you how to start Claude Code.
 # Without Node 22+ it offers to install it (Debian/Ubuntu: NodeSource + apt, macOS: Homebrew) and asks first.
 # POSIX sh: runs on Linux and macOS (dash, bash, zsh as sh).
 set -eu
@@ -47,12 +52,29 @@ mv -f "$TMP" "$CONNECTOR"
 printf '%s  channel.mjs\n' "$GOT" > "$DIR/channel.mjs.sha256"
 say "Connector $(printf '%s' "$GOT" | cut -c 1-12) in $DIR"
 
-# ---- 2. registered for this folder ---------------------------------------------------------------------------------
-# Project scope: .mcp.json in this folder, so every project folder has its own connector entry (and its own key).
-# Claude Code starts it in this folder, which names the key slot.
-claude mcp remove trommi --scope project </dev/null >/dev/null 2>&1 || true
-claude mcp add trommi --scope project -- node "$CONNECTOR" </dev/null >/dev/null || fail "claude mcp add failed (run this in your project folder)"
-say "Registered for $(pwd) (.mcp.json)"
+# ---- 2. the plugin, for this folder ---------------------------------------------------------------------------------
+# Local scope: enabled only in this folder (every project folder has its own key), in .claude/settings.local.json.
+# Claude Code starts the connector in this folder, which names the key slot.
+MARKET="${TROMMI_MARKETPLACE:-$APP/plugins/marketplace.json}"
+PLUGIN=""
+if claude plugin marketplace add "$MARKET" </dev/null >/dev/null 2>&1 || claude plugin marketplace update trommi </dev/null >/dev/null 2>&1; then
+  claude plugin marketplace update trommi </dev/null >/dev/null 2>&1 || true
+  if claude plugin install trommi@trommi --scope local </dev/null >/dev/null 2>&1; then
+    claude plugin update trommi@trommi </dev/null >/dev/null 2>&1 || true
+    PLUGIN=yes
+  fi
+fi
+if [ -n "$PLUGIN" ]; then
+  # An older install registered the connector in .mcp.json: two of them in one session would be two members.
+  claude mcp remove trommi --scope project </dev/null >/dev/null 2>&1 || true
+  allow_tools
+  say "Trommi plugin installed for $(pwd)"
+else
+  say "This Claude Code has no plugin support (update it: claude update); registering the connector directly."
+  claude mcp remove trommi --scope project </dev/null >/dev/null 2>&1 || true
+  claude mcp add trommi --scope project -- node "$CONNECTOR" </dev/null >/dev/null || fail "claude mcp add failed (run this in your project folder)"
+  say "Registered for $(pwd) (.mcp.json)"
+fi
 
 # ---- 3. join ------------------------------------------------------------------------------------------------------
 say "Joining your Trommi account… (the app adds this agent by itself; keep it open)"
@@ -61,11 +83,33 @@ say "Joined."
 
 # ---- 4. next step -------------------------------------------------------------------------------------------------
 say ""
-say "Done. Start Claude Code in this folder with:"
-say ""
-say "  claude --dangerously-load-development-channels server:trommi"
-say ""
-say "Always start (or resume: claude --resume <id> ...) with that flag: without it Claude Code drops every Trommi message."
+if [ -n "$PLUGIN" ]; then
+  say "Done. Start Claude Code in this folder with:"
+  say ""
+  say "  claude"
+  say ""
+  say "Board messages wake it through the Trommi plugin's monitor (also after claude --continue or --resume)."
+  say "Optional, live channel instead: claude --dangerously-load-development-channels plugin:trommi@trommi"
+else
+  say "Done. Start Claude Code in this folder with:"
+  say ""
+  say "  claude --dangerously-load-development-channels server:trommi"
+  say ""
+  say "Always start (or resume: claude --resume <id> ...) with that flag: without it Claude Code drops every Trommi message."
+fi
+}
+
+# The plugin's tools (reply, cards, inbox ...) only talk to the human's board: allowed in this folder, so a board message
+# never waits for a yes in a terminal nobody watches. Merged into .claude/settings.local.json (Claude Code's per-folder,
+# not committed settings).
+allow_tools() {
+  mkdir -p .claude
+  node -e '
+    const fs = require("fs"), f = ".claude/settings.local.json", rule = "mcp__plugin_trommi_trommi"
+    let j = {}; try { j = JSON.parse(fs.readFileSync(f, "utf8")) } catch {}
+    j.permissions = j.permissions || {}; const a = j.permissions.allow = j.permissions.allow || []
+    if (!a.includes(rule)) a.push(rule)
+    fs.writeFileSync(f, JSON.stringify(j, null, 2) + "\n")' </dev/null || say "(could not allow the Trommi tools in .claude/settings.local.json; Claude Code will ask once per tool)"
 }
 
 node_major() { node -p 'process.versions.node.split(".")[0]' </dev/null 2>/dev/null || echo 0; }
