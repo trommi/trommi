@@ -1,7 +1,9 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "trommi-app",
+  "main": "src/index.js",
   "compatibility_date": "2026-10-01",
   // The app is static: every navigation that is not a file gets index.html (the app routes in the page).
-  "assets": { "directory": "./public", "not_found_handling": "single-page-application" }
+  // The worker runs first only to send http to https.
+  "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": true }
 }
