@@ -245,7 +245,7 @@ ${note ? html`<p class="room-lead" id="logout-last">${note}</p>` : ''}<p class="
     t.post(/^\/logout$/, async () => { await logOut(client) })
 
     // A join link opened on a device that is in a room already.
-    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', shell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/devices" data-nav>Devices</a>.</p>`)))
+    t.get(/^\/(?:join|login)$/, ({ req, res }) => page(req, res, 'Pair a device', shell('Already logged in', html`<p class="room-lead">This device is logged in already. Pair another device under <a href="/devices" data-nav>Devices</a>.</p><p class="room-meta">Another account? <a href="/logout" data-nav id="login-logout-first">Log out of this device first</a>, then log in.</p><p class="room-meta"><a href="/" data-nav>Open your Desk</a></p>`)))
   }
 }
 
@@ -333,7 +333,7 @@ const accountError = err => ({
 }[err.code] ?? err.message)
 
 // ---- before a room: a screen of its own, before the board exists ----
-export async function roomScreen({ start, hub }) {
+export async function roomScreen({ start, hub, openError = null }) {
   document.title = 'Trommi'
   useSheets(['tokens', 'app', 'back', 'logo', 'links', 'keys', 'turbo', 'fonts', 'trommi', 'room'])
   const root = document.createElement('div')
@@ -367,10 +367,42 @@ export async function roomScreen({ start, hub }) {
 
   // After a log out (logOut): said once on the start page, then the address is plain again.
   const loggedOut = new URLSearchParams(location.search).get('logged_out')
+  const wayLogin = new URLSearchParams(location.search).get('way') === 'login'
   if (loggedOut) history.replaceState(null, '', '/')
+  // This browser holds an account that did not open: never the start page (Log in would refuse: "signed in already").
+  if (openError) return brokenFlow(openError)
   if (location.pathname === '/join' && location.hash.length > 1) return joinFlow()
   if (location.pathname === '/recover') recoverFlow()
+  else if (wayLogin) loginFlow()
   else welcome()
+
+  // The stored account does not open (or a login found one stored): say so, Retry, or Log out of this device (wipe
+  // this browser's copy; the account and the other devices stay). Never a dead end.
+  function brokenFlow(err, { fromLogin = false } = {}) {
+    const why = err?.code === 'no-device' || err?.code === 'device-not-stored'
+      ? 'This browser kept your account but lost this device\'s keys, so it cannot open it.'
+      : `It did not open: ${err?.message ?? err}`
+    show(shell('Your account on this device', html`<p class="room-error" role="alert" id="broken-why">${fromLogin ? 'This browser holds an account already, and it does not open.' : 'This device is logged in, but your account did not open.'}</p>
+<p class="room-lead">${why}</p>
+<p class="room-lead">Log out of this device, then log in again with your email and password. Your account, your cards and your other devices stay as they are.</p>
+<div class="room-actions"><button type="button" class="room-primary" id="broken-logout">Log out of this device</button><button type="button" id="broken-retry">Retry</button></div>
+<p class="room-meta" id="broken-detail">${err?.code ? `${err.code}: ` : ''}${err?.message ?? ''}</p>`), '#broken-retry')
+    on('#broken-retry', 'click', () => location.reload())
+    on('#broken-logout', 'click', async e => {
+      e.target.disabled = true; e.target.textContent = 'Logging out…'
+      await wipeLocal(null)
+      location.replace('/?logged_out=kept&way=login')
+    })
+  }
+  // A login, kit or pairing on a browser that holds an account: open that one (it is the account, or the person logs
+  // out first); if it does not open, the broken screen.
+  async function roomExists() {
+    try {
+      const client = await c.openRoom({ storage: await storage(), client: CLIENT })
+      if (client) return done(client)
+    } catch (err) { return brokenFlow(err, { fromLogin: true }) }
+    return brokenFlow(new Error('the stored account vanished meanwhile'), { fromLogin: true })
+  }
 
   function welcome(error = '') {
     show(shell('Trommi', html`<p class="room-lead">Your agents ask, you answer, from any device. End-to-end encrypted: the hub carries sealed envelopes only.</p>
@@ -400,7 +432,7 @@ ${errorLine(error)}${loggedOut ? html`<p class="room-lead" id="logged-out" role=
         const hub_url = hub
         const { client, recovery_code } = await A.createAccount({ hub_url, email: lastEmail, password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), found_token: foundCode(), client: CLIENT })
         kitOffer(client, recovery_code, A.normaliseEmail(lastEmail))
-      } catch (err) { console.warn(err); createFlow(`Not created: ${accountError(err)}`) }
+      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); createFlow(`Not created: ${accountError(err)}`) }
     })
   }
 
@@ -438,7 +470,7 @@ ${kitBox(email, words)}<div class="room-actions"><button type="button" class="ro
       try {
         const { client } = await (await account()).loginWithPassword({ hub_url: hub, email: lastEmail, password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT })
         await done(client)
-      } catch (err) { console.warn(err); loginFlow(accountError(err)) }
+      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); loginFlow(accountError(err)) }
     })
   }
 
@@ -461,7 +493,7 @@ ${pwField({ label: 'New password' })}${nameField}
       try {
         const { client } = await A.resetPassword({ hub_url: hub, email: lastEmail, words: String(f.get('words')), new_password: String(f.get('password')), device_name: String(f.get('device_name')), storage: await storage(), client: CLIENT })
         await done(client)
-      } catch (err) { console.warn(err); forgotFlow(accountError(err)) }
+      } catch (err) { console.warn(err); if (err.code === 'room-exists') return roomExists(); forgotFlow(accountError(err)) }
     })
   }
 
@@ -507,6 +539,7 @@ ${errorLine(error)}
       } catch (err) {
         if (err.code === 'cancelled') return
         console.error(err)
+        if (err.code === 'room-exists') return roomExists()
         const why = { 'invite-used': 'The code was used already.', 'invite-expired': 'The code has expired.', 'invite-burned': 'A wrong number was tapped; the code is used up.' }[err.code] ?? err.message
         show(shell('Log in with a signed-in device', html`<p class="room-error" role="alert">Not logged in: ${why}</p><p class="room-lead">Show a new code on the other device.</p><button type="button" class="room-primary" id="scan-again">Scan again</button>${backLink}`), '#scan-again')
         on('#scan-again', 'click', () => scanFlow()); wireBack()
