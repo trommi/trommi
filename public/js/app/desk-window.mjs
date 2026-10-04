@@ -11,7 +11,7 @@ function fill() {
     if (!el.isConnected || !el.hasAttribute('data-later')) continue
     const markup = board.row(el.dataset.id)
     if (markup) { const t = document.createElement('template'); t.innerHTML = markup; el.replaceWith(t.content) }
-    if (++n >= 12) break
+    if (++n >= 6) break
   }
   if (queue.size && !scheduled) { scheduled = true; requestAnimationFrame(fill) }
 }
@@ -23,7 +23,7 @@ export function startDeskWindow(b) {
   io = new IntersectionObserver(entries => {
     for (const e of entries) if (e.isIntersecting) { io.unobserve(e.target); queue.add(e.target) }
     if (queue.size && !scheduled) { scheduled = true; requestAnimationFrame(fill) }
-  }, { rootMargin: '1600px 0px' })
+  }, { rootMargin: '1000px 0px' })
   document.addEventListener('turbo:load', () => watch())
   new MutationObserver(records => { for (const r of records) for (const n of r.addedNodes) if (n instanceof Element) { if (n.matches('.inbox-row[data-later]')) io.observe(n); else if (n.querySelector?.('.inbox-row[data-later]')) watch(n) } })
     .observe(document.body, { childList: true, subtree: true })

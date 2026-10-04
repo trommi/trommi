@@ -141,7 +141,7 @@ export function createBoard({ hub, model, extraPages = [] }) {
   }
   // Windowed: the first WINDOW rows are whole; the rest stand as empty rows of the same id (and knock mark), filled in
   // when they come near the viewport (desk-window.mjs asks board.row(id)). A long Desk costs what is in view.
-  const WINDOW = 40
+  const WINDOW = 16
   const later = c => raw(`<article class="inbox-row" id="row-${c.id}" data-later data-id="${c.id}"${isKnock(c) ? ' data-knock' : ''}></article>`)
   const windowed = m => { const first = new Set(m.fresh.slice(0, WINDOW).map(c => c.id)); return c => (first.has(c.id) ? rowOf(c, m) : later(c)) }
   function registerDesk() {
