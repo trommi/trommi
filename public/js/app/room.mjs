@@ -68,7 +68,8 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
         ? html`${name} kann danach nichts Neues mehr öffnen. Alle anderen bekommen einen neuen Raumschlüssel (Schlüsselwechsel); das dauert einen Moment.`
         : html`${name} kann danach nichts Neues mehr lesen. Die anderen bekommen einen neuen Raumschlüssel; der Verlauf der Sitzung bleibt.`}</p><button type="submit" class="room-danger">${name} entfernen</button></details></form>` : ''}</li>`
     }
-    const historyAsk = (required = true) => html`<fieldset class="room-history"><legend>Darf er den bisherigen Verlauf lesen?</legend><label><input type="radio" name="with_history" value="yes"${required ? raw(' required') : ''}> Ja</label><label><input type="radio" name="with_history" value="no"${required ? raw(' required') : ''}> Nein</label></fieldset>`
+    // The earlier conversation stays closed unless the human opens it (security review: agent invites without history).
+    const historyAsk = () => html`<fieldset class="room-history"><legend>May it read the earlier conversation?</legend><label><input type="radio" name="with_history" value="no" checked> No</label><label><input type="radio" name="with_history" value="yes"> Yes</label></fieldset>`
     const sessionOptions = (except = null) => [...m().sessions.values()].filter(s => s.agent_device_id !== except).map(s => html`<option value="${s.agent_session_id || s.agent_device_id}">${sessionName(s)}</option>`)
     // Hand a session to an agent that is in the room: one form under the agents (not one per row: big rooms).
     const handoverForm = agents => html`<details class="room-more room-handover"><summary>Sitzung an einen Agenten übergeben</summary><form method="post" action="/devices/handover" class="room-form">
@@ -138,9 +139,10 @@ ${raw(L.gone)}
       const agent = inv.device_role === 'agent', state = inv.invite_state
       const left = Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))
       let body
-      if (state === 'open' && agent) body = html`<p class="room-lead">Gib das der Claude-Code-Sitzung, die dazukommen soll. Entweder in die Sitzung einfügen:</p>
-${copyBox(`join this: ${inv.link}`, 'Text für die Sitzung')}<p class="room-lead">oder im Ordner der Sitzung ausführen:</p>${copyBox(`node hub/channel.mjs join '${inv.link}'`, 'Befehl', 'room-cmd')}
-<p class="room-wait">Wartet auf den Agenten … Der Link gilt einmal, noch ${left} Min. Ein Agent braucht keine Zahl.</p>`
+      // The link goes to the channel by the human's hands only (never pasted into the model's prompt).
+      if (state === 'open' && agent) body = html`<p class="room-lead">Run this in the project folder of the Claude Code session that should join:</p>
+${copyBox(`node /home/christopher/git/trommi/hub/channel.mjs join '${inv.link}'`, 'Command', 'room-cmd')}<p class="room-lead">or start Claude Code there with the link:</p>${copyBox(`TROMMI_INVITE='${inv.link}' claude --dangerously-load-development-channels server:trommi`, 'Command', 'room-cmd')}
+<p class="room-wait">Waiting for the agent… The link works once, ${left} more min. An agent needs no code.</p>`
       else if (state === 'open') body = html`<div class="room-pair"><div class="room-qr" data-controller="room">${raw(qrSvg(inv.link, 'QR-Code zum Koppeln'))}</div>
 <ol class="room-steps"><li>Auf dem neuen Gerät die Kamera öffnen und den Code scannen. Oder dort app.trommi.com öffnen und „Gerät koppeln“ wählen.</li><li>Das neue Gerät zeigt eine Zahl. Hier tippst du dieselbe an.</li></ol></div>
 <details class="room-more"><summary>Kein Scanner? Link schicken</summary><p class="room-meta">Schick dir den Link selbst (z. B. per Nachricht an dich) und öffne ihn auf dem neuen Gerät. Das Geheimnis steht hinter dem #; es erreicht keinen Server.</p>${copyBox(inv.link, 'Einladungslink')}</details>
