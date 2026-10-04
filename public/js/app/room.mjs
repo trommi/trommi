@@ -9,7 +9,7 @@ import { sketchSvg, doodleSvg } from '../pen.js'
 import { BELL } from './layout.mjs'
 import { CLIENT } from './version.mjs'
 import { qrSvg } from './qr.mjs'
-import { passphraseProblem as corePassphraseProblem } from '/vendor/escrow.mjs'
+import { passphraseProblem as corePassphraseProblem, generatePassphrase } from '/vendor/escrow.mjs'
 
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -26,7 +26,7 @@ const sk = name => raw(['phone', 'house'].includes(name) ? doodleSvg(`draw:${nam
 const has = (o, fn) => typeof o?.[fn] === 'function'
 const code6 = c => `${String(c).slice(0, 3)} ${String(c).slice(3)}`
 // The core's passphrase rule; its reasons in the app's words.
-const PROBLEM = { 'at least 14 characters': 'At least 14 characters.', 'at least four words, or 20 characters': 'At least four words (or 20 characters).', 'too repetitive': 'Too repetitive.' }
+const PROBLEM = { 'at least six words (or take the generated passphrase)': 'At least six words, or take the generated one.', 'too repetitive': 'Too repetitive.' }
 /** null if the passphrase is good enough, else why not. */
 export function passphraseProblem(p) {
   p = String(p ?? '')
@@ -35,9 +35,10 @@ export function passphraseProblem(p) {
 }
 /** Signing in with a password on a fresh browser waits for the hub and crypto side (A); ?pwlogin shows it early. */
 const PASSWORD_LOGIN = new URLSearchParams(location.search).has('pwlogin')
-const pwFields = html`<label>Password<input type="password" name="passphrase" autocomplete="new-password" required minlength="14" data-room-target="pass" placeholder="a sentence of four or more words"></label>
-<label>Once more<input type="password" name="again" autocomplete="new-password" required data-room-target="again"></label>
-<p class="room-strength" data-room-target="meter" data-level="0" aria-live="polite">At least four words and 14 characters.</p>`
+// A generated passphrase is offered (visible, to be written down like the recovery code); an own one needs six words.
+const pwFields = () => { const g = generatePassphrase(); return html`<label>Password<input type="text" name="passphrase" value="${g}" autocomplete="off" spellcheck="false" required minlength="24" data-room-target="pass" class="room-mono"><small class="room-hint">Generated for you: write it down, it is shown only here. Or type six words of your own.</small></label>
+<label>Once more<input type="text" name="again" value="${g}" autocomplete="off" spellcheck="false" required data-room-target="again" class="room-mono"></label>
+<p class="room-strength" data-room-target="meter" data-level="2" aria-live="polite">Strong enough.</p>` }
 const TRADE_OFF = 'Convenient, but whoever knows the room address and the password gets in. Take a long sentence only you know.'
 const shell = (title, inner, cls = '') => html`<main id="room" class="room${cls ? ` ${cls}` : ''}" aria-label="${title}"><header class="room-head"><span class="room-bell">${BELL}</span><h2>${title}</h2></header>${inner}</main>`
 const tabs = on => html`<nav class="room-tabs" aria-label="Devices and settings"><a href="/devices" data-nav${on === 'devices' ? raw(' aria-current="page"') : ''}>Devices</a><a href="/settings" data-nav${on === 'settings' ? raw(' aria-current="page"') : ''}>Settings</a></nav>`
@@ -191,7 +192,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
       const escrow = has(client, 'setPassphrase'), pw = room.has_passphrase
       const pwForm = (word) => html`<form method="post" action="/settings/passphrase" class="room-form room-pw" data-controller="room" data-action="input->room#strength">
 <label>Recovery code<input name="recovery_code" required autocomplete="off" spellcheck="false" class="room-mono" placeholder="XXXX-XXXX-…"><small class="room-hint">The password protects an encrypted copy of this code. It is needed only for that and not stored.</small></label>
-${pwFields}
+${pwFields()}
 <button type="submit" class="room-primary" data-room-target="go" disabled>${word}</button></form>`
       return shell('Settings', html`${tabs('settings')}
 ${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
@@ -217,7 +218,7 @@ ${link ? html`<section class="room-section" aria-labelledby="addr-head"><h3 id="
       const why = passphraseProblem(p)
       if (why) return fail(`Too weak. ${why}`)
       try { await client.setPassphrase(p, { recovery_code: String(form.get('recovery_code') ?? '').trim() }) } catch (err) {
-        return fail(err.code === 'weak-passphrase' ? 'Too weak: at least four words and 14 characters.' : err.code === 'bad-recovery-code' ? 'This recovery code does not belong to this room.' : `Not saved: ${err.message}`)
+        return fail(err.code === 'weak-passphrase' ? 'Too weak: at least six words.' : err.code === 'bad-recovery-code' ? 'This recovery code does not belong to this room.' : `Not saved: ${err.message}`)
       }
       t.redirect(res, '/settings?pw=on')
     })
@@ -299,7 +300,7 @@ ${errorLine(error)}<form id="found-form" class="room-form">${nameField}
 <p class="room-recovery" id="recovery-code">${code}</p>
 <div class="room-actions"><button type="button" id="recovery-copy">Copy</button></div>
 <form id="recovery-form" class="room-form"><label class="room-check"><input type="checkbox" name="kept" required> I have kept the code somewhere safe.</label>
-${has(client, 'setPassphrase') && PASSWORD_LOGIN ? html`<details class="room-more" id="recovery-pw" data-controller="room" data-action="input->room#strength"><summary>Also allow signing in with a password (optional)</summary><p class="room-meta">${TRADE_OFF}</p>${pwFields}<input type="hidden" data-room-target="go"></details>` : ''}
+${has(client, 'setPassphrase') && PASSWORD_LOGIN ? html`<details class="room-more" id="recovery-pw" data-controller="room" data-action="input->room#strength"><summary>Also allow signing in with a password (optional)</summary><p class="room-meta">${TRADE_OFF}</p>${pwFields()}<input type="hidden" data-room-target="go"></details>` : ''}
 <button type="submit" class="room-primary">Open the room</button></form>`), '#recovery-copy')
     on('#recovery-copy', 'click', async e => { try { await navigator.clipboard.writeText(code); e.target.textContent = 'Copied' } catch { e.target.textContent = 'Please write it down' } })
     on('#recovery-form', 'submit', async e => {

@@ -28,7 +28,7 @@ export default class extends Controller {
     const why = p ? passphraseProblem(p) : null
     const level = !p ? 0 : why ? 1 : p.length >= 28 ? 3 : 2
     this.meterTarget.dataset.level = level
-    this.meterTarget.textContent = !p ? 'At least four words and 14 characters.'
+    this.meterTarget.textContent = !p ? 'At least six words.'
       : why ? `Not yet: ${why}`
         : again && again !== p ? 'Strong enough. The second entry still differs.'
           : level === 3 ? 'Very good.' : 'Strong enough.'
