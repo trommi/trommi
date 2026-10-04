@@ -268,6 +268,9 @@ export function placeOf(card, model) {
 export function cardPage(card, model, base, { pic = 1, walk = false, error = '', version = null, from = null, more: older = false } = {}) {
   const old = versionOf(card, version)
   const open = card.status === 'open' && !card.with_agent && !old
+  // The draft and the pen stay while the card is with its session too: the reworked card comes back live into a page
+  // whose form is not rendered again, and what is drawn or written meanwhile is kept for it.
+  const drafting = card.status === 'open' && card.kind === 'decision' && !old
   const session = from ? model.byAgent.get(from) : null
   const home = session ? `${base}/s/${encodeURIComponent(session.id)}` : `${base}/`
   const self = session ? home : base
@@ -279,7 +282,7 @@ export function cardPage(card, model, base, { pic = 1, walk = false, error = '',
   const step = (to, cls, label, d) => (to ? html`<a class="tc-step-card ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${icon(d)}</a>` : html`<span class="tc-step-card ${cls}" aria-hidden="true">${icon(d)}</span>`)
   const form = `card-form-${card.id}`
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
-  return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${open && card.kind === 'decision' ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#link circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
+  return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#link circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 <nav class="tc-head" aria-label="Around this question">
 <a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape"><span>Back to ${session ? session.name : WORDS.desk}</span><kbd>Esc</kbd></a>
 ${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
@@ -299,7 +302,7 @@ ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 ${cardThread(card, model, self, { more: older })}
 <form class="tc-ask tc-chat" id="${form}" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
-${open && card.kind === 'decision' ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
+${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
 <div class="tc-chips" data-card-target="chips" hidden></div>
 <textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="2" placeholder="Write to the agent about this question" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk below; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
 <div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div>
