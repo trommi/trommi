@@ -387,6 +387,10 @@ Plus `setMany([[key, value | undefined]...])` (one transaction; `undefined` dele
 - Thread items are verified from their pruned header at sync time (one signature each, no decryption); bodies are fetched and decrypted only for opened timelines and items addressed to an agent.
 - Projections (`stack`, counts) are recomputed only for the sessions and cards a batch touched.
 
+## Room snapshot (fast first start)
+
+A human device writes a snapshot every 5000 envelopes (counted from the newest anyone wrote): the model records (no timeline items), the chain head per sender and the cursor, gzipped, as an encrypted attachment; the human register `room_snapshot` = `{ attachment, encoding, envelope_number, log_seq, log_hash, written_at }` points at it. A new human device scans the newest pages for that register (signature and sender checked, from a human device), checks the log entry it names, loads it and verifies only the tail with full chain checks. Stated trust, like canvas snapshots: the snapshot's content cannot be checked without replaying. Thread items from before it are checked by their signature when opened. `client.options.snapshot = false` (before `start()`) disables reading and writing; `client.writeSnapshot()` writes one now; `client.stats.snapshot` says whether a start used one. Measured (Node, local hub): 20,000 envelopes, first start 29 ms with the snapshot (65 KiB) vs 1,039 ms full replay.
+
 ## Keys (R6 prepared)
 
 `client.keyFor({ kind, object, timeline, recipient })` is the only place that chooses the key an envelope is sealed with (today: the room key of the current epoch); `client.openKeys` is its opening side. Per-session keys (README R6: session scope for a session's cards, chat, canvas and agent registers; room scope for desks, memos, human registers, device labels) plug in there once `crypto/zcrypto.mjs` has key scopes and session grants. Until then sessions are keyed by the agent's `device_id`; the switch to `session_id` will be announced to app and channel first.
