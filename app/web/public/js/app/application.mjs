@@ -152,12 +152,23 @@ document.addEventListener('turbo:submit-start', e => { e.detail.formSubmission.s
 document.addEventListener('turbo:submit-end', e => { e.detail.formSubmission.submitter?.classList.remove('is-picked') })
 
 // ---- the Trommi menu opens and closes; the theme (the menu's own behaviour is the island/controller "menu") ----
-const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false') } }
+const shut = () => { const doors = $('#brand-doors'); if (doors && !doors.hidden) { doors.hidden = true; $('#brand-menu')?.setAttribute('aria-expanded', 'false'); $('#desk-switch')?.setAttribute('aria-expanded', 'false'); delete doors.dataset.from } }
 document.addEventListener('click', e => {
   const t = e.target instanceof Element ? e.target : null
   if (!t) return
   const menu = t.closest('#brand-menu'), doors = $('#brand-doors')
-  if (menu && doors) { doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); return }
+  if (menu && doors) { delete doors.dataset.from; doors.hidden = !doors.hidden; menu.setAttribute('aria-expanded', String(!doors.hidden)); $('#desk-switch')?.setAttribute('aria-expanded', 'false'); return }
+  // The desk drawing (the desk switcher): the same menu, the keyboard on the desk in view in its desk list.
+  const desk = t.closest('#desk-switch')
+  if (desk && doors) {
+    if (!doors.hidden && desk.getAttribute('aria-expanded') === 'true') return shut()
+    doors.dataset.from = 'desk'   // under the drawing (app.css), not under the pill
+    doors.hidden = false
+    $('#brand-menu')?.setAttribute('aria-expanded', 'true'); desk.setAttribute('aria-expanded', 'true')
+    const row = doors.querySelector('.menu-desk[aria-checked="true"]') ?? doors.querySelector('.menu-desk')
+    row?.focus({ preventScroll: true }); row?.scrollIntoView({ block: 'nearest' })
+    return
+  }
   if (doors && !doors.hidden && !t.closest('#brand-doors')) shut()
   if (t.closest('#theme-toggle')) {
     const dark = document.documentElement.dataset.theme !== 'dark'

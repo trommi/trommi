@@ -4,7 +4,7 @@
 import { html, raw } from '../views/html.mjs'
 import { sidebarRows, deskState } from '../views/sidebar.mjs'
 import { sketchSvg } from '../pen.js'
-import { menuDoors } from '../views/menu.mjs'
+import { menuDoors, deskMark } from '../views/menu.mjs'
 import { pageSheets } from '../views/keys.mjs'
 import { memoLayer } from '../views/memo.mjs'
 
@@ -22,10 +22,21 @@ export const CSS = {
   room: ['tokens', 'app', 'crowns', 'back', 'cardclip', 'phone-desk', 'piles', 'logo', 'links', 'quicksend', 'keys'],   // devices, pairing, settings: the sidebar stands beside them
 }
 
+const CARET = raw('<svg class="desk-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 9.4Q9.4 12.2 12.1 15Q14.9 12.1 17.6 9.2"/></svg>')
+/** How big the desk's name may stand in the Desk box: s (as "Desk"), m (a little smaller), l (two smaller lines). */
+const nameSize = name => { const n = [...String(name)].length; return n <= 6 ? 's' : n <= 11 ? 'm' : 'l' }
+/** The desk switcher (his pick e of five, "Zeichnung als Umschalter"): the desk drawing with its lamp on is a button; a caret
+ *  and the desk's number key under the lamp (the drawing of the menu's desk rows). It opens the Trommi menu at its desk list (application.mjs); 1-9 switch. */
+function deskSwitch(model) {
+  const at = (model.desks ?? []).findIndex(d => d.id === model.desk)
+  const key = model.desks?.length > 1 && at >= 0 && at < 9 ? html`<kbd>${at + 1}</kbd>` : ''
+  return html`<button type="button" class="desk-switch" id="desk-switch" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" title="Switch desk${model.desks?.length > 1 ? ' (1-9)' : ''}" aria-label="Switch desk (now: ${model.deskName})">${deskMark(true)}<span class="desk-switch-hint">${CARET}${key}</span></button>`
+}
+
 function topbar(model, base, current, view = '') {
   const sk = name => raw(sketchSvg(name))
   return html`<header class="topbar"><div class="brand">
-<h1 class="deskpill"><a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk: everything that waits for you"${current ? raw(' aria-current=""') : ''}>${sk('desk')}${BELL}<span class="desk-name" title="Desk">${model.deskName}</span></a><span class="desk-state" id="desk-state">${deskState(model, base)}</span>
+<h1 class="deskpill">${deskSwitch(model)}<a href="${base}/" data-nav draggable="false" class="desk-go" id="desk-go" title="Desk ${model.deskName}: everything that waits for you"${current ? raw(' aria-current=""') : ''}>${deskMark(true)}${BELL}<span class="desk-name" data-size="${nameSize(model.deskName)}">${model.deskName}</span></a><span class="desk-state" id="desk-state">${deskState(model, base)}</span>
 <button type="button" class="brand-open" id="brand-menu" aria-haspopup="menu" aria-expanded="false" aria-controls="brand-doors" aria-label="Menu: jump, desks, places, settings">${raw(String(BELL).replace('class="brand-mark"', 'class="brand-mark pill-mark"'))}<b class="pill-word">Trommi</b><span class="conn pill-conn" id="conn" data-state="connecting" role="status"><i aria-hidden="true"></i><span id="conn-text" class="tc-sr">Connecting</span></span><span class="brand-fold">${sk('unfold')}</span></button></h1>
 ${menuDoors(model, base)}
 </div>

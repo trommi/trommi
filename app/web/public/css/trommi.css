@@ -1,8 +1,8 @@
 /* The app's own few rules outside the areas (the room screens are in css/room.css). */
 /* The Trommi menu (views/menu.mjs): the desks without a heading, each with the desk drawing; the one in view has its
    lamp on (a warm cone and three rays) instead of a tick. "New desk" is a quiet line under them; the theme sits beside Log out. */
-.topbar #brand-doors { --lamp: #e2a21b; }
-:root[data-theme="dark"] .topbar #brand-doors { --lamp: #f2bd4a; }
+.topbar { --lamp: #e2a21b; }   /* the menu's rows and the Desk box's switcher (app.css) */
+:root[data-theme="dark"] .topbar { --lamp: #f2bd4a; }
 .topbar #brand-doors .menu-desks { margin-top: 0; padding-top: 0; }
 .topbar #brand-doors .menu-desk[aria-checked]::after { content: none; }
 .topbar #brand-doors .menu-desk { gap: 10px; }
