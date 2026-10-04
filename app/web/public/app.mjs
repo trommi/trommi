@@ -2,7 +2,6 @@
 // views' "hub"), the board (pages, forms, live pieces: every view registers its own), the router, the frame around a
 // page, the service worker's side (attachments, push, new versions). Importing it does nothing; index.html's import
 // starts it (boot, at the end).
-
 import * as auth from './auth.mjs'
 import * as agents from './agents.mjs'
 import * as desk from './desk.mjs'
@@ -18,7 +17,6 @@ import { boardMemos, memoLayer, memoStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
 import { rowSheet } from './desk.mjs'
 import { showShare } from './media.mjs'
-
 const VIEWS = [auth, agents, desk, card, session, sidebar, notes, media, whiteboard]
 
 // ---- the app's version ----
@@ -31,6 +29,7 @@ export const CLIENT = `app/${APP_VERSION}`
 // the account through these, never on its own.
 export const core = () => import('./gen/vendor/index.mjs')
 export const account = () => import('./gen/vendor/account.mjs')
+export const canvasWire = () => import('./gen/vendor/canvas.mjs')
 
 // Where the hub is (a tab session may override it: ?hub=, for development).
 export const ses = (k, v) => { try { if (v != null) sessionStorage.setItem(k, v); return sessionStorage.getItem(k) } catch { return v ?? null } }
@@ -44,7 +43,7 @@ export function hubUrl() {
 
 // ---- blocked ----
 // When a session is really stopped (card Nr. 202/203): the raised red hand. It is about a SESSION, not a card, and it
-// can stand without any card. (A card that is urgent knocks; that is the knock, views/text.mjs isKnock.)
+// can stand without any card. (A card that is urgent knocks; that is the knock, ui.mjs isKnock.)
 //
 // A session is blocked when
 //   - it is disconnected while a status line of its says "working" (for longer than a blip: OFFLINE_GRACE_MS),
@@ -128,7 +127,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   const mine = c => onDesk(byAgent.get(c.agent))
   const allOpen = state.queue.map(id => byCard.get(id)).filter(Boolean)
   // An info (a report, a note: nothing to decide) is no question: it is read in the news strip above the Desk
-  // (views/desk.mjs newsStrip, card Nr. "info-c"), never counted in Next, on the Desk or on a session's badge.
+  // (desk.mjs newsStrip, card Nr. "info-c"), never counted in Next, on the Desk or on a session's badge.
   const isInfo = c => c.kind === 'info'
   const allFresh = allOpen.filter(c => !c.with_agent && !isInfo(c))   // the whole board's stack, for the menu's count per desk
   const open = allOpen.filter(c => mine(c) || (!c.with_agent && isKnock(c)))
@@ -682,7 +681,7 @@ function hubFacade(client, board) {
 // A small stand-in for the part of Hotwire Turbo the board's controllers and views rely on: the <turbo-stream>
 // element (actions append, prepend, before, after, replace, update, remove, refresh, with the
 // turbo:before-stream-render event and its detail.render hook), renderStreamMessage, and visit(). The pages are not
-// fetched: the router (public/js/app/router.mjs) renders them in the page. window.Turbo is set for code that asks it.
+// fetched: the router (public/app.mjs) renders them in the page. window.Turbo is set for code that asks it.
 
 let visitor = null
 /** The router registers how a visit is made (path, { action }). */
@@ -757,7 +756,7 @@ export function renderStreamMessage(text) {
 // The view modules register themselves exactly as on the hub (register(t) with t.get, t.post, t.live), so the
 // markup is the same; a "request" here is a navigation or a form of this page, answered from the local model.
 //
-//   const board = createBoard({ hub, model })   hub: hub-facade.mjs; model(): views/model.mjs boardModel of now
+//   const board = createBoard({ hub, model })   hub: hub-facade.mjs; model(): app.mjs boardModel of now
 //   await board.request({ method, path, form, headers })  -> { kind: 'page' | 'stream' | 'redirect' | 'html' | 'none', … }
 //   board.live(clients)                          after a change: the stream actions per open page (only what changed)
 
@@ -848,7 +847,7 @@ function createBoard({ hub, model, views }) {
 
 // ---- layout ----
 // The frame around every view: the floating Desk with the Trommi menu, the sidebar, the place for toasts, the key
-// sheet, the memos. A port of trommi-hub server/views/layout.mjs: the same markup, without the hub's <head>, the
+// sheet, the memos. A port of trommi-hub app.mjs: the same markup, without the hub's <head>, the
 // import map and the live stream (the router keeps the head and patches the body).
 
 /** The body's parts for a page: [{ key, html }] in order (the router keeps a part whose markup did not change). */
@@ -871,7 +870,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
 // pages, done in the page):
 //   - a link of the app (same origin) renders its page from the local model: no request leaves the device;
 //   - the page's body is patched by parts (topbar, sidebar, main, …): a part whose markup did not change stays;
-//   - a form is answered by the board's handlers (public/js/app/board.mjs): stream actions, a redirect, or a page;
+//   - a form is answered by the board's handlers (public/app.mjs): stream actions, a redirect, or a page;
 //   - after every change of the core only the elements that changed are replaced (board.live → <turbo-stream>);
 //   - fetch() calls of the controllers to the hub's old JSON routes (/memo, /desk, a card's draft) are answered here.
 
@@ -1306,7 +1305,7 @@ async function start(client, { fresh = false } = {}) {
   document.addEventListener('turbo:load', conn)
   // The timeline of the page in view is fetched when it is opened (newest page first; "Earlier" loads more).
   // The card page's thread is fetched when it is opened (newest page first; "Earlier comments" loads more). A session's
-  // page loads its own (views/session.mjs, before its first render). The Desk's Working stack says each card's last
+  // page loads its own (session.mjs, before its first render). The Desk's Working stack says each card's last
   // word: the newest few items of the cards with their session.
   const opened = new Set()
   const load = (key, limit) => { if (opened.has(key)) return; opened.add(key); client.loadTimeline(key, { limit }).catch(err => console.warn('timeline', err)) }
@@ -1372,7 +1371,7 @@ async function adopt(c) {
 /** Ask the browser to keep this origin's storage (no eviction under storage pressure; Safari weighs it too). */
 function keepStorage() { try { navigator.storage?.persist?.().catch(() => {}) } catch {} }
 
-/** A calm full-width line at the foot (styled by css/room.css), with "Reload". update: fetch the new build first. */
+/** A calm full-width line at the foot (styled by auth.css), with "Reload". update: fetch the new build first. */
 function notice(text, detail, update, why = '') {
   if (document.querySelector('.room-notice')) return
   const box = document.createElement('div')

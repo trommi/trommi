@@ -1,7 +1,3 @@
-
-import { CLIENT, core, hubUrl } from './app.mjs'
-import { galleryItems, html, mediaPreview, raw, smallMark } from './ui.mjs'
-
 // ---- gallery ----
 // Everything the agents sent, across sessions: one fanned pile "Media N" at the foot of the Desk, beside Notes and
 // "Off the desk" (the newest pictures and videos lying fanned like prints), and the plain media gallery it leads to
@@ -10,6 +6,8 @@ import { galleryItems, html, mediaPreview, raw, smallMark } from './ui.mjs'
 // What counts: the assets the sessions published and the questions' own pictures and videos (one tile each per question). Files sent in
 // a plain chat message are not here: they stand in their session's Files drawer (session.mjs looseFiles), which reads
 // that session's conversation; an index of them across sessions would need every conversation loaded.
+import { CLIENT, core, hubUrl } from './app.mjs'
+import { galleryItems, html, mediaPreview, raw, smallMark } from './ui.mjs'
 const KIND = { image: 'Pictures', video: 'Videos', file: 'Files' }   // Files: pages and every other file
 const kindOf2 = i => (i.type === 'image' || i.type === 'video' ? i.type : 'file')
 const two = n => String(n).padStart(2, '0')

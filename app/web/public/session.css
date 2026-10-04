@@ -1,0 +1,748 @@
+/* Shared primitive: inline video and audio attachments, used by chat and cards alike. */
+.media { margin: 0; display: flex; flex-direction: column; gap: var(--s-1); min-width: 0; }
+.media video { display: block; width: 100%; max-height: min(60vh, 480px); border-radius: var(--r-md); background: #000; }
+.media audio { display: block; width: 100%; }
+.media figcaption { font-size: var(--t-xs); color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Scrollbars: thin and quiet in the panes, in the house colours, no arrow buttons; none at all on the
+   sidebar (it still scrolls by wheel, touch and keys). Text fields keep the system's own. */
+#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap { scrollbar-width: thin; scrollbar-color: color-mix(in srgb, var(--line-strong) 80%, transparent) transparent; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar { width: 8px; height: 8px; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-thumb { border-radius: 8px; border: 2px solid transparent; background: var(--line-strong); background-clip: padding-box; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-track { background: transparent; }
+:is(#inbox, .log, .pane-list, #chat .rich pre, .rich-table-wrap)::-webkit-scrollbar-button { display: none; }
+
+/* ---- conversation: layout ------------------------------------------------ */
+
+/* A session fills the page: its title, then its conversation or its canvas. */
+#session { display: none; grid-column: 2; min-width: 0; min-height: 0; flex-direction: column; background: var(--surface); }
+body:not([data-scope="all"]):not([data-page]) #session { display: flex; }
+/* The title lines up with the column of the conversation and of the questions below it. */
+.pane-title {
+  flex: none; display: flex; align-items: center; gap: var(--s-3); min-height: 56px;
+  padding: var(--s-2) max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter)));
+  border-bottom: 1px solid var(--line);
+}
+.pane-who { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); }
+.pane-name button { max-width: 100%; padding: 0; border: 0; background: none; font: inherit; letter-spacing: inherit; overflow: hidden; text-overflow: ellipsis; }
+@media (any-hover: hover) { .pane-name button:hover { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 5px; text-decoration-color: var(--line-strong); }
+}
+.pane-title h2 { min-width: 0; font: 800 1.2rem/1.2 var(--display); letter-spacing: -.012em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* Sessions laid together: each name is a button that picks that one, for the canvas and for a phone's one column. */
+/* Sessions laid together use the whole width, as their columns do: no name is cut short. */
+body[data-pair] .pane-title { padding-inline: var(--gutter); }
+#chat, #scribble { flex: 1; min-width: 0; min-height: 0; display: none; position: relative; }
+body[data-view="chat"] #chat { display: flex; overflow-x: auto; }
+/* One pane per session; sessions laid together stand side by side, each with its own composer. */
+.chat-pane { flex: 1 1 0; min-width: 0; min-height: 0; display: flex; flex-direction: column; }
+#chat[data-cols]:not([data-cols="1"]) .chat-pane { min-width: 340px; --gutter: var(--s-5); }
+.chat-pane + .chat-pane { border-left: 1px solid var(--line); }
+/* The log and the two lists share one place; a filter decides which is seen. The others keep their scroll position. */
+.chat-body { flex: 1; min-height: 0; display: grid; grid-template: minmax(0, 1fr) / minmax(0, 1fr); }
+.chat-body > * { grid-area: 1 / 1; min-width: 0; min-height: 0; }
+.pane-list { overflow-y: auto; overscroll-behavior: contain; visibility: hidden; padding-block: var(--s-8) var(--s-10); }
+body[data-filter] .log { visibility: hidden; }
+body[data-filter="questions"] .pane-questions { visibility: visible; }
+body[data-filter] .jump { display: none; }
+.log { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; scrollbar-gutter: stable both-edges; }
+.log-inner { min-height: 100%; display: flex; flex-direction: column; padding-block: var(--s-8) var(--s-6); }
+
+/* ---- conversation: messages ---------------------------------------------- */
+
+.msg { margin-top: var(--s-8); min-width: 0; }
+.msg.cont { margin-top: var(--s-3); }
+.day + .msg, .day + .event { margin-top: var(--s-5); }
+/* A message that asks back about a question says which one. */
+.msg-about { display: inline-flex; align-items: baseline; gap: 6px; max-width: 100%; margin-bottom: 4px; padding: 0; border: 0; background: none; font-size: var(--t-xs); color: var(--muted); }
+.msg-about span:last-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+/* (a finger needs 36px: the line is taller than it looks) */
+.msg-about { padding-block: 9px; margin-block: -9px -5px; }
+.msg-about:hover span:last-child { color: var(--fg); text-decoration: underline; }
+.msg-head { display: flex; align-items: center; gap: 10px; margin-bottom: var(--s-2); }
+.msg-name { font-weight: 600; font-size: var(--t-sm); }
+.msg-time { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; }
+
+.msg-user { align-self: flex-end; max-width: min(82%, 34rem); display: flex; flex-direction: column; align-items: flex-end; }
+.msg-user.cont { margin-top: var(--s-1); }
+.bubble {
+  padding: 10px 16px; background: var(--sunken); border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg);
+  font-size: 1rem; line-height: 1.5; overflow-wrap: anywhere;
+}
+.bubble p { white-space: pre-wrap; }
+.msg-user .msg-time { margin-top: 5px; padding-right: 4px; }
+/* One timestamp per run of user messages, under the last one. */
+.msg-user:has(+ .msg-user.cont) .msg-time { display: none; }
+.msg-user:has(+ .msg-user.cont) .bubble { border-radius: var(--r-lg) var(--r-lg) var(--r-sm) var(--r-lg); }
+
+/* Markdown as rich() builds it. Shared by the conversation and the history. */
+:is(#chat, #inbox) .rich { font-size: 1rem; line-height: 1.65; overflow-wrap: anywhere; min-width: 0; }
+:is(#chat, #inbox) .rich > * + * { margin-top: .8em; }
+:is(#chat, #inbox) .rich p { white-space: pre-wrap; }
+:is(#chat, #inbox) .rich ul { padding-left: 1.35em; }
+:is(#chat, #inbox) .rich li + li { margin-top: .3em; }
+:is(#chat, #inbox) .rich li::marker { color: var(--faint); }
+:is(#chat, #inbox) .rich strong { font-weight: 600; }
+:is(#chat, #inbox) .rich a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+:is(#chat, #inbox) .rich a:hover { color: var(--accent-hover); }
+:is(#chat, #inbox) .rich :not(pre) > code {
+  font: .86em/1.4 var(--mono); padding: .12em .4em; border-radius: 6px;
+  background: var(--sunken); border: 1px solid var(--line);
+}
+:is(#chat, #inbox) .rich .code { border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); overflow: hidden; }
+:is(#chat, #inbox) .rich .code-head {
+  display: flex; align-items: center; justify-content: space-between; gap: var(--s-3);
+  padding: 4px 4px 4px 14px; background: var(--sunken); border-bottom: 1px solid var(--line);
+}
+:is(#chat, #inbox) .rich .code-lang { font: 500 var(--t-xs)/1 var(--mono); letter-spacing: .04em; text-transform: uppercase; color: var(--muted); }
+:is(#chat, #inbox) .rich .code-copy {
+  display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px;
+  border: 0; border-radius: var(--r-sm); background: none; color: var(--muted);
+  font-size: var(--t-xs); font-weight: 500;
+  transition: background var(--d-fast) var(--ease-out), color var(--d-fast) var(--ease-out);
+}
+:is(#chat, #inbox) .rich .code-copy:hover { background: var(--surface); color: var(--fg); }
+:is(#chat, #inbox) .rich .code-copy.is-done { color: var(--accent); }
+:is(#chat, #inbox) .rich .code-copy .ico { width: 15px; height: 15px; }
+:is(#chat, #inbox) .rich pre { margin: 0; padding: 14px 16px; overflow-x: auto; tab-size: 2; }
+:is(#chat, #inbox) .rich pre code { font: .84rem/1.65 var(--mono); }
+
+/* attachments */
+.shots { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: var(--s-2); max-width: 34rem; }
+.shots-one { grid-template-columns: minmax(0, 26rem); }
+.shot {
+  display: block; padding: 0; aspect-ratio: 4 / 3; overflow: hidden; cursor: zoom-in;
+  border: 1px solid var(--line); border-radius: var(--r-md); background: var(--sunken);
+  transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-med) var(--ease-out), transform var(--d-med) var(--ease-out);
+}
+.shots-one .shot { aspect-ratio: 16 / 10; }
+.shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.shot:hover { border-color: var(--line-strong); box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.file-chip {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-height: 36px; padding: 0 12px 0 9px;
+  border: 1px solid var(--line); border-radius: var(--r-sm); background: var(--surface-2);
+  color: var(--fg); font-size: var(--t-sm); font-weight: 500; text-decoration: none;
+  transition: border-color var(--d-fast) var(--ease-out);
+}
+.file-chip .ico { width: 17px; height: 17px; color: var(--muted); }
+.file-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+:is(#chat, #inbox) .rich .file-chip { color: var(--fg); }
+.file-chip:hover { border-color: var(--accent); }
+
+/* something the session published under a link of its own */
+.asset-card { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3) var(--s-4); max-width: 34rem; padding: var(--s-3) var(--s-4); border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line-strong), 0 2px 2px rgb(20 30 25 / .04), 0 5px 5px rgb(20 30 25 / .04); }
+.asset-card.is-gone { background: none; box-shadow: none; border: 1px dashed var(--line-strong); }
+.asset-card.is-gone strong { color: var(--muted); }
+/* The server-rendered card (session.mjs assetCard): an artifact, sober, always with a picture of it on
+   the left (controller assetthumb: the decrypted picture, or a page's first screen; else the drawn kind), what it is,
+   Open, and one Copy link that copies the link anyone can open (controller share). Card Nr. 197. */
+.asset-card.has-preview { display: grid; grid-template-columns: 176px minmax(0, 1fr); grid-template-areas: "preview text" "preview actions"; align-items: start; gap: var(--s-2) var(--s-4); max-width: 36rem; padding: var(--s-3); border-radius: 10px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); }
+.asset-card.has-preview[data-busy] .asset-copy { opacity: .6; pointer-events: none; }
+.asset-card.has-preview.is-gone { grid-template-areas: "preview text"; border: 0; background: none; box-shadow: 0 0 0 1px var(--line-strong); }
+.asset-card.has-preview.is-gone .asset-preview { opacity: .6; }
+.asset-card { --asset-open-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M14 4h6v6 M20 4l-9 9 M18 14v5.5H4.5V6H10' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); --asset-link-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath d='M10 14a4.5 4.5 0 0 0 6.4 0l3-3a4.5 4.5 0 0 0-6.4-6.4l-1.2 1.2 M14 10a4.5 4.5 0 0 0-6.4 0l-3 3a4.5 4.5 0 0 0 6.4 6.4l1.2-1.2' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+@media (max-width: 600px) {
+  .asset-card.has-preview { grid-template-columns: 104px minmax(0, 1fr); grid-template-areas: "preview text" "actions actions"; gap: 10px 12px; }
+}
+
+/* board events: a quiet timeline between the messages */
+.event {
+  --tone: var(--accent); --tone-soft: var(--accent-soft);
+  align-self: flex-start; max-width: 100%; margin: var(--s-6) 0 0 -6px;
+  display: flex; align-items: center; gap: 10px; min-height: 36px; padding: 4px 12px 4px 6px;
+  border: 0; border-radius: var(--r-pill); background: none; text-align: left; position: relative;
+  transition: background var(--d-fast) var(--ease-out);
+}
+.event.cont { margin-top: 0; }
+.event:hover { background: var(--sunken); }
+.event-asked { --tone: var(--urg-high); --tone-soft: var(--urg-high-soft); }
+.event-done { --tone: var(--urg-low); --tone-soft: var(--urg-low-soft); }
+.event-urgency { --tone: var(--urg-critical); --tone-soft: var(--urg-critical-soft); }
+.event-ico { width: 24px; height: 24px; flex: none; display: grid; place-items: center; border-radius: 50%; background: var(--tone-soft); color: var(--tone); position: relative; }
+.event-ico .ico { width: 14px; height: 14px; stroke-width: 2.2; }
+/* consecutive events are joined into one thread */
+.event.cont .event-ico::before { content: ""; position: absolute; left: 50%; bottom: 100%; width: 1px; height: 12px; background: var(--line-strong); }
+.event-body { display: flex; align-items: baseline; gap: 8px; min-width: 0; font-size: var(--t-sm); }
+.event-kind { font-size: var(--t-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; color: var(--tone); white-space: nowrap; }
+.event-text, .event-about { color: var(--muted); font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.event:hover .event-text, .event:hover .event-about { color: var(--fg); }
+/* The question, named briefly, then what happened to it. The question gives way first when the line is short. */
+.event-about { flex: 0 20 auto; min-width: 5ch; }
+.event-about + .event-text { flex: 0 1 auto; color: var(--fg); font-weight: 600; }
+.event-about + .event-text::before { content: "→"; margin-right: 8px; color: var(--faint); font-weight: 400; }
+.event-time { font-size: var(--t-xs); color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* (Quiet: what happened to a question is a note between the messages, not a headline: one small line.) */
+.event { min-height: 26px; margin-top: var(--s-3); padding-block: 2px; }
+.event-ico { width: 16px; height: 16px; background: none; color: var(--faint); }
+.event-ico .ico { width: 13px; height: 13px; stroke-width: 2; }
+.event-body { font-size: var(--t-xs); gap: 6px; }
+.event-kind { color: var(--faint); font-weight: 500; letter-spacing: .05em; font-size: .68rem; }
+.event-text, .event-about { color: var(--faint); font-weight: 400; }
+.event-about + .event-text { color: var(--muted); font-weight: 500; }
+.event-about + .event-text::before { margin-right: 6px; }
+.event-time { font-size: .68rem; opacity: 0; transition: opacity var(--d-fast); }
+.event.cont .event-ico::before { content: none; }
+/* A question that waits elsewhere (snoozed, with the agent) keeps a little of its colour. */
+.event-snoozed .event-ico, .event-handed .event-ico { color: var(--urg-high); }
+/* The answer stands where the question was asked (a session on its own): its second line is left out. */
+.chat-pane:not(.is-several) .event-echo { display: none; }
+/* day separators */
+.day { display: flex; align-items: center; gap: var(--s-4); margin-top: var(--s-10); color: var(--faint); }
+.day:first-child { margin-top: 0; }
+.day::before, .day::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.day span { font-size: var(--t-xs); font-weight: 600; letter-spacing: .08em; text-transform: uppercase; }
+
+/* the agent is working */
+.working { display: flex; align-items: center; gap: 10px; margin-top: var(--s-8); color: var(--muted); font-size: var(--t-sm); font-weight: 500; }
+.working .agent-mark { animation: breathe 2.4s var(--ease-in-out) infinite; }
+
+/* empty conversation */
+.empty-chat { margin: auto; padding-block: var(--s-8); display: flex; flex-direction: column; align-items: center; text-align: center; max-width: 30rem; }
+.empty-chat h2 { font: 700 var(--t-2xl)/1.15 var(--display); letter-spacing: -.02em; margin-top: var(--s-6); text-wrap: balance; }
+.empty-chat > p { color: var(--muted); font-size: 1rem; margin-top: var(--s-3); text-wrap: pretty; }
+.empty-picks { display: flex; flex-wrap: wrap; justify-content: center; gap: var(--s-2); margin-top: var(--s-6); }
+.empty-pick {
+  min-height: 40px; padding: 0 16px; border: 1px solid var(--line); border-radius: var(--r-pill);
+  background: var(--surface); font-size: var(--t-sm); font-weight: 500; color: var(--fg);
+  transition: border-color var(--d-fast) var(--ease-out), background var(--d-fast) var(--ease-out);
+}
+.empty-pick:hover { border-color: var(--accent); background: var(--accent-soft); }
+
+/* ---- conversation: dock (jump button, error, composer) ------------------- */
+
+.dock { flex: none; position: relative; padding-bottom: max(var(--s-4), env(safe-area-inset-bottom, 0px)); background: var(--surface); }
+.dock::before {
+  content: ""; position: absolute; left: 0; right: 0; bottom: 100%; height: 28px; pointer-events: none;
+  background: linear-gradient(to top, var(--surface), transparent);
+}
+.jump {
+  position: absolute; left: 50%; bottom: calc(100% + var(--s-3)); translate: -50% 0; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px; height: 38px; padding: 0 16px 0 11px;
+  border: 1px solid var(--line); border-radius: var(--r-pill); background: var(--surface); color: var(--fg);
+  box-shadow: var(--shadow-md); font-size: var(--t-sm); font-weight: 500; white-space: nowrap;
+  animation: pop var(--d-med) var(--ease-spring) both;
+  transition: background var(--d-fast) var(--ease-out), border-color var(--d-fast) var(--ease-out);
+}
+.jump .ico { width: 17px; height: 17px; }
+.jump:hover { border-color: var(--line-strong); }
+.jump.has-unread { background: var(--accent); border-color: transparent; color: var(--accent-fg); }
+.jump.has-unread:hover { background: var(--accent-hover); }
+
+.composer {
+  display: flex; align-items: flex-end; gap: var(--s-1); padding: 7px; cursor: text;
+  background: var(--surface); border: 1px solid var(--line-strong); border-radius: var(--r-xl);
+  box-shadow: var(--shadow-md);
+  transition: border-color var(--d-fast) var(--ease-out), box-shadow var(--d-med) var(--ease-out);
+}
+.composer { flex-wrap: wrap; }
+.composer.is-drop { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft), var(--shadow-md); }
+/* what is attached: a line of small chips above the words; a click takes one off */
+.composer-files { flex: 0 0 100%; display: flex; flex-wrap: wrap; gap: 6px; padding: 4px 6px 4px; }
+.composer-files:empty { display: none; }
+.composer-file { display: inline-flex; align-items: center; gap: 6px; max-width: 240px; height: 32px; padding: 0 4px 0 7px; border: 0; border-radius: 9px; background: var(--sunken); color: var(--fg); font-size: var(--t-xs); font-weight: 500; }
+.composer-file .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
+.composer-file span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* a picture shows itself; the x says that a click takes the chip off */
+.composer-file.has-thumb { padding-left: 4px; }
+.composer-file img { flex: none; width: 24px; height: 24px; border-radius: 6px; object-fit: cover; background: var(--surface); }
+.composer-file em { flex: none; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 50%; font: 400 15px/1 var(--font); font-style: normal; color: var(--muted); }
+.composer-file:hover em { background: var(--fg); color: var(--bg); }
+.composer-clip .sketch { width: 21px; height: 21px; stroke-width: 1.8; }
+.composer textarea {
+  flex: 1; min-width: 0; height: 40px; padding: 8px 4px; resize: none; border: 0; background: none;
+  font-size: 1rem; line-height: 24px; overflow-y: hidden; scrollbar-width: thin;
+}
+.composer textarea::placeholder { color: var(--faint); opacity: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* ---- a scribble in the conversation ---- */
+.scribble-card { display: grid; gap: 0; padding: 0; width: min(280px, 100%); border: 1px solid var(--line); border-radius: var(--r-lg); background: var(--surface); overflow: hidden; text-align: left; box-shadow: var(--shadow-sm); transition: box-shadow var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.scribble-card:hover { box-shadow: var(--shadow-md); transform: translateY(-1px); }
+.scribble-card img { display: block; width: 100%; aspect-ratio: 4 / 3; object-fit: contain; background: #fff; border-bottom: 1px solid var(--line); }
+.scribble-card span { padding: 9px var(--s-3); font-size: var(--t-sm); font-weight: 600; }
+.msg-user .scribble-card { margin-left: auto; }
+.msg-user .bubble + .scribble-card, .msg-user .scribble-card + .bubble { margin-top: var(--s-2); }
+@media (hover: hover) {
+  .agent-row .crown-toggle[aria-pressed="false"], .pane-who .crown-toggle[aria-pressed="false"] { opacity: 0; }
+  .agent-row:hover .crown-toggle[aria-pressed="false"], .pane-who:hover .crown-toggle[aria-pressed="false"] { opacity: .5; }
+}
+.pane-who { position: relative; }
+.pane-who .crown-toggle { left: 4px; top: calc(50% - 32px); }
+
+/* ---- a question inside the conversation: the same row as in the inbox, where it was asked ---- */
+.ask { margin-top: var(--s-4); }
+/* A session on its own: the question is the Desk's row itself, answerable in the stream (js/chat.js). */
+.ask-card { container: rows / inline-size; margin-block: var(--s-6) var(--s-3); }
+.ask > .event { margin-left: -6px; }
+.ask > .event[aria-expanded="true"] .event-about { color: var(--fg); }
+/* What the human sent along stands at the right, under each other's edge like the bubbles. */
+.msg.msg-user:has(.shots) { width: min(82%, 34rem); }
+.msg.msg-user .shots { align-self: stretch; margin-left: 0; grid-template-columns: repeat(auto-fit, minmax(0, 11rem)); justify-content: end; max-width: none; }
+.msg.msg-user .shots-one { grid-template-columns: minmax(0, 18rem); }
+.msg.msg-user .files { justify-content: flex-end; margin-bottom: var(--s-2); }
+/* Open questions out of sight: how many, and the way to the next one. Beside "To the end", at the column's right edge. */
+.open-jump {
+  position: absolute; z-index: 2; bottom: calc(100% + var(--s-3)); right: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter)));
+  display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 9px 0 13px;
+  border: 0; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface);
+  box-shadow: var(--shadow-md); font-size: var(--t-sm); font-weight: 600; white-space: nowrap; font-variant-numeric: tabular-nums;
+}
+.open-jump .ico { width: 16px; height: 16px; stroke-width: 2.2; }
+.open-jump.is-up .ico { rotate: 180deg; }
+.open-jump:hover { filter: brightness(.94); }
+.open-jump:active { scale: .97; }
+body[data-filter] .open-jump { display: none; }
+html body:not([data-pair]) .pane-now { font-size: var(--t-sm); }
+html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
+@media (min-width: 861px) {
+  html body:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: calc(var(--s-3) + 44px); }
+}
+@media (min-width: 1200px) {
+  html body:not([data-pair]):not([data-scope="all"]) .pane-title { padding-right: 0; }
+}
+/* A wide window, a session on its own: the conversation moves together to half the width, the canvas stands beside it. */
+@media (min-width: 1200px) {
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #session { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); grid-template-rows: auto minmax(0, 1fr); }
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) .pane-title { grid-column: 1 / -1; }
+  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #chat { display: flex; grid-column: 1; grid-row: 2; }
+}
+/* Both markers stand at the column's right edge, one above the other, clear of the middle of the lines; and the
+   stream ends with room for them, so its last line is never under one. */
+.jump { left: auto; translate: none; right: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))); height: 34px; }
+.jump:not([hidden]) ~ .open-jump { bottom: calc(100% + var(--s-3) + 40px); }
+.chat-pane:not(.is-several) .log-inner { padding-bottom: 60px; }
+/* On a wide window a session used to be split in two (session.css: its questions in a column of their own,
+   the conversation narrow beside it). It is one stream again; these lines take that split back for a session
+   on its own. Sessions laid together keep their layout. */
+@media (min-width: 1200px) {
+  body:not([data-pair]):not([data-scope="all"]) .pane-who,
+  body:not([data-pair]):not([data-scope="all"]) .pane-now { margin-inline: max(var(--gutter), calc((100% - 47.5rem) / 2 + var(--gutter))) max(17rem, calc((100% - 47.5rem) / 2 + var(--gutter))); }
+  body:not([data-pair]):not([data-scope="all"]) .pane-title { border-bottom: 1px solid var(--line); }
+}
+
+.msg-details { margin-top: var(--s-2); border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface-2); }
+.msg-details summary { cursor: pointer; padding: 8px var(--s-3); font-size: var(--t-sm); font-weight: 600; color: var(--muted); list-style: none; display: flex; align-items: center; gap: 6px; }
+.msg-details summary::before { content: "›"; display: inline-block; transition: transform var(--d-fast) var(--ease-out); }
+.msg-details[open] summary::before { transform: rotate(90deg); }
+.msg-details summary::-webkit-details-marker { display: none; }
+.msg-details > .rich { padding: 0 var(--s-3) var(--s-3); font-size: var(--t-md) !important; color: var(--muted); }
+
+/* ---- the lists a filter lays over the conversation: the session's questions, then the answered ones; its files ---- */
+.session-cards .inbox-head, .session-cards .inbox-groups { max-width: none; }
+.session-cards .inbox-head { margin-bottom: var(--s-5); }
+.session-cards .inbox-title p { margin-top: 0; }
+.session-cards .inbox-groups { gap: var(--s-8); }
+.session-cards .inbox-empty { margin-top: var(--s-4); }
+
+/* The heading is a divider, as the senders' names are in the inbox. */
+.hist-heading { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-2); font: 800 1.2rem/1 var(--display); }
+.hist-heading::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
+.hist-heading b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); }
+
+/* ---- rename a session, pick its scribble ---- */
+/* Rename is a small form at the name that was pressed (agents.js openEditor): no veil over the page. */
+.session-editor { border: 0; padding: 0; border-radius: 12px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); width: min(340px, calc(100vw - 16px)); animation: pop var(--d-fast) var(--ease-out) both; }
+.session-editor[data-anchored] { position: fixed; margin: 0; }
+.session-editor::backdrop { background: transparent; }
+.session-editor form { display: grid; gap: var(--s-2); padding: var(--s-4); }
+.session-editor h2 { font: 800 1.5rem/1.15 var(--display); }
+.session-editor input { width: 100%; padding: 10px 12px; border: 1px solid var(--line-strong); border-radius: 8px; background: transparent; font-size: max(16px, 1em); }
+.session-editor .caps { color: var(--muted); }
+.session-buttons { display: flex; justify-content: flex-end; gap: var(--s-2); margin-top: var(--s-2); }
+.session-buttons button { min-height: 42px; padding: 0 1.2em; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: none; font-weight: 600; }
+.session-buttons .is-lead { background: var(--fg); border-color: var(--fg); color: var(--bg); }
+@media (max-width: 860px) {
+  #session { grid-column: 1; grid-row: 3; }
+  #chat, #scribble { animation: fade var(--d-med) var(--ease-out); }
+  /* The strip of sessions above already says which one this is; the title keeps only the filters,
+     and for sessions laid together the names, to pick the one column there is room for. */
+  .pane-title { min-height: 0; padding: 6px var(--gutter); gap: var(--s-2) var(--s-3); flex-wrap: wrap; }
+  .pane-title .modes { display: none; }
+  .pane-who { flex: 1 1 auto; }
+  .pane-who:empty, body:not([data-pair]) .pane-who { display: none; }
+  .pane-title h2 { font-size: 1rem; }
+  body[data-view="scribble"]:not([data-pair]) .pane-title { display: none; }
+  body[data-pair] .chat-pane:not(.is-member) { display: none; }
+  #chat[data-cols]:not([data-cols="1"]) .chat-pane { min-width: 0; --gutter: var(--s-4); }
+  .pane-list { padding-block: var(--s-5) var(--s-8); }
+
+  .log { scrollbar-gutter: auto; }
+  .log-inner { padding-block: var(--s-5) var(--s-5); }
+  .msg { margin-top: var(--s-6); }
+  .msg-user { max-width: 88%; }
+  .event { min-height: 44px; margin-top: var(--s-4); }
+  .event.cont .event-ico::before { height: 20px; }
+  .event-time { display: none; }
+  .dock { padding-bottom: var(--s-3); }
+  .composer { border-radius: var(--r-xl); padding: 5px; gap: 0; }
+  .composer textarea { height: 44px; padding-block: 10px; font-size: 16px; }
+  #chat .rich pre code { font-size: .8rem; }
+}
+.topbar #brand-doors :is(i, kbd):not(.jump-box kbd) { margin-left: auto; padding-left: 12px; font: 500 var(--t-xs)/1 var(--font); font-style: normal; letter-spacing: 0; text-transform: none; color: var(--muted); }
+.topbar #brand-doors kbd:not(.jump-box kbd) { min-width: 0; padding: 3px 6px; background: none; box-shadow: 0 0 0 1px var(--line-strong); border-radius: 6px; font-family: var(--mono); }
+@media (max-width: 860px) {
+
+  /* A finger needs 40px. These keep their look; an unseen area around them takes the tap. */
+  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .inbox-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback) { position: relative; }
+  :is(.agent-badge, .inbox-revising-take, #filter-questions, #filter-files, .rich .code-copy, .file-chip, .keys-close, .composer-file, .scribble-back, .inbox-walk, .inbox-when > .cardclip-copy, .inbox-done-sub > .cardclip-copy, .inbox-takeback, .topbar .padlink-open, .open-jump, .jump, .rh-open)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 40px); height: max(100%, 40px); translate: -50% -50%; }
+  .msg-details summary { min-height: 40px; }
+  .composer-file { height: 34px; }
+  /* the Snooze corner of a question inside a conversation */
+  /* It is the 28px square beside the title now (.inbox-when): made 40px high it was 28x40 and lay 10px over the
+     title below. It keeps its look; an unseen 40px area takes the tap. */
+  .log .inbox-when .inbox-tab-act { overflow: visible; }
+  .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; translate: -50% -50%; }
+}/* A session's title on a wide window, and the view of sessions laid together (js/beside.js).
+   One session is one stream (js/chat.js): its questions stand in its conversation. Here is only the
+   head of its page on a wide window: a large mark, the name, a line with what it is at.
+   Sessions laid together: one list of the questions of all of them (js/beside.js mounts it) in a wide
+   column, their conversations narrow beside it, one above the other; below 1200px that list stands
+   above the conversations. */
+
+.pane-now { display: none; }
+@media (min-width: 1200px) {
+
+  /* ---- one session: the title is a head of its own: mark, name, a line; the modes at its right end ---- */
+  body:not([data-pair]) .pane-title {
+    display: grid; grid-template-rows: auto auto; align-items: center; gap: 0;
+    min-height: 0; padding: 0;
+  }
+  body:not([data-pair]) .pane-who {
+    grid-column: 1 / -1; grid-row: 1; gap: var(--s-4);
+    margin: var(--s-6) max(var(--gutter), calc((100% - var(--beside-col)) / 2 + var(--gutter))) 0;
+  }
+  body:not([data-pair]) .pane-who .agent-avatar { width: 56px; height: 56px; border-radius: 16px; }
+  body:not([data-pair]) .pane-who .crown-toggle { left: 12px; top: -17px; }
+  body:not([data-pair]) .pane-who .crown-toggle .crown-mark { width: 26px; }
+  body:not([data-pair]) .pane-title h2 { font-size: clamp(1.7rem, 2.6vw, 2.2rem); line-height: 1.1; letter-spacing: -.025em; }
+  /* Under the name: what the session is at, its model and machine. */
+  body:not([data-pair]) .pane-now {
+    grid-column: 1 / -1; grid-row: 2; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px var(--s-3); min-height: 1.5em;
+    margin: -14px max(var(--gutter), calc((100% - var(--beside-col)) / 2 + var(--gutter))) var(--s-3);
+    padding-left: calc(56px + var(--s-4)); color: var(--muted); font-size: var(--t-md);
+  }
+  .pane-now .caps { color: var(--faint); font-size: .66rem; white-space: nowrap; }
+  .pane-now span:first-child { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The name's column, then the filters, then the two modes, on the title's lower line. (The longer
+     selectors outweigh the lines in app.css that once took the old split back.) */
+  body:not([data-pair]):not([data-scope="all"]) .pane-title { grid-template-columns: minmax(0, 1fr) auto auto; }
+
+  /* ---- sessions laid together: one wide column with the questions of all of them, the conversations
+     narrow beside it, one above the other, each with its own name and composer ---- */
+  body[data-pair]:not([data-page]):not([data-scope="all"]) #session { display: grid; grid-template-columns: minmax(0, 1fr) var(--talk-w); grid-template-rows: auto minmax(0, 1fr); }
+  body[data-pair] .pane-title { grid-column: 1 / -1; }
+  body[data-pair] #chat { grid-column: 2; grid-row: 2; flex-direction: column; overflow: hidden; border-left: 1px solid var(--line); }
+  body[data-pair] #chat .chat-pane { min-width: 0 !important; --gutter: var(--s-4) !important; }
+  body[data-pair] #chat .chat-pane + .chat-pane { border-left: 0; border-top: 1px solid var(--line-strong); }
+  body[data-pair] #chat .log-inner { padding-block: var(--s-4) var(--s-4); }
+  body[data-pair] #chat .msg { margin-top: var(--s-5); }
+  body[data-pair] #chat .hint { display: none; }
+}
+body[data-pair][data-filter="questions"] .log { visibility: visible; }
+/* The two round buttons (memo, Scratchpad) stand at the top right of a session: the joined title's
+   controls end before them. */
+@media (min-width: 861px) {
+  body[data-pair]:not([data-scope="all"]):not([data-page]) .pane-title { padding-right: 108px; }
+}
+@media (max-width: 860px) {
+  body[data-pair][data-joined-list][data-view="chat"]:not([data-page]) #chat { display: none; }
+}
+@media (min-width: 1200px) {
+  body[data-pair][data-view="chat"]:not([data-page]):not([data-scope="all"]) #session { position: relative; }
+  body[data-talk-drag] #session :is(iframe, .rh-frame) { pointer-events: none; }
+  body[data-pair][data-talk-folded] #chat { display: none !important; }
+}
+.cardclip-chip { display: inline-flex; align-items: center; gap: 6px; min-width: 0; max-width: 100%; height: 28px; padding: 0 4px 0 9px; border-radius: 8px; background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); text-decoration: none; }
+.cardclip-chip b { flex: none; font-weight: 600; color: var(--muted); }
+
+/* in a message: a quiet line of linked chips */
+.cardclip-row { display: flex; flex-wrap: wrap; gap: 6px; max-width: 100%; margin: 0 0 4px; }
+.msg-user .cardclip-row { justify-content: flex-end; }
+.cardclip-chip.is-link { padding-right: 9px; box-shadow: inset 0 0 0 1px var(--line); background: none; }
+.cardclip-chip.is-link:hover { background: var(--sunken); }
+.cardclip-chip.is-link:hover .cardclip-title { text-decoration: underline; text-underline-offset: 3px; }
+.quick .cardclip-chip, .quick .cardclip-offer { background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
+.pane-list .inbox-row.is-current::before { display: none; }/* A session's page on a wide window (861px and up): band, heading, conversation, one under the other.
+   The band at the top (app.css, --band: 64px, as high as the Desk box reaches) holds only what floats: the Desk
+   box, the menu's pill in its middle, the corner buttons. The heading (drawing, name, the quiet line, the crown
+   switch) has its own line under the band, on the conversation's column, as the Desk's and the Agents' headings
+   do (3 Oct: in the band it competed with the pill). The conversation begins under the heading, without a rule,
+   and fades out at its top edge. The filter stands beside the composer.
+   Linked last, so it outweighs the head rules in app.css and beside.css.
+   A phone: see the foot of this file. */
+
+@media (min-width: 861px) {
+  body:not([data-scope="all"]):not([data-page]) #session { position: relative; }
+  /* One session, its conversation: it begins below the band (app.css, --band), so no line of it can lie under the
+     pill or the heading, wherever it is scrolled to; its first line stands 16px under the band, on the line of the
+     sidebar's first row, and what scrolls away fades out over the band's last 12px instead of being cut. */
+  body[data-view="chat"]:not([data-pair]) #session .log-inner,
+  body[data-view="chat"]:not([data-pair]) #session .pane-list { padding-top: var(--s-4); }
+  body[data-view="chat"]:not([data-pair]) #session :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
+  /* The same fade wherever else something scrolls away under the band: the conversation beside the canvas, and
+     with sessions laid together the column of their questions. (Their conversations each begin under a name
+     with a rule, and the canvas under its strip of pictures: those are not at the band.) */
+  body[data-view="scribble"]:not([data-pair]) #session #chat :is(.log, .pane-list) { -webkit-mask-image: linear-gradient(#0000, #000 var(--s-3)); mask-image: linear-gradient(#0000, #000 var(--s-3)); }
+
+  /* ---- the heading's own line: under the band, never in it (the band holds only the Desk box, the pill and the
+     corner buttons, so the place one is in does not compete with the menu). It stands on the 80px line (band 64 +
+     16), on the conversation's column (app.css .column: 47.5rem, the gutter inside), and the conversation begins
+     under it. It is in the flow, not laid over: what the stream replaces in it keeps its height (one line each). */
+  #session .pane-title {
+    position: relative; z-index: 4; flex: none; grid-area: auto;
+    display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto auto; align-items: start; gap: 0;
+    box-sizing: border-box; width: 100%; max-width: 47.5rem; min-height: 0; margin: 0 auto; padding: var(--s-4) var(--gutter) var(--s-3); border: 0;
+    --head-w: 100%;
+  }
+
+  /* ---- the heading: drawing, name, the quiet line under the name (at the column's left edge). ---- */
+  #session .pane-who:empty { display: none; }
+  #session .pane-who {
+    grid-column: 1; grid-row: 1; flex: none; display: flex; align-items: flex-start; gap: var(--s-3);
+    max-width: var(--head-w); min-height: 44px; margin: 0; pointer-events: auto; z-index: 1;
+  }
+  #session .pane-who .agent-avatar { width: 44px; height: 44px; border-radius: 12px; }
+  #session .pane-title h2 { font-size: 1.5rem; line-height: 1.15; letter-spacing: -.02em; } /* the name of the place: a heading */
+  body[data-pair] #session .pane-title h2 { align-self: center; font-size: 1.08rem; }
+  /* (The crown sits on the drawing's corner, its tip on the heading's top line.) */
+  #session .pane-who .crown-toggle { left: 7px; top: -4px; }
+  /* The crown a main session's drawing wears (app.css .agent-avatar .crown-mark stands a quarter above the drawing):
+     here it sits on its corner, as it did in the band. */
+  #session .pane-who .agent-avatar .crown-mark { top: 2%; left: 22%; width: 52%; }
+  #session .pane-who .crown-toggle .crown-mark { width: 22px; }
+  /* Under the name: what the session is at, its model and machine, on one line. */
+  body:not([data-pair]) #session .pane-now {
+    grid-column: 1; grid-row: 2; display: flex; flex-wrap: nowrap; align-items: baseline; gap: var(--s-2);
+    position: relative; z-index: 1; max-width: var(--head-w); min-height: 0; margin: -15px 0 0; padding-left: 56px;
+    color: var(--muted); font-size: var(--t-sm); line-height: 1.25; white-space: nowrap; overflow: hidden;
+  }
+  #session .pane-now span:first-child { flex: 0 0 auto; min-width: 2.5em; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+  #session .pane-now .caps { flex: 0 1 auto; min-width: 0; max-width: 100%; overflow: hidden; text-overflow: ellipsis; font-size: .68rem; }
+  /* A name alone (no line under it) stands at the drawing's middle. */
+  #session .pane-title:has(.pane-now:empty) .pane-who { align-items: center; }
+
+  /* ---- the filters: a quiet row under the composer, at the column's left edge ---- */
+  #session .filters {
+    position: static; grid-column: 1 / -1; grid-row: 4; justify-self: start; align-self: end; gap: 2px;
+    margin: 0 0 6px calc(max(var(--gutter), (100% - 47.5rem) / 2 + var(--gutter)) + 2px); pointer-events: auto;
+  }
+  #session .filters :is(a, button) { min-height: 26px; padding: 0 9px; border-radius: 7px; font-size: var(--t-xs); }
+  #session .filters b { margin-left: 6px; padding: 1px 6px; }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: 38px; }
+  /* Sessions laid together have a composer each: "Files" stands beside their names in the band. */
+  body[data-pair] #session .filters { grid-column: 2; grid-row: 1 / 3; align-self: center; margin: 0 0 0 18px; }
+}
+
+/* ---- a phone (860px and below): the same idea. One session: no strip and no rule above the conversation; it
+   flows from under the top bars to the composer. The session's name stands in the strip of sessions already,
+   so there is no heading. The two filters are a quiet row under the composer; while the keyboard is up
+   (app.js sets data-typing; or the viewport is short) the row is gone and its room goes to the conversation.
+   Sessions laid together keep their line of names (it picks the one column) with "Files", without the rule. ---- */
+@media (max-width: 860px) {
+  #session .pane-title { border-bottom: 0; }
+  body[data-view="chat"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #session { position: relative; }
+  body[data-view="chat"]:not([data-pair]) #session .pane-title {
+    position: absolute; z-index: 4; inset: 0; display: flex; align-items: flex-end; flex-wrap: nowrap;
+    min-height: 0; padding: 0 var(--gutter) max(3px, env(safe-area-inset-bottom, 0px)); pointer-events: none;
+  }
+  body[data-view="chat"]:not([data-pair]) #session .filters { margin: 0 0 0 4px; gap: 2px; pointer-events: auto; }
+  body[data-view="chat"]:not([data-pair]) #session .filters :is(a, button) { min-height: 32px; padding: 0 9px; font-size: var(--t-xs); }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: calc(38px + env(safe-area-inset-bottom, 0px)); }
+  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+  :root[data-typing] body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
+  body[data-pair] #session .filters :is(a, button) { min-height: 36px; }
+}
+@media (max-width: 860px) and (max-height: 520px) {
+  body[data-view="chat"]:not([data-pair]) #session .filters { display: none; }
+  body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: var(--s-3); }
+}
+
+/* Windowed paint: what of the conversation is out of sight is neither laid out nor painted (messages: trommi.css). */
+#session .log .event, #session .log .day { content-visibility: auto; contain-intrinsic-size: auto 36px; }
+/* (A question's Desk row in the conversation is not skipped: its box and shadow reach past it and would be clipped.) */
+
+/* The heading with a long name: the drawing keeps its size, the stop sign keeps its words, the name gives way. */
+#session .pane-who .t-session-edit { flex: 0 1 auto; }
+#session .pane-who .t-session-edit > .t-pick-mark, #session .pane-who .t-session-edit > .t-crown-form { flex: none; }
+#session .pane-who .t-session-edit > .t-pick-name { flex: 0 1 auto; min-width: 0; }
+#session .pane-who .t-blocked { flex: none; max-width: 45%; }
+#session .pane-who .t-blocked > span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.as-view .as-copy { flex: none; margin-left: auto; }
+.as-note { margin: 0; padding: 0 18px 10px; color: var(--muted); font-size: var(--t-sm); text-wrap: pretty; }
+.as-stage { min-height: 0; display: flex; flex-direction: column; padding: 0 14px 14px; }
+.as-stage[data-type="image"], .as-stage[data-type="video"], .as-stage[data-type="audio"], .as-stage[data-type="file"] { align-items: center; justify-content: center; }
+/* The published page gets the room: a sheet with a hairline, edge to edge on a phone. */
+.as-frame-box { position: relative; flex: 1; min-height: 0; border-radius: var(--r-sm); overflow: hidden; background: #fff; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
+.as-frame-box > iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; background: #fff; }
+.as-wait { margin: auto; padding: var(--s-6); color: var(--faint); font-size: var(--t-sm); }
+.as-media { display: block; max-width: 100%; max-height: 100%; border-radius: var(--r-sm); box-shadow: 0 0 0 1px var(--line); }
+audio.as-media { width: min(100%, 560px); box-shadow: none; }
+video.as-media { background: #000; }
+.as-file, .as-problem { max-width: 560px; padding: var(--s-5) var(--s-6); border-radius: var(--r-sm); background: var(--surface); }
+.as-file { display: grid; gap: var(--s-2); justify-items: start; box-shadow: 0 0 0 1px var(--line-strong); }
+.as-file-name { font: 500 var(--t-md)/1.3 var(--mono); overflow-wrap: anywhere; }
+.as-problem { margin: auto; border: 1.5px dashed var(--line-strong); color: var(--muted); }
+.as-btn { display: inline-flex; align-items: center; min-height: 44px; margin-top: var(--s-2); padding: 0 1.3em; border-radius: var(--r-pill); background: var(--fg); color: var(--bg); font-weight: 600; text-decoration: none; }
+@media (max-width: 600px) {
+  .as-stage[data-type="html"] { padding-inline: 0; padding-bottom: 0; }
+  .as-frame-box { border-radius: 0; box-shadow: none; }
+}
+
+/* Where it stands. An agent's message: beside the time. */
+.msg-head > .say { margin: -4px 0 -4px -4px; }
+/* The human's own: to the left of the bubble. */
+.bubble:has(> .say) { position: relative; }
+.bubble > .say { position: absolute; right: calc(100% + 4px); top: 50%; margin-top: -13px; }
+/* A session's heading: its mark and its name, each the control that changes it. */
+.t-session-edit { display: inline-flex; align-items: center; gap: var(--s-3); min-width: 0; }
+.t-head-mark, .t-head-name { display: block; }
+
+/* ---- the session page (worker A: session.mjs, t/islands/composer.js) ---- */
+/* The log begins at its end and stays there while messages arrive, without a script: a reversed column scrolls
+   from its end, and what is put in above (the earlier messages) does not move what is in view. */
+#session .log { display: flex; flex-direction: column-reverse; }
+#session .log-inner { flex: none; }
+/* The frame the earlier messages are loaded into is no box: they are lines of the log like the others. */
+turbo-frame.log-earlier { display: contents; }
+.log-earlier-link { align-self: center; display: inline-flex; align-items: center; gap: 8px; min-height: 32px; margin-bottom: var(--s-4); padding: 0 14px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-sm); font-weight: 500; }
+.log-earlier-link:hover { color: var(--fg); }
+.log-earlier-link b { color: var(--faint); font-weight: 600; font-variant-numeric: tabular-nums; }
+.log-earlier-link.is-later { margin: var(--s-6) 0 0; }
+turbo-frame.log-earlier[busy] > .log-earlier-link { opacity: .5; pointer-events: none; }
+#session a.shot { cursor: zoom-in; }
+#session a.event { text-align: left; user-select: text; -webkit-user-select: text; }
+#session a.msg-about { text-align: left; }
+/* What the session is at, at the end of the conversation: one quiet line per piece of running work. */
+.session-status { display: grid; gap: 6px; justify-items: start; margin-top: var(--s-6); }
+.session-status[hidden] { display: none; }
+.status-line { display: flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; color: var(--muted); font-size: var(--t-sm); }
+.status-line b { flex: none; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); font-weight: 600; }
+.status-line[data-state="done"] b { color: var(--muted); font-weight: 500; }
+.status-line[data-state="decision"] .status-mark { color: var(--urg-high); }
+.status-line[data-state="done"] .status-mark { color: var(--faint); }
+.session-status .working { margin-top: var(--s-2); }
+/* The composer: the clip is the label of a real file field; the chosen files stand above the words. */
+.composer-clip { cursor: pointer; }
+.composer .composer-file { cursor: default; }
+.composer-file-off { flex: none; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 50%; background: none; font: 400 15px/1 var(--font); color: var(--muted); cursor: pointer; }
+.composer-file-off:hover { background: var(--fg); color: var(--bg); }
+/* The heading's controls (ui.mjs), on the heading's line under the band: the name in the heading's letters. */
+#session .pane-who .t-head-name strong { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 800 1.5rem/1.15 var(--display); letter-spacing: -.02em; }
+#session .pane-who .t-session-edit { min-height: 44px; align-items: flex-start; }
+/* Messages that arrive while one reads further up do not move what is in view: the controller "log" keeps the place. */
+#session .log { overflow-anchor: none; }
+#session .jump[hidden], #session .open-jump[hidden] { display: none; }
+.empty-pick { text-align: center; }
+.session-past { display: grid; justify-items: start; }
+.session-past .event { margin-top: 0; }
+a.open-jump { text-decoration: none; }
+/* The filter beside the composer (session.mjs sessionFilters): one quiet line icon at the bar's right; its menu
+   opens upward, the one in view ticked; a dot on the icon while a filter is on. */
+#session .session-compose { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 8px; align-items: end; }
+#session .session-compose > :not(.composer, .session-filter) { grid-column: 1 / -1; }
+.session-filter { margin-bottom: 7px; }
+/* (session.css keeps a row free under the composer for the old pills; on a wide screen nothing stands there now.
+   A phone keeps it: the memo button sits in it.) */
+@media (min-width: 861px) { body[data-view="chat"]:not([data-pair]) #session .dock { padding-bottom: max(var(--s-4), env(safe-area-inset-bottom, 0px)); }
+}
+.session-filter-btn { position: relative; width: 42px; height: 42px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 50%; background: var(--surface); color: var(--muted); transition: color var(--d-fast) var(--ease-out), border-color var(--d-fast) var(--ease-out); }
+.session-filter-btn:hover, .session-filter[open] > .session-filter-btn { color: var(--fg); border-color: var(--line-strong); }
+.session-filter[data-on] > .session-filter-btn { color: var(--fg); border-color: var(--line-strong); }
+.session-filter-btn .ico { width: 19px; height: 19px; }
+.session-filter-dot { position: absolute; top: 7px; right: 7px; width: 9px; height: 9px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+.session-filter-menu.t-pop { top: auto; bottom: calc(100% + 8px); left: auto; right: 0; }
+.session-filter-menu a { display: flex; align-items: center; gap: 8px; min-height: 36px; padding: 0 10px 0 8px; border-radius: var(--r-sm); color: var(--fg); font-size: var(--t-sm); font-weight: 500; text-decoration: none; white-space: nowrap; }
+.session-filter-menu a[aria-current="true"] { font-weight: 700; }
+.session-filter-tick { width: 16px; height: 16px; visibility: hidden; }
+.session-filter-menu a[aria-current="true"] .session-filter-tick { visibility: visible; }
+.session-filter-menu b { margin-left: auto; padding: 1px 7px; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
+.session-filter-menu b:empty { display: none; }
+@media (max-width: 860px) {
+  .session-filter { margin-bottom: 6px; }
+  .session-filter-btn { width: 40px; height: 40px; }
+  #session .session-compose { column-gap: 6px; }
+}
+
+/* ---- the session's files (session.mjs filesChip, filesDrawer; controller "files"): "N files"
+   beside the quiet line opens a drawer from the right, the conversation stays; on a phone "Files (N)" in the filter
+   menu opens it as a sheet from below. Sober: lines and tokens, nothing drawn. ---- */
+#session .pane-now .files-chip { flex: none; align-self: center; display: inline-flex; align-items: center; gap: 4px; margin-left: 2px; padding: 1px 9px 1px 6px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--muted); font: 600 var(--t-xs)/1.5 var(--font); text-decoration: none; white-space: nowrap; }
+#session .pane-now .files-chip .ico { width: 13px; height: 13px; }
+#session .pane-now .files-chip span { overflow: visible; min-width: 0; }
+#session .pane-now .files-chip:hover, #session[data-files-open] .pane-now .files-chip { color: var(--fg); background: var(--sunken); }
+.session-filter-files .session-filter-tick { visibility: visible; }
+@media (min-width: 861px) { .session-filter-menu .session-filter-files { display: none; }
+}
+.files-drawer { position: fixed; z-index: 60; top: var(--s-3); right: var(--s-3); bottom: calc(var(--s-3) + 68px); width: min(380px, calc(100vw - 2 * var(--s-3))); display: flex; flex-direction: column; border-radius: var(--r-lg); background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.files-drawer[hidden] { display: none; }
+.files-head { flex: none; display: flex; align-items: center; gap: 8px; padding: 10px 8px 8px 18px; border-bottom: 1px solid var(--line); }
+.files-head h3 { margin: 0; font: 800 1.1rem/1 var(--display); }
+.files-close { margin-left: auto; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+.files-close .ico { width: 18px; height: 18px; }
+.files-frame { flex: 1; min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+.files-frame[busy]:empty::before { content: ""; display: block; margin: var(--s-6) auto; width: 18px; height: 18px; border-radius: 50%; border: 2px solid var(--line-strong); border-top-color: transparent; animation: files-turn .8s linear infinite; }
+.files-list { padding: 4px 8px 12px; }
+.files-sum { margin: 8px 10px 4px; color: var(--muted); font-size: var(--t-xs); }
+.files-group { display: grid; gap: 8px; padding: 10px; }
+.files-group + .files-group { border-top: 1px solid var(--line); }
+.files-group-head { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.files-where { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; color: var(--fg); text-decoration: none; }
+.files-where b { flex: none; color: var(--muted); font-size: .68rem; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; }
+.files-where b time { font: inherit; }
+.files-where span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: var(--t-sm); font-weight: 600; }
+a.files-where:hover span { text-decoration: underline; }
+.files-jump { flex: none; display: inline-flex; align-items: center; gap: 1px; padding: 3px 4px 3px 9px; border-radius: var(--r-pill); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font-size: .72rem; font-weight: 600; text-decoration: none; }
+.files-jump .ico { width: 13px; height: 13px; }
+.files-thumbs { display: flex; align-items: center; gap: 6px; }
+.files-thumb { position: relative; flex: none; display: grid; place-items: center; width: 64px; height: 44px; overflow: hidden; border-radius: 6px; background: var(--sunken); color: var(--faint); box-shadow: inset 0 0 0 1px var(--line); }
+.files-thumb.asset-preview { grid-area: auto; width: 64px; height: 44px; }
+.files-thumb > img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; object-position: top center; }
+.files-thumb .asset-glyph { width: 22px; height: 22px; }
+.files-thumb.asset-preview > iframe { display: none; }
+.files-more, .files-empty { color: var(--muted); font-size: var(--t-xs); }
+.files-empty { margin: var(--s-4) 10px; line-height: 1.4; }
+#session .is-jumped { animation: files-jumped 1.8s var(--ease-out); border-radius: var(--r-md); }
+@media (min-width: 1280px) { #session[data-files-open] { padding-right: 392px; }
+}
+@media (max-width: 860px) {
+  .files-drawer { top: auto; left: 0; right: 0; bottom: 0; width: auto; height: min(74vh, 640px); padding-bottom: env(safe-area-inset-bottom, 0px); border-radius: var(--r-xl) var(--r-xl) 0 0; z-index: 2700; }
+}
+@media (prefers-reduced-motion: reduce) { #session .is-jumped { animation-duration: .01s; box-shadow: 0 0 0 3px var(--accent); }
+}
+.session-past { grid-template-columns: minmax(0, 1fr); }
+.session-cards > .hist-heading { margin-top: var(--s-8); }
+#session .pane-who .crown-toggle[aria-pressed="false"] { opacity: 0; }
+/* Stopped (cards Nr. 202/203): the raised hand, solid red, means the SESSION is really stopped (server/blocked.mjs);
+   the knock (warm orange) stays the sign of an urgent card. One colour each. Sidebar badge, the Desk box, a session's
+   heading, the Agents line. */
+.agent-badge[data-state="blocked"], .agent-badge[data-state="blocked"][data-offline], .desk-blocked, .t-blocked { color: var(--urg-critical); }
+.agent-badge[data-state="blocked"] .hand-loop, .desk-blocked .hand-loop, .t-blocked .hand-loop { fill: var(--urg-critical); stroke: var(--urg-critical); }
+/* Quiet (not a stop): a grey hint, no hand. */
+.t-quiet { color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+.agent-badge[data-state="blocked"] .hand-pen, .desk-blocked .hand-pen, .t-blocked .hand-pen { stroke: var(--surface); stroke-width: 1.7; }
+.t-blocked { display: inline-flex; align-items: center; gap: 6px; min-width: 0; margin-left: 4px; font: 600 .8rem/1.2 var(--font); }
+.t-blocked .hand-mark { position: static; flex: none; width: 26px; height: 26px; }
+.t-blocked span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (max-width: 860px) { .t-blocked span { display: none; }
+}
+/* Long Desk lists: rows out of sight are not laid out or painted until they come near. */
+#desk-list .inbox-row, .log .msg { content-visibility: auto; contain-intrinsic-size: auto 172px; overflow-clip-margin: 80px; }
+
+/* ---- the pile "Media N" in #desk-stacks, beside Notes and "Off the desk": prints fanned, the newest on top ---- */
+.inbox-stacks.stack-tabs > .media-pile { --w: 104px; --h: 74px; --step: 27px; flex: none; display: grid; gap: 10px; align-self: flex-start; color: var(--fg); text-decoration: none; }
+.media-fan { position: relative; display: block; width: calc(var(--w) + (var(--n) - 1) * var(--step) + 8px); height: calc(var(--h) + 14px); }
+.media-sheet { position: absolute; top: 6px; left: calc(var(--i) * var(--step)); z-index: calc(10 - var(--i)); box-sizing: border-box; width: var(--w); height: var(--h); padding: 4px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: calc(-3deg + var(--i) * 2.6deg); transform-origin: 50% 100%; transition: translate 140ms ease-out, rotate 140ms ease-out; }
+.media-sheet:nth-child(2) { rotate: 3deg; top: 3px; }
+.media-sheet:nth-child(3) { rotate: -1.5deg; top: 8px; }
+.media-sheet:nth-child(4) { rotate: 5deg; top: 2px; }
+.media-sheet .asset-preview { grid-area: auto; width: 100%; height: 100%; border-radius: 2px; }
+.media-sheet .asset-preview::after { content: none; }
+.media-sheet .asset-preview .asset-glyph { width: 24px; height: 24px; }
+@media (any-hover: hover) {
+  .media-pile:hover .media-sheet { translate: 0 -2px; }
+  .media-pile:hover .media-sheet:nth-child(2) { translate: 6px -3px; }
+  .media-pile:hover .media-sheet:nth-child(3) { translate: 12px -2px; }
+  .media-pile:hover .media-sheet:nth-child(4) { translate: 18px -3px; }
+}
+@container rows (max-width: 600px) {
+  .inbox-stacks.stack-tabs > .media-pile { order: -1; --w: 92px; --h: 64px; --step: 24px; }
+}

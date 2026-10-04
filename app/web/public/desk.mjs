@@ -1,16 +1,14 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
-// (Later, Memos, Done). The markup is the one css/app.css, css/piles.css and css/phone-desk.css style
+// (Later, Memos, Done). The markup is the one app.css, desk.css and desk.css style
 // (the old client built it in js/inbox.js and js/piles.js). A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-
-import { BASE, crownOf, stream } from './app.mjs'
-import { Controller, PLUS, WORDS, act, advisedLabels, agoSpan, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, ringSvg, runSection, sk, sketchSvg, smallMark } from './ui.mjs'
-
 // ---- the news: the infos (reports, notes; nothing to decide), out of the stack of questions ----
 // (Christopher's pick "6" of ten, 4 October: bare lines, a box to tick on the left and the info's title, nothing else:
 // no title over them, no count, no sender, no time, no "All read". Three lines, then "N more" that unfolds. With
 // questions waiting they stand right above "Next"; on a clear Desk under the small "Clear" heading, which this block
 // carries itself, so the order holds when the live stream replaces it. Its id stays for the stream: #desk-news.)
+import { BASE, crownOf, stream } from './app.mjs'
+import { Controller, PLUS, WORDS, act, advisedLabels, agoSpan, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, ringSvg, runSection, sk, sketchSvg, smallMark } from './ui.mjs'
 const NEWS_SHOWN = 3
 function newsLine(card, base) {
   const knock = isKnock(card)
@@ -85,7 +83,7 @@ ${newsStrip(model, base)}${deskHead(model, base)}
 // ---- nextplease ----
 // "Next" above the Desk: one small plain sentence, "Next 3 →", that leads into the walk through every open question.
 // (It was an index-card divider tab with the next cards peeking behind it, card Nr. 166; Christopher asked on
-// 3 October for a plain line of text instead: no tab, no card shape.) css/turbo.css styles it (.inbox-next).
+// 3 October for a plain line of text instead: no tab, no card shape.) app.css styles it (.inbox-next).
 
 /** The line for n > 0 open cards (model.fresh, in the hub's order): a link to the walk. */
 function nextPlease(model, base) {
@@ -93,8 +91,8 @@ function nextPlease(model, base) {
   return html`<p class="inbox-heading inbox-next"><a class="inbox-walk inbox-go" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F"><span>${WORDS.walk}</span><b class="inbox-next-n">${n}</b>${raw(sketchSvg('go'))}</a></p>`
 }
 
-/** The sheet a long press on a Desk row brings up on a phone (css/phone-desk.css, dialog.rowmenu): one form, each way its own
- *  button. The hub renders it once per Desk; the controller t/controllers/sheet_controller.js points it at the row that was held. */
+/** The sheet a long press on a Desk row brings up on a phone (desk.css, dialog.rowmenu): one form, each way its own
+ *  button. The hub renders it once per Desk; the controller controller "sheet" points it at the row that was held. */
 export function rowSheet(base) {
   const way = (name, drawing, word, cls = '', tip = '') => html`<button type="submit" data-way="${name}"${cls ? html` class="${cls}"` : ''}${tip ? html` title="${tip}" aria-label="${tip}"` : ''}>${sk(drawing)}${tip ? '' : html`<span>${word}</span>`}</button>`
   return html`<dialog class="rowmenu" id="row-sheet" data-controller="sheet" data-sheet-cards-value="${base}/cards" data-action="click->sheet#tapped turbo:submit-start->sheet#sent" aria-labelledby="row-sheet-title"><div class="rowmenu-in">
@@ -132,13 +130,13 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //     <h3 class="inbox-stack-title"><button class="inbox-stack-head inbox-pile-head off-head" aria-label="Off the desk, 51 cards">
 //       <span class="off-label">Off the desk <b class="off-count">51</b></span><span class="off-fan"> five .off-sheet </span></button></h3>
 //     <div class="inbox-pile-sheets off-body"> chips, the search, the lines in <turbo-frame id="stack-list-off"> </div></section>
-// An empty pile is a faint label over one dashed sheet that cannot be pressed. Look: css/piles.css, css/stamps.css.
+// An empty pile is a faint label over one dashed sheet that cannot be pressed. Look: desk.css, desk.css.
 
 const FAN_MAX = 8      // a fanned stack shows so many of the newest sheets, then "N more"
 const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
 const STACKS = ['notes', 'off']
-const STRAIGHT = true    // the tabs without any tilt (css/piles.css .is-straight); decided "gerade" on card 205
-const STAMPS = { notes: 'Notes', later: 'Snooze', works: 'Working', done: 'Done', trash: 'Trash' }   // line 1 of each stack's stamp; line 2 is its sign (css/stamps.css: three Z, gear, tick) and the number
+const STRAIGHT = true    // the tabs without any tilt (desk.css .is-straight); decided "gerade" on card 205
+const STAMPS = { notes: 'Notes', later: 'Snooze', works: 'Working', done: 'Done', trash: 'Trash' }   // line 1 of each stack's stamp; line 2 is its sign (desk.css: three Z, gear, tick) and the number
 const cardPath = (card, base) => `${base}/q/${encodeURIComponent(card.number ?? card.id)}`
 const answeredBy = c => (c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && Boolean(c.read))
 
@@ -174,7 +172,7 @@ function stackCards(model) {
 
 // ---- a line of the pile: one card that left the open rows ----
 // kind: why it lies there: 'later' | 'asked' (in revision) | 'answered' | 'shredded' | 'withdrawn'. g: its place (the sign).
-/** The sign of a place, in its stamp's ink (css/stamps.css): three Z, the gear, the tick; the basket for Trash. */
+/** The sign of a place, in its stamp's ink (desk.css): three Z, the gear, the tick; the basket for Trash. */
 const signOf = g => (g === 'trash' ? html`<span class="off-sign" data-g="trash" aria-hidden="true">${raw(sketchSvg('basket-full'))}</span>` : html`<span class="stack-stamp off-sign" data-stamp="${g}" data-g="${g}" aria-hidden="true"><span class="stack-stamp-sign"></span></span>`)
 const PLACE = { later: 'Snoozed', works: 'Working', done: 'Done', trash: 'Trash' }
 // A card its session closed (status done, his answer on it) has no way back: the core does not count a decide-again
@@ -198,7 +196,7 @@ ${kind === 'withdrawn' || closedByAgent(card) ? html`<span class="off-way"></spa
 // ---- a line on the Notes stack: one of his notes, not sent yet ----
 // The note's words (a click opens it to write on: POST /memos/<id>/open), when it was last written, and its ways:
 // send it to a session (the crown first; POST /memos/<id>/send with to=<session>) and throw it away (…/bin). Plain
-// yellow paper, no tape: the tape is what a note gets once it is sent and stuck into the conversation (views/session.mjs).
+// yellow paper, no tape: the tape is what a note gets once it is sent and stuck into the conversation (session.mjs).
 const noteWords = m => m.text.trim().replace(/\s+/g, ' ') || (m.attachments?.length ? `${m.attachments.length} attached` : 'Empty note')
 function noteLine(memo, model, base) {
   const act = what => `${base}/memos/${memo.id}/${what}`
@@ -303,7 +301,7 @@ function offPile(all, model, base, stands, hits, q) {
 }
 
 
-/** The pile "Media N" at the foot of the Desk (in #desk-stacks, beside Notes and "Off the desk"; views/stacks.mjs): the
+/** The pile "Media N" at the foot of the Desk (in #desk-stacks, beside Notes and "Off the desk"; desk.mjs): the
  *  newest pictures and videos fanned like prints, the newest on top; a click opens the gallery. Without any it is not
  *  there. (Pages and files only, no picture: their drawn kinds lie fanned instead.) */
 const MEDIA_FAN = 4
@@ -388,7 +386,7 @@ function startDeskWindow(markupOf) {
 }
 
 // ---- controller "desk" ----
-// The Desk's list (views/desk.mjs). "New questions must not move my window": a card that arrives out of
+// The Desk's list (desk.mjs). "New questions must not move my window": a card that arrives out of
 // sight is said quietly ("1 new ↓", a tap goes there), and a knock that is out of sight has one strip at the edge
 // of the list it lies beyond ("↓ 1 knock"), which leads to the nearest one.
 // Which rows stand in sight is told by an IntersectionObserver; a row out of sight is above or below by its place in
@@ -473,7 +471,7 @@ controller('desk', class extends Controller {
 })
 
 // ---- controller "stack-search" ----
-// The search field over a fanned stack at the foot of the Desk (server/views/stacks.mjs). Typing sends the form a
+// The search field over a fanned stack at the foot of the Desk (desk.mjs). Typing sends the form a
 // moment later: a GET into the stack's Turbo Frame, which the hub answers with the sheets that have the words.
 // Escape empties it. The live stream replaces the stacks when a card moves: the words, the keyboard and the caret are
 // put back into the new field and the search is sent again, so typing is never lost.
@@ -513,9 +511,9 @@ controller('stack-search', class extends Controller {
 })
 
 // ---- controller "sheet" ----
-// A phone: the ways out of a Desk row behind a long press (css/phone-desk.css). The row shows who asks, the
+// A phone: the ways out of a Desk row behind a long press (desk.css). The row shows who asks, the
 // title and the answers; Snooze, Revise, Whatever, What??, Shred and Open come up as a sheet after a long press
-// on the row, or a right click. The sheet is the hub's (views/menu.mjs, rowSheet): one form whose buttons
+// on the row, or a right click. The sheet is the hub's (sidebar.mjs, rowSheet): one form whose buttons
 // are pointed at the row that was held. No veil; Escape, a tap beside it or focus leaving it closes. The finger
 // that held does not open the link under it, and selects no text (the stylesheet takes selection and the callout
 // off the row).

@@ -46,11 +46,11 @@ const attrs = map => raw(Object.entries(map).map(([name, value]) => (value == nu
 // (server/views) and the page (islands) draw with the same code and the same seeds: a name or a session id
 // always gives the same strokes, byte for byte.
 //
-// The stroke tables and generators below are the ones of js/ui.js and js/agents.js (the old client builds
+// The stroke tables and generators below are the ones of ui.mjs and js/agents.js (the old client builds
 // DOM nodes from them). Until the old client is retired they stand in both places: when a drawing changes
 // there, run `node dev/pen-sync.mjs` to copy the tables here again.
 
-// ---- tables (copied from js/ui.js by dev/pen-sync.mjs; do not edit between the two marks) ----
+// ---- tables (copied from ui.mjs by dev/pen-sync.mjs; do not edit between the two marks) ----
 // pen-tables:begin
 // Small seeded generator, so a session always gets the same scribble.
 function seeded(text) {
@@ -243,7 +243,7 @@ const SKETCH = {
   shred: [[[3.6, 10.8], [12, 10.3], [20.4, 10.9]], [[7.4, 10], [7.6, 3.6], [16.4, 3.4], [16.6, 10]], [[8, 12.6], [7.5, 16.2], [8.3, 20.2]], [[12, 12.8], [12.4, 17], [11.8, 21]], [[16, 12.6], [16.5, 15.8], [15.8, 19.6]]],
   // a wastebasket: thrown away
   bin: [[[4.8, 7.8], [12, 7.4], [19.2, 7.9]], [[6.6, 8.4], [7.7, 20], [16.3, 20.2], [17.4, 8.2]], [[10.1, 11], [10.4, 17.2]], [[13.9, 11], [13.6, 17.2]], [[9.4, 7.2], [9.9, 4.5], [14.1, 4.3], [14.6, 7.2]]],
-  // the waste-paper basket at the end of the Desk's stacks (server/views/stacks.mjs): rim, body, a loose weave; full: a crumpled sheet over the rim
+  // the waste-paper basket at the end of the Desk's stacks (desk.mjs): rim, body, a loose weave; full: a crumpled sheet over the rim
   basket: [[[3.6, 8.3], [8, 7.7], [12.2, 7.6], [16.4, 7.9], [20.4, 8.4]], [[4.9, 8.8], [5.9, 14.6], [7.1, 21.1], [12.1, 21.6], [16.9, 21], [18, 14.8], [19.2, 8.9]], [[8.7, 10.6], [9.3, 15.4], [9.9, 19.6]], [[12.2, 10.8], [12.1, 15.2], [12.3, 19.9]], [[15.6, 10.5], [15, 15.3], [14.4, 19.5]], [[6.4, 14.9], [9.6, 14.4], [13.2, 14.7], [17.6, 14.3]]],
   'basket-full': [[[3.6, 8.3], [8, 7.7], [12.2, 7.6], [16.4, 7.9], [20.4, 8.4]], [[4.9, 8.8], [5.9, 14.6], [7.1, 21.1], [12.1, 21.6], [16.9, 21], [18, 14.8], [19.2, 8.9]], [[8.7, 10.6], [9.3, 15.4], [9.9, 19.6]], [[12.2, 10.8], [12.1, 15.2], [12.3, 19.9]], [[15.6, 10.5], [15, 15.3], [14.4, 19.5]], [[6.4, 14.9], [9.6, 14.4], [13.2, 14.7], [17.6, 14.3]], [[8.6, 7.4], [7.8, 5.6], [8.9, 3.9], [10.9, 4.1], [12.4, 2.7], [14.8, 3.2], [15.9, 4.9], [15.2, 7.2]], [[10.1, 5.8], [11.6, 6.6], [12.7, 5.1], [13.9, 6.2]]],
   // other waste-paper baskets, proposed for the Desk's stacks (a decision card): a bucket with its lid ajar, a heap of
@@ -251,7 +251,7 @@ const SKETCH = {
   'bin-lid': [[[5.6, 10.8], [6.2, 16], [6.8, 21.1], [12, 21.4], [17.2, 21], [17.8, 16], [18.4, 10.8]], [[4.6, 10.6], [12, 10.2], [19.4, 10.6]], [[4.2, 8.4], [11.4, 5.6], [18.8, 3.4]], [[10.6, 6], [11.2, 4.4], [12.8, 4]], [[9.8, 13.4], [10, 16.4], [10.2, 19.2]], [[14.2, 13.4], [14, 16.4], [13.8, 19.2]], [[7.6, 10.2], [8.6, 8], [10.4, 8.6], [11.6, 7.4]]],
   'bin-balls': [[[7.4, 14.0], [9.7, 14.5], [11.6, 16.0], [11.1, 18.3], [9.9, 20.1], [7.8, 21.0], [5.7, 20.1], [3.9, 18.9], [3.4, 16.8], [4.3, 14.7], [6.8, 14.5], [8.9, 14.4]], [[16.4, 14.5], [19.0, 14.2], [20.5, 16.2], [19.7, 18.4], [19.5, 20.9], [16.8, 21.9], [14.3, 21.0], [12.5, 19.2], [12.9, 17.1], [14.0, 15.5], [15.6, 13.9], [17.8, 14.8]], [[11.9, 7.4], [14.0, 7.9], [15.0, 9.6], [15.7, 11.5], [14.4, 13.3], [12.3, 14.6], [9.9, 13.7], [8.1, 12.2], [8.0, 10.0], [8.9, 7.9], [11.2, 7.1], [13.4, 7.6]], [[5.6, 16], [7, 17.4], [6.6, 19], [8.6, 18.6]], [[14.6, 15.8], [16.4, 17], [15.6, 19.4], [18, 18.8]], [[10.4, 9], [11.4, 11.4], [12.6, 9.6], [13.4, 12]]],
   'bin-shredder': [[[4.2, 9.2], [12, 8.9], [19.8, 9.2], [19.9, 11.6], [19.8, 14.1], [12, 14.3], [4.2, 14.1], [4.1, 11.6], [4.2, 9.2]], [[6.4, 11.7], [12, 11.5], [17.6, 11.7]], [[8.2, 8.9], [8.1, 6], [8.2, 3.7], [8.3, 3.5], [12, 3.4], [15.7, 3.5], [15.8, 3.7], [15.9, 6], [16, 8.9]], [[9.8, 5.6], [14, 5.5]], [[9.8, 7.2], [12.6, 7.1]], [[7, 14.4], [7.4, 17.6], [6.8, 21]], [[10, 14.4], [10.3, 17.8], [10, 20.2]], [[13.2, 14.4], [12.8, 17.4], [13.3, 20.8]], [[16.6, 14.4], [16.9, 17], [16.5, 19.6]]],
-  // a magnifier: search a stack's sheets (server/views/stacks.mjs)
+  // a magnifier: search a stack's sheets (desk.mjs)
   search: [[[10.5, 4.2], [6.1, 5.7], [4.3, 10.3], [6.3, 14.7], [10.7, 16.3], [15, 14.5], [16.7, 10.1], [14.7, 5.6], [10.1, 4]], [[15.1, 15.2], [19.9, 19.9]]],
   // a paperclip, bent in one go: attach something
   clip: [[[15.8, 7.4], [9.6, 13.8], [8.6, 16.4], [10.2, 18.2], [12.8, 17.4], [18.8, 11.2], [19.6, 7.8], [17.4, 5.2], [14, 5.6], [6.6, 13.2], [5.2, 17.2], [7.2, 20.4], [11.2, 20.6], [17.2, 15]]],
@@ -607,10 +607,10 @@ export const sk = (name, cls) => raw(sketchSvg(name, cls))
 
 // ---- text ----
 // Words and small rules the views share: what a card says in one line, how a label fits a tile, the light
-// markdown agents write as safe HTML. The rules are those of the old client (js/ui.js, js/inbox.js); the
+// markdown agents write as safe HTML. The rules are those of the old client (ui.mjs, js/inbox.js); the
 // output is strings made with html`` (html.mjs), so every piece of board content is escaped.
 
-// ---- the board's words (one place; the old client has them in js/ui.js) ----
+// ---- the board's words (one place; the old client has them in ui.mjs) ----
 export const WORDS = {
   later: 'Snooze', wake: 'Wake up', ack: 'Acknowledge', what: 'What??', trust: 'I don’t give a duck', revise: 'Revise',
   revising: 'In revision', shred: 'Shred', walk: 'Next', desk: 'Desk', takeBack: 'Take back',
@@ -633,7 +633,7 @@ function ago(ts, now = Date.now()) {
   if (min < 1440) return `${Math.round(min / 60)} h ago`
   return new Date(ts).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })
 }
-/** A time that keeps itself current in the page (js/app/application.mjs rewrites every [data-ts] each 30 s). */
+/** A time that keeps itself current in the page (ui.mjs rewrites every [data-ts] each 30 s). */
 export const agoSpan = (ts, cls = 'ago') => html`<span class="${cls}" data-ts="${ts}">${ago(ts)}</span>`
 
 // ---- links ----
@@ -708,7 +708,7 @@ function carries(card, assets = []) {
 // Paragraphs, bullet lists, **bold**, `code`, fenced code, tables, bare links, paths to pages of this board,
 // __underlined__ words. A block fenced as html is the agent's own layout: it is NOT put into the page. It
 // stands as an inert holder with its source in a data attribute, and the controller "richhtml" shows it in the
-// sandboxed frame of js/richhtml.js, exactly as the old client does.
+// sandboxed frame of ui.mjs, exactly as the old client does.
 const UNDER = /(?<![\w.])__(?=\S)([^_\n]+?)(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$))/gm
 const INLINE = /(\[[^\]\n]+\]\((?:https?:\/\/[^\s)]+|\/[^\s)]*)\))|(?<![\w*])\*(?=[^\s*])([^*\n]+?)(?<=[^\s*])\*(?![\w*])|(`[^`\n]+`)|(\*\*[^*\n]+\*\*)|(https?:\/\/[^\s<>)]+)|((?<![\w.])__(?=\S)[^_\n]+?(?<=\S)__(?=$|[\s,;:!?)\]]|\.(?:\s|$)))|((?<![\w\/:.~\-])\/(?:[\w\-.]+\/)*[\w\-.]+\.html?(?:\?[\w\-.=&%+]*)?(?:#[\w\-.=&%+]*)?)/gm
 const pathLink = path => html`<a href="${path}" target="_blank" rel="noopener">${path}</a>`
@@ -805,7 +805,7 @@ export const srcOf = file => attrs({ src: thumb(file).src })
 // The toast: one quiet line at the top right that says what just happened ("Answered: <title>", "Memo sent to
 // <name>") and, when it can be taken back, an Undo button. The same on every page and on the phone. It goes by
 // itself (about five seconds, a held memo's own hold), stays while the pointer rests on it, and stacks: three at
-// most, the newest on top. U presses the newest Undo (t/controllers/keys_controller.js).
+// most, the newest on top. U presses the newest Undo (controller "keys").
 //
 //   toast({ head, line?, undo?: { action, label?, fields? }, role?, ms? })   the markup (html)
 //   in turbo.mjs: t.toast(opts) is the stream action that puts one on the page (prepend into #says-host),
@@ -814,10 +814,10 @@ export const srcOf = file => attrs({ src: thumb(file).src })
 // The Undo is a form that posts to the route that takes the action back (a card's /reopen, /wake, /takeback; a
 // memo's /unsend; a session's /edit with archived=0), with stay=1 (answer with a stream) and quiet=1 (no new toast
 // for taking it back). The behaviour (time, pause, the stack, gone once Undo is pressed) is the controller "says"
-// in client/web/t/application.js; the look is the block "toast" in css/turbo.css.
+// in ui.mjs; the look is the block "toast" in app.css.
 
 const UNDO = raw('<svg class="back-arrow" viewBox="0 0 24 24" aria-hidden="true"><path d="M9 14L4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3"/></svg>')
-// The time left runs out along a scribbled line (css/back.css .back-line).
+// The time left runs out along a scribbled line (app.css .back-line).
 const CLOCK = raw('<svg class="back-line" viewBox="0 0 100 6" preserveAspectRatio="none" aria-hidden="true"><path d="M0 3 Q12 1 25 3 T50 3 T75 3 T100 3" pathLength="100"/></svg>')
 const ACTION = 'pointerenter->says#pause pointerleave->says#run turbo:submit-start->says#leave turbo:submit-end->says#gone'
 
@@ -1134,7 +1134,7 @@ function keyMatches(event, filter) {
 const stimulus = new Application()
 export const controller = (name, Klass) => stimulus.register(name, Klass)
 
-// The toast at the top right (server/views/toast.mjs): it goes by itself; while the pointer rests on it, it stays.
+// The toast at the top right (ui.mjs): it goes by itself; while the pointer rests on it, it stays.
 // Several stack, the newest on top, three at most. Once its Undo is pressed it is gone (kept, hidden, until the form's
 // answer is in: a form taken out of the page would lose its stream answer).
 controller('says', class extends Controller {
@@ -1302,7 +1302,7 @@ function adviceFrame(measure) {
 
 // ---- controller "advice" ----
 // The agent's advice: a highlighter swipe drawn by hand behind the words of the option it would pick (the old client's
-// adviceLoop in js/ui.js, which measures the words and redraws when its host changes size). On a tile, a card option.
+// adviceLoop in ui.mjs, which measures the words and redraws when its host changes size). On a tile, a card option.
 
 controller('advice', class extends Controller {
   connect() {
@@ -1327,7 +1327,7 @@ controller('advice', class extends Controller {
 // The agent's channel has already cleaned what it sent (trommi-hub connector/richhtml.mjs); here it is parsed and
 // cleaned once more by the browser's own parser, so that old state and other senders hold too.
 //
-// The richhtml controller calls htmlBlock() for each block js/views/text.mjs marks; richMark() names a card's extras.
+// The richhtml controller calls htmlBlock() for each block ui.mjs marks; richMark() names a card's extras.
 
 // ---- tables ----------------------------------------------------------------------
 
@@ -1616,7 +1616,7 @@ function htmlBlock(source) {
 }
 
 // ---- controller "richhtml" ----
-// A layout the agent sent along (a block fenced as html): shown in the sandboxed frame of js/richhtml.js,
+// A layout the agent sent along (a block fenced as html): shown in the sandboxed frame of ui.mjs,
 // never as markup of this page. The hub put the source into the value, escaped.
 
 controller('richhtml', class extends Controller {
@@ -1773,9 +1773,9 @@ controller('pops', class extends Controller {
 })
 
 // ---- controller "later" ----
-// A <details> whose content is made only when it opens (views/agents.mjs, views/session-edit.mjs LATER): the lists
+// A <details> whose content is made only when it opens (agents.mjs, ui.mjs LATER): the lists
 // of an Agents line (lay together with…, main agent, desk, the phone's sheet) wait in a <template>; the grid of
-// forty drawings is made here from views/session-edit.mjs marksFrame. A page of many sessions would otherwise carry
+// forty drawings is made here from ui.mjs marksFrame. A page of many sessions would otherwise carry
 // thousands of elements nobody opened.
 
 const mine = (el, root) => el.parentElement.closest('details') === root
@@ -1793,8 +1793,8 @@ controller('later', class extends Controller {
 })
 
 // ---- controller "assetthumb" ----
-// A published page (views/session.mjs): its first screen on the card, or the whole page in the viewer (full).
-// The page is fetched from /att/<id> (decrypted in this browser, js/app/att.mjs) once it comes near the screen and
+// A published page (session.mjs): its first screen on the card, or the whole page in the viewer (full).
+// The page is fetched from /att/<id> (decrypted in this browser, app.mjs) once it comes near the screen and
 // shown in the sandboxed frame /frame.html (no origin, no network, its own CSP; it gets the page as one message).
 // Until then, and when anything fails, the drawn kind stays.
 
@@ -1859,10 +1859,10 @@ controller('assetthumb', class extends Controller {
 // What the human changes on a session, as small forms that stand right where they are used (docs/turbo.md):
 // rename (a form under the name: Enter saves, Escape closes), the drawing (a grid under the mark, fetched when
 // it is first opened). No veil, no dialog: each is a <details> whose content lies over the page; the controller
-// "pops" (client/web/t/controllers/pops_controller.js) closes it on Escape or a click beside it and puts the keyboard in the field.
-// The forms post to <base>/sessions/<id>/edit (views/agents.mjs), which hands them to the hub's own rules.
+// "pops" (controller "pops") closes it on Escape or a click beside it and puts the keyboard in the field.
+// The forms post to <base>/sessions/<id>/edit (agents.mjs), which hands them to the hub's own rules.
 //
-// Used by the Agents page (views/agents.mjs) and, through sessionHeadEdit(), by a session's heading.
+// Used by the Agents page (agents.mjs) and, through sessionHeadEdit(), by a session's heading.
 
 /** The address of a session's forms. */
 export const sessionForms = (agent, base) => `${base}/sessions/${encodeURIComponent(agent.id)}`
@@ -1909,7 +1909,7 @@ const crownControl = (agent, base, { stay = false, back = '' } = {}) => html`<fo
 
 // ---- keys ----
 // The one table that says what the keys of the server-rendered board do. Read by the controller that listens
-// (t/controllers/keys_controller.js) and by the hub for the "?" sheet (server/views/keys.mjs), so what the sheet
+// (controller "keys") and by the hub for the "?" sheet (ui.mjs), so what the sheet
 // lists and what works cannot drift apart. Plain data and two helpers: nothing here touches a page.
 
 /** scope: where the keys count ('desk' | 'card' | 'picture' | 'agents' | 'app'). keys: 'j', 'ArrowDown', 'g d' (g, then d),
@@ -2005,8 +2005,8 @@ export const capOf = (part, mod = 'Ctrl') => part.split('+').map(p => (p === 'Mo
 
 // ---- keys ----
 // The sheet behind "?": the keys of the view that is up, rendered by the hub from the one table of keys
-// (client/web/t/lib/keys.js; t/controllers/keys_controller.js listens for them). No veil: a <dialog> with a clear backdrop
-// (css/keys.css); "?" , Escape, its Close button or a click beside it closes. The whole table: /help.html#keys.
+// (ui.mjs (keys); controller "keys" listens for them). No veil: a <dialog> with a clear backdrop
+// (app.css); "?" , Escape, its Close button or a click beside it closes. The whole table: /help.html#keys.
 // pageSheets() is what the layout includes: this sheet, and on the Desk the sheet a long press on a row brings up.
 
 // One key as caps: 'g d' is G then D; "Mod" is Ctrl here and ⌘ on a Mac (the controller swaps the cap marked data-mod).
@@ -2032,9 +2032,9 @@ export function keySheet(view, { sidebar = true } = {}) {
 
 
 // ---- controller "keys" ----
-// The keyboard of the server-rendered board: the one listener. What the keys do is the table in /t/lib/keys.js.
+// The keyboard of the server-rendered board: the one listener. What the keys do is the table in ui.mjs (keys).
 // A key does what a click would do: it follows a link or presses a button of a form the hub rendered. Nothing
-// here knows the board's state. The controller hangs on the "?" sheet, which every page has (views/keys.mjs).
+// here knows the board's state. The controller hangs on the "?" sheet, which every page has (ui.mjs).
 //
 // Rules, for every key in the table:
 //   - plain keys and "g then x" sequences only; nothing with Ctrl, Alt or Cmd is taken (one exception: Ctrl/Cmd+K, jump)
@@ -2094,7 +2094,7 @@ function start(signal) {
     for (const old of document.querySelectorAll(HOSTS)) if (old !== row) old.classList.remove('is-current')
     if (!row) return
     row.classList.add('is-current')
-    // On the marked row the controls wear their keys (css/keys.css).
+    // On the marked row the controls wear their keys (app.css).
     for (const [sel, cap] of CAPS) for (const node of row.querySelectorAll(sel)) node.dataset.cap = cap
     if (focus) { if (!row.hasAttribute('tabindex')) row.tabIndex = -1; row.focus({ preventScroll: true }); row.scrollIntoView({ block: 'nearest' }) }
   }
@@ -2163,7 +2163,7 @@ function start(signal) {
     s.showModal()
     $('.keys-close', s)?.focus()
   }
-  const backNote = () => press($('#says-host .says:not([hidden]) .says-back'))   // the newest toast's Undo (server/views/toast.mjs)
+  const backNote = () => press($('#says-host .says:not([hidden]) .says-back'))   // the newest toast's Undo (ui.mjs)
 
   /** What the keys do, by the id in the table. A function that returns false did not take the key. */
   const ACTIONS = {
@@ -2226,7 +2226,7 @@ function start(signal) {
     'go.session': n => { press(sessions()[n - 1]) },
     'session.next': () => sessionStep(1),
     'session.prev': () => sessionStep(-1),
-    'pen': () => (document.getElementById('whiteboard-frame') ? document.dispatchEvent(new CustomEvent('trommi:pen')) : go(`${base()}/whiteboard`)),
+    'pen': () => (document.getElementById('whiteboard') ? document.dispatchEvent(new CustomEvent('trommi:pen')) : go(`${base()}/whiteboard`)),
     'rail': () => (matchMedia('(min-width: 861px)').matches ? press($('.rail-fold')) : false),   // the sidebar's "|<" (rail_controller.js)
     'back': () => backNote(),
     'theme': () => {

@@ -254,7 +254,7 @@ class MockClient {
   }
 }
 
-// Cards he put away, so the pile "Off the desk" holds a card of every place (views/stacks.mjs): two snoozed, one
+// Cards he put away, so the pile "Off the desk" holds a card of every place (desk.mjs): two snoozed, one
 // handed back, one answered a moment ago (its session is still at it), one shredded. Times relative to now.
 function putAway(f) {
   const now = Date.now(), MIN = 60e3, [zu, ui, , cr] = f.sessions.map(s => s.agent_device_id)

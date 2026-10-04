@@ -1,11 +1,36 @@
+/* The Whiteboard (whiteboard.mjs): its row at the top of the sidebar and its page, the pad as large as the
+   main area. The Desk itself is cards on plain paper. */
+
+/* ---- the row: the pen in the avatar's place, marked while its page is in view ---- */
+.whiteboard-mark svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; }
+.whiteboard-mark { color: var(--fg); }
+body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { background: var(--surface); box-shadow: var(--shadow-sm); }
+.whiteboard-row { margin-bottom: var(--s-2); }
+
+/* ---- the page ---- */
+#whiteboard { display: none; }
+body[data-page="whiteboard"] #inbox, body[data-page="whiteboard"] #session { display: none; }
+body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; position: relative; background: var(--surface); }
+@media (min-width: 861px) { body[data-page="whiteboard"] #whiteboard { margin-top: var(--band); }
+}
+.whiteboard-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: var(--surface); }
+
+@media (max-width: 860px) {
+  body[data-page="whiteboard"] #whiteboard { grid-column: 1; grid-row: 3; }
+  /* the pad's own bar takes the foot of the screen: the memo button stands above it */
+  html body[data-t-view="whiteboard"] .quick-open.memo-open-free { bottom: calc(var(--s-4) + 76px + env(safe-area-inset-bottom, 0px)) !important; }
+  body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { box-shadow: 0 0 0 1px var(--line-strong); }
+  .whiteboard-row { margin-bottom: 0; }
+  .whiteboard-mark svg { width: 22px; height: 22px; }
+}
+
+/* ---- the pad ---- */
 /* The global pad. Everything is prefixed pad-; colours, shadows, radii and
-   easings of the chrome come from /css/tokens.css. The paper follows the theme;
+   easings of the chrome come from /app.css. The paper follows the theme;
    ink colours are content and are painted by elements.js. */
 
-html, body { height: 100%; margin: 0; }
-body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--font); overflow: hidden; overscroll-behavior: none; }
 
-.pad { position: fixed; inset: 0; overflow: hidden; background: var(--surface); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
+.pad { position: absolute; inset: 0; overflow: hidden; background: var(--surface); color: var(--fg); font: 400 var(--t-md)/1.4 var(--font); -webkit-font-smoothing: auto; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent; }
 .pad *, .pad *::before, .pad *::after, .pad-dialog, .pad-dialog * { box-sizing: border-box; }
 .pad [hidden] { display: none !important; }
 :where(.pad, .pad-dialog) button { font: inherit; color: inherit; cursor: pointer; border: 0; background: none; padding: 0; margin: 0; }
@@ -189,18 +214,6 @@ body { background: var(--bg); color: var(--fg); font: 400 var(--t-md)/1.4 var(--
 /* ── on the Desk (?desk): the paper the Desk lies on ──────────────────────────
    No bar of its own, no zoom: the Desk scrolls it. The tools show while the paper is in front (data-started:
    a tool in hand, or something on the paper held); with the bare pointer the Desk's cards lie over this frame. */
-:root[data-desk] .pad-top, :root[data-desk] .pad-hint { display: none; }
-:root[data-desk] .pad[data-touch="scroll"] .pad-canvas { touch-action: pan-y; }
-:root[data-desk] .pad-bar { bottom: max(14px, env(safe-area-inset-bottom)); opacity: 0; visibility: hidden; translate: 0 6px; transition: opacity var(--d-med) var(--ease-out), translate var(--d-med) var(--ease-out), visibility 0s linear var(--d-med); }
-:root[data-desk] .pad[data-started] .pad-bar { opacity: 1; visibility: visible; translate: 0 0; transition: opacity var(--d-med) var(--ease-out), translate var(--d-med) var(--ease-out); }
-:root[data-desk] .pad-tools { padding: 3px; box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
-:root[data-desk] .pad-tools .pad-icon-btn { width: 38px; height: 38px; }
-:root[data-desk] .pad-tools [data-tool="hl"], :root[data-desk] .pad-tools .pad-sep:not(:has(+ [data-tool="area"])) { display: none; }
-:root[data-desk] .pad-tools [data-tool="area"]:not([aria-pressed="true"]) { color: var(--faint); }
-:root[data-desk] .pad-status { display: none; bottom: 62px; }
-:root[data-desk] .pad[data-started] .pad-status:is([data-kind="error"], [data-kind="warn"]) { display: block; }
-:root[data-desk] .pad-toast { top: 16px; }
-@media (prefers-reduced-motion: reduce) { :root[data-desk] .pad-bar { transition: none !important; translate: none; } }
 
 /* The pen and the highlighter carry their colour: a dot at the foot of the icon. A second click on the tool in hand opens colour and width there. */
 .pad-tool:is([data-tool="pen"], [data-tool="hl"])::before { content: ""; position: absolute; right: 6px; bottom: 6px; width: 10px; height: 10px; border-radius: 50%; background: var(--c, var(--fg)); box-shadow: 0 0 0 1.5px var(--surface); }

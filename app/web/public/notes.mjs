@@ -1,11 +1,7 @@
-
-import { Controller, avatar, controller, crownSvg, el, html, mq, raw, sk, toast } from './ui.mjs'
-import { addressOf, crownOf, rememberRef, renderStreamMessage, stream, uploadFile } from './app.mjs'
-
 // ---- memo ----
-// Memos: the yellow notes the human writes to the crowned session (or to the session whose page it is). The notes are end-to-end memo objects (js/app/memo-store.mjs: every human device
+// Memos: the yellow notes the human writes to the crowned session (or to the session whose page it is). The notes are end-to-end memo objects (notes.mjs: every human device
 // writes versions, a sent note is held 3 s for Undo); the forms reach it through hub.memo, the route POST /memo of
-// the old hub. The markup is the one css/quicksend.css styles.
+// the old hub. The markup is the one notes.css styles.
 //
 //   memoLayer(model, base, view, scope)   for the layout: the round button with the notes that were put away hanging
 //                                  off it, every note that is out. scope: the session whose page
@@ -14,10 +10,12 @@ import { addressOf, crownOf, rememberRef, renderStreamMessage, stream, uploadFil
 //
 // What needs no script: making a note, opening one from the stack, sending it by a crown, throwing it away and
 // taking that back. Carrying a note, keeping what is typed, attachments and the tear-off are script
-// (controllers memo and memos, client/web/t/lib/memo.js); they save through POST /memo like the old client.
+// (controllers memo and memos, notes.mjs); they save through POST /memo like the old client.
 // The look of a note is CSS only: the markup has no placeholder and no drawn tear line.
 // A note belongs where it was written: on a session's page to that session (shown there only, sent to it, its
 // envelope sealed with the session's drawing); anywhere else to the Desk (sent to the crown, sealed with the crown).
+import { Controller, avatar, controller, crownSvg, el, html, mq, raw, sk, toast } from './ui.mjs'
+import { addressOf, crownOf, rememberRef, renderStreamMessage, stream, uploadFile } from './app.mjs'
 const STICKY = raw('<svg class="memo-sticky" viewBox="0 0 24 24" aria-hidden="true"><path class="sticky-paper" d="M4.3 4.2 Q12 3.5 19.8 3.9 Q20.3 9.4 20 14.7 L14.8 20.2 Q9.3 20.4 4.1 19.9 Q3.8 12 4.3 4.2 Z"/><path class="sticky-fold" d="M20 14.7 Q17.4 14.5 15.3 14.9 Q14.7 17.4 14.8 20.2"/><path class="sticky-line" d="M7.6 8.6 Q12 8.1 16.3 8.4"/><path class="sticky-line" d="M7.7 12.1 Q10.6 11.7 13.4 12"/></svg>')
 const isImage = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.name ?? '')
 const holds = memo => Boolean(memo.text.trim() || memo.attachments?.length)
@@ -66,8 +64,8 @@ function memoOpener(model, base, scope = null) {
   const put = away(model, scope), n = put.length
   // (on a session's page a new note belongs to it)
   const here = scope ? html`<input type="hidden" name="session" value="${scope}">` : ''
-  // (Put-away notes are counted by the Notes stack on the Desk (views/stacks.mjs), not here. On a phone a floating note
-  //  waits at the button: that one is counted, css/turbo.css.)
+  // (Put-away notes are counted by the Notes stack on the Desk (desk.mjs), not here. On a phone a floating note
+  //  waits at the button: that one is counted, app.css.)
   const phoneN = out(model, scope).filter(m => m.place === 'float').length
   const title = `${to ? `Memo to ${to.name}` : 'Memo: a note to the crowned session'} ( / )${n ? ` · ${n === 1 ? '1 note' : `${n} notes`} put away` : ''}`
   const words = m => m.text.trim().replace(/\s+/g, ' ').slice(0, 120) || (m.attachments?.length ? `${m.attachments.length} attached` : 'Empty note')
@@ -180,7 +178,7 @@ export function register(t) {
 // ---- memo store ----
 // Memos as end-to-end objects (trommi-hub client/core README, "memo"): every human device may write a new version,
 // concurrent versions are settled by the core's causal order (R2). What the old hub's POST /memo did (server.mjs
-// memoAct) is done here with the core, behind the same { code, text } answer, so views/memo.mjs and t/lib/memo.js
+// memoAct) is done here with the core, behind the same { code, text } answer, so notes.mjs and notes.mjs
 // stay as they were.
 //
 // The memo's own fields beyond the core's (text, x, y, color, desk_id) travel through as they are:
@@ -194,7 +192,7 @@ export function register(t) {
 //   held         { to, until } while a sent memo waits for the toast's Undo; the device that wrote it delivers it
 //                after `until` (sendMessage, then deleteMemo), also after a reload (sweep). Every page hides it.
 //
-//   boardMemos(model, devToAgent)    the board state's memos (views/model.mjs shape), from the core's model
+//   boardMemos(model, devToAgent)    the board state's memos (app.mjs shape), from the core's model
 //   memoStore(client, board)         -> act(body): POST /memo of the old hub, as { code, text }
 
 const HOLD_MS = 3000
@@ -253,7 +251,7 @@ export function memoStore(client, board) {
   client.on('change', ch => { if (ch.memos.size) sweep(ch.memos) })
   sweep(m().memos.keys())
 
-  // { name, data: base64 data URL } of t/lib/memo.js -> an uploaded, encrypted attachment reference.
+  // { name, data: base64 data URL } of notes.mjs -> an uploaded, encrypted attachment reference.
   async function upload({ name, data }, object_id) {
     const [, type = 'application/octet-stream', b64 = ''] = /^data:([^;,]*)(?:;[^,]*)?,(.*)$/s.exec(String(data)) ?? []
     return uploadFile(client, new Blob([Uint8Array.from(atob(b64), c => c.charCodeAt(0))], { type }), { file_name: String(name || 'file'), media_type: type, object_id })
@@ -307,7 +305,7 @@ export function memoStore(client, board) {
 //     round button, which shows how many wait there and lists them on a click;
 //   - what is typed is kept a moment later (POST /memo, as the old client did), on leaving the page at once;
 //   - a note is carried by its top strip, anywhere over the page (the Desk has no paper under it any more: the
-//     drawing is the Whiteboard's, js/views/whiteboard.mjs);
+//     drawing is the Whiteboard's, whiteboard.mjs);
 //   - pictures and files: the paperclip, a paste, a drop on the note;
 //   - a phone: a note is a sheet at the bottom, one at a time, only the one he opened on this page;
 //   - a stream that brings a note which is already here changes it in place: the field with the keyboard in it,
@@ -315,7 +313,7 @@ export function memoStore(client, board) {
 // controllers/memo_controller.js is one note; controllers/memos_controller.js is the round button, its list and
 // what concerns all notes of the page.
 const STREAM = 'text/vnd.turbo-stream.html'
-const W = 340   // a note's width on a wide screen (css/quicksend.css)
+const W = 340   // a note's width on a wide screen (notes.css)
 const sheet = mq('(max-width: 860px)')
 const calm = () => matchMedia('(prefers-reduced-motion: reduce)').matches
 const base = () => document.body.dataset.tBase ?? ''
@@ -332,7 +330,7 @@ const sheetNote = () => (sheetId ? document.getElementById(`memo-${sheetId}`) : 
 function say(head, line) {
   const at = document.getElementById('says-host')
   if (!at) return
-  // (a toast without Undo, server/views/toast.mjs: the controller "says" times it and keeps the stack)
+  // (a toast without Undo, ui.mjs: the controller "says" times it and keeps the stack)
   const node = Object.assign(document.createElement('div'), { className: 'says' })
   node.setAttribute('role', 'alert')
   node.dataset.controller = 'says'
@@ -506,13 +504,13 @@ async function write() {
   // (The button, or the row of the Desk the keyboard is on, lets go of the keyboard first: Turbo gives it back to
   // what held it when a stream came, and a stream that replaces the button would otherwise give it the keyboard back.)
   if (document.activeElement !== document.body) document.activeElement?.blur?.()
-  // On a session's page the note belongs to that session (shown there only, sent to it): views/memo.mjs.
+  // On a session's page the note belongs to that session (shown there only, sent to it): notes.mjs.
   const session = document.body.dataset.tView === 'session' ? document.body.dataset.scope ?? '' : ''
   const out = await act(`${base()}/memos`, { place: 'float', x: at.x, y: at.y, ...(session && session !== 'all' ? { session } : {}) }).catch(err => ({ ok: false, text: '', err }))
   if (out.text) streams(out.text)
   else if (!out.ok) say('Not saved', out.err?.message ?? 'the board did not take it')
 }
-/** The envelope of a sent note (css/quicksend.css .memo-env), laid where the send button is: it opens, the note
+/** The envelope of a sent note (notes.css .memo-env), laid where the send button is: it opens, the note
  *  slips into it, it closes with the crown as its seal, and flies to `to` (aim()). The slip moves by --env-x/--env-y
  *  (from its middle to the envelope's) and --env-s (how small it gets). Only for the look: it takes no clicks. */
 function envelope(note, to) {
@@ -699,14 +697,14 @@ function beside(e) {
 }
 
 // ---- controller "memo" ----
-// One yellow note: <div class="memo" data-controller="memo"> (server/views/memo.mjs memoNote()). It is a form that
+// One yellow note: <div class="memo" data-controller="memo"> (notes.mjs memoNote()). It is a form that
 // works by itself; this adds Enter, keeping what is typed, carrying it by its strip, pictures and files,
-// and the tear-off. The work is /t/lib/memo.js, shared with the round button (memos_controller.js).
+// and the tear-off. The work is notes.mjs, shared with the round button (memos_controller.js).
 
 controller('memo', class extends Controller {
   connect() {
     stand(this.element); fit(this.element)
-    // More than five attachments lie folded as one chip (css/quicksend.css): a click on it opens or shuts the list.
+    // More than five attachments lie folded as one chip (notes.css): a click on it opens or shuts the list.
     this.element.addEventListener('click', e => {
       const files = e.target.closest?.('.memo-files')
       if (files && e.target === files && files.querySelector('.memo-file:nth-child(6)')) files.toggleAttribute('data-open')
@@ -733,10 +731,10 @@ controller('memo', class extends Controller {
 
 // ---- controller "memos" ----
 // The memos of a page: <div id="memo-layer" data-controller="memos"> around the round yellow button, the list of
-// the notes that were put away, and the notes that are out (server/views/memo.mjs memoLayer()). The button makes a
+// the notes that were put away, and the notes that are out (notes.mjs memoLayer()). The button makes a
 // note, or shows the list when notes wait there. What concerns all notes of the page is here too: streams that
 // change a note in place, a phone's tap beside the sheet, keeping what was
-// typed when the page is left. The work is /t/lib/memo.js. The key "/" may click #memo-open.
+// typed when the page is left. The work is notes.mjs. The key "/" may click #memo-open.
 
 controller('memos', class extends Controller {
   connect() {

@@ -1,53 +1,88 @@
 # Trommi app
 
-The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`, repo `trommi/trommi-hub`) only in sealed envelopes. No framework: plain ES modules and CSS, served as they are; the one build step joins the stylesheets into one file (see "The build"). Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`).
-
-Its markup, CSS, pen drawings and controllers came from the old server-rendered Turbo board (taken over on 4 Oct 2026, trommi-hub commit f6b89b8; the old board was removed from the repository the same day). The copies here are the app's own source: edit them here.
+The Trommi app at **https://app.trommi.com**: a static, local-first single-page app. Every device makes its own keys, keeps the room in IndexedDB, decrypts and renders locally, and talks to the hub (`https://hub.trommi.com`) only in sealed envelopes. No framework: plain ES modules and CSS, one file per view. Push to `main` deploys (Cloudflare Workers static assets, `wrangler.jsonc`, directory `public/`; its build step `dev/build.mjs` makes what is generated).
 
 ## Running it
 
 ```bash
-node dev/serve.mjs 8900                 # static server with the SPA fallback, the CSP of public/_headers and the build (in memory; --raw: without)
+node dev/serve.mjs 8900                 # the app as deployed, built in memory on every request (never stale, no service worker)
 open http://127.0.0.1:8900/             # not logged in on this device: Create account or Log in
-open http://127.0.0.1:8900/?mock=1      # the mock room: fixture cards of every kind, simulated agents, no hub
-open http://127.0.0.1:8900/?mock=crazy  # a very big mock room (performance)
+open http://127.0.0.1:8900/?mock=1      # the demo room: fixture cards of every kind, simulated agents, no hub
 ```
 
-The hub is fixed, with no setting on screen. Hidden developer override: `?hub=<url>` (and `?found_code=<code>` for a founding token), kept for the tab session only (sessionStorage); default `https://hub.trommi.com`, on localhost `http://127.0.0.1:8890` (the dev hub: `HUB_PORT=8890 node hub/server.mjs` in trommi-hub, whose default port is 8790).
+A design change: edit the view's `.mjs` and `.css`, reload, push. Nothing to build or release; nothing generated is
+committed.
 
-Tests (headless Chromium, `CHROMIUM` env or `chromium` on the path):
+The hub is fixed, with no setting on screen. Hidden developer override: `?hub=<url>` (and `?found_code=<code>` for a founding token), kept for the tab session only (sessionStorage); default `https://hub.trommi.com`, on localhost `http://127.0.0.1:8890` (the dev hub: `HUB_PORT=8890 node hub/server.mjs`).
+
+Checks:
 
 ```bash
-node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E]   # create account + kit, agent invite, cards, picture, answer, undo, What??, 2nd device by QR, 3rd by email + password, 4th by Emergency Kit
+node dev/check.mjs                      # the layout rules below (CI: Test workflow, job "App layout")
+node dev/e2e.mjs [--app URL] [--hub URL] [--shots DIR] [--email E]   # end to end against a real hub, headless Chromium
 node dev/look.mjs URL 1440,900 out.png [--dark] [--js '...']   # one screenshot, console errors
+node dev/perf.mjs                       # the very big demo room (?mock=crazy), desktop and a slowed phone
 ```
+
+## Layout
+
+```
+worker.js              http -> https, /connect (the connect script), the generated files at their public addresses
+wrangler.jsonc  dev/   serve, build, check, e2e, look, cdp, perf, make-fixture
+public/
+  index.html  sw.js  manifest.webmanifest  _headers  connect.sh  frame.html (the sandbox a published page runs in)
+  help.html            help and "how it works", its own style and script inline
+  app.mjs  app.css     start, router, the room in the page (board state, actions, the board's pages and live
+                       pieces), frame, attachments, push, new versions; app.css: tokens, base layout, type, links, focus
+  ui.mjs               what every view shares: html, the pen, words, toasts, the controllers (controller(name, class)),
+                       rich text, agent layouts, keys, a card's row, a session's mark, the room's frame
+  auth.mjs/.css        account screens, password, Emergency Kit, recovery, pairing, devices, settings, log out
+  desk  card  session  sidebar  notes  media  agents  whiteboard   (.mjs + .css each)
+  demo/                the demo room (demo.mjs, fixture.json, files/), also the "Demo" desk
+  fonts/  icons/  drawings.json
+  gen/                 generated, never edited by hand: vendor/ (the core), bundle.<hash>.css, build.txt (made by
+                       dev/build.mjs, not committed); connector.mjs(.sha256), plugins/ (connector/bundle.mjs,
+                       committed, checked by CI), served at /connector.mjs, /connector.mjs.sha256, /plugins/…
+```
+
+## Rules
+
+1. A view imports only from `app.mjs` and `ui.mjs` (the core through `app.mjs`), never from another view. What two views
+   need goes to `ui.mjs` (markup, controllers) or `app.mjs` (data, the room). `ui.mjs` imports nothing.
+2. No crypto in the app: everything crypto, account and keys comes from the core (`gen/vendor`, via `app.mjs` `core()`,
+   `account()`, `canvasWire()`).
+3. `gen/` is never edited by hand; CI checks what is committed there.
+4. A file is split only when it passes ~3000 lines.
+5. JavaScript is `.mjs` only. Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
+
+`dev/check.mjs` (CI) fails on a file outside this layout, a view that imports another view, crypto outside the core,
+and an inline script whose hash is not in `_headers`.
 
 ### The build
 
-Nothing generated is committed. `dev/build.mjs` (no dependencies) makes, in Cloudflare's build at deploy time
-(`wrangler.jsonc` "build", `WORKERS_CI=1`): `public/gen/vendor/` (the core, from the repository's `core/`), one
-stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their order), `public/gen/build.txt`
-(the commit; the Web app deploy workflow waits until app.trommi.com serves it), the modulepreload list in
-`index.html` and `VERSION` + `SHELL` of `sw.js` (a hash of, and the list of, every file the app serves). In the
-repository `index.html` and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`): no release
-step, nothing to conflict on. `dev/serve.mjs` serves the same build from memory on every request, with `VERSION "dev"`
-(the service worker caches nothing): edit, reload, see it. `node dev/build.mjs` checks only; `--write` writes into
-`public/` (never commit that). `gen/connector.mjs` and `gen/plugins/` are made by `node connector/bundle.mjs` (it needs
-the repository's npm packages), committed, and checked by CI.
+`dev/build.mjs` (no dependencies) runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/vendor/` (the core,
+from the repository's `core/`), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
+order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
+serves it), the modulepreload list of `index.html` and `VERSION` + `SHELL` of `sw.js`. In the repository `index.html`
+and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`). `dev/serve.mjs` serves the same build
+from memory. `node dev/build.mjs` checks only; `--write` writes into `public/` (never commit that).
+
+The service worker: a new deploy takes over at once and the page reloads (a field with unsent words: a quiet "Reload"
+instead); files come network first, the cache only offline. On the dev server (`VERSION "dev"`) there is none.
 
 ## The Whiteboard
 
 The Desk is cards on plain paper. Drawing has a place of its own: **Whiteboard**, the first row of the sidebar (on a
 phone the first chip of the sessions' line), the page `/whiteboard` (`P` leads there with the pen in hand; the old
-address `/pad` too). The page is the pad (`public/pad/`, embedded with `?place`) as large as the main area; select or
+address `/pad` too). The page is the pad (`whiteboard.mjs` mountPad, on the page itself) as large as the main area; select or
 frame something and **Send to…** a session, as before. Memos stay what they are: the round button on every page and
 the NOTES stack on the Desk.
 
-What is drawn is the desk's canvas timeline `desk/<32 hex>` (`js/views/whiteboard.mjs` `deskCanvas`: a desk id that is
+What is drawn is the desk's canvas timeline `desk/<32 hex>` (`whiteboard.mjs` `deskCanvas`; the wire format is the core's `canvas.mjs`: a desk id that is
 not 32 hex, such as `main`, is folded into 16 bytes, the same on every device). The Desk's paper before it wrote to
 `desk/<desk_id>` with the plain id, which the core refuses since protocol v1.1 (`parseTimelineId`): none of its strokes
 reached the hub, so there was nothing to carry over. A memo that lay on the paper (place `paper`) is read as put away
-and waits on the NOTES stack (`memo-store.mjs`); nothing is rewritten.
+and waits on the NOTES stack (`notes.mjs`); nothing is rewritten.
 
 ## The account (what a person sees)
 
@@ -79,44 +114,14 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 - What the hub learns: the email in plaintext and which room it belongs to; nothing it could open (trommi-hub README,
   "Accounts").
 
-## Architecture
-
-```
-public/
-  index.html             the shell: all stylesheets (enabled per view; one bundle once built), fonts, one module: js/app/boot.mjs
-  _headers               CSP and caching (Cloudflare; dev/serve.mjs reads it too)
-  sw.js                  service worker: shell cache (versioned), /att/<id> (decrypted attachments), push
-  css/  js/pen.js …      the board's look (taken over from the old board, now the app's own source)
-  js/views/*.mjs         the board's view modules (trommi-hub server/views), synced, running in the page
-  t/controllers t/lib    the board's Stimulus controllers, synced, running on js/app/stimulus.mjs
-  gen/                   generated, never edited by hand: vendor/ (the client core, copied from the repository's core/ by
-                         dev/build.mjs in Cloudflare's build; dev/serve.mjs serves it from core/), the stylesheet bundle,
-                         build.txt (not committed); connector.mjs(.sha256) and plugins/ (connector/bundle.mjs, committed,
-                         CI checks them), served at /connector.mjs, /connector.mjs.sha256, /plugins/… (worker.js)
-  mock/                  fixture of the mock room (dev/make-fixture.mjs) and its pictures
-  pad/                   the pad: the Whiteboard's page (?embed&place, in /whiteboard) and the Scratchpad on its own
-  js/app/
-    boot.mjs             open the room (or the room screens), first paint from the local model, start the core
-    board-state.mjs      THE SEAM: core model -> the state shape the views were written for (incremental)
-    hub-facade.mjs       the views' "hub" actions (decide, message, editSession, memo, …) -> core human actions
-    board.mjs            the hub's page routes, forms and live diffs (trommi-hub server/turbo.mjs) in the browser
-    router.mjs           navigation (real URLs), forms, frames, body patching by parts, fetch() of old JSON routes
-    layout.mjs           the frame around every view (topbar, menu, sidebar, sheets, memos)
-    turbo.mjs            <turbo-stream> element (append/prepend/before/after/replace/update/remove/refresh), visit()
-    stimulus.mjs         a small Stimulus stand-in (targets, values, actions, params, lazy registration)
-    application.mjs      what every page has (toasts, folds, piles, times, menu, theme), from the board
-    room.mjs             the account screens: Create account, Log in (email + password or QR), Emergency Kit, Forgot password; devices, pairing, Settings
-    att.mjs              attachments: decrypted only when the browser asks for them
-    mock-room.mjs        the core's API and model shape without hub or crypto, simulated agents
-    mock-crazy.mjs       a generated very big room
-```
+## How it works
 
 ### Data flow
 
-1. `boot.mjs` opens the room from IndexedDB (`openRoom` of the core) — no network — and builds the board state (`board-state.mjs`) from `client.model`.
-2. The page for the address is rendered at once (`router.visit` → `board.request` → a view module → `layout.mjs` parts). First paint does not wait for the hub.
+1. `app.mjs` boot opens the room from IndexedDB (`openRoom` of the core) — no network — and builds the board state (`BoardState`) from `client.model`.
+2. The page for the address is rendered at once (`router.visit` → `board.request` → a view's route → `bodyParts`). First paint does not wait for the hub.
 3. `client.start()` signs in, catches up from the cursor and opens the stream. Every `change` of the core (sets of object ids, timeline keys, register keys) is collected for one animation frame, then `board-state` rebuilds only the cards the change names, and `board.live()` diffs the open page's live pieces (Desk rows, card face/answer/thread, session log, sidebar rows, the pill's counts, memos) and replaces only the elements that changed (`<turbo-stream>` actions, keyed by `row-<id>`, `agent-<id>`, `msg-<id>`, `card-lead-<id>` …).
-4. A form (answer, Snooze, Revise, What??, Whatever, Shred, message, memo, session edit, desk, pairing) is answered by the board's handlers in the page: `hub-facade.mjs` calls the core (`answer`, `sendMessage`, `setRegisters`, …). The core shows the change at once (optimistic echo, `pending`) and seals, signs and sends it; the hub's copy replaces the echo.
+4. A form (answer, Snooze, Revise, What??, Whatever, Shred, message, memo, session edit, desk, pairing) is answered by the views' handlers in the page: the actions (`hubFacade`) call the core (`answer`, `sendMessage`, `setRegisters`, …). The core shows the change at once (optimistic echo, `pending`) and seals, signs and sends it; the hub's copy replaces the echo.
 
 ### Addresses
 
@@ -132,29 +137,12 @@ The core owns the schema (trommi-hub `core/README.md`, "Storage adapter"): datab
 - **Patch only**: after a change, only elements whose markup changed are replaced; Desk rows are cached per card object (a card the change did not name keeps its row string), the sidebar per row, the body per part (a navigation keeps the topbar and sidebar if their markup is the same).
 - **Windowed**: conversations are timelines loaded newest page first (50), older pages on "Earlier"; a session page loads its cards' threads lazily; Desk rows and log messages out of sight are skipped by layout and paint (`content-visibility: auto`).
 - **Lazy decrypt**: attachments are rendered as `/att/<id>` with `loading="lazy"`; the service worker asks the page, which fetches and decrypts only that file, only when it is shown or opened.
-- **No framework, one stylesheet**: modules load lazily (controllers on first use), the shell is cached by the service worker per release.
-- **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only), no inline script, fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
+- **No framework, one stylesheet**: a dozen modules, preloaded at once; one stylesheet bundle.
+- **CSP**: `script-src 'self' 'wasm-unsafe-eval'` (WebAssembly for Argon2id only) plus the hashes of the two inline scripts (the theme before first paint, the help page), fonts self-hosted (`public/fonts`, OFL), all assets from the app origin, `connect-src` only the hub.
 
-### The mock room
+### The demo room
 
-`?mock=1` runs the same app on `mock-room.mjs`: the core's API and model shape (change sets naming ids, optimistic echo with `local_id`/`pending`, windowed timeline reads), fed from `public/mock/fixture.json` (made by `dev/make-fixture.mjs` from a state export of today's board with its test cards), and agents that reply, rework a handed-back card and explain on What??. It is what the screen-by-screen comparison with the Turbo board uses.
-
-## Working on the app: areas and their files
-
-Several people (and agents) work on the app at once. Each area owns its files; the **integrator** owns the shell and the render core. Touch another area's file only after asking its owner; small fixes to a shared file go through the integrator. Every change: try it in the mock room (`?mock=1`) and against a hub, `node dev/e2e.mjs` must stay green, `node dev/look.mjs` at 1440x900 light and dark and 390x844 shows no console error; commit only your files, `git pull --rebase`, push when green (push = deploy).
-
-| Area | Files |
-| --- | --- |
-| **Integrator** (shell, router, store glue, render core) | `public/index.html`, `public/sw.js`, `public/_headers`, `wrangler.jsonc`, `public/js/app/{boot,router,board,board-state,hub-facade,layout,turbo,stimulus,application,att,desk-window}.mjs`, `public/js/app/node-stubs/*`, `public/js/views/{html,model,text,sidebar,menu,keys,toast}.mjs`, `public/css/{tokens,app,turbo,logo,back,crowns,keys}.css`, `public/t/controllers/{keys,menu,rail,copy}_controller.js`, `public/t/lib/{keys,toast}.js`, `public/js/pen.js`, `dev/*`, `README.md` |
-| **Desk, stacks, Next line** | `public/js/views/{desk,stacks,nextplease}.mjs`, `public/css/{piles,stamps,slip}.css`, `public/t/controllers/{desk,stack_search}_controller.js` |
-| **Card page** (every decision flow: options, sections, pictures with marks, hand back, What??, Whatever, Shred, versions, info, permission) | `public/js/views/{card,picture}.mjs`, `public/css/{cardpage,cardclip,richhtml}.css`, `public/t/controllers/{card,circles,clip,pops,advice,richhtml}_controller.js`, `public/js/{focus-marks,richhtml,ui}.js`; the card routes in `board.mjs` (`registerCards`, `WAYS`) with the integrator |
-| **Session, chat, files, assets, Ledger** | `public/js/views/{session,session-edit,agents}.mjs`, `public/css/{session,beside,ledger,links,speech,asset}.css`, `public/t/controllers/{composer,files,log,lean,say,share,assetthumb,title}_controller.js` |
-| **Whiteboard, pad, canvas** (E2E strokes + snapshots) | `public/pad/*`, `public/js/views/whiteboard.mjs`, `public/t/controllers/whiteboard_controller.js`, `public/css/{whiteboard,scribble,padlink}.css` |
-| **Memos** | `public/js/views/memo.mjs`, `public/t/lib/memo.js`, `public/t/controllers/{memo,memos}_controller.js`, `public/css/quicksend.css` |
-| **Account, pairing, devices, settings** (Create account, Log in, Emergency Kit, QR pairing, device list, storage usage, the reload notice's look) | `public/js/app/room.mjs`, `public/js/app/qr.mjs`, `public/css/room.css`, `public/t/controllers/room_controller.js` |
-| **Phone layout** | `public/css/phone-desk.css`, `public/t/controllers/sheet_controller.js`, the `@media (max-width: …)` blocks of the area files in agreement with their owners |
-
-The model the views get is `board-state.mjs` (core model → board state) and `views/model.mjs`; an area that needs a field the core has but the board state lacks asks the integrator. Hub actions go through `hub-facade.mjs` (integrator).
+`?mock=1` runs the same app on `demo/demo.mjs`: the core's API and model shape (change sets naming ids, optimistic echo with `local_id`/`pending`, windowed timeline reads), fed from `demo/fixture.json` (made by `dev/make-fixture.mjs`), and agents that reply, rework a handed-back card and explain on What??. `?mock=crazy` generates a very big room (`dev/perf.mjs`).
 
 ## Performance (measured 4 Oct 2026)
 
@@ -171,4 +159,4 @@ Headless Chromium; "phone" = 390x844 with the CPU 4x slower. Scripts: `dev/perf.
 | Crazy room: Desk / huge session chat / switch session / card thread / answer / own send visible | 6 / 48 / 57 / 19 / 18 / 3 ms | 25 / 211 / 220 / 60 / – / 11 ms |
 | Mock crazy room (300 open cards, 50k messages): patch after a change | 4–7 ms | 20–30 ms |
 
-What made the difference: rows rendered only near the viewport (`desk-window.mjs`), patch-only updates keyed by id, no page patching while the core catches up (one whole render every 2.5 s and once when live), board state rebuilt only for what a change names, no `:has()` over the whole document, advice marks measured in one batch, the service worker serving every file from its cache and revalidating only `index.html`. Still over budget: opening and switching sessions on a 4x phone (≈200 ms), a new device's first load in a huge room (bound by the core's verify/decrypt of every envelope; the core's room snapshot is the way out).
+What made the difference: rows rendered only near the viewport (`desk.mjs` startDeskWindow), patch-only updates keyed by id, no page patching while the core catches up (one whole render every 2.5 s and once when live), board state rebuilt only for what a change names, no `:has()` over the whole document, advice marks measured in one batch, the service worker serving every file from its cache and revalidating only `index.html`. Still over budget: opening and switching sessions on a 4x phone (≈200 ms), a new device's first load in a huge room (bound by the core's verify/decrypt of every envelope; the core's room snapshot is the way out).

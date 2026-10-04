@@ -7,13 +7,11 @@
 //
 // One form (#card-form-<id>) holds the field and the notes on single options; every way to answer is a button of that
 // form with its own address (formaction), so what was written goes along, with or without scripts. The controller
-// "card" (t/controllers/card_controller.js) adds the pencil for a note on one option, the draft kept while typing,
+// "card" (controller "card") adds the pencil for a note on one option, the draft kept while typing,
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
-// Styles: client/web/css/cardpage.css.
-
+// Styles: card.css.
 import { BASE, SAID, stream } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, plain, raw, rich, sk, sketch, srcOf, thumb } from './ui.mjs'
-
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
@@ -653,7 +651,7 @@ function cardMarks({ scroll, blocks, labelOf, onChange }) {
 }
 
 // ---- controller "card" ----
-// A card's page (server/views/card.mjs). The page works without this: every answer is a button of one form.
+// A card's page (card.mjs). The page works without this: every answer is a button of one form.
 // This adds what needs a script: the pencil that opens the note on one option, the draft kept on the hub while
 // typing, Enter that sends, the names of attached files (also pasted or dropped), and the arrow of the pen from
 // the picture shown to the option it belongs to.
@@ -680,7 +678,7 @@ controller('card', class extends Controller {
     clearTimeout(this.timer)
   }
 
-  // ---- marks: draw on the card with the pen, write a note at a paragraph (the old client's js/focus-marks.js) ----
+  // ---- marks: draw on the card with the pen, write a note at a paragraph (the old client's card.mjs) ----
   // They travel in the form's field "marks" with whatever is pressed, and in the draft while nothing is.
   async mountMarks() {
 

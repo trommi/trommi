@@ -1,0 +1,913 @@
+.inbox-head, .inbox-groups { max-width: 800px; margin-inline: auto; }
+.inbox-head { display: flex; align-items: flex-end; justify-content: space-between; gap: var(--s-4); flex-wrap: wrap; margin-bottom: var(--s-8); }
+/* The heading, and on its line the count with its sentence; in a narrow window that wraps below. */
+.inbox-title { flex: 1 1 20rem; min-width: 0; display: flex; flex-wrap: wrap; align-items: baseline; gap: var(--s-1) var(--s-6); }
+.inbox-title h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
+.inbox-title p { display: flex; flex-wrap: wrap; align-items: center; gap: .1em .3em; font-size: var(--t-lg); color: var(--muted); }
+/* The desk's heading is the way into the walk: the words in the display face, the number of what waits
+   in its circle, and a small arrow that steps forward under the pointer or the keyboard. */
+.inbox-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .2em .5em; }
+.inbox-go { display: inline-flex; align-items: center; gap: .32em; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
+.inbox-go .sketch { width: .62em; height: .62em; stroke-width: 2.2; color: var(--faint); transition: translate 140ms ease-out, color 140ms ease-out; }
+.inbox-go:active { scale: .98; }
+/* One list at one pitch: the senders' sections follow each other at the gap between two rows. The
+   piles at the foot stand a little apart. */
+.inbox-groups { display: grid; gap: var(--s-4); container: rows / inline-size; }
+.inbox-groups > .inbox-pile { margin-top: var(--s-6); }
+.inbox-group { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-4); }
+/* Our own card (card Nr. 87, "Farben so nicht"): a plain white row, grey text, one neutral line and one
+   soft shadow. The colour stands only where one answers: the tiles, the tabs, the knock. It is a tone
+   (tokens.css: --tone-wash, --tone-edge, --tone-mid, --tone-pen): the asking session's on the Desk, where
+   the row carries its hue; the urgency's where no session is named. */
+.inbox-row {
+  --urg-color: var(--urg-normal);
+  --urg-soft: var(--urg-normal-soft);
+  --card-bg: var(--surface);
+  --card-ink: color-mix(in srgb, var(--muted) 75%, var(--fg));
+  --card-line: var(--line-strong);
+  /* Every row in the list is the same height and the answers are tiles at its right edge, always in
+     the same place. Answer one, the next slides up, and its tiles are under the pointer.
+     "Choose" unfolds a second grid row below; folded, that row has no height. */
+  min-height: 172px; display: grid; grid-template-columns: minmax(0, 1fr) auto auto auto; grid-template-rows: 172px auto; align-items: stretch;
+  position: relative; background: var(--card-bg); border-radius: 6px;
+  box-shadow: 0 0 0 1px var(--card-line), 0 6px 14px -10px rgb(20 30 25 / .18);
+}
+.inbox-row[data-urgency="low"] { --urg-color: var(--urg-low); --urg-soft: var(--urg-low-soft); }
+.inbox-row[data-urgency="high"] { --urg-color: var(--urg-high); --urg-soft: var(--urg-high-soft); }
+.inbox-row[data-urgency="critical"] { --urg-color: var(--urg-critical); --urg-soft: var(--urg-critical-soft); }
+.inbox-row:not([data-from]) { --tone-pen: var(--urg-color); --tone-mid: var(--urg-color); --tone-edge: var(--line-strong); --tone-wash: var(--urg-soft); }
+/* A card that says who asks (the desk) answers in that session's tones: its tiles and tabs (the row carries
+   --hue, tokens.css works out the tones). What knocks keeps its warning colour on top: the label and the
+   leading tile, so urgency still wins the eye. */
+.inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--urg-color); }
+/* The sender's drawing, small, before the title; the text stands beside it. The byline then does not
+   say who asks a second time. */
+.inbox-text.has-sender { position: relative; padding-left: 36px; }
+.inbox-who.inbox-from-mark { position: absolute; left: 0; top: 3px; width: 26px; height: 26px; color: var(--tone-pen); }
+.inbox-revising-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 9px; min-height: 36px; padding: 0; border: 0; background: none; color: var(--fg); font: inherit; text-align: left; cursor: pointer; }
+.inbox-revising-open .agent-ring { position: static; flex: none; width: 15px; height: 15px; color: var(--accent); }
+.inbox-revising-open .ring-loop { opacity: .38; stroke-width: 2.2; }
+.inbox-revising-open .ring-drop path { stroke-width: 3.2; }
+.inbox-revising-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+.inbox-revising-tail { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
+.inbox-revising-tail .inbox-from-mark { width: 16px; height: 16px; color: var(--tone-pen); }
+@media (prefers-reduced-motion: reduce) { .inbox-revising-open .ring-loop { opacity: 1; stroke-dasharray: 91 9; }
+}
+/* In the dark the quiet tile (No, Deny) is nearly the card's own ground: an edge makes it a button. */
+:root[data-theme="dark"] .inbox-answer:not(.is-lead):not(:hover):not(.is-picked):not(.is-hinted) { box-shadow: inset 0 0 0 1px var(--card-line); }
+/* ---- a row unfolded in place: it holds the whole card (js/focus.js, inline) and nothing of its own ----
+   Its compact content is hidden while the card shows it; where the page has room the row is wider
+   than the column. */
+@container inboxpage (min-width: 1000px) { .inbox-row.is-unfolded { margin-inline: -70px; }
+}
+@container inboxpage (min-width: 1140px) { .inbox-row.is-unfolded { margin-inline: -140px; }
+}
+/* ---- a run: the cards of one session, behind a divider tab ----
+   The tab stands in the list's own flow above the run's first card (so it never lies on the card
+   before it): the session's drawing, crown and name on the session's colour. The run's cards stand
+   close under it, 4px apart, square where they meet, and do not repeat the drawing. */
+.inbox-group[data-sender] { --run-color: var(--tone-pen); --run-on: var(--surface); gap: var(--s-4); }
+.inbox-group[data-sender] .inbox-who { display: none; }
+.inbox-group[data-sender] .inbox-text.has-sender { padding-left: 0; }
+.inbox-row[data-from] .inbox-byline :is(.inbox-from, .inbox-from + .inbox-sep) { display: none; }
+.inbox-row > :not(.inbox-more) { grid-row: 1; }
+/* The row the keyboard is on. */
+.inbox-row.is-current { outline: 3px solid var(--fg); outline-offset: 3px; }
+/* Whole lines only, in whole pixels: head 26, gap 8, 8 above the title, title 28 a line, gap 6,
+   text 25 a line, 16 below. One title line leaves room for two of text, two title lines for one
+   (data-tall, measured in inbox.js). */
+.inbox-content { display: grid; grid-template-columns: minmax(0, 1fr); align-content: start; gap: var(--s-2); padding: 0 var(--s-4) var(--s-4) var(--s-5); min-width: 0; overflow: hidden; }
+.inbox-content > * { min-width: 0; }
+.inbox-row-head { height: 26px; display: flex; align-items: flex-start; gap: var(--s-3); margin-left: calc(-1 * var(--s-5)); }
+/* Only a knock has a head line (its tab). Every other row begins with its title, at the row's top padding. */
+.inbox-row-head:empty { display: none; }
+.inbox-content:has(> .inbox-row-head:empty) { padding-top: 13px; }
+/* Only what stands out carries a tab: blocking and urgent. A normal question has none. */
+.inbox-tab { display: inline-flex; align-items: center; gap: 5px; flex: none; padding: 7px 10px; border-radius: 6px 0 6px 0; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .06em; text-transform: uppercase; white-space: nowrap; }
+.inbox-tab { background: var(--urg-color); color: var(--surface); }
+/* A knock wears the small drawing of knuckles on a door before its word. */
+.inbox-tab .sketch { width: 15px; height: 15px; margin: -3px 0 -3px -2px; stroke-width: 2.1; }
+.inbox-row.is-knocking { animation: knock 640ms cubic-bezier(.3, .7, .4, 1) 120ms; }
+@media (prefers-reduced-motion: reduce) { .inbox-row.is-knocking,
+.agent-row.is-knocking .agent-avatar { animation: none; }
+}
+/* One that can wait: no tab, a small hourglass scribbled in a soft colour. */
+/* (It stands in the byline, before who asks.) */
+.inbox-whenever { flex: none; display: inline-flex; color: var(--tone-mid); }
+.inbox-whenever .sketch { width: 16px; height: 16px; stroke-width: 2; }
+/* The byline under the text: who asks (the session's mark and name, where the list holds more than one
+   session), the card's number, its age, and what it carries. One quiet line at the foot of the row. */
+.inbox-content { position: relative; }
+.inbox-byline { position: absolute; left: var(--s-5); right: var(--s-4); bottom: 9px; margin: 0; display: flex; align-items: center; gap: .35em; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .01em; font-variant-numeric: tabular-nums; color: color-mix(in srgb, var(--card-ink) 62%, var(--card-bg)); white-space: nowrap; overflow-x: clip; overflow-y: visible; }
+.inbox-byline .inbox-from { display: inline-flex; align-items: center; gap: 5px; min-width: 0; font-weight: 600; color: var(--card-ink); }
+.inbox-byline .inbox-from span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.inbox-byline .inbox-from-mark { width: 17px; height: 17px; color: var(--tone-pen); }
+.inbox-from-mark { flex: none; position: relative; display: block; width: 18px; height: 18px; }
+.inbox-from-mark .crown-mark { left: 0; top: -52%; width: 92%; }
+.inbox-from-mark .crown-pen { stroke-width: 2.1; }
+/* (Tightened by a few pixels, so that the byline has its line below two lines of title and one of text.) */
+.inbox-text { display: grid; gap: 2px; padding: 2px 0 0; border: 0; background: none; text-align: left; min-width: 0; }
+.inbox-question, .inbox-body { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; }
+.inbox-question { font: 800 1.45rem/28px var(--display); letter-spacing: -.012em; text-wrap: balance; color: var(--fg); }
+.inbox-body { color: var(--card-ink); font-size: var(--t-lg); line-height: 25px; }
+.inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 1; }
+/* Unfolded with its text in full below: the row itself does not say it a second time. */
+/* At most one small picture, beside the text; the rest are behind it. */
+/* Beside the title, at the top right of the text: a small clock for the card's age; the number shows
+   only under the pointer or the keyboard. */
+.inbox-when { position: absolute; top: 15px; right: var(--s-4); display: inline-flex; align-items: center; gap: 6px; color: color-mix(in srgb, var(--card-ink) 55%, var(--card-bg)); }
+.inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 40px; }
+.inbox-when .inbox-nr { margin: 0; padding: 2px 0 0 6px; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .02em; text-transform: none; opacity: 0; background: var(--card-bg); transition: opacity 100ms ease-out; }
+.inbox-when .inbox-ago { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.inbox-question { padding-right: 30px; }
+/* The pictures: a small stack under the text, a little fanned; beside it what the card carries. */
+.inbox-byline .inbox-thumb { flex: none; position: relative; align-self: center; width: auto; height: 40px; margin: 0 4px 0 2px; padding: 0; border: 0; border-radius: 0; overflow: visible; background: none; box-shadow: none; display: inline-flex; align-items: center; }
+.inbox-byline .inbox-thumb img { width: 50px; height: 38px; border-radius: 5px; object-fit: cover; object-position: top center; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line), 0 1px 3px rgb(20 30 25 / .12); }
+.inbox-byline .inbox-thumb img:nth-child(1) { rotate: -3deg; z-index: 3; }
+.inbox-byline .inbox-thumb img:nth-child(2) { margin-left: -30px; rotate: 2.5deg; translate: 0 1px; z-index: 2; }
+.inbox-byline .inbox-thumb img:nth-child(3) { margin-left: -30px; rotate: -1.5deg; translate: 0 -1px; z-index: 1; }
+.inbox-byline:has(.inbox-thumb) { bottom: 8px; }
+.inbox-row:has(> .inbox-pics) .inbox-byline :is(.inbox-carries, .inbox-sep:has(+ .inbox-carries)) { display: none; }
+/* It stands clear of the tiles by the row's own padding; a narrower column drops it before the gap. */
+.inbox-thumb { position: relative; align-self: center; width: 64px; height: 64px; margin-right: var(--s-4); padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line); cursor: zoom-in; transition: scale 100ms ease-out; }
+@media (any-hover: hover) { .inbox-thumb:hover { scale: 1.05; }
+}
+.inbox-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
+/* A card that is shredded leaves in strips. */
+.inbox-row.is-leaving[data-leave="shredded"] { animation-name: row-shred; animation-duration: 340ms; -webkit-mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); }
+.inbox-carries { display: inline-flex; align-items: center; gap: .7em; min-width: 0; }
+.inbox-carries > span { display: inline-flex; align-items: center; gap: 4px; }
+.inbox-carries .sketch { width: 15px; height: 15px; stroke-width: 1.9; }
+/* The row's ways out (.inbox-tabs): small paper tabs down its right edge, in the order of the opened
+   card: Snooze (.inbox-later, key L), Revise (.inbox-revise), Whatever (.inbox-trust), Shred
+   (.inbox-shred). Each is tucked behind the edge with only its drawing showing; under the pointer or
+   the keyboard it slides out and shows its word, eased,
+   with a soft shadow. Two places: in the desk on a wide page they lie wholly outside the row, in the
+   right margin, so no click on a tile can land on them; everywhere else (narrow pages, a session's own
+   list) they sit inside the right edge and slide inward, and the tiles are set in to clear them; on a
+   phone they are a short line at the card's top right. */
+.inbox-tabs { position: absolute; z-index: 2; top: 0; right: 0; display: grid; justify-items: end; gap: 3px; }
+.inbox-tab-act { --nub: 26px; position: relative; height: 26px; width: max-content; max-width: var(--nub); padding: 0; border: 0; background: none; color: var(--card-ink); overflow: hidden; border-radius: 8px 0 0 8px; filter: drop-shadow(0 1px 2px rgb(20 30 25 / .10)); transition: max-width 260ms cubic-bezier(.22, .9, .25, 1), filter 260ms ease-out; }
+.inbox-tab-act:first-child { border-radius: 8px 6px 0 8px; }
+.inbox-tab-act[hidden] { display: none; }
+.inbox-later-flap { display: flex; flex-direction: row; align-items: center; gap: 7px; height: 100%; padding: 0 9px 0 6px; background: var(--tone-wash); box-shadow: inset 0 0 0 1px var(--card-line); border-radius: inherit; white-space: nowrap; transition: background 140ms; }
+.inbox-later-flap .sketch { flex: none; width: 15px; height: 15px; stroke-width: 2.2; opacity: .8; }
+.inbox-later-flap b { font: 700 .68rem/1 var(--font); letter-spacing: .07em; text-transform: uppercase; }
+.inbox-tab-act:active .inbox-later-flap { filter: brightness(.95); }
+/* Shift held (bar.js sets body[data-shift]): the row's one tab is Shred instead of Snooze, slid out and red */
+/* On the card, beside the title (inbox.js puts .inbox-tabs into .inbox-when): one small square button with the
+   drawing alone, the word is its tooltip; nothing lies outside the row. Shift held: the same place is Shred. */
+.inbox-when .inbox-tabs { position: static; display: flex; gap: 4px; margin: -6px 0 -6px 2px; }
+.inbox-when .inbox-tab-act, .inbox-when .inbox-tab-act:first-child { --nub: 28px; width: 28px; max-width: 28px; height: 28px; border-radius: 8px; filter: none; transition: none; color: var(--card-ink); }
+.inbox-when .inbox-later-flap .sketch { width: 16px; height: 16px; opacity: 1; }
+.inbox-when .inbox-later-flap b { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+.inbox-when .inbox-tab-act.inbox-shred .inbox-later-flap { box-shadow: inset 0 0 0 1px var(--urg-critical); }
+body:not([data-shift]) .inbox-tab-act.inbox-shred { display: none; }
+body[data-shift] .inbox-tabs:has(.inbox-shred) > .inbox-later { display: none; }
+body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg-critical); }
+/* on the row the keys are on, each tab wears its key */
+.inbox-row.is-current .inbox-tab-act[data-cap]::after { content: none; }
+/* Whatever under the pointer: the tile the agent would take lights up */
+.inbox-answer.is-hinted { box-shadow: 0 0 0 3px var(--surface), 0 0 0 5px var(--tone-pen); }
+/* One tile or two, 124 square, from the right: the right-hand one is at the same place in every row.
+   (Set in from the right where the Snooze label sits inside the row's edge.) */
+.inbox-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; padding: 12px 12px 12px 0; }
+.inbox-answer { flex: none; width: 124px; height: 124px; min-width: 0; padding: 8px 6px; display: grid; grid-template-columns: minmax(0, auto); justify-content: center; justify-items: center; align-content: center; gap: 6px; border: 0; border-radius: 12px; background: var(--tone-wash); color: var(--card-ink); font: 600 var(--t-sm)/1.2 var(--font); text-align: center; overflow-wrap: normal; transition: background 100ms ease-out, box-shadow 100ms ease-out, scale 100ms ease-out; }
+.inbox-answer .sketch { width: 32px; height: 32px; }
+/* Thumbs are the answer; the word under one says what the thumb means here. It stands whole, in one
+   or two lines at a size that reads: inbox.js lets only labels onto a tile that fit that way. */
+.inbox-answer.is-thumb .sketch { width: 44px; height: 44px; stroke-width: 1.5; }
+.inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { max-width: 100%; font-size: var(--t-sm); font-weight: 600; line-height: 1.2; text-wrap: balance; overflow-wrap: normal; }
+/* A longer pair of labels: smaller, up to three lines; a word is never broken inside (inbox.js labelSize). */
+.inbox-answer.is-thumb.is-small { gap: 4px; }
+.inbox-answer.is-thumb.is-small .sketch { width: 34px; height: 34px; }
+.inbox-answer.is-thumb.is-small > span:last-child:not(.inbox-disc) { font-size: .72rem; line-height: 1.15; }
+/* More than two ways: one tile, "Choose", in the place of the right-hand thumb. */
+.inbox-answer.is-wide { font: 700 1.05rem/1.2 var(--display); }
+.inbox-answer small { font: 500 var(--t-xs)/1.2 var(--font); opacity: .8; }
+.inbox-answer.is-wide[aria-expanded="true"] .sketch { opacity: .5; }
+.inbox-answer.is-lead { background: var(--tone-pen); color: var(--surface); }
+/* An info card: "What??" and "Acknowledge" stand where the answers do; in the byline a small page says it is to read. */
+.inbox-toread { color: var(--tone-mid); }
+@media (any-hover: hover) {
+  .inbox-answer:hover { box-shadow: inset 0 0 0 2px var(--tone-pen); }
+  .inbox-answer.is-lead:hover { filter: brightness(.92); }
+}
+.inbox-answer:active { scale: .97; }
+.inbox-answer:disabled { opacity: .35; }
+.inbox-answer.is-picked { opacity: 1; box-shadow: inset 0 0 0 3px var(--tone-pen); }
+.inbox-error { color: var(--deny); font-size: var(--t-sm); }
+/* Put off: dashed, because where these cards stand is provisional. */
+/* The dashed edge is an outline, so the row and its tiles are exactly as large as an open one. */
+.inbox-row[data-later] { background: none; box-shadow: none; outline: 1px dashed var(--tone-mid); outline-offset: -1px; }
+/* ---- piles (inbox.js pile()): "Snoozed", "With the agent", "Answered" ----
+   At the foot of the list they stand side by side behind a dashed rule (one compact line each in a
+   narrow column). Folded, a pile is: its count as a tally of pen strokes, five to a gate; its name and
+   number; and one line under it, the latest of what it holds. Open, it takes the whole width: its
+   line is a dividing line with a rule and a stroke that points up, and its entries are rows like any
+   other. Plain blocks; only the tally and the small drawing are by hand. */
+.inbox-groups { grid-template-columns: repeat(6, minmax(0, 1fr)); column-gap: var(--s-5); }
+.inbox-groups > * { grid-column: 1 / -1; }
+.inbox-groups > .inbox-pile:not(.is-open) { grid-column: span 3; }
+/* Three of them: three to a row. */
+.inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: span 2; }
+.inbox-pile { gap: var(--s-3); align-content: start; }
+.inbox-pile-head { flex: 1; min-width: 0; display: flex; align-items: center; gap: var(--s-3); padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: inherit; font: inherit; text-align: left; }
+.inbox-pile-head::after { content: ""; flex: 1; order: 2; border-top: 1px solid var(--line-strong); }
+.inbox-pile-head b { order: 3; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.inbox-pile-head:hover,
+.inbox-pile-head:hover b { color: var(--fg); }
+.inbox-pile-sheets { display: flex; flex-direction: column; min-width: 0; }
+.inbox-pile-item { position: relative; min-width: 0; margin-top: var(--s-4); }
+.inbox-pile-item:first-child { margin-top: var(--s-1); }
+/* folded: one quiet line, a word and its strokes; nothing else */
+.inbox-groups > .inbox-pile:not(.is-open) { padding: 2px 0; cursor: pointer; }
+.inbox-pile:not(.is-open) .inbox-pile-head { gap: 10px; }
+.inbox-pile:not(.is-open) .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
+.inbox-pile:not(.is-open) .tally-more,
+.inbox-pile:not(.is-open) .inbox-pile-head b,
+.inbox-pile:not(.is-open) .inbox-pile-head::after,
+.inbox-pile:not(.is-open) .inbox-pile-sheets { display: none; }
+/* While the sheets move, each is cut at its own edge. */
+.inbox-pile.is-moving .inbox-pile-item { overflow: hidden; }
+/* Nothing here yet: dashed and a little crooked, so it reads as not-yet-real. */
+.inbox-empty { justify-self: center; display: grid; justify-items: center; gap: var(--s-3); margin: var(--s-10) auto 0; color: var(--muted); text-align: center; font-size: var(--t-lg); }
+.inbox-empty .sketch { width: 96px; height: 96px; stroke-width: 1.1; color: var(--faint); }
+/* A new account's Desk (no session yet): "Invite your first agent", a calm sheet of paper with one way on (desk.mjs).
+   The empty Desk's own line below it says the same thing later, so it steps aside while the note stands. */
+.inbox-head:has(> .desk-invite) { justify-content: center; }
+.desk-invite { flex: 0 1 34rem; display: grid; justify-items: center; gap: var(--s-3); margin-top: var(--s-8); padding: var(--s-8) var(--s-6) var(--s-6); border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: var(--surface); box-shadow: var(--shadow-sm); text-align: center; }
+.desk-invite .desk-invite-art { width: 72px; height: 72px; stroke-width: 1.2; color: var(--accent); }
+.desk-invite h2 { font: 800 var(--t-2xl)/1.15 var(--display); letter-spacing: -.02em; }
+.desk-invite p { max-width: 30rem; color: var(--muted); font-size: var(--t-md); line-height: 1.5; }
+.desk-invite code { font: .86em var(--mono); padding: 1px 4px; border-radius: 5px; background: var(--sunken); color: var(--fg); white-space: nowrap; }
+.desk-invite form { margin: var(--s-2) 0 0; }
+.desk-invite-go { display: inline-flex; align-items: center; gap: var(--s-2); min-height: 44px; padding: 0 var(--s-5); border: 0; border-radius: var(--r-pill); background: var(--accent); color: var(--accent-fg); font: 650 var(--t-md) var(--font); cursor: pointer; box-shadow: var(--shadow-sm); transition: background var(--d-fast), transform var(--d-fast) var(--ease-out); }
+.desk-invite-go:hover { background: var(--accent-hover); transform: translateY(-1px); }
+.desk-invite-go .sketch { width: 20px; height: 20px; stroke-width: 1.9; }
+#desk-head:has(> .desk-invite) ~ .inbox-groups .inbox-empty { display: none; }
+@media (max-width: 600px) { .desk-invite { margin-top: var(--s-4); padding: var(--s-6) var(--s-4) var(--s-5); } .desk-invite code { white-space: normal; overflow-wrap: anywhere; }
+}
+/* A narrower column: the text keeps its width, the picture waits behind the title. */
+@container rows (max-width: 700px) {
+  .inbox-question { font-size: 1.25rem; }
+  .inbox-body { font-size: var(--t-md); }
+}
+/* Narrow (a phone, or sessions side by side): rows are as tall as their text, the answers stand below it. */
+@container rows (max-width: 560px) {
+  .inbox-row { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
+  .inbox-answer { height: auto; }
+  .inbox-when, .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 10px; right: 10px; }
+  .inbox-byline:has(.inbox-thumb) { order: 3; margin-top: 4px; }
+  .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; }
+  .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-3)); }
+  .inbox-row > :not(.inbox-more) { grid-row: auto; }
+  .inbox-content { grid-column: 1 / -1; padding: 0 var(--s-4) var(--s-3); overflow: visible; }
+  .inbox-row-head { height: auto; min-height: 26px; margin-left: calc(-1 * var(--s-4)); }
+  .inbox-question { font-size: 1.25rem; line-height: 1.18; }
+  .inbox-body, .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; font-size: var(--t-md); line-height: 1.45; }
+  .inbox-thumb { display: block; width: 72px; height: 54px; }
+  .inbox-row-head { padding-right: 30px; }
+  /* a phone: the four tabs are a short line at the card's top right */
+  .inbox-tabs { display: flex; gap: 2px; }
+  .inbox-tab-act, .inbox-tab-act:first-child { border-radius: 0 0 7px 7px; }
+  .inbox-tabs .inbox-tab-act:last-child { border-radius: 0 6px 0 7px; }
+  /* big enough for a thumb: one tap snoozes */
+  .inbox-tab-act { height: 36px; --nub: 36px; }
+  .inbox-tab-act .inbox-later-flap { padding: 0 10px 0 10.5px; gap: 14px; }
+  /* the note is a quiet line at the top of the card; later rows of a run drop the mark and the name */
+  .inbox-byline { position: static; order: -1; flex-wrap: wrap; row-gap: 2px; margin: 10px 0 0; padding-right: 26px; }
+  /* (the line keeps its height when it has nothing to say: the clock at the right stands in it) */
+  .inbox-row[data-from] .inbox-byline { min-height: 18px; }
+  .inbox-row[data-from] .inbox-row-head:not(:empty) ~ .inbox-byline { min-height: 0; margin-top: 0; }
+  .inbox-row-head { order: -2; }
+  .inbox-row-head:not(:empty) + .inbox-text { margin-top: 0; }
+  .inbox-content:has(> .inbox-row-head:empty) { padding-top: 0; }
+  .inbox-actions { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding: 0 var(--s-3) var(--s-4); }
+  .inbox-answer { width: auto; }
+  .inbox-answer.is-wide { grid-column: 1 / -1; }
+  .inbox-answer { aspect-ratio: auto; grid-template-columns: none; grid-auto-flow: column; grid-auto-columns: minmax(0, auto); justify-content: center; align-items: center; gap: 10px; min-height: 56px; border-radius: 10px; }
+  .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: left; }
+  .inbox-answer .sketch, .inbox-answer.is-thumb .sketch { width: 30px; height: 30px; stroke-width: 1.7; }
+  .inbox-answer.is-wide small { display: none; }
+}
+/* Narrower still (three sessions side by side): the word goes under its thumb again, so it keeps its width. */
+@container rows (max-width: 330px) {
+  .inbox-answer.is-thumb { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: 4px; padding-block: 8px; }
+  .inbox-answer.is-thumb > span:last-child:not(.inbox-disc) { text-align: center; }
+}
+/* Two long answers (card Nr. 157): the tile shows the agent's short word (options[i].short), the thumb small
+   with it: above it in a square tile, beside it where tiles are flat. The word stands whole; inbox.js
+   (fitShorts) picks the step for the pair: one line, a size smaller, two lines, last the thumb above. */
+.inbox-answer.is-thumb.is-short { padding-inline: 4px; }
+.inbox-answer.is-thumb.is-short .sketch { width: 26px; height: 26px; stroke-width: 1.7; }
+.inbox-answer.is-thumb.is-short > span.inbox-short { min-width: 0; max-width: 100%; font: 700 var(--t-md)/1.15 var(--display); white-space: nowrap; text-wrap: balance; overflow-wrap: normal; text-align: center; }
+.inbox-answer.is-thumb.is-short.is-two > span.inbox-short { white-space: normal; }
+.inbox-answer.is-thumb.is-short.is-tight > span.inbox-short { font-size: var(--t-sm); }
+.inbox-answer.is-thumb.is-short.is-tiny > span.inbox-short { font-size: var(--t-xs); }
+/* Who asks, on a wide screen (card Nr. 164): no tab above the rows; the session's drawing stands alone in a
+   narrow column left of each card, in the session's colour, level with the title. Its name is a small note
+   under it, written out into the margin so it lies over nothing, under the pointer or the keyboard; a click
+   opens the session (inbox.js questionRow). A phone says who asks in the card's first line (phone-desk.css). */
+.inbox-gutter { display: none; }
+@media (min-width: 861px) {
+  .inbox-group[data-sender] { padding-left: 46px; }
+  .inbox-group[data-sender] > .inbox-row > .inbox-gutter { display: block; position: absolute; left: -46px; top: 14px; width: 32px; height: 32px; border-radius: 8px; color: var(--tone-pen); }
+  .inbox-group[data-sender] > .inbox-row:has(.inbox-row-head:not(:empty)) > .inbox-gutter { top: 36px; }
+  .inbox-gutter .inbox-from-mark { position: relative; display: block; width: 32px; height: 32px; color: inherit; }
+  .inbox-gutter .doodle { stroke-width: 2.2; }
+  .inbox-gutter::after { content: attr(data-name); position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); padding: 5px 9px; border-radius: 7px; background: currentColor; font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; -webkit-text-fill-color: var(--surface); }
+}
+/* Rows that came in above the fold while he is further down (inbox.js keepRow): said, not pushed. */
+.inbox-news-at { position: sticky; top: 8px; z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
+.inbox-news-at:has(~ .inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
+/* A knock out of sight (inbox.js tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
+   the list. It is the edge: rows pass under it, it floats over no tile. */
+.inbox-edge { position: fixed; z-index: 6; pointer-events: none; }
+.inbox-edge-knock { pointer-events: auto; width: 100%; height: 26px; display: flex; align-items: center; justify-content: center; gap: 6px; padding: 0; border: 0; border-radius: 0 0 10px 10px; background: var(--urg-high); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.inbox-edge.is-down .inbox-edge-knock { border-radius: 10px 10px 0 0; }
+.inbox-edge-knock[hidden] { display: none; }
+.inbox-edge-knock .sketch { width: 18px; height: 18px; stroke-width: 2; }
+.inbox-edge-knock[hidden] { display: none; }
+.inbox-news { pointer-events: auto; align-self: start; padding: 7px 13px; border: 0; border-radius: 999px; background: var(--fg); color: var(--surface); font: 700 var(--t-sm)/1 var(--font); box-shadow: var(--shadow-lg); white-space: nowrap; }
+@container rows (max-width: 560px) {
+  .inbox-answer.is-thumb.is-short { grid-auto-flow: column; grid-template-columns: auto minmax(0, auto); gap: 8px; padding-inline: 8px; }
+  .inbox-answer.is-thumb.is-short .sketch { width: 22px; height: 22px; }
+  .inbox-answer.is-thumb.is-short:not(.is-stacked) > span.inbox-short { text-align: left; }
+  .inbox-answer.is-thumb.is-short.is-stacked { grid-auto-flow: row; grid-template-columns: minmax(0, auto); gap: 3px; padding-block: 7px; }
+}
+@media (min-width: 861px) {
+  .topbar:has(#desk-go[aria-current]) { box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
+}
+@media (max-width: 860px) {
+  .inbox-head { margin-bottom: var(--s-5); }
+}
+
+/* A finger needs 44px: the one-line pile heads and the menu's entries. */
+@media (pointer: coarse), (max-width: 860px) {
+  .inbox-pile-head { min-height: 44px; }
+  .inbox-revising-open { min-height: 44px; }
+}
+@media (max-width: 860px) {
+  .inbox-when > .cardclip-copy { z-index: 1; }
+}
+
+/* "Next, please" as index cards (card Nr. 166, "index"): the heading is the divider tab in front, standing on the
+   first card; the cards behind it peek out as small tabs with their titles, then "+N". Fixed heights: nothing
+   shifts when a card arrives. */
+.inbox-title:has(> .inbox-index) { flex: 1 1 100%; }
+.inbox-head:has(.inbox-index) { margin-bottom: 0; align-items: flex-end; }
+
+/* ---- a question leaves: one calm motion that shows where it goes ---- */
+/* In a list the row that left stays for a moment as a ghost in its old place: an answered one
+   slides off to the side, one that was put off (Later, asked to explain) sinks towards the
+   "Later" group at the end. The rows below move up once it is on its way (inbox.js). */
+.inbox-groups { position: relative; }
+.inbox-row.is-leaving { position: absolute; z-index: 0; margin: 0; pointer-events: none; animation: row-answered 300ms cubic-bezier(.4, 0, .7, .2) forwards; }
+.inbox-row.is-leaving[data-leave="later"] { animation-name: row-later; }
+@media (prefers-reduced-motion: reduce) {
+  .inbox-row.is-leaving.is-leaving { animation: row-fade 160ms linear forwards !important; }
+}
+.inbox-done { position: relative; display: grid; grid-template-columns: 30px minmax(0, 1fr) auto; align-items: center; gap: var(--s-3); min-height: 60px; padding: 8px 12px 8px 14px; border-radius: 6px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); scroll-margin: 72px 0 28px; }
+.inbox-done:focus { outline: none; }
+.inbox-takeback { display: inline-flex; align-items: center; min-height: 36px; padding: 0 14px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font-size: var(--t-sm); font-weight: 600; white-space: nowrap; }
+.inbox-takeback:hover { border-color: var(--fg); }
+.inbox-takeback:disabled { opacity: .5; }
+@container rows (max-width: 520px) {
+  .inbox-done { grid-template-columns: 26px minmax(0, 1fr); }
+  .inbox-takeback { grid-column: 2; justify-self: start; }
+}
+
+/* What went wrong with an answer on a row: on the row's lower edge, in full, never cut by the text's fixed lines. */
+.inbox-row-error { position: absolute; z-index: 2; left: 76px; bottom: 6px; max-width: calc(100% - 96px); padding: 3px 9px; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1px color-mix(in srgb, var(--deny) 40%, var(--surface)); font-weight: 600; line-height: 1.3; }
+.inbox-row-error[hidden] { display: none; }
+/* on a Desk row: beside the clock, under the pointer or the keyboard only */
+.inbox-when > .cardclip-copy { width: 24px; height: 24px; margin: -4px 0; opacity: 0; color: inherit; transition: opacity 100ms ease-out, background var(--d-fast); }
+.inbox-when > .cardclip-copy .cardclip-ico { width: 15px; height: 15px; }
+
+/* a finger has no hover: the button on a Desk row is always there, quietly */
+@media (hover: none) { .inbox-when > .cardclip-copy { opacity: .75; }
+}
+/* The copy icon, the number and the clock stand at the top right of a Desk row: the question keeps clear of them. */
+.inbox-content:has(.inbox-when > .cardclip-copy) .inbox-question { padding-right: 82px; }
+/* (a narrow row with a head puts them on the line of the head, above the question) */
+@container rows (max-width: 560px) { .inbox-content:has(> .inbox-row-head:not(:empty)):has(.inbox-when > .cardclip-copy) .inbox-question { padding-right: 0; }
+}/* The Desk on a phone: calm cards (card Nr. 153, "Karten ohne Nebensachen"; the drawing: designs/phone-calm.html).
+   At phone width a question row shows only who asks, the title and the answer tiles. The copy button, the
+   clock, the Snooze corner, the text and the pictures are not on the row: a long press brings Snooze, Revise,
+   Whatever, What??, Shred and Copy up as a sheet (js/inbox.js, holdMenu), a tap on the title opens the card
+   with its text and pictures. Only in a list of questions (.inbox-groups: the Desk, a session's own list); a
+   question inside a conversation keeps its text. Wide screens keep the row of app.css. Loaded after app.css. */
+@media (max-width: 860px) {
+  .inbox-groups .inbox-row {
+    min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); grid-template-rows: none; padding: 14px;
+    border-radius: 14px; box-shadow: none; background: var(--tone-wash);
+    user-select: none; -webkit-user-select: none; -webkit-touch-callout: none;
+    transition: scale 120ms ease-out, box-shadow 120ms ease-out;
+  }
+  .inbox-groups .inbox-row > :not(.inbox-more) { grid-row: auto; grid-column: 1; }
+  /* the finger is down and holding: the card answers before the sheet comes */
+  .inbox-groups .inbox-row.is-held { scale: .985; box-shadow: 0 0 0 2px var(--tone-pen); }
+  /* what is read and chosen below the card (the unfolded options) can be selected as before */
+
+  /* not on the row: copy and clock, the Snooze corner, the text, the pictures and what the card carries */
+  .inbox-groups .inbox-row :is(.inbox-tabs, .inbox-when, .inbox-body, .inbox-pics, .inbox-thumb, .inbox-carries, .inbox-sep, .inbox-who) { display: none; }
+  .inbox-groups .inbox-group[data-sender] { gap: 10px; }
+  .inbox-groups { gap: 10px; }
+  /* two folded piles in a row stay apart: app.css pulls the second one up by more than this list's gap */
+  .inbox-groups > .inbox-pile + .inbox-pile { margin-top: -6px; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row { border-radius: 14px; box-shadow: none; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row.is-held { box-shadow: 0 0 0 2px var(--tone-pen); }
+
+  /* one line: who (drawing and name), then the knock; under it the title */
+  .inbox-groups .inbox-content { grid-column: 1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 0; overflow: visible; }
+  .inbox-groups .inbox-content:has(> .inbox-row-head:empty) { padding-top: 0; }
+  .inbox-groups .inbox-byline, .inbox-groups .inbox-row[data-from] .inbox-byline { position: static; order: -2; flex: 0 1 auto; min-width: 0; min-height: 20px; margin: 0; padding: 0; flex-wrap: nowrap; font-size: var(--t-sm); }
+  .inbox-groups .inbox-row[data-from] .inbox-row-head:not(:empty) ~ .inbox-byline { min-height: 20px; margin: 0; }
+  .inbox-groups .inbox-byline:not(:has(.inbox-from, .inbox-whenever)) { display: none; }
+  .inbox-groups .inbox-row[data-from] .inbox-content .inbox-byline .inbox-from { display: inline-flex; gap: 7px; color: var(--tone-pen); }
+  .inbox-groups .inbox-byline .inbox-whenever { order: 1; }
+  .inbox-groups .inbox-byline .inbox-from-mark { width: 20px; height: 20px; }
+  .inbox-groups .inbox-row-head { order: -1; flex: none; height: auto; min-height: 0; margin: 0; padding: 0; align-items: center; }
+  .inbox-groups .inbox-tab { padding: 4px 7px 3px; border-radius: 6px; font: 700 .66rem/1 var(--font); letter-spacing: .07em; }
+  .inbox-groups .inbox-tab .sketch { width: 13px; height: 13px; margin: -2px 0; }
+  .inbox-groups .inbox-text, .inbox-groups .inbox-text.has-sender { flex: 0 0 100%; align-content: center; min-height: 40px; margin: -2px 0; padding: 0; }
+  .inbox-groups .inbox-row-head:not(:empty) + .inbox-text { margin-top: -2px; }
+  .inbox-groups .inbox-question { font: 700 1.3rem/1.18 var(--display); letter-spacing: -.015em; -webkit-line-clamp: 3; overflow-wrap: break-word; }
+
+  /* the answers: tiles in the session's colour, at finger size */
+  .inbox-groups .inbox-actions { grid-column: 1; display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 10px; padding: 0; }
+  .inbox-groups .inbox-answer { min-height: 58px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge); }
+  .inbox-groups .inbox-answer.is-lead, .inbox-groups .inbox-row[data-from]:is([data-urgency="high"], [data-urgency="critical"]) .inbox-answer.is-lead { background: var(--tone-pen); box-shadow: none; }
+  .inbox-groups .inbox-row-error { margin: 8px 0 0; }
+
+  /* how to get at the rest, said once under the Desk's open questions */
+  #inbox .inbox-groups > .inbox-group[data-sender]:not(:has(~ .inbox-group[data-sender]))::after { content: "Hold a card: Snooze, Revise, Whatever, What??, Shred, Copy. Tap its title: text and pictures."; margin: 4px 12px 0; color: var(--faint); font: 500 var(--t-sm)/1.4 var(--font); text-align: center; text-wrap: balance; }
+}
+
+/* ---- the sheet a long press brings up ---- */
+dialog.rowmenu {
+  --ink: var(--tone-pen);
+  /* opened with show(), not in the top layer (sheet_controller.js): above the round buttons and the memo */
+  position: fixed; z-index: 2800; inset: auto 0 0 0; width: 100%; max-width: 480px; max-height: 82dvh; margin: 0 auto; padding: 0; border: 0;
+  border-radius: 20px 20px 0 0; background: var(--surface); color: var(--fg); box-shadow: var(--shadow-lg); overflow-y: auto; overscroll-behavior: contain;
+  animation: rowmenu-up 240ms var(--ease-out, ease-out) both;
+}
+/* No veil over the page: a line and a shadow set the sheet off; Escape or a tap beside it closes. */
+dialog.rowmenu { box-shadow: 0 0 0 1px var(--line-strong), 0 -12px 40px -12px rgb(20 30 25 / .35); }
+dialog.rowmenu::backdrop { background: transparent; }
+@media (prefers-reduced-motion: reduce) { dialog.rowmenu, dialog.rowmenu::backdrop { animation: none; }
+}
+.rowmenu-in { display: grid; padding: 8px 8px calc(12px + env(safe-area-inset-bottom, 0px)); }
+.rowmenu-in::before { content: ""; justify-self: center; width: 38px; height: 4px; margin-bottom: 10px; border-radius: 2px; background: var(--line-strong); }
+.rowmenu-in h3 { overflow-wrap: anywhere; margin: 0 8px 8px; font: 700 1.15rem/1.2 var(--display); letter-spacing: -.01em; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; }
+.rowmenu-in button { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 8px; border: 0; border-radius: 10px; background: none; color: var(--fg); font: 500 1rem/1.2 var(--font); text-align: left; touch-action: manipulation; }
+.rowmenu-in button:active { background: var(--sunken); }
+.rowmenu-in button svg { flex: none; width: 22px; height: 22px; color: var(--ink); }
+.rowmenu-in button.is-shred, .rowmenu-in button.is-shred svg { color: var(--deny); }
+.rowmenu-in hr { width: auto; margin: 6px 8px; border: 0; border-top: 1px solid var(--line); }/* The piles at the foot of a list of questions (js/piles.js), one per state: Later (snoozed), In the works (in
+   revision, or answered and being acted on) and Done (closed) as three small stacks of paper drawn with the pen, and
+   at the end of the row a small waste-paper basket (shredded, withdrawn). A click fans a stack (or the basket) out below,
+   as full-width sheets. The sections keep the names the keys and the tests know (.inbox-pile,
+   .inbox-pile-head, .inbox-pile-sheets, .inbox-pile-item, .inbox-done); what the older piles in app.css and
+   back.css say about those is undone here. */
+.inbox-groups > .inbox-stacks { --gap: 22px; --bin: 46px; --w: min(124px, calc((100cqi - var(--inset, 0px) - 3 * var(--gap) - var(--bin)) / 3)); --shade: rgb(20 30 25 / .14); grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, var(--w)) var(--bin); grid-template-rows: auto auto; column-gap: var(--gap); justify-content: start; min-width: 0; margin-top: var(--s-8); }
+:root[data-theme="dark"] .inbox-groups > .inbox-stacks { --shade: rgb(0 0 0 / .55); }
+/* a phone: three stacks of 124px, the basket and the gaps are wider than the list, so the stacks share what is there
+   (--w above) and the basket stays small, instead of pushing the Desk sideways; the stamps are set smaller with them */
+@container rows (max-width: 430px) {
+  .inbox-groups > .inbox-stacks { --gap: 10px; --bin: 38px; }
+  .inbox-stacks .inbox-stack .tally-mark { height: 14px; }
+}
+.inbox-stacks > .inbox-stack { grid-row: 1 / span 2; display: grid; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; margin: 0; padding: 0; cursor: auto; }
+.inbox-stack-title { align-self: end; display: grid; margin: 0; font: inherit; }
+
+/* a stack: the paper, on its top sheet the count (strokes, or a number), the turning ring, and its name as a stamp */
+.inbox-stacks .inbox-stack .inbox-stack-head { position: relative; flex: none; display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 6px; row-gap: 5px; width: 100%; min-height: 0; padding: 0 0 4px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: inherit; text-align: center; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-head::after { content: none; }
+.inbox-stacks .inbox-stack .inbox-stack-head:disabled { cursor: default; }
+.inbox-stack-sheets { display: block; width: 100%; height: auto; overflow: visible; filter: drop-shadow(0 2px 2.5px var(--shade)); }
+.inbox-stack-sheets path { fill: var(--surface); stroke: var(--fg); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+.inbox-stacks .inbox-stack .tally { color: var(--fg); }
+.inbox-stacks .inbox-stack .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
+/* The name of a stack: a rubber stamp on its top sheet, below the count. Capitals in a double frame drawn a little out of
+   true, turned a few degrees (each stack its own tilt), in an ink of its own; the ink took unevenly (one small mask of
+   noise, rastered once). The inks are variables, so the palette can retune them. */
+.inbox-stacks { --stamp-works: #5c4a8a; --stamp-later: #46607c; --stamp-memos: #8a5f0c; --stamp-done: #1b6a57; }
+:root[data-theme="dark"] .inbox-stacks { --stamp-works: #b9a8e6; --stamp-later: #9fb6d0; --stamp-memos: #d9b35a; --stamp-done: #6fd0b5; }
+/* The server-rendered pages (desk.mjs): a stack's name and count are ONE element on its top sheet,
+   .stack-stamp[data-stamp="later|works|done"] > .stack-stamp-word + .stack-stamp-num (a numbering stamp; it stands
+   instead of the strokes). Its look is desk.css. Here is only a plain default for as long as that sheet is not
+   linked: the number large, the word small under it, no frame, in the middle of the sheet. (The top sheet is
+   136 x 90 of the stack's width: the box below is that sheet.) */
+.stack-stamp { position: absolute; z-index: 1; inset: 0 0 auto; aspect-ratio: 136 / 90; display: flex; flex-direction: column-reverse; align-items: center; justify-content: center; gap: 5px; color: var(--fg); pointer-events: none; transition: translate 140ms ease-out; }
+.stack-stamp-num { font: 700 1.25rem/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
+.stack-stamp-word { font: 700 .62rem/1 var(--font); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; color: var(--muted); }
+.inbox-stack.is-empty .stack-stamp { opacity: .5; }
+.inbox-stack.is-open .stack-stamp { translate: 0 -4px; }
+@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover .stack-stamp { translate: 0 -2px; }
+}
+@media (prefers-reduced-motion: reduce) { .stack-stamp { transition: none; }
+}
+@container rows (max-width: 430px) { .stack-stamp { gap: 4px; } .stack-stamp-num { font-size: 1.05rem; } .stack-stamp-word { font-size: .54rem; letter-spacing: .06em; }
+}
+/* "N more" as a link (the server-rendered pages): its words stand in the middle of the sheet, like the button's */
+.inbox-stacks .inbox-stack a.inbox-stack-more { display: flex; align-items: center; text-decoration: none; }
+/* The search over a fanned stack (desk.mjs): one quiet line, a magnifier drawn with the pen and a field
+   on a ruled line; the sheets below it stand in a frame (.stack-list) that the search fills. */
+.inbox-stacks .stack-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; }
+.inbox-stacks .stack-search { margin: 0 0 3px; }
+.inbox-stacks .stack-search label { display: flex; align-items: center; gap: 8px; max-width: 360px; padding: 0 2px 0 4px; border-bottom: 1.3px solid color-mix(in srgb, var(--fg) 40%, var(--surface)); color: var(--muted); }
+.inbox-stacks .stack-search .sketch { flex: none; width: 17px; height: 17px; }
+.inbox-stacks .stack-search input { flex: 1; min-width: 0; height: 34px; padding: 0; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1 var(--font); outline: 0; }
+.inbox-stacks .stack-search input::placeholder { color: var(--faint); opacity: 1; }
+.inbox-stacks .stack-search input::-webkit-search-cancel-button { cursor: pointer; }
+.inbox-stacks .stack-search-none { margin: 4px 0 2px 6px; color: var(--muted); font: 400 var(--t-sm)/1.4 var(--font); }
+@container rows (max-width: 600px) { .inbox-stacks .stack-search label { max-width: none; } .inbox-stacks .stack-search input { height: 40px; font-size: 16px; }
+}
+/* the count as a number, for whoever reads the page aloud */
+.inbox-stacks .inbox-stack .inbox-stack-head > b { order: 0; display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; letter-spacing: 0; text-transform: none; }
+@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -2px; }
+}
+/* an empty pile: one faint sheet, the same size, quieter */
+.inbox-stack.is-empty .inbox-stack-sheets { filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--shade) 45%, transparent)); }
+.inbox-stack.is-empty .inbox-stack-sheets path { fill: var(--surface); stroke: color-mix(in srgb, var(--fg) 38%, var(--surface)); stroke-width: 1.5; }
+/* the open stack: its last sheet in heavy ink, lifted */
+.inbox-stack.is-open .inbox-stack-sheets path { stroke-width: 2.6; }
+.inbox-stack.is-open :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -4px; }
+
+/* the fan: the sheets of the open stack, across the whole list */
+.inbox-stacks .inbox-stack > .inbox-pile-sheets { display: none; scroll-margin: 200px 0 24px; }
+.inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: calc(100cqi - var(--inset, 0px)); margin: 12px 0 0 calc(var(--at) * -1 * (var(--w) + var(--gap))); padding-right: 6px; }
+.inbox-stacks .inbox-stack .inbox-pile-item { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 0 14px; border: 1.3px solid color-mix(in srgb, var(--fg) 55%, var(--surface)); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); transform-origin: 0 0; }
+.inbox-stacks .inbox-pile-item:nth-child(odd) { rotate: -.22deg; }
+.inbox-stacks .inbox-pile-item:nth-child(even) { rotate: .18deg; translate: 6px 0; }
+.inbox-stacks .inbox-stack .inbox-stack-more { min-height: 38px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-align: left; cursor: pointer; }
+.inbox-stacks .inbox-stack .inbox-stack-more:hover { color: var(--fg); border-color: var(--fg); }
+
+/* a sheet's line: mark, title, the grey line, who, when, the way back */
+.inbox-stacks .inbox-pile-item > .inbox-done { display: flex; align-items: center; gap: var(--s-3); min-height: 36px; padding: 0; border: 0; border-radius: 4px; background: none; box-shadow: none; }
+.inbox-stacks .inbox-revising-open .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
+.inbox-stacks .inbox-done[data-later] .inbox-revising-open .sketch { color: var(--gold-pen); }
+.inbox-stacks .inbox-revising-open .agent-ring { margin-left: -3px; }
+.inbox-stacks .inbox-done .inbox-takeback { grid-column: auto; min-height: 28px; padding: 0 4px; border: 0; border-radius: 0; background: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; opacity: 1; }
+.inbox-stacks .inbox-done .inbox-takeback:hover { color: var(--fg); }
+.inbox-stacks .inbox-done .inbox-takeback:disabled { opacity: .5; }
+
+/* a narrow list (the phone, a slim pane): the lines without the grey text */
+@container rows (max-width: 600px) {
+  .inbox-stacks .inbox-stack .inbox-pile-item { padding: 0 10px; }
+  .inbox-stacks .inbox-revising-open strong { flex: 1 1 auto; }
+}
+/* On the Desk of a wide screen the cards stand right of a narrow column with the session's drawing (app.css,
+   .inbox-gutter): the stacks stand under the cards, their paper's edge on the cards' left edge, and the fan
+   is as wide as the cards. */
+@media (min-width: 861px) {
+  #inbox .inbox-groups > .inbox-stacks { --inset: 46px; padding-left: var(--inset); }
+  #inbox .inbox-stacks .inbox-stack-title { margin-left: -5px; }
+  #inbox .inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
+  #inbox .inbox-stacks .inbox-pile-item:nth-child(even) { translate: 0 0; }
+}
+
+/* ---- The places as small stamped tabs (desk.mjs, card Nr. 198: c) ----
+   One line of tabs under the cards (two rows on a phone); the open place's list stands below all tabs, as wide as
+   the cards. The sections give up their box (display: contents) so that tabs and the open list share one row of
+   flex items: the tabs first, the list after them (order). Only under .stack-tabs: the old client keeps its stacks. */
+.inbox-groups > .inbox-stacks.stack-tabs { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: var(--s-6); }
+.inbox-stacks.stack-tabs > .inbox-stack { display: contents; }
+.inbox-stacks.stack-tabs .inbox-stack-title { display: block; margin: 0; }
+.inbox-stacks.stack-tabs .inbox-stack .inbox-stack-head { display: inline-flex; align-items: center; width: auto; min-height: 36px; padding: 0 12px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: -.6deg; transition: translate 140ms ease-out; }
+.inbox-stacks.stack-tabs .inbox-stack:nth-child(even) .inbox-stack-head { rotate: .5deg; }
+@media (any-hover: hover) { .inbox-stacks.stack-tabs .inbox-stack-head:not(:disabled):hover { translate: 0 -2px; }
+}
+.inbox-stacks.stack-tabs .inbox-stack.is-open .inbox-stack-head { border-width: 2.2px; padding: 0 11px; translate: 0 -2px; }
+.inbox-stacks.stack-tabs .inbox-stack.is-empty .inbox-stack-head { border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; }
+.inbox-stacks.stack-tabs .inbox-stack.is-empty .stack-tab-stamp { opacity: .5; }
+/* the open place's list: below every tab, as wide as the cards */
+.inbox-stacks.stack-tabs .inbox-stack > .inbox-pile-sheets { display: none; }
+.inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { display: grid; order: 1; flex: 0 0 100%; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: 100%; margin: 6px 0 0; padding-right: 6px; }
+#inbox .inbox-groups > .inbox-stacks.stack-tabs { padding-left: var(--inset, 0px); }
+#inbox .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
+@container rows (max-width: 430px) { .inbox-groups > .inbox-stacks.stack-tabs { gap: 8px; }
+}
+/* The tabs straight (his proposal "Mach das Schiefe da weg"): no turn, square corners of one radius, the stamp's sign
+   and word upright. Switched on by the class .is-straight on .stack-tabs (desk.mjs: STRAIGHT). */
+.inbox-stacks.stack-tabs.is-straight .inbox-stack .inbox-stack-head { rotate: 0deg; border-radius: 6px; }
+.inbox-stacks.stack-tabs.is-straight .stack-stamp.stack-tab-stamp[data-stamp], .inbox-stacks.stack-tabs.is-straight .stack-tab-stamp > * { rotate: 0deg; transform: none; }
+
+/* ---- The Notes stack (desk.mjs 'notes'): his notes as plain slips of the memo's yellow paper, no tape (the tape
+   is what a note gets when it is sent: session.css .msg-note). A line: the words (open to write), when, the session
+   it goes to with Send, Delete. ---- */
+.inbox-stacks .inbox-stack .inbox-pile-item.is-note { --note-paper: #fbeaa0; --note-ink: #3b300d; --note-muted: #6a5d24; border-color: color-mix(in srgb, #8a6d14 55%, transparent); background: var(--note-paper); color: var(--note-ink); }
+:root[data-theme="dark"] .inbox-stacks .inbox-stack .inbox-pile-item.is-note { --note-paper: #d9c35f; --note-ink: #231c06; --note-muted: #4d4214; border-color: #a58c2c; }
+.inbox-stacks .note-line > form { display: contents; }
+.inbox-stacks .note-line .note-open-form { display: block; flex: 1 1 auto; min-width: 0; }
+.inbox-stacks .note-open { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: 36px; padding: 0; border: 0; background: none; color: var(--note-ink); font: inherit; text-align: left; cursor: pointer; }
+.inbox-stacks .note-open strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
+.inbox-stacks .note-open .sketch { flex: none; width: 17px; height: 17px; color: var(--note-muted); }
+.inbox-stacks .note-line .inbox-revising-tail { flex: none; color: var(--note-muted); font-size: var(--t-xs); }
+.inbox-stacks .note-line .inbox-revising-tail * { color: inherit; }
+.inbox-stacks .note-line .note-send { display: inline-flex; align-items: center; gap: 2px; flex: none; }
+.inbox-stacks .note-line .note-to select { max-width: 150px; height: 28px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--note-ink) 30%, transparent); border-radius: 5px; background: color-mix(in srgb, #fff 45%, var(--note-paper)); color: var(--note-ink); font: 500 var(--t-xs)/1 var(--font); }
+.inbox-stacks .note-line .inbox-takeback, .inbox-stacks .note-new-go { color: var(--note-muted, var(--muted)); }
+.inbox-stacks .note-line .note-send-go { color: var(--note-ink); font-weight: 700; }
+.inbox-stacks .note-line .inbox-takeback:hover { color: var(--note-ink); }
+.inbox-stacks .note-new { margin: 0 0 3px; }
+.inbox-stacks .note-new-go { min-height: 30px; padding: 0 2px; border: 0; background: none; font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.inbox-stacks .note-new-go:hover { color: var(--fg); }
+@container rows (max-width: 600px) {
+  .inbox-stacks .note-line { flex-wrap: wrap; row-gap: 0; padding-bottom: 4px; }
+  .inbox-stacks .note-line .note-open-form { flex-basis: 100%; }
+  .inbox-stacks .note-line .inbox-revising-tail { margin-right: auto; }
+}
+
+/* ---- Off the desk (desk.mjs offPile; his pick A of three, 4 October): ONE pile for every card that left the
+   open rows, beside the Notes tab. Folded: its label and the newest five sheets fanned, each with the sign of its place
+   (desk.css), its title and when. Unfolded (.is-open, the controller "piles"): the label as a tab with "Fold up",
+   and below the row a box with the filter chips (radio buttons: CSS shows the lines of the checked one), the search,
+   the newest ten lines and "N more". ---- */
+.inbox-groups > .inbox-stacks.stack-tabs { align-items: flex-start; column-gap: 24px; row-gap: 12px; margin-bottom: 56px; }
+.inbox-stacks.stack-tabs .inbox-stack-title { align-self: flex-start; }
+.inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex: 0 1 380px; min-width: 0; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head { display: grid; grid-template-columns: minmax(0, 1fr); justify-content: stretch; gap: 10px; width: 100%; min-height: 0; padding: 0; border: 0; border-radius: 0; background: none; box-shadow: none; rotate: 0deg; translate: none; color: var(--fg); text-align: left; cursor: pointer; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile .inbox-stack-head.off-head:disabled { cursor: default; }
+.off-label { display: flex; align-items: center; gap: 8px; min-height: 18px; white-space: nowrap; font: 700 .72rem/1 var(--font); letter-spacing: .16em; text-transform: uppercase; }
+.off-label > .off-count { font: 700 .86rem/1 var(--mono); letter-spacing: 0; }
+.off-fold { display: none; margin-left: auto; align-items: center; gap: 4px; color: var(--accent); letter-spacing: .06em; }
+.off-fold .sketch { width: 14px; height: 14px; transform: rotate(180deg); }
+.off-fan { position: relative; display: block; height: calc(34px + (var(--n) - 1) * 25px); }
+.off-sheet { position: absolute; left: calc(var(--i) * 3px); right: calc(var(--i) * -2px); top: calc(var(--i) * 25px); z-index: calc(10 - var(--i)); box-sizing: border-box; height: 34px; display: flex; align-items: flex-end; gap: 9px; padding: 0 12px 7px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: calc(-.8deg + var(--i) * .45deg); transition: translate 140ms ease-out; }
+.off-sheet:first-child { align-items: center; padding-bottom: 0; }
+.off-sheet:nth-child(2n) { rotate: calc(.6deg - var(--i) * .2deg); }
+.off-sheet.is-blank { border-style: dashed; border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; color: var(--faint); }
+.off-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-sm)/1.2 var(--font); }
+.off-sheet .ago { flex: none; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+@media (any-hover: hover) { .off-head:not(:disabled):hover .off-sheet { translate: 0 -2px; }
+}
+.off-pile.is-empty .off-label { opacity: .5; }
+.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open .inbox-stack-head.off-head { padding: 9px 12px; border: 2px solid var(--fg); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); }
+.off-pile.is-open .off-fan { display: none; }
+.off-pile.is-open .off-fold { display: inline-flex; }
+
+/* the sign of a place, small, in its stamp's ink; the basket for Trash */
+.off-pile .stack-stamp.off-sign[data-stamp], .off-pile .off-sign { position: static; inset: auto; aspect-ratio: auto; rotate: 0deg; transform: none; flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; margin: 0; -webkit-mask: none; mask: none; color: var(--ink, var(--fg)); }
+.off-pile .off-sign .stack-stamp-sign { width: 17px; height: 17px; }
+.off-pile .off-sign[data-g="works"] .stack-stamp-sign { animation: stack-stamp-turn 7s linear infinite; }
+.off-pile .off-sign[data-g="trash"] svg { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+@media (prefers-reduced-motion: reduce) { .off-pile .off-sign .stack-stamp-sign { animation: none; }
+}
+
+/* the unfolded pile: one box under the row */
+.inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open > .off-body { display: block; margin-top: 4px; padding: 10px 6px 6px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
+.off-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
+.off-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; cursor: pointer; }
+.off-chip input { position: absolute; opacity: 0; pointer-events: none; }
+.off-chip b { font: 700 var(--t-xs)/1 var(--mono); color: var(--muted); }
+.off-pile .off-chip .off-sign { width: 15px; height: 15px; }
+.off-pile .off-chip .off-sign .stack-stamp-sign { width: 14px; height: 14px; }
+.off-pile .off-chip .off-sign[data-g="trash"] svg { width: 15px; height: 15px; }
+.off-chip:has(input:checked) { border-color: var(--fg); background: var(--fg); color: var(--surface); }
+.off-chip:has(input:checked) b { color: var(--surface); }
+.off-pile .off-chip:has(input:checked) .off-sign { --ink: var(--surface); }
+.off-pile .off-chip:has(input:checked) .off-sign[data-g="trash"] svg { stroke: var(--surface); }
+.inbox-stacks .off-search { margin: 0 4px 2px; }
+.inbox-stacks .off-search label { max-width: none; }
+
+/* a line: sign, title and its grey line, sender and time, the way back */
+.inbox-stacks .off-list .inbox-done.off-line { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 0; padding: 6px 8px; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
+.off-open { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
+.off-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-md)/1.3 var(--font); }
+.off-said { flex: 0 10 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--t-sm); }
+.off-tail { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
+.off-tail .inbox-from-mark, .off-tail .inbox-from-mark svg { width: 18px; height: 18px; }
+.off-who { color: var(--tone-pen, var(--muted)); font-weight: 600; }
+.off-way { margin: 0; min-width: 76px; text-align: right; }
+.inbox-stacks .off-line .inbox-takeback { min-height: 28px; padding: 0 6px; font-weight: 600; }
+.inbox-stacks .off-line[data-later] .inbox-takeback { color: var(--stamp-ink-later); }
+.off-more { display: block; padding: 8px 8px 4px; border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
+.off-more input { position: absolute; opacity: 0; pointer-events: none; }
+.off-more:not(:has(input:checked)) .off-more-shut, .off-more:has(input:checked) .off-more-open { display: none; }
+.inbox-stacks .off-none { display: none; }
+/* the filter: All shows the newest ten and "N more"; a place shows all of its lines */
+.off-pile:has([data-off-filter][value="all"]:checked):not(:has([data-off-more]:checked)) .off-line.is-rest { display: none; }
+.off-pile:not(:has([data-off-filter][value="all"]:checked)) .off-more { display: none; }
+.off-pile:has([data-off-filter][value="later"]:checked) .off-line:not([data-g="later"]),
+.off-pile:has([data-off-filter][value="works"]:checked) .off-line:not([data-g="works"]),
+.off-pile:has([data-off-filter][value="done"]:checked) .off-line:not([data-g="done"]),
+.off-pile:has([data-off-filter][value="trash"]:checked) .off-line:not([data-g="trash"]) { display: none; }
+.off-pile:has([data-off-filter][value="later"]:checked) .off-list:not(:has(.off-line[data-g="later"])) .off-none[data-g="later"],
+.off-pile:has([data-off-filter][value="works"]:checked) .off-list:not(:has(.off-line[data-g="works"])) .off-none[data-g="works"],
+.off-pile:has([data-off-filter][value="done"]:checked) .off-list:not(:has(.off-line[data-g="done"])) .off-none[data-g="done"],
+.off-pile:has([data-off-filter][value="trash"]:checked) .off-list:not(:has(.off-line[data-g="trash"])) .off-none[data-g="trash"] { display: block; }
+
+/* a narrow list (the phone): the pile under the Notes tab, across the width; a line in two rows */
+@container rows (max-width: 600px) {
+  .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex-basis: 100%; }
+  .off-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
+  .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px 4px; }
+  .off-line > .off-sign { grid-area: s; } .off-line > .off-open { grid-area: o; } .off-line > .off-tail { grid-area: t; } .off-line > .off-way { grid-area: w; min-width: 0; }
+  .off-said { display: none; }
+}/* The stamp on a stack's top sheet (card Nr. 188: the numbering stamp, in colour, two leading zeros; his notes since:
+   a sign drawn with the board's pen, the word back above it, the gear turning).
+   Markup (desk.mjs), one element on the top sheet of Later, In the works and Done; the small bin has none:
+     <span class="stack-stamp" data-stamp="later|works|done">
+       <span class="stack-stamp-word">Snooze</span>
+       <span class="stack-stamp-line"><span class="stack-stamp-sign" aria-hidden="true"></span><span class="stack-stamp-num"><i>0</i><i>0</i><i>5</i></span></span>
+     </span>
+   Line 1 the word (Snooze | Working | Done), set in spaced capitals. Line 2 the sign (three growing Z | a gear | a tick,
+   drawn here as a mask, by data-stamp) and the number: the stack's count behind "00", "Nr." before it is drawn here; one
+   <i> per digit sets each wheel a little out of line, fixed by its place, as on a numbering stamp (as plain text the
+   digits stand in line). The gear turns while the stack holds something. The stamp carries the count, so the sheet
+   shows no other count; an empty stack (.is-empty) shows "000", faint.
+   It scales with the stack: --w is the stack's width (desk.css), 124px when nothing sets it. The inks are the
+   tokens --stamp-ink-later | -works | -done (app.css), light and dark. The uneven ink is one small picture of
+   noise used as a mask, rastered once; only the gear moves, on the compositor. Load after desk.css. */
+.stack-stamp[data-stamp] { --u: calc(var(--w, 124px) / 124); --ink: var(--stamp-ink-later);
+  /* its place is the top sheet (as desk.css sets it): a box of 136 x 90 over the paper, the stamp in its middle */
+  position: absolute; z-index: 1; inset: 0 0 auto; aspect-ratio: 136 / 90; rotate: -3deg;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(3 * var(--u));
+  color: var(--ink); white-space: nowrap; pointer-events: none;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.22'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 71px 43px;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.22'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 71px 43px; }
+.stack-stamp[data-stamp="works"] { --ink: var(--stamp-ink-works); rotate: 2deg; -webkit-mask-position: -31px -9px; mask-position: -31px -9px; }
+.stack-stamp[data-stamp="done"] { --ink: var(--stamp-ink-done); rotate: -1.5deg; -webkit-mask-position: -57px -21px; mask-position: -57px -21px; }
+/* line 1, the word: small spaced capitals */
+.stack-stamp[data-stamp] > .stack-stamp-word { display: block; padding-left: .28em; color: inherit; font: 700 calc(9 * var(--u))/1 var(--font); letter-spacing: .28em; text-transform: uppercase; }
+/* the sign, cut into the die: Snooze the three growing Z (js/pen.js SNOOZE_Z), Working a gear, Done a tick, drawn with
+   the board's pen (wobbly line, round caps, uneven teeth; generated once, fixed) */
+.stack-stamp[data-stamp] .stack-stamp-sign { flex: none; display: block; width: calc(19 * var(--u)); height: calc(19 * var(--u)); background-color: var(--ink);
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke-width='2.4' transform='rotate(-4 12 12)'%3E%3Cpath d='M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3'/%3E%3Cpath d='M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2'/%3E%3Cpath d='M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke-width='2.4' transform='rotate(-4 12 12)'%3E%3Cpath d='M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3'/%3E%3Cpath d='M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2'/%3E%3Cpath d='M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat; }
+.stack-stamp[data-stamp="works"] .stack-stamp-sign { width: calc(20 * var(--u)); height: calc(20 * var(--u)); -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E"); }
+.stack-stamp[data-stamp="done"] .stack-stamp-sign { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 12.6 Q6.4 15.4 7.9 17.1 Q9.4 18.9 11.0 16.0 Q12.6 13.2 14.8 10.4 Q17.0 7.6 19.3 5.5 L21.6 3.4' stroke-width='2.6'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 12.6 Q6.4 15.4 7.9 17.1 Q9.4 18.9 11.0 16.0 Q12.6 13.2 14.8 10.4 Q17.0 7.6 19.3 5.5 L21.6 3.4' stroke-width='2.6'/%3E%3C/svg%3E"); }
+/* the number: "Nr." and the wheels, heavy figures of one width */
+.stack-stamp[data-stamp] .stack-stamp-num { display: flex; align-items: baseline; color: inherit; font: 700 calc(20 * var(--u))/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
+.stack-stamp[data-stamp] .stack-stamp-num::before { content: "Nr."; margin-right: calc(4 * var(--u)); font: 700 calc(8.5 * var(--u))/1 var(--font); letter-spacing: .04em; }
+.stack-stamp-num > i { display: block; margin-inline: calc(-.6 * var(--u)); font-style: normal; transform: scaleX(.86) rotate(-1deg); }
+.stack-stamp-num > i:nth-child(6n + 2) { translate: 0 calc(.9 * var(--u)); rotate: 2.5deg; }
+.stack-stamp-num > i:nth-child(6n + 3) { translate: 0 calc(-.8 * var(--u)); rotate: -1.5deg; }
+.stack-stamp-num > i:nth-child(6n + 4) { translate: 0 calc(.6 * var(--u)); rotate: -3deg; }
+.stack-stamp-num > i:nth-child(6n + 5) { translate: 0 calc(-1 * var(--u)); rotate: 2deg; }
+.stack-stamp-num > i:nth-child(6n) { translate: 0 calc(.7 * var(--u)); rotate: -2deg; }
+.inbox-stack:not(.is-empty) .stack-stamp[data-stamp="works"] .stack-stamp-sign { animation: stack-stamp-turn 7s linear infinite; will-change: transform; }
+@media (prefers-reduced-motion: reduce) { .stack-stamp[data-stamp="works"] .stack-stamp-sign { animation: none; }
+}
+/* an empty stack: the stamp is there, faint (the lift of an open or hovered stack is desk.css) */
+.inbox-stack.is-empty .stack-stamp[data-stamp] { opacity: .6; }
+/* Done: stamped into the lower right corner of its sheet, smaller and turned, as one stamps a finished file
+   (his note on the live stacks: "das Erledigt dann doch in die Ecke stempeln"). */
+.stack-stamp[data-stamp="done"] { --u: calc(var(--w, 124px) / 124 * .86); box-sizing: border-box; align-items: flex-end; justify-content: flex-end; padding: 0 8% 9% 0; transform-origin: 86% 84%; rotate: -9deg; }
+.stack-stamp[data-stamp="done"] > .stack-stamp-word { padding-left: 0; margin-right: -.28em; }
+/* In a small tab (desk.mjs, card Nr. 198: c): the stamp lies in one line, sign, word and count, in its
+   ink; no "Nr.", no out-of-line wheels, no noise; the gear still turns while "Working" holds something. */
+.stack-tabs .stack-stamp.stack-tab-stamp[data-stamp] { --u: .82; position: static; inset: auto; aspect-ratio: auto; rotate: 0deg; display: inline-flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 7px; padding: 0; -webkit-mask: none; mask: none; }
+.stack-tabs .stack-stamp[data-stamp="trash"] { --ink: var(--fg); }
+.stack-tabs .stack-tab-stamp > .stack-stamp-word { padding-left: 0; margin-right: 0; font: 700 .72rem/1 var(--font); letter-spacing: .14em; }
+.stack-tabs .stack-tab-stamp .stack-stamp-sign { width: 17px; height: 17px; }
+.stack-tabs .stack-tab-stamp > .stack-stamp-num { font: 700 .82rem/1 var(--mono); }
+.stack-tabs .stack-tab-stamp > .stack-stamp-num::before { content: none; }
+
+/* Notes: his own notes, not sent yet (desk.mjs 'notes'). The sign is a sticky note drawn with the board's pen
+   (wobbly square, folded corner, two lines of writing), in the ochre of the memo's paper. */
+.stack-stamp[data-stamp="notes"] { --ink: var(--stamp-ink-notes); }
+.stack-stamp[data-stamp="notes"] .stack-stamp-sign { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4.6%204.5%20Q12.1%203.7%2019.6%204.2%20Q20.1%209.5%2019.8%2014.5%20L14.7%2019.8%20Q9.5%2020.3%204.4%2019.7%20Q4%2012.1%204.6%204.5'%20stroke-width='2.3'/%3E%3Cpath%20d='M19.6%2014.6%20Q17.1%2014.3%2015%2014.8%20Q14.5%2017.2%2014.7%2019.7'%20stroke-width='1.9'/%3E%3Cpath%20d='M8%209.1%20Q12%208.5%2016.1%208.8'%20stroke-width='2'/%3E%3Cpath%20d='M8.1%2012.7%20Q10.4%2012.3%2012.7%2012.6'%20stroke-width='2'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4.6%204.5%20Q12.1%203.7%2019.6%204.2%20Q20.1%209.5%2019.8%2014.5%20L14.7%2019.8%20Q9.5%2020.3%204.4%2019.7%20Q4%2012.1%204.6%204.5'%20stroke-width='2.3'/%3E%3Cpath%20d='M19.6%2014.6%20Q17.1%2014.3%2015%2014.8%20Q14.5%2017.2%2014.7%2019.7'%20stroke-width='1.9'/%3E%3Cpath%20d='M8%209.1%20Q12%208.5%2016.1%208.8'%20stroke-width='2'/%3E%3Cpath%20d='M8.1%2012.7%20Q10.4%2012.3%2012.7%2012.6'%20stroke-width='2'/%3E%3C/svg%3E"); }/* The keyboard: the mark on the row it is on, the caps that say which key answers,
+   the small notice while a sequence is under way, and the sheet behind "?".
+   What the keys do is declared in js/keys.js. */
+
+/* ---- the row the keyboard is on ---- */
+/* Unmistakable, in ink: a thick frame, a scribbled arrow in the margin, and on each of its
+   controls the key that presses it. The other rows stay as they are. */
+.inbox-row { scroll-margin: 72px 0 28px; }
+.inbox-row:focus { outline: none; }
+.inbox-row.is-current, .inbox-done.is-current { outline: 3px solid var(--fg); outline-offset: 3px; z-index: 1; }
+.inbox-row.is-current::before, .inbox-done.is-current::before {
+  content: ""; position: absolute; right: calc(100% + 14px); top: 50px; width: 46px; height: 46px; background: var(--fg); pointer-events: none;
+  -webkit-mask: var(--keys-arrow) center / contain no-repeat; mask: var(--keys-arrow) center / contain no-repeat;
+  animation: keys-point 320ms cubic-bezier(.25, 1.4, .5, 1);
+}
+/* No margin to point from: a narrow window, or a list inside a session's column. */
+/* An answered row is slim: the arrow stands at its middle. */
+.inbox-done.is-current::before { top: 7px; }
+@media (max-width: 1180px) { .inbox-row.is-current::before, .inbox-done.is-current::before { display: none; }
+}
+
+/* A key cap: paper, a line, a little weight below. */
+.keys-sheet kbd, .keys-pending kbd, .inbox-row.is-current [data-cap]::after, .inbox-done.is-current [data-cap]::after {
+  display: inline-block; min-width: 24px; padding: 5px 7px; border-radius: 6px; background: var(--surface); color: var(--fg);
+  box-shadow: 0 0 0 1px var(--line-strong), 0 2px 0 var(--line-strong);
+  font: 500 .74rem/1 var(--mono); letter-spacing: 0; text-align: center; text-transform: none; white-space: nowrap;
+}
+/* On the marked row every control wears its key, so the next move needs no legend. */
+.inbox-row.is-current .inbox-answer { position: relative; }
+.inbox-row.is-current [data-cap]::after { content: attr(data-cap); position: absolute; top: 7px; right: 7px; rotate: 3deg; }
+.inbox-done.is-current [data-cap]::after { content: attr(data-cap); margin-left: 8px; min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
+.inbox-row.is-current .inbox-later[data-cap]::after { position: static; margin-left: 7px; rotate: 0deg; min-width: 20px; padding: 3px 5px; box-shadow: 0 0 0 1px var(--line-strong); }
+/* A finger has no keys. */
+@media (pointer: coarse) { .inbox-row.is-current [data-cap]::after, .inbox-done.is-current [data-cap]::after { content: none; }
+}
+
+@media (prefers-reduced-motion: reduce) { .inbox-row.is-current::before, .keys-pending { animation: none; }
+}
+/* A question in the conversation: after its age, at the end of the row's head. */
+.inbox-row-head > .say { margin: -3px 0 -3px 2px; }/* The few rules of the server-rendered board (docs/turbo.md) that the old styles do not have: forms and
+   links standing where the old client had buttons, the picture's own page, the passing note's place.
+   Everything else is styled by the sheets the old client uses. Colours are tokens only. */
+
+/* A tile that is a link ("Choose" leads to the card's own page), and forms that hold a row's tiles and tabs. */
+a.inbox-answer { text-decoration: none; box-sizing: border-box; }
+form.inbox-actions, form.inbox-tabs { margin: 0; }
+a.inbox-thumb { text-decoration: none; }
+a.inbox-stack-more { text-decoration: none; text-align: center; }
+.inbox-group:empty { display: none; }
+.rowmenu-in > form { display: contents; }
+.rowmenu-in button[hidden] { display: none; }
+.rowmenu-in a.rowmenu-open { display: flex; align-items: center; gap: 12px; min-height: 48px; padding: 0 8px; border-radius: 10px; color: var(--fg); font: 500 1rem/1.2 var(--font); text-decoration: none; }
+.rowmenu-in a.rowmenu-open:active { background: var(--sunken); }
+.rowmenu-in a.rowmenu-open svg { flex: none; width: 22px; height: 22px; color: var(--ink); }
+
+/* What??: the word written by hand (pen.js sketchSvg('what'), card Nr. 206) on the Desk tile and in the phone sheet. */
+.inbox-answer.is-thumb .sketch.sketch-what { width: 72px; height: 25px; stroke-width: 2.2; }
+.rowmenu-in button .sketch-what { width: 63px; height: 22px; stroke-width: 2; }
+
+.inbox-answer[data-controller~="advice"] { position: relative; isolation: isolate; }
+
+/* Desk rows (his word, 3 October): the answer tiles have ONE colour for every session, the bell's green, not the
+   session's tone; who asks is said by its drawing at the left and its name beside it. */
+.inbox-row .inbox-actions {
+  --tone-pen: var(--accent);
+  --tone-mid: color-mix(in srgb, var(--accent) 60%, var(--surface));
+  --tone-edge: color-mix(in srgb, var(--accent) 24%, var(--surface));
+  --tone-wash: color-mix(in srgb, var(--accent) 9%, var(--surface));
+}
+.inbox-row .inbox-actions .inbox-answer.is-lead { background: var(--accent); color: var(--accent-fg, var(--surface)); }
+.inbox-gutter-name { display: none; }
+@media (min-width: 861px) {
+  .inbox-group[data-sender] > .inbox-row > .inbox-gutter .inbox-gutter-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; position: absolute; left: 50%; top: calc(100% + 4px); width: 64px; translate: -50% 0; text-align: center; overflow-wrap: anywhere; font: 600 .66rem/1.2 var(--font); color: var(--tone-pen); }
+  .inbox-group[data-sender] > .inbox-row > .inbox-gutter::after { display: none; }
+}
+/* "Next" above the Desk (desk.mjs): one small plain sentence, "Next 3 →", no tab. On a wide screen it
+   starts where the cards start (past the column of session drawings). */
+.inbox-head:has(> .inbox-title > .inbox-next) { margin-bottom: var(--s-3); }
+.inbox-title > p.inbox-next { display: block; margin: 0; font: 600 var(--t-md)/1.5 var(--font); letter-spacing: 0; color: var(--muted); }
+.inbox-next > .inbox-go { gap: .35em; color: inherit; }
+.inbox-next .inbox-next-n { font-weight: 700; color: var(--fg); }
+.inbox-next > .inbox-go .sketch { width: 16px; height: 16px; }
+@media (min-width: 861px) { .inbox-title > p.inbox-next { padding-left: 46px; }
+}
+/* the line: each card but the last draws its piece, from its hook down to the next card's hook */
+.inbox-group[data-sender] > .inbox-row:not(:last-of-type)::after { content: ""; position: absolute; left: -34px; top: 21px; width: 8px; height: calc(100% + 16px); background: var(--tone-pen); -webkit-mask: var(--run-line) center / 100% 100% no-repeat; mask: var(--run-line) center / 100% 100% no-repeat; pointer-events: none; }
+/* (the first card's piece starts under its drawing and name) */
+.inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type)::after { top: 72px; height: calc(100% - 72px + 16px + 21px); }
+.inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type):has(.inbox-row-head:not(:empty))::after { top: 94px; height: calc(100% - 94px + 16px + 21px); }
+@media (max-width: 860px) {
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:not(:last-of-type)::after, .inbox-groups .inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type)::after, .inbox-groups .inbox-group[data-sender] > .inbox-row:first-of-type:not(:last-of-type):has(.inbox-row-head:not(:empty))::after { left: -13px; top: 15px; height: calc(100% + 10px); }
+  /* every card of a run of two or more gets a hook from the line (a phone's rows stand in a grid: 14px padding) */
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:is(:not(:first-of-type), :not(:last-of-type)) > .inbox-gutter { display: block; position: absolute; left: -26px; top: 14px; width: 12px; height: 14px; background: var(--tone-pen); -webkit-mask: var(--run-hook-s) center / contain no-repeat; mask: var(--run-hook-s) center / contain no-repeat; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row > .inbox-gutter > * { display: none; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:not(:first-of-type) .inbox-byline .inbox-from { display: none !important; }
+  .inbox-groups .inbox-group[data-sender] > .inbox-row:not(:first-of-type) .inbox-byline:not(:has(.inbox-whenever)) { display: none; }
+}
+@media (min-width: 861px) {
+  .inbox-group[data-sender] > .inbox-row:not(:first-of-type) > .inbox-gutter, .inbox-group[data-sender] > .inbox-row:not(:first-of-type):has(.inbox-row-head:not(:empty)) > .inbox-gutter { left: -32px; top: 20px; width: 28px; height: 14px; border-radius: 0; background: var(--tone-pen); -webkit-mask: var(--run-hook) center / contain no-repeat; mask: var(--run-hook) center / contain no-repeat; }
+  .inbox-group[data-sender] > .inbox-row:not(:first-of-type) > .inbox-gutter > * { display: none !important; }
+}
+/* A Desk row that is not filled in yet (beyond the first rows; desk-window.mjs fills it when it comes near). */
+.inbox-row[data-later] { min-height: 172px; visibility: hidden; }
+@media (max-width: 860px) { .inbox-row[data-later] { min-height: 150px; }
+}/* The news above the Desk: the infos (reports, notes; nothing to decide), out of the stack of questions, as bare lines
+   to tick; on a clear Desk under a small "Clear" with the sessions at work.
+   Markup: desk.mjs newsStrip (#desk-news[.is-clear] > header.news-clear, ul.news-list > li.news-line…). */
+.news-at[hidden] { display: none; }
+.news-at { max-width: 800px; margin: 0 auto var(--s-4); text-align: left; }
+.news-at.is-clear { margin-bottom: var(--s-8); }
+@media (min-width: 861px) { .news-at { padding-left: 46px; }
+}
+
+.news-clear { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
+.news-clear h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; color: var(--fg); }
+.news-clear-tick { width: 24px; height: 24px; color: var(--accent); }
+.news-working { display: inline-flex; align-items: center; gap: 8px; padding: 5px 12px 5px 6px; border-radius: var(--r-pill); background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); color: var(--muted); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; }
+.news-working .agent-ring { position: static; flex: none; width: 20px; height: 20px; color: var(--accent); }
+.news-working .ring-loop { opacity: .38; }
+.news-clear + .news-list { margin-top: var(--s-3); }
+
+.news-list { list-style: none; margin: 0; padding: 0; display: grid; }
+.news-line { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 4px 0; }
+.news-act { flex: none; margin: 0; }
+.news-tick { width: 22px; height: 22px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: var(--surface); box-shadow: inset 0 0 0 1.5px var(--line-strong); color: transparent; cursor: pointer; }
+.news-tick .sketch { width: 15px; height: 15px; opacity: 0; }
+.news-line[data-knock] .news-tick { box-shadow: inset 0 0 0 1.5px var(--urg-critical); }
+.news-open { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); text-decoration: none; font: 500 var(--t-md)/1.35 var(--font); }
+
+.news-more > summary { list-style: none; display: inline-block; padding: 4px 0 2px 32px; color: var(--muted); font: 600 var(--t-sm)/1.2 var(--font); cursor: pointer; }
+.news-more > summary::-webkit-details-marker { display: none; }
+.news-more > summary:hover { color: var(--accent); }
+.news-more[open] { display: flex; flex-direction: column; }
+.news-more[open] > summary { order: 1; }
+.news-more:not([open]) .news-more-shut, .news-more[open] .news-more-open { display: none; }
+
+@media (max-width: 860px) { .news-at.is-clear { margin-bottom: var(--s-5); } .news-clear h2 { font-size: 1.35rem; }
+}
+/* narrow (a phone): Notes and Media share the first row, "Off the desk" takes the next one whole */
+@container rows (max-width: 600px) {
+  .inbox-stacks.stack-tabs > [data-stack="notes"] > .inbox-stack-title { order: -2; }
+}

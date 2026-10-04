@@ -1,5 +1,6 @@
-// The canvas on the wire (trommi-hub README "Canvases", Security rules R1, R2, R9), without DOM: the shapes as timeline
-// items carry them, the reducer that turns a canvas timeline into shapes, and the snapshot. canvas.js drives it with the core.
+// The canvas on the wire (README "Canvases", Security rules R1, R2, R9), without DOM: the shapes as timeline
+// items carry them, the reducer that turns a canvas timeline into shapes, and the snapshot. The app's Whiteboard
+// (app/web/public/whiteboard.mjs openCanvas) drives it with the client core.
 //
 // A canvas item's body (content_type and its fields as in the README):
 //   strokes    { strokes: [Entry] }           new shapes, or a piece of a stroke still being drawn (~ every 150 ms)
@@ -20,7 +21,7 @@
 // sender's items come in its sender_sequence order, and the frontier (sender -> [sequence, envelope_hash]) says up to
 // where a sender is applied. The snapshot carries that frontier; items it covers are skipped.
 
-import { b64u, unb64u } from '../gen/vendor/zcrypto.mjs'
+import { b64u, unb64u } from './zcrypto.mjs'
 
 const Q = 8   // 1/8 px
 

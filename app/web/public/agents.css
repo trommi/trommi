@@ -1,4 +1,19 @@
-/* The Ledger (js/ledger.js): the overview of the sessions at /agents, one line per session.
+/* ---- overview of all sessions ---- */
+body[data-page="roster"] #inbox, body[data-page="roster"] #session { display: none; }
+@media (min-width: 861px) {
+  #session, #inbox, #ledger { grid-row: 1; }
+  #session, #inbox, #ledger { margin-top: var(--band); }
+  /* Desk and Agents: the heading begins 16px under the band, the same line on both pages (ledger.css said 32px, the Desk 8px) */
+  html body[data-scope="all"] #inbox, html body[data-page="roster"] #ledger { padding-top: var(--s-4); }
+}
+@media (max-width: 860px) { .ledger-desk { display: none; }
+}
+.ledger-desk { height: 32px; max-width: 8.5rem; margin-right: 4px; padding: 0 6px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }
+
+/* A button centres its words by itself; a link of a set height does it this way. */
+a.ledger-more { display: inline-flex; align-items: center; justify-content: center; }
+/* The Agents page: the answers of a line keep their place now that the question before them is a link. */
+.ledger-does > a ~ .ledger-ans:first-of-type { margin-left: 0; }/* The Ledger (js/ledger.js): the overview of the sessions at /agents, one line per session.
    Plain lines and plain controls; by hand are only the marks, the crown, the hand, the small drawings. */
 
 #ledger { display: none; }
@@ -19,7 +34,6 @@ body[data-page="roster"] #ledger {
 .ledger-link { min-height: 36px; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-decoration-color: var(--line-strong); text-underline-offset: 4px; }
 .ledger-link:hover { text-decoration-color: currentColor; }
 .ledger-link:disabled { color: var(--faint); text-decoration: none; cursor: default; }
-.ledger-note { padding: var(--s-2) var(--s-3); border: 1.5px dashed var(--urg-high); border-radius: var(--r-md); font-size: var(--t-sm); }
 
 /* ---- the lines ---- */
 .ledger { display: grid; user-select: none; -webkit-user-select: none; }
@@ -32,7 +46,8 @@ body[data-page="roster"] #ledger {
 .ledger-line[data-urgency="critical"] { --c: var(--urg-critical); }
 .ledger-line[data-urgency="low"] { --c: var(--urg-low); }
 .ledger-line.is-head { min-height: 36px; border-bottom-color: var(--line-strong); }
-@media (any-hover: hover) { .ledger-line:not(.is-head):hover { background: var(--surface-2); } }
+@media (any-hover: hover) { .ledger-line:not(.is-head):hover { background: var(--surface-2); }
+}
 .ledger-line.is-cur { background: var(--surface-2); box-shadow: inset 3px 0 0 var(--fg); }
 .ledger-line:focus-visible { box-shadow: inset 3px 0 0 var(--accent); }
 .ledger-line.is-carried { opacity: .35; }
@@ -51,7 +66,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-face { position: relative; display: block; width: 40px; height: 40px; }
 .ledger-mark { display: block; padding: 0; border: 0; border-radius: 12px; background: none; }
 .ledger-face .agent-avatar { width: 38px; height: 38px; }
-@media (any-hover: hover) { .ledger-mark:hover .agent-avatar { box-shadow: 0 0 0 2px var(--line-strong); } }
+@media (any-hover: hover) { .ledger-mark:hover .agent-avatar { box-shadow: 0 0 0 2px var(--line-strong); }
+}
 .ledger-face .crown-toggle { left: 5px; top: -14px; }
 @media (hover: hover) {
   .ledger-face .crown-toggle[aria-pressed="false"] { opacity: 0; }
@@ -63,7 +79,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-name { min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px var(--s-2); }
 .ledger-rename { max-width: 100%; padding: 0; border: 0; background: none; text-align: left; }
 .ledger-name strong { display: block; font: 700 1.02rem/1.25 var(--display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-@media (any-hover: hover) { .ledger-rename:hover strong { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); } }
+@media (any-hover: hover) { .ledger-rename:hover strong { text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 4px; text-decoration-color: var(--line-strong); }
+}
 .ledger-name small { font-size: var(--t-xs); color: var(--faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .ledger-with { display: inline-flex; align-items: center; gap: 2px; padding-left: 8px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font-size: var(--t-xs); font-weight: 600; white-space: nowrap; max-width: 100%; }
 .ledger-with { min-width: 0; }
@@ -138,7 +155,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
   .ledger-acts .ledger-main { width: 116px; }
   .ledger-desk option { color: var(--fg); background: var(--surface); }
 }
-@media (min-width: 1501px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px var(--acts, 132px); } }
+@media (min-width: 1501px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px var(--acts, 132px); }
+}
 @media (min-width: 1241px) and (max-width: 1500px) {
   .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) 88px var(--acts, 132px); }
   .ledger:has(select.ledger-desk) .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) 88px var(--acts, 132px); }
@@ -146,7 +164,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
      the whole page after every change to it.) */
   .ledger:has(select.ledger-desk) .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6) { display: none; }
 }
-@media (min-width: 861px) and (max-width: 1240px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 104px minmax(0, 1.8fr) var(--acts, 132px); } }
+@media (min-width: 861px) and (max-width: 1240px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 104px minmax(0, 1.8fr) var(--acts, 132px); }
+}
 @media (min-width: 861px) and (max-width: 1360px) {
   .ledger:has(select.ledger-desk:not(.ledger-main)) { --pick-desk: 38px; }
   .ledger:has(select.ledger-main) { --pick-main: 38px; }
@@ -170,3 +189,76 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
   .ledger-face .crown-toggle { pointer-events: none; }
   .ledger-face .crown-toggle[aria-pressed="false"] { display: none; }
 }
+.ledger-line.is-current { outline: 3px solid var(--fg); outline-offset: -3px; }
+.ledger-line:focus { outline-offset: -3px; }
+.ledger-acts .t-pop { left: auto; right: 0; }
+.ledger-line form { margin: 0; }
+.ledger-face form, .ledger-acts > form, .ledger-with form { display: contents; }
+.ledger-tools > form { flex: 1 1 260px; max-width: 360px; margin: 0; }
+.ledger-tools .ledger-find { max-width: none; }
+a.ledger-th, a.ledger-ib, a.ledger-q, a.ledger-more, a.ledger-ans, a.ledger-link, a.ledger-sheet-item { text-decoration: none; }
+a.ledger-th { min-height: 32px; align-items: center; color: var(--faint); }
+a.ledger-th:hover { color: var(--fg); }
+a.ledger-link { display: inline-flex; align-items: center; text-decoration: underline; text-decoration-color: var(--line-strong); }
+a.ledger-ans { display: inline-grid; margin-left: auto; }
+a.ledger-more { display: inline-flex; align-items: center; }
+a.ledger-sheet-item { display: flex; align-items: center; }
+.ledger-mark { display: block; }
+.ledger-name > .t-pick { flex: 0 1 auto; }
+.ledger-rename { display: block; }
+/* A main's subs stand under it, a step in. */
+.ledger-line.is-sub .ledger-face { margin-left: 10px; }
+.ledger-line.is-sub .ledger-face .agent-avatar { width: 31px; height: 31px; margin-top: 4px; }
+/* (No transform on a line's parts: it would hold the open control under the lines that follow.) */
+.ledger-line:has(details.t-pick[open]) { z-index: 5; }
+.ledger-line.is-sub .ledger-name { padding-left: 12px; }
+/* The main agent's choice: "belongs under", drawn; beside the name where there is room, alone where there is none. */
+.ledger-main > .sketch { flex: none; width: 18px; height: 18px; margin-right: 4px; }
+/* In his own order a line moves one place up or down: two small forms in the grip's place. */
+.ledger-grip > form { display: grid; gap: 0; }
+.ledger-grip { padding: 0; gap: 0; }
+.ledger-grip button { width: 18px; height: 17px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--line-strong); }
+.ledger-grip button .sketch { display: block; width: 16px; height: 16px; margin: auto; }
+.ledger-grip button[value="up"] .sketch { scale: 1 -1; }
+.ledger-line:hover .ledger-grip button, .ledger-grip button:focus-visible { color: var(--muted); }
+.ledger-grip button:hover { background: var(--sunken); color: var(--fg); }
+.ledger[data-sorted] .ledger-grip > form { visibility: hidden; }
+/* What the hub refused: a quiet line under the session's line. */
+.ledger-err { grid-column: 3 / -1; margin: -4px 0 8px; color: var(--deny); font-size: var(--t-sm); }
+.ledger-open, .ledger-dots { display: none; }
+.t-marks-page { position: static; margin: var(--s-6) auto; width: max-content; max-width: calc(100vw - 16px); }
+@media (min-width: 861px) {
+  /* The room of the last column: as wide in every line; the two choices (desk, main agent) have their own. */
+  .ledger[data-desks] { --pick-desk: 100px; }
+  .ledger[data-mains] { --pick-main: 120px; }
+  .ledger-acts { align-items: center; }
+  .ledger-acts summary.ledger-desk { display: flex; align-items: center; box-sizing: border-box; height: 34px; margin-right: 4px; padding: 0 8px; border: 1px solid var(--line-strong); border-radius: var(--r-sm); background-color: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
+  .ledger-acts summary.ledger-desk > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+}
+@media (min-width: 1241px) and (max-width: 1500px) {
+  .ledger[data-desks] .ledger-line, .ledger[data-mains] .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) 88px var(--acts, 132px); }
+  .ledger[data-desks] .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6), .ledger[data-mains] .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6) { display: none; }
+}
+@media (min-width: 861px) and (max-width: 1360px) {
+  /* Each choice is a small drawn button; its list says the rest. The desk's is drawn by agents.css; the main agent's is
+     the pen's "belongs under" (the crown means one thing only: the crowned session of a desk). */
+  .ledger-acts summary.ledger-main { background-image: none; justify-content: center; color: var(--muted); }
+  .ledger-acts summary.ledger-main > .sketch { width: 20px; height: 20px; margin: 0; }
+  .ledger[data-desks] { --pick-desk: 38px; }
+  .ledger[data-mains] { --pick-main: 38px; }
+  .ledger-acts summary.ledger-desk { margin-right: 0; border-color: transparent; }
+  .ledger-acts summary.ledger-desk > span { display: none; }
+  .ledger-acts summary.ledger-main[data-set] { border-color: var(--line-strong); }
+}
+@media (max-width: 860px) {
+  /* A line is mark, name, state and "…": a tap on the line opens the session, "…" the sheet at the lower edge. */
+  .ledger-pick, .ledger-acts > a.ledger-ib { display: none; }
+  .ledger-dots { display: block; position: relative; z-index: 2; }
+  .ledger-open { display: block; position: absolute; inset: 0; z-index: 1; }
+  .ledger-tools > form { max-width: none; }
+  .t-sheet form > .ledger-sheet-item:only-of-type { grid-column: 1 / -1; }
+  .t-sheet form:has(> input[type="text"]) > .ledger-sheet-item { grid-column: auto; background: var(--sunken); font-weight: 600; }
+  .t-sheet .ledger-sheet-item { width: 100%; box-sizing: border-box; }
+}
+.ledger-line[data-state="stopped"] .ledger-state { color: var(--urg-critical); }
+.ledger-tabs { margin: 0 0 var(--s-4, 16px); }
