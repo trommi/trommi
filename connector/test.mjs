@@ -72,6 +72,7 @@ function fakeClient() {
       }
     },
     async requestPermission(p) { calls.push(['requestPermission', p]); return id() },
+    async withdrawPermission(...a) { calls.push(['withdrawPermission', ...a]); return true },
     async publish(p) { calls.push(['publish', p]); const i = id(); model.published.set(i, { object_id: i, agent_device_id: me, object_state: 'open', ...p }); return i },
     async uploadAttachment(bytes, meta) { calls.push(['upload', bytes.length, meta]); const i = id(); return { attachment_id: i, file_key: 'k', sha256: 's', total_size: bytes.length, ...meta } },
     async settle() {},
@@ -363,6 +364,24 @@ await test('permission relay: request -> object, verdict -> notifications/claude
   await bridge.command({ command: 'verdict', object_id: id, allow: true, content: {} })
   assert.equal(events.length, 1)
 })
+await test('permission relay: a request answered in the terminal is withdrawn (once), also one still on its way; a verdict after it reaches nobody', async () => {
+  const { client, bridge, events, state } = bridgeWith()
+  const params = { request_id: 'abcde', tool_name: 'Bash', description: 'Run shell command', input_preview: '{"command":"npm test"}' }
+  const id = await bridge.permissionRequest(params)
+  assert.equal(await bridge.permissionWithdraw('abcde'), true)
+  assert.deepEqual(client.calls.filter(c => c[0] === 'withdrawPermission'), [['withdrawPermission', id, 'answered in the terminal']])
+  assert.deepEqual(state.permissions, {})
+  assert.equal(await bridge.permissionWithdraw('abcde'), false, 'once')
+  assert.equal(await bridge.permissionWithdraw('nope'), false, 'an unknown request')
+  await bridge.command({ command: 'verdict', object_id: id, allow: true, content: {} })
+  assert.equal(events.length, 0, 'no verdict goes to Claude Code')
+  // Answered before the request was sealed: withdrawn right after.
+  const filing = bridge.permissionRequest({ ...params, request_id: 'fghij' })
+  assert.equal(await bridge.permissionWithdraw('fghij'), false)
+  const id2 = await filing
+  assert.deepEqual(client.calls.filter(c => c[0] === 'withdrawPermission').at(-1), ['withdrawPermission', id2, 'answered in the terminal'])
+  assert.deepEqual(state.permissions, {})
+})
 
 // ---- the lock ---------------------------------------------------------------------------------------------
 
@@ -495,6 +514,11 @@ await test('request: a tool call becomes a permission request; question dialogs 
   assert.equal(hookRequest('permission', { tool_name: 'AskUserQuestion', tool_input: {} }), null)
   assert.equal(hookRequest('permission', { tool_name: 'ExitPlanMode', tool_input: {} }), null)
   assert.equal(hookRequest('permission', null), null)
+  // PostToolUse of the same call names it exactly as its PermissionRequest did.
+  const done = hookRequest('resolved', { ...BASH, hook_event_name: 'PostToolUse', tool_response: { stdout: '' } }, {})
+  assert.deepEqual({ ...done, ancestors: null }, { op: 'resolved', ancestors: null, tool_name: 'Bash', description: r.description, input_preview: r.input_preview })
+  assert.equal(hookRequest('resolved', { tool_name: 'AskUserQuestion', tool_input: {} }), null)
+  assert.equal(hookOutput('resolved', { ok: true, withdrawn: true }), '')
   assert.equal(hookRequest('notice', { notification_type: 'idle_prompt', message: 'x' }), null)
   assert.equal(hookRequest('notice', { notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }).message, 'Claude needs your permission to use Bash')
   assert.equal(previewOf({ file_path: '/a', content: 'x'.repeat(2000) }).input_preview.length, 600)
@@ -515,6 +539,7 @@ await test('plugin: the manifest declares both hooks, and the zip still holds tw
   assert.deepEqual({ type: perm.type, command: perm.command }, { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" permission' })
   assert.ok(perm.timeout * 1000 > waitMs({ TROMMI_PERMISSION_MS: '99999999' }), 'the hook\'s own limit is above the longest wait')
   assert.equal(note.matcher, NOTICE_TYPES.join('|'))
+  for (const ev of ['PostToolUse', 'PostToolUseFailure']) assert.deepEqual(man.hooks[ev][0].hooks[0], { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" resolved', timeout: 30, async: true })
   assert.equal(note.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" notice')
   assert.deepEqual(Object.keys(pluginFiles('// c', 'v1')).sort(), ['.claude-plugin/plugin.json', 'connector.mjs'])
   assert.ok(JSON.parse(pluginFiles('// c', 'v1')['.claude-plugin/plugin.json']).hooks.PermissionRequest)
@@ -547,12 +572,13 @@ await test('denied: secrets are taken out', () => {
 })
 
 function scripted({ heard = false, inRoom = true } = {}) {
-  const asked = [], said = []
-  const bridge = { permissionRequest: async p => { asked.push(p); return 'obj' } }
+  const asked = [], said = [], withdrawn = []
+  const bridge = { permissionRequest: async p => { asked.push(p); return 'obj' }, permissionWithdraw: async (id, why) => { withdrawn.push([id, why]); return true } }
   const desk = createHookDesk({ heard, bridge: () => (inRoom ? bridge : null), say: async (_, m) => { said.push(m) }, ppid: 4242, settle_ms: 60 })
   const perm = (extra = {}, gone) => desk.handle({ op: 'permission', ancestors: [7, 4242], tool_name: 'Bash', description: 'd', input_preview: 'ls', wait_ms: 1000, ...extra }, gone)
   const notice = (type = 'permission_prompt', message = 'Claude needs your permission to use Bash') => desk.handle({ op: 'notice', ancestors: [4242], notification_type: type, message })
-  return { desk, asked, said, perm, notice }
+  const done = (extra = {}) => desk.handle({ op: 'resolved', ancestors: [4242], tool_name: 'Bash', description: 'd', input_preview: 'ls', ...extra })
+  return { desk, asked, said, withdrawn, perm, notice, done }
 }
 await test('desk: the request goes out as channel mode\'s permission request and the verdict answers it', async () => {
   for (const behavior of ['allow', 'deny']) {
@@ -571,10 +597,53 @@ await test('desk: the request goes out as channel mode\'s permission request and
 await test('desk: no verdict in time, or a hook that hung up, is a timeout; another session is refused; no room is an error', async () => {
   const s = scripted()
   assert.deepEqual(await s.perm(), { ok: true, timeout: true })
+  assert.deepEqual(s.withdrawn, [], 'a request that ran out is not withdrawn: it is over by itself')
   assert.deepEqual(await s.perm({ wait_ms: 60000 }, sleep(50)), { ok: true, timeout: true })
+  assert.deepEqual(s.withdrawn, [[s.asked[1].request_id, 'answered in the terminal']], 'Claude Code ended the hook (denied in the terminal): withdrawn')
   assert.deepEqual(await s.perm({ ancestors: [7, 8] }), { ok: false, error: 'another session' })
   assert.equal(s.asked.length, 2)
   assert.deepEqual(await scripted({ inRoom: false }).perm(), { ok: false, error: 'not in a room' })
+})
+await test('desk: answered in the terminal (the call\'s PostToolUse): exactly that prompt\'s request is withdrawn and its hook let go', async () => {
+  const s = scripted()
+  const other = s.perm({ wait_ms: 60000, input_preview: 'rm -rf build' })
+  await until('the first request', () => s.asked.length === 1)
+  const mine = s.perm({ wait_ms: 60000 })
+  await until('both requests', () => s.asked.length === 2)
+  assert.deepEqual(await s.done({ input_preview: 'pwd' }), { ok: true, silent: true }, 'a call nobody was asked about')
+  assert.deepEqual(await s.done({ tool_name: 'Write' }), { ok: true, silent: true })
+  assert.deepEqual(s.withdrawn, [])
+  assert.deepEqual(await s.done(), { ok: true, withdrawn: true })
+  assert.deepEqual(await mine, { ok: true, timeout: true }, 'no decision: the terminal decided')
+  assert.deepEqual(s.withdrawn, [[s.asked[1].request_id, 'answered in the terminal']])
+  assert.deepEqual(await s.done(), { ok: true, silent: true }, 'once')
+  assert.deepEqual(await s.notice(), { ok: true, silent: true }, 'and no "the terminal is waiting" for a prompt just answered there')
+  s.desk.verdict({ request_id: s.asked[0].request_id, behavior: 'deny' })
+  assert.deepEqual(await other, { ok: true, behavior: 'deny' }, 'the other prompt still takes the board\'s verdict')
+  assert.equal(s.withdrawn.length, 1)
+})
+await test('desk: with the channel flag the hook asks nothing but stands for the relayed request of its prompt, whichever came first', async () => {
+  for (const first of ['hook', 'relay']) {
+    const s = scripted({ heard: true })
+    let hook
+    if (first === 'hook') hook = s.perm({ wait_ms: 60000 })
+    s.desk.relayed({ request_id: 'abcde', tool_name: 'Bash' })
+    s.desk.relayed({ request_id: 'other', tool_name: 'Write' })
+    hook ??= s.perm({ wait_ms: 60000 })
+    assert.deepEqual(await s.done(), { ok: true, withdrawn: true })
+    assert.deepEqual(await hook, { ok: true, silent: true })
+    assert.deepEqual(s.withdrawn, [['abcde', 'answered in the terminal']], first)
+    // Denied in the terminal: Claude Code ends the hook.
+    assert.deepEqual(await s.perm({ wait_ms: 60000, tool_name: 'Write' }, sleep(30)), { ok: true, silent: true })
+    assert.deepEqual(s.withdrawn.at(-1), ['other', 'answered in the terminal'])
+    // Answered on the board: the verdict is Claude Code's (not the desk's), the hook is let go, nothing is withdrawn.
+    const third = s.perm({ wait_ms: 60000, tool_name: 'Edit' })
+    s.desk.relayed({ request_id: 'third', tool_name: 'Edit' })
+    assert.equal(s.desk.verdict({ request_id: 'third', behavior: 'allow' }), false)
+    assert.deepEqual(await third, { ok: true, silent: true })
+    assert.equal(s.withdrawn.length, 2)
+    assert.equal(s.asked.length, 0)
+  }
 })
 await test('desk: with the channel flag both hooks of a permission prompt stay silent', async () => {
   const s = scripted({ heard: true })

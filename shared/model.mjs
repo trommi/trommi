@@ -549,12 +549,24 @@ function applyPermissionRequest(model, rec, change) {
   const object_id = rec.object?.object_id
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'permission requests come from agents')
   if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a permission request in a session this agent is not assigned to')
-  if (!object_id || model.permissions.has(object_id)) return refuse(model, change, rec, 'bad-object', 'permission request without a new object id')
+  const known = object_id ? model.permissions.get(object_id) : null
+  // A second head of the same object from its agent, closed: the agent withdraws its request (the prompt was answered
+  // elsewhere). Only a pending request changes; one already answered keeps its verdict, quietly.
+  if (known && known.agent_device_id === rec.sender_device_id && OBJECT_STATE_NAME[rec.object?.object_state] === 'closed') {
+    if (known.permission_state !== 'pending') return { applied: false }
+    known.permission_state = 'withdrawn'
+    known.withdraw_reason = rec.content?.withdraw_reason ?? ''
+    change.permissions.add(object_id)
+    if (known.session_id) change.sessions.add(known.session_id)
+    change.stack = true
+    return { applied: true }
+  }
+  if (!object_id || known) return refuse(model, change, rec, 'bad-object', 'permission request without a new object id')
   if (rec.bind && rec.bind.requestId !== object_id) return refuse(model, change, rec, 'bad-object', 'request id differs from object id')
   if (rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence)')
   const c = rec.content ?? {}
   model.permissions.set(object_id, { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? null, tool_name: c.tool_name ?? '', description: c.description ?? '', input_preview: c.input_preview ?? '',
-    expires_at: rec.bind?.expiresAt ?? 0, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, sent_at: rec.sent_at, permission_state: 'pending', verdict: null })
+    expires_at: rec.bind?.expiresAt ?? 0, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, sent_at: rec.sent_at, permission_state: 'pending', verdict: null, withdraw_reason: null })
   change.permissions.add(object_id)
   if (rec.session_id) change.sessions.add(rec.session_id)
   change.stack = true

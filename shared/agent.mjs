@@ -172,7 +172,26 @@ const agentMethods = {
     const expiresAt = Date.now() + expires_in_ms
     const r = await this._version(null, () => ({ fields: { tool_name, description, input_preview }, object_state: 'open', urgency: 'critical' }),
       { kind: codec.KIND.permission_request, push: true, session_id, bind: id => z.encodeRequestBind({ requestId: unhex(id), expiresAt }) })
+    ;(this._requests ??= new Map()).set(r.object_id, { session_id: session_id ?? this.session_id, expires_at: expiresAt })
     return r.object_id
+  },
+  /**
+   * Withdraw an own permission request that still waits (the prompt was answered elsewhere, e.g. in the terminal): a
+   * second permission_request head of the same object, closed. A verdict after it is refused (request-not-pending).
+   * Returns false when the request is not pending any more (answered, withdrawn, run out).
+   */
+  async withdrawPermission(object_id, withdraw_reason = '') {
+    this._needAgent()
+    const p = this.model.permissions.get(object_id)
+    const own = p ?? this._requests?.get(object_id)   // sent, not echoed by the hub yet
+    if (!own || (p && p.agent_device_id !== this.my_device_id)) throw new ZError('not-found', `no own permission request ${object_id}`)
+    if (p ? p.permission_state !== 'pending' : own.withdrawn) return false
+    if (Date.now() > own.expires_at) return false
+    await this._version(object_id, () => ({ fields: { withdraw_reason }, object_state: 'closed', urgency: 'critical' }),
+      { kind: codec.KIND.permission_request, session_id: own.session_id, bind: id => z.encodeRequestBind({ requestId: unhex(id), expiresAt: own.expires_at }) })
+    const mine = this._requests?.get(object_id)
+    if (mine) mine.withdrawn = true
+    return true
   },
 
   // ---- the gate ---------------------------------------------------------------------------

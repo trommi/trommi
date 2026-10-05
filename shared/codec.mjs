@@ -28,7 +28,7 @@ export const FIELDS = Object.freeze({
   note: ['object_type', 'object_version', 'previous_version_hash', 'text'],
   published: ['object_type', 'object_version', 'previous_version_hash', 'attachments', 'title', 'note', 'released_until'],
   answer: ['answer_action', 'choices', 'note', 'option_notes', 'attachments', 'marks', 'trusted'],
-  permission_request: ['tool_name', 'description', 'input_preview'],
+  permission_request: ['tool_name', 'description', 'input_preview', 'withdraw_reason'],
   verdict: [],
   status: ['values', 'lamport'],
   decide_again: [],
