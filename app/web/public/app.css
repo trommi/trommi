@@ -783,9 +783,7 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
 .curl-flap-tone { fill: url(#curl-hatch); opacity: .45; }
 .curl-fold { fill: none; stroke: var(--fg); stroke-width: 1.7; stroke-linecap: round; }
 :root[data-theme="dark"] .curl-paper { fill: #1d2320; } :root[data-theme="dark"] .curl-dot { fill: #3a443f; }
-.curl-grab { position: absolute; right: 0; bottom: 0; width: 96px; height: 96px; padding: 0; border: 0; background: none; cursor: grab; pointer-events: auto; touch-action: none; clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+.curl-grab { position: absolute; right: 0; top: 0; width: 96px; height: 96px; padding: 0; border: 0; background: none; cursor: grab; pointer-events: auto; touch-action: none; clip-path: polygon(0 0, 100% 0, 100% 100%); }
 .curl-grab:active { cursor: grabbing; }
 .curl-grab:focus-visible { outline: 2px solid var(--fg); outline-offset: -6px; }
-/* the round memo button steps up out of the corner's way */
-:root[data-curl] { --float-up: 92px; }
-@media (max-width: 860px) { .curl-grab { width: 72px; height: 72px; } :root[data-curl] { --float-up: 70px; } }
+@media (max-width: 860px) { .curl-grab { width: 72px; height: 72px; } }

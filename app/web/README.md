@@ -85,7 +85,7 @@ instead); files come network first, the cache only offline. On the dev server (`
 
 ## The Scribble Board
 
-Drawing is the back of the Desk: its bottom-right corner is lifted; a tap, a pull or `P` turns the page to the
+Drawing is the back of the Desk: its top-right corner is lifted; a tap, a pull or `P` turns the page to the
 **Scribble Board** (`/scribble-board`; the same corner, Esc or `P` turns back; `ui.mjs` controller `curl`). The page is
 the pad (`whiteboard.mjs` mountPad) as large as the main area; select or frame something and **Send to…** a session.
 One drawing on it is a scribble.
