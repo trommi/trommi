@@ -10,7 +10,7 @@ on:
   push:
     branches: [main]
     # Only what goes into the image restarts the hub (a restart drops every open stream).
-    paths: ['hub/**', 'core/zcrypto.mjs', 'core/hub.mjs', 'core/session-grants.mjs', '.github/workflows/deploy.yml']
+    paths: ['hub/**', 'shared/crypto/zcrypto.mjs', 'shared/crypto/hub.mjs', 'shared/crypto/session-grants.mjs', 'shared/codec.mjs', '.github/workflows/deploy.yml']
   workflow_dispatch:
 
 concurrency:

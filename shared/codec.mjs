@@ -1,6 +1,6 @@
 // codec.mjs: the encrypted body's payload (UTF-8 JSON, schema_version 1) for the seven envelope kinds,
 // the names of header values, and attachment references. README "Inside the envelope: the body".
-import * as z from './zcrypto.mjs'
+import * as z from './crypto/zcrypto.mjs'
 
 export const SCHEMA_VERSION = 1
 const te = new TextEncoder()

@@ -75,10 +75,10 @@ await test('instructions: with the plugin-mode monitor rule in front, they stay 
 })
 
 // ---- part 2 ----------------------------------------------------------------------------------------
-const haveHub = fs.existsSync(path.join(here, '../hub/server.mjs')) && fs.existsSync(path.join(here, '../core/index.mjs'))
+const haveHub = fs.existsSync(path.join(here, '../hub/server.mjs')) && fs.existsSync(path.join(here, '../shared/index.mjs'))
 if (haveHub) {
   const { startHub, startChannel } = await import('./channel-test-e2e.mjs')
-  const core = await import('../core/index.mjs')
+  const core = await import('../shared/index.mjs')
   const hub = await startHub(tmp)
   const run = path.join(tmp, 'run')
   fs.mkdirSync(run, { recursive: true })
@@ -147,7 +147,7 @@ if (haveHub) {
     await human?.stop().catch(() => {})
     hub.stop()
   }
-} else results.push('skip part 2: hub/ or core/ missing')
+} else results.push('skip part 2: hub/ or shared/ missing')
 
 console.log(results.join('\n'))
 console.log(`\n${passed} passed, ${failed} failed`)

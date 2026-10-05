@@ -64,7 +64,7 @@ const app = http.createServer((req, res) => {
 await new Promise(r => app.listen(0, '127.0.0.1', r))
 const APP = `http://127.0.0.1:${app.address().port}`
 
-const core = await import('../core/index.mjs')
+const core = await import('../shared/index.mjs')
 const hub = await startHub(tmp)
 let human, channel
 const run = (cmd, args, opts) => new Promise((resolve) => {

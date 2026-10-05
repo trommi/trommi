@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
-import { fileStorage } from '../core/storage-file.mjs'
+import { fileStorage } from '../shared/storage-file.mjs'
 
 export async function run({ core, human, agentId, channel, until, keys }) {
   const { z, codec } = core

@@ -1,5 +1,5 @@
 // The app's build: everything generated is made here, at deploy time, and never committed.
-//   gen/vendor/            the client core, copied from the repository's core/ (plus two browser-safe connector files)
+//   gen/vendor/            the client core, copied flat from the repository's shared/ and shared/crypto/ (plus two browser-safe connector files)
 //   gen/bundle.<hash>.css  the stylesheets of index.html as one file (their <link>s become one)
 //   gen/build.txt          which commit this build is (the Web app deploy workflow reads it)
 //   index.html             the modulepreload list between <!-- preload --> and <!-- /preload -->, data-build=<version>
@@ -26,13 +26,18 @@ const sha = data => crypto.createHash('sha256').update(data).digest('hex').slice
 // ---- the core ----
 const NOT_VENDORED = /(^test|-test\.mjs$|^test-|^load\.mjs$|^storage-file\.mjs$|^hub\.mjs$)/   // tests, Node-only, the hub's side
 function vendorFiles(repo) {
-  const core = path.join(repo, 'core')
+  const core = path.join(repo, 'shared')
   if (!fs.existsSync(path.join(core, 'index.mjs'))) throw new Error(`build: the core is missing (${core}/index.mjs)`)
   const out = {}
-  for (const f of fs.readdirSync(core).sort()) if (f.endsWith('.mjs') && !NOT_VENDORED.test(f)) out[f] = fs.readFileSync(path.join(core, f), 'utf8')
+  // gen/vendor/ is flat: shared/crypto/ lands beside the rest, so an import of './crypto/x.mjs' becomes './x.mjs'.
+  for (const dir of [core, path.join(core, 'crypto')]) for (const f of fs.readdirSync(dir).sort()) {
+    if (!f.endsWith('.mjs') || NOT_VENDORED.test(f)) continue
+    if (out[f] != null) throw new Error(`build: ${f} is in shared/ and in shared/crypto/`)
+    out[f] = fs.readFileSync(path.join(dir, f), 'utf8').replace(/(['"])\.\/crypto\//g, '$1./')
+  }
   // The agent tool and event reference for the help page, and the HTML cleaner the agent's side uses (browser-safe).
   for (const f of ['channel-tools.mjs', 'richhtml.mjs']) out[f] = fs.readFileSync(path.join(repo, 'connector', f), 'utf8')
-  out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's core/. Do not edit: edit core/.\nexport const CORE_COMMIT = ${JSON.stringify(commitOf(repo))}\n`
+  out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's shared/. Do not edit: edit shared/.\nexport const CORE_COMMIT = ${JSON.stringify(commitOf(repo))}\n`
   return out
 }
 function commitOf(repo) {

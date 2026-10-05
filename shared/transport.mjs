@@ -1,6 +1,6 @@
 // transport.mjs: the hub's routes over fetch (README "Routes"), sign-in by signed challenge, token refresh,
 // and the fetch-based SSE stream with resume and reconnect backoff. No state about the room beyond the token.
-import * as z from './zcrypto.mjs'
+import * as z from './crypto/zcrypto.mjs'
 
 const { ZError, b64u, unb64u } = z
 const REFRESH_BEFORE_MS = 60_000

@@ -1,7 +1,7 @@
 // The app's layout rules (README "Rules"), checked in CI (Test workflow):
 //   1. a file in public/ outside the allowed set or folders fails;
 //   2. a view imports only from app.mjs and ui.mjs (and the core only through app.mjs); ui.mjs imports nothing;
-//   3. no crypto in the app: crypto.subtle, argon2 and zcrypto only in gen/vendor (the core);
+//   3. no crypto in the app: crypto.subtle, argon2 and zcrypto only in gen/vendor (the repository's shared/crypto/, copied by the build);
 //   4. the inline scripts of index.html and help.html are allowed by their hash in _headers (CSP).
 //   node dev/check.mjs
 import fs from 'node:fs'

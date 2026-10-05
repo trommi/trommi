@@ -1,6 +1,6 @@
-// test.mjs: client/core against the real hub (hub/server.mjs, in-process on a free port 8891-8899, throwaway data dir).
-//   node core/test.mjs            all tests
-//   node core/test.mjs --bench    plus the verify/decrypt throughput run (larger)
+// test.mjs: shared/ against the real hub (hub/server.mjs, in-process on a free port 8891-8899, throwaway data dir).
+//   node shared/test.mjs            all tests
+//   node shared/test.mjs --bench    plus the verify/decrypt throughput run (larger)
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
@@ -12,7 +12,7 @@ import { Hub, openShared, foundRoom, openRoom, joinRoom, recoverRoom, loginWithP
 import { fileStorage } from './storage-file.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import * as G from './session-grants.mjs'
+import * as G from './crypto/session-grants.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const BENCH = process.argv.includes('--bench')
@@ -51,11 +51,11 @@ LIMITS.foundPerIpHour = 10_000
 LIMITS.openRequestsPerIpMinute = 100_000       // every test signs in and joins from 127.0.0.1
 LIMITS.envelopesPerSecond = 100_000; LIMITS.envelopeBurst = 100_000
 const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-core-test-'))
-// hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on core/hub.mjs.
+// hub/server.mjs once it has the v1.1 routes (sessions, grants, lease); until then the stand-in on shared/crypto/hub.mjs.
 const serverHasSessions = fs.readFileSync(path.join(HERE, '../hub/server.mjs'), 'utf8').includes('sealed_session_keys')
 const useTestHub = process.env.CORE_HUB === 'test' || (!serverHasSessions && !!z.KEY_SCOPE)
 const hub = useTestHub ? await startTestHub({ port: await freePort() }) : await startHub({ port: await freePort(), host: '127.0.0.1', dataDir: path.join(scratch, 'hub'), log: () => {}, pingMs: 2000 })
-console.log(`hub: ${useTestHub ? 'test-hub.mjs (core/hub.mjs)' : 'hub/server.mjs'}`)
+console.log(`hub: ${useTestHub ? 'test-hub.mjs (shared/crypto/hub.mjs)' : 'hub/server.mjs'}`)
 const HUB = hub.hubUrl
 const clients = []
 const track = c => { clients.push(c); return c }

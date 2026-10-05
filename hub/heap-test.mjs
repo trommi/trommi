@@ -4,8 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import assert from 'node:assert/strict'
-import * as z from '../core/zcrypto.mjs'
-import { createHub } from '../core/hub.mjs'
+import * as z from '../shared/crypto/zcrypto.mjs'
+import { createHub } from '../shared/crypto/hub.mjs'
 import { openDb, roomStorage } from './store.mjs'
 
 const N = Number(process.argv[2] || 50000)

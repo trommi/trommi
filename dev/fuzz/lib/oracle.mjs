@@ -1,5 +1,5 @@
 // oracle.mjs: an independent, plain in-memory model of what every member of a room should see, written from the
-// README rules (not from core/model.mjs). It is fed the intended effect of every action that the real
+// README rules (not from shared/model.mjs). It is fed the intended effect of every action that the real
 // client accepted; strict mode (sequential actions, quiesce after each) compares it exactly.
 const URG = { low: 0, normal: 1, high: 2, critical: 3 }
 

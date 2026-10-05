@@ -1,5 +1,5 @@
-// Tests for zcrypto.mjs. Run: node core/crypto-test.mjs
-//   --write-vectors   regenerate core/vectors.json instead of comparing with it
+// Tests for zcrypto.mjs. Run: node shared/crypto/crypto-test.mjs
+//   --write-vectors   regenerate shared/crypto/vectors.json instead of comparing with it
 //   --no-bench        skip the micro-benchmark
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -43,7 +43,7 @@ const fill = (n, v) => new Uint8Array(n).fill(v)
 // ---- a small world: phone and laptop (human), one agent, and a hub that stores everything ----
 
 // One agent session for the whole world: its key is shared by the humans and the agent (R6). The session
-// grant chain that hands it out is core/session-grants.mjs; here the secret is simply given to everyone.
+// grant chain that hands it out is shared/crypto/session-grants.mjs; here the secret is simply given to everyone.
 const SESSION_ID = fill(16, 0x5e)
 const SESSION_SECRET = { epoch: 1, key: fill(32, 0x51), hist: fill(32, 0x52) }
 const DESK = '0d'.repeat(16)
@@ -1390,7 +1390,7 @@ async function handEntry(state, signer, type, payload) {
   return concat(body, await z.sign(signer, z.LABEL.logSig, body))
 }
 async function buildVectors() {
-  const v = { about: 'Deterministic test vectors for zcrypto.mjs format version 1. All byte strings are lower-case hex. Regenerate with: node core/crypto-test.mjs --write-vectors', rng: 'Test-only randomness: call number c (from 0) of a generator with seed s returns n bytes, byte j = (s + 17c + j) mod 256. Each section names its seed.' }
+  const v = { about: 'Deterministic test vectors for zcrypto.mjs format version 1. All byte strings are lower-case hex. Regenerate with: node shared/crypto/crypto-test.mjs --write-vectors', rng: 'Test-only randomness: call number c (from 0) of a generator with seed s returns n bytes, byte j = (s + 17c + j) mod 256. Each section names its seed.' }
   const dev = async (a, b) => z.deviceFromSeeds(fill(32, a), fill(32, b), { extractable: true })
   const phone = await dev(0x11, 0x12), laptop = await dev(0x21, 0x22), agent = await dev(0x31, 0x32), tablet = await dev(0x41, 0x42), helper = await dev(0x51, 0x52)
   const pubs = d => ({ signPub: H(d.signPub), kexPub: H(d.kexPub), id: H(d.id) })
@@ -1446,7 +1446,7 @@ async function buildVectors() {
   const stateEpoch1 = state
 
   // Envelopes, all under the agent's session key (scope 1): phone 1 (chat), agent 1 (a card), phone 2 (the answer).
-  // The session key is a fixed secret here; core/session-grants.mjs hands such keys out.
+  // The session key is a fixed secret here; shared/crypto/session-grants.mjs hands such keys out.
   const sessionId = fill(16, 0x5e), sessionSecret = { epoch: 1, key: fill(32, 0x61), hist: fill(32, 0x62) }
   const sess = { keyScope: 1, sessionId, secret: sessionSecret }
   const sessKeys = () => sessionSecret
@@ -1580,7 +1580,7 @@ test('vectors.json regenerates byte for byte', async () => {
     console.log(`  wrote ${VECTORS}`)
     return
   }
-  assert.ok(fs.existsSync(VECTORS), 'core/vectors.json is missing: run with --write-vectors')
+  assert.ok(fs.existsSync(VECTORS), 'shared/crypto/vectors.json is missing: run with --write-vectors')
   assert.deepEqual(JSON.parse(fs.readFileSync(VECTORS, 'utf8')), JSON.parse(JSON.stringify(vectorsBuilt)))
 })
 test('the stored vectors open from their bytes alone (as a second implementation would)', async () => {

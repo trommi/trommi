@@ -8,8 +8,8 @@
   "scripts": {
     "test": "npm run test:app && npm run test:hub && npm run test:core",
     "test:app": "node app/web/dev/check.mjs",
-    "test:hub": "node core/crypto-test.mjs --no-bench && node core/hub-crypto-test.mjs && node core/session-grants-test.mjs && node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs",
-    "test:core": "node core/test.mjs && node connector/channel-test.mjs && node connector/monitor-test.mjs && node connector/hook-test.mjs && node connector/bundle.mjs --check && node connector/connect-test.mjs",
+    "test:hub": "node shared/crypto/crypto-test.mjs --no-bench && node shared/crypto/hub-crypto-test.mjs && node shared/crypto/session-grants-test.mjs && node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs",
+    "test:core": "node shared/test.mjs && node connector/channel-test.mjs && node connector/monitor-test.mjs && node connector/hook-test.mjs && node connector/bundle.mjs --check && node connector/connect-test.mjs",
     "fuzz": "node dev/fuzz/run.mjs --quick"
   },
   "dependencies": {

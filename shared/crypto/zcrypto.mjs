@@ -5,7 +5,7 @@
 // No primitive is implemented here; if the runtime lacks one, requireRuntime() says which.
 //
 // The wire formats, labels and key schedule are specified in FORMAT.md. Keep both in step.
-// Used by hub/, client/core and the channel. Not audited.
+// Used by hub/, shared/ and the channel. Not audited.
 
 const subtle = globalThis.crypto?.subtle
 const te = new TextEncoder()

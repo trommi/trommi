@@ -21,7 +21,7 @@
 // sender's items come in its sender_sequence order, and the frontier (sender -> [sequence, envelope_hash]) says up to
 // where a sender is applied. The snapshot carries that frontier; items it covers are skipped.
 
-import { b64u, unb64u } from './zcrypto.mjs'
+import { b64u, unb64u } from './crypto/zcrypto.mjs'
 
 const Q = 8   // 1/8 px
 

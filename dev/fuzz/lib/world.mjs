@@ -1,5 +1,5 @@
 // world.mjs: one simulated deployment: a hub (local, own port + throwaway dir, or a remote URL), rooms, and
-// devices that are real client/core Clients (human devices and agents) with fault-injecting transports.
+// devices that are real shared/ Clients (human devices and agents) with fault-injecting transports.
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'

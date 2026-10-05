@@ -9,13 +9,13 @@
 // changed finds it there (or in the acked list) and is answered without sealing again (exactly once).
 //
 //   const client = await openRoomInTabs({ storage: idbStorage({ name: 'trommi', prefix: 'room/' }), makeStorage, client: 'web' })
-//   client.tabRole   // 'leader' | 'follower'; the rest is the Client's interface (core/README.md)
+//   client.tabRole   // 'leader' | 'follower'; the rest is the Client's interface (shared/README.md)
 //
 // Without Web Locks or BroadcastChannel (Node, old browsers) it is openRoom: one client, its own lock.
 import { openRoom } from './room.mjs'
 import { rangeOf } from './storage-memory.mjs'
 import * as M from './model.mjs'
-import * as z from './zcrypto.mjs'
+import * as z from './crypto/zcrypto.mjs'
 
 const { ZError, hex } = z
 

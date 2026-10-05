@@ -1,4 +1,4 @@
-// worker.mjs: one load process hosting several members (forked by load.mjs). Each member is a client/core client
+// worker.mjs: one load process hosting several members (forked by load.mjs). Each member is a shared/ client
 // opened from its storage dir; it sends a realistic mix through the core's own API (sealed, chained, posted by the
 // core's outbox). Commands arrive over IPC; counters go back once a second.
 //

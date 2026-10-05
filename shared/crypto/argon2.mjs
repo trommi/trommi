@@ -1,6 +1,6 @@
 // argon2.mjs: Argon2id from hash-wasm 4.12.0 (https://github.com/Daninet/hash-wasm, MIT, (c) Dani Biró), its
 // dist/argon2.umd.min.js with the UMD wrapper replaced by an ES module export (no other change). WebAssembly inside:
-// the page needs CSP script-src 'wasm-unsafe-eval'. Checked against node:crypto argon2 and RFC 9106 in core/test-account.mjs.
+// the page needs CSP script-src 'wasm-unsafe-eval'. Checked against node:crypto argon2 and RFC 9106 in shared/test-account.mjs.
 /*!
  * hash-wasm (https://www.npmjs.com/package/hash-wasm)
  * (c) Dani Biro

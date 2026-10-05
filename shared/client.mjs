@@ -1,12 +1,12 @@
 // client.mjs: one room as seen by one device. The sync engine (one cursor, verify every header, decrypt heads,
 // lazy timelines), the outbox, persistence, membership changes, and the human actions. The agent actions are in
-// agent.mjs (mixed into the same class). Contract: core/README.md.
-import * as z from './zcrypto.mjs'
+// agent.mjs (mixed into the same class). Contract: shared/README.md.
+import * as z from './crypto/zcrypto.mjs'
 import { Hub } from './transport.mjs'
 import * as codec from './codec.mjs'
 import * as M from './model.mjs'
-import { sealEscrowV2 } from './escrow.mjs'
-import * as G from './session-grants.mjs'
+import { sealEscrowV2 } from './crypto/escrow.mjs'
+import * as G from './crypto/session-grants.mjs'
 import { bootFromSnapshot, writeSnapshot, SNAPSHOT_EVERY } from './snapshot.mjs'
 
 const { b64u, unb64u, hex, unhex, ZError, ROLE } = z
@@ -960,7 +960,7 @@ export class Client {
   }
 
   /**
-   * Phase 2, strictly in hub order: the sender's chain (core/FORMAT.md §9 step 6 and 7, the same rules as
+   * Phase 2, strictly in hub order: the sender's chain (shared/crypto/FORMAT.md §9 step 6 and 7, the same rules as
    * zcrypto's verifyEnvelope) and our own envelopes. Returns the reducer record, or null for a replay.
    */
   async _commit(pre) {

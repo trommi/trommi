@@ -1,6 +1,6 @@
-// browser-test.mjs: the SAME client/core files in headless Chromium (IndexedDB storage, non-extractable keys),
+// browser-test.mjs: the SAME shared/ files in headless Chromium (IndexedDB storage, non-extractable keys),
 // against the real hub in-process, with a Node agent on the other side. Needs Chromium outside the command sandbox.
-//   node core/browser-test.mjs [--n=2000]
+//   node shared/browser-test.mjs [--n=2000]
 import fs from 'node:fs'
 import http from 'node:http'
 import os from 'node:os'
@@ -54,7 +54,7 @@ try {
     return r.result.value
   }
   await nav()
-  const imp = `const core = await import('${ORIGIN}/core/index.mjs');`
+  const imp = `const core = await import('${ORIGIN}/shared/index.mjs');`
   // 1. found in the browser
   const founded = await run(`${imp}
     const storage = core.idbStorage({ name: 'trommi-test', prefix: 'r1/' })

@@ -3,12 +3,12 @@
 //   const storage = await fileStorage({ dir, key_file?, prefix? })
 //
 // dir: created with mode 0700. State lives in memory and is written as one JSON file `<prefix>state.json`
-// (durable before a write resolves: temp file + fsync + rename + directory fsync, mode 0600). The device key is a 66-byte key file (core/FORMAT.md §4),
+// (durable before a write resolves: temp file + fsync + rename + directory fsync, mode 0600). The device key is a 66-byte key file (shared/crypto/FORMAT.md §4),
 // mode 0600: `key_file` is a path or a function (room_id hex) -> path; default `<dir>/<prefix>device.key`.
 // Several sessions of one room may share `dir` with different prefixes.
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import * as z from './zcrypto.mjs'
+import * as z from './crypto/zcrypto.mjs'
 import { rangeOf } from './storage-memory.mjs'
 
 export async function fileStorage({ dir, key_file = null, prefix = '', write_delay_ms: _ignored = 0 } = {}) {   // write_delay_ms: ignored since writes are write-ahead

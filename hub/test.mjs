@@ -1,4 +1,4 @@
-// Tests for the thin hub: real HTTP against hub/server.mjs, real crypto clients (core/zcrypto.mjs).
+// Tests for the thin hub: real HTTP against hub/server.mjs, real crypto clients (shared/crypto/zcrypto.mjs).
 // Run: node hub/test.mjs     (each test world gets its own hub on a free port and a throwaway data directory)
 import assert from 'node:assert/strict'
 import crypto from 'node:crypto'
@@ -7,8 +7,8 @@ import http from 'node:http'
 import net from 'node:net'
 import os from 'node:os'
 import path from 'node:path'
-import * as z from '../core/zcrypto.mjs'
-import { createSessionGrant } from '../core/session-grants.mjs'
+import * as z from '../shared/crypto/zcrypto.mjs'
+import { createSessionGrant } from '../shared/crypto/session-grants.mjs'
 import { startHub, LIMITS } from './server.mjs'
 
 const { ROLE, KIND, hex, utf8, b64u, unb64u } = z
@@ -537,7 +537,7 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   assert.equal(z.peekEnvelope(unb64u(rec.envelope)).header.epoch, 2)
   await assert.rejects(z.openVerifiedEnvelope(unb64u(rec.envelope), { state: w.laptop.state, secrets: secretsOf(w.laptop), envelopeHash: fresh.env.hash }), e => e.code === 'no-key')
   assert.equal(z.peekEnvelope(desk.env.bytes).header.epoch, 2)
-  // A sender in the old session key epoch is refused once the grace is over is tested in core/hub-crypto-test.mjs (PoC3).
+  // A sender in the old session key epoch is refused once the grace is over is tested in shared/crypto/hub-crypto-test.mjs (PoC3).
   assert.deepEqual((await ok(w, 'GET', `${R(w)}/sessions`, { token: w.phone.token })).sessions, [{ session_id: hex(SID), last_grant_number: 1, session_key_epoch: 2 }])
   // A removal without a sealed key for someone who stays is refused.
   const r2 = await z.removeMembers(w.phone.state, w.phone.device, { ids: [w.agent.device.id], previous: w.phone.secrets.get(2) })

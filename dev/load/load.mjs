@@ -1,5 +1,5 @@
 // load.mjs: the load generator. Founds a dedicated test room, adds agents and humans as real E2E members (real
-// invites, check codes for humans), forks worker processes that send a realistic mix through client/core, and
+// invites, check codes for humans), forks worker processes that send a realistic mix through shared/, and
 // measures while it runs. Big runs go against a local hub (dev/load/hub-local.mjs, real hub code, server metrics
 // every 5 s); runs against hub.trommi.com stay within its default limits and measure client-side only.
 //
@@ -24,7 +24,7 @@ import http from 'node:http'
 import https from 'node:https'
 import { fork } from 'node:child_process'
 import { DatabaseSync } from 'node:sqlite'
-import { memoryStorage, joinRoom, z } from '../../core/index.mjs'
+import { memoryStorage, joinRoom, z } from '../../shared/index.mjs'
 import { HERE, NET, useTestKey, deleteTestRoom, arg, flag, sleep, until, pct, found, addAgent, addHuman, reopen, leanSender, trimWindows, startLocalHub, writeJson, readJsonl, text, rngOf, stroke, hex16 } from './lib.mjs'
 
 
