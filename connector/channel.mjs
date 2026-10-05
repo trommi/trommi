@@ -13,6 +13,7 @@
 //                                              the emergency side channel: one message to the human, then exit
 //   node connector/channel.mjs permission      the plugin's PermissionRequest hook (hook JSON on stdin; connector/hook.mjs)
 //   node connector/channel.mjs notice          the plugin's Notification hook
+//   node connector/channel.mjs denied          the plugin's PermissionDenied hook (one quiet line, never a decision)
 //
 // Environment:
 //   TROMMI_INVITE    agent invite link (https://app.trommi.com/join#v1....), needed once per room + machine + folder
@@ -350,7 +351,7 @@ async function sayCli(argv) {
 }
 
 /**
- * The plugin's hooks (connector/hook.mjs): `permission` and `notice`. Reads the hook's JSON on stdin, asks the running
+ * The plugin's hooks (connector/hook.mjs): `permission`, `notice` and `denied`. Reads the hook's JSON on stdin, asks the running
  * connector of this Claude Code session through its door and prints Claude Code's decision, or nothing. Never fails
  * and never opens a key: whatever goes wrong is "no decision", and the terminal's own dialog goes on.
  */
@@ -488,7 +489,7 @@ async function main() {
       // The door for `say` (the emergency side channel) and the plugin's hooks: all go through this process, on this
       // key's one chain.
       closeDoor ??= openDoor(me.paths, async (req, gone) => {
-        if (req?.op === 'permission' || req?.op === 'notice') return desk.handle(req, gone)
+        if (req?.op === 'permission' || req?.op === 'notice' || req?.op === 'denied') return desk.handle(req, gone)
         if (req?.op !== 'say') return { ok: false, error: 'unknown request' }
         if (!bridge || channel.me.phase !== 'ready') return { ok: false, error: notReady() }
         return { ok: true, said: await sayWith(bridge, req) }
@@ -646,7 +647,7 @@ async function cli(argv) {
     process.exit(0)
   }
   // The Trommi plugin's hooks (connector/hook.mjs). Always exit 0: no output is "no decision".
-  if (cmd === 'permission' || cmd === 'notice') {
+  if (cmd === 'permission' || cmd === 'notice' || cmd === 'denied') {
     const out = await hookCli(cmd).catch(err => { log(`hook ${cmd}: ${err.message}`); return '' })
     if (out) await new Promise(r => process.stdout.write(`${out}\n`, r))
     process.exit(0)

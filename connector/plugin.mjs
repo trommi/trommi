@@ -8,7 +8,8 @@
 // channels plugin:trommi@trommi still gets live <channel> events), and a monitor (`node channel.mjs monitor`,
 // connector/monitor.mjs) that wakes a plain `claude` for every verified board event, and two hooks (connector/hook.mjs)
 // that bring a plain `claude`'s permission prompts to the board: PermissionRequest (`node channel.mjs permission`) and
-// Notification (`node channel.mjs notice`).
+// Notification (`node channel.mjs notice`), and PermissionDenied (`node channel.mjs denied`, one quiet line when auto
+// mode blocks a tool call).
 //
 // bundle.mjs writes app/web/public/gen/plugins/marketplace.json and trommi-<version>.zip (a zip archive source with its
 // sha256; deterministic, so --check can compare it). The version is the connector's sha256 prefix: a new connector is
@@ -34,6 +35,7 @@ export function pluginManifest(version) {
     channels: [{ server: 'trommi', displayName: 'Trommi' }],
     hooks: {
       PermissionRequest: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" permission', timeout: HOOK_TIMEOUT_S }] }],
+      PermissionDenied: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" denied', timeout: 30 }] }],
       Notification: [{ matcher: NOTICE_TYPES.join('|'), hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" notice', timeout: 60 }] }],
     },
     experimental: {
