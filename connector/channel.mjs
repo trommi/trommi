@@ -11,6 +11,8 @@
 //   node connector/channel.mjs whoami          print room, key file and device id
 //   node connector/channel.mjs say "<text>" [--session <name>] [--urgent]
 //                                              the emergency side channel: one message to the human, then exit
+//   node connector/channel.mjs permission      the plugin's PermissionRequest hook (hook JSON on stdin; connector/hook.mjs)
+//   node connector/channel.mjs notice          the plugin's Notification hook
 //
 // Environment:
 //   TROMMI_INVITE    agent invite link (https://app.trommi.com/join#v1....), needed once per room + machine + folder
@@ -18,6 +20,7 @@
 //   TROMMI_HUB       hub address, default https://hub.trommi.com (an invite link names its own hub)
 //   TROMMI_KEYS_DIR  where key files live, default ~/.local/share/trommi/keys
 //   TROMMI_FOLDER    the working folder that names the key file, default the current directory
+//   TROMMI_PERMISSION_MS  how long the permission hook waits for the human's verdict, default 300000 (5 minutes)
 //   TROMMI_SESSION_KEY  which Claude Code session this process belongs to, default its parent pid: a new process of
 //                    the same session (a /mcp Reconnect) takes the slot over from the old one (channel-lock.mjs)
 //
@@ -39,6 +42,7 @@ import { createBridge } from './channel-bridge.mjs'
 import { alive, claimSlot, unlockSlot, holdersOf, openDoor, knock } from './channel-lock.mjs'
 import { diskVersion, loadCode, watchUpdates } from './reload.mjs'
 import { createMonitorFeed, pointerLine, runMonitor, INBOX_TOOL, MONITOR_NOTE } from './monitor.mjs'
+import { createHookDesk, hookRequest, hookOutput } from './hook.mjs'
 
 const log = (...a) => console.error('[trommi]', ...a)
 // Sent by client/core as Trommi-Client on every request; the hub answers 426 client-too-old when it is too old.
@@ -50,10 +54,10 @@ const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^
  * .gitignore of its own), and every later run reads it from there, so a renamed or moved folder keeps its identity
  * (its key, state and file cache). Without the file (read-only folder) the name comes from host and folder as before.
  */
-function slotBase(folder, derived) {
+function slotBase(folder, derived, write = true) {
   const dir = path.join(folder, '.trommi'), file = path.join(dir, 'slot-base')
   try { const kept = fs.readFileSync(file, 'utf8').trim(); if (/^[a-z0-9-]{1,200}$/.test(kept)) return kept } catch {}
-  try {
+  if (write) try {
     fs.mkdirSync(dir, { recursive: true })
     if (!fs.existsSync(path.join(dir, '.gitignore'))) fs.writeFileSync(path.join(dir, '.gitignore'), '*\n')
     fs.writeFileSync(file, derived + '\n', { flag: 'wx' })
@@ -61,13 +65,13 @@ function slotBase(folder, derived) {
   return derived
 }
 
-function channelConfig(env = process.env) {
+function channelConfig(env = process.env, { write = true } = {}) {
   const keys_dir = path.resolve(env.TROMMI_KEYS_DIR || path.join(os.homedir(), '.local/share/trommi/keys'))
   const folder = path.resolve(env.TROMMI_FOLDER || process.cwd())
   const home = os.homedir()
   const shown = folder === home ? '~' : folder.startsWith(home + path.sep) ? `~/${path.relative(home, folder)}` : folder
   const host = os.hostname()
-  const base = slotBase(folder, `${slug(host)}-${slug(shown.replace(/^~\/?/, '')) || 'home'}`)
+  const base = slotBase(folder, `${slug(host)}-${slug(shown.replace(/^~\/?/, '')) || 'home'}`, write)
   const session = env.TROMMI_SESSION_KEY || `ppid:${process.ppid}`
   const takeover_ms = Number(env.TROMMI_TAKEOVER_MS) || 4000
   return { keys_dir, folder, shown, host, base, session, takeover_ms, hub_url: env.TROMMI_HUB || 'https://hub.trommi.com', invite: env.TROMMI_INVITE || '', room: (env.TROMMI_ROOM || '').toLowerCase() }
@@ -344,6 +348,35 @@ async function sayCli(argv) {
     await new Promise(r => setTimeout(r, 1000))
   }
 }
+
+/**
+ * The plugin's hooks (connector/hook.mjs): `permission` and `notice`. Reads the hook's JSON on stdin, asks the running
+ * connector of this Claude Code session through its door and prints Claude Code's decision, or nothing. Never fails
+ * and never opens a key: whatever goes wrong is "no decision", and the terminal's own dialog goes on.
+ */
+async function hookCli(kind) {
+  let text = ''
+  for await (const d of process.stdin.setEncoding('utf8')) text += d
+  let input = null
+  try { input = JSON.parse(text) } catch {}
+  const request = hookRequest(kind, input)
+  if (!request) return ''
+  // The connector's folder is the project root (Claude Code starts it there); a hook may run somewhere below it.
+  const env = { ...process.env, TROMMI_FOLDER: process.env.TROMMI_FOLDER || process.env.CLAUDE_PROJECT_DIR || input.cwd || process.cwd() }
+  const cfg = { ...channelConfig(env, { write: false }), invite: '' }
+  const room_id = await resolveRoom(cfg)
+  if (!room_id) return ''
+  for (const n of slotsIn(cfg, path.join(cfg.keys_dir, room_id))) {
+    const p = pathsOf(cfg, room_id, n)
+    if (!holdersOf(p).length) continue
+    try {
+      const answer = await knock(p, request, (request.wait_ms ?? 0) + 15000)
+      if (answer.ok) return hookOutput(kind, answer)
+      log(`hook ${kind}: slot ${n}: ${answer.error}`)
+    } catch (err) { log(`hook ${kind}: slot ${n}: ${err.message}`) }
+  }
+  return ''
+}
 const notInRoom = me => ({ 'waiting-session': 'the agent is not assigned to a session yet (the human does that in the Trommi app)', 'needs-invite': 'no free key of this folder' }[me.phase] ?? `not in the room (${me.phase})`)
 
 // ---- MCP ---------------------------------------------------------------------------------------------
@@ -408,6 +441,8 @@ async function main() {
   let deafTold = false
   if (!heard) log(DEAF_HINT)
   const notify = (method, params) => {
+    // A verdict on a permission request a hook filed goes to that hook, not to Claude Code.
+    if (method === 'notifications/claude/channel/permission' && desk.verdict(params)) return Promise.resolve()
     if (!heard && method === 'notifications/claude/channel') {
       missed.push(params); if (missed.length > 100) missed.shift()
       const line = pointerLine(params)
@@ -424,6 +459,8 @@ async function main() {
     return [said, head, ...(events.length ? [`[Trommi: ${events.length} board event${events.length === 1 ? '' : 's'} that Claude Code did not show you:]`, ...events.map(channelTag)] : [])].filter(Boolean).join('\n\n')
   }
   let bridge = null, closeDoor = null
+  // The plugin's hooks ask here (connector/hook.mjs); with the channel flag Claude Code relays permission prompts itself.
+  const desk = createHookDesk({ heard, bridge: () => (bridge && channel.me.phase === 'ready' ? bridge : null), say: sayWith, log })
   // Leaving must not hang: a stop that waits on the network or the disk gets 2 s, then the process ends anyway.
   // (A connector that outlived its Claude Code session kept the key slot, and the reconnected one had none.)
   let leaving = false
@@ -448,8 +485,10 @@ async function main() {
       const state = { permissions: {}, ...(await storage.get('channel')) }
       bridgeArgs = { client: me.client, notify, cacheDir: me.paths.cache, state, saveState: () => storage.set('channel', state), log }
       bridge = code.createBridge(bridgeArgs)
-      // The door for `say` (the emergency side channel): it sends through this process, on this key's one chain.
-      closeDoor ??= openDoor(me.paths, async req => {
+      // The door for `say` (the emergency side channel) and the plugin's hooks: all go through this process, on this
+      // key's one chain.
+      closeDoor ??= openDoor(me.paths, async (req, gone) => {
+        if (req?.op === 'permission' || req?.op === 'notice') return desk.handle(req, gone)
         if (req?.op !== 'say') return { ok: false, error: 'unknown request' }
         if (!bridge || channel.me.phase !== 'ready') return { ok: false, error: notReady() }
         return { ok: true, said: await sayWith(bridge, req) }
@@ -604,6 +643,12 @@ async function cli(argv) {
   }
   if (cmd === 'say') {
     console.log(await sayCli(argv.slice(1)))
+    process.exit(0)
+  }
+  // The Trommi plugin's hooks (connector/hook.mjs). Always exit 0: no output is "no decision".
+  if (cmd === 'permission' || cmd === 'notice') {
+    const out = await hookCli(cmd).catch(err => { log(`hook ${cmd}: ${err.message}`); return '' })
+    if (out) await new Promise(r => process.stdout.write(`${out}\n`, r))
     process.exit(0)
   }
   // The Trommi plugin's monitor (connector/monitor.mjs): prints this Claude Code session's board notifications.

@@ -1,7 +1,7 @@
 // reload.mjs: connector updates without losing the session.
 //
 // The connector has two parts:
-//   shell   channel.mjs, channel-lock.mjs, reload.mjs and the core (../core): stdio, the MCP server, the key, the lease,
+//   shell   channel.mjs, channel-lock.mjs, reload.mjs, monitor.mjs, hook.mjs and the core (../core): stdio, the MCP server, the key, the lease,
 //           the stream. A change here needs a real restart (in Claude Code: /mcp -> trommi -> Reconnect).
 //   code    channel-tools.mjs, channel-bridge.mjs, richhtml.mjs: tool definitions, instructions and the bridge between
 //           tools/commands and the core. A change here is hot-reloaded: imported again as ./<file>?v=<hash>, the
@@ -26,7 +26,7 @@ const BUNDLED = typeof __TROMMI_BUNDLE__ !== 'undefined'
 const SELF = fileURLToPath(import.meta.url)
 const CORE = path.join(HERE, '../core')
 export const CODE_FILES = ['channel-tools.mjs', 'channel-bridge.mjs', 'richhtml.mjs']
-const SHELL_FILES = ['channel.mjs', 'channel-lock.mjs', 'reload.mjs', 'monitor.mjs']
+const SHELL_FILES = ['channel.mjs', 'channel-lock.mjs', 'reload.mjs', 'monitor.mjs', 'hook.mjs']
 const isTest = f => /(^test|-test|test-)[\w-]*\.mjs$/.test(f) || f === 'load.mjs'
 
 const hashOf = files => {

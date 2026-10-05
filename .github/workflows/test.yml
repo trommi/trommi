@@ -60,6 +60,7 @@ jobs:
       - run: node core/test.mjs
       - run: node connector/channel-test.mjs
       - run: node connector/monitor-test.mjs
+      - run: node connector/hook-test.mjs
       # app/web/public/gen/connector.mjs (and gen/plugins/) is generated (connector/bundle.mjs) and committed: it must match the sources.
       - run: node connector/bundle.mjs --check
       - run: node connector/connect-test.mjs
