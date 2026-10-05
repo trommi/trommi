@@ -18,7 +18,18 @@ try { let cur = null; for (const line of fs.readFileSync(path.join(root, '_heade
 // The build, made again when it is older than a moment (a page load asks for index.html, sw.js and the bundle at once).
 let made = null
 const built = () => { if (!made || Date.now() - made.at > 500) { const { out } = generate(); out['sw.js'] = out['sw.js'].replace(/^const VERSION = .*$/m, 'const VERSION = "dev"'); out['index.html'] = out['index.html'].replace(/data-build="\w+"/, 'data-build="dev"'); made = { at: Date.now(), out } } return made.out }
+// A request never takes the server down: a file the build reads may be missing for a moment (a rebase under it).
+// The answer is 500 with the message; the same message is logged once.
+let lastError = ''
 http.createServer((req, res) => {
+  try { serve(req, res) } catch (err) {
+    const what = String(err?.message ?? err)
+    if (what !== lastError) { lastError = what; console.error(`serve: ${what}`) }
+    if (!res.headersSent) res.writeHead(500, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' })
+    res.end(`dev server: ${what}\n`)
+  }
+}).listen(port, '127.0.0.1', () => console.log(`app on http://127.0.0.1:${port}`))
+function serve(req, res) {
   const url = new URL(req.url, 'http://x')
   // The connect script (curl -fsSL <app>/connect | sh -s '<link>'), as worker.js serves it.
   if (url.pathname === '/connect' || url.pathname === '/connect/') { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-cache' }); return res.end(fs.readFileSync(path.join(root, 'connect.sh'))) }
@@ -43,5 +54,5 @@ http.createServer((req, res) => {
   res.writeHead(200, h)
   const out = rel === 'index.html' ? built()[rel] : gen[rel]
   if (out != null) return res.end(out)
-  fs.createReadStream(path.join(root, rel)).pipe(res)
-}).listen(port, '127.0.0.1', () => console.log(`app on http://127.0.0.1:${port}`))
+  fs.createReadStream(path.join(root, rel)).on('error', () => res.destroy()).pipe(res)
+}

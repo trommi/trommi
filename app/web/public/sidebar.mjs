@@ -28,14 +28,14 @@ const inviteAgentButton = () => html`<form method="post" action="/pair" class="a
 // Folded it shows the sticky, and the note's first line beside it when it holds words; a click unfolds it there,
 // growing upward, into a field that grows with the words (Enter: a new line, Ctrl/Cmd+Enter sends, Esc folds), with
 // the paperclip, the bin and the crown (send straight to the crown). Sent or thrown away, it is empty again. It is
-// the newest unsent note (place "stack", no session).
+// the newest unsent note.
 const NOTE_ICON = raw('<svg viewBox="0 0 52 52" class="corner-note-ico" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
 const BIN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5 7.2 Q12 6.8 19 7.3"/><path d="M9.6 6.9 Q9.8 4.8 12 4.7 Q14.3 4.8 14.4 6.9"/><path d="M6.6 7.6 Q7.4 14 8.2 20.2 Q12 20.6 15.8 20.2 Q16.6 14 17.4 7.6"/></svg>')
 const isPic = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.name ?? '')
 /** The note's attachments: a picture as a small thumbnail, a file by its name; a click takes it off. */
 const noteFiles = atts => (atts ?? []).map(a => `<button type="button" class="corner-note-file${isPic(a) ? ' is-pic' : ''}" data-url="${String(a.url).replace(/"/g, '&quot;')}" data-action="corner-note#unclip" title="${String(a.name).replace(/"/g, '&quot;')}: click to take it off">${isPic(a) ? `<img src="${String(a.url).replace(/"/g, '&quot;')}" alt="" loading="lazy">` : `<span>${String(a.name).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'))}</span>`}<i>×</i></button>`).join('')
 const CLIP = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M15.6 7.2 Q11 12 8.4 14.8 Q7 16.6 8.6 17.8 Q10.2 18.8 11.6 17.2 Q15.6 12.8 18.2 9.8 Q20.4 7 18.2 5 Q16 3.4 13.8 5.6 Q9.4 10.4 6.4 13.8 Q3.8 17 6.4 19.6 Q9 21.8 12 19"/></svg>')
-const deskNotesOf = model => (model.state.notes ?? []).filter(m => m.place === 'stack' && !m.held && !m.session).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
+const deskNotesOf = model => (model.state.notes ?? []).filter(m => !m.held).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
 export function cornerNote(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
   const text = note?.text ?? '', files = note?.attachments ?? []
@@ -43,7 +43,7 @@ export function cornerNote(model, base) {
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
 <button type="button" class="corner-note-head" data-action="corner-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="corner-note-first">${first || (files.length ? `${files.length} attached` : 'New note')}</span></button>
 <div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop"><textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->corner-note#typed keydown->corner-note#key">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
-<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="quick-send memo-send corner-note-send" data-action="corner-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="corner-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
+<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="note-send corner-note-send" data-action="corner-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="corner-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
 controller('corner-note', class extends Controller {
@@ -86,7 +86,7 @@ controller('corner-note', class extends Controller {
     if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) { e.preventDefault(); this.send() }
     else if (e.key === 'Escape') { e.preventDefault(); this.close() }
   }
-  // The words are kept as they stand: a note of place "stack" (made the first time there are words, gone when empty).
+  // The words are kept as they stand: the note is made the first time there are words, gone when empty.
   async save(now = false) {
     clearTimeout(this.timer)
     const text = this.field.value
@@ -95,10 +95,10 @@ controller('corner-note', class extends Controller {
     try {
       if (!this.idValue) {
         if (!text.trim()) return
-        await this.post('/notes', { place: 'stack', text })
+        await this.post('/notes', { text })
         const made = deskNotesOf(window.trommi?.model?.() ?? { state: {} })[0]
         if (made) this.idValue = made.id
-      } else await this.post(`/notes/${this.idValue}/stack`, { text })
+      } else await this.post(`/notes/${this.idValue}/keep`, { text })
       if (!text.trim()) this.idValue = ''
     } finally { this.saving = false; if (this.again) { this.again = false; this.save() } }
   }
@@ -108,7 +108,7 @@ controller('corner-note', class extends Controller {
     const got = [...list].filter(f => f instanceof File)
     if (!got.length) return
     if (!this.idValue) {
-      await this.post('/notes', { place: 'stack', text: this.field.value })
+      await this.post('/notes', { text: this.field.value })
       const made = deskNotesOf(window.trommi?.model?.() ?? { state: {} })[0]
       if (!made) return
       this.idValue = made.id

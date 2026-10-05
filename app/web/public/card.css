@@ -18,7 +18,6 @@
 button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 .inbox-go:hover .sketch, .inbox-go:focus-visible .sketch { translate: 5px 0; color: var(--fg); }
 .inbox-revising-open:hover strong, .inbox-revising-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
-.inbox-row:hover .inbox-when .inbox-nr, .inbox-row:focus-within .inbox-when .inbox-nr, .inbox-row.is-current .inbox-when .inbox-nr { opacity: 1; }
 .inbox-tab-act:focus-visible { outline: 0; }
 :is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) { max-width: 150px; z-index: 1; filter: drop-shadow(0 3px 6px rgb(20 30 25 / .16)); }
 :is(.inbox-tab-act:hover, .inbox-tab-act:focus-visible, .inbox-tab-act.is-unfolded) .inbox-later-flap { background: var(--tone-wash); }
@@ -61,7 +60,6 @@ button.agent-badge:hover, button.agent-badge:focus-visible { scale: 1.08; }
 .quick:not(:focus-within) .cardclip-offer { display: none; }
 .rowmenu-in button:focus-visible { outline: 2px solid var(--ink); outline-offset: -2px; }
 .inbox-stacks .stack-search label:focus-within { border-bottom-color: var(--fg); color: var(--fg); }
-.off-chip:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: 2px; }
 .off-open:hover strong, .off-open:focus-visible strong { text-decoration: underline; text-underline-offset: 3px; }
 .off-more:has(input:focus-visible) { outline: 2px solid var(--accent); outline-offset: -2px; }
 a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
@@ -451,7 +449,4 @@ div.focus-opt { cursor: default; }
 #session .pane-who:hover .crown-toggle[aria-pressed="false"], #session .pane-who .crown-toggle:focus-visible { opacity: .5; }
 .inbox-next > .inbox-go:hover, .inbox-next > .inbox-go:focus-visible { color: var(--fg); }
 .topbar #brand-doors button.menu-desk-add:is(:hover, :focus-visible) { color: var(--fg); }
-.news-tick:hover .sketch, .news-tick:focus-visible .sketch { opacity: 1; }
-.news-tick:hover, .news-tick:focus-visible { color: var(--accent); box-shadow: inset 0 0 0 1.5px var(--accent); }
-.news-open:hover, .news-open:focus-visible { text-decoration: underline; text-underline-offset: 3px; }
 .media-pile:focus-visible { outline: 2px solid var(--accent); outline-offset: 6px; border-radius: 6px; }

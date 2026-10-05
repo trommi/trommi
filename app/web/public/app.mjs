@@ -13,7 +13,7 @@ import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
 import { RAIL_FOLD, cornerNote, sidebarRows, topbar } from './sidebar.mjs'
 import { WORDS, calm, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
-import { boardNotes, noteLayer, noteStore } from './notes.mjs'
+import { boardNotes, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
 import { rowSheet } from './desk.mjs'
 import { showShare } from './media.mjs'
@@ -323,7 +323,7 @@ export class BoardState {
     const tasks = []
     for (const s of sessionsOf(m)) for (const t of s.status_lines ?? []) tasks.push({ agent: devToAgent.get(sessionKey(s)), id: t.id, label: t.label, state: t.state, detail: t.detail, card_id: t.object_id ?? null, updated: t.updated_at ?? 0 })
     const desks = [...m.human.desks].filter(([, v]) => v).map(([id, v]) => ({ id, name: v.name || 'Desk', created: v.created_at ?? 0 })).sort((a, b) => (a.id === 'main' ? -1 : b.id === 'main' ? 1 : a.created - b.created))
-    const notes = boardNotes(m, devToAgent)
+    const notes = boardNotes(m)
     // Published objects (an agent's publish): the first attachment is the thing itself; type by its media type.
     const assetType = t => (t === 'text/html' ? 'html' : t.startsWith('image/') ? 'image' : t.startsWith('video/') ? 'video' : t.startsWith('audio/') ? 'audio' : 'file')
     const assets = [...m.published.values()].filter(p => p.object_state !== 'closed').map(p => { const a = p.attachments?.[0]; return { id: p.object_id, agent: devToAgent.get(keyOf(p)), type: assetType(String(a?.media_type ?? '')), title: p.title, note: p.note ?? '', size: a?.total_size ?? 0, att: this.att(a), envelope_number: p.envelope_number, created: p.sent_at ?? 0 } })
@@ -935,7 +935,6 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
   parts.push({ key: 'main', html: String(main) })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
   parts.push({ key: 'sheets', html: String(html`${keySheet()}${view === 'desk' ? rowSheet(base) : ''}`) })
-  if (stream !== null && model) parts.push({ key: 'memos', html: String(noteLayer(model, base, view, view === 'session' ? current : null)) })
   return parts
 }
 

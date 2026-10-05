@@ -230,10 +230,10 @@ try {
   // ---- the note: it waits at the window's bottom-right; sent from there (to the crown) it reaches the agent marked as a note and stands in
   //      the session's chat taped on, from the optimistic echo on, never as a bubble ----
   const noteText = 'Notiz e2e: Backup vor der Migration'
-  await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', place: 'stack', created_at: now, updated_at: now })`)
+  await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
   await A.until(`document.querySelector('#corner-note-box .corner-note-first')?.textContent.startsWith('Notiz e2e')`, 'the note at the bottom-right').then(() => check(true, 'the note waits at the bottom-right, its first line shown'), e => check(false, e.message))
-  check(await A.js("return !document.querySelector('#agents #corner-note-box') && !document.getElementById('memo-open')"), 'the note is not in the sidebar, and there is no second note button')
+  check(await A.js("return !document.querySelector('#agents #corner-note-box')"), 'the note is not in the sidebar')
   await A.js("document.querySelector('#corner-note-box .corner-note-head').click()")
   await A.until("!document.querySelector('#corner-note-box .corner-note-body').hidden", 'the note unfolds')
   await A.js(`window.__bubbled = false; new MutationObserver(() => { if ([...document.querySelectorAll('.msg-user .bubble')].some(b => b.textContent.includes('${noteText}'))) window.__bubbled = true }).observe(document.documentElement, { childList: true, subtree: true }); document.querySelector('#corner-note-box .corner-note-send').click()`)

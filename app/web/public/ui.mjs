@@ -23,7 +23,6 @@ class Safe {
   toString() { return this.text }
 }
 export const raw = text => new Safe(String(text ?? ''))
-const isSafe = value => value instanceof Safe
 
 const put = value => {
   if (value == null || value === false || value === true) return ''
@@ -420,7 +419,6 @@ function loopPath(r, { rad = 14.9, drift = 1.1, jitter = .9, start = 3.6 } = {})
     return [16 + Math.cos(a) * at, 16 + Math.sin(a) * at * .97]
   }))
 }
-const penSeed = text => seeded(text)
 // pen-tables:end
 
 // ---- strings -------------------------------------------------------------------
@@ -457,7 +455,6 @@ export function sketchSvg(name, cls = '') {
     return svg('0 0 24 24', `sketch${cls ? ` ${cls}` : ''}`, paths(ds), ` style="rotate:${turn}deg"`)
   })
 }
-const SKETCH_NAMES = Object.keys(SKETCH)
 
 /** A session's scribbled mark (ui.js doodle). id: a seed, or "draw:<name>". */
 export function doodleSvg(id) {
@@ -486,8 +483,6 @@ export function handSvg() {
   })
 }
 
-/** The circle round a count (inbox.js penCircle). */
-const circleSvg = () => once('circle', () => `<svg viewBox="0 0 32 32" preserveAspectRatio="none" aria-hidden="true"><path d="${loopPath(seeded('count circle'), { rad: 14.2, drift: 1.4, jitter: .8, start: 4.1 })}"/></svg>`)
 
 // The working ring (agents.js ring): a loop circled by hand and, while the session works, a tapering stroke that goes round it.
 const RING_TURN = 1900
@@ -544,37 +539,7 @@ export function edgeQuirk(id) {
 
 // ---- small drawings of the Desk ----
 
-/** A count kept on paper: strokes, five to a gate (ui.js tally). */
-function tallySvg(n, cap = 25) {
-  const r = seeded('tally')
-  const shown = Math.min(n, cap), gates = Math.ceil(shown / 5), width = Math.max(1, gates) * 34 - 6
-  let out = ''
-  for (let i = 0; i < shown; i++) {
-    const gate = Math.floor(i / 5), at = i % 5, x0 = gate * 34 + 3
-    const w = () => (r() - .5) * 1.6
-    if (at < 4) { const x = x0 + at * 6.4; out += `<path d="${penPath([[x + w(), 3.4 + w()], [x + .6 + w() * .5, 12], [x + w(), 20.6 + w()]])}"/>` }
-    else out += `<path d="${penPath([[x0 - 3 + w(), 17.6 + w()], [x0 + 10, 12 + w()], [x0 + 23.4 + w(), 6.2 + w()]])}"/>`
-  }
-  return `<span class="tally" role="img" aria-label="${n}"><svg viewBox="0 0 ${width} 24" class="tally-mark" aria-hidden="true" style="width:${width}px">${out}</svg>${n > shown ? `<span class="tally-more">+${n - shown}</span>` : ''}</span>`
-}
 
-/** A stack of paper: one sheet for every three that lie on it (piles.js paper). */
-function paperSvg(n, key = '') {
-  let seed = 7 + n
-  for (const ch of key) seed = (seed * 31 + ch.charCodeAt(0)) % 2147483647
-  const r = () => (seed = (seed * 16807) % 2147483647) / 2147483647 - .5
-  const sheets = Math.min(6, Math.max(1, Math.ceil(n / 3))), W = 124, H = 78, pad = 6, step = 3.4
-  const sheet = () => {
-    const c = [[pad, pad], [pad + W, pad], [pad + W, pad + H], [pad, pad + H]].map(([x, y]) => [x + r() * 1.8, y + r() * 1.8])
-    let d = `M${c[0][0].toFixed(1)} ${c[0][1].toFixed(1)}`
-    for (let i = 1; i <= 4; i++) { const a = c[i - 1], b = c[i % 4]; d += ` Q${((a[0] + b[0]) / 2 + r() * 2.4).toFixed(1)} ${((a[1] + b[1]) / 2 + r() * 2.4).toFixed(1)} ${b[0].toFixed(1)} ${b[1].toFixed(1)}` }
-    return `${d}Z`
-  }
-  let out = ''
-  for (let i = sheets - 1; i >= 0; i--) out += `<path transform="translate(${i ? (r() * 7).toFixed(1) : 0} ${(i * step).toFixed(1)}) rotate(${(r() * (i ? 7 : 1.6)).toFixed(2)} ${pad + W / 2} ${pad + H / 2})" d="${sheet()}"/>`
-  const h = (H + 2 * pad + (sheets - 1) * step).toFixed(0)
-  return `<svg class="inbox-stack-sheets" width="${W + 2 * pad}" height="${h}" viewBox="0 0 ${W + 2 * pad} ${h}" aria-hidden="true">${out}</svg>`
-}
 
 /** The pointing hand beside the paragraph an agent marks with "☞" (ui.js pointingHand). */
 function pointingHandSvg() {
@@ -619,7 +584,6 @@ export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain w
 
 export const isKnock = card => card.kind === 'permission' || card.urgency === 'high' || card.urgency === 'critical'
 export const knockWord = card => (card.kind === 'permission' ? 'Knock! Permission' : card.urgency === 'critical' ? 'Knock! Blocking' : card.urgency === 'high' ? 'Knock' : null)
-export const knocksText = n => (n === 1 ? '1 knock' : `${n} knocks`)
 export const cardNr = card => `Nr. ${card.number}`
 export const cardNote = card => [card.merged_from?.length ? `replaces ${card.merged_from.length} questions` : '', card.revised ? 'revised' : ''].filter(Boolean).join(' · ')
 export const kindOf = a => a.kind ?? (a.image ? 'image' : 'file')
@@ -1179,15 +1143,6 @@ controller('fit', class extends Controller {
 export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><svg class="curl-svg" aria-hidden="true"><defs><pattern id="curl-dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" class="curl-paper"/><circle cx="11" cy="11" r="1.1" class="curl-dot"/></pattern><pattern id="curl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(38)"><path d="M0,0 V5" class="curl-hatch-line"/></pattern><clipPath id="curl-clip"><path class="curl-clip-p"/></clipPath></defs><path class="curl-under"/><g class="curl-sketch" clip-path="url(#curl-clip)"><path class="curl-ink"/></g><path class="curl-cast"/><path class="curl-flap"/><path class="curl-flap-tone"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
 const CURL_REST_WIDE = 50, CURL_REST_PHONE = 44
 const restOf = () => (innerWidth < 861 ? CURL_REST_PHONE : CURL_REST_WIDE)
-function clipHalf(poly, c, keepBelow) {
-  const f = ([x, y]) => (keepBelow ? c - x - y : x + y - c), out = []
-  for (let i = 0; i < poly.length; i++) {
-    const a = poly[i], b = poly[(i + 1) % poly.length], fa = f(a), fb = f(b)
-    if (fa >= 0) out.push(a)
-    if ((fa >= 0) !== (fb >= 0)) { const t = fa / (fa - fb); out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]) }
-  }
-  return out
-}
 controller('curl', class extends Controller {
   static values = { side: String, to: String }
   connect() {
@@ -1215,7 +1170,7 @@ controller('curl', class extends Controller {
     on(document, 'trommi:curl', () => this.turn())
     on(document, 'keydown', e => {
       if (e.key !== 'Escape' || this.sideValue !== 'pad' || e.defaultPrevented) return
-      const t = e.target; if (t?.closest?.('input, textarea, select, [contenteditable], dialog[open], .memo')) return
+      const t = e.target; if (t?.closest?.('input, textarea, select, [contenteditable], dialog[open]')) return
       this.turn()
     })
     this.place()
