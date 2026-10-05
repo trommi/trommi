@@ -54,7 +54,8 @@ jobs:
           got=$(sha256sum connector.mjs | cut -d ' ' -f 1)
           echo "connector.mjs sha256 $got, connector.mjs.sha256 says $want"
           [ -n "$want" ] && [ "$got" = "$want" ] || { echo "::error::app.trommi.com/connector.mjs does not match connector.mjs.sha256"; exit 1; }
-          zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?ci=${{ github.run_id }}" | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
+          # The plugin's archive: plugins[0].source.url of the marketplace (the owner has a url too, so no grep for "url").
+          zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?ci=${{ github.run_id }}" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))')
           echo "plugin archive $zip"
           case "$zip" in *"/trommi-$(echo "$got" | cut -c1-12).zip") ;; *) echo "::error::the marketplace does not name the plugin of this connector"; exit 1 ;; esac
           curl -fsS --max-time 30 -o /dev/null "$zip"
