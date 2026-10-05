@@ -241,12 +241,22 @@ function logItems(s, base, from = 0, to = s.messages.length) {
 
 // ---- the pieces of the page that change by themselves (each has an id; the live stream replaces it) ----
 /** The session's drawing and name: the page's heading, on its own line under the band (session.css). */
+/** A main session's small way to another desk (his word, 5 October): beside its name, the desk drawing with a caret; it
+ *  lists the other desks, a click moves the session there (the human register session/<id>, as on the Agents page;
+ *  its subs go with it). Not for a sub, and not while there is only one desk. */
+function deskMove(s, base) {
+  const a = s.agent, desks = s.model.state.desks ?? []
+  if (a.parent || desks.length < 2) return ''
+  const others = desks.filter(d => d.id !== a.desk)
+  return html`<details class="t-pick t-pick-desk"><summary class="t-head-desk" title="Move to another desk" aria-label="${a.name}: move to another desk">${sk('desk')}<svg class="t-head-desk-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 9.4Q9.4 12.2 12.1 15Q14.9 12.1 17.6 9.2"/></svg></summary>
+<div class="desk-move t-pop" role="menu" aria-label="Move ${a.name} to a desk"><p class="desk-move-head">Move to desk</p>${others.map(d => html`<form method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/edit"><input type="hidden" name="stay" value="1"><input type="hidden" name="moved" value="1"><input type="hidden" name="leave" value="1"><button type="submit" role="menuitem" name="desk" value="${d.id}">${sk('desk')}<span>${d.name || 'Desk'}</span></button></form>`)}</div></details>`
+}
 function sessionWho(s, base) {
   const a = s.agent
   // The mark opens the drawings, the name renames (ui.mjs); the live stream brings what was changed.
   // The raised red hand when the session is really stopped (server/blocked.mjs), with the cause in words.
   const stopped = blockedOf(a, s.model.state), quiet = stopped ? null : quietOf(a, s.model.state)
-  return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : quiet ? html`<span class="t-quiet" title="Connected and working, nothing new for a while">${quiet.text}</span>` : ''}</div>`
+  return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${deskMove(s, base)}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : quiet ? html`<span class="t-quiet" title="Connected and working, nothing new for a while">${quiet.text}</span>` : ''}</div>`
 }
 /** The quiet line under the name: what the session is at, its model and machine, and "N files" (the drawer). */
 function sessionNow(s, base = '') {

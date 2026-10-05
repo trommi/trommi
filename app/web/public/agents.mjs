@@ -222,6 +222,8 @@ export function register(t) {
       if (form.has('label')) { const label = form.get('label').trim(); body.label = label === m.byAgent.get(id)?.given ? '' : label }
       if (form.has('icon')) body.icon = form.get('icon')
       if (form.has('desk')) body.desk = form.get('desk')
+      // (a main that moves takes its subs along: each a register of its own, so they stand on the new desk too)
+      if (form.has('desk') && form.has('moved')) return (async () => { for (const sub of m.units.find(u => u.id === id)?.subs ?? []) await hub.editSession({ agent: sub.id, desk: body.desk }); return hub.editSession(body) })()
       if (form.has('parent')) body.parent = form.get('parent') || null
       if (form.has('archived')) body.archived = form.get('archived') === '1'
       return hub.editSession(body)
@@ -262,9 +264,16 @@ export function register(t) {
   t.post(/^\/sessions\/([^/]+)\/(edit|star|pair|unpair|move)$/, async ({ req, res, url, match, form }) => {
     const id = decodeURIComponent(match[1]), stay = form.has('stay') && t.wantsStream(req)
     let error = ''
+    const was = t.model().byAgent.get(id)?.desk ?? null   // (for the Undo of a move to another desk)
     try { await WAYS[match[2]](id, form, t.model()) } catch (err) { error = `Not saved: ${err.message || 'the board did not take it'}` }
     if (!error) {
       // The live stream brings the change to every page, this one too; the form itself adds only the toast of an archiving.
+      if (stay && match[2] === 'edit' && form.has('moved') && form.has('desk')) {
+        const to = (t.model().state.desks ?? []).find(d => d.id === form.get('desk'))
+        // (from the session's own page: on to the Desk, the session is not on this desk any more; an Undo stays where it is)
+        const on = form.has('leave') ? t.stream('visit', `${BASE}/`) : ''
+        return t.sendStream(req, res, html`${on}${t.toast({ head: `Moved to ${to?.name || 'Desk'}`, line: nameOf(t.model(), id).replace(/ · [^·]*$/, ''), undo: was ? { action: `${sessionForms({ id }, BASE)}/edit`, fields: { desk: was, moved: '1' } } : null })}`)
+      }
       if (stay) return t.sendStream(req, res, match[2] === 'edit' && form.get('archived') === '1' && !form.has('quiet') ? t.toast({ head: 'Archived', line: nameOf(t.model(), id), undo: { action: `${sessionForms({ id }, BASE)}/edit`, fields: { archived: '0' } } }) : '')
       return t.redirect(res, backOf(form.get('back')) || `${BASE}/agents`)
     }

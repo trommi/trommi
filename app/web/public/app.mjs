@@ -714,6 +714,7 @@ function defineTurbo() {
 async function perform(stream) {
   const action = stream.action, target = stream.targetElements[0]
   if (action === 'refresh') return refresher?.()
+  if (action === 'visit') return visit(stream.getAttribute('target') || '/', { action: 'replace' })   // (a form's answer that leads on: the page it names)
   if (!target) return
   const content = () => stream.templateContent
   switch (action) {
@@ -835,7 +836,7 @@ export const SAID = {
 }
 export const BASE = ''
 const STREAM = 'text/vnd.turbo-stream.html'
-export const stream = (action, target, content = '') => html`<turbo-stream action="${action}"${target ? html` target="${target}"` : ''}>${action === 'remove' || action === 'refresh' ? '' : html`<template>${content}</template>`}</turbo-stream>`
+export const stream = (action, target, content = '') => html`<turbo-stream action="${action}"${target ? html` target="${target}"` : ''}>${action === 'remove' || action === 'refresh' || action === 'visit' ? '' : html`<template>${content}</template>`}</turbo-stream>`
 const sig = text => String(text).replace(/(data-ts="\d+">)[^<]*</g, '$1<').replace(/asked [^"]*"/g, '"')
 
 function createBoard({ hub, model, views }) {
