@@ -19,8 +19,9 @@
 //
 // The plugin declares the connector as MCP server "trommi", the same server as a channel (claude
 // --dangerously-load-development-channels plugin:trommi@trommi still gets live <channel> events), a monitor
-// (`node connector.mjs monitor`) that wakes a plain `claude` for every verified board event, and three hooks that
+// (`node connector.mjs monitor`) that wakes a plain `claude` for every verified board event, and hooks that
 // bring a plain `claude`'s permission prompts to the board: PermissionRequest (`node connector.mjs permission`),
+// PostToolUse and PostToolUseFailure (`node connector.mjs resolved`: a prompt answered in the terminal leaves the board),
 // Notification (`node connector.mjs notice`) and PermissionDenied (`node connector.mjs denied`, one quiet line when
 // auto mode blocks a tool call). Its version is the connector's sha256 prefix: a new connector is a new plugin
 // version, and `claude plugin update trommi@trommi` (or the marketplace's auto-update) fetches it. The zip is
@@ -68,6 +69,9 @@ export function pluginManifest(version) {
     channels: [{ server: 'trommi', displayName: 'Trommi' }],
     hooks: {
       PermissionRequest: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" permission', timeout: HOOK_TIMEOUT_S }] }],
+      // Answered in the terminal: the call went on, the request leaves the board. Async: never in the tool call's way.
+      PostToolUse: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" resolved', timeout: 30, async: true }] }],
+      PostToolUseFailure: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" resolved', timeout: 30, async: true }] }],
       PermissionDenied: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" denied', timeout: 30 }] }],
       Notification: [{ matcher: NOTICE_TYPES.join('|'), hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/connector.mjs" notice', timeout: 60 }] }],
     },

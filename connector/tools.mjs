@@ -770,7 +770,7 @@ const markOf = m => {
  *   cacheDir:  where the human's attachments are written decrypted (dir 0700, files 0600)
  *   state:     the bridge's own small persisted state ({ permissions: { object_id: request_id } })
  *   saveState: () => void, called after state changed
- * Returns { callTool(name, args) -> text, permissionRequest(params), command(cmd) }.
+ * Returns { callTool(name, args) -> text, permissionRequest(params), permissionWithdraw(request_id), command(cmd) }.
  */
 export function createBridge({ client, notify, cacheDir, state = {}, saveState = () => {}, log = () => {} }) {
   state.permissions ??= {}
@@ -1200,8 +1200,21 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       })
       state.permissions[id] = params.request_id
       saveState()
+      asking.delete(params.request_id)
+      if (dropped.delete(params.request_id)) await permissionWithdraw(params.request_id)
       return id
-    } finally { asking.delete(params.request_id) }
+    } finally { asking.delete(params.request_id); dropped.delete(params.request_id) }
+  }
+  // The prompt was answered elsewhere (in the terminal): the request is withdrawn, the board takes its card away, and a
+  // verdict given after that is refused by the core (request-not-pending) and never reaches Claude Code.
+  const dropped = new Set()   // withdrawn while still on the way to the hub: withdrawn right after
+  async function permissionWithdraw(request_id, reason = 'answered in the terminal') {
+    if (asking.has(request_id)) { dropped.add(request_id); return false }
+    const id = Object.keys(state.permissions).find(k => state.permissions[k] === request_id)
+    if (!id) return false
+    delete state.permissions[id]
+    saveState()
+    return client.withdrawPermission(id, reason)
   }
 
   // ---- a human's command (already verified and authorised by the core) -> a channel event ------------
@@ -1305,5 +1318,5 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     log(`command ${cmd.command} not relayed`)
   }
 
-  return { callTool, permissionRequest, command }
+  return { callTool, permissionRequest, permissionWithdraw, command }
 }

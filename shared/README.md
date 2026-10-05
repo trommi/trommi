@@ -168,7 +168,8 @@ Answer = {
 ```js
 PermissionRequest = { object_id, agent_device_id, tool_name, description, input_preview, expires_at,
   version_hash, envelope_number, sent_at,
-  permission_state: 'pending' | 'allowed' | 'denied' | 'expired',   // expired is computed against the local clock when the model is read via isExpired()
+  permission_state: 'pending' | 'allowed' | 'denied' | 'withdrawn' | 'expired',   // expired is computed against the local clock when the model is read via isExpired()
+  withdraw_reason: null | string,   // withdrawn: the agent took its pending request back (answered elsewhere); a verdict after it is refused
   verdict: null | { allow, by_device_id, envelope_number } }
 Note = { object_id, by_device_id, text, object_version, version_hash, envelope_number, object_state }   // any human device may write a new version
 Published = { object_id, agent_device_id, attachments, title, note, released_until, object_version, version_hash, envelope_number, object_state }
@@ -344,6 +345,7 @@ await client.close(object_id, close_summary)                          // after a
 await client.sendMessage({ text, details?, html?, attachments?, object_id?, present_card? })   // agent -> everyone
 await client.setStatus({ 'status_line/tests': { label, state, detail, object_id } | null, profile: { model, task, icon, agent_name } })
 const object_id = await client.requestPermission({ tool_name, description, input_preview, expires_in_ms })
+await client.withdrawPermission(object_id, withdraw_reason)            // a pending own request; false when it is not pending any more
 await client.publish({ attachments, title, note?, released_until? })   // a published object
 
 client.on('command', command => { ... })

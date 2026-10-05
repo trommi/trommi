@@ -231,6 +231,36 @@ await test('permission request and verdict', async () => {
   eq(phone.model.open_permission_ids, [], 'none pending')
 })
 
+await test('permission request withdrawn by its agent: gone from the open ones at once, a late verdict is refused, an answered one keeps its verdict', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const commands = [], alerts = []
+  agent.on('command', c => commands.push(c))
+  agent.on('alert', a => alerts.push(a))
+  const pid = await agent.requestPermission({ tool_name: 'Bash', description: 'rm -rf build', input_preview: 'rm -rf build' })
+  eq(await agent.withdrawPermission(pid, 'answered in the terminal'), true, 'withdrawn right after it was sent')
+  eq(await agent.withdrawPermission(pid, 'again'), false, 'once only')
+  await settleAll(agent)
+  await until(() => phone.model.permissions.get(pid)?.permission_state === 'withdrawn', 'withdrawn on the phone')
+  eq(phone.model.permissions.get(pid).withdraw_reason, 'answered in the terminal')
+  eq(phone.model.open_permission_ids, [], 'none pending')
+  eq(agent.model.permissions.get(pid).permission_state, 'withdrawn', 'and on the agent')
+  await phone.verdict({ object_id: pid, allow: true })
+  await settleAll(phone)
+  await until(() => alerts.some(a => a.code === 'request-not-pending'), 'the agent refuses the late verdict')
+  eq(commands.filter(c => c.command === 'verdict'), [], 'no verdict reaches the agent\'s program')
+  eq(phone.model.permissions.get(pid).permission_state, 'withdrawn', 'the late verdict changes nothing')
+  eq(phone.model.permissions.get(pid).verdict, null)
+
+  const answered = await agent.requestPermission({ tool_name: 'Write', description: '', input_preview: 'a.txt' })
+  await settleAll(agent)
+  await until(() => phone.model.open_permission_ids.includes(answered), 'pending on phone')
+  await phone.verdict({ object_id: answered, allow: false })
+  await settleAll(phone)
+  await until(() => agent.model.permissions.get(answered).permission_state === 'denied', 'denied')
+  eq(await agent.withdrawPermission(answered, 'late'), false, 'an answered request is not withdrawn')
+  eq(await agent.withdrawPermission('00'.repeat(16), 'x').catch(e => e.code), 'not-found', 'an unknown request')
+})
+
 await test('registers: status lines, profile, human keys shared between humans, ignored by agents', async () => {
   const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
   await agent.setStatus({ 'status_line/tests': { label: 'Tests', state: 'working', detail: '12/40' }, profile: { model: 'opus', task: 'crypto' } })

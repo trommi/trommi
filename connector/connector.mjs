@@ -17,6 +17,7 @@
 //   node connector/connector.mjs permission      the plugin's PermissionRequest hook (hook JSON on stdin)
 //   node connector/connector.mjs notice          the plugin's Notification hook
 //   node connector/connector.mjs denied          the plugin's PermissionDenied hook (one quiet line, never a decision)
+//   node connector/connector.mjs resolved        the plugin's PostToolUse hook: a prompt answered in the terminal leaves the board
 //   node connector/connector.mjs monitor         the plugin's monitor: prints one line per board event of this session
 //
 // Environment:
@@ -177,12 +178,14 @@ export function knock(p, request, timeout_ms = 30000) {
   })
 }
 
-// ==== the plugin's hooks: permission, notice, denied ==============================================================
+// ==== the plugin's hooks: permission, notice, denied, resolved ====================================================
 //
 // With the channel flag Claude Code relays a permission prompt to the connector itself (claude/channel/permission).
-// Without it nothing is relayed, so the plugin (build.mjs) declares three hooks:
+// Without it nothing is relayed, so the plugin (build.mjs) declares these hooks:
 //
 //   PermissionRequest  `node connector.mjs permission`  asks the human on the board and answers for them
+//   PostToolUse(Failure) `node connector.mjs resolved`  the call went on, so its prompt (if one waits) was answered in the
+//                                                     terminal: the connector withdraws the request, its card leaves the board
 //   Notification       `node connector.mjs notice`      says "the terminal is waiting for you" when no card stands for it
 //   PermissionDenied   `node connector.mjs denied`      one quiet chat line "Auto mode blocked: <tool> — <reason>" (rate-limited,
 //                                                     secrets stripped); it approves nothing and never sets retry
@@ -193,6 +196,12 @@ export function knock(p, request, timeout_ms = 30000) {
 // verdict and answers the hook, which prints Claude Code's decision JSON. No verdict in time, no connector, not in a
 // room, a session with the channel flag: the hook prints nothing and exits 0, which is "no decision": Claude Code
 // goes on with its own dialog in the terminal.
+//
+// A prompt answered in the terminal (Claude Code tells nobody, also not a channel; seen with 2.1.286): allowed there,
+// the PermissionRequest hook keeps running, but the call's PostToolUse hook fires at once with the same tool_name and
+// tool_input; denied there, Claude Code ends the PermissionRequest hook (SIGTERM), so its door connection closes.
+// Either way the connector withdraws the request. With the channel flag the hook asks nothing itself, but it stays
+// to give the same two signals for the request Claude Code relayed for that prompt (paired by tool name, in order).
 //
 // Which connector: the one whose parent is an ancestor of the hook process (both are children of one Claude Code
 // process), so two sessions in one folder each ask through their own.
@@ -254,6 +263,10 @@ export function hookRequest(kind, input, env = process.env) {
     if (!input.tool_name || DIALOG_TOOLS.has(input.tool_name)) return null
     return { op: 'permission', ancestors: ancestors(), tool_name: String(input.tool_name), ...previewOf(input.tool_input), wait_ms: waitMs(env) }
   }
+  if (kind === 'resolved') {
+    if (!input.tool_name || DIALOG_TOOLS.has(input.tool_name)) return null
+    return { op: 'resolved', ancestors: ancestors(), tool_name: String(input.tool_name), ...previewOf(input.tool_input) }
+  }
   if (kind === 'notice') {
     if (!NOTICE_TYPES.includes(input.notification_type)) return null
     return { op: 'notice', ancestors: ancestors(), notification_type: input.notification_type, message: clip(input.message, 300) }
@@ -276,31 +289,57 @@ const HOOK_ID = /^hook:/
 
 /**
  * The connector's side: answers the hooks' door requests.
- *   heard:   this session has the channel flag, so Claude Code relays permission prompts itself: hooks stay silent
+ *   heard:   this session has the channel flag, so Claude Code relays permission prompts itself: the hooks ask nothing
  *   bridge:  () => the bridge, or null while not in a room
  *   say:     (bridge, { text, urgent }) => Promise, the side channel's sender
- * Returns { handle(request, gone) -> answer, verdict(params) -> true when the verdict was a hook's }.
+ * Returns { handle(request, gone) -> answer, verdict(params) -> true when the verdict was a hook's,
+ *           relayed(params): a request Claude Code relayed over the channel }.
  */
-export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = () => {}, settle_ms = 1500, denied_window_ms = 30_000, now = Date.now }) {
-  const waiting = new Map()   // request id -> resolve(behavior)
+export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = () => {}, settle_ms = 1500, denied_window_ms = 30_000, pair_ms = 30_000, now = Date.now }) {
+  const open = []      // the prompts a permission hook waits on: { tool_name, key, request_id, end(how) }
+  const unpaired = []  // channel mode: relayed requests no hook has come for yet: { request_id, tool_name, at }
   let answered_at = 0
   const sleep = ms => new Promise(r => setTimeout(r, ms))
+  const keyOf = req => [req.tool_name, req.description ?? '', req.input_preview ?? ''].map(String).join('\n')
 
   async function permission(req, gone) {
     const b = bridge()
     if (!b) return { ok: false, error: 'not in a room' }
     const wait_ms = Math.min(3600_000, Math.max(1000, Number(req.wait_ms) || 300_000))
-    const request_id = `hook:${crypto.randomBytes(8).toString('hex')}`
+    const entry = { tool_name: String(req.tool_name), key: keyOf(req), request_id: null, end: null }
+    const ended = new Promise(resolve => { entry.end = resolve })
+    const quiet = heard ? { ok: true, silent: true } : { ok: true, timeout: true }
     let timer
-    const verdict = new Promise(resolve => waiting.set(request_id, resolve))
+    open.push(entry)
     try {
-      // The card expires when the hook stops waiting: after that the terminal's dialog decides.
-      await b.permissionRequest({ request_id, tool_name: req.tool_name, description: req.description, input_preview: req.input_preview, expires_in_ms: wait_ms })
-      const behavior = await Promise.race([verdict, gone.then(() => null), new Promise(r => { timer = setTimeout(r, wait_ms, null) })])
-      if (!behavior) return { ok: true, timeout: true }
-      answered_at = Date.now()
-      return { ok: true, behavior }
-    } finally { clearTimeout(timer); waiting.delete(request_id) }
+      if (heard) {
+        // Claude Code relayed this prompt itself: no second card. The hook only stands for that request.
+        const i = unpaired.findIndex(r => r.tool_name === entry.tool_name && now() - r.at < pair_ms)
+        if (i >= 0) entry.request_id = unpaired.splice(i, 1)[0].request_id
+      } else {
+        entry.request_id = `hook:${crypto.randomBytes(8).toString('hex')}`
+        // The card expires when the hook stops waiting: after that the terminal's dialog decides.
+        await b.permissionRequest({ request_id: entry.request_id, tool_name: req.tool_name, description: req.description, input_preview: req.input_preview, expires_in_ms: wait_ms })
+      }
+      const how = await Promise.race([ended, gone.then(() => 'gone'), new Promise(r => { timer = setTimeout(r, wait_ms, 'timeout') })])
+      if (how === 'allow' || how === 'deny') {
+        answered_at = Date.now()
+        return heard ? quiet : { ok: true, behavior: how }
+      }
+      // Answered in the terminal: allowed (the call went on: `resolved`) or denied (Claude Code ended the hook: `gone`).
+      if (how !== 'timeout' && entry.request_id) {
+        answered_at = Date.now()
+        await Promise.resolve(bridge()?.permissionWithdraw(entry.request_id, 'answered in the terminal')).catch(err => log(`permission request not withdrawn: ${err.message}`))
+      }
+      return quiet
+    } finally { clearTimeout(timer); open.splice(open.indexOf(entry), 1) }
+  }
+
+  /** PostToolUse of a call: the prompt that stood for exactly this call (if one waits) was answered in the terminal. */
+  function resolved(req) {
+    const entry = open.find(e => e.key === keyOf(req))
+    entry?.end('resolved')
+    return { ok: true, ...(entry ? { withdrawn: true } : { silent: true }) }
   }
 
   async function notice(req) {
@@ -309,7 +348,7 @@ export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = 
       if (heard) return { ok: true, silent: true }
       // The permission hook of the same prompt may be a moment behind; a card that stands for it, or a verdict just given, is enough.
       await sleep(settle_ms)
-      if (waiting.size || Date.now() - answered_at < settle_ms + 10_000) return { ok: true, silent: true }
+      if (open.length || Date.now() - answered_at < settle_ms + 10_000) return { ok: true, silent: true }
     }
     const b = bridge()
     if (!b) return { ok: false, error: 'not in a room' }
@@ -343,18 +382,26 @@ export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = 
   return {
     async handle(req, gone = new Promise(() => {})) {
       if (!Array.isArray(req.ancestors) || !req.ancestors.includes(ppid)) return { ok: false, error: 'another session' }
-      if (req.op === 'permission') return heard ? { ok: true, silent: true } : permission(req, gone)
+      if (req.op === 'permission') return permission(req, gone)
+      if (req.op === 'resolved') return resolved(req)
       if (req.op === 'notice') return notice(req)
       if (req.op === 'denied') return denied(req)
       return { ok: false, error: 'unknown request' }
     },
     /** A verdict the bridge reports: true when it answers a hook (then it is not a channel notification). */
     verdict(params) {
-      if (!HOOK_ID.test(String(params?.request_id))) return false
-      const resolve = waiting.get(params.request_id)
-      if (resolve) resolve(params.behavior === 'allow' ? 'allow' : 'deny')
-      else log(`verdict for a permission hook that waits no more (${params.request_id})`)
+      const id = String(params?.request_id)
+      const entry = open.find(e => e.request_id === id)
+      entry?.end(params.behavior === 'allow' ? 'allow' : 'deny')
+      if (!HOOK_ID.test(id)) return false
+      if (!entry) log(`verdict for a permission hook that waits no more (${id})`)
       return true
+    },
+    /** Channel mode: Claude Code relayed a prompt. The permission hook of the same prompt (before or after) stands for it. */
+    relayed(params) {
+      const entry = open.find(e => !e.request_id && e.tool_name === String(params.tool_name))
+      if (entry) entry.request_id = String(params.request_id)
+      else { unpaired.push({ request_id: String(params.request_id), tool_name: String(params.tool_name), at: now() }); if (unpaired.length > 20) unpaired.shift() }
     },
   }
 }
@@ -851,7 +898,7 @@ async function sayCli(argv) {
 }
 
 /**
- * The plugin's hooks: `permission`, `notice` and `denied`. Reads the hook's JSON on stdin, asks the running
+ * The plugin's hooks: `permission`, `notice`, `denied` and `resolved`. Reads the hook's JSON on stdin, asks the running
  * connector of this Claude Code session through its door and prints Claude Code's decision, or nothing. Never fails
  * and never opens a key: whatever goes wrong is "no decision", and the terminal's own dialog goes on.
  */
@@ -984,7 +1031,7 @@ async function main() {
       // The door for `say` (the emergency side channel) and the plugin's hooks: all go through this process, on this
       // key's one chain.
       closeDoor ??= openDoor(me.paths, async (req, gone) => {
-        if (req?.op === 'permission' || req?.op === 'notice' || req?.op === 'denied') return desk.handle(req, gone)
+        if (['permission', 'notice', 'denied', 'resolved'].includes(req?.op)) return desk.handle(req, gone)
         if (req?.op !== 'say') return { ok: false, error: 'unknown request' }
         if (!bridge || member.me.phase !== 'ready') return { ok: false, error: notReady() }
         return { ok: true, said: await sayWith(bridge, req) }
@@ -1087,6 +1134,7 @@ async function main() {
     z.object({ method: z.literal('notifications/claude/channel/permission_request'), params: z.object({ request_id: z.string(), tool_name: z.string(), description: z.string(), input_preview: z.string() }) }),
     async ({ params }) => {
       if (!bridge) return log('approval request not relayed: not in a room')
+      desk.relayed(params)
       for (let attempt = 1; ; attempt++) {
         try { return await bridge.permissionRequest(params) } catch (err) {
           if (attempt === 5) return log(`approval request not relayed: ${err.message}`)
@@ -1142,7 +1190,7 @@ async function cli(argv) {
     process.exit(0)
   }
   // The Trommi plugin's hooks. Always exit 0: no output is "no decision".
-  if (cmd === 'permission' || cmd === 'notice' || cmd === 'denied') {
+  if (['permission', 'notice', 'denied', 'resolved'].includes(cmd)) {
     const out = await hookCli(cmd).catch(err => { log(`hook ${cmd}: ${err.message}`); return '' })
     if (out) await new Promise(r => process.stdout.write(`${out}\n`, r))
     process.exit(0)

@@ -746,16 +746,18 @@ const BASH = { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_inp
 
 /** The hook as Claude Code runs it: its JSON on stdin; resolves { code, out, err, ms }. */
 function hook(kind, input, env, cwd) {
-  return new Promise(resolve => {
+  let p
+  const done = new Promise(resolve => {
     const t = Date.now()
-    const p = spawn(process.execPath, [path.join(here, 'connector.mjs'), kind], { env: { ...process.env, ...env }, cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    p = spawn(process.execPath, [path.join(here, 'connector.mjs'), kind], { env: { ...process.env, ...env }, cwd, stdio: ['pipe', 'pipe', 'pipe'] })
     let out = '', err = ''
     p.stdout.on('data', d => { out += d })
     p.stderr.on('data', d => { err += d })
     p.on('exit', code => resolve({ code, out: out.trim(), err, ms: Date.now() - t }))
     p.stdin.end(typeof input === 'string' ? input : JSON.stringify(input))
-    resolve.kill = () => p.kill()
   })
+  done.kill = () => p.kill('SIGTERM')
+  return done
 }
 
 export async function hooks({ test, tmp }) {
@@ -811,17 +813,60 @@ export async function hooks({ test, tmp }) {
       process.env.XDG_RUNTIME_DIR = run
       assert.deepEqual(await knock(p, { op: 'permission', ancestors: [1], tool_name: 'Bash' }, 5000), { ok: false, error: 'another session' })
     })
-    await test('e2e: in a session with channel events the hook stays silent and files nothing (Claude Code relays the prompt itself)', async () => {
+    const stateOf = id => human.model.permissions.get(id).permission_state
+    await test('e2e: allowed in the terminal (the call\'s PostToolUse hook): the request is withdrawn at once, its hook ends without a decision, a verdict after it is refused', async () => {
+      const call = { ...BASH, tool_input: { command: 'make clean', description: 'Clean' } }
+      const asked = hook('permission', call, env, project)
+      const p = await until('the request', () => pending().find(x => x.input_preview === 'make clean'))
+      const other = await hook('resolved', { ...call, hook_event_name: 'PostToolUse', tool_input: { command: 'ls' } }, env, project)
+      assert.deepEqual({ code: other.code, out: other.out }, { code: 0, out: '' })
+      assert.equal(stateOf(p.object_id), 'pending', 'another call changes nothing')
+      const done = await hook('resolved', { ...call, hook_event_name: 'PostToolUse', tool_response: { stdout: '' } }, env, project)
+      assert.deepEqual({ code: done.code, out: done.out }, { code: 0, out: '' })
+      await until('withdrawn at the human', () => stateOf(p.object_id) === 'withdrawn')
+      assert.equal(human.model.permissions.get(p.object_id).withdraw_reason, 'answered in the terminal')
+      assert.ok(!human.model.open_permission_ids.includes(p.object_id), 'not among the open ones')
+      const r = await asked
+      assert.deepEqual({ code: r.code, out: r.out }, { code: 0, out: '' })
+      assert.ok(r.ms < 20000, `the hook does not wait on: ${r.ms} ms`)
+      // A verdict from a board that had not caught up: refused by the agent's core, an alert on its session, nothing changes.
+      const alerts = () => [...human.model.sessions.values()].flatMap(s => s.agent_alerts ?? []).filter(a => a.value?.code === 'request-not-pending')
+      const before = alerts().length
+      await human.verdict({ object_id: p.object_id, allow: true })
+      await until('the refusal', () => alerts().length > before)
+      assert.equal(stateOf(p.object_id), 'withdrawn')
+      assert.equal(human.model.permissions.get(p.object_id).verdict, null)
+    })
+    await test('e2e: denied in the terminal (Claude Code ends the permission hook): the request is withdrawn', async () => {
+      const asked = hook('permission', { ...BASH, tool_input: { command: 'make distclean' } }, env, project)
+      const p = await until('the request', () => pending().find(x => x.input_preview === 'make distclean'))
+      asked.kill()
+      await asked
+      await until('withdrawn at the human', () => stateOf(p.object_id) === 'withdrawn')
+    })
+    await test('e2e: in a session with channel events the hook files nothing (Claude Code relays the prompt itself); answered in the terminal, the relayed request is withdrawn', async () => {
       await connector.close()
       await until('the connector to exit', () => connector.exited)
       connector = await startConnector({ env: { ...env, TROMMI_CHANNEL_EVENTS: 'on' }, cwd: project })
       await connector.ready()
       const before = human.model.permissions.size
-      const r = await hook('permission', { ...BASH, tool_name: 'NotebookEdit' }, env, project)
-      assert.deepEqual({ code: r.code, out: r.out }, { code: 0, out: '' })
-      assert.ok(r.ms < 5000, `${r.ms} ms`)
+      const call = { ...BASH, tool_name: 'NotebookEdit', tool_input: { notebook_path: 'a.ipynb' } }
+      const quiet = await hook('permission', call, { ...env, TROMMI_PERMISSION_MS: '1500' }, project)
+      assert.deepEqual({ code: quiet.code, out: quiet.out }, { code: 0, out: '' })
       await sleep(500)
-      assert.equal(human.model.permissions.size, before)
+      assert.equal(human.model.permissions.size, before, 'the hook alone files nothing')
+      // The prompt as Claude Code gives it with the channel flag: relayed, and the plugin's hook beside it.
+      await connector.client.notification({ method: 'notifications/claude/channel/permission_request', params: { request_id: 'nbook', tool_name: 'NotebookEdit', description: 'Edit a notebook', input_preview: '{"notebook_path":"a.ipynb"}' } })
+      const asked = hook('permission', call, env, project)
+      const p = await until('the relayed request at the human', () => pending().find(x => x.tool_name === 'NotebookEdit'))
+      assert.equal(human.model.permissions.size, before + 1, 'one card, not two')
+      await sleep(300)   // the hook is at the door
+      await hook('resolved', { ...call, hook_event_name: 'PostToolUse' }, env, project)
+      await until('withdrawn at the human', () => stateOf(p.object_id) === 'withdrawn')
+      assert.equal((await asked).out, '')
+      await human.verdict({ object_id: p.object_id, allow: true })
+      await sleep(1500)
+      assert.ok(!connector.events.some(e => e.method === 'notifications/claude/channel/permission' && e.params.request_id === 'nbook'), 'the late verdict is not sent to Claude Code')
     })
   } finally {
     await connector?.close().catch(() => {})
