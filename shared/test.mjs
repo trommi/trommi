@@ -700,9 +700,9 @@ if (z.KEY_SCOPE) await test('lease: a second process takes over, the first gets 
   await until(() => errors.includes('lease-lost'), 'old process told')
 })
 
-if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (a post queued at start, the channel claims after start)', async () => {
+if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (a post queued at start, the connector claims after start)', async () => {
   const { phone } = await room()
-  // Like connector/channel.mjs: join, then start({ process_instance }) and claim with the same instance. The session is assigned
+  // Like connector/connector.mjs: join, then start({ process_instance }) and claim with the same instance. The session is assigned
   // before the start, so start() queues the device register before it takes the lease.
   const instances = []
   let delayed = false
@@ -711,7 +711,7 @@ if (z.KEY_SCOPE) await test('lease: one process never takes its own lease over (
       const body = JSON.parse(init.body)
       instances.push(body.process_instance)
       const res = await fetch(url, init)
-      // the channel's own claim answers late: the queued post meets the hub's new generation first
+      // the connector's own claim answers late: the queued post meets the hub's new generation first
       if (body.process_instance === 'P' && !body.renew && !delayed) { delayed = true; await sleep(400) }
       return res
     }

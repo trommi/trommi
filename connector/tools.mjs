@@ -1,14 +1,597 @@
-// channel-bridge.mjs: tool calls -> envelopes, commands -> channel events, for connector/channel.mjs.
+// tools.mjs: the connector's tools: their schemas, and what each does in the room.
 //
-// No protocol code lives here. Everything that touches the hub, the keys or the envelopes goes through the
-// client of shared/ (README there: "Agent API"); this module only translates between what Claude Code
-// knows (the tools and events of today's board, connector/channel-tools.mjs) and that client. Tested with a real
-// client in connector/channel-test.mjs.
-
+//   1. the agent's HTML, cleaned before it is stored (html fields and ```html fences)
+//   2. the tools' schemas, one example per tool and the list of events (the app's help page shows them; the app's build
+//      writes them to gen/vendor/tools-reference.mjs)
+//   3. the bridge: tool call -> envelopes, a human's command -> <channel> event
+//
+// Every text the agent reads (the instructions and each tool's description) is in prompt.md beside this file, read
+// when this module loads (inlined by build.mjs in the single-file connector). No protocol code lives here: everything
+// that touches the hub, the keys or the envelopes goes through the client of shared/ (README there: "Agent API").
+// This file and prompt.md are the connector's hot-reloaded part (connector.mjs "updates"). Tested in test.mjs.
 import fs from 'node:fs'
 import path from 'node:path'
-import { cleanFences, htmlBeside, strippedHint, fences } from './richhtml.mjs'
-import { URGENCIES, STATUSES, MAX_ASSET, ASSET_TYPES, TEASER_MAX, shortOf } from './channel-tools.mjs'
+
+// ---- prompt.md: the instructions and the tools' descriptions ----------------------------------------------
+
+/** prompt.md as { '# Heading' | '## tool': text }: a section's lines and paragraphs read as one paragraph. */
+export function parsePrompt(md) {
+  const out = {}
+  let at = null
+  for (const line of String(md).split(/\r?\n/)) {
+    const h = /^(##?) +(.+?)\s*$/.exec(line)
+    if (h) { at = `${h[1]} ${h[2]}`; out[at] = '' } else if (at) out[at] += ` ${line}`
+  }
+  for (const k of Object.keys(out)) out[k] = out[k].replace(/\s+/g, ' ').trim()
+  return out
+}
+// __TROMMI_PROMPT__: the file's text, set by build.mjs (esbuild define) in the single-file connector.
+const PROMPT = parsePrompt(typeof __TROMMI_PROMPT__ !== 'undefined' ? __TROMMI_PROMPT__ : fs.readFileSync(new URL('./prompt.md', import.meta.url), 'utf8'))
+/** Each tool's description: { name: text }, the "## <name>" sections of prompt.md. */
+export const DESCRIPTIONS = Object.fromEntries(Object.entries(PROMPT).filter(([k]) => k.startsWith('## ')).map(([k, v]) => [k.slice(3), v]))
+/** The server's instructions; <connector> stands for the connector's path. Claude Code keeps the first 2048 characters. */
+export const INSTRUCTIONS = PROMPT['# Instructions'] ?? ''
+// The inbox tool as Claude Code names it: the plugin's server (plugin:trommi:trommi) or a .mcp.json server "trommi".
+export const inboxToolName = (env = process.env) => env.CLAUDE_PLUGIN_ROOT ? 'mcp__plugin_trommi_trommi__inbox' : 'mcp__trommi__inbox'
+/** What goes in front of the instructions in a session without channel events (the plugin's monitor wakes it). */
+export const monitorNote = (tool = inboxToolName()) => (PROMPT['# Without channel events'] ?? '').replace('<inbox>', tool)
+
+// ---- 1. the agent's HTML -----------------------------------------------------------------------------------
+//
+// HTML an agent sends along with a message or a question (the field html, or a block fenced as
+// ```html inside a text). It is stored already cleaned: nothing that runs, loads or navigates.
+// The board shows it in a sandboxed frame without an origin and without network (app/web/public/ui.mjs
+// "richhtml"), and that frame is what really holds; this cleaning keeps the stored content honest
+// and tells the agent what it lost.
+
+/** The most one block may weigh, in bytes of UTF-8. */
+export const HTML_MAX = Number(process.env.BOARD_MAX_HTML_KB || 200) * 1024
+
+// Elements that run code, load something, embed another document or send something away: gone with
+// their content. Void ones (and anything left unclosed) go as a tag alone.
+const PAIRED = ['script', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'noscript', 'template', 'audio', 'video', 'portal']
+const SINGLE = ['script', 'meta', 'link', 'base', 'iframe', 'frame', 'frameset', 'object', 'embed', 'applet', 'source', 'track', 'param', 'portal', 'audio', 'video', 'noscript', 'template']
+// A form cannot be sent from the frame anyway; its tags go, what stands inside stays.
+const UNWRAPPED = ['form']
+
+// What the last cleaning took out, for the answer to the tool call.
+let taken = new Map()
+const took = (what, n = 1) => { if (n) taken.set(what, (taken.get(what) ?? 0) + n) }
+
+/** A sentence naming what was removed since the last call, or ''. */
+export function strippedHint() {
+  if (!taken.size) return ''
+  const said = [...taken].map(([what, n]) => (n > 1 ? `${what} (${n})` : what)).join(', ')
+  taken = new Map()
+  return `\nRemoved from your html, because the board shows it without scripts and without network: ${said}. Send semantic HTML with inline CSS; pictures as data: URLs or as attachments; for a page that must run, use publish_asset.`
+}
+
+// An attribute value as the browser reads it: character references resolved, blanks and control characters gone.
+const plainOf = value => value
+  .replace(/&#x([0-9a-f]+);?/gi, (_, h) => String.fromCodePoint(Math.min(parseInt(h, 16), 0x10ffff)))
+  .replace(/&#(\d+);?/g, (_, d) => String.fromCodePoint(Math.min(Number(d), 0x10ffff)))
+  .replace(/&colon;?/gi, ':').replace(/&(tab|newline);?/gi, '').replace(/[\s\u0000-\u001f]/g, '')
+const count = (text, re) => (text.match(re) ?? []).length
+
+/** The block as it is stored: without scripts, handlers, frames, forms, and without any address that would be fetched. */
+export function cleanHtml(source, what = 'html') {
+  let html = String(source ?? '').replace(/\r\n?/g, '\n').replace(/\u0000/g, '').trim()
+  if (Buffer.byteLength(html) > HTML_MAX) {
+    throw new Error(`${what} is ${Math.ceil(Buffer.byteLength(html) / 1024)} KB; one block may have at most ${HTML_MAX / 1024} KB. Shorten it (pictures as attachments instead of data: URLs), or publish a whole page with publish_asset and link it`)
+  }
+  // Until nothing changes: what is removed must not leave something behind that reads as a tag again.
+  for (let round = 0, before = null; before !== html && round < 8; round++) {
+    before = html
+    for (const tag of PAIRED) {
+      const re = new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/${tag}\\s*>`, 'gi')
+      took(`<${tag}>`, count(html, re))
+      html = html.replace(re, '')
+    }
+    for (const tag of SINGLE) {
+      // also one that never closes: the rest of the block would be its content
+      const open = new RegExp(`<${tag}\\b[^>]*>?`, 'gi')
+      took(`<${tag}>`, count(html, open))
+      html = html.replace(open, '').replace(new RegExp(`<\\/${tag}\\s*>`, 'gi'), '')
+    }
+    for (const tag of UNWRAPPED) {
+      const re = new RegExp(`<\\/?${tag}\\b[^>]*>`, 'gi')
+      took(`<${tag}>`, count(html, new RegExp(`<${tag}\\b[^>]*>`, 'gi')))
+      html = html.replace(re, '')
+    }
+    // Attribute by attribute, each value taken whole, so that nothing inside a quoted value is mistaken for one.
+    html = html.replace(/<([a-z][\w:-]*)((?:"[^"]*"|'[^']*'|[^<>"'])*)>/gi, (tag, name, rest) => {
+      const attrs = rest.replace(/([^\s=\/"']+)(\s*=\s*("[^"]*"|'[^']*'|[^\s"'>]+))?/g, (attr, key, _eq, value = '') => {
+        const k = key.toLowerCase()
+        const bare = value.replace(/^["']|["']$/g, '').trim()
+        // handlers, and what would load or send
+        if (/^on/.test(k)) { took('on… handlers'); return '' }
+        if (['srcdoc', 'formaction', 'ping', 'background', 'srcset', 'poster'].includes(k)) { took(`${k}=`); return '' }
+        // a link goes to the web, to mail or to a place in the block; anything else could run code
+        if (['href', 'xlink:href', 'action'].includes(k) && !/^(https?:|mailto:|#|[^:]*$)/i.test(plainOf(bare))) { took('script addresses'); return `${key}="#"` }
+        // a picture from elsewhere would not load: only data: is shown
+        if (k === 'src' && !/^data:image\//i.test(bare)) { took('pictures from an address'); return '' }
+        return attr
+      })
+      return `<${name}${attrs}>`
+    })
+    // Styles may not fetch either.
+    const fetched = /@import\b[^;]*;?|url\(\s*(['"]?)(?!data:image\/|#)[^)]*\)/gi
+    took('addresses in CSS', count(html, fetched))
+    html = html.replace(fetched, '')
+  }
+  if (!html.replace(/<[^>]*>/g, '').trim() && !/<(img|svg|table|hr)\b/i.test(html)) throw new Error(`${what} is empty${taken.size ? ' after cleaning' : ''}: send semantic HTML (tables, lists, headings, details) with inline CSS`)
+  // A fence inside would end the block where the text carries it.
+  return html.replace(/```/g, '&#96;&#96;&#96;')
+}
+
+const FENCE = /```html[ \t]*\n([\s\S]*?)```/gi
+
+/** A text with its ```html blocks cleaned in place. Text without one comes back untouched. */
+export function cleanFences(text, what = 'text') {
+  const said = String(text ?? '')
+  if (!/```html/i.test(said)) return said
+  return said.replace(FENCE, (_, inner) => `\`\`\`html\n${cleanHtml(inner, `an html block in ${what}`)}\n\`\`\``)
+}
+
+/** Blank lines inside fenced blocks, hidden from a parser that splits a text at blank lines; show() brings them back. */
+export const fences = {
+  hide: text => String(text).replace(/```[\s\S]*?```/g, block => block.replace(/\n[ \t]*(?=\n)/g, '\n\u0001')),
+  show: text => String(text).replace(/\u0001/g, ''),
+}
+
+/** The html beside a text, checked: cleaned, and never without words next to it. */
+export function htmlBeside(html, text, { field = 'html', beside = 'text' } = {}) {
+  if (html == null || html === '') return ''
+  if (typeof html !== 'string') throw new Error(`${field} must be a string of HTML`)
+  if (!String(text ?? '').trim()) throw new Error(`${field} needs ${beside} beside it: say the same in plain words there. It is what read-aloud speaks and what clients that cannot show HTML display`)
+  return cleanHtml(html, field)
+}
+
+// ---- 2. the tools ------------------------------------------------------------------------------------------
+
+export const MAX_ASSET = 64 * 1024 * 1024
+export const ASSET_TYPES = ['html', 'image', 'video', 'audio', 'file']
+export const RETENTION_DAYS = 30
+export const URGENCIES = ['low', 'normal', 'high', 'critical']
+export const STATUSES = ['decision', 'working', 'done']
+
+const SECTION_TEXT_EXAMPLE = [
+  'The export times out for large accounts. Tick what I may build.',
+  '[limit*] Raise the limit: 60 instead of 30 seconds. Done in five minutes, but only moves the wall.',
+  '[async] Export in the background: The file arrives by mail when it is ready. About two days.',
+  '[page] Paginate the export\nSmaller files, but every consumer of the API has to follow.',
+].join('\n\n')
+
+// What a question is made of besides its title, the same for create_decision, revise_card and merge_cards.
+// An option in two or three words, for the answer tile on a Desk row (card Nr. 157). Longer is cut at a word.
+export const SHORT_MAX = 18
+export function shortOf(value) {
+  const said = String(value ?? '').replace(/\s+/g, ' ').trim()
+  if (said.length <= SHORT_MAX) return said
+  const cut = said.slice(0, SHORT_MAX + 1)
+  return (cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : said.slice(0, SHORT_MAX)).trim()
+}
+
+// A card's teaser: the two short lines the Desk row shows under the title (the same limit as shared/codec.mjs TEASER_MAX).
+export const TEASER_MAX = 160
+const TEASER_PROP = { type: 'string', description: `Two short lines of plain text (at most ${TEASER_MAX} characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body.` }
+const TITLE_ONE_LINE = 'one line, at most about 70 characters'
+
+export const QUESTION_PROPS = {
+  teaser: TEASER_PROP,
+  body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context.' },
+  html: { type: 'string', description: `Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most ${HTML_MAX / 1024} KB. For a plain comparison a markdown table in the text is enough. Needs body beside it, the same in plain words; not together with sections or text, where a block carries its own html.` },
+  options: {
+    type: 'array',
+    minItems: 2,
+    description: 'The choices offered. Give options (with body), or sections, or text: one of the three.',
+    items: {
+      type: 'object',
+      properties: {
+        key: { type: 'string', description: 'Stable identifier returned to you, e.g. "sqlite"' },
+        label: { type: 'string', description: 'What the human sees on the button, at most about four words' },
+        detail: { type: 'string', description: 'Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means' },
+        short: { type: 'string', description: `Optional: the option in two or three words (at most ${SHORT_MAX} characters), for the answer tile on the Desk row of a two-option question whose labels are not a plain yes or no, e.g. "Delete" and "Keep". Without it such a row shows one "Choose" tile.` },
+      },
+      required: ['key', 'label'],
+    },
+  },
+  sections: {
+    type: 'array',
+    description: 'Instead of body and options: the whole question as one structured text, an ordered list of blocks. A block without key is plain text (introduction, context). A block with key is a flagged paragraph and becomes an option: the board shows the paragraph tied to its option, and options, body and recommended are derived from the blocks. At least two blocks need a key.',
+    items: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The paragraph, markdown; for a flagged block what this option means, at most about 400 characters' },
+        key: { type: 'string', description: 'Flags the block as an option: the stable identifier returned to you' },
+        label: { type: 'string', description: 'Required with key: the short name of the option on its tile, at most about four words' },
+        short: { type: 'string', description: `With key, optional: the option in two or three words (at most ${SHORT_MAX} characters) for the answer tile on the Desk row; see options` },
+        html: { type: 'string', description: 'A rich layout shown under this paragraph (see html); the text beside it says the same in plain words' },
+        recommended: { type: 'boolean', description: 'true: you would pick this one; several only with multiple: true' },
+        picture: { anyOf: [{ type: 'string' }, { type: 'integer' }], description: 'An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0' },
+      },
+      required: ['text'],
+    },
+  },
+  text: {
+    type: 'string',
+    description: `The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: "[key] Label: explanation"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice. A last line "picture: file.png" ties an attachment to the option. Every other paragraph is plain context. Example:\n${SECTION_TEXT_EXAMPLE}`,
+  },
+  attachments: {
+    type: 'array',
+    description: 'Files to show on the card, each an absolute path or { path, page, title, mark }; images render inline, videos (mp4, webm, mov; up to 64 MB, end-to-end encrypted like every file) play on the card. A picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
+    items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' }, mark: { type: 'object', description: 'For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, label: { type: 'string', description: 'A word or two beside the circle, at most 24 characters' } }, required: ['x', 'y', 'w', 'h'] }, marks: { type: 'array', maxItems: 4, description: 'Several such regions on one picture, at most four', items: { type: 'object' } } }, required: ['path'] }] },
+  },
+  urgency: {
+    type: 'string',
+    enum: URGENCIES,
+    description: 'Position in the stack. critical: you are blocked entirely; high: blocks your current task; normal (default): needed soon; low: nice to know',
+  },
+  urgency_reason: { type: 'string', description: 'What is waiting on this, one short phrase; expected for high and critical' },
+  multiple: { type: 'boolean', description: 'true: the human may tick several options and sends them together; the decision then also carries choices, all chosen keys comma-separated. Default false: one tap on one option decides.' },
+  recommended: {
+    anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+    description: 'The key of the option you would pick yourself; for a card with multiple: true it may be a list of keys. It is shown circled by hand, so the human sees your advice at a glance. Leave it out when you have no preference.',
+  },
+}
+
+// Claude Code loads these tools up front instead of deferring them behind its tool search.
+export const ALWAYS_LOAD = { 'anthropic/alwaysLoad': true }
+
+export const TOOLS = [
+  {
+    _meta: ALWAYS_LOAD,
+    name: 'reply',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'The message to show in the chat' },
+        html: { type: 'string', description: `Optional rich layout shown under the words, at its place, in the house style: a comparison table with merged cells, a small grid, a details block. Semantic HTML with inline CSS only (tables, headings, lists, details, mark, kbd; classes grid, cols-2, cols-3, card, tag, muted, num, good, warn, bad); scripts, forms, frames and anything fetched from the network are removed; pictures as data: URLs. At most ${HTML_MAX / 1024} KB. For a plain comparison a markdown table in the text is enough. Needs text beside it: the gist in plain words, which is what is read aloud and what clients without HTML show.` },
+        details: { type: 'string', description: 'Optional longer material shown collapsed under the message: your reasoning, what you tried, command output, a diff. Markdown. The human opens it only if they want to.' },
+        attachments: {
+          type: 'array',
+          description: 'Absolute paths of files to show with the message; images, videos (mp4, webm, mov) and audio play inline, anything else is a download link. Each is an absolute path or { path, page, title, mark }: a picture of something you built comes with the page it was rendered from (page); foo.html beside foo.png is linked by itself.',
+          items: { anyOf: [{ type: 'string' }, { type: 'object', properties: { path: { type: 'string', description: 'Absolute path of the file' }, page: { type: 'string', description: 'The page this picture was rendered from, so the human can open and try it under the picture: the path of a self-contained HTML file, a path on the board (/designs/x.html), an asset link or a URL' }, title: { type: 'string', description: 'A short caption' }, mark: { type: 'object', description: 'For a picture: where on it the thing is, when the picture is a whole screen and what matters is a small part. A region in fractions of the picture, x and y the top-left corner; the board circles it and ties it to the option. Do not draw on the picture yourself.', properties: { x: { type: 'number' }, y: { type: 'number' }, w: { type: 'number' }, h: { type: 'number' }, label: { type: 'string', description: 'A word or two beside the circle, at most 24 characters' } }, required: ['x', 'y', 'w', 'h'] }, marks: { type: 'array', maxItems: 4, description: 'Several such regions on one picture, at most four', items: { type: 'object' } } }, required: ['path'] }] },
+        },
+        card_id: { type: 'string', description: 'One of your cards this message belongs to; the board shows it under that card. Use it to answer a question the human asked back about the card (a chat message that carried card_id), and to give the details of a card you just filed (background, reasoning, measurements, links), which do not belong in its body. On an open card it changes nothing about the card: not its place, not its state.' },
+        present: { type: 'boolean', description: 'Only with card_id, for a card the human handed back to you. true: your work on it is done without rewording it, put the card before the human again. Left out: the reply is only a message on the card (an acknowledgement, a progress note) and the card stays with you. The answer to "Explain" presents the card by itself.' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    _meta: ALWAYS_LOAD,
+    name: 'create_decision',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: `The question, ${TITLE_ONE_LINE}` },
+        ...QUESTION_PROPS,
+      },
+      required: ['title'],
+    },
+  },
+  {
+    _meta: ALWAYS_LOAD,
+    name: 'create_info',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        title: { type: 'string', description: `What it is about, ${TITLE_ONE_LINE}` },
+        teaser: TEASER_PROP,
+        body: { type: 'string', description: 'The text, markdown. Or give sections or text.' },
+        sections: {
+          type: 'array',
+          description: 'Instead of body: the text as an ordered list of blocks, each a paragraph or a short passage of its own. No block has a key: an info has no options.',
+          items: { type: 'object', properties: { text: { type: 'string', description: 'The paragraph, markdown' }, html: QUESTION_PROPS.sections.items.properties.html }, required: ['text'] },
+        },
+        text: { type: 'string', description: 'The same as sections, written as one text block: paragraphs separated by a blank line.' },
+        ...Object.fromEntries(['html', 'attachments', 'urgency', 'urgency_reason'].filter(k => QUESTION_PROPS[k]).map(k => [k, QUESTION_PROPS[k]])),
+      },
+      required: ['title'],
+    },
+  },
+  {
+    name: 'revise_card',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string' },
+        title: { type: 'string', description: `The question, ${TITLE_ONE_LINE}` },
+        ...QUESTION_PROPS,
+        note: { type: 'string', description: 'One short line telling the human what changed, shown in the conversation; without it the new title is shown' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    name: 'merge_cards',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_ids: { type: 'array', minItems: 2, items: { type: 'string' }, description: 'The open cards this one replaces, at least two' },
+        title: { type: 'string', description: `The one question, ${TITLE_ONE_LINE}` },
+        ...QUESTION_PROPS,
+      },
+      required: ['card_ids', 'title'],
+    },
+  },
+  {
+    name: 'set_urgency',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string' },
+        urgency: { type: 'string', enum: URGENCIES },
+        reason: { type: 'string', description: 'Why the urgency changed, one short phrase shown to the human' },
+      },
+      required: ['card_id', 'urgency'],
+    },
+  },
+  {
+    name: 'withdraw_card',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string' },
+        reason: { type: 'string', description: 'One line on why the answer is no longer needed' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    name: 'close_card',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        card_id: { type: 'string' },
+        summary: { type: 'string', description: 'One line on what you did' },
+      },
+      required: ['card_id'],
+    },
+  },
+  {
+    _meta: ALWAYS_LOAD,
+    name: 'set_status',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'Stable identifier of the work stream, e.g. "server" or "tests"' },
+        label: { type: 'string', description: 'Short name the human sees, two or three words' },
+        state: { type: 'string', enum: STATUSES, description: 'decision = red, waiting on the human; working = yellow, in progress; done = green, finished' },
+        detail: { type: 'string', description: 'One line on where it stands' },
+        card_id: { type: 'string', description: 'For state "decision": the card that holds the question. The line turns yellow by itself once the human answers it.' },
+      },
+      required: ['id', 'state'],
+    },
+  },
+  {
+    name: 'clear_status',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' } } },
+  },
+  {
+    name: 'introduce',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        model: { type: 'string', description: 'The model you are running as, e.g. "Claude Opus 5.5"' },
+        task: { type: 'string', description: 'What you are working on in this session, one line' },
+        icon: { type: 'string', description: 'The name of the drawing that fits your task; it becomes the symbol of your session. A symbol the human picked by hand is kept.' },
+        parent: { type: 'string', description: 'If you are a helper of another session: the id or the name of your main session. The board then shows you under it. Pass an empty string to stand alone again.' },
+        main: { type: 'boolean', description: 'true: you are a main agent that leads helper sessions; the board shows your helpers under you. A session that has helpers under it is a main without saying so.' },
+      },
+      required: ['model'],
+    },
+  },
+  {
+    name: 'create_voiceover',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        text: { type: 'string', description: 'What to say, up to about 4000 characters; split longer narration into several calls' },
+        style: { type: 'string', description: 'Optional delivery instruction in plain words, e.g. "calm documentary narrator" or "upbeat and fast"' },
+      },
+      required: ['text'],
+    },
+  },
+  {
+    name: 'list_cards',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'publish_asset',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'Absolute path of the file to publish. Give this or content.' },
+        content: { type: 'string', description: 'The asset itself as a string, e.g. the HTML of a page. Give this or path.' },
+        type: { type: 'string', enum: ASSET_TYPES, description: 'How the viewer shows it. html: a page in a sandboxed frame, which must be self-contained (inline CSS and scripts, data: images), because nothing is loaded from the network; image, video, audio: shown or played; file: offered as a download. Left out: inferred from the file extension, html for content.' },
+        title: { type: 'string', description: 'Shown above the asset and on the board; defaults to the file name' },
+        note: { type: 'string', description: 'Optional line shown with the link on the board, e.g. what the page is for' },
+        silent: { type: 'boolean', description: 'true: do not show the asset on the board. The hub then never sees the key or the title; the returned link is the only copy.' },
+        keep: { type: 'boolean', description: `true: keep until revoked. Default: deleted after ${RETENTION_DAYS} days.` },
+      },
+    },
+  },
+  {
+    name: 'list_assets',
+    inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'revoke_asset',
+    inputSchema: { type: 'object', properties: { id: { type: 'string', description: 'The asset id returned by publish_asset' } }, required: ['id'] },
+  },
+  {
+    _meta: ALWAYS_LOAD,
+    name: 'open_session',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The helper\'s short name, shown on the board, e.g. "Design"' },
+        task: { type: 'string', description: 'What the helper works on, one line' },
+        icon: { type: 'string', description: 'The name of the drawing that fits the helper\'s task (as in introduce)' },
+        model: { type: 'string', description: 'The model the helper runs as' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    _meta: ALWAYS_LOAD,
+    name: 'close_session',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'The helper\'s short name, as given to open_session' },
+        summary: { type: 'string', description: 'Optional: the helper\'s result in a few lines, posted into the child session before it is closed' },
+      },
+      required: ['name'],
+    },
+  },
+  {
+    name: 'adopt_session',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The id or the name of the session' },
+        release: { type: 'boolean', description: 'true: it is no longer your helper' },
+      },
+      required: ['id'],
+    },
+  },
+  {
+    name: 'share_asset',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        id: { type: 'string', description: 'The asset id returned by publish_asset' },
+        release: { type: 'boolean', description: 'true (default): release it. false: take the release back; the link stops working at once, the asset itself stays.' },
+        expires_hours: { type: 'number', description: 'The release ends by itself after this many hours. 0 or left out: no end.' },
+        keep: { type: 'boolean', description: `true: also keep the asset beyond the ${RETENTION_DAYS} days after which it would be deleted.` },
+      },
+      required: ['id'],
+    },
+  },
+]
+
+// Child sessions (open_session): these tools take `session`, the helper's name; the call then lands in that child session.
+export const SESSION_TOOLS = ['reply', 'create_decision', 'create_info', 'merge_cards', 'set_status', 'clear_status', 'introduce', 'list_cards', 'publish_asset']
+for (const t of TOOLS) if (SESSION_TOOLS.includes(t.name)) t.inputSchema.properties.session = { type: 'string', description: 'Optional: the name of a child session (a helper of yours, e.g. "Design"); opened on first use. Left out: your own session.' }
+// The two tools connector.mjs answers itself: loading a new version of this file, and the events of a session without
+// channel events (listed only there).
+export const RELOAD_TOOL = { name: 'reload_connector', inputSchema: { type: 'object', properties: {}, additionalProperties: false } }
+export const INBOX_TOOL = { name: 'inbox', _meta: ALWAYS_LOAD, inputSchema: { type: 'object', properties: {}, additionalProperties: false } }
+// Every tool takes its description from prompt.md; one without a section is a mistake there.
+for (const t of [...TOOLS, RELOAD_TOOL, INBOX_TOOL]) {
+  if (!DESCRIPTIONS[t.name]) throw new Error(`connector/prompt.md has no section "## ${t.name}"`)
+  t.description = DESCRIPTIONS[t.name]
+}
+// One call per tool that does something sensible, for the help page. The test checks each against its schema.
+export const TOOL_EXAMPLES = {
+  reply: {
+    text: 'Three ways to run the migration. **Tonight at 2** is the cheapest: 40 seconds of lock while hardly anyone is online.',
+    html: '<table><thead><tr><th>Way</th><th>Lock</th><th>Work for me</th></tr></thead><tbody><tr><td>Now</td><td>40 s</td><td>none</td></tr><tr><td><mark>Tonight at 2</mark></td><td>40 s</td><td>none</td></tr><tr><td>In batches</td><td>0 s</td><td>2 h</td></tr></tbody></table>',
+    details: 'Ran `npm test`: 48 of 48 pass.\nThe slow one was the index on `orders`.', attachments: ['/home/me/project/out/before-after.png'],
+  },
+  create_decision: {
+    title: 'Run the migration on production now?', teaser: 'Locks orders for about 40 seconds; now, or tonight when nobody orders?', body: 'It locks `orders` for about 40 seconds.', urgency: 'high', urgency_reason: 'the deploy waits on it', recommended: 'tonight',
+    options: [{ key: 'tonight', label: 'Tonight at 2', detail: 'Hardly anyone is online' }, { key: 'now', label: 'Now', detail: 'Short outage for whoever is online' }],
+  },
+  create_info: {
+    title: 'How the nightly migration works', attachments: [{ path: '/home/me/project/out/migration.png', page: '/home/me/project/out/migration.html', title: 'The three steps' }], urgency: 'low',
+    sections: [
+      { text: 'You asked why the deploy waits until 2. In short: the migration locks `orders`, and at 2 nobody is writing to it.' },
+      { text: '**Order of events.** Backup at midnight, migration at 2, deploy right after. The picture shows the three steps.' },
+      { text: '**If it fails,** the deploy does not start and you find a question from me in the morning.' },
+    ],
+  },
+  revise_card: { card_id: 'a1b2c3d4', title: 'Run the migration tonight at 2?', options: [{ key: 'tonight', label: 'Tonight at 2' }, { key: 'weekend', label: 'At the weekend' }], recommended: 'tonight', note: 'Running it now is off the table: the backup takes until midnight' },
+  merge_cards: {
+    card_ids: ['a1b2c3d4', 'e5f6a7b8', 'c9d0e1f2'], title: 'Which parts of the storage plan do you agree to?', multiple: true, attachments: ['/home/me/project/out/sync.png'],
+    sections: [
+      { text: 'Three parts, each stands on its own. Tick what I may build.' },
+      { key: 'sqlite', label: 'SQLite for cards', recommended: true, text: 'One file, no server to run. Cards survive a restart and can be searched.' },
+      { key: 'files', label: 'Attachments as files', recommended: true, text: 'Pictures stay next to the database as plain files, so backups are a copy.' },
+      { key: 'sync', label: 'Sync between hubs', picture: 'sync.png', text: 'Two machines show the same board. About two days more, and conflicts need a rule.' },
+    ],
+  },
+  set_urgency: { card_id: 'a1b2c3d4', urgency: 'critical', reason: 'nothing else is left to do' },
+  withdraw_card: { card_id: 'a1b2c3d4', reason: 'the staging run answered it' },
+  close_card: { card_id: 'a1b2c3d4', summary: 'Migration ran at 02:00, 38 seconds' },
+  set_status: { id: 'migration', label: 'Migration', state: 'decision', detail: 'waiting for the go-ahead', card_id: 'a1b2c3d4' },
+  clear_status: { id: 'migration' },
+  introduce: { model: 'Claude Opus 5.5', task: 'Prepare migration and deploy', icon: 'database' },
+  create_voiceover: { text: 'The deploy went through. Two things need your answer.', style: 'calm, friendly' },
+  list_cards: {},
+  publish_asset: { path: '/home/me/project/out/report.html', title: 'Load test, 2 October', note: 'Charts for the three variants' },
+  list_assets: {},
+  revoke_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A' },
+  share_asset: { id: 'q3n0XWb1kq0lYb6m3v8K2A', expires_hours: 72 },
+  adopt_session: { id: 'web-ui' },
+  open_session: { name: 'Design', task: 'Pictures for the landing page', icon: 'brush' },
+  close_session: { name: 'Design', summary: 'Three landing page pictures are in out/landing/, the blue one recommended' },
+}
+
+// Everything that travels between Claude Code and the connector besides tool calls, for the help page.
+// to_agent: what this process sends Claude Code. from_client: what Claude Code sends this process.
+export const EVENTS = [
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'update', when: 'A new version of the connector is on disk (or the hub recommends one).',
+    content: 'a sentence naming the version and what to do: file the update card (jetzt / später)', meta: { kind: 'update', update_available: '1', version: 'the new version (a hash of the connector code, or the hub\'s recommended version)', restart_required: '"1" when only a restart loads it (/mcp → trommi → Reconnect), "0" when reload_connector can' },
+    example: '<channel source="board" kind="update" update_available="1" version="3f2a9c1d0b7e" restart_required="0">A new version of the Trommi connector is available …</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'chat', when: 'The human sent a chat message.',
+    content: 'the message; when the human sent only files, a sentence naming them', meta: { kind: 'chat' }, optional: { card_id: 'set when the human asks back about an open card instead of answering it; answer with reply and the same card_id', handback: '"1" when the human handed that card back to you to be reworked: revise it with revise_card, which presents it again', explain: '"1" when the human pressed "Explain" on that card', cards: 'ids of cards the human copied into this message, comma-separated, often another session\'s: each stands in full in the content (question, options, answer, notes, picture paths), so you can act on a decision you never saw', cards_json: 'the same cards as a JSON list of {id, number, title, agent, choice_label, kind, status, choices}', marks: 'how many notes and drawings the human pinned to parts of that card; they are lines of the content under "Notes pinned to the card:", and the picture of the annotated card is in image_path', files: 'absolute paths of the files and pictures the human attached, comma-separated; open them', image_path: 'the first attached picture, when there is one' },
+    example: '<channel source="board" kind="chat">Please check the logs first.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision', when: 'The human answered a decision card.',
+    content: 'the human\'s note, or a sentence naming the card and the chosen key; when the human wrote notes on single options, a blank line and "Notes on options:" follow, with one line "- Label [key], chosen: note" or "- Label [key], not chosen: note" per note, in the order of the options',
+    meta: { kind: 'decision', card_id: 'the card', choice: 'key of the chosen option; of several, the first' },
+    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options', trust: '"1" when the human left the decision to you: choice is then the option you recommended, or empty if you recommended none; decide, say what you chose with reply and the card_id, and close the card', marks: 'how many notes and drawings the human pinned to parts of the card; they are lines of the content under "Notes pinned to the card:"', option_notes: 'only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content', files: 'absolute paths of what the human attached to the note of the answer, comma-separated', image_path: 'the first attached picture, when there is one' },
+    example: '<channel source="board" kind="decision" card_id="a1b2c3d4" choice="tonight">After the backup, please.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision_reopened', when: 'The human took an answer back; the card is open again.',
+    content: 'a sentence saying which answer was taken back', meta: { kind: 'decision_reopened', card_id: 'the card', previous_choice: 'key of the answer that no longer holds' },
+    optional: { previous_choices: 'only for a card made with multiple: true: every key that was chosen, comma-separated', trust: '"1" when what is taken back is the human leaving the decision to you', shredded: '"1" when the human took a card back out of the shredder; previous_choice is then empty' },
+    example: '<channel source="board" kind="decision_reopened" card_id="a1b2c3d4" previous_choice="tonight">…</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'shredded', when: 'The human threw a question (or an info) away unanswered.',
+    content: 'a sentence saying so and what to do: do not ask again, carry on with your own judgement or drop the matter; then the human\'s note, if they wrote one', meta: { kind: 'shredded', card_id: 'the card' },
+    optional: { marks: 'how many notes and drawings the human pinned to the card before throwing it away; they are lines of the content', files: 'absolute paths of the pictures that came with it, comma-separated', image_path: 'the first picture' },
+    example: '<channel source="board" kind="shredded" card_id="a1b2c3d4">The human threw the question "Which font?" away unanswered. …</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'info_read', when: 'The human read an info card (create_info) and closed it. Nothing is expected of you.',
+    content: 'a sentence naming the card', meta: { kind: 'info_read', card_id: 'the card' },
+    example: '<channel source="board" kind="info_read" card_id="a1b2c3d4">The human read "How the nightly migration works" and closed it.</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel', kind: 'pad', when: 'The human selected elements on the pad and sent them to this session.',
+    content: 'the words of the selected notes and spoken notes in reading order, or a sentence pointing at the picture',
+    meta: { kind: 'pad', pad: 'which pad: global', message_id: 'the message in the conversation that shows the selection', elements: 'ids of the selected elements, comma-separated', image_path: 'PNG of exactly the selection, on white' },
+    example: '<channel source="board" kind="pad" pad="global" message_id="5e1f09ab" elements="0muqnb5cchmsr9cse,0muqnb7k2p1d4xw3a" image_path="/…/files/pad-9f2c41d07a3e.png">Ship the pad prototype</channel>',
+  },
+  {
+    direction: 'to_agent', method: 'notifications/claude/channel/permission', kind: null, when: 'The human answered an approval card. Claude Code decides whether this or the terminal came first.',
+    params: { request_id: 'the id from the request', behavior: 'allow or deny' },
+    example: '{ "request_id": "abcde", "behavior": "allow" }',
+  },
+  {
+    direction: 'from_client', method: 'notifications/claude/channel/permission_request', kind: null, when: 'Claude Code wants approval for a tool call. It becomes a card with Allow and Deny, always on top of the stack.',
+    params: { request_id: 'echoed in the verdict', tool_name: 'e.g. Bash', description: 'what the tool does', input_preview: 'the arguments, shortened' },
+    example: '{ "request_id": "abcde", "tool_name": "Bash", "description": "Run shell command", "input_preview": "{\\"command\\":\\"npm test\\"}" }',
+  },
+  {
+    direction: 'from_client', method: 'initialize', kind: null, when: 'Once, when the MCP connection starts. The name appears as "Program" in the sessions overview.',
+    params: { 'clientInfo.name': 'the program on the other end of stdio', 'clientInfo.version': 'its version' },
+    example: '{ "clientInfo": { "name": "claude-code", "version": "2.1.0" } }',
+  },
+]
+
+// ---- 3. the bridge: what each tool does in the room ----------------------------------------------------------
 
 const withShort = value => (shortOf(value) ? { short: shortOf(value) } : {})
 const listArg = (value, what) => {
@@ -24,7 +607,7 @@ const urgencyArg = (value, fallback) => {
   return value
 }
 
-// ---- a question as one structured text (as in server/server.mjs) -------------------------------------
+// ---- a question as one structured text ---------------------------------------------------------------
 
 const FLAGGED = /^\[([\w.-]+)(\*)?\](?!\()[ \t]*/
 function parseSections(text) {

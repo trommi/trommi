@@ -115,7 +115,7 @@ export class Client {
     this.byHash = new Map()             // own envelope hash -> local_id (until it comes back)
     this.invitesPrivate = new Map()     // invite_id -> zcrypto invite record (+ code)
     this.delivered = new Map()          // human sender device id -> highest sender_sequence handed out as a command (R4)
-    this.ledgerSet = new Set()          // executed commands (envelope hashes), kept by the channel via client.ledger (R4)
+    this.ledgerSet = new Set()          // executed commands (envelope hashes), kept by the connector via client.ledger (R4)
     this.frontiers = new Map()          // sender -> Map(other sender -> highest sequence it has seen): causal order (R2)
     this.commandsHalted = null          // 'log-fork' halts every command until a human acts (R3)
     this.startedAt = Date.now()
@@ -1168,7 +1168,7 @@ export class Client {
       frontiers: Object.fromEntries([...this.frontiers].map(([k, m]) => [k, Object.fromEntries(m)])) }
   }
 
-  /** The executed-command ledger (R4): the channel marks a command executed; survives restarts. */
+  /** The executed-command ledger (R4): the connector marks a command executed; survives restarts. */
   get ledger() {
     return {
       has: hash => this.ledgerSet.has(hash),
@@ -1775,7 +1775,7 @@ export class Client {
 
   /**
    * An invite link. Agent invites are bearer links: the first agent that answers is added. Review 3: with
-   * confirm_code: true an agent invite is bound to the intended agent like a human pairing (the channel prints the
+   * confirm_code: true an agent invite is bound to the intended agent like a human pairing (the connector prints the
    * six-digit check code; the human confirms it with confirmInvite), and every agent invite that two different devices
    * answer is burned instead of going to whoever came first (alert invite-contested).
    */

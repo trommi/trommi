@@ -112,7 +112,7 @@ ${raw(L.gone)}
       const agent = inv.device_role === 'agent', state = inv.invite_state
       const left = Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))
       let body
-      // The link goes to the channel by the human's hands only (never pasted into the model's prompt).
+      // The link goes to the connector by the human's hands only (never pasted into the model's prompt).
       if (state === 'open' && agent) body = html`<p class="room-lead">On any computer with Claude Code and Node 22+, open a terminal in the project folder and run:</p>
 ${copyBox(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Command', 'room-cmd')}<p class="room-lead">Then start Claude Code there (the Trommi plugin brings every message from here into the session, also after <code>--continue</code> or <code>--resume</code>):</p>${copyBox('claude', 'Command', 'room-cmd')}
 <p class="room-wait">Waiting for the agent… The link works once, ${left} more min. An agent needs no code.</p>`

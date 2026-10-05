@@ -1,4 +1,4 @@
-// storage-file.mjs: the storage adapter for Node (the agent channel). Not exported by index.mjs: browsers cannot load node:fs.
+// storage-file.mjs: the storage adapter for Node (the agent connector). Not exported by index.mjs: browsers cannot load node:fs.
 //
 //   const storage = await fileStorage({ dir, key_file?, prefix? })
 //

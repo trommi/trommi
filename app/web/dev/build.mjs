@@ -1,12 +1,18 @@
 // The app's build: everything generated is made here, at deploy time, and never committed.
-//   gen/vendor/            the client core, copied flat from the repository's shared/ and shared/crypto/ (plus two browser-safe connector files)
+//   gen/vendor/            the client core, copied flat from the repository's shared/ and shared/crypto/, and
+//                          tools-reference.mjs: the connector's tools and events as data, for the help page
 //   gen/bundle.<hash>.css  the stylesheets of index.html as one file (their <link>s become one)
 //   gen/build.txt          which commit this build is (the Web app deploy workflow reads it)
 //   index.html             the modulepreload list between <!-- preload --> and <!-- /preload -->, data-build=<version>
 //   sw.js                  VERSION (a hash of every shell file) and SHELL (every file the app serves)
+//   gen/connector.mjs, gen/connector.mjs.sha256, gen/plugins/
+//                          the single-file connector, its checksum and the Claude Code plugin (connector/build.mjs)
 // In the repository index.html and sw.js are templates (empty preload block, VERSION "dev", SHELL []), so two
-// branches never conflict there. (gen/connector.mjs and gen/plugins/ are connector/bundle.mjs's: they need the
-// repository's npm packages, which this dependency-free build does not have; they stay committed and CI checks them.)
+// branches never conflict there, and public/gen/ is not in git at all.
+//
+// The connector files are the one part that needs the repository's npm packages (esbuild, the MCP SDK, zod; the rest
+// of this build has no dependency). Cloudflare's build (WORKERS_CI=1) installs them first: npm ci at the repository
+// root. Without them a check and the dev server go on without the connector files; a build that writes fails.
 //
 //   node dev/build.mjs            check only: generate in memory, print what it would write
 //   node dev/build.mjs --write    write it into public/ (Cloudflare's build: WORKERS_CI=1 counts as --write).
@@ -16,7 +22,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import { execFileSync } from 'node:child_process'
 
 export const PUBLIC = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public')
@@ -35,8 +41,7 @@ function vendorFiles(repo) {
     if (out[f] != null) throw new Error(`build: ${f} is in shared/ and in shared/crypto/`)
     out[f] = fs.readFileSync(path.join(dir, f), 'utf8').replace(/(['"])\.\/crypto\//g, '$1./')
   }
-  // The agent tool and event reference for the help page, and the HTML cleaner the agent's side uses (browser-safe).
-  for (const f of ['channel-tools.mjs', 'richhtml.mjs']) out[f] = fs.readFileSync(path.join(repo, 'connector', f), 'utf8')
+  out['tools-reference.mjs'] = toolsReference(repo)
   out['core-version.mjs'] = `// Written by app/web/dev/build.mjs from the repository's shared/. Do not edit: edit shared/.\nexport const CORE_COMMIT = ${JSON.stringify(commitOf(repo))}\n`
   return out
 }
@@ -44,6 +49,37 @@ function commitOf(repo) {
   const env = process.env.WORKERS_CI_COMMIT_SHA || process.env.GITHUB_SHA
   if (env) return env.slice(0, 7)
   try { return execFileSync('git', ['-C', repo, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).trim().slice(0, 7) } catch { return 'dev' }
+}
+
+// ---- the connector ----
+// The tools and events for the help page. connector/tools.mjs is Node code (it reads prompt.md and files), so its
+// tables are read in a Node process and written out as data. Made again only when the two files changed.
+let reference = null
+function toolsReference(repo) {
+  const files = ['tools.mjs', 'prompt.md'].map(f => path.join(repo, 'connector', f))
+  const key = files.map(f => fs.statSync(f).mtimeMs).join()
+  if (reference?.key !== key) {
+    const read = `const t = await import(${JSON.stringify(pathToFileURL(files[0]).href)}); process.stdout.write(JSON.stringify({ TOOLS: t.TOOLS, TOOL_EXAMPLES: t.TOOL_EXAMPLES, EVENTS: t.EVENTS, RETENTION_DAYS: t.RETENTION_DAYS, MAX_ASSET: t.MAX_ASSET }))`
+    const json = execFileSync(process.execPath, ['--input-type=module', '-e', read], { encoding: 'utf8', maxBuffer: 16 * 1024 * 1024 })
+    reference = { key, text: `// Written by app/web/dev/build.mjs from connector/tools.mjs and connector/prompt.md. Do not edit.\nexport const { TOOLS, TOOL_EXAMPLES, EVENTS, RETENTION_DAYS, MAX_ASSET } = ${json}\n` }
+  }
+  return reference.text
+}
+
+// The single-file connector, its checksum and the plugin: connector/build.mjs, which needs the npm packages.
+const CI = process.env.WORKERS_CI === '1'
+if (CI) execFileSync('npm', ['ci', '--no-audit', '--no-fund'], { cwd: REPO, stdio: 'inherit' })
+const connector = await import(pathToFileURL(path.join(REPO, 'connector/build.mjs')).href).catch(err => {
+  if (err.code === 'ERR_MODULE_NOT_FOUND' && /Cannot find package/.test(err.message)) return null
+  throw err
+})
+// Made again only when a source changed (the dev server asks on every page load; a bundle takes a moment).
+let bundled = null
+function connectorFiles() {
+  if (!connector) return null
+  const key = ['connector', 'shared', 'shared/crypto'].flatMap(d => fs.readdirSync(path.join(REPO, d)).map(f => `${f}:${fs.statSync(path.join(REPO, d, f)).mtimeMs}`)).join()
+  if (bundled?.key !== key) bundled = { key, files: connector.connectorFiles() }
+  return bundled.files
 }
 
 // ---- the stylesheets ----
@@ -88,7 +124,7 @@ function preloads(read, entries) {
   return [...seen]
 }
 
-/** Everything the build makes: { 'path under public/': content }. Nothing is written. */
+/** Everything the build makes: { 'path under public/': content (text, or bytes for the plugin's zip) }. Nothing is written. */
 export function generate({ pub = PUBLIC, repo = REPO } = {}) {
   const out = {}
   for (const [f, c] of Object.entries(vendorFiles(repo))) out[`gen/vendor/${f}`] = c
@@ -113,16 +149,19 @@ export function generate({ pub = PUBLIC, repo = REPO } = {}) {
   const sw = fs.readFileSync(path.join(pub, 'sw.js'), 'utf8')
   out['sw.js'] = sw.replace(/^const VERSION = .*$/m, `const VERSION = ${JSON.stringify(version)}`).replace(/^const SHELL = .*$/m, `const SHELL = ${JSON.stringify(['/', ...files.map(f => `/${f}`)])}`)
   if (!out['sw.js'].includes(version)) throw new Error('sw.js: the VERSION line is missing')
-  return { out, version, sheets: links.length, files: files.length }
+  // Not part of the shell: the app itself never loads them (Claude Code and the connect script do).
+  const made = connectorFiles()
+  for (const [f, c] of Object.entries(made ?? {})) out[`gen/${f}`] = c
+  return { out, version, sheets: links.length, files: files.length, connector: made ? made['connector.mjs.sha256'].slice(0, 12) : null }
 }
 
 export function build({ write = false } = {}) {
-  const { out, version, sheets, files } = generate()
-  console.log(`build ${version}: ${Object.keys(out).filter(f => f.startsWith('gen/vendor/')).length} core files, ${sheets} sheets in one bundle, ${files} shell files${write ? '' : ' (check only, nothing written)'}`)
+  const { out, version, sheets, files, connector } = generate()
+  console.log(`build ${version}: ${Object.keys(out).filter(f => f.startsWith('gen/vendor/')).length} core files, ${sheets} sheets in one bundle, ${files} shell files, ${connector ? `connector ${connector} with its plugin` : 'no connector (its npm packages are missing: npm ci)'}${write ? '' : ' (check only, nothing written)'}`)
   if (!write) return
-  fs.rmSync(path.join(PUBLIC, 'gen', 'vendor'), { recursive: true, force: true })
-  for (const f of fs.readdirSync(path.join(PUBLIC, 'gen'))) if (/^bundle\..*\.css$/.test(f)) fs.rmSync(path.join(PUBLIC, 'gen', f))
+  if (!connector) throw new Error('build: the connector cannot be built (esbuild, @modelcontextprotocol/sdk or zod is missing: npm ci at the repository root)')
+  fs.rmSync(path.join(PUBLIC, 'gen'), { recursive: true, force: true })
   for (const [f, c] of Object.entries(out)) { fs.mkdirSync(path.dirname(path.join(PUBLIC, f)), { recursive: true }); fs.writeFileSync(path.join(PUBLIC, f), c) }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) build({ write: process.argv.includes('--write') || process.env.WORKERS_CI === '1' })
+if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) build({ write: process.argv.includes('--write') || CI })

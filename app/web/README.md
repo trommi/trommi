@@ -40,9 +40,9 @@ public/
   desk  card  session  sidebar  notes  media  agents  whiteboard   (.mjs + .css each)
   demo/                the demo room (demo.mjs, fixture.json, files/), also the "Demo" desk
   fonts/  icons/  drawings.json
-  gen/                 generated, never edited by hand: vendor/ (the core), bundle.<hash>.css, build.txt (made by
-                       dev/build.mjs, not committed); connector.mjs(.sha256), plugins/ (connector/bundle.mjs,
-                       committed, checked by CI), served at /connector.mjs, /connector.mjs.sha256, /plugins/…
+  gen/                 generated at deploy time by dev/build.mjs, not in git: vendor/ (the core and the tools
+                       reference), bundle.<hash>.css, build.txt; connector.mjs(.sha256), plugins/ (connector/build.mjs),
+                       served at /connector.mjs, /connector.mjs.sha256, /plugins/…
 ```
 
 ## Rules
@@ -51,7 +51,7 @@ public/
    need goes to `ui.mjs` (markup, controllers) or `app.mjs` (data, the room). `ui.mjs` imports nothing.
 2. No crypto in the app: everything crypto, account and keys comes from the core (`gen/vendor`, via `app.mjs` `core()`,
    `account()`, `canvasWire()`).
-3. `gen/` is never edited by hand; CI checks what is committed there.
+3. `gen/` is never edited by hand and never committed: the build makes it at deploy time.
 4. A file is split only when it passes ~3000 lines.
 5. JavaScript is `.mjs` only. Importing a module does nothing; `app.mjs` boots the page (so Node tests can import it).
 
@@ -60,10 +60,13 @@ and an inline script whose hash is not in `_headers`.
 
 ### The build
 
-`dev/build.mjs` (no dependencies) runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/vendor/` (the core,
-from the repository's `shared/`), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
+`dev/build.mjs` runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/vendor/` (the core, from the
+repository's `shared/`, and `tools-reference.mjs`, the connector's tools and events for the help page), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
-serves it), the modulepreload list of `index.html` and `VERSION` + `SHELL` of `sw.js`. In the repository `index.html`
+serves it), the modulepreload list of `index.html`, `VERSION` + `SHELL` of `sw.js`, and the connector's files
+`public/gen/connector.mjs`, `connector.mjs.sha256` and `plugins/` (`connector/build.mjs`). Only those last ones need npm
+packages (esbuild, the MCP SDK, zod): in Cloudflare's build `dev/build.mjs` runs `npm ci` at the repository root first;
+locally, without `node_modules`, a check and the dev server go on without them, and `--write` fails. In the repository `index.html`
 and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`). `dev/serve.mjs` serves the same build
 from memory. `node dev/build.mjs` checks only; `--write` writes into `public/` (never commit that).
 

@@ -250,8 +250,8 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 
 <header class="hp-part" id="agents">
   <h2>For agents, and for whoever sets them up</h2>
-  <p>An agent is a member of your account like your phone: the channel process beside a Claude Code session has its own device keys and talks to you only in signed, encrypted envelopes. Below: what travels between the session and you, in which direction, and what never makes the trip.</p>
-  <nav class="hp-nav" aria-label="The channel">
+  <p>An agent is a member of your account like your phone: the connector process beside a Claude Code session has its own device keys and talks to you only in signed, encrypted envelopes. Below: what travels between the session and you, in which direction, and what never makes the trip.</p>
+  <nav class="hp-nav" aria-label="The connector">
     <a href="#picture">Picture</a><a href="#missing">What is missing</a><a href="#events">Events</a><a href="#tools">Tools</a><a href="#assets">Assets</a>
   </nav>
 </header>
@@ -260,12 +260,12 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
   <h2 class="hp-title" id="h-picture">The picture <b>four parties, two directions</b></h2>
   <figure class="hp-figure">
     <div id="diagram"></div>
-    <figcaption>Every session starts its own <code>connector/channel.mjs</code>: that process is the channel. It seals what the agent says before it leaves the machine; the hub only stores and forwards envelopes it cannot open; this app opens them on your device. Green arrows run towards the agent, dark ones towards you.</figcaption>
+    <figcaption>Every session starts its own <code>connector/connector.mjs</code>: that process is the connector. It seals what the agent says before it leaves the machine; the hub only stores and forwards envelopes it cannot open; this app opens them on your device. Green arrows run towards the agent, dark ones towards you.</figcaption>
   </figure>
 </section>
 
 <section id="missing" aria-labelledby="h-missing">
-  <h2 class="hp-title" id="h-missing">What the channel cannot deliver <b>and what stands in</b></h2>
+  <h2 class="hp-title" id="h-missing">What the connector cannot deliver <b>and what stands in</b></h2>
   <div class="hp-two">
     <ul class="hp-never">
       <li>The model's thinking</li>
@@ -274,9 +274,9 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
       <li>Text while it streams</li>
     </ul>
     <div class="hp-prose">
-      <p>A channel is narrow: an MCP server sees the tool calls made <em>to it</em> and nothing else of the session. The agent sees its own thinking; the channel gets none of it, so Trommi cannot show it.</p>
+      <p>A connector is narrow: an MCP server sees the tool calls made <em>to it</em> and nothing else of the session. The agent sees its own thinking; the connector gets none of it, so Trommi cannot show it.</p>
       <p><strong>The substitute is a habit, not a feed.</strong> The agent's instructions say: what you should know goes into <code>reply</code>, and the reasoning or evidence into its <code>details</code> field, which is shown collapsed under the message. Progress goes into <code>set_status</code>.</p>
-      <p>Seeing the session live would need a second road beside the channel (hooks, the Agent SDK, or herdr). Trommi does not have one yet.</p>
+      <p>Seeing the session live would need a second road beside the connector (hooks, the Agent SDK, or herdr). Trommi does not have one yet.</p>
     </div>
   </div>
 </section>
@@ -289,7 +289,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 
 <section id="tools" aria-labelledby="h-tools">
   <h2 class="hp-title" id="h-tools">Tools <b id="tool-count">what the agent can do</b></h2>
-  <p class="hp-lead">Every way from the agent to you is a tool call. The descriptions are the words the agent itself is given; this list is read from the channel's own tool table, so it cannot drift from it.</p>
+  <p class="hp-lead">Every way from the agent to you is a tool call. The descriptions are the words the agent itself is given; this list is read from the connector's own tool table, so it cannot drift from it.</p>
   <div id="tool-list" class="hp-list"><p class="hp-wait">Loading…</p></div>
 </section>
 
@@ -297,7 +297,7 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
   <h2 class="hp-title" id="h-assets">Assets and links <b>pages to pass on</b></h2>
   <div class="hp-prose">
     <p>With <code>publish_asset</code> an agent deposits an HTML page, an image, a video, an audio file or any other file. It shows up in the conversation as a card with Open; only your devices and agents can open it. Someone outside needs a link (<code>share_asset</code>, or Share on the asset's card): <code>app.trommi.com/a/&lt;share&gt;#&lt;secret&gt;</code>, which opens without joining until it expires or is taken back (<code>revoke_asset</code> ends the asset and its links at once).</p>
-    <p><strong>How it is encrypted.</strong> The channel process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside your account, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
+    <p><strong>How it is encrypted.</strong> The connector process makes a fresh random key for each file and encrypts it before anything leaves for the hub. Inside your account, that key travels sealed in an envelope. In an outside link it is the part after the <code>#</code>, which a browser never sends to a server; the hub only checks a hash of the link's secret and hands out ciphertext.</p>
   </div>
   <div class="hp-facts">
     <div><dt>Stored on the hub</dt><dd>Ciphertext of the file, its size, the time, the device that uploaded it; for a link, a hash of its secret and when it ends</dd></div>
@@ -313,8 +313,8 @@ kbd { display: inline-block; min-width: 1.6em; padding: 1px 6px; border: 1px sol
 </main>
 <script type="module">
 // The help page: the key list from the app's own key table (ui.mjs SHORT), the key beside each way, and the
-// part "For agents": the picture of the channel and the reference of tools and events, read from the channel's own
-// tables (connector/channel-tools.mjs, copied into gen/vendor/ by dev/build.mjs), so it cannot drift from them.
+// part "For agents": the picture of the connector and the reference of tools and events, read from the connector's own
+// tables (connector/tools.mjs and prompt.md, written to gen/vendor/tools-reference.mjs by dev/build.mjs), so it cannot drift from them.
 import { SHORT, capOf } from '/ui.mjs'
 
 const $ = id => document.getElementById(id)
@@ -352,7 +352,7 @@ addEventListener('keydown', e => {
 
 const LANES = [
   { name: 'Claude Code', sub: 'the session: model and terminal' },
-  { name: 'Channel', sub: 'connector/channel.mjs, its own device keys' },
+  { name: 'Connector', sub: 'connector/connector.mjs, its own device keys' },
   { name: 'Hub', sub: 'stores sealed envelopes, reads none' },
   { name: 'Trommi app', short: 'App', sub: 'you: opens them on your device', human: true },
 ]
@@ -365,7 +365,7 @@ const BANDS = [
     [hop(3, 2, 'POST envelopes', '~Allow or Deny, signed'), hop(2, 1, 'GET stream'),
       hop(1, 0, 'notifications/claude/channel/', 'permission', 'request_id, behavior')],
   ] },
-  { title: 'Claude Code → channel', rows: [
+  { title: 'Claude Code → connector', rows: [
     [hop(1, 2, 'POST requests', '~once, by hand in its folder:', '~curl …/connect | sh -s <link>'), hop(2, 3, 'GET stream', '~you add it to a session')],
     [hop(0, 1, 'notifications/claude/channel/', 'permission_request', 'request_id, tool_name,', 'description, input_preview'), hop(1, 2, 'POST envelopes'),
       hop(2, 3, 'GET stream', '~a card: Allow or Deny')],
@@ -373,7 +373,7 @@ const BANDS = [
   { title: 'Agent → you', rows: [
     [hop(0, 1, 'tools/call', '~every tool: reply, create_decision,', '~set_status, list_cards …'), hop(1, 2, 'POST envelopes', '~sealed here, on its machine'),
       hop(2, 3, 'GET stream', '~only the change, decrypted here')],
-    [hop(0, 1, 'tools/call publish_asset', '~encrypted here, in the channel'), hop(1, 2, 'PUT attachments', '~ciphertext only'),
+    [hop(0, 1, 'tools/call publish_asset', '~encrypted here, in the connector'), hop(1, 2, 'PUT attachments', '~ciphertext only'),
       hop(2, 3, 'GET attachments', '~the key comes sealed in an envelope')],
   ] },
 ]
@@ -387,7 +387,7 @@ function drawDiagram(narrow) {
   const width = narrow ? 380 : 1180
   const xs = narrow ? [46, 142, 238, 334] : [130, 437, 743, 1050]
   const box = narrow ? { w: 88, h: 30 } : { w: 236, h: 54 }
-  const root = svg('svg', { class: `dg ${narrow ? 'is-narrow' : 'is-wide'}`, role: 'img', 'aria-label': 'What travels between Claude Code, the channel, the hub and the app, in both directions' })
+  const root = svg('svg', { class: `dg ${narrow ? 'is-narrow' : 'is-wide'}`, role: 'img', 'aria-label': 'What travels between Claude Code, the connector, the hub and the app, in both directions' })
   const defs = root.appendChild(svg('defs'))
   for (const way of ['to-agent', 'to-human']) {
     const marker = defs.appendChild(svg('marker', { id: `dg-${way}-${width}`, viewBox: '0 0 10 10', refX: 9, refY: 5, markerWidth: 6.5, markerHeight: 6.5, orient: 'auto' }))
@@ -443,7 +443,7 @@ function drawDiagram(narrow) {
   y = end + 14
   root.append(svg('line', { x1: 0, y1: y, x2: width, y2: y, class: 'dg-rule' }))
   y += 18
-  root.append(svg('text', { x: 0, y, class: 'dg-band' }, 'Never crosses the channel'))
+  root.append(svg('text', { x: 0, y, class: 'dg-band' }, 'Never crosses the connector'))
   y += 12
   const never = root.appendChild(svg('g', { class: 'dg-never' }))
   const lost = { x: narrow ? 1 : xs[0] - box.w / 2, w: narrow ? 172 : box.w, h: NEVER.length * 17 + 16 }
@@ -523,16 +523,15 @@ function eventEntry(event) {
 }
 
 try {
-  globalThis.process ??= { env: {} } // channel-tools.mjs reads one Node setting (richhtml.mjs HTML_MAX); none here
-  const ref = await import('/gen/vendor/channel-tools.mjs')
+  const ref = await import('/gen/vendor/tools-reference.mjs')
   $('tool-list').replaceChildren(...ref.TOOLS.map(t => toolEntry(t, ref.TOOL_EXAMPLES ?? {})))
-  $('event-list').replaceChildren(...ref.CHANNEL_EVENTS?.map(eventEntry) ?? [el('p', 'hp-wait', 'The list of events comes with the next channel release.')])
+  $('event-list').replaceChildren(...ref.EVENTS.map(eventEntry))
   $('tool-count').textContent = `${ref.TOOLS.length} tools`
   $('asset-life').textContent = `Deleted ${ref.RETENTION_DAYS} days after its card is answered or closed; an outside link lasts at most ${ref.RETENTION_DAYS} days. Up to ${ref.MAX_ASSET / 1024 / 1024} MB each.`
   // The page may have been opened at an entry that was not drawn yet.
   if (location.hash.startsWith('#tool-')) $(location.hash.slice(1))?.scrollIntoView()
 } catch {
-  for (const id of ['tool-list', 'event-list']) $(id)?.replaceChildren(el('p', 'hp-wait', 'The reference could not be read. The agent still sees every tool; ask it with list_cards or look at connector/channel-tools.mjs.'))
+  for (const id of ['tool-list', 'event-list']) $(id)?.replaceChildren(el('p', 'hp-wait', 'The reference could not be read. The agent still sees every tool; ask it with list_cards or look at connector/prompt.md.'))
 }
 </script>
 </body>

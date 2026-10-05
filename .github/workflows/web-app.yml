@@ -1,12 +1,14 @@
 # Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, shared/*,
-# connector/*); its build step (app/web/dev/build.mjs) generates public/gen/, sw.js and the preloads. This job waits
-# until https://app.trommi.com serves this commit (gen/build.txt), so the "web-app" environment shows which is live.
+# connector/*, package.json, package-lock.json); its build step (app/web/dev/build.mjs) generates public/gen/ (with the
+# connector bundle, its checksum and the plugin, after npm ci at the repository root), sw.js and the preloads. This job
+# waits until https://app.trommi.com serves this commit (gen/build.txt), so the "web-app" environment shows which is
+# live, and checks that the connector it serves matches the checksum it serves.
 name: Web app deploy
 
 on:
   push:
     branches: [main]
-    paths: ['app/web/**', 'shared/**', 'connector/channel-tools.mjs', 'connector/richhtml.mjs', '.github/workflows/web-app.yml']
+    paths: ['app/web/**', 'shared/**', 'connector/**', 'package.json', 'package-lock.json', '.github/workflows/web-app.yml']
   workflow_dispatch:
 
 concurrency:
@@ -34,10 +36,25 @@ jobs:
             sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sed -n 's/^const VERSION = "\([^"]*\)".*/\1/p' || true)
             echo "attempt $i: build.txt commit ${got:-none}, sw.js version ${sw:-none}"
             if [ "$got" = "$want" ]; then
-              [ -n "$sw" ] && [ "$sw" != "dev" ] && exit 0
+              [ -n "$sw" ] && [ "$sw" != "dev" ] && break
               echo "::error::app.trommi.com serves this commit with an unbuilt sw.js (VERSION dev)"; exit 1
+            fi
+            if [ "$i" = 60 ]; then
+              echo "app.trommi.com did not serve this commit within 10 minutes (check the Cloudflare build of trommi-app)"
+              exit 1
             fi
             sleep 10
           done
-          echo "app.trommi.com did not serve this commit within 10 minutes (check the Cloudflare build of trommi-app)"
-          exit 1
+
+      # The connect script and the plugin install what these two addresses serve: both must be there (200) and agree.
+      - name: The connector is served and matches its checksum
+        run: |
+          curl -fsS --max-time 30 -o connector.mjs "https://app.trommi.com/connector.mjs?ci=${{ github.run_id }}"
+          want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector.mjs.sha256?ci=${{ github.run_id }}" | cut -d ' ' -f 1 | tr -d '\r\n')
+          got=$(sha256sum connector.mjs | cut -d ' ' -f 1)
+          echo "connector.mjs sha256 $got, connector.mjs.sha256 says $want"
+          [ -n "$want" ] && [ "$got" = "$want" ] || { echo "::error::app.trommi.com/connector.mjs does not match connector.mjs.sha256"; exit 1; }
+          zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?ci=${{ github.run_id }}" | sed -n 's/.*"url": "\([^"]*\)".*/\1/p')
+          echo "plugin archive $zip"
+          case "$zip" in *"/trommi-$(echo "$got" | cut -c1-12).zip") ;; *) echo "::error::the marketplace does not name the plugin of this connector"; exit 1 ;; esac
+          curl -fsS --max-time 30 -o /dev/null "$zip"

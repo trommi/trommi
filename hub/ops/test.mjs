@@ -126,7 +126,7 @@ const aid = i => i.toString(16).padStart(32, '0')
 test('versions: semver, the public version answer, 426 for an old client on every route, missing header allowed, unknown protocol refused', async () => {
   assert.equal(compareVersions('1.2.0', '1.10.0'), -1)
   assert.equal(compareVersions('2.0.0-beta.1', '2.0.0'), 0)
-  assert.deepEqual(parseClient('channel/0.3.1'), { kind: 'channel', version: '0.3.1' })
+  assert.deepEqual(parseClient('connector/0.3.1'), { kind: 'connector', version: '0.3.1' })
   assert.equal(parseClient('evil/1.0.0'), null)
   const w = await newHub({}, { HUB_UPGRADE_MESSAGE: 'Bitte neu laden.' })
   const v = (await expect(w, 'GET', '/v1/version', {}, 200)).json
@@ -137,7 +137,7 @@ test('versions: semver, the public version answer, 426 for an old client on ever
     assert.deepEqual(r.json, { error: 'client-too-old', message: 'Bitte neu laden.', minimum_version: '1.2.0' })
   }
   await expect(w, 'GET', '/healthz', { headers: { 'trommi-client': 'app/1.2.0' } }, 200)
-  await expect(w, 'GET', '/healthz', { headers: { 'trommi-client': 'channel/0.0.1' } }, 200)    // no minimum for channel
+  await expect(w, 'GET', '/healthz', { headers: { 'trommi-client': 'connector/0.0.1' } }, 200)    // no minimum for connector
   await expect(w, 'GET', '/healthz', {}, 200)
   const r = await expect(w, 'GET', '/healthz', { headers: { 'trommi-protocol': '2' } }, 400, 'bad-version')
   assert.match(r.json.message, /protocol 1/)
