@@ -1287,6 +1287,70 @@ await test('fuzz undetected-tampering: a resync keeps the alerts the device rais
   assert(phone.model.alerts.some(a => a.code === 'bad-signature'), 'the alert survives the resync')
 })
 
+await test('fuzz H1 / F2 (trace smuv697gt-w1-0): a device that reads the room again (resync) still shows a handed-back card in revision', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  const id = await agent.sendCard({ card_type: 'info', title: 'for your information' })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id), 'card on the phone')
+  await phone.sendMessage({ object_id: id, text: 'what does this mean?', hand_back: true })
+  await settleAll(phone)
+  const late = await addHuman(phone, 'Late')
+  await until(() => late.model.cards.get(id)?.in_revision?.by === 'hand_back', 'the late device settled it from the conversation')
+  await late.serial(() => late._resync())                  // what a gap (a hub that reordered or withheld) leads to
+  await late.settle({ timeout_ms: 10_000 })
+  eq(late.model.cards.get(id).in_revision?.by, 'hand_back', 'still in revision after the resync')
+  eq(phone.model.cards.get(id).in_revision?.by, 'hand_back', 'as on the device that was live')
+})
+
+await test('fuzz F2 (trace smuv7jdxv-w2-8): a hand-back the stream replays as a header after a reconnect puts the card in revision on that device too', async () => {
+  const { phone, laptop, agents: [agent] } = await room({ laptop: true, agents: 1 })
+  const id = await agent.sendCard({ title: 'Export?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  await settleAll(agent)
+  await until(() => phone.model.cards.get(id) && laptop.model.cards.get(id), 'card everywhere')
+  laptop._stream.close(); laptop._stream = null            // the laptop is not connected for a moment
+  await phone.sendMessage({ object_id: id, text: 'what is B?', explain: true })
+  await settleAll(phone)
+  // the stream opens again: the hub replays from the cursor in the form of GET envelopes (a conversation item as a header)
+  const r = await laptop.hub.envelopes({ after_envelope_number: laptop.model.room.last_envelope_number, limit: 100 })
+  for (const e of r.envelopes) await laptop._onStreamEvent({ event: 'envelope', data: e })
+  await laptop.settle({ timeout_ms: 10_000 })
+  eq(laptop.model.cards.get(id).in_revision?.by, 'explain', 'in revision on the laptop')
+  eq(phone.model.cards.get(id).in_revision?.by, 'explain', 'as on the phone')
+})
+
+await test('fuzz undetected-tampering (trace smuv6ie9h-w1-4): an envelope whose member list entry number was altered on the way is held back with an alert, and read once the hub is honest', async () => {
+  const { phone, agents: [agent] } = await room({ agents: 1 })
+  await settleAll(phone, agent)
+  const cmds = []
+  agent.on('command', c => cmds.push(c.content?.text))
+  agent._stream.close(); agent._stream = null
+  const real = agent.hub.envelopes.bind(agent.hub)
+  let flip = null
+  // the bit flip that turns the entry number the sender names into a later one (the header is read before any signature)
+  const raise = bytes => {
+    const was = z.peekEnvelope(bytes).header.logSeq
+    for (let i = 0; i < bytes.length; i++) {
+      const u = bytes.slice(); u[i] ^= 0x10
+      let h = null; try { h = z.peekEnvelope(u).header } catch {}
+      if (h && h.logSeq > was && h.seq === z.peekEnvelope(bytes).header.seq) return u
+    }
+    throw new Error('no byte of the header raises logSeq')
+  }
+  agent.hub.envelopes = async q => { const r = await real(q); return { ...r, envelopes: r.envelopes.map(e => (e.envelope_number === flip ? { ...e, envelope: z.b64u(raise(z.unb64u(e.envelope))) } : e)) } }
+  await phone.sendMessage({ agent_device_id: agent.my_device_id, text: 'entry number altered' })
+  await settleAll(phone)
+  flip = phone.model.room.last_envelope_number
+  const before = agent.model.room.last_envelope_number
+  await agent.catchUp()
+  await agent.catchUp()
+  assert(!cmds.includes('entry number altered'), 'not applied while altered')
+  eq(agent.model.room.last_envelope_number, before, 'and not skipped')
+  eq(agent.model.alerts.filter(a => a.code === 'log-behind').map(a => a.envelope_number), [flip], 'the device says so, once')
+  flip = null
+  await agent.catchUp()
+  await until(() => cmds.includes('entry number altered'), 'the honest copy is applied')
+})
+
 if (z.KEY_SCOPE) await test('agent child session: the agent opens one without approval; the human sees it under the parent; another agent cannot read it; it survives a restart', async () => {
   const dir = path.join(scratch, 'agent-child')
   const { phone, agents: [bot] } = await room({ laptop: true, agents: 1 })

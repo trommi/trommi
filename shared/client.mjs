@@ -570,7 +570,9 @@ export class Client {
   async _resolveRevisions() {
     if (!this.is_human) return
     const change = M.emptyChange()
-    for (const card of this.model.cards.values()) {
+    const model = this.model
+    for (const card of model.cards.values()) {
+      if (this.model !== model) return                   // a resync built the model anew meanwhile: it settles the new one
       if (card.object_state !== 'open') continue
       const t = this.model.timelines.get(card.timeline_key)
       if (!t) continue
@@ -589,6 +591,7 @@ export class Client {
         const got = await this._readTimeline(card.timeline_key, { before: this.model.room.last_envelope_number + 1, limit: 20 })
         if (newest() === at) items = got
       }
+      if (this.model !== model) return
       if (!items || card.object_state !== 'open') continue
       checked.set(card.object_id, mark)
       // newest wins: a human's hand_back / explain puts the card in revision, the agent's present_card takes it back.
@@ -729,7 +732,7 @@ export class Client {
       const commands = []                // agents: commands in order
       let t0 = performance.now(), tStart = t0
       const todo = records.filter(r => r.envelope_number > this.model.room.last_envelope_number)
-      let holes = false
+      let holes = false, headerItem = false
       const WINDOW = 64
       let window = [], wAt = 0
       for (let i = 0; i < todo.length; i++) {
@@ -756,6 +759,7 @@ export class Client {
             const cmd = this.model.room.my_role === 'agent' ? this._preAuthorise(rec) : null
             const result = M.applyRecord(this.model, rec, change)
             if (rec.kind === codec.KIND.timeline_item && result.applied !== false) tl.push(rec)   // F7: a refused item is not kept for the window
+            if (rec.kind === codec.KIND.timeline_item && result.applied !== false && !rec.content) headerItem = true
             if (cmd) commands.push({ ...cmd, applied: result.applied, refused: cmd.refused ?? (rec.is_head && !result.applied ? result.refused : null) })
           }
         } catch (e) {
@@ -764,7 +768,14 @@ export class Client {
           // record: stop here without moving the cursor past it, and read on from it a little later.
           // H1: the same for an envelope naming a member list entry the hub still does not show after a refresh (only a
           // hub serving a stale member list does that): read on once it does, never skip the envelope.
+          // An honest hub accepted the envelope only with that entry in its list, so after the refresh this is the hub's
+          // doing (a stale member list, or the entry number altered on the way: it is read before the signature can be
+          // checked): the device says so, once per envelope, however often it reads it again.
           if (isTransient(e) || e.code === 'log-behind') {
+            if (e.code === 'log-behind' && this._behindAlerted !== r.envelope_number) {
+              this._behindAlerted = r.envelope_number
+              M.pushAlert(this.model, change, { code: 'log-behind', message: `envelope ${r.envelope_number} names a member list entry the hub does not show (${e.message}): held back and read again`, envelope_number: r.envelope_number })
+            }
             this._scheduleCatchUp(e.code === 'log-behind' ? 5000 : 1500)
             break
           }
@@ -789,6 +800,9 @@ export class Client {
       if (!this.is_human) this._reassertRefused?.()      // F15, also when the commands were held back
       this._checkMissedEchoes()
       if (holes) this._gapSeen()
+      // F2: the stream replays what a device missed while it was not connected as GET envelopes does, conversations as
+      // headers: a hand-back among them is settled from the conversation, as after a catch-up (settle() waits).
+      if (live && headerItem && this.is_human && !this._resyncing) this._revisions = (this._revisions ?? Promise.resolve()).then(() => this._resolveRevisions()).catch(e => this._localAlert('revisions', e))
       if (live) this._maybeSnapshot()
     }
   }
@@ -874,6 +888,10 @@ export class Client {
     await this.flush()
     this.stats.resyncs = (this.stats.resyncs ?? 0) + 1
     this._emitChange(ch)
+    // F2: the replay read the conversations as headers again, so the rebuilt cards carry no 'in revision': settle it from
+    // the conversations anew (what was checked before the resync says nothing about the new model; settle() waits).
+    this._revChecked = new Map()
+    if (this.is_human) this._revisions = this._resolveRevisions().catch(e => this._localAlert('revisions', e))
   }
 
   /**

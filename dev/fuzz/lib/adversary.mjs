@@ -74,8 +74,10 @@ export function install(dev, attack) {
             const m = /^event: envelope\ndata: (.*)$/m.exec(block)
             if (m) {
               let d; try { d = JSON.parse(m[1]) } catch { ctl.enqueue(enc.encode(block + '\n\n')); continue }
-              const kept = rewrite(attack, dev, [{ envelope_number: d.envelope_number, envelope: d.envelope }], state)
-              for (const k of kept) ctl.enqueue(enc.encode(`id: ${k.envelope_number}\nevent: envelope\ndata: ${JSON.stringify({ envelope_number: k.envelope_number, envelope: k.envelope })}\n\n`))
+              // the record as the hub wrote it (a void record keeps its flag, as on GET envelopes): dropping the flag is an
+              // attack of its own with a known, accepted outcome (FINDINGS H2) and no part of the attacks named above
+              const kept = rewrite(attack, dev, [d], state)
+              for (const k of kept) ctl.enqueue(enc.encode(`id: ${k.envelope_number}\nevent: envelope\ndata: ${JSON.stringify(k)}\n\n`))
             } else ctl.enqueue(enc.encode(block + '\n\n'))
           }
         },
