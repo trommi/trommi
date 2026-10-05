@@ -1,7 +1,7 @@
 // Performance of the app in the very big mock room (?mock=crazy: 32 sessions, 5,300 cards, 300 open, 50,000
 // messages), desktop and 4x CPU-throttled phone. Prints p50/p95 per interaction, long tasks, heap.
 //   node dev/perf.mjs [--app http://127.0.0.1:8900] [--runs 5] [--mock crazy]
-import { launchChromium } from './cdp.mjs'
+import { launchChromium } from '../../../dev/cdp.mjs'
 
 const arg = (n, f) => { const i = process.argv.indexOf(n); return i > 0 ? process.argv[i + 1] : f }
 const APP = arg('--app', 'http://127.0.0.1:8900'), RUNS = Number(arg('--runs', 5)), MOCK = arg('--mock', 'crazy')

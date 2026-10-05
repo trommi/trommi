@@ -155,7 +155,7 @@ The core owns the schema (trommi-hub `core/README.md`, "Storage adapter"): datab
 
 ## Performance (measured 4 Oct 2026)
 
-Headless Chromium; "phone" = 390x844 with the CPU 4x slower. Scripts: `dev/perf.mjs` (mock rooms), `dev/e2e.mjs` (real hub), trommi-hub `dev/e2e/app-perf.mjs` (the crazy room on a real hub).
+Headless Chromium; "phone" = 390x844 with the CPU 4x slower. Scripts: `dev/perf.mjs` (mock rooms), `dev/e2e.mjs` (real hub), trommi-hub `dev/load/app-perf.mjs` (the crazy room on a real hub).
 
 | What | Desktop | Phone 4x |
 | --- | --- | --- |

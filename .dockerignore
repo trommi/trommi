@@ -2,8 +2,5 @@ data
 node_modules
 app
 connector
-fuzz
-docs
-assets
 dev
 **/.git

@@ -10,7 +10,7 @@
 //    with Retry and Log out of this device; Log out leads to Log in.
 // 4. /login on a logged-in device offers "Log out of this device first" (another account), never a dead end.
 // Exits 1 on a failure. WebKit itself: see the commit (the same flow passed in WebKitGTK 2.52).
-import { launchChromium } from './cdp.mjs'
+import { launchChromium } from '../../../dev/cdp.mjs'
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }
 const APP = arg('--app', 'https://app.trommi.com'), HUB = arg('--hub', null)

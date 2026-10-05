@@ -1,13 +1,17 @@
 {
   "name": "trommi",
   "version": "1.0.0",
-  "description": "",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
-  },
-  "keywords": [],
-  "type": "module",
+  "description": "Chat and decision cards between a person and their Claude Code sessions, end-to-end encrypted: app, connector, core and hub",
+  "license": "SEE LICENSE IN LICENSE.md",
   "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "npm run test:app && npm run test:hub && npm run test:core",
+    "test:app": "node app/web/dev/check.mjs",
+    "test:hub": "node core/crypto-test.mjs --no-bench && node core/hub-crypto-test.mjs && node core/session-grants-test.mjs && node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs",
+    "test:core": "node core/test.mjs && node connector/channel-test.mjs && node connector/monitor-test.mjs && node connector/hook-test.mjs && node connector/bundle.mjs --check && node connector/connect-test.mjs",
+    "fuzz": "node dev/fuzz/run.mjs --quick"
+  },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
     "zod": "^4.6.5"

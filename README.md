@@ -13,9 +13,7 @@ envelopes and can read none of them. Formerly "Trommi". License: O'Saasy (`LICEN
 | `app/web/` | the app, static, no framework (`app/web/README.md`); `dev/build.mjs` copies `core/` into `public/vendor/` and bundles the stylesheets | Cloudflare Workers Builds on every push to `main` (watch paths `app/web/*`, `core/*`, `connector/*`) |
 | `connector/` | the agent connector `channel.mjs` (MCP stdio server `trommi`), its tools (`channel-tools.mjs`), bridge, slot lock, hot reload (`reload.mjs`), the single-file bundle (`bundle.mjs` → `app/web/public/gen/connector.mjs`), tests | runs on the agent's machine from this checkout, or as one file installed by `curl -fsSL https://app.trommi.com/connect \| sh -s '<link>'` |
 | `hub/` | the hub server (`server.mjs`, `store.mjs`, `accounts.mjs`, `ops/`, `Dockerfile`) | GitHub Action "Hub deploy" on every push to `main` touching `hub/**` or the hub's three `core/` files |
-| `fuzz/` | model-based fuzzing of hub and clients (`fuzz/README.md`); the quick run blocks the hub deploy | |
-| `dev/` | `cdp.mjs` (headless Chromium), `e2e/` (load generator with real members) | |
-| `assets/` | brand sources (logo, bell marks, fonts, palette, icons) | |
+| `dev/` | everything not shipped: `fuzz/` (model-based fuzzing of hub and clients, `dev/fuzz/README.md`; the quick run blocks the hub deploy), `load/` (load generator and perf tools with real members), `cdp.mjs` (headless Chromium, also used by the app's dev tools) | |
 
 The old board (plaintext server `server/`, Turbo and SPA clients `client/web/`, the iOS and Linux clients, their tools
 and docs) was removed on 4 October 2026; its history is in git and in
@@ -24,10 +22,8 @@ and docs) was removed on 4 October 2026; its history is in git and in
 ## Tests
 
 ```bash
-node core/crypto-test.mjs --no-bench && node core/hub-crypto-test.mjs && node core/session-grants-test.mjs
-node hub/test.mjs && node hub/ops/test.mjs && node hub/accounts-test.mjs && node hub/admin-test.mjs
-node core/test.mjs && node connector/channel-test.mjs
-node fuzz/run.mjs --quick
+npm test        # test:app (layout check), test:hub (crypto, hub), test:core (core, connector); lists in package.json, CI runs the same
+npm run fuzz    # node dev/fuzz/run.mjs --quick
 (cd app/web && node dev/serve.mjs 8900)     # the app as deployed (build in memory); e2e: app/web/README.md
 (cd app/web && node dev/serve.mjs 8901 --preview) && tailscale serve --bg --https=8443 http://127.0.0.1:8901
                                             # design preview: the working tree at https://desktop.TAILNET.ts.net:8443
@@ -490,7 +486,7 @@ All additive: a client that knows none of this still has `body`, `options`, `rec
 
 ### Performance
 
-Measured on 4 October 2026 with real E2E members (`dev/e2e/`). "local" is the real hub code on the PC with server metrics. "live" is hub.trommi.com measured from outside: its metrics port and test key are not enabled yet.
+Measured on 4 October 2026 with real E2E members (`dev/load/`). "local" is the real hub code on the PC with server metrics. "live" is hub.trommi.com measured from outside: its metrics port and test key are not enabled yet.
 
 | What | Number |
 | --- | --- |

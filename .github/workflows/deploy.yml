@@ -41,17 +41,11 @@ jobs:
           node-version: 26
 
       - name: Test crypto and hub
-        run: |
-          node core/crypto-test.mjs --no-bench
-          node core/hub-crypto-test.mjs
-          node hub/test.mjs
-          node hub/ops/test.mjs
-          node hub/accounts-test.mjs
-          node hub/admin-test.mjs
+        run: npm run test:hub
 
-      # Blocks the deploy on any fuzz failure not listed in fuzz/known-open.json (fuzz/FINDINGS.md).
+      # Blocks the deploy on any fuzz failure not listed in dev/fuzz/known-open.json (dev/fuzz/FINDINGS.md).
       - name: Fuzz (quick)
-        run: node fuzz/run.mjs --quick
+        run: npm run fuzz
 
       # PREVIEW_ORIGINS: the design preview served from the developer desktop over tailscale serve (tailnet only),
       # which talks to this hub; the repository variable HUB_PREVIEW_ORIGINS (comma list) replaces the default.
