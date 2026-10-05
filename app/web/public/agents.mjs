@@ -222,8 +222,6 @@ export function register(t) {
       if (form.has('label')) { const label = form.get('label').trim(); body.label = label === m.byAgent.get(id)?.given ? '' : label }
       if (form.has('icon')) body.icon = form.get('icon')
       if (form.has('desk')) body.desk = form.get('desk')
-      // (a main that moves takes its subs along: each a register of its own, so they stand on the new desk too)
-      if (form.has('desk') && form.has('moved')) return (async () => { for (const sub of m.units.find(u => u.id === id)?.subs ?? []) await hub.editSession({ agent: sub.id, desk: body.desk }); return hub.editSession(body) })()
       if (form.has('parent')) body.parent = form.get('parent') || null
       if (form.has('archived')) body.archived = form.get('archived') === '1'
       return hub.editSession(body)

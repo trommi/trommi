@@ -289,7 +289,7 @@ function filler(f) {
   // (one note in the sidebar: the demo keeps the newest of its notes)
   { const kept = (f.notes ?? []).filter(m => m.place === 'stack').sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))[0]; if (kept) f.notes = f.notes.filter(m => m.place !== 'stack' || m === kept) }
   for (const d of Object.values(f.human?.desks ?? {})) if (d.name === 'Desk') d.name = 'Web App 3'
-  // (two knocks and one blocking card in the test room, his word: the migration waits calmly)
+  // (two knocks and one blocking card on the first desk: the board on the phone, the parallel tests; the migration blocks)
   // Teasers: what the agent says on the Desk in two lines (the card's own field, core FIELDS.card.teaser).
   const TEASE = {
     'Produktion steht: jetzt zurückrollen?': 'Seit 12:04 gibt die API 502 zurück. Zurückrollen dauert zwei Minuten, der alte Build ist noch warm.',
@@ -300,7 +300,6 @@ function filler(f) {
     'Was baue ich als Nächstes?': 'Drei Wege liegen bereit: Suche, Teilen, oder die Handy-Ansicht fertig machen.',
   }
   for (const c of f.cards) if (TEASE[c.title]) { c.teaser = TEASE[c.title]; for (const v of c.versions ?? []) if (v.content) v.content.teaser = TEASE[c.title] }
-  for (const c of f.cards) if (c.title?.startsWith('Migration auf der Produktions-Datenbank')) { c.urgency = 'normal'; for (const v of c.versions ?? []) v.urgency = 'normal' }
   let env = 9500
   const pic = name => ({ attachment_id: hex(32), file_key: '', sha256: '', file_name: name, media_type: name.endsWith('.webm') ? 'video/webm' : 'image/png', total_size: 0, url: `/demo/files/${name}` })
   const YN = [{ key: 'ja', label: 'Ja', detail: '' }, { key: 'nein', label: 'Nein', detail: '' }]
@@ -313,7 +312,7 @@ function filler(f) {
     return card
   }
   mk('Kaffee vor dem nächsten Deploy?', zu, 3, { recommended: 'ja', teaser: 'Der Deploy dauert zwölf Minuten. Genug Zeit für einen Espresso.' })
-  mk('Darf ich die Tests parallel laufen lassen?', zu, 7, { body: 'Halbiert die Laufzeit, braucht aber doppelt so viel Speicher.', recommended: 'ja' })
+  mk('Darf ich die Tests parallel laufen lassen?', zu, 7, { body: 'Halbiert die Laufzeit, braucht aber doppelt so viel Speicher.', recommended: 'ja', urgency: 'high' })
   mk('Dunkles Theme als Standard?', ui, 9, { files: ['thema-dunkel.png', 'thema-hell.png'] })
   mk('Runde Ecken an den Knöpfen?', ui, 12, { recommended: 'nein', teaser: 'Eckig passt besser zum Papier-Look. Ich würde es lassen.' })
   mk('Emoji in Commit-Nachrichten erlauben?', docs, 15, { teaser: 'Zwei Helfer schreiben schon welche. Einheitlich wäre schöner.' })

@@ -179,9 +179,7 @@ function sidebarParts(model, base, current = null) {
  *  waits on it (open questions of this desk's sessions), dark when it is clear. No count and no hand beside it (his word,
  *  4 October): what waits is on the Desk, a stopped session shows its hand in its own row. */
 function deskLamp(model) {
-  const desks = model.state.desks?.length ? model.state.desks : [{ id: DEFAULT_DESK }]
-  const here = c => { const d = model.byAgent.get(c.agent)?.desk; return (desks.some(x => x.id === d) ? d : desks[0].id) === (model.desk ?? desks[0].id) }
-  return deskMark(model.fresh.some(here))   // (a knock of another desk stands on this one too, but lights its own lamp)
+  return deskMark(model.fresh.length > 0)   // (model.fresh: the open questions of the sessions on this desk)
 }
 
 const $ = (sel, root = document) => root.querySelector(sel)

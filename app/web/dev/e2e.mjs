@@ -294,6 +294,20 @@ try {
   await A.js("trommi.router.visit('/')")
   await A.until(`document.getElementById('row-${pile.snooze}')`, 'woken up', 15000).then(() => check(true, 'woken up from its card, back on the Desk'), e => check(false, e.message))
   await A.shot('e2e-pile.png')
+  // ---- a session that moves to another desk takes its cards along: nothing of it stays on the old desk (open rows,
+  //      infos, with the agents, Off the desk, Media, the menu's count), and all of it is back after the move back ----
+  {
+    const home = await A.js("return trommi.model().desk ?? 'main'")
+    const made = await A.js("const r = await fetch('/desk', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Zweiter Desk' }) }); return (await r.json()).desk?.id")
+    await A.js("trommi.router.visit('/')")
+    const count = `(() => { const m = trommi.model(), of = l => l.filter(c => c.agent === '${sid}' || m.byAgent.get(c.agent)?.parent === '${sid}').length; return of(m.fresh) + of(m.reads) + of(m.revising) + of(m.snoozed) + of(m.done) })()`
+    const before = await A.js(`return ${count}`)
+    const move = to => A.js(`await fetch('/sessions/${sid}/edit', { method: 'POST', headers: { Accept: 'text/vnd.turbo-stream.html' }, body: new URLSearchParams({ stay: '1', moved: '1', desk: '${'${to}'}' }) })`.replace('${to}', to))
+    await move(made)
+    await A.until(`${count} === 0 && !document.querySelector('#agents [data-unit="${sid}"]') && !document.querySelector('#desk-list .inbox-row[data-from="${sid}"]') && !document.querySelector('#desk-stacks .off-line')`, 'the moved session and its cards left this desk', 10000).then(() => check(before > 0, `a session moved to another desk takes its cards along (${before} cards)`), e => check(false, e.message))
+    await move(home)
+    await A.until(`${count} === ${before}`, 'the cards are back with the session', 10000).then(() => check(true, 'moved back: its cards are on this desk again'), e => check(false, e.message))
+  }
   // ---- the Whiteboard: the Desk has no paper; the drawing is a place of its own in the sidebar, on the desk's canvas
   //      timeline (desk/<32 hex>, js/views/whiteboard.mjs deskCanvas) ----
   await A.js("trommi.router.visit('/')")

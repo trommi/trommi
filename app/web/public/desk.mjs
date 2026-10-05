@@ -153,10 +153,9 @@ function stackOf(card, { now = Date.now(), online = () => true } = {}) {
 
 /** The four places with their cards, the newest first: { later, revising, acting, done, trash }. */
 function stackCards(model) {
-  const { state, desks, desk, byAgent } = model
-  // (The desk in view: the model's rule. A card of a session of another desk lies on that desk's stacks.)
-  const deskOf = a => (desks.some(d => d.id === a?.desk) ? a.desk : desks[0].id)
-  const mine = c => !desks.length || deskOf(byAgent.get(c.agent)) === desk
+  const { state, byAgent } = model
+  // (A card lies where its session stands now: the model's rule, app.mjs boardModel.)
+  const mine = c => model.onDesk(byAgent.get(c.agent))
   const newest = (cards, at) => [...cards].sort((a, b) => (at(b) ?? 0) - (at(a) ?? 0))
   const closed = state.cards.filter(c => c.status !== 'open' && mine(c))
   const ctx = { now: Date.now(), online: id => Boolean(byAgent.get(id)?.online) }
