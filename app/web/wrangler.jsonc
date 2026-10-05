@@ -3,7 +3,9 @@
   "name": "trommi-app",
   "main": "worker.js",
   "compatibility_date": "2026-10-01",
-  // The build step (dev/build.mjs): the stylesheets into one bundle. It writes only in Cloudflare's build (WORKERS_CI=1).
+  // The build step (dev/build.mjs): everything in public/gen/, sw.js and the preloads; the connector bundle and the
+  // plugin too, for which it runs npm ci at the repository root first. It installs and writes only in Cloudflare's
+  // build (WORKERS_CI=1).
   "build": { "command": "node dev/build.mjs" },
   // The app is static: every navigation that is not a file gets index.html (the app routes in the page).
   // The worker runs first only to send http to https.

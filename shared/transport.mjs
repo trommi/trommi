@@ -36,7 +36,7 @@ export class Hub {
    * (signHubAuth for this room and hub_url), or null for routes without sign-in.
    */
   constructor({ hub_url, room_id = null, signer = null, fetch: f = null, found_token = null, client = null }) {
-    this.client_name = client                   // 'app/1.2.3' | 'channel/0.1.0': sent as Trommi-Client on every request
+    this.client_name = client                   // 'app/1.2.3' | 'connector/0.1.0': sent as Trommi-Client on every request
     this.onTooOld = null
     this.onLeaseLost = null
     this.recoverLease = null                    // agents: async () => true if this process holds the lease again (renewal), false if another does

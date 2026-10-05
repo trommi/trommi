@@ -1,4 +1,4 @@
-# The suites of the hub, the crypto library, the client core and the agent channel; the lists are the scripts in
+# The suites of the hub, the crypto library, the client core and the agent connector; the lists are the scripts in
 # package.json (`npm test` runs all three). Each starts its own hubs on free ports with throwaway data directories.
 # Needs Node with node:sqlite; no browser (the browser tests stay local).
 name: Test
@@ -26,9 +26,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
+          cache: npm
+      - run: npm ci
       # app/web/README.md "Rules": the file set, who imports whom, no crypto outside the core, inline script hashes.
       - run: npm run test:app
-      - run: node app/web/dev/build.mjs
+      # The whole build as Cloudflare runs it, into the checkout: gen/ with the connector bundle and the plugin.
+      - run: node app/web/dev/build.mjs --write
+      - run: test -s app/web/public/gen/connector.mjs && (cd app/web/public/gen && echo "$(cat connector.mjs.sha256)  connector.mjs" | sha256sum -c -) && ls app/web/public/gen/plugins/marketplace.json app/web/public/gen/plugins/trommi-*.zip
 
   hub:
     name: Hub and crypto suite
@@ -52,6 +56,6 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
-      # Includes connector/bundle.mjs --check: app/web/public/gen/connector.mjs (and gen/plugins/) is generated and
-      # committed, it must match the sources.
+      # shared/test.mjs, connector/test.mjs (fast) and connector/test-e2e.mjs (a local hub; its last part builds the
+      # connector bundle and installs it with the connect script).
       - run: npm run test:core

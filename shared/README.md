@@ -1,10 +1,10 @@
 # shared/: the Trommi client library
 
-One plain-ES-module library that every Trommi client uses: the app (`app/web`, copied into `public/vendor/` by its build, `app/web/dev/build.mjs`) and the agent channel (`connector/channel.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
+One plain-ES-module library that every Trommi client uses: the app (`app/web`, copied into `public/vendor/` by its build, `app/web/dev/build.mjs`) and the agent connector (`connector/connector.mjs`). WebCrypto and `fetch` only; runs unchanged in browsers and Node 26. The only client-specific parts are the **storage adapter** (which also keeps the device keys).
 
-The wire contract is the README section "Hub v1: the wire protocol" of this repository. This file is the contract **between the core and its users**: the model the app renders from (stream C) and the API the channel drives (stream D). Names follow the README: snake_case, ids as lowercase hex, times in ms.
+The wire contract is the README section "Hub v1: the wire protocol" of this repository. This file is the contract **between the core and its users**: the model the app renders from (stream C) and the API the connector drives (stream D). Names follow the README: snake_case, ids as lowercase hex, times in ms.
 
-> Status: this document was written first, as the contract. Where the code differs, the code is wrong. Changes to the shape are announced to the app and channel before they land.
+> Status: this document was written first, as the contract. Where the code differs, the code is wrong. Changes to the shape are announced to the app and connector before they land.
 
 ## Files
 
@@ -327,7 +327,7 @@ client.on('session', ({ session_id, with_history }) => …)
 
 When keys arrive for epochs whose envelopes this device already saw unopened (a handover with history, a re-seal after a join), the core replays the room from the start once (`client.stats.resyncs`) so those heads are read.
 
-## Agent API (the channel drives this)
+## Agent API (the connector drives this)
 
 ```js
 const client = await openRoom({ storage })   // or (await joinRoom({ link, device_name, storage })).client

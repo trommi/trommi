@@ -1,10 +1,10 @@
-// versions.mjs: which clients this hub serves. Clients send `Trommi-Client: <app|channel|ios>/<semver>` and
+// versions.mjs: which clients this hub serves. Clients send `Trommi-Client: <app|connector|ios>/<semver>` and
 // `Trommi-Protocol: 1`. A client below the minimum of its kind gets 426 client-too-old on every route, and an
 // open stream of such a client gets `event: upgrade_required` when the minimum is raised at run time.
 import { refuse } from './http.mjs'
 
 export const PROTOCOL_VERSIONS = [1]
-const KINDS = ['app', 'channel', 'ios']
+const KINDS = ['app', 'connector', 'ios']
 const SEMVER = /^(\d{1,6})\.(\d{1,6})\.(\d{1,6})(?:[-+][0-9A-Za-z.-]*)?$/
 
 /** -1, 0, 1 for two "x.y.z" strings (pre-release and build suffixes ignored). */

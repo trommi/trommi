@@ -46,10 +46,9 @@ curl -fsSL "$APP/connector.mjs.sha256" -o "$TMP.sha256" || fail "could not downl
 WANT=$(cut -d ' ' -f 1 < "$TMP.sha256" | tr -d '\r\n')
 GOT=$(sha256 "$TMP")
 [ -n "$WANT" ] && [ "$WANT" = "$GOT" ] || fail "the downloaded connector does not match its checksum; nothing was changed. Try again."
-# The file is named channel.mjs: the connector recognises itself as the program by that name.
-CONNECTOR="$DIR/channel.mjs"
+CONNECTOR="$DIR/connector.mjs"
 mv -f "$TMP" "$CONNECTOR"
-printf '%s  channel.mjs\n' "$GOT" > "$DIR/channel.mjs.sha256"
+printf '%s  connector.mjs\n' "$GOT" > "$DIR/connector.mjs.sha256"
 say "Connector $(printf '%s' "$GOT" | cut -c 1-12) in $DIR"
 
 # ---- 2. the plugin, for this folder ---------------------------------------------------------------------------------

@@ -1,4 +1,4 @@
-// agent.mjs: what an agent's client does (the channel drives it): objects (cards, permission requests, published),
+// agent.mjs: what an agent's client does (the connector drives it): objects (cards, permission requests, published),
 // messages, status registers, and the gate on everything a human sends it (authoriseCommand) before it becomes a
 // `command`. Mixed into Client (see index.mjs). Contract: shared/README.md "Agent API".
 import * as z from './crypto/zcrypto.mjs'
@@ -290,7 +290,7 @@ const agentMethods = {
     }
   },
 
-  /** A human resolved a fork (or the channel decides to go on): deliver commands again, the held ones first. */
+  /** A human resolved a fork (or the connector decides to go on): deliver commands again, the held ones first. */
   resumeCommands() { this.commandsHalted = null; return this.serial(() => this._deliverCommands([])) },
 }
 

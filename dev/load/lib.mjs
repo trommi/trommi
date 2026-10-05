@@ -103,7 +103,7 @@ export async function startLocalHub({ data, metrics, every = 5000, extra = [], d
 // for it, and POST /v1/rooms founds a test room (deleted with a signed DELETE, or after 24 h). The key file never
 // leaves the scratchpad and is never printed.
 export const NET = { fetch: null, key: null, postMs: [] }
-const CLIENT_HEADERS = { 'trommi-client': 'channel/0.9.0-loadgen', 'trommi-protocol': '1' }
+const CLIENT_HEADERS = { 'trommi-client': 'connector/0.9.0-loadgen', 'trommi-protocol': '1' }
 export async function useTestKey(keyPath) {
   if (!keyPath) {   // no test key: only the client headers (the hub counts requests without them)
     NET.fetch = async (url, opts = {}) => {

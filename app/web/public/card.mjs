@@ -892,7 +892,7 @@ controller('circles', class extends Controller {
     Object.assign(this.layer.style, { left: `${img.offsetLeft}px`, top: `${img.offsetTop}px`, width: `${w}px`, height: `${h}px` })
     const nodes = []
     this.marksValue.forEach((given, n) => {
-      // (The client core carries a region as width/height (the channel's ref); the board wrote w/h.)
+      // (The client core carries a region as width/height (the connector's ref); the board wrote w/h.)
       const m = { ...given, w: Number(given.w ?? given.width), h: Number(given.h ?? given.height) }
       if (![m.x, m.y, m.w, m.h].every(Number.isFinite)) return
       const cx = (m.x + m.w / 2) * w, cy = (m.y + m.h / 2) * h

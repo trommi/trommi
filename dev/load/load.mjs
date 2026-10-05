@@ -253,7 +253,7 @@ async function stallPhase() {
   for (let i = 0; i < STALLED; i++) {
     // --stall-from=live (default): listeners that were up to date and then stop reading; zero: each starts a catch-up of the whole room
     const pathq = `${u.pathname}?after_envelope_number=${arg('stall-from', 'live') === 'zero' ? 0 : liveCursor}`
-    const headers = { authorization: tokens[Math.floor(i / perDevice)], accept: 'text/event-stream', 'trommi-client': 'channel/0.9.0-loadgen', 'trommi-protocol': '1' }
+    const headers = { authorization: tokens[Math.floor(i / perDevice)], accept: 'text/event-stream', 'trommi-client': 'connector/0.9.0-loadgen', 'trommi-protocol': '1' }
     if (NET.sign) headers['x-test-signature'] = NET.sign('GET', `${u.origin}${pathq}`)
     const req = lib.request({ host: u.hostname, port: u.port || (u.protocol === 'https:' ? 443 : 80), path: pathq, headers, agent })
     req.on('response', res => { if (res.statusCode === 200) { opened++; res.pause(); res.socket.setNoDelay(true) } else { refused[res.statusCode] = (refused[res.statusCode] ?? 0) + 1; res.resume() } })
