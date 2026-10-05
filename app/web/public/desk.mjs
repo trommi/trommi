@@ -1,8 +1,8 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, crownOf, stream } from './app.mjs'
-import { Controller, LATER_TAG, PLUS, WORDS, act, curlHTML, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg, smallMark } from './ui.mjs'
+import { BASE, stream } from './app.mjs'
+import { Controller, LATER_TAG, PLUS, WORDS, curlHTML, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -134,8 +134,6 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 
 const OPEN_MAX = 200   // an open stack (?pile=) or a search shows at most so many; the rest are found by searching
 const STACKS = ['off']
-const STRAIGHT = true    // the tabs without any tilt (desk.css .is-straight); decided "gerade" on card 205
-const STAMPS = { notes: 'Notes', later: 'Snooze', works: 'Working', done: 'Done', trash: 'Trash' }   // line 1 of each stack's stamp; line 2 is its sign (desk.css: three Z, gear, tick) and the number
 const cardPath = (card, base) => `${base}/q/${encodeURIComponent(card.number ?? card.id)}`
 const answeredBy = c => (c.kind === 'decision' && (c.choice != null || c.trusted)) || (c.kind === 'info' && Boolean(c.read))
 
@@ -189,15 +187,9 @@ ${items.map(i => html`<a class="ipb-card" data-id="${i.card.id}" data-nav href="
 }
 
 // ---- a line of the pile: one card that left the open rows ----
-// kind: why it lies there: 'later' | 'asked' (in revision) | 'answered' | 'shredded' | 'withdrawn'. g: its place (the sign).
-/** The sign of a place, in its stamp's ink (desk.css): three Z, the gear, the tick; the basket for Trash. */
-const signOf = g => (g === 'trash' ? html`<span class="off-sign" data-g="trash" aria-hidden="true">${raw(sketchSvg('basket-full'))}</span>` : html`<span class="stack-stamp off-sign" data-stamp="${g}" data-g="${g}" aria-hidden="true"><span class="stack-stamp-sign"></span></span>`)
 /** A line's mark on the shopping list: a pen tick (done), the three z (snoozed), the bin (shredded, struck too). */
 const shopMark = g => html`<span class="shop-mark" data-g="${g}" aria-hidden="true">${g === 'done' ? sk('tick') : g === 'later' ? sk('snooze') : g === 'trash' ? sk('bin') : ''}</span>`
 const PLACE = { later: 'Snoozed', works: 'Working', done: 'Done', trash: 'Trash' }
-// A card its session closed (status done, his answer on it) has no way back: the core does not count a decide-again
-// there, so a Take back would do nothing. (An info he read he closed himself.)
-const closedByAgent = c => c.status === 'done' && c.kind !== 'info'
 function line(sheet, model, base, rest = false) {
   // (one line of a shopping list, his word 4 October: the place's mark at its start and the title; a click opens the
   //  card, where Wake up and Take back are)
@@ -242,10 +234,9 @@ function deskStacks(model, base, open = null, q = '') {
   // Off the desk: Snoozed, Done and Trash in one pile, the newest first (what is being worked on stands on the Desk: withAgents).
   const all = piles.filter(p => p.kind !== 'works').flatMap(p => p.sheets.map(s => Object.assign(s, { g: p.kind }))).sort((a, b) => b.at - a.at)
   // (the notes are in the sidebar now, his word 4 October: the foot holds Off the desk and Media)
-  return html`<div class="inbox-stacks stack-tabs${STRAIGHT ? ' is-straight' : ''}" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}${mediaPile(model, base)}</div>`
+  return html`<div class="inbox-stacks stack-tabs is-straight" id="desk-stacks" data-controller="piles" data-action="keydown.esc->piles#shut change->piles#filter">${offPile(all, model, base, open === 'off', terms.length ? all.filter(found) : null, q)}${mediaPile(model, base)}</div>`
 }
 
-const FAN = 5        // the pile shows so many sheets fanned
 const SHOWN = 10     // the unfolded pile shows so many lines, then "N more"
 /** The one pile "Off the desk" (his pick A). stands: it stands unfolded (?pile=off). hits: the sheets found by q, or null. */
 function offPile(all, model, base, stands, hits, q) {
@@ -290,14 +281,7 @@ controller('piles', class extends Controller {
   connect() {
     if (openPile === undefined) openPile = this.pileTargets.find(p => p.classList.contains('is-open'))?.dataset.pile ?? null
     this.apply()
-    // The notes open as a small list at the block (his word, 4 October: "Liste direkt an der Maus"): a click beside
-    // it or Escape closes it.
-    this.away = e => { if (openPile !== 'notes' || !(e.target instanceof Element) || e.target.closest('[data-stack="notes"]')) return; openPile = null; this.apply() }
-    this.esc = e => { if (e.key === 'Escape' && openPile === 'notes') { openPile = null; this.apply() } }
-    document.addEventListener('pointerdown', this.away)
-    document.addEventListener('keydown', this.esc)
   }
-  disconnect() { document.removeEventListener('pointerdown', this.away); document.removeEventListener('keydown', this.esc) }
   toggle({ currentTarget }) {
     const pile = currentTarget.closest('[data-pile]')
     openPile = openPile === pile.dataset.pile ? null : pile.dataset.pile

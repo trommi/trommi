@@ -729,20 +729,6 @@ a.files-where:hover span { text-decoration: underline; }
 
 /* ---- the pile "Media N" in #desk-stacks, beside Notes and "Off the desk": prints fanned, the newest on top ---- */
 .inbox-stacks.stack-tabs > .media-pile { --w: 104px; --h: 74px; --step: 27px; flex: none; display: grid; gap: 10px; align-self: flex-start; color: var(--fg); text-decoration: none; }
-.media-fan { position: relative; display: block; width: calc(var(--w) + (var(--n) - 1) * var(--step) + 8px); height: calc(var(--h) + 14px); }
-.media-sheet { position: absolute; top: 6px; left: calc(var(--i) * var(--step)); z-index: calc(10 - var(--i)); box-sizing: border-box; width: var(--w); height: var(--h); padding: 4px; border: 1.4px solid var(--fg); border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); rotate: calc(-3deg + var(--i) * 2.6deg); transform-origin: 50% 100%; transition: translate 140ms ease-out, rotate 140ms ease-out; }
-.media-sheet:nth-child(2) { rotate: 3deg; top: 3px; }
-.media-sheet:nth-child(3) { rotate: -1.5deg; top: 8px; }
-.media-sheet:nth-child(4) { rotate: 5deg; top: 2px; }
-.media-sheet .asset-preview { grid-area: auto; width: 100%; height: 100%; border-radius: 2px; }
-.media-sheet .asset-preview::after { content: none; }
-.media-sheet .asset-preview .asset-glyph { width: 24px; height: 24px; }
-@media (any-hover: hover) {
-  .media-pile:hover .media-sheet { translate: 0 -2px; }
-  .media-pile:hover .media-sheet:nth-child(2) { translate: 6px -3px; }
-  .media-pile:hover .media-sheet:nth-child(3) { translate: 12px -2px; }
-  .media-pile:hover .media-sheet:nth-child(4) { translate: 18px -3px; }
-}
 @container rows (max-width: 600px) {
   .inbox-stacks.stack-tabs > .media-pile { order: -1; --w: 92px; --h: 64px; --step: 24px; }
 }

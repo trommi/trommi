@@ -49,8 +49,6 @@
 .inbox-revising-open .ring-loop { opacity: .38; stroke-width: 2.2; }
 .inbox-revising-open .ring-drop path { stroke-width: 3.2; }
 .inbox-revising-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
-.inbox-revising-tail { flex: none; display: inline-flex; align-items: center; gap: 7px; font-size: var(--t-xs); color: var(--muted); font-variant-numeric: tabular-nums; }
-.inbox-revising-tail .inbox-from-mark { width: 16px; height: 16px; color: var(--tone-pen); }
 @media (prefers-reduced-motion: reduce) { .inbox-revising-open .ring-loop { opacity: 1; stroke-dasharray: 91 9; }
 }
 /* In the dark the quiet tile (No, Deny) is nearly the card's own ground: an edge makes it a button. */
@@ -119,24 +117,10 @@
 .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 40px; }
 .inbox-when .inbox-ago { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .inbox-question { padding-right: 30px; }
-/* The pictures: a small stack under the text, a little fanned; beside it what the card carries. */
-.inbox-byline .inbox-thumb { flex: none; position: relative; align-self: center; width: auto; height: 40px; margin: 0 4px 0 2px; padding: 0; border: 0; border-radius: 0; overflow: visible; background: none; box-shadow: none; display: inline-flex; align-items: center; }
-.inbox-byline .inbox-thumb img { width: 50px; height: 38px; border-radius: 5px; object-fit: cover; object-position: top center; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line), 0 1px 3px rgb(20 30 25 / .12); }
-.inbox-byline .inbox-thumb img:nth-child(1) { rotate: -3deg; z-index: 3; }
-.inbox-byline .inbox-thumb img:nth-child(2) { margin-left: -30px; rotate: 2.5deg; translate: 0 1px; z-index: 2; }
-.inbox-byline .inbox-thumb img:nth-child(3) { margin-left: -30px; rotate: -1.5deg; translate: 0 -1px; z-index: 1; }
 .inbox-byline:has(.inbox-thumb) { bottom: 8px; }
 .inbox-row:has(> .inbox-pics) .inbox-byline :is(.inbox-carries, .inbox-sep:has(+ .inbox-carries)) { display: none; }
-/* It stands clear of the tiles by the row's own padding; a narrower column drops it before the gap. */
-.inbox-thumb { position: relative; align-self: center; width: 64px; height: 64px; margin-right: var(--s-4); padding: 0; border: 0; border-radius: 6px; overflow: hidden; background: var(--sunken); box-shadow: 0 0 0 1px var(--card-line); cursor: zoom-in; transition: scale 100ms ease-out; }
-@media (any-hover: hover) { .inbox-thumb:hover { scale: 1.05; }
-}
-.inbox-thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
 /* A card that is shredded leaves in strips. */
 .inbox-row.is-leaving[data-leave="shredded"] { animation-name: row-shred; animation-duration: 340ms; -webkit-mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); }
-.inbox-carries { display: inline-flex; align-items: center; gap: .7em; min-width: 0; }
-.inbox-carries > span { display: inline-flex; align-items: center; gap: 4px; }
-.inbox-carries .sketch { width: 15px; height: 15px; stroke-width: 1.9; }
 /* The row's ways out (.inbox-tabs): small paper tabs down its right edge, in the order of the opened
    card: Snooze (.inbox-later, key L), Revise (.inbox-revise), Whatever (.inbox-trust), Shred
    (.inbox-shred). Each is tucked behind the edge with only its drawing showing; under the pointer or
@@ -217,18 +201,13 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 .inbox-pile-head:hover,
 .inbox-pile-head:hover b { color: var(--fg); }
 .inbox-pile-sheets { display: flex; flex-direction: column; min-width: 0; }
-.inbox-pile-item { position: relative; min-width: 0; margin-top: var(--s-4); }
-.inbox-pile-item:first-child { margin-top: var(--s-1); }
 /* folded: one quiet line, a word and its strokes; nothing else */
 .inbox-groups > .inbox-pile:not(.is-open) { padding: 2px 0; cursor: pointer; }
 .inbox-pile:not(.is-open) .inbox-pile-head { gap: 10px; }
-.inbox-pile:not(.is-open) .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
 .inbox-pile:not(.is-open) .tally-more,
 .inbox-pile:not(.is-open) .inbox-pile-head b,
 .inbox-pile:not(.is-open) .inbox-pile-head::after,
 .inbox-pile:not(.is-open) .inbox-pile-sheets { display: none; }
-/* While the sheets move, each is cut at its own edge. */
-.inbox-pile.is-moving .inbox-pile-item { overflow: hidden; }
 /* Nothing here yet: dashed and a little crooked, so it reads as not-yet-real. */
 .inbox-empty { justify-self: center; display: grid; justify-items: center; gap: var(--s-3); margin: var(--s-10) auto 0; color: var(--muted); text-align: center; font-size: var(--t-lg); }
 .inbox-empty .sketch { width: 96px; height: 96px; stroke-width: 1.1; color: var(--faint); }
@@ -265,7 +244,6 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-row-head { height: auto; min-height: 26px; margin-left: calc(-1 * var(--s-4)); }
   .inbox-question { font-size: 1.25rem; line-height: 1.18; }
   .inbox-body, .inbox-row[data-tall] .inbox-body { -webkit-line-clamp: 2; font-size: var(--t-md); line-height: 1.45; }
-  .inbox-thumb { display: block; width: 72px; height: 54px; }
   .inbox-row-head { padding-right: 30px; }
   /* a phone: the four tabs are a short line at the card's top right */
   .inbox-tabs { display: flex; gap: 2px; }
@@ -461,7 +439,6 @@ dialog.rowmenu::backdrop { background: transparent; }
    (--w above) and the basket stays small, instead of pushing the Desk sideways; the stamps are set smaller with them */
 @container rows (max-width: 430px) {
   .inbox-groups > .inbox-stacks { --gap: 10px; --bin: 38px; }
-  .inbox-stacks .inbox-stack .tally-mark { height: 14px; }
 }
 .inbox-stacks > .inbox-stack { grid-row: 1 / span 2; display: grid; grid-template-rows: subgrid; grid-template-columns: minmax(0, 1fr); gap: 0; min-width: 0; margin: 0; padding: 0; cursor: auto; }
 .inbox-stack-title { align-self: end; display: grid; margin: 0; font: inherit; }
@@ -470,33 +447,11 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stacks .inbox-stack .inbox-stack-head { position: relative; flex: none; display: grid; grid-template-columns: auto auto; justify-content: center; column-gap: 6px; row-gap: 5px; width: 100%; min-height: 0; padding: 0 0 4px; border: 0; border-radius: var(--r-sm); background: none; color: var(--fg); font: inherit; text-align: center; cursor: pointer; }
 .inbox-stacks .inbox-stack .inbox-stack-head::after { content: none; }
 .inbox-stacks .inbox-stack .inbox-stack-head:disabled { cursor: default; }
-.inbox-stack-sheets { display: block; width: 100%; height: auto; overflow: visible; filter: drop-shadow(0 2px 2.5px var(--shade)); }
-.inbox-stack-sheets path { fill: var(--surface); stroke: var(--fg); stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
-.inbox-stacks .inbox-stack .tally { color: var(--fg); }
-.inbox-stacks .inbox-stack .tally-mark { height: 17px; width: auto !important; stroke-width: 2.3; }
 /* The name of a stack: a rubber stamp on its top sheet, below the count. Capitals in a double frame drawn a little out of
    true, turned a few degrees (each stack its own tilt), in an ink of its own; the ink took unevenly (one small mask of
    noise, rastered once). The inks are variables, so the palette can retune them. */
 .inbox-stacks { --stamp-works: #5c4a8a; --stamp-later: #46607c; --stamp-memos: #8a5f0c; --stamp-done: #1b6a57; }
 :root[data-theme="dark"] .inbox-stacks { --stamp-works: #b9a8e6; --stamp-later: #9fb6d0; --stamp-memos: #d9b35a; --stamp-done: #6fd0b5; }
-/* The server-rendered pages (desk.mjs): a stack's name and count are ONE element on its top sheet,
-   .stack-stamp[data-stamp="later|works|done"] > .stack-stamp-word + .stack-stamp-num (a numbering stamp; it stands
-   instead of the strokes). Its look is desk.css. Here is only a plain default for as long as that sheet is not
-   linked: the number large, the word small under it, no frame, in the middle of the sheet. (The top sheet is
-   136 x 90 of the stack's width: the box below is that sheet.) */
-.stack-stamp { position: absolute; z-index: 1; inset: 0 0 auto; aspect-ratio: 136 / 90; display: flex; flex-direction: column-reverse; align-items: center; justify-content: center; gap: 5px; color: var(--fg); pointer-events: none; transition: translate 140ms ease-out; }
-.stack-stamp-num { font: 700 1.25rem/1 var(--display); font-variant-numeric: tabular-nums; letter-spacing: .04em; }
-.stack-stamp-word { font: 700 .62rem/1 var(--font); letter-spacing: .1em; text-transform: uppercase; white-space: nowrap; color: var(--muted); }
-.inbox-stack.is-empty .stack-stamp { opacity: .5; }
-.inbox-stack.is-open .stack-stamp { translate: 0 -4px; }
-@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover .stack-stamp { translate: 0 -2px; }
-}
-@media (prefers-reduced-motion: reduce) { .stack-stamp { transition: none; }
-}
-@container rows (max-width: 430px) { .stack-stamp { gap: 4px; } .stack-stamp-num { font-size: 1.05rem; } .stack-stamp-word { font-size: .54rem; letter-spacing: .06em; }
-}
-/* "N more" as a link (the server-rendered pages): its words stand in the middle of the sheet, like the button's */
-.inbox-stacks .inbox-stack a.inbox-stack-more { display: flex; align-items: center; text-decoration: none; }
 /* The search over a fanned stack (desk.mjs): one quiet line, a magnifier drawn with the pen and a field
    on a ruled line; the sheets below it stand in a frame (.stack-list) that the search fills. */
 .inbox-stacks .stack-list { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; min-width: 0; }
@@ -513,24 +468,11 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stacks .inbox-stack .inbox-stack-head > b { order: 0; display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; letter-spacing: 0; text-transform: none; }
 @media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -2px; }
 }
-/* an empty pile: one faint sheet, the same size, quieter */
-.inbox-stack.is-empty .inbox-stack-sheets { filter: drop-shadow(0 1px 1.5px color-mix(in srgb, var(--shade) 45%, transparent)); }
-.inbox-stack.is-empty .inbox-stack-sheets path { fill: var(--surface); stroke: color-mix(in srgb, var(--fg) 38%, var(--surface)); stroke-width: 1.5; }
-/* the open stack: its last sheet in heavy ink, lifted */
-.inbox-stack.is-open .inbox-stack-sheets path { stroke-width: 2.6; }
 .inbox-stack.is-open :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -4px; }
 
 /* the fan: the sheets of the open stack, across the whole list */
 .inbox-stacks .inbox-stack > .inbox-pile-sheets { display: none; scroll-margin: 200px 0 24px; }
 .inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { display: grid; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: calc(100cqi - var(--inset, 0px)); margin: 12px 0 0 calc(var(--at) * -1 * (var(--w) + var(--gap))); padding-right: 6px; }
-.inbox-stacks .inbox-stack .inbox-pile-item { display: block; box-sizing: border-box; width: 100%; min-width: 0; margin: 0; padding: 0 14px; border: 1.3px solid color-mix(in srgb, var(--fg) 55%, var(--surface)); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); transform-origin: 0 0; }
-.inbox-stacks .inbox-pile-item:nth-child(odd) { rotate: -.22deg; }
-.inbox-stacks .inbox-pile-item:nth-child(even) { rotate: .18deg; translate: 6px 0; }
-.inbox-stacks .inbox-stack .inbox-stack-more { min-height: 38px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); text-align: left; cursor: pointer; }
-.inbox-stacks .inbox-stack .inbox-stack-more:hover { color: var(--fg); border-color: var(--fg); }
-
-/* a sheet's line: mark, title, the grey line, who, when, the way back */
-.inbox-stacks .inbox-pile-item > .inbox-done { display: flex; align-items: center; gap: var(--s-3); min-height: 36px; padding: 0; border: 0; border-radius: 4px; background: none; box-shadow: none; }
 .inbox-stacks .inbox-revising-open .sketch { flex: none; width: 17px; height: 17px; color: var(--muted); }
 .inbox-stacks .inbox-done[data-later] .inbox-revising-open .sketch { color: var(--gold-pen); }
 .inbox-stacks .inbox-revising-open .agent-ring { margin-left: -3px; }
@@ -540,7 +482,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 
 /* a narrow list (the phone, a slim pane): the lines without the grey text */
 @container rows (max-width: 600px) {
-  .inbox-stacks .inbox-stack .inbox-pile-item { padding: 0 10px; }
   .inbox-stacks .inbox-revising-open strong { flex: 1 1 auto; }
 }
 /* On the Desk of a wide screen the cards stand right of a narrow column with the session's drawing (app.css,
@@ -550,7 +491,6 @@ dialog.rowmenu::backdrop { background: transparent; }
   #inbox .inbox-groups > .inbox-stacks { --inset: 46px; padding-left: var(--inset); }
   #inbox .inbox-stacks .inbox-stack-title { margin-left: -5px; }
   #inbox .inbox-stacks .inbox-stack.is-open > .inbox-pile-sheets { padding-right: 0; }
-  #inbox .inbox-stacks .inbox-pile-item:nth-child(even) { translate: 0 0; }
 }
 
 /* ---- The places as small stamped tabs (desk.mjs, card Nr. 198: c) ----
@@ -566,7 +506,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 }
 .inbox-stacks.stack-tabs .inbox-stack.is-open .inbox-stack-head { border-width: 2.2px; padding: 0 11px; translate: 0 -2px; }
 .inbox-stacks.stack-tabs .inbox-stack.is-empty .inbox-stack-head { border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; }
-.inbox-stacks.stack-tabs .inbox-stack.is-empty .stack-tab-stamp { opacity: .5; }
 /* the open place's list: below every tab, as wide as the cards */
 .inbox-stacks.stack-tabs .inbox-stack > .inbox-pile-sheets { display: none; }
 .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { display: grid; order: 1; flex: 0 0 100%; grid-template-columns: minmax(0, 1fr); gap: 5px; box-sizing: border-box; width: 100%; margin: 6px 0 0; padding-right: 6px; }
@@ -577,33 +516,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 /* The tabs straight (his proposal "Mach das Schiefe da weg"): no turn, square corners of one radius, the stamp's sign
    and word upright. Switched on by the class .is-straight on .stack-tabs (desk.mjs: STRAIGHT). */
 .inbox-stacks.stack-tabs.is-straight .inbox-stack .inbox-stack-head { rotate: 0deg; border-radius: 6px; }
-.inbox-stacks.stack-tabs.is-straight .stack-stamp.stack-tab-stamp[data-stamp], .inbox-stacks.stack-tabs.is-straight .stack-tab-stamp > * { rotate: 0deg; transform: none; }
-
-/* ---- The Notes stack (desk.mjs 'notes'): his notes as plain slips of the memo's yellow paper, no tape (the tape
-   is what a note gets when it is sent: session.css .msg-note). A line: the words (open to write), when, the session
-   it goes to with Send, Delete. ---- */
-.inbox-stacks .inbox-stack .inbox-pile-item.is-note { --note-paper: #fbeaa0; --note-ink: #3b300d; --note-muted: #6a5d24; border-color: color-mix(in srgb, #8a6d14 55%, transparent); background: var(--note-paper); color: var(--note-ink); }
-:root[data-theme="dark"] .inbox-stacks .inbox-stack .inbox-pile-item.is-note { --note-paper: #d9c35f; --note-ink: #231c06; --note-muted: #4d4214; border-color: #a58c2c; }
-.inbox-stacks .note-line > form { display: contents; }
-.inbox-stacks .note-line .note-open-form { display: block; flex: 1 1 auto; min-width: 0; }
-.inbox-stacks .note-open { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: 36px; padding: 0; border: 0; background: none; color: var(--note-ink); font: inherit; text-align: left; cursor: pointer; }
-.inbox-stacks .note-open strong { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 500; }
-.inbox-stacks .note-open .sketch { flex: none; width: 17px; height: 17px; color: var(--note-muted); }
-.inbox-stacks .note-line .inbox-revising-tail { flex: none; color: var(--note-muted); font-size: var(--t-xs); }
-.inbox-stacks .note-line .inbox-revising-tail * { color: inherit; }
-.inbox-stacks .note-line .note-send { display: inline-flex; align-items: center; gap: 2px; flex: none; }
-.inbox-stacks .note-line .note-to select { max-width: 150px; height: 28px; padding: 0 4px; border: 1px solid color-mix(in srgb, var(--note-ink) 30%, transparent); border-radius: 5px; background: color-mix(in srgb, #fff 45%, var(--note-paper)); color: var(--note-ink); font: 500 var(--t-xs)/1 var(--font); }
-.inbox-stacks .note-line .inbox-takeback, .inbox-stacks .note-new-go { color: var(--note-muted, var(--muted)); }
-.inbox-stacks .note-line .note-send-go { color: var(--note-ink); font-weight: 700; }
-.inbox-stacks .note-line .inbox-takeback:hover { color: var(--note-ink); }
-.inbox-stacks .note-new { margin: 0 0 3px; }
-.inbox-stacks .note-new-go { min-height: 30px; padding: 0 2px; border: 0; background: none; font: 600 var(--t-sm)/1 var(--font); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.inbox-stacks .note-new-go:hover { color: var(--fg); }
-@container rows (max-width: 600px) {
-  .inbox-stacks .note-line { flex-wrap: wrap; row-gap: 0; padding-bottom: 4px; }
-  .inbox-stacks .note-line .note-open-form { flex-basis: 100%; }
-  .inbox-stacks .note-line .inbox-revising-tail { margin-right: auto; }
-}
 
 /* ---- Off the desk (desk.mjs offPile; his pick A of three, 4 October): ONE pile for every card that left the
    open rows, beside the Notes tab. Folded: its label and the newest five sheets fanned, each with the sign of its place
@@ -624,44 +536,16 @@ dialog.rowmenu::backdrop { background: transparent; }
 .off-sheet:first-child { align-items: center; padding-bottom: 0; }
 .off-sheet:nth-child(2n) { rotate: calc(.6deg - var(--i) * .2deg); }
 .off-sheet.is-blank { border-style: dashed; border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); box-shadow: none; color: var(--faint); }
-.off-t { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-sm)/1.2 var(--font); }
 .off-sheet .ago { flex: none; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
 @media (any-hover: hover) { .off-head:not(:disabled):hover .off-sheet { translate: 0 -2px; }
 }
 .off-pile.is-empty .off-label { opacity: .5; }
-/* NOTES: the same pile, its slips yellow note paper (desk.mjs notesTab); none: one faint slip "+ New note" to press */
-.inbox-stacks.stack-tabs .notes-pile > .inbox-stack-title { flex: 0 1 190px; min-width: 0; }
-.off-sheet.note-sheet { --note-paper: #fbeaa0; border-color: color-mix(in srgb, #8a6d14 60%, transparent); background: var(--note-paper); color: #3b300d; }
-.off-sheet.note-sheet .ago { color: #6a5d24; }
-:root[data-theme="dark"] .off-sheet.note-sheet { --note-paper: #d9c35f; border-color: #a58c2c; color: #231c06; }
-.off-sheet.note-sheet.is-blank { position: absolute; width: auto; font: inherit; border-color: color-mix(in srgb, #8a6d14 40%, transparent); background: color-mix(in srgb, #fbeaa0 35%, var(--surface)); color: var(--muted); cursor: pointer; }
-.off-sheet.note-sheet.is-blank:hover, .off-sheet.note-sheet.is-blank:focus-visible { border-style: solid; color: var(--fg); }
-.inbox-stacks.stack-tabs .notes-pile.is-empty .inbox-stack-head.off-head { display: grid; gap: 10px; width: 100%; margin: 0; padding: 0; border: 0; background: none; box-shadow: none; rotate: 0deg; min-height: 0; }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open .inbox-stack-head.off-head { padding: 9px 12px; border: 2px solid var(--fg); border-radius: 6px; background: var(--surface); box-shadow: 0 1px 2px var(--shade); }
 .off-pile.is-open .off-fan { display: none; }
 .off-pile.is-open .off-fold { display: inline-flex; }
 
-/* the sign of a place, small, in its stamp's ink; the basket for Trash */
-.off-pile .stack-stamp.off-sign[data-stamp], .off-pile .off-sign { position: static; inset: auto; aspect-ratio: auto; rotate: 0deg; transform: none; flex: none; display: inline-grid; place-items: center; width: 18px; height: 18px; padding: 0; margin: 0; -webkit-mask: none; mask: none; color: var(--ink, var(--fg)); }
-.off-pile .off-sign .stack-stamp-sign { width: 17px; height: 17px; }
-.off-pile .off-sign[data-g="works"] .stack-stamp-sign { animation: stack-stamp-turn 7s linear infinite; }
-.off-pile .off-sign[data-g="trash"] svg { width: 18px; height: 18px; fill: none; stroke: var(--muted); stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
-@media (prefers-reduced-motion: reduce) { .off-pile .off-sign .stack-stamp-sign { animation: none; }
-}
-
 /* the unfolded pile: one box under the row */
 .inbox-stacks.stack-tabs .inbox-stack.off-pile.is-open > .off-body { display: block; margin-top: 4px; padding: 10px 6px 6px; border-radius: 12px; background: var(--surface-2); box-shadow: 0 0 0 1px var(--line); }
-.off-chips { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 4px 8px; }
-.off-chip { position: relative; display: inline-flex; align-items: center; gap: 6px; min-height: 30px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: var(--r-pill); background: var(--surface); color: var(--fg); font: 600 var(--t-sm)/1 var(--font); white-space: nowrap; cursor: pointer; }
-.off-chip input { position: absolute; opacity: 0; pointer-events: none; }
-.off-chip b { font: 700 var(--t-xs)/1 var(--mono); color: var(--muted); }
-.off-pile .off-chip .off-sign { width: 15px; height: 15px; }
-.off-pile .off-chip .off-sign .stack-stamp-sign { width: 14px; height: 14px; }
-.off-pile .off-chip .off-sign[data-g="trash"] svg { width: 15px; height: 15px; }
-.off-chip:has(input:checked) { border-color: var(--fg); background: var(--fg); color: var(--surface); }
-.off-chip:has(input:checked) b { color: var(--surface); }
-.off-pile .off-chip:has(input:checked) .off-sign { --ink: var(--surface); }
-.off-pile .off-chip:has(input:checked) .off-sign[data-g="trash"] svg { stroke: var(--surface); }
 .inbox-stacks .off-search { margin: 0 4px 2px; }
 .inbox-stacks .off-search label { max-width: none; }
 
@@ -669,90 +553,19 @@ dialog.rowmenu::backdrop { background: transparent; }
 .inbox-stacks .off-list .inbox-done.off-line { display: grid; grid-template-columns: 18px minmax(0, 1fr) auto auto; align-items: center; gap: 10px; min-height: 0; padding: 6px 8px; border-radius: 0; background: none; box-shadow: none; border-top: 1px solid var(--line); }
 .off-open { display: flex; align-items: baseline; gap: 8px; min-width: 0; color: var(--fg); text-decoration: none; }
 .off-open strong { flex: 0 1 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 var(--t-md)/1.3 var(--font); }
-.off-said { flex: 0 10 auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--faint); font-size: var(--t-sm); }
-.off-tail { display: inline-flex; align-items: center; gap: 6px; color: var(--faint); font-size: var(--t-xs); white-space: nowrap; }
-.off-tail .inbox-from-mark, .off-tail .inbox-from-mark svg { width: 18px; height: 18px; }
-.off-who { color: var(--tone-pen, var(--muted)); font-weight: 600; }
-.off-way { margin: 0; min-width: 76px; text-align: right; }
 .inbox-stacks .off-line .inbox-takeback { min-height: 28px; padding: 0 6px; font-weight: 600; }
 .inbox-stacks .off-line[data-later] .inbox-takeback { color: var(--stamp-ink-later); }
 .off-more { display: block; padding: 8px 8px 4px; border-top: 1px solid var(--line); color: var(--accent); font: 600 var(--t-sm)/1 var(--font); text-align: center; cursor: pointer; }
 .off-more input { position: absolute; opacity: 0; pointer-events: none; }
 .off-more:not(:has(input:checked)) .off-more-shut, .off-more:has(input:checked) .off-more-open { display: none; }
-.inbox-stacks .off-none { display: none; }
 /* the list shows the newest ten and "N more" */
 .off-pile:not(:has([data-off-more]:checked)) .off-line.is-rest { display: none; }
 
 /* a narrow list (the phone): the pile under the Notes tab, across the width; a line in two rows */
 @container rows (max-width: 600px) {
   .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex-basis: 100%; }
-  .off-chips { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; }
-  .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px 4px; }
-  .off-line > .off-sign { grid-area: s; } .off-line > .off-open { grid-area: o; } .off-line > .off-tail { grid-area: t; } .off-line > .off-way { grid-area: w; min-width: 0; }
-  .off-said { display: none; }
-}/* The stamp on a stack's top sheet (card Nr. 188: the numbering stamp, in colour, two leading zeros; his notes since:
-   a sign drawn with the board's pen, the word back above it, the gear turning).
-   Markup (desk.mjs), one element on the top sheet of Later, In the works and Done; the small bin has none:
-     <span class="stack-stamp" data-stamp="later|works|done">
-       <span class="stack-stamp-word">Snooze</span>
-       <span class="stack-stamp-line"><span class="stack-stamp-sign" aria-hidden="true"></span><span class="stack-stamp-num"><i>0</i><i>0</i><i>5</i></span></span>
-     </span>
-   Line 1 the word (Snooze | Working | Done), set in spaced capitals. Line 2 the sign (three growing Z | a gear | a tick,
-   drawn here as a mask, by data-stamp) and the number: the stack's count behind "00", "Nr." before it is drawn here; one
-   <i> per digit sets each wheel a little out of line, fixed by its place, as on a numbering stamp (as plain text the
-   digits stand in line). The gear turns while the stack holds something. The stamp carries the count, so the sheet
-   shows no other count; an empty stack (.is-empty) shows "000", faint.
-   It scales with the stack: --w is the stack's width (desk.css), 124px when nothing sets it. The inks are the
-   tokens --stamp-ink-later | -works | -done (app.css), light and dark. The uneven ink is one small picture of
-   noise used as a mask, rastered once; only the gear moves, on the compositor. Load after desk.css. */
-.stack-stamp[data-stamp] { --u: calc(var(--w, 124px) / 124); --ink: var(--stamp-ink-later);
-  /* its place is the top sheet (as desk.css sets it): a box of 136 x 90 over the paper, the stamp in its middle */
-  position: absolute; z-index: 1; inset: 0 0 auto; aspect-ratio: 136 / 90; rotate: -3deg;
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: calc(3 * var(--u));
-  color: var(--ink); white-space: nowrap; pointer-events: none;
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.22'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 71px 43px;
-  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='96' height='40'%3E%3Cfilter id='n' x='0' y='0' width='100%25' height='100%25'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.16 .3' numOctaves='2' seed='11'/%3E%3CfeColorMatrix values='0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 2.6 0 0 0 -.22'/%3E%3C/filter%3E%3Crect width='96' height='40' filter='url(%23n)'/%3E%3C/svg%3E") 0 0 / 71px 43px; }
-.stack-stamp[data-stamp="works"] { --ink: var(--stamp-ink-works); rotate: 2deg; -webkit-mask-position: -31px -9px; mask-position: -31px -9px; }
-.stack-stamp[data-stamp="done"] { --ink: var(--stamp-ink-done); rotate: -1.5deg; -webkit-mask-position: -57px -21px; mask-position: -57px -21px; }
-/* line 1, the word: small spaced capitals */
-.stack-stamp[data-stamp] > .stack-stamp-word { display: block; padding-left: .28em; color: inherit; font: 700 calc(9 * var(--u))/1 var(--font); letter-spacing: .28em; text-transform: uppercase; }
-/* the sign, cut into the die: Snooze the three growing Z (js/pen.js SNOOZE_Z), Working a gear, Done a tick, drawn with
-   the board's pen (wobbly line, round caps, uneven teeth; generated once, fixed) */
-.stack-stamp[data-stamp] .stack-stamp-sign { flex: none; display: block; width: calc(19 * var(--u)); height: calc(19 * var(--u)); background-color: var(--ink);
-  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke-width='2.4' transform='rotate(-4 12 12)'%3E%3Cpath d='M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3'/%3E%3Cpath d='M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2'/%3E%3Cpath d='M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cg stroke-width='2.4' transform='rotate(-4 12 12)'%3E%3Cpath d='M2 12.2 L5.5 12 L2.1 16.5 L5.7 16.3'/%3E%3Cpath d='M8.4 10.7 L12.9 10.4 L8.5 16.5 L13.1 16.2'/%3E%3Cpath d='M16.2 8.8 L22 8.5 L16.3 16.5 L22.2 16.2'/%3E%3C/g%3E%3C/svg%3E") center / contain no-repeat; }
-.stack-stamp[data-stamp="works"] .stack-stamp-sign { width: calc(20 * var(--u)); height: calc(20 * var(--u)); -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E"); }
-.stack-stamp[data-stamp="done"] .stack-stamp-sign { -webkit-mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 12.6 Q6.4 15.4 7.9 17.1 Q9.4 18.9 11.0 16.0 Q12.6 13.2 14.8 10.4 Q17.0 7.6 19.3 5.5 L21.6 3.4' stroke-width='2.6'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.4 12.6 Q6.4 15.4 7.9 17.1 Q9.4 18.9 11.0 16.0 Q12.6 13.2 14.8 10.4 Q17.0 7.6 19.3 5.5 L21.6 3.4' stroke-width='2.6'/%3E%3C/svg%3E"); }
-/* the number: "Nr." and the wheels, heavy figures of one width */
-.stack-stamp[data-stamp] .stack-stamp-num { display: flex; align-items: baseline; color: inherit; font: 700 calc(20 * var(--u))/1 var(--mono); font-variant-numeric: tabular-nums; letter-spacing: .02em; }
-.stack-stamp[data-stamp] .stack-stamp-num::before { content: "Nr."; margin-right: calc(4 * var(--u)); font: 700 calc(8.5 * var(--u))/1 var(--font); letter-spacing: .04em; }
-.stack-stamp-num > i { display: block; margin-inline: calc(-.6 * var(--u)); font-style: normal; transform: scaleX(.86) rotate(-1deg); }
-.stack-stamp-num > i:nth-child(6n + 2) { translate: 0 calc(.9 * var(--u)); rotate: 2.5deg; }
-.stack-stamp-num > i:nth-child(6n + 3) { translate: 0 calc(-.8 * var(--u)); rotate: -1.5deg; }
-.stack-stamp-num > i:nth-child(6n + 4) { translate: 0 calc(.6 * var(--u)); rotate: -3deg; }
-.stack-stamp-num > i:nth-child(6n + 5) { translate: 0 calc(-1 * var(--u)); rotate: 2deg; }
-.stack-stamp-num > i:nth-child(6n) { translate: 0 calc(.7 * var(--u)); rotate: -2deg; }
-.inbox-stack:not(.is-empty) .stack-stamp[data-stamp="works"] .stack-stamp-sign { animation: stack-stamp-turn 7s linear infinite; will-change: transform; }
-@media (prefers-reduced-motion: reduce) { .stack-stamp[data-stamp="works"] .stack-stamp-sign { animation: none; }
-}
-/* an empty stack: the stamp is there, faint (the lift of an open or hovered stack is desk.css) */
-.inbox-stack.is-empty .stack-stamp[data-stamp] { opacity: .6; }
-/* Done: stamped into the lower right corner of its sheet, smaller and turned, as one stamps a finished file
-   (his note on the live stacks: "das Erledigt dann doch in die Ecke stempeln"). */
-.stack-stamp[data-stamp="done"] { --u: calc(var(--w, 124px) / 124 * .86); box-sizing: border-box; align-items: flex-end; justify-content: flex-end; padding: 0 8% 9% 0; transform-origin: 86% 84%; rotate: -9deg; }
-.stack-stamp[data-stamp="done"] > .stack-stamp-word { padding-left: 0; margin-right: -.28em; }
-/* In a small tab (desk.mjs, card Nr. 198: c): the stamp lies in one line, sign, word and count, in its
-   ink; no "Nr.", no out-of-line wheels, no noise; the gear still turns while "Working" holds something. */
-.stack-tabs .stack-stamp.stack-tab-stamp[data-stamp] { --u: .82; position: static; inset: auto; aspect-ratio: auto; rotate: 0deg; display: inline-flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 7px; padding: 0; -webkit-mask: none; mask: none; }
-.stack-tabs .stack-stamp[data-stamp="trash"] { --ink: var(--fg); }
-.stack-tabs .stack-tab-stamp > .stack-stamp-word { padding-left: 0; margin-right: 0; font: 700 .72rem/1 var(--font); letter-spacing: .14em; }
-.stack-tabs .stack-tab-stamp .stack-stamp-sign { width: 17px; height: 17px; }
-.stack-tabs .stack-tab-stamp > .stack-stamp-num { font: 700 .82rem/1 var(--mono); }
-.stack-tabs .stack-tab-stamp > .stack-stamp-num::before { content: none; }
-
-/* Notes: his own notes, not sent yet (desk.mjs 'notes'). The sign is a sticky note drawn with the board's pen
-   (wobbly square, folded corner, two lines of writing), in the ochre of the memo's paper. */
-.stack-stamp[data-stamp="notes"] { --ink: var(--stamp-ink-notes); }
-.stack-stamp[data-stamp="notes"] .stack-stamp-sign { -webkit-mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4.6%204.5%20Q12.1%203.7%2019.6%204.2%20Q20.1%209.5%2019.8%2014.5%20L14.7%2019.8%20Q9.5%2020.3%204.4%2019.7%20Q4%2012.1%204.6%204.5'%20stroke-width='2.3'/%3E%3Cpath%20d='M19.6%2014.6%20Q17.1%2014.3%2015%2014.8%20Q14.5%2017.2%2014.7%2019.7'%20stroke-width='1.9'/%3E%3Cpath%20d='M8%209.1%20Q12%208.5%2016.1%208.8'%20stroke-width='2'/%3E%3Cpath%20d='M8.1%2012.7%20Q10.4%2012.3%2012.7%2012.6'%20stroke-width='2'/%3E%3C/svg%3E"); mask-image: url("data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2024%2024'%20fill='none'%20stroke='%23000'%20stroke-linecap='round'%20stroke-linejoin='round'%3E%3Cpath%20d='M4.6%204.5%20Q12.1%203.7%2019.6%204.2%20Q20.1%209.5%2019.8%2014.5%20L14.7%2019.8%20Q9.5%2020.3%204.4%2019.7%20Q4%2012.1%204.6%204.5'%20stroke-width='2.3'/%3E%3Cpath%20d='M19.6%2014.6%20Q17.1%2014.3%2015%2014.8%20Q14.5%2017.2%2014.7%2019.7'%20stroke-width='1.9'/%3E%3Cpath%20d='M8%209.1%20Q12%208.5%2016.1%208.8'%20stroke-width='2'/%3E%3Cpath%20d='M8.1%2012.7%20Q10.4%2012.3%2012.7%2012.6'%20stroke-width='2'/%3E%3C/svg%3E"); }/* The keyboard: the mark on the row it is on, the caps that say which key answers,
+  .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr) auto; grid-template-areas: "s o w" ". t w"; gap: 2px 10px; padding: 7px 4px; }.off-line > .off-open { grid-area: o; }
+}/* The keyboard: the mark on the row it is on, the caps that say which key answers,
    the small notice while a sequence is under way, and the sheet behind "?".
    What the keys do is declared in js/keys.js. */
 
@@ -798,8 +611,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 /* A tile that is a link ("Choose" leads to the card's own page), and forms that hold a row's tiles and tabs. */
 a.inbox-answer { text-decoration: none; box-sizing: border-box; }
 form.inbox-actions, form.inbox-tabs { margin: 0; }
-a.inbox-thumb { text-decoration: none; }
-a.inbox-stack-more { text-decoration: none; text-align: center; }
 .inbox-group:empty { display: none; }
 .rowmenu-in > form { display: contents; }
 .rowmenu-in button[hidden] { display: none; }
@@ -878,9 +689,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .ip-gear { display: inline-block; flex: none; width: 15px; height: 15px; background: currentColor; -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E") center / contain no-repeat; mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M18.2 10.8 Q18.6 11.7 19.8 11.8 Q21.0 12.0 20.7 13.2 Q20.3 14.4 19.2 14.4 Q18.1 14.4 17.7 14.9 Q17.4 15.5 17.3 16.0 Q17.2 16.5 17.7 17.4 Q18.3 18.3 17.3 19.3 Q16.4 20.3 15.6 19.3 Q14.7 18.3 14.0 18.1 Q13.3 17.8 12.8 18.1 Q12.2 18.3 12.0 19.9 Q11.7 21.5 10.6 21.3 Q9.4 21.1 9.6 19.5 Q9.8 17.9 9.1 17.5 Q8.5 17.1 8.2 17.0 Q7.8 16.8 6.7 17.6 Q5.5 18.3 4.8 17.4 Q4.1 16.4 5.1 15.5 Q6.1 14.6 6.1 13.9 Q6.0 13.2 5.7 12.8 Q5.4 12.3 3.9 12.0 Q2.5 11.7 2.6 10.6 Q2.6 9.5 4.3 9.6 Q5.9 9.7 6.4 9.2 Q7.0 8.7 7.1 8.1 Q7.3 7.6 6.6 6.5 Q5.8 5.5 6.8 4.9 Q7.7 4.2 8.6 5.2 Q9.4 6.1 10.1 6.0 Q10.8 6.0 11.3 5.7 Q11.7 5.5 12.1 4.2 Q12.4 2.9 13.4 3.0 Q14.4 3.1 14.3 4.4 Q14.2 5.7 14.9 6.2 Q15.7 6.6 16.1 6.8 Q16.6 6.9 17.6 6.3 Q18.7 5.6 19.3 6.5 Q19.8 7.4 19.0 8.2 Q18.2 9.1 18.2 10.0 Q18.2 10.8 18.4 11.3' stroke-width='2.4'/%3E%3Cpath d='M14.4 12.8 Q12.2 14.4 11.2 14.0 Q10.1 13.7 9.9 12.3 Q9.6 10.9 10.7 10.2 Q11.8 9.5 12.8 10.1 Q13.9 10.6 14.2 11.7 Q14.4 12.8 13.3 13.6' stroke-width='1.9'/%3E%3C/svg%3E") center / contain no-repeat; animation: ip-turn 7s linear infinite; }
 @keyframes ip-turn { to { rotate: 360deg; } }
 @media (prefers-reduced-motion: reduce) { .ip-gear { animation: none; } }
-.ip-status { grid-column: 1 / -1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--t-sm)/1.35 var(--font); color: var(--muted); }
-.ip-status b { font-weight: 600; color: color-mix(in srgb, var(--muted) 55%, var(--fg)); }
-.ip-status.is-none { color: var(--faint); font-style: italic; }
 .ipb-head { display: flex; align-items: center; gap: 12px; margin: 4px 0 4px; font: 700 var(--t-xs)/1 var(--font); letter-spacing: .2em; text-transform: uppercase; color: var(--stamp-ink-works); }
 .ipb-word { display: inline-flex; align-items: center; gap: 7px; white-space: nowrap; }
 .ipb-rule { flex: 1; height: 0; border-top: 1.5px dashed color-mix(in srgb, var(--stamp-ink-works) 35%, transparent); }
@@ -897,13 +705,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 /* one slip */
 .off-fan { margin-right: 10px; }
 .off-sheet { left: calc(var(--i) * 3px); right: calc(var(--i) * -2px); height: 34px; border-width: 1.4px; border-radius: 4px 7px 4px 6px / 6px 4px 7px 4px; }
-.off-sheet.media-slip { align-items: flex-end; gap: 8px; padding: 0 10px 6px 4px; background: var(--surface); }
-.off-sheet.media-slip:first-child { align-items: center; padding-bottom: 0; }
-.media-thumb { flex: none; position: relative; width: 38px; height: 24px; overflow: hidden; border-radius: 2px; }
-.off-sheet.media-slip:not(:first-child) .media-thumb { display: none; }
-.media-thumb .asset-preview { position: absolute; inset: 0; grid-area: auto; width: 100%; height: 100%; aspect-ratio: auto; border-radius: 2px; }
-.media-thumb .asset-preview::after, .media-thumb :is(.asset-page-label, .gal-ext, .gal-play) { display: none; }
-.media-thumb .asset-glyph { width: 16px; height: 16px; }
 @media (any-hover: hover) { .media-pile:hover .off-sheet { translate: 0 -2px; } }
 @container rows (max-width: 600px) {
   #inbox .inbox-groups > .inbox-stacks.stack-tabs { grid-template-columns: minmax(0, 1fr); }
@@ -922,7 +723,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 @media (max-width: 860px) { .ipb-line { font-size: var(--t-sm); } }
 /* foot: no half-step to the left (the piles stand on the card column's edges) */
 #inbox .inbox-stacks.stack-tabs .inbox-stack-title { margin-left: 0; }
-.off-t { text-align: left; }
 
 /* ---- TEST (his word, 4 October: "weniger hoch"): a lower decision row, the pictures as a small fan beside the title ---- */
 @media (min-width: 861px) {
@@ -967,18 +767,7 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
    blocking ---- */
 .inbox-groups .inbox-row .inbox-body { display: none; }
 .inbox-groups .inbox-row .inbox-row-head:empty { display: none !important; }
-.inbox-knock svg { width: 100%; height: 100%; }
-.inbox-knock { position: relative; display: inline-block; vertical-align: -.12em; margin-right: .3em; width: .95em; height: .95em; border-radius: 50%; background: var(--surface); color: var(--urg-high); }
-.inbox-row[data-urgency="critical"] .inbox-knock { color: var(--urg-critical); }
-.inbox-knock .hand-loop { fill: currentColor; stroke: currentColor; }
-.inbox-knock .hand-pen { stroke: var(--surface); stroke-width: 1.7; }
 @media (min-width: 861px) { .inbox-groups .inbox-row > .inbox-content { min-height: 76px; align-content: center; overflow: visible; } .inbox-content:has(> .inbox-fan) > .inbox-text, .inbox-content > .inbox-fan { grid-row: 1; } }
-
-/* ---- The stack, one compact line per card (his word, 4 October: "einzeilig, die Titel nur"): the round sign (knock,
-   or the page of an info) and the title on one line with an ellipsis, the pictures small at its right, the quiet
-   Snooze, the answers as low tiles. The whole title on hover and on the card's page. ---- */
-.inbox-news-sign { display: inline-block; vertical-align: -.1em; width: .95em; height: .95em; margin-right: .35em; color: var(--muted); }
-.inbox-news-sign .sketch { width: 100%; height: 100%; }
 @media (min-width: 861px) {
   .inbox-groups .inbox-row { min-height: 0; grid-template-rows: auto auto; }
   .inbox-groups .inbox-row > .inbox-content, .inbox-groups .inbox-row > .inbox-content:has(> .inbox-fan) { display: flex; align-items: center; gap: 14px; min-height: 64px; padding: 0 10px 0 18px; overflow: visible; }
@@ -1097,8 +886,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
    red blocking (the raised hand), orange a knock (the knocking knuckle); the answer tiles in that colour as before ---- */
 .inbox-groups .inbox-row[data-knock] { background: color-mix(in srgb, var(--urg-high) 7%, var(--surface)); box-shadow: inset 4px 0 0 var(--urg-high), 0 0 0 1px color-mix(in srgb, var(--urg-high) 45%, var(--line)); }
 .inbox-groups .inbox-row[data-knock][data-urgency="critical"] { background: color-mix(in srgb, var(--urg-critical) 7%, var(--surface)); box-shadow: inset 4px 0 0 var(--urg-critical), 0 0 0 1px color-mix(in srgb, var(--urg-critical) 45%, var(--line)); }
-.inbox-row:not([data-urgency="critical"]) .inbox-knock { background: none; color: var(--urg-high); }
-.inbox-row:not([data-urgency="critical"]) .inbox-knock .sketch { width: 100%; height: 100%; stroke-width: 2.4; }
 @media (max-width: 860px) { .inbox-groups .inbox-row[data-knock] { box-shadow: inset 4px 0 0 var(--urg-high); } .inbox-groups .inbox-row[data-knock][data-urgency="critical"] { box-shadow: inset 4px 0 0 var(--urg-critical); } }
 #inbox .inbox-groups .inbox-row[data-knock] { box-shadow: inset 4px 0 0 var(--urg-high), 0 0 0 1px color-mix(in srgb, var(--urg-high) 45%, var(--line)); }
 #inbox .inbox-groups .inbox-row[data-knock][data-urgency="critical"] { box-shadow: inset 4px 0 0 var(--urg-critical), 0 0 0 1px color-mix(in srgb, var(--urg-critical) 45%, var(--line)); }
@@ -1120,15 +907,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .inbox-groups .inbox-row .row-mark { order: 0; position: relative; flex: none; display: block; width: 30px; height: 30px; color: var(--tone-pen); }
 .inbox-groups .inbox-row .row-mark > svg { display: block; width: 100%; height: 100%; overflow: visible; }
 .inbox-groups .inbox-row .row-mark > .crown-mark { position: absolute; left: 3px; top: -11px; width: 22px; height: auto; }
-.row-badge { position: absolute; right: -6px; bottom: -5px; display: grid; place-items: center; width: 17px; height: 17px; border-radius: 50%; background: var(--surface); box-shadow: 0 0 0 1.5px var(--surface); }
-.row-badge > svg { width: 15px; height: 15px; }
-.row-badge.is-block { color: var(--urg-critical); }
-.row-badge.is-block .hand-loop { fill: currentColor; stroke: currentColor; }
-.row-badge.is-block .hand-pen { stroke: var(--surface); stroke-width: 1.7; }
-.row-badge.is-knock { color: var(--urg-high); }
-.row-badge.is-knock .sketch { stroke-width: 2.4; }
-.row-badge.is-info { color: var(--muted); }
-.inbox-groups .inbox-row .inbox-knock, .inbox-groups .inbox-row .inbox-news-sign { display: none; }
 @media (max-width: 860px) { .inbox-groups .inbox-row .row-mark { width: 26px; height: 26px; } .inbox-groups .inbox-row .row-mark > .crown-mark { width: 19px; top: -9px; } }
 /* the session's drawing smaller, the urgency its own small sign before the title (his word: "komisch darüber") */
 .inbox-groups .inbox-row .row-mark { width: 20px; height: 20px; }
@@ -1153,22 +931,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 @media (any-hover: hover) { .off-head:not(:disabled):hover .desk-obj, .media-pile:hover .desk-obj { translate: 0 -2px; } }
 .desk-obj { transition: translate 140ms ease-out; }
 .off-pile.is-open .desk-obj { display: none; }
-/* the sticky block */
-.note-under { position: absolute; inset: 0; translate: calc(2px + var(--i) * 2px) calc(4px + var(--i) * 3px); rotate: calc(1.2deg - var(--i) * 2.4deg); background: #fbe98f; box-shadow: 0 1px 2px var(--shade); }
-.note-under:nth-child(2) { rotate: -1.2deg; }
-.note-top { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: space-between; padding: 22px 16px 12px; rotate: -1.5deg; background: #f7de6c; color: #3b300d; box-shadow: 0 2px 3px var(--shade); text-align: left; font: 500 .85rem/1.3 var(--font); }
-.note-words { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
-.note-top i { font-style: normal; font-size: var(--t-xs); opacity: .65; }
-.note-tape { position: absolute; top: -8px; left: 70px; width: 58px; height: 16px; rotate: 3deg; background: rgb(255 255 255 / .55); border: 1px solid rgb(0 0 0 / .05); }
-.note-pad.is-blank .note-top { border: 0; justify-content: center; align-items: center; background: color-mix(in srgb, #f7de6c 30%, var(--surface)); box-shadow: inset 0 0 0 1.3px color-mix(in srgb, #8a6d14 35%, transparent); color: var(--muted); font-weight: 600; cursor: pointer; }
-.note-pad.is-blank .note-top:hover { color: var(--fg); }
-:root[data-theme="dark"] .note-top { background: #d9c35f; color: #231c06; } :root[data-theme="dark"] .note-under { background: #c9b453; }
-/* the out-tray */
-.tray-slip { position: absolute; top: 30px; left: calc(14px + var(--i) * 44px); z-index: 1; width: 52px; height: 68px; display: flex; justify-content: center; padding-top: 8px; border: 1.3px solid color-mix(in srgb, var(--fg) 55%, var(--surface)); border-radius: 4px; background: var(--surface); rotate: calc(-4deg + var(--i) * 3.5deg); }
-.tray-slip .off-sign { width: 18px; height: 18px; }
-.tray-box { position: absolute; z-index: 2; left: 0; right: 0; bottom: 0; height: 44px; display: flex; align-items: flex-end; padding: 0 14px 9px; border: 1.6px solid var(--fg); border-radius: 3px; background: var(--surface-2); box-shadow: inset 0 10px 0 -9px var(--line-strong); }
-.tray-t { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: var(--t-sm); }
-.out-tray.is-blank .tray-box { border-color: color-mix(in srgb, var(--fg) 30%, var(--surface)); }
 /* the photos */
 .photo-pile { width: 210px; }
 .photo { position: absolute; width: 168px; height: 105px; left: calc(6px + var(--i) * 12px); top: calc(10px - var(--i) * 4px); border: 5px solid var(--surface); outline: 1.3px solid color-mix(in srgb, var(--fg) 55%, var(--surface)); box-shadow: 0 2px 4px var(--shade); rotate: calc(-7deg + var(--i) * 6deg); overflow: hidden; background: var(--surface); }
@@ -1180,15 +942,10 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 @container rows (max-width: 600px) {
   #inbox .inbox-groups > .inbox-stacks.stack-tabs { grid-template-columns: repeat(3, minmax(0, 1fr)) !important; gap: var(--s-3) 10px; }
   .desk-obj, .photo-pile { width: 108px; height: 76px; }
-  .note-top { padding: 12px 8px 6px; font-size: .7rem; } .note-words { -webkit-line-clamp: 2; } .note-tape { left: 30px; width: 40px; height: 12px; }
-  .tray-slip { width: 30px; height: 40px; left: calc(8px + var(--i) * 26px); padding-top: 4px; } .tray-slip .off-sign { width: 14px; height: 14px; }
-  .tray-box { height: 28px; padding: 0 6px 5px; } .tray-t { font-size: .65rem; }
   .photo { width: 88px; height: 56px; border-width: 3px; left: calc(4px + var(--i) * 6px); }
   .inbox-stacks.stack-tabs .off-head > .off-label, .media-pile > .off-label { font-size: .62rem; letter-spacing: .1em; }
 }
-.tray-slip:nth-child(2) { top: 22px; }
 #inbox .inbox-stacks.stack-tabs > .media-pile, #inbox .inbox-stacks.stack-tabs > [data-stack="notes"] > .inbox-stack-title { order: 0; }
-@container rows (max-width: 600px) { .tray-slip { top: 18px; } .tray-slip:nth-child(2) { top: 13px; } }
 
 /* ---- Select by the session's drawing (desk.mjs selectWays): a soft ring on hover, an empty round box, a filled round
    tick when chosen; the chosen row a quiet tint; the bar at the bottom while any is chosen. The row's zzZ goes (L and
@@ -1252,13 +1009,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 :root[data-theme="dark"] .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { background-color: #232a26; }
 .inbox-stacks .off-list .inbox-done.off-line { grid-template-columns: 16px minmax(0, 1fr) auto auto; min-height: 34px; padding: 0 4px; border-top: 0; }
 .off-line .off-open strong { font: 600 var(--t-md)/1.3 var(--display); }
-.off-line .off-said { font-size: var(--t-xs); }
-.off-line .off-tail .inbox-from-mark, .off-line .off-who { display: none; }
-@media (any-hover: hover) { .off-line .off-way { opacity: 0; transition: opacity 120ms; } .off-line:hover .off-way, .off-line:focus-within .off-way { opacity: 1; } }
-.off-pile[data-stack="off"] .off-chips { padding: 0 0 8px; }
-.off-pile[data-stack="off"] .off-chip { min-height: 26px; border: 0; background: none; color: var(--muted); }
-.off-pile[data-stack="off"] .off-chip:has(input:checked) { background: none; color: var(--fg); text-decoration: underline; text-underline-offset: 4px; }
-.off-pile[data-stack="off"] .off-chip:has(input:checked) b { color: var(--fg); }
 .off-more { border-top: 0; text-align: left; padding-left: 24px; }
 @container rows (max-width: 600px) { .shop-slip { width: 108px; min-height: 76px; padding: 6px 6px 4px; background-size: auto; } .shop-line { height: 14px; font-size: .58rem; line-height: 14px; gap: 3px; } .shop-mark, .shop-mark .sketch { width: 10px; height: 10px; } .shop-slip .shop-line:nth-child(n+5) { display: none; } }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { background-image: none; }
@@ -1270,9 +1020,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
    of a line under the pointer. ---- */
 .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="off"].is-open > .off-body { position: relative; padding: 10px 16px 12px; background-image: repeating-linear-gradient(transparent 0 31px, color-mix(in srgb, #6a8fb5 20%, transparent) 31px 32px); background-position: 0 40px; }
 .off-pile[data-stack="off"] .off-list .inbox-done.off-line { grid-template-columns: 16px minmax(0, 1fr) auto; min-height: 32px; border: 0 !important; background: none; }
-.off-pile[data-stack="off"] .off-chips { gap: 14px; padding: 0 40px 6px 0; }
-.off-pile[data-stack="off"] .off-chip { min-height: 24px; padding: 0; font: 500 var(--t-xs)/1 var(--font); letter-spacing: .02em; }
-.off-pile[data-stack="off"] .off-chip:has(input:checked) { font-weight: 700; text-decoration: none; }
 .off-find { position: absolute; top: 8px; right: 12px; z-index: 1; }
 .off-find > summary { list-style: none; display: grid; place-items: center; width: 28px; height: 28px; border-radius: 8px; color: var(--muted); cursor: pointer; }
 .off-find > summary::-webkit-details-marker { display: none; }
@@ -1283,7 +1030,6 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .off-find[open] .off-search { margin: 0 0 4px; }
 .off-find .off-search label { border: 0 !important; border-bottom: 1px solid var(--line-strong) !important; border-radius: 0; background: none; }
 .off-find .off-search label > .sketch { display: none; }
-.off-pile[data-stack="off"] .off-line .off-way { min-width: 0; }
 .off-pile[data-stack="off"] .off-line .inbox-takeback { min-height: 24px; padding: 0 2px; border: 0; background: none; font: 500 var(--t-xs)/1 var(--font); color: var(--muted); text-decoration: underline; text-underline-offset: 3px; }
 .off-pile[data-stack="off"] .off-line .inbox-takeback:hover { color: var(--fg); }
 
@@ -1308,18 +1054,9 @@ a.inbox-stack-more { text-decoration: none; text-align: center; }
 .off-pile[data-stack="notes"] .off-fold { display: none !important; }
 #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: absolute; z-index: 30; left: calc(100% - 24px); bottom: 24px; width: 300px; max-height: 360px; overflow-y: auto; margin: 0; padding: 6px; gap: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
 [data-stack="notes"] .inbox-pile-sheets .stack-search, [data-stack="notes"] .inbox-pile-sheets :is(.note-send, .note-bin), [data-stack="notes"] .inbox-pile-sheets .inbox-revising-tail { display: none !important; }
-[data-stack="notes"] .inbox-pile-sheets .note-new { margin: 0; }
-[data-stack="notes"] .inbox-pile-sheets .note-new-go { width: 100%; min-height: 36px; padding: 0 10px; text-align: left; text-decoration: none; border-radius: 8px; color: var(--accent); font-weight: 700; }
-[data-stack="notes"] .inbox-pile-sheets .note-new-go:hover { background: var(--sunken); }
-.inbox-stacks [data-stack="notes"] .inbox-pile-item.is-note { border: 0; background: none; box-shadow: none; padding: 0; }
-.inbox-stacks [data-stack="notes"] .inbox-pile-sheets .note-line { padding: 0; background: none; box-shadow: none; }
-.inbox-stacks [data-stack="notes"] .inbox-pile-sheets .note-open { min-height: 34px; padding: 0 10px; border-radius: 8px; color: var(--fg); }
-.inbox-stacks [data-stack="notes"] .inbox-pile-sheets .note-open:hover { background: #fbeaa0; }
-.inbox-stacks [data-stack="notes"] .inbox-pile-sheets .note-open .sketch { color: #8a6d14; }
 @media (max-width: 860px) {
   #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: fixed; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 60vh; padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); border-radius: 16px; }
 }
-.inbox-stacks [data-stack="notes"] .inbox-pile-sheets .inbox-pile-item { margin: 0 !important; translate: none !important; rotate: none !important; }
 @media (max-width: 860px) { #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { z-index: 80; bottom: 70px; } }
 /* the mark at the line's start, centred with the title in a narrow column (his word: on the same line) */
 .off-pile[data-stack="off"] .off-list .inbox-done.off-line { grid-template-columns: 18px minmax(0, 1fr); align-items: center; column-gap: 10px; padding: 0 4px; }

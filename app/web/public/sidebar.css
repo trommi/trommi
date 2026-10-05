@@ -631,13 +631,6 @@ a.agent-badge { text-decoration: none; }
 .topbar #brand-doors .menu-leave button.menu-theme { flex: none; width: 36px; min-height: 36px; padding: 0; justify-content: center; border-radius: 9px; }
 @media (max-width: 860px) { .topbar #brand-doors .menu-leave button.menu-theme { width: 44px; min-height: 44px; } .topbar #brand-doors button.menu-desk-add { min-height: 40px; }
 }
-
-/* ---- The Desk as one flat line (his word, 4 October: "nicht so erhaben, ein einzeiliges Element"; his pick a): the desk
-   drawing with its lamp, the name in the rows' type, the chevron, the Sketchpad's pen at the right end; a hairline
-   under it. No card, no shadow. ---- */
-.desk-pad { flex: none; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 8px; color: var(--accent); text-decoration: none; }
-.desk-pad .sketch { width: 22px; height: 22px; }
-.desk-pad:hover, .desk-pad[aria-current] { background: var(--sunken); }
 @media (min-width: 861px) {
   .topbar { height: 48px; top: 8px; left: 8px; width: 240px; border-radius: 0; background: var(--bg); box-shadow: 0 1px 0 var(--line); }
   #agents::before { height: 64px; }
@@ -646,11 +639,9 @@ a.agent-badge { text-decoration: none; }
   .topbar .desk-go .desk-lamp > .sketch { width: 26px; height: 26px; margin: 0 12px 0 10px; }
   .topbar .deskpill .desk-name, .topbar .desk-name[data-size="m"], .topbar .desk-name[data-size="l"] { font: 700 var(--t-md)/1.2 var(--font); letter-spacing: 0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none; -webkit-line-clamp: unset; }
   [data-rail="folded"] .topbar { width: 60px; height: 48px; }
-  [data-rail="folded"] .topbar .desk-pad { display: none; }
 }
-@media (max-width: 860px) { .topbar .deskpill > .desk-pad { margin-left: 2px; } }
 @media (min-width: 861px) { html body .topbar { box-shadow: 0 1px 0 var(--line) !important; } }
-@media (max-width: 860px) { .topbar .deskpill > .brand-open { order: 1; } .topbar .deskpill > .desk-pad { order: 2; } }
+@media (max-width: 860px) { .topbar .deskpill > .brand-open { order: 1; }}
 /* the Desk row says the desk's own name; switching desks is in the Trommi menu (his word, 4 October) */
 @media (min-width: 861px) { .topbar .deskpill > .desk-go { padding-right: 12px; } }
 /* the folded rail: the desk's drawing alone, centred like the sessions' drawings; its name in the tooltip */
@@ -713,6 +704,12 @@ a.agent-badge { text-decoration: none; }
 .corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: 12px 12px 8px; }
 .corner-note-field { max-height: 50vh; }
 :root[data-theme="dark"] :is(.corner-note-first, .corner-note-body) { background: #d9c35f; }
+/* In a conversation the note never lies on the composer or its buttons: it stands above the composer's line, only
+   the sticky (a dot says it holds words), so the least of the conversation is under it. */
+body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
+body[data-t-view="session"] .corner-note-box.has-words .corner-note-first { display: none; }
+body[data-t-view="session"] .corner-note-box.has-words .corner-note-head::after { content: ""; position: absolute; right: 2px; top: 6px; width: 9px; height: 9px; border-radius: 50%; background: var(--urg-high); box-shadow: 0 0 0 2px var(--bg); }
+body[data-t-view="session"] .corner-note-head { position: relative; }
 /* the phone: above the composer of a conversation and the pens of the Scribble Board */
 @media (max-width: 860px) {
   body[data-t-view="session"] .corner-note-box { bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }

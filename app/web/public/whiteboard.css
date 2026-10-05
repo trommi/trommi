@@ -1,25 +1,3 @@
-/* The Sketchpad (whiteboard.mjs; called Whiteboard until 4 October): its card under the Desk box and its page, the pad
-   as large as the main area. The Desk itself is cards on plain paper. */
-
-/* ---- the drawer: a second card taped under the Desk box, pulled out of the desk (his pick, reference wb2-2) ---- */
-.whiteboard-mark svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; }
-.whiteboard-mark { color: var(--fg); }
-.whiteboard-sub { display: none; }
-body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { background: var(--surface); box-shadow: var(--shadow-sm); }
-.whiteboard-row { margin-bottom: var(--s-2); }
-@media (min-width: 861px) {
-  :root:not([data-rail="folded"]) .whiteboard-row { position: sticky; top: 58px; z-index: 4; margin: -16px 6px var(--s-4); }
-  :root:not([data-rail="folded"]) .whiteboard-row .agent-entry { min-height: 66px; gap: 12px; padding: 10px 14px 10px 12px; border-top: 1px dashed var(--line-strong); border-radius: 0 0 14px 14px; background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-sm); rotate: -.4deg; transition: translate 140ms ease-out, box-shadow 140ms; }
-  :root:not([data-rail="folded"]) .whiteboard-row .agent-entry:hover { translate: 0 2px; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
-  :root:not([data-rail="folded"]) body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { box-shadow: 0 0 0 2px var(--fg), var(--shadow-sm); }
-  :root:not([data-rail="folded"]) .whiteboard-row .agent-avatar.whiteboard-mark { width: 42px; height: 42px; background: none; box-shadow: none; display: grid; place-items: center; }
-  :root:not([data-rail="folded"]) .whiteboard-mark svg { width: 38px; height: 38px; stroke-width: 1.7; }
-  :root:not([data-rail="folded"]) .whiteboard-row .agent-text strong { font: 800 1.3rem/1.05 var(--display); letter-spacing: -.02em; }
-  :root:not([data-rail="folded"]) .whiteboard-sub { display: block; margin-top: 3px; font: 500 var(--t-xs)/1.2 var(--font); color: var(--muted); white-space: nowrap; }
-  /* the tape that holds it to the Desk box: a strip of translucent paper over the seam */
-  :root:not([data-rail="folded"]) .whiteboard-row::before { content: ""; position: absolute; z-index: 1; left: 58%; top: -7px; width: 46px; height: 16px; rotate: 3deg; background: color-mix(in srgb, #e9dfb8 70%, transparent); box-shadow: 0 0 0 1px color-mix(in srgb, #b9a970 35%, transparent); pointer-events: none; }
-  :root[data-theme="dark"]:not([data-rail="folded"]) .whiteboard-row::before { background: color-mix(in srgb, #8a7d52 55%, transparent); }
-}
 
 /* ---- the page ---- */
 #whiteboard { display: none; }
@@ -27,13 +5,9 @@ body[data-page="whiteboard"] #inbox, body[data-page="whiteboard"] #session { dis
 body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; position: relative; background: var(--surface); }
 @media (min-width: 861px) { body[data-page="whiteboard"] #whiteboard { margin-top: var(--band); }
 }
-.whiteboard-frame { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; display: block; background: var(--surface); }
 
 @media (max-width: 860px) {
   body[data-page="whiteboard"] #whiteboard { grid-column: 1; grid-row: 3; }
-  body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { box-shadow: 0 0 0 1px var(--line-strong); }
-  .whiteboard-row { margin-bottom: 0; }
-  .whiteboard-mark svg { width: 22px; height: 22px; }
 }
 
 /* ---- the pad ---- */
@@ -100,10 +74,6 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-editor::after { content: ""; position: absolute; inset: -5px -8px; border-radius: 6px; box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--accent) 55%, transparent); pointer-events: none; }
 .pad-editor:empty::after { box-shadow: none; }
 .pad-caret-tip { position: absolute; left: 0; top: 0; z-index: 2; display: flex; align-items: center; gap: var(--s-2); color: var(--faint); font-size: var(--t-xs); white-space: nowrap; animation: pad-rise var(--d-med) var(--ease-out); }
-.pad-chip { height: 30px; display: inline-flex; align-items: center; gap: 5px; padding: 0 12px 0 8px !important; border-radius: var(--r-pill); background: var(--surface) !important; color: var(--fg) !important; font: 600 var(--t-xs)/1 var(--font) !important; box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-sm); }
-.pad-chip:not(:has(svg)) { padding-left: 12px !important; }
-.pad-chip:hover { box-shadow: 0 0 0 1px var(--accent), var(--shadow-sm); color: var(--accent) !important; }
-.pad-chip .pad-icon { width: 16px; height: 16px; }
 @keyframes pad-rise { from { opacity: 0; translate: 0 4px; } }
 
 /* ── actions for the selection ──────────────────────────────────────────── */
@@ -129,9 +99,6 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-tool[aria-pressed="true"] { background: var(--accent) !important; color: var(--accent-fg); }
 .pad-tools .pad-sep { margin: 0 3px; }
 .pad-dot { display: block; width: var(--d, 10px); height: var(--d, 10px); border-radius: 50%; background: var(--c, var(--fg)); }
-.pad-stylebtn::before { content: ""; position: absolute; inset: 9px; border-radius: 50%; box-shadow: inset 0 0 0 1.5px var(--line-strong); }
-.pad-stylebtn[aria-expanded="true"]::before { box-shadow: inset 0 0 0 2px var(--accent); }
-.pad-stylebtn[data-kind="hl"] .pad-dot { border-radius: 3px; opacity: .8; }
 .pad-style { position: absolute; left: 50%; bottom: calc(100% + 10px); z-index: 3; width: max-content; max-width: calc(100vw - 2 * var(--s-2)); display: grid; gap: 2px; padding: var(--s-2) var(--s-3); border-radius: var(--r-lg); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-lg); transform: translateX(-50%); }
 .pad-style-row { display: flex; align-items: center; gap: var(--s-2); }
 .pad-label { flex: none; width: 4.2em; font: 600 var(--t-xs)/1 var(--font); letter-spacing: .07em; text-transform: uppercase; color: var(--faint); }

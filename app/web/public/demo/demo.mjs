@@ -286,8 +286,8 @@ function putAway(f) {
 function filler(f) {
   const now = Date.now(), MIN = 60e3, [zu, ui, docs, cr] = f.sessions.map(s => s.agent_device_id)
   // (the demo's desk has a real name, his word 4 October: "Web App 3")
-  // (one note in the sidebar: the demo keeps the newest of its notes)
-  { const kept = (f.notes ?? []).filter(m => m.place === 'stack').sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))[0]; if (kept) f.notes = f.notes.filter(m => m.place !== 'stack' || m === kept) }
+  // (one note: the demo keeps the newest of its notes)
+  if (f.notes?.length) f.notes = [[...f.notes].sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0))[0]]
   for (const d of Object.values(f.human?.desks ?? {})) if (d.name === 'Desk') d.name = 'Web App 3'
   // (two knocks and one blocking card on the first desk: the board on the phone, the parallel tests; the migration blocks)
   // Teasers: what the agent says on the Desk in two lines (the card's own field, core FIELDS.card.teaser).

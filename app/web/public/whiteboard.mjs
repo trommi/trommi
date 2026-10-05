@@ -9,7 +9,7 @@
 // ever reached the hub or a second device: there is nothing to carry over, and the Whiteboard is where drawing is kept
 // from now on. The pad runs on the page itself (mountPad, controller "whiteboard"); its elements live in that canvas
 // timeline, end-to-end encrypted (openCanvas, the wire format is the core's canvas.mjs).
-import { Controller, controller, curlHTML, html, markArt, raw, sketchSvg } from './ui.mjs'
+import { Controller, controller, curlHTML, html, markArt, raw } from './ui.mjs'
 import { canvasWire } from './app.mjs'
 /** The canvas timeline of a desk: desk/ and 32 hex. A desk id that is not 32 hex already ('main', a menu desk's 8 hex)
  *  is folded into 16 bytes (its UTF-8, XOR by position, the length last): the same desk is the same timeline on every
@@ -452,7 +452,6 @@ function paintElement(c, el, env) {
 }
 
 // ── hit testing ─────────────────────────────────────────────────────────────
-const boxOf = el => ({ x0: el.x, y0: el.y, x1: el.x + el.w, y1: el.y + el.h })
 
 /** Is the world point on the element? tol is the slack in world units. */
 function hitElement(el, wx, wy, tol) {
