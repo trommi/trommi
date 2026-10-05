@@ -19,7 +19,6 @@ import { addressOf, crownOf, rememberRef, renderStreamMessage, stream, uploadFil
 const STICKY = raw('<svg class="memo-sticky" viewBox="0 0 24 24" aria-hidden="true"><path class="sticky-paper" d="M4.3 4.2 Q12 3.5 19.8 3.9 Q20.3 9.4 20 14.7 L14.8 20.2 Q9.3 20.4 4.1 19.9 Q3.8 12 4.3 4.2 Z"/><path class="sticky-fold" d="M20 14.7 Q17.4 14.5 15.3 14.9 Q14.7 17.4 14.8 20.2"/><path class="sticky-line" d="M7.6 8.6 Q12 8.1 16.3 8.4"/><path class="sticky-line" d="M7.7 12.1 Q10.6 11.7 13.4 12"/></svg>')
 // The round button's place is taken by a hand-drawn sticky note (his word, 4 October: "gezeichnet"): a wobbly ink
 // outline, the yellow a little off it like a print, a few pen lines as if written, its dog-ear.
-const MEMO_NOTE = raw('<svg class="memo-note" viewBox="0 0 52 52" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
 const isImage = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.name ?? '')
 const holds = memo => Boolean(memo.text.trim() || memo.attachments?.length)
 
@@ -67,12 +66,11 @@ function noteOpener(model, base, scope = null) {
   const here = scope ? html`<input type="hidden" name="session" value="${scope}">` : ''
   // (Put-away notes are counted by the Notes stack on the Desk (desk.mjs), not here. On a phone a floating note
   //  waits at the button: that one is counted, app.css.)
-  const phoneN = out(model, scope).filter(m => m.place === 'float').length
   const title = `${to ? `Note to ${to.name}` : 'Note to the crowned session'} ( / )${n ? ` · ${n === 1 ? '1 note' : `${n} notes`} put away` : ''}`
   const words = m => m.text.trim().replace(/\s+/g, ' ').slice(0, 120) || (m.attachments?.length ? `${m.attachments.length} attached` : 'Empty note')
   // (A note left floating on a wide screen is listed on a phone too: there it is not out by itself.)
   const line = (m, float) => html`<form method="post" action="${base}/notes/${m.id}/open"${float ? raw(' class="memo-away-float"') : ''}><button class="memo-away-line" type="submit" role="menuitem" data-memo="${m.id}" title="Open the note">${sk('page')}<span>${words(m)}</span></button></form>`
-  return html`<div class="memo-new" id="memo-new"><form method="post" action="${base}/notes">${here}<button class="icon-btn quick-open memo-open memo-open-free" id="memo-open" type="submit" data-action="click->memos#open" aria-haspopup="${n ? 'menu' : 'dialog'}" aria-expanded="false" title="New note (N)" aria-label="New note">${STICKY}${MEMO_NOTE}${phoneN ? html`<b class="memo-count memo-count-phone">${phoneN}</b>` : ''}</button></form>
+  return html`<div class="memo-new" id="memo-new">
 <div class="memo-away" id="memo-away" role="menu" aria-label="Notes that were put away" data-action="turbo:submit-start->memos#shut" hidden><form method="post" action="${base}/notes">${here}<button class="memo-away-line memo-away-new" type="submit" role="menuitem" data-action="click->memos#write">${STICKY}<span>New note</span></button></form>${put.map(m => line(m, false))}${out(model, scope).filter(m => m.place === 'float').map(m => line(m, true))}</div></div>`
 }
 
@@ -318,7 +316,6 @@ const host = () => document.getElementById('memos')
 const fieldOf = note => note.querySelector('.memo-field')
 const noteHolds = note => Boolean(fieldOf(note).value.trim() || note.querySelector('.memo-file'))
 const notes = () => [...document.querySelectorAll('.memo[data-id]')]
-const opener = () => document.getElementById('memo-open')
 
 let sheetId = null   // a phone: the note that is open as the sheet (only one he opened on this page)
 const sheetNote = () => (sheetId ? document.getElementById(`memo-${sheetId}`) : null)
@@ -581,7 +578,6 @@ async function send(note) {
   if (sheetId === id) sheetId = null
   paintOpener()
   streams(out.text.replace(toastPart, ''))
-  opener()?.focus({ preventScroll: true })
 }
 /** Put the note away: it hangs off the round button; an empty one is gone. */
 async function putAway(note) {
@@ -592,7 +588,6 @@ async function putAway(note) {
   if (sheetId === id) sheetId = null
   note.remove()
   paintOpener()
-  if (had) opener()?.focus({ preventScroll: true })
   const out = await act(`${base()}/notes/${id}/stack`, { text: fieldOf(note).value }).catch(() => null)
   if (!out?.ok) return say('Not saved', 'The note could not be put away.')
   if (kept) say('Note kept', 'It waits in the sidebar until you send it.')
@@ -605,7 +600,6 @@ function showAway(on) {
   const list = document.getElementById('memo-away')
   if (!list) return
   list.hidden = !on
-  opener()?.setAttribute('aria-expanded', String(on))
   if (on) list.querySelector('.memo-away-line')?.focus({ preventScroll: true })
 }
 /** The lines of the notes that wait at the button, as this screen shows them. */
@@ -739,7 +733,7 @@ controller('memos', class extends Controller {
     on(document, 'turbo:before-cache', () => flushAll())
     on(window, 'pagehide', () => flushAll())
     on(window, 'resize', standAll)
-    on(document, 'trommi:note', () => { if (!document.getElementById('side-notes')) write() })   // the key that writes a new note (ui.mjs keys); the sidebar's note takes it where it stands
+    on(document, 'trommi:note', () => { if (!document.getElementById('corner-note-box')) write() })   // the key that writes a new note (ui.mjs keys); the corner's note takes it where it stands
     on(sheet, 'change', standAll)
     on(document, 'pointerdown', e => {
       beside(e)
@@ -753,7 +747,7 @@ controller('memos', class extends Controller {
       const note = e.target instanceof Element ? e.target.closest('.memo') : null
       if (!this.listOpen && !note) return
       e.preventDefault(); e.stopPropagation()
-      if (this.listOpen) { showAway(false); document.getElementById('memo-open')?.focus({ preventScroll: true }) }
+      if (this.listOpen) showAway(false)
       else putAway(note)   // Escape in a note puts it away; what was written stays on it
     }, true)
     standAll()
@@ -761,13 +755,6 @@ controller('memos', class extends Controller {
   disconnect() { for (const undo of this.undo) undo() }
 
   get listOpen() { const list = document.getElementById('memo-away'); return Boolean(list && !list.hidden) }
-  /** The round button: with notes put away it shows them (and "New note"); with none it makes a note at once. */
-  open(e) {
-    // (his word, 4 October: the button always starts a new note; the notes put away are on the NOTES block)
-    e.preventDefault()
-    showAway(false)
-    write()
-  }
   write(e) { e.preventDefault(); showAway(false); write() }
   shut() { showAway(false) }
 })

@@ -81,7 +81,7 @@ instead); files come network first, the cache only offline. On the dev server (`
 - **With the agents:** answered cards whose session is still at it, one line each, below the open ones.
 - **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
   are) and Media (a pile of the newest pictures; the gallery at `/assets`).
-- **Note:** one yellow note at the sidebar's foot; it unfolds to write, sends to the crown (`sidebar.mjs` `sideNotes`).
+- **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (`sidebar.mjs` `cornerNote`).
 
 ## The Scribble Board
 

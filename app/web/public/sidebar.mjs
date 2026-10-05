@@ -23,34 +23,34 @@ ${badge(u, shown, base)}
 
 const inviteAgentButton = () => html`<form method="post" action="/pair" class="agent-invite"><input type="hidden" name="role" value="agent"><button type="submit" class="agent-invite-go" id="sidebar-invite" title="Invite an agent" aria-label="Invite an agent">${PLUS}<span class="agent-invite-label">New agent</span></button></form>`
 
-// ---- the note in the sidebar (his word, 4 October: "nur EINE Notiz") ----
-// At the sidebar's foot, a fixed anchor (his word, 4 October: "immer unten links"): one yellow sticky. Folded it shows the note's first line, or "New note" when empty; a click
-// unfolds it upward into a field that grows with the words (Enter: a new line, Ctrl/Cmd+Enter sends), with the crown
-// (send straight to the crown) and the bin. Sent or thrown away, it is "New note" again. It is the
-// newest unsent note (place "stack", no session). Folded rail: the sticky with a dot when it holds words. A
-// phone: a chip that opens it as a sheet.
-const NOTE_ICON = raw('<svg viewBox="0 0 52 52" class="side-note-ico" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
+// ---- the note (his word, 4 October: "nur EINE Notiz"; 5 October: "wieder nach unten rechts") ----
+// One drawn yellow sticky at the window's bottom-right, a part of the frame beside the sidebar (app.mjs bodyParts).
+// Folded it shows the sticky, and the note's first line beside it when it holds words; a click unfolds it there,
+// growing upward, into a field that grows with the words (Enter: a new line, Ctrl/Cmd+Enter sends, Esc folds), with
+// the paperclip, the bin and the crown (send straight to the crown). Sent or thrown away, it is empty again. It is
+// the newest unsent note (place "stack", no session).
+const NOTE_ICON = raw('<svg viewBox="0 0 52 52" class="corner-note-ico" aria-hidden="true"><path class="note-fill" d="M9.5 11.2 Q25 9.6 42.6 10.6 Q43.4 25 42.8 38.4 L35.4 45.4 Q21 46.6 9.8 45.8 Q8.6 28 9.5 11.2 Z"/><path class="note-ink" d="M7.6 9.4 Q24 8.2 41.4 8.8 Q42.4 23.6 41.6 37.2 L34.2 44.2 Q20.4 45.2 8.2 44.4 Q6.8 27 7.6 9.4 Z"/><path class="note-ink" d="M41.6 37.2 Q37.2 36.6 34.8 37.6 Q34.1 40.8 34.2 44.2"/><path class="note-lines" d="M14.2 19.4 Q22 18.8 30.6 19.2 M14 25.6 Q20 25.1 26.4 25.5 M14.3 31.6 Q18.6 31.2 22.4 31.5"/></svg>')
 const BIN = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M5 7.2 Q12 6.8 19 7.3"/><path d="M9.6 6.9 Q9.8 4.8 12 4.7 Q14.3 4.8 14.4 6.9"/><path d="M6.6 7.6 Q7.4 14 8.2 20.2 Q12 20.6 15.8 20.2 Q16.6 14 17.4 7.6"/></svg>')
 const isPic = a => /^image\//.test(a?.type ?? '') || /\.(png|jpe?g|gif|webp|svg)$/i.test(a?.name ?? '')
 /** The note's attachments: a picture as a small thumbnail, a file by its name; a click takes it off. */
-const noteFiles = atts => (atts ?? []).map(a => `<button type="button" class="side-note-file${isPic(a) ? ' is-pic' : ''}" data-url="${String(a.url).replace(/"/g, '&quot;')}" data-action="side-note#unclip" title="${String(a.name).replace(/"/g, '&quot;')}: click to take it off">${isPic(a) ? `<img src="${String(a.url).replace(/"/g, '&quot;')}" alt="" loading="lazy">` : `<span>${String(a.name).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'))}</span>`}<i>×</i></button>`).join('')
+const noteFiles = atts => (atts ?? []).map(a => `<button type="button" class="corner-note-file${isPic(a) ? ' is-pic' : ''}" data-url="${String(a.url).replace(/"/g, '&quot;')}" data-action="corner-note#unclip" title="${String(a.name).replace(/"/g, '&quot;')}: click to take it off">${isPic(a) ? `<img src="${String(a.url).replace(/"/g, '&quot;')}" alt="" loading="lazy">` : `<span>${String(a.name).replace(/[<&]/g, c => (c === '<' ? '&lt;' : '&amp;'))}</span>`}<i>×</i></button>`).join('')
 const CLIP = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M15.6 7.2 Q11 12 8.4 14.8 Q7 16.6 8.6 17.8 Q10.2 18.8 11.6 17.2 Q15.6 12.8 18.2 9.8 Q20.4 7 18.2 5 Q16 3.4 13.8 5.6 Q9.4 10.4 6.4 13.8 Q3.8 17 6.4 19.6 Q9 21.8 12 19"/></svg>')
 const deskNotesOf = model => (model.state.notes ?? []).filter(m => m.place === 'stack' && !m.held && !m.session).sort((a, b) => (b.updated ?? 0) - (a.updated ?? 0))
-function sideNotes(model, base) {
+export function cornerNote(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
   const text = note?.text ?? '', files = note?.attachments ?? []
   const first = text.split('\n')[0].trim()
-  return html`<section class="side-notes${text || files.length ? ' has-words' : ''}" id="side-notes" aria-label="Your note" data-controller="side-note" data-side-note-id-value="${note?.id ?? ''}" data-side-note-base-value="${base}">
-<button type="button" class="side-note-head" data-action="side-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="side-note-first">${first || (files.length ? `${files.length} attached` : 'New note')}</span></button>
-<div class="side-note-body" hidden data-action="paste->side-note#paste dragover->side-note#over dragleave->side-note#out drop->side-note#drop"><textarea class="side-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->side-note#typed keydown->side-note#key">${text}</textarea><div class="side-note-files">${raw(noteFiles(files))}</div>
-<footer class="side-note-foot"><button type="button" class="side-note-clip" data-action="side-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="side-note-bin" data-action="side-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="quick-send memo-send side-note-send" data-action="side-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="side-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
+  return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
+<button type="button" class="corner-note-head" data-action="corner-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="corner-note-first">${first || (files.length ? `${files.length} attached` : 'New note')}</span></button>
+<div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop"><textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->corner-note#typed keydown->corner-note#key">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
+<footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="quick-send memo-send corner-note-send" data-action="corner-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="corner-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
 }
-controller('side-note', class extends Controller {
+controller('corner-note', class extends Controller {
   static values = { id: String, base: String }
   connect() {
-    this.field = this.element.querySelector('.side-note-field')
-    this.guard = e => { if (e.target?.getAttribute?.('target') === 'side-notes' && this.element.classList.contains('is-open')) e.preventDefault() }
+    this.field = this.element.querySelector('.corner-note-field')
+    this.guard = e => { if (e.target?.getAttribute?.('target') === 'corner-note-box' && this.element.classList.contains('is-open')) e.preventDefault() }
     document.addEventListener('turbo:before-stream-render', this.guard)
     this.write = () => this.open()
     document.addEventListener('trommi:note', this.write)
@@ -64,8 +64,8 @@ controller('side-note', class extends Controller {
   }
   open() {
     this.element.classList.add('is-open')
-    this.element.querySelector('.side-note-head').setAttribute('aria-expanded', 'true')
-    this.element.querySelector('.side-note-body').hidden = false
+    this.element.querySelector('.corner-note-head').setAttribute('aria-expanded', 'true')
+    this.element.querySelector('.corner-note-body').hidden = false
     this.fit(); this.field.focus(); this.field.setSelectionRange(this.field.value.length, this.field.value.length)
     this.away = e => { if (!this.element.contains(e.target)) this.close() }
     setTimeout(() => document.addEventListener('pointerdown', this.away), 0)
@@ -73,10 +73,10 @@ controller('side-note', class extends Controller {
   close() {
     document.removeEventListener('pointerdown', this.away)
     this.element.classList.remove('is-open')
-    this.element.querySelector('.side-note-head').setAttribute('aria-expanded', 'false')
-    this.element.querySelector('.side-note-body').hidden = true
+    this.element.querySelector('.corner-note-head').setAttribute('aria-expanded', 'false')
+    this.element.querySelector('.corner-note-body').hidden = true
     const first = this.field.value.trim().split('\n')[0].trim(), n = this.files().length
-    this.element.querySelector('.side-note-first').textContent = first || (n ? `${n} attached` : 'New note')
+    this.element.querySelector('.corner-note-first').textContent = first || (n ? `${n} attached` : 'New note')
     this.element.classList.toggle('has-words', Boolean(first || n))
     this.save(true)
   }
@@ -103,7 +103,7 @@ controller('side-note', class extends Controller {
     } finally { this.saving = false; if (this.again) { this.again = false; this.save() } }
   }
   // ---- attachments, as the note had them: POST /note with { id, attachments: [kept refs..., { name, data }] } ----
-  files() { return [...this.element.querySelectorAll('.side-note-file')].map(c => ({ url: c.dataset.url })) }
+  files() { return [...this.element.querySelectorAll('.corner-note-file')].map(c => ({ url: c.dataset.url })) }
   async attach(list) {
     const got = [...list].filter(f => f instanceof File)
     if (!got.length) return
@@ -119,11 +119,11 @@ controller('side-note', class extends Controller {
       const res = await fetch('/note', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: this.idValue, attachments: [...this.files(), ...fresh] }) })
       if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
       this.paintFiles()
-    } catch (err) { console.warn('note', err); this.element.querySelector('.side-note-files').insertAdjacentHTML('beforeend', '<em class="side-note-err">Not attached</em>') }
+    } catch (err) { console.warn('note', err); this.element.querySelector('.corner-note-files').insertAdjacentHTML('beforeend', '<em class="corner-note-err">Not attached</em>') }
   }
   paintFiles() {
     const m = (window.trommi?.model?.().state.notes ?? []).find(n => n.id === this.idValue)
-    this.element.querySelector('.side-note-files').innerHTML = noteFiles(m?.attachments ?? [])
+    this.element.querySelector('.corner-note-files').innerHTML = noteFiles(m?.attachments ?? [])
   }
   pick() {
     let input = this.element.querySelector('input[type=file]')
@@ -148,13 +148,13 @@ controller('side-note', class extends Controller {
     if (!text.trim() && !this.files().length) return this.field.focus()
     if (!this.idValue) { await this.save(); if (!this.idValue) return }
     const id = this.idValue
-    this.idValue = ''; this.field.value = ''; this.element.querySelector('.side-note-files').innerHTML = ''
+    this.idValue = ''; this.field.value = ''; this.element.querySelector('.corner-note-files').innerHTML = ''
     this.close()
     await this.post(`/notes/${id}/send`, { text })
   }
   async bin() {
     const id = this.idValue, text = this.field.value
-    this.idValue = ''; this.field.value = ''; this.element.querySelector('.side-note-files').innerHTML = ''
+    this.idValue = ''; this.field.value = ''; this.element.querySelector('.corner-note-files').innerHTML = ''
     this.close()
     if (id) await this.post(`/notes/${id}/bin`, { text })
   }
@@ -163,7 +163,7 @@ controller('side-note', class extends Controller {
 /** The rows of #agents: the sessions (the Scribble Board is the back of the Desk: its page corner). current: the session in view, if any. */
 export function sidebarRows(model, base, current = null) {
   const { here, away } = sidebarParts(model, base, current)
-  return html`${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}${sideNotes(model, base)}`
+  return html`${here.map(r => r[1])}${inviteAgentButton()}${away.length ? html`<h2 class="caps agent-heading agent-heading-away">Disconnected</h2>${away.map(r => r[1])}` : ''}`
 }
 /** The same rows one by one, for the live stream: [id, row] of those connected (here) and those that are not (away);
  *  shape says their order, so that a change within one row replaces that row only (turbo.mjs). */
@@ -519,8 +519,8 @@ export function register(t) {
   })
   document.addEventListener('keydown', e => { if (e.key === 'Escape') shut() })
   t.live('', {
-    take: m => ({ sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), desks: menuDeskRows(m, BASE), notes: sideNotes(m, BASE) }),
-    diff: (was, now) => `${t.differs(was.notes, now.notes) ? stream('replace', 'side-notes', now.notes) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
+    take: m => ({ sidebar: sidebarRows(m, BASE), rows: sidebarParts(m, BASE), lamp: deskLamp(m), desks: menuDeskRows(m, BASE), notes: cornerNote(m, BASE) }),
+    diff: (was, now) => `${t.differs(was.notes, now.notes) ? stream('replace', 'corner-note-box', now.notes) : ''}${t.differs(was.lamp, now.lamp) ? stream('update', 'desk-lamp', now.lamp) : ''}${t.differs(was.desks, now.desks) ? stream('replace', 'menu-desk-rows', now.desks) : ''}${!t.differs(was.sidebar, now.sidebar) ? ''
       : was.rows.shape !== now.rows.shape ? stream('update', 'agents', now.sidebar)
         : [...now.rows.here, ...now.rows.away].map(([id, row], i) => (t.differs([...was.rows.here, ...was.rows.away][i][1], row) ? stream('replace', `agent-${id}`, row) : '')).join('')}`,
   })

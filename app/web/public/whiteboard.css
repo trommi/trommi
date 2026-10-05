@@ -32,7 +32,6 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 @media (max-width: 860px) {
   body[data-page="whiteboard"] #whiteboard { grid-column: 1; grid-row: 3; }
   /* the pad's own bar takes the foot of the screen: the memo button stands above it */
-  html body[data-t-view="whiteboard"] .quick-open.memo-open-free { bottom: calc(var(--s-4) + 76px + env(safe-area-inset-bottom, 0px)) !important; }
   body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { box-shadow: 0 0 0 1px var(--line-strong); }
   .whiteboard-row { margin-bottom: 0; }
   .whiteboard-mark svg { width: 22px; height: 22px; }

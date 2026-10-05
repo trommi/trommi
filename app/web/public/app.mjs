@@ -11,7 +11,7 @@ import * as sidebar from './sidebar.mjs'
 import * as notes from './notes.mjs'
 import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
-import { RAIL_FOLD, sidebarRows, topbar } from './sidebar.mjs'
+import { RAIL_FOLD, cornerNote, sidebarRows, topbar } from './sidebar.mjs'
 import { WORDS, calm, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteLayer, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
@@ -930,6 +930,7 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
     parts.push({ key: 'topbar', html: String(topbar(model, base, view === 'desk', view)) })
     parts.push({ key: 'agents', html: String(html`<nav id="agents" aria-label="Sessions" data-controller="folds">${sidebarRows(model, base, current)}</nav>`) })
     parts.push({ key: 'rail', html: String(RAIL_FOLD) })
+    if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
   }
   parts.push({ key: 'main', html: String(main) })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
