@@ -323,7 +323,7 @@ try {
     c.push([{ id: 'e2e-old-paper', before: null, after: { id: 'e2e-old-paper', pad: tl, type: 'stroke', rotation: 0, z: 1, group: null, author: 'human', rev: 1, blob: null, sent: [], ...k } }])
     for (let i = 0; i < 150 && c.state().pending; i++) await new Promise(r => setTimeout(r, 100))
     return c.state()`).then(st => check(!st.error && !st.pending, `a stroke on the desk's canvas timeline is sealed (${JSON.stringify(st)})`))
-  await A.js("const g = document.querySelector('#inbox .curl-grab'), r = g.getBoundingClientRect(); for (const t of ['pointerdown', 'pointerup']) g.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 1, clientX: r.right - 8, clientY: r.bottom - 8 }))")
+  await A.js("const g = document.querySelector('#inbox .curl-grab'), r = g.getBoundingClientRect(); for (const t of ['pointerdown', 'pointerup']) g.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 1, clientX: r.right - 8, clientY: r.top + 8 }))")
   await A.until("location.pathname === '/scribble-board' && window.pad", 'whiteboard page with the pad')
   const pad = 'window.pad'
   await A.until(`${pad}.elements().length >= 1`, 'the canvas stroke on the Whiteboard').then(() => check(true, 'a stroke of the desk canvas shows on the Whiteboard'), e => check(false, e.message))

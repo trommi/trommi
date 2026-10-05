@@ -1171,13 +1171,13 @@ controller('fit', class extends Controller {
 })
 
 // ---- the page curl (his pick, 4 October: "the back of the Desk") ----
-// The Desk's bottom-right corner is lifted a little, the sketch paper showing under it; the Sketchpad is the back of
+// The Desk's top-right corner (his word, 5 October: "nach oben rechts") is lifted a little, the sketch paper showing under it; the Sketchpad is the back of
 // that sheet. Hover lifts it more, a drag peels it along a diagonal fold (the flap shaded, a shadow under it), a tap
 // or a pull past ~28 % turns the page: to /scribble-board from the Desk, to the Desk from the Scribble Board (the same corner
 // there). Esc turns back from the Sketchpad; P turns either way (ui.mjs keys). Markup: curlHTML(side) on both pages;
 // controller "curl" draws over the page's main area (fixed, in px of that area). Reduced motion: no peel, a fade.
 export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><svg class="curl-svg" aria-hidden="true"><defs><pattern id="curl-dots" width="22" height="22" patternUnits="userSpaceOnUse"><rect width="22" height="22" class="curl-paper"/><circle cx="11" cy="11" r="1.1" class="curl-dot"/></pattern><pattern id="curl-hatch" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(38)"><path d="M0,0 V5" class="curl-hatch-line"/></pattern><clipPath id="curl-clip"><path class="curl-clip-p"/></clipPath></defs><path class="curl-under"/><g class="curl-sketch" clip-path="url(#curl-clip)"><path class="curl-ink"/></g><path class="curl-cast"/><path class="curl-flap"/><path class="curl-flap-tone"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
-const CURL_REST_WIDE = 50, CURL_REST_PHONE = 56
+const CURL_REST_WIDE = 50, CURL_REST_PHONE = 44
 const restOf = () => (innerWidth < 861 ? CURL_REST_PHONE : CURL_REST_WIDE)
 function clipHalf(poly, c, keepBelow) {
   const f = ([x, y]) => (keepBelow ? c - x - y : x + y - c), out = []
@@ -1197,6 +1197,7 @@ controller('curl', class extends Controller {
     document.documentElement.dataset.curl = this.sideValue
     const on = (t, n, f, o) => { t.addEventListener(n, f, o); (this.offs ??= []).push(() => t.removeEventListener(n, f, o)) }
     on(window, 'resize', () => this.place())
+    on(window, 'scroll', () => { this.tick ??= requestAnimationFrame(() => { this.tick = null; if (this.top !== this.barTop()) this.place() }) }, { passive: true })
     on(this.grab, 'pointerenter', () => { if (!this.drag && !this.turning) this.tween(64, 220) })
     on(this.grab, 'pointerleave', () => { if (!this.drag && !this.turning) this.tween(restOf(), 260) })
     on(this.grab, 'pointerdown', e => { if (this.turning) return; this.grab.setPointerCapture(e.pointerId); cancelAnimationFrame(this.anim); this.drag = { x: e.clientX, y: e.clientY, moved: false } })
@@ -1204,7 +1205,7 @@ controller('curl', class extends Controller {
       if (!this.drag) return
       if (Math.hypot(e.clientX - this.drag.x, e.clientY - this.drag.y) > 6) this.drag.moved = true
       if (!this.drag.moved || this.calm) return
-      const r = this.box; this.p = Math.max(restOf(), ((r.right - e.clientX) + (r.bottom - e.clientY)) / 2); this.render()
+      const r = this.box; this.p = Math.max(restOf(), ((r.right - e.clientX) + (e.clientY - r.top)) / 2); this.render()
     })
     on(this.grab, 'pointerup', () => {
       const was = this.drag; this.drag = null; if (!was) return
@@ -1223,30 +1224,36 @@ controller('curl', class extends Controller {
     if (this.calm) { this.p = restOf(); this.render(); if (arrived) { this.element.parentElement?.animate?.([{ opacity: 0 }, { opacity: 1 }], { duration: 200 }) } return }
     this.tween(restOf(), arrived ? 380 : 500)
   }
-  disconnect() { cancelAnimationFrame(this.anim); for (const off of this.offs ?? []) off(); if (document.documentElement.dataset.curl === this.sideValue) delete document.documentElement.dataset.curl }
+  disconnect() { cancelAnimationFrame(this.anim); cancelAnimationFrame(this.tick); for (const off of this.offs ?? []) off(); if (document.documentElement.dataset.curl === this.sideValue) delete document.documentElement.dataset.curl }
+  /** Where the sheet's top edge is: the window's, or the lower edge of a bar that stands over the corner (a phone's top bar and its sessions). */
+  barTop() {
+    const vw = document.documentElement.clientWidth
+    return Math.round(Math.max(0, ...[...document.querySelectorAll('.topbar, #agents')].map(e => e.getBoundingClientRect()).filter(b => b.right >= vw - 24 && b.bottom > 0).map(b => b.bottom)))
+  }
   /** The overlay stands over the page's main area (the Desk's <main id="inbox"> or the Scribble Board's). */
   place() {
     const main = this.element.closest('main') ?? document.querySelector('main')
-    // (inside what is visible: the main area without its scroll bar, never beyond the window's right or bottom edge)
+    // (inside what is visible: the main area without its scroll bar, never beyond the window's right or bottom edge,
+    //  and under whatever bar stands over the page's top on a phone)
     const r = main.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
-    const top = Math.max(r.top, 0), right = Math.min(r.left + (main.clientWidth || r.width), vw), h = Math.min(r.bottom, vh) - top, w = right - r.left
+    const right = Math.min(r.left + (main.clientWidth || r.width), vw)
+    const top = this.top = this.barTop()
+    const h = Math.min(r.bottom, vh) - top, w = right - r.left
     this.box = { left: r.left, top, width: w, height: h, right, bottom: top + h }
     Object.assign(this.element.style, { left: `${r.left}px`, top: `${top}px`, width: `${w}px`, height: `${h}px` })
     this.svg.setAttribute('viewBox', `0 0 ${w} ${h}`)
-    // the note button keeps its place beside or above the corner, also when a scroll bar takes the window's edge
-    document.documentElement.style.setProperty('--curl-edge', `${Math.max(0, vw - right)}px`)
     this.render()
   }
   render() {
     // Drawn, not flat (his word, 4 October): the fold runs at a skew (about 30°, slightly curved), the flap is outlined
     // in ink with pen hatching at its fold, its shadow on the page is hatching too; under it the other side's paper.
-    // p: how far the corner is lifted. The fold meets the bottom edge at a = 1.4 p from the corner, the right edge at
+    // p: how far the corner is lifted. The fold meets the top edge at a = 1.4 p from the corner, the right edge at
     // b = 0.8 p; the flap's tip is the corner mirrored over the fold.
     const W = this.box.width, H = this.box.height, p = this.p, sel = c => this.svg.querySelector(c), f = n => n.toFixed(1)
     this.svg.style.display = p > 0 ? '' : 'none'
     if (p <= 0) return
     const a = p * 1.4, b = p * 0.8
-    const F1 = [W - a, H], F2 = [W, H - b], C = [W, H]
+    const F1 = [W - a, 0], F2 = [W, b], C = [W, 0]
     const dx = F2[0] - F1[0], dy = F2[1] - F1[1], len2 = dx * dx + dy * dy
     const t = ((C[0] - F1[0]) * dx + (C[1] - F1[1]) * dy) / len2, foot = [F1[0] + t * dx, F1[1] + t * dy]
     const T = [2 * foot[0] - C[0], 2 * foot[1] - C[1]]
@@ -1254,19 +1261,19 @@ controller('curl', class extends Controller {
     const Q = [mid[0] + nx * bow, mid[1] + ny * bow]
     const fold = `M${f(F1[0])},${f(F1[1])} Q${f(Q[0])},${f(Q[1])} ${f(F2[0])},${f(F2[1])}`
     const whole = a >= W || b >= H
-    const under = whole ? `M0,0 H${W} V${H} H0 Z` : `${fold} L${W},${H} Z`
+    const under = whole ? `M0,0 H${W} V${H} H0 Z` : `${fold} L${W},0 Z`
     sel('.curl-under').setAttribute('d', under); sel('.curl-clip-p').setAttribute('d', under)
     // the flap: from the fold out to its tip, edges with a little wobble of the pen
-    const e1 = [(F2[0] + T[0]) / 2 + bow * 0.5, (F2[1] + T[1]) / 2 - bow * 0.3], e2 = [(F1[0] + T[0]) / 2 - bow * 0.3, (F1[1] + T[1]) / 2 + bow * 0.5]
+    const e1 = [(F2[0] + T[0]) / 2 + bow * 0.5, (F2[1] + T[1]) / 2 + bow * 0.3], e2 = [(F1[0] + T[0]) / 2 - bow * 0.3, (F1[1] + T[1]) / 2 - bow * 0.5]
     const flap = `${fold} Q${f(e1[0])},${f(e1[1])} ${f(T[0])},${f(T[1])} Q${f(e2[0])},${f(e2[1])} ${f(F1[0])},${f(F1[1])} Z`
     sel('.curl-flap').setAttribute('d', flap)
-    sel('.curl-cast').setAttribute('d', flap); sel('.curl-cast').setAttribute('transform', `translate(${f(-Math.min(9, p * 0.06))},${f(-Math.min(7, p * 0.05))})`)
+    sel('.curl-cast').setAttribute('d', flap); sel('.curl-cast').setAttribute('transform', `translate(${f(-Math.min(9, p * 0.06))},${f(Math.min(7, p * 0.05))})`)
     const k = 0.24, B1 = [F1[0] + (T[0] - F1[0]) * k, F1[1] + (T[1] - F1[1]) * k], B2 = [F2[0] + (T[0] - F2[0]) * k, F2[1] + (T[1] - F2[1]) * k], QB = [Q[0] + (T[0] - mid[0]) * k, Q[1] + (T[1] - mid[1]) * k]
     sel('.curl-flap-tone').setAttribute('d', `${fold} L${f(B2[0])},${f(B2[1])} Q${f(QB[0])},${f(QB[1])} ${f(B1[0])},${f(B1[1])} Z`)
     sel('.curl-fold').setAttribute('d', fold)
     if (this.sideValue === 'desk' && !this.sketched) {
       this.sketched = true
-      const x = W - 92, y = H - 58
+      const x = W - 92, y = 4
       sel('.curl-ink').setAttribute('d', `M${x},${y + 30} q10,-18 22,-6 t24,-4 t22,8 M${x + 18},${y + 46} q16,-3 34,1 M${x + 52},${y + 18} q7,-9 13,0 q-6,8 -13,0`)
     }
   }

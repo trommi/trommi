@@ -5,7 +5,7 @@
    session (quick send, the memo slip: notes.css) and the pad's drawing. In a session
    they stand above the composer, so they never lie on its send button. */
 .quick-open {
-  position: fixed; z-index: 6; bottom: calc(var(--s-4) + var(--float-up, 0px) + env(safe-area-inset-bottom, 0px)); width: 44px; height: 44px; min-height: 0; padding: 0; margin: 0;
+  position: fixed; z-index: 6; bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)); width: 44px; height: 44px; min-height: 0; padding: 0; margin: 0;
   display: grid; place-items: center; border: 0; border-radius: 50%; rotate: none; background: var(--surface); color: var(--fg);
   box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); transition: box-shadow var(--d-fast), translate var(--d-fast);
 }

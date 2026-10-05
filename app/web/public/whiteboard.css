@@ -31,7 +31,6 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 
 @media (max-width: 860px) {
   body[data-page="whiteboard"] #whiteboard { grid-column: 1; grid-row: 3; }
-  /* the pad's own bar takes the foot of the screen: the memo button stands above it */
   body[data-t-view="whiteboard"] .whiteboard-row .agent-entry { box-shadow: 0 0 0 1px var(--line-strong); }
   .whiteboard-row { margin-bottom: 0; }
   .whiteboard-mark svg { width: 22px; height: 22px; }
@@ -80,7 +79,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 }
 
 /* ── top bar ────────────────────────────────────────────────────────────── */
-.pad-top { position: absolute; top: max(var(--s-2), env(safe-area-inset-top)); left: var(--s-2); right: var(--s-2); z-index: 3; display: flex; align-items: center; gap: 6px; pointer-events: none; }
+.pad-top { position: absolute; top: max(var(--s-2), env(safe-area-inset-top)); left: var(--s-2); right: 84px; z-index: 3; display: flex; align-items: center; gap: 6px; pointer-events: none; }
 .pad-top > * { pointer-events: auto; }
 .pad-gap { flex: 1; pointer-events: none; }
 .pad-title { padding-right: var(--s-4); gap: 2px; }
@@ -196,7 +195,7 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-wide { display: none; }
 @media (min-width: 620px) { .pad-wide { display: grid; } }
 @media (max-width: 619px) {
-  .pad-top { gap: 4px; }
+  .pad-top { gap: 4px; right: 60px; }   /* (the sheet's turned corner has the top-right: ui.mjs curl) */
   .pad-title { padding-right: 10px; }
   .pad-title span { display: none; }
   .pad-top .pad-icon-btn { width: 40px; height: 40px; }
