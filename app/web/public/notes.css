@@ -35,18 +35,13 @@ body:not([data-scope="all"]):not([data-page]) :is(.quick-open, .topbar .padlink-
 
 /* ---- closed: the button is a yellow sticky note (who receives is in its tooltip and on the slip) ---- */
 .topbar .quick-open { right: var(--s-4); width: 44px; height: 44px; border-radius: 50%; }
-.memo-open { --sticky: #f7d64f; --sticky-ink: #4a3c08; }
-:root[data-theme="dark"] .memo-open { --sticky: #e9c63f; }
 .memo-sticky { width: 27px; height: 27px; fill: none; stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; rotate: -4deg; pointer-events: none; }
 .memo-sticky .sticky-paper { fill: var(--sticky); }
 .memo-sticky .sticky-fold { fill: color-mix(in srgb, var(--sticky) 62%, #fff); }
 .memo-sticky .sticky-line { stroke: var(--sticky-ink); stroke-width: 1.4; }
 :root[data-theme="dark"] .memo-sticky :is(.sticky-paper, .sticky-fold) { stroke: var(--sticky-ink); }
-.memo-open[data-none] .memo-sticky { opacity: .55; }
 /* while a note is out, it keeps its paper (the note must stay readable): a firm ring instead of a filled button */
-.quick-open.memo-open[aria-expanded="true"] { background: var(--surface); color: var(--fg); box-shadow: 0 0 0 2px var(--fg), var(--shadow-md); }
 /* notes were put away: the button holds them and says how many; a click lists them (.memo-list) */
-.memo-open[data-draft]::after { content: attr(data-count); position: absolute; right: -4px; top: -4px; min-width: 18px; height: 18px; box-sizing: border-box; padding: 0 4px; display: grid; place-items: center; border-radius: 9px; background: var(--fg); color: var(--bg); font: 700 .68rem/1 var(--font); box-shadow: 0 0 0 2px var(--bg); }
 body:not([data-scope="all"]):not([data-page]) .memo-sticky { width: 23px; height: 23px; }
 @media (max-width: 860px) { .memo-sticky { width: 23px; height: 23px; }
 }
@@ -203,15 +198,11 @@ body:not([data-scope="all"]):not([data-page]) .memo-sticky { width: 23px; height
 
 /* On a card page the round button stands by itself, over the page: bottom right beside the card on a wide screen,
    top right on a phone (the foot there holds the field and the arrows). */
-.quick-open.memo-open-free { right: var(--s-4); bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)); top: auto; width: 44px; height: 44px; border-radius: 50%; z-index: 2601; display: grid !important; }
 /* Always bottom right, on every page and width, above a phone's home bar (Christopher: "immer unten rechts"). The
    paper's pen and eye switches stand bottom left. Strong on purpose: older rules put it into the top bar on narrow
    pages (app.css, quick-open in .topbar). */
-html body .quick-open.memo-open-free { top: auto !important; bottom: calc(var(--s-4) + env(safe-area-inset-bottom, 0px)) !important; right: calc(var(--s-4) + env(safe-area-inset-right, 0px)) !important; left: auto !important; width: 44px !important; height: 44px !important; display: grid !important; }
 /* a session's page on a phone has its message field and its filter button across the foot, and the "open" jump just
    above them at the right: the button stands above those */
-@media (max-width: 860px) { html body[data-t-view="session"] .quick-open.memo-open-free { bottom: calc(var(--s-4) + 136px + env(safe-area-inset-bottom, 0px)) !important; }
-}
 /* A note being written is plain paper: the tape is what it gets once sent, stuck into the conversation
    (session.css .msg-note). Until then it lies on the Notes stack (desk.mjs). */
 .memo-head::before { content: none; }
@@ -244,7 +235,6 @@ a.memo-send { text-decoration: none; box-sizing: border-box; }
 }
 /* The notes that were put away hang off the round button: their number on it, the list above it on a click. */
 .memo-count { position: absolute; right: -4px; top: -4px; min-width: 18px; height: 18px; padding: 0 4px; box-sizing: border-box; display: grid; place-items: center; border-radius: var(--r-pill); background: var(--accent); color: var(--bg); font: 700 .68rem/1 var(--font); box-shadow: 0 0 0 2px var(--bg); }
-.memo-open[data-count]::after { content: none; }
 .memo-away { position: fixed; z-index: 2601; right: var(--s-4); bottom: calc(var(--s-4) + 52px + env(safe-area-inset-bottom, 0px)); width: min(320px, calc(100vw - 2 * var(--s-4))); max-height: min(60vh, 420px); overflow-y: auto; display: grid; gap: 2px; padding: 6px; border-radius: var(--r-md, 12px); background: var(--surface); box-shadow: 0 0 0 1px var(--line), var(--shadow-md); }
 .memo-away[hidden] { display: none; }
 .memo-away form { margin: 0; }
@@ -259,9 +249,7 @@ a.memo-send { text-decoration: none; box-sizing: border-box; }
 
 /* Parity with the old board (worker "parity"): the phone's Agents button beside the memo button, the memo count of
    a phone (a floating note waits at the button there too), the index-card heading's tabs as links. */
-@media (min-width: 861px) { .memo-count-phone { display: none; }
-}
-@media (max-width: 860px) { .memo-count:not(.memo-count-phone) { display: none; }
+@media (max-width: 860px) { .memo-count { display: none; }
 }
 
 /* ---- Keep on the pile: a small drawn button beside the send (an arrow down onto a stack) ---- */
@@ -269,25 +257,9 @@ a.memo-send { text-decoration: none; box-sizing: border-box; }
 
 /* ---- The memo button: a hand-drawn sticky note right above the page's corner (his word, 4 October: drawn, like the
    rest; no circle, no flat box) ---- */
-html body .quick-open.memo-open-free { width: 54px; height: 54px; padding: 0; border-radius: 0; background: none !important; box-shadow: none !important; color: var(--fg); rotate: -4deg; overflow: visible; }
-html body .quick-open.memo-open-free .memo-sticky { display: none; }
-html body .quick-open.memo-open-free .memo-note { width: 54px; height: 54px; overflow: visible; }
-.memo-note .note-fill { fill: #f5d64a; }
-.memo-note .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
-.memo-note .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.6; stroke-linecap: round; opacity: .8; }
-.memo-note .note-pencil path { fill: none; stroke: var(--fg); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
-.memo-note .note-pencil .pencil-body { fill: var(--surface); }
-.memo-note .note-tape { fill: rgb(255 255 255 / .55); stroke: var(--fg); stroke-width: 1; stroke-opacity: .35; }
-html body .quick-open.memo-open-free:hover { rotate: -1deg; translate: 0 -2px; }
-html[data-curl] body .quick-open.memo-open-free { right: calc(var(--s-4) + 4px + env(safe-area-inset-right, 0px)) !important; }
-:root[data-theme="dark"] .memo-note .note-fill { fill: #d9bc3c; }
 .memo-foot { flex-wrap: nowrap; }
 /* the sticky never lies over the cards: in the free margin left of the page's corner, at the bottom */
 /* beside the page's corner while there is room in the margin; on smaller screens above it (his word, 4 October) */
-html[data-curl] body .quick-open.memo-open-free { right: calc(14px + var(--curl-edge, 0px) + env(safe-area-inset-right, 0px)) !important; bottom: calc(104px + env(safe-area-inset-bottom, 0px)) !important; }
-@media (min-width: 1380px) { html[data-curl] body .quick-open.memo-open-free { right: calc(var(--s-4) + 96px + var(--curl-edge, 0px) + env(safe-area-inset-right, 0px)) !important; bottom: calc(var(--s-3) + env(safe-area-inset-bottom, 0px)) !important; } }
-@media (max-width: 860px) { html[data-curl] body .quick-open.memo-open-free { right: calc(10px + var(--curl-edge, 0px) + env(safe-area-inset-right, 0px)) !important; bottom: calc(80px + env(safe-area-inset-bottom, 0px)) !important; } }
-html[data-curl] body .quick-open.memo-open-free { position: fixed !important; max-width: calc(100vw - 16px); }
 /* the sidebar's note sends with the same envelope */
-.side-note-body { --memo-envelope: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E"); }
-:root[data-theme="dark"] .side-note-body { --memo-envelope: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E"); }
+.corner-note-body { --memo-envelope: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E"); }
+:root[data-theme="dark"] .corner-note-body { --memo-envelope: url("data:image/svg+xml,%3Csvg%20xmlns%3D'http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg'%20viewBox%3D'0%200%2056%2040'%3E%3Cpath%20d%3D'M3%207.4%20L52.6%206.6%20L53%2036.4%20L3.4%2037%20Z'%20fill%3D'%23fdf2c4'%2F%3E%3Cpath%20d%3D'M3%207.4%20Q28%206.4%2052.6%206.6%20Q53.4%2022%2053%2036.4%20Q28%2037.4%203.4%2037%20Q2.6%2022%203%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.6'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3Cpath%20d%3D'M3.4%208%20Q16%2018.6%2027.6%2024.2%20Q40%2018%2052.4%207.4'%20fill%3D'none'%20stroke%3D'%231d1a12'%20stroke-width%3D'1.5'%20stroke-linecap%3D'round'%20stroke-linejoin%3D'round'%2F%3E%3C%2Fsvg%3E"); }

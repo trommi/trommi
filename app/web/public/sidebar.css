@@ -662,43 +662,17 @@ a.agent-badge { text-decoration: none; }
   html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { margin: 0; width: 28px; height: 28px; }
 }
 
-/* ---- The note in the sidebar (sidebar.mjs sideNotes): one yellow sticky pinned at the sidebar's foot, above the fold button; folded its first line,
-   unfolded a field that grows, the bin and the crown ---- */
-@media (min-width: 861px) { .side-notes { margin: auto 0 0; padding: 12px 0 52px; position: sticky; bottom: 0; background: var(--bg); } }
-.side-note-head { display: flex; align-items: center; gap: var(--s-3); width: 100%; min-height: 40px; padding: 6px var(--s-3); border: 0; border-radius: var(--r-md); background: none; color: var(--muted); font: 500 var(--t-md)/1.2 var(--font); text-align: left; cursor: pointer; }
-.side-note-head:hover { background: color-mix(in srgb, var(--fg) 5%, transparent); color: var(--fg); }
-.side-note-first { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.side-notes.has-words .side-note-head { color: #3b300d; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .25), 0 1px 2px rgb(20 30 25 / .15); border-radius: 2px; rotate: -.6deg; }
-.side-notes.has-words .side-note-head:hover { background: #fae58a; }
-.side-note-ico { flex: none; width: 34px; height: 22px; overflow: visible; }
-.side-note-ico .note-fill { fill: #f5d64a; } .side-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .side-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; opacity: .8; }
-.side-notes.has-words .side-note-ico { width: 22px; }
-.side-notes.is-open .side-note-head { display: none; }
-.side-note-body[hidden] { display: none; }
-.side-note-body { display: grid; gap: 4px; padding: 10px 10px 6px; border-radius: 2px; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
-.side-note-field { width: 100%; min-height: 64px; resize: none; padding: 2px; border: 0; background: none; color: #2d2406; font: 500 var(--t-sm)/1.45 var(--font); outline: none; }
-.side-note-foot { display: flex; align-items: center; gap: 4px; }
-.side-note-foot > i { flex: 1; }
-.side-note-bin { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
-.side-note-bin .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.side-note-bin:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
-.side-notes .side-note-send { position: relative; width: 58px; height: 40px; }
-.side-note-nocrown { font-size: var(--t-xs); color: #6a5d24; }
-:root[data-theme="dark"] :is(.side-notes.has-words .side-note-head, .side-note-body) { background: #d9c35f; }
-@media (min-width: 861px) {
-  html[data-rail="folded"] .side-notes { display: flex; justify-content: center; }
-  html[data-rail="folded"] .side-note-head { position: relative; width: 48px; justify-content: center; padding: 6px 0; background: none !important; box-shadow: none !important; rotate: none; }
-  html[data-rail="folded"] .side-note-first { display: none; }
-  html[data-rail="folded"] .side-notes.has-words .side-note-head::after { content: ""; position: absolute; right: 8px; top: 6px; width: 8px; height: 8px; border-radius: 50%; background: var(--urg-high); }
-  html[data-rail="folded"] .side-notes.is-open .side-note-body { position: fixed; left: 80px; bottom: 60px; width: 300px; z-index: 30; }
-}
-@media (max-width: 860px) {
-  .side-notes { margin: 0; flex: none; }
-  .side-note-head { min-height: 44px; border-radius: 22px; padding: 0 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong); max-width: 180px; }
-  .side-notes.is-open .side-note-body { position: fixed; z-index: 80; left: 8px; right: 8px; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); padding: 14px; rotate: none; border-radius: 6px; }
-}
-/* the floating memo button goes: the sidebar has it */
-html body .quick-open.memo-open-free, html[data-curl] body .quick-open.memo-open-free, html body[data-t-view] .quick-open.memo-open-free { display: none !important; }
+.corner-note-box.is-open .corner-note-head { display: none; }
+.corner-note-body[hidden] { display: none; }
+.corner-note-body { display: grid; gap: 4px; padding: 10px 10px 6px; border-radius: 2px; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 2px 6px rgb(20 30 25 / .18); rotate: -.4deg; }
+.corner-note-field { width: 100%; min-height: 64px; resize: none; padding: 2px; border: 0; background: none; color: #2d2406; font: 500 var(--t-sm)/1.45 var(--font); outline: none; }
+.corner-note-foot { display: flex; align-items: center; gap: 4px; }
+.corner-note-foot > i { flex: 1; }
+.corner-note-bin { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
+.corner-note-bin .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.corner-note-bin:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
+.corner-note-box .corner-note-send { position: relative; width: 58px; height: 40px; }
+.corner-note-nocrown { font-size: var(--t-xs); color: #6a5d24; }
 /* ---- One calm sidebar (his word, 4 October: "so noch komisch"): one inset for every row, the pills inside with equal
    margins; "New note" a quiet row like "+ New agent", right under it, the unsent notes as small stickies under that;
    the bracket of an unfolded main thinner and lighter ---- */
@@ -709,25 +683,38 @@ html body .quick-open.memo-open-free, html[data-curl] body .quick-open.memo-open
   .agent-row.is-main[data-fold] { margin-inline: 0; }
   .crown-bracket { stroke-width: 1.3; opacity: .45; }
 }
-.side-note-field:focus, .side-note-field:focus-visible { outline: none; box-shadow: none; }
-@media (min-width: 861px) { html[data-rail="folded"] #agents > .side-notes { display: flex !important; padding: 8px 0 56px; } }
-/* the note on the sidebar's bottom line, beside the fold button (his word: anchored, no gap) */
-@media (min-width: 861px) {
-  :root:not([data-rail="folded"]) #agents { padding-bottom: 0; }
-  :root:not([data-rail="folded"]) #agents > .side-notes { margin-bottom: 0; padding: 8px 0 12px 40px; }
-  :root:not([data-rail="folded"]) #agents > .side-notes .side-note-head { padding-left: 8px; }
-}
+.corner-note-field:focus, .corner-note-field:focus-visible { outline: none; box-shadow: none; }
 /* the note's attachments: thumbnails and file names under the words, the paperclip beside the bin */
-.side-note-files { display: flex; flex-wrap: wrap; gap: 6px; }
-.side-note-files:empty { display: none; }
-.side-note-file { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-height: 28px; padding: 2px 22px 2px 8px; border: 0; border-radius: 4px; background: rgb(255 255 255 / .55); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3); color: #3b300d; font: 500 var(--t-xs)/1.2 var(--font); cursor: pointer; }
-.side-note-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.side-note-file.is-pic { padding: 3px; }
-.side-note-file.is-pic img { display: block; width: 56px; height: 42px; object-fit: cover; border-radius: 2px; }
-.side-note-file > i { position: absolute; top: 1px; right: 4px; font-style: normal; opacity: .55; }
-.side-note-file:hover > i { opacity: 1; }
-.side-note-clip { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
-.side-note-clip .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.side-note-clip:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
-.side-notes.is-drop .side-note-body { box-shadow: inset 0 0 0 2px #8a6d14, 0 2px 6px rgb(20 30 25 / .18); }
-.side-note-err { font-size: var(--t-xs); color: var(--urg-critical); }
+.corner-note-files { display: flex; flex-wrap: wrap; gap: 6px; }
+.corner-note-files:empty { display: none; }
+.corner-note-file { position: relative; display: inline-flex; align-items: center; max-width: 100%; min-height: 28px; padding: 2px 22px 2px 8px; border: 0; border-radius: 4px; background: rgb(255 255 255 / .55); box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3); color: #3b300d; font: 500 var(--t-xs)/1.2 var(--font); cursor: pointer; }
+.corner-note-file > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.corner-note-file.is-pic { padding: 3px; }
+.corner-note-file.is-pic img { display: block; width: 56px; height: 42px; object-fit: cover; border-radius: 2px; }
+.corner-note-file > i { position: absolute; top: 1px; right: 4px; font-style: normal; opacity: .55; }
+.corner-note-file:hover > i { opacity: 1; }
+.corner-note-clip { display: grid; place-items: center; width: 36px; height: 36px; padding: 0; border: 0; border-radius: 8px; background: none; color: #6a5d24; cursor: pointer; }
+.corner-note-clip .sketch { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
+.corner-note-clip:hover { background: rgb(0 0 0 / .06); color: #3b300d; }
+.corner-note-box.is-drop .corner-note-body { box-shadow: inset 0 0 0 2px #8a6d14, 0 2px 6px rgb(20 30 25 / .18); }
+.corner-note-err { font-size: var(--t-xs); color: var(--urg-critical); }
+
+/* ---- The note (sidebar.mjs cornerNote): the one drawn yellow sticky at the window's bottom-right; a click unfolds it
+   there, growing upward, with the field, the attachments, the bin and the crown; folded, its first line stands beside
+   it when it holds words ---- */
+.corner-note-box { position: fixed; z-index: 30; right: calc(16px + env(safe-area-inset-right, 0px)); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); }
+:root.is-choosing .corner-note-box { opacity: 0; pointer-events: none; }
+.corner-note-head { display: flex; flex-direction: row-reverse; align-items: center; gap: 8px; max-width: min(280px, calc(100vw - 32px)); min-height: 56px; padding: 0; border: 0; background: none; color: #3b300d; cursor: pointer; }
+.corner-note-ico { flex: none; width: 54px; height: 54px; overflow: visible; rotate: -4deg; transition: rotate 140ms, translate 140ms; }
+.corner-note-head:hover .corner-note-ico { rotate: -1deg; translate: 0 -2px; }
+.corner-note-ico .note-fill { fill: #f5d64a; } .corner-note-ico .note-ink { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; } .corner-note-ico .note-lines { fill: none; stroke: var(--fg); stroke-width: 1.8; stroke-linecap: round; opacity: .8; }
+.corner-note-first { display: none; min-width: 0; max-width: 200px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; padding: 5px 9px; border-radius: 2px; background: #f7de6c; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .25), 0 1px 2px rgb(20 30 25 / .15); font: 500 var(--t-xs)/1.3 var(--font); rotate: -.6deg; }
+.corner-note-box.has-words .corner-note-first { display: block; }
+.corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: 12px 12px 8px; }
+.corner-note-field { max-height: 50vh; }
+:root[data-theme="dark"] :is(.corner-note-first, .corner-note-body) { background: #d9c35f; }
+/* the phone: above the composer of a conversation and the pens of the Scribble Board */
+@media (max-width: 860px) {
+  body[data-t-view="session"] .corner-note-box { bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
+  body[data-t-view="whiteboard"] .corner-note-box { bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+}

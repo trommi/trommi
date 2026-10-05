@@ -789,5 +789,3 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
 /* the round memo button steps up out of the corner's way */
 :root[data-curl] { --float-up: 92px; }
 @media (max-width: 860px) { .curl-grab { width: 72px; height: 72px; } :root[data-curl] { --float-up: 70px; } }
-html[data-curl] body .quick-open.memo-open-free { bottom: calc(var(--s-4) + 92px + env(safe-area-inset-bottom, 0px)) !important; }
-@media (max-width: 860px) { html[data-curl] body .quick-open.memo-open-free { bottom: calc(var(--s-4) + 72px + env(safe-area-inset-bottom, 0px)) !important; } }
