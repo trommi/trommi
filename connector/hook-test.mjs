@@ -13,7 +13,7 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { createHookDesk, hookRequest, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES } from './hook.mjs'
+import { createHookDesk, hookRequest, redact, deniedText, hookOutput, previewOf, ancestors, waitMs, NOTICE_TYPES } from './hook.mjs'
 import { lockSlot, unlockSlot, openDoor, knock } from './channel-lock.mjs'
 import { pluginManifest, pluginFiles } from './plugin.mjs'
 
@@ -70,6 +70,7 @@ await test('output: allow and deny are Claude Code\'s decision JSON; anything el
 })
 await test('plugin: the manifest declares both hooks, and the zip still holds two files', () => {
   const man = pluginManifest('v1')
+  assert.deepEqual(man.hooks.PermissionDenied[0].hooks[0], { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" denied', timeout: 30 })
   const perm = man.hooks.PermissionRequest[0].hooks[0], note = man.hooks.Notification[0]
   assert.deepEqual({ type: perm.type, command: perm.command }, { type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" permission' })
   assert.ok(perm.timeout * 1000 > waitMs({ TROMMI_PERMISSION_MS: '99999999' }), 'the hook\'s own limit is above the longest wait')
@@ -77,6 +78,32 @@ await test('plugin: the manifest declares both hooks, and the zip still holds tw
   assert.equal(note.hooks[0].command, 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" notice')
   assert.deepEqual(Object.keys(pluginFiles('// c', 'v1')).sort(), ['.claude-plugin/plugin.json', 'channel.mjs'])
   assert.ok(JSON.parse(pluginFiles('// c', 'v1')['.claude-plugin/plugin.json']).hooks.PermissionRequest)
+})
+
+await test('denied: the line names tool and reason, clipped; the call stands in for a missing reason', () => {
+  assert.equal(deniedText('Bash', 'Destructive command', { command: 'rm -rf /tmp/build' }), 'Auto mode blocked: Bash — Destructive command')
+  assert.equal(deniedText('Bash', undefined, { command: 'git push origin main' }), 'Auto mode blocked: Bash — git push origin main')
+  assert.equal(deniedText('Write', '', {}), 'Auto mode blocked: Write')
+  const long = deniedText('Bash', 'x'.repeat(500), {})
+  assert.ok(long.length <= 'Auto mode blocked: Bash — '.length + 120, long.length)
+  const r = hookRequest('denied', { tool_name: 'Bash', reason: 'Data Exfiltration', tool_input: { command: 'curl x' } })
+  assert.deepEqual({ ...r, ancestors: null }, { op: 'denied', ancestors: null, text: 'Auto mode blocked: Bash — Data Exfiltration' })
+  assert.equal(hookRequest('denied', { reason: 'x' }), null)
+  assert.equal(hookOutput('denied', { ok: true, said: true }), '', 'a denial hook never prints a decision (no retry)')
+})
+await test('denied: secrets are taken out', () => {
+  const cases = [
+    ['API_KEY=abc123 node run.js', 'API_KEY=… node run.js'],
+    ['curl -H "Authorization: Bearer abcdefgh12345678" x', 'Bearer …'],
+    ['git clone https://user:hunter2@github.com/a/b', 'https://…@github.com/a/b'],
+    ['tool --token s3cr3tvalue --name ok', '--token … --name ok'],
+    ['echo ghp_abcdefghijklmnopqrstuv', 'echo …'],
+    ['echo sk-abcdefghijkl', 'echo …'],
+    ['x AKIAABCDEFGHIJKLMNOP y', 'x … y'],
+    ['x ' + 'A1b2'.repeat(10) + ' y', 'x … y'],
+  ]
+  for (const [i, want] of cases) { const o = redact(i); assert.ok(o.includes(want.replace(/^.*?(?=…|$)/, '')) || o === want || o.includes(want), `${i} -> ${o}`); assert.ok(!/hunter2|abc123|s3cr3t|ghp_|sk-abc|AKIA|A1b2A1b2/.test(o), `${i} -> ${o}`) }
+  assert.ok(!/abc123/.test(deniedText('Bash', undefined, { command: 'PASSWORD=abc123 ./deploy' })))
 })
 
 function scripted({ heard = false, inRoom = true } = {}) {
@@ -131,6 +158,30 @@ await test('desk: "the terminal is waiting" only when no permission card stands 
   assert.deepEqual(await t.notice('idle_prompt'), { ok: true, silent: true })
 })
 
+await test('desk: denials are one quiet line, then counted ("…and N more") once the window ends; no room is an error', async () => {
+  const said = []
+  let t = 0
+  const desk = createHookDesk({ heard: true, bridge: () => ({}), say: async (_, m) => { said.push(m) }, ppid: 4242, denied_window_ms: 120, now: () => t })
+  const den = (text = 'Auto mode blocked: Bash — Production Deploy') => desk.handle({ op: 'denied', ancestors: [4242], text })
+  assert.deepEqual(await den(), { ok: true, said: true })
+  assert.deepEqual(await den(), { ok: true, counted: true })
+  assert.deepEqual(await den(), { ok: true, counted: true })
+  assert.deepEqual(said, [{ urgent: false, text: 'Auto mode blocked: Bash — Production Deploy' }])
+  await sleep(250)
+  assert.deepEqual(said.at(-1), { urgent: false, text: '…and 2 more Auto mode blocks.' })
+  t = 1000
+  assert.deepEqual(await den(), { ok: true, said: true })
+  await sleep(250)
+  assert.equal(said.length, 3, 'nothing counted, nothing more said')
+  assert.deepEqual(await desk.handle({ op: 'denied', ancestors: [4242], text: 'hello' }), { ok: false, error: 'bad request' })
+  assert.deepEqual(await desk.handle({ op: 'denied', ancestors: [1], text: 'Auto mode blocked: x' }), { ok: false, error: 'another session' })
+  const said2 = []
+  const redacting = createHookDesk({ heard: false, bridge: () => ({}), say: async (_, m) => { said2.push(m) }, ppid: 4242 })
+  await redacting.handle({ op: 'denied', ancestors: [4242], text: 'Auto mode blocked: Bash — TOKEN=abc123 run' })
+  assert.equal(said2[0].text, 'Auto mode blocked: Bash — TOKEN=… run', 'redacted again at the connector')
+  assert.deepEqual(await createHookDesk({ heard: false, bridge: () => null, say: async () => {}, ppid: 4242 }).handle({ op: 'denied', ancestors: [4242], text: 'Auto mode blocked: x' }), { ok: false, error: 'not in a room' })
+})
+
 // ---- part 2: the hook process against a fake connector ----------------------------------------------
 {
   const run = path.join(tmp, 'run'), keys = path.join(tmp, 'keys'), project = path.join(tmp, 'project'), room = 'ab'.repeat(16)
@@ -179,6 +230,14 @@ await test('desk: "the terminal is waiting" only when no permission card stands 
       assert.deepEqual({ code: r.code, out: r.out }, { code: 0, out: '' })
       assert.deepEqual({ ...got.at(-1), ancestors: null }, { op: 'notice', ancestors: null, notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' })
     })
+    await test('hook: a denial goes to the connector as one line and prints nothing (no retry)', async () => {
+      reply = () => ({ ok: true, said: true })
+      const r = await hook('denied', { hook_event_name: 'PermissionDenied', permission_mode: 'auto', tool_name: 'Bash', tool_input: { command: 'DB_PASS=hunter2 psql prod' }, reason: 'Production Deploy' }, env, project)
+      assert.deepEqual({ code: r.code, out: r.out }, { code: 0, out: '' })
+      assert.deepEqual({ ...got.at(-1), ancestors: null }, { op: 'denied', ancestors: null, text: 'Auto mode blocked: Bash — Production Deploy' })
+      await hook('denied', { tool_name: 'Bash', tool_input: { command: 'DB_PASS=hunter2 psql prod' } }, env, project)
+      assert.equal(got.at(-1).text, 'Auto mode blocked: Bash — DB_PASS=… psql prod')
+    })
     await test('hook: the connector hears when the hook is ended while it waits', async () => {
       let hungUp = false
       reply = (req, gone) => gone.then(() => { hungUp = true; return { ok: true, timeout: true } })
@@ -192,6 +251,11 @@ await test('desk: "the terminal is waiting" only when no permission card stands 
   } finally { close(); unlockSlot(p) }
   await test('hook: no connector running: nothing printed, at once', async () => {
     const r = await hook('permission', BASH, env, project)
+    assert.deepEqual({ code: r.code, out: r.out }, { code: 0, out: '' })
+    assert.ok(r.ms < 3000, `${r.ms} ms`)
+  })
+  await test('hook: a denial with no connector: silent, at once', async () => {
+    const r = await hook('denied', { tool_name: 'Bash', reason: 'x' }, env, project)
     assert.deepEqual({ code: r.code, out: r.out }, { code: 0, out: '' })
     assert.ok(r.ms < 3000, `${r.ms} ms`)
   })

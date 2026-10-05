@@ -5,6 +5,8 @@
 //
 //   PermissionRequest  `node channel.mjs permission`  asks the human on the board and answers for them
 //   Notification       `node channel.mjs notice`      says "the terminal is waiting for you" when no card stands for it
+//   PermissionDenied   `node channel.mjs denied`      one quiet chat line "Auto mode blocked: <tool> — <reason>" (rate-limited,
+//                                                     secrets stripped); it approves nothing and never sets retry
 //
 // A hook is a short-lived process of its own. It never opens the key: it hands its request to the running connector
 // of the same Claude Code session through that connector's door (channel-lock.mjs, the socket `say` uses). The
@@ -41,6 +43,17 @@ export function ancestors(pid = process.ppid, depth = 8) {
   return up
 }
 
+/** A line of a tool call or a reason with what looks like a secret taken out: env assignments, tokens, passwords in URLs. */
+export function redact(s) {
+  return String(s ?? '')
+    .replace(/\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+\/=-]{8,}/gi, 'Bearer …')
+    .replace(/(\b[a-z][a-z0-9+.-]*:\/\/)[^\s\/@:]+(?::[^\s\/@]*)?@/gi, '$1…@')
+    .replace(/(--?[\w-]*(?:token|secret|password|passwd|pass|key|auth|credential)[\w-]*)([= ])\S+/gi, '$1$2…')
+    .replace(/\b([A-Za-z_][A-Za-z0-9_]*)=("[^"]*"|'[^']*'|\S*)/g, '$1=…')
+    .replace(/\b(?:sk|pk|rk)-[A-Za-z0-9_-]{8,}|\bgh[pousr]_[A-Za-z0-9]{16,}|\bgithub_pat_\w{16,}|\bxox[abprs]-[\w-]{8,}|\bAKIA[0-9A-Z]{12,}|\beyJ[\w-]{10,}\.[\w-]{5,}(?:\.[\w-]*)?/g, '…')
+    .replace(/\b[A-Za-z0-9+\/_-]{32,}={0,2}/g, '…')
+}
+
 const clip = (s, n) => { s = String(s ?? ''); return s.length > n ? `${s.slice(0, n - 1)}…` : s }
 
 /** What the card shows of a tool call: its own description if it has one, and the call itself in short. */
@@ -48,6 +61,14 @@ export function previewOf(tool_input) {
   const i = tool_input && typeof tool_input === 'object' ? tool_input : {}
   const preview = typeof i.command === 'string' ? i.command : JSON.stringify(i)
   return { description: clip(typeof i.description === 'string' ? i.description : '', 300), input_preview: clip(preview, 600) }
+}
+
+/** The line the board gets for a denial: tool and a short reason (or the call itself), redacted and clipped. */
+export function deniedText(tool_name, reason, tool_input) {
+  const i = tool_input && typeof tool_input === 'object' ? tool_input : {}
+  const call = typeof i.command === 'string' ? i.command : typeof i.file_path === 'string' ? i.file_path : typeof i.url === 'string' ? i.url : ''
+  const why = redact(reason).replace(/\s+/g, ' ').trim() || redact(call).replace(/\s+/g, ' ').trim()
+  return `Auto mode blocked: ${clip(redact(tool_name).replace(/\s+/g, ' ').trim(), 60)}${why ? ` — ${clip(why, 120)}` : ''}`
 }
 
 /** The door request for a hook's input JSON, or null when this hook has nothing to ask. */
@@ -60,6 +81,10 @@ export function hookRequest(kind, input, env = process.env) {
   if (kind === 'notice') {
     if (!NOTICE_TYPES.includes(input.notification_type)) return null
     return { op: 'notice', ancestors: ancestors(), notification_type: input.notification_type, message: clip(input.message, 300) }
+  }
+  if (kind === 'denied') {
+    if (!input.tool_name) return null
+    return { op: 'denied', ancestors: ancestors(), text: deniedText(input.tool_name, input.reason, input.tool_input) }
   }
   return null
 }
@@ -80,7 +105,7 @@ const HOOK_ID = /^hook:/
  *   say:     (bridge, { text, urgent }) => Promise, the side channel's sender
  * Returns { handle(request, gone) -> answer, verdict(params) -> true when the verdict was a hook's }.
  */
-export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = () => {}, settle_ms = 1500 }) {
+export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = () => {}, settle_ms = 1500, denied_window_ms = 30_000, now = Date.now }) {
   const waiting = new Map()   // request id -> resolve(behavior)
   let answered_at = 0
   const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -117,11 +142,34 @@ export function createHookDesk({ heard, bridge, say, ppid = process.ppid, log = 
     return { ok: true, said: true }
   }
 
+  // Denials of auto mode: one quiet line per window, the rest counted and told once when the window ends.
+  let denied_at = -Infinity, denied_more = 0, denied_timer = null
+  async function denied(req) {
+    const b = bridge()
+    if (!b) return { ok: false, error: 'not in a room' }
+    // Redacted again here: the door takes requests from any local process.
+    const text = redact(String(req.text ?? '')).replace(/\s+/g, ' ').trim().slice(0, 260)
+    if (!/^Auto mode blocked: /.test(text)) return { ok: false, error: 'bad request' }
+    if (now() - denied_at < denied_window_ms) { denied_more++; return { ok: true, counted: true } }
+    denied_at = now()
+    denied_more = 0
+    clearTimeout(denied_timer)
+    denied_timer = setTimeout(async () => {
+      const n = denied_more, bb = bridge()
+      denied_more = 0
+      if (n && bb) await say(bb, { urgent: false, text: `…and ${n} more Auto mode block${n === 1 ? '' : 's'}.` }).catch(err => log(`denied: ${err.message}`))
+    }, denied_window_ms)
+    denied_timer.unref?.()
+    await say(b, { urgent: false, text })
+    return { ok: true, said: true }
+  }
+
   return {
     async handle(req, gone = new Promise(() => {})) {
       if (!Array.isArray(req.ancestors) || !req.ancestors.includes(ppid)) return { ok: false, error: 'another session' }
       if (req.op === 'permission') return heard ? { ok: true, silent: true } : permission(req, gone)
       if (req.op === 'notice') return notice(req)
+      if (req.op === 'denied') return denied(req)
       return { ok: false, error: 'unknown request' }
     },
     /** A verdict the bridge reports: true when it answers a hook (then it is not a channel notification). */
