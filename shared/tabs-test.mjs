@@ -1,6 +1,6 @@
-// tabs-test.mjs: one room in several tabs of one Chromium profile (core/tabs.mjs), against the real hub in-process,
+// tabs-test.mjs: one room in several tabs of one Chromium profile (shared/tabs.mjs), against the real hub in-process,
 // with a Node agent that counts what arrives. Needs Chromium outside the command sandbox.
-//   node core/tabs-test.mjs
+//   node shared/tabs-test.mjs
 // Write in A (leader), in B (follower, forwarded), in A again: every message arrives once, no fork alert in any tab.
 // Closing the leader hands over to the next tab. A follower's call whose answer never came (the leader sealed it, then
 // closed) is answered by the new leader from the outbox, not sealed twice. A send racing the leader's close arrives once.
@@ -32,7 +32,7 @@ const PAGE = `${ORIGIN}/index.html`
 const browser = await launchChromium({ width: 800, height: 600 })
 let failed = 0
 const out = (ok, name, extra = '') => { if (!ok) failed++; console.log(`${ok ? 'ok  ' : 'FAIL'} ${name}${extra ? ` ${extra}` : ''}`) }
-const imp = `const core = await import('${ORIGIN}/core/index.mjs');`
+const imp = `const core = await import('${ORIGIN}/shared/index.mjs');`
 const OPEN = `${imp}
   const st = () => core.idbStorage({ name: 'trommi-tabs', prefix: 'r/' })
   window.c = await core.openRoomInTabs({ storage: st(), makeStorage: st, client: 'tabs-test' })

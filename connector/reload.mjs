@@ -1,7 +1,7 @@
 // reload.mjs: connector updates without losing the session.
 //
 // The connector has two parts:
-//   shell   channel.mjs, channel-lock.mjs, reload.mjs, monitor.mjs, hook.mjs and the core (../core): stdio, the MCP server, the key, the lease,
+//   shell   channel.mjs, channel-lock.mjs, reload.mjs, monitor.mjs, hook.mjs and the core (../shared): stdio, the MCP server, the key, the lease,
 //           the stream. A change here needs a real restart (in Claude Code: /mcp -> trommi -> Reconnect).
 //   code    channel-tools.mjs, channel-bridge.mjs, richhtml.mjs: tool definitions, instructions and the bridge between
 //           tools/commands and the core. A change here is hot-reloaded: imported again as ./<file>?v=<hash>, the
@@ -24,7 +24,7 @@ const HERE = path.dirname(fileURLToPath(import.meta.url))
 // Set by connector/bundle.mjs (esbuild define): this module runs inside the single-file connector.
 const BUNDLED = typeof __TROMMI_BUNDLE__ !== 'undefined'
 const SELF = fileURLToPath(import.meta.url)
-const CORE = path.join(HERE, '../core')
+const CORE = path.join(HERE, '../shared')
 export const CODE_FILES = ['channel-tools.mjs', 'channel-bridge.mjs', 'richhtml.mjs']
 const SHELL_FILES = ['channel.mjs', 'channel-lock.mjs', 'reload.mjs', 'monitor.mjs', 'hook.mjs']
 const isTest = f => /(^test|-test|test-)[\w-]*\.mjs$/.test(f) || f === 'load.mjs'
@@ -34,7 +34,8 @@ const hashOf = files => {
   for (const f of files) { h.update(f); try { h.update(fs.readFileSync(f)) } catch { h.update('missing') } }
   return h.digest('hex').slice(0, 12)
 }
-const coreFiles = () => { try { return fs.readdirSync(CORE).filter(f => f.endsWith('.mjs') && !isTest(f)).sort().map(f => path.join(CORE, f)) } catch { return [] } }
+const CORE_DIRS = [CORE, path.join(CORE, 'crypto')]
+const coreFiles = () => CORE_DIRS.flatMap(dir => { try { return fs.readdirSync(dir).filter(f => f.endsWith('.mjs') && !isTest(f)).sort().map(f => path.join(dir, f)) } catch { return [] } })
 /** Hashes of the two parts as they are on disk now. */
 export const diskVersion = () => (BUNDLED ? { code: hashOf([SELF]), shell: hashOf([SELF]) } : {
   code: hashOf(CODE_FILES.map(f => path.join(HERE, f))),
@@ -99,7 +100,7 @@ export function watchUpdates({ loaded, onUpdate, hubUrl, clientVersion, log = ()
   }
   let debounce = null
   const watchers = []
-  for (const dir of BUNDLED ? [HERE] : [HERE, CORE]) {
+  for (const dir of BUNDLED ? [HERE] : [HERE, ...CORE_DIRS]) {
     try { watchers.push(fs.watch(dir, () => { clearTimeout(debounce); debounce = setTimeout(check, 1500); debounce.unref?.() })) } catch {}
   }
   timer = setInterval(check, pollMs); timer.unref?.()

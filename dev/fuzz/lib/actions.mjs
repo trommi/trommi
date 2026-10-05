@@ -1,5 +1,5 @@
 // actions.mjs: the action generator (a pure function of the seed: it never looks at what the system did) and the
-// executor (real client/core calls) that also feeds the oracle. Actions name devices ('r0:H1', 'r0:A2'), cards
+// executor (real shared/ calls) that also feeds the oracle. Actions name devices ('r0:H1', 'r0:A2'), cards
 // ('#c3'), notes ('#m1'), permission requests ('#p1'), attachments ('#f1'); the executor resolves them, and a name
 // that does not resolve (the creating action was shrunk away) makes the action a skip.
 import { RoomOracle } from './oracle.mjs'

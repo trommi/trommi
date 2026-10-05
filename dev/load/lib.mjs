@@ -1,12 +1,12 @@
-// lib.mjs: shared pieces of the load generator (dev/load). Every member is a real client/core client: real device
+// lib.mjs: shared pieces of the load generator (dev/load). Every member is a real shared/ client: real device
 // keys, real invites, real sealed envelopes over HTTP. Only the storage is lean (see leanStorage) and senders keep
 // their echo bookkeeping small (see leanSender), so one process can host many members for hours.
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { foundRoom, openRoom, joinRoom, z } from '../../core/index.mjs'
-import { fileStorage } from '../../core/storage-file.mjs'
+import { foundRoom, openRoom, joinRoom, z } from '../../shared/index.mjs'
+import { fileStorage } from '../../shared/storage-file.mjs'
 
 export const HERE = path.dirname(fileURLToPath(import.meta.url))
 export const REPO = path.resolve(HERE, '../..')
@@ -34,7 +34,7 @@ export function pct(values, ps = [50, 95, 99]) {
 }
 
 /**
- * The file adapter of client/core (same key file, same state.json), but: thread-item records (`tl/…`) are dropped
+ * The file adapter of shared/ (same key file, same state.json), but: thread-item records (`tl/…`) are dropped
  * (a load member never scrolls back) and state.json is written only on flush(). Device keys stay in a 0600 file.
  */
 export async function leanStorage(dir, { persist = false } = {}) {

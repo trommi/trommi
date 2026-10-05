@@ -4,7 +4,7 @@
 // An MCP stdio server, like server/server.mjs in session mode, with the same tools and the same
 // <channel source="board" kind=...> events. Unlike it, this process is a member of the room: it has its own
 // device keys (a key file, mode 0600), signs and encrypts everything it sends, and verifies everything it gets
-// (client/core does all protocol work; connector/channel-bridge.mjs translates tools and commands).
+// (shared/ does all protocol work; connector/channel-bridge.mjs translates tools and commands).
 //
 //   node connector/channel.mjs                 MCP server (Claude Code starts it from .mcp.json)
 //   node connector/channel.mjs join <link>     join a room with an agent invite link, then exit
@@ -46,7 +46,7 @@ import { createMonitorFeed, pointerLine, runMonitor, INBOX_TOOL, MONITOR_NOTE } 
 import { createHookDesk, hookRequest, hookOutput } from './hook.mjs'
 
 const log = (...a) => console.error('[trommi]', ...a)
-// Sent by client/core as Trommi-Client on every request; the hub answers 426 client-too-old when it is too old.
+// Sent by shared/ as Trommi-Client on every request; the hub answers 426 client-too-old when it is too old.
 const CLIENT = 'channel/0.1.0'
 const slug = s => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'x'
 
@@ -79,7 +79,7 @@ function channelConfig(env = process.env, { write = true } = {}) {
 }
 
 const roomOfLink = async link => {
-  const zc = await import('../core/zcrypto.mjs')
+  const zc = await import('../shared/crypto/zcrypto.mjs')
   const { roomId, hub } = zc.parseInviteLink(String(link).trim())
   return { room_id: zc.hex(roomId), hub }
 }
@@ -132,8 +132,8 @@ async function pickSlot(cfg, room_id) {
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
  */
 async function createChannel({ cfg = channelConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {} } = {}) {
-  const core = await import('../core/index.mjs')
-  const { fileStorage } = await import('../core/storage-file.mjs')
+  const core = await import('../shared/index.mjs')
+  const { fileStorage } = await import('../shared/storage-file.mjs')
   const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
   const process_instance = crypto.randomBytes(8).toString('hex')
   // The sidebar shows the folder's name, as today's board does ("trommi"); host and full folder are for the details view.

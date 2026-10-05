@@ -7,10 +7,10 @@ The cryptographic core of Trommi as one standalone ES module. It implements the 
 | File | What |
 | --- | --- |
 | `zcrypto.mjs` | the library; no dependencies, WebCrypto only |
-| `test.mjs` | tests, hostile-hub simulation, micro-benchmark: `node core/crypto-test.mjs` |
+| `crypto-test.mjs` | tests, hostile-hub simulation, micro-benchmark: `node shared/crypto/crypto-test.mjs` |
 | `hub.mjs` | the hub's side of pairing and keys, without HTTP and without a database: member list, sign-in, invites, sealed keys, envelopes. Protocol: README, "Founding and joining" |
-| `hub-test.mjs` | real clients against the hub module, and everything a hub must refuse: `node core/hub-crypto-test.mjs` |
-| `vectors.json` | deterministic vectors for other implementations; `test.mjs` regenerates and compares them (`--write-vectors` rewrites) |
+| `hub-crypto-test.mjs` | real clients against the hub module, and everything a hub must refuse: `node shared/crypto/hub-crypto-test.mjs` |
+| `vectors.json` | deterministic vectors for other implementations; `crypto-test.mjs` regenerates and compares them (`--write-vectors` rewrites) |
 | `FORMAT.md` | exact bytes, labels, key schedule, deviations from the concept |
 | `demo.html` | invite → join → send → tamper → detect, in a browser |
 

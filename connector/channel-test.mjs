@@ -1,9 +1,9 @@
 // channel-test.mjs: node connector/channel-test.mjs
 //
-// Part 1 (always): the bridge between tools/events and client/core, against a recording stand-in for the
+// Part 1 (always): the bridge between tools/events and shared/, against a recording stand-in for the
 //   client: tool -> core call mapping, command -> channel event mapping, permission relay, files.
-// Part 2 (when core/index.mjs and hub/server.mjs exist): the real thing. A hub on a free port
-//   8891-8899, a scripted human from client/core, and connector/channel.mjs spawned as a real MCP stdio child:
+// Part 2 (when shared/index.mjs and hub/server.mjs exist): the real thing. A hub on a free port
+//   8891-8899, a scripted human from shared/, and connector/channel.mjs spawned as a real MCP stdio child:
 //   join via agent invite, introduce, decision round trips, hand back, explain, decide again, shred, info read,
 //   permission round trip, forged commands rejected, restart reuses the identity.
 
@@ -13,8 +13,8 @@ import os from 'node:os'
 import path from 'node:path'
 import { createBridge } from './channel-bridge.mjs'
 import { TOOLS, TOOL_EXAMPLES, INSTRUCTIONS, TEASER_MAX } from './channel-tools.mjs'
-import * as codec from '../core/codec.mjs'
-import { encryptAsset, decryptAsset } from '../core/zcrypto.mjs'
+import * as codec from '../shared/codec.mjs'
+import { encryptAsset, decryptAsset } from '../shared/crypto/zcrypto.mjs'
 
 let passed = 0, failed = 0
 const results = []
@@ -446,14 +446,14 @@ await test('tools: every description is at most 2048 characters; the core tools 
 })
 
 const here = path.dirname(new URL(import.meta.url).pathname)
-const haveCore = fs.existsSync(path.join(here, '../core/index.mjs')) && fs.existsSync(path.join(here, '../core/agent.mjs'))
+const haveCore = fs.existsSync(path.join(here, '../shared/index.mjs')) && fs.existsSync(path.join(here, '../shared/agent.mjs'))
 const haveHub = fs.existsSync(path.join(here, '../hub/server.mjs'))
 if (haveCore && haveHub) {
   const { integration, updates } = await import('./channel-test-e2e.mjs')
   await integration({ test, tmp })
   await updates({ test, tmp })
 } else {
-  results.push(`skip part 2 (end to end): ${[!haveCore && 'core/ is not complete yet', !haveHub && 'hub/server.mjs does not exist yet'].filter(Boolean).join(', ')}`)
+  results.push(`skip part 2 (end to end): ${[!haveCore && 'shared/ is not complete yet', !haveHub && 'hub/server.mjs does not exist yet'].filter(Boolean).join(', ')}`)
 }
 
 console.log(results.join('\n'))

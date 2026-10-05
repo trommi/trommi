@@ -1,5 +1,5 @@
 // channel-test-e2e.mjs: part 2 of connector/channel-test.mjs. A real hub (hub/server.mjs on a free port 8891-8899,
-// throwaway data dir), a scripted human device from client/core, and connector/channel.mjs as a real MCP stdio child.
+// throwaway data dir), a scripted human device from shared/, and connector/channel.mjs as a real MCP stdio child.
 
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
@@ -10,7 +10,7 @@ import crypto from 'node:crypto'
 import { spawn, execFile } from 'node:child_process'
 import { Client } from '@modelcontextprotocol/sdk/client/index.js'
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
-import { fileStorage } from '../core/storage-file.mjs'
+import { fileStorage } from '../shared/storage-file.mjs'
 
 const here = path.dirname(new URL(import.meta.url).pathname)
 const sleep = ms => new Promise(r => setTimeout(r, ms))
@@ -73,7 +73,7 @@ export async function startChannel({ env, cwd, script = path.join(here, 'channel
 }
 
 export async function integration({ test, tmp }) {
-  const core = await import('../core/index.mjs')
+  const core = await import('../shared/index.mjs')
   // A stand-in push service: the hub's loss watch pushes here (HUB_PUSH_HOSTS), after HUB_LOSS_MS.
   const pushed = []
   const pushService = http.createServer((req, res) => { const parts = []; req.on('data', c => parts.push(c)); req.on('end', () => { pushed.push(Buffer.concat(parts)); res.writeHead(201).end() }) })
@@ -562,11 +562,11 @@ export async function integration({ test, tmp }) {
  * file ask for a restart, and the update is hinted once on the next tool result.
  */
 export async function updates({ test, tmp }) {
-  const core = await import('../core/index.mjs')
+  const core = await import('../shared/index.mjs')
   const hub = await startHub(tmp, { HUB_RECOMMENDED_CHANNEL: '9.0.0' })
-  // A copy of connector/ and core/ beside node_modules, so the test can change files without touching the repository.
+  // A copy of connector/ and shared/ beside node_modules, so the test can change files without touching the repository.
   const repo = path.join(tmp, 'update-repo')
-  for (const d of ['connector', 'core']) fs.cpSync(path.join(here, '..', d), path.join(repo, d), { recursive: true })
+  for (const d of ['connector', 'shared']) fs.cpSync(path.join(here, '..', d), path.join(repo, d), { recursive: true })
   fs.symlinkSync(path.join(here, '../node_modules'), path.join(repo, 'node_modules'))
   const project = path.join(tmp, 'update-project')
   fs.mkdirSync(project, { recursive: true })
@@ -628,7 +628,7 @@ export async function updates({ test, tmp }) {
     })
 
     await test('update: a changed core file (shell) is announced with restart_required and reload_connector asks for /mcp Reconnect', async () => {
-      fs.appendFileSync(path.join(repo, 'core/transport.mjs'), '\n// changed by the update test\n')
+      fs.appendFileSync(path.join(repo, 'shared/transport.mjs'), '\n// changed by the update test\n')
       const ev = await ch.next(e => update(e) && e.params.meta.restart_required === '1', 'the restart event')
       assert.match(ev.params.content, /\/mcp/)
       assert.match(await ch.call('reload_connector'), /\/mcp, then trommi, then Reconnect/)

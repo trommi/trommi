@@ -42,7 +42,7 @@ export function shortOf(value) {
   return (cut.includes(' ') ? cut.slice(0, cut.lastIndexOf(' ')) : said.slice(0, SHORT_MAX)).trim()
 }
 
-// A card's teaser: the two short lines the Desk row shows under the title (the same limit as core/codec.mjs TEASER_MAX).
+// A card's teaser: the two short lines the Desk row shows under the title (the same limit as shared/codec.mjs TEASER_MAX).
 export const TEASER_MAX = 160
 const deskRow = what => `The Desk shows only the title (one line) and the teaser (two short lines, at most ${TEASER_MAX} characters): make both carry ${what}; details go in the body or sections, seen when the card is opened.`
 const TEASER_PROP = { type: 'string', description: `Two short lines of plain text (at most ${TEASER_MAX} characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body.` }

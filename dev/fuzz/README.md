@@ -1,7 +1,7 @@
 # fuzz: randomised tests for the Trommi hub and clients
 
 Model-based fuzzing of the real thing: the thin hub (`hub/server.mjs`, own port, throwaway data dir, in the same
-process) and real `client/core` clients (human devices, agents) with the real crypto library. Nothing is mocked
+process) and real `shared/` clients (human devices, agents) with the real crypto library. Nothing is mocked
 except the network, which is fetch with injected faults. Never touches `127.0.0.1:8790` or `data/`.
 
 ```sh

@@ -18,8 +18,8 @@
 // Hub routes (README "Accounts"): POST /rooms/:room/account, GET it, PUT …/account/password, PUT …/account/recovery,
 // POST …/account/verify, POST …/account/code; POST /accounts/login, POST /accounts/recover (anonymous, rate-limited,
 // one answer for "no such email" and "wrong password").
-import * as z from './zcrypto.mjs'
-import { argon2id } from './argon2.mjs'
+import * as z from './crypto/zcrypto.mjs'
+import { argon2id } from './crypto/argon2.mjs'
 import { WORDS } from './wordlist.mjs'
 import { Hub, normaliseHubUrl } from './transport.mjs'
 import { foundRoom, joinWithRecoveryCode } from './room.mjs'

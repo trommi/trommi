@@ -5,7 +5,7 @@ name: Test
 
 on:
   push:
-    paths: ['core/**', 'hub/**', 'connector/**', 'dev/**', 'app/web/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
+    paths: ['shared/**', 'hub/**', 'connector/**', 'dev/**', 'app/web/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
   pull_request:
   workflow_dispatch:
 

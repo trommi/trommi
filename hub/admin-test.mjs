@@ -385,7 +385,7 @@ try {
       const data = await (await request('/data', { cookie }, server)).text();
       assert.match(data, /class="tree"/);
       // A real room: the founding envelope's cleartext header decodes; its body stays size + hex.
-      const { foundRoom, memoryStorage } = await import('../core/index.mjs');
+      const { foundRoom, memoryStorage } = await import('../shared/index.mjs');
       const { client } = await foundRoom({ hub_url: `http://127.0.0.1:${hub.port}`, storage: memoryStorage(), device_name: 'Admin test phone' });
       await client.start({ stream: false });
       const roomId = hub.db.prepare('SELECT room_id FROM rooms').get().room_id;

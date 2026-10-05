@@ -1,9 +1,9 @@
-// test-hub.mjs: a small HTTP hub for client/core tests, on top of core/hub.mjs (memory storage), speaking the
+// test-hub.mjs: a small HTTP hub for shared/ tests, on top of shared/crypto/hub.mjs (memory storage), speaking the
 // README routes the core uses. Stand-in only while hub/server.mjs does not have the v1.1 routes (sessions, grants,
 // lease); the tests prefer hub/server.mjs when it has them.
 import http from 'node:http'
-import * as z from './zcrypto.mjs'
-import { createHub } from './hub.mjs'
+import * as z from './crypto/zcrypto.mjs'
+import { createHub } from './crypto/hub.mjs'
 
 const { b64u, unb64u, hex, unhex } = z
 const STATUS = { unauthorised: 401, 'bad-challenge': 401, forbidden: 403, 'not-member': 403, 'removed-sender': 403, 'wrong-sender': 403, 'not-found': 404, 'no-room': 404,
@@ -30,7 +30,7 @@ export async function startTestHub({ port = 0, host = '127.0.0.1' } = {}) {
       const q = k => url.searchParams.get(k)
       if (parts[0] !== 'v1') return send(404, { error: 'not-found' })
       if (parts[1] === 'rooms' && parts.length === 2 && req.method === 'POST') {
-        const storage = (await import('./hub.mjs')).memoryStorage()
+        const storage = (await import('./crypto/hub.mjs')).memoryStorage()
         const hub = await createHub({ hubUrl, storage })
         const r = await hub.found({ entry: unb64u(body.signed_entry), wraps: body.sealed_room_keys.map(w => ({ id: unhex(w.device_id), sealed: unb64u(w.key_sealed) })) })
         rooms.set(hub.roomId, { hub, storage, streams: new Set() })

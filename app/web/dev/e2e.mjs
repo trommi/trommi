@@ -9,7 +9,7 @@
 import { launchChromium } from '../../../dev/cdp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
-import { joinRoom, memoryStorage } from '../../../core/index.mjs'
+import { joinRoom, memoryStorage } from '../../../shared/index.mjs'
 import { execSync } from 'node:child_process'
 
 const arg = (name, fallback) => { const i = process.argv.indexOf(name); return i > 0 ? process.argv[i + 1] : fallback }

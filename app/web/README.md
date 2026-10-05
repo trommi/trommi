@@ -61,7 +61,7 @@ and an inline script whose hash is not in `_headers`.
 ### The build
 
 `dev/build.mjs` (no dependencies) runs in Cloudflare's build (`WORKERS_CI=1`) and makes `public/gen/vendor/` (the core,
-from the repository's `core/`), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
+from the repository's `shared/`), one stylesheet `public/gen/bundle.<hash>.css` of the `<link>`s of `index.html` (in their
 order: `app.css` first), `public/gen/build.txt` (the commit; the Web app deploy workflow waits until app.trommi.com
 serves it), the modulepreload list of `index.html` and `VERSION` + `SHELL` of `sw.js`. In the repository `index.html`
 and `sw.js` are templates (empty preload block, `VERSION = "dev"`, `SHELL = []`). `dev/serve.mjs` serves the same build
@@ -138,7 +138,7 @@ The UI says **account**, never "room" (inside, the core still founds and joins a
 
 ### IndexedDB
 
-The core owns the schema (trommi-hub `core/README.md`, "Storage adapter"): database `trommi`, keys prefixed `room/`; device keys as non-extractable CryptoKeys; records `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `note/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number>`, `sync` (cursor + chains, same transaction), `room`, `outbox`, `invite/<id>`; written incrementally (~200 ms batches). The app keeps only per-browser conveniences in localStorage: theme (`agent-board-theme`), rail (`trommi-rail`), open crowns (`trommi-crowns-open`), the desk in view (`trommi-desk`), the dev hub override is sessionStorage only. The mock room keeps nothing.
+The core owns the schema (trommi-hub `shared/README.md`, "Storage adapter"): database `trommi`, keys prefixed `room/`; device keys as non-extractable CryptoKeys; records `card/<object_id>`, `session/<agent_device_id>`, `perm/<id>`, `note/<id>`, `pub/<id>`, `reg/<key>`, `tlmeta/<timeline_key>`, `tl/<timeline_key>/<envelope_number>`, `sync` (cursor + chains, same transaction), `room`, `outbox`, `invite/<id>`; written incrementally (~200 ms batches). The app keeps only per-browser conveniences in localStorage: theme (`agent-board-theme`), rail (`trommi-rail`), open crowns (`trommi-crowns-open`), the desk in view (`trommi-desk`), the dev hub override is sessionStorage only. The mock room keeps nothing.
 
 ### Render strategy (performance)
 

@@ -1,4 +1,4 @@
-// crazy.mjs: seed the "crazy case" room through client/core, as real members: 32 agent sessions with profiles and
+// crazy.mjs: seed the "crazy case" room through shared/, as real members: 32 agent sessions with profiles and
 // status lines, 5,000 answered cards (half of them revised), 300 open cards, 50,000 chat messages (one session
 // chat of 2,500 and one card thread of 2,000 among them), 50,000 strokes (one desk canvas of 20,000).
 //

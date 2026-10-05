@@ -1,4 +1,4 @@
-# Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, core/*,
+# Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, shared/*,
 # connector/*); its build step (app/web/dev/build.mjs) generates public/gen/, sw.js and the preloads. This job waits
 # until https://app.trommi.com serves this commit (gen/build.txt), so the "web-app" environment shows which is live.
 name: Web app deploy
@@ -6,7 +6,7 @@ name: Web app deploy
 on:
   push:
     branches: [main]
-    paths: ['app/web/**', 'core/**', 'connector/channel-tools.mjs', 'connector/richhtml.mjs', '.github/workflows/web-app.yml']
+    paths: ['app/web/**', 'shared/**', 'connector/channel-tools.mjs', 'connector/richhtml.mjs', '.github/workflows/web-app.yml']
   workflow_dispatch:
 
 concurrency:

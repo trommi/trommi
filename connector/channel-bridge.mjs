@@ -1,7 +1,7 @@
 // channel-bridge.mjs: tool calls -> envelopes, commands -> channel events, for connector/channel.mjs.
 //
 // No protocol code lives here. Everything that touches the hub, the keys or the envelopes goes through the
-// client of client/core (README there: "Agent API"); this module only translates between what Claude Code
+// client of shared/ (README there: "Agent API"); this module only translates between what Claude Code
 // knows (the tools and events of today's board, connector/channel-tools.mjs) and that client. Tested with a real
 // client in connector/channel-test.mjs.
 
@@ -182,7 +182,7 @@ const markOf = m => {
 
 /**
  * createBridge({ client, notify, cacheDir, state, saveState, log })
- *   client:    a started client/core agent client
+ *   client:    a started shared/ agent client
  *   notify:    (method, params) => Promise: an MCP notification to Claude Code
  *   cacheDir:  where the human's attachments are written decrypted (dir 0700, files 0600)
  *   state:     the bridge's own small persisted state ({ permissions: { object_id: request_id } })
