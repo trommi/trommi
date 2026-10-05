@@ -92,22 +92,28 @@ function doorDir() {
 }
 export const doorOf = p => path.join(doorDir(), `${crypto.createHash('sha256').update(path.resolve(p.key_file)).digest('hex').slice(0, 20)}.sock`)
 
-/** Open the door of a slot this process holds: handler(request) -> answer object. Returns close(). */
+/**
+ * Open the door of a slot this process holds: handler(request, gone) -> answer object. `gone` resolves when the
+ * caller hung up before the answer (a hook that waited for the human and was ended). Returns close().
+ */
 export function openDoor(p, handler, log = () => {}) {
   const file = doorOf(p)
   fs.rmSync(file, { force: true })   // this process holds the slot, so a socket file there is a dead holder's
   const server = net.createServer(sock => {
-    let buf = ''
+    let buf = '', asked = false
+    const gone = new Promise(resolve => sock.on('close', resolve))
     sock.setEncoding('utf8')
     sock.on('error', () => {})
     sock.on('data', async d => {
+      if (asked) return
       buf += d
       if (buf.length > 64 * 1024) return sock.destroy()
       const nl = buf.indexOf('\n')
       if (nl < 0) return
+      asked = true
       let answer
-      try { answer = await handler(JSON.parse(buf.slice(0, nl))) } catch (err) { answer = { ok: false, error: err.message } }
-      sock.end(JSON.stringify(answer) + '\n')
+      try { answer = await handler(JSON.parse(buf.slice(0, nl)), gone) } catch (err) { answer = { ok: false, error: err.message } }
+      if (!sock.destroyed) sock.end(JSON.stringify(answer) + '\n')
     })
   })
   server.on('error', err => log(`door not open: ${err.message}`))

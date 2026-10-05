@@ -6,7 +6,9 @@
 // The plugin is two files: .claude-plugin/plugin.json and channel.mjs (the single-file connector of bundle.mjs). It
 // declares the connector as MCP server "trommi", the same server as a channel (claude --dangerously-load-development-
 // channels plugin:trommi@trommi still gets live <channel> events), and a monitor (`node channel.mjs monitor`,
-// connector/monitor.mjs) that wakes a plain `claude` for every verified board event.
+// connector/monitor.mjs) that wakes a plain `claude` for every verified board event, and two hooks (connector/hook.mjs)
+// that bring a plain `claude`'s permission prompts to the board: PermissionRequest (`node channel.mjs permission`) and
+// Notification (`node channel.mjs notice`).
 //
 // bundle.mjs writes app/web/public/gen/plugins/marketplace.json and trommi-<version>.zip (a zip archive source with its
 // sha256; deterministic, so --check can compare it). The version is the connector's sha256 prefix: a new connector is
@@ -15,6 +17,7 @@ import fs from 'node:fs'
 import path from 'node:path'
 import zlib from 'node:zlib'
 import crypto from 'node:crypto'
+import { HOOK_TIMEOUT_S, NOTICE_TYPES } from './hook.mjs'
 
 export const MARKETPLACE = 'trommi'
 export const PLUGIN = 'trommi'
@@ -29,6 +32,10 @@ export function pluginManifest(version) {
     homepage: 'https://app.trommi.com',
     mcpServers: { trommi: { command: 'node', args: ['${CLAUDE_PLUGIN_ROOT}/channel.mjs'] } },
     channels: [{ server: 'trommi', displayName: 'Trommi' }],
+    hooks: {
+      PermissionRequest: [{ hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" permission', timeout: HOOK_TIMEOUT_S }] }],
+      Notification: [{ matcher: NOTICE_TYPES.join('|'), hooks: [{ type: 'command', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" notice', timeout: 60 }] }],
+    },
     experimental: {
       monitors: [{ name: 'board', command: 'node "${CLAUDE_PLUGIN_ROOT}/channel.mjs" monitor', description: 'Trommi board events' }],
     },

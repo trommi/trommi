@@ -613,7 +613,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     asking.add(params.request_id)
     try {
       const id = await client.requestPermission({
-        tool_name: String(params.tool_name), description: String(params.description ?? ''), input_preview: String(params.input_preview ?? ''), expires_in_ms: 10 * 60 * 1000,
+        tool_name: String(params.tool_name), description: String(params.description ?? ''), input_preview: String(params.input_preview ?? ''), expires_in_ms: params.expires_in_ms ?? 10 * 60 * 1000,
       })
       state.permissions[id] = params.request_id
       saveState()
