@@ -154,7 +154,7 @@ export class World {
     dev.lastBootBatch = this.batch
     dev.storage_base._gen = dev.gen
     dev.storage = fencedStorage(dev.storage_base, dev.gen)
-    if (this.attack && !dev.mitm) this.adversary.install(dev, this.attack)
+    if (this.attack && !dev.mitm) this.adversary.install(dev, this.attack, this.t.z)
     const client = await this.t.core.openRoom({ storage: dev.storage, fetch: this.makeFetch(dev) })
     if (!client) throw new Finding('boot', `${dev.name}: openRoom found no room in storage`)
     this.attach(dev, client)
