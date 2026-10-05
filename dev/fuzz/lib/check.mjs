@@ -148,15 +148,20 @@ export async function checkOracle(runner, { final = false } = {}) {
   if (out.length) throw new Finding('oracle', out.slice(0, 4).join('\n'))
 }
 
-/** Humans must agree with each other on everything, whatever the oracle says (chaos mode). */
-export async function checkConvergence(runner) {
+/**
+ * Humans must agree with each other on everything, whatever the oracle says (chaos mode).
+ * `accepted`: card refs left out of the comparison (masked like pruned ones), for the one accepted outcome of a hostile
+ * hub (FINDINGS H2); everything else is compared as always.
+ */
+export async function checkConvergence(runner, { accepted = null } = {}) {
   const w = runner.w, m = maps(runner), out = []
+  const maskFor = (r, d) => { const p = r.prunedRefs ?? null; return accepted?.size ? new Set([...(p ?? []), ...accepted]) : p }
   for (const room of w.rooms) {
     if (!room) continue
     const humans = [...room.devs.values()].filter(d => d.isHuman && d.client && !d.dead && !d.removed)
     if (humans.length > 1) {
       const mk = d => maskFor(runner, d)
-      const allMask = humans.some(d => mk(d)) ? runner.prunedRefs : null
+      const allMask = mk(humans[0])
       const noStack = x => { x.stack = []; return x }
       for (const d of humans) if (stackInconsistent(d.client, m)) runner.known('F18-stack-stale-after-refused-answer', 'model.stack not re-projected after an optimistic echo is undone')
       const base = noStack(snapOf(humans[0].client, m, { mask: allMask }))
@@ -179,7 +184,7 @@ export async function checkConvergence(runner) {
   for (const room of w.rooms) {
     if (!room) continue
     const humans = [...room.devs.values()].filter(d => d.isHuman && d.client && !d.dead && !d.removed)
-    const views = humans.map(d => canon([...d.client.model.cards].map(([id, c]) => [id, c.in_revision?.by ?? null]).sort()))
+    const views = humans.map(d => canon([...d.client.model.cards].filter(([id]) => !accepted?.has(m.idToRef.get(id))).map(([id, c]) => [id, c.in_revision?.by ?? null]).sort()))
     if (new Set(views).size > 1) out.push(`F2 again: 'in revision' differs between human devices: ${humans.map((d, k) => `${d.name} ${views[k].replace(/[0-9a-f]{24}"/g, '"').slice(0, 120)}`).join(' / ')}`)
   }
   if (out.length && w.rooms.some(r => r && [...r.devs.values()].some(x => x.client?.model.alerts.some(al => al.code === 'card-closed' || (al.code === 'answer-stale' && !runner.staleUsed))))) { runner.known('F17-answer-echo-undo-reopens-card', 'a human answers a card that the agent closed a moment ago (the answer is bound to the old version): when the hub copy comes back as answer-stale, the optimistic echo is undone with the card state saved BEFORE the echo (open), which overwrites the newer closed state: that device shows the card open, the agent and other devices closed'); runner.stopCompare = true; return }

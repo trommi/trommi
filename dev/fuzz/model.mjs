@@ -85,8 +85,20 @@ async function hostileEnd(w, R) {
   // a device that met gaps re-reads the room after its gap backoff (2 s doubling, at most 10 min): wait for the ones due soon
   const due = Date.now() + 20000
   while (Date.now() < due && [...w.devs.values()].some(d => d.client && !d.dead && (d.client._gapTimer || d.client._needResync || d.client._resyncing))) await sleep(100)
-  try { await w.quiesce({ timeout_ms: 20000 }); await C.checkConvergence(R) }
-  catch (e) {
+  try {
+    await w.quiesce({ timeout_ms: 20000 })
+    try { await C.checkConvergence(R) }
+    catch (e) {
+      // H2 (accepted): the hub's void flag was dropped from a refused answer, so the devices that read it then count it
+      // from its signed header (as after retention) and the ones that read the room from the honest hub do not. Only the
+      // cards of those answers are left out; a difference anywhere else still fails.
+      const { idToRef } = C.maps(R)
+      const cards = new Set([...a.unvoidedAnswers].map(id => idToRef.get(id)).filter(Boolean))
+      if (!(e instanceof Finding) || !cards.size) throw e
+      await C.checkConvergence(R, { accepted: cards })
+      w.known.set('H2-refused-answer-served-header-only', `accepted: a hostile hub served a refused answer header-only without its void flag and it counts on the devices that read it then (cards ${[...cards].sort().join(', ')})`)
+    }
+  } catch (e) {
     // H1 (fixed): the clients converge once the hub is honest, within the gap backoff. Only a backoff that grew past the
     // wait above during a long attack (by design, at most 10 min) is reported as known.
     if (![...w.devs.values()].some(d => d.client && (d.client._gapBackoff ?? 0) > 16000)) throw new Finding('H1', `after a hub that ${a.kind}s turned honest: ${e.message}`)
