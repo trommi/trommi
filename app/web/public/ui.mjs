@@ -2596,17 +2596,19 @@ const galleryKept = new WeakMap()
 export function galleryItems(model, base = '') {
   const { state } = model
   const hit = galleryKept.get(state)
-  if (hit && hit.base === base && hit.cards === state.cards && hit.assets === state.assets) return hit.out
+  // (only what the sessions of the desk in view sent: a session that moved took its pictures along)
+  const key = `${model.desk}|${model.everyone.map(a => a.desk).join(',')}`
+  if (hit && hit.base === base && hit.key === key && hit.cards === state.cards && hit.assets === state.assets) return hit.out
   const out = []
   for (const a of state.assets ?? []) {
     const agent = model.byAgent.get(a.agent)
-    if (!agent) continue
+    if (!agent || !model.onDesk(agent)) continue
     const type = a.type === 'image' || a.type === 'html' || a.type === 'video' ? a.type : 'file'
     out.push({ id: a.id, type, title: a.title || 'Untitled', agent, ts: a.created ?? 0, url: a.att?.url ?? '', name: a.att?.name ?? '', href: `${base}/s/${encodeURIComponent(agent.id)}/a/${a.id}`, from: 'published' })
   }
   for (const c of state.cards) {
     const agent = model.byAgent.get(c.agent)
-    if (!agent) continue
+    if (!agent || !model.onDesk(agent)) continue
     const pics = (c.attachments ?? []).filter(a => kindOf(a) === 'image')
     if (pics.length) out.push({ id: c.id, type: 'image', title: c.title, agent, ts: c.created ?? 0, url: pics[0].url, name: pics[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}/p/1`, from: `Nr. ${c.number}`, more: pics.length, urls: pics.slice(0, 3).map(a => a.url) })
     // Its videos stand on the card after the pictures (card.mjs cardMedia): the tile opens the card at the first one.
@@ -2614,7 +2616,7 @@ export function galleryItems(model, base = '') {
     if (vids.length) out.push({ id: `${c.id}-v`, type: 'video', title: c.title, agent, ts: c.created ?? 0, url: vids[0].url, name: vids[0].name, href: `${base}/q/${encodeURIComponent(c.number ?? c.id)}?pic=${pics.length + 1}`, from: `Nr. ${c.number}`, more: vids.length })
   }
   out.sort((x, y) => y.ts - x.ts)
-  galleryKept.set(state, { base, cards: state.cards, assets: state.assets, out })
+  galleryKept.set(state, { base, key, cards: state.cards, assets: state.assets, out })
   return out
 }
 

@@ -106,8 +106,10 @@ export function quietOf(agent, state, now = Date.now()) {
 // gets the same answer and none has to compute it.
 
 /** state: the hub's state. agents: the sessions as the page may see them (pageAgents() in server.mjs). */
-/** desk: the desk in view (its id). A desk is a world of its own sessions and their stack; of the other desks only
- *  what knocks shows here (the card, named with its desk). Without desks on the hub the board is one. */
+/** desk: the desk in view (its id). A desk is a world of its own: the sessions that stand on it now, and every card of
+ *  theirs (a card has no desk of its own: it is where its session is, so a session that moves takes all of them
+ *  along: open, with the agents, put away, its pictures). Nothing of another desk shows here; the Trommi menu's desk
+ *  list says what waits there. Without desks on the hub the board is one. */
 function boardModel(state, agents = state.agents, desk = null) {
   const desks = state.desks?.length ? state.desks : null
   const deskId = desks ? (desks.some(d => d.id === desk) ? desk : desks[0].id) : null
@@ -130,7 +132,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   // (desk.mjs newsStrip, card Nr. "info-c"), never counted in Next, on the Desk or on a session's badge.
   const isInfo = c => c.kind === 'info'
   const allFresh = allOpen.filter(c => !c.with_agent && !isInfo(c))   // the whole board's stack, for the menu's count per desk
-  const open = allOpen.filter(c => mine(c) || (!c.with_agent && isKnock(c)))
+  const open = allOpen.filter(mine)
   const reads = open.filter(c => !c.with_agent && isInfo(c) && mine(c)).sort((a, b) => Number(isKnock(b)) - Number(isKnock(a)) || (b.created ?? 0) - (a.created ?? 0))   // knocks first, then the newest
   const fresh = open.filter(c => !c.with_agent && !isInfo(c))
   const revising = open.filter(c => c.with_agent).sort((a, b) => b.with_agent - a.with_agent)
@@ -160,7 +162,7 @@ function boardModel(state, agents = state.agents, desk = null) {
   for (const u of units) if (u.subs) u.whole = summary(new Set([u.id, ...u.subs.map(s => s.id)]))
 
   return {
-    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, desk: deskId, desks: desks ?? [], revising, snoozed, done, units,
+    state, agents: here, everyone, byAgent, byCard, open, fresh, reads, allFresh, onDesk, desk: deskId, desks: desks ?? [], revising, snoozed, done, units,
     knocking: fresh.filter(isKnock).length,
     blocked: units.filter(u => u.blocked).length,
     working: units.filter(u => u.online && u.running).length,
@@ -170,7 +172,7 @@ function boardModel(state, agents = state.agents, desk = null) {
 }
 
 /** Who receives a note: the crowned session of the desk. One crown per desk: the starred session. */
-export const crownOf = model => model.agents.find(a => !a.other_desk && a.starred) ?? null
+export const crownOf = model => model.agents.find(a => a.starred) ?? null
 
 // ---- att ----
 // Attachments are end-to-end encrypted: the views render them at /att/<attachment_id> and the bytes are fetched and
@@ -362,9 +364,11 @@ export class BoardState {
         removed: s.is_active === false,
       }
     })
-    // A helper without a desk of its own lies on its main's desk (a child session lands where its main is).
+    // A sub-session stands on its main's desk, always (it has no desk of its own: a main that moves takes its subs and
+    // all their cards along); a session without a desk stands on the first one.
     const byId = new Map(out.map(a => [a.id, a]))
-    for (const a of out) if (a.desk == null) a.desk = (a.parent && byId.get(a.parent)?.desk) || 'main'
+    for (const a of out) if (!a.parent || !byId.has(a.parent)) a.desk ??= 'main'
+    for (const a of out) if (a.parent && byId.has(a.parent)) a.desk = byId.get(a.parent).desk
     return out.sort((a, b) => a.position - b.position)
   }
 
