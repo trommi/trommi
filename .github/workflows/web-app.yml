@@ -1,8 +1,10 @@
 # Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, shared/*,
 # connector/*, package.json, package-lock.json); its build step (app/web/dev/build.mjs) generates public/gen/ (with the
 # connector bundle, its checksum and the plugin, after npm ci at the repository root), sw.js and the preloads. This job
-# waits until https://app.trommi.com serves this commit (gen/build.txt), so the "web-app" environment shows which is
-# live, and checks that the connector it serves matches the checksum it serves.
+# waits until https://app.trommi.com serves the newest commit that touched those paths (gen/build.txt; a commit that
+# changed nothing there, like one to this file alone, is never built by Cloudflare), so the "web-app" environment
+# shows which is live, and checks that the connector it serves matches the checksum it serves.
+# The trigger paths are Cloudflare's watch paths plus this file; the step below names the same list.
 name: Web app deploy
 
 on:
@@ -21,26 +23,31 @@ permissions:
 jobs:
   verify:
     runs-on: ubuntu-24.04
-    timeout-minutes: 10
+    timeout-minutes: 15
     environment:
       name: web-app
       url: https://app.trommi.com
     steps:
-      - name: Wait until app.trommi.com serves this commit
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Wait until app.trommi.com serves the newest commit Cloudflare builds
         run: |
-          # Cloudflare's build (app/web/dev/build.mjs) writes gen/build.txt with the commit and fills sw.js; a sw.js
-          # with VERSION "dev" means the build step did not run there.
-          want=$(echo "${{ github.sha }}" | cut -c1-7)
+          # Cloudflare's build (app/web/dev/build.mjs) writes gen/build.txt with the commit (7 characters) and fills
+          # sw.js; a sw.js with VERSION "dev" means the build step did not run there.
+          want=$(git log -1 --format=%H -- app/web shared connector package.json package-lock.json | cut -c1-7)
+          echo "newest commit in Cloudflare's watch paths: $want (this run: $(echo "${{ github.sha }}" | cut -c1-7))"
           for i in $(seq 1 60); do
             got=$(curl -fsS --max-time 10 "https://app.trommi.com/gen/build.txt?ci=$i" | sed -n 's/^commit: //p' || true)
             sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sed -n 's/^const VERSION = "\([^"]*\)".*/\1/p' || true)
             echo "attempt $i: build.txt commit ${got:-none}, sw.js version ${sw:-none}"
             if [ "$got" = "$want" ]; then
               [ -n "$sw" ] && [ "$sw" != "dev" ] && break
-              echo "::error::app.trommi.com serves this commit with an unbuilt sw.js (VERSION dev)"; exit 1
+              echo "::error::app.trommi.com serves $want with an unbuilt sw.js (VERSION dev)"; exit 1
             fi
             if [ "$i" = 60 ]; then
-              echo "app.trommi.com did not serve this commit within 10 minutes (check the Cloudflare build of trommi-app)"
+              echo "::error::app.trommi.com did not serve $want within 10 minutes (check the Cloudflare build of trommi-app)"
               exit 1
             fi
             sleep 10
