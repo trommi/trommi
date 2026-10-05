@@ -6,7 +6,7 @@
 // member list, IndexedDB and caches empty) and logs in again.
 //   node dev/e2e.mjs [--app http://127.0.0.1:8900] [--hub http://127.0.0.1:8890] [--shots dir] [--resolve 'MAP …']
 // Prints timings (send -> visible on the other device) and exits 1 on a failure.
-import { launchChromium } from './cdp.mjs'
+import { launchChromium } from '../../../dev/cdp.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import { joinRoom, memoryStorage } from '../../../core/index.mjs'

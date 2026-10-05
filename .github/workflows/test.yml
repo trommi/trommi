@@ -1,10 +1,11 @@
-# The suites of the hub, the crypto library, the client core and the agent channel. Each starts its own hubs on
-# free ports with throwaway data directories. Needs Node with node:sqlite; no browser (the browser tests stay local).
+# The suites of the hub, the crypto library, the client core and the agent channel; the lists are the scripts in
+# package.json (`npm test` runs all three). Each starts its own hubs on free ports with throwaway data directories.
+# Needs Node with node:sqlite; no browser (the browser tests stay local).
 name: Test
 
 on:
   push:
-    paths: ['core/**', 'hub/**', 'connector/**', 'fuzz/**', 'app/web/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
+    paths: ['core/**', 'hub/**', 'connector/**', 'dev/**', 'app/web/**', 'package.json', 'package-lock.json', '.github/workflows/test.yml']
   pull_request:
   workflow_dispatch:
 
@@ -26,7 +27,7 @@ jobs:
         with:
           node-version: 26
       # app/web/README.md "Rules": the file set, who imports whom, no crypto outside the core, inline script hashes.
-      - run: node app/web/dev/check.mjs
+      - run: npm run test:app
       - run: node app/web/dev/build.mjs
 
   hub:
@@ -38,13 +39,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 26
-      - run: node core/crypto-test.mjs --no-bench
-      - run: node core/hub-crypto-test.mjs
-      - run: node hub/test.mjs
-      - run: node hub/ops/test.mjs
-      - run: node hub/accounts-test.mjs
-      - run: node hub/admin-test.mjs
-      - run: node core/session-grants-test.mjs
+      - run: npm run test:hub
 
   core:
     name: Core and connector
@@ -57,10 +52,6 @@ jobs:
           node-version: 26
           cache: npm
       - run: npm ci
-      - run: node core/test.mjs
-      - run: node connector/channel-test.mjs
-      - run: node connector/monitor-test.mjs
-      - run: node connector/hook-test.mjs
-      # app/web/public/gen/connector.mjs (and gen/plugins/) is generated (connector/bundle.mjs) and committed: it must match the sources.
-      - run: node connector/bundle.mjs --check
-      - run: node connector/connect-test.mjs
+      # Includes connector/bundle.mjs --check: app/web/public/gen/connector.mjs (and gen/plugins/) is generated and
+      # committed, it must match the sources.
+      - run: npm run test:core

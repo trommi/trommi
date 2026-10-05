@@ -1,4 +1,4 @@
-// load.mjs: a load generator driven by the real client core (for stream F, dev/e2e). Every envelope is sealed,
+// load.mjs: a load generator driven by the real client core (for stream F, dev/load). Every envelope is sealed,
 // signed, posted, delivered and verified exactly as in the app and the channel; nothing is faked.
 //
 //   import { createLoadRoom, runMix } from './load.mjs'

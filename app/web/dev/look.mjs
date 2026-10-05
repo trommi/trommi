@@ -1,7 +1,7 @@
 // Opens the app in headless Chromium, waits until it painted (html[data-ready]), runs an optional script, prints
 // console errors and exceptions and the script's result, saves a screenshot.
 //   node dev/look.mjs URL WIDTH,HEIGHT [OUT.png] [--dark] [--js 'async code returning a value'] [--wait ms] [--resolve 'MAP host ip']
-import { launchChromium } from './cdp.mjs'
+import { launchChromium } from '../../../dev/cdp.mjs'
 import fs from 'node:fs'
 
 const args = process.argv.slice(2)
