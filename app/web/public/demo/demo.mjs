@@ -184,16 +184,18 @@ class MockClient {
   async fetchAttachment(ref) { return new Uint8Array(await (await this.attachmentBlob(ref)).arrayBuffer()) }
 
   // ---- membership (mock: an invite that is joined by a pretend phone after a moment) ----
-  async createInvite({ device_role = 'human', app_url = `${location.origin}/join` } = {}) {
+  async createInvite({ device_role = 'human', app_url = `${location.origin}/join`, session_id = null, takeover = false } = {}) {
     const invite_id = hex(32)
-    const invite = { invite_id, device_role, link: `${app_url}#v1.mock.${this.model.room.room_id.slice(0, 16)}.${hex(32)}`, expires_at: Date.now() + 600000, invite_state: 'open', newcomer: null, error: null, check_code: String(100000 + Math.floor(Math.random() * 900000)) }
+    const invite = { invite_id, device_role, link: `${app_url}#v1.mock.${this.model.room.room_id.slice(0, 16)}.${hex(32)}`, expires_at: Date.now() + 600000, invite_state: 'open', newcomer: null, error: null, check_code: String(100000 + Math.floor(Math.random() * 900000)), session_id, takeover: !!takeover }
     this.changed(c => { this.model.invites.set(invite_id, invite); c.invites.add(invite_id) })
     setTimeout(() => this.changed(c => {
       invite.newcomer = { device_id: hex(64), device_name: device_role === 'agent' ? 'claude-session' : 'Phone (new)' }
-      invite.invite_state = device_role === 'agent' ? 'adding' : 'confirm_code'
-      if (device_role !== 'agent') { const six = () => String(100000 + Math.floor(Math.random() * 900000)); invite.code_choices = [invite.check_code, six(), six(), six()].sort(() => Math.random() - 0.5) }
+      // (a link that continues a session always asks for the number, as the core does)
+      const ask = device_role !== 'agent' || takeover
+      invite.invite_state = ask ? 'confirm_code' : 'adding'
+      if (ask) { const six = () => String(100000 + Math.floor(Math.random() * 900000)); invite.code_choices = [invite.check_code, six(), six(), six()].sort(() => Math.random() - 0.5) }
       c.invites.add(invite_id)
-      if (device_role === 'agent') setTimeout(() => this.addMember(invite), 400)
+      if (!ask) setTimeout(() => this.addMember(invite), 400)
     }), 2500)
     return invite
   }

@@ -736,9 +736,17 @@ a.files-where:hover span { text-decoration: underline; }
 .t-head-desk { display: inline-flex; align-items: center; gap: 1px; height: 30px; padding: 0 4px 0 6px; border-radius: 8px; color: var(--faint); }
 .t-head-desk:hover, .t-pick-desk[open] > .t-head-desk { color: var(--fg); background: var(--sunken); }
 .t-head-desk > .sketch { width: 20px; height: 20px; }
-.t-head-desk-caret { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
-.desk-move.t-pop { min-width: 200px; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
-.desk-move-head { margin: 4px 8px 6px; font: 700 .68rem/1 var(--font); letter-spacing: .12em; text-transform: uppercase; color: var(--muted); }
+.t-head-more { padding: 0 5px; }
+.t-head-dots { width: 24px; height: 24px; fill: currentColor; stroke: currentColor; stroke-width: .6; stroke-linejoin: round; }
+.desk-move.t-pop { min-width: 232px; padding: 6px; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
+.desk-move-sub > summary { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 0 10px; border-radius: 8px; font: 600 var(--t-md)/1.2 var(--font); list-style: none; cursor: pointer; }
+.desk-move-sub > summary::-webkit-details-marker { display: none; }
+.desk-move-sub > summary::after { content: ""; flex: none; width: 7px; height: 7px; margin-left: auto; border-right: 2px solid var(--muted); border-bottom: 2px solid var(--muted); rotate: -45deg; }
+.desk-move-sub[open] > summary::after { rotate: 45deg; }
+.desk-move-sub > summary:hover, .desk-move-sub > summary:focus-visible { background: var(--sunken); }
+.desk-move-sub > summary .sketch { flex: none; width: 22px; height: 22px; color: var(--muted); }
+.desk-move-sub > form button { padding-left: 42px; }
+.desk-move-sub > form button .sketch { display: none; }
 .desk-move form { margin: 0; }
 .desk-move button { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 40px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--fg); font: 600 var(--t-md)/1.2 var(--font); text-align: left; cursor: pointer; }
 .desk-move button:hover, .desk-move button:focus-visible { background: var(--sunken); }

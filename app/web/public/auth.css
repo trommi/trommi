@@ -173,6 +173,11 @@
 .room .clip button.clip-copy.is-small { width: auto; justify-self: start; min-height: 40px; grid-template-columns: auto auto; box-shadow: none; background: none; border-style: dashed; }
 .clip-copy.is-small .clip-copy-word { min-width: 0; height: 26px; padding: 0 8px; background: none; color: var(--muted); font-weight: 600; }
 .clip-in { display: flex; align-items: center; gap: 10px; }
+.clip-ask { display: grid; gap: 9px; }
+.clip-ask small strong { color: var(--fg); font-weight: 700; }
+.clip-choices { max-width: none; margin: 4px 0 2px; }
+.room .clip .clip-choices .room-choice { padding: 16px 8px; font-size: 24px; white-space: nowrap; background: var(--surface); }
+@media (max-width: 600px) { .clip-choices { gap: 8px; } .room .clip .clip-choices .room-choice { padding: 16px 2px; font-size: 19px; letter-spacing: 0; } }
 .clip-in .agent-avatar { width: 34px; height: 34px; }
 .clip-note { margin: 4px 0 0 42px; color: var(--muted); font: 400 var(--t-xs)/1.4 var(--font); }
 .clip-again { margin: 4px 0 0 42px; }

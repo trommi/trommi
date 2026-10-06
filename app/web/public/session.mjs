@@ -241,22 +241,27 @@ function logItems(s, base, from = 0, to = s.messages.length) {
 
 // ---- the pieces of the page that change by themselves (each has an id; the live stream replaces it) ----
 /** The session's drawing and name: the page's heading, on its own line at the page's top (session.css). */
-/** A main session's small way to another desk (his word, 5 October): beside its name, the desk drawing with a caret; it
- *  lists the other desks, a click moves the session there (the human register session/<id>, as on the Agents page;
- *  its subs go with it). Not for a sub, and not while there is only one desk. */
-function deskMove(s, base) {
+/** A main session's small menu beside its name (his word, 6 October): three pen dots. "Move to other desk" lists the
+ *  other desks, a click moves the session there (the human register session/<id>, as on the Agents page; its subs go
+ *  with it; only while there is more than one desk). "Copy invite link again" makes an invite link for THIS session
+ *  (auth.mjs /pair, continue=<session>): the connector that joins with it continues the session, the one that held it
+ *  is retired. Not for a sub: it goes with its main. */
+const DOTS = raw('<svg class="t-head-dots" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.4 11.1Q5.9 9.9 7.2 11.3Q7.9 13.2 6.2 14Q4.3 14.2 3.9 12.6Q3.8 11.7 4.4 11.1Z"/><path d="M10.7 10.9Q12.4 10 13.5 11.4Q14 13.3 12.3 14Q10.5 14 10.1 12.4Q10.1 11.5 10.7 10.9Z"/><path d="M17 11.2Q18.5 10 19.8 11.2Q20.5 13 18.9 13.9Q17 14.2 16.5 12.7Q16.4 11.8 17 11.2Z"/></svg>')
+function sessionMore(s, base) {
   const a = s.agent, desks = s.model.state.desks ?? []
-  if (a.parent || desks.length < 2) return ''
-  const others = desks.filter(d => d.id !== a.desk)
-  return html`<details class="t-pick t-pick-desk"><summary class="t-head-desk" title="Move to another desk" aria-label="${a.name}: move to another desk">${sk('desk')}<svg class="t-head-desk-caret" viewBox="0 0 24 24" aria-hidden="true"><path d="M6.6 9.4Q9.4 12.2 12.1 15Q14.9 12.1 17.6 9.2"/></svg></summary>
-<div class="desk-move t-pop" role="menu" aria-label="Move ${a.name} to a desk"><p class="desk-move-head">Move to desk</p>${others.map(d => html`<form method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/edit"><input type="hidden" name="stay" value="1"><input type="hidden" name="moved" value="1"><input type="hidden" name="leave" value="1"><button type="submit" role="menuitem" name="desk" value="${d.id}">${sk('desk')}<span>${d.name || 'Desk'}</span></button></form>`)}</div></details>`
+  if (a.parent) return ''
+  const others = desks.length < 2 ? [] : desks.filter(d => d.id !== a.desk)
+  const move = d => html`<form method="post" action="${base}/sessions/${encodeURIComponent(a.id)}/edit"><input type="hidden" name="stay" value="1"><input type="hidden" name="moved" value="1"><input type="hidden" name="leave" value="1"><button type="submit" role="menuitem" name="desk" value="${d.id}">${sk('desk')}<span>${d.name || 'Desk'}</span></button></form>`
+  return html`<details class="t-pick t-pick-desk"><summary class="t-head-desk t-head-more" title="More" aria-label="${a.name}: more">${DOTS}</summary>
+<div class="desk-move t-pop" role="menu" aria-label="More for ${a.name}">${others.length ? html`<details class="desk-move-sub"><summary role="menuitem">${sk('desk')}<span>Move to other desk</span></summary>${others.map(move)}</details>` : ''}
+<form method="post" action="/pair" data-turbo-frame="_top"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button type="submit" role="menuitem">${sk('key')}<span>Copy invite link again</span></button></form></div></details>`
 }
 function sessionWho(s, base) {
   const a = s.agent
   // The mark opens the drawings, the name renames (ui.mjs); the live stream brings what was changed.
   // The raised red hand when the session is really stopped (server/blocked.mjs), with the cause in words.
   const stopped = blockedOf(a, s.model.state), quiet = stopped ? null : quietOf(a, s.model.state)
-  return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${deskMove(s, base)}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : quiet ? html`<span class="t-quiet" title="Connected and working, nothing new for a while">${quiet.text}</span>` : ''}</div>`
+  return html`<div class="pane-who" id="session-who-${a.id}"${a.main ? raw(' data-main') : ''}><h2 class="pane-name offscreen">${a.name}</h2>${sessionHeadEdit(a, base, { stay: true })}${sessionMore(s, base)}${stopped ? html`<span class="t-blocked" data-why="${stopped.why}" role="status" title="Stopped: ${stopped.text}">${raw(handSvg())}<span>Stopped: ${stopped.text}</span></span>` : quiet ? html`<span class="t-quiet" title="Connected and working, nothing new for a while">${quiet.text}</span>` : ''}</div>`
 }
 /** The quiet line under the name: what the session is at, its model and machine, and "N files" (the drawer). */
 function sessionNow(s, base = '') {
