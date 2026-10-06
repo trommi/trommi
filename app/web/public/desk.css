@@ -1123,12 +1123,16 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .desk-walk { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
 .desk-walk .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .desk-walk-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
-/* the duck for all (desk.mjs duckAll): a small quiet round button left of Rapid fire; pressed, a small sheet asks */
+/* the duck for all (desk.mjs duckAll): Rapid fire's small sibling, in the same drawn box (ink outline, the crooked
+   corners, the shadow, the height), the duck in full ink; under the pointer or the keyboard it lifts as Rapid fire
+   does and turns the note's yellow (the duck stays ink). Pressed, a small sheet asks. */
 .desk-duck { position: relative; }
-.desk-duck-open { list-style: none; display: grid; place-items: center; width: 38px; height: 38px; border: 1.3px solid var(--line-strong); border-radius: 48% 52% 50% 50% / 52% 48% 53% 47%; background: var(--surface); color: var(--muted); cursor: pointer; transition: color 120ms, border-color 120ms, rotate 120ms; }
+.desk-duck-open { list-style: none; box-sizing: border-box; display: grid; place-items: center; width: 44px; height: 40px; border: 1.6px solid var(--fg); border-radius: 12px 9px 13px 8px / 8px 13px 9px 12px; background: var(--surface); color: var(--fg); cursor: pointer; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: .8deg; transition: translate 90ms, box-shadow 90ms, background 120ms; }
 .desk-duck-open::-webkit-details-marker { display: none; }
-.desk-duck-open .sketch-duck { width: 27px; height: 23px; stroke-width: 1.5; }
-.desk-duck-open:hover, .desk-duck[open] > .desk-duck-open { color: var(--fg); border-color: var(--fg); rotate: -4deg; }
+.desk-duck-open .sketch-duck { width: 30px; height: 25px; stroke-width: 1.6; }
+.desk-duck-open:focus-visible, .desk-duck[open] > .desk-duck-open { --surface: #fff6c9; background: #f5d64a; color: #1f1a05; }
+@media (any-hover: hover) { .desk-duck-open:hover { --surface: #fff6c9; background: #f5d64a; color: #1f1a05; translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
+.desk-duck-open:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
 .desk-duck-open:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
 .desk-duck-ask { position: absolute; z-index: 20; right: -6px; top: calc(100% + 10px); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; display: grid; gap: 10px; padding: 12px 14px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); color: var(--fg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); text-align: left; }
 .desk-duck-ask p { margin: 0; font: 700 var(--t-md)/1.3 var(--display); }
@@ -1145,7 +1149,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .desk-tools { grid-column: 1; grid-row: auto; justify-content: flex-end; margin-top: var(--s-3); padding-right: 6px; }
   .desk-walk { min-height: 44px; }
   .desk-duck { position: static; }
-  .desk-duck-open { width: 44px; height: 44px; }
+  .desk-duck-open { width: 48px; height: 44px; }
   .desk-duck-ask { left: auto; right: 6px; top: calc(100% + 6px); }
 }
 @media (any-hover: hover) { .desk-walk:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
