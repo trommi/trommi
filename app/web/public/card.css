@@ -70,14 +70,15 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 
 #cardpage { container: cardpage / inline-size; grid-column: 2; min-width: 0; min-height: 0; overflow-y: auto; background: var(--surface); padding: 72px var(--gutter) var(--s-10); scrollbar-width: thin; }
 .tc-page { --card-h: clamp(420px, calc(100dvh - 170px), 600px); --right: 330px; }
-.tc-page > * { max-width: 1040px; margin-inline: auto; }
+.tc-page > * { max-width: 1180px; margin-inline: auto; }
+.tc-pad > * { max-width: 1040px; margin-inline: auto; }
 .tc-icon { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .tc-sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
 /* ---- round the card: nothing above it; round drawn buttons at its outer edges (card.mjs .tc-rails). The frame is the
    card with room at both sides for them; a narrow window: back and More sit on the card's top edge. ---- */
 .tc-back { color: var(--fg); text-decoration: none; }
-.tc-page > .tc-frame { position: relative; max-width: min(1040px, 100% - 132px); }
+.tc-pad > .tc-frame { position: relative; max-width: min(1040px, 100% - 132px); }
 .tc-rail, .t-picture .tc-step { box-sizing: border-box; display: grid; place-items: center; width: 46px; height: 46px; padding: 0; border: 1.3px solid var(--line-strong); border-radius: 48% 52% 50% 50% / 52% 48% 53% 47%; background: var(--surface); color: var(--fg); text-decoration: none; list-style: none; cursor: pointer; box-shadow: none; transition: translate 100ms, border-color 120ms, background 120ms; }
 .tc-rail::-webkit-details-marker { display: none; }
 :is(.tc-rail, .t-picture .tc-step) .sketch { width: 22px; height: 22px; stroke-width: 2; }
@@ -90,7 +91,7 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-rails > .is-next { right: -60px; top: calc(var(--card-h) / 2 - 23px); }
 .tc-rails > .is-prev:hover { translate: -2px 0; } .tc-rails > .is-next:hover { translate: 2px 0; }
 @container cardpage (max-width: 760px) {
-  .tc-page > .tc-frame { max-width: 100%; margin-top: 14px; }
+  .tc-pad > .tc-frame { max-width: 100%; margin-top: 14px; }
   .tc-frame .tc-left { padding-top: var(--s-8); }
   .tc-rails > .tc-rail, .tc-rails > .tc-more > .tc-rail { width: 40px; height: 40px; }
   .tc-rails > .tc-back { left: 14px; top: -20px; }
@@ -265,7 +266,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
    hangs on one rail: who at the left (the session's small drawing, the pen for you), the content right of it; the
    field to write in is the column's last entry and hangs on the same rail. What happened (asked, a new version, taken
    back) is a small quiet line on the content's edge. Why a card is urgent is one centred line between card and talk. ---- */
-.tc-page > :is(.tc-feed, .tc-chat) { --who: 34px; --who-gap: 14px; max-width: min(100%, 660px); }
+.tc-pad > :is(.tc-feed, .tc-chat) { --who: 34px; --who-gap: 14px; max-width: min(100%, 660px); }
 .tc-feed { display: grid; margin-top: var(--s-5); padding: 0; }
 .tc-feed[hidden] { display: none; }
 .tc-why { display: flex; justify-content: center; align-items: baseline; gap: 8px; margin: 0 0 var(--s-3); color: var(--urg-high); font: 600 var(--t-sm)/1.45 var(--font); text-align: center; }
@@ -425,8 +426,8 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-opt.tc-whatever { display: flex; flex-direction: row; align-items: center; min-width: 0; justify-items: start; justify-content: flex-start; gap: 12px; min-height: 56px; padding-right: 14px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line); }
 .tc-opt.tc-whatever .sketch-duck { flex: none; width: 38px; height: 32px; stroke-width: 2; }
 /* the chat under the comments: a plain message to the agent, the card stays with him */
-/* (it stands under the card and the talk, where they end: never over the card's foot) */
-.tc-chat { display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; margin-top: var(--s-2); padding: 10px 0 12px; background: var(--surface); }
+/* (it stands under the card and the talk; once the card's foot has passed it sticks to the window's foot, on the pad) */
+.tc-chat { display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; margin-top: var(--s-2); padding: 14px 0 12px; }
 .tc-chat > .tc-c-who { margin-top: 5px; }
 .tc-chat > .tc-ask { grid-column: 2; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px 6px; padding: 6px 6px 6px 12px; border-radius: 14px; }
 .tc-chat .tc-chips { grid-column: 1 / -1; }
@@ -552,3 +553,75 @@ div.focus-opt { cursor: default; }
 #cardpage .tc-c-in .shots img { max-width: 100%; height: auto; }
 .t-picture-back h1 { text-align: left; }
 @media (max-width: 860px) { .t-picture.is-deciding .tc-step { top: 32%; } }   /* (a phone: clear of the small pictures under the large one) */
+
+/* ---- The tray (card.mjs .tc-pad): card and talk on one drawn desk pad in the session's pale tone: a pen outline, a
+   second line inside it, four hatched corners. The card lies on it with a soft shadow; the talk is written straight
+   on the pad (no boxes), what happened and the times in the session's ink. ---- */
+.tc-pad { position: relative; padding: 30px 0 14px; border-radius: 12px; background: var(--tone-wash); box-shadow: inset 0 0 0 1.6px var(--tone-pen), inset 0 0 0 5px var(--tone-wash), inset 0 0 0 6px var(--tone-edge); }
+.tc-corner { position: absolute; z-index: 1; width: 54px; height: 54px; fill: var(--tone-edge); stroke: var(--tone-pen); stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; pointer-events: none; }
+.tc-corner .hatch { fill: none; stroke-width: 1.2; opacity: .55; }
+.tc-corner.tl { left: -3px; top: -3px; } .tc-corner.tr { right: -3px; top: -3px; rotate: 90deg; } .tc-corner.bl { left: -3px; bottom: -3px; rotate: 270deg; } .tc-corner.br { right: -3px; bottom: -3px; rotate: 180deg; }
+.tc-pad .tc-card { box-shadow: 0 0 0 1px var(--line), 0 14px 24px -18px rgb(20 40 35 / .5); }
+.tc-pad .tc-rail { background: var(--surface); }
+.tc-pad :is(.tc-did, .tc-turn) { color: var(--tone-pen); }
+.tc-pad .tc-feed .msg-time { color: color-mix(in srgb, var(--tone-pen) 70%, var(--tone-wash)); }
+.tc-pad .tc-c-who, .tc-pad .tc-c-who.is-you { background: var(--surface); }
+.tc-pad .tc-fold { background: color-mix(in srgb, var(--surface) 55%, transparent); box-shadow: inset 0 0 0 1px var(--tone-edge); }
+.tc-pad .tc-ask { box-shadow: inset 0 0 0 1px var(--tone-edge); }
+.tc-pad .tc-ask:focus-within { box-shadow: inset 0 0 0 2px var(--tone-pen); }
+.tc-pad .rich :not(pre) > code, .tc-pad .rich pre { background: color-mix(in srgb, var(--surface) 70%, transparent); }
+.tc-pad .tc-why { margin-top: 2px; }
+.tc-page.foot-passed .tc-chat { position: sticky; bottom: 0; z-index: 4; background: linear-gradient(to bottom, transparent, var(--tone-wash) 14px); }
+/* the strip: the card's paper, come along under the top edge once the card is out of view */
+.tc-bar { position: sticky; top: 0; z-index: 6; height: 0; max-width: 1060px; }
+.tc-bar-in { position: absolute; left: 0; right: 0; top: 0; display: flex; align-items: center; gap: 8px; height: 56px; padding: 0 10px 0 20px; border-radius: 16px; background: var(--surface); box-shadow: 0 0 0 1px var(--tone-edge), 0 10px 20px -14px rgb(20 40 35 / .55); opacity: 0; translate: 0 -14px; pointer-events: none; visibility: hidden; transition: opacity 160ms, translate 160ms, visibility 0s 160ms; }
+.tc-page.card-gone .tc-bar-in { opacity: 1; translate: none; pointer-events: auto; visibility: visible; transition-delay: 0s; }
+.tc-bar-title { flex: 1 1 200px; min-width: 80px; font: 800 var(--t-md)/1.15 var(--display); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.tc-bar-chips { flex: 0 1 auto; min-width: 0; display: flex; gap: 8px; }
+.tc-chip { flex: 0 1 auto; min-width: 0; max-width: 220px; height: 38px; padding: 0 12px; border: 0; border-radius: 10px; background: oklch(var(--tone-wash-l) var(--tone-wash-c) calc(162 + var(--tone-turn))); box-shadow: inset 0 0 0 1px var(--line-strong); color: var(--fg); font: 700 var(--t-sm)/1 var(--display); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: pointer; }
+.tc-chip:hover, .tc-chip:focus-visible { box-shadow: inset 0 0 0 2px var(--fg); outline: none; }
+.tc-chip.is-jump { flex: none; background: none; box-shadow: none; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); }
+.tc-bar-chips + .tc-chip.is-jump { display: none; }
+.tc-mini { flex: none; display: grid; place-items: center; height: 38px; min-width: 42px; padding: 0 8px; border: 0; border-radius: 10px; background: var(--sunken); box-shadow: inset 0 0 0 1px var(--line); color: var(--fg); cursor: pointer; transition: background 120ms, color 120ms; }
+.tc-mini .sketch { width: 24px; height: 24px; stroke-width: 1.9; }
+.tc-mini .sketch-duck { width: 30px; height: 25px; }
+.tc-mini .sketch-what { width: 50px; height: 18px; }
+.tc-mini.is-duck:is(:hover, :focus-visible) { --surface: #fff6c9; background: var(--duck-yellow); color: var(--duck-ink); }
+.tc-mini.is-what:is(:hover, :focus-visible) { background: var(--what-violet); color: #fff; }
+.tc-mini.is-reverse:is(:hover, :focus-visible) { background: conic-gradient(from 7deg at 53% 47%, var(--uno-red) 0 25%, var(--uno-yellow) 0 50%, var(--uno-green) 0 75%, var(--uno-blue) 0); color: #fff; }
+.tc-mini.is-ack { background: var(--accent); color: var(--accent-fg, #fff); box-shadow: none; }
+.tc-mini:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
+.tc-bar-sep { flex: none; width: 1px; height: 26px; margin: 0 2px; background: var(--line-strong); }
+.tc-bar-later { position: absolute; right: 30px; top: 53px; margin: 0; }
+.tc-bar-later .sel-later { display: block; padding: 0 8px 6px; border: 0; background: none; cursor: pointer; }
+.tc-bar-later .sel-later svg { width: 30px; height: 57px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: rotate 200ms, translate 200ms; }
+.tc-bar-later .tag-paper { fill: var(--surface); } .tc-bar-later .tag-z { stroke: var(--fg); }
+.tc-bar-later .sel-later:is(:hover, :focus-visible) svg { rotate: 5deg; translate: 0 3px; }
+@container cardpage (max-width: 1000px) { .tc-bar-chips { display: none; } .tc-bar-chips + .tc-chip.is-jump { display: block; } }
+@container cardpage (max-width: 760px) {
+  /* a phone: the pad goes from edge to edge */
+  .tc-pad { margin-inline: calc(-1 * var(--s-3)); padding: 22px var(--s-3) 12px; border-radius: 0; box-shadow: inset 0 1.6px 0 var(--tone-pen), inset 0 -1.6px 0 var(--tone-pen); }
+  .tc-corner { width: 34px; height: 34px; } .tc-corner.tl, .tc-corner.bl { left: 0; } .tc-corner.tr, .tc-corner.br { right: 0; }
+  .tc-bar { top: -10px; }
+  .tc-bar-in { height: 50px; gap: 4px; padding: 0 6px 0 12px; border-radius: 14px; }
+  .tc-bar-title { flex-basis: 60px; font-size: var(--t-sm); }
+  .tc-chip.is-jump { padding: 0 6px; font-size: var(--t-xs); }
+  .tc-bar-sep { display: none; }
+  .tc-mini { height: 36px; min-width: 36px; padding: 0 5px; }
+  .tc-mini .sketch-what { width: 38px; height: 14px; }
+  .tc-bar-later { right: 14px; top: 47px; }
+}
+@media (min-width: 861px) { #cardpage { padding-top: 64px; padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } .tc-pad .tc-rails > :is(.tc-back, .tc-more) { top: 18px; } }
+@media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } }
+@media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }
+/* (a phone's gallery: Later's tag stands small in the head, beside the question, not over the picture) */
+@media (max-width: 860px) {
+  .t-picture.is-deciding .tc-later { position: static; flex: none; width: auto; height: auto; z-index: auto; }
+  .t-picture.is-deciding .tc-later .sel-later { position: static; padding: 0 4px; translate: none; }
+  .t-picture.is-deciding .tc-later .sel-later::before { content: none; }
+  .t-picture.is-deciding .tc-later .sel-later svg { width: 22px; height: 42px; animation: none; }
+  .t-picture.is-deciding > .t-picture-bar { align-items: flex-start; }
+  .t-picture-back { flex: 1 1 0; }
+  .t-picture.is-deciding .tc-later { order: 1; }
+  .t-picture-sub { order: 2; }
+}

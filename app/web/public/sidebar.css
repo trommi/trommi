@@ -711,6 +711,7 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
 @media (max-width: 860px) {
   body[data-t-view="session"] .corner-note-box { bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
   body[data-t-view="whiteboard"] .corner-note-box { bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
+  body[data-t-view="card"] .corner-note-box { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); }   /* (above the field that sticks to the foot) */
 }
 
 /* ---- The bracket stands clear of the rows (his word, 6 October: "zu nah dran … überdeckt den Strich"): the subs
