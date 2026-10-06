@@ -568,7 +568,10 @@ test('ephemeral: relayed to the other open streams only, never stored; own envel
 
 test('stream buffers: catch-up in slices, a global cap drops the fattest non-reading streams; freed pages go back', async () => {
   process.env.HUB_STREAM_BUFFER_TOTAL_BYTES = String(2 << 20)
-  const w = await world()
+  // The hub's own check (every second) is off here: it would drop the stuck streams before the call below counts them,
+  // or the reading stream in the middle of its catch-up (one burst of 40 heads is more than this cap), whenever the
+  // machine is slow enough for a tick to fall into this test.
+  const w = await world({ streamCapEveryMs: 3600000 })
   delete process.env.HUB_STREAM_BUFFER_TOTAL_BYTES
   const big = new Uint8Array(60000).fill(65)
   for (let i = 0; i < 40; i++) await posted(w, w.agent, { kind: KIND.OBJECT_VERSION, card: { id: await z.objectIdOf(w.agent.device.id, i + 1), state: 1, urgency: 1 }, payload: big })
@@ -581,7 +584,9 @@ test('stream buffers: catch-up in slices, a global cap drops the fattest non-rea
     })
     res.pause(); res.on('error', () => {}); stuck.push(res)
   }
-  await sleep(300)
+  const held = () => [...w.hub.ops.flow.streams].reduce((t, x) => t + x.res.writableLength, 0)
+  for (const end = Date.now() + 10000; held() <= 2 << 20 && Date.now() < end;) await sleep(20)
+  assert.ok(held() > 2 << 20, `the stuck streams hold more than the cap: ${held()} bytes`)
   const dropped = w.hub.capStreams()
   assert.ok(dropped >= 1, 'over the cap, the fattest streams are dropped')
   // A reading client catches up completely in slices.
