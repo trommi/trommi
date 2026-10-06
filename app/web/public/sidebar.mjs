@@ -54,6 +54,49 @@ controller('corner-note', class extends Controller {
     document.addEventListener('turbo:before-stream-render', this.guard)
     this.write = () => this.open()
     document.addEventListener('trommi:note', this.write)
+    this.park()
+  }
+  // ---- park the note on the Scribble Board: there, the sticky can be dragged out of its corner (mouse or finger) and
+  // dropped on the board; it stays where it was dropped as a yellow sticky with its words (whiteboard.mjs), and the
+  // corner is empty again. A press without a drag opens the note, as everywhere. Attached files do not go along:
+  // they stay with the corner's note.
+  park() {
+    const head = this.element.querySelector('.corner-note-head')
+    let drag = null
+    const ghostAt = e => { drag.ghost.style.left = `${e.clientX}px`; drag.ghost.style.top = `${e.clientY}px` }
+    head.addEventListener('pointerdown', e => {
+      if (e.button > 0 || document.body.dataset.tView !== 'whiteboard' || !this.field.value.trim()) return
+      drag = { x: e.clientX, y: e.clientY, id: e.pointerId, ghost: null }
+      head.setPointerCapture(e.pointerId)
+    })
+    head.addEventListener('pointermove', e => {
+      if (!drag || e.pointerId !== drag.id) return
+      if (!drag.ghost) {
+        if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return
+        drag.ghost = Object.assign(document.createElement('div'), { className: 'corner-note-ghost', textContent: this.field.value.trim() })
+        document.body.append(drag.ghost)
+        this.element.classList.add('is-parking')
+      }
+      ghostAt(e)
+    })
+    const end = e => {
+      const d = drag; drag = null
+      if (!d?.ghost) return
+      d.ghost.remove()
+      this.element.classList.remove('is-parking')
+      this.skipOpen = true; setTimeout(() => { this.skipOpen = false }, 0)   // (the click that follows a drag opens nothing)
+      const far = Math.hypot(e.clientX - d.x, e.clientY - d.y) > 48
+      if (e.type === 'pointerup' && far) this.parked(e.clientX, e.clientY)
+    }
+    head.addEventListener('pointerup', end); head.addEventListener('pointercancel', end)
+  }
+  async parked(x, y) {
+    const detail = { text: this.field.value, x, y, taken: false }
+    document.dispatchEvent(new CustomEvent('trommi:park-note', { detail }))
+    if (!detail.taken) return
+    this.field.value = ''
+    this.element.classList.toggle('has-words', this.files().length > 0)
+    await this.save(true)
   }
   disconnect() { document.removeEventListener('turbo:before-stream-render', this.guard); document.removeEventListener('trommi:note', this.write); clearTimeout(this.timer) }
   async post(path, fields = {}) {
@@ -63,6 +106,7 @@ controller('corner-note', class extends Controller {
     return res.ok
   }
   open() {
+    if (this.skipOpen) return
     this.element.classList.add('is-open')
     this.element.querySelector('.corner-note-head').setAttribute('aria-expanded', 'true')
     this.element.querySelector('.corner-note-body').hidden = false
