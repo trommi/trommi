@@ -232,7 +232,7 @@ try {
   const noteText = 'Notiz e2e: Backup vor der Migration'
   await A.js(`const now = Date.now(); await trommi.client.saveNote({ text: '${noteText}', created_at: now, updated_at: now })`)
   await A.js("trommi.router.visit('/')")
-  await A.until(`document.querySelector('#corner-note-box .corner-note-first')?.textContent.startsWith('Notiz e2e')`, 'the note at the bottom-right').then(() => check(true, 'the note waits at the bottom-right, its first line shown'), e => check(false, e.message))
+  await A.until(`document.querySelector('#corner-note-box.has-words .corner-note-field')?.value.startsWith('Notiz e2e')`, 'the note at the bottom-right').then(() => check(true, 'the note waits at the bottom-right, the sticky shows it holds words'), e => check(false, e.message))
   check(await A.js("return !document.querySelector('#agents #corner-note-box')"), 'the note is not in the sidebar')
   await A.js("document.querySelector('#corner-note-box .corner-note-head').click()")
   await A.until("!document.querySelector('#corner-note-box .corner-note-body').hidden", 'the note unfolds')

@@ -198,7 +198,9 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-opt-note:focus-within { box-shadow: inset 0 0 0 2px var(--accent); }
 .tc-opt-note .sketch { flex: none; width: 15px; height: 15px; }
 .tc-opt-note input { flex: 1; min-width: 0; height: 100%; border: 0; background: none; font: inherit; font-size: var(--t-sm); color: var(--fg); outline: none; }
-.tc-or { display: grid; justify-items: stretch; gap: 8px; }
+/* ("or" and the duck close the options; What?? and Revise are side ways and stand at the foot of the column) */
+.tc-or { flex: 1 0 auto; display: flex; flex-direction: column; align-items: stretch; gap: 8px; }
+.tc-or > .tc-or-pair { margin-top: auto; padding-top: var(--s-3); }
 .tc-or > i { display: flex; align-items: center; gap: 10px; width: 100%; color: var(--muted); font: 600 var(--t-xs)/1 var(--font); font-style: normal; text-transform: uppercase; letter-spacing: .08em; }
 .tc-or > i::before, .tc-or > i::after { content: ""; flex: 1; height: 1px; background: var(--line-strong); }
 .tc-whatever { display: grid; justify-items: center; gap: 2px; min-height: 64px; min-width: 96px; padding: 6px 14px; border: 0; border-radius: var(--r-md); background: none; color: var(--fg); cursor: pointer; }
@@ -236,28 +238,43 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-tile.is-ack { background: var(--accent); color: var(--accent-fg, #fff); box-shadow: none; }
 .tc-tile:hover { filter: brightness(.96); }
 
-/* ---- the comments under the card ---- */
-.tc-feed { display: grid; gap: var(--s-4); margin-top: var(--s-6); padding: 0 var(--s-2); }
-.tc-feed[hidden] { display: none; }
-.tc-feed .msg { max-width: 46rem; }
-.tc-feed .msg-head { gap: var(--s-2); }
+/* ---- the comments under the card: one calm column as wide as the card. Every comment stands the same way: who at
+   the left (the session's small drawing, the pen for you), beside it name and time, under them the words. What
+   happened (asked, why urgent, a new version, taken back) is a small quiet line on the words' line. The field to
+   write in is the column's last piece, as wide as the rest. ---- */
+.tc-feed { --who: 34px; --who-gap: 14px; display: grid; margin-top: var(--s-5); padding: 0; }
+.tc-feed > * { min-width: 0; }
+.tc-feed .tc-c { display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; align-self: auto; justify-self: stretch; width: auto; max-width: none; margin: 0; padding: 12px 0; }
+.tc-feed .tc-c.cont { padding-top: 0; }
+.tc-feed .tc-c.cont > .tc-c-in { grid-column: 2; }
+.tc-c-who { display: grid; place-items: center; width: var(--who); height: var(--who); border-radius: 50%; background: var(--tone-wash, var(--sunken)); color: var(--tone-pen, var(--muted)); }
+.tc-c-who .doodle { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.tc-c-who.is-you { background: var(--sunken); color: var(--muted); }
+.tc-c-who.is-you .sketch { width: 17px; height: 17px; }
+.tc-c-in { min-width: 0; display: grid; gap: 4px; justify-items: start; }
+.tc-c-in > * { min-width: 0; max-width: 100%; }
+.tc-c-in .rich > :is(p, ul, ol, blockquote), .tc-c-in .bubble { max-width: 74ch; }
+.tc-feed .msg-head { display: flex; align-items: baseline; gap: var(--s-2); min-height: 20px; margin: 0; }
+.tc-feed .msg-head .msg-time, .tc-feed .msg-user .msg-time { margin: 0; padding: 0; }
+.tc-feed .bubble { width: auto; margin: 0; padding: 0; border-radius: 0; background: none; font: 400 var(--t-md)/1.6 var(--font); }
 .tc-said { font: 700 var(--t-sm)/1 var(--display); }
-.tc-whole { padding: var(--s-4) var(--s-5); border-radius: var(--r-lg); background: var(--sunken); }
+.tc-did, .tc-turn { position: relative; margin: 0; padding: 5px 0 5px calc(var(--who) + var(--who-gap)); color: var(--muted); font: 500 var(--t-xs)/1.5 var(--font); }
+.tc-did { display: flex; align-items: baseline; gap: 10px; }
+:is(.tc-did, .tc-turn)::before { content: ""; position: absolute; left: calc(var(--who) / 2 - 3px); top: calc(5px + .75em - 3px); width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
+.tc-explained { display: grid; }
 .tc-sec { padding-top: var(--s-3); border-top: 1px solid var(--line); margin-top: var(--s-3); }
 .tc-sec:first-of-type { border-top: 0; margin-top: 0; }
 .tc-sec h3 { margin: 0 0 4px; font: 700 var(--t-md)/1.25 var(--display); }
 .tc-advised-word { color: var(--accent); font: 600 var(--t-xs)/1 var(--font); }
-.tc-did { display: flex; align-items: baseline; gap: 10px; margin: 0; color: var(--muted); font: 500 var(--t-sm)/1.4 var(--font); }
 .tc-did ul { margin: 4px 0 0; padding-left: 1.1em; }
 .t-opt-links { display: block; }
 .tc-feed a { color: var(--accent); text-underline-offset: 3px; }
 .tc-feed a.tc-older { justify-self: center; display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border-radius: var(--r-pill); background: var(--sunken); color: var(--muted); font: 500 var(--t-sm)/1 var(--font); text-decoration: none; }
 .tc-feed a.tc-older:hover { color: var(--fg); }
-.tc-turn { padding: var(--s-3) var(--s-4); border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line); }
-.tc-turn-head { display: flex; align-items: center; gap: 8px; margin: 0; font: 500 var(--t-sm)/1 var(--font); color: var(--muted); }
+.tc-turn-head { display: flex; align-items: baseline; gap: 10px; margin: 0; }
 .tc-turn-head b { color: var(--fg); }
 .tc-turn-head .sketch { width: 18px; height: 18px; }
-.tc-turn-note { margin: 6px 0 0; }
+.tc-turn-note { margin: 2px 0 0; max-width: 74ch; font-size: var(--t-sm); }
 .tc-turn-before { display: inline-block; margin-top: 6px; color: var(--accent); font: 600 var(--t-xs)/1 var(--font); }
 .tc-files a { margin-right: 8px; }
 
@@ -304,7 +321,6 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .t-picture.is-deciding .tc-step.is-next { right: calc(var(--answer-w) + 14px); }
 .t-picture-answer { grid-column: 2; grid-row: 2; min-height: 0; display: flex; flex-direction: column; overflow-y: auto; padding: var(--s-4) var(--s-4) calc(var(--s-4) + env(safe-area-inset-bottom)); background: var(--surface); box-shadow: -1px 0 0 var(--line); scrollbar-width: thin; }
 .t-picture-answer .tc-answer { flex: none; overflow: visible; }
-.t-picture-answer .tc-revise-form { top: auto; bottom: calc(100% + 8px); }
 .t-picture-later { display: inline-flex; align-items: center; gap: 6px; margin-top: var(--s-3); }
 .t-picture-later .sketch { width: 18px; height: 18px; }
 @media (max-width: 860px) {
@@ -376,9 +392,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 #cardpage .rich :not(pre) > code { padding: .1em .35em; border-radius: 5px; background: var(--sunken); font: .9em var(--mono, monospace); }
 #cardpage .rich pre { overflow-x: auto; padding: 10px 12px; border-radius: var(--r-md); background: var(--sunken); }
 #cardpage .rich .rich-point { font-weight: 600; }
-.tc-feed .msg-user { justify-self: end; max-width: min(82%, 34rem); }
-.tc-feed .msg-user .bubble { width: fit-content; margin-left: auto; }
-.tc-fold { border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line); }
+.tc-fold { margin: 6px 0 6px calc(var(--who, 0px) + var(--who-gap, 0px)); border-radius: var(--r-md); box-shadow: inset 0 0 0 1px var(--line); }
 .tc-fold > summary { cursor: pointer; padding: 10px 14px; color: var(--muted); font: 600 var(--t-sm)/1 var(--font); list-style: none; }
 .tc-fold > summary::after { content: " ▸"; }
 .tc-fold[open] > summary::after { content: " ▾"; }
@@ -386,9 +400,6 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-fold[open] { padding-bottom: var(--s-4); }
 .tc-fold[open] > :not(summary) { margin: var(--s-3) var(--s-4) 0; }
 .tc-earlier[open] { display: grid; gap: var(--s-4); }
-.tc-explained { display: grid; gap: var(--s-2); padding: var(--s-3) var(--s-4); border-left: 3px solid var(--line-strong); }
-.tc-explained-head { display: flex; align-items: baseline; gap: 10px; margin: 0; color: var(--muted); font: 600 var(--t-sm)/1.3 var(--font); }
-.tc-turn-head { gap: 10px; }
 
 /* the agent's advice on a card tile: a stronger marker than in running text, so it reads at a glance */
 .tc-opt.is-advised { --marker: .42; }
@@ -399,7 +410,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-revise > summary::-webkit-details-marker { display: none; }
 .tc-revise > summary .sketch { width: 34px; height: 34px; stroke-width: 2; }
 .tc-revise[open] > summary { box-shadow: inset 0 0 0 2px var(--accent); }
-.tc-revise-form { position: absolute; left: 0; right: 0; top: calc(100% + 8px); z-index: 4; display: grid; gap: 6px; padding: 8px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
+.tc-revise-form { position: absolute; left: 0; right: 0; bottom: calc(100% + 8px); z-index: 4; display: grid; gap: 6px; padding: 8px; border-radius: var(--r-md); background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-md); }
 .tc-revise-form textarea { width: 100%; min-height: 56px; resize: none; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1.45 var(--font); outline: none; }
 .tc-revise-send { justify-self: end; display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 12px 0 10px; border: 0; border-radius: 999px; background: var(--accent); color: var(--accent-fg, #fff); font: 600 var(--t-sm)/1 var(--font); cursor: pointer; }
 .tc-revise-send .sketch { width: 16px; height: 16px; }
@@ -413,7 +424,7 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-revise-form input[type="text"] { min-width: 0; height: 36px; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1 var(--font); outline: none; padding: 0 4px; }
 .tc-revise-send { justify-self: auto; }
 /* the chat under the comments: a plain message to the agent, the card stays with him */
-.tc-chat { position: sticky; bottom: 0; z-index: 5; margin: var(--s-6) auto 0; box-shadow: inset 0 0 0 1px var(--line-strong), 0 -10px 18px -12px rgb(0 0 0 / .18); }
+.tc-chat { position: sticky; bottom: 0; z-index: 5; margin: var(--s-3) auto 0; box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 0 8px var(--surface); }
 .tc-right { overflow: hidden; }/* The viewer of something a session published (session.mjs assetPage, /s/<id>/a/<object>): the bar of the
    picture page (turbo.css .t-picture), the note under it, the thing as large as the page lets it be. Sober: what an
    agent made is shown as it is, nothing drawn around it. */

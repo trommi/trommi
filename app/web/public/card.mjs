@@ -200,24 +200,30 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const who = model.byAgent.get(card.agent)
   const files = list => { const rest = (list ?? []).filter(a => kindOf(a) !== 'image'); return rest.length ? html`<p class="tc-files">${rest.map(a => html`<a href="${a.url}" target="_blank" rel="noopener">${a.name}</a> `)}</p>` : '' }
   const shots = list => { const pics = (list ?? []).filter(a => kindOf(a) === 'image'); return pics.length ? html`<div class="shots">${pics.map(a => html`<a href="${a.url}" target="_blank" rel="noopener"><img${srcOf(a, 320)} alt="${a.name}" loading="lazy" decoding="async"></a>`)}</div>` : '' }
-  const did = (text, ts) => html`<p class="tc-did"><span>${text}</span>${agoSpan(ts, 'msg-time')}</p>`
+  // One column, every piece in the same two places: at the left who (the session's small drawing, the pen for you),
+  // beside it the name, when, and the words. What happened (asked, why urgent, a version, taken back) is one quiet
+  // line on the words' line, without a who.
+  const did = (text, ts) => html`<p class="tc-did"><span>${text}</span>${ts ? agoSpan(ts, 'msg-time') : ''}</p>`
   const name = who?.name ?? card.agent
-  const head = (title, ts) => html`<header class="msg-head"><span class="msg-name">${name}</span>${title ? html`<b class="tc-said">${title}</b>` : ''}${ts ? agoSpan(ts, 'msg-time') : ''}</header>`
+  const mark = who ? html`<span class="tc-c-who" style="--hue:${who.hue}" aria-hidden="true">${raw(doodleSvg(who.mark))}</span>` : html`<span class="tc-c-who" aria-hidden="true"></span>`
+  const you = html`<span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>`
+  const head = (title, ts, by = name) => html`<header class="msg-head"><span class="msg-name">${by}</span>${title ? html`<b class="tc-said">${title}</b>` : ''}${ts ? agoSpan(ts, 'msg-time') : ''}</header>`
   const words = text => rich(text ?? '', { assets, hand: false })
-  const agentMsg = (m, cont = false) => html`<article class="msg msg-agent${cont ? ' cont' : ''}" id="msg-${m.id}">${cont ? '' : head('', m.ts)}${rich(m.text ?? '', { assets, extra: m.html ?? '', hand: false })}${shots(m.attachments)}${files(m.attachments)}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details)}</details>` : ''}</article>`
-  const userMsg = (m, text = m.text) => html`<article class="msg msg-user" id="msg-${m.id}">${text ? html`<div class="bubble"><p>${text}</p></div>` : ''}${shots(m.attachments)}${files(m.attachments)}${agoSpan(m.ts, 'msg-time')}</article>`
+  const agentMsg = (m, cont = false) => html`<article class="msg msg-agent tc-c${cont ? ' cont' : ''}" id="msg-${m.id}">${cont ? '' : mark}<div class="tc-c-in">${cont ? '' : head('', m.ts)}${rich(m.text ?? '', { assets, extra: m.html ?? '', hand: false })}${shots(m.attachments)}${files(m.attachments)}${m.details ? html`<details class="msg-details"><summary>Details</summary>${words(m.details)}</details>` : ''}</div></article>`
+  const userMsg = (m, text = m.text) => html`<article class="msg msg-user tc-c" id="msg-${m.id}">${you}<div class="tc-c-in">${head('', m.ts, 'You')}${text ? html`<div class="bubble"><p>${text}</p></div>` : ''}${shots(m.attachments)}${files(m.attachments)}</div></article>`
   const isBare = m => (m.handback && m.text?.trim() === HAND_BACK_TEXT) || (m.explain && m.text?.trim() === EXPLAIN_TEXT)
 
   // ---- what the card did not hold ----
-  const lead = []
+  const lead = [did(`${name} asked`, card.created)]
   const whole = textOf(card)
-  if (fitText(whole).more) lead.push(html`<article class="msg msg-agent tc-whole" id="card-whole-${card.id}">${head('The whole text')}${rich(whole, { assets, extra: card.html ?? '', hand: false })}</article>`)
-  else if (card.html) lead.push(html`<article class="msg msg-agent tc-whole" id="card-whole-${card.id}">${head('With the text')}${rich('', { assets, extra: card.html })}</article>`)
+  if (fitText(whole).more) lead.push(html`<article class="msg msg-agent tc-c tc-whole" id="card-whole-${card.id}">${mark}<div class="tc-c-in">${head('The whole text')}${rich(whole, { assets, extra: card.html ?? '', hand: false })}</div></article>`)
+  else if (card.html) lead.push(html`<article class="msg msg-agent tc-c tc-whole" id="card-whole-${card.id}">${mark}<div class="tc-c-in">${head('With the text')}${rich('', { assets, extra: card.html })}</div></article>`)
   const secs = (card.sections ?? []).filter(s => s.key != null && (s.text || s.html))
   if (secs.length) lead.push(html`<details class="tc-fold tc-options-said"><summary>Options in detail</summary>${secs.map(s => html`<section class="tc-sec"><h3>${s.label}${s.recommended ? html` <span class="tc-advised-word">recommended</span>` : ''}</h3>${s.text ? rich(s.text, { assets, extra: s.html ?? '', hand: false }) : ''}</section>`)}</details>`)
   const links = optionLinks(card)
   if (String(links)) lead.push(links)
-  if (card.urgency_reason) lead.push(did(`Why it is urgent: ${card.urgency_reason}`, card.created))
+  if (card.urgency_reason) lead.push(did(`Why it is urgent: ${card.urgency_reason}`))
+  if (card.status === 'open' && card.snoozed_until) lead.push(did(`You put it off: it waits on “${WORDS.later}”`, card.snoozed_at))
 
   // ---- the talk, in pieces ----
   const items = []   // { html, turn?: version, handback?, brought?: the version a hand-back brought }
@@ -243,7 +249,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
       // What?? and what the session answered to it, as one block.
       const answers = []
       while (all[i + 1] && all[i + 1].from === 'agent') answers.push(all[++i])
-      items.push({ html: html`<section class="tc-explained"><p class="tc-explained-head"><b>You asked: What??</b>${agoSpan(m.ts, 'msg-time')}</p>${answers.length ? answers.map((a, n) => agentMsg(a, n > 0)) : html`<p class="tc-quiet">Waiting for the explanation.</p>`}</section>` })
+      items.push({ html: html`<section class="tc-explained">${did('You asked: What??', m.ts)}${answers.length ? answers.map((a, n) => agentMsg(a, n > 0)) : did('Waiting for the explanation.')}</section>` })
       continue
     }
     if (m.from === 'user') { if (m.handback) askedAt = items.length; items.push({ handback: Boolean(m.handback), html: userMsg(m, isBare(m) ? WORDS.revise : m.text === EXPLAIN_TEXT ? WORDS.what : m.text) }); continue }
@@ -260,8 +266,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const folded = earlier.length ? html`<details class="tc-fold tc-earlier"><summary>Earlier versions (${turns + 1})</summary>${earlier.map(x => x.html)}</details>` : ''
   // The talk is loaded newest page first: older comments come on request, at the top of the talk.
   const older = more ? html`<a class="tc-older" data-nav href="${cardPath(card, base)}?older=1#card-thread-${card.id}" data-turbo-action="replace">Earlier comments</a>` : ''
-  const any = lead.length || items.length || more
-  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${any ? '' : raw(' hidden')}>${lead}${older}${folded}${now.map(x => x.html)}</section>`
+  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments">${lead}${older}${folded}${now.map(x => x.html)}</section>`
 }
 
 /** Where the card stands in the stack, for the walk: { at, of, prev, next } (cards), or null when it is not waiting. */
@@ -305,7 +310,7 @@ ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </div>
 </article>
 ${cardThread(card, model, self, { more: older })}
-<form class="tc-ask tc-chat" id="${form}" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
+<form class="tc-ask tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
 ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
 <div class="tc-chips" data-card-target="chips" hidden></div>
