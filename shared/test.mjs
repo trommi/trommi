@@ -1085,6 +1085,199 @@ await test('review 3 agent invites: a link two devices answer adds nobody; with 
   await until(() => phone.model.members.get(c.my_device_id)?.device_role === 'agent', 'the intended agent is added')
 })
 
+// ---- continue a session: "Copy invite link again" (README "Continuing a session") ----
+/** Join with a takeover link up to the check code; the human's device then waits in confirm_code. */
+async function answerTakeover(phone, inv, name = 'Heir') {
+  const j = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: name, device_info: { device_name: name, platform: 'node', folder: '~/git/x', host: 'pc' }, poll_ms: 50 })
+  j.client.catch(() => {})
+  const code = await j.check_code
+  await until(() => phone.model.invites.get(inv.invite_id).invite_state === 'confirm_code', 'the human device waits for the code')
+  return { j, code }
+}
+async function takeOver(phone, session_id, name) {
+  const inv = await phone.createInvite({ device_role: 'agent', session_id, takeover: true })
+  const { j, code } = await answerTakeover(phone, inv, name)
+  await phone.confirmInvite(inv.invite_id, code)
+  const c = track(await j.client)
+  await c.start()
+  await c.whenSession()
+  return { heir: c, inv }
+}
+
+if (z.KEY_SCOPE) await test('continue a session: the new connector is the same session (cards, helper sessions, chat, name); the old device is retired, at the hub and for every member', async () => {
+  const { phone, laptop, agents: [a1, a2] } = await room({ laptop: true, agents: 2 })
+  const S = a1.session_id, B = a2.session_id
+  await phone.setSessionSettings(S, { name: 'Website', icon: 'kite' })
+  const open = await a1.sendCard({ title: 'open question', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
+  const answered = await a1.sendCard({ title: 'answered question', options: [{ key: 'a', label: 'A' }] })
+  await a1.sendMessage({ text: 'said before the takeover' })
+  await a1.setStatus({ 'status_line/build': { label: 'Build', state: 'working', detail: 'half way' } })
+  const child = await a1.openChildSession({ profile: { agent_name: 'Design', task: 'draws' } })
+  const childCard = await a1.sendCard({ title: 'helper question', options: [{ key: 'a', label: 'A' }], session_id: child })
+  const other = await a2.sendCard({ title: 'card of session B', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a1, a2, phone, laptop)
+  await until(() => phone.model.cards.get(answered)?.title && phone.model.cards.get(childCard)?.title, 'the human reads the cards')
+  await phone.answer({ object_id: answered, choices: ['a'] })
+  await settleAll(phone, a1, laptop)
+  eq(M.parentSessionOf(phone.model, phone.model.sessions.get(child)), S, 'the helper session hangs under the session')
+
+  // The link is for THIS session; it always asks for the check code.
+  const inv = await phone.createInvite({ device_role: 'agent', session_id: S, takeover: true })
+  eq(inv.confirm_code, true, 'a takeover link always asks for the check code')
+  eq(inv.takeover, true, 'the invite says it continues a session')
+  // An unconfirmed link grants nothing: the request is in, the code not yet confirmed.
+  const { j, code } = await answerTakeover(phone, inv)
+  await sleep(300)
+  eq([...phone.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).length, 2, 'nobody added before the code')
+  eq(JSON.stringify(phone.model.sessions.get(S).agent_device_ids), JSON.stringify([a1.my_device_id]), 'the session is still the old device\'s')
+  const epochBefore = phone.sessionKeys.get(S).state.epoch
+  const stateBefore = a1.state, tokenBefore = a1.hub.token
+  await phone.confirmInvite(inv.invite_id, code)
+  const heir = track(await j.client)
+  await heir.start()
+  await heir.whenSession()
+  await settleAll(phone, laptop, heir)
+
+  // The same session: its id, its name and drawing, its helper session, its status line.
+  eq(heir.session_id, S, 'the newcomer\'s main session is the continued one')
+  assert(heir.childSessionIds().includes(child), 'it holds the helper session')
+  assert(!heir.session_ids.includes(B), 'and nothing of another session')
+  for (const h of [phone, laptop]) {
+    const s = h.model.sessions.get(S)
+    eq(JSON.stringify(s.agent_device_ids), JSON.stringify([heir.my_device_id]), 'the session\'s one agent is the newcomer')
+    eq(s.settings?.name, 'Website', 'the name stays'); eq(s.settings?.icon, 'kite', 'the drawing stays')
+    eq(M.parentSessionOf(h.model, h.model.sessions.get(child)), S, 'the helper session still hangs under it')
+    eq(JSON.stringify(h.model.sessions.get(child).agent_device_ids), JSON.stringify([heir.my_device_id]), 'the helper session went with it')
+    assert(s.status_lines.some(l => l.label === 'Build'), 'its status line is still there')
+    eq(JSON.stringify(h.model.sessions.get(B).agent_device_ids), JSON.stringify([a2.my_device_id]), 'session B is untouched')
+    eq(h.model.members.get(a1.my_device_id).is_active, false, 'the old device is removed from the member list')
+    eq(h.model.members.get(a2.my_device_id).is_active, true, 'the other agent stays')
+  }
+  assert(phone.sessionKeys.get(S).state.epoch > epochBefore, 'a new session key the old device never held')
+
+  // The newcomer reads the session's history and holds its cards: list, revise, close.
+  await until(async () => { await heir.catchUp(); return heir.model.cards.get(open)?.title === 'open question' && heir.model.cards.get(childCard)?.title === 'helper question' }, 'the newcomer reads the earlier cards')
+  assert(heir.holds(heir.model.cards.get(open)) && heir.holds(heir.model.cards.get(answered)) && heir.holds(heir.model.cards.get(childCard)), 'it holds the cards of the session and of the helper session')
+  assert(!heir.holds(heir.model.cards.get(other) ?? { agent_device_id: a2.my_device_id, session_id: B }), 'not a card of session B')
+  await heir.revise(open, { title: 'open question, revised by the newcomer' })
+  await heir.close(answered, 'done by the newcomer')
+  await settleAll(heir, phone, laptop)
+  for (const h of [phone, laptop]) {
+    await until(() => h.model.cards.get(open)?.title === 'open question, revised by the newcomer', 'every human device takes the newcomer\'s revision')
+    eq(h.model.cards.get(open).object_version, 2, 'as version 2 of the same card')
+    eq(h.model.cards.get(open).agent_device_id, a1.my_device_id, 'whose creator is still the old device')
+    await until(() => h.model.cards.get(answered)?.object_state === 'closed', 'and its close of the answered card')
+    assert(!h.model.alerts.some(a => a.code === 'not-creator' || a.code === 'not-for-owner'), `no refusal (${JSON.stringify(h.model.alerts.map(a => a.code))})`)
+  }
+  // The human's answer, a message under a helper's card and a chat message reach the newcomer.
+  const cmds = []
+  heir.on('command', c => cmds.push(c))
+  await laptop.answer({ object_id: open, choices: ['b'] })
+  await phone.sendMessage({ object_id: childCard, text: 'about the helper question' })
+  await phone.sendMessage({ session_id: S, text: 'hello again' })
+  await settleAll(phone, laptop, heir)
+  await until(() => cmds.some(c => c.command === 'answer' && c.object_id === open && c.choices[0] === 'b'), 'the answer reaches the newcomer')
+  await until(() => cmds.some(c => c.command === 'message' && c.object_id === childCard), 'the message under the helper\'s card too')
+  await until(() => cmds.some(c => c.command === 'message' && c.content.text === 'hello again' && c.session_id === S), 'and the chat message')
+  assert(!cmds.some(c => c.refused), 'nothing refused')
+  // It writes into the helper session and the conversation is one timeline with what was said before.
+  const more = await heir.sendCard({ title: 'helper goes on', options: [{ key: 'a', label: 'A' }], session_id: child })
+  await heir.sendMessage({ text: 'said after the takeover' })
+  await settleAll(heir, phone)
+  await until(() => phone.model.cards.get(more)?.session_id === child, 'a new card in the helper session')
+  const chat = await phone.loadTimeline(`chat:session/${S}`, { limit: 50 }).catch(() => null)
+  const texts = [...(phone.model.timelines.get(`chat:session/${S}`)?.items.values() ?? [])].map(i => i.content?.text)
+  assert(texts.includes('said before the takeover') && texts.includes('said after the takeover'), `one conversation (${JSON.stringify(texts)}, ${chat})`)
+
+  // The retired device: it learns it from the signed member list (the hub's refusal carries the entries), and says replaced.
+  await until(() => a1.model.room.connection === 'removed', `the old device knows it is out (${a1.model.room.connection})`)
+  eq(a1.model.room.replaced, true, 'and that another connector continues its session')
+  let err = null
+  try { a1.hub.token = null; await a1.hub.signIn() } catch (e) { err = e }
+  eq(err?.code, 'not-member', 'the hub refuses its sign-in')
+  assert(Array.isArray(err.body?.signed_entries) && err.body.signed_entries.length === a1.state.head.seq + 1, 'with the signed entries up to its removal, no further')
+  // Someone who is not that device gets no entries with the refusal.
+  const stranger = await fetch(`${HUB}/v1/rooms/${phone.model.room.room_id}/access_tokens`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ signed_challenge: z.b64u(new Uint8Array(200)) }) })
+  assert(!(await stranger.json()).signed_entries, 'no entries without the removed device\'s signature')
+  // Its key no longer works for the session: the hub takes no envelope of it, and a member that is handed one refuses it.
+  const oldK = a1.sessionKeys.get(S), oldSecret = oldK.secrets.get(Math.max(...oldK.secrets.keys()))   // the newest key it ever held
+  const payload = codec.encodePayload(codec.KIND.status, { values: { 'status_line/ghost': { label: 'Ghost', state: 'working' } }, lamport: 9999 })
+  const sealed = await z.sealEnvelope({ device: a1.device, state: stateBefore, secret: oldSecret, chains: a1.chains, keyScope: 1, sessionId: z.unhex(S), kind: codec.KIND.status, payload })
+  const posted = await fetch(`${HUB}/v1/rooms/${phone.model.room.room_id}/envelopes`, { method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${tokenBefore}` }, body: JSON.stringify({ envelope: z.b64u(sealed.bytes) }) })
+  assert(posted.status === 401 || posted.status === 403, `the hub takes nothing from the retired device (${posted.status})`)
+  await laptop.processRecords([{ envelope_number: laptop.model.room.last_envelope_number + 1, envelope: z.b64u(sealed.bytes) }], { live: true }).catch(() => {})
+  assert(!laptop.model.sessions.get(S).status_lines.some(l => l.label === 'Ghost'), 'a member that is handed the retired device\'s envelope does not apply it')
+  // The used link is spent: a second join with it adds nobody.
+  const again = joinRoom({ link: inv.link, storage: memoryStorage(), device_name: 'Replay', poll_ms: 50 })
+  const rerr = await Promise.race([again.client.then(() => null, e => e), sleep(2500).then(() => 'waiting')])
+  again.cancel()
+  assert(rerr && rerr !== 'waiting', `a replayed link is refused (${rerr?.code ?? rerr})`); console.log(`     replayed link: ${rerr?.code}`)
+  eq([...phone.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).length, 2, 'still two agents: the newcomer and the other session\'s')
+})
+
+if (z.KEY_SCOPE) await test('continue a session: a link for session A cannot continue session B; a wrong code, an expired link and a plain agent link take nothing over', async () => {
+  const { phone, agents: [a1, a2] } = await room({ agents: 2 })
+  const A = a1.session_id, B = a2.session_id
+  const cardB = await a2.sendCard({ title: 'B asks', options: [{ key: 'a', label: 'A' }] })
+  await settleAll(a1, a2, phone)
+  // only an existing session, only for an agent
+  for (const bad of [{ device_role: 'agent', takeover: true }, { device_role: 'agent', takeover: true, session_id: 'ab'.repeat(16) }, { device_role: 'human', takeover: true, session_id: A }]) {
+    let e = null
+    try { await phone.createInvite(bad) } catch (x) { e = x }
+    eq(e?.code, 'bad-argument', `no takeover link for ${JSON.stringify(bad)}`)
+  }
+  // a wrong code burns the link: nobody added, nothing moved
+  const wrongInv = await phone.createInvite({ device_role: 'agent', session_id: A, takeover: true })
+  const w = await answerTakeover(phone, wrongInv, 'Wrong')
+  let err = null
+  try { await phone.confirmInvite(wrongInv.invite_id, String((Number(w.code) + 1) % 1000000).padStart(6, '0')) } catch (e) { err = e }
+  eq(err?.code, 'code-mismatch', 'a wrong code is refused')
+  w.j.cancel()
+  // an expired link: the newcomer's request comes too late
+  const old = await phone.createInvite({ device_role: 'agent', session_id: A, takeover: true, ttl_ms: 500 })
+  await sleep(1200)
+  const late = joinRoom({ link: old.link, storage: memoryStorage(), device_name: 'Late', poll_ms: 50 })
+  const lerr = await Promise.race([late.client.then(() => null, e => e), sleep(2500).then(() => 'waiting')])
+  late.cancel()
+  assert(lerr && lerr !== 'waiting', `an expired link is refused (${lerr?.code ?? lerr})`); console.log(`     expired link: ${lerr?.code}`)
+  await sleep(200)
+  eq([...phone.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).length, 2, 'nobody was added')
+  eq(JSON.stringify(phone.model.sessions.get(A).agent_device_ids), JSON.stringify([a1.my_device_id]), 'session A is still the old device\'s')
+  eq(phone.model.members.get(a1.my_device_id).is_active, true, 'which is still a member')
+  // a link for A continues A, never B
+  const { heir } = await takeOver(phone, A, 'Heir of A')
+  await settleAll(phone, heir, a2)
+  eq(heir.session_id, A, 'the newcomer continues A')
+  eq(JSON.stringify(phone.model.sessions.get(B).agent_device_ids), JSON.stringify([a2.my_device_id]), 'B keeps its agent')
+  eq(phone.model.members.get(a2.my_device_id).is_active, true, 'B\'s device is not retired')
+  assert(!heir.sessionKeys.get(B)?.secrets.size, 'the newcomer holds no key of B')
+  let rerr = null
+  try { await heir.revise(cardB, { title: 'hijacked' }) } catch (e) { rerr = e }
+  assert(rerr, 'it cannot revise a card of B')
+  // forced past its own checks: the hub and the members refuse it
+  await heir._send({ kind: codec.KIND.object_version, session_id: A, content: { object_type: 'card', object_version: 2, previous_version_hash: phone.model.cards.get(cardB).version_hash, card_type: 'decision', title: 'hijacked', options: [{ key: 'a', label: 'A' }] }, object: { object_id: cardB, object_state: 'open', urgency: 'normal' } }).catch(() => {})
+  await heir.settle().catch(() => {})
+  await settleAll(phone, a2)
+  eq(phone.model.cards.get(cardB).title, 'B asks', 'B\'s card is untouched')
+  await a2.revise(cardB, { title: 'B asks again' })
+  await settleAll(a2, phone)
+  await until(() => phone.model.cards.get(cardB).title === 'B asks again', 'B\'s own agent still revises it')
+  // an agent that shares a session with a card's creator does not hold the creator's cards (only a hand-over moves them)
+  const a3 = await addAgent(phone, 'Second in B')
+  await phone.assignSession({ session_id: B, agent_device_ids: [a2.my_device_id, a3.my_device_id], with_history: true })
+  await until(() => a3.session_ids.includes(B), 'a3 assigned to B beside a2')
+  await until(async () => { await a3.catchUp(); return a3.model.cards.get(cardB)?.title === 'B asks again' }, 'a3 reads B')
+  assert(!a3.holds(a3.model.cards.get(cardB)), 'the creator is still assigned: the card is the creator\'s')
+  await a3._send({ kind: codec.KIND.object_version, session_id: B, content: { object_type: 'card', object_version: 3, previous_version_hash: phone.model.cards.get(cardB).version_hash, card_type: 'decision', title: 'taken by the second', options: [{ key: 'a', label: 'A' }] }, object: { object_id: cardB, object_state: 'open', urgency: 'normal' } }).catch(() => {})
+  await a3.settle().catch(() => {})
+  await settleAll(phone)
+  eq(phone.model.cards.get(cardB).title, 'B asks again', 'the hub and the members refuse the second agent\'s version')
+  // a plain agent link (no takeover) retires nobody
+  const plain = await addAgent(phone, 'Plain')
+  eq(phone.model.members.get(heir.my_device_id).is_active, true, 'a new agent by a plain link retires nobody')
+  assert(plain.session_id && plain.session_id !== A && plain.session_id !== B, 'and gets a session of its own')
+})
+
 await test('fuzz F17/F18: undoing an answer echo keeps a newer card state and re-projects the stack', async () => {
   const { phone, agents: [agent] } = await room({ agents: 1 })
   const id = await agent.sendCard({ title: 'which?', options: [{ key: 'a', label: 'A' }, { key: 'b', label: 'B' }] })
