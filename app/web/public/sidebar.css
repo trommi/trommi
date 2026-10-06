@@ -201,7 +201,6 @@ button.agent-badge:active { scale: .95; }
 .brand:has(.conn[data-state="offline"]) .brand-open::after, .brand:has(.conn[data-state="connecting"]) .brand-open::after { content: ""; flex: none; width: 8px; height: 8px; margin-left: 3px; border-radius: 50%; background: var(--faint); }
 .brand:has(.conn[data-state="offline"]) .brand-open::after { background: var(--urg-high); animation: blink 1.6s var(--ease-in-out) infinite; }
 /* The theme: a scribbled moon while it is light, a sun while it is dark. */
-.topbar .icon-btn { width: 36px; height: 36px; border-radius: 10px; }
 #theme-toggle .ico-sun, :root[data-theme="dark"] #theme-toggle .ico-moon { display: none; }
 :root[data-theme="dark"] #theme-toggle .ico-sun { display: block; }
 /* The sheet of keys: only where there is a keyboard. */
@@ -453,7 +452,7 @@ a.agent-badge { text-decoration: none; }
   background: var(--surface); border: 1.5px solid color-mix(in srgb, var(--fg) 70%, transparent); border-radius: 12px;
   box-shadow: 0 10px 28px -16px rgb(20 30 25 / .45);
 }
-.topbar #brand-doors :is(.menu-desks, .menu-grid, .menu-foot, .menu-dev) { border-top-style: dashed; }
+.topbar #brand-doors :is(.menu-desks, .menu-grid, .menu-foot) { border-top-style: dashed; }
 
 /* The bracket round an unfolded main's subs is drawn inside the main's row (ui.mjs folds). */
 .agent-row.is-main[data-fold] { position: relative; }

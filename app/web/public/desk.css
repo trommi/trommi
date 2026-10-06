@@ -113,8 +113,6 @@
 .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 40px; }
 .inbox-when .inbox-ago { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .inbox-question { padding-right: 30px; }
-.inbox-byline:has(.inbox-thumb) { bottom: 8px; }
-.inbox-row:has(> .inbox-pics) .inbox-byline :is(.inbox-carries, .inbox-sep:has(+ .inbox-carries)) { display: none; }
 /* A card that is shredded leaves in strips. */
 .inbox-row.is-leaving[data-leave="shredded"] { animation-name: row-shred; animation-duration: 340ms; -webkit-mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); mask: repeating-linear-gradient(90deg, #000 0 11px, transparent 11px 14px); }
 /* The row's ways out (.inbox-tabs): small paper tabs down its right edge, in the order of the opened
@@ -200,7 +198,6 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* folded: one quiet line, a word and its strokes; nothing else */
 .inbox-groups > .inbox-pile:not(.is-open) { padding: 2px 0; cursor: pointer; }
 .inbox-pile:not(.is-open) .inbox-pile-head { gap: 10px; }
-.inbox-pile:not(.is-open) .tally-more,
 .inbox-pile:not(.is-open) .inbox-pile-head b,
 .inbox-pile:not(.is-open) .inbox-pile-head::after,
 .inbox-pile:not(.is-open) .inbox-pile-sheets { display: none; }
@@ -232,7 +229,6 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-row { min-height: 0; grid-template-columns: auto minmax(0, 1fr); grid-template-rows: none; }
   .inbox-answer { height: auto; }
   .inbox-when, .inbox-content:has(> .inbox-row-head:not(:empty)) .inbox-when { top: 10px; right: 10px; }
-  .inbox-byline:has(.inbox-thumb) { order: 3; margin-top: 4px; }
   .inbox-groups > .inbox-pile:not(.is-open), .inbox-groups:has(> .inbox-pile ~ .inbox-pile ~ .inbox-pile) > .inbox-pile:not(.is-open) { grid-column: 1 / -1; }
   .inbox-groups > .inbox-pile + .inbox-pile { margin-top: calc(-1 * var(--s-3)); }
   .inbox-row > :not(.inbox-more) { grid-row: auto; }
@@ -325,8 +321,6 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
 /* "Next, please" as index cards (card Nr. 166, "index"): the heading is the divider tab in front, standing on the
    first card; the cards behind it peek out as small tabs with their titles, then "+N". Fixed heights: nothing
    shifts when a card arrives. */
-.inbox-title:has(> .inbox-index) { flex: 1 1 100%; }
-.inbox-head:has(.inbox-index) { margin-bottom: 0; align-items: flex-end; }
 
 /* ---- a question leaves: one calm motion that shows where it goes ---- */
 /* In a list the row that left stays for a moment as a ghost in its old place: an answered one
@@ -369,7 +363,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   /* what is read and chosen below the card (the unfolded options) can be selected as before */
 
   /* not on the row: copy and clock, the Snooze corner, the text, the pictures and what the card carries */
-  .inbox-groups .inbox-row :is(.inbox-tabs, .inbox-when, .inbox-body, .inbox-pics, .inbox-thumb, .inbox-carries, .inbox-sep, .inbox-who) { display: none; }
+  .inbox-groups .inbox-row :is(.inbox-tabs, .inbox-when, .inbox-body, .inbox-sep, .inbox-who) { display: none; }
   .inbox-groups .inbox-group[data-sender] { gap: 10px; }
   .inbox-groups { gap: 10px; }
   /* two folded piles in a row stay apart: app.css pulls the second one up by more than this list's gap */
@@ -462,9 +456,6 @@ dialog.rowmenu::backdrop { background: transparent; }
 }
 /* the count as a number, for whoever reads the page aloud */
 .inbox-stacks .inbox-stack .inbox-stack-head > b { order: 0; display: block; position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; letter-spacing: 0; text-transform: none; }
-@media (any-hover: hover) { .inbox-stack-head:not(:disabled):hover :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -2px; }
-}
-.inbox-stack.is-open :is(.inbox-stack-paper, .inbox-stack-word) { translate: 0 -4px; }
 
 /* the fan: the sheets of the open stack, across the whole list */
 .inbox-stacks .inbox-stack > .inbox-pile-sheets { display: none; scroll-margin: 200px 0 24px; }
@@ -669,7 +660,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
    equal columns on the card column's edges; one heading style, one slip (height, corner, border, step, turn) for all
    three, five slips at most; the open list below across all three. A phone: one column, the same slips. ---- */
 #inbox .inbox-groups > .inbox-stacks.stack-tabs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: var(--s-5) 28px; margin-top: var(--s-6); }
-.inbox-stacks.stack-tabs > .inbox-stack > .inbox-stack-title, .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title, .inbox-stacks.stack-tabs .notes-pile > .inbox-stack-title { flex: none; max-width: none; width: 100%; min-width: 0; }
+.inbox-stacks.stack-tabs > .inbox-stack > .inbox-stack-title, .inbox-stacks.stack-tabs .off-pile > .inbox-stack-title { flex: none; max-width: none; width: 100%; min-width: 0; }
 .inbox-stacks.stack-tabs .inbox-stack.is-open > .inbox-pile-sheets { grid-column: 1 / -1; order: 1; }
 .inbox-stacks.stack-tabs > .media-pile { order: 0; display: grid; gap: 10px; width: 100%; min-width: 0; color: var(--fg); text-decoration: none; }
 .inbox-stacks.stack-tabs .off-head, .inbox-stacks.stack-tabs > .media-pile { gap: 12px; }
@@ -1017,7 +1008,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .inbox-stacks.stack-tabs .inbox-stack.off-pile[data-stack="notes"].is-open .inbox-stack-head.off-head { padding: 0; border: 0; background: none; box-shadow: none; }
 .off-pile[data-stack="notes"] .off-fold { display: none !important; }
 #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: absolute; z-index: 30; left: calc(100% - 24px); bottom: 24px; width: 300px; max-height: 360px; overflow-y: auto; margin: 0; padding: 6px; gap: 0; border-radius: 12px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); }
-[data-stack="notes"] .inbox-pile-sheets .stack-search, [data-stack="notes"] .inbox-pile-sheets :is(.note-send, .note-bin), [data-stack="notes"] .inbox-pile-sheets .inbox-revising-tail { display: none !important; }
+[data-stack="notes"] .inbox-pile-sheets .stack-search, [data-stack="notes"] .inbox-pile-sheets :is(.note-send, .note-bin) { display: none !important; }
 @media (max-width: 860px) {
   #inbox .inbox-stacks.stack-tabs .inbox-stack[data-stack="notes"].is-open > .inbox-pile-sheets { position: fixed; left: 8px; right: 8px; bottom: 8px; width: auto; max-height: 60vh; padding: 10px 8px calc(10px + env(safe-area-inset-bottom, 0px)); border-radius: 16px; }
 }
