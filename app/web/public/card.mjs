@@ -11,9 +11,9 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
 import { BASE, SAID, stream } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, plain, raw, rich, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
-const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
+const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', ZOOM_OUT = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
 const HAND_BACK_TEXT = 'Back to you: please revise this question and present it again.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
@@ -73,21 +73,28 @@ function pictureKeys(card) {
   return images.length === options.length && options.length >= 3 ? new Map(options.map((o, i) => [i, o.key])) : new Map()
 }
 
-/** What the controller "card" needs to put an option's picture on the stage while the pointer is on the option:
- *  per picture its address at the stage's size, its marks, the option it belongs to, its page. */
+/** What the controller "card" needs to put another picture on the stage (the pointer on an option or on a small
+ *  picture): per picture its address, its size, its marks, the option it belongs to, its file name and caption, its page. */
 function picturesOf(card, base) {
   const keys = pictureKeys(card)
   const images = imagesOf(card)
   // (Several options may show the same picture: a section names it for each.)
   const shared = i => (card.sections ?? []).filter(s => s.key != null && s.picture != null && images.indexOf(card.attachments?.[s.picture]) === i).map(s => s.key)
-  return images.map((a, i) => { const t = thumb(a, 640), all = shared(i), key = keys.get(i) ?? null; return { at: i + 1, src: t.src, srcset: t.srcset, name: a.name, marks: a.marks ?? [], key, keys: all.length ? all : key != null ? [key] : [], href: `${cardPath(card, base)}/p/${i + 1}` } })
+  return images.map((a, i) => { const all = shared(i), key = keys.get(i) ?? null; return { at: i + 1, src: thumb(a).src, width: a.width > 0 ? a.width : null, height: a.height > 0 ? a.height : null, name: a.name, title: a.title && a.title !== a.name ? a.title : '', page: a.page ?? null, marks: a.marks ?? [], key, keys: all.length ? all : key != null ? [key] : [], href: `${cardPath(card, base)}/p/${i + 1}` } })
 }
+/** Where one stands among the pictures: "2 / 6", the file's name, its caption. */
+const where = (a, i, n, cls) => html`<span class="${cls}" data-card-target="where">${n > 1 ? html`<b>${i} / ${n}</b> ` : ''}<span>${a.name}${a.title && a.title !== a.name ? ` · ${a.title}` : ''}</span></span>`
+/** The small pictures to pick from: the one that stands is marked; the pointer on one shows it (controller "card"). */
+const strip = (images, i, to, cls = '') => html`<span class="tc-strip ${cls}" data-action="pointerover->card#peek focusin->card#peek pointerleave->card#unpreview focusout->card#unpreview">${images.map((p, n) => html`<a class="tc-thumb" data-nav href="${to(n + 1)}" data-turbo-action="replace" data-at="${n + 1}" title="${p.name}" aria-label="Show picture ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}"><img${srcOf(p)} alt="" loading="lazy" decoding="async" draggable="false" width="48" height="34"></a>`)}</span>`
+/** The picture's shown width: its own, never wider than its place (a phone's screenshot is not blown up). */
+const ownWidth = a => (a.width > 0 ? raw(` style="width:${Number(a.width)}px"`) : '')
 
-/** The picture of the card, low: one at a time, the others as small ones to pick; a click opens it large on its own
- *  page. A frame of its own, so picking another loads only this. Videos come after the pictures (?pic= counts on):
- *  one stands on the stage as a player (decrypted to a blob by att.mjs / sw.js; never autoplays), its tile a play mark. */
+/** The picture of the card: one at a time at the column's width, cut off below (its top is what one reads); "+" makes
+ *  it whole right here, "Gallery" opens it large on its own page. The others as small ones to pick. A frame of its
+ *  own, so picking another loads only this. Videos come after the pictures (?pic= counts on): one stands on the stage
+ *  as a player (decrypted to a blob by att.mjs / sw.js; never autoplays), its tile a play mark. */
 function cardMedia(card, base, at = 1, query = '') {
-  const images = imagesOf(card), all = [...images, ...videosOf(card)]
+  const images = imagesOf(card), videos = videosOf(card), all = [...images, ...videos]
   if (!all.length) return ''
   const i = Math.min(Math.max(1, at), all.length), a = all[i - 1], video = i > images.length
   const here = cardPath(card, base)
@@ -96,13 +103,11 @@ function cardMedia(card, base, at = 1, query = '') {
   const step = (n, cls, label, d) => (all.length > 1 ? html`<a class="tc-step ${cls}" data-nav href="${to(n)}" data-turbo-action="replace" aria-label="${label}">${icon(d)}</a>` : '')
   const shown = video
     ? html`<figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure>`
-    : html`<a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" aria-label="Enlarge picture ${i} of ${images.length}: ${a.name}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a, 640)} decoding="async" draggable="false"><span class="tc-zoom">${icon(ZOOM)}</span></a>`
-  const tile = (p, n) => (n >= images.length
-    ? html`<a class="tc-thumb tc-thumb-video" data-nav href="${to(n + 1)}" data-turbo-action="replace" aria-label="Show video ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}">${icon(PLAY)}</a>`
-    : html`<a class="tc-thumb" data-nav href="${to(n + 1)}" data-turbo-action="replace" aria-label="Show picture ${n + 1}: ${p.name}" aria-pressed="${String(n + 1 === i)}"><img${srcOf(p, 64)} alt="" loading="lazy" decoding="async" draggable="false" width="48" height="34"></a>`)
+    : html`<div class="tc-figure" data-card-target="figure" data-action="click->card#enlarge" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt="Picture ${i} of ${images.length}: ${a.name}"${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></div><button class="tc-zoom" type="button" data-card-target="zoom" data-action="card#enlarge" aria-pressed="false" title="Bigger, right here" aria-label="Show the whole picture here, or only its top">${icon(ZOOM)}${icon(ZOOM_OUT)}</button>`
   return html`<turbo-frame id="card-media-${card.id}" class="tc-media">
 <div class="tc-stage${video ? ' is-video' : ''}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
-${all.length > 1 ? html`<div class="tc-thumbs">${all.map(tile)}<span class="tc-where">${i} / ${all.length} · ${a.title || a.name}</span></div>` : html`<div class="tc-thumbs"><span class="tc-where">${a.title || a.name}</span></div>`}
+<div class="tc-thumbs">${all.length > 1 ? html`${strip(images, i, to)}${videos.map((p, n) => html`<a class="tc-thumb tc-thumb-video" data-nav href="${to(images.length + n + 1)}" data-turbo-action="replace" aria-label="Show video ${n + 1}: ${p.name}" aria-pressed="${String(images.length + n + 1 === i)}">${icon(PLAY)}</a>`)}` : ''}${video ? '' : html`<a class="tc-gallery" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="gallery" title="Open the gallery: the pictures large, on their own page">${sk('picture')}<span>Gallery</span></a>`}</div>
+<div class="tc-cap">${where(a, i, all.length, 'tc-where')}${video ? '' : pageChip(a.page, true)}</div>
 </turbo-frame>`
 }
 
@@ -281,18 +286,16 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const images = imagesOf(old ? { attachments: old.attachments ?? card.attachments } : card)
   const media = images.length + videosOf(old ? { attachments: old.attachments ?? card.attachments } : card).length
   const shownPic = Math.min(Math.max(1, pic), Math.max(1, media))
-  const pageLink = images[shownPic - 1]?.page?.url
   const step = (to, cls, label, d) => (to ? html`<a class="tc-step-card ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${icon(d)}</a>` : html`<span class="tc-step-card ${cls}" aria-hidden="true">${icon(d)}</span>`)
   const form = `card-form-${card.id}`
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
-  return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#link circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
+  return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 <nav class="tc-head" aria-label="Around this question">
 <a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape"><span>Back to ${session ? session.name : WORDS.desk}</span><kbd>Esc</kbd></a>
 ${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-more-open" aria-label="More for this question">More ${sk('unfold')}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' ? html`${card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : more('', 'snooze', WORDS.later, `${WORDS.later}: it waits for you on "Later"`, act(card, base, 'snooze'))}${more('is-shred', 'bin', WORDS.shred, `${WORDS.shred}: throw it away unanswered`, act(card, base, 'shred'))}` : ''}
 ${copyButton(card)}
-${pageLink ? html`<a class="tc-more-item" href="${pageLink}" target="_blank" rel="noopener noreferrer">${sk('page')}<span>Open the page</span></a>` : ''}
 </div></details>
 </nav>
 <article class="tc-card" id="card-${card.id}" data-id="${card.id}" data-kind="${card.kind}" data-urgency="${card.urgency}" aria-labelledby="card-title-${card.id}"${media ? raw(' data-pictures') : ''}>
@@ -324,11 +327,12 @@ function picturePage(card, model, base, at, { from = null } = {}) {
   const here = cardPath(card, self)
   const form = `card-form-${card.id}`, zoom = `t-picture-zoom-${card.id}`
   const drafting = card.status === 'open' && card.kind === 'decision'
-  return html`<div class="t-picture is-deciding" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}">
-<header class="t-picture-bar"><a class="tc-back t-picture-back" data-nav href="${here}?pic=${i}" aria-label="Back to the question">${icon(ARROW_L)}<span>${card.title}</span></a><span class="t-picture-where"><b>${i} / ${images.length}</b> ${a.title || a.name}</span>${a.page?.url ? html`<a class="focus-page-link" target="_blank" rel="noopener noreferrer" href="${a.page.url}">${sk('page')}<span>Open the page</span></a>` : ''}</header>
+  const key = pictureKeys(card).get(i - 1)
+  return html`<div class="t-picture is-deciding" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(card, self))}">
+<header class="t-picture-bar"><a class="tc-back t-picture-back" data-nav href="${here}?pic=${i}" data-card-target="gallery" data-back aria-label="Back to the question">${icon(ARROW_L)}<span>${card.title}</span></a>${where(a, i, images.length, 't-picture-where')}${pageChip(a.page, true)}</header>
 <input type="checkbox" class="t-picture-zoom" id="${zoom}" hidden>
-<div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width"${a.marks?.length ? html` data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks)}"` : ''}><img${srcOf(a, 1600)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>
-${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${icon(ARROW_L)}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${icon(ARROW_R)}</a>` : ''}
+<div class="t-picture-view" tabindex="0" role="region" aria-label="The picture: scroll to see all of it"><label class="t-picture-fit" for="${zoom}" title="Click: its own size, or fit to the width" data-card-target="figure" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img${srcOf(a)} alt="${a.name}" decoding="async"${a.width > 0 && a.height > 0 ? html` width="${a.width}" height="${a.height}"` : ''}></label></div>
+${images.length > 1 ? html`<a class="tc-step is-prev" data-nav href="${here}/p/${i > 1 ? i - 1 : images.length}" data-turbo-action="replace" aria-label="The picture before">${icon(ARROW_L)}</a><a class="tc-step is-next" data-nav href="${here}/p/${i < images.length ? i + 1 : 1}" data-turbo-action="replace" aria-label="The next picture">${icon(ARROW_R)}</a><nav class="t-picture-strip" aria-label="The pictures of this question">${strip(images, i, n => `${here}/p/${n}`)}</nav>` : ''}
 <aside class="t-picture-answer" aria-label="Your answer" data-kind="${card.kind}">${cardAnswer(card, model, base, { pic: i })}${card.status === 'open' && !card.with_agent && card.kind !== 'permission' ? html`<button class="tc-way t-picture-later" type="submit" form="${form}" formaction="${act(card, base, 'snooze')}" title="${WORDS.later}: it waits for you on &quot;Later&quot;">${sk('snooze')}<span>${WORDS.later}</span></button>` : ''}</aside>
 <form id="${form}" method="post" action="${act(card, base, 'message')}" hidden data-card-target="form">${session ? html`<input type="hidden" name="back" value="${self}">` : ''}${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}"><input type="hidden" name="note" value="${card.draft?.note ?? ''}">` : ''}</form>
 </div>`
@@ -661,7 +665,7 @@ let turn = 0
 const GROWS = globalThis.CSS?.supports?.('field-sizing', 'content') ?? false
 
 controller('card', class extends Controller {
-  static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'revise', 'reviseField', 'reviseMarks']
+  static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'revise', 'reviseField', 'reviseMarks', 'where', 'page', 'gallery', 'zoom']
   static values = { draft: String, pictures: Array }
 
   connect() {
@@ -718,37 +722,67 @@ controller('card', class extends Controller {
   }
   openRevise() { if (!this.hasReviseTarget) return false; this.reviseTarget.open = true; this.reviseToggle(); return true }
 
-  // ---- an option's picture: while the pointer or the keyboard is on an option, its picture stands on the stage ----
-  // (A finger has no hover: a tap answers, as before. Leaving the options puts the picture back that stood.)
+  // ---- the pictures and the options are one thing ----
+  // While the pointer or the keyboard is on an option, its picture stands on the stage and its small picture is
+  // marked; on a small picture, that picture stands there and its option is marked. Leaving puts back what stood.
+  // A click on a small picture makes it the one that stands (its link). A finger has no hover: a tap on a small
+  // picture shows it and marks its option; a tap on an option answers, as before.
   preview(event) {
     if (event.pointerType === 'touch') return
     const key = event.target.closest?.('.tc-opt[data-key]')?.dataset.key
     const pic = key != null && this.picturesValue.find(p => (p.keys ?? [p.key]).includes(key))
-    if (pic) this.stage(pic, false, key)
+    if (pic) this.stage(pic, key)
+  }
+  peek(event) {
+    if (event.pointerType === 'touch') return
+    const pic = this.picturesValue.find(p => p.at === Number(event.target.closest?.('.tc-thumb[data-at]')?.dataset.at))
+    if (pic) this.stage(pic)
   }
   unpreview(event) {
-    if (event.relatedTarget instanceof Element && event.relatedTarget.closest('.tc-opts') === event.currentTarget) return
-    if (this.shown) { const back = this.shown; this.shown = null; this.stage(back, true) }
+    if (event.relatedTarget instanceof Element && event.currentTarget.contains(event.relatedTarget)) return
+    if (this.stood) { const back = this.stood; this.stood = null; this.stage(back.pic, back.key, true) }
   }
   // key: the option the picture stands for now (a picture several options share points at the one under the pointer).
-  stage(pic, restoring = false, key = pic.key) {
-    if (!this.hasFigureTarget) return
+  stage(pic, key = pic.key, restoring = false) {
+    if (!this.hasFigureTarget || !pic) return
     const fig = this.figureTarget, img = fig.querySelector('img')
-    const now = { at: Number(fig.dataset.at), key: fig.dataset.key ?? null }
-    if (!restoring && !this.shown) this.shown = { ...(this.picturesValue.find(p => p.at === now.at) ?? {}), key: now.key }
-    if (now.at === pic.at) { if (key != null) fig.dataset.key = key; return this.link() }
-    img.src = pic.src
-    if (pic.srcset) img.srcset = pic.srcset; else img.removeAttribute('srcset')
-    fig.dataset.at = pic.at
-    fig.href = pic.href
+    const now = Number(fig.dataset.at)
+    if (!restoring && !this.stood) this.stood = { pic: this.picturesValue.find(p => p.at === now), key: fig.dataset.key ?? null }
     if (key != null) fig.dataset.key = key; else delete fig.dataset.key
+    const thumbs = [...this.element.querySelectorAll('.tc-thumb[data-at]')]
+    for (const t of thumbs) t.toggleAttribute('data-peek', !restoring && Number(t.dataset.at) === pic.at)
+    if (now === pic.at) return this.link()
+    img.src = pic.src
+    if (img.hasAttribute('width')) { if (pic.width && pic.height) { img.width = pic.width; img.height = pic.height } else { img.removeAttribute('width'); img.removeAttribute('height') } }
+    else img.style.width = pic.width ? `${pic.width}px` : ''
+    fig.dataset.at = pic.at
     fig.dataset.circlesMarksValue = JSON.stringify(pic.marks ?? [])
-    const where = this.element.querySelector('.tc-where')
-    if (where) where.textContent = `${pic.at} / ${this.element.querySelectorAll('.tc-thumb').length || this.picturesValue.length} · ${pic.name}`
-    this.element.querySelectorAll('.tc-thumb').forEach((t, i) => t.setAttribute('aria-pressed', String(i + 1 === pic.at)))
+    if (this.hasWhereTarget) {
+      const n = thumbs.length || this.picturesValue.length
+      this.whereTarget.replaceChildren(...(n > 1 ? [el('b', '', `${pic.at} / ${n}`), ' '] : []), el('span', '', `${pic.name}${pic.title ? ` · ${pic.title}` : ''}`))
+    }
+    if (this.hasPageTarget) {
+      this.pageTarget.hidden = !pic.page
+      if (pic.page) { this.pageTarget.href = pic.page.url; this.pageTarget.querySelector('b').textContent = pic.page.name }
+    }
+    // (the way to the gallery opens the picture that stands; the gallery's way back returns to it)
+    if (this.hasGalleryTarget) this.galleryTarget.href = 'back' in this.galleryTarget.dataset ? pic.href.replace(/\/p\/(\d+)$/, '?pic=$1') : pic.href
     img.addEventListener('load', () => this.link(), { once: true })
     this.link()
   }
+  // "+": the whole picture, right here on the card (and back to its top). Never another page.
+  enlarge(event) {
+    event.preventDefault()
+    this.large = !this.large
+    this.sized()
+  }
+  sized() {
+    this.element.querySelector('.tc-stage')?.classList.toggle('is-large', Boolean(this.large))
+    if (this.hasZoomTarget) { this.zoomTarget.setAttribute('aria-pressed', String(Boolean(this.large))); this.zoomTarget.title = this.large ? 'Smaller again: only its top' : 'Bigger, right here' }
+    this.link()
+  }
+  // (another picture came into the frame: it is the one that stands now, at the size the last one had)
+  framed() { this.stood = null; this.sized() }
 
   // ---- the note on one option: the pencil opens its line ----
   note(event) {
@@ -831,17 +865,17 @@ controller('card', class extends Controller {
   // The picture names its option (data-key); the option is marked (data-match) and, where the answers stand beside
   // the picture and both ends are in sight, the arrow is drawn into the option's left edge.
   link() {
+    const picture = this.hasFigureTarget ? this.figureTarget : null, key = picture?.dataset.key
+    for (const b of this.element.querySelectorAll('.tc-opt[data-key]')) b.toggleAttribute('data-match', key != null && b.dataset.key === key)
     const host = this.element.querySelector('.tc-card')
-    if (!host) return
-    const picture = host.querySelector('.tc-media .tc-figure'), key = picture?.dataset.key
-    for (const b of host.querySelectorAll('.tc-opt[data-key]')) b.toggleAttribute('data-match', key != null && b.dataset.key === key)
+    if (!host) return   // (the gallery: the option is marked, no arrow)
     const tile = host.querySelector('.tc-opt[data-match]'), answer = host.querySelector('.tc-right'), scroll = host.querySelector('.tc-left')
     const old = host.querySelector(':scope > .focus-arrow')
     const gone = () => { old?.remove(); this.arrowSig = '' }
     if (!picture || !tile || !answer || !scroll) return gone()
     const base = host.getBoundingClientRect()
     const box = n => { const r = n.getBoundingClientRect(); return { x: r.left - base.left, y: r.top - base.top, w: r.width, h: r.height } }
-    const P = box(picture), T = box(tile), A = box(answer), F = box(scroll), L = box(tile.parentElement)
+    const P = box(picture.closest('.tc-stage') ?? picture), T = box(tile), A = box(answer), F = box(scroll), L = box(tile.parentElement)
     if (A.x < P.x + P.w - 1) return gone()   // a narrow window: the answers stand under the pictures
     const top = Math.max(P.y, F.y), bottom = Math.min(P.y + P.h, F.y + F.h)
     if (!P.w || bottom - top < 70 || T.y < L.y - 2 || T.y + T.h > L.y + L.h + 2) return gone()
@@ -852,7 +886,7 @@ controller('card', class extends Controller {
     old?.remove()
     const mid = T.y + T.h / 2
     // (it starts at the first circle where the agent marked a region, else near the picture's edge)
-    const from = ring?.width ? [ring.right - base.left - 2, clamp(ring.top - base.top + ring.height / 2, top + 6, bottom - 6)] : [P.x + P.w - 30, clamp(mid - 46, top + 22, bottom - 22)]
+    const from = ring?.width ? [ring.right - base.left - 2, clamp(ring.top - base.top + ring.height / 2, top + 6, bottom - 6)] : [P.x + P.w - 30, clamp(mid - 46, Math.min(top + 62, bottom - 22), bottom - 22)]   // (under the "+" in its corner)
     const gx = Math.max(P.x + P.w + 12, T.x - 26)   // down the gap just before the options, never across the words
     const points = [from, [P.x + P.w - 6, from[1] + 5], [gx - 8, from[1] + 9], [gx + 4, from[1] + (mid - from[1]) * .45], [gx + 6, mid - (mid > from[1] ? 14 : -14)], [gx + 12, mid - (mid > from[1] ? 3 : -3)], [T.x - 2, mid]]
     const svg = document.createElementNS(NS, 'svg')
