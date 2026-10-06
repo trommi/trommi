@@ -25,7 +25,8 @@ const inviteAgentButton = () => html`<form method="post" action="/pair" class="a
 
 // ---- the note (his word, 4 October: "nur EINE Notiz"; 5 October: "wieder nach unten rechts") ----
 // One drawn yellow sticky at the window's bottom-right, a part of the frame beside the sidebar (app.mjs bodyParts).
-// Folded it shows the sticky, and the note's first line beside it when it holds words; a click unfolds it there,
+// Folded it is the sticky alone, and the sticky says how it stands: lines on it when the note holds something, blank
+// when it is empty; a click unfolds it there,
 // growing upward, into a field that grows with the words (Enter: a new line, Ctrl/Cmd+Enter sends, Esc folds), with
 // the paperclip, the bin and the crown (send straight to the crown). Sent or thrown away, it is empty again. It is
 // the newest unsent note.
@@ -39,9 +40,8 @@ const deskNotesOf = model => (model.state.notes ?? []).filter(m => !m.held).sort
 export function cornerNote(model, base) {
   const note = deskNotesOf(model)[0] ?? null, crown = crownOf(model)
   const text = note?.text ?? '', files = note?.attachments ?? []
-  const first = text.split('\n')[0].trim()
   return html`<section class="corner-note-box${text || files.length ? ' has-words' : ''}" id="corner-note-box" aria-label="Your note" data-controller="corner-note" data-corner-note-id-value="${note?.id ?? ''}" data-corner-note-base-value="${base}">
-<button type="button" class="corner-note-head" data-action="corner-note#open" title="${text ? 'Your note: open it' : 'New note (N)'}" aria-expanded="false">${NOTE_ICON}<span class="corner-note-first">${first || (files.length ? `${files.length} attached` : 'New note')}</span></button>
+<button type="button" class="corner-note-head" data-action="corner-note#open" title="${text || files.length ? 'Your note: open it (N)' : 'New note (N)'}" aria-label="${text || files.length ? 'Your note: open it' : 'New note'}" aria-expanded="false">${NOTE_ICON}</button>
 <div class="corner-note-body" hidden data-action="paste->corner-note#paste dragover->corner-note#over dragleave->corner-note#out drop->corner-note#drop"><textarea class="corner-note-field" rows="2" aria-label="Your note${crown ? ` to ${crown.name}` : ''}" data-action="input->corner-note#typed keydown->corner-note#key">${text}</textarea><div class="corner-note-files">${raw(noteFiles(files))}</div>
 <footer class="corner-note-foot"><button type="button" class="corner-note-clip" data-action="corner-note#pick" title="Attach a picture or a file (or paste it, or drop it on the note)" aria-label="Attach a picture or a file">${CLIP}</button><button type="button" class="corner-note-bin" data-action="corner-note#bin" title="Throw the note away" aria-label="Throw the note away">${BIN}</button><i></i>${crown ? html`<button type="button" class="note-send corner-note-send" data-action="corner-note#send" title="Send to ${crown.name} (Ctrl+Enter)" aria-label="Send to ${crown.name}">${raw(crownSvg())}</button>` : html`<a class="corner-note-nocrown" data-nav href="${base}/agents">Give a session the crown to send</a>`}</footer></div>
 </section>`
@@ -75,9 +75,7 @@ controller('corner-note', class extends Controller {
     this.element.classList.remove('is-open')
     this.element.querySelector('.corner-note-head').setAttribute('aria-expanded', 'false')
     this.element.querySelector('.corner-note-body').hidden = true
-    const first = this.field.value.trim().split('\n')[0].trim(), n = this.files().length
-    this.element.querySelector('.corner-note-first').textContent = first || (n ? `${n} attached` : 'New note')
-    this.element.classList.toggle('has-words', Boolean(first || n))
+    this.element.classList.toggle('has-words', Boolean(this.field.value.trim() || this.files().length))
     this.save(true)
   }
   fit() { this.field.style.height = 'auto'; this.field.style.height = `${Math.min(this.field.scrollHeight + 2, 320)}px` }
