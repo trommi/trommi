@@ -214,7 +214,7 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const isBare = m => (m.handback && m.text?.trim() === HAND_BACK_TEXT) || (m.explain && m.text?.trim() === EXPLAIN_TEXT)
 
   // ---- what the card did not hold ----
-  const lead = [did(`${name} asked`, card.created)]
+  const lead = []
   const whole = textOf(card)
   if (fitText(whole).more) lead.push(html`<article class="msg msg-agent tc-c tc-whole" id="card-whole-${card.id}">${mark}<div class="tc-c-in">${head('The whole text')}${rich(whole, { assets, extra: card.html ?? '', hand: false })}</div></article>`)
   else if (card.html) lead.push(html`<article class="msg msg-agent tc-c tc-whole" id="card-whole-${card.id}">${mark}<div class="tc-c-in">${head('With the text')}${rich('', { assets, extra: card.html })}</div></article>`)
@@ -222,7 +222,6 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   if (secs.length) lead.push(html`<details class="tc-fold tc-options-said"><summary>Options in detail</summary>${secs.map(s => html`<section class="tc-sec"><h3>${s.label}${s.recommended ? html` <span class="tc-advised-word">recommended</span>` : ''}</h3>${s.text ? rich(s.text, { assets, extra: s.html ?? '', hand: false }) : ''}</section>`)}</details>`)
   const links = optionLinks(card)
   if (String(links)) lead.push(links)
-  if (card.urgency_reason) lead.push(did(`Why it is urgent: ${card.urgency_reason}`))
   if (card.status === 'open' && card.snoozed_until) lead.push(did(`You put it off: it waits on “${WORDS.later}”`, card.snoozed_at))
 
   // ---- the talk, in pieces ----
@@ -266,7 +265,11 @@ function cardThread(card, model, base = '', { more = false } = {}) {
   const folded = earlier.length ? html`<details class="tc-fold tc-earlier"><summary>Earlier versions (${turns + 1})</summary>${earlier.map(x => x.html)}</details>` : ''
   // The talk is loaded newest page first: older comments come on request, at the top of the talk.
   const older = more ? html`<a class="tc-older" data-nav href="${cardPath(card, base)}?older=1#card-thread-${card.id}" data-turbo-action="replace">Earlier comments</a>` : ''
-  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments">${lead}${older}${folded}${now.map(x => x.html)}</section>`
+  // Between the card and the talk, one quiet centred line, only when it says something: why the card is urgent.
+  // "<session> asked" opens a talk; alone it would say what the card's own line says already, so it is left out then.
+  const why = card.urgency_reason ? html`<p class="tc-why">${sk('knock')}<span>${card.urgency_reason}</span></p>` : ''
+  const any = lead.length || items.length || more
+  return html`<section class="tc-feed" id="card-thread-${card.id}" aria-label="Comments"${why || any ? '' : raw(' hidden')}>${why}${any ? did(`${name} asked`, card.created) : ''}${lead}${older}${folded}${now.map(x => x.html)}</section>`
 }
 
 /** Where the card stands in the stack, for the walk: { at, of, prev, next } (cards), or null when it is not waiting. */
@@ -293,6 +296,7 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const shownPic = Math.min(Math.max(1, pic), Math.max(1, media))
   const step = (to, cls, label, d) => (to ? html`<a class="tc-step-card ${cls}" data-nav href="${cardPath(to, self)}${walk ? '?walk=1' : ''}" aria-label="${label}: ${to.title}" title="${label}: ${to.title}">${icon(d)}</a>` : html`<span class="tc-step-card ${cls}" aria-hidden="true">${icon(d)}</span>`)
   const form = `card-form-${card.id}`
+  const asker = model.byAgent.get(card.agent)?.name ?? ''
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 <nav class="tc-head" aria-label="Around this question">
@@ -310,12 +314,13 @@ ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </div>
 </article>
 ${cardThread(card, model, self, { more: older })}
-<form class="tc-ask tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
+<form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
 ${drafting ? html`<input type="hidden" name="marks" value="${JSON.stringify(card.draft?.marks ?? [])}" data-card-target="marks">` : ''}
-<div class="tc-chips" data-card-target="chips" hidden></div>
-<textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="2" placeholder="Write to the agent about this question" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk below; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
-<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div>
+<span class="tc-c-who is-you" aria-hidden="true">${sk('pen')}</span>
+<div class="tc-ask"><div class="tc-chips" data-card-target="chips" hidden></div>
+<textarea class="tc-field" id="card-field-${card.id}" data-card-target="field" data-action="input->card#typed keydown->card#keys paste->card#paste" name="note" rows="1" placeholder="${asker ? `Ask ${asker} something, or say what is missing…` : 'Ask something, or say what is missing…'}" autocomplete="off" enterkeyhint="send" aria-label="Write to the agent about this question. Send adds it to the talk; an answer takes it along as a note.">${card.draft?.note ?? ''}</textarea>
+<div class="tc-ask-row"><label class="tc-clip" title="Attach files or pictures (or paste, or drop them on the card)">${sk('clip')}<span class="tc-sr">Attach files</span><input type="file" name="files" multiple hidden data-card-target="files" data-action="change->card#files"></label><span class="tc-saved" role="status" data-card-target="saved" hidden></span><button class="tc-send" type="submit" name="stay" value="1" title="Send to the agent (Enter); the question stays with you" aria-label="Send to the agent">${sk('send')}</button></div></div>
 </form>
 </main>`
 }

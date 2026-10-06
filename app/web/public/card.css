@@ -222,10 +222,10 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-saved { color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
 .tc-saved[data-state="saved"] { color: var(--accent); }
 .tc-saved[data-state="failed"] { color: var(--urg-high); }
-.tc-send { margin-left: auto; flex: none; width: 48px; height: 48px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-md); background: var(--accent); color: var(--accent-fg, #fff); cursor: pointer; }
+.tc-send { margin-left: auto; flex: none; width: 38px; height: 38px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-md); background: var(--accent); color: var(--accent-fg, #fff); cursor: pointer; }
 .tc-send:hover { filter: brightness(1.08); }
 .tc-send:active { transform: scale(.94); }
-.tc-send .sketch { width: 30px; height: 30px; stroke-width: 2; }
+.tc-send .sketch { width: 24px; height: 24px; stroke-width: 2; }
 .tc-chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .tc-chips[hidden] { display: none; }
 .tc-chips .focus-chip { display: inline-flex; align-items: center; height: 26px; padding: 0 10px; border: 0; border-radius: 999px; background: var(--sunken); color: var(--fg); font: 500 var(--t-xs)/1 var(--font); }
@@ -238,11 +238,15 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-tile.is-ack { background: var(--accent); color: var(--accent-fg, #fff); box-shadow: none; }
 .tc-tile:hover { filter: brightness(.96); }
 
-/* ---- the comments under the card: one calm column as wide as the card. Every comment stands the same way: who at
-   the left (the session's small drawing, the pen for you), beside it name and time, under them the words. What
-   happened (asked, why urgent, a new version, taken back) is a small quiet line on the words' line. The field to
-   write in is the column's last piece, as wide as the rest. ---- */
-.tc-feed { --who: 34px; --who-gap: 14px; display: grid; margin-top: var(--s-5); padding: 0; }
+/* ---- under the card: one centred column, clearly narrower than the card and on its middle axis. Everything in it
+   hangs on one rail: who at the left (the session's small drawing, the pen for you), the content right of it; the
+   field to write in is the column's last entry and hangs on the same rail. What happened (asked, a new version, taken
+   back) is a small quiet line on the content's edge. Why a card is urgent is one centred line between card and talk. ---- */
+.tc-page > :is(.tc-feed, .tc-chat) { --who: 34px; --who-gap: 14px; max-width: min(100%, 660px); }
+.tc-feed { display: grid; margin-top: var(--s-5); padding: 0; }
+.tc-feed[hidden] { display: none; }
+.tc-why { display: flex; justify-content: center; align-items: baseline; gap: 8px; margin: 0 0 var(--s-3); color: var(--urg-high); font: 600 var(--t-sm)/1.45 var(--font); text-align: center; }
+.tc-why .sketch { flex: none; align-self: center; width: 18px; height: 18px; }
 .tc-feed > * { min-width: 0; }
 .tc-feed .tc-c { display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; align-self: auto; justify-self: stretch; width: auto; max-width: none; margin: 0; padding: 12px 0; }
 .tc-feed .tc-c.cont { padding-top: 0; }
@@ -258,9 +262,8 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-feed .msg-head .msg-time, .tc-feed .msg-user .msg-time { margin: 0; padding: 0; }
 .tc-feed .bubble { width: auto; margin: 0; padding: 0; border-radius: 0; background: none; font: 400 var(--t-md)/1.6 var(--font); }
 .tc-said { font: 700 var(--t-sm)/1 var(--display); }
-.tc-did, .tc-turn { position: relative; margin: 0; padding: 5px 0 5px calc(var(--who) + var(--who-gap)); color: var(--muted); font: 500 var(--t-xs)/1.5 var(--font); }
+.tc-did, .tc-turn { margin: 0; padding: 5px 0 5px calc(var(--who) + var(--who-gap)); color: var(--muted); font: 500 var(--t-xs)/1.5 var(--font); }
 .tc-did { display: flex; align-items: baseline; gap: 10px; }
-:is(.tc-did, .tc-turn)::before { content: ""; position: absolute; left: calc(var(--who) / 2 - 3px); top: calc(5px + .75em - 3px); width: 6px; height: 6px; border-radius: 50%; background: var(--line-strong); }
 .tc-explained { display: grid; }
 .tc-sec { padding-top: var(--s-3); border-top: 1px solid var(--line); margin-top: var(--s-3); }
 .tc-sec:first-of-type { border-top: 0; margin-top: 0; }
@@ -424,7 +427,12 @@ label.tc-opt:has(> input:checked) .tc-tick { background: var(--accent); color: v
 .tc-revise-form input[type="text"] { min-width: 0; height: 36px; border: 0; background: none; color: var(--fg); font: 400 var(--t-sm)/1 var(--font); outline: none; padding: 0 4px; }
 .tc-revise-send { justify-self: auto; }
 /* the chat under the comments: a plain message to the agent, the card stays with him */
-.tc-chat { position: sticky; bottom: 0; z-index: 5; margin: var(--s-3) auto 0; box-shadow: inset 0 0 0 1px var(--line-strong), 0 0 0 8px var(--surface); }
+.tc-chat { position: sticky; bottom: 0; z-index: 5; display: grid; grid-template-columns: var(--who) minmax(0, 1fr); column-gap: var(--who-gap); align-items: start; margin-top: var(--s-2); padding: 10px 0 12px; background: var(--surface); }
+.tc-chat > .tc-c-who { margin-top: 5px; }
+.tc-chat > .tc-ask { grid-column: 2; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 4px 6px; padding: 6px 6px 6px 12px; border-radius: 14px; }
+.tc-chat .tc-chips { grid-column: 1 / -1; }
+.tc-chat .tc-field { min-height: 32px; padding: 6px 0; font-size: var(--t-md); }
+.tc-chat .tc-ask-row { gap: 2px; }
 .tc-right { overflow: hidden; }/* The viewer of something a session published (session.mjs assetPage, /s/<id>/a/<object>): the bar of the
    picture page (turbo.css .t-picture), the note under it, the thing as large as the page lets it be. Sober: what an
    agent made is shown as it is, nothing drawn around it. */
