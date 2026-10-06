@@ -1464,6 +1464,9 @@ function adviceLoop() {
     const watch = new ResizeObserver(draw)
     queueMicrotask(() => { if (svg.parentElement) watch.observe(svg.parentElement); draw() })
   }
+  // (the display face arrives after the first measure and sets the words anew without changing the host's box:
+  // the swipe lay beside its words, as in a gallery opened first)
+  document.fonts?.ready.then(() => { if (svg.isConnected) draw() })
   return svg
 }
 const adviceQueue = new Set()
@@ -2174,11 +2177,11 @@ const LAYOUT = [
 /** The short list (card Nr. 200): the keys the "?" sheet and the help page show. Everything else in LAYOUT still
  *  works, but is not listed yet ("More keys later"). */
 export const SHORT = [
-  { id: 'move', keys: ['ArrowUp', 'ArrowDown'], does: 'move: the next or the previous question (on a card: ← →)' },
-  { id: 'open', keys: ['Enter'], does: 'open' },
+  { id: 'move', keys: ['ArrowUp', 'ArrowDown'], does: 'move: the next or the previous question; on a card its answers (← → there: the questions)' },
+  { id: 'open', keys: ['Enter'], does: 'open; on a card: take the marked answer' },
   { id: 'back', keys: ['Escape'], does: 'back: leave a field, close, back to the Desk' },
   { id: 'note.new', keys: ['n'], does: 'a new note' },
-  { id: 'later', keys: ['l'], does: 'later (snooze)' },
+  { id: 'later', keys: ['l'], does: 'Later: put the question off' },
   { id: 'help', keys: ['?'], does: 'this list' },
 ]
 
