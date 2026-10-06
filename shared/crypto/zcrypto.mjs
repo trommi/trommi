@@ -1149,8 +1149,12 @@ export async function verifyHubAuth(bytes, { state, hub }) {
   if (a.hub !== hub) fail('wrong-hub', 'signed for another hub')
   const recovery = bytesEqual(a.id, state.recovery.id)
   const member = recovery ? null : memberAt(state, a.id)
-  if (!recovery && !member) fail('not-member', 'this device is not a member (or was removed)')
-  if (!await verify(recovery ? state.recovery.signPub : member.signPub, LABEL.hubAuth, body, bytes.slice(bytes.length - 64))) fail('bad-signature', 'hub auth')
+  // A removed device that proves its key is told so with the entry that removed it (removedSeq), so it can check the
+  // removal against the signed list instead of taking the hub's word.
+  const gone = !recovery && !member ? state.members.get(idKey(a.id)) ?? null : null
+  if (!recovery && !member && !gone) fail('not-member', 'this device is not a member (or was removed)')
+  if (!await verify(recovery ? state.recovery.signPub : (member ?? gone).signPub, LABEL.hubAuth, body, bytes.slice(bytes.length - 64))) fail('bad-signature', 'hub auth')
+  if (gone) fail('not-member', 'this device was removed', { removedSeq: gone.removedSeq })
   return { id: a.id, kind: recovery ? 'recovery' : 'member', member, challenge: a.challenge }
 }
 

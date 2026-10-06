@@ -212,15 +212,18 @@ export function applySessionGrant(model, sessionState, change, everAgentIds = []
 }
 /**
  * The parent a session names in its profile (parent_session: a session id, or an older board id), if it may: a child
- * session an agent opened itself counts only under a session that agent is assigned to; others as before (display only).
+ * session an agent opened itself counts only under a session that agent is assigned to, or the agent a human's grant
+ * handed the child to (a continued session keeps its helpers); others as before (display only).
  */
 export function parentSessionOf(model, s) {
   const want = s?.profile?.parent_session
   if (!want || typeof want !== 'string') return null
   const parent = model.sessions.get(want) ?? null
-  if (s.created_by_agent) return parent && parent !== s && parent.agent_device_ids.includes(s.creator_device_id) ? parent.session_id : null
+  if (s.created_by_agent) return parent && parent !== s && childOf(parent, s) ? parent.session_id : null
   return parent ? parent.session_id : want
 }
+/** A child an agent opened hangs under `parent` if its creator, or an agent a human handed the child to, is assigned to the parent. */
+export const childOf = (parent, s) => (parent.agent_device_ids ?? []).some(a => a === s.creator_device_id || (s.agent_device_ids ?? []).includes(a))
 const everAgent = (model, sid, device) => !!sid && (model.sessions.get(sid)?.ever_agent_ids.includes(device) ?? false)
 /**
  * B03/A7: may this agent write into session `sid` with this record? It must be among the agents the grants gave the
@@ -232,6 +235,19 @@ const agentAt = (model, sid, device, rec) => {
   if (!s) return false
   const at = rec?.session_id === sid && rec._epoch != null ? s.epoch_agent_ids?.[rec._epoch] : null
   return at ? at.includes(device) : s.ever_agent_ids.includes(device)
+}
+
+/**
+ * R1: who holds an object of a session, judged for one record. Its creator; and once the grants no longer assign the
+ * creator to the object's session at the record's session key epoch (a human handed the session on, or let another
+ * connector continue it), the agents they assign then. Only a human's grant moves it, and the same on every device.
+ */
+const holdsAt = (model, obj, device, rec) => !!obj && !!device && (device === obj.agent_device_id
+  || (!!obj.session_id && rec?.session_id === obj.session_id && rec._epoch != null && agentAt(model, obj.session_id, device, rec) && !agentAt(model, obj.session_id, obj.agent_device_id, rec)))
+/** Who holds an object now (whom a human addresses, who may revise or close it): its creator while assigned, else the session's agent. */
+export function holderOf(model, obj) {
+  const now = obj?.session_id ? model.sessions.get(obj.session_id)?.agent_device_ids ?? [] : []
+  return !obj ? null : !now.length || now.includes(obj.agent_device_id) ? obj.agent_device_id : now[0]
 }
 
 // ---- alerts ---------------------------------------------------------------------------------
@@ -315,14 +331,14 @@ export function timelineRefusal(model, rec) {
     if (p.scope === 'card') {
       const card = model.cards.get(p.scope_id)
       if (!card) return 'card-mismatch'
-      return rec.sender_device_id === card.agent_device_id || (human && rec.recipient_device_id === card.agent_device_id) ? null : 'not-allowed'
+      return holdsAt(model, card, rec.sender_device_id, rec) || (human && holdsAt(model, card, rec.recipient_device_id, rec)) ? null : 'not-allowed'
     }
     return 'not-allowed'
   }
   if (p.timeline_kind === 'canvas') {
     if (p.scope === 'desk') return human ? null : 'not-allowed'
     if (p.scope === 'session') return human || agentAt(model, p.scope_id, rec.sender_device_id, rec) ? null : 'not-allowed'
-    if (p.scope === 'card') return human || rec.sender_device_id === model.cards.get(p.scope_id)?.agent_device_id ? null : 'not-allowed'
+    if (p.scope === 'card') return human || holdsAt(model, model.cards.get(p.scope_id), rec.sender_device_id, rec) ? null : 'not-allowed'
     return 'not-allowed'
   }
   return null   // a timeline kind this client does not know yet: count it, show nothing
@@ -393,7 +409,7 @@ function applyObjectVersion(model, rec, change) {
   let card = model.cards.get(object_id)
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'cards come from agents')
   const fresh = !card
-  if (card && card.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a card version from someone else than its creator')
+  if (card && !holdsAt(model, card, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-creator', 'a card version from someone else than its creator')
   if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a card in a session this agent is not assigned to')
   if (card && card.session_id !== (rec.session_id ?? null)) return refuse(model, change, rec, 'not-allowed', 'a card version in another session')
   if (fresh && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
@@ -486,14 +502,14 @@ function applyPublished(model, rec, change) {
   const old = model.published.get(object_id)
   if (rec.sender_role !== 'agent') return refuse(model, change, rec, 'not-creator', 'published objects come from agents')
   if (rec.session_id && !agentAt(model, rec.session_id, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-allowed', 'a published object in a session this agent is not assigned to')
-  if (old && old.agent_device_id !== rec.sender_device_id) return refuse(model, change, rec, 'not-creator', 'a published object from someone else than its creator')
+  if (old && !holdsAt(model, old, rec.sender_device_id, rec)) return refuse(model, change, rec, 'not-creator', 'a published object from someone else than its creator')
   if (!old && rec.object_id_ok === false) return refuse(model, change, rec, 'bad-object-id', 'object id is not H(creator, sequence of version 1)')
   const c = rec.content ?? {}
   const expected = (old?.object_version ?? 0) + 1
   if (rec.content && c.object_version !== expected) return refuse(model, change, rec, 'bad-version', `published version ${c.object_version}, expected ${expected}`)
   // N4: a later version names its predecessor (as cards do).
   if (rec.content && old && c.previous_version_hash && c.previous_version_hash !== old.version_hash) return refuse(model, change, rec, 'bad-version', 'previous_version_hash does not name the current version')
-  model.published.set(object_id, { object_id, agent_device_id: rec.sender_device_id, session_id: rec.session_id ?? old?.session_id ?? null, attachments: c.attachments ?? old?.attachments ?? [], title: c.title ?? old?.title ?? '',
+  model.published.set(object_id, { object_id, agent_device_id: old?.agent_device_id ?? rec.sender_device_id, session_id: rec.session_id ?? old?.session_id ?? null, attachments: c.attachments ?? old?.attachments ?? [], title: c.title ?? old?.title ?? '',
     note: c.note ?? null, released_until: c.released_until ?? null, object_version: expected, version_hash: rec.envelope_hash, envelope_number: rec.envelope_number, object_state: stateOf(rec).object_state })
   change.published.add(object_id)
   if (rec.session_id) change.sessions.add(rec.session_id)
@@ -510,7 +526,7 @@ export function answerRefusal(model, rec) {
   const card = model.cards.get(rec.object?.object_id)
   if (rec.sender_role !== 'human') return 'not-human'
   if (!card) return 'card-mismatch'
-  if (rec.recipient_device_id !== card.agent_device_id) return 'not-for-owner'
+  if (!holdsAt(model, card, rec.recipient_device_id, rec)) return 'not-for-owner'
   const b = rec.bind
   // F9: retention pruned it (no body, no bind): the signed header still says the card was answered or closed.
   if (!b && !rec.content && (rec.content_state === 'pruned' || rec.content_state === 'header')) return card.object_state === 'open' ? null : 'card-closed'
@@ -584,7 +600,7 @@ function applyAnswer(model, rec, change) {
 /** F15: own open cards the hub holds as closed (a refused answer is their newest head): the owner re-sends them. */
 export function cardsToReassert(model, my_device_id) {
   const out = []
-  for (const c of model.cards.values()) if (c.agent_device_id === my_device_id && c.object_state === 'open' && (c.refused_head ?? 0) > c.envelope_number) out.push(c.object_id)
+  for (const c of model.cards.values()) if (holderOf(model, c) === my_device_id && c.object_state === 'open' && (c.refused_head ?? 0) > c.envelope_number) out.push(c.object_id)
   return out
 }
 
@@ -599,7 +615,7 @@ export function decideAgainRefusal(model, rec) {
   const card = model.cards.get(rec.object?.object_id)
   if (rec.sender_role !== 'human') return 'not-human'
   if (!card) return 'card-mismatch'
-  if (rec.recipient_device_id !== card.agent_device_id) return 'not-for-owner'
+  if (!holdsAt(model, card, rec.recipient_device_id, rec)) return 'not-for-owner'
   if (!rec.bind || rec.bind.cardId !== card.object_id) return 'card-mismatch'
   if (!card.answer || card.answer.envelope_hash !== rec.bind.previousHash) return 'decision-mismatch'
   if (rec.bind.versionHash && rec.bind.versionHash !== card.version_hash) return 'card-changed'
