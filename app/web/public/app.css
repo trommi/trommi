@@ -418,6 +418,7 @@ body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
 .says-words span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 400 var(--t-sm)/1.3 var(--font); opacity: .8; }
 .says-back { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 10px 0 8px; border: 0; border-radius: var(--r-pill); background: var(--bg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); transition: scale 100ms ease-out; }
 .says-back:hover { filter: brightness(.94); }
+.says-go { padding: 0 14px; text-decoration: none; }
 .says-back:active { scale: .96; }
 .says-back:disabled { opacity: .5; }
 .back-arrow { flex: none; width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; }

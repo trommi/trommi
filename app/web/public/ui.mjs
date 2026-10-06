@@ -816,8 +816,9 @@ function undoForm({ action, label = 'Undo', fields = {} }) {
 
 /** One toast. head: what happened, in one or two words; line: of what (a title, a name), may be empty; undo: the route
  *  that takes it back (none: a plain note); role: 'alert' for what went wrong; ms: how long it stays (default 5 s). */
-export function toast({ head, line = '', undo = null, role = 'status', ms = null }) {
-  return html`<div class="says" data-controller="says" data-action="${ACTION}" role="${role}"${ms ? html` data-says-ms-value="${Math.round(ms)}"` : ''}><span class="says-words"><b>${head}</b>${line ? html`<span>${line}</span>` : ''}</span>${undo ? undoForm(undo) : ''}${CLOCK}</div>`
+/** link: { href, label }: a way to the page where the thing is done (a device waiting for its check code), instead of an undo. */
+export function toast({ head, line = '', undo = null, link = null, role = 'status', ms = null }) {
+  return html`<div class="says" data-controller="says" data-action="${ACTION}" role="${role}"${ms ? html` data-says-ms-value="${Math.round(ms)}"` : ''}><span class="says-words"><b>${head}</b>${line ? html`<span>${line}</span>` : ''}</span>${undo ? undoForm(undo) : ''}${link ? html`<a class="says-back says-go" data-nav href="${link.href}" data-action="says#leave">${link.label}</a>` : ''}${CLOCK}</div>`
 }
 
 /** A toast made in the page, for an action a controller did itself: the same markup; undo is a function that takes it

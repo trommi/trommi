@@ -279,7 +279,7 @@ export async function integration({ test, tmp }) {
         await second.close()
         const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
         const { execFile } = await import('node:child_process')
-        const out = await new Promise((res, rej) => execFile(process.execPath, [path.join(here, 'connector.mjs'), 'join', invite.link], { env: { ...process.env, ...env }, cwd: project }, (e, so, se) => (e ? rej(new Error(`${e.message}\n${se}`)) : res(so))))
+        const out = await new Promise((res, rej) => execFile(process.execPath, [path.join(here, 'connector.mjs'), 'join', invite.link], { env: { ...process.env, ...env, TROMMI_JOIN_OTHER: '1' }, cwd: project }, (e, so, se) => (e ? rej(new Error(`${e.message}\n${se}`)) : res(so))))
         assert.match(out, /joined room/)
         await until('two agents', () => [...human.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).length === 2)
         const room = path.join(keys, human.model.room.room_id)
@@ -659,6 +659,101 @@ export async function integration({ test, tmp }) {
       await until('the helper\'s line in its old session', () => [...(human.model.timelines.get(`chat:session/${child}`)?.items.values() ?? [])].some(i => i.content?.text === 'the helper is back'))
       assert.equal(human.model.sessions.size, sessionsBefore, 'no new session on the board')
       await second.close()
+    })
+
+    // A session that is in the room already (a key of its own) joins again with a link: a new key, the old one put aside.
+    await test('e2e: join with a key at hand: a link that is not confirmed leaves the old key in place; a confirmed one continues the other session with a new key, also under a running connector', async () => {
+      const dir = path.join(tmp, 'heir-own')
+      fs.mkdirSync(dir, { recursive: true })
+      const room = path.join(keys, human.model.room.room_id)
+      const sha = f => crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')
+      const mine = () => fs.readdirSync(room).filter(f => f.includes('heir-own')).sort()
+      const keyed = () => mine().filter(f => /-\d+\.key$/.test(f) && !f.startsWith('replaced-'))
+      const agentsNow = () => new Set([...human.model.members.values()].filter(m => m.device_role === 'agent' && m.is_active).map(m => m.device_id))
+      /** `connector.mjs join` as the connect script runs it; `onCode(code)` is the human with the app. */
+      const joinCli = (link, onCode = null) => new Promise(resolve => {
+        const child = spawn(process.execPath, [path.join(here, 'connector.mjs'), 'join'], { env: { ...process.env, ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: link, TROMMI_FOLDER_WATCH: '0', TROMMI_SESSION_KEY: `cli-${Math.random().toString(36).slice(2)}` }, cwd: dir, stdio: ['ignore', 'ignore', 'pipe'] })
+        let err = '', told = false
+        child.stderr.on('data', d => {
+          err += d
+          const m = /check code (\d{3}) (\d{3})/.exec(err)
+          if (m && !told && onCode) { told = true; Promise.resolve(onCode(m[1] + m[2])).catch(e => { err += `\nonCode: ${e.message}` }) }
+        })
+        child.on('exit', code => resolve({ code, err }))
+      })
+      const confirmWith = invite => async code => {
+        await until('the app waits for the code', () => human.model.invites.get(invite.invite_id).invite_state === 'confirm_code')
+        await human.confirmInvite(invite.invite_id, code)
+      }
+      // This folder's session joins the room as a member of its own (a plain agent link).
+      const agentsBefore = agentsNow()
+      const plain = await joinCli((await human.createInvite({ device_role: 'agent' })).link)
+      assert.equal(plain.code, 0, plain.err)
+      assert.equal(keyed().length, 1)
+      const firstKey = path.join(room, keyed()[0]), firstSha = sha(firstKey), oldName = path.basename(firstKey, '.key')
+      const firstDevice = await until('this session\'s own device', () => [...agentsNow()].find(id => !agentsBefore.has(id)))
+
+      // (1) A link for the other session whose number the human gets wrong: nothing changes for this session.
+      const wrong = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
+      const no = await joinCli(wrong.link, async code => {
+        await until('the app waits for the code', () => human.model.invites.get(wrong.invite_id).invite_state === 'confirm_code')
+        await human.confirmInvite(wrong.invite_id, String((Number(code) + 1) % 1000000).padStart(6, '0')).catch(() => {})
+      })
+      assert.notEqual(no.code, 0)
+      assert.match(no.err, /joining with a new key, the old one stays/)
+      assert.match(no.err, /this session keeps the key it had/)
+      assert.match(no.err, /not joined: .*invite/)
+      assert.doesNotMatch(no.err, /restart/)
+      assert.equal(sha(firstKey), firstSha, 'the old key file is untouched')
+      assert.deepEqual(keyed(), [path.basename(firstKey)], 'no second key')
+      assert.equal(mine().some(f => f.startsWith('replaced-')), false, 'nothing put aside')
+      // (2) A link that runs out before anybody confirms it: the same.
+      const short = await human.createInvite({ device_role: 'agent', session_id, takeover: true, ttl_ms: 2500 })
+      const out = await joinCli(short.link)
+      assert.notEqual(out.code, 0)
+      assert.match(out.err, /not joined: .*invite-expired/)
+      assert.match(out.err, /an invite link works once and for a limited time/)
+      assert.equal(sha(firstKey), firstSha, 'the old key file is untouched')
+      assert.deepEqual(keyed(), [path.basename(firstKey)])
+      assert.equal(human.model.sessions.get(session_id).agent_device_ids.includes(firstDevice), false, 'and the other session was not touched')
+
+      // (3) Confirmed: the new key continues the other session; the key this session had is put aside, its device stays a member.
+      const invite = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
+      const yes = await joinCli(invite.link, confirmWith(invite))
+      assert.equal(yes.code, 0, yes.err)
+      assert.match(yes.err, new RegExp(`this session was device ${firstDevice.slice(0, 12)}… before \\(slot 1\\); that key is put aside as .*replaced-.*-1\\.key and this session uses the new one`))
+      assert.match(yes.err, /still a member of the room: remove it under Agents & devices → Devices/)
+      assert.doesNotMatch(yes.err, /restart/)
+      assert.equal(keyed().length, 1, 'one key for this session')
+      assert.notEqual(keyed()[0], path.basename(firstKey), 'in a new slot')
+      const aside = mine().find(f => /^replaced-.*-1\.key$/.test(f))
+      assert.equal(sha(path.join(room, aside)), firstSha, 'the old key is kept, aside')
+      assert.deepEqual(mine().filter(f => f.startsWith(`${oldName}.`) && !f.startsWith(`${oldName}.lock`)), [], 'none of the old slot\'s state is left under its name')
+      const heir = human.model.invites.get(invite.invite_id).newcomer.device_id
+      await until('the session is the newcomer\'s', () => JSON.stringify(human.model.sessions.get(session_id).agent_device_ids) === JSON.stringify([heir]))
+      assert.equal(human.model.members.get(firstDevice).is_active, true, 'the device this session was before is left a member (the human removes it)')
+      // Its Claude Code session starts: the connector opens the new key and is that session.
+      const mcp = await startConnector({ env: { ...env, TROMMI_FOLDER: dir }, cwd: dir })
+      await mcp.ready().catch(e => { throw new Error(`${e.message}\n${mcp.stderr()}`) })
+      const q = (await mcp.call('create_decision', { title: 'Still me?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })).match(/card ([0-9a-f]{32})/)[1]
+      await until('its card in the continued session', () => human.model.cards.get(q)?.session_id === session_id)
+
+      // (4) The same while that connector runs (join in the same Claude Code session: here both have this process above
+      // them): it gives its key up, and its next tool call goes on with the new one, without a restart.
+      const again = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
+      const live = await joinCli(again.link, confirmWith(again))
+      assert.equal(live.code, 0, live.err)
+      assert.match(live.err, /that key is put aside as .* and this session uses the new one/)
+      assert.doesNotMatch(live.err, /restart/)
+      const heir2 = human.model.invites.get(again.invite_id).newcomer.device_id
+      assert.notEqual(heir2, heir)
+      await until('the running connector goes on with the new key', async () => { try { return JSON.parse(await mcp.call('list_cards')).some(c => c.id === q) } catch (e) { mcp.lastError = e.message; return false } }, 30000).catch(e => { throw new Error(`${e.message}: ${mcp.lastError}\n${mcp.stderr().slice(-1500)}`) })
+      await mcp.call('revise_card', { card_id: q, title: 'Still me, with the third key?' })
+      await until('the revision at the human', () => human.model.cards.get(q)?.title === 'Still me, with the third key?')
+      assert.equal(JSON.stringify(human.model.sessions.get(session_id).agent_device_ids), JSON.stringify([heir2]))
+      assert.equal(human.model.members.get(heir).is_active, false, 'the key that held the session before is retired')
+      assert.equal(keyed().length, 1)
+      await mcp.close()
     })
 
     await test('e2e: lease-lost: another process takes over the key; the connector exits without posting', async () => {
