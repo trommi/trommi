@@ -290,11 +290,9 @@ button.agent-badge:active { scale: .95; }
 .menu-desks { display: grid; gap: 1px; padding-bottom: 4px; }
 .topbar .sidedoors .menu-desk { min-height: 32px; padding: 0 8px; font-size: var(--t-sm); }
 .menu-desk b { font-weight: 600; }
-.topbar .sidedoors .menu-desk i { text-transform: none; letter-spacing: 0; font-weight: 500; }
 .menu-desk[aria-checked="true"]::after { content: "✓"; margin-left: 8px; color: var(--accent); font-weight: 700; }
 .menu-desk b { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .topbar .sidedoors .menu-desk kbd { margin-left: 10px; white-space: nowrap; }
-.topbar .sidedoors .menu-desk i.is-knock { color: var(--urg-high); }
 .menu-desk-form { display: flex; gap: 6px; padding: 3px 4px 5px; }
 .menu-desk-field { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--line-strong); border-radius: 8px; background: var(--surface); color: var(--fg); font: 500 var(--t-sm)/1 var(--font); }
 .topbar .sidedoors .menu-desk-form button { flex: none; width: auto; min-height: 36px; padding: 0 12px; border-radius: 8px; background: var(--fg); color: var(--bg); font: 600 var(--t-sm)/1 var(--font); }
@@ -377,7 +375,6 @@ button.agent-badge:active { scale: .95; }
 .menu-desks { border-top: 0; margin-top: 2px; }
 .menu-grid { display: grid; grid-template-columns: 1fr; gap: 0; }
 .menu-desk:only-child::after { content: none; }
-.menu-desk[aria-checked="true"] i { color: var(--muted); }
 .menu-foot { display: grid; gap: 0; align-items: stretch; }
 .topbar #brand-doors .menu-foot .conn { order: 9; justify-content: flex-start; justify-self: start; height: 30px; margin: 4px 0 0; padding: 0 12px; border: 0; font-size: var(--t-xs); color: var(--muted); }
 .topbar #brand-doors .menu-foot button:is([aria-checked="true"], [aria-pressed="true"]) { background: none; }
@@ -418,7 +415,6 @@ button.agent-badge:active { scale: .95; }
   .topbar #brand-doors, .menu-desks { grid-template-columns: minmax(0, 1fr); }
   .topbar #brand-doors > *,
 .topbar .sidedoors .menu-desk { min-width: 0; max-width: 100%; }
-  .topbar .sidedoors .menu-desk i { flex: none; white-space: nowrap; }
 }
 
 /* ---- The Desk box (his word: "klassisch ganz rechts Dropdown"; sidebar.mjs topbar): the desk drawing, its lamp lit while
@@ -621,7 +617,6 @@ a.agent-badge { text-decoration: none; }
 .menu-lamp .lamp-light :is(.lamp-glow, .lamp-cone) { fill: var(--lamp); stroke: none; }
 .menu-lamp .lamp-glow { fill-opacity: .85; }
 .menu-lamp .lamp-cone { fill-opacity: .42; }
-.topbar #brand-doors .menu-desk.is-demo i { opacity: .8; }
 .topbar #brand-doors button.menu-desk-add { width: 100%; min-height: 30px; padding: 0 12px 0 15px; gap: 13px; justify-content: flex-start; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); }
 .topbar #brand-doors button.menu-desk-add svg { width: 15px; height: 15px; }
 .topbar #brand-doors .menu-leave { display: flex; align-items: center; gap: 2px; }
@@ -737,4 +732,18 @@ body[data-t-view="session"] .corner-note-head { position: relative; }
   html .topbar .brand-open { top: 13px; }
   html .topbar #brand-doors { top: 59px; max-height: calc(100dvh - 71px); }
 }
+
+/* ---- A desk's row in the menu: the link, and at its right end the pencil that renames it (shown when the row is
+   under the pointer or holds the keyboard, always where there is no hover); renaming, a field stands in the row. ---- */
+.topbar #brand-doors .menu-desk-row { position: relative; display: block; }
+.topbar #brand-doors .menu-desk kbd { margin-left: auto; }
+.topbar #brand-doors button.menu-desk-pen { position: absolute; right: 40px; top: 50%; translate: 0 -50%; width: 30px; min-height: 30px; height: 30px; padding: 0; justify-content: center; border-radius: 8px; color: var(--muted); opacity: 0; }
+.topbar #brand-doors button.menu-desk-pen .sketch { width: 16px; height: 16px; }
+.topbar #brand-doors .menu-desk-row:is(:hover, :focus-within) button.menu-desk-pen { opacity: 1; }
+.topbar #brand-doors button.menu-desk-pen:hover { background: color-mix(in srgb, var(--fg) 9%, transparent); color: var(--fg); }
+@media (hover: none) { .topbar #brand-doors button.menu-desk-pen { opacity: 1; right: 4px; width: 40px; height: 40px; } .topbar #brand-doors .menu-desk kbd { display: none; } .topbar #brand-doors .menu-desk-rename { right: 46px; } }
+.topbar #brand-doors .menu-desk-row.is-renaming > :is(.menu-desk b, .menu-desk-pen) { visibility: hidden; }
+.topbar #brand-doors .menu-desk-row.is-renaming .menu-desk b { visibility: hidden; }
+.topbar #brand-doors .menu-desk-rename { position: absolute; left: 42px; right: 40px; top: 50%; translate: 0 -50%; margin: 0; display: flex; }
+.topbar #brand-doors .menu-desk-rename .menu-desk-field { flex: 1; min-width: 0; height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: var(--surface); box-shadow: 0 0 0 1.5px var(--fg); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); }
 
