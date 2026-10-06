@@ -6,7 +6,7 @@
 // code), Forgot password (Emergency Kit), and the old recovery code. The UI says "account", never "room".
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (escrow, usage, session handover) are shown only when the core has them.
-import { BELL, Controller, controller, copyText, doodleSvg, errorLine, html, raw, roomShell, roomTabs, sketchSvg } from './ui.mjs'
+import { BELL, Controller, avatar, controller, copyText, doodleSvg, errorLine, html, raw, roomShell, roomTabs, sketchSvg } from './ui.mjs'
 import { CLIENT, account, core, ses, stream } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -107,16 +107,43 @@ ${raw(L.gone)}
     const newcomerName = inv => (inv.newcomer && m().members.get(inv.newcomer.device_id)?.device_name) || inv.newcomer?.device_name || ''
     const again = (agent, word = 'Pair again') => html`<form method="post" action="/pair" class="room-inline"><input type="hidden" name="role" value="${agent ? 'agent' : 'human'}"><button type="submit" class="room-primary">${word}</button></form>`
     const back = html`<a href="/devices" data-nav class="room-back">Back to the devices</a>`
+    // ---- inviting an agent: a clipboard with a short checklist (his word, 6 October: "eine Art Zettel oder Klemmbrett") ----
+    // 1 the command, one big thing to press (it copies; the link goes to the connector by the human's hands only, never
+    // into the model's prompt), 2 start claude, 3 waiting: the line ticks itself when the agent is in, and shows who came.
+    const CLAMP = raw('<svg class="clip-clamp" viewBox="0 0 120 44" aria-hidden="true"><path class="clamp-plate" d="M22 40 Q21 25 26 22 L43 21 Q46 9 60 8 Q74 9 77 21 L94 22 Q99 25 98 40 Z"/><path d="M52 21 Q53 15 60 14.6 Q67 15 68 21"/><path d="M30 31 Q60 29.4 90 31"/></svg>')
+    const TICKBOX = raw('<svg class="clip-box" viewBox="0 0 24 24" aria-hidden="true"><path d="M4.6 5.2 Q12 4.4 19.3 4.9 Q20 12 19.5 19.2 Q12 20 4.9 19.4 Q4.2 12 4.6 5.2 Z"/><path class="clip-tick" d="M7.4 12.6 Q9.6 14.6 10.9 16.6 Q14.6 10.2 20.6 5.2"/></svg>')
+    const copyLine = (text, word, small = false) => html`<button type="button" class="clip-copy${small ? ' is-small' : ''}" data-action="clip#copy" data-clip-text-param="${text}" title="Copy"><code>${text}</code><span class="clip-copy-word" data-word="${word}">${word}</span></button>`
+    const step = (state, inner) => html`<li class="clip-step${state ? ` is-${state}` : ''}">${TICKBOX}<div class="clip-step-body">${inner}</div></li>`
+    const clipboard = (inv, error = '') => {
+      const state = inv.invite_state === 'open' && inv.expires_at <= Date.now() ? 'expired' : inv.invite_state, open = state === 'open', joined = state === 'joined', coming = state === 'adding' || state === 'confirm_code'
+      const dead = !open && !joined && !coming
+      const who = joined ? t.model().agents.find(a => a.agent_device_id === inv.newcomer?.device_id || a.id === inv.newcomer?.device_id) ?? null : null
+      const name = newcomerName(inv) || who?.name || 'The agent'
+      const h = handovers.get(inv.invite_id)
+      const done = open ? '' : 'done'
+      const last = joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
+        : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
+        : dead ? html`<b>${state === 'expired' ? 'The link has expired' : inv.error === 'code-mismatch' ? 'Wrong number: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
+        : html`<b>Waiting for the agent…</b>`
+      const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
+        : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent"><button type="submit">New link</button></form>`
+        : html`<p class="clip-note">The link works once · <span data-clip-target="left">${Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))} more min.</span></p>`
+      return html`<main id="room" class="room room-clip" aria-label="Invite an agent"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
+<section class="clip" data-controller="clip" data-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
+<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>
+<ol class="clip-list">
+${step(done, html`<b>Copy this into a terminal in your project</b>${open ? copyLine(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Copy') : ''}`)}
+${step(done, html`<b>Start Claude Code there</b>${open ? copyLine('claude', 'Copy', true) : ''}`)}
+${step(joined ? 'done' : dead ? 'dead' : 'wait', last)}
+</ol>${foot}</section></div></main>`
+    }
     const inviteMain = (inv, error = '') => {
       if (!inv) return roomShell('Invite', html`<p class="room-lead">This invite is gone.</p>${back}`)
       const agent = inv.device_role === 'agent', state = inv.invite_state
       const left = Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))
       let body
-      // The link goes to the connector by the human's hands only (never pasted into the model's prompt).
-      if (state === 'open' && agent) body = html`<p class="room-lead">On any computer with Claude Code and Node 22+, open a terminal in the project folder and run:</p>
-${copyBox(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Command', 'room-cmd')}<p class="room-lead">Then start Claude Code there (the Trommi plugin brings every message from here into the session, also after <code>--continue</code> or <code>--resume</code>):</p>${copyBox('claude', 'Command', 'room-cmd')}
-<p class="room-wait">Waiting for the agent… The link works once, ${left} more min. An agent needs no code.</p>`
-      else if (state === 'open') body = html`<div class="room-pair"><div class="room-qr" data-controller="room">${raw(qrSvg(inv.link, 'QR code to pair'))}</div>
+      if (agent) return clipboard(inv, error)
+      if (state === 'open') body = html`<div class="room-pair"><div class="room-qr" data-controller="room">${raw(qrSvg(inv.link, 'QR code to pair'))}</div>
 <ol class="room-steps"><li>On the new device, open the camera and scan the code. Or open app.trommi.com there and choose "Pair a device".</li><li>The new device shows a number. Tap the same one here.</li></ol></div>
 <details class="room-more"><summary>No scanner? Send the link</summary><p class="room-meta">Send the link to yourself (a message to yourself works) and open it on the new device. The secret is after the #; it never reaches a server.</p>${copyBox(inv.link, 'Invite link')}</details>
 <p class="room-wait">Waiting for the new device… The code works once, ${left} more min.</p>`
@@ -154,7 +181,7 @@ ${errorLine(error)}<p class="room-meta">A wrong number burns the invite.</p>`
       t.redirect(res, `/pair/${match[1]}`)
     })
     t.live('invite', {
-      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\./g, '')] })),
+      take: (mm, clients) => new Map(clients.map(c => c.params.get('invite')).filter(Boolean).map(id => { const inv = m().invites.get(id); handOver(inv); return [id, String(inviteMain(inv)).replace(/\d+ more min\./g, '').replace(/data-clip-until-value="\d+"/, '')] })),
       diff: (was, now, c) => { const id = c.params.get('invite'); return was.get(id) !== now.get(id) ? String(t.stream('refresh')) : '' },
     })
 
@@ -734,6 +761,27 @@ async function scanQr(video, onText) {
 // Generate a password, download or print the Emergency Kit, and the storage numbers (navigator.storage; client.usage()).
 
 const size = n => (n == null ? '–' : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} kB` : n < 1e9 ? `${(n / 1e6).toFixed(1).replace('.', ',')} MB` : `${(n / 1e9).toFixed(2).replace('.', ',')} GB`)
+
+// The agent invite's clipboard (clipboard() above): a press on a command copies it and ticks its line; the minutes
+// left count down by themselves, and when they are gone the page is rendered again (it then offers a new link).
+controller('clip', class extends Controller {
+  static targets = ['left']
+  static values = { until: Number }
+  connect() { if (this.untilValue) { this.count(); this.timer = setInterval(() => this.count(), 5000) } }
+  disconnect() { clearInterval(this.timer); clearTimeout(this.said) }
+  count() {
+    const ms = this.untilValue - Date.now()
+    if (this.hasLeftTarget) this.leftTarget.textContent = ms > 90000 ? `${Math.round(ms / 60000)} more min.` : ms > 0 ? 'under a minute.' : 'no time left.'
+    if (ms <= 0) { clearInterval(this.timer); window.Turbo?.visit(location.pathname, { action: 'replace' }) }
+  }
+  async copy(e) {
+    const line = e.currentTarget, word = line.querySelector('.clip-copy-word'), ok = await copyText(e.params.text)
+    word.textContent = ok ? 'Copied' : 'Not copied'
+    if (ok) line.closest('.clip-step')?.classList.add('is-done')
+    clearTimeout(this.said)
+    this.said = setTimeout(() => { for (const w of this.element.querySelectorAll('.clip-copy-word')) w.textContent = w.dataset.word }, 1800)
+  }
+})
 
 controller('room', class extends Controller {
   static targets = ['field', 'label', 'local', 'hub']
