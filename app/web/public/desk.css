@@ -292,7 +292,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-gutter::after { content: attr(data-name); position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); padding: 5px 9px; border-radius: 7px; background: currentColor; font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; -webkit-text-fill-color: var(--surface); }
 }
 /* Rows that came in above the fold while he is further down (inbox.js keepRow): said, not pushed. */
-.inbox-news-at { position: sticky; top: calc(var(--desk-band, 0px) + 8px); z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
+.inbox-news-at { position: sticky; top: 8px; z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
 .inbox-news-at:has(~ .inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
 /* A knock out of sight (inbox.js tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
    the list. It is the edge: rows pass under it, it floats over no tile. */
@@ -1113,18 +1113,20 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 #inbox .inbox-stacks.stack-tabs .photo-pile { rotate: 1deg; }
 @container rows (max-width: 600px) { #inbox .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 22px; } }
 
-/* ---- The Desk's top (desk.mjs deskHead): one quiet line that names the list, and the tools for what waits.
-   Wide: the tools stand fixed in the band of the Trommi menu, at its height, their right edge on the column's; the
-   line stands alone over the list, well clear of that row. A phone: line and tools share one slim row. ---- */
-#inbox .desk-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: var(--s-3); margin-bottom: var(--s-4); min-height: 40px; }
-.desk-line { display: flex; align-items: baseline; gap: .45em; min-width: 0; margin: 0; font: 700 var(--t-lg)/1.3 var(--display); letter-spacing: -.005em; color: var(--muted); white-space: nowrap; }
-.desk-line b { color: var(--fg); font-weight: 800; padding-bottom: 3px; background: var(--under-ink) left bottom / 100% 6px no-repeat; overflow: hidden; text-overflow: ellipsis; }
-.desk-line i, .desk-line em { font-style: normal; }
-.desk-line i { color: var(--faint); }
-.desk-line span { overflow: hidden; text-overflow: ellipsis; }
+/* ---- The Desk's top (desk.mjs deskHead): where one arrives. A greeting in the display face, its last word underlined
+   with the pen; under it the desk's name and one quiet sentence on what waits; the tools for what waits at the right,
+   on the list's right edge, on the sentence's line. Air above and below: the list starts clearly under it.
+   A phone: the greeting on a line of its own, the sentence under it, the tools under that. ---- */
+#inbox .desk-top { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: end; gap: 6px var(--s-5); flex-wrap: nowrap; margin-top: var(--s-6); margin-bottom: var(--s-8); padding: 0 4px; box-sizing: border-box; }
+.desk-hello { grid-column: 1; margin: 0; font: 800 clamp(2.1rem, 3.6vw, 2.9rem)/1.08 var(--display); letter-spacing: -.028em; color: var(--fg); }
+.desk-hello em { font-style: normal; padding-bottom: 5px; background: var(--under-ink) left bottom / 100% 9px no-repeat; }
+.desk-line { grid-column: 1; display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px .5em; min-width: 0; margin: 0; font: 500 var(--t-lg)/1.4 var(--font); color: var(--muted); }
+.desk-line-name { font: 700 var(--t-lg)/1.4 var(--display); color: var(--fg); }
+.desk-line span b { color: var(--fg); font-weight: 600; }
+.desk-line i { font-style: normal; color: var(--faint); }
 .desk-line .is-calm { display: inline-flex; align-items: center; gap: 6px; }
 .desk-line .is-calm .sketch { width: 18px; height: 18px; color: var(--accent); align-self: center; }
-.desk-tools { flex: none; display: flex; align-items: center; gap: 10px; }
+.desk-tools { grid-column: 2; grid-row: 1 / 3; flex: none; display: flex; align-items: center; gap: 10px; padding-bottom: 2px; }
 .desk-walk { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
 .desk-walk .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
 .desk-walk-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
@@ -1135,10 +1137,9 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .desk-duck-open .sketch-duck { width: 27px; height: 23px; stroke-width: 1.5; }
 .desk-duck-open:hover, .desk-duck[open] > .desk-duck-open { color: var(--fg); border-color: var(--fg); rotate: -4deg; }
 .desk-duck-open:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
-.desk-duck-ask { position: absolute; z-index: 20; right: -6px; top: calc(100% + 10px); width: min(320px, calc(100vw - 32px)); box-sizing: border-box; display: grid; gap: 8px; padding: 14px 16px 14px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); color: var(--fg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); text-align: left; }
-.desk-duck-ask p { margin: 0; font: 700 var(--t-md)/1.35 var(--display); }
-.desk-duck-ask small { color: var(--muted); font: 400 var(--t-xs)/1.4 var(--font); }
-.desk-duck-ways { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; }
+.desk-duck-ask { position: absolute; z-index: 20; right: -6px; top: calc(100% + 10px); width: max-content; max-width: calc(100vw - 32px); box-sizing: border-box; display: grid; gap: 10px; padding: 12px 14px; border: 1.6px solid var(--fg); border-radius: 10px 14px 9px 15px / 14px 9px 15px 10px; background: var(--surface); color: var(--fg); box-shadow: 3px 4px 0 color-mix(in srgb, var(--fg) 85%, transparent); text-align: left; }
+.desk-duck-ask p { margin: 0; font: 700 var(--t-md)/1.3 var(--display); }
+.desk-duck-ways { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .desk-duck-yes { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 14px 0 10px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--fg); color: var(--bg); font: 700 var(--t-sm)/1 var(--font); cursor: pointer; }
 .desk-duck-yes .sketch-duck { width: 28px; height: 24px; stroke-width: 1.5; color: var(--fg); }
 .desk-duck-yes:active { translate: 1px 2px; }
@@ -1146,21 +1147,16 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .desk-duck-no:hover { background: var(--sunken); color: var(--fg); }
 :is(.desk-duck-yes, .desk-duck-no):focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 @media (max-width: 860px) {
-  #inbox .desk-top { position: relative; }
+  #inbox .desk-top { position: relative; grid-template-columns: minmax(0, 1fr); margin-top: var(--s-2); margin-bottom: var(--s-5); padding: 0 2px; }
+  .desk-hello { font-size: 2rem; }
+  .desk-line { font-size: var(--t-md); }
+  .desk-line-name { font-size: var(--t-md); }
+  .desk-tools { grid-column: 1; grid-row: auto; justify-content: flex-end; margin-top: var(--s-3); padding-right: 6px; }
+  .desk-walk { min-height: 44px; }
   .desk-duck { position: static; }
   .desk-duck-open { width: 44px; height: 44px; }
-  .desk-duck-ask { left: 0; right: 12px; width: auto; top: calc(100% + 6px); }
+  .desk-duck-ask { left: auto; right: 6px; top: calc(100% + 6px); }
 }
 @media (any-hover: hover) { .desk-walk:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
 .desk-walk:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
 .desk-walk:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
-@media (min-width: 861px) {
-  /* (the band is the Desk's own here: a strip that stays at the top of the scrolling page, the list goes under it) */
-  html body[data-scope="all"]:not([data-page]) #inbox:has(> .desk-top) { --desk-band: var(--band); margin-top: 0; padding-top: 0; }
-  #inbox .desk-top { display: contents; }
-  #inbox .desk-tools { position: sticky; top: 0; z-index: 6; box-sizing: border-box; height: var(--band); max-width: 800px; margin-inline: auto; justify-content: flex-end; align-items: flex-start; padding: 8px 4px 0 0; }
-  #inbox .desk-tools::before { content: ""; position: absolute; z-index: -1; inset: 0 -100vmax; background: var(--surface); }
-  #inbox .desk-walk { min-height: 38px; }
-  #inbox .desk-line { box-sizing: border-box; max-width: 800px; margin: var(--s-6) auto var(--s-4); padding-left: 46px; }
-}
-@media (max-width: 860px) { #inbox .desk-top { padding-right: 12px; } .desk-walk { min-height: 44px; } .desk-line { font-size: var(--t-sm); } .desk-line b { flex: 0 1 auto; min-width: 3ch; } .desk-line span { flex: none; } .desk-line em { display: none; } .desk-tools { order: 2; } .desk-tools:empty { display: none; } }
