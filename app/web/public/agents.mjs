@@ -10,7 +10,8 @@
 //     sorted by) the page fetches itself anew
 //   - hooks for the keys: a line is .ledger-line[data-id][data-state], id="ledger-<id>"; its controls carry
 //     data-ledger="rename|mark|crown|main|desk|open|walk|question|pair|unpair|archive|fetch|up|down|more"
-// On a phone a line is mark, name, state and "…": a tap opens the session, "…" a sheet at the lower edge.
+// On a phone a line is mark, name, state and "…": a tap opens the session, "…" a sheet at the lower edge (there also
+// "Copy invite link again": a link for this very session, auth.mjs /pair continue=<session>; a phone's session page has no head).
 import { BASE } from './app.mjs'
 import { LATER, agoSpan, answerFields, avatar, badge, cardPath, crownSvg, html, markControl, marksFrame, marksHolder, raw, renameControl, roomTabs, sessionForms, sk } from './ui.mjs'
 const RANK = { critical: 3, high: 2, normal: 1, low: 0 }
@@ -78,6 +79,7 @@ ${group ? item(`${forms}/unpair`, 'out', '1', `Take out of the group with ${othe
 ${item(`${forms}/move`, 'dir', 'up', 'Move up')}${item(`${forms}/move`, 'dir', 'down', 'Move down')}
 ${!a.online ? item(`${forms}/edit`, 'archived', '1', 'Archive') : ''}
 ${desks.length > 1 ? desks.filter(d => d.id !== a.desk).map(d => item(`${forms}/edit`, 'desk', d.id, `Move to desk ${d.name}`)) : ''}
+${a.parent ? '' : html`<form method="post" action="/pair"><input type="hidden" name="role" value="agent"><input type="hidden" name="continue" value="${a.device_id}"><button class="ledger-sheet-item" type="submit">Copy invite link again</button></form>`}
 <button class="ledger-sheet-item is-close" type="button" data-pop-close>Close</button></div>`)}</details>`
 }
 

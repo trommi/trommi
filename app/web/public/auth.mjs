@@ -92,7 +92,10 @@ ${raw(L.gone)}
       try {
         const agent = form.get('role') === 'agent'
         const label = String(form.get('label') ?? '').trim() || null
-        const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}) })
+        // continue=<session>: "Copy invite link again" on a session's page. The link is for THAT session: the connector that
+        // joins with it continues it, after the human confirmed its check code here (the core: createInvite takeover).
+        const cont = agent ? String(form.get('continue') ?? '') : ''
+        const invite = await client.createInvite({ device_role: agent ? 'agent' : 'human', app_url: `${location.origin}/join`, ...(agent && label ? { label } : {}), ...(cont ? { session_id: cont, takeover: true } : {}) })
         const session_id = String(form.get('session_id') ?? '')
         if (agent && session_id) handovers.set(invite.invite_id, { session_id, with_history: form.get('with_history') === 'yes', done: false })
         t.redirect(res, `/pair/${invite.invite_id}`)
@@ -121,20 +124,32 @@ ${raw(L.gone)}
       const name = newcomerName(inv) || who?.name || 'The agent'
       const h = handovers.get(inv.invite_id)
       const done = open ? '' : 'done'
-      const last = joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
+      // A link that continues an existing session ("Copy invite link again"): the human sees which session, and
+      // confirms the number the new connector's terminal shows before anything is granted.
+      const cont = inv.takeover ? t.model().everyone?.find(a => a.device_id === inv.session_id || a.session_id === inv.session_id) ?? t.model().agents.find(a => a.device_id === inv.session_id) ?? null : null
+      const contName = inv.takeover ? cont?.label || cont?.given || cont?.name || 'this session' : ''
+      const ask = inv.takeover && state === 'confirm_code' && inv.code_choices?.length
+      const keep = inv.takeover ? html`<input type="hidden" name="continue" value="${inv.session_id}">` : ''
+      const last = ask ? html`<div class="clip-ask" role="group" aria-label="Confirm: continue ${contName}"><b>A connector wants to continue ${contName}.</b>
+<small>Which number does its terminal show? Tap it, and that connector continues <strong>${contName}</strong>: its questions, helper sessions and conversation. The connector that held ${contName} until now is retired.</small>
+<div class="room-choices clip-choices">${inv.code_choices.map(c => html`<form method="post" action="/pair/${inv.invite_id}/confirm"><input type="hidden" name="code" value="${c}"><button type="submit" class="room-choice" aria-label="${code6(c)}: continue ${contName}">${code6(c)}</button></form>`)}</div>
+${errorLine(error)}<small>None matches? Tap nothing. A wrong number burns the link, and ${contName} stays as it is.</small></div>`
+        : joined && inv.takeover ? html`<b class="clip-in">${cont ? avatar(cont, { crown: false }) : ''}<span>${contName} goes on with the new connector</span></b><small>The connector that held it before is retired.</small>`
+        : joined ? html`<b class="clip-in">${who ? avatar(who, { crown: false }) : ''}<span>${name} is in</span></b>${h && !h.done ? html`<small>Handing over the session…</small>` : ''}${h?.error ? errorLine(`Session not handed over: ${h.error}`) : ''}`
         : coming ? html`<b>Adding ${newcomerName(inv) || 'the agent'}…</b>`
         : dead ? html`<b>${state === 'expired' ? 'The link has expired' : inv.error === 'code-mismatch' ? 'Wrong number: nobody was added' : `That did not work${inv.error ? ` (${inv.error})` : ''}`}</b>${errorLine(error)}`
         : html`<b>Waiting for the agent…</b>`
       const foot = joined ? html`<a href="/" data-nav class="room-done clip-done">Done</a>`
-        : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent"><button type="submit">New link</button></form>`
+        : dead ? html`<form method="post" action="/pair" class="clip-again"><input type="hidden" name="role" value="agent">${keep}<button type="submit">New link</button></form>`
         : html`<p class="clip-note">The link works once · <span data-invite-clip-target="left">${Math.max(0, Math.round((inv.expires_at - Date.now()) / 60000))} more min.</span></p>`
-      return html`<main id="room" class="room room-clip" aria-label="Invite an agent"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
+      return html`<main id="room" class="room room-clip" aria-label="${inv.takeover ? `Continue ${contName}` : 'Invite an agent'}"><div id="invite-${inv.invite_id}" class="room-invite" data-state="${state}">
 <section class="clip" data-controller="invite-clip" data-invite-clip-until-value="${open ? inv.expires_at : 0}">${CLAMP}
-<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>
+${inv.takeover ? html`<h2>Continue ${contName}</h2><p class="clip-sub">A link for this session: the connector that joins with it goes on as ${contName}. On a computer with Claude Code and Node 22+.</p>`
+        : html`<h2>Invite an agent</h2><p class="clip-sub">On a computer with Claude Code and Node 22+.</p>`}
 <ol class="clip-list">
 ${step(done, html`<b>Copy this into a terminal in your project</b>${open ? copyLine(`curl -fsSL ${location.origin}/connect | sh -s '${inv.link}'`, 'Copy') : ''}`)}
 ${step(done, html`<b>Start Claude Code there</b>${open ? copyLine('claude', 'Copy', true) : ''}`)}
-${step(joined ? 'done' : dead ? 'dead' : 'wait', last)}
+${step(joined ? 'done' : dead ? 'dead' : ask ? 'ask' : 'wait', last)}
 </ol>${foot}</section></div></main>`
     }
     const inviteMain = (inv, error = '') => {
