@@ -33,7 +33,7 @@ function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
   const said = n ? html`<span>${n === 1 ? '1 decision' : `${n} decisions`}<em> waiting</em></span>` : html`<span class="is-calm">${sk('tick')}${isClear(model) ? 'all clear' : 'no decision waiting'}</span>`
-  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="desk-tools">${n ? nextPlease(model, base) : ''}</div><h2 class="desk-line"><b>${model.deskName}</b><i aria-hidden="true">·</i>${said}</h2></header>`
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="desk-tools">${n ? html`${duckAll(model, base)}${nextPlease(model, base)}` : ''}</div><h2 class="desk-line"><b>${model.deskName}</b><i aria-hidden="true">·</i>${said}</h2></header>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends
@@ -85,6 +85,23 @@ const BURST = raw('<svg class="walk-burst" viewBox="0 0 24 24" aria-hidden="true
 function nextPlease(model, base) {
   const n = model.fresh.length
   return html`<a class="desk-walk" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F">${BURST}<span>${WORDS.walk}</span><b class="desk-walk-n">${n}</b></a>`
+}
+
+// ---- the duck for all ----
+// Left of Rapid fire, smaller and quieter: the duck of "I don't give a duck". One press asks, in a small sheet of its
+// own (no browser dialog); "Yes" answers every open decision on this Desk the way the single card's duck does, one
+// answer per card (POST <base>/cards/batch, way "duck": hub.trust per card, one toast whose Undo takes all back).
+// Infos and permission requests are not touched. Not there when no decision is open.
+function duckAll(model, base) {
+  const ids = model.fresh.filter(c => c.kind === 'decision').map(c => c.id), n = ids.length
+  if (!n) return ''
+  const tip = n === 1 ? 'I don’t give a duck: for the one open decision' : `I don’t give a duck: for all ${n} open decisions`
+  return html`<details class="t-pick desk-duck" data-controller="pops"><summary class="desk-duck-open" title="${tip}" aria-label="${tip}">${sk('duck')}</summary>
+<form class="desk-duck-ask" method="post" action="${base}/cards/batch" aria-label="Answer all open decisions"><input type="hidden" name="way" value="duck"><input type="hidden" name="ids" value="${ids.join(',')}">
+<p>Answer ${n === 1 ? 'the 1 open decision' : html`all <b>${n}</b> open decisions`} with “I don’t give a duck”?</p>
+<small>Every agent goes on with its own advice. Infos and permission requests stay.</small>
+<div class="desk-duck-ways"><button type="submit" class="desk-duck-yes">${sk('duck')}<span>Yes, duck ${n === 1 ? 'it' : 'them all'}</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div>
+</form></details>`
 }
 
 /** The sheet a long press on a Desk row brings up on a phone (desk.css, dialog.rowmenu): one form, each way its own
