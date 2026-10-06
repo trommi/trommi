@@ -1177,7 +1177,7 @@ controller('curl', class extends Controller {
       const b = this.box, dx = b.right - e.clientX, dy = e.clientY - b.top, d = Math.hypot(dx, dy)
       if (d > CURL_NEAR || dx < 0 || dy < 0) { if (this.goal) { this.goal = null; this.spring() } return }
       this.wake()
-      const k = 1 - d / CURL_NEAR, len = 32 + 40 * k, a = Math.atan2(Math.max(dy, 6), Math.max(dx, 6)), lean = Math.min(1.15, Math.max(.35, a))
+      const k = 1 - d / CURL_NEAR, len = 32 + 56 * k, a = Math.atan2(Math.max(dy, 6), Math.max(dx, 6)), lean = Math.min(1.15, Math.max(.35, a))
       this.goal = [-Math.cos(lean) * len, Math.sin(lean) * len]
       this.spring()
     }, { passive: true })
@@ -1231,7 +1231,7 @@ controller('curl', class extends Controller {
   /** The sheet is the page's main area: right of the sidebar, under a phone's bars, never beyond the window. */
   place() {
     const main = document.querySelector('main'), r = main.getBoundingClientRect(), vw = document.documentElement.clientWidth, vh = document.documentElement.clientHeight
-    const left = Math.max(0, Math.round(r.left)), right = Math.min(Math.round(r.left + (main.clientWidth || r.width)), vw), top = this.top = this.barTop()
+    const left = Math.max(0, Math.round(r.left)), right = Math.min(Math.round(r.right), vw), top = this.top = this.barTop()
     this.box = { left, top, right, bottom: vh, width: right - left, height: vh - top }
     Object.assign(this.element.style, { left: `${left}px`, top: `${top}px`, width: `${this.box.width}px`, height: `${this.box.height}px` })
     this.svg.setAttribute('viewBox', `0 0 ${this.box.width} ${this.box.height}`)
@@ -1267,7 +1267,7 @@ controller('curl', class extends Controller {
     const d = Math.hypot(P[0] - C[0], P[1] - C[1]), set = (c, v) => this.svg.querySelector(c).setAttribute('d', v)
     const path = pts => (pts.length ? `M${pts.map(p => `${f(p[0])},${f(p[1])}`).join(' L')} Z` : '')
     if (d < 3) { for (const c of ['.curl-under', '.curl-cast', '.curl-flap', '.curl-flap-clip', '.curl-hatch', '.curl-fold']) set(c, ''); return this.under([]) }
-    for (const c of ['.curl-flap', '.curl-fold', '.curl-hatch']) this.svg.querySelector(c).style.strokeOpacity = Math.min(1, .5 + (d - 33) / 50).toFixed(2)   // (at rest the ink is light)
+    for (const c of ['.curl-flap', '.curl-fold', '.curl-hatch']) this.svg.querySelector(c).style.strokeOpacity = Math.min(1, .5 + (d - 29.3) / 61).toFixed(2)   // (at rest the ink is light)
     const n = [(C[0] - P[0]) / d, (C[1] - P[1]) / d], M = [(C[0] + P[0]) / 2, (C[1] + P[1]) / 2]
     const lifted = cutPoly([[0, 0], [W, 0], [W, H], [0, H]], M, n)
     const mirror = p => { const k = 2 * ((p[0] - M[0]) * n[0] + (p[1] - M[1]) * n[1]); return [p[0] - k * n[0], p[1] - k * n[1]] }
@@ -1277,11 +1277,11 @@ controller('curl', class extends Controller {
     if (on.length < 2) { set('.curl-fold', ''); set('.curl-hatch', ''); return this.under(lifted) }
     const [A, B] = on, len = Math.hypot(B[0] - A[0], B[1] - A[1]), u = [(B[0] - A[0]) / len, (B[1] - A[1]) / len]
     set('.curl-fold', `M${f(A[0])},${f(A[1])} L${f(B[0])},${f(B[1])}`)
-    // pen hatching along the fold, on the flap: short strokes that lean, every 5 px of the fold, anchored to its upper end
+    // pen hatching along the fold, on the flap: short strokes that lean, every 6 px of the fold, anchored to its upper end
     // (so they do not swim while the fold moves); their length follows the lift, up to 20 px
     const depth = Math.min(20, d * .22), lean = [-n[0] * .92 + u[0] * .4, -n[1] * .92 + u[1] * .4]
     let hatch = ''
-    for (let s = 3, i = 0; s < len; s += 5, i++) { const x = A[0] + u[0] * s, y = A[1] + u[1] * s, l = depth * (i % 3 === 1 ? .62 : 1); hatch += `M${f(x)},${f(y)} l${f(lean[0] * l)},${f(lean[1] * l)}` }
+    for (let s = 3.6, i = 0; s < len; s += 6, i++) { const x = A[0] + u[0] * s, y = A[1] + u[1] * s, l = depth * (i % 3 === 1 ? .62 : 1); hatch += `M${f(x)},${f(y)} l${f(lean[0] * l)},${f(lean[1] * l)}` }
     set('.curl-hatch', hatch)
     this.under(lifted)
   }
