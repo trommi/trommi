@@ -16,6 +16,8 @@ import { BASE, SAID, stream } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', ZOOM_OUT = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
+// The way back, drawn with the pen: an arrow to the left.
+const BACK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M19.4 12.3 Q12.2 11.5 5 12.1"/><path d="M10.9 6 Q7.7 9.3 4.7 12.1 Q8 14.8 11.2 18.2"/></svg>')
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
 const imagesOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'image')
 const videosOf = card => (card.attachments ?? []).filter(a => kindOf(a) === 'video')
@@ -303,7 +305,7 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const more = (cls, drawing, word, tip, action) => html`<button class="tc-more-item ${cls}" type="submit" form="${form}" formaction="${action}" title="${tip}">${sk(drawing)}<span>${word}</span></button>`
   return html`<main id="cardpage" class="tc-page" aria-label="Question ${card.number}" data-id="${card.id}" data-controller="card" data-card-draft-value="${drafting ? act(card, base, 'draft') : ''}" data-card-pictures-value="${JSON.stringify(picturesOf(old ? { ...card, attachments: old.attachments ?? card.attachments } : card, self))}" data-action="turbo:frame-load->card#framed circles:drawn->card#link turbo:submit-start->card#sent turbo:submit-end->card#done dragover->card#over drop->card#drop">
 <nav class="tc-head" aria-label="Around this question">
-<a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape"><span>Back to ${session ? session.name : WORDS.desk}</span><kbd>Esc</kbd></a>
+<a class="tc-back" data-nav href="${home}" aria-keyshortcuts="Escape" title="Back to ${session ? session.name : WORDS.desk} · Esc" aria-label="Back to ${session ? session.name : WORDS.desk}">${BACK}</a>
 ${place ? html`<span class="tc-place">${step(place.prev, 'is-prev', 'The question before', ARROW_L)}<span class="tc-count" title="Where this question stands on the Desk">${place.at} of ${place.of}</span>${step(place.next, 'is-next', 'The next question', ARROW_R)}</span>` : ''}
 <details class="tc-more" data-controller="pops"><summary class="tc-more-open" aria-label="More for this question">More ${sk('unfold')}</summary><div class="tc-more-list" role="menu">
 ${open && card.kind !== 'permission' && card.snoozed_until ? more('', 'wake', WORDS.wake, `${WORDS.wake}: back on the Desk now`, act(card, base, 'wake')) : ''}
@@ -317,7 +319,7 @@ ${cardLeft(card, model, self, { version, pic: shownPic, query })}
 ${cardAnswer(card, model, base, { error, version, pic: shownPic })}
 </div>
 </article>
-${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false })}</form>` : ''}
+${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-later" data-action="pointerdown->card#pullStart click->card#pullClick" method="post" action="${base}/cards/batch" aria-label="Put this question off"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false })}</form>` : ''}
 ${cardThread(card, model, self, { more: older })}
 <form class="tc-chat" id="${form}" aria-label="Write to the agent" method="post" action="${act(card, base, 'message')}" enctype="multipart/form-data" data-card-target="form">
 ${walk ? raw('<input type="hidden" name="walk" value="1">') : ''}${session ? html`<input type="hidden" name="back" value="${home}">` : ''}
@@ -761,6 +763,45 @@ controller('card', class extends Controller {
     if (this.hasGalleryTarget) this.galleryTarget.href = 'back' in this.galleryTarget.dataset ? pic.href.replace(/\/p\/(\d+)$/, '?pic=$1') : pic.href
     img.addEventListener('load', () => this.link(), { once: true })
     this.link()
+  }
+  // ---- Later is a pull: the tag under the card is drawn down (mouse or finger), the card follows the string; let go
+  // past the threshold (or a plain press) and the card is pulled off the page, then the next one comes; let go before
+  // it and both spring back. Reduced motion: nothing moves, the press does it.
+  pullStart(event) {
+    const tag = event.target.closest?.('.sel-later')
+    if (!tag || event.button > 0 || this.pulling) return
+    const card = this.element.querySelector('.tc-card'), y0 = event.clientY, calm = matchMedia('(prefers-reduced-motion: reduce)').matches
+    let dy = 0
+    const set = v => { dy = v; tag.style.setProperty('--pull', `${v}px`); if (card && !calm) card.style.translate = `0 ${(v * .4).toFixed(1)}px` }
+    tag.setPointerCapture(event.pointerId)
+    tag.classList.add('is-pulling')
+    if (card) card.style.transition = 'none'
+    const move = e => set(clamp(e.clientY - y0, 0, 240))
+    const up = e => {
+      tag.removeEventListener('pointermove', move); tag.removeEventListener('pointerup', up); tag.removeEventListener('pointercancel', up)
+      tag.classList.remove('is-pulling')
+      if (dy > 6) { this.dragged = true; setTimeout(() => { this.dragged = false }, 0) }   // (the click that follows a drag is not a press)
+      if (e.type === 'pointerup' && dy > 72) return this.pullAway(tag)
+      if (card) card.style.transition = 'translate 320ms cubic-bezier(.3, 1.7, .5, 1)'
+      set(0)
+    }
+    tag.addEventListener('pointermove', move); tag.addEventListener('pointerup', up); tag.addEventListener('pointercancel', up)
+  }
+  pullClick(event) {
+    const tag = event.target.closest?.('.sel-later')
+    if (!tag || this.going) return
+    event.preventDefault()
+    if (!this.dragged && !this.pulling) this.pullAway(tag)
+  }
+  pullAway(tag) {
+    this.pulling = true
+    const go = () => { this.going = true; tag.form.requestSubmit(tag) }
+    const card = this.element.querySelector('.tc-card')
+    if (!card || matchMedia('(prefers-reduced-motion: reduce)').matches) return go()
+    const from = parseFloat(card.style.translate.split(' ')[1]) || 0, far = innerHeight
+    const how = { duration: 300, easing: 'cubic-bezier(.55, 0, .9, .45)', fill: 'forwards' }
+    tag.animate([{ translate: `0 ${tag.style.getPropertyValue('--pull') || '0px'}` }, { translate: `0 ${far + 120}px` }], how)
+    card.animate([{ translate: `0 ${from}px` }, { translate: `0 ${far}px`, rotate: '1.2deg' }], how).finished.then(go, go)
   }
   // "+": the whole picture, right here on the card (and back to its top). Never another page.
   enlarge(event) {

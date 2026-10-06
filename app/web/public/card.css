@@ -78,31 +78,36 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 .tc-head { display: flex; align-items: center; gap: var(--s-3); margin-bottom: var(--s-3); }
 /* The way back is plain words with its key beside it ("Back to Desk  Esc"), no frame; on touch screens the key goes. */
 .tc-back { color: var(--fg); text-decoration: none; }
-.tc-head .tc-back { display: inline-flex; align-items: center; gap: 8px; min-width: 0; min-height: 36px; font: 700 var(--t-sm)/1 var(--font); }
-.tc-head .tc-back:hover span { text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 4px; }
+/* The way back is a symbol: a drawn arrow in a quiet round button (its name and key in the tooltip). */
+.tc-head .tc-back { flex: none; display: grid; place-items: center; width: 40px; height: 40px; margin-left: -8px; border-radius: 50%; color: var(--muted); transition: background 120ms, color 120ms, translate 120ms; }
+.tc-head .tc-back .sketch { width: 24px; height: 24px; stroke-width: 2; }
+.tc-head .tc-back:hover, .tc-head .tc-back:focus-visible { background: var(--sunken); color: var(--fg); translate: -2px 0; }
+.tc-head .tc-back:focus-visible { outline: 2px solid var(--fg); outline-offset: 2px; }
 .tc-back span { max-width: 32ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.tc-back kbd { opacity: 0; transition: opacity 120ms; flex: none; padding: 3px 6px; border-radius: 5px; background: var(--surface); box-shadow: 0 0 0 1px var(--line-strong), 0 1px 0 var(--line-strong); color: var(--muted); font: 500 .68rem/1 var(--mono); }
-/* (the key shows only while the pointer or the keyboard is on the way back; it is in the keys sheet too) */
-.tc-back:hover kbd, .tc-back:focus-visible kbd { opacity: 1; }
-@media (hover: none) and (pointer: coarse) { .tc-back kbd { display: none; }
-}
-@container cardpage (max-width: 760px) { .tc-head { gap: 2px; } .tc-head .tc-back { flex: none; } .tc-head .tc-more-open { padding: 0 4px 0 8px; } }
+@container cardpage (max-width: 760px) { .tc-head { gap: 2px; } .tc-head .tc-back { margin-left: -4px; } .tc-head .tc-more-open { padding: 0 4px 0 8px; } }
 /* Later: the pull-tag (ui.mjs LATER_TAG, the Desk's Later) tied under the card's bottom-right corner, beside the
    column of the talk: its string comes out from under the card's edge; under the pointer it swings and is pulled a
    little. Where the talk needs the whole width (a phone, a narrow window) it hangs in a short row of its own. */
-.tc-later { position: relative; height: 0; margin-top: 0; z-index: 2; }
-.tc-later .sel-later { position: absolute; right: 34px; top: -3px; display: grid; justify-items: center; gap: 2px; padding: 0 10px 6px; border: 0; background: none; color: var(--muted); font: 700 var(--t-xs)/1 var(--display); cursor: pointer; }
-.tc-later .sel-later svg { width: 24px; height: 46px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.4; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: transform 300ms cubic-bezier(.3, 1.6, .5, 1); }
+.tc-card { z-index: 1; }   /* (the tag's string comes out from behind the card) */
+.tc-later { position: relative; height: 0; margin-top: 0; z-index: 0; }
+.tc-later .sel-later { --pull: 0px; position: absolute; right: 30px; top: -5px; display: grid; justify-items: center; gap: 3px; padding: 0 14px 8px; border: 0; background: none; color: var(--muted); font: 700 var(--t-sm)/1 var(--display); cursor: grab; touch-action: none; translate: 0 var(--pull); transition: translate 320ms cubic-bezier(.3, 1.7, .5, 1); }
+.tc-later .sel-later.is-pulling { transition: none; cursor: grabbing; }
+/* (pulled, the string grows out of the card's edge above the tag) */
+.tc-later .sel-later::before { content: ""; position: absolute; left: calc(50% - 1.3px); bottom: calc(100% - 3px); width: 2.6px; height: calc(var(--pull) + 3px); border-radius: 2px; background: var(--stamp-ink-later); }
+.tc-later .sel-later svg { width: 46px; height: 88px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.3; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; animation: tag-sway 3.6s ease-in-out infinite alternate; }
 .tc-later .sel-later .tag-paper { fill: var(--surface); }
 .tc-later .sel-later .tag-lines { opacity: .55; }
 .tc-later .sel-later:hover, .tc-later .sel-later:focus-visible { color: var(--fg); outline: none; }
-.tc-later .sel-later:hover svg, .tc-later .sel-later:focus-visible svg { transform: rotate(6deg) translateY(5px); }
-.tc-later .sel-later:active svg { transform: translateY(12px); transition-duration: 80ms; }
+.tc-later .sel-later:not(.is-pulling):hover, .tc-later .sel-later:focus-visible { --pull: 6px; }
+.tc-later .sel-later.is-pulling svg { animation: none; }
+@keyframes tag-sway { from { rotate: -1.6deg; } to { rotate: 1.6deg; } }
+@media (prefers-reduced-motion: reduce) { .tc-later .sel-later svg { animation: none; } .tc-later .sel-later { transition: none; } }
 @container cardpage (max-width: 900px) {
-  .tc-later { height: 58px; }
-  .tc-later .sel-later { right: 22px; grid-auto-flow: column; align-items: end; gap: 6px; padding: 0 4px 0 10px; min-height: 48px; }
-  .tc-later .sel-later svg { width: 20px; height: 40px; }
-  .tc-later .sel-later span { padding-bottom: 6px; }
+  .tc-later { height: 96px; }
+  .tc-later .sel-later { right: 18px; grid-auto-flow: column; align-items: end; gap: 8px; padding: 0 4px 0 12px; }
+  .tc-later .sel-later svg { width: 38px; height: 73px; }
+  .tc-later .sel-later span { padding-bottom: 12px; }
+  .tc-later .sel-later::before { left: 30px; }
   .tc-later + .tc-feed { margin-top: 0; }
 }
 .tc-place { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; color: var(--muted); font: 500 var(--t-sm)/1 var(--font); }
