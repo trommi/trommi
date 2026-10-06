@@ -2612,7 +2612,7 @@ export function deskRow(card, model, base, { error = '' } = {}) {
   const from = model.byAgent.get(card.agent)
   const assets = model.state.assets
   // (with the card's own teaser, the urgency's reason stays on the card's page: the teaser says what matters)
-  const about = [cardNote(card), card.unsnoozed && !card.snoozed_until ? 'Back from snooze' : '', card.teaser ? '' : card.urgency_reason].filter(Boolean).join(' · ')
+  const about = [cardNote(card), card.unsnoozed && !card.snoozed_until ? 'Back from Later' : '', card.teaser ? '' : card.urgency_reason].filter(Boolean).join(' · ')
   // (the card's own teaser, two lines for the Desk; without one, the first lines of its body)
   const words = card.teaser || plain(card.body, assets)
   const extra = carries(card, assets)
@@ -2752,5 +2752,8 @@ export const mediaPreview = (i, extra = '') => i.type === 'image' && i.url
 // ---- the room's pages: their frame and tabs (Devices, Settings, the account screens) ----
 export const BELL = raw(`<svg class="brand-mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.1 19Q12.3 18.6 16.7 19L21 19.3"/><path d="M4.8 18.9Q5.2 15.1 5.7 13.7Q6.2 12.3 7.5 11.3Q8.7 10.3 10.3 9.5Q12 8.8 13.7 9.3Q15.3 9.8 16.4 11Q17.5 12.2 18.1 13.7Q18.6 15.2 18.8 17L18.9 18.8"/><path d="M11.8 8.6L12.2 6.9"/><path d="M10 6.6Q11.8 6 12.8 6.4L13.8 6.8"/><path class="brand-mark-ring" d="M18.5 7.3Q19.5 5.8 19.8 5.2L20 4.5"/><path class="brand-mark-ring" d="M20.6 10.3Q21.5 9.4 22.3 8.9L23.1 8.5"/></svg>`)
 export const roomShell = (title, inner, cls = '') => html`<main id="room" class="room${cls ? ` ${cls}` : ''}" aria-label="${title}"><header class="room-head"><span class="room-bell">${BELL}</span><h2>${title}</h2></header>${inner}</main>`
+/** One of the three tabbed pages (Agents is agents.mjs; Devices and Settings here): the tabs first, at the same place on
+ *  all three, then the heading in the display face, then the page in one reading column (auth.css .room-paged). */
+export const roomPage = (title, on, inner) => html`<main id="room" class="room room-paged" aria-label="${title}"><div class="room-page">${roomTabs(on)}<header class="room-head"><h2>${title}</h2></header><div class="room-col">${inner}</div></div></main>`
 export const roomTabs = (on, cls = '') => html`<nav class="room-tabs${cls ? ` ${cls}` : ''}" aria-label="Agents, devices and settings">${[['agents', 'Agents'], ['devices', 'Devices'], ['settings', 'Settings']].map(([p, word]) => html`<a href="/${p}" data-nav${on === p ? raw(' aria-current="page"') : ''}>${word}</a>`)}</nav>`
 export const errorLine = e => (e ? html`<p class="room-error" role="alert">${e}</p>` : '')

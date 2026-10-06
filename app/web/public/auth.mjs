@@ -6,7 +6,7 @@
 // code), Forgot password (Emergency Kit), and the old recovery code. The UI says "account", never "room".
 // Calm and sober: this is about keys; pen drawings only on the choice buttons.
 // Core features that may not be there yet (escrow, usage, session handover) are shown only when the core has them.
-import { BELL, Controller, avatar, controller, copyText, doodleSvg, errorLine, html, raw, roomShell, roomTabs, sketchSvg } from './ui.mjs'
+import { BELL, Controller, avatar, controller, copyText, doodleSvg, errorLine, html, raw, roomPage, roomShell, sketchSvg } from './ui.mjs'
 import { CLIENT, account, core, ses, stream } from './app.mjs'
 const read = (k, f = null) => { try { return localStorage.getItem(k) ?? f } catch { return f } }
 const write = (k, v) => { try { localStorage.setItem(k, v) } catch {} }
@@ -66,8 +66,7 @@ ${canRemove ? html`<form method="post" action="/devices/remove" class="room-remo
     }
     const devicesMain = (error = '') => {
       const L = lists(), active = [...m().members.values()].filter(d => d.is_active && d.device_role !== 'human')
-      return roomShell('Devices', html`${roomTabs('devices')}
-${errorLine(error)}
+      return roomPage('Devices', 'devices', html`${errorLine(error)}
 ${isHuman() ? html`<section class="room-section" aria-labelledby="add-head"><h3 id="add-head">Add a device</h3>
 <div class="room-ways">
 <form method="post" action="/pair" class="room-way"><input type="hidden" name="role" value="human"><button type="submit" class="room-way-go" id="pair-start">${art('phone')}<b>Pair a device</b><span>A QR code appears here. The new device scans it, you tap a number. Done.</span></button></form>
@@ -227,8 +226,7 @@ ${kit ? html`<p class="room-lead">Download or print it, and keep it somewhere sa
 <h4 class="room-sub">Password</h4>
 <details class="room-more" id="pw-change"><summary>Change password</summary>${form('/settings/password', html`${pwField({ name: 'current', label: 'Current password', gen: false, autocomplete: 'current-password' })}${pwField({ label: 'New password' })}`, 'Change password', 'pw-form')}</details>
 <p class="room-meta">${NO_RECOVERY}</p>`
-      return roomShell('Settings', html`${roomTabs('settings')}
-${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
+      return roomPage('Settings', 'settings', html`${errorLine(error)}${said ? html`<p class="room-lead room-ok" role="status">${said}</p>` : ''}
 ${isHuman() ? html`<section class="room-section" id="account" aria-labelledby="acct-head"><h3 id="acct-head">Account</h3>${accountPart}<p class="room-logout-line"><a href="/logout" data-nav id="settings-logout">Log out of this device</a></p></section>` : ''}
 <section class="room-section" aria-labelledby="store-head"><h3 id="store-head">Storage</h3><dl class="room-usage" data-controller="room" data-room-usage-value="${has(client, 'usage') ? 'hub' : 'local'}"><div><dt>On this device</dt><dd data-room-target="local">…</dd></div>${has(client, 'usage') ? html`<div><dt>On the hub (encrypted)</dt><dd data-room-target="hub">…</dd></div>` : ''}</dl><p class="room-meta">The hub deletes envelopes after 30 days; your devices keep what they decrypted.</p></section>
 ${link ? html`<details class="room-section room-more" id="advanced"><summary>Advanced</summary><p class="room-lead">The address of this account, for the old recovery code (app.trommi.com/recover). On its own it opens nothing.</p>${copyBox(link, 'Address')}
@@ -775,7 +773,7 @@ async function scanQr(video, onText) {
 // The account pages' small helpers (auth.mjs): copy a link or command, select a read-only field on focus,
 // Generate a password, download or print the Emergency Kit, and the storage numbers (navigator.storage; client.usage()).
 
-const size = n => (n == null ? '–' : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} kB` : n < 1e9 ? `${(n / 1e6).toFixed(1).replace('.', ',')} MB` : `${(n / 1e9).toFixed(2).replace('.', ',')} GB`)
+const size = n => (n == null ? '–' : n < 1e3 ? `${n} B` : n < 1e6 ? `${(n / 1e3).toFixed(0)} kB` : n < 1e9 ? `${(n / 1e6).toFixed(1)} MB` : `${(n / 1e9).toFixed(2)} GB`)
 
 // The agent invite's clipboard (clipboard() above): a press on a command copies it and ticks its line; the minutes
 // left count down by themselves, and when they are gone the page is rendered again (it then offers a new link).

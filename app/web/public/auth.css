@@ -4,7 +4,11 @@
 .share-picture { display: block; max-width: 100%; max-height: calc(100vh - 32px); margin: 0 auto; border-radius: 8px; }/* The account screens (create account, log in, Emergency Kit, pair, recover, devices, invite, settings) and the reload notice. Owner: pairing
    area (auth.mjs). Sober: the board's tokens and type; pen drawings only on the two choice buttons. */
 .room { box-sizing: border-box; width: 100%; max-width: 712px; margin: 0 auto; padding: 72px 16px 96px; color: var(--fg); }
-#room-screen { grid-column: 1 / -1; width: 100%; min-height: 100dvh; background: var(--bg); }
+/* (Both scroll by themselves: the page's body does not. A short window, a phone on its side or one with the keyboard
+   up otherwise cut off whatever stood below the fold: the button of a form, the last devices of the list.) */
+#room-screen { grid-column: 1 / -1; grid-row: 1 / -1; width: 100%; height: 100%; min-height: 0; overflow-y: auto; background: var(--bg); }
+body > main#room { min-height: 0; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--line-strong) transparent; }
+body > main#room:not(.room-paged) { max-width: none; margin: 0; padding-inline: max(16px, calc(50% - 340px)); }
 #room-screen .room { padding-top: max(48px, 10vh); }
 .room-head { display: flex; align-items: center; gap: 12px; margin-bottom: 18px; }
 .room-head h2 { font: 700 28px/1.15 var(--display); margin: 0; }
@@ -26,6 +30,18 @@
 .room-tabs a { padding: 8px 12px; color: var(--muted); text-decoration: none; font-weight: 500; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .room-tabs a:hover { color: var(--fg); }
 .room-tabs a[aria-current] { color: var(--fg); border-bottom-color: var(--accent); }
+
+/* The three tabbed pages are one place (Agents: agents.css .ledger-page; Devices and Settings: ui.mjs roomPage): the tabs
+   stand first and at the same spot on all three, the heading under them in the display face, the page on the same
+   left edge; Devices and Settings keep one reading column. */
+.room.room-paged { max-width: none; margin: 0; padding: var(--s-4) var(--gutter) var(--s-10); }
+.room-page { max-width: 1160px; margin-inline: auto; }
+.room-paged .room-tabs { margin: -4px 0 var(--s-6); }
+.room-paged .room-head { margin-bottom: var(--s-6); }
+.room-paged .room-head h2 { font: 800 clamp(2.2rem, 4vw, 3rem)/1.05 var(--display); letter-spacing: -.025em; }
+.room-col { max-width: 680px; }
+.room-col > .room-section:first-child { margin-top: 0; }
+@media (max-width: 860px) { .room.room-paged { padding: var(--s-5) var(--gutter) 96px; } .room-paged .room-tabs { margin-bottom: var(--s-5); } }
 
 /* forms and buttons */
 .room-form { display: grid; gap: 14px; margin: 18px 0; }
