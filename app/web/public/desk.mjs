@@ -2,7 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, stream } from './app.mjs'
-import { Controller, LATER_TAG, PLUS, WORDS, curlHTML, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg } from './ui.mjs'
+import { Controller, LATER_TAG, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, mediaPreview, mq, plain, raw, runSection, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -77,7 +77,6 @@ ${deskHead(model, base)}
 <form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span><button type="submit" name="way" value="later" class="sel-later" title="Later: pull them down, they wait in Off the desk">${LATER_TAG}<span>Later</span></button><button type="submit" name="way" value="duck" class="sel-duck" title="Egal: the agents take their advice">${sk('duck')}<span>Egal</span></button><button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button><button type="submit" name="way" value="shred" class="sel-shred" title="Shred: throw them away">${sk('bin')}<span>Shred</span></button><button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
 <div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" data-desk-target="down" data-action="desk#toKnock" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
-${curlHTML('desk', `${base}/scribble-board`)}
 </main>`
 
 // ---- the walk's button ----

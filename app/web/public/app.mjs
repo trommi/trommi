@@ -12,7 +12,7 @@ import * as notes from './notes.mjs'
 import * as media from './media.mjs'
 import * as whiteboard from './whiteboard.mjs'
 import { RAIL_FOLD, cornerNote, sidebarRows, topbar } from './sidebar.mjs'
-import { WORDS, calm, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
+import { WORDS, calm, curlHTML, el, html, hueFor, isKnock, keySheet, startUi, toast } from './ui.mjs'
 import { boardNotes, noteStore } from './notes.mjs'
 import { roomScreen } from './auth.mjs'
 import { rowSheet } from './desk.mjs'
@@ -923,6 +923,8 @@ function createBoard({ hub, model, views }) {
 // sheet, the notes. A port of trommi-hub app.mjs: the same markup, without the hub's <head>, the
 // import map and the live stream (the router keeps the head and patches the body).
 
+let padKept = false   // the Scribble Board stays mounted under the Desk (set when the corner is first touched, or coming from the board)
+const padCanvas = html => /data-whiteboard-canvas-value="([^"]*)"/.exec(html)?.[1] ?? null
 /** The body's parts for a page: [{ key, html }] in order (the router keeps a part whose markup did not change). */
 function bodyParts({ view, model, base = '', main, sidebar = true, current = null, says = '', stream = '' }) {
   const parts = []
@@ -932,7 +934,13 @@ function bodyParts({ view, model, base = '', main, sidebar = true, current = nul
     parts.push({ key: 'rail', html: String(RAIL_FOLD) })
     if (model) parts.push({ key: 'note', html: String(cornerNote(model, base)) })
   }
-  parts.push({ key: 'main', html: String(main) })
+  // The Desk and the Scribble Board are two sides of one sheet (ui.mjs, controller "curl"): the board is a part of
+  // its own ("pad"), which the Desk keeps under its sheet once its corner was touched (padKept), so turning the
+  // page mounts nothing anew; the corner itself is the part "curl".
+  if (view === 'whiteboard') parts.push({ key: 'pad', html: String(main) })
+  else parts.push({ key: 'main', html: String(main) })
+  if (view === 'desk' && padKept && model) parts.push({ key: 'pad', html: String(whiteboard.whiteboardMain(model)) })
+  if (view === 'desk' || view === 'whiteboard') parts.push({ key: 'curl', html: String(curlHTML(view === 'desk' ? 'desk' : 'pad', view === 'desk' ? `${base}/scribble-board` : `${base}/`)) })
   parts.push({ key: 'says', html: `<div class="says-host says-page" id="says-host" data-turbo-permanent>${says}</div>` })
   parts.push({ key: 'sheets', html: String(html`${keySheet()}${view === 'desk' ? rowSheet(base) : ''}`) })
   return parts
@@ -973,6 +981,14 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
         const fresh = t.content.firstElementChild, host = document.getElementById('says-host')
         if (fresh?.childNodes.length && host) host.prepend(...fresh.childNodes)
       }
+      if (part && key === 'pad' && part.html !== html && padCanvas(part.html0) === padCanvas(html)) {
+        // The same drawing: the mounted pad stays; only its list of sessions is brought up to date.
+        const t = document.createElement('template')
+        t.innerHTML = html
+        const fresh = t.content.querySelector('#whiteboard-sessions')
+        if (fresh) document.getElementById('whiteboard-sessions')?.replaceWith(fresh)
+        part.html = html
+      }
       if (part && (key === 'says' || part.html === html)) {
         // Kept (toasts always stay across pages, like data-turbo-permanent): moved into place if needed.
         if (part.start !== anchor) for (const n of between(part)) body.insertBefore(n, anchor)
@@ -987,7 +1003,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
       body.insertBefore(start, anchor)
       body.insertBefore(t.content, anchor)
       body.insertBefore(end, anchor)
-      parts.set(key, { html, start, end })
+      parts.set(key, { html, html0: html, start, end })
       anchor = end.nextSibling
     }
   }
@@ -1009,6 +1025,7 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     body.dataset.tBase = ''
     for (const a of [...body.attributes]) if (a.name.startsWith('data-') && !['data-view', 'data-scope', 'data-t-view', 'data-t-base'].includes(a.name)) body.removeAttribute(a.name)
     for (const [, name, value] of String(opts.bodyAttrs ?? '').matchAll(/([\w-]+)="([^"]*)"/g)) body.setAttribute(name, value)
+    padKept = opts.view === 'whiteboard' || (opts.view === 'desk' && padKept)
     paintBody(bodyParts({ ...opts, base: '' }))
     const params = new URLSearchParams(`view=${opts.view}${opts.sidebar === false ? '' : '&bar=1'}${opts.stream ?? ''}`)
     page = { path, client: { view: opts.view, params }, opts }
@@ -1167,7 +1184,18 @@ function createRouter({ board, onPage = () => {}, beforeVisit = () => {}, flush 
     const streams = board.live(page.client)
     if (streams) { forget(streams); renderStreamMessage(streams) }
   }
-  return { visit, refresh, changed, get page() { return page }, paint }
+  /** The Scribble Board under the Desk's sheet, from now on (the corner was touched): mounted once, kept. */
+  function keepPad() {
+    if (padKept || page?.opts.view !== 'desk') return
+    padKept = true
+    paintBody(bodyParts({ ...page.opts, base: '' }))
+  }
+  /** A page's main markup, rendered from the model without going there (the Desk under the Scribble Board's corner). */
+  async function peek(path) {
+    const res = await board.request({ method: 'GET', path, headers: { accept: 'text/html' } })
+    return res.kind === 'page' ? String(res.opts.main) : ''
+  }
+  return { visit, refresh, changed, get page() { return page }, paint, keepPad, peek }
 }
 
 // ---- push ----

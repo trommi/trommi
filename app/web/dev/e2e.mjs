@@ -314,7 +314,7 @@ try {
   await A.until("document.querySelector('#inbox')", 'desk again')
   await sleep(800)
   check(await A.js("return !document.querySelector('#deskpad, #deskpad-pen, #deskpad-clear, #paper-island, .clear-btn')"), 'the Desk has no paper under it, no pen and no wipe button')
-  check(await A.js("return !!document.querySelector('#inbox .curl-grab') && !document.querySelector('#whiteboard-row, #desk-pad')"), 'the Scribble Board is the back of the Desk: its corner')
+  check(await A.js("return !!document.querySelector('.curl-grab') && !document.querySelector('#whiteboard-row, #desk-pad')"), 'the Scribble Board is the back of the Desk: its corner')
   // A stroke on the desk's canvas, sealed through the Whiteboard's openCanvas before it opens (as another device would).
   await A.js(`const { openCanvas, strokeFromWorld, deskCanvas } = await import('/whiteboard.mjs')
     const tl = deskCanvas(trommi.model().desk)
@@ -323,7 +323,7 @@ try {
     c.push([{ id: 'e2e-old-paper', before: null, after: { id: 'e2e-old-paper', pad: tl, type: 'stroke', rotation: 0, z: 1, group: null, author: 'human', rev: 1, blob: null, sent: [], ...k } }])
     for (let i = 0; i < 150 && c.state().pending; i++) await new Promise(r => setTimeout(r, 100))
     return c.state()`).then(st => check(!st.error && !st.pending, `a stroke on the desk's canvas timeline is sealed (${JSON.stringify(st)})`))
-  await A.js("const g = document.querySelector('#inbox .curl-grab'), r = g.getBoundingClientRect(); for (const t of ['pointerdown', 'pointerup']) g.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 1, clientX: r.right - 8, clientY: r.top + 8 }))")
+  await A.js("const g = document.querySelector('.curl-grab'), r = g.getBoundingClientRect(); for (const t of ['pointerdown', 'pointerup']) g.dispatchEvent(new PointerEvent(t, { bubbles: true, pointerId: 1, clientX: r.right - 8, clientY: r.top + 8 }))")
   await A.until("location.pathname === '/scribble-board' && window.pad", 'whiteboard page with the pad')
   const pad = 'window.pad'
   await A.until(`${pad}.elements().length >= 1`, 'the canvas stroke on the Whiteboard').then(() => check(true, 'a stroke of the desk canvas shows on the Whiteboard'), e => check(false, e.message))

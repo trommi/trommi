@@ -3,8 +3,8 @@
 #whiteboard { display: none; }
 body[data-page="whiteboard"] #inbox, body[data-page="whiteboard"] #session { display: none; }
 body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-row: 1; min-width: 0; min-height: 0; position: relative; background: var(--surface); }
-@media (min-width: 861px) { body[data-page="whiteboard"] #whiteboard { margin-top: var(--band); }
-}
+/* (the board's paper reaches the window's top, as the Desk's sheet does: its top tools stand under the band) */
+@media (min-width: 861px) { .pad-top { top: calc(var(--band) + 4px) !important; } }
 
 @media (max-width: 860px) {
   body[data-page="whiteboard"] #whiteboard { grid-column: 1; grid-row: 3; }
