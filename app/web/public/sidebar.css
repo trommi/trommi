@@ -248,7 +248,9 @@ button.agent-badge:active { scale: .95; }
   [data-rail="folded"] .agent-row { justify-content: center; }
   [data-rail="folded"] .agent-entry { flex: none; justify-content: center; width: 60px; padding: 8px 0 !important; }
   [data-rail="folded"] .agent-text { display: none; }
-  [data-rail="folded"] .agent-row > .agent-badge { position: absolute; right: -2px; top: -4px; margin: 0; width: 24px; height: 24px; scale: .85; }
+  /* (the rail shows no counts: only the red hand of a stopped session stands at its drawing's corner) */
+  [data-rail="folded"] .agent-row > .agent-badge { position: absolute; right: 2px; top: -4px; margin: 0; width: 24px; height: 24px; scale: .85; }
+  [data-rail="folded"] .agent-row > .agent-badge[data-state="open"] { display: none; }
   [data-rail="folded"] .agent-row.is-group .agent-entry { min-height: 0; }
   [data-rail="folded"] .agent-row > :is(.agent-cut, .agent-archive) { display: none; }
   [data-rail="folded"] #agents > :not(.agent-row) { display: none; }
@@ -719,6 +721,12 @@ body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-are
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 28px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-sub.is-last { margin-bottom: 20px; }
   :root:not([data-rail="folded"]) #agents .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 4px + 28px); }
+  /* the rail: no bracket; every drawing on the rail's middle line, one step from row to row */
+  html[data-rail="folded"] #agents .crown-bracket { display: none !important; }
+  html[data-rail="folded"] #agents .agent-row { margin: 0 0 6px; }
+  html[data-rail="folded"] #agents .agent-row .agent-entry, html[data-rail="folded"] #agents .agent-row.is-main[data-fold] .agent-entry { width: 48px; min-height: 48px; padding: 0 !important; border-radius: 12px; }
+  html[data-rail="folded"] #agents .agent-row .agent-avatar { width: 30px; height: 30px; }
+  html[data-rail="folded"] #agents .agent-row.is-main[data-fold="shut"] { margin-bottom: calc(var(--n) * 2px + 12px); }
 }
 
 /* ---- The Desk row is the heading of the whole sidebar (his word, 6 October: "zu klein … man sieht nicht, dass das das
