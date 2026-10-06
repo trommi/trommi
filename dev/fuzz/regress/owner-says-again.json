@@ -1,0 +1,16 @@
+{
+ "seed": "owner-says-again",
+ "mode": "hostile",
+ "about": "An answer addressed to the wrong agent is voided by the hub; the hostile hub drops the void flag, the card's owner refuses the answer and says its open card again (F15, one version more than the actions name), then the owner crashes. The card stands at version 2 everywhere and version 2 was sent: no finding. Until 2026-10-06 the safety check took 'sent' from the oracle (which never learns of the forgery) and from the live owner's memory, so it reported 'card #c0 at version 2, only 1 were sent' as soon as the owner was down.",
+ "actions": [
+  { "t": "found", "room": 0 },
+  { "t": "invite_agent", "room": 0, "inviter": "r0:H0", "name": "r0:A0", "_add": "agent" },
+  { "t": "invite_agent", "room": 0, "inviter": "r0:H0", "name": "r0:A1", "_add": "agent" },
+  { "t": "wait", "ms": 1500 },
+  { "t": "card", "room": 0, "agent": "r0:A0", "ref": "#c0", "card_type": "decision", "title": "FZMARK-card0 kiwi", "options": [{ "key": "a", "label": "opt a" }, { "key": "b", "label": "opt b" }], "urgency": "normal", "multi": false },
+  { "t": "forge", "dev": "r0:H0", "what": "foreign_answer", "room": 0, "r": 0 },
+  { "t": "wait", "ms": 500 },
+  { "t": "crash", "dev": "r0:A0", "mid": null, "delay": 5 },
+  { "t": "wait", "ms": 100 }
+ ]
+}

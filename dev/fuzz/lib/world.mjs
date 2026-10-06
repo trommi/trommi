@@ -141,6 +141,11 @@ export class World {
   attach(dev, client) {
     dev.client = client
     dev.id = client.my_device_id
+    // A1: an agent's send waits for a human device to re-key its session after a removal, by default a minute, and is
+    // refused then (stale-session-key). Where no human re-keys (a hostile hub hides the remover's own member entry from
+    // it; the remover lost its network), every send of that agent would take the minute: as long as the limit of one
+    // action, and longer than a quick seed may run. Here it waits 3 s; the refusal is the same.
+    client.rekey_wait_ms = 3000
     client.on('command', c => dev.commands.push({ ...c, card: undefined, permission: undefined, incarnation: dev.incarnation, hash: c.hash }))
     client.on('alert', a => dev.alerts.push(a))
     client.on('error', e => dev.errors.push(String(e?.message ?? e)))

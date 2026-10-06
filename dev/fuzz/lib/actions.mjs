@@ -126,6 +126,7 @@ export class Runner {
     this.flags = { pruned: false }
     this.notes = []                    // oracle caveats
   }
+  staleSessionRefused() { this.known('A1-agent-send-refused-until-rekey', 'an agent\'s send waited for a human device to re-key its session after a removal and was refused (stale-session-key): no human device did it in time. Seen when a hostile hub serves the remover a member list without its own removal (it re-keys only once it has read that entry), or when the remover is offline') }
   known(id, text) {
     // FUZZ_STRICT=1: the masks of findings marked fixed in FINDINGS.md fail the run instead (to see what they still hide)
     if (process.env.FUZZ_STRICT && /^F(3|4|6|7|8|11|12|17|18|19)-/.test(id)) throw new Finding('masked', `${id}: ${text.slice(0, 120)}`)
@@ -157,7 +158,7 @@ export class Runner {
     catch (e) {
       if (e instanceof Finding) throw e
       if (/simulated:|process killed|fenced:/.test(e?.message ?? '')) { w.stats.refused++; return 'refused:net' }
-      if (e?.code && (e.name === 'ZError' || e?.constructor?.name === 'ZError')) { w.stats.refused++; outcome = `refused:${e.code}`; this.lastRefusal = e }
+      if (e?.code && (e.name === 'ZError' || e?.constructor?.name === 'ZError')) { w.stats.refused++; outcome = `refused:${e.code}`; this.lastRefusal = e; if (e.code === 'stale-session-key') this.staleSessionRefused() }
       else throw new Finding('exception', `${a.t}: ${e?.stack ?? e}`, { action: a })
     }
     if (outcome === 'skip') w.stats.skipped++
@@ -627,6 +628,8 @@ export class Runner {
     try { await d.client.hub.postEnvelope(last.bytes) } catch (e) { if (e.status !== 0 && !['replay', 'gap', 'rate-limited', 'wrong-epoch', 'removed-sender', 'offline', 'lease-lost'].includes(e.code)) throw new Finding('invariant', `a duplicate post was answered with ${e.code} (${e.status}); expected success or replay`, { action: a }) }
     return 'ok'
   }
+  /** Hand-written traces only (dev/fuzz/regress): let timers run (a stream's reconnect, a re-send) where a mode does not quiesce. */
+  async do_wait(a) { await sleep(Math.min(Number(a.ms) || 0, 5000)); return 'ok' }
   async do_net(a) { const d = this.dev(a.dev); if (!d) return 'skip'; if (a.lose || a.offline) d.everFaulty = true; d.faults = { delay: a.delay, lose_response: a.lose, offline: a.offline }; return 'ok' }
   async do_drop_streams(a) { const d = this.dev(a.dev); if (!d) return 'skip'; for (const ac of [...d.controllers]) { try { ac.abort(new Error('simulated reset')) } catch {} } return 'ok' }
   async do_hub_restart() {

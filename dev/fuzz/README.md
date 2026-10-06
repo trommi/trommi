@@ -25,12 +25,18 @@ Options: `--mode strict|chaos|hostile` (default: rotate), `--root DIR` (code und
 | oracle | `lib/oracle.mjs` | independent plain model of what every member should see, written from the README rules, not from the reducer |
 | checks | `lib/check.mjs` | oracle equality (strict), convergence of all human devices and of agents on their own objects, timeline contents (loaded through the real paging), removed devices hold nothing newer than the cut, forged/foreign content shown nowhere, commands executed once, hub: no 5xx, derived tables (`objects`, `timelines`) rebuild identically, **no plaintext marker anywhere in the hub's data dir** |
 | forgeries | `lib/forge.mjs` | malicious members with valid signatures: foreign object versions, foreign closes, foreign registers, wrong timelines, answers addressed wrong, agent writes human keys/desks, bit-flipped / garbage / BOM / oversize / stolen envelopes |
-| malicious hub | `lib/adversary.mjs` | man in the middle per device: withhold, reorder, replay, fork (two devices see different histories), bit flips, stale member list; always: the hub's void flag dropped (a refused answer then counts from its header: the accepted H2, its cards alone are left out of the end comparison and the run reports it as known). Checks safety (nothing shown or executed that members did not send, member list never rolls back, tampering raises an alert) and then whether clients recover once the hub is honest again |
+| malicious hub | `lib/adversary.mjs` | man in the middle per device: withhold, reorder, replay, fork (two devices see different histories), bit flips, stale member list; always: the hub's void flag dropped (a refused answer then counts from its header: the accepted H2, its cards alone are left out of the end comparison and the run reports it as known). Checks safety (nothing shown or executed that members did not send: a card never stands at a higher version than its owner has `object_version` envelopes in the hub's own database; member list never rolls back, tampering raises an alert) and then whether clients recover once the hub is honest again |
 | shrinker | `lib/shrink.mjs` | ddmin over the action list; failure signature = kind + normalised message |
-| runner | `run.mjs`, `worker.mjs` | worker threads, rotating seeds, new failures shrunk and written to `failures/<seed>.json`, `FINDINGS.md`, `failures/known.md`; hung workers are terminated and reported |
+| runner | `run.mjs`, `worker.mjs` | worker threads, rotating seeds; worker 0 first replays the hand-kept traces in `regress/` (each was a finding once, in the product or in the harness; a failing one is a failure `regress/<name>: ...`), new failures shrunk and written to `failures/<seed>.json`, `FINDINGS.md`, `failures/known.md`; hung workers are terminated and reported |
 
 Modes: **strict** = one action at a time, quiesce after each, exact oracle comparison. **chaos** = rounds of
 concurrent actions from many devices, convergence and safety checks. **hostile** = strict actions through a malicious hub.
+
+`regress/*.json` are short fixed traces (`{ seed, mode, about, actions }`; the seed picks the attack of a hostile one), replayed
+at the start of every local run, also `--quick`: what random seeds of quick size hardly ever reach is met there every time.
+`{ "t": "wait", "ms": N }` exists for them alone (the generator never writes it): hostile mode does not quiesce, and a stream's
+reconnect or an owner's re-send needs its moment. An agent's wait for a re-key after a removal (`Client.rekey_wait_ms`, a
+minute by default) is 3 s in the fuzz world.
 
 `failures/known.md` lists behaviours the harness already knows and keeps running through (each is also in
 `FINDINGS.md` with its status); a `known` entry is reported once per run, not as a failure.
