@@ -1155,3 +1155,12 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 @media (any-hover: hover) { .desk-walk:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
 .desk-walk:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
 .desk-walk:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+
+/* ---- The pictures of a row have a column of their own (ui.mjs deskRow .inbox-fan): as wide as the fan is, a gap to
+   the answers, never under them; the words beside it give way (they are cut with an ellipsis); where the rows are
+   narrow the fan goes rather than be squeezed. Two named options are plain tiles, their words alone. ---- */
+#inbox .inbox-groups .inbox-row .inbox-content > .inbox-fan { flex: none; width: max-content; min-width: max-content; margin: 0 16px 0 6px; }
+#inbox .inbox-groups .inbox-row .inbox-content > .inbox-text { flex: 1 1 0; min-width: 0; }
+@container rows (max-width: 640px) { #inbox .inbox-groups .inbox-row .inbox-content > .inbox-fan { display: none; } }
+.inbox-answer.is-thumb.is-named > .inbox-disc { display: none; }
+.inbox-groups .inbox-row .inbox-actions .inbox-answer.is-named > span:last-child { font: 700 var(--t-sm)/1.2 var(--display); text-wrap: balance; overflow-wrap: anywhere; }

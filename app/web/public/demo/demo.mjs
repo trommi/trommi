@@ -312,6 +312,7 @@ function filler(f) {
     f.cards.push(card)
     return card
   }
+  mk('The talk under a card: how does it grow together with the card above it?', ui, 2, { files: ['board-desktop.png', 'thema-hell.png'], recommended: 'talk', teaser: 'Two worked-out variants with a long conversation (12 comments), both as a scrollable page to try out before you pick one.', options: [{ key: 'tray', label: 'Shared tray', detail: '' }, { key: 'talk', label: 'Talk inside the card', detail: '' }] })
   mk('Coffee before the next deploy?', zu, 3, { recommended: 'ja', teaser: 'The deploy takes twelve minutes. Time enough for an espresso.' })
   mk('May I run the tests in parallel?', zu, 7, { body: 'Halves the run time, but needs twice the memory.', recommended: 'ja', urgency: 'high' })
   mk('Dark theme as the default?', ui, 9, { files: ['thema-dunkel.png', 'thema-hell.png'] })
