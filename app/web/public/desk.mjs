@@ -26,14 +26,16 @@ function deskCards(model) {
 }
 /** The Desk is clear (sessions there, no question and no info waiting): "Clear". */
 const isClear = model => !model.fresh.length && !(model.reads ?? []).length && model.units.length > 0
-/** The Desk's top: one quiet line that names the list ("Desk · 5 decisions waiting"; at zero a calm word) and, at its
- *  right, the tools for what waits (Rapid fire). On a wide screen the tools stand in the band of the Trommi menu, at
- *  its height, and the line stands alone over the list (desk.css). */
+/** The Desk's top is where one arrives: a greeting in the display face (by the hour of this device; the app knows no
+ *  name of the human, so none is said), under it the desk's name and one quiet sentence on what waits (a calm word at
+ *  none); at the right, on the list's right edge, the tools for what waits (the duck for all, Rapid fire). */
+const hello = () => { const h = new Date().getHours(); return h < 5 ? ['Still', 'up?'] : h < 12 ? ['Good', 'morning.'] : h < 18 ? ['Welcome', 'back.'] : ['Good', 'evening.'] }
 function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
-  const said = n ? html`<span>${n === 1 ? '1 decision' : `${n} decisions`}<em> waiting</em></span>` : html`<span class="is-calm">${sk('tick')}${isClear(model) ? 'all clear' : 'no decision waiting'}</span>`
-  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="desk-tools">${n ? html`${duckAll(model, base)}${nextPlease(model, base)}` : ''}</div><h2 class="desk-line"><b>${model.deskName}</b><i aria-hidden="true">·</i>${said}</h2></header>`
+  const [first, last] = hello()
+  const said = n ? html`<span><b>${n === 1 ? '1 decision' : `${n} decisions`}</b> ${n === 1 ? 'is' : 'are'} waiting for you</span>` : html`<span class="is-calm">${sk('tick')}${isClear(model) ? 'All clear. Nothing waits for you.' : 'No decision waits for you.'}</span>`
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${first} <em>${last}</em></h2><p class="desk-line"><b class="desk-line-name">${model.deskName}</b><i aria-hidden="true">·</i>${said}</p>${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends
@@ -91,15 +93,14 @@ function nextPlease(model, base) {
 // Left of Rapid fire, smaller and quieter: the duck of "I don't give a duck". One press asks, in a small sheet of its
 // own (no browser dialog); "Yes" answers every open decision on this Desk the way the single card's duck does, one
 // answer per card (POST <base>/cards/batch, way "duck": hub.trust per card, one toast whose Undo takes all back).
-// Infos and permission requests are not touched. Not there when no decision is open.
+// Infos and permission requests are not touched (the sheet does not say so: one line and two buttons). Not there when no decision is open.
 function duckAll(model, base) {
   const ids = model.fresh.filter(c => c.kind === 'decision').map(c => c.id), n = ids.length
   if (!n) return ''
   const tip = n === 1 ? 'I don’t give a duck: for the one open decision' : `I don’t give a duck: for all ${n} open decisions`
   return html`<details class="t-pick desk-duck" data-controller="pops"><summary class="desk-duck-open" title="${tip}" aria-label="${tip}">${sk('duck')}</summary>
 <form class="desk-duck-ask" method="post" action="${base}/cards/batch" aria-label="Answer all open decisions"><input type="hidden" name="way" value="duck"><input type="hidden" name="ids" value="${ids.join(',')}">
-<p>Answer ${n === 1 ? 'the 1 open decision' : html`all <b>${n}</b> open decisions`} with “I don’t give a duck”?</p>
-<small>Every agent goes on with its own advice. Infos and permission requests stay.</small>
+<p>Answer ${n === 1 ? 'it' : html`all ${n}`} with “I don’t give a duck”?</p>
 <div class="desk-duck-ways"><button type="submit" class="desk-duck-yes">${sk('duck')}<span>Yes, duck ${n === 1 ? 'it' : 'them all'}</span></button><button type="button" class="desk-duck-no" data-pop-close>Cancel</button></div>
 </form></details>`
 }
@@ -518,7 +519,7 @@ controller('desk', class extends Controller {
         if (!n) continue
         button.querySelector('span').textContent = knocks(n)
         button.setAttribute('aria-label', `${knocks(n)} ${dir === 'up' ? 'above' : 'below'}: go there`)
-        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? 'var(--desk-band, 0px)' : '', bottom: dir === 'down' ? '0px' : '' })
+        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? '0px' : '', bottom: dir === 'down' ? '0px' : '' })
       }
     })
   }
