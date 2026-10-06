@@ -1,5 +1,8 @@
 // worker.mjs: one worker thread: seeds in a loop (rotating mode and size), shrink every new failure, report to run.mjs.
 import { parentPort, workerData } from 'node:worker_threads'
+import fs from 'node:fs'
+import path from 'node:path'
+import { FUZZ_DIR } from './lib/env.mjs'
 import { generate, runActions } from './model.mjs'
 import { shrink, signature } from './lib/shrink.mjs'
 import { makeRng } from './lib/rng.mjs'
@@ -9,6 +12,22 @@ const seen = new Set(seenInit)
 const send = m => parentPort.postMessage({ worker: id, ...m })
 let n = 0
 parentPort.on('message', m => { if (m.type === 'seen') seen.add(m.sig) })
+// Worker 0 first replays the hand-kept traces of dev/fuzz/regress (local hub only): each was a finding once, in the
+// product or in the harness, and must stay clean. They are short and fixed, so the quick run (the deploy gate) meets
+// what random seeds of its size hardly ever reach.
+if (id === 0 && !remote) {
+  const dir = path.join(FUZZ_DIR, 'regress')
+  for (const file of fs.existsSync(dir) ? fs.readdirSync(dir).filter(f => f.endsWith('.json')).sort() : []) {
+    const t = JSON.parse(fs.readFileSync(path.join(dir, file), 'utf8'))
+    const seed = `regress/${file.replace(/\.json$/, '')}`
+    send({ type: 'start', seed, mode: t.mode, steps: t.actions.length })
+    let res
+    try { res = await runActions(t.actions, { seed: t.seed, mode: t.mode, root, port: 0 }) }
+    catch (e) { send({ type: 'crash', seed, error: String(e?.stack ?? e) }); continue }
+    send({ type: 'done', commit: res.commit, seed, mode: t.mode, steps: t.actions.length, ok: res.ok, stats: res.stats, known: res.known, finding: res.finding })
+    if (!res.ok) send({ type: 'failure', repro: null, commit: res.commit, seed, mode: t.mode, sig: `${seed}: ${signature(res.finding)}`, finding: res.finding, trace: res.trace.slice(-25), actions: t.actions, shrunk: null })
+  }
+}
 while (Date.now() < until) {
   const seed = `${baseSeed}-w${id}-${n++}`
   const rng = makeRng(seed)

@@ -345,6 +345,23 @@ export function checkPlaintext(w) {
 }
 
 // ---- safety under a malicious hub: nothing shown or executed that members did not really send ----------------------
+/**
+ * How many versions of each object each device really sent: the envelopes of kind object_version in the hub's database.
+ * The man in the middle sits between the hub and the clients and writes nothing there, and a version counts one up from
+ * the one before, so no device may show a higher version than its owner has rows. A row the hub voided names no object
+ * any more (the clients may still be handed it without its flag): it counts for every object of its sender.
+ */
+function versionsSent(runner) {
+  const db = runner.w.hub?.db
+  if (!db) return null
+  const hex = b => Buffer.from(b).toString('hex')
+  const by = new Map(), voided = new Map()
+  for (const r of db.prepare(`SELECT sender_device_id AS s, object_id AS o, COUNT(*) AS n FROM envelopes WHERE envelope_kind = ${runner.w.t.codec.KIND.object_version} GROUP BY sender_device_id, object_id`).all()) {
+    if (r.o == null) voided.set(hex(r.s), (voided.get(hex(r.s)) ?? 0) + Number(r.n)); else by.set(`${hex(r.s)}/${r.o}`, Number(r.n))
+  }
+  return { by, voided }
+}
+
 export async function checkSafety(runner, { deep = false } = {}) {
   const m = maps(runner), out = []
   for (const room of runner.w.rooms) {
@@ -352,12 +369,20 @@ export async function checkSafety(runner, { deep = false } = {}) {
     for (const d of room.devs.values()) {
       if (!d.client || d.dead) continue
       const rf = id => m.idToRef.get(id)
+      // read here, in one go with this device's cards (nothing awaits in between): the deep check below awaits, and a
+      // version that reached the hub meanwhile would be on the next device's screen and not in an older reading
+      const log = versionsSent(runner)
+      const sentOf = (owner, id) => !log ? Infinity : (log.by.get(`${owner}/${id}`) ?? 0) + (log.voided.get(owner) ?? 0)
       for (const [id, c] of d.client.model.cards) {
         const ref = rf(id), oc = ref && O.cards.get(ref)
         if (!oc) { if (!ref || !O.cards.has(ref)) { out.push(`${d.name} shows a card nobody created: ${id.slice(0, 8)} "${String(c.title).slice(0, 40)}"`); } continue }
         if (c.title && !oc.titles.has(c.title)) out.push(`${d.name}: card ${ref} shows a title no version ever had: ${c.title.slice(0, 50)}`)
-        // the owner agent may send versions on its own (F15: it re-asserts an open card after refusing an answer)
-        const sent = Math.max(oc.v, room.devs.get(oc.agent)?.client?.localHeads?.get(id)?.object_version ?? 0)
+        // What the owner sent is read from the hub's own log, not from the oracle and not from the owner's memory: the owner
+        // sends versions no action names (F15: it says an open card again after refusing an answer, also one the oracle
+        // never learns of: a forged one, one whose void flag the hostile hub dropped, one that crossed a revision), and a
+        // crashed owner has no memory to ask.
+        // The owner itself may be ahead of the hub by what it signed and still holds in its outbox.
+        const sent = Math.max(sentOf(room.devs.get(oc.agent)?.id, id), d.name === oc.agent ? d.client.localHeads.get(id)?.object_version ?? 0 : 0)
         if (c.object_version > sent) out.push(`${d.name}: card ${ref} at version ${c.object_version}, only ${sent} were sent`)
         if (c.answer && !O.attempts.has(ref)) out.push(`${d.name}: card ${ref} shows an answer nobody gave`)
       }
