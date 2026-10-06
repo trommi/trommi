@@ -1072,9 +1072,9 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 .sel-bar button { min-height: 48px; padding: 0 12px; border-radius: 8px; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }
 .sel-bar button:hover, .sel-bar button:focus-visible { background: var(--sunken); }
 .sel-bar .sketch { width: 20px; height: 20px; }
-.sel-bar .sel-later svg { width: 15px; height: 30px; margin: -6px 0 -2px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: transform 300ms cubic-bezier(.34, 1.56, .64, 1); }
+.sel-bar .sel-later svg { width: 21px; height: 40px; margin: -8px 0 -4px; overflow: visible; fill: none; stroke: var(--stamp-ink-later); stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; transform-origin: 50% 0; transition: transform 300ms cubic-bezier(.34, 1.56, .64, 1); }
 .sel-bar .sel-later .tag-paper { fill: var(--surface); }
-.sel-bar .sel-later .tag-lines { opacity: .55; }
+.sel-bar .sel-later .tag-z { stroke: var(--fg); }
 .sel-bar .sel-later:hover svg { transform: rotate(5deg) translateY(2px); }
 .sel-bar .sel-shred { color: color-mix(in srgb, var(--urg-critical) 75%, var(--fg)); }
 .sel-bar .sel-clear { width: 44px; padding: 0; opacity: .7; }
