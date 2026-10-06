@@ -1,7 +1,7 @@
 // The sidebar (#agents): one row per session, a main with its subs under it, and the floating Desk's state.
 // The markup is the one app.css and sidebar.css style (the old client built it in js/agents.js).
 import { BASE, crownOf, renderStreamMessage, stream } from './app.mjs'
-import { BELL, Controller, PLUS, avatar, badge, controller, crownSvg, edgeQuirk, html, raw, sk, sketchSvg, toast } from './ui.mjs'
+import { BELL, Controller, PLUS, avatar, badge, controller, crownSvg, edgeQuirk, el, html, raw, sk, sketchSvg, toast } from './ui.mjs'
 const EDGES = 7   // more subs than this lie in a folded stack without an edge of their own
 
 function row(u, base, current) {
@@ -272,22 +272,23 @@ const deskMark = lit => raw(lit ? sketchSvg('desk', 'menu-lamp is-lit').replace(
 function menuDeskRows(model, base) {
   const desks = desksOf(model)
   const here = d => (model.desk ? d.id === model.desk : d === desks[0])
-  return html`<span class="menu-desk-rows" id="menu-desk-rows">${desks.map((d, i) => html`<a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b><i${d.knocks && i ? raw(' class="is-knock"') : ''}>${d.open} open</i>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a>`)}</span>`
+  // (a row: the link to the desk, and beside it the pencil that renames it: menu#rename puts a field in the name's place)
+  return html`<span class="menu-desk-rows" id="menu-desk-rows">${desks.map((d, i) => html`<span class="menu-desk-row" data-desk="${d.id}"><a role="menuitemradio" class="menu-desk" data-nav draggable="false" href="${base}/?desk=${d.id}" data-desk="${d.id}" aria-checked="${String(here(d))}">${deskMark(d.open > 0)}<b>${d.name}</b>${i < 9 ? html`<kbd>${i + 1}</kbd>` : ''}</a><button type="button" class="menu-desk-pen" data-action="click->menu#rename" data-menu-id-param="${d.id}" title="Rename ${d.name}" aria-label="Rename the desk ${d.name}">${sk('pen')}</button></span>`)}</span>`
 }
 
 /** The menu: <nav id="brand-doors">, hidden until the pill or the Desk box's caret is pressed (or Ctrl K).
  *  Three calm groups: the desks, each a row with the desk drawing (lamp lit while something waits there; the desk in
  *  view is the marked row), the Demo as one more desk, and a quiet "New desk" (a line to name it, Enter makes it);
- *  places (Agents & devices, Help, Keys); this device (Push, Log out, and the theme as a small sun/moon beside Log out).
+ *  places (Agents & devices, Help, Keys; Media is the pile on the Desk); this device (Push, Log out, and the theme as a small sun/moon beside Log out).
  *  The connection is not said here: a lost one is a dot on the pill (app.mjs). */
 function menuDoors(model, base) {
   return html`<nav class="sidedoors" id="brand-doors" role="menu" aria-label="Desks, places and settings" data-controller="menu" data-menu-desk-value="${base}/" data-action="keydown->menu#walk click->menu#chosen" hidden>
 <div class="menu-desks" id="menu-desks">${menuDeskRows(model, base)}
-<a role="menuitem" class="menu-desk is-demo" href="${base}/?mock=1" data-turbo="false" draggable="false" id="dev-mock" title="The demo: a made-up room, nothing is kept">${deskMark(false)}<b>Demo</b><i>sample room</i></a>
+<a role="menuitem" class="menu-desk is-demo" href="${base}/?mock=1" data-turbo="false" draggable="false" id="dev-mock" title="The demo: a made-up room, nothing is kept">${deskMark(false)}<b>Demo</b></a>
 <button type="button" role="menuitem" class="menu-desk-add" id="desk-add" data-action="click->menu#newDesk" aria-label="New desk">${NEW_DESK}<span>New desk</span></button>
 <form class="menu-desk-form" id="desk-new" data-menu-target="deskForm" data-action="submit->menu#makeDesk" hidden><input class="menu-desk-field" data-menu-target="deskName" data-action="keydown->menu#deskKey" maxlength="40" placeholder="Name of the new desk" aria-label="Name of the new desk" autocomplete="off"><button type="submit">Make</button></form>
 <p class="menu-desk-error" data-menu-target="deskError" role="alert"></p></div>
-<div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents and devices: the sessions, and who is in the room">${sk('heads')}<span>Agents &amp; devices</span></a><a role="menuitem" href="${base}/assets" data-nav draggable="false" id="menu-assets" title="Media: everything your agents sent">${sk('picture')}<span>Media</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
+<div class="menu-grid"><a role="menuitem" href="${base}/agents" data-nav draggable="false" id="menu-agents" title="Agents and devices: the sessions, and who is in the room">${sk('heads')}<span>Agents &amp; devices</span></a><a role="menuitem" href="/help.html">${sk('page')}<span>Help</span></a><button role="menuitem" type="button" id="keys-open" data-action="click->menu#keys" aria-haspopup="dialog" aria-keyshortcuts="?">${sk('keycap')}<span>Keys</span></button></div>
 <div class="menu-foot"><button role="menuitemcheckbox" type="button" id="push-toggle" aria-checked="false" aria-label="Push on this device">${sk('bell')}</button></div>
 <div class="menu-leave"><a role="menuitem" href="${base}/logout" data-nav draggable="false" id="menu-logout" class="menu-logout" title="Log out of this device">${LEAVE}<span>Log out</span></a><button role="menuitemcheckbox" type="button" id="theme-toggle" class="menu-theme" aria-label="Light or dark (T)" title="Light or dark (T)">${raw(sketchSvg('moon', 'ico-moon'))}${raw(sketchSvg('sun', 'ico-sun'))}</button></div>
 </nav>`
@@ -407,6 +408,34 @@ controller('menu', class extends Controller {
         go(`${home}?desk=main`)
       } })
     } catch { this.deskErrorTarget.textContent = 'Not made: the board did not answer.' }
+  }
+  // ---- rename a desk: the pencil puts a field where the name is; Enter saves (POST /desk { id, name }), Escape leaves it ----
+  rename({ params: { id } }) {
+    const row = this.element.querySelector(`.menu-desk-row[data-desk="${CSS.escape(id)}"]`), was = row?.querySelector('b')?.textContent ?? ''
+    if (!row || row.querySelector('.menu-desk-rename')) return
+    const form = el('form', 'menu-desk-rename'), field = Object.assign(el('input', 'menu-desk-field'), { maxLength: 40, autocomplete: 'off', enterKeyHint: 'done', ariaLabel: `New name of the desk ${was}` })
+    field.value = was
+    form.append(field)
+    row.classList.add('is-renaming'); row.append(form)
+    // (the live stream leaves the rows alone while a name is being written)
+    const hold = e => { if (e.target?.getAttribute?.('target') === 'menu-desk-rows') e.preventDefault() }
+    document.addEventListener('turbo:before-stream-render', hold)
+    const done = () => { document.removeEventListener('turbo:before-stream-render', hold); form.remove(); row.classList.remove('is-renaming') }
+    field.addEventListener('keydown', e => { e.stopPropagation(); if (e.key === 'Escape') { e.preventDefault(); done(); row.querySelector('.menu-desk-pen')?.focus() } })
+    field.addEventListener('blur', () => setTimeout(() => { if (form.isConnected && !form.contains(document.activeElement)) done() }, 0))
+    form.addEventListener('submit', async e => {
+      e.preventDefault()
+      const name = field.value.trim().slice(0, 40)
+      if (!name || name === was) return done()
+      try {
+        const res = await fetch('/desk', { method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id, name }) })
+        if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || res.statusText)
+        row.querySelector('b').textContent = name
+        if (row.querySelector('.menu-desk[aria-checked="true"]')) for (const n of document.querySelectorAll('.topbar .desk-name')) n.textContent = name   // (the sidebar's heading is the desk in view)
+        done()
+      } catch (err) { done(); toast({ head: 'Not renamed', line: err.message || 'the board did not answer', role: 'alert' }) }
+    })
+    field.focus(); field.select()
   }
   keys() { this.close(); document.dispatchEvent(new CustomEvent('trommi:keys')) }
 })
