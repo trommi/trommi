@@ -82,7 +82,7 @@ export class RoomOracle {
   decideAgain(ref) {
     const c = this.cards.get(ref)
     if (!c || !c.answer) return false
-    if (c.state === 'closed' && c.closed_how !== 'read' && c.closed_how !== 'shredded') return false
+    if (c.state === 'closed' && ['closed', 'withdrawn', 'merged'].includes(c.closed_how)) return false   // what its agent closed stays closed
     c.answer = null; c.state = 'open'; c.closed_how = null
     return true
   }
