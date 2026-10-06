@@ -699,7 +699,8 @@ a.agent-badge { text-decoration: none; }
    carried, a small sticky with its words follows the pointer and the corner's one fades. */
 body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cursor: grab; touch-action: none; }
 .corner-note-box.is-parking .corner-note-ico { opacity: .3; }
-.corner-note-ghost { position: fixed; z-index: 60; width: 200px; max-height: 160px; overflow: hidden; box-sizing: border-box; padding: 12px 14px; translate: -50% -50%; rotate: -2deg; border-radius: 3px; background: #f7de6c; color: #2d2406; box-shadow: inset 0 0 0 1px rgb(120 95 20 / .3), 0 10px 22px rgb(20 30 25 / .28); font: 500 var(--t-sm)/1.4 var(--font); white-space: pre-wrap; overflow-wrap: anywhere; pointer-events: none; cursor: grabbing; }
+.corner-note-ghost.msg-note { position: fixed; z-index: 60; width: 240px; max-height: 200px; translate: -50% -50%; rotate: -2deg; box-shadow: 0 10px 22px rgb(20 30 25 / .28); pointer-events: none; }
+.corner-note-ghost p { max-height: 170px; overflow: hidden; overflow-wrap: anywhere; }
 .corner-note-box.is-open .corner-note-body { width: min(320px, calc(100vw - 32px)); padding: 12px 12px 8px; }
 .corner-note-field { max-height: 50vh; }
 :root[data-theme="dark"] .corner-note-body { background: #d9c35f; }
