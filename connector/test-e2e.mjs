@@ -606,6 +606,56 @@ export async function integration({ test, tmp }) {
       assert.ok(!card?.title, 'the earlier card was readable without history')
     })
 
+    // "Copy invite link again": a connector that joins with a session's own link continues that session.
+    await test('e2e: continue a session: a second connector joins with the session\'s link, holds its cards and its helper session; the first one says it is retired', async () => {
+      const continueWith = async folder => {
+        const dir = path.join(tmp, folder)
+        fs.mkdirSync(dir, { recursive: true })
+        const invite = await human.createInvite({ device_role: 'agent', session_id, takeover: true })
+        const next = await startConnector({ env: { ...env, TROMMI_FOLDER: dir, TROMMI_INVITE: invite.link }, cwd: dir })
+        // The connector prints the check code in its terminal; the human picks it in the app.
+        const code = await until('the check code in the terminal', () => /check code (\d{3}) (\d{3})/.exec(next.stderr()))
+        await until('the app waits for the code', () => human.model.invites.get(invite.invite_id).invite_state === 'confirm_code')
+        assert.equal(human.model.sessions.get(session_id).agent_device_ids.includes(human.model.invites.get(invite.invite_id).newcomer.device_id), false, 'nothing is granted before the code')
+        await human.confirmInvite(invite.invite_id, code[1] + code[2])
+        await next.ready().catch(e => { throw new Error(`${e.message}\n${next.stderr()}`) })
+        return next
+      }
+      const first = await continueWith('heir-cont-first')
+      const card = (await first.call('create_decision', { title: 'Carry on?', options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }] })).match(/card ([0-9a-f]{32})/)[1]
+      await first.call('open_session', { name: 'Design', task: 'draws' })
+      const helperCard = (await first.call('create_decision', { title: 'Blue or green?', options: [{ key: 'b', label: 'Blue' }, { key: 'g', label: 'Green' }], session: 'Design' })).match(/card ([0-9a-f]{32})/)[1]
+      await until('the cards at the human', () => human.model.cards.get(card)?.title && human.model.cards.get(helperCard)?.title)
+      const child = human.model.cards.get(helperCard).session_id
+      assert.notEqual(child, session_id)
+      const sessionsBefore = human.model.sessions.size
+
+      const second = await continueWith('heir-cont-second')
+      // The first connector still runs: it is told once, plainly, and its tools say the same.
+      const told = await first.next(e => e.method === 'notifications/claude/channel' && e.params.meta?.retired === '1', 'the retired notice')
+      assert.match(told.params.content, /retired/); assert.match(told.params.content, /another connector continue/)
+      await assert.rejects(first.call('list_cards'), /retired: the human let another connector continue/)
+      await first.close()
+      // The second one is the same session: its cards (also the helper's) are its own to list, revise and close.
+      const s = human.model.sessions.get(session_id)
+      assert.equal(s.agent_device_ids.length, 1)
+      assert.equal(human.model.sessions.get(child).agent_device_ids[0], s.agent_device_ids[0], 'the helper session went with it')
+      const listed = await until('its cards', async () => { const l = JSON.parse(await second.call('list_cards')); return l.some(c => c.id === card) && l.some(c => c.id === helperCard) && l })
+      assert.equal(listed.find(c => c.id === card).status, 'open')
+      await second.call('revise_card', { card_id: card, title: 'Carry on with the second?' })
+      await until('the revision at the human', () => human.model.cards.get(card)?.title === 'Carry on with the second?')
+      await human.answer({ object_id: card, choices: ['y'] })
+      const ev = await second.next(chEvent('decision', card), 'the answer at the second connector')
+      assert.equal(ev.params.meta.choice, 'y')
+      await second.call('close_card', { card_id: card, summary: 'carried on' })
+      await until('closed at the human', () => human.model.cards.get(card)?.object_state === 'closed')
+      // It writes into the helper session it found again by name: no second "Design".
+      await second.call('reply', { text: 'the helper is back', session: 'Design' })
+      await until('the helper\'s line in its old session', () => [...(human.model.timelines.get(`chat:session/${child}`)?.items.values() ?? [])].some(i => i.content?.text === 'the helper is back'))
+      assert.equal(human.model.sessions.size, sessionsBefore, 'no new session on the board')
+      await second.close()
+    })
+
     await test('e2e: lease-lost: another process takes over the key; the connector exits without posting', async () => {
       const room = path.join(keys, human.model.room.room_id)
       const slot = fs.readdirSync(room).find(f => /-1\.key$/.test(f) && !f.includes('heir'))

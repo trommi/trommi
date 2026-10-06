@@ -518,7 +518,17 @@ test('removal: tokens revoked, streams closed at once, new epoch keys for who st
   await refused(w, 'GET', `${R(w)}/envelopes`, { token: w.laptop.token }, 401, 'unauthorised')
   const { challenge } = await ok(w, 'POST', `${R(w)}/challenge`)
   const signed = await z.signHubAuth({ device: w.laptop.device, roomId: z.unhex(w.roomId), hub: w.hubUrl, challenge: unb64u(challenge) })
-  await refused(w, 'POST', `${R(w)}/access_tokens`, { body: { signed_challenge: b64u(signed) } }, 403, 'not-member')
+  // The refusal of a removed device that proved its key carries the signed entries up to its removal (and no further),
+  // so it checks the removal itself; a challenge signed by nobody gets none.
+  const gone = await refused(w, 'POST', `${R(w)}/access_tokens`, { body: { signed_challenge: b64u(signed) } }, 403, 'not-member')
+  assert.equal(gone.json.signed_entries.length, out.entry_number + 1)
+  const after = await z.applyEntry(w.laptop.state, unb64u(gone.json.signed_entries.at(-1)))
+  assert.equal(z.memberAt(after, w.laptop.device.id), null, 'the last entry is the one that removed it')
+  const { challenge: c2 } = await ok(w, 'POST', `${R(w)}/challenge`)
+  const forged = await z.signHubAuth({ device: w.laptop.device, roomId: z.unhex(w.roomId), hub: w.hubUrl, challenge: unb64u(c2) })
+  forged[forged.length - 1] ^= 1
+  const bad = await api(w, 'POST', `${R(w)}/access_tokens`, { body: { signed_challenge: b64u(forged) } })
+  assert.ok(bad.status >= 400 && !bad.json.signed_entries, 'no entries without the removed device\'s signature')
   const late = await seal(w.laptop)
   await refused(w, 'POST', `${R(w)}/envelopes`, { token: w.laptop.token, body: { envelope: b64u(late.bytes) } }, 401, 'unauthorised')
   const s = await openStream(w, w.laptop); assert.equal(s.status, 401)
