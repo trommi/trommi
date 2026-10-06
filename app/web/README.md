@@ -88,6 +88,11 @@ instead); files come network first, the cache only offline. On the dev server (`
 - **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
   are) and Media (a pile of the newest pictures; the gallery at `/assets`).
 - **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (`sidebar.mjs` `cornerNote`).
+- **Sidebar:** the Desk box, the sessions (a main with its helpers on a pen bracket, tallies, the red hand), "New agent" and
+  the Trommi menu at its foot. One sidebar, two presentations (`sidebar.css` "A phone"): beside the page on a wide
+  screen (foldable to a rail), a drawer up to 860px. There a slim top line holds the handle (three pen lines, a red dot
+  while something knocks) and the name of the place in view (`sidebar.mjs` `phoneBar`); the handle or a finger from the
+  left edge slides the drawer in over the dimmed page, a tap beside it, a push back, Esc or a choice closes it.
 
 ## The Scribble Board
 
