@@ -320,13 +320,13 @@ const revisionsOf = c => (c?.versions ?? []).filter(v => v.object_version === 1 
 /** How the core addresses a session for a send: { session_id } (v1.1) or { agent_device_id } (the mock, v1). */
 export const addressOf = (model, key) => (model.sessions.get(key)?.session_id ? { session_id: key } : { agent_device_id: key })
 // The parent a session names (profile.parent_session), as core model.parentSessionOf rules: a child session an agent
-// opened itself counts only under a session that agent is assigned to; any other claim as before (display only).
+// opened itself counts only under a session that agent (or the agent a human handed the child to) is assigned to; any other claim as before (display only).
 function parentClaim(m, s) {
   const want = s.profile?.parent_session
   if (!want || typeof want !== 'string') return null
   if (!s.created_by_agent) return want
   const parent = m.sessions.get(want)
-  return parent && parent !== s && (parent.agent_device_ids ?? []).includes(s.creator_device_id) ? want : null
+  return parent && parent !== s && (parent.agent_device_ids ?? []).some(a => a === s.creator_device_id || (s.agent_device_ids ?? []).includes(a)) ? want : null
 }
 const agentIdOf = s => (s.agent_session_id && !/^[0-9a-f]{12,}$/.test(s.agent_session_id) ? s.agent_session_id : sessionKey(s).slice(0, SESSION_ID_LEN))
 

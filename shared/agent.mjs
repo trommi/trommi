@@ -83,11 +83,14 @@ const agentMethods = {
     return r.object_id
   },
 
+  /** Whether this agent holds the object (a card, a published page): it created it, or it continues the session it is in. */
+  holds(obj) { return !!obj && M.holderOf(this.model, obj) === this.my_device_id },
+
   _ownOpen(object_id) {
     const head = this._head(object_id)
     if (!head || head.content.object_type !== 'card') throw new ZError('not-found', `no own card ${object_id}`)
     const card = this.model.cards.get(object_id)
-    if (card && card.agent_device_id !== this.my_device_id) throw new ZError('forbidden', 'not this agent\'s card')
+    if (card && M.holderOf(this.model, card) !== this.my_device_id) throw new ZError('forbidden', 'not this agent\'s card')
     return head
   },
   /** F1: an own card is open only if neither the last sent version nor the room (a human's answer, read, shred) closed it. */
@@ -179,8 +182,8 @@ const agentMethods = {
     await this.setStatus({ profile: { ...profile, parent_session: parent, is_main: false } }, { session_id: sid })
     return sid
   },
-  /** The child sessions this agent opened itself (and still holds). */
-  childSessionIds() { return this.session_ids.filter(sid => this.sessionKeys.get(sid)?.state.creatorId === this.my_device_id) },
+  /** The child sessions this agent holds: the ones it opened itself, and the ones of a session it continues. */
+  childSessionIds() { return this.session_ids.filter(sid => this.sessionKeys.get(sid)?.state.createdByAgent) },
 
   async requestPermission({ tool_name, description = '', input_preview = '', expires_in_ms = 10 * 60_000, session_id = null }) {
     this._needAgent()
