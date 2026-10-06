@@ -90,7 +90,6 @@ ${whiteboardSessions(model)}
       <button type="button" class="pad-icon-btn pad-tool" data-tool="hl" data-icon="hl" aria-label="Highlighter; again: colour and width" aria-haspopup="true" aria-expanded="false" data-tip="Highlighter · H · again: colour"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="eraser" data-icon="eraser" aria-label="Eraser" data-tip="Eraser · E"></button>
       <button type="button" class="pad-icon-btn pad-tool" data-tool="text" data-icon="text" aria-label="Text: click on the paper and type" data-tip="Text · T"></button>
-      <button type="button" class="pad-icon-btn pad-tool" data-tool="area" data-icon="area" aria-label="Send an area to a session" data-tip="Send area · A"></button>
       <div class="pad-style" id="style" hidden>
         <div class="pad-style-row"><span class="pad-label">Colour</span><div class="pad-swatches" id="swatches" role="group" aria-label="Colour"></div></div>
         <div class="pad-style-row"><span class="pad-label">Width</span><div class="pad-widths" id="widths" role="group" aria-label="Width"></div></div>
@@ -98,6 +97,9 @@ ${whiteboardSessions(model)}
       <span class="pad-sep"></span>
       <button type="button" class="pad-icon-btn" id="image" data-icon="clip" aria-label="Attach a picture" data-tip="Attach a picture · I"></button>
     </div>
+    <!-- not a tool of the board: what takes something out of it. Scissors along a dashed line round a letter
+         (the note's envelope, notes.css): cut out an area and send it to an agent. -->
+    <button type="button" class="pad-tool pad-cut" data-tool="area" aria-label="Cut out and send to an agent" data-tip="Cut out and send to an agent · A"><svg viewBox="0 -9 76 56" aria-hidden="true"><path class="cut-line" d="M17 4.2 Q44 3.4 71.4 4 Q72.2 23 71.6 42 Q44 42.8 17.4 42.2 Q16.6 23 17 4.2"/><g class="cut-letter"><path class="cut-paper" d="M24 11.4 L64.6 10.8 L65 35.4 L24.4 36 Z"/><path d="M24 11.4 Q44 10.6 64.6 10.8 Q65.2 23 65 35.4 Q44 36.2 24.4 36 Q23.6 23 24 11.4"/><path d="M24.4 12 Q34.6 20.6 44.2 25 Q54.4 20 64.4 11.4"/></g><g class="cut-scissors" transform="translate(-1 -8.4)"><path d="M21.4 5.2 Q16.6 9.6 11.4 13.6 Q9.8 15 8.6 16.2 Q7 15.6 5.6 16 Q3.8 16.8 3.8 18.4 Q3.8 20.4 5 21 Q6.6 21.6 7.8 21.2 Q9.2 20.4 9.2 18.8 Q9 17.4 8.2 16.6"/><path d="M21.8 19.6 Q16.4 14.8 11.6 10.6 Q10 9.2 8.8 8 Q7.2 8.6 5.8 8.4 Q4 7.8 3.6 6.2 Q3.6 4.2 4.6 3.4 Q6.2 2.6 7.6 3 Q9.2 3.8 9.2 5.4 Q9 6.8 8.4 7.8"/></g></svg></button>
   </div>
   <input class="pad-file" id="file" type="file" accept="image/*" multiple tabindex="-1" aria-hidden="true">
 
@@ -980,7 +982,6 @@ function mountPad(main, { canvasId: PAD, client }) {
   // ── icons ───────────────────────────────────────────────────────────────────
   const ICONS = {
     // a frame cut along a dashed line, and where it goes
-    area: ['M4 8.5V6.200A2.200 2.200 0 016.200 4H8.500', 'M12 4h3', 'M18.500 4.300A2.200 2.200 0 0120 6.200V8.500', 'M4 12v3', 'M4 18.200A2.200 2.200 0 006.200 20H8.500', 'M12.500 20.500l7-7', 'M14.500 13.500h5v5'],
     more: ['M6 9l6 6 6-6'],
     select: ['M5 3.5l13.5 6.6-5.7 1.9-2 5.7z', 'M13.5 13.5l5 5'],
     pen: ['M4 20l1.2-4.4L16.6 4.2a2 2 0 012.9 0l.3.3a2 2 0 010 2.9L8.4 18.8z', 'M14.5 6.5l3 3'],
@@ -1934,7 +1935,7 @@ function mountPad(main, { canvasId: PAD, client }) {
   $('group').addEventListener('click', () => toggleGroup())
   $('delete').addEventListener('click', () => remove(selected()))
   for (const b of main.querySelectorAll('.pad-tool')) {
-    b.addEventListener('click', () => { if (tool === b.dataset.tool && (tool === 'pen' || tool === 'hl')) toggleStyle(); else setTool(b.dataset.tool) })
+    b.addEventListener('click', () => { if (tool === b.dataset.tool && (tool === 'pen' || tool === 'hl')) toggleStyle(); else if (tool === 'area' && b.dataset.tool === 'area') setTool(toolBefore); else setTool(b.dataset.tool) })   // (the scissors again: out of cutting)
   }
   function setTheme(next) {
     if (next === dark()) return
