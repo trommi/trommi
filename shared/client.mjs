@@ -1630,7 +1630,7 @@ export class Client {
     const answered_at = Date.now()
     return this._send({ kind: codec.KIND.answer, content, bind, recipient: card.agent_device_id, session_id: card.session_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
       echo: this._echoAnswer(object_id, { answer_action, choices, note: note ?? null, option_notes: option_notes ?? {}, attachments: attachments ?? [], marks: marks ?? [], trusted: !!trusted,
-        bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: null, envelope_hash: null, by_device_id: this.my_device_id, answered_at, taken_back_at: null }, state) })
+        bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: null, envelope_hash: null, by_device_id: this.my_device_id, answered_at, taken_back_at: null, taken_back_sent_at: null }, state) })
   }
   trust({ object_id, note }) {
     const card = this._card(object_id)
