@@ -2577,9 +2577,9 @@ ${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options
 
 const knockAttr = card => (isKnock(card) ? raw(' data-knock') : '')
 /** One open question as a row. from: the session that asked. error: what went wrong with the last answer. */
-// The pull-tag of Later: a paper tag on its string, the three Zs of sleep drawn down it (small at the hole, growing). The drawing of Later in sideWays
+// The pull-tag of Later: a paper tag on its string, the three Zs of sleep drawn down it (small at the hole, growing; a clear gap under the hole, as much under the last Z). The drawing of Later in sideWays
 // below (the Desk's selection bar, with the word; under a card and beside a large picture, the tag alone).
-export const LATER_TAG = raw('<svg viewBox="0 0 44 84" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M6 28 L38 27 L40 76 C40 80 37 82 34 82 L10 82.5 C7 82.5 4.6 80 4.8 77 Z" class="tag-paper"/><circle cx="22" cy="34.5" r="3"/><g class="tag-z"><path d="M21.5 42.2 L27.4 42 L21.7 48.6 L27.8 48.3" stroke-width="2.2"/><path d="M14.6 52 L22.6 51.7 L14.9 60.6 L23.2 60.2" stroke-width="2.6"/><path d="M18.4 64.2 L30.2 63.8 L18.8 76.4 L30.8 75.9" stroke-width="3.1"/></g></svg>')
+export const LATER_TAG = raw('<svg viewBox="0 0 44 92" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M6 28 L38 27 L40 84 C40 88 37 90 34 90 L10 90.5 C7 90.5 4.6 88 4.8 85 Z" class="tag-paper"/><circle cx="22" cy="34.5" r="3"/><g class="tag-z"><path d="M21.6 48.4 L26.9 48.2 L21.8 54.1 L27.3 53.9" stroke-width="2.1"/><path d="M15.4 57.2 L22.6 56.9 L15.7 64.9 L23.2 64.6" stroke-width="2.4"/><path d="M18.8 68.2 L29.5 67.8 L19.2 79.2 L30 78.7" stroke-width="2.9"/></g></svg>')
 /** The ways to put cards aside without answering them: Later, Duck it, Shred, in this order, with these drawings and
  *  names. One set for the Desk's selection bar (many cards) and a card's own page (this one): buttons of a form that
  *  posts to <base>/cards/batch with the ids (desk.mjs). later, duck, shred: which of them apply; between: what stands
