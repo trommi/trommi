@@ -365,8 +365,8 @@ const SNOOZE_Z = [
 const DUCK_BODY = [
   ['line', 'M11 25 C4.6 27 2.4 32.6 5.4 37.2 C9 40.6 34 40.6 37.6 37.2 C40.6 32.6 38.6 27.4 32.6 25.6'],
   ['open', 'M10 31.4 C13.6 35.6 20 35.6 23.6 32'],
-  ['thin', 'M0.4 38.8 C1.8 38 3 39.2 4.4 38.6'],
-  ['thin', 'M39 38.6 C40.8 37.6 42.6 39.4 44.4 38.6 C45.6 38 46.6 38.6 47.6 38.4'],
+  ['water', 'M0.4 38.8 C1.8 38 3 39.2 4.4 38.6'],
+  ['water', 'M39 38.6 C40.8 37.6 42.6 39.4 44.4 38.6 C45.6 38 46.6 38.6 47.6 38.4'],
 ]
 const DUCK_HEAD_AT = 'translate(6.4 -1.2) scale(.78)'
 const DUCK_HEAD = [
@@ -429,14 +429,17 @@ const kept = new Map()
 const once = (key, make) => { let v = kept.get(key); if (v == null) { v = make(); kept.set(key, v) } return v }
 
 // The duck's parts as paths. Widths are in screen pixels (non-scaling), so the duck draws as heavy at 24 px as at 50.
+// A host may colour it: --surface is its body, --duck-bill its bill, --duck-glint the glint on its glasses,
+// --duck-water the two wave lines it swims on (card.css, the duck's button).
 const SURFACE = 'var(--surface, #fff)'
 const DUCK_STYLE = {
   line: `fill:${SURFACE}`,
   open: '',
   thin: 'stroke-width:1.1px',
-  bill: `fill:color-mix(in srgb, currentColor 22%, ${SURFACE});stroke-width:1.3px`,
+  water: 'stroke:var(--duck-water, currentColor);stroke-width:1.1px',
+  bill: `fill:var(--duck-bill, color-mix(in srgb, currentColor 22%, ${SURFACE}));stroke-width:1.3px`,
   ink: 'fill:currentColor;stroke-width:1px',
-  glint: `stroke:${SURFACE};stroke-width:1.4px`,
+  glint: `stroke:var(--duck-glint, ${SURFACE});stroke-width:1.4px`,
 }
 const duckParts = parts => parts.map(([kind, d]) => `<path d="${d}" vector-effect="non-scaling-stroke"${DUCK_STYLE[kind] ? ` style="${DUCK_STYLE[kind]}"` : ''}/>`).join('')
 
