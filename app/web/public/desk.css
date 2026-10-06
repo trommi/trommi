@@ -835,7 +835,10 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .inbox-groups .inbox-row .inbox-answer, .inbox-groups .inbox-row .inbox-answer.is-wide { flex: none; width: 76px; min-width: 0; height: 76px; min-height: 0; grid-auto-flow: row; grid-template-columns: minmax(0, auto); justify-items: center; align-content: center; gap: 4px; padding: 4px; }
   .inbox-groups .inbox-row .inbox-answer .sketch { width: 26px !important; height: 26px !important; }
   .inbox-groups .inbox-row .inbox-answer > span:last-child:not(.inbox-disc) { position: static !important; width: auto !important; height: auto !important; clip-path: none !important; overflow: hidden !important; max-width: 100%; text-align: center !important; font-size: .7rem; line-height: 1.1; white-space: nowrap; text-overflow: ellipsis; }
-  .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 56px; height: 20px; }
+  /* (What?? written large enough to read: the 26px of the other tiles' drawings shrank it to a speck; and the one long word, Acknowledge, whole) */
+  .inbox-groups .inbox-row .inbox-answer.is-what .sketch-what { width: 56px !important; height: 20px !important; }
+  .inbox-groups .inbox-row .inbox-answer.is-ack { padding-inline: 2px; }
+  .inbox-groups .inbox-row .inbox-answer.is-ack > span:last-child:not(.inbox-disc) { font-size: .64rem; letter-spacing: -.015em; }
   .inbox-groups .inbox-row .inbox-content { display: flex; flex-wrap: nowrap; align-items: center; gap: 8px; }
   .inbox-groups .inbox-row .inbox-content > .inbox-byline { display: none !important; }
   .inbox-groups .inbox-row .inbox-content > .inbox-fan { order: 2; }

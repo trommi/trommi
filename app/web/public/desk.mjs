@@ -546,7 +546,7 @@ controller('desk', class extends Controller {
         if (!n) continue
         button.querySelector('span').textContent = knocks(n)
         button.setAttribute('aria-label', `${knocks(n)} ${dir === 'up' ? 'above' : 'below'}: go there`)
-        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? '0px' : '', bottom: dir === 'down' ? '0px' : '' })
+        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? `${Math.max(0, Math.round(this.element.getBoundingClientRect().top))}px` : '', bottom: dir === 'down' ? '0px' : '' })   // (under a phone's top line, not over it)
       }
     })
   }
