@@ -8,6 +8,8 @@
 //   hooks         the plugin's permission hook: the human's verdict on the board is the hook's decision
 //   monitor       a session without channel events: the monitor's pointer line, the inbox tool
 //   keyclaim      several connectors in one folder (a Claude Code spare, two sessions): the key follows use
+//   link          the link report and the receipt: live and on its next step, not listening, cut off and gone, the
+//                 folder watch (two sessions, one key), answers that wait for the agent's next tool call
 //   second machine  the connect script (app/web/public/connect.sh) run as a person runs it,
 //                     curl -fsSL <app>/connect | sh -s '<invite link>'
 //                 in a fresh HOME and project folder against the files connector/build.mjs makes; then the installed
@@ -82,7 +84,8 @@ export async function startHub(tmp, extraEnv = {}) {
 export async function startConnector({ env, cwd, script = path.join(here, 'connector.mjs'), session = `test-${Math.random().toString(36).slice(2)}` }) {
   const events = [], said = []
   const { TROMMI_SESSION_KEY: _, ...base } = process.env
-  const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...base, ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
+  // The folder watch is off unless a test asks for it: every connector here has this process as its "Claude Code", which outlives them all.
+  const transport = new StdioClientTransport({ command: process.execPath, args: [script], env: { ...base, TROMMI_FOLDER_WATCH: '0', ...(session ? { TROMMI_SESSION_KEY: session } : {}), ...env }, cwd, stderr: 'pipe' })
   let err = ''
   const client = new Client({ name: 'connector-test', version: '1' }, { capabilities: {} })
   client.fallbackNotificationHandler = async n => { events.push(n) }
@@ -354,7 +357,7 @@ export async function integration({ test, tmp }) {
       assert.equal(human.model.room.outbox_blocked ?? null, null)
     })
 
-    await test('e2e: loss watch: a connector with running work that drops away is pushed to the human once; the app says since when; a clean end pushes nothing', async () => {
+    await test('e2e: loss watch: a connector with running work that drops away is pushed to the human once; the app says since when; a clean end with running work pushes once too, one without pushes nothing', async () => {
       const browser = crypto.createECDH('prime256v1'), browserPub = browser.generateKeys(), auth = crypto.randomBytes(16)
       await human.hub.pushSubscription({ endpoint: `http://${pushHost}/push/phone`, keys: { p256dh: browserPub.toString('base64url'), auth: auth.toString('base64url') } })
       const open = b => {
@@ -372,6 +375,7 @@ export async function integration({ test, tmp }) {
       process.kill(connector.pid, 'SIGKILL')   // a crash: no goodbye
       const msg = open(await until('the loss push', () => pushed.length > before && pushed.at(-1), 8000))
       assert.equal(msg.kind, 'agent-lost', JSON.stringify(msg))
+      assert.equal(msg.state, 'gone', 'no word that its Claude Code lives on')
       assert.equal(msg.device_id, agentId, 'device')
       assert.equal(msg.room_id, human.model.room.room_id, 'room')
       await sleep(2500)
@@ -387,16 +391,29 @@ export async function integration({ test, tmp }) {
       const stop = blockedOf(a, st, Date.now() + 61000)   // (the module counts from its own load too)
       assert.equal(stop?.why, 'offline')
       assert.match(stop.text, /^Connection lost since (\d+ \w+ )?\d\d:\d\d$/)
-      // A clean end (Claude Code closes the connector) disarms first: no push.
+      // A clean end (Claude Code closes the connector and ends) while a line says working: the work stopped, one push.
       connector = await startConnector({ env, cwd: project })
       await connector.ready()
-      await connector.call('set_status', { id: 'build', label: 'Build', state: 'working' })
-      await sleep(400)
+      await until('the link report', () => human.model.members.get(agentId).link?.working === true)
+      assert.equal(human.model.members.get(agentId).link.exit, null, 'a new stream forgets the last word')
+      await connector.close()
+      const bye = open(await until('the push for the work that stopped', () => pushed.length > before + 1 && pushed.at(-1), 8000))
+      assert.equal(bye.state, 'gone')
+      assert.deepEqual(human.model.members.get(agentId).link.exit, { reason: 'stdin', claude: 'gone' }, 'its last word')
+      // The same end with nothing running: the human ended the session himself, no push.
+      connector = await startConnector({ env, cwd: project })
+      await connector.ready()
+      const lines = () => [...human.model.sessions.values()].filter(s => s.agent_device_id === agentId).flatMap(s => s.status_lines.filter(l => l.state === 'working').map(l => [s, l]))
+      const was = lines()
+      for (const [s, l] of was) await connector.call('set_status', { id: l.id, label: l.label, state: 'done', ...(s.session_id === human.sessionOfAgent(agentId) ? {} : { session: s.profile?.agent_name }) })
+      await until('the report without work', () => human.model.members.get(agentId).link?.working === false)
       await connector.close()
       await sleep(2500)
-      assert.equal(pushed.length, before + 1, 'no push for a clean end')
+      assert.equal(pushed.length, before + 2, 'no push for a clean end without work')
       connector = await startConnector({ env, cwd: project })
       await connector.ready()
+      // (the lines as the later tests expect them)
+      for (const [s, l] of was) if (l.id !== 'build') await connector.call('set_status', { id: l.id, label: l.label, state: 'working', ...(l.detail ? { detail: l.detail } : {}), ...(s.session_id === human.sessionOfAgent(agentId) ? {} : { session: s.profile?.agent_name }) })
       await connector.call('clear_status', { id: 'build' })
     })
 
@@ -1227,12 +1244,227 @@ export async function keyclaim({ test, tmp: root }) {
   }
 }
 
+// ---- link: what the human sees of a session's link, and the receipt -------------------------------------------------
+// Every connector here has this test process as its "Claude Code" (it stays alive); TROMMI_SESSION_KEY says which
+// Claude Code session a connector belongs to, so a restart under the same key is a reconnect of that session.
+export async function link({ test, tmp: root }) {
+  const tmp = fs.mkdtempSync(path.join(root, 'link-'))
+  const core = await import('../shared/index.mjs')
+  const pushed = []
+  const pushService = http.createServer((req, res) => { const parts = []; req.on('data', c => parts.push(c)); req.on('end', () => { pushed.push(Buffer.concat(parts)); res.writeHead(201).end() }) })
+  await new Promise(r => pushService.listen(0, '127.0.0.1', r))
+  const pushHost = `127.0.0.1:${pushService.address().port}`
+  const LOSS = 1500, GRACE = 700
+  const hub = await startHub(tmp, { HUB_PUSH_HOSTS: pushHost, HUB_LOSS_MS: String(LOSS) })
+  const run = path.join(tmp, 'run'), project = path.join(tmp, 'project'), keys = path.join(tmp, 'keys')
+  for (const d of [run, project]) fs.mkdirSync(d, { recursive: true })
+  fs.chmodSync(run, 0o700)
+  const env = { TROMMI_KEYS_DIR: keys, TROMMI_FOLDER: project, TROMMI_HUB: hub.hub_url, XDG_RUNTIME_DIR: run, CLAUDE_PROJECT_DIR: project, TROMMI_ROOM: '', TROMMI_INVITE: '', TROMMI_SPARE: '0',
+    TROMMI_FOLDER_WATCH: '1', TROMMI_CUT_GRACE_MS: String(GRACE), TROMMI_LINK_TICK_MS: '150', TROMMI_LINK_MS: '300' }
+  const ONCALL = { ...env, TROMMI_CHANNEL_EVENTS: 'off' }
+  let human, agentId, a, b, main
+  const browser = crypto.createECDH('prime256v1'), browserPub = browser.generateKeys(), auth = crypto.randomBytes(16)
+  const open = body => {
+    const salt = body.subarray(0, 16), idlen = body[20], senderPub = body.subarray(21, 21 + idlen), ct = body.subarray(21 + idlen)
+    const hk = (salt2, ikm, info, len) => Buffer.from(crypto.hkdfSync('sha256', ikm, salt2, info, len))
+    const ikm = hk(auth, browser.computeSecret(senderPub), Buffer.concat([Buffer.from('WebPush: info\0'), browserPub, senderPub]), 32)
+    const d = crypto.createDecipheriv('aes-128-gcm', hk(salt, ikm, 'Content-Encoding: aes128gcm\0', 16), hk(salt, ikm, 'Content-Encoding: nonce\0', 12))
+    d.setAuthTag(ct.subarray(ct.length - 16))
+    const plain = Buffer.concat([d.update(ct.subarray(0, ct.length - 16)), d.final()])
+    return JSON.parse(plain.subarray(0, plain.lastIndexOf(2)).toString())
+  }
+  // The pushes about a session's link (a new card pushes too: not counted).
+  const lost = () => pushed.map(open).filter(m => m.kind === 'agent-lost')
+  const row = () => human.model.members.get(agentId)
+  const state = opts => core.linkState(row(), Date.now(), opts)
+  const stateIs = (want, what = want) => until(`the link to be ${what}`, () => state().state === want && state(), 10000)
+  const card = async (c, title, more = {}) => {
+    const id = (await c.call('create_decision', { title, options: [{ key: 'y', label: 'Yes' }, { key: 'n', label: 'No' }], ...more })).match(/card ([0-9a-f]{32})/)[1]
+    await until(`"${title}" at the human`, () => human.model.cards.get(id))
+    return id
+  }
+  const heard = id => core.cardHeard(human.model, human.model.cards.get(id))
+  const dead = pid => until(`pid ${pid} to end`, () => { try { process.kill(pid, 0); return false } catch { return true } })
+  try {
+    await test('link: a session with the live channel hears at once: no sign, and the receipt follows the answer', async () => {
+      ;({ client: human } = await core.foundRoom({ hub_url: hub.hub_url, device_name: '', storage: core.memoryStorage() }))
+      await human.start()
+      await human.hub.pushSubscription({ endpoint: `http://${pushHost}/push/phone`, keys: { p256dh: browserPub.toString('base64url'), auth: auth.toString('base64url') } })
+      const invite = await human.createInvite({ device_role: 'agent', app_url: 'https://app.trommi.com/join' })
+      a = await startConnector({ env: { ...env, TROMMI_INVITE: invite.link }, cwd: project, session: 'claude-a' })
+      await a.ready()
+      agentId = [...human.model.members.values()].find(m => m.device_role === 'agent').device_id
+      main = human.sessionOfAgent(agentId)
+      await until('the link report at the human', () => row().link?.hears === 'live')
+      assert.equal(row().link.attached, true)
+      assert.ok(row().link.last_call_at > Date.now() - 20000, 'its last tool call')
+      assert.equal(state().state, 'live')
+      const id = await card(a, 'Live?')
+      assert.equal(heard(id), null, 'nothing to hear yet')
+      await human.answer({ object_id: id, choices: ['y'] })
+      await a.next(e => e.params?.meta?.card_id === id, 'the decision event')
+      await until('the receipt', () => heard(id) === true, 4000)
+      assert.equal(human.model.sessions.get(main).heard_up_to, human.model.cards.get(id).answer.envelope_number)
+      await a.call('close_card', { card_id: id })
+    })
+
+    await test('link: without the live channel it hears on its next step; no step for the threshold: not listening; a step: listening again', async () => {
+      await a.close()
+      a = await startConnector({ env: ONCALL, cwd: project, session: 'claude-a' })
+      await a.ready()
+      await until('hears on its next step', () => row().link?.hears === 'oncall')
+      assert.equal(state().state, 'oncall')
+      const at = row().link.last_call_at
+      await sleep(1300)
+      assert.equal(state({ asleep_ms: 1200 }).state, 'asleep', 'no tool call for the threshold')
+      assert.ok(state({ asleep_ms: 1200 }).idle_ms >= 1200)
+      assert.equal(state().state, 'oncall', 'ten minutes are not over')
+      await a.call('list_cards')
+      await until('the new last call', () => row().link.last_call_at > at, 3000)
+      assert.equal(state({ asleep_ms: 1200 }).state, 'oncall', 'a step: it listens again')
+      assert.equal(lost().length, 0, 'nothing to push so far')
+    })
+
+    await test('link: an answer given while it hears on its next step has no receipt until that step; a helper\'s call takes only its own session\'s events', async () => {
+      const id = await card(a, 'On call?')
+      assert.match(await a.call('open_session', { name: 'Helper', task: 'helps' }), /child session opened/)
+      const hid = await card(a, 'Helper?', { session: 'Helper' })
+      const helper = human.model.cards.get(hid).session_id
+      assert.notEqual(helper, main)
+      assert.equal(human.model.sessions.get(helper).heard_up_to ?? null, null, 'a new session has no mark')
+      await human.answer({ object_id: id, choices: ['n'], note: 'for the main agent' })
+      await human.answer({ object_id: hid, choices: ['y'], note: 'for the helper' })
+      await a.next(e => e.params?.meta?.card_id === hid, 'both reached the connector')
+      await sleep(600)
+      assert.equal(heard(id), false, 'the main answer waits')
+      await until('the helper session\'s first mark', () => human.model.sessions.get(helper).heard_up_to != null, 4000)
+      assert.equal(heard(hid), false, 'the helper\'s answer waits: its mark stands right before it')
+      // The helper acts: it gets its own answer, not the main session's.
+      const forHelper = await a.call('list_cards', { session: 'Helper' })
+      assert.match(forHelper, /1 board event that Claude Code did not show you/)
+      assert.match(forHelper, new RegExp(`<channel source="board" kind="decision" card_id="${hid}"[^>]* session="Helper">\\nfor the helper\\n</channel>`))
+      assert.doesNotMatch(forHelper, /for the main agent/, 'the main session\'s answer is not drained into the helper')
+      await until('the helper\'s receipt', () => heard(hid) === true, 4000)
+      await sleep(400)
+      assert.equal(heard(id), false, 'still waiting for the main agent')
+      assert.doesNotMatch(await a.call('list_cards', { session: 'Helper' }), /<channel /, 'nothing more for the helper')
+      // The main agent acts.
+      const forMain = await a.call('list_cards')
+      assert.match(forMain, new RegExp(`<channel source="board" kind="decision" card_id="${id}" choice="n">\\nfor the main agent\\n</channel>`))
+      await until('the main receipt', () => heard(id) === true, 4000)
+    })
+
+    await test('link: what waits survives the connector: after a reconnect the next tool call brings it, and only then the receipt', async () => {
+      const id = await card(a, 'Kept?')
+      await human.answer({ object_id: id, choices: ['y'], note: 'kept for later' })
+      await a.next(e => e.params?.meta?.card_id === id, 'the answer at the connector')
+      await sleep(300)
+      await a.close()
+      a = await startConnector({ env: ONCALL, cwd: project, session: 'claude-a' })
+      await a.ready()                                   // (its first tool call)
+      assert.ok(a.said.some(t => /kept for later/.test(t)), 'the waiting answer came with the new connector\'s first tool result')
+      await until('the receipt', () => heard(id) === true, 4000)
+      assert.equal(lost().length, 0, 'a reconnect within the grace is no loss')
+      assert.equal(state().state, 'oncall')
+    })
+
+    await test('link: SIGTERM while its Claude Code lives on: gone at first, cut off once the witness has looked, one push; a reconnect ends it', async () => {
+      const before = lost().length
+      process.kill(a.pid, 'SIGTERM')
+      await until('offline', () => !row().is_online)
+      assert.ok(['checking', 'alive'].includes(row().link.exit?.claude), `its last word: ${JSON.stringify(row().link.exit)}`)
+      assert.equal(row().link.exit.reason, 'signal')
+      const cut = await stateIs('cut', 'cut off')
+      assert.equal(cut.reason, 'signal'); assert.ok(cut.since > Date.now() - 20000)
+      const msg = await until('the push', () => lost()[before], 8000)
+      assert.deepEqual([msg.state, msg.device_id, msg.room_id], ['cut', agentId, human.model.room.room_id])
+      await sleep(LOSS + 800)
+      assert.equal(lost().length, before + 1, 'once')
+      a = await startConnector({ env, cwd: project, session: 'claude-a' })
+      await a.ready()
+      await stateIs('live')
+      assert.equal(row().link.exit, null)
+    })
+
+    await test('link: SIGKILL of a lone connector with running work: no word, gone, one push', async () => {
+      const before = lost().length
+      await a.call('set_status', { id: 'build', label: 'Build', state: 'working' })
+      await until('the report says working', () => row().link?.working === true)
+      process.kill(a.pid, 'SIGKILL')
+      const gone = await stateIs('gone')
+      assert.equal(gone.reason, '', 'it left without a word')
+      const msg = await until('the push', () => lost()[before], 8000)
+      assert.equal(msg.state, 'gone')
+      await sleep(LOSS + GRACE + 800)
+      assert.equal(lost().length, before + 1, 'once, and nobody was there to call it cut off')
+      a = await startConnector({ env, cwd: project, session: 'claude-a' })
+      await a.ready()
+      await a.call('clear_status', { id: 'build' })
+      await stateIs('live')
+    })
+
+    await test('link: two sessions, one key: the keyless session\'s connector dies while its Claude Code lives: the key holder reports it cut off, once; its return ends it', async () => {
+      const before = lost().length
+      b = await startConnector({ env, cwd: project, session: 'claude-b' })
+      // b's session is used (a tool call), but a holds the key and is in use: b stays keyless.
+      await assert.rejects(b.call('list_cards'), /is held by connector process pid/)
+      await sleep(500)
+      assert.equal(state().state, 'live', 'a keyless connector beside it changes nothing')
+      process.kill(b.pid, 'SIGKILL')
+      const cut = await stateIs('cut', 'cut off (folder)')
+      assert.equal(cut.reason, 'folder'); assert.equal(row().is_online, true, 'the key holder is alive: the hub alone would say online')
+      assert.ok(cut.since > Date.now() - 20000)
+      const msg = await until('the push', () => lost()[before], 8000)
+      assert.equal(msg.state, 'cut')
+      await a.call('list_cards'); await sleep(LOSS + 500)
+      assert.equal(lost().length, before + 1, 'once')
+      // The session reconnects (a connector of the same Claude Code session): no longer cut off.
+      b = await startConnector({ env, cwd: project, session: 'claude-b' })
+      await stateIs('live')
+      assert.equal(row().link.cut_since, null)
+    })
+
+    await test('link: a keyless session that only starts or never used Trommi is never reported', async () => {
+      const before = lost().length
+      const c = await startConnector({ env, cwd: project, session: 'claude-c' })
+      await sleep(400)
+      process.kill(c.pid, 'SIGKILL')
+      await sleep(GRACE + 1200)
+      assert.equal(state().state, 'live')
+      assert.equal(lost().length, before)
+    })
+
+    await test('link: the key holder is killed while a keyless session of the folder lives: that one says "cut off" in the key\'s name, without taking the key', async () => {
+      const before = lost().length
+      process.kill(a.pid, 'SIGKILL')
+      await dead(a.pid)
+      const cut = await stateIs('cut', 'cut off (said by the sibling)')
+      assert.equal(cut.reason, 'killed'); assert.equal(row().is_online, false)
+      const msg = await until('the push', () => lost()[before], 8000)
+      assert.equal(msg.state, 'cut')
+      const room = path.join(keys, human.model.room.room_id)
+      assert.deepEqual(fs.readdirSync(room).filter(f => /-1\.lock\.\d+$/.test(f)), [], 'nobody holds the key: the sibling did not take it')
+      await sleep(LOSS + 800)
+      assert.equal(lost().length, before + 1, 'once')
+      // The sibling is used: it takes the free key, and what the room shows is its link.
+      await b.ready()
+      await until('online again', () => row().is_online)
+      assert.equal(row().link.exit, null)
+    })
+  } finally {
+    for (const c of [a, b]) await c?.close().catch(() => {})
+    await human?.stop().catch(() => {})
+    hub.stop()
+    pushService.close()
+  }
+}
+
 // ---- run ----------------------------------------------------------------------------------------------------------
 
 if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   const argv = process.argv.slice(2)
   const only = argv.includes('--only') ? argv[argv.indexOf('--only') + 1] : null
-  const parts = { integration, updates, hooks, monitor, keyclaim, connect }
+  const parts = { integration, updates, hooks, monitor, keyclaim, link, connect }
   if (only && !parts[only]) { console.error(`--only ${Object.keys(parts).join('|')}`); process.exit(2) }
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'trommi-e2e-'))
   const results = []
