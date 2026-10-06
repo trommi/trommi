@@ -19,7 +19,7 @@
 // A question never unfolds here: an open one stands in the conversation as its Desk row, whose text links to the
 // card's page; every other one is a quiet line that links there too.
 import { BASE, blockedOf, quietOf } from './app.mjs'
-import { Controller, WORDS, advisedLabels, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, mq, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
+import { Controller, WORDS, advisedLabels, agoSpan, assetGlyph, controller, copyText, deskRow, handSvg, html, kindOf, mq, pageChip, raw, rich, ringSvg, runSection, sessionHeadEdit, sk, srcOf, thumb, toast } from './ui.mjs'
 const LIVE = 80               // so many of the newest messages are kept up to date by the live stream
 const PAGE = 40               // messages of one render: the page shows the latest, "Earlier" (or scrolling up) brings as many again
 const GROUP_GAP = 5 * 60000          // messages of one side closer than this stand as one run
@@ -99,7 +99,7 @@ function attachments(list, s, base, from) {
   const files = list.filter(a => kindOf(a) === 'file')
   return html`${media.map(a => (kindOf(a) === 'video'
     ? html`<figure class="media media-video"><video src="${a.url}#t=0.001" controls preload="metadata" playsinline></video><figcaption>${a.name}</figcaption></figure>`
-    : html`<figure class="media media-audio"><audio src="${a.url}" controls preload="metadata"></audio><figcaption>${a.name}</figcaption></figure>`))}${images.length ? html`<div class="shots${images.length === 1 ? ' shots-one' : ''}">${images.map(a => html`<a class="shot" data-nav href="${sessionPath(s.id, base)}/files/${s.nr.get(a.url) ?? 1}?from=${from}" aria-label="Enlarge ${a.name}"><img${srcOf(a, images.length === 1 ? 416 : 272)} alt="${a.name}" loading="lazy" decoding="async" width="320" height="240"></a>${a.page?.url ? html`<a class="focus-page-link" href="${a.page.url}" target="_blank" rel="noopener noreferrer">Open the page</a>` : ''}`)}</div>` : ''}${files.length ? html`<div class="files">${files.map(a => html`<a class="file-chip" href="${a.url}" target="_blank" rel="noopener">${ico('file')}<span>${a.name}</span></a>`)}</div>` : ''}`
+    : html`<figure class="media media-audio"><audio src="${a.url}" controls preload="metadata"></audio><figcaption>${a.name}</figcaption></figure>`))}${images.length ? html`<div class="shots${images.length === 1 ? ' shots-one' : ''}">${images.map(a => html`<a class="shot" data-nav href="${sessionPath(s.id, base)}/files/${s.nr.get(a.url) ?? 1}?from=${from}" aria-label="Enlarge ${a.name}"><img${srcOf(a, images.length === 1 ? 416 : 272)} alt="${a.name}" loading="lazy" decoding="async" width="320" height="240"></a>${pageChip(a.page)}`)}</div>` : ''}${files.length ? html`<div class="files">${files.map(a => html`<a class="file-chip" href="${a.url}" target="_blank" rel="noopener">${ico('file')}<span>${a.name}</span></a>`)}</div>` : ''}`
 }
 
 // ---- one line for something that happened to a question ----
@@ -450,7 +450,7 @@ function sessionPicture(s, base, at, from = '') {
   const back = from && s.messages.some(m => m.id === from) ? `${here}#msg-${from}` : `${here}/files`
   const arrow = d => raw(`<svg viewBox="0 0 24 24" class="focus-icon" aria-hidden="true"><path d="${d}"/></svg>`)
   return html`<div class="t-picture">
-<header class="t-picture-bar"><a class="focus-back-desk t-picture-back" data-nav href="${back}" aria-label="Back to ${from ? 'the conversation' : 'the files'}">${arrow('M19 12H5M11 6l-6 6 6 6')}<span>${s.agent.name}</span></a><span class="t-picture-where"><b>${i} / ${n}</b> ${a.title || a.name}</span><a class="focus-page-link" target="_blank" rel="noopener noreferrer" href="${a.page?.url ?? a.url}">${sk('page')}<span>${a.page?.url ? 'Open the page' : 'Open the original'}</span></a></header>
+<header class="t-picture-bar"><a class="focus-back-desk t-picture-back" data-nav href="${back}" aria-label="Back to ${from ? 'the conversation' : 'the files'}">${arrow('M19 12H5M11 6l-6 6 6 6')}<span>${s.agent.name}</span></a><span class="t-picture-where"><b>${i} / ${n}</b> ${a.title || a.name}</span>${a.page ? pageChip(a.page) : html`<a class="page-chip" target="_blank" rel="noopener noreferrer" href="${a.url}">${sk('picture')}<b>${a.name}</b><i>open</i></a>`}</header>
 <a class="t-picture-view" data-nav href="${back}" aria-label="Close the picture"><img src="${a.url}" alt="${a.name}" decoding="async"></a>
 ${n > 1 ? html`<a class="focus-stage-step is-prev" data-nav href="${here}/files/${i > 1 ? i - 1 : n}${q}" data-turbo-action="replace" aria-label="The picture before">${arrow('M19 12H5M11 6l-6 6 6 6')}</a><a class="focus-stage-step is-next" data-nav href="${here}/files/${i < n ? i + 1 : 1}${q}" data-turbo-action="replace" aria-label="The next picture">${arrow('M5 12h14M13 6l6 6-6 6')}</a>` : ''}
 </div>`

@@ -765,6 +765,10 @@ export function thumb(file) {
 /** The src attribute of an <img> for that file (the shown width is the caller's; there are no variants). */
 export const srcOf = file => attrs({ src: thumb(file).src })
 
+/** The page behind a picture (the HTML it was rendered from), as one thing to press: a sheet with the file's name.
+ *  always: it stands hidden where the picture has no page (the controller shows it for one that has). */
+export const pageChip = (page, always = false) => (page || always ? html`<a class="page-chip" data-card-target="page" target="_blank" rel="noopener noreferrer" href="${page?.url ?? '#'}" title="This picture has a page behind it: open the page"${page ? '' : raw(' hidden')}>${sk('page')}<b>${page?.name ?? ''}</b><i>open</i></a>` : '')
+
 // ---- toast ----
 // The toast: one quiet line at the top right that says what just happened ("Answered: <title>", "Note sent to
 // <name>") and, when it can be taken back, an Undo button. The same on every page and on the phone. It goes by

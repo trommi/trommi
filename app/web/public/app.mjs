@@ -372,14 +372,16 @@ export class BoardState {
     return out.sort((a, b) => a.position - b.position)
   }
 
-  att(a) {
+  att(a, list = []) {
     if (!a) return null
     rememberRef(a)
     const type = String(a.media_type ?? '')
     const kind = type.startsWith('image/') ? 'image' : type.startsWith('video/') ? 'video' : type.startsWith('audio/') ? 'audio' : 'file'
     // The page a picture was made from: another attachment of the same list ('attachment:<id>') or an address.
     const p = typeof a.page === 'string' ? a.page : a.page?.url ?? null
-    const page = p ? { url: p.startsWith('attachment:') ? `/att/${p.slice(11)}` : p, kind: p.startsWith('attachment:') ? 'file' : 'link' } : null
+    const own = p?.startsWith('attachment:') ? p.slice(11) : null
+    const named = text => { try { return decodeURIComponent(text) } catch { return text } }
+    const page = p ? { url: own ? `/att/${own}` : p, kind: own ? 'file' : 'link', name: own ? list.find(x => x.attachment_id === own)?.file_name ?? 'page.html' : named(p.split(/[?#]/)[0].replace(/\/+$/, '').split('/').pop()) || 'page' } : null
     return { name: a.file_name ?? 'file', url: a.url ?? `/att/${a.attachment_id}`, image: kind === 'image', kind, type, size: a.total_size, width: a.width, height: a.height, caption: a.caption, title: a.caption ?? a.title, page, marks: a.marks, ref: a }
   }
   /** A list of attachment references as the views want them; a page that belongs to a picture is not a file of its own. */
@@ -387,7 +389,7 @@ export class BoardState {
     if (!list?.length) return []
     for (const a of list) rememberRef(a)
     const pages = new Set(list.map(a => (typeof a.page === 'string' && a.page.startsWith('attachment:') ? a.page.slice(11) : null)).filter(Boolean))
-    return list.filter(a => !pages.has(a.attachment_id)).map(a => this.att(a)).filter(Boolean)
+    return list.filter(a => !pages.has(a.attachment_id)).map(a => this.att(a, list)).filter(Boolean)
   }
 
   boardCard(c, number) {
