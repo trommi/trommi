@@ -6,10 +6,6 @@
 .inbox-title p { display: flex; flex-wrap: wrap; align-items: center; gap: .1em .3em; font-size: var(--t-lg); color: var(--muted); }
 /* The desk's heading is the way into the walk: the words in the display face, the number of what waits
    in its circle, and a small arrow that steps forward under the pointer or the keyboard. */
-.inbox-heading { display: flex; flex-wrap: wrap; align-items: center; gap: .2em .5em; }
-.inbox-go { display: inline-flex; align-items: center; gap: .32em; padding: 0; border: 0; border-radius: 6px; background: none; color: var(--fg); font: inherit; letter-spacing: inherit; text-align: left; cursor: pointer; }
-.inbox-go .sketch { width: .62em; height: .62em; stroke-width: 2.2; color: var(--faint); transition: translate 140ms ease-out, color 140ms ease-out; }
-.inbox-go:active { scale: .98; }
 /* One list at one pitch: the senders' sections follow each other at the gap between two rows. The
    piles at the foot stand a little apart. */
 .inbox-groups { display: grid; gap: var(--s-4); container: rows / inline-size; }
@@ -296,7 +292,7 @@ body[data-shift] .inbox-tab-act.inbox-shred { max-width: 150px; color: var(--urg
   .inbox-gutter::after { content: attr(data-name); position: absolute; z-index: 5; right: 0; top: calc(100% + 4px); padding: 5px 9px; border-radius: 7px; background: currentColor; font: 700 var(--t-sm)/1 var(--font); white-space: nowrap; opacity: 0; pointer-events: none; transition: opacity 120ms; -webkit-text-fill-color: var(--surface); }
 }
 /* Rows that came in above the fold while he is further down (inbox.js keepRow): said, not pushed. */
-.inbox-news-at { position: sticky; top: 8px; z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
+.inbox-news-at { position: sticky; top: calc(var(--desk-band, 0px) + 8px); z-index: 6; height: 0; display: flex; justify-content: center; pointer-events: none; }
 .inbox-news-at:has(~ .inbox-edge.is-up > :not([hidden])) .inbox-news { translate: 0 26px; }
 /* A knock out of sight (inbox.js tellKnocks): a slim strip on the edge of the list it lies beyond, as wide as
    the list. It is the edge: rows pass under it, it floats over no tile. */
@@ -638,15 +634,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .inbox-group[data-sender] > .inbox-row > .inbox-gutter .inbox-gutter-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; position: absolute; left: 50%; top: calc(100% + 4px); width: 64px; translate: -50% 0; text-align: center; overflow-wrap: anywhere; font: 600 .66rem/1.2 var(--font); color: var(--tone-pen); }
   .inbox-group[data-sender] > .inbox-row > .inbox-gutter::after { display: none; }
 }
-/* "Next" above the Desk (desk.mjs): one small plain sentence, "Next 3 →", no tab. On a wide screen it
-   starts where the cards start (past the column of session drawings). */
-.inbox-head:has(> .inbox-title > .inbox-next) { margin-bottom: var(--s-3); }
-.inbox-title > p.inbox-next { display: block; margin: 0; font: 600 var(--t-md)/1.5 var(--font); letter-spacing: 0; color: var(--muted); }
-.inbox-next > .inbox-go { gap: .35em; color: inherit; }
-.inbox-next .inbox-next-n { font-weight: 700; color: var(--fg); }
-.inbox-next > .inbox-go .sketch { width: 16px; height: 16px; }
-@media (min-width: 861px) { .inbox-title > p.inbox-next { padding-left: 46px; }
-}
 /* the line: each card but the last draws its piece, from its hook down to the next card's hook */
 .inbox-group[data-sender] > .inbox-row:not(:last-of-type)::after { content: ""; position: absolute; left: -34px; top: 21px; width: 8px; height: calc(100% + 16px); background: var(--tone-pen); -webkit-mask: var(--run-line) center / 100% 100% no-repeat; mask: var(--run-line) center / 100% 100% no-repeat; pointer-events: none; }
 /* (the first card's piece starts under its drawing and name) */
@@ -670,13 +657,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 }
 /* "Clear": no question and no info waits (desk.mjs clearHead). */
 /* Clear: the heading at the top, with the sessions at work */
-.inbox-head.is-clear { display: block; margin-bottom: var(--s-6); }
-@media (min-width: 861px) { .inbox-head.is-clear { padding-left: 46px; } }
-.news-clear { display: flex; align-items: center; justify-content: space-between; gap: var(--s-4); padding-bottom: 10px; border-bottom: 1px solid var(--line); }
-.news-clear h2 { display: inline-flex; align-items: center; gap: 8px; margin: 0; font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; color: var(--fg); }
-.news-clear-tick { width: 24px; height: 24px; color: var(--accent); }
-
-@media (max-width: 860px) { .news-clear h2 { font-size: 1.35rem; } }
 /* narrow (a phone): Notes and Media share the first row, "Off the desk" takes the next one whole */
 @container rows (max-width: 600px) {
   .inbox-stacks.stack-tabs > [data-stack="notes"] > .inbox-stack-title { order: -2; }
@@ -833,8 +813,6 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 @media (min-width: 861px) {
   #inbox .inbox-groups > .inbox-group, #inbox .inbox-groups > .ipb, #inbox .inbox-groups > .inbox-stacks { padding-left: 0; }
   #inbox .inbox-groups > .inbox-stacks { --inset: 0px; }
-  .inbox-title > p.inbox-next { padding-left: 0; }
-  .inbox-head.is-clear { padding-left: 0; }
 }
 .inbox-groups .inbox-row .inbox-byline .inbox-from { display: none !important; }
 @media (max-width: 860px) { .inbox-groups .inbox-row .inbox-content > .inbox-byline:not(:has(.inbox-whenever)) { display: none !important; } }
@@ -1135,14 +1113,30 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 #inbox .inbox-stacks.stack-tabs .photo-pile { rotate: 1deg; }
 @container rows (max-width: 600px) { #inbox .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 22px; } }
 
-/* ---- The walk's button (desk.mjs nextPlease): at the right end of the heading line, drawn with the pen: an uneven
-   ink outline on paper, three quick strokes, the word, the count in an ink disc. It lifts under the pointer and
-   sits down when pressed. ---- */
-#inbox .inbox-title > p.inbox-next { display: flex; justify-content: flex-end; flex: 1; padding-left: 0; margin: 0 4px 0 0; }
-#inbox .inbox-next > .inbox-go { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
-#inbox .inbox-next .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
-#inbox .inbox-next .inbox-next-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
-@media (any-hover: hover) { #inbox .inbox-next > .inbox-go:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
-#inbox .inbox-next > .inbox-go:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
-#inbox .inbox-next > .inbox-go:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
-@media (max-width: 860px) { #inbox .inbox-next > .inbox-go { min-height: 44px; } }
+/* ---- The Desk's top (desk.mjs deskHead): one quiet line that names the list, and the tools for what waits.
+   Wide: the tools stand fixed in the band of the Trommi menu, at its height, their right edge on the column's; the
+   line stands alone over the list, well clear of that row. A phone: line and tools share one slim row. ---- */
+#inbox .desk-top { display: flex; align-items: center; justify-content: space-between; flex-wrap: nowrap; gap: var(--s-3); margin-bottom: var(--s-4); min-height: 40px; }
+.desk-line { display: flex; align-items: baseline; gap: .45em; min-width: 0; margin: 0; font: 700 var(--t-lg)/1.3 var(--display); letter-spacing: -.005em; color: var(--muted); white-space: nowrap; }
+.desk-line b { color: var(--fg); font-weight: 800; padding-bottom: 3px; background: var(--under-ink) left bottom / 100% 6px no-repeat; overflow: hidden; text-overflow: ellipsis; }
+.desk-line i, .desk-line em { font-style: normal; }
+.desk-line i { color: var(--faint); }
+.desk-line span { overflow: hidden; text-overflow: ellipsis; }
+.desk-line .is-calm { display: inline-flex; align-items: center; gap: 6px; }
+.desk-line .is-calm .sketch { width: 18px; height: 18px; color: var(--accent); align-self: center; }
+.desk-tools { flex: none; display: flex; align-items: center; gap: 10px; }
+.desk-walk { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
+.desk-walk .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+.desk-walk-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
+@media (any-hover: hover) { .desk-walk:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
+.desk-walk:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
+.desk-walk:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+@media (min-width: 861px) {
+  /* (the band is the Desk's own here: a strip that stays at the top of the scrolling page, the list goes under it) */
+  html body[data-scope="all"]:not([data-page]) #inbox:has(> .desk-top) { --desk-band: var(--band); margin-top: 0; padding-top: 0; }
+  #inbox .desk-top { display: contents; }
+  #inbox .desk-tools { position: sticky; top: 0; z-index: 6; box-sizing: border-box; height: var(--band); max-width: 800px; margin-inline: auto; justify-content: flex-end; align-items: flex-start; padding: 8px 4px 0 0; background: var(--surface); box-shadow: 0 0 0 100vmax var(--surface); clip-path: inset(0 -100vmax); }
+  #inbox .desk-walk { min-height: 38px; }
+  #inbox .desk-line { box-sizing: border-box; max-width: 800px; margin: var(--s-6) auto var(--s-4); padding-left: 46px; }
+}
+@media (max-width: 860px) { #inbox .desk-top { padding-right: 12px; } .desk-walk { min-height: 44px; } .desk-line { font-size: var(--t-sm); } .desk-line b { flex: 0 1 auto; min-width: 3ch; } .desk-line span { flex: none; } .desk-line em { display: none; } .desk-tools { order: 2; } .desk-tools:empty { display: none; } }

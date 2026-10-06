@@ -26,17 +26,14 @@ function deskCards(model) {
 }
 /** The Desk is clear (sessions there, no question and no info waiting): "Clear". */
 const isClear = model => !model.fresh.length && !(model.reads ?? []).length && model.units.length > 0
-function clearHead() {
-  // (who is at work stands in "With the agents" below; his word, 4 October)
-  return html`<header class="news-clear"><h2>${sk('tick', 'news-clear-tick')}Clear</h2></header>`
-}
-/** The heading: "Next, please" with the number of what waits, the way into the walk; or that the Desk is clear. */
+/** The Desk's top: one quiet line that names the list ("Desk · 5 decisions waiting"; at zero a calm word) and, at its
+ *  right, the tools for what waits (Rapid fire). On a wide screen the tools stand in the band of the Trommi menu, at
+ *  its height, and the line stands alone over the list (desk.css). */
 function deskHead(model, base) {
   const n = model.fresh.length
-  if (n) return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="inbox-title">${nextPlease(model, base)}</div></header>`
   if (!model.units.length) return deskInvite()
-  if (!isClear(model)) return html`<header class="inbox-head" id="desk-head" data-controller="title" data-title-count-value="0" hidden></header>`
-  return html`<header class="inbox-head is-clear" id="desk-head" data-controller="title" data-title-count-value="0">${clearHead()}</header>`
+  const said = n ? html`<span>${n === 1 ? '1 decision' : `${n} decisions`}<em> waiting</em></span>` : html`<span class="is-calm">${sk('tick')}${isClear(model) ? 'all clear' : 'no decision waiting'}</span>`
+  return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><div class="desk-tools">${n ? nextPlease(model, base) : ''}</div><h2 class="desk-line"><b>${model.deskName}</b><i aria-hidden="true">·</i>${said}</h2></header>`
 }
 
 /** The Desk of a new account (no session yet): a calm note with one way on, inviting the first agent. The button sends
@@ -80,15 +77,14 @@ ${deskHead(model, base)}
 </main>`
 
 // ---- the walk's button ----
-// At the right end of the Desk's heading line (his word, 6 October: "eher rechts … ein Button mit eigenem Design"):
-// a drawn button into the walk through every open question: three quick strokes, the word (WORDS.walk, the one
-// place it stands), the count in an ink disc. desk.css styles it (.inbox-next).
+// A drawn button into the walk through every open question (his word, 6 October: "ein Button mit eigenem Design"):
+// three quick strokes, the word (WORDS.walk, the one place it stands), the count in an ink disc. desk.css (.desk-walk).
 const BURST = raw('<svg class="walk-burst" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.6 Q9 6.9 13.6 7.3"/><path d="M5.6 12.2 Q12 11.5 20.6 12"/><path d="M3.8 16.9 Q8.6 16.3 12.2 16.6"/><path d="M16.2 8.2 Q18.8 10 20.8 12 Q18.6 14 16.4 15.9"/></svg>')
 
 /** The button for n > 0 open cards (model.fresh, in the hub's order): a link to the walk. */
 function nextPlease(model, base) {
   const n = model.fresh.length
-  return html`<p class="inbox-heading inbox-next"><a class="inbox-walk inbox-go" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F">${BURST}<span>${WORDS.walk}</span><b class="inbox-next-n">${n}</b></a></p>`
+  return html`<a class="desk-walk" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F">${BURST}<span>${WORDS.walk}</span><b class="desk-walk-n">${n}</b></a>`
 }
 
 /** The sheet a long press on a Desk row brings up on a phone (desk.css, dialog.rowmenu): one form, each way its own
@@ -505,7 +501,7 @@ controller('desk', class extends Controller {
         if (!n) continue
         button.querySelector('span').textContent = knocks(n)
         button.setAttribute('aria-label', `${knocks(n)} ${dir === 'up' ? 'above' : 'below'}: go there`)
-        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? '0px' : '', bottom: dir === 'down' ? '0px' : '' })
+        if (this.across) Object.assign(button.parentElement.style, { left: `${this.across.left}px`, width: `${this.across.width}px`, top: dir === 'up' ? 'var(--desk-band, 0px)' : '', bottom: dir === 'down' ? '0px' : '' })
       }
     })
   }
