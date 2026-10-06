@@ -212,6 +212,8 @@ a.ledger-sheet-item { display: flex; align-items: center; }
 .ledger-line.is-sub .ledger-face .agent-avatar { width: 31px; height: 31px; margin-top: 4px; }
 /* (No transform on a line's parts: it would hold the open control under the lines that follow.) */
 .ledger-line:has(details.t-pick[open]) { z-index: 5; }
+/* (a phone's sheet lies over everything of the page, the corner note too: it lay on the sheet's Close) */
+@media (max-width: 860px) { .ledger-line:has(details.t-pick[open] > .t-sheet) { z-index: 91; } }
 .ledger-line.is-sub .ledger-name { padding-left: 12px; }
 /* The main agent's choice: "belongs under", drawn; beside the name where there is room, alone where there is none. */
 .ledger-main > .sketch { flex: none; width: 18px; height: 18px; margin-right: 4px; }

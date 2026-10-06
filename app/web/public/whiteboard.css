@@ -65,6 +65,8 @@ body[data-page="whiteboard"] #whiteboard { display: block; grid-column: 2; grid-
 .pad-hint { position: absolute; left: 50%; top: 42%; margin: 0; width: max-content; max-width: calc(100% - 48px); padding: 12px 20px; border: 1.5px dashed var(--line-strong); border-radius: var(--r-lg); background: color-mix(in srgb, var(--surface) 86%, transparent); color: var(--muted); font-size: var(--t-md); text-align: center; transform: translate(-50%, -50%) rotate(-1deg); pointer-events: none; opacity: 0; transition: opacity var(--d-med); }
 .pad-hint[data-show="true"] { opacity: 1; }
 .pad-hint b { color: var(--fg); font-weight: 600; }
+.pad-hint .if-touch { display: none; }
+@media (pointer: coarse) { .pad-hint .if-touch { display: inline; } .pad-hint .if-mouse { display: none; } }
 
 /* ── the note being typed ───────────────────────────────────────────────── */
 .pad-editor { position: absolute; left: 0; top: 0; z-index: 1; min-width: 2px; min-height: 1.35em; width: max-content; margin: 0; padding: 0; outline: none; white-space: pre-wrap; overflow-wrap: anywhere; transform-origin: 0 0; caret-color: var(--accent); user-select: text; -webkit-user-select: text; cursor: text; }
