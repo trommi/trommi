@@ -15,7 +15,7 @@
 import { BASE, SAID, stream } from './app.mjs'
 import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
-const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', ZOOM = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M11 8v6M8 11h6', ZOOM_OUT = 'M11 4a7 7 0 1 0 0 14a7 7 0 0 0 0-14M20 20l-4-4M8 11h6', PLAY = 'M9 6.5v11l9-5.5z'
+const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
 // The way back, drawn with the pen: an arrow to the left.
 const BACK = raw('<svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M19.4 12.3 Q12.2 11.5 5 12.1"/><path d="M10.9 6 Q7.7 9.3 4.7 12.1 Q8 14.8 11.2 18.2"/></svg>')
 const HAND_BACK_TEXT = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
@@ -26,23 +26,14 @@ const liveVersion = card => card.version ?? (card.versions?.at(-1)?.n ?? 0) + 1
 /** The card as it was in version n (title, text, options, pictures), or null. */
 const versionOf = (card, n) => (n != null && n < liveVersion(card) ? card.versions?.find(v => v.n === n) ?? null : null)
 
-// ---- the fixed height: what the card holds, and what goes to the comments ----
-// The card shows at most TEXT_FIT characters of plain text, whole paragraphs first. A layout, a table or code never
-// stands on the card. What does not fit is in the comments, as "The whole text", and the card says so.
-const TEXT_FIT = 340
+// ---- what the card holds, and what goes to the comments ----
+// The card is as long as its words: every paragraph stands on it and the page scrolls. A layout, a table or code never
+// stands on the card: those are in the comments, as "The whole text", and the card says so.
 /** -> { shown: the text for the card (markdown), more: whether the comments hold more } */
 function fitText(text) {
   const source = String(text ?? '')
   const prose = source.replace(/```[\s\S]*?```/g, '\n\n').split(/\n{2,}/).map(p => p.trim()).filter(p => p && !/^\s*\|.*\|\s*$/m.test(p))
-  let shown = '', used = 0
-  for (const p of prose) {
-    const len = plain(p).length
-    if (used + len <= TEXT_FIT) { shown += `${shown ? '\n\n' : ''}${p}`; used += len; continue }
-    if (!shown) { const words = plain(p).slice(0, TEXT_FIT).replace(/\s+\S*$/, ''); shown = `${words}…`; used = TEXT_FIT }
-    break
-  }
-  const all = prose.reduce((n, p) => n + plain(p).length, 0)
-  return { shown, more: used < all || /```|^\s*\|/m.test(source) }
+  return { shown: prose.join('\n\n'), more: /```|^\s*\|/m.test(source) }
 }
 /** What was said about one card (its events and its comments), in order: the board state's per-card list where it
  *  has one (built from that card's thread only), else filtered from its session's or the whole board's. */
@@ -93,10 +84,10 @@ const strip = (images, i, to, cls = '') => html`<span class="tc-strip ${cls}" da
 /** The picture's shown width: its own, never wider than its place (a phone's screenshot is not blown up). */
 const ownWidth = a => (a.width > 0 ? raw(` style="width:${Number(a.width)}px"`) : '')
 
-/** The picture of the card: one at a time at the column's width, cut off below (its top is what one reads); "+" makes
- *  it whole right here, "Gallery" opens it large on its own page. The others as small ones to pick. A frame of its
- *  own, so picking another loads only this. Videos come after the pictures (?pic= counts on): one stands on the stage
- *  as a player (decrypted to a blob by att.mjs / sw.js; never autoplays), its tile a play mark. */
+/** The picture of the card: one at a time, whole, at the column's width (a very tall one shows its top); a click on
+ *  it, or "Gallery", opens it large on its own page. The others as small ones to pick. A frame of its own, so picking
+ *  another loads only this. Videos come after the pictures (?pic= counts on): one stands on the stage as a player
+ *  (decrypted to a blob by att.mjs / sw.js; never autoplays), its tile a play mark. */
 function cardMedia(card, base, at = 1, query = '') {
   const images = imagesOf(card), videos = videosOf(card), all = [...images, ...videos]
   if (!all.length) return ''
@@ -107,7 +98,7 @@ function cardMedia(card, base, at = 1, query = '') {
   const step = (n, cls, label, d) => (all.length > 1 ? html`<a class="tc-step ${cls}" data-nav href="${to(n)}" data-turbo-action="replace" aria-label="${label}">${icon(d)}</a>` : '')
   const shown = video
     ? html`<figure class="tc-video"><video src="${a.url}#t=0.001" controls playsinline preload="metadata" aria-label="Video ${i} of ${all.length}: ${a.name}"></video></figure>`
-    : html`<div class="tc-figure" data-card-target="figure" data-action="click->card#enlarge" data-at="${i}"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt="Picture ${i} of ${images.length}: ${a.name}"${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></div><button class="tc-zoom" type="button" data-card-target="zoom" data-action="card#enlarge" aria-pressed="false" title="Bigger, right here" aria-label="Show the whole picture here, or only its top">${icon(ZOOM)}${icon(ZOOM_OUT)}</button>`
+    : html`<a class="tc-figure" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="figure" data-at="${i}" title="Open the gallery" aria-label="Picture ${i} of ${images.length}: ${a.name}. Open the gallery"${key != null ? html` data-key="${key}"` : ''} data-controller="circles" data-circles-marks-value="${JSON.stringify(a.marks ?? [])}"><img alt=""${srcOf(a)}${ownWidth(a)} decoding="async" draggable="false"></a>`
   return html`<turbo-frame id="card-media-${card.id}" class="tc-media">
 <div class="tc-stage${video ? ' is-video' : ''}">${shown}${step(i > 1 ? i - 1 : all.length, 'is-prev', 'The one before', ARROW_L)}${step(i < all.length ? i + 1 : 1, 'is-next', 'The next one', ARROW_R)}</div>
 <div class="tc-thumbs">${all.length > 1 ? html`${strip(images, i, to)}${videos.map((p, n) => html`<a class="tc-thumb tc-thumb-video" data-nav href="${to(images.length + n + 1)}" data-turbo-action="replace" aria-label="Show video ${n + 1}: ${p.name}" aria-pressed="${String(images.length + n + 1 === i)}">${icon(PLAY)}</a>`)}` : ''}${video ? '' : html`<a class="tc-gallery" data-nav href="${here}/p/${i}" data-turbo-frame="_top" data-card-target="gallery" title="Open the gallery: the pictures large, on their own page">${sk('picture')}<span>Gallery</span></a>`}</div>
@@ -682,7 +673,7 @@ let turn = 0
 const GROWS = globalThis.CSS?.supports?.('field-sizing', 'content') ?? false
 
 controller('card', class extends Controller {
-  static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'where', 'page', 'gallery', 'zoom']
+  static targets = ['form', 'field', 'files', 'chips', 'saved', 'figure', 'marks', 'where', 'page', 'gallery']
   static values = { draft: String, pictures: Array }
 
   connect() {
@@ -750,6 +741,7 @@ controller('card', class extends Controller {
     if (img.hasAttribute('width')) { if (pic.width && pic.height) { img.width = pic.width; img.height = pic.height } else { img.removeAttribute('width'); img.removeAttribute('height') } }
     else img.style.width = pic.width ? `${pic.width}px` : ''
     fig.dataset.at = pic.at
+    fig.href = pic.href
     fig.dataset.circlesMarksValue = JSON.stringify(pic.marks ?? [])
     if (this.hasWhereTarget) {
       const n = thumbs.length || this.picturesValue.length
@@ -803,19 +795,8 @@ controller('card', class extends Controller {
     tag.animate([{ translate: `0 ${tag.style.getPropertyValue('--pull') || '0px'}` }, { translate: `0 ${far + 120}px` }], how)
     card.animate([{ translate: `0 ${from}px` }, { translate: `0 ${far}px`, rotate: '1.2deg' }], how).finished.then(go, go)
   }
-  // "+": the whole picture, right here on the card (and back to its top). Never another page.
-  enlarge(event) {
-    event.preventDefault()
-    this.large = !this.large
-    this.sized()
-  }
-  sized() {
-    this.element.querySelector('.tc-stage')?.classList.toggle('is-large', Boolean(this.large))
-    if (this.hasZoomTarget) { this.zoomTarget.setAttribute('aria-pressed', String(Boolean(this.large))); this.zoomTarget.title = this.large ? 'Smaller again: only its top' : 'Bigger, right here' }
-    this.link()
-  }
-  // (another picture came into the frame: it is the one that stands now, at the size the last one had)
-  framed() { this.stood = null; this.sized() }
+  // (another picture came into the frame: it is the one that stands now)
+  framed() { this.stood = null; this.link() }
 
   // ---- the note on one option: the pencil opens its line ----
   note(event) {
