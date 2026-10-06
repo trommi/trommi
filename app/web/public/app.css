@@ -654,6 +654,7 @@ body[data-pair] #filter-questions { display: none; }
 body[data-t-view="card"] #says-host { --says-bottom: 116px; }
 body[data-t-view="session"] #says-host { --says-bottom: 100px; }
 body[data-t-view="whiteboard"] #says-host { --says-bottom: 112px; }
+@media (max-width: 1520px) { body[data-t-view="whiteboard"] #says-host { --says-bottom: 172px; } }
 :root.is-choosing #says-host { --says-bottom: 92px; }
 #says-host:empty { display: none; }
 .says form { margin: 0; flex: none; }
@@ -679,7 +680,7 @@ body[data-t-view="whiteboard"] #says-host { --says-bottom: 112px; }
   #says-host { --says-bottom: 84px; left: 0; padding-inline: 8px; }
   body[data-t-view="card"] #says-host { --says-bottom: 196px; }
   body[data-t-view="session"] #says-host { --says-bottom: 92px; }
-  body[data-t-view="whiteboard"] #says-host { --says-bottom: 152px; }
+  body[data-t-view="whiteboard"] #says-host { --says-bottom: 158px; }
   :root.is-choosing #says-host { --says-bottom: 72px; }
 }
 .keys-sheet header form { margin: 0; }

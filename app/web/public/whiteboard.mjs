@@ -47,10 +47,6 @@ ${whiteboardSessions(model)}
   </div>
 
   <div class="pad-top">
-    <div class="pad-pill pad-title">
-            <strong id="pad-word">Scribble Board</strong>
-    </div>
-    <span class="pad-gap"></span>
     <div class="pad-pill">
       <button type="button" class="pad-icon-btn" id="undo" data-icon="undo" aria-label="Undo" data-tip="Undo · Ctrl+Z"></button>
       <button type="button" class="pad-icon-btn" id="redo" data-icon="redo" aria-label="Redo" data-tip="Redo · Ctrl+Shift+Z"></button>
@@ -2276,7 +2272,10 @@ function mountPad(main, { canvasId: PAD, client }) {
       nodes.push(find)
     }
     if (!items.length) nodes.push(Object.assign(document.createElement('p'), { className: 'pad-menu-head', textContent: 'No session is connected.' }))
-    menu.replaceChildren(...nodes, ...items)
+    // (the heading and the field stand still; only the list of sessions scrolls)
+    const list = Object.assign(document.createElement('div'), { className: 'pad-menu-list' })
+    list.append(...items)
+    menu.replaceChildren(...nodes, list)
     firstKey()
     menu.onkeydown = e => {
       const list = shownItems(), at = list.indexOf(document.activeElement)
@@ -2299,11 +2298,14 @@ function mountPad(main, { canvasId: PAD, client }) {
     if (menu.hidden || !area) return
     const x = area.x * view.z + view.x, y = area.y * view.z + view.y, w = area.w * view.z, h = area.h * view.z
     const mw = menu.offsetWidth, mh = menu.offsetHeight
-    // under the frame; over it if there is no room; else inside its lower edge
-    let ty = y + h + 10
-    if (ty + mh > H - 84) ty = y - mh - 10
-    if (ty < 60) ty = clamp(y + h - mh - 10, 60, Math.max(60, H - 84 - mh))
-    const tx = clamp(x + w / 2 - mw / 2, 8, Math.max(8, W - mw - 8))
+    // One rule: beside the frame that was just drawn, its top on the frame's top: at the right; at the left when
+    // there is no room there; inside the frame's right edge when neither side has room. Always inside the paper,
+    // above the tools at the foot.
+    const gap = 12, foot = 96
+    let tx = x + w + gap
+    if (tx + mw > W - 8) tx = x - mw - gap
+    if (tx < 8) tx = clamp(x + w - mw - gap, 8, Math.max(8, W - mw - 8))
+    const ty = clamp(y, 8, Math.max(8, H - foot - mh))
     menu.style.transform = `translate(${Math.round(tx)}px, ${Math.round(ty)}px)`
   }
   async function sendArea(session, item) {
