@@ -66,8 +66,8 @@ import * as toolsModule from './tools.mjs'
 // that started it). claimSlot() takes a slot over from a live claim of the SAME session: that is a reconnect
 // (/mcp -> Reconnect), where Claude Code starts the new connector before the old one is gone. The old one is asked to
 // stop (SIGTERM, only when its command line shows a Trommi connector) and given a few seconds; then its claim is
-// removed either way. The hub's lease fences the old process if it still runs. Claims of other sessions are never
-// taken over: two Claude sessions in one folder stay two slots.
+// removed either way. The hub's lease fences the old process if it still runs. A claim of another session is never
+// taken away: its holder is asked, and gives the key up itself when its session is not using it ("who gets the key").
 
 export const alive = pid => { try { process.kill(pid, 0); return true } catch (e) { return e.code === 'EPERM' } }
 const pause = ms => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms)
