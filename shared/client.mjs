@@ -532,6 +532,9 @@ export class Client {
       await this.serial(() => this._refreshMembers())
       this.serial(() => this._healStaleSessions()).catch(e => this._localAlert('rekey', e))
       this._refreshDevices().catch(() => {})
+    } else if (event === 'presence') {
+      // A device's stream opened or closed, or its link report changed: the row GET devices would give, at once.
+      if (data?.device_id) await this._refreshDevices({ devices: [data] }, { partial: true })
     } else if (event === 'session_grant') {
       // A grant this device knows (its own re-seal or re-key, announced back to it) needs no refresh. Others: one
       // refresh for a burst (a re-seal announces every session of the room at once; a refresh per grant held live
@@ -705,11 +708,13 @@ export class Client {
     }
   }
 
-  async _refreshDevices(prefetched = null) {
+  async _refreshDevices(prefetched = null, { partial = false } = {}) {
     const r = prefetched ?? await this.hub.devices()
     const change = M.emptyChange()
     M.applyDevices(this.model, r.devices, change)
-    await this.storage.set('devices', r.devices.map(d => ({ device_id: d.device_id, is_online: d.is_online, offline_since: d.offline_since ?? null, agent_session_id: d.agent_session_id ?? null })))
+    // (A presence event names one device: the stored list keeps the others.)
+    const rows = partial ? [...this.model.members.values()] : r.devices
+    await this.storage.set('devices', rows.map(d => ({ device_id: d.device_id, is_online: d.is_online, offline_since: d.offline_since ?? null, link: d.link ?? null, agent_session_id: d.agent_session_id ?? null })))
     this._emitChange(change)
   }
 
@@ -2270,7 +2275,7 @@ function itemFromStored(r) {
 }
 
 const HUMAN_KEY = /^(crown$|room_snapshot$|draft\/|snooze\/|duck\/|desk\/|session\/|read_up_to\/|canvas_snapshot\/)/
-const AGENT_KEY = /^(profile$|status_line\/|alert\/)/
+const AGENT_KEY = /^(profile$|heard$|status_line\/|alert\/)/
 export const isHumanRegisterKey = k => HUMAN_KEY.test(k)
 export const isAgentRegisterKey = k => AGENT_KEY.test(k)
 
