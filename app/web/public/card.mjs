@@ -373,7 +373,8 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   // has scrolled out of view a slim strip of its paper stays under the top edge: the title, the answers as chips (the
   // card's own buttons again: the same form, the same addresses), the duck, What??, the reverse card, Later's tag.
   const corner = cls => raw(`<svg class="tc-corner ${cls}" viewBox="0 0 64 64" aria-hidden="true"><path d="M1.5 1.5 Q30 2.4 61 1.8 Q32 31 2.2 61 Q1 30 1.5 1.5 Z"/><path d="M8 40 L40 8 M8 26 L26 8 M8 13 L13 8" class="hatch"/></svg>`)
-  const mini = (cls, way, tip, art) => html`<button class="tc-mini ${cls}" type="submit" form="${form}" formaction="${act(card, base, way)}" title="${tip}" aria-label="${tip}">${art}</button>`
+  // (Reverse goes on to the next card, as the card's own reverse tile does: name="next")
+  const mini = (cls, way, tip, art) => html`<button class="tc-mini ${cls}" type="submit" form="${form}" formaction="${act(card, base, way)}"${way === 'revise' ? raw(' name="next" value="1"') : ''} title="${tip}" aria-label="${tip}">${art}</button>`
   const jump = html`<button class="tc-chip is-jump" type="button" data-action="card#toAnswers">To the answers ↑</button>`
   const few = open && card.kind === 'decision' && !card.multiple && card.options.length <= 4
   const strip = html`<div class="tc-bar" aria-label="This question, in short"><div class="tc-bar-in"><b class="tc-bar-title">${card.title}</b>
