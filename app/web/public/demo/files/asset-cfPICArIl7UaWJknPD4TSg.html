@@ -1,6 +1,6 @@
 <!doctype html>
-<html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Testseite: Zähler</title>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Test page: counter</title>
 <style>
   body { font: 16px/1.5 system-ui, sans-serif; margin: 0; padding: 24px; background: #faf8f3; color: #222; }
   h1 { font-size: 20px; margin: 0 0 12px; }
@@ -12,10 +12,10 @@
   @media (prefers-color-scheme: dark) { body { background: #1d1c1a; color: #eee; } button { background: #333; color: #eee; } }
 </style></head>
 <body>
-<h1>Testseite (Fixture): ein kleiner Zähler</h1>
-<p>Eine selbst gebaute Seite mit eigenem Skript, wie ein Agent sie neben ein Bild legt.</p>
+<h1>Test page (fixture): a small counter</h1>
+<p>A hand-made page with a script of its own, as an agent puts one beside a picture.</p>
 <div class="box"><button id="minus">−</button><output id="n">0</output><button id="plus">+</button></div>
-<table><tr><th>Variante</th><th>Ladezeit</th></tr><tr><td>A</td><td>84 ms</td></tr><tr><td>B</td><td>120 ms</td></tr></table>
+<table><tr><th>Variant</th><th>Load time</th></tr><tr><td>A</td><td>84 ms</td></tr><tr><td>B</td><td>120 ms</td></tr></table>
 <script>
   let n = 0; const out = document.getElementById('n')
   document.getElementById('plus').onclick = () => { out.textContent = ++n }
