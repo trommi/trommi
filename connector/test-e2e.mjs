@@ -636,6 +636,11 @@ export async function integration({ test, tmp }) {
       assert.match(told.params.content, /retired/); assert.match(told.params.content, /another connector continue/)
       await assert.rejects(first.call('list_cards'), /retired: the human let another connector continue/)
       await first.close()
+      // Started again later (its Claude Code restarts and finds the old key file): the same plain sentence, not an odd failure.
+      const dir1 = path.join(tmp, 'heir-cont-first')
+      const late = await startConnector({ env: { ...env, TROMMI_FOLDER: dir1 }, cwd: dir1 })
+      await until('the restarted old connector says it is retired', async () => { try { await late.call('list_cards'); return false } catch (e) { return /This connector is retired/.test(e.message) || (late.lastError = e.message, false) } }, 20000).catch(e => { throw new Error(`${e.message}: ${late.lastError}\n${late.stderr().slice(-1500)}`) })
+      await late.close()
       // The second one is the same session: its cards (also the helper's) are its own to list, revise and close.
       const s = human.model.sessions.get(session_id)
       assert.equal(s.agent_device_ids.length, 1)

@@ -1017,6 +1017,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
       me.phase = 'starting'
       return await open({ ask })
     })().catch(async err => {
+      if (me.phase === 'retired') return me              // said by the 'removed' handler, in its own words
       me.error = err.message
       if (err.code === 'client-too-old') me.phase = 'too-old'
       else if (me.phase === 'starting') { await drop().catch(() => {}); me.phase = 'asleep' }   // e.g. the hub out of reach: the next call tries again
