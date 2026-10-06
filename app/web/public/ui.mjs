@@ -2555,13 +2555,17 @@ ${tile('is-thumb is-lead is-ack', 'tick', WORDS.ack, { title: `${WORDS.ack}: rea
   const size = bare ? 'none' : labelSize(card.options)
   const short = card.options.every(shortOf)
   if (quick(card) && (bare || size !== 'none' || short)) {
-    // Thumbs: down on the left, up on the right. The option the agent leads with (its first, or "allow") is the up.
-    const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : o === card.options[0])
+    // Thumbs only for a real yes or no (bare words, or a permission): down on the left, up on the right; the option
+    // the agent leads with (its first, or "allow") is the up. Two named options are two plain tiles with their words,
+    // in the order given, no thumbs; the one the agent advises is the filled one (and carries the pen's mark).
+    const thumbs = bare || card.kind === 'permission'
+    const advice = advisedKeys(card)
+    const isYes = o => (card.kind === 'permission' ? o.key === 'allow' : thumbs ? o === card.options[0] : advice.includes(o.key))
     const worded = !bare && size === 'none'
     return html`<form class="inbox-actions" method="post" action="${act(card, base, 'decide')}">${stay}${seen}
-${[...card.options].sort((a, b) => isYes(a) - isYes(b)).map(o => {
+${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options).map(o => {
       const lead = isYes(o), advised = advisedKeys(card).includes(o.key)
-      const cls = `is-thumb${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}${worded ? ' is-short' : ''}${advised ? ' is-advised' : ''}`
+      const cls = `is-thumb${thumbs ? '' : ' is-named'}${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}${worded ? ' is-short' : ''}${advised ? ' is-advised' : ''}`
       const title = advised ? 'The agent recommends this' : [size === 'none' && !bare ? o.label : '', o.detail].filter(Boolean).join(': ')
       return tile(cls, lead ? 'yes' : 'no', worded ? shortOf(o) : size === 'none' && !bare ? '' : o.label, { value: o.key, title, aria: o.label, short: worded })
     })}</form>`
