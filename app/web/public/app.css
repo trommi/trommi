@@ -205,12 +205,6 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
 .caps { font-size: var(--t-xs); font-weight: 600; letter-spacing: .07em; text-transform: uppercase; }
 @keyframes blink { 50% { opacity: .3; } }
 
-.icon-btn {
-  width: 40px; height: 40px; flex: none; display: grid; place-items: center;
-  border: 0; border-radius: var(--r-pill); background: none; color: var(--muted);
-  transition: background var(--d-fast) var(--ease-out), color var(--d-fast) var(--ease-out);
-}
-.icon-btn:hover { background: var(--sunken); color: var(--fg); }
 /* Filters lay a list over the conversation: two quiet words at the head's right end, filled while one holds. */
 .filters { flex: none; display: flex; align-items: center; gap: var(--s-1); }
 .filters button { min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
@@ -218,7 +212,6 @@ html:where([data-ui]), :where([data-ui]) body { margin: 0; overflow: hidden; ove
 .filters button[aria-pressed="true"] { background: var(--fg); color: var(--bg); }
 .filters b { display: inline-block; margin-left: 7px; padding: 1px 7px; border-radius: var(--r-pill); background: var(--urg-high); color: var(--surface); font-size: var(--t-xs); font-weight: 700; font-variant-numeric: tabular-nums; }
 .filters b:empty { display: none; }
-body[data-view="scribble"] .filters { display: none; }
 /* The switch between the session's two modes is part of its title: words, the current one underlined. */
 .modes { flex: none; display: flex; align-items: center; margin-right: calc(-1 * var(--s-3)); }
 .modes button { position: relative; min-height: 40px; padding: 0 var(--s-3); border: 0; border-radius: var(--r-pill); background: none; color: var(--muted); font-size: var(--t-md); font-weight: 500; white-space: nowrap; }
@@ -228,7 +221,6 @@ body[data-view="scribble"] .filters { display: none; }
 .modes button[aria-current] { color: var(--fg); font-weight: 700; text-decoration: underline; text-decoration-thickness: 2px; text-underline-offset: 6px; }
 /* Something new was said while you were looking at a list or the canvas. */
 .modes button[data-unread]::after { content: ""; display: inline-block; width: 7px; height: 7px; margin-left: 7px; border-radius: 50%; background: var(--accent); vertical-align: middle; }
-body[data-view="scribble"] #scribble { display: block; }
 .column { width: 100%; max-width: 47.5rem; margin-inline: auto; padding-inline: var(--gutter); }
 /* "☞" before a paragraph (ui.js rich()): the drawn hand points at it from the margin, the text a shade stronger */
 .rich-point { position: relative; padding-left: 34px; font-weight: 600; }
@@ -353,10 +345,7 @@ html body:not([data-scope="all"]):not([data-page]) .modes { display: none; }
   html body:not([data-pair]):not([data-scope="all"]) .filters { margin: 0 var(--s-4) 9px 0; }
 }
 /* The canvas in the pane's place: it carries the way back to the conversation. */
-body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
-@media (min-width: 1200px) {
-  html body[data-view="scribble"]:not([data-pair]):not([data-scope="all"]):not([data-page]) #scribble { grid-column: 2; grid-row: 2; border-left: 1px solid var(--line); }
-}
+
 /* The choice of drawing opens right under the picture that was clicked: forty tiles in the session's colour. */
 .mark-picker { position: fixed; margin: 0; padding: var(--s-3); border: 0; border-radius: 14px; background: var(--surface); color: var(--fg); box-shadow: 0 0 0 1px var(--line-strong), var(--shadow-lg); animation: pop var(--d-fast) var(--ease-out) both; }
 .mark-picker::backdrop { background: transparent; }
@@ -381,7 +370,6 @@ body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
   /* (room at the foot, so the last row can be scrolled clear of the two floating buttons) */
   body[data-scope="all"] #inbox { grid-column: 1; grid-row: 2; padding: var(--s-5) var(--gutter) 96px; }
   .mic { width: 44px; height: 44px; }
-  .icon-btn { width: 44px; height: 44px; }   /* below 16px iOS zooms the page on focus */
   .send { width: 44px; height: 44px; }
 }
 
@@ -450,20 +438,17 @@ body[data-view="scribble"] #scribble { display: flex; flex-direction: column; }
 /* For a moment a new note lets taps through, so a second tap meant for the next answer cannot hit "Back". */
 .says[data-fresh] { pointer-events: none; }
 
-
 @media (min-width: 1200px) {
   :where([data-ui]) body { --beside-col: 50.5rem; --talk-w: clamp(340px, 30vw, 440px); }
   /* (The name's box reaches under them and is positioned: they stand above it, so they can be pressed.) */
   body:not([data-pair]):not([data-scope="all"]) :is(.filters, .modes) { position: relative; z-index: 1; }
   body:not([data-pair]):not([data-scope="all"]) .filters { grid-column: 2; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-3) 10px 0; }
   body:not([data-pair]):not([data-scope="all"]) .modes { grid-column: 3; grid-row: 1 / -1; align-self: end; justify-self: end; margin: 0 var(--s-4) 6px 0; }
-  body[data-pair] #scribble { grid-column: 1 / -1; grid-row: 2; }
 }
-body[data-pair] #filter-questions { display: none; }
 @media (min-width: 1200px) {
   body[data-talk-drag] { cursor: col-resize; user-select: none; -webkit-user-select: none; }
   /* Folded: the column is a strip; the list of questions takes the rest. */
-  body[data-pair][data-talk-folded] { --talk-w: 44px !important; }
+
 }
 /* Copying a decision into another session's conversation. Clean, quiet controls. */
 
@@ -504,7 +489,6 @@ body[data-pair] #filter-questions { display: none; }
   display: inline-block; color: inherit; text-decoration: none; text-align: center; cursor: pointer;
   touch-action: manipulation; user-select: none; -webkit-user-select: none; -webkit-user-drag: none;
 }
-
 
 :root { --keys-arrow: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 46 46' fill='none' stroke='%23000' stroke-width='3.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 25c9-3.500 19-1 33-3.200'/%3E%3Cpath d='M27.500 11.500c3.800 4.200 6.800 7.300 11.500 10-4.600 2.600-8.300 6.700-10.800 12.500'/%3E%3C/svg%3E"); }
 @keyframes keys-point { from { translate: -14px 0; opacity: 0; } }
@@ -599,7 +583,6 @@ body[data-pair] #filter-questions { display: none; }
   .rh.is-capped, .rh.is-wide { padding-bottom: 44px; }
 }
 
-
 /* ---- the filters are real links (js/link.js; hrefs kept by app.js paintLinks): what app.css says for
    `.filters button`, for the anchor. (#mode-*, #tab-* are links too; .modes and .tabbar are shown nowhere.) ---- */
 .filters a { display: inline-flex; align-items: center; min-height: 30px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--muted); font-size: var(--t-sm); font-weight: 500; white-space: nowrap; }
@@ -638,7 +621,6 @@ body[data-pair] #filter-questions { display: none; }
 @media (prefers-reduced-motion: reduce) {
   .say[data-say="loading"] { animation: none; }
 }
-
 
 /* ---- toast: one quiet pill at the bottom, in the middle of the page's main area (right of the sidebar), the same
    on every page (ui.mjs). "<what happened>: <of what>  ↶ Undo", the newest lowest, three at most; a scribbled line
@@ -719,7 +701,6 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
   --run-hook-s: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 14'%3E%3Cpath d='M2 1C2.3 6.5 4.6 9.4 11 9' fill='none' stroke='black' stroke-width='2.3' stroke-linecap='round'/%3E%3C/svg%3E");
 }
 
-
 /* An attachment the hub no longer has (retention, quota). */
 .att-gone { display: inline-flex; align-items: center; min-height: 48px; padding: 8px 12px; border: 1px dashed var(--line, #d8d6cf); border-radius: 10px; color: var(--muted, #6b6b66); font-size: 13px; }
 
@@ -734,7 +715,6 @@ button.t-chip-drop { background: none; color: var(--muted); text-decoration: und
 
 /* ---- the page /assets ---- */
 #gallery { display: none; }
-
 
 /* ---- The page curl (ui.mjs curlHTML, controller "curl"): the sheet's box over the page's main area; only the corner
    takes the pointer. Under the lifted piece the other page itself shows (the Scribble Board laid there by the
