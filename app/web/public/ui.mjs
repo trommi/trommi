@@ -1149,7 +1149,7 @@ controller('fit', class extends Controller {
 // Desk as it is rendered now (app.mjs peek). So a turn swaps two things that are both there, and nothing flashes.
 // Markup: curlHTML(side, to), a part of the frame on both pages (app.mjs bodyParts). Reduced motion: no peel, a fade.
 export const curlHTML = (side, to) => raw(`<div class="curl" data-controller="curl" data-curl-side-value="${side}" data-curl-to-value="${to}"><div class="curl-back" hidden inert></div><svg class="curl-svg" aria-hidden="true"><defs><clipPath id="curl-flap-clip"><path class="curl-flap-clip"/></clipPath></defs><path class="curl-under"/><path class="curl-cast"/><path class="curl-flap"/><path class="curl-hatch" clip-path="url(#curl-flap-clip)"/><path class="curl-fold"/></svg><button type="button" class="curl-grab" title="${side === 'desk' ? 'Turn to the Scribble Board (P)' : 'Turn back to the Desk (Esc)'}" aria-label="${side === 'desk' ? 'Turn to the Scribble Board' : 'Turn back to the Desk'}"></button></div>`)
-const CURL_REST = [-19, 14], CURL_NEAR = 130   // the dog-ear's tip from the corner at rest; how near the pointer wakes it
+const CURL_REST = [-31, 23], CURL_NEAR = 130   // the dog-ear's tip from the corner at rest; how near the pointer wakes it
 /** A convex polygon cut by the line through m with normal n: the part on n's side. */
 function cutPoly(poly, m, n) {
   const f = p => (p[0] - m[0]) * n[0] + (p[1] - m[1]) * n[1], out = []
