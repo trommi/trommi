@@ -591,6 +591,11 @@ export const cardNr = card => `Nr. ${card.number}`
 export const cardNote = card => [card.merged_from?.length ? `replaces ${card.merged_from.length} questions` : '', card.revised ? 'revised' : ''].filter(Boolean).join(' · ')
 export const kindOf = a => a.kind ?? (a.image ? 'image' : 'file')
 export const advisedKeys = card => [].concat(card.recommended ?? [])
+// A final option (the agent marked it: choosing it leaves nothing to do) ends the card with the answer. Its tile says
+// so before he chooses: a small pen tick, on a card's own page with two words beside it.
+export const FINAL_TIP = 'Settles it: nothing follows from this answer, the card goes straight to Done'
+export const SETTLED = 'Settled by your answer'
+export const finalSign = (words = false) => html`<span class="final-sign" title="${FINAL_TIP}">${sk('tick')}${words ? html`<span>settles it</span>` : ''}</span>`
 export const advisedLabels = card => card.options.filter(o => advisedKeys(card).includes(o.key)).map(o => o.label).join(', ')
 
 function ago(ts, now = Date.now()) {
@@ -2544,7 +2549,7 @@ export const act = (card, base, what) => `${base}/cards/${card.id}/${what}`
 // A way out of the row, tucked beside the title: Snooze, Revise, Whatever, Shred. One form, each button its own address.
 const tab = (cls, drawing, word, label, action, hidden = false) => html`<button class="inbox-tab-act ${cls}" type="submit" formaction="${action}" aria-label="${label}" title="${label}"${hidden ? raw(' hidden') : ''}><i class="inbox-later-flap">${sk(drawing)}<b>${word}</b></i></button>`
 
-const tile = (cls, drawing, label, { name = 'key', value = '', action = null, title = '', aria = '', short = false } = {}) => html`<button class="inbox-answer ${cls}"${/\bis-advised\b/.test(cls) ? raw(' data-controller="advice"') : ''} type="submit"${value ? html` name="${name}" value="${value}"` : ''}${action ? html` formaction="${action}"` : ''}${title ? html` title="${title}"` : ''}${aria ? html` aria-label="${aria}"` : ''}><span class="inbox-disc">${sk(drawing)}</span>${label ? html`<span${short ? raw(' class="inbox-short"') : ''}>${label}</span>` : ''}</button>`
+const tile = (cls, drawing, label, { name = 'key', value = '', action = null, title = '', aria = '', short = false, final = false } = {}) => html`<button class="inbox-answer ${cls}"${/\bis-advised\b/.test(cls) ? raw(' data-controller="advice"') : ''} type="submit"${value ? html` name="${name}" value="${value}"` : ''}${action ? html` formaction="${action}"` : ''}${title ? html` title="${title}"` : ''}${aria ? html` aria-label="${aria}"` : ''}>${final ? finalSign() : ''}<span class="inbox-disc">${sk(drawing)}</span>${label ? html`<span${short ? raw(' class="inbox-short"') : ''}>${label}</span>` : ''}</button>`
 
 function tiles(card, base) {
   const stay = raw('<input type="hidden" name="stay" value="1">')
@@ -2569,8 +2574,9 @@ ${tile('is-thumb is-lead is-ack', 'tick', WORDS.ack, { title: `${WORDS.ack}: rea
 ${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options).map(o => {
       const lead = isYes(o), advised = advisedKeys(card).includes(o.key)
       const cls = `is-thumb${thumbs ? '' : ' is-named'}${lead ? ' is-lead' : ''}${size === 'small' ? ' is-small' : ''}${worded ? ' is-short' : ''}${advised ? ' is-advised' : ''}`
-      const title = advised ? 'The agent recommends this' : [size === 'none' && !bare ? o.label : '', o.detail].filter(Boolean).join(': ')
-      return tile(cls, lead ? 'yes' : 'no', worded ? shortOf(o) : size === 'none' && !bare ? '' : o.label, { value: o.key, title, aria: o.label, short: worded })
+      const final = o.final === true
+      const title = [advised ? 'The agent recommends this' : [size === 'none' && !bare ? o.label : '', o.detail].filter(Boolean).join(': '), final ? FINAL_TIP : ''].filter(Boolean).join(' · ')
+      return tile(cls, lead ? 'yes' : 'no', worded ? shortOf(o) : size === 'none' && !bare ? '' : o.label, { value: o.key, title, aria: final ? `${o.label} (settles it)` : o.label, short: worded, final })
     })}</form>`
   }
   // More than two ways: one tile, "Choose". It is a link to the card's own page, where every option stands.

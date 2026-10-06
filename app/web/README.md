@@ -82,7 +82,9 @@ instead); files come network first, the cache only offline. On the dev server (`
   leaves glides out while the rows below move up (`app.mjs` `flipOut`, transform only).
 - **Selection bar:** while rows are selected, Later (the pull-tag: the rows go down into Off the desk), Egal, Read (with
   infos), Shred; one POST `/cards/batch`, one toast with Undo.
-- **With the agents:** answered cards whose session is still at it, one line each, below the open ones.
+- **With the agents:** answered cards whose session is still at it, one line each, below the open ones. A card answered
+  with a final option (a small pen tick on its tile) never lies here: the answer settles it, it goes to "Off the desk"
+  at once ("settled by your answer"), and Take back opens it again.
 - **Foot:** "Off the desk" (a list of snoozed, done, shredded cards; a line opens its card, where Wake up and Take back
   are) and Media (a pile of the newest pictures; the gallery at `/assets`).
 - **Note:** one drawn yellow note at the window's bottom-right; it unfolds there to write, takes attachments, sends to the crown (`sidebar.mjs` `cornerNote`).
