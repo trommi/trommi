@@ -167,10 +167,12 @@ export function openDoorAt(file, handler, log = () => {}) {
     })
   })
   server.on('error', err => log(`door not open: ${err.message}`))
-  server.listen(file, () => { try { fs.chmodSync(file, 0o600); ino = fs.statSync(file).ino } catch {} })
+  const mark = () => { const st = fs.statSync(file); return `${st.ino}/${st.ctimeMs}` }   // a freed inode number is given out again
+  server.listen(file, () => { try { fs.chmodSync(file, 0o600); ino = mark() } catch {} })
   server.unref()
-  // Only our own socket file: a later process (the next holder, the reconnected connector) may have made it anew.
-  return () => { server.close(); try { if (ino != null && fs.statSync(file).ino === ino) fs.unlinkSync(file) } catch {} }
+  // Only our own socket file: a later process (the next holder, the reconnected connector) may have made it anew, and
+  // closing a listening socket removes whatever file has its name. Then this one is left as it is (it is unref'd).
+  return () => { let own = false; try { own = ino != null && mark() === ino } catch {} ; if (own) { server.close(); fs.rmSync(file, { force: true }) } }
 }
 
 /** Knock at a slot's door: resolves the holder's answer, or rejects (no door, no answer within timeout_ms). */
@@ -551,17 +553,20 @@ export function createMonitorFeed({ claudePid = process.ppid, log = () => {}, en
       sock.resume()
     })
     server.on('error', err => log(`monitor socket: ${err.message}`))
-    server.listen(file, () => { try { ino = fs.statSync(file).ino } catch {} })
+    server.listen(file, () => { try { ino = mark() } catch {} })
     server.unref()
   } catch (err) { log(`monitor socket not opened: ${err.message}`) }
-  // Only our own socket file: after /mcp Reconnect the new connector of the same session may have made it anew.
-  const unlink = () => { try { if (ino != null && fs.statSync(file).ino === ino) fs.unlinkSync(file) } catch {} }
+  // Only our own socket file: after /mcp Reconnect the new connector of the same session may have made it anew (and
+  // closing a listening socket removes whatever file has its name; a freed inode number is given out again).
+  const mark = () => { const st = fs.statSync(file); return `${st.ino}/${st.ctimeMs}` }
+  const own = () => { try { return ino != null && mark() === ino } catch { return false } }
+  const unlink = () => { if (own()) try { fs.unlinkSync(file) } catch {} }
   process.on('exit', unlink)
   return {
     file,
     connected: () => clients.size > 0,
     push(line) { for (const s of clients) s.write(`${line.replace(/[\r\n]+/g, ' ')}\n`) },
-    close() { for (const s of clients) s.destroy(); server?.close(); unlink() },
+    close() { for (const s of clients) s.destroy(); if (own()) { server?.close(); unlink() } },
   }
 }
 
