@@ -84,8 +84,14 @@ self.addEventListener('fetch', event => {
 self.addEventListener('push', event => {
   let message = {}
   try { message = event.data.json() } catch {}
-  // The hub's loss watch: an agent with running work whose connection stayed gone for a minute (hub/server.mjs).
-  if (message.kind === 'agent-lost') message = { ...message, title: 'Trommi: connection lost', body: 'An agent with running work lost its connection to Trommi.', tag: `lost-${String(message.device_id ?? '').slice(0, 16)}` }
+  // The hub's word on a session's link (hub/server.mjs): cut off (its Claude Code runs, its Trommi tools are gone), or
+  // gone with running work, for a minute.
+  if (message.kind === 'agent-lost') {
+    message = message.state === 'cut'
+      ? { ...message, title: 'Trommi: a session is cut off', body: 'It cannot hear you and cannot write to you. In its terminal: /mcp → trommi → Reconnect.' }
+      : { ...message, title: 'Trommi: connection lost', body: 'An agent with running work lost its connection to Trommi.' }
+    message.tag = `lost-${String(message.device_id ?? '').slice(0, 16)}`
+  }
   event.waitUntil(self.registration.showNotification(message.title || 'Trommi', {
     body: message.body || (message.urgency === 'critical' || message.urgency === 'high' ? 'Something knocks' : 'A new question'),
     tag: message.tag || 'trommi', renotify: true, icon: '/icons/trommi-192.png',

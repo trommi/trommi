@@ -1,8 +1,8 @@
 // The Desk: every open question as a row, in the hub's fixed order, and the stacks at its foot
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
-import { BASE, stream, flipOut } from './app.mjs'
-import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { BASE, heardOf, linkOf, stream, flipOut } from './app.mjs'
+import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, linkSlip, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -36,10 +36,12 @@ const GREETINGS = [
 const CALM = ['All quiet.', 'Nothing needs you.', 'Clear desk.', 'Carry on.', 'As you were.', 'Go outside.']
 const dice = Math.random()
 const greeting = calm => { const set = calm ? CALM : GREETINGS; return set[Math.floor(dice * set.length)] }
+/** No question waits, but it is not quiet: a session cannot hear him, or an answer of his was not picked up. */
+const unquiet = model => (model.cut?.length ? (model.cut.length === 1 ? 'One can’t hear you.' : 'Some can’t hear you.') : model.unheard ? (model.unheard === 1 ? 'An answer waits.' : 'Answers wait.') : '')
 function deskHead(model, base) {
   const n = model.fresh.length
   if (!model.units.length) return deskInvite()
-  const words = greeting(!n).split(' '), last = words.pop()
+  const words = ((!n && unquiet(model)) || greeting(!n)).split(' '), last = words.pop()
   return html`<header class="inbox-head desk-top" id="desk-head" data-controller="title" data-title-count-value="${n}"><h2 class="desk-hello">${words.join(' ')} <em>${last}</em></h2>${n ? html`<div class="desk-tools">${duckAll(model, base)}${nextPlease(model, base)}</div>` : ''}</header>`
 }
 
@@ -66,7 +68,8 @@ function runs(model) {
 
 /** Everything inside .inbox-groups (#desk-list). rowOf(card): the row's markup (the stream keeps what it rendered). */
 function deskList(model, base, { pile = null, q = '', rowOf = card => deskRow(card, model, base) } = {}) {
-  return html`${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
+  // (The slip for the sessions that are cut off stands above the questions: #link-slip, hidden while there is none.)
+  return html`${linkSlip(model.cut ?? [], base)}${runs(model).map(({ sender, cards }) => runSection(sender, cards.map(rowOf), cards.length))}
 ${withAgents(model, base)}${deskStacks(model, base, pile, q)}
 ${model.open.length || (model.reads ?? []).length ? '' : html`<div class="inbox-empty">${sk('desk')}<p>As soon as an agent has a question, it shows up here.</p></div>`}`
 }
@@ -131,7 +134,8 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //   later   status "open" and snoozed_until set: he put it off; "Wake up" fetches it back
 //   works   status "open" and with_agent set (handed back by Revise or What??; it returns by itself; "Take back"),
 //           or status "decided" while it is really with its session: answered within ACTING_MS and the session is
-//           online (it acts on the answer and has not closed it yet; "Take back")
+//           online or cut off (it acts on the answer and has not closed it yet), or it has not picked the answer up
+//           (the receipt, card.heard false); "Take back"
 //   done    status "decided" but older than ACTING_MS or its session is offline (its line says "not closed by the
 //           agent"), and status "done" with an answer of his (choice, or trusted; one that was a final option settled
 //           the card at once, it was never "decided": its line says "settled by your answer"), or an info he read; "Take back"
@@ -164,7 +168,7 @@ function stackOf(card, { now = Date.now(), online = () => true } = {}) {
   if (card.kind === 'permission') return card.status === 'open' && card.snoozed_until ? 'later' : null
   if (card.status === 'open') return card.snoozed_until ? 'later' : card.with_agent ? 'works' : null
   if (card.status === 'shredded') return 'trash'
-  if (card.status === 'decided') return !answeredBy(card) ? null : now - (card.decided ?? 0) < ACTING_MS && online(card.agent) ? 'works' : 'done'
+  if (card.status === 'decided') return !answeredBy(card) ? null : now - (card.decided ?? 0) < ACTING_MS && (online(card.agent) || card.heard === false) ? 'works' : 'done'
   if (card.status === 'done') return answeredBy(card) ? 'done' : 'trash'
   return null
 }
@@ -176,7 +180,8 @@ function stackCards(model) {
   const mine = c => model.onDesk(byAgent.get(c.agent))
   const newest = (cards, at) => [...cards].sort((a, b) => (at(b) ?? 0) - (at(a) ?? 0))
   const closed = state.cards.filter(c => c.status !== 'open' && mine(c))
-  const ctx = { now: Date.now(), online: id => Boolean(byAgent.get(id)?.online) }
+  // (A session that is cut off still runs: what it was given, or was to be given, stays with it.)
+  const ctx = { now: Date.now(), online: id => Boolean(byAgent.get(id)?.online) || linkOf(byAgent.get(id))?.state === 'cut' }
   return {
     later: model.snoozed.filter(c => stackOf(c, ctx) === 'later'),
     revising: model.revising.filter(c => stackOf(c, ctx) === 'works'),
@@ -191,6 +196,20 @@ function stackCards(model) {
 // below the open questions as one slim line (his word: "Agent refines … bla"): the session's drawing, "<session> is
 // working on: <title>" (or "is reworking"), when. A dashed rule "With the agents · N" parts them from what is to decide. They leave when the session closes them.
 // "Off the desk" then keeps only Snoozed, Done and Trash. Its id stays for the stream: #desk-ip.
+/** Who has the card, at the end of a tail card: whether the session has his answer (the receipt), and if not, whether it can hear. */
+function tailWho(i) {
+  const name = i.sender.name, doing = i.card.status === 'open' ? 'is reworking it' : 'is on it'
+  const who = (sign, words, state = '') => html`<span class="tail-who"${state ? html` data-link="${state}"` : ''}>${sign}<span><b>${name}</b> ${words}</span></span>`
+  const link = linkOf(i.sender), h = heardOf(i.card)
+  if (!link || !h) return who(raw(ringSvg()), doing)
+  if (h.heard) return link.state === 'cut' ? who(sk('ear-off'), 'has it, but is cut off', 'cut') : link.state === 'gone' ? who(sk('plug'), 'had it, and is gone', 'gone') : who(sk('tick'), `has it, ${doing}`, 'heard')
+  if (link.state === 'cut') return who(sk('ear-off'), 'cannot hear you', 'cut')
+  if (link.state === 'gone') return who(sk('plug'), h.heard === false ? 'is gone, has not picked it up' : 'is gone', 'gone')
+  if (link.state === 'asleep') return who(sk('ear-later'), 'is not listening', 'asleep')
+  if (h.heard == null) return link.state === 'oncall' ? who(sk('ear-later'), 'hears it on its next step', 'oncall') : who(raw(ringSvg()), doing)   // a connector without receipts
+  if (h.late) return who(sk('letter'), 'has not picked it up', 'unheard')
+  return link.state === 'oncall' ? who(sk('ear-later'), 'hears it on its next step', 'oncall') : who(sk('letter'), 'gets it', 'sent')
+}
 function withAgents(model, base) {
   const cards = stackCards(model)
   const working = (model.state.tasks ?? []).filter(t => t.state === 'working')
@@ -203,7 +222,7 @@ function withAgents(model, base) {
   // The stack's tail: each card that is out with an agent is a stack card pressed flat (the same outline, drawing and
   // title face, one line high, a shade paler), tucked under the last card; where the answers would be: who is on it.
   return html`<section id="desk-ip" class="tail" aria-label="With the agents: ${items.length}">
-${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}"><span class="tail-mark">${markArt({ ...i.sender, starred: false })}</span><strong class="tail-title">${i.card.title}</strong><span class="tail-who">${raw(ringSvg())}<span><b>${i.sender.name}</b> ${i.card.status === 'open' ? 'is reworking it' : 'is on it'}</span></span>${i.at ? agoSpan(i.at) : html`<span class="ago"></span>`}</a>`)}
+${items.map(i => html`<a class="tail-card" data-id="${i.card.id}" data-nav href="${cardPath(i.card, base)}" title="${cardNr(i.card)}: ${i.card.title}" style="--hue:${i.sender.hue}"><span class="tail-mark">${markArt({ ...i.sender, starred: false })}</span><strong class="tail-title">${i.card.title}</strong>${tailWho(i)}${i.at ? agoSpan(i.at) : html`<span class="ago"></span>`}</a>`)}
 </section>`
 }
 
@@ -756,10 +775,11 @@ export function register(t) {
       redirect(res, next ? `${cardPath(next, BASE)}?walk=1` : `${BASE}/${said ? `?said=${encodeURIComponent(said)}` : ''}`)
     })
     t.live('desk', {
-      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
+      take: m => { const all = deskCards(m); return { order: all.map(c => c.id), agents: new Map(all.map(c => [c.id, c.agent])), rows: new Map(all.map(c => [c.id, rowOf(c, m)])), head: deskHead(m, BASE), slip: linkSlip(m.cut ?? [], BASE), ip: withAgents(m, BASE), stacks: deskStacks(m, BASE) } },
       diff(was, now, client, m) {
         const out = []
         if (t.differs(was.head, now.head)) out.push(stream('replace', 'desk-head', now.head))
+        if (t.differs(was.slip, now.slip)) out.push(stream('replace', 'link-slip', now.slip))
         const kept = was.order.filter(id => now.rows.has(id)), added = now.order.filter(id => !was.rows.has(id))
         const sameOrder = kept.every((id, i) => now.order[i] === id)
         // A run is one section with the session's drawing on its first card only. A removal that brings two runs of

@@ -573,7 +573,46 @@ async function loadFixture(kind) {
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
   if (kind === 'quiet') return quietDesk(structuredClone(fixtureCache))
   const f = overloaded(filler(putAway(structuredClone(fixtureCache))))
-  return kind === 'side' ? crowded(f) : f
+  return kind === 'side' ? crowded(f) : kind === 'link' ? linkDemo(f) : f
+}
+
+// ?mock=link: one session in each state of its link (app.mjs linkOf), and receipts. UI hears on its next step and is at
+// work, Connector the same but has done nothing for 46 minutes, Hub is cut off (its Claude Code runs, its Trommi tools
+// are gone), Docs is gone; the others hear at once. Every older answer reached its session; two were not picked up.
+function linkDemo(f) {
+  const now = Date.now(), MIN = 60e3
+  const by = id => f.sessions.find(s => s.agent_session_id === id)
+  const report = (hears, min, more = {}) => ({ hears, attached: true, last_call_at: now - min * MIN, working: false, since: now - 300 * MIN, cut_since: null, exit: null, ...more })
+  const LINK = {
+    'trommi-ui': report('oncall', 1),
+    'trommi-conn': report('oncall', 46),
+    'trommi-hub': report('live', 44),
+    crypto: report('oncall', 3),
+  }
+  const HEARD = 1e9
+  for (const s of f.sessions) { s.link = LINK[s.agent_session_id] ?? report('live', 2); s.heard_up_to = HEARD }
+  const off = (id, min, exit) => { const s = by(id); if (s) { s.is_online = false; s.offline_since = now - min * MIN; s.link = { ...s.link, exit } } }
+  off('trommi-hub', 38, { reason: 'stdin', claude: 'alive' })
+  off('trommi-docs', 131, { reason: 'stdin', claude: 'gone' })
+  off('crypto-audit', 320, null)
+  const answer = (title, ago, heard) => {
+    const c = f.cards.find(c => c.title === title); if (!c) return
+    if (!c.answer) {
+      const v = c.versions[0]
+      c.answer = { answer_action: 'answer', choices: [c.options?.[0]?.key ?? 'ja'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: v.version_hash, bound_object_version: 1, envelope_number: c.first_envelope_number + 1, envelope_hash: hex(64), by_device_id: f.room.my_device_id, answered_at: now - ago * MIN, taken_back_at: null }
+      c.answers = [c.answer]; c.object_state = 'answered'; c.closed_how = 'answered'
+    }
+    c.answer.answered_at = now - ago * MIN
+    c.answer.envelope_number = heard ? Math.min(c.answer.envelope_number ?? 1, HEARD) : HEARD + 1
+  }
+  answer('Run the fuzz tests at night?', 1, true)
+  answer('Start the rotation on all devices now?', 4, true)
+  answer('Tab bar at the bottom or at the top?', 4, true)
+  answer('Publish the plugin version in the marketplace?', 12, false)
+  // (and one answer each that waits: in the session that is cut off, in one that hears on its next step, in one that hears at once)
+  const waiting = (id, ago) => { const s = by(id), c = s && f.cards.find(c => c.agent_device_id === s.agent_device_id && c.object_state === 'open' && c.card_type !== 'info' && c.urgency === 'normal' && !c.in_revision); if (c) answer(c.title, ago, false) }
+  waiting('trommi-hub', 6); waiting('trommi-ui', 1); waiting('trommi-tests', 9)
+  return f
 }
 
 // A full sidebar (?mock=side): eight more sessions beside the demo's two trees, with long names and none, one, two,
