@@ -219,7 +219,7 @@ controller('folds', class extends Controller {
       const w = i => wob(gi * 17 + i, 1.1)
       let pts
       if (flat) { const y = G.height + 3, x0 = first.left - G.left + 3, x1 = last.right - G.left - 3; pts = [[x0, y - 7], [x0 + w(1), y], [(x0 + x1) / 2, y - 1 + w(2)], [x1 + w(3), y], [x1, y - 7]] }
-      else { const x = document.documentElement.dataset.rail === 'folded' ? 3 : 13, y0 = G.height - 10, y1 = last.bottom - G.top - 8; pts = [[x + 9, y0 - 6], [x, y0 + 4 + w(1)], [x + w(2), (y0 + y1) / 2], [x, y1 + w(3)], [x + 9, y1]] }
+      else { const rail = document.documentElement.dataset.rail === 'folded', x = G.left < 12 ? 3 : rail ? -G.left + 5 : 5, h = rail ? 5 : 7, y0 = G.height - 4, y1 = last.bottom - G.top - 8; pts = [[x + h, y0 - 4], [x, y0 + 5 + w(1)], [x + w(2), (y0 + y1) / 2], [x, y1 + w(3)], [x + h, y1]] }
       for (const p of svg.querySelectorAll('path')) p.setAttribute('d', penLine(pts))
     })
   }

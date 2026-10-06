@@ -640,7 +640,6 @@ a.agent-badge { text-decoration: none; }
   .topbar .deskpill .desk-name, .topbar .desk-name[data-size="m"], .topbar .desk-name[data-size="l"] { font: 700 var(--t-md)/1.2 var(--font); letter-spacing: 0; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: none; -webkit-line-clamp: unset; }
   [data-rail="folded"] .topbar { width: 60px; height: 48px; }
 }
-@media (min-width: 861px) { html body .topbar { box-shadow: 0 1px 0 var(--line) !important; } }
 @media (max-width: 860px) { .topbar .deskpill > .brand-open { order: 1; }}
 /* the Desk row says the desk's own name; switching desks is in the Trommi menu (his word, 4 October) */
 @media (min-width: 861px) { .topbar .deskpill > .desk-go { padding-right: 12px; } }
@@ -715,3 +714,27 @@ body[data-t-view="session"] .corner-note-head { position: relative; }
   body[data-t-view="session"] .corner-note-box { bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
   body[data-t-view="whiteboard"] .corner-note-box { bottom: calc(92px + env(safe-area-inset-bottom, 0px)); }
 }
+
+/* ---- The bracket stands clear of the rows (his word, 6 October: "zu nah dran … überdeckt den Strich"): the subs
+   stand indented right of it, so their hover and the open row's ground never reach the line; in the rail the
+   subs' drawings move a little to the right for it. ---- */
+@media (min-width: 861px) {
+  :root:not([data-rail="folded"]) #agents .agent-row.is-sub { margin-left: 22px; }
+  html[data-rail="folded"] #agents .agent-row.is-sub { margin-left: 12px; margin-right: -4px; }
+  html[data-rail="folded"] #agents .agent-row.is-sub .agent-entry { border-radius: 10px; }
+}
+
+/* ---- The Desk row is the heading of the whole sidebar (his word, 6 October: "zu klein … man sieht nicht, dass das das
+   Heading von allem ist. Und den Trennstrich mag ich nicht"): the desk's drawing large, its name in the display face;
+   no line under it, room instead. Not a raised card. ---- */
+@media (min-width: 861px) {
+  html body .topbar { height: 56px; box-shadow: none !important; }
+  html:not([data-rail="folded"]) .topbar .desk-go .desk-lamp > .sketch { width: 38px; height: 38px; margin: 0 12px 0 8px; stroke-width: 1.5; }
+  html:not([data-rail="folded"]) .topbar .deskpill .desk-name, html:not([data-rail="folded"]) .topbar .desk-name[data-size="m"] { font: 800 1.5rem/1.1 var(--display); letter-spacing: -.02em; }
+  html:not([data-rail="folded"]) .topbar .desk-name[data-size="l"] { font: 800 1.12rem/1.08 var(--display); letter-spacing: -.02em; white-space: normal; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+  html[data-rail="folded"] .topbar .desk-go .desk-lamp > .sketch { width: 34px; height: 34px; }
+  /* the Trommi menu's button a little lower (his word: "fünf Pixel mehr Abstand nach oben") */
+  html .topbar .brand-open { top: 13px; }
+  html .topbar #brand-doors { top: 59px; max-height: calc(100dvh - 71px); }
+}
+
