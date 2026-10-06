@@ -2084,7 +2084,7 @@ const LAYOUT = [
     { id: 'list.open', keys: ['Enter', 'c'], does: 'open the question on its own page' },
     { id: 'list.later', keys: ['l'], does: 'Snooze; on a snoozed one: fetch it back' },
     { id: 'list.revise', keys: ['b'], does: 'Revise: back to the agent' },
-    { id: 'list.trust', keys: ['r'], does: 'Whatever: the agent decides' },
+    { id: 'list.trust', keys: ['r'], does: 'Duck it: the agent decides' },
     { id: 'list.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'take back: the marked line of a stack, else the newest toast\'s Undo' },
     { id: 'list.leave', keys: ['Escape'], does: 'drop the mark' },
@@ -2092,7 +2092,7 @@ const LAYOUT = [
   { scope: 'card', title: 'An opened question', keys: [
     { id: 'card.send', keys: ['Enter'], does: 'send, where several answers are allowed' },
     { id: 'card.later', keys: ['l', 's'], does: 'Snooze' },
-    { id: 'card.trust', keys: ['r'], does: 'Whatever: the agent decides' },
+    { id: 'card.trust', keys: ['r'], does: 'Duck it: the agent decides' },
     { id: 'card.revise', keys: ['b'], does: 'Revise: say what should change; Enter hands it back' },
     { id: 'card.what', keys: ['e'], does: 'What??: ask the agent to explain' },
     { id: 'card.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },

@@ -78,7 +78,7 @@ const deskMain = (model, base, opts = {}) => html`<main id="inbox" aria-label="D
 ${deskHead(model, base)}
 <div class="inbox-news-at"><button class="inbox-news" type="button" data-desk-target="news" data-action="desk#toNew" hidden></button></div>
 <div class="inbox-groups" id="desk-list" data-desk-target="list">${deskList(model, base, opts)}</div>
-<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span><button type="submit" name="way" value="later" class="sel-later" title="Later: pull them down, they wait in Off the desk">${LATER_TAG}<span>Later</span></button><button type="submit" name="way" value="duck" class="sel-duck" title="Egal: the agents take their advice">${sk('duck')}<span>Egal</span></button><button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button><button type="submit" name="way" value="shred" class="sel-shred" title="Shred: throw them away">${sk('bin')}<span>Shred</span></button><button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
+<form class="sel-bar" id="sel-bar" method="post" action="${base}/cards/batch" hidden aria-label="Selected cards"><input type="hidden" name="stay" value="1"><input type="hidden" name="ids" value=""><span class="sel-n"></span><button type="submit" name="way" value="later" class="sel-later" title="Later: pull them down, they wait in Off the desk">${LATER_TAG}<span>Later</span></button><button type="submit" name="way" value="duck" class="sel-duck" title="Duck it: the agents take their own advice">${sk('duck')}<span>Duck it</span></button><button type="submit" name="way" value="read" class="sel-read" hidden>${sk('tick')}<span>Read</span></button><button type="submit" name="way" value="shred" class="sel-shred" title="Shred: throw them away">${sk('bin')}<span>Shred</span></button><button type="button" class="sel-clear" title="Clear the selection (Esc)" aria-label="Clear the selection"><svg viewBox="0 0 24 24" class="sketch" aria-hidden="true"><path d="M6.8 7.2 Q12 12.4 17.4 17.6"/><path d="M17.2 6.8 Q12.2 12 6.6 17.4"/></svg></button></form>
 <div class="inbox-edge is-up"><button class="inbox-edge-knock" type="button" data-desk-target="up" data-action="desk#toKnock" data-dir="up" hidden>↑ ${sk('knock')}<span></span></button></div>
 <div class="inbox-edge is-down"><button class="inbox-edge-knock" type="button" data-desk-target="down" data-action="desk#toKnock" data-dir="down" hidden>↓ ${sk('knock')}<span></span></button></div>
 </main>`
@@ -400,7 +400,7 @@ function pullDown(root, rows, done) {
 
 // ---- Select several cards by their session's drawing (his idea, 4 October, "Multi-Select über das Logo des Agents"):
 // a click on the drawing ticks the row (Shift: the range from the last one); while any is ticked a bar at the bottom
-// puts them off (Later), leaves them to the agents (Egal), reads the infos, or shreds them, all in one form
+// puts them off (Later), leaves them to the agents (Duck it), reads the infos, or shreds them, all in one form
 // (POST <base>/cards/batch, one toast with Undo for all). Esc or ✕ clears. A stream that renews a row keeps its tick.
 const chosen = new Set()
 let lastPicked = null
@@ -578,7 +578,7 @@ controller('stack-search', class extends Controller {
 
 // ---- controller "sheet" ----
 // A phone: the ways out of a Desk row behind a long press (desk.css). The row shows who asks, the
-// title and the answers; Snooze, Revise, Whatever, What??, Shred and Open come up as a sheet after a long press
+// title and the answers; Snooze, Revise, the duck, What??, Shred and Open come up as a sheet after a long press
 // on the row, or a right click. The sheet is the hub's (sidebar.mjs, rowSheet): one form whose buttons
 // are pointed at the row that was held. No veil; Escape, a tap beside it or focus leaving it closes. The finger
 // that held does not open the link under it, and selects no text (the stylesheet takes selection and the callout

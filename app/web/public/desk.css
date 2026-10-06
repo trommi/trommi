@@ -1066,7 +1066,7 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 
 /* ---- The selection bar, drawn (his word, 4 October): paper, an ink outline in the pen's line, a slight turn; "N
    selected", then the ways as drawn signs with words: the pull-tag (Later: the rows go down into Off the desk), the
-   duck (Egal), the tick (Read, with infos), the bin (Shred, muted red), the cross ---- */
+   duck (Duck it), the tick (Read, with infos), the bin (Shred, muted red), the cross ---- */
 .sel-bar { background: var(--surface); color: var(--fg); padding: 6px 8px 6px 18px; border-radius: 6px 10px 7px 9px / 9px 6px 10px 7px; box-shadow: 0 0 0 1.6px var(--fg), 4px 5px 0 -1px color-mix(in srgb, var(--fg) 12%, transparent), 0 10px 24px -12px rgb(20 30 25 / .35); rotate: -.6deg; }
 .sel-n { font: 700 var(--t-sm)/1 var(--display); margin-right: 10px; }
 .sel-bar button { min-height: 48px; padding: 0 12px; border-radius: 8px; color: var(--fg); font: 600 var(--t-sm)/1 var(--font); }

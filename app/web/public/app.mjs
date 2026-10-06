@@ -535,7 +535,7 @@ export class BoardState {
     for (const a of c.answers ?? []) {
       if (a.answer_action === 'read') out.push(ev(a.envelope_number, 'read', card.title, a.answered_at))
       else if (a.answer_action === 'shred') out.push(ev(a.envelope_number, 'shredded', [card.title, a.note].filter(Boolean).join(' · '), a.answered_at))
-      else out.push(ev(a.envelope_number, 'decided', a.trusted ? `Whatever: your call${a.choices?.length ? ` · ${label(a.choices)}` : ''}` : label(a.choices ?? []), a.answered_at, a.trusted ? { trusted: true } : {}))
+      else out.push(ev(a.envelope_number, 'decided', a.trusted ? `Duck: your call${a.choices?.length ? ` · ${label(a.choices)}` : ''}` : label(a.choices ?? []), a.answered_at, a.trusted ? { trusted: true } : {}))
       if (a.taken_back_at) out.push(ev(a.taken_back_at, 'reopened', card.title, a.answered_at + 1))
     }
     if (c.object_state === 'closed' && (c.close_summary || c.withdraw_reason)) out.push(ev((c.envelope_number ?? 0) + 0.5, 'done', c.withdraw_reason ? `Withdrawn: ${c.withdraw_reason}` : c.close_summary, c.updated_at))
