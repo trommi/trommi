@@ -241,6 +241,8 @@ controller('whiteboard', class extends Controller {
 //   text    { text, size, color, wrap }       wrap: the width lines break at; null = the default
 //           (TEXT_WRAP, scaled with the size). The box is as wide as the longest line.
 //   voice   a text that was spoken: { text, size, color, wrap, ms, stub }
+//   sticky  a note on yellow paper, held by a strip of tape (the corner note parked here): { text, size, color, wrap }
+//           wrap is the paper's width; the box is the paper
 //   image   { mime, nw, nh, name }
 
 const INK = 'ink'   // the one colour that follows the theme: dark on light paper, light on dark
@@ -251,6 +253,9 @@ const TEXT_SIZE = 20
 const TEXT_WRAP = 460      // a typed line breaks here unless the element was given a width
 const LINE = 1.35
 const VOICE_INSET = 14            // room for the bar that marks spoken text
+// A sticky is the note as a conversation shows it taped on (notes.css .msg-note, .msg-note-tape): the same paper, ink,
+// edge, turn and strip of tape, painted on the canvas. Lengths are for the sticky's own text size and scale with it.
+const STICKY = { size: 17, w: 240, min: 104, padX: 16, top: 16, bottom: 14, turn: -1, paper: ['#fbe7a1', '#d9c35f'], ink: ['#3b300d', '#231c06'], edge: ['rgb(138 109 20 / .35)', '#a58c2c'], tape: ['rgb(230 210 122 / .62)', 'rgb(255 242 184 / .58)'], tapeW: 68, tapeH: 20, tapeUp: 10, tapeTurn: -5 }
 const FONT_STACK = '"IBM Plex Sans", "Segoe UI", system-ui, sans-serif'
 const textFont = size => `400 ${size}px ${FONT_STACK}`
 
@@ -381,15 +386,18 @@ function distPtSeg(px, py, ax, ay, bx, by) {
 // ── text ────────────────────────────────────────────────────────────────────
 let measureCtx = null
 const layoutCache = new WeakMap()
-/** Break the text of a text or voice element into lines. Returns { lines, w, h, inset, lh }. */
+/** Break the text of a text, voice or sticky element into lines. Returns { lines, w, h, inset, top, lh }: w and h are
+ *  the element's box (a sticky's: its paper), inset and top where the first line begins in it. */
 function layoutText(data, type = 'text') {
   let out = layoutCache.get(data)
   if (out) return out
   measureCtx ??= document.createElement('canvas').getContext('2d')
   const c = measureCtx
   c.font = textFont(data.size)
-  const inset = type === 'voice' ? VOICE_INSET * (data.size / TEXT_SIZE) : 0
-  const max = Math.max(data.size * 2, (data.wrap ?? TEXT_WRAP * (data.size / TEXT_SIZE)) - inset)
+  const sticky = type === 'sticky', k = data.size / STICKY.size
+  const inset = sticky ? STICKY.padX * k : type === 'voice' ? VOICE_INSET * (data.size / TEXT_SIZE) : 0
+  const paper = sticky ? data.wrap ?? STICKY.w * k : 0
+  const max = sticky ? Math.max(data.size * 2, paper - 2 * inset) : Math.max(data.size * 2, (data.wrap ?? TEXT_WRAP * (data.size / TEXT_SIZE)) - inset)
   const lines = []
   let widest = 0
   for (const para of String(data.text).split('\n')) {
@@ -413,12 +421,14 @@ function layoutText(data, type = 'text') {
   }
   for (const l of lines) widest = Math.max(widest, c.measureText(l).width)
   const lh = data.size * LINE
-  out = { lines, inset, lh, w: r2(Math.max(data.size * 0.6, Math.ceil(widest) + inset + 2)), h: r2(Math.max(1, lines.length) * lh) }
+  out = sticky
+    ? { lines, inset, top: STICKY.top * k, lh, w: r2(paper), h: r2(Math.max(STICKY.min * k, Math.max(1, lines.length) * lh + (STICKY.top + STICKY.bottom) * k)) }
+    : { lines, inset, top: 0, lh, w: r2(Math.max(data.size * 0.6, Math.ceil(widest) + inset + 2)), h: r2(Math.max(1, lines.length) * lh) }
   layoutCache.set(data, out)
   return out
 }
 
-const isText = el => el.type === 'text' || el.type === 'voice'
+const isText = el => el.type === 'text' || el.type === 'voice' || el.type === 'sticky'
 
 // ── painting ────────────────────────────────────────────────────────────────
 /** Paint one element in world coordinates.
@@ -437,10 +447,33 @@ function paintElement(c, el, env) {
     else { c.fillStyle = env.placeholder; c.fillRect(el.x, el.y, el.w, el.h) }
   } else if (isText(el)) {
     const lay = layoutText(d, el.type)
+    const sticky = el.type === 'sticky', t = env.dark ? 1 : 0
+    if (sticky) {
+      // the paper, turned a little about its middle; on it, at the top, the strip of tape with its torn ends
+      const k = d.size / STICKY.size, cx = el.x + el.w / 2, cy = el.y + el.h / 2
+      c.save()
+      c.translate(cx, cy); c.rotate(STICKY.turn * Math.PI / 180); c.translate(-cx, -cy)
+      c.shadowColor = 'rgb(0 0 0 / .14)'; c.shadowBlur = 5 * k; c.shadowOffsetY = 1.5 * k
+      c.fillStyle = STICKY.paper[t]
+      c.fillRect(el.x, el.y, el.w, el.h)
+      c.shadowColor = 'transparent'
+      c.strokeStyle = STICKY.edge[t]; c.lineWidth = 1 * k
+      c.strokeRect(el.x, el.y, el.w, el.h)
+      const w = STICKY.tapeW * k, h = STICKY.tapeH * k
+      c.save()
+      c.translate(cx, el.y - STICKY.tapeUp * k + h / 2); c.rotate(STICKY.tapeTurn * Math.PI / 180)
+      c.beginPath()
+      for (const [px, py] of [[.03, 0], [1, 0], [.97, .25], [1, .5], [.97, .75], [1, 1], [0, 1], [.03, .75], [0, .5], [.03, .25]]) c.lineTo((px - .5) * w, (py - .5) * h)
+      c.closePath()
+      c.fillStyle = STICKY.tape[t]; c.fill()
+      c.strokeStyle = 'rgb(0 0 0 / .08)'; c.lineWidth = .5 * k; c.stroke()
+      c.restore()
+    }
     c.font = textFont(d.size)
     c.textBaseline = 'middle'
-    c.fillStyle = resolveInk(d.color, env.dark)
-    lay.lines.forEach((line, i) => c.fillText(line, el.x + lay.inset, el.y + (i + 0.5) * lay.lh))
+    c.fillStyle = sticky ? STICKY.ink[t] : resolveInk(d.color, env.dark)
+    lay.lines.forEach((line, i) => c.fillText(line, el.x + lay.inset, el.y + lay.top + (i + 0.5) * lay.lh))
+    if (sticky) c.restore()
     if (el.type === 'voice') {
       // spoken text carries a bar on its left, like a quotation
       const bw = Math.max(2, d.size * 0.16)
@@ -1148,7 +1181,8 @@ function mountPad(main, { canvasId: PAD, client }) {
     const e = env()
     for (const rec0 of ordered()) {
       const el = shown(rec0)
-      if (el.id === edit?.id || gesture?.erased?.has(el.id)) continue
+      if (gesture?.erased?.has(el.id)) continue
+      if (el.id === edit?.id) { if (el.type === 'sticky') paintElement(c, { ...el, data: { ...el.data, text: '' } }, e); continue }
       if (el.x > x1 || el.y > y1 || el.x + el.w < x0 || el.y + el.h < y0) continue
       paintElement(c, el, e)
     }
@@ -1517,8 +1551,8 @@ function mountPad(main, { canvasId: PAD, client }) {
     if (editor.contentEditable !== 'plaintext-only') editor.contentEditable = 'true'
     editor.style.font = textFont(spec.size)
     editor.style.lineHeight = '1.35'
-    editor.style.color = resolveInk(spec.color, dark())
-    editor.style.maxWidth = `${spec.wrap ?? TEXT_WRAP * (spec.size / TEXT_SIZE)}px`
+    editor.style.color = spec.type === 'sticky' ? STICKY.ink[dark() ? 1 : 0] : resolveInk(spec.color, dark())
+    editor.style.maxWidth = `${spec.max ?? spec.wrap ?? TEXT_WRAP * (spec.size / TEXT_SIZE)}px`
     editor.style.paddingLeft = spec.type === 'voice' ? `${14 * (spec.size / TEXT_SIZE)}px` : '0'
     $('caret-tip').hidden = Boolean(spec.id || text)
     refresh()
@@ -1546,7 +1580,9 @@ function mountPad(main, { canvasId: PAD, client }) {
   }
   function editElement(el) {
     sel.clear()
-    openEditor({ id: el.id, type: el.type, x: el.x, y: el.y, size: el.data.size, color: el.data.color, wrap: el.data.wrap }, el.data.text)
+    // (a sticky's words begin inside its paper, which stays while they are edited)
+    const lay = layoutText(el.data, el.type), sticky = el.type === 'sticky'
+    openEditor({ id: el.id, type: el.type, x: el.x + (sticky ? lay.inset : 0), y: el.y + lay.top, size: el.data.size, color: el.data.color, wrap: el.data.wrap, ...(sticky ? { max: el.w - 2 * lay.inset } : {}) }, el.data.text)
   }
   /** Close the note and keep what was typed. Returns the element it became, if any. */
   function commitEditor() {
@@ -2359,23 +2395,13 @@ function mountPad(main, { canvasId: PAD, client }) {
     refresh()
   }
 
-  // ---- a note parked here (sidebar.mjs, the corner note dragged onto the board): a yellow sticky with its words ----
-  // No element kind of its own (the canvas knows pen, highlighter, text, voice, picture): the paper is one stroke of
-  // the yellow highlighter going to and fro, the words a text on it, the two grouped, so they move and go as one.
-  const STICKY = { w: 220, min: 130, pad: 16, nib: 24, size: 17 }
+  // ---- a note parked here (sidebar.mjs, the corner note dragged onto the board): a sticky, an element of its own ----
+  // It is moved, selected, sent with a selection and deleted like any element; a double click edits its words.
   function addSticky(text, wx, wy) {
-    const data = { text, size: STICKY.size, color: INK, wrap: STICKY.w - 2 * STICKY.pad }
-    const h = Math.max(STICKY.min, layoutText(data, 'text').h + 2 * STICKY.pad), x = r2(wx - STICKY.w / 2), y = r2(wy - h / 2)
-    const rows = Math.max(2, Math.ceil((h - STICKY.nib) / (STICKY.nib * .3)) + 1), pts = []
-    for (let i = 0; i < rows; i++) {
-      const yy = y + STICKY.nib / 2 + (h - STICKY.nib) * i / (rows - 1), ends = [x + STICKY.nib / 2, x + STICKY.w - STICKY.nib / 2]
-      pts.push(...(i % 2 ? [ends[1], yy, ends[0], yy] : [ends[0], yy, ends[1], yy]))
-    }
-    const k = strokeFromWorld(pts.map(r2), null, { tool: 'hl', color: HL_COLORS[0][0], size: STICKY.nib })
-    const z = topZ() + 1, group = newId()
-    const paper = { ...make('stroke', k, k.data, z), group }
-    const words = { ...makeText('text', x + STICKY.pad, y + STICKY.pad, data), z: z + 1, group }
-    add([paper, words])
+    const data = { text, size: STICKY.size, color: INK, wrap: STICKY.w }
+    const lay = layoutText(data, 'sticky')
+    const el = makeText('sticky', r2(wx - lay.w / 2), r2(wy - lay.h / 2), data)
+    add([el])
     sel.clear()
     refresh()
   }

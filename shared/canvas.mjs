@@ -10,7 +10,7 @@
 // Entry = { points, pressure?, style: { tool, color?, size? }, z?, group?, text?, wrap?, attachment?, nw?, nh?, mime?, name?, continues? }
 //   tool 'pen' | 'hl': a stroke; points: the line (R9: base64url, 1/8 px, the first point absolute as two int32 BE,
 //                      then int16 BE deltas); pressure: base64url, one byte per point
-//   tool 'text' | 'voice': a note; points: the top left corner; text, wrap, style.size, style.color
+//   tool 'text' | 'voice' | 'sticky': a note (sticky: on a yellow paper of the width wrap); points: the top left corner; text, wrap, style.size, style.color
 //   tool 'image': a picture; points: top left and bottom right; attachment: the README attachment reference
 //   continues: the stroke id of the first piece of the same stroke (only from the same sender): these points go on it
 // A stroke id is never read from a body: every receiver derives it (R1) as `<sender_device_id>/<sender_sequence>/<index>`,
@@ -72,7 +72,8 @@ export function decodePressure(text, n) {
 // ---- shapes ----
 // A shape is the canvas's own form of one element: { id, by, tool, pts (world), pr, color, size, z, group, text, wrap,
 // attachment, nw, nh, mime, name }. Strokes keep every point in world units; a note and a picture keep their corners.
-const TOOLS = new Set(['pen', 'hl', 'text', 'voice', 'image'])
+const TOOLS = new Set(['pen', 'hl', 'text', 'voice', 'sticky', 'image'])
+const WORDS = new Set(['text', 'voice', 'sticky'])   // the tools that carry text and wrap
 const str = (v, max = 200) => (typeof v === 'string' ? v.slice(0, max) : null)
 const num = (v, d = 0) => (Number.isFinite(v) ? v : d)
 
@@ -83,7 +84,7 @@ export function entryOf(s) {
   if (s.size != null) e.style.size = s.size
   if (s.z != null) e.z = s.z
   if (s.group) e.group = s.group
-  if (s.tool === 'text' || s.tool === 'voice') { e.text = s.text ?? ''; if (s.wrap != null) e.wrap = s.wrap }
+  if (WORDS.has(s.tool)) { e.text = s.text ?? ''; if (s.wrap != null) e.wrap = s.wrap }
   if (s.tool === 'image') { e.attachment = s.attachment; for (const k of ['nw', 'nh', 'mime', 'name']) if (s[k] != null) e[k] = s[k] }
   return e
 }
@@ -94,7 +95,7 @@ export function shapeOf(e, id, by) {
   const pts = decodePoints(e.points)
   if (!pts.length || (tool === 'image' && pts.length < 4)) return null
   const s = { id, by, tool, pts, pr: tool === 'pen' ? decodePressure(e.pressure, pts.length >> 1) : null, color: str(e.style.color, 40), size: num(e.style.size, tool === 'hl' ? 18 : 4), z: num(e.z), group: str(e.group, 80) }
-  if (tool === 'text' || tool === 'voice') { s.text = String(e.text ?? '').slice(0, 20000); s.wrap = Number.isFinite(e.wrap) ? e.wrap : null }
+  if (WORDS.has(tool)) { s.text = String(e.text ?? '').slice(0, 20000); s.wrap = Number.isFinite(e.wrap) ? e.wrap : null }
   if (tool === 'image') {
     if (!e.attachment?.attachment_id) return null
     s.attachment = e.attachment

@@ -57,7 +57,7 @@ controller('corner-note', class extends Controller {
     this.park()
   }
   // ---- park the note on the Scribble Board: there, the sticky can be dragged out of its corner (mouse or finger) and
-  // dropped on the board; it stays where it was dropped as a yellow sticky with its words (whiteboard.mjs), and the
+  // dropped on the board; it stays where it was dropped as a sticky with its words (whiteboard.mjs), and the
   // corner is empty again. A press without a drag opens the note, as everywhere. Attached files do not go along:
   // they stay with the corner's note.
   park() {
@@ -73,7 +73,9 @@ controller('corner-note', class extends Controller {
       if (!drag || e.pointerId !== drag.id) return
       if (!drag.ghost) {
         if (Math.hypot(e.clientX - drag.x, e.clientY - drag.y) < 8) return
-        drag.ghost = Object.assign(document.createElement('div'), { className: 'corner-note-ghost', textContent: this.field.value.trim() })
+        // (what is carried is the note as a conversation shows it: the paper with its strip of tape, notes.css .msg-note)
+        drag.ghost = Object.assign(document.createElement('figure'), { className: 'msg-note corner-note-ghost' })
+        drag.ghost.append(Object.assign(document.createElement('i'), { className: 'msg-note-tape' }), Object.assign(document.createElement('p'), { textContent: this.field.value.trim() }))
         document.body.append(drag.ghost)
         this.element.classList.add('is-parking')
       }
