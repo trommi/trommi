@@ -679,6 +679,16 @@ div.focus-opt { cursor: default; }
   .tc-mini .sketch-what { width: 38px; height: 14px; }
   .tc-bar-later { right: 14px; top: 47px; }
 }
+/* a phone: Later's tag hangs nowhere (it lay on the words of the talk): it stands in the strip as its last button, and
+   every button of the strip is a finger's size */
+@container cardpage (max-width: 520px) {
+  .tc-bar-in { height: 54px; gap: 2px; padding: 0 4px 0 12px; }
+  .tc-mini { height: 44px; min-width: 42px; }
+  .tc-chip.is-jump { min-height: 44px; }
+  .tc-bar-later { position: static; flex: none; }
+  .tc-bar-later .sel-later { display: grid; place-items: center; width: 36px; height: 44px; padding: 0; }
+  .tc-bar-later .sel-later svg { width: 19px; height: 40px; }
+}
 @media (min-width: 861px) { #cardpage { padding-top: var(--s-6); padding-bottom: 0; } .tc-pad { margin-bottom: var(--s-8); } }
 @media (max-width: 860px) { #cardpage { padding-bottom: 0; } .tc-pad { margin-bottom: 96px; } }
 @media (prefers-reduced-motion: reduce) { .tc-bar-in { transition: none; } }

@@ -573,6 +573,8 @@ body[data-t-view="whiteboard"] .corner-note-box.has-words .corner-note-head { cu
 /* In a conversation the note never lies on the composer or its buttons: it stands above the composer's line, only
    the sticky (a dot says it holds words), so the least of the conversation is under it. */
 body[data-t-view="session"] .corner-note-box { bottom: calc(144px + env(safe-area-inset-bottom, 0px)); }
+/* a card on a narrow window: the field to write in reaches under the note's corner; the note stands above it */
+@media (min-width: 861px) and (max-width: 1120px) { body[data-t-view="card"] .corner-note-box { bottom: calc(84px + env(safe-area-inset-bottom, 0px)); } }
 /* the phone: above the composer of a conversation and the pens of the Scribble Board */
 @media (max-width: 860px) {
   body[data-t-view="session"] .corner-note-box { bottom: calc(152px + env(safe-area-inset-bottom, 0px)); }
