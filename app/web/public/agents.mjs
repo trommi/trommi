@@ -107,13 +107,15 @@ function ledgerLine(u, ctx, { error = '' } = {}) {
     ? html`<details class="t-pick ledger-pick"${LATER}><summary class="ledger-ib" data-ledger="pair" title="Lay together with…" aria-label="${a.name}: lay together with…">${sk('heads')}</summary>
 <form class="t-pop t-menu" method="post" action="${forms}/pair">${answerFields(STAY)}${later(m.agents.filter(x => x.id !== a.id).map(x => html`<button type="submit" name="with" value="${x.id}">${x.name}</button>`))}</form></details>` : ''
 
+  // (a line without one of the small buttons keeps its place empty: the buttons stand in columns down the page)
+  const NONE = raw('<i class="ledger-ib is-none" aria-hidden="true"></i>')
   const acts = html`<span class="ledger-acts">
 ${mains.length ? pick({ cls: 'ledger-desk ledger-main', hook: 'main', mark: sk('under'), title: `Main agent of ${a.name}: the session this one works for`, label: main ? main.name : 'No main', action: `${forms}/edit`, name: 'parent', set: Boolean(main), options: [{ value: '', label: 'No main', current: !main }, ...mains.map(x => ({ value: x.id, label: `↳ ${x.name}`, current: x.id === a.parent }))] }) : ''}
 ${desks.length > 1 ? pick({ cls: 'ledger-desk', hook: 'desk', title: `Desk of ${a.name}: move to another desk`, label: desks.find(d => d.id === a.desk)?.name ?? 'Desk', action: `${forms}/edit`, name: 'desk', options: desks.map(d => ({ value: d.id, label: d.name, current: d.id === a.desk })) }) : ''}
 <a class="ledger-ib" data-ledger="open" data-nav href="${to}" title="Open the conversation" aria-label="${a.name}: open the conversation">${sk('go')}</a>
-${u.open ? html`<a class="ledger-ib" data-ledger="walk" data-nav href="${cardPath(card, base)}?walk=1" title="Its questions, one after the other" aria-label="${a.name}: its questions, one after the other">${sk('tray')}</a>` : ''}
+${u.open ? html`<a class="ledger-ib" data-ledger="walk" data-nav href="${cardPath(card, base)}?walk=1" title="Its questions, one after the other" aria-label="${a.name}: its questions, one after the other">${sk('tray')}</a>` : NONE}
 ${together}
-${!a.online ? post(`${forms}/edit`, '', html`<button class="ledger-ib" data-ledger="archive" type="submit" name="archived" value="1" title="Archive: put this session away" aria-label="Archive ${a.name}">${sk('archive')}</button>`) : ''}
+${!a.online ? post(`${forms}/edit`, '', html`<button class="ledger-ib" data-ledger="archive" type="submit" name="archived" value="1" title="Archive: put this session away" aria-label="Archive ${a.name}">${sk('archive')}</button>`) : m.agents.some(x => !x.online) ? NONE : ''}
 ${sheet(u, ctx, { group, others })}</span>`
 
   // The crown: one per desk, given by his hand (the hub takes it from whoever wore it on this desk).

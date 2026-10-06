@@ -38,7 +38,7 @@ body[data-page="roster"] #ledger {
 .ledger { display: grid; user-select: none; -webkit-user-select: none; }
 .ledger-line {
   --c: var(--urg-normal);
-  position: relative; display: grid; grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px 132px;
+  position: relative; display: grid; grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px 132px;
   align-items: center; gap: 0 var(--s-3); min-height: 56px; padding: 0 6px; border-bottom: 1px solid var(--line); outline: 0;
 }
 .ledger-line[data-urgency="high"] { --c: var(--urg-high); }
@@ -123,6 +123,8 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-acts { display: flex; justify-content: flex-end; gap: 0; }
 .ledger-ib { width: 34px; height: 34px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--r-sm); background: none; color: var(--muted); }
 .ledger-ib:hover { background: var(--sunken); color: var(--fg); }
+.ledger-ib.is-none { flex: none; pointer-events: none; }
+.ledger-ib.is-none:hover { background: none; }
 .ledger-ib .sketch { width: 20px; height: 20px; }
 .ledger-line.is-archived { min-height: 46px; }
 .ledger-line.is-archived .ledger-name strong { font: 600 var(--t-md)/1.3 var(--font); color: var(--muted); }
@@ -135,11 +137,11 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
 .ledger-line[data-drop="pair"] { outline: 2px dashed var(--fg); outline-offset: -2px; border-radius: var(--r-sm); }
 
 @media (max-width: 1500px) {
-  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) 88px var(--acts, 132px); }
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) minmax(0, 104px) 88px var(--acts, 132px); }
   .ledger-line > :nth-child(7) { display: none; }
 }
 @media (max-width: 1240px) {
-  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 104px minmax(0, 1.8fr) var(--acts, 132px); }
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 124px minmax(0, 1.8fr) var(--acts, 132px); }
   .ledger-line > :nth-child(6), .ledger-line > :nth-child(8) { display: none; }
 }
 /* The selects of a line (its desk, its main agent) have room of their own in the last column, so they never lie on
@@ -149,21 +151,21 @@ button.ledger-th:hover, .ledger-th[aria-sort="ascending"], .ledger-th[aria-sort=
   .ledger { --acts: calc(136px + var(--pick-desk, 0px) + var(--pick-main, 0px)); }
   .ledger:has(select.ledger-desk:not(.ledger-main)) { --pick-desk: 100px; }
   .ledger:has(select.ledger-main) { --pick-main: 120px; }
-  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px var(--acts, 132px); }
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px var(--acts, 132px); }
   .ledger-acts .ledger-desk { flex: none; width: 96px; max-width: none; text-overflow: ellipsis; }
   .ledger-acts .ledger-main { width: 116px; }
   .ledger-desk option { color: var(--fg); background: var(--surface); }
 }
-@media (min-width: 1501px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px var(--acts, 132px); }
+@media (min-width: 1501px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) minmax(0, 104px) minmax(0, 112px) 88px var(--acts, 132px); }
 }
 @media (min-width: 1241px) and (max-width: 1500px) {
-  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) minmax(0, 104px) 88px var(--acts, 132px); }
-  .ledger:has(select.ledger-desk) .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) 88px var(--acts, 132px); }
+  .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) minmax(0, 104px) 88px var(--acts, 132px); }
+  .ledger:has(select.ledger-desk) .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) 88px var(--acts, 132px); }
   /* (Named by class, not a bare :nth-child: a :has() rule whose subject is any element makes the browser restyle
      the whole page after every change to it.) */
   .ledger:has(select.ledger-desk) .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6) { display: none; }
 }
-@media (min-width: 861px) and (max-width: 1240px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 104px minmax(0, 1.8fr) var(--acts, 132px); }
+@media (min-width: 861px) and (max-width: 1240px) { .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.2fr) 124px minmax(0, 1.8fr) var(--acts, 132px); }
 }
 @media (min-width: 861px) and (max-width: 1360px) {
   .ledger:has(select.ledger-desk:not(.ledger-main)) { --pick-desk: 38px; }
@@ -235,7 +237,7 @@ a.ledger-sheet-item { display: flex; align-items: center; }
   .ledger-acts summary.ledger-desk > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }
 @media (min-width: 1241px) and (max-width: 1500px) {
-  .ledger[data-desks] .ledger-line, .ledger[data-mains] .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 104px minmax(0, 1.9fr) 88px var(--acts, 132px); }
+  .ledger[data-desks] .ledger-line, .ledger[data-mains] .ledger-line { grid-template-columns: 18px 44px minmax(0, 1.3fr) 124px minmax(0, 1.9fr) 88px var(--acts, 132px); }
   .ledger[data-desks] .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6), .ledger[data-mains] .ledger-line > :is(.ledger-cell, .ledger-th):nth-child(6) { display: none; }
 }
 @media (min-width: 861px) and (max-width: 1360px) {
