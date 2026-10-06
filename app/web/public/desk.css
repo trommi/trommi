@@ -1123,3 +1123,14 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 @container rows (max-width: 600px) { #inbox .inbox-stacks.stack-tabs .desk-obj { height: 76px !important; } }
 #inbox .inbox-stacks.stack-tabs > .media-pile { gap: 12px !important; }
 #inbox .inbox-groups > .inbox-stacks.stack-tabs { grid-template-columns: repeat(2, minmax(0, 1fr)) !important; }
+
+/* ---- The Desk's foot is a pair (his word, 6 October: "nur noch zwei Sachen … besser nebeneinander leben"): the list
+   slip and the photo pile stand close together in the middle, the same height, their labels on one line; the opened
+   list still takes the whole width under them. ---- */
+#inbox .inbox-groups > .inbox-stacks.stack-tabs { grid-template-columns: minmax(0, 1fr) max-content max-content minmax(0, 1fr) !important; column-gap: 44px; justify-items: center; }
+#inbox .inbox-stacks.stack-tabs > .off-pile > .inbox-stack-title { grid-column: 2; grid-row: 1; width: auto; }
+#inbox .inbox-stacks.stack-tabs > .media-pile { grid-column: 3; grid-row: 1; width: auto; }
+#inbox .inbox-stacks.stack-tabs > .off-pile > .inbox-pile-sheets { grid-column: 1 / -1; grid-row: 2; justify-self: stretch; }
+#inbox .inbox-stacks.stack-tabs .shop-slip { rotate: -1.2deg; }
+#inbox .inbox-stacks.stack-tabs .photo-pile { rotate: 1deg; }
+@container rows (max-width: 600px) { #inbox .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 22px; } }
