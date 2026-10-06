@@ -577,7 +577,7 @@ export const sk = (name, cls) => raw(sketchSvg(name, cls))
 
 // ---- the board's words (one place; the old client has them in ui.mjs) ----
 export const WORDS = {
-  later: 'Later', duck: 'Duck it', wake: 'Wake up', ack: 'Acknowledge', what: 'What??', trust: 'I don’t give a duck', revise: 'Revise',
+  later: 'Later', duck: 'Duck it', wake: 'Wake up', ack: 'Acknowledge', what: 'What??', trust: 'I don’t give a duck', revise: 'Reverse',
   revising: 'In revision', shred: 'Shred', walk: 'Rapid fire', desk: 'Desk', takeBack: 'Take back',
 }
 export const EXPLAIN_TEXT = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
@@ -2083,7 +2083,7 @@ const LAYOUT = [
     { id: 'list.last', keys: ['End'], does: 'last question' },
     { id: 'list.open', keys: ['Enter', 'c'], does: 'open the question on its own page' },
     { id: 'list.later', keys: ['l'], does: 'Later; on one put off: fetch it back' },
-    { id: 'list.revise', keys: ['b'], does: 'Revise: back to the agent' },
+    { id: 'list.revise', keys: ['b'], does: 'Reverse: back to the agent' },
     { id: 'list.trust', keys: ['r'], does: 'Duck it: the agent decides' },
     { id: 'list.shred', keys: ['x'], does: 'Shred: throw it away unanswered' },
     { id: 'list.takeback', keys: ['u', 'Backspace'], does: 'take back: the marked line of a stack, else the newest toast\'s Undo' },
