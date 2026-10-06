@@ -85,7 +85,7 @@ export class Client {
     this.chains = z.newChains()
     this.roomRecord = roomRecord
     this.hub = new Hub({ hub_url, room_id, fetch, client, signer: challenge => z.signHubAuth({ device, roomId: state.roomId, hub: this.hub.hub_url, challenge }) })
-    this.hub.onForbidden = () => { this.serial(() => this._refreshMembers()).catch(() => {}) }
+    this.hub.onForbidden = () => { this.serial(() => this._learnRemoval()).catch(() => {}) }
     this.hub.onTooOld = e => { if (this._tooOld) return; this._tooOld = true; this.emit('error', e); this.stop().catch(() => {}) }
     // lease-lost: first ask for the lease again (renew: a restarted hub that knows no live lease gives it back with a new
     // generation); only if ANOTHER live process holds it does this process stop (R4 fencing).
@@ -637,8 +637,20 @@ export class Client {
 
   // ---- membership and keys ----------------------------------------------------------------------
 
-  async _refreshMembers({ throwOnFork = false } = {}) {
-    const r = await this.hub.members({ after_entry_number: this.state.head.seq })
+  /**
+   * The hub refuses this device (403): it may have been removed. A removed device cannot read the member list any more,
+   * so it signs a challenge: the hub's refusal then carries the signed entries up to the removal, checked here like any.
+   */
+  async _learnRemoval() {
+    try { return await this._refreshMembers() } catch (e) { if (e.status !== 403) throw e }
+    this.hub.token = null
+    const e = await this.hub.signIn().then(() => null, e => e)
+    const entries = e?.code === 'not-member' && Array.isArray(e.body?.signed_entries) ? e.body.signed_entries : null
+    if (entries) await this._refreshMembers({ given: { last_entry_number: entries.length - 1, signed_entries: entries.slice(this.state.head.seq + 1) } })
+  }
+
+  async _refreshMembers({ throwOnFork = false, given = null } = {}) {
+    const r = given ?? await this.hub.members({ after_entry_number: this.state.head.seq })
     const change = M.emptyChange()
     if (r.last_entry_number < this.state.head.seq) {
       M.pushAlert(this.model, change, { code: 'log-rollback', message: `the hub shows member list entry ${r.last_entry_number}, this device saw ${this.state.head.seq}` })
@@ -673,11 +685,18 @@ export class Client {
     M.applyMembers(this.model, membersOf(state), change)
     const me = state.members.get(b64u(this.device.id))
     if (!me || me.removedSeq !== null) {
+      const was = this.model.room.connection
       this.model.room.connection = 'removed'
-      M.pushAlert(this.model, change, { code: 'removed', message: 'this device was removed from the room' })
+      // Replaced, not just removed: the entry right before the removal added an agent, signed by the same device (what
+      // "Copy invite link again" does: the newcomer continues this agent's sessions, then this one is retired).
+      const out = me ? state.entries.find(e => e.seq === me.removedSeq) : null, before = out ? state.entries.find(e => e.seq === out.seq - 1) : null
+      const replaced = !this.is_human && !!before && before.type === z.ENTRY.ADD && before.member?.role === ROLE.AGENT && z.bytesEqual(before.signer, out.signer)
+      this.model.room.replaced = replaced
+      M.pushAlert(this.model, change, { code: 'removed', message: replaced ? 'another connector continues this session: this device was retired' : 'this device was removed from the room' })
       await this._saveRoom()
       this._emitChange(change)
       this._stream?.close()
+      if (was !== 'removed') this.emit('removed', { replaced })
       return
     }
     if (!this.secrets.has(state.epoch)) await this._fetchKeys()
@@ -1602,7 +1621,7 @@ export class Client {
     const card = object_id ? this._card(object_id) : null
     if (this.is_human) {
       sid = card?.session_id ?? fields_session(fields) ?? (agent_device_id ? this.sessionOfAgent(agent_device_id) : null)
-      recipient = card?.agent_device_id ?? agent_device_id ?? this.sessionKeys.get(sid)?.state.agentIds[0] ?? null
+      recipient = (card ? M.holderOf(this.model, card) : null) ?? agent_device_id ?? this.sessionKeys.get(sid)?.state.agentIds[0] ?? null
       if (!recipient || !sid) throw new ZError('bad-argument', 'a message from a human names a session (with an agent) or a card')
     } else {
       sid = card?.session_id ?? fields_session(fields) ?? this.session_id
@@ -1628,7 +1647,7 @@ export class Client {
     const settles = answer_action === 'answer' && !trusted && plain && M.choicesFinal(card, choices)
     const state = answer_action === 'answer' && !settles ? 'answered' : 'closed'
     const answered_at = Date.now()
-    return this._send({ kind: codec.KIND.answer, content, bind, recipient: card.agent_device_id, session_id: card.session_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
+    return this._send({ kind: codec.KIND.answer, content, bind, recipient: M.holderOf(this.model, card), session_id: card.session_id, object: { object_id, object_state: state, urgency: card.urgency, answered_at },
       echo: this._echoAnswer(object_id, { answer_action, choices, note: note ?? null, option_notes: option_notes ?? {}, attachments: attachments ?? [], marks: marks ?? [], trusted: !!trusted,
         bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: null, envelope_hash: null, by_device_id: this.my_device_id, answered_at, taken_back_at: null, taken_back_sent_at: null }, state) })
   }
@@ -1645,7 +1664,7 @@ export class Client {
     const card = this._card(object_id)
     if (!card.answer?.envelope_hash) throw new ZError('decision-mismatch', 'no answer in force to take back')
     const bind = z.encodeRedecideBind({ objectId: unhex(object_id), previousHash: unhex(card.answer.envelope_hash), versionHash: unhex(card.version_hash), cardId: unhex(object_id), choice: card.answer.choices[0] ?? '' })
-    return this._send({ kind: codec.KIND.decide_again, content: {}, bind, recipient: card.agent_device_id, session_id: card.session_id, object: { object_id, object_state: 'open', urgency: card.urgency } })
+    return this._send({ kind: codec.KIND.decide_again, content: {}, bind, recipient: M.holderOf(this.model, card), session_id: card.session_id, object: { object_id, object_state: 'open', urgency: card.urgency } })
   }
 
   async verdict({ object_id, allow }) {
@@ -1805,13 +1824,20 @@ export class Client {
    * six-digit check code; the human confirms it with confirmInvite), and every agent invite that two different devices
    * answer is burned instead of going to whoever came first (alert invite-contested).
    */
-  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false, confirm_code = false } = {}) {
+  async createInvite({ device_role = 'human', app_url = 'https://app.trommi.com/join', ttl_ms, label = null, session_id = null, with_history = false, confirm_code = false, takeover = false } = {}) {
     this._needHuman()
     const role = device_role === 'agent' ? ROLE.AGENT : ROLE.HUMAN
+    // takeover: the agent that joins with this link continues the existing session `session_id` (its cards, its helper
+    // sessions, its history) and the devices that held it are retired. Always with the check code, so the human sees
+    // on this device which session the link continues before anything is granted.
+    if (takeover) {
+      if (role !== ROLE.AGENT || !this.sessionKeys.has(session_id)) throw new ZError('bad-argument', 'a takeover invite names an existing session and is for an agent')
+      with_history = true; confirm_code = true; label = null
+    }
     const { link, offer, invite } = await z.createInvite({ state: this.state, inviter: this.device, hub: this.hub.hub_url, role, app: app_url, ...(ttl_ms ? { ttlMs: ttl_ms } : {}) })
     const r = await this.hub.postInvite(b64u(offer))
     const invite_id = r.invite_id
-    const pub = { invite_id, device_role, link, label, session_id, with_history, confirm_code: device_role === 'agent' ? !!confirm_code : true, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
+    const pub = { invite_id, device_role, link, label, session_id, with_history, takeover: !!takeover, confirm_code: device_role === 'agent' ? !!confirm_code : true, expires_at: invite.expiresAt, invite_state: 'open', newcomer: null, error: null }
     invite.public = pub
     this.invitesPrivate.set(invite_id, invite)
     this.model.invites.set(invite_id, pub)
@@ -1909,7 +1935,10 @@ export class Client {
         if (added) await this.hub.postMember({ signed_entry: b64u(added.entry), sealed_room_keys: added.wrap ? [{ device_id: newId, key_sealed: b64u(added.wrap) }] : [] })
         clearInterval(inv._timer); inv._timer = null
         await this._refreshMembers()
-        if (inv.role === ROLE.AGENT) {
+        if (inv.role === ROLE.AGENT && inv.public.takeover) {
+          if (!opts?.codeConfirmed) throw new ZError('code-not-confirmed', 'a takeover needs the check code confirmed')
+          await this._takeOverLocked(invite_id, newId)
+        } else if (inv.role === ROLE.AGENT) {
           // R6: an agent gets a session: the one named in the invite (handover, with or without history) or a new one.
           const sid = inv.public.session_id
             ? (await this._assignSessionLocked({ session_id: inv.public.session_id, agent_device_ids: [newId], with_history: !!inv.public.with_history }), inv.public.session_id)
@@ -1943,7 +1972,33 @@ export class Client {
    */
   removeDevices(device_ids) {
     this._needHuman()
-    return this.serial(async () => {
+    return this.serial(() => this._removeDevicesLocked(device_ids))
+  }
+  /**
+   * A takeover invite was confirmed and the newcomer is a member: it continues the invite's session. Every session
+   * the session's holders held (the session itself, the helper sessions they opened) goes to the newcomer with its
+   * history, by this device's grants; then the old holders are removed from the member list (one entry, the usual
+   * re-key). Who is retired is fixed with the invite at the first try, so a retry after a failure finishes the same work.
+   */
+  async _takeOverLocked(invite_id, newId) {
+    const inv = this.invitesPrivate.get(invite_id), sid = inv.public.session_id
+    await this._refreshSessions()
+    const main = this.sessionKeys.get(sid)
+    if (!main) throw new ZError('not-found', `no session ${sid}`)
+    if (!inv.public.retired) { inv.public.retired = main.state.agentIds.filter(a => a !== newId); await this._saveInvite(invite_id) }
+    const retired = inv.public.retired
+    // also a helper session left without an agent (its agent was removed earlier) that names this session as its parent
+    const orphan = (id, k) => !k.state.agentIds.length && k.state.createdByAgent && this.model.sessions.get(id)?.profile?.parent_session === sid
+    for (const [id, k] of [...this.sessionKeys]) {
+      if (id !== sid && !k.state.agentIds.some(a => retired.includes(a)) && !orphan(id, k)) continue
+      if (k.state.agentIds.includes(newId) && !k.state.agentIds.some(a => retired.includes(a))) continue     // done at an earlier try
+      await this._grantLocked(id, { agent_device_ids: [...k.state.agentIds.filter(a => !retired.includes(a) && a !== newId), newId], with_history: true, rotate: true })
+    }
+    const still = retired.filter(a => z.memberAt(this.state, unhex(a)))
+    if (still.length) await this._removeDevicesLocked(still)
+  }
+  async _removeDevicesLocked(device_ids) {
+    {
       await this._refreshMembers()
       await this._refreshSessions()
       const previous = this.secrets.get(this.state.epoch)
@@ -1959,7 +2014,7 @@ export class Client {
       // stale), so a crash or a refused post here is finished by the next start of any human device (_healStaleSessions).
       await this._healStaleSessions().catch(e => this._localAlert('rekey', e))
       return { key_epoch: r.secret.epoch }
-    })
+    }
   }
 
   /**
