@@ -367,11 +367,142 @@ function filler(f) {
   return f
 }
 
+// Two cards with far too much on them, the first two of the Desk (his wish, 7 October): stress cases for the card's
+// page, the gallery and the Desk row. A decision (a three-line title, a long text with a list, code and a table, five
+// wordy options, eight pictures and a video, three versions, a long talk) and an info (sections, a layout, pictures,
+// a talk). Demo data only.
+const EXPLAIN = 'Explain this question in more detail and in plain words: what it is about, what each option means for me, and what you would do.'
+const HAND_BACK = 'Back to you: please rework this question and present it again. Take the comments under the card into account.'
+function overloaded(f) {
+  const now = Date.now(), MIN = 60e3, me = f.room.my_device_id, zu = f.sessions[0].agent_device_id, docs = f.sessions[2].agent_device_id
+  const first = Math.min(...f.cards.filter(c => c.urgency === 'critical' && c.object_state === 'open').map(c => c.created_at), now - 90 * MIN)
+  let env = 8000
+  const att = (name, show, type, more = {}) => ({ attachment_id: hex(32), file_key: '', sha256: '', file_name: show, media_type: type, total_size: 0, url: `/demo/files/${name}`, ...more })
+  const png = (name, show, w, h, caption, more = {}) => att(name, show, 'image/png', { width: w, height: h, caption, ...more })
+  const item = (from, at, content) => ({ envelope_number: ++env, local_id: null, pending: false, envelope_hash: hex(64), sender_device_id: from === 'me' ? me : from, recipient_device_id: from === 'me' ? null : null, sent_at: at, item_state: 'loaded', content_type: 'message', content: { attachments: [], ...content } })
+  const put = (agent, created, urgency, versions, talk, extra = {}) => {
+    const id = hex(32), key = `chat:card/${id}`
+    const vs = versions.map((v, i) => ({ object_version: i + 1, version_hash: hex(64), previous_version_hash: null, envelope_number: v.env, sent_at: v.at, object_state: 'open', urgency, content: v.content }))
+    vs.forEach((v, i) => { if (i) v.previous_version_hash = vs[i - 1].version_hash })
+    const last = vs.at(-1)
+    f.cards.push({ object_id: id, agent_device_id: agent, first_envelope_number: vs[0].envelope_number, created_at: created, answers: [], answer: null, closed_how: null, in_revision: null, timeline_key: key, content_state: 'ok', object_version: last.object_version, version_hash: last.version_hash, envelope_number: last.envelope_number, updated_at: last.sent_at, urgency, object_state: 'open', ...last.content, versions: vs, ...extra(vs) })
+    ;(f.timelines ??= {})[key] = talk.map(t => ({ ...t, recipient_device_id: t.sender_device_id === me ? agent : null }))
+  }
+  const base = { sections: null, html: null, allows_multiple: false, change_note: '', close_summary: null, withdraw_reason: null, merged_into_object_id: null, merged_from_object_ids: null }
+
+  // ---- 1. the decision ----
+  const t0 = first - 3 * MIN, at = n => t0 + n * 40e3
+  const pictures = [
+    png('tall-sheet.png', 'rollout-whole-page.png', 1440, 2160, 'The whole rollout page, long'),
+    png('phone-entscheidungen.png', 'rollout-phone.png', 400, 860, 'The switch as a phone sees it'),
+    png('board-desktop.png', 'rollout-desktop.png', 1360, 860, 'The dashboard during the canary, with its page', { page: '/demo/files/page-plan.html' }),
+    png('thema-hell.png', 'canary-light.png', 1440, 900, 'Canary: 5 % of the rooms'),
+    png('thema-dunkel.png', 'canary-dark.png', 1440, 900, 'The same at night'),
+    png('d35bd5f7.png', 'queue-before.png', 1440, 900, 'The queue before the switch'),
+    png('635b3af5.png', 'queue-after.png', 1440, 900, 'The queue after the switch'),
+    png('12ca0ba4.png', 'rollback-drill.png', 1440, 900, 'The rollback drill of last Tuesday'),
+    att('clip.webm', 'switch-in-ten-seconds.webm', 'video/webm'),
+  ]
+  const options = [
+    { key: 'canary', label: 'Canary first: 5 % of the rooms for a day, then everyone', detail: 'Slowest, safest. A bad day costs twenty rooms an hour of delayed messages, nobody loses anything.' },
+    { key: 'night', label: 'All rooms tonight at 02:00, while almost nobody is online', detail: 'One switch, one night. If it goes wrong the morning starts with a rollback and a status post.' },
+    { key: 'region', label: 'Region by region over three nights, Europe last', detail: 'Three small switches instead of one big one; the on-call engineer is awake three nights in a row.' },
+    { key: 'optin', label: 'Opt-in for two weeks, then switch whoever is left', detail: 'Rooms that want the speed get it now. Two code paths stay alive for two weeks, with twice the tests.' },
+    { key: 'wait', label: 'Not before the audit of the new queue is finished', detail: 'The auditors need about ten more days. Until then the old engine keeps its 400 ms lag at peak.' },
+  ]
+  const body = v => `The new sync engine is ready on the staging hub. It replaces the polling loop with one long-lived stream per device and cuts the delay between an agent's question and your phone from about **400 ms** to under **60 ms** at peak.
+
+What I need from you is the **order of the rollout**, not whether we do it: the old loop is the reason for last week's two lost notifications, and it has to go.
+
+What I checked${v > 1 ? ' (now with the rollback drill you asked for)' : ''}:
+
+- every envelope written during the switch is delivered exactly once (replayed 1.2 million from last month)
+- a device on the old client keeps working: it falls back to \`GET /envelopes?after=\` until it updates
+- the queue drains in under four minutes when the stream drops, see \`hub/ops/drain.mjs\`
+- the rollback is one flag, \`SYNC_ENGINE=loop\`, and needs no migration
+
+The switch itself:
+
+\`\`\`sh
+node hub/ops/flag.mjs set SYNC_ENGINE stream --rooms canary
+node hub/ops/watch.mjs --metric delivery_lag_ms --alarm 250
+\`\`\`
+
+| Way | Rooms at risk | Nights awake | Old code gone by |
+|---|--:|--:|---|
+| Canary first | 20 | 1 | Thursday |
+| All tonight | 412 | 1 | tomorrow |
+| Region by region | 140 | 3 | Saturday |
+| Opt-in | 0 | 0 | in two weeks |
+| After the audit | 0 | 0 | about the 20th |
+
+My advice is the canary: it costs one day and tells us what the load of real rooms does to the stream before all of them are on it.`
+  const content = (v, note = '') => ({ ...base, card_type: 'decision', title: 'The new sync engine is ready on staging: in which order do we move the 412 rooms over to it, and how much risk are we willing to take in the first night?', teaser: 'Five ways from "everyone tonight" to "after the audit". I would start with a canary of 5 % of the rooms for one day; it costs a day and shows what real load does to the stream.', body: body(v), options: v === 1 ? options.slice(0, 3) : v === 2 ? options.slice(0, 4) : options, recommended: 'canary', urgency_reason: 'The old polling loop lost two notifications last week; every day on it risks another one, and the on-call rota for a night switch has to be fixed by this evening', attachments: v === 1 ? pictures.slice(0, 4) : pictures, change_note: note })
+  const v1 = { env: ++env, at: at(0), content: content(1) }
+  const say = (from, n, text, more = {}) => item(from, at(n), { text, ...more })
+  const talk = [
+    say(zu, 1, 'Some background before you pick: the stream is the same code that has carried the Scribble Board for three weeks, so it is not new in production, only new for cards and chat.'),
+    say('me', 2, 'How sure are you about "exactly once"? Last time that sentence cost us a weekend.'),
+    say(zu, 3, 'Fair. I replayed every envelope of September through the new engine on a copy of the hub and compared the delivery log line by line: 1,204,331 in, 1,204,331 out, no duplicate, none missing. The two that were lost last week are in that set and arrive.', { details: 'The replay took 41 minutes on the staging box.\n\n```\nreplay: 1204331 envelopes, 0 duplicates, 0 missing\nmax lag 212 ms, p95 58 ms\n```' }),
+    say('me', 4, EXPLAIN, { explain: true }),
+    say(zu, 5, 'In plain words: today every device asks the hub "anything new?" a few times a second. The new engine keeps one line open and the hub speaks when there is something. That is faster and loses nothing when a phone sleeps. The question is only how many rooms we move at once: few first (slow, safe), all in one night (fast, one risky night), or something in between.'),
+    say('me', 6, 'Good. I miss an option where people can choose themselves. And I want to see a rollback actually done, not described.', { hand_back: true }),
+    say(zu, 7, 'Understood. I add an opt-in way and run a rollback drill on staging tonight.'),
+  ]
+  const v2 = { env: ++env, at: at(8), content: content(2, 'Added the opt-in way and the pictures of the rollback drill') }
+  talk.push(
+    say(zu, 9, 'The drill is done: switched 40 staging rooms to the stream, pulled the flag back after ten minutes, nothing lost. The picture shows the queue during the drill.', { attachments: [png('12ca0ba4.png', 'rollback-drill.png', 1440, 900, 'The rollback drill')] }),
+    say('me', 10, 'That looks calm. What does the on-call engineer have to do in the canary night, concretely?'),
+    say(zu, 11, 'Three things, all in the runbook:\n\n- watch `delivery_lag_ms`; above 250 ms for two minutes the alarm rings\n- if it rings, set `SYNC_ENGINE=loop` for the canary rooms (one command)\n- write one line into the status page\n\nNothing else. No migration, no restart.'),
+    say('me', 12, 'Here are the numbers from our last incident for comparison, in case you want to put them next to yours.', { attachments: [att('40c1a1e0.csv', 'incident-september.csv', 'text/csv')] }),
+    say(zu, 13, 'Thank you. Your incident had a p95 of 1.9 s for eleven minutes; the worst minute of the drill was 212 ms. I put both into the table on the dashboard page.'),
+    say('me', 14, 'One more thing: the auditors asked whether we can wait for them. Please make that a real option so I can say I considered it.'),
+    say('me', 15, HAND_BACK, { hand_back: true }),
+  )
+  const v3 = { env: ++env, at: at(16), content: content(3, 'Added "not before the audit" as the fifth way, with what waiting costs') }
+  talk.push(
+    say(zu, 17, 'It is on the card now as the fifth way. Honest cost of waiting: about ten more days on the loop, at the current rate one more lost notification is likely.'),
+    say('me', 18, 'Is the canary set random, or can I pick the rooms?'),
+    say(zu, 19, 'You can pick. By default I take the twenty rooms with the most devices, because they show problems first. If you would rather start with our own rooms, say so and I change the list.'),
+    say('me', 20, 'Our own rooms plus the ten busiest. And tell the support channel before anything is switched.'),
+    say(zu, 21, 'Noted both. The list is in `hub/ops/canary-rooms.json`; the support channel gets a message one hour before the switch and one when it is done.'),
+    say('me', 22, 'I picked "all tonight" by mistake a minute ago and took it back. Still thinking; leaning towards the canary.'),
+    say(zu, 23, 'No harm done: nothing was switched, the answer was taken back before I acted on it. I am ready for whichever way you pick; for the canary I need your answer by 18:00 to fix the rota.'),
+  )
+  put(zu, t0, 'critical', [v1, v2, v3], talk, vs => { const n = ++env; return { answers: [{ answer_action: 'answer', choices: ['night'], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: vs[2].version_hash, bound_object_version: 3, envelope_number: n - 4.5, envelope_hash: hex(64), by_device_id: me, answered_at: at(21.5), taken_back_at: n - 4.4 }] } })
+
+  // ---- 2. the info ----
+  const i0 = first - 2 * MIN, ia = n => i0 + n * 35e3
+  const isay = (from, n, text, more = {}) => item(from, ia(n), { text, ...more })
+  const info = { ...base, card_type: 'info', title: 'Handbook, chapter 4, is rewritten: what changed in "Pairing a device", why, and what the support team has to say differently from Monday on', teaser: 'The pairing chapter is new from the first line: six-digit check code, one invite per device, what to do when a code is refused. Nothing to decide, but support should read it before Monday.', body: '', options: [], recommended: null, urgency_reason: 'Support answers pairing questions with the old text until they have read this',
+    sections: [
+      { text: 'The chapter **Pairing a device** was written for the four-digit code and for invites that could be used twice. Both are gone since release 0.9, and the old text sent three people in a circle last week. I rewrote it from the first line.' },
+      { text: '**What is different for the reader**\n\n- the check code has six digits and is shown on *both* devices; it is compared, never typed\n- an invite is for one device and ends after ten minutes or one use\n- a refused code is explained in one sentence, with the one thing to do next\n- the Emergency Kit has a page of its own instead of a paragraph at the end' },
+      { text: '**What support says from Monday on**\n\nNo more "try the link again": an invite that was used is used up. The sentence is now: *"Make a new invite on a device that is already in the room, and compare the six digits."* The old macros `PAIR-02` and `PAIR-05` are replaced by `PAIR-10`.', html: '<div class="grid cols-3"><div class="card"><h4>Before</h4><p class="muted">4 digits, typed. Invite works twice.</p><p><span class="tag bad">3 tickets a day</span></p></div><div class="card"><h4>Since 0.9</h4><p class="muted">6 digits, compared. One invite, one device.</p><p><span class="tag warn">old text</span></p></div><div class="card"><h4>From Monday</h4><p class="muted">New chapter, new macro PAIR-10.</p><p><span class="tag good">in step</span></p></div></div>' },
+      { text: '**Where it is**\n\n`docs/handbook/04-pairing.md` on `main`, built into the help page under "Pairing a device". The pictures below are the three screens the chapter walks through; the long one is the whole chapter as it prints.' },
+    ],
+    attachments: [png('phone-gespraech.png', 'pairing-step-1.png', 400, 860, 'Step 1: the invite'), png('phone-entscheidungen.png', 'pairing-step-2.png', 400, 860, 'Step 2: compare the six digits'), png('tall-sheet.png', 'chapter-4-print.png', 1440, 2160, 'The whole chapter as it prints'), png('c573b0a8.png', 'help-page.png', 1440, 900, 'The chapter on the help page')] }
+  const italk = [
+    isay(docs, 1, 'One thing I was unsure about: I call it "check code" everywhere, the app says "number" in one place. I kept the app\'s word in the screenshots and used "check code" in the text.'),
+    isay('me', 2, 'Use "check code" everywhere and tell UI to change the one place in the app.'),
+    isay(docs, 3, 'Done in the text; I sent UI a note with the line (`auth.mjs`, the confirm screen).'),
+    isay('me', 4, 'Does the chapter say what happens when the two codes differ?'),
+    isay(docs, 5, 'Yes, as its own short section: the codes differ when somebody else took the invite. The chapter says to press "They differ", which ends the invite, and to make a new one. It also says plainly that nothing was shared with the other device.'),
+    isay('me', 6, 'Good. Is the Emergency Kit page linked from the pairing chapter?'),
+    isay(docs, 7, 'Twice: at the start ("before you pair your last device, print the kit") and at the end. The kit page itself is chapter 7 now.'),
+    isay('me', 8, 'Support wants a one-page version for the wall.', { attachments: [att('a62a99e2.json', 'support-macros.json', 'application/json')] }),
+    isay(docs, 9, 'I can do that today: the three steps, the one sentence for a refused code, the new macro. It comes as a published page, not as a new card.'),
+    isay('me', 10, 'Fine. I will acknowledge this once support has confirmed they read it.'),
+  ]
+  put(docs, i0, 'critical', [{ env: ++env, at: ia(0), content: info }], italk, () => ({}))
+  return f
+}
+
 let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
-  return filler(putAway(structuredClone(fixtureCache)))
+  return overloaded(filler(putAway(structuredClone(fixtureCache))))
 }
 export async function openRoom({ mock = '1' } = {}) { return new MockClient(await loadFixture(mock)) }
 
