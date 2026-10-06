@@ -1134,3 +1134,15 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
 #inbox .inbox-stacks.stack-tabs .shop-slip { rotate: -1.2deg; }
 #inbox .inbox-stacks.stack-tabs .photo-pile { rotate: 1deg; }
 @container rows (max-width: 600px) { #inbox .inbox-groups > .inbox-stacks.stack-tabs { column-gap: 22px; } }
+
+/* ---- The walk's button (desk.mjs nextPlease): at the right end of the heading line, drawn with the pen: an uneven
+   ink outline on paper, three quick strokes, the word, the count in an ink disc. It lifts under the pointer and
+   sits down when pressed. ---- */
+#inbox .inbox-title > p.inbox-next { display: flex; justify-content: flex-end; flex: 1; padding-left: 0; margin: 0 4px 0 0; }
+#inbox .inbox-next > .inbox-go { display: inline-flex; align-items: center; gap: 8px; min-height: 40px; padding: 0 8px 0 12px; border: 1.6px solid var(--fg); border-radius: 9px 12px 8px 13px / 12px 8px 13px 9px; background: var(--surface); color: var(--fg); font: 700 var(--t-sm)/1 var(--font); text-decoration: none; box-shadow: 2px 3px 0 color-mix(in srgb, var(--fg) 85%, transparent); rotate: -.6deg; transition: translate 90ms, box-shadow 90ms; }
+#inbox .inbox-next .walk-burst { flex: none; width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.9; stroke-linecap: round; stroke-linejoin: round; }
+#inbox .inbox-next .inbox-next-n { display: grid; place-items: center; min-width: 26px; height: 26px; padding: 0 6px; box-sizing: border-box; border-radius: 13px 12px 14px 12px; background: var(--fg); color: var(--bg); font: 700 var(--t-xs)/1 var(--font); }
+@media (any-hover: hover) { #inbox .inbox-next > .inbox-go:hover { translate: -1px -2px; box-shadow: 3px 5px 0 color-mix(in srgb, var(--fg) 85%, transparent); } }
+#inbox .inbox-next > .inbox-go:active { translate: 2px 3px; box-shadow: 0 0 0 transparent; }
+#inbox .inbox-next > .inbox-go:focus-visible { outline: 2px solid var(--fg); outline-offset: 3px; }
+@media (max-width: 860px) { #inbox .inbox-next > .inbox-go { min-height: 44px; } }

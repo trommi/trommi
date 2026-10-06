@@ -80,15 +80,16 @@ ${deskHead(model, base)}
 ${curlHTML('desk', `${base}/scribble-board`)}
 </main>`
 
-// ---- nextplease ----
-// "Rapid fire" above the Desk (his word, 4 October; it said "Next"): one small plain sentence, "Rapid fire 3 →", that leads into the walk through every open question.
-// (It was an index-card divider tab with the next cards peeking behind it, card Nr. 166; Christopher asked on
-// 3 October for a plain line of text instead: no tab, no card shape.) app.css styles it (.inbox-next).
+// ---- the walk's button ----
+// At the right end of the Desk's heading line (his word, 6 October: "eher rechts … ein Button mit eigenem Design"):
+// a drawn button into the walk through every open question: three quick strokes, the word (WORDS.walk, the one
+// place it stands), the count in an ink disc. desk.css styles it (.inbox-next).
+const BURST = raw('<svg class="walk-burst" viewBox="0 0 24 24" aria-hidden="true"><path d="M3.2 7.6 Q9 6.9 13.6 7.3"/><path d="M5.6 12.2 Q12 11.5 20.6 12"/><path d="M3.8 16.9 Q8.6 16.3 12.2 16.6"/><path d="M16.2 8.2 Q18.8 10 20.8 12 Q18.6 14 16.4 15.9"/></svg>')
 
-/** The line for n > 0 open cards (model.fresh, in the hub's order): a link to the walk. */
+/** The button for n > 0 open cards (model.fresh, in the hub's order): a link to the walk. */
 function nextPlease(model, base) {
   const n = model.fresh.length
-  return html`<p class="inbox-heading inbox-next"><a class="inbox-walk inbox-go" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F"><span>${WORDS.walk}</span><b class="inbox-next-n">${n}</b>${raw(sketchSvg('go'))}</a></p>`
+  return html`<p class="inbox-heading inbox-next"><a class="inbox-walk inbox-go" data-nav href="${base}/walk" title="${WORDS.walk}: every open question, one after the other (G F)" aria-label="${WORDS.walk}: ${n === 1 ? '1 open question' : `${n} open questions`}" aria-keyshortcuts="G F">${BURST}<span>${WORDS.walk}</span><b class="inbox-next-n">${n}</b></a></p>`
 }
 
 /** The sheet a long press on a Desk row brings up on a phone (desk.css, dialog.rowmenu): one form, each way its own
