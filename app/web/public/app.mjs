@@ -420,6 +420,7 @@ export class BoardState {
       if (a.marks?.length) card.marks = a.marks
       if (a.attachments?.length) card.note_attachments = atts(a.attachments)
       if (a.trusted) card.trusted = true
+      if (c.closed_how === 'settled') card.settled = true   // his answer closed it: every choice was an option the agent marked final
       if (a.answer_action === 'read') card.read = a.answered_at
       if (a.answer_action === 'shred') card.shredded = a.answered_at
       if (a.pending) card.pending = true
@@ -860,7 +861,7 @@ function createBoard({ hub, model, views }) {
     if (!card || !said) return ''
     const picked = card.choices?.length ? card.options.filter(o => card.choices.includes(o.key)).map(o => o.label).join(', ') : ''
     const line = what === 'decide' && picked ? `${card.title} → ${picked}` : card.title
-    return toast({ head: said.head, line, undo: said.back ? { action: `${BASE}/cards/${card.id}/${said.back}` } : null })
+    return toast({ head: what === 'decide' && card.settled ? 'Settled' : said.head, line, undo: said.back ? { action: `${BASE}/cards/${card.id}/${said.back}` } : null })
   }
   const saidOf = req => { const [id, what] = String(new URL(req.url, 'http://x').searchParams.get('said') ?? '').split(':'); return id && what ? says(model().byCard.get(id), what) : '' }
 

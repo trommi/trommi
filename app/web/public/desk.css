@@ -1171,3 +1171,11 @@ form.inbox-actions, form.inbox-tabs { margin: 0; }
   .tail-who svg { display: none; }
   .tail-card .ago { grid-column: 3; }
 }
+
+/* ---- a final option's sign on an answer tile of a row: the small pen tick in the tile's corner (ui.mjs finalSign) ---- */
+.inbox-answer { position: relative; }
+.inbox-answer > .final-sign { position: absolute; top: 6px; right: 7px; color: inherit; opacity: .65; }
+/* (the rows size every drawing of a tile, some with !important: this one stays small) */
+.inbox-answer > .final-sign > svg.sketch, .inbox-groups .inbox-row .inbox-actions .inbox-answer > .final-sign > svg.sketch { width: 13px !important; height: 13px !important; stroke-width: 2.2; }
+/* why a card lies under Done without an agent's word: "settled by your answer", quiet beside the title */
+.off-why { flex: 0 1 auto; min-width: 9ch; overflow: hidden; text-overflow: ellipsis; color: var(--faint); font: 400 var(--t-xs)/1.3 var(--font); white-space: nowrap; }

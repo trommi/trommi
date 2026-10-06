@@ -2,7 +2,7 @@
 // (Later, Notes, Done), the news beside them. The markup is the one app.css and desk.css style. A row never unfolds: its text is a link to
 // the card's own page, its tiles are forms that answer with one tap.
 import { BASE, stream, flipOut } from './app.mjs'
-import { Controller, PLUS, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
+import { Controller, PLUS, SETTLED, WORDS, advisedLabels, agoSpan, avatar, calm, cardNr, controller, deskRow, el, galleryItems, html, isKnock, markArt, mediaPreview, mq, plain, raw, ringSvg, runSection, sideWays, sk, sketchSvg } from './ui.mjs'
 // ---- the infos: reports, notes, nothing to decide ----
 // (His word, 4 October: "einfach untermischen".) An info is a card of the stack like any other, among the decisions by
 // its time (a knock first): the drawn page where a decision has its pictures, the title, and at the right What?? and
@@ -133,7 +133,8 @@ ${way('snooze', 'snooze', WORDS.later)}${way('revise', 'reverse', WORDS.revise)}
 //           or status "decided" while it is really with its session: answered within ACTING_MS and the session is
 //           online (it acts on the answer and has not closed it yet; "Take back")
 //   done    status "decided" but older than ACTING_MS or its session is offline (its line says "not closed by the
-//           agent"), and status "done" with an answer of his (choice, or trusted), or an info he read; "Take back"
+//           agent"), and status "done" with an answer of his (choice, or trusted; one that was a final option settled
+//           the card at once, it was never "decided": its line says "settled by your answer"), or an info he read; "Take back"
 //   trash   status "shredded" (he threw it away; "Take back" fishes it out), or status "done" without an answer
 //           of his (its session withdrew it; the hub takes nothing back there, so the line has no way back)
 // A permission card is never listed (the hub closes it by itself). The newest lies on top of each.
@@ -215,7 +216,7 @@ function line(sheet, model, base, rest = false) {
   //  card, where Wake up and Take back are)
   const { card, kind, g } = sheet
   return html`<article class="inbox-done off-line${rest ? ' is-rest' : ''}" tabindex="-1" data-id="${card.id}" data-kind="${kind}" data-g="${g}"${kind === 'later' ? raw(' data-later') : ''}>
-${shopMark(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(card, base)}" aria-label="${PLACE[g]}: ${card.title}"><strong>${card.title}</strong></a>
+${shopMark(g)}<a class="inbox-revising-open off-open" data-nav href="${cardPath(card, base)}" aria-label="${PLACE[g]}: ${card.title}"><strong>${card.title}</strong>${sheet.why ? html`<span class="off-why">${sheet.why}</span>` : ''}</a>
 </article>`
 }
 
@@ -241,7 +242,8 @@ function deskStacks(model, base, open = null, q = '') {
   // A sheet: the card, why it lies there, its grey line. (An info he read he closed himself: only "Read".)
   // A sheet's grey line is worked out only when the sheet is drawn or searched (a Done stack can hold thousands).
   const sheet = (card, kind, say) => { let said = null; return { card, kind, at: atOf(card, kind), get said() { return (said ??= say()) } } }
-  const answered = c => sheet(c, 'answered', () => `${answerOf(c)}${c.status === 'done' && c.kind !== 'info' ? ' · done by the agent' : c.status === 'decided' && stackOf(c, ctx) === 'done' ? ' · not closed by the agent' : ''}`)
+  // (A card his own answer settled, a final option, says so on its line: no agent closed it.)
+  const answered = c => Object.assign(sheet(c, 'answered', () => `${answerOf(c)}${c.settled ? ` · ${SETTLED.toLowerCase()}` : c.status === 'done' && c.kind !== 'info' ? ' · done by the agent' : c.status === 'decided' && stackOf(c, ctx) === 'done' ? ' · not closed by the agent' : ''}`), c.settled ? { why: SETTLED.toLowerCase() } : {})
   const thrown = c => (c.status === 'shredded' ? sheet(c, 'shredded', () => 'Shredded') : sheet(c, 'withdrawn', () => `Withdrawn${c.summary ? `: ${plain(c.summary, state.assets).slice(0, 220)}` : ''}`))
   const piles = [
     { kind: 'later', word: 'Later', sheets: cards.later.map(c => sheet(c, 'later', () => until(c))) },

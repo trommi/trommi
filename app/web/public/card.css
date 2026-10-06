@@ -652,3 +652,13 @@ div.focus-opt { cursor: default; }
   .t-picture.is-deciding .tc-later { order: 1; }
   .t-picture-sub { order: 2; }
 }
+
+/* ---- a final option: choosing it settles the card. A small pen tick and two quiet words at the tile's end; on a
+   narrow tile and on a chip of the strip the tick alone. The settled card says so on a still tile with the tick. ---- */
+.final-sign { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--muted); font: 500 var(--t-xs)/1 var(--font); white-space: nowrap; }
+.final-sign .sketch { width: 13px; height: 13px; stroke-width: 2; }
+.tc-opt > .final-sign { margin-left: auto; padding-left: 6px; }
+.t-picture-answer .tc-opt > .final-sign > span { display: none; }
+.tc-chip > .final-sign { margin-left: 6px; vertical-align: -1px; }
+.tc-opt.is-settled .tc-opt-label { display: inline-flex; align-items: center; gap: 7px; }
+.tc-opt.is-settled .tc-opt-label .sketch { flex: none; width: 16px; height: 16px; stroke-width: 2; color: var(--stamp-ink-done, currentColor); }

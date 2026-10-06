@@ -125,7 +125,7 @@ function ask(m, s, base) {
   }
   const over = card.status !== 'open'
   const [kind, text] = !here ? ['asked', '']
-    : card.status === 'decided' ? [card.trusted ? 'trusted' : 'decided', choiceLabel(card) || (card.trusted ? advisedLabels(card) || 'your call' : '')]
+    : card.status === 'decided' || card.settled ? [card.trusted ? 'trusted' : 'decided', choiceLabel(card) || (card.trusted ? advisedLabels(card) || 'your call' : '')]
     : card.status === 'shredded' ? ['shredded', '']
     : over ? ['done', card.summary ?? '']
     : card.with_agent ? ['handed', ''] : ['snoozed', '']
@@ -340,7 +340,7 @@ function questionList(s, base) {
   const { model } = s
   const rest = s.cards.filter(c => !s.fresh.includes(c)).sort((a, b) => (b.decided ?? b.shredded ?? b.created ?? 0) - (a.decided ?? a.shredded ?? a.created ?? 0))
   const line = card => {
-    const [kind, text] = card.status === 'decided' ? [card.trusted ? 'trusted' : 'decided', choiceLabel(card)] : card.status === 'shredded' ? ['shredded', ''] : card.status !== 'open' ? ['done', card.summary ?? ''] : card.with_agent ? ['handed', ''] : ['snoozed', '']
+    const [kind, text] = card.status === 'decided' || card.settled ? [card.trusted ? 'trusted' : 'decided', choiceLabel(card)] : card.status === 'shredded' ? ['shredded', ''] : card.status !== 'open' ? ['done', card.summary ?? ''] : card.with_agent ? ['handed', ''] : ['snoozed', '']
     return eventLine({ kind, text: text === card.title ? '' : text, ts: card.decided ?? card.shredded ?? card.created ?? 0 }, card, base, { wrap: true, cont: true })
   }
   return html`<div class="session-cards" id="session-questions-${s.id}"><header class="inbox-head"><div class="inbox-title"><h2>${s.fresh.length ? (s.fresh.length === 1 ? '1 question waits for you' : `${s.fresh.length} questions wait for you`) : 'No question waits for you.'}</h2></div></header>

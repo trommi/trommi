@@ -1,5 +1,5 @@
 // The mock room: the client core's API and model shape (core/README.md in trommi-hub), without a hub and
-// without crypto, fed from public/demo/fixture.json (dev/make-fixture.mjs) or generated big (?mock=crazy); ?mock=side is the fixture with a full sidebar. Used with
+// without crypto, fed from public/demo/fixture.json (dev/make-fixture.mjs) or generated big (?mock=crazy); ?mock=side is the fixture with a full sidebar, ?mock=quiet a small Desk with final answers. Used with
 // ?mock=1 for UI work and the screen-by-screen comparison with today's board; the real core is the default.
 // Agents are simulated: they reply to messages, rework a card that was handed back, explain on "What??".
 
@@ -122,10 +122,13 @@ class MockClient {
     if (!card) throw Object.assign(new Error('unknown card'), { code: 'not-found' })
     if (card.object_state !== 'open') throw Object.assign(new Error('card already decided'), { code: 'bad-argument' })
     const answer = { answer_action: 'answer', choices: [], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, ...fields, bound_version_hash: card.version_hash, bound_object_version: card.object_version, envelope_number: this.next(), envelope_hash: hex(64), by_device_id: this.model.room.my_device_id, answered_at: Date.now(), taken_back_at: null }
+    // (as the core: every choice a final option, nothing said beside it and not left to the agent: the answer settles the card)
+    const plain = !String(answer.note ?? '').trim() && !Object.values(answer.option_notes ?? {}).some(Boolean) && !answer.attachments.length && !answer.marks.length
+    const settled = answer.answer_action === 'answer' && !answer.trusted && plain && answer.choices.length > 0 && answer.choices.every(k => card.options.find(o => o.key === k)?.final === true)
     this.changed(c => {
       card.answer = answer; card.answers.push(answer)
-      card.object_state = answer.answer_action === 'answer' ? 'answered' : 'closed'
-      card.closed_how = answer.answer_action === 'shred' ? 'shredded' : answer.answer_action === 'read' ? 'read' : 'answered'
+      card.object_state = answer.answer_action === 'answer' && !settled ? 'answered' : 'closed'
+      card.closed_how = answer.answer_action === 'shred' ? 'shredded' : answer.answer_action === 'read' ? 'read' : settled ? 'settled' : 'answered'
       card.in_revision = null; card.updated_at = answer.answered_at
       c.cards.add(object_id); c.stack = true
     })
@@ -520,10 +523,55 @@ My advice is the canary: it costs one day and tells us what the load of real roo
   return f
 }
 
+// A small Desk for final answers (?mock=quiet): three open questions with an option their agent marked final (a chore
+// with two named answers, a plain yes or no, one with three ways), two cards such an answer settled, two a session
+// works on, and a few closed by their agents.
+function quietDesk(f) {
+  const now = Date.now(), MIN = 60e3, me = f.room.my_device_id
+  const main = f.sessions[0], claude = main.agent_device_id
+  Object.assign(main, { device_name: 'Claude', is_online: true, status_lines: [] })
+  main.profile = { ...main.profile, agent_name: 'Claude', task: 'Trommi: hub, app and connector' }
+  f.sessions = [main]
+  const design = hex(64)
+  f.sessions.push({ agent_device_id: design, agent_session_id: 'claude-design', device_name: 'Design', is_active: true, is_online: true,
+    profile: { model: 'claude-opus-5-5', task: 'Desk and card design', icon: 'draw:brush', agent_name: 'Design', parent_session: main.agent_session_id, is_main: false },
+    status_lines: [], settings: { name: '', desk: 'main', archived: false, group: null, icon: null } })
+  const mine = new Set([claude, design])
+  f.members = f.members.filter(m => m.device_role !== 'agent' || mine.has(m.device_id))
+  f.human.session_settings = Object.fromEntries(Object.entries(f.human.session_settings ?? {}).filter(([k]) => mine.has(k)))
+  f.human.snoozes = {}; f.human.drafts = {}
+  f.timelines = Object.fromEntries(Object.entries(f.timelines ?? {}).filter(([k]) => k === `chat:session/${claude}`))
+  f.cards = []; f.permissions = []; f.published = []
+  let env = 9000
+  // A card asked "ago" minutes back. how: 'open', 'answered' (its first option, with the agent), 'settled' (its first
+  // option, final: closed by that answer) or a summary (its session closed it). options: [key, label, final?].
+  const mk = (title, agent, ago, options, { body = '', how = 'open' } = {}) => {
+    const id = hex(32), at = now - ago * MIN, n = ++env, version_hash = hex(64), open = how === 'open', by = !['open', 'answered', 'settled'].includes(how)
+    const content = { card_type: 'decision', title, teaser: null, body, options: options.map(([key, label, final]) => ({ key, label, detail: '', ...(final ? { final: true } : {}) })), sections: null, html: null, allows_multiple: false, recommended: null, urgency_reason: '', attachments: [], change_note: '', close_summary: by ? how : null, withdraw_reason: null, merged_into_object_id: null, merged_from_object_ids: null }
+    const answer = open ? null : { answer_action: 'answer', choices: [options[0][0]], note: '', option_notes: {}, attachments: [], marks: [], trusted: false, bound_version_hash: version_hash, bound_object_version: 1, envelope_number: ++env, envelope_hash: hex(64), by_device_id: me, answered_at: at, taken_back_at: null }
+    f.cards.push({ object_id: id, agent_device_id: agent, first_envelope_number: n, created_at: at - (open ? 0 : 25 * MIN), answers: answer ? [answer] : [], answer, closed_how: open ? null : by ? 'closed' : how, in_revision: null, timeline_key: `chat:card/${id}`, content_state: 'ok', object_version: 1, version_hash, envelope_number: n, updated_at: at, urgency: 'normal', object_state: open ? 'open' : how === 'answered' ? 'answered' : 'closed', ...content,
+      versions: [{ object_version: 1, version_hash, previous_version_hash: null, envelope_number: n, sent_at: at - (open ? 0 : 25 * MIN), object_state: 'open', urgency: 'normal', content }] })
+  }
+  mk('Welche Schrift für die Überschriften?', design, 2 * 1440, [['bri', 'Bricolage'], ['int', 'Inter']], { how: 'Bricolage ist überall drin, auch in der Hilfe.' })
+  mk('Backup jede Nacht um 3 Uhr?', claude, 1440, [['ja', 'Ja'], ['nein', 'Nein']], { how: 'Der Timer läuft, das erste Backup liegt auf der Storage Box.' })
+  mk('Die alten Testdaten löschen?', claude, 420, [['ja', 'Ja'], ['nein', 'Nein', true]], { how: '312 Räume gelöscht, 1,4 GB frei.' })
+  mk('Runde Ecken an den Knöpfen?', design, 300, [['nein', 'Eckig lassen', true], ['ja', 'Rund']], { how: 'settled', body: 'Eckig passt zum Stift; rund wäre ein Nachmittag Arbeit.' })
+  mk('Schatten unter der Karte: so lassen?', design, 95, [['ja', 'So lassen', true], ['nein', 'Weicher machen']], { how: 'settled', body: 'Er ist jetzt 2 px tief und leicht nach rechts versetzt, wie beim Notizzettel.' })
+  mk('Eselsohr: 20 % größer oder so lassen?', design, 12, [['gross', '20 % größer'], ['so', 'So lassen', true]], { how: 'answered', body: 'Die Spitze stünde dann 38 statt 31 px von der Ecke.' })
+  mk('Den neuen Hub heute Nacht ausrollen?', claude, 25, [['nacht', 'Heute Nacht'], ['morgen', 'Erst morgen']], { how: 'answered', body: 'Der Wechsel dauert etwa zwei Minuten; in der Zeit kommt keine Karte an.' })
+  mk('Zwei Handgriffe für dich (Cloudflare, Auto-Modus)', claude, 34, [['done', 'Beides erledigt', true], ['hilfe', 'Zeig mir wie']], { body: '1. Im Cloudflare-Dashboard den DNS-Eintrag „hub“ auf „Proxied“ stellen.\n2. Im Terminal den Auto-Modus einschalten (Shift+Tab), sonst fragt jede Datei einzeln.' })
+  mk('Später-Marke grau lassen?', design, 21, [['ja', 'Ja', true], ['nein', 'Nein']], { body: 'Grau hält sich zurück wie alles andere, was vom Tisch ist. Bei Nein baue ich die blaue Variante.' })
+  mk('Review vom Desk: drei Kleinigkeiten behoben. Passt das so?', design, 8, [['ok', 'Passt so', true], ['nochmal', 'Noch mal ran'], ['bilder', 'Erst Bilder zeigen']], { body: 'Die Überschrift springt nicht mehr, der Stapel schließt mit Escape, die Zeiten stehen rechtsbündig.' })
+  for (const d of Object.values(f.human?.desks ?? {})) if (d.name === 'Desk') d.name = 'Trommi'
+  if (f.notes?.length) f.notes = [f.notes[0]]
+  return f
+}
+
 let fixtureCache
 async function loadFixture(kind) {
   if (kind === 'crazy') return crazyFixture()
   fixtureCache ??= await (await fetch('/demo/fixture.json')).json()
+  if (kind === 'quiet') return quietDesk(structuredClone(fixtureCache))
   const f = overloaded(filler(putAway(structuredClone(fixtureCache))))
   return kind === 'side' ? crowded(f) : f
 }

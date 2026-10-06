@@ -15,7 +15,7 @@
 // Enter that sends, files that are pasted or dropped, and the pen's arrow from the picture to its option.
 // Styles: card.css.
 import { BASE, SAID, stream } from './app.mjs'
-import { Controller, EXPLAIN_TEXT, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
+import { Controller, EXPLAIN_TEXT, FINAL_TIP, SETTLED, WORDS, act, advisedKeys, advisedLabels, agoSpan, arrowStrokes, cardNote, cardNr, cardPath, controller, copyButton, deskRow, doodleSvg, el, finalSign, html, isKnock, kindOf, knockWord, pageChip, plain, raw, rich, sideWays, sk, sketch, srcOf, thumb } from './ui.mjs'
 const icon = d => raw(`<svg viewBox="0 0 24 24" class="tc-icon" aria-hidden="true"><path d="${d}"/></svg>`)
 const ARROW_L = 'M19 12H5M11 6l-6 6 6 6', ARROW_R = 'M5 12h14M13 6l6 6-6 6', TICK = 'M5 12.5l4.5 4.5L19 7.5', PLAY = 'M9 6.5v11l9-5.5z'
 // Drawn with the pen, for the round buttons above a card: an arrow to the left and one to the right, a cross, three
@@ -175,7 +175,7 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
     const picked = card.choices?.length ? card.choices : [card.choice]
     const said = card.status === 'shredded' ? 'Shredded' : card.kind === 'info' ? 'Read' : card.trusted ? `${WORDS.trust}${advisedLabels(card) ? `: ${advisedLabels(card)}` : ''}` : card.options.filter(o => picked.includes(o.key)).map(o => o.label).join(', ') || 'Withdrawn by the agent'
     const can = card.status === 'shredded' || card.choice != null || card.trusted || (card.kind === 'info' && card.read)
-    return box(html`<div class="tc-opts">${still(said, card.note ? `Your note: ${card.note}` : '', 'is-picked')}${card.options.filter(o => card.option_notes?.[o.key]).map(o => still(o.label, `Your note: ${card.option_notes[o.key]}`))}${card.summary ? still('Done by the agent', card.summary) : ''}</div>${can ? back(card, base, 'reopen') : ''}`)
+    return box(html`<div class="tc-opts">${still(said, card.note ? `Your note: ${card.note}` : '', 'is-picked')}${card.options.filter(o => card.option_notes?.[o.key]).map(o => still(o.label, `Your note: ${card.option_notes[o.key]}`))}${card.settled ? still(html`${sk('tick')}${SETTLED}`, `${model.byAgent.get(card.agent)?.name ?? 'The agent'} marked this answer as final: nothing follows from it.`, 'is-settled') : ''}${card.summary ? still('Done by the agent', card.summary) : ''}</div>${can ? back(card, base, 'reopen') : ''}`)
   }
   if (card.with_agent) return box(html`<div class="tc-opts">${still(WORDS.revising, 'It is with its session and comes back reworked.')}</div>${back(card, base, 'takeback')}`)
   // Something to read: two clear tiles, What?? (it comes back explained) and Acknowledge (read, closed).
@@ -184,11 +184,11 @@ function cardAnswer(card, model, base, { error = '', version = null, pic = 1 } =
   const shownKey = pictureKeys(card).get(pic - 1)
   const draft = card.draft ?? {}
   const option = o => {
-    const is = advised.includes(o.key), noted = String(draft.notes?.[o.key] ?? '')
+    const is = advised.includes(o.key), noted = String(draft.notes?.[o.key] ?? ''), final = o.final === true
     // (A link written into an option is not on its tile: the tile says it in plain words, the link stands in the comments.)
-    const words = html`<span class="tc-opt-words"><span class="tc-opt-label"${is ? raw(' data-controller="advice"') : ''}>${o.label}</span>${o.detail ? html`<span class="tc-opt-detail">${plain(o.detail)}</span>` : ''}${is ? raw('<span class="tc-sr">, recommended by the agent</span>') : ''}</span>`
+    const words = html`<span class="tc-opt-words"><span class="tc-opt-label"${is ? raw(' data-controller="advice"') : ''}>${o.label}</span>${o.detail ? html`<span class="tc-opt-detail">${plain(o.detail)}</span>` : ''}${is ? raw('<span class="tc-sr">, recommended by the agent</span>') : ''}</span>${final ? finalSign(true) : ''}`
     const pen = card.kind === 'decision' ? html`<span class="tc-opt-pen" data-key="${o.key}" data-action="click->card#note" title="A note on this option"${noted ? raw(' data-noted') : ''}>${sk('pen')}</span>` : ''
-    const marks = html`${is ? raw(' title="The agent recommends this"') : ''}${shownKey === o.key ? raw(' data-match') : ''}`
+    const marks = html`${is || final ? html` title="${[is ? 'The agent recommends this' : '', final ? FINAL_TIP : ''].filter(Boolean).join(' · ')}"` : ''}${shownKey === o.key ? raw(' data-match') : ''}`
     const tile = card.multiple
       ? html`<label class="tc-opt${is ? ' is-advised' : ''}" data-key="${o.key}"${marks}><input type="checkbox" id="tick-${card.id}-${o.key}" name="keys" value="${o.key}" form="${form}" data-action="change->card#keep"${draft.keys?.includes(o.key) ? raw(' checked') : ''}><span class="tc-tick" aria-hidden="true">${icon(TICK)}</span>${words}${pen}</label>`
       : html`<button class="tc-opt${is ? ' is-advised' : ''}" type="submit" form="${form}" formaction="${act(card, base, 'decide')}" name="key" value="${o.key}" data-key="${o.key}"${marks}>${words}${pen}</button>`
@@ -327,7 +327,7 @@ function cardPage(card, model, base, { pic = 1, walk = false, error = '', versio
   const jump = html`<button class="tc-chip is-jump" type="button" data-action="card#toAnswers">To the answers ↑</button>`
   const few = open && card.kind === 'decision' && !card.multiple && card.options.length <= 4
   const strip = html`<div class="tc-bar" aria-label="This question, in short"><div class="tc-bar-in"><b class="tc-bar-title">${card.title}</b>
-${few ? html`<span class="tc-bar-chips">${card.options.map(o => html`<button class="tc-chip" type="submit" form="${form}" formaction="${act(card, base, 'decide')}" name="key" value="${o.key}" title="${o.label}">${o.label}</button>`)}</span>` : ''}${jump}
+${few ? html`<span class="tc-bar-chips">${card.options.map(o => html`<button class="tc-chip" type="submit" form="${form}" formaction="${act(card, base, 'decide')}" name="key" value="${o.key}" title="${o.final === true ? `${o.label} · ${FINAL_TIP}` : o.label}">${o.label}${o.final === true ? finalSign() : ''}</button>`)}</span>` : ''}${jump}
 ${open && card.kind === 'decision' ? html`<i class="tc-bar-sep"></i>${mini('is-duck', 'trust', 'I don’t give a duck', sk('duck'))}${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-reverse', 'revise', `Reverse: back to ${asker || 'the agent'} for rework, with the comments`, sk('reverse'))}` : open && card.kind === 'info' ? html`<i class="tc-bar-sep"></i>${mini('is-what', 'what', 'What?? Explain this to me', sk('what'))}${mini('is-ack', 'close', `${WORDS.ack}: read, close it`, sk('tick'))}` : ''}
 ${open && card.kind !== 'permission' && !card.snoozed_until ? html`<form class="tc-bar-later" method="post" action="${base}/cards/batch"><input type="hidden" name="ids" value="${card.id}"><input type="hidden" name="from" value="${card.id}">${session ? html`<input type="hidden" name="back" value="${home}">` : ''}${sideWays({ duck: false, shred: false, word: false })}</form>` : ''}
 </div></div>`
