@@ -276,7 +276,7 @@ export async function integration({ test, tmp }) {
     await test('e2e: a session left without a key (the key was busy) takes it on the next tool call once it is free; the error names the pid and the fix', async () => {
       const second = await startConnector({ env, cwd: project })   // the second member (slot 2) runs too
       await second.ready()
-      const keyless = await startConnector({ env: { ...env, TROMMI_RETRY_MS: '600000' }, cwd: project })   // another session: no take-over
+      const keyless = await startConnector({ env, cwd: project })   // another session: no take-over
       try {
         const err = await until('busy', async () => { try { await keyless.call('list_cards'); return false } catch (e) { return /is held by/.test(e.message) && e.message } })
         assert.match(err, new RegExp(`pid ${connector.pid}`))

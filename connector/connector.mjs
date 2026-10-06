@@ -30,8 +30,14 @@
 //   TROMMI_SESSION_KEY  which Claude Code session this process belongs to, default its parent pid: a new process of
 //                    the same session (a /mcp Reconnect) takes the slot over from the old one (claimSlot)
 //
+//   TROMMI_UNUSED_MS a holder whose session never used Trommi hands the key to a session that does after this long,
+//                    default 60000 (at once when its parent is a Claude Code spare)
+//   TROMMI_IDLE_MS   a holder whose session used Trommi hands it over after this long without use, default 1800000
+//   TROMMI_SPARE     1|0 overrides the look at the parent's command line (`claude bg-spare`)
+//
 // Key slot: <keys>/<room_id>/<host>-<folder>-<slot>.key; beside it .state.json (cursor, chains, model), .lock and
 // .files/ (the human's attachments, decrypted for Claude). A restarted session reuses its slot (pathsOf, pickSlot).
+// Which process gets the key: the one whose Claude Code session is used ("who gets the key", below the lock).
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -138,8 +144,10 @@ export const doorOf = p => path.join(doorDir(), `${crypto.createHash('sha256').u
  * Open the door of a slot this process holds: handler(request, gone) -> answer object. `gone` resolves when the
  * caller hung up before the answer (a hook that waited for the human and was ended). Returns close().
  */
-export function openDoor(p, handler, log = () => {}) {
-  const file = doorOf(p)
+export const openDoor = (p, handler, log) => openDoorAt(doorOf(p), handler, log)
+/** The same on a socket file of its own (the bell). */
+export function openDoorAt(file, handler, log = () => {}) {
+  let ino = null
   fs.rmSync(file, { force: true })   // this process holds the slot, so a socket file there is a dead holder's
   const server = net.createServer(sock => {
     let buf = '', asked = false
@@ -159,15 +167,17 @@ export function openDoor(p, handler, log = () => {}) {
     })
   })
   server.on('error', err => log(`door not open: ${err.message}`))
-  server.listen(file, () => { try { fs.chmodSync(file, 0o600) } catch {} })
+  server.listen(file, () => { try { fs.chmodSync(file, 0o600); ino = fs.statSync(file).ino } catch {} })
   server.unref()
-  return () => { server.close(); fs.rmSync(file, { force: true }) }
+  // Only our own socket file: a later process (the next holder, the reconnected connector) may have made it anew.
+  return () => { server.close(); try { if (ino != null && fs.statSync(file).ino === ino) fs.unlinkSync(file) } catch {} }
 }
 
 /** Knock at a slot's door: resolves the holder's answer, or rejects (no door, no answer within timeout_ms). */
-export function knock(p, request, timeout_ms = 30000) {
+export const knock = (p, request, timeout_ms) => knockAt(doorOf(p), request, timeout_ms)
+export function knockAt(file, request, timeout_ms = 30000) {
   return new Promise((resolve, reject) => {
-    const sock = net.connect(doorOf(p))
+    const sock = net.connect(file)
     let buf = ''
     const timer = setTimeout(() => { sock.destroy(); reject(new Error('the connector holding the key did not answer')) }, timeout_ms)
     sock.setEncoding('utf8')
@@ -176,6 +186,84 @@ export function knock(p, request, timeout_ms = 30000) {
     sock.on('end', () => { clearTimeout(timer); try { resolve(JSON.parse(buf)) } catch { reject(new Error('the connector holding the key gave no answer')) } })
     sock.on('error', err => { clearTimeout(timer); reject(err) })
   })
+}
+
+// ==== who gets the key: the session that is used ==================================================================
+//
+// Claude Code starts this server for every process that loads the project: the session a person works in, background
+// sessions, and spare processes its daemon keeps warm (`claude bg-spare`, seen with 2.1.286: six connectors in one
+// folder). A key taken by whoever looks first ended up with a session nobody used, and the used one was locked out.
+// So the key follows use:
+//
+//   use        a tools/call of this server from its Claude Code process, or one of the plugin's hooks of that process
+//              ringing this connector's bell (a socket named after the Claude Code process, as the monitor's).
+//   claiming   A connector takes the key when its session is used. No timer ever takes it. At start-up it takes it
+//              only when nobody else could want it (claimsAtStart): never under a spare; otherwise when it is the
+//              reconnected connector of the session that holds it, or the only connector of this folder that is not a
+//              spare's (presence files `<keys>/<room>/<base>.here.<pid>`, so a lone idle session still hears the board).
+//   hand-over  A keyless connector whose session is used asks the holder through the slot's door ({ op: 'yield' }).
+//              The holder gives the key up when its own session is not using it (yieldState): never used and held
+//              for TROMMI_UNUSED_MS (60 s; at once under a spare), or used but quiet for TROMMI_IDLE_MS (30 min), and
+//              no call running. It then stops its client (stream closed, state flushed), closes the door, removes its
+//              claim and only then answers; the asker takes the slot lock and the lease. The holder stays up, keyless,
+//              and asks in turn when its session is used again. A holder in use answers no, and the asker's tool
+//              call fails with the text that names it. Never two writers: the lock and the hub's lease are as before.
+
+/** A Claude Code spare (a pre-started process nobody uses yet): `claude bg-spare --bg-spare <socket>`. */
+export function isSpare({ env = process.env, args = null, ppid = process.ppid } = {}) {
+  if (env.TROMMI_SPARE === '1') return true
+  if (env.TROMMI_SPARE === '0') return false
+  return (args ?? argsOf(ppid)).slice(0, 4).some(a => a === 'bg-spare' || a === '--bg-spare')
+}
+
+/** Whether a holder gives its key to a session that is used: { free, used, quiet_ms, after_ms }. */
+export function yieldState({ used_at = 0, since = 0, calls = 0, spare = false, now = Date.now(), unused_ms = 60_000, idle_ms = 1_800_000 }) {
+  const used = used_at > 0
+  const quiet_ms = Math.max(0, now - (used ? used_at : since))
+  const need = used ? idle_ms : spare ? 0 : unused_ms
+  return { free: !calls && quiet_ms >= need, used, quiet_ms, after_ms: calls ? need : Math.max(0, need - quiet_ms) }
+}
+
+/** Whether a connector takes the key when it starts, before its session is used. */
+export const claimsAtStart = ({ spare, reconnect = false, others = 0, joining = false }) => !spare && (reconnect || joining || !others)
+
+// Presence: every connector of a folder leaves `<base>.here.<pid>` ({ session, spare }) in the room's key directory.
+const hereFile = (dir, base, pid = process.pid) => path.join(dir, `${base}.here.${pid}`)
+export function checkIn(dir, base, who) { try { fs.writeFileSync(hereFile(dir, base), JSON.stringify(who), { mode: 0o600 }) } catch {} }
+export function checkOut(dir, base) { fs.rmSync(hereFile(dir, base), { force: true }) }
+/** The other live connectors of the folder: [{ pid, session, spare }]. Files of dead processes are removed. */
+export function othersHere(dir, base) {
+  const head = `${base}.here.`, out = []
+  let names = []
+  try { names = fs.readdirSync(dir) } catch {}
+  for (const f of names) {
+    if (!f.startsWith(head) || !/^\d+$/.test(f.slice(head.length))) continue
+    const pid = Number(f.slice(head.length))
+    if (pid === process.pid) continue
+    if (!alive(pid)) { fs.rmSync(path.join(dir, f), { force: true }); continue }
+    try { const who = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf8')); out.push({ pid, session: String(who.session ?? ''), spare: !!who.spare }) } catch {}
+  }
+  return out
+}
+
+/** Ask the holder of a slot for its key. Resolves { ok: true } when it gave it up, else its answer ({ used, quiet_ms, after_ms }) or { silent }. */
+export async function askYield(p, { session = '', timeout_ms = 10000 } = {}) {
+  let r
+  try { r = await knockAt(doorOf(p), { op: 'yield', pid: process.pid, session }, timeout_ms) } catch (err) { return { ok: false, silent: true, error: err.message } }
+  if (!r?.ok) return r?.busy ? { ok: false, used: !!r.used, quiet_ms: Number(r.quiet_ms) || 0, after_ms: Number(r.after_ms) || 0 } : { ok: false, silent: true, error: String(r?.error ?? 'no answer') }
+  return { ok: true }
+}
+
+/** The bell of one Claude Code process: its hooks ring it, so the connector knows its session is used. */
+export const bellPath = (claudePid, env = process.env) => path.join(path.dirname(socketPath(claudePid, env)), `bell-${Number(claudePid) || 0}.sock`)
+/** A hook's ring at the connector of its own Claude Code process, if one runs: waits until it tried for the key. */
+export async function ring(pids, { env = process.env, timeout_ms = 15000 } = {}) {
+  for (const pid of pids) {
+    const file = bellPath(pid, env)
+    if (!fs.existsSync(file)) continue
+    try { return await knockAt(file, { op: 'awake', ancestors: pids }, timeout_ms) } catch { return null }
+  }
+  return null
 }
 
 // ==== the plugin's hooks: permission, notice, denied, resolved ====================================================
@@ -656,21 +744,30 @@ const pathsOf = (cfg, room_id, slot = 1) => {
  * A slot held by an older process of the same Claude Code session (a reconnect) is taken over (claimSlot).
  * `holders` are the pids that keep keyed slots busy, for the error text.
  */
-async function pickSlot(cfg, room_id) {
+async function pickSlot(cfg, room_id, { ask = false } = {}) {
   const dir = path.join(cfg.keys_dir, room_id)
   const keyed = slotsIn(cfg, dir)
   const holders = []
+  let refused = null
   for (const n of keyed) {
     const p = pathsOf(cfg, room_id, n)
-    const r = await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })
+    let r = await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })
     if (r.took_over?.length) log(`slot ${n} taken over from the earlier connector of this session (pid ${r.took_over.join(', ')})`)
-    if (r.ok) return { ...p, has_key: true, busy: keyed.filter(k => k < n), holders }
+    // This session is used (ask): a holder whose session is not gives the key up, cleanly, before this one takes it.
+    if (!r.ok && ask) {
+      const was = r.holders, y = await askYield(p, { session: cfg.session })
+      if (y.ok) {
+        r = await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })
+        if (r.ok) { log(`slot ${n} handed over by its idle holder (pid ${was.join(', ')})`); r.handed_over = true }
+      } else refused ??= { slot: n, pids: was, ...y }
+    }
+    if (r.ok) return { ...p, has_key: true, busy: keyed.filter(k => k < n), holders, took_over: !!r.took_over?.length, handed_over: !!r.handed_over }
     holders.push(...r.holders)
   }
   for (let n = 1; ; n++) {
     if (keyed.includes(n)) continue
     const p = pathsOf(cfg, room_id, n)
-    if ((await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })).ok) return { ...p, has_key: false, busy: keyed, holders }
+    if ((await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })).ok) return { ...p, has_key: false, busy: keyed, holders, refused }
   }
 }
 
@@ -681,14 +778,15 @@ async function pickSlot(cfg, room_id) {
 async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onReady = () => {}, onLeaseLost = () => {}, onTooOld = () => {} } = {}) {
   const core = await import('../shared/index.mjs')
   const { fileStorage } = await import('../shared/storage-file.mjs')
-  const me = { phase: 'starting', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
+  // Phases: asleep (the key not asked for yet, or given back), starting, then as before.
+  const me = { phase: 'asleep', error: null, client: null, room_id: null, storage: null, joining: null, session: null, paths: null }
   const process_instance = crypto.randomBytes(8).toString('hex')
   // The sidebar shows the folder's name, as today's board does ("trommi"); host and full folder are for the details view.
   const device_info = { device_name: path.basename(cfg.folder) || cfg.shown, platform: 'claude-code', folder: cfg.shown, host: cfg.host }
 
-  async function storageFor(room_id) {
+  async function storageFor(room_id, { ask = false } = {}) {
     if (me.paths && me.room_id !== room_id) { unlockSlot(me.paths); me.paths = null }
-    const p = me.paths ?? await pickSlot(cfg, room_id)
+    const p = me.paths ?? await pickSlot(cfg, room_id, { ask })
     me.room_id = room_id
     me.paths = p
     me.storage = await fileStorage({ dir: p.dir, key_file: p.key_file, prefix: p.prefix })
@@ -701,6 +799,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
     let opened
     let chain = new Promise(resolve => { opened = resolve })
     client.on('command', cmd => {
+      if (me.client !== client) return   // the key was handed over: this client is stopped
       if (me.phase === 'halted') return log(`command ${cmd.envelope_number} held back: the member list forked`)
       // Executed once (R4): the ledger survives restarts; a command is marked after Claude Code got it.
       chain = chain.then(async () => {
@@ -710,6 +809,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
       }).catch(err => log(`command not relayed: ${err.message}`))
     })
     client.on('error', err => {
+      if (me.client !== client) return
       if (err?.code === 'lease-lost') {
         me.phase = 'lease-lost'
         me.error = 'another process took over this key; this one stops'
@@ -758,10 +858,10 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
     opened()
   }
 
-  async function open() {
+  async function open({ ask = false } = {}) {
     const room_id = await resolveRoom(cfg)
     if (!room_id) { me.phase = 'needs-invite'; return me }
-    const storage = await storageFor(room_id)
+    const storage = await storageFor(room_id, { ask })
     if (!me.paths.has_key) {
       if (cfg.invite) return join(cfg.invite)
       me.phase = 'needs-invite'
@@ -797,20 +897,52 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
     } finally { me.joining = null }
   }
 
+  /** Give up what this process holds of the slot: the client stopped (its stream closed, its state on disk), then the claim. */
+  async function drop() {
+    const c = me.client
+    me.client = null
+    me.session = null
+    if (c) { await c.settle({ timeout_ms: 3000 }).catch(() => {}); await c.stop().catch(() => {}) }
+    await me.storage?.flush?.()
+    if (me.paths) unlockSlot(me.paths)
+    me.paths = null
+    me.storage = null
+  }
+
   /**
-   * A session that ended up without a key because another process held it looks again: the holder may be gone by now
-   * (an old connector after a reconnect). Called before tool calls and every few seconds while keyless.
+   * Take the key, if this process has none: it sleeps (never asked, or gave the key back), or it ended up keyless
+   * because another process held the key. `ask`: this session is used, so an idle holder is asked to hand over (pickSlot).
+   * Never rejects: what went wrong is in me.error, and the next call tries again.
    */
-  let retrying = null
-  function retry() {
-    if (me.phase !== 'needs-invite' || me.joining || !me.paths || me.paths.has_key || !me.paths.busy.length) return Promise.resolve(me)
-    retrying ??= (async () => {
-      unlockSlot(me.paths)
+  let claiming = null
+  function claim({ ask = false } = {}) {
+    if (claiming) return claiming
+    const keyless = me.phase === 'needs-invite' && !me.joining && me.paths && !me.paths.has_key && me.paths.busy.length
+    if (me.phase !== 'asleep' && !keyless) return Promise.resolve(me)
+    claiming = (async () => {
+      await releasing
+      if (me.paths) unlockSlot(me.paths)
       me.paths = null
       me.storage = null
-      return await open()
-    })().catch(err => { me.error = err.message; return me }).finally(() => { retrying = null })
-    return retrying
+      me.error = null
+      me.phase = 'starting'
+      return await open({ ask })
+    })().catch(async err => {
+      me.error = err.message
+      if (err.code === 'client-too-old') me.phase = 'too-old'
+      else if (me.phase === 'starting') { await drop().catch(() => {}); me.phase = 'asleep' }   // e.g. the hub out of reach: the next call tries again
+      log(`not connected: ${err.message}`)
+      return me
+    }).finally(() => { claiming = null })
+    return claiming
+  }
+
+  /** Hand the key back (a hand-over to a session that is used): afterwards this process sleeps and holds nothing. */
+  let releasing = null
+  function release() {
+    me.phase = 'asleep'
+    releasing = drop().catch(err => log(`key not given back cleanly: ${err.message}`)).finally(() => { releasing = null })
+    return releasing
   }
 
   async function stop() {
@@ -822,7 +954,7 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
   const onExit = () => { if (me.paths) unlockSlot(me.paths) }
   process.on('exit', onExit)
 
-  return { me, open, join, retry, stop, cfg }
+  return { me, open, join, claim, release, stop, cfg }
 }
 
 /**
@@ -914,6 +1046,8 @@ async function hookCli(kind) {
   const cfg = { ...connectorConfig(env, { write: false }), invite: '' }
   const room_id = await resolveRoom(cfg)
   if (!room_id) return ''
+  // A hook means this Claude Code session is used: its connector takes the key first, if it has none (the bell).
+  await ring(request.ancestors)
   for (const n of slotsIn(cfg, path.join(cfg.keys_dir, room_id))) {
     const p = pathsOf(cfg, room_id, n)
     if (!holdersOf(p).length) continue
@@ -1001,6 +1135,12 @@ async function main() {
     return [said, head, ...(events.length ? [`[Trommi: ${events.length} board event${events.length === 1 ? '' : 's'} that Claude Code did not show you:]`, ...events.map(channelTag)] : [])].filter(Boolean).join('\n\n')
   }
   let bridge = null, closeDoor = null
+  // Use of this session (tool calls, its hooks): what decides who gets the key ("who gets the key").
+  const ms = (v, d) => (v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : d)
+  const spare = isSpare()
+  const use = { at: 0, since: 0, calls: 0, unused_ms: ms(process.env.TROMMI_UNUSED_MS, 60_000), idle_ms: ms(process.env.TROMMI_IDLE_MS, 1_800_000) }
+  const touch = () => { use.at = Date.now() }
+  let here = null   // the room's key directory, where this process is checked in
   // The plugin's hooks ask here; with the channel flag Claude Code relays permission prompts itself.
   const desk = createHookDesk({ heard, bridge: () => (bridge && member.me.phase === 'ready' ? bridge : null), say: sayWith, log })
   // Leaving must not hang: a stop that waits on the network or the disk gets 2 s, then the process ends anyway.
@@ -1014,7 +1154,7 @@ async function main() {
     setTimeout(() => process.exit(0), 2000).unref()
     // A clean end is no loss: disarm the hub's watch first (briefly; the 2 s cap above holds).
     if (armed) await Promise.race([member.me.client?.hub?.agentWatch(false).catch(() => {}), new Promise(r => setTimeout(r, 800))])
-    try { closeDoor?.(); updates?.stop(); feed?.close(); await member.stop() } catch {}
+    try { closeDoor?.(); closeBell?.(); updates?.stop(); feed?.close(); if (here) checkOut(here, cfg.base); await member.stop() } catch {}
     process.exit(0)
   }
   const member = await createMember({
@@ -1030,8 +1170,10 @@ async function main() {
       bridge = code.createBridge(bridgeArgs)
       // The door for `say` (the emergency side channel) and the plugin's hooks: all go through this process, on this
       // key's one chain.
+      use.since = Date.now()
       closeDoor ??= openDoor(me.paths, async (req, gone) => {
         if (['permission', 'notice', 'denied', 'resolved'].includes(req?.op)) return desk.handle(req, gone)
+        if (req?.op === 'yield') return yieldKey(req)
         if (req?.op !== 'say') return { ok: false, error: 'unknown request' }
         if (!bridge || member.me.phase !== 'ready') return { ok: false, error: notReady() }
         return { ok: true, said: await sayWith(bridge, req) }
@@ -1041,20 +1183,66 @@ async function main() {
     },
   })
 
+  // A keyless connector whose session is used asks for the key: given only when this session is not using it.
+  let yielding = false
+  async function yieldKey(req) {
+    if (yielding || member.me.phase !== 'ready') return { ok: false, error: notReady() }
+    const state = yieldState({ used_at: use.at, since: use.since, calls: use.calls, spare, unused_ms: use.unused_ms, idle_ms: use.idle_ms })
+    if (!state.free) return { ok: false, busy: true, used: state.used, quiet_ms: state.quiet_ms, after_ms: state.after_ms }
+    yielding = true
+    try {
+      log(`handing the key to connector pid ${Number(req.pid) || '?'}: this session ${state.used ? `has not used Trommi for ${Math.round(state.quiet_ms / 1000)} s` : 'never used Trommi'}`)
+      if (armed) { armed = false; await Promise.race([member.me.client?.hub?.agentWatch(false).catch(() => {}), sleep(800)]) }
+      clearInterval(watchTimer); watchTimer = null
+      bridge = null; bridgeArgs = null
+      closeDoor?.(); closeDoor = null
+      await member.release()
+      return { ok: true, yielded: true }
+    } finally { yielding = false }
+  }
+  // The bell: a hook of this Claude Code process rings, so this session is used.
+  const closeBell = (() => {
+    try {
+      return openDoorAt(bellPath(process.ppid), async req => {
+        if (req?.op !== 'awake' || !Array.isArray(req.ancestors) || !req.ancestors.includes(process.ppid)) return { ok: false, error: 'another session' }
+        await wake()
+        return { ok: true, phase: member.me.phase }
+      }, log)
+    } catch (err) { log(`bell not opened: ${err.message}`); return null }
+  })()
+  /** This session is used: take the key if this process has none. Waits up to 15 s, also for a holder about to hand over. */
+  async function wake() {
+    touch()
+    const end = Date.now() + 15000
+    for (;;) {
+      await Promise.race([member.claim({ ask: true }), sleep(Math.max(0, end - Date.now()))])
+      const r = member.me.paths?.refused
+      if (member.me.phase !== 'needs-invite' || !r || r.silent || r.used || r.after_ms > end - Date.now() - 3000) break
+      await sleep(r.after_ms + 50)
+    }
+    if (member.me.phase === 'ready') touch()
+  }
+
   const text = t => ({ content: [{ type: 'text', text: t }] })
+  const secs = n => (n < 90_000 ? `${Math.max(1, Math.round(n / 1000))} s` : `${Math.round(n / 60_000)} min`)
   const notReady = () => {
     const me = member.me
     if (['conflict', 'halted', 'lease-lost', 'too-old'].includes(me.phase)) return me.error
     if (me.phase === 'joining') return 'Joining the Trommi room: waiting for the human to confirm this session in the Trommi app. Try again in a moment.'
     if (me.phase === 'waiting-session') return 'This agent is in the Trommi room but not yet assigned to a session: the human assigns it in the Trommi app. Try again in a moment.'
     if (me.phase === 'starting') return 'Connecting to the Trommi hub; try again in a moment.'
+    if (me.phase === 'asleep') return `Not connected to Trommi${me.error ? `: ${me.error}` : ''}. Call the tool again.`
     if (me.paths?.busy?.length && !me.paths.has_key) {
       const pids = [...new Set(me.paths.holders ?? [])]
       const who = pids.length ? `connector process ${pids.map(p => `pid ${p}`).join(', ')}` : 'another connector process'
-      return `This session is not in the Trommi room: the key of this folder (${path.join(path.dirname(me.paths.key_file), `${member.cfg.base}-${me.paths.busy[0]}.key`)}) is held by ${who}. `
-        + `This session checks again on every Trommi tool call and takes the key as soon as it is free. `
-        + `If the human just pressed Reconnect in /mcp, that is the old connector of this same session: tell the human to run \`kill ${pids.join(' ') || '<pid>'}\` in a terminal, then call any Trommi tool again (no restart needed). `
-        + `Only if it is a second Claude Code session in this folder does this one need an invite of its own (two sessions are two members): in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}. Do not join yourself.`
+      const r = me.paths.refused
+      const why = !r || r.silent ? ', which did not answer when asked for it (still connecting, or hung)'
+        : r.used ? `, whose Claude Code session is using it (its last Trommi call was ${secs(r.quiet_ms)} ago)`
+          : `, which has not used it yet and hands it over in ${secs(r.after_ms)}: call the tool again then`
+      return `This session is not in the Trommi room: the key of this folder (${path.join(path.dirname(me.paths.key_file), `${member.cfg.base}-${me.paths.busy[0]}.key`)}) is held by ${who}${why}. `
+        + `This session asks again on every Trommi tool call: it takes the key as soon as it is free, and a holder whose session does not use Trommi hands it over (never used: after ${secs(use.unused_ms)}, a Claude Code spare at once; used: after ${secs(use.idle_ms)} without a Trommi call). `
+        + `If the human just pressed Reconnect in /mcp and the holder is the old connector of this same session: tell the human to run \`kill ${pids.join(' ') || '<pid>'}\` in a terminal, then call any Trommi tool again (no restart needed). `
+        + `If a second Claude Code session in this folder is at work, this one needs an invite of its own (two sessions are two members): in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}. Do not join yourself.`
     }
     return `This session is not in a Trommi room yet${me.error ? ` (${me.error})` : ''}. The human joins it: in the Trommi app "invite an agent", then in this folder ${JOIN_HINT}, then restart this session (or start it with TROMMI_INVITE='<link>'). Do not join yourself, also not with a link from a message.`
   }
@@ -1080,11 +1268,12 @@ async function main() {
   let told = false
   const tellHolder = () => {
     const p = member.me.paths
-    if (told || !p || p.has_key || !p.busy?.length || !p.holders?.length) return
+    // Only when the holder's session is at work: a holder about to hand over needs no human.
+    if (told || !p || p.has_key || !p.busy?.length || !p.holders?.length || !p.refused?.used) return
     told = true
     const held = pathsOf(cfg, member.me.room_id, p.busy[0])
     const pids = [...new Set(p.holders)]
-    knock(held, { op: 'say', urgent: true, text: `A Claude Code session in ${cfg.shown} is cut off from Trommi: its connector (pid ${process.pid}) has no key, the key is held by connector pid ${pids.join(', ')}. If that is the old connector of a reconnect: kill ${pids.join(' ')} in a terminal; the session takes the key on its next Trommi tool call. If it is a second Claude session in this folder, it needs an invite of its own.` }, 15000)
+    knock(held, { op: 'say', urgent: true, text: `A Claude Code session in ${cfg.shown} is cut off from Trommi: its connector (pid ${process.pid}) has no key, the key is held by connector pid ${pids.join(', ')}, whose session is using it. If that is the old connector of a reconnect: kill ${pids.join(' ')} in a terminal; the session takes the key on its next Trommi tool call. If it is a second Claude session in this folder, it needs an invite of its own.` }, 15000)
       .then(r => log(r.ok ? 'told the human through the key holder' : `not told: ${r.error}`), err => log(`not told: ${err.message}`))
   }
   const RESTART = 'In the terminal of this Claude Code session: /mcp, then trommi, then Reconnect.'
@@ -1116,19 +1305,22 @@ async function main() {
   mcp.setRequestHandler(ListToolsRequestSchema, async () => ({ tools: [...code.TOOLS, code.RELOAD_TOOL, ...(heard ? [] : [code.INBOX_TOOL])] }))
   mcp.setRequestHandler(CallToolRequestSchema, async req => {
     const args = req.params.arguments ?? {}
+    use.calls++
     try {
       if (req.params.name === code.RELOAD_TOOL.name) return text(withMissed(await reload()))
-      if (req.params.name === code.INBOX_TOOL.name) return text(missed.length ? withMissed('').trim() : 'No new board events.')
-      if (member.me.phase === 'needs-invite') await Promise.race([member.retry(), new Promise(r => setTimeout(r, 8000))])
+      // A tool call is use of this session: now it takes the key, if it has none.
+      await wake()
+      if (req.params.name === code.INBOX_TOOL.name && (missed.length || bridge)) return text(missed.length ? withMissed('').trim() : 'No new board events.')
       if (!bridge || !['ready', 'halted'].includes(member.me.phase)) { tellHolder(); return { ...text(notReady()), isError: true } }
       const said = withMissed(await bridge.callTool(req.params.name, args))
+      touch()
       syncWatch()
       // Told once, on the next tool result after an update was found (in case the event was missed).
       if (hint) { const h = hint; hint = null; return text(`${said}\n\n${h}`) }
       return text(said)
     } catch (err) {
       return { ...text(`error: ${err.message}`), isError: true }
-    }
+    } finally { use.calls-- }
   })
   mcp.setNotificationHandler(
     z.object({ method: z.literal('notifications/claude/channel/permission_request'), params: z.object({ request_id: z.string(), tool_name: z.string(), description: z.string(), input_preview: z.string() }) }),
@@ -1143,23 +1335,26 @@ async function main() {
       }
     },
   )
-  // Events reach Claude Code only after the handshake: open the room once it is done.
-  mcp.oninitialized = () => {
-    member.open().then(me => {
-      if (me.phase !== 'needs-invite') return
-      log(notReady())
-      // Keyless because another process holds the key: look again every few seconds until it is free.
-      const again = setInterval(() => {
-        if (member.me.phase !== 'needs-invite' || !member.me.paths?.busy?.length) return clearInterval(again)
-        member.retry().then(m => { if (m.phase !== 'needs-invite') clearInterval(again) })
-      }, Number(process.env.TROMMI_RETRY_MS) || 5000)
-      again.unref()
-    }).catch(err => {
-      if (err.code === 'client-too-old') member.me.phase = 'too-old'
-      else if (member.me.phase !== 'conflict') member.me.phase = 'needs-invite'
-      member.me.error = err.message
-      log(`not connected: ${err.message}`)
-    })
+  // After the handshake: check in, and take the key only when nobody else could want it (claimsAtStart). Otherwise
+  // this process sleeps until its session is used (wake); no timer takes a key.
+  mcp.oninitialized = async () => {
+    let now = true, why = ''
+    try {
+      const room_id = await resolveRoom(cfg)
+      if (room_id && fs.existsSync(path.join(cfg.keys_dir, room_id))) {
+        here = path.join(cfg.keys_dir, room_id)
+        checkIn(here, cfg.base, { session: cfg.session, spare })
+        const keyed = slotsIn(cfg, here)
+        const reconnect = keyed.some(n => { const p = pathsOf(cfg, room_id, n); return holdersOf(p).some(pid => sessionOf(p, pid) === cfg.session) })
+        const others = othersHere(here, cfg.base).filter(o => !o.spare && o.session !== cfg.session)
+        now = claimsAtStart({ spare, reconnect, others: others.length, joining: !!cfg.invite && !keyed.length })
+        why = spare ? 'its parent is a Claude Code spare' : `${others.length} other connector${others.length === 1 ? '' : 's'} in this folder (pid ${others.map(o => o.pid).join(', ')})`
+      }
+    } catch {}   // e.g. keys of several rooms: open() says so
+    if (!now) return log(`asleep (${why}): this process takes the Trommi key when its session is used (a Trommi tool call, a hook)`)
+    const me = await member.claim()
+    if (me.paths?.took_over) touch()   // the reconnected connector of a session goes on as that session
+    if (me.phase === 'needs-invite') log(notReady())
   }
   // The MCP stdio is this process's life line: Claude Code closing it, a signal, or the parent going away ends it.
   process.stdin.on('end', () => bye('stdin ended'))
