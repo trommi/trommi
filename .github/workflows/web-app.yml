@@ -1,9 +1,12 @@
 # Records the web app deployment: Cloudflare builds app/web on every push to main (watch paths app/web/*, shared/*,
 # connector/*, package.json, package-lock.json); its build step (app/web/dev/build.mjs) generates public/gen/ (with the
 # connector bundle, its checksum and the plugin, after npm ci at the repository root), sw.js and the preloads. This job
-# waits until https://app.trommi.com serves the newest commit that touched those paths (gen/build.txt; a commit that
-# changed nothing there, like one to this file alone, is never built by Cloudflare), so the "web-app" environment
-# shows which is live, and checks that the connector it serves matches the checksum it serves.
+# waits until https://app.trommi.com serves a build of the newest commit that touched those paths, so the "web-app"
+# environment shows which is live, and checks that the connector it serves matches the checksum it serves.
+# Which commit that build names (gen/build.txt) depends on the push: Cloudflare builds the head of a push that changed
+# something in the watch paths, and never a push that changed nothing there (like one to this file alone). So the
+# served commit is the newest commit in the watch paths, or a later one up to this run's commit when the push carried
+# more on top of it (a README commit after the code): from there on the watch paths are the same.
 # The trigger paths are Cloudflare's watch paths plus this file; the step below names the same list.
 name: Web app deploy
 
@@ -32,22 +35,34 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Wait until app.trommi.com serves the newest commit Cloudflare builds
+      - name: Wait until app.trommi.com serves a build of the newest commit in Cloudflare's watch paths
         run: |
-          # Cloudflare's build (app/web/dev/build.mjs) writes gen/build.txt with the commit (7 characters) and fills
-          # sw.js; a sw.js with VERSION "dev" means the build step did not run there.
-          want=$(git log -1 --format=%H -- app/web shared connector package.json package-lock.json | cut -c1-7)
+          # Cloudflare's build (app/web/dev/build.mjs) writes gen/build.txt with the commit it built (7 characters: the
+          # head of the push) and fills sw.js; a sw.js with VERSION "dev" means the build step did not run there.
+          paths='app/web shared connector package.json package-lock.json'
+          full=$(git log -1 --format=%H -- $paths)
+          want=$(echo "$full" | cut -c1-7)
+          # Is the served commit a build of $want: $want itself, or a later commit on the way to this run's commit with
+          # no change to the watch paths in between? Anything else (older, unknown here, not a commit) is not.
+          current() {
+            local served
+            echo "$1" | grep -Eq '^[0-9a-f]{7,40}$' || return 1
+            served=$(git rev-parse --verify --quiet "$1^{commit}") || return 1
+            git merge-base --is-ancestor "$full" "$served" || return 1
+            git merge-base --is-ancestor "$served" HEAD || return 1
+            [ -z "$(git log -1 --format=%H "$full..$served" -- $paths)" ]
+          }
           echo "newest commit in Cloudflare's watch paths: $want (this run: $(echo "${{ github.sha }}" | cut -c1-7))"
           for i in $(seq 1 60); do
             got=$(curl -fsS --max-time 10 "https://app.trommi.com/gen/build.txt?ci=$i" | sed -n 's/^commit: //p' || true)
             sw=$(curl -fsS --max-time 10 "https://app.trommi.com/sw.js?ci=$i" | sed -n 's/^const VERSION = "\([^"]*\)".*/\1/p' || true)
             echo "attempt $i: build.txt commit ${got:-none}, sw.js version ${sw:-none}"
-            if [ "$got" = "$want" ]; then
+            if current "$got"; then
               [ -n "$sw" ] && [ "$sw" != "dev" ] && break
-              echo "::error::app.trommi.com serves $want with an unbuilt sw.js (VERSION dev)"; exit 1
+              echo "::error::app.trommi.com serves $got with an unbuilt sw.js (VERSION dev)"; exit 1
             fi
             if [ "$i" = 60 ]; then
-              echo "::error::app.trommi.com did not serve $want within 10 minutes (check the Cloudflare build of trommi-app)"
+              echo "::error::app.trommi.com did not serve $want within 10 minutes; it serves ${got:-nothing} (check the Cloudflare build of trommi-app)"
               exit 1
             fi
             sleep 10
