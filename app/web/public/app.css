@@ -780,3 +780,13 @@ html body .curl .curl-back > main#session { display: flex !important; height: 10
 .link-slip a { display: inline-flex; align-items: center; gap: 8px; min-width: 0; color: inherit; text-decoration: none; text-align: left; }
 .link-slip a .sketch { flex: none; width: 22px; height: 22px; color: var(--urg-critical); }
 .link-slip .link-fix code { margin-top: 0; background: var(--surface); }
+
+/* ---- A phone's tap targets: what a finger presses is at least 44px each way. Controls with room grow to it; small
+   ones keep their look and an unseen area around them takes the tap (as the list in session.css does). ---- */
+@media (max-width: 860px) {
+  :is(.desk-duck-yes, .desk-duck-no, .tc-more-item, .tc-more .tc-more-list > .cardclip-copy, .t-picture-back, .session-buttons button, .session-filter-menu a, .t-menu button) { min-height: 44px; }
+  .room-tabs a { display: inline-flex; align-items: center; min-height: 44px; }
+  .ledger-find { height: 44px; }
+  :is(.row-mark, .tc-from, .tc-clip, .focus-mark-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout) { position: relative; }
+  :is(.row-mark, .tc-from, .tc-step, .tc-clip, .focus-mark-pen, .tc-send, .ledger-mark, .ledger-rename, .room-devices summary, .gal-kinds a, #settings-logout)::after { content: ""; position: absolute; left: 50%; top: 50%; width: max(100%, 44px); height: max(100%, 44px); translate: -50% -50%; }
+}

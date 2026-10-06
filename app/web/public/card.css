@@ -100,7 +100,7 @@ a.agent-badge:hover, a.agent-badge:focus-visible { scale: 1.08; }
 @container cardpage (max-width: 760px) {
   .tc-pad > .tc-frame { max-width: 100%; }
   .tc-rails { --step: 48px; }
-  .tc-rails > .tc-rail, .tc-rails > .tc-more > .tc-rail { width: 40px; height: 40px; }
+  .tc-rails > .tc-rail, .tc-rails > .tc-more > .tc-rail { width: 44px; height: 44px; }
   .tc-rails > .tc-rail, .tc-rails > .tc-more { top: -48px; }
   .tc-rails > .tc-back { left: 30px; }
   .tc-rails > .tc-more { right: 30px; }
