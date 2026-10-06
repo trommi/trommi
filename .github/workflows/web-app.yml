@@ -54,15 +54,28 @@ jobs:
           done
 
       # The connect script and the plugin install what these two addresses serve: both must be there (200) and agree.
+      # A rollout swaps the files one after another: for a moment connector.mjs is the new one while its checksum or the
+      # marketplace is still the old one. So the whole check is tried again, 12 times 10 s apart, before it fails.
       - name: The connector is served and matches its checksum
         run: |
-          curl -fsS --max-time 30 -o connector.mjs "https://app.trommi.com/connector.mjs?ci=${{ github.run_id }}"
-          want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector.mjs.sha256?ci=${{ github.run_id }}" | cut -d ' ' -f 1 | tr -d '\r\n')
-          got=$(sha256sum connector.mjs | cut -d ' ' -f 1)
-          echo "connector.mjs sha256 $got, connector.mjs.sha256 says $want"
-          [ -n "$want" ] && [ "$got" = "$want" ] || { echo "::error::app.trommi.com/connector.mjs does not match connector.mjs.sha256"; exit 1; }
-          # The plugin's archive: plugins[0].source.url of the marketplace (the owner has a url too, so no grep for "url").
-          zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?ci=${{ github.run_id }}" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))')
-          echo "plugin archive $zip"
-          case "$zip" in *"/trommi-$(echo "$got" | cut -c1-12).zip") ;; *) echo "::error::the marketplace does not name the plugin of this connector"; exit 1 ;; esac
-          curl -fsS --max-time 30 -o /dev/null "$zip"
+          check() {
+            local q="ci=${{ github.run_id }}-$1" want got zip
+            curl -fsS --max-time 30 -o connector.mjs "https://app.trommi.com/connector.mjs?$q" || { why="app.trommi.com/connector.mjs is not served"; return 1; }
+            want=$(curl -fsS --max-time 10 "https://app.trommi.com/connector.mjs.sha256?$q" | cut -d ' ' -f 1 | tr -d '\r\n')
+            got=$(sha256sum connector.mjs | cut -d ' ' -f 1)
+            echo "connector.mjs sha256 $got, connector.mjs.sha256 says $want"
+            [ -n "$want" ] && [ "$got" = "$want" ] || { why="app.trommi.com/connector.mjs does not match connector.mjs.sha256"; return 1; }
+            # The plugin's archive: plugins[0].source.url of the marketplace (the owner has a url too, so no grep for "url").
+            zip=$(curl -fsS --max-time 10 "https://app.trommi.com/plugins/marketplace.json?$q" | node -e 'let s = ""; process.stdin.on("data", d => { s += d }).on("end", () => console.log(JSON.parse(s).plugins[0].source.url))')
+            echo "plugin archive $zip"
+            case "$zip" in *"/trommi-$(echo "$got" | cut -c1-12).zip") ;; *) why="the marketplace does not name the plugin of this connector"; return 1 ;; esac
+            curl -fsS --max-time 30 -o /dev/null "$zip" || { why="the plugin archive $zip is not served"; return 1; }
+          }
+          why=
+          for try in $(seq 1 12); do
+            check "$try" && exit 0
+            echo "try $try of 12: $why"
+            [ "$try" -lt 12 ] && sleep 10
+          done
+          echo "::error::$why"
+          exit 1
