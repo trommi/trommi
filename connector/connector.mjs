@@ -849,6 +849,42 @@ async function pickSlot(cfg, room_id, { ask = false } = {}) {
   }
 }
 
+/** The first slot of the folder without a key, claimed (a join with a new key goes there). */
+async function freeSlot(cfg, room_id) {
+  const keyed = slotsIn(cfg, path.join(cfg.keys_dir, room_id))
+  for (let n = 1; ; n++) {
+    if (keyed.includes(n)) continue
+    const p = pathsOf(cfg, room_id, n)
+    if ((await claimSlot(p, { session: cfg.session, wait_ms: cfg.takeover_ms })).ok) return { ...p, has_key: false, busy: keyed, holders: [] }
+  }
+}
+
+/**
+ * Put a slot's key and everything stored with it (state, file cache) aside: `replaced-<time>-<name>` in the same
+ * directory. The slot then counts as empty (no connector opens that key again), nothing is deleted, and no later join
+ * into that slot number meets another device's state. The caller holds the slot's lock.
+ */
+export function setSlotAside(p, stamp = new Date().toISOString().replace(/[-:]|\..*$/g, '')) {
+  const name = path.basename(p.key_file, '.key'), moved = []
+  for (const f of fs.readdirSync(p.dir)) {
+    if (!f.startsWith(`${name}.`) || f.startsWith(`${name}.lock`)) continue
+    try { fs.renameSync(path.join(p.dir, f), path.join(p.dir, `replaced-${stamp}-${f}`)); moved.push(f) } catch {}
+  }
+  return path.join(p.dir, `replaced-${stamp}-${name}.key`)
+}
+
+/** The keyed slot of this folder that a running connector of this same Claude Code session holds, if any (its door says so). */
+async function ownHeldSlot(cfg, room_id) {
+  const up = ancestors()
+  for (const n of slotsIn(cfg, path.join(cfg.keys_dir, room_id))) {
+    const p = pathsOf(cfg, room_id, n)
+    if (!holdersOf(p).length) continue
+    const r = await knock(p, { op: 'whose', ancestors: up }, 3000).catch(() => null)
+    if (r?.ok && r.mine) return p
+  }
+  return null
+}
+
 /**
  * This process as a member of the room: opens or joins the room and keeps it running.
  * Returns { me, open(), join(link), stop() }; `onCommand(cmd)` gets every authorised command.
@@ -964,18 +1000,47 @@ async function createMember({ cfg = connectorConfig(), onCommand = () => {}, onR
   }
 
   /** Join by an agent invite link; resolves when the human's app has added this device and the session is claimed. */
-  async function join(link) {
+  async function join(link, { replace_held = false } = {}) {
     if (me.phase === 'ready') throw new Error('this session is already in a room')
     if (me.joining) return me.joining
     me.joining = (async () => {
       const { room_id } = await roomOfLink(link)
-      const storage = await storageFor(room_id)
-      if (me.paths.has_key) throw new Error(`this session already has a key for room ${room_id} (${me.paths.key_file}); restart the session to use it`)
+      let storage = await storageFor(room_id)
+      // This session is in the room already, with a key of its own: the link is answered with a NEW key in a free slot.
+      // The key it has stays where it is, untouched, until the app has added the new one; only then it is put aside
+      // (setSlotAside) and this session goes on with the new key. `old`: the keyed slot this process was given (nobody
+      // runs on it); `held`: the one a running connector of this same Claude Code session holds.
+      let old = null
+      // (replace_held: only `connector.mjs join`, a process beside the session's connector, looks for that one)
+      const held = me.paths.has_key || !replace_held ? null : await ownHeldSlot(cfg, room_id)
+      if (me.paths.has_key) {
+        old = me.paths
+        me.paths = await freeSlot(cfg, room_id)
+        me.storage = storage = await fileStorage({ dir: me.paths.dir, key_file: me.paths.key_file, prefix: me.paths.prefix })
+        log(`this session has a key for this room already (slot ${old.slot}); joining with a new key, the old one stays until the app has added the new one`)
+      }
       me.phase = 'joining'
-      const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage, client: CLIENT })
-      j.check_code.then(code => log(`invite answered: check code ${code.slice(0, 3)} ${code.slice(3)} (if the Trommi app asks which number this session shows, it is this one); waiting for the app to add this session`)).catch(() => {})
-      const client = await j.client
+      let client
+      try {
+        const j = core.joinRoom({ link: String(link).trim(), device_name: '', device_info, storage, client: CLIENT })
+        j.check_code.then(code => log(`invite answered: check code ${code.slice(0, 3)} ${code.slice(3)} (if the Trommi app asks which number this session shows, it is this one); waiting for the app to add this session`)).catch(() => {})
+        client = await j.client
+      } catch (err) {
+        // Not added (not confirmed, run out, used): the key this session had is the one it keeps.
+        if (old) { unlockSlot(me.paths); me.paths = old; me.storage = null; log(`not joined: this session keeps the key it had (slot ${old.slot})`) }
+        throw err
+      }
       me.paths.has_key = true
+      const before = old ?? held
+      if (before) {
+        const was = await fileStorage({ dir: before.dir, key_file: before.key_file, prefix: before.prefix }).then(st => st.get('room')).catch(() => null)
+        // A running connector of this session gives its key up first (it then takes the new one at its next use).
+        const free = old ? true : await knock(held, { op: 'replaced', ancestors: ancestors() }, 10000).then(r => !!r?.ok, () => false) && (await claimSlot(held, { session: cfg.session, wait_ms: cfg.takeover_ms })).ok
+        const aside = free ? setSlotAside(before) : null
+        if (free) unlockSlot(before)
+        me.replaced = { slot: before.slot, device_id: was?.my_device_id ?? null, aside }
+        log(`this session was ${was?.my_device_id ? `device ${was.my_device_id.slice(0, 12)}…` : 'another device'} before (slot ${before.slot}); ${aside ? `that key is put aside as ${aside} and this session uses the new one from now on` : 'its connector did not give that key up: restart this Claude Code session to use the new key'}. The old device is still a member of the room: remove it under Agents & devices → Devices in the Trommi app if you no longer need it.`)
+      }
       await run(client)
       return me
     })()
@@ -1383,6 +1448,9 @@ async function main() {
       closeDoor ??= openDoor(me.paths, async (req, gone) => {
         if (['permission', 'notice', 'denied', 'resolved'].includes(req?.op)) return desk.handle(req, gone)
         if (req?.op === 'yield') return yieldKey(req)
+        // `join` in this same Claude Code session: is this its connector, and (once the new key is in) give the old one up.
+        if (req?.op === 'whose') return { ok: true, mine: Array.isArray(req.ancestors) && req.ancestors.includes(process.ppid) }
+        if (req?.op === 'replaced') return replacedKey(req)
         if (req?.op !== 'say') return { ok: false, error: 'unknown request' }
         if (!bridge || member.me.phase !== 'ready') return { ok: false, error: notReady() }
         return { ok: true, said: await sayWith(bridge, req) }
@@ -1409,6 +1477,25 @@ async function main() {
       closeDoor?.(); closeDoor = null
       await member.release()
       return { ok: true, yielded: true }
+    } finally { yielding = false }
+  }
+  // This session joined again with a new key (join, run in this Claude Code session): this process gives the key it
+  // holds up for good and sleeps; its next use takes the session's new key. Only for a join of the same session.
+  async function replacedKey(req) {
+    if (!Array.isArray(req.ancestors) || !req.ancestors.includes(process.ppid)) return { ok: false, error: 'another session' }
+    // (retired: the new key continues the very session this connector held, so the app removed this device meanwhile)
+    const retired = member.me.phase === 'retired'
+    if (yielding || (member.me.phase !== 'ready' && !retired)) return { ok: false, error: notReady() }
+    yielding = true
+    try {
+      log('this session joined again with a new key: giving the old key up; the next tool call uses the new one')
+      if (!retired) await Promise.race([lastReport({ reason: 'handover', claude: 'gone' }, { working: false }), sleep(800)])
+      said = null
+      missed.length = 0; marks.clear()               // what waited was said to the old device; it does not go to the new one
+      bridge = null; bridgeArgs = null
+      closeDoor?.(); closeDoor = null
+      await member.release()
+      return { ok: true }
     } finally { yielding = false }
   }
   // The bell: a hook of this Claude Code process rings, so this session is used.
@@ -1632,7 +1719,13 @@ async function cli(argv) {
     if (!arg) throw new Error('usage: node connector/connector.mjs join <invite link>  (or TROMMI_INVITE=<link> ... join)')
     const member = await createMember({ onCommand: () => {} })
     log('joining; confirm this session in the Trommi app')
-    const me = await member.join(arg)
+    // Run inside a Claude Code session whose connector holds a key, the join is that session joining again (its
+    // connector goes on with the new key). TROMMI_JOIN_OTHER=1: the join is for another session of this folder.
+    const me = await member.join(arg, { replace_held: process.env.TROMMI_JOIN_OTHER !== '1' }).catch(async err => {
+      await member.stop().catch(() => {})
+      const spent = ['invite-expired', 'invite-used', 'invite-burned', 'invite-contested', 'bad-invite'].includes(err.code)
+      throw new Error(`not joined: ${err.message}${spent ? ' (an invite link works once and for a limited time: make a new one in the app)' : ''}`)
+    })
     console.log(`joined room ${me.room_id} as device ${me.client.model.room.my_device_id}, session ${me.client.session_id ?? me.session?.agent_session_id}; key file ${me.paths.key_file}`)
     await member.stop()
     process.exit(0)

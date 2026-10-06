@@ -1485,7 +1485,28 @@ async function start(client, { fresh = false } = {}) {
     router.refresh()
     conn()
   }
+  // A device answered one of this device's invite links and waits for its check code (a new device, or a connector
+  // that continues a session): said on whatever page he is on, with the way to the numbers. The confirm itself is on
+  // the invite's page (auth.mjs); without this it showed only while that page stayed open.
+  const codeAsked = new Set()
+  const askCodes = ids => {
+    for (const id of ids ?? []) {
+      const inv = client.model.invites.get(id)
+      if (inv?.invite_state !== 'confirm_code') { if (inv && inv.invite_state !== 'open') document.getElementById(`code-ask-${id}`)?.remove(); continue }
+      if (codeAsked.has(id)) continue
+      codeAsked.add(id)
+      if (location.pathname === `/pair/${id}`) continue
+      const host = document.getElementById('says-host')
+      if (!host) { codeAsked.delete(id); continue }
+      const who = inv.takeover ? model().everyone?.find(a => a.device_id === inv.session_id) : null
+      const head = inv.takeover ? `A connector wants to continue ${who?.label || who?.given || who?.name || 'a session'}` : inv.device_role === 'agent' ? 'An agent wants to join' : 'A device wants to join'
+      host.insertAdjacentHTML('afterbegin', String(toast({ head, line: 'Check the number it shows.', link: { href: `/pair/${id}`, label: 'Confirm' }, role: 'alert', ms: 5 * 60_000 })))
+      host.firstElementChild.id = `code-ask-${id}`
+    }
+  }
+  document.addEventListener('turbo:load', () => askCodes(client.model.invites.keys()), { once: true })
   client.on('change', change => {
+    askCodes(change.invites)
     if (!pending) pending = merge({ cards: new Set(), sessions: new Set(), permissions: new Set(), notes: new Set(), published: new Set(), timelines: new Set(), registers: new Set(), invites: new Set() }, change)
     else merge(pending, change)
     if (catchingUp()) { if (!wasCatchingUp) { wasCatchingUp = true; conn() } catchUpTimer ||= setTimeout(renderWhole, CATCH_UP_MS); return }

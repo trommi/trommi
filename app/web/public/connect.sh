@@ -77,7 +77,7 @@ fi
 
 # ---- 3. join ------------------------------------------------------------------------------------------------------
 say "Joining your Trommi account… (keep the app open: it adds this agent by itself, or asks for the check code shown below)"
-TROMMI_INVITE="$LINK" node "$CONNECTOR" join </dev/null >/dev/null || fail "joining did not work (an invite link works once and for a limited time: make a new one in the app)"
+TROMMI_INVITE="$LINK" node "$CONNECTOR" join </dev/null >/dev/null || fail "joining did not work (the line above says why)"
 say "Joined."
 
 # ---- 4. next step -------------------------------------------------------------------------------------------------
