@@ -2577,9 +2577,9 @@ ${(thumbs ? [...card.options].sort((a, b) => isYes(a) - isYes(b)) : card.options
 
 const knockAttr = card => (isKnock(card) ? raw(' data-knock') : '')
 /** One open question as a row. from: the session that asked. error: what went wrong with the last answer. */
-// The pull-tag of Later: a paper tag on its string, the three Zs of sleep drawn on it. The drawing of Later in sideWays
+// The pull-tag of Later: a paper tag on its string, the three Zs of sleep drawn down it (small at the hole, growing). The drawing of Later in sideWays
 // below (the Desk's selection bar, with the word; under a card and beside a large picture, the tag alone).
-export const LATER_TAG = raw(`<svg viewBox="0 0 44 84" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M5 28 L39 27 L41 76 C41 80 38 82 35 82 L9 82.5 C6 82.5 3.6 80 3.8 77 Z" class="tag-paper"/><circle cx="22" cy="35" r="3.2"/><g class="tag-z" transform="translate(3.2 39) scale(1.55)">${SNOOZE_Z.map(([d, width]) => `<path d="${d}" stroke-width="${width}"/>`).join('')}</g></svg>`)
+export const LATER_TAG = raw('<svg viewBox="0 0 44 84" aria-hidden="true"><path d="M22 0 C23 8 21 14 22 22" class="tag-string"/><path d="M6 28 L38 27 L40 76 C40 80 37 82 34 82 L10 82.5 C7 82.5 4.6 80 4.8 77 Z" class="tag-paper"/><circle cx="22" cy="34.5" r="3"/><g class="tag-z"><path d="M21.5 42.2 L27.4 42 L21.7 48.6 L27.8 48.3" stroke-width="2.2"/><path d="M14.6 52 L22.6 51.7 L14.9 60.6 L23.2 60.2" stroke-width="2.6"/><path d="M18.4 64.2 L30.2 63.8 L18.8 76.4 L30.8 75.9" stroke-width="3.1"/></g></svg>')
 /** The ways to put cards aside without answering them: Later, Duck it, Shred, in this order, with these drawings and
  *  names. One set for the Desk's selection bar (many cards) and a card's own page (this one): buttons of a form that
  *  posts to <base>/cards/batch with the ids (desk.mjs). later, duck, shred: which of them apply; between: what stands
