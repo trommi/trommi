@@ -391,7 +391,11 @@ html .pane-now .caps { font-size: .62rem; letter-spacing: .06em; }
      title below. It keeps its look; an unseen 40px area takes the tap. */
   .log .inbox-when .inbox-tab-act { overflow: visible; }
   .log .inbox-when .inbox-tab-act::before { content: ""; position: absolute; left: 50%; top: 50%; width: 40px; height: 40px; translate: -50% -50%; }
-}/* A session's title on a wide window, and the view of sessions laid together.
+}
+/* A question in the conversation: its title ends before the small Later button at the card's top right (a title that
+   filled its line ran under it). */
+@media (min-width: 861px) { .log .inbox-row:has(.inbox-when .inbox-later) .inbox-question { padding-right: 54px; } }
+/* A session's title on a wide window, and the view of sessions laid together.
    One session is one stream: its questions stand in its conversation. Here is only the
    head of its page on a wide window: a large mark, the name, a line with what it is at.
    Sessions laid together: one list of the questions of all of them in a wide

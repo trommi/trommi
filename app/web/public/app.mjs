@@ -912,7 +912,7 @@ export function renderStreamMessage(text) {
 // The toast after a card's action (and the way back it offers).
 export const SAID = {
   decide: { head: 'Answered', back: 'reopen' }, trust: { head: WORDS.trust, back: 'reopen' }, close: { head: 'Read', back: 'reopen' },
-  shred: { head: 'Shredded', back: 'reopen' }, snooze: { head: 'Snoozed', back: 'wake' }, revise: { head: 'Handed back', back: 'takeback' }, message: { head: 'Message sent' }, what: { head: `Asked: ${WORDS.what}`, back: 'takeback' },
+  shred: { head: 'Shredded', back: 'reopen' }, snooze: { head: WORDS.later, back: 'wake' }, revise: { head: 'Handed back', back: 'takeback' }, message: { head: 'Message sent' }, what: { head: `Asked: ${WORDS.what}`, back: 'takeback' },
 }
 export const BASE = ''
 const STREAM = 'text/vnd.turbo-stream.html'
