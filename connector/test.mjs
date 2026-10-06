@@ -205,6 +205,50 @@ await test('revise, set_urgency, withdraw, merge, close map onto the core', asyn
   assert.deepEqual(client.calls.at(-1), ['close', a, 'ran'])
 })
 
+await test('final options: options, sections and text mark them; revise keeps them; a settled answer says so and needs no close_card', async () => {
+  const { client, bridge, events } = bridgeWith()
+  for (const t of TOOLS.filter(t => ['create_decision', 'revise_card', 'merge_cards'].includes(t.name))) {
+    assert.equal(t.inputSchema.properties.options.items.properties.final.type, 'boolean', `${t.name}: options take final`)
+    assert.equal(t.inputSchema.properties.sections.items.properties.final.type, 'boolean', `${t.name}: sections take final`)
+    assert.match(t.inputSchema.properties.text.description, /\[key!\] marks an option as final/)
+  }
+  assert.match(TOOLS.find(t => t.name === 'create_decision').description, /final: true when choosing it leaves you nothing to do/)
+  assert.match(TOOLS.find(t => t.name === 'close_card').description, /closed="1"/)
+  assert.match(INSTRUCTIONS, /call close_card; an option that leaves you nothing to do gets final: true/)
+  // options: final only where it is true
+  const id = (await bridge.callTool('create_decision', { title: 'Two things for you to do', options: [{ key: 'done', label: 'Both done', final: true }, { key: 'later', label: 'Later', final: 'yes' }, { key: 'help', label: 'Help me' }] })).split(' ')[1]
+  assert.deepEqual(client.calls.at(-1)[1].options, [{ key: 'done', label: 'Both done', detail: '', final: true }, { key: 'later', label: 'Later', detail: '' }, { key: 'help', label: 'Help me', detail: '' }])
+  // a revise that does not touch the options keeps the mark; new options replace it
+  await bridge.callTool('revise_card', { card_id: id, title: 'Two things to do' })
+  assert.deepEqual(client.calls.at(-1)[2].options.map(o => o.final === true), [true, false, false])
+  await bridge.callTool('revise_card', { card_id: id, options: [{ key: 'done', label: 'Both done' }, { key: 'later', label: 'Later', final: true }] })
+  assert.deepEqual(client.calls.at(-1)[2].options.map(o => o.final === true), [false, true])
+  // sections and text
+  await bridge.callTool('create_decision', { title: 'S', sections: [{ text: 'intro' }, { key: 'ok', label: 'Fine', text: 'as it is', final: true, recommended: true }, { key: 'again', label: 'Once more', text: 'rework' }] })
+  let sent = client.calls.at(-1)[1]
+  assert.deepEqual(sent.options, [{ key: 'ok', label: 'Fine', detail: '', final: true }, { key: 'again', label: 'Once more', detail: '' }])
+  assert.equal(sent.sections[1].final, true); assert.equal(sent.sections[2].final, undefined); assert.equal(sent.recommended, 'ok')
+  const text = (await bridge.callTool('create_decision', { title: 'T', text: 'Intro.\n\n[ok*!] Fine: as it is\n\n[no!] Leave it: nothing changes\n\n[again] Once more: rework' })).split(' ')[1]
+  sent = client.calls.at(-1)[1]
+  assert.deepEqual(sent.options.map(o => [o.key, o.label, o.final === true]), [['ok', 'Fine', true], ['no', 'Leave it', true], ['again', 'Once more', false]])
+  assert.equal(sent.recommended, 'ok')
+  await bridge.callTool('revise_card', { card_id: text, title: 'T2' })
+  assert.deepEqual(client.calls.at(-1)[2].options.map(o => o.final === true), [true, true, false], 'a card filed as text keeps its final marks on revise')
+  // the event: a settled answer says the card is closed, a plain one does not
+  Object.assign(client.model.cards.get(text), { object_state: 'closed', closed_how: 'settled', answer: { choices: ['no'] } })
+  await bridge.command({ command: 'answer', object_id: text, choices: ['no'], settled: true, content: {} })
+  assert.deepEqual(events.at(-1).meta, { kind: 'decision', card_id: text, choice: 'no', closed: '1' })
+  assert.match(events.at(-1).content, /^Decision on "T2": no\n\nThis answer settled the card: .*Nothing is expected of you/)
+  await bridge.command({ command: 'answer', object_id: id, choices: ['done'], settled: false, content: {} })
+  assert.deepEqual(events.at(-1).meta, { kind: 'decision', card_id: id, choice: 'done' })
+  assert.doesNotMatch(events.at(-1).content, /settled/)
+  // close_card on a settled card sends nothing (the human keeps "Take back"); list_cards calls it done
+  const n = client.calls.length
+  assert.match(await bridge.callTool('close_card', { card_id: text, summary: 'ok' }), /^already closed: the human's answer settled it/)
+  assert.equal(client.calls.length, n)
+  assert.equal(JSON.parse(await bridge.callTool('list_cards', {})).find(c => c.id === text).status, 'done')
+})
+
 await test('teaser: the Desk row\'s two lines go to the card, are kept on revise, cleared with "", refused when too long', async () => {
   const { client, bridge } = bridgeWith()
   for (const t of TOOLS.filter(t => ['create_decision', 'create_info', 'revise_card', 'merge_cards'].includes(t.name))) assert.ok(t.inputSchema.properties.teaser, `${t.name} takes a teaser`)
@@ -566,7 +610,7 @@ await test('prompt.md: every tool has a section and no section lacks a tool; eve
 
 await test('tools: the core tools and inbox load up front (anthropic/alwaysLoad)', () => {
   const always = [...TOOLS, RELOAD_TOOL, INBOX_TOOL].filter(t => t._meta?.['anthropic/alwaysLoad'] === true).map(t => t.name).sort()
-  assert.deepEqual(always, ['close_session', 'create_decision', 'create_info', 'inbox', 'open_session', 'reply', 'set_status'])
+  assert.deepEqual(always, ['close_card', 'close_session', 'create_decision', 'create_info', 'inbox', 'open_session', 'reply', 'set_status'])
 })
 
 const ALLOW = '{"hookSpecificOutput":{"hookEventName":"PermissionRequest","decision":{"behavior":"allow"}}}'

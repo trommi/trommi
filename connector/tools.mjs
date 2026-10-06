@@ -154,6 +154,8 @@ export const ASSET_TYPES = ['html', 'image', 'video', 'audio', 'file']
 export const RETENTION_DAYS = 30
 export const URGENCIES = ['low', 'normal', 'high', 'critical']
 export const STATUSES = ['decision', 'working', 'done']
+// The summary of an answered card that its helper never closed and close_session closes with the session.
+export const SESSION_ENDED = 'Closed with its session.'
 
 const SECTION_TEXT_EXAMPLE = [
   'The export times out for large accounts. Tick what I may build.',
@@ -177,6 +179,9 @@ export const TEASER_MAX = 160
 const TEASER_PROP = { type: 'string', description: `Two short lines of plain text (at most ${TEASER_MAX} characters, no markdown) shown under the title on the Desk row: the gist, so the human can decide whether to open the card. Without it the Desk shows the start of the body.` }
 const TITLE_ONE_LINE = 'one line, at most about 70 characters'
 
+// An option whose choice ends the matter: the answer itself closes the card (README "card", `final`).
+const FINAL_PROP = { type: 'boolean', description: 'true: choosing this leaves nothing for you to do or to report ("Done", "Leave it", "No"). The card then closes itself with the answer: it never waits "with the agent", and you need no close_card. Its tile shows the human a small sign that this choice ends the matter. Leave it out when you will act on the choice.' }
+
 export const QUESTION_PROPS = {
   teaser: TEASER_PROP,
   body: { type: 'string', description: 'Context the human needs to decide: one or two short sentences. Longer explanation belongs behind a link or in an attachment. Not together with sections or text, which carry their own context.' },
@@ -192,6 +197,7 @@ export const QUESTION_PROPS = {
         label: { type: 'string', description: 'What the human sees on the button, at most about four words' },
         detail: { type: 'string', description: 'Optional consequence of this choice: one short line of about six words, never a paragraph, never what leaving it unticked means' },
         short: { type: 'string', description: `Optional: the option in two or three words (at most ${SHORT_MAX} characters), for the answer tile on the Desk row of a two-option question whose labels are not a plain yes or no, e.g. "Delete" and "Keep". Without it such a row shows one "Choose" tile.` },
+        final: FINAL_PROP,
       },
       required: ['key', 'label'],
     },
@@ -208,6 +214,7 @@ export const QUESTION_PROPS = {
         short: { type: 'string', description: `With key, optional: the option in two or three words (at most ${SHORT_MAX} characters) for the answer tile on the Desk row; see options` },
         html: { type: 'string', description: 'A rich layout shown under this paragraph (see html); the text beside it says the same in plain words' },
         recommended: { type: 'boolean', description: 'true: you would pick this one; several only with multiple: true' },
+        final: { type: 'boolean', description: 'With key: choosing this option ends the matter and closes the card; see options' },
         picture: { anyOf: [{ type: 'string' }, { type: 'integer' }], description: 'An attachment of this card that belongs to this option: its file name, or its position in attachments counted from 0' },
       },
       required: ['text'],
@@ -215,7 +222,7 @@ export const QUESTION_PROPS = {
   },
   text: {
     type: 'string',
-    description: `The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: "[key] Label: explanation"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice. A last line "picture: file.png" ties an attachment to the option. Every other paragraph is plain context. Example:\n${SECTION_TEXT_EXAMPLE}`,
+    description: `The same as sections, written as one text block. Paragraphs are separated by a blank line. A paragraph that starts with [key] is an option: "[key] Label: explanation"; without a colon the first line is the label and the following lines explain. [key*], or (recommended) after the label, marks your advice; [key!] marks an option as final (choosing it ends the matter and closes the card, see options; both: [key*!]). A last line "picture: file.png" ties an attachment to the option. Every other paragraph is plain context. Example:\n${SECTION_TEXT_EXAMPLE}`,
   },
   attachments: {
     type: 'array',
@@ -340,6 +347,7 @@ export const TOOLS = [
     },
   },
   {
+    _meta: ALWAYS_LOAD,
     name: 'close_card',
     inputSchema: {
       type: 'object',
@@ -548,7 +556,7 @@ export const EVENTS = [
     direction: 'to_agent', method: 'notifications/claude/channel', kind: 'decision', when: 'The human answered a decision card.',
     content: 'the human\'s note, or a sentence naming the card and the chosen key; when the human wrote notes on single options, a blank line and "Notes on options:" follow, with one line "- Label [key], chosen: note" or "- Label [key], not chosen: note" per note, in the order of the options',
     meta: { kind: 'decision', card_id: 'the card', choice: 'key of the chosen option; of several, the first' },
-    optional: { choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options', trust: '"1" when the human left the decision to you: choice is then the option you recommended, or empty if you recommended none; decide, say what you chose with reply and the card_id, and close the card', marks: 'how many notes and drawings the human pinned to parts of the card; they are lines of the content under "Notes pinned to the card:"', option_notes: 'only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content', files: 'absolute paths of what the human attached to the note of the answer, comma-separated', image_path: 'the first attached picture, when there is one' },
+    optional: { closed: '"1" when the answer settled the card: every chosen option was one you marked final, so the card closed itself; nothing is expected of you, no close_card', choices: 'only for a card made with multiple: true: every chosen key, comma-separated, in the order of the options', trust: '"1" when the human left the decision to you: choice is then the option you recommended, or empty if you recommended none; decide, say what you chose with reply and the card_id, and close the card', marks: 'how many notes and drawings the human pinned to parts of the card; they are lines of the content under "Notes pinned to the card:"', option_notes: 'only when the human wrote notes on single options: the keys that have one, comma-separated; the notes themselves are in the content', files: 'absolute paths of what the human attached to the note of the answer, comma-separated', image_path: 'the first attached picture, when there is one' },
     example: '<channel source="board" kind="decision" card_id="a1b2c3d4" choice="tonight">After the backup, please.</channel>',
   },
   {
@@ -594,6 +602,7 @@ export const EVENTS = [
 // ---- 3. the bridge: what each tool does in the room ----------------------------------------------------------
 
 const withShort = value => (shortOf(value) ? { short: shortOf(value) } : {})
+const withFinal = value => (value === true ? { final: true } : {})
 const listArg = (value, what) => {
   if (value != null && !Array.isArray(value)) throw new Error(`${what} must be a list`)
   return value ?? []
@@ -609,7 +618,7 @@ const urgencyArg = (value, fallback) => {
 
 // ---- a question as one structured text ---------------------------------------------------------------
 
-const FLAGGED = /^\[([\w.-]+)(\*)?\](?!\()[ \t]*/
+const FLAGGED = /^\[([\w.-]+)([*!]{0,2})\](?!\()[ \t]*/
 function parseSections(text) {
   return fences.hide(String(text).replace(/\r\n?/g, '\n')).split(/\n[ \t]*\n/).map(p => fences.show(p).trim()).filter(Boolean).map(par => {
     const flag = FLAGGED.exec(par)
@@ -620,11 +629,11 @@ function parseSections(text) {
       .replace(/\n[ \t]*short:[ \t]*(.+)$/im, (_, words) => { short = words.trim(); return '' })
     const [first, ...lines] = rest.split('\n')
     const colon = first.search(/:(\s|$)/)
-    let advised = Boolean(flag[2])
+    let advised = flag[2].includes('*')
     const label = (colon < 0 ? first : first.slice(0, colon)).replace(/\s*(\*|\(recommended\))\s*$/i, () => { advised = true; return '' }).trim()
     return {
       key: flag[1], label, text: [colon < 0 ? '' : first.slice(colon + 1), ...lines].join('\n').trim(),
-      ...(advised ? { recommended: true } : {}), ...(picture == null ? {} : { picture }), ...(short == null ? {} : { short }),
+      ...(advised ? { recommended: true } : {}), ...(flag[2].includes('!') ? { final: true } : {}), ...(picture == null ? {} : { picture }), ...(short == null ? {} : { short }),
     }
   })
 }
@@ -654,7 +663,7 @@ function sectionsOf(args, names) {
     const key = String(b.key)
     const label = String(b.label ?? '').trim()
     if (!label) throw new Error(`section "${key}" has a key, so it becomes an option and needs a label: the short name on its tile, at most about four words`)
-    return { key, label, text: said, ...layout, ...withShort(b.short), recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
+    return { key, label, text: said, ...layout, ...withShort(b.short), ...withFinal(b.final), recommended: b.recommended === true, ...(b.picture == null || b.picture === '' ? {} : { picture: pictureOf(b.picture, names, key) }) }
   })
 }
 const bodyOf = sections => sections.map(s => (s.key == null ? s.text : `**${s.label}**${s.text ? `: ${s.text}` : ''}`)).join('\n\n')
@@ -675,8 +684,8 @@ function questionFields(args, names = []) {
   const body = sections ? bodyOf(sections) : cleanFences(String(args.body ?? ''), 'body')
   const html = sections ? '' : htmlBeside(args.html, body, { beside: 'body' })
   const flagged = sections?.filter(s => s.key != null)
-  const options = flagged ? flagged.map(s => ({ key: s.key, label: s.label, detail: '', ...withShort(s.short) })) : listArg(args.options, 'options').map(o => ({
-    key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '', ...withShort(o?.short),
+  const options = flagged ? flagged.map(s => ({ key: s.key, label: s.label, detail: '', ...withShort(s.short), ...withFinal(s.final) })) : listArg(args.options, 'options').map(o => ({
+    key: String(o?.key), label: String(o?.label), detail: o?.detail ? String(o.detail) : '', ...withShort(o?.short), ...withFinal(o?.final),
   }))
   const keys = new Set(options.map(o => o.key))
   if (options.length < 2 || keys.size !== options.length) {
@@ -929,7 +938,7 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
     const open = c.object_state === 'open'
     const answer = c.answer
     return {
-      id: c.object_id, kind: c.card_type, status: open ? 'open' : c.closed_how === 'answered' ? 'decided' : c.closed_how === 'shredded' ? 'shredded' : 'done',
+      id: c.object_id, kind: c.card_type, status: open ? 'open' : c.closed_how === 'answered' && c.object_state === 'answered' ? 'decided' : c.closed_how === 'shredded' ? 'shredded' : 'done',
       urgency: c.urgency, urgency_reason: c.urgency_reason ?? '', queue_position: model().stack.indexOf(c.object_id) + 1 || null,
       title: c.title, ...(c.teaser ? { teaser: c.teaser } : {}), version: versionOf(c),
       ...(answer ? { answered_version: answer.bound_object_version, choice: answer.choices?.[0] ?? null, choices: answer.choices ?? [], note: answer.note ?? '', ...(answer.trusted ? { trusted: true } : {}) } : {}),
@@ -1063,6 +1072,8 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
       }
       case 'close_card': {
         const card = findCard(args.card_id)
+        // Settled by a final answer: it is closed already, and a version from here would take the human's "Take back" away.
+        if (card.object_state === 'closed' && card.closed_how === 'settled') return 'already closed: the human\'s answer settled it (a final option). Nothing to do; say what there is to say with reply'
         await client.close(card.object_id, String(args.summary ?? ''))
         return 'closed'
       }
@@ -1128,8 +1139,11 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const lines = s?.status_lines ?? []
         if (lines.length) await client.setStatus(Object.fromEntries(lines.map(l => [`status_line/${l.id}`, null])), { session_id: sid })
         await client.setStatus({ profile: { ...(s?.profile ?? {}), closed_at: Date.now() } }, { session_id: sid })
+        // What the human answered there and the helper never closed would wait "with the agent" for nobody: closed with it.
+        const left = myCards().filter(c => c.session_id === sid && c.object_state === 'answered')
+        for (const c of left) await client.close(c.object_id, SESSION_ENDED)
         const open = myCards().filter(c => c.session_id === sid && c.object_state === 'open').length
-        return `child session "${name}" closed: archived on the board, still readable there${open ? `; ${open} open question${open === 1 ? '' : 's'} of it stay${open === 1 ? 's' : ''} on the human's stack, and the session stays in the active list until ${open === 1 ? 'it is' : 'they are'} answered` : ''}. open_session("${name}") opens it again.`
+        return `child session "${name}" closed: archived on the board, still readable there${left.length ? `; ${left.length} answered card${left.length === 1 ? '' : 's'} of it ${left.length === 1 ? 'was' : 'were'} closed with it` : ''}${open ? `; ${open} open question${open === 1 ? '' : 's'} of it stay${open === 1 ? 's' : ''} on the human's stack, and the session stays in the active list until ${open === 1 ? 'it is' : 'they are'} answered` : ''}. open_session("${name}") opens it again.`
       }
       case 'publish_asset': {
         if (args.silent === true) throw new Error('silent assets are not available on the new hub yet: publish it without silent, or attach the file to a reply')
@@ -1264,12 +1278,14 @@ export function createBridge({ client, notify, cacheDir, state = {}, saveState =
         const notes = c.option_notes && typeof c.option_notes === 'object' ? c.option_notes : {}
         const remarked = (card?.options ?? []).filter(o => notes[o.key])
         const marks = listArg(c.marks, 'marks')
+        // A final answer closed the card itself (closed="1"): the agent hears the choice and that nothing is left to do.
         return send([
           c.note || `Decision on "${title}": ${choices.join(', ')}`,
+          ...(cmd.settled ? ['', 'This answer settled the card: you marked the choice as final, so the card is closed already. Nothing is expected of you: no close_card, no reply.'] : []),
           ...(remarked.length ? ['', 'Notes on options:', ...remarked.map(o => `- ${o.label} [${o.key}], ${choices.includes(o.key) ? 'chosen' : 'not chosen'}: ${String(notes[o.key]).replace(/\s*\n\s*/g, ' ')}`)] : []),
           ...marksBlock(card, marks),
         ].join('\n'), {
-          kind: 'decision', card_id: cmd.object_id, choice: choices[0] ?? '', ...(card?.allows_multiple ? { choices: choices.join(',') } : {}),
+          kind: 'decision', card_id: cmd.object_id, choice: choices[0] ?? '', ...(card?.allows_multiple ? { choices: choices.join(',') } : {}), ...(cmd.settled ? { closed: '1' } : {}),
           ...(remarked.length ? { option_notes: remarked.map(o => o.key).join(',') } : {}), ...(marks.length ? { marks: String(marks.length) } : {}), ...fileMeta(got),
         })
       }
