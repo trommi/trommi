@@ -307,7 +307,15 @@ export class Client {
     this._started = true
     if (process_instance) this._processInstance = process_instance   // R4: every lease claim of this process names it
     this._setConnection('connecting')
-    await this.hub.authHeader()                       // signs in unless a fresh token is at hand (a login just signed in)
+    try { await this.hub.authHeader() }               // signs in unless a fresh token is at hand (a login just signed in)
+    catch (e) {
+      // A device that was removed while it was away: the refusal carries the signed entries; checked, this start ends
+      // with 'removed' (and the event of that name), not with the hub's bare word.
+      if (e.code !== 'not-member') throw e
+      await this.serial(() => this._learnRemoval(e)).catch(() => {})
+      if (this.model.room.connection !== 'removed') throw e
+      throw new ZError('removed', this.model.room.replaced ? 'another connector continues this session: this device was retired' : 'this device was removed from the room', { replaced: !!this.model.room.replaced })
+    }
     // The device list (presence) is asked now, side by side with the member and session refresh, and applied after
     // them without holding the start up. The session list too (it names each session's newest grant number; the grants
     // themselves are read after the member list, which they are checked against).
@@ -641,10 +649,13 @@ export class Client {
    * The hub refuses this device (403): it may have been removed. A removed device cannot read the member list any more,
    * so it signs a challenge: the hub's refusal then carries the signed entries up to the removal, checked here like any.
    */
-  async _learnRemoval() {
-    try { return await this._refreshMembers() } catch (e) { if (e.status !== 403) throw e }
-    this.hub.token = null
-    const e = await this.hub.signIn().then(() => null, e => e)
+  async _learnRemoval(refusal = null) {
+    let e = refusal
+    if (!e) {
+      try { return await this._refreshMembers() } catch (x) { if (x.status !== 403) throw x }
+      this.hub.token = null
+      e = await this.hub.signIn().then(() => null, x => x)
+    }
     const entries = e?.code === 'not-member' && Array.isArray(e.body?.signed_entries) ? e.body.signed_entries : null
     if (entries) await this._refreshMembers({ given: { last_entry_number: entries.length - 1, signed_entries: entries.slice(this.state.head.seq + 1) } })
   }
@@ -676,7 +687,7 @@ export class Client {
       if (throwOnFork) throw e
       return
     }
-    if (state === this.state && r.signed_entries.length === 0) return
+    if (state === this.state && r.signed_entries.length === 0 && !given) return   // (given: a refused device looks at the list it holds, too)
     this.state = state
     if (state.epoch !== epochBefore) this.epochChangedAt = Date.now()
     this.model.room.last_entry_number = state.head.seq
